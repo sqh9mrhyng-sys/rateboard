@@ -194,6 +194,7 @@
         <div id="pane-buy" class="panel">
           <div class="panel-hd"><h2>Post a buy offer</h2></div>
           <div class="panel-bd stack">
+            <div class="warn" id="b-instructions"></div>
             <div>
               <label for="b-player">Player</label>
               <input id="b-player" class="field" autocomplete="off" placeholder="e.g. Travis Hunter">
@@ -202,8 +203,12 @@
               <label for="b-rate">Rate you'll pay</label>
               <select id="b-rate" class="field num"></select>
             </div>
+            <div>
+              <label for="b-link">Your comment link</label>
+              <input id="b-link" class="field" autocomplete="off" placeholder="https://www.realapp.com/...">
+            </div>
             <button id="b-post" class="btn">Post offer</button>
-            <p class="note">Rates are per 1. Posting the same player twice replaces your earlier offer.</p>
+            <p class="note">Rates are per 1. Posting the same player twice replaces your earlier offer. A valid comment link is required — sellers use it to reach you.</p>
           </div>
         </div>
 
@@ -239,6 +244,13 @@ const KEY = 'ratebrd_market_v1';
 const SESSION = 'ratebrd_session';
 const ADMINS = ['dennis'];            // <-- put your username(s) here
 const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL' };
+
+// Where buyers have to go before they can post a buy offer.
+const GROUP_LINK = 'https://www.realapp.com/zr4caf3fbkb';
+const TARGET_LINK = 'https://www.realapp.com/a9hQFJYKeYbuLp4oKM/178892690465700001';
+// Comment links a buyer submits should be their own comment on realapp.com —
+// this is a light sanity check, not a guarantee it's the right post.
+const COMMENT_LINK_PREFIX = 'https://www.realapp.com/';
 const RATES = (()=>{ const a=[]; for(let r=10;r<=120;r+=5) a.push(r); return a; })();
 
 const S = {
@@ -443,6 +455,21 @@ function rateOptions(sel){
 $('#b-rate').innerHTML = rateOptions(25);
 
 /* =========================================================
+   Buyer instructions — join the group, comment "buying X" on the
+   pinned post, then paste back the link to that comment.
+   ========================================================= */
+function renderBuyInstructions(){
+  const player = $('#b-player').value.trim();
+  $('#b-instructions').innerHTML =
+    `To buy cards: join <a href="${esc(GROUP_LINK)}" target="_blank" rel="noopener">this group</a>, ` +
+    `then go to <a href="${esc(TARGET_LINK)}" target="_blank" rel="noopener">this post</a> and add a comment ` +
+    `that says <b>"buying ${esc(player || 'a player')}"</b>. Once you've created it, paste the link to ` +
+    `<b>your own comment</b> below — that's how sellers reach you.`;
+}
+renderBuyInstructions();
+$('#b-player').addEventListener('input', renderBuyInstructions);
+
+/* =========================================================
    Sport + mode
    ========================================================= */
 $('#sport').addEventListener('change', e => {
@@ -508,17 +535,24 @@ document.addEventListener('click', async e => {
 /* =========================================================
    Buyer actions
    ========================================================= */
+function validCommentLink(link){
+  return link.startsWith(COMMENT_LINK_PREFIX) && link.length > COMMENT_LINK_PREFIX.length;
+}
+
 $('#b-post').addEventListener('click', async () => {
   const player = $('#b-player').value.trim();
   const rate = +$('#b-rate').value;
+  const link = $('#b-link').value.trim();
   if(player.length < 2) return toast('Enter a player name.');
+  if(!validCommentLink(link)) return toast(`Paste your "buying ${player || 'X'}" comment link first.`);
 
   await push(m => {
     const i = m.offers.findIndex(o => o.user===me.toLowerCase() && o.sport===sport && norm(o.player)===norm(player));
-    if(i > -1){ m.offers[i].rate = rate; m.offers[i].player = player; m.offers[i].ts = Date.now(); }
-    else m.offers.push({ id:uid(), user:me.toLowerCase(), sport, player, rate, ts:Date.now() });
+    if(i > -1){ m.offers[i].rate = rate; m.offers[i].player = player; m.offers[i].link = link; m.offers[i].ts = Date.now(); }
+    else m.offers.push({ id:uid(), user:me.toLowerCase(), sport, player, rate, link, ts:Date.now() });
   });
-  $('#b-player').value='';
+  $('#b-player').value=''; $('#b-link').value='';
+  renderBuyInstructions();
   toast(`Posted ${player} at ${rate}/1`);
   render();
 });
@@ -526,12 +560,15 @@ $('#b-post').addEventListener('click', async () => {
 function editRate(id){
   const o = market.offers.find(x => x.id===id);
   if(!o) return;
-  const box = modal(`Change rate — ${o.player}`, `
+  const box = modal(`Change offer — ${o.player}`, `
     <div><label for="e-rate">New rate</label><select id="e-rate" class="field num">${rateOptions(o.rate)}</select></div>
-    <button class="btn" id="e-save">Save rate</button>`);
+    <div><label for="e-link">Your comment link</label><input id="e-link" class="field" value="${esc(o.link||'')}" placeholder="https://www.realapp.com/..."></div>
+    <button class="btn" id="e-save">Save</button>`);
   box.querySelector('#e-save').addEventListener('click', async () => {
     const r = +box.querySelector('#e-rate').value;
-    await push(m => { const t = m.offers.find(x=>x.id===id); if(t) { t.rate = r; t.ts = Date.now(); } });
+    const link = box.querySelector('#e-link').value.trim();
+    if(!validCommentLink(link)) return toast('That doesn\'t look like a realapp.com comment link.');
+    await push(m => { const t = m.offers.find(x=>x.id===id); if(t) { t.rate = r; t.link = link; t.ts = Date.now(); } });
     box.remove(); toast(`${o.player} now ${r}/1`); render();
   });
 }
@@ -570,7 +607,7 @@ $('#s-go').addEventListener('click', async () => {
     content.push({ type:'text', text:
 `These are screenshots of a "Top players" list from a ${SPORTS[sport]} sports card app, sorted by Boost value.
 
-Each row has: a small headshot on the left, the player's name, sometimes a checkmark after the name, a large decimal number on the right (the boost value), and beneath it two small numbers with card icons.
+Each row has: a small headshot on the left, the player's name, sometimes a checkmark after the name, a large decimal number on the right (the boost value), and beneath it two small numbers with card icons — the left one and the right one.
 
 Read every player row. Rules:
 - Keep names exactly as printed, including accents and suffixes: García, Sánchez, Jr.
@@ -578,9 +615,10 @@ Read every player row. Rules:
 - Ignore all interface text: the clock and battery in the status bar, "Top players", "Close", "Boost value".
 - The first and last rows may be cut off mid-scroll. Include a row only if you can read the whole name.
 - boost is the large decimal on that row. Use null if it is cut off.
+- owned is the RIGHT-hand one of the two small numbers with card icons beneath the boost value — that's how many of that card the person owns. Use null if it is cut off or unclear. Do not confuse it with the left-hand number.
 
 Respond with only this JSON. No markdown fences, no other text:
-{"players":[{"name":"Shohei Ohtani","boost":100.8}]}
+{"players":[{"name":"Shohei Ohtani","boost":100.8,"owned":3}]}
 
 If you cannot read any rows, return {"players":[]}.` });
 
@@ -600,33 +638,93 @@ If you cannot read any rows, return {"players":[]}.` });
   }
 });
 
+async function copyText(text){
+  try{
+    await navigator.clipboard.writeText(text);
+    return true;
+  }catch(e){
+    try{
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      return ok;
+    }catch(e2){ return false; }
+  }
+}
+
 async function showMatches(raw){
   await pull();
   const live = market.offers.filter(o => o.sport===sport && !market.users[o.user]?.banned);
 
-  // Accept either ["Name"] or [{name, boost}]
-  const players = (raw||[]).map(p => typeof p === 'string' ? {name:p, boost:null} : p)
+  // Accept either ["Name"] or [{name, boost, owned}]
+  const players = (raw||[]).map(p => typeof p === 'string' ? {name:p, boost:null, owned:null} : p)
                            .filter(p => p && p.name);
 
   const hits = [];
   for(const p of players){
     const best = live.filter(o => sameGuy(o.player, p.name)).sort((a,b) => b.rate - a.rate)[0];
-    if(best) hits.push({ player:p.name, boost:p.boost, rate:best.rate, buyer: market.users[best.user]?.name || best.user });
+    if(best) hits.push({ player:p.name, boost:p.boost, owned:p.owned, rate:best.rate, buyer: market.users[best.user]?.name || best.user, link: best.link || '' });
   }
   hits.sort((a,b) => b.rate - a.rate);
 
   const seen = new Set();
   const rows = hits.filter(h => !seen.has(norm(h.player)) && seen.add(norm(h.player)));
 
-  modal('Your best sellers', rows.length ? `
-    <p class="note">Read ${players.length} player${players.length===1?'':'s'} off your screenshots. ${rows.length} ${rows.length===1?'has':'have'} a standing ${SPORTS[sport]} offer, highest first.</p>
-    <div>${rows.map(h=>`
-      <div class="hit">
-        <span class="rate num">${h.rate}<small>/1</small></span>
-        <span><span class="player">${esc(h.player)}</span><br><span class="who">${h.boost!=null?esc(h.boost)+' boost — ':''}buying: ${esc(h.buyer)}</span></span>
-        <button class="btn-ghost" data-rep="${esc(h.buyer)}">Report</button>
+  const box = modal('Your best sellers', rows.length ? `
+    <p class="note">Read ${players.length} player${players.length===1?'':'s'} off your screenshots. ${rows.length} ${rows.length===1?'has':'have'} a standing ${SPORTS[sport]} offer, highest first. The "you own" count is read from your screenshot when visible — double-check it before sending a message.</p>
+    <div>${rows.map((h,i)=>`
+      <div class="hit" style="display:block">
+        <div style="display:grid;grid-template-columns:78px 1fr auto;gap:12px;align-items:center">
+          <span class="rate num">${h.rate}<small>/1</small></span>
+          <span><span class="player">${esc(h.player)}</span><br><span class="who">${h.boost!=null?esc(h.boost)+' boost — ':''}buying: ${esc(h.buyer)}</span></span>
+          <button class="btn-ghost" data-rep="${esc(h.buyer)}">Report</button>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+          <label style="margin:0;flex-shrink:0" for="own-${i}">You own</label>
+          <input id="own-${i}" data-owned="${i}" class="field num" type="number" min="0" step="1" style="width:80px" value="${h.owned!=null?h.owned:''}" placeholder="#">
+        </div>
+        <div class="note" data-msg="${i}" style="margin-top:6px"></div>
+        <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
+          <button class="btn-ghost" data-copy="${i}">Copy message</button>
+          ${h.link ? `<a class="btn-ghost" href="${esc(h.link)}" target="_blank" rel="noopener">Message buyer</a>` : `<span class="nohit">No comment link on file for this buyer</span>`}
+        </div>
       </div>`).join('')}</div>`
     : `<p class="nohit">Read ${players.length} player${players.length===1?'':'s'}, but none of them have a standing ${SPORTS[sport]} offer right now. Check back, or switch sports if the screenshots were from a different one.</p>`);
+
+  if(!rows.length) return;
+
+  const msgFor = i => {
+    const input = box.querySelector(`[data-owned="${i}"]`);
+    const msgEl = box.querySelector(`[data-msg="${i}"]`);
+    const copyBtn = box.querySelector(`[data-copy="${i}"]`);
+    const n = +input.value;
+    if(!input.value || !(n > 0)){
+      msgEl.textContent = 'Enter how many you own to generate a message.';
+      copyBtn.disabled = true;
+      return null;
+    }
+    const total = Math.round(n * rows[i].rate * 100) / 100;
+    const text = `i have ${n} ${rows[i].player} offer ${total}`;
+    msgEl.textContent = text;
+    copyBtn.disabled = false;
+    return text;
+  };
+
+  rows.forEach((h,i) => {
+    msgFor(i);
+    box.querySelector(`[data-owned="${i}"]`).addEventListener('input', () => msgFor(i));
+  });
+
+  box.addEventListener('click', async e => {
+    const cp = e.target.closest('[data-copy]');
+    if(!cp) return;
+    const text = msgFor(cp.dataset.copy);
+    if(!text) return;
+    const ok = await copyText(text);
+    toast(ok ? 'Message copied' : 'Could not copy — select the text and copy it manually');
+  });
 }
 
 /* =========================================================
