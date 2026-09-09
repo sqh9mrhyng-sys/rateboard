@@ -231,9 +231,9 @@
 
 <script>
 /* =========================================================
-   Storage — shared key for the market, personal key for session.
-   Falls back to an in-memory store if window.storage is absent
-   (e.g. if you open this file outside the Claude artifact host).
+   Storage — the market (shared across everyone) lives in Cloudflare KV,
+   reached through a Pages Function at /api/kv. The session key is
+   per-browser, so it just stays in localStorage.
    ========================================================= */
 const KEY = 'ratebrd_market_v1';
 const SESSION = 'ratebrd_session';
@@ -241,40 +241,41 @@ const ADMINS = ['dennis'];            // <-- put your username(s) here
 const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL' };
 const RATES = (()=>{ const a=[]; for(let r=10;r<=120;r+=5) a.push(r); return a; })();
 
-/* MODE is decided at boot by actually writing a probe value:
-   shared   = one board everyone sees (what we want)
-   personal = storage works but only for you, so the board is private
-   memory   = no storage at all, everything resets on refresh          */
-let MODE = 'memory';
-const shim = new Map();
-
-async function probeStorage(){
-  if(!(window.storage && window.storage.set)) return 'memory';
-  for(const shared of [true, false]){
-    try{
-      await window.storage.set('ratebrd_probe', 'ok', shared);
-      const r = await window.storage.get('ratebrd_probe', shared);
-      if(r && r.value === 'ok') return shared ? 'shared' : 'personal';
-    }catch(err){
-      console.warn('storage probe failed (shared=' + shared + '):', err);
-    }
-  }
-  return 'memory';
-}
-
 const S = {
   async get(k){
-    if(MODE === 'memory') return shim.has(k) ? {value:shim.get(k)} : null;
-    try{ return await window.storage.get(k, MODE === 'shared'); }
-    catch(e){ return null; }
+    if(k === SESSION){
+      try{ const v = localStorage.getItem(k); return v!=null ? {value:v} : null; }
+      catch(e){ return null; }
+    }
+    try{
+      const r = await fetch('/api/kv?key=' + encodeURIComponent(k));
+      if(!r.ok) throw new Error('bad response ' + r.status);
+      const data = await r.json();
+      showConnBanner(false);
+      return data.value!=null ? {value:data.value} : null;
+    }catch(e){
+      console.error('storage get failed:', e);
+      showConnBanner(true);
+      return null;
+    }
   },
   async set(k, v){
-    if(MODE === 'memory'){ shim.set(k, v); return true; }
-    try{ await window.storage.set(k, v, MODE === 'shared'); return true; }
-    catch(e){
-      console.error('storage set failed, dropping to memory:', e);
-      MODE = 'memory'; shim.set(k, v); showModeBanner();
+    if(k === SESSION){
+      try{ localStorage.setItem(k, v); return true; }
+      catch(e){ return false; }
+    }
+    try{
+      const r = await fetch('/api/kv', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ key:k, value:v })
+      });
+      if(!r.ok) throw new Error('bad response ' + r.status);
+      showConnBanner(false);
       return true;
+    }catch(e){
+      console.error('storage set failed:', e);
+      showConnBanner(true);
+      return false;
     }
   }
 };
@@ -411,14 +412,11 @@ async function resume(){
   return true;
 }
 
-function showModeBanner(){
+function showConnBanner(broken){
   const el = $('#offline');
   if(!el) return;
-  if(MODE === 'shared'){ el.classList.add('hide'); return; }
-  el.classList.remove('hide');
-  el.textContent = MODE === 'personal'
-    ? 'Shared storage is unavailable here, so this board is saved to your device only. It survives refreshes, but nobody else can see what you post.'
-    : 'No storage is available here, so anything you post disappears on refresh and nobody else can see it. Everything below still works for testing.';
+  el.classList.toggle('hide', !broken);
+  if(broken) el.textContent = "Couldn't reach the shared board right now. Your last action may not have saved — try again in a moment.";
 }
 
 function enter(){
@@ -426,7 +424,6 @@ function enter(){
   $('#app').classList.remove('hide');
   $('#me').textContent = me;
   if(ADMINS.includes(me.toLowerCase())) $('#open-admin').classList.remove('hide');
-  showModeBanner();
   render();
 }
 
@@ -706,8 +703,6 @@ async function adminPanel(){
    Boot
    ========================================================= */
 (async () => {
-  MODE = await probeStorage();
-  console.log('Rate Board storage mode:', MODE);
   if(await resume()) enter();
 })();
 </script>
