@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rate Board — CFB / FC / NFL card offers</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --field:#1B2130;
+    --panel:#232B3D;
+    --panel-2:#2C3549;
+    --line:#3A4459;
+    --bone:#E9E7E1;
+    --mute:#98A2B8;
+    --accent:#E8A33D;
+    --accent-ink:#1B2130;
+    --bad:#F0685E;
+    --good:#4FD1A5;
+    --r:10px;
+  }
+  [data-sport="FC"]{ --accent:#3FD0A6; }
+  [data-sport="NFL"]{ --accent:#7E9BFF; }
+
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--field);
+    color:var(--bone);
+    font-family:'Archivo',ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:15px;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  .num{font-variant-numeric:tabular-nums;letter-spacing:-0.02em}
+  button,input,select,textarea{font:inherit;color:inherit}
+  button{cursor:pointer;border:none;background:none}
+  a{color:var(--accent)}
+
+  /* ---------- shell ---------- */
+  .topbar{
+    display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:16px;
+    padding:14px 22px;border-bottom:1px solid var(--line);
+    background:rgba(27,33,48,.94);position:sticky;top:0;z-index:40;backdrop-filter:blur(6px);
+  }
+  .brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:-0.02em}
+  .pip{width:11px;height:11px;border-radius:3px;background:var(--accent);transition:background .25s}
+  .sportpick{position:relative}
+  .sportpick select{
+    appearance:none;background:var(--panel);border:1px solid var(--line);color:var(--bone);
+    padding:9px 40px 9px 16px;border-radius:999px;font-weight:600;letter-spacing:.01em;
+  }
+  .sportpick select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .sportpick .caret{position:absolute;right:16px;top:50%;transform:translateY(-50%);pointer-events:none;color:var(--mute)}
+  .whoami{justify-self:end;display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--mute)}
+  .whoami b{color:var(--bone);font-weight:600}
+  .linkbtn{color:var(--mute);text-decoration:underline;text-underline-offset:3px;font-size:13.5px}
+  .linkbtn:hover{color:var(--bone)}
+
+  .wrap{max-width:1180px;margin:0 auto;padding:22px}
+  .cols{display:grid;grid-template-columns:1fr 380px;gap:22px;align-items:start}
+  @media(max-width:900px){.cols{grid-template-columns:1fr}}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+  .panel-hd{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+  .panel-hd h2{margin:0;font-size:16px;font-weight:600;letter-spacing:-0.01em}
+  .panel-hd .count{color:var(--mute);font-size:13px}
+  .panel-bd{padding:18px}
+
+  /* ---------- offer board ---------- */
+  .board{list-style:none;margin:0;padding:0}
+  .row{display:grid;grid-template-columns:96px 1fr auto;gap:14px;align-items:center;padding:12px 18px;border-bottom:1px solid var(--line)}
+  .row:last-child{border-bottom:none}
+  .rate{font-size:27px;font-weight:800;line-height:1;color:var(--accent)}
+  .rate small{font-size:13px;font-weight:500;color:var(--mute);margin-left:2px}
+  .who{font-size:13px;color:var(--mute)}
+  .player{font-weight:600;letter-spacing:-0.01em}
+  .rowacts{display:flex;gap:8px;align-items:center}
+  .mine{background:linear-gradient(90deg,color-mix(in srgb,var(--accent) 12%,transparent),transparent 60%)}
+
+  .empty{padding:34px 18px;color:var(--mute);text-align:center}
+  .empty b{display:block;color:var(--bone);font-weight:600;margin-bottom:4px}
+
+  /* ---------- controls ---------- */
+  label{display:block;font-size:13px;color:var(--mute);margin-bottom:6px}
+  .field{width:100%;background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:11px 13px}
+  .field:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:transparent}
+  select.field{appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--mute) 50%),linear-gradient(135deg,var(--mute) 50%,transparent 50%);background-position:calc(100% - 18px) 50%,calc(100% - 13px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+  .stack>*+*{margin-top:14px}
+  .btn{background:var(--accent);color:var(--accent-ink);font-weight:600;padding:11px 18px;border-radius:8px;width:100%;transition:filter .15s}
+  .btn:hover{filter:brightness(1.08)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn-ghost{background:transparent;border:1px solid var(--line);color:var(--bone);padding:7px 12px;border-radius:7px;font-size:13px}
+  .btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
+  .btn-danger:hover{border-color:var(--bad);color:var(--bad)}
+  .btn-lg{padding:26px;font-size:17px;border-radius:12px;text-align:center}
+
+  .seg{display:flex;background:var(--panel-2);border:1px solid var(--line);border-radius:999px;padding:3px;gap:3px}
+  .seg button{flex:1;padding:9px;border-radius:999px;font-weight:600;font-size:14px;color:var(--mute)}
+  .seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+
+  .note{font-size:12.5px;color:var(--mute);line-height:1.45}
+  .warn{background:color-mix(in srgb,var(--bad) 13%,transparent);border:1px solid color-mix(in srgb,var(--bad) 40%,transparent);border-radius:8px;padding:11px 13px;font-size:12.5px;line-height:1.45}
+
+  /* ---------- gate ---------- */
+  .gate{max-width:430px;margin:8vh auto;padding:22px}
+  .gate h1{font-size:31px;font-weight:800;letter-spacing:-0.03em;margin:0 0 6px}
+  .gate .sub{color:var(--mute);margin:0 0 26px}
+
+  /* ---------- modal ---------- */
+  .scrim{position:fixed;inset:0;background:rgba(10,13,20,.72);display:flex;align-items:center;justify-content:center;padding:20px;z-index:60}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:100%;max-width:520px;max-height:86vh;overflow:auto}
+  .modal .panel-hd{position:sticky;top:0;background:var(--panel)}
+
+  .hit{display:grid;grid-template-columns:78px 1fr auto;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid var(--line)}
+  .hit:last-child{border-bottom:none}
+  .nohit{color:var(--mute);font-size:13px}
+
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--bone);color:var(--field);padding:11px 18px;border-radius:999px;font-weight:600;font-size:14px;z-index:80}
+  .spin{display:inline-block;width:15px;height:15px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  @media(prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+  .hide{display:none!important}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+</style>
+</head>
+<body data-sport="CFB">
+
+<!-- ============ LOGIN GATE ============ -->
+<div id="gate" class="gate">
+  <h1>Rate Board</h1>
+  <p class="sub">Standing buy offers for CFB, FC and NFL cards. Post what you'll pay, or scan your stats and see who's paying most.</p>
+  <div class="panel">
+    <div class="panel-bd stack">
+      <div>
+        <label for="g-user">Your in-game username</label>
+        <input id="g-user" class="field" autocomplete="off" spellcheck="false" placeholder="Exactly as it appears in the app">
+      </div>
+      <div>
+        <label for="g-pass">Board password</label>
+        <input id="g-pass" class="field" type="password" autocomplete="new-password" placeholder="At least 6 characters">
+      </div>
+      <div class="warn">Don't reuse your real account password. This password is only for this board and it protects nothing else. Pick something you use nowhere else.</div>
+      <div id="g-msg" class="note hide"></div>
+      <button id="g-go" class="btn">Continue</button>
+      <p class="note">New username signs you up. Returning username signs you in.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============ APP ============ -->
+<div id="app" class="hide">
+  <header class="topbar">
+    <div class="brand"><span class="pip"></span> Rate Board</div>
+    <div class="sportpick">
+      <select id="sport" aria-label="Sport">
+        <option value="CFB">College football</option>
+        <option value="FC">FC</option>
+        <option value="NFL">NFL</option>
+      </select>
+      <span class="caret">▾</span>
+    </div>
+    <div class="whoami">
+      <span>Signed in as <b id="me"></b></span>
+      <button class="linkbtn" id="open-report">Report a user</button>
+      <button class="linkbtn hide" id="open-admin">Admin</button>
+      <button class="linkbtn" id="signout">Sign out</button>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <div id="offline" class="warn hide" style="margin-bottom:18px"></div>
+    <div class="cols">
+
+      <!-- board -->
+      <section class="panel">
+        <div class="panel-hd">
+          <h2 id="board-title">Standing buy offers</h2>
+          <span class="count" id="board-count"></span>
+        </div>
+        <ul class="board" id="board"></ul>
+      </section>
+
+      <!-- side -->
+      <aside class="stack">
+        <div class="seg" role="group" aria-label="Mode">
+          <button id="tab-buy" aria-pressed="true">Buyer</button>
+          <button id="tab-sell" aria-pressed="false">Seller</button>
+        </div>
+
+        <!-- BUYER -->
+        <div id="pane-buy" class="panel">
+          <div class="panel-hd"><h2>Post a buy offer</h2></div>
+          <div class="panel-bd stack">
+            <div>
+              <label for="b-player">Player</label>
+              <input id="b-player" class="field" autocomplete="off" placeholder="e.g. Travis Hunter">
+            </div>
+            <div>
+              <label for="b-rate">Rate you'll pay</label>
+              <select id="b-rate" class="field num"></select>
+            </div>
+            <button id="b-post" class="btn">Post offer</button>
+            <p class="note">Rates are per 1. Posting the same player twice replaces your earlier offer.</p>
+          </div>
+        </div>
+
+        <div id="pane-mine" class="panel">
+          <div class="panel-hd"><h2>Your buys</h2><span class="count" id="mine-count"></span></div>
+          <ul class="board" id="mine"></ul>
+        </div>
+
+        <!-- SELLER -->
+        <div id="pane-sell" class="panel hide">
+          <div class="panel-hd"><h2>Scan your stats</h2></div>
+          <div class="panel-bd stack">
+            <input type="file" id="s-file" accept="image/*" multiple class="hide">
+            <button id="s-pick" class="btn btn-lg">Upload stats screenshots</button>
+            <div id="s-files" class="note"></div>
+            <button id="s-go" class="btn hide">Read screenshots</button>
+            <p class="note">Reads the player names off your screenshots and shows the highest standing offer for each, in the sport you have selected.</p>
+          </div>
+        </div>
+      </aside>
+
+    </div>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   Storage — shared key for the market, personal key for session.
+   Falls back to an in-memory store if window.storage is absent
+   (e.g. if you open this file outside the Claude artifact host).
+   ========================================================= */
+const KEY = 'ratebrd_market_v1';
+const SESSION = 'ratebrd_session';
+const ADMINS = ['dennis'];            // <-- put your username(s) here
+const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL' };
+const RATES = (()=>{ const a=[]; for(let r=10;r<=120;r+=5) a.push(r); return a; })();
+
+/* MODE is decided at boot by actually writing a probe value:
+   shared   = one board everyone sees (what we want)
+   personal = storage works but only for you, so the board is private
+   memory   = no storage at all, everything resets on refresh          */
+let MODE = 'memory';
+const shim = new Map();
+
+async function probeStorage(){
+  if(!(window.storage && window.storage.set)) return 'memory';
+  for(const shared of [true, false]){
+    try{
+      await window.storage.set('ratebrd_probe', 'ok', shared);
+      const r = await window.storage.get('ratebrd_probe', shared);
+      if(r && r.value === 'ok') return shared ? 'shared' : 'personal';
+    }catch(err){
+      console.warn('storage probe failed (shared=' + shared + '):', err);
+    }
+  }
+  return 'memory';
+}
+
+const S = {
+  async get(k){
+    if(MODE === 'memory') return shim.has(k) ? {value:shim.get(k)} : null;
+    try{ return await window.storage.get(k, MODE === 'shared'); }
+    catch(e){ return null; }
+  },
+  async set(k, v){
+    if(MODE === 'memory'){ shim.set(k, v); return true; }
+    try{ await window.storage.set(k, v, MODE === 'shared'); return true; }
+    catch(e){
+      console.error('storage set failed, dropping to memory:', e);
+      MODE = 'memory'; shim.set(k, v); showModeBanner();
+      return true;
+    }
+  }
+};
+
+const blank = () => ({ users:{}, offers:[], reports:[] });
+let market = blank();
+let me = null, sport = 'CFB', mode = 'buy', pending = [];
+
+async function pull(){
+  const r = await S.get(KEY);
+  market = r && r.value ? JSON.parse(r.value) : blank();
+  market.users ||= {}; market.offers ||= []; market.reports ||= [];
+  return market;
+}
+async function push(mutate){
+  await pull();                       // re-read so we don't clobber other people
+  mutate(market);
+  const ok = await S.set(KEY, JSON.stringify(market));
+  if(!ok) toast('Could not save. Try again.');
+  return ok;
+}
+
+/* =========================================================
+   Helpers
+   ========================================================= */
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+// García -> garcia, Sánchez -> sanchez, "Luis Garcia Jr." -> "luis garcia"
+const norm = s => String(s)
+  .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+  .toLowerCase()
+  .replace(/[^a-z0-9 ]/g,' ')
+  .replace(/\b(jr|sr|ii|iii|iv)\b/g,'')
+  .replace(/\s+/g,' ').trim();
+
+// Match on surname, then confirm with the first initial. Avoids the substring
+// bug where an offer for "Will" would match every Will* on a screenshot.
+function sameGuy(a, b){
+  const x = norm(a), y = norm(b);
+  if(!x || !y) return false;
+  if(x === y) return true;
+  const xp = x.split(' '), yp = y.split(' ');
+  if(xp[xp.length-1] !== yp[yp.length-1]) return false;
+  if(xp.length === 1 || yp.length === 1) return true;
+  return xp[0][0] === yp[0][0];
+}
+
+async function hash(str){
+  const salted = 'rb1:' + str;
+  // crypto.subtle only exists in secure contexts. If it's missing (sandboxed
+  // iframe, file:// , plain http) fall back so signup still works.
+  if(window.crypto && crypto.subtle && crypto.subtle.digest){
+    try{
+      const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(salted));
+      return 's:' + [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
+    }catch(e){ /* fall through */ }
+  }
+  let h1 = 0x811c9dc5, h2 = 0x01000193;
+  for(let i=0;i<salted.length;i++){
+    const c = salted.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+    h2 = Math.imul(h2 + c, 0x85ebca6b) >>> 0;
+  }
+  return 'f:' + h1.toString(16).padStart(8,'0') + h2.toString(16).padStart(8,'0');
+}
+
+let toastT;
+function toast(msg){
+  document.querySelector('.toast')?.remove();
+  const d = document.createElement('div');
+  d.className='toast'; d.textContent = msg; d.setAttribute('role','status');
+  document.body.appendChild(d);
+  clearTimeout(toastT); toastT = setTimeout(()=>d.remove(), 3200);
+}
+
+function modal(title, bodyHTML){
+  const scrim = document.createElement('div');
+  scrim.className = 'scrim';
+  scrim.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+    <div class="panel-hd"><h2>${esc(title)}</h2><button class="btn-ghost" data-x>Close</button></div>
+    <div class="panel-bd stack">${bodyHTML}</div></div>`;
+  scrim.addEventListener('click', e => { if(e.target===scrim || e.target.hasAttribute('data-x')) scrim.remove(); });
+  document.addEventListener('keydown', function k(e){ if(e.key==='Escape'){ scrim.remove(); document.removeEventListener('keydown',k);} });
+  document.body.appendChild(scrim);
+  return scrim;
+}
+
+/* =========================================================
+   Gate
+   ========================================================= */
+$('#g-go').addEventListener('click', signIn);
+$('#g-pass').addEventListener('keydown', e => { if(e.key==='Enter') signIn(); });
+$('#g-user').addEventListener('keydown', e => { if(e.key==='Enter') $('#g-pass').focus(); });
+
+function gateMsg(t){ const m=$('#g-msg'); m.textContent=t; m.classList.toggle('hide', !t); m.style.color='var(--bad)'; }
+
+async function signIn(){
+  try{ await doSignIn(); }
+  catch(err){ console.error(err); gateMsg('Something broke: ' + (err && err.message ? err.message : err)); }
+}
+
+async function doSignIn(){
+  const u = $('#g-user').value.trim();
+  const p = $('#g-pass').value;
+  if(u.length < 2) return gateMsg('Enter your username.');
+  if(p.length < 6) return gateMsg('Password needs at least 6 characters.');
+
+  const key = u.toLowerCase();
+  const h = await hash(p);
+  await pull();
+  const existing = market.users[key];
+
+  if(existing){
+    if(existing.banned) return gateMsg('This account has been removed from the board.');
+    if(existing.hash !== h) return gateMsg('Wrong password for that username.');
+  } else {
+    const ok = await push(m => { m.users[key] = { name:u, hash:h, created:Date.now(), banned:false }; });
+    if(!ok) return gateMsg('Could not create the account. Try again.');
+  }
+
+  me = market.users[key]?.name || u;
+  await S.set(SESSION, key);
+  enter();
+}
+
+async function resume(){
+  const r = await S.get(SESSION);
+  if(!r || !r.value) return false;
+  await pull();
+  const u = market.users[r.value];
+  if(!u || u.banned) return false;
+  me = u.name;
+  return true;
+}
+
+function showModeBanner(){
+  const el = $('#offline');
+  if(!el) return;
+  if(MODE === 'shared'){ el.classList.add('hide'); return; }
+  el.classList.remove('hide');
+  el.textContent = MODE === 'personal'
+    ? 'Shared storage is unavailable here, so this board is saved to your device only. It survives refreshes, but nobody else can see what you post.'
+    : 'No storage is available here, so anything you post disappears on refresh and nobody else can see it. Everything below still works for testing.';
+}
+
+function enter(){
+  $('#gate').classList.add('hide');
+  $('#app').classList.remove('hide');
+  $('#me').textContent = me;
+  if(ADMINS.includes(me.toLowerCase())) $('#open-admin').classList.remove('hide');
+  showModeBanner();
+  render();
+}
+
+$('#signout').addEventListener('click', async () => {
+  await S.set(SESSION, '');
+  me = null;
+  $('#app').classList.add('hide'); $('#gate').classList.remove('hide');
+  $('#g-pass').value=''; gateMsg('');
+});
+
+/* =========================================================
+   Rate select
+   ========================================================= */
+function rateOptions(sel){
+  return RATES.map(r => `<option value="${r}" ${r===sel?'selected':''}>${r} / 1</option>`).join('');
+}
+$('#b-rate').innerHTML = rateOptions(25);
+
+/* =========================================================
+   Sport + mode
+   ========================================================= */
+$('#sport').addEventListener('change', e => {
+  sport = e.target.value;
+  document.body.dataset.sport = sport;
+  render();
+});
+$('#tab-buy').addEventListener('click', ()=>setMode('buy'));
+$('#tab-sell').addEventListener('click', ()=>setMode('sell'));
+function setMode(m){
+  mode = m;
+  $('#tab-buy').setAttribute('aria-pressed', m==='buy');
+  $('#tab-sell').setAttribute('aria-pressed', m==='sell');
+  $('#pane-buy').classList.toggle('hide', m!=='buy');
+  $('#pane-mine').classList.toggle('hide', m!=='buy');
+  $('#pane-sell').classList.toggle('hide', m!=='sell');
+}
+
+/* =========================================================
+   Render
+   ========================================================= */
+async function render(){
+  await pull();
+  const live = market.offers
+    .filter(o => o.sport===sport && !market.users[o.user]?.banned)
+    .sort((a,b) => b.rate - a.rate || a.ts - b.ts);
+
+  $('#board-title').textContent = `${SPORTS[sport]} buy offers`;
+  $('#board-count').textContent = live.length ? `${live.length} standing` : '';
+  $('#board').innerHTML = live.length ? live.map(o => `
+    <li class="row ${o.user===me.toLowerCase()?'mine':''}">
+      <span class="rate num">${o.rate}<small>/1</small></span>
+      <span><span class="player">${esc(o.player)}</span><br><span class="who">${esc(market.users[o.user]?.name||o.user)}</span></span>
+      <span class="rowacts">${o.user===me.toLowerCase()
+        ? `<button class="btn-ghost" data-edit="${o.id}">Change rate</button><button class="btn-ghost btn-danger" data-del="${o.id}">Remove</button>`
+        : `<button class="btn-ghost" data-rep="${esc(market.users[o.user]?.name||o.user)}">Report</button>`}</span>
+    </li>`).join('')
+    : `<li class="empty"><b>Nothing on the board yet</b>Post the first ${SPORTS[sport]} offer and sellers will see it.</li>`;
+
+  const mine = live.filter(o => o.user===me.toLowerCase());
+  $('#mine-count').textContent = mine.length ? `${mine.length} in ${sport}` : '';
+  $('#mine').innerHTML = mine.length ? mine.map(o => `
+    <li class="row">
+      <span class="rate num">${o.rate}<small>/1</small></span>
+      <span class="player">${esc(o.player)}</span>
+      <span class="rowacts">
+        <button class="btn-ghost" data-edit="${o.id}">Change</button>
+        <button class="btn-ghost btn-danger" data-del="${o.id}">Remove</button>
+      </span>
+    </li>`).join('')
+    : `<li class="empty"><b>No offers in ${SPORTS[sport]}</b>Anything you post shows up here.</li>`;
+}
+
+document.addEventListener('click', async e => {
+  const ed = e.target.closest('[data-edit]');
+  const dl = e.target.closest('[data-del]');
+  const rp = e.target.closest('[data-rep]');
+  if(ed) return editRate(ed.dataset.edit);
+  if(dl) return removeOffer(dl.dataset.del);
+  if(rp) return reportUser(rp.dataset.rep);
+});
+
+/* =========================================================
+   Buyer actions
+   ========================================================= */
+$('#b-post').addEventListener('click', async () => {
+  const player = $('#b-player').value.trim();
+  const rate = +$('#b-rate').value;
+  if(player.length < 2) return toast('Enter a player name.');
+
+  await push(m => {
+    const i = m.offers.findIndex(o => o.user===me.toLowerCase() && o.sport===sport && norm(o.player)===norm(player));
+    if(i > -1){ m.offers[i].rate = rate; m.offers[i].player = player; m.offers[i].ts = Date.now(); }
+    else m.offers.push({ id:uid(), user:me.toLowerCase(), sport, player, rate, ts:Date.now() });
+  });
+  $('#b-player').value='';
+  toast(`Posted ${player} at ${rate}/1`);
+  render();
+});
+
+function editRate(id){
+  const o = market.offers.find(x => x.id===id);
+  if(!o) return;
+  const box = modal(`Change rate — ${o.player}`, `
+    <div><label for="e-rate">New rate</label><select id="e-rate" class="field num">${rateOptions(o.rate)}</select></div>
+    <button class="btn" id="e-save">Save rate</button>`);
+  box.querySelector('#e-save').addEventListener('click', async () => {
+    const r = +box.querySelector('#e-rate').value;
+    await push(m => { const t = m.offers.find(x=>x.id===id); if(t) { t.rate = r; t.ts = Date.now(); } });
+    box.remove(); toast(`${o.player} now ${r}/1`); render();
+  });
+}
+
+async function removeOffer(id){
+  const o = market.offers.find(x => x.id===id);
+  await push(m => { m.offers = m.offers.filter(x => x.id!==id); });
+  toast(o ? `Removed ${o.player}` : 'Removed'); render();
+}
+
+/* =========================================================
+   Seller — screenshot scan
+   ========================================================= */
+$('#s-pick').addEventListener('click', ()=>$('#s-file').click());
+$('#s-file').addEventListener('change', e => {
+  pending = [...e.target.files].slice(0,5);
+  $('#s-files').textContent = pending.length ? pending.map(f=>f.name).join(', ') : '';
+  $('#s-go').classList.toggle('hide', !pending.length);
+});
+
+const toB64 = f => new Promise((res, rej) => {
+  const r = new FileReader();
+  r.onload = () => res(r.result.split(',')[1]);
+  r.onerror = () => rej(new Error('Could not read ' + f.name));
+  r.readAsDataURL(f);
+});
+
+$('#s-go').addEventListener('click', async () => {
+  const btn = $('#s-go');
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Reading screenshots';
+  try{
+    const content = [];
+    for(const f of pending){
+      content.push({ type:'image', source:{ type:'base64', media_type:f.type||'image/png', data: await toB64(f) } });
+    }
+    content.push({ type:'text', text:
+`These are screenshots of a "Top players" list from a ${SPORTS[sport]} sports card app, sorted by Boost value.
+
+Each row has: a small headshot on the left, the player's name, sometimes a checkmark after the name, a large decimal number on the right (the boost value), and beneath it two small numbers with card icons.
+
+Read every player row. Rules:
+- Keep names exactly as printed, including accents and suffixes: García, Sánchez, Jr.
+- The checkmark is not part of the name. Ignore it.
+- Ignore all interface text: the clock and battery in the status bar, "Top players", "Close", "Boost value".
+- The first and last rows may be cut off mid-scroll. Include a row only if you can read the whole name.
+- boost is the large decimal on that row. Use null if it is cut off.
+
+Respond with only this JSON. No markdown fences, no other text:
+{"players":[{"name":"Shohei Ohtani","boost":100.8}]}
+
+If you cannot read any rows, return {"players":[]}.` });
+
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:1000, messages:[{role:'user', content}] })
+    });
+    const data = await res.json();
+    const txt = (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
+    const parsed = JSON.parse(txt.replace(/```json|```/g,'').trim());
+    showMatches(parsed.players || []);
+  }catch(err){
+    console.error(err);
+    toast('Could not read those screenshots. Try a clearer, uncropped image.');
+  }finally{
+    btn.disabled = false; btn.textContent = 'Read screenshots';
+  }
+});
+
+async function showMatches(raw){
+  await pull();
+  const live = market.offers.filter(o => o.sport===sport && !market.users[o.user]?.banned);
+
+  // Accept either ["Name"] or [{name, boost}]
+  const players = (raw||[]).map(p => typeof p === 'string' ? {name:p, boost:null} : p)
+                           .filter(p => p && p.name);
+
+  const hits = [];
+  for(const p of players){
+    const best = live.filter(o => sameGuy(o.player, p.name)).sort((a,b) => b.rate - a.rate)[0];
+    if(best) hits.push({ player:p.name, boost:p.boost, rate:best.rate, buyer: market.users[best.user]?.name || best.user });
+  }
+  hits.sort((a,b) => b.rate - a.rate);
+
+  const seen = new Set();
+  const rows = hits.filter(h => !seen.has(norm(h.player)) && seen.add(norm(h.player)));
+
+  modal('Your best sellers', rows.length ? `
+    <p class="note">Read ${players.length} player${players.length===1?'':'s'} off your screenshots. ${rows.length} ${rows.length===1?'has':'have'} a standing ${SPORTS[sport]} offer, highest first.</p>
+    <div>${rows.map(h=>`
+      <div class="hit">
+        <span class="rate num">${h.rate}<small>/1</small></span>
+        <span><span class="player">${esc(h.player)}</span><br><span class="who">${h.boost!=null?esc(h.boost)+' boost — ':''}buying: ${esc(h.buyer)}</span></span>
+        <button class="btn-ghost" data-rep="${esc(h.buyer)}">Report</button>
+      </div>`).join('')}</div>`
+    : `<p class="nohit">Read ${players.length} player${players.length===1?'':'s'}, but none of them have a standing ${SPORTS[sport]} offer right now. Check back, or switch sports if the screenshots were from a different one.</p>`);
+}
+
+/* =========================================================
+   Reports + admin
+   ========================================================= */
+$('#open-report').addEventListener('click', ()=>reportUser(''));
+
+function reportUser(target){
+  const box = modal('Report a user', `
+    <div><label for="r-who">Username</label><input id="r-who" class="field" value="${esc(target)}" placeholder="Who are you reporting?"></div>
+    <div><label for="r-why">What happened</label><textarea id="r-why" class="field" rows="4" placeholder="Scammed, fake screenshots, didn't pay…"></textarea></div>
+    <button class="btn" id="r-send">Send report</button>
+    <p class="note">Reports go to the board admin. Nothing is shared with the person you report.</p>`);
+  box.querySelector('#r-send').addEventListener('click', async () => {
+    const who = box.querySelector('#r-who').value.trim();
+    const why = box.querySelector('#r-why').value.trim();
+    if(who.length < 2 || why.length < 3) return toast('Add a username and a reason.');
+    await push(m => m.reports.push({ id:uid(), by:me, target:who, reason:why, ts:Date.now(), status:'open' }));
+    box.remove(); toast('Report sent');
+  });
+}
+
+$('#open-admin').addEventListener('click', adminPanel);
+
+async function adminPanel(){
+  await pull();
+  const open = market.reports.filter(r => r.status==='open').sort((a,b)=>b.ts-a.ts);
+  const users = Object.entries(market.users).sort((a,b)=>a[0].localeCompare(b[0]));
+
+  const box = modal('Admin', `
+    <h3 style="margin:0;font-size:14px;font-weight:600">Open reports</h3>
+    ${open.length ? open.map(r=>`
+      <div class="hit" style="grid-template-columns:1fr auto">
+        <span><span class="player">${esc(r.target)}</span><br>
+          <span class="who">${esc(r.reason)} — from ${esc(r.by)}, ${new Date(r.ts).toLocaleDateString()}</span></span>
+        <span class="rowacts">
+          <button class="btn-ghost btn-danger" data-ban="${esc(r.target.toLowerCase())}">Delete account</button>
+          <button class="btn-ghost" data-clear="${r.id}">Dismiss</button>
+        </span>
+      </div>`).join('') : '<p class="nohit">No open reports.</p>'}
+    <h3 style="margin:18px 0 0;font-size:14px;font-weight:600">All accounts (${users.length})</h3>
+    ${users.map(([k,u])=>`
+      <div class="hit" style="grid-template-columns:1fr auto">
+        <span><span class="player">${esc(u.name)}</span><br>
+          <span class="who">${u.banned ? 'deleted' : market.offers.filter(o=>o.user===k).length + ' offers'}</span></span>
+        ${u.banned ? `<button class="btn-ghost" data-unban="${esc(k)}">Restore</button>`
+                   : `<button class="btn-ghost btn-danger" data-ban="${esc(k)}">Delete account</button>`}
+      </div>`).join('')}`);
+
+  box.addEventListener('click', async e => {
+    const ban = e.target.closest('[data-ban]'), un = e.target.closest('[data-unban]'), cl = e.target.closest('[data-clear]');
+    if(ban){
+      const k = ban.dataset.ban;
+      if(!confirm(`Delete ${k}? Their offers come off the board.`)) return;
+      await push(m => {
+        if(m.users[k]) m.users[k].banned = true;
+        m.offers = m.offers.filter(o => o.user!==k);
+        m.reports.forEach(r => { if(r.target.toLowerCase()===k) r.status='closed'; });
+      });
+      box.remove(); toast(`${k} deleted`); render(); adminPanel();
+    }
+    if(un){
+      await push(m => { if(m.users[un.dataset.unban]) m.users[un.dataset.unban].banned = false; });
+      box.remove(); toast('Account restored'); render(); adminPanel();
+    }
+    if(cl){
+      await push(m => { const r = m.reports.find(x=>x.id===cl.dataset.clear); if(r) r.status='closed'; });
+      box.remove(); adminPanel();
+    }
+  });
+}
+
+/* =========================================================
+   Boot
+   ========================================================= */
+(async () => {
+  MODE = await probeStorage();
+  console.log('Rate Board storage mode:', MODE);
+  if(await resume()) enter();
+})();
+</script>
+</body>
+</html>
