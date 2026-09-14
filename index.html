@@ -107,8 +107,17 @@
   /* ---------- example screenshots ---------- */
   .examples{display:flex;flex-direction:column;gap:12px}
   .examples figure{margin:0}
-  .examples img{width:100%;display:block;border-radius:8px;border:1px solid var(--line)}
+  .examples a{display:block}
+  .examples img{display:block;width:100%;max-width:100%;border-radius:8px;border:1px solid var(--line)}
   .examples figcaption{font-size:12px;color:var(--mute);margin-top:6px}
+  .tapfull{opacity:.75}
+
+  /* ---------- seller results: owned / boost inputs ---------- */
+  .ownrow{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px}
+  .ownrow label{margin:0 0 4px}
+  .ownrow input{width:100%}
+  .hitacts{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+  .hitacts .btn-ghost{flex:1 1 auto;text-align:center}
 
   /* ---------- player/team autocomplete ---------- */
   .suggest{list-style:none;margin:6px 0 0;padding:4px;position:absolute;left:0;right:0;top:100%;z-index:50;
@@ -141,6 +150,75 @@
   @media(prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
   .hide{display:none!important}
   :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+  /* =========================================================
+     Phones. Most people hit this board from their phone, right
+     after screenshotting the app, so this is the real layout.
+     ========================================================= */
+  @media(max-width:900px){
+    /* The reason you opened the board — post an offer, or scan your
+       stats — goes above the list instead of under all of it. */
+    .cols > aside{order:-1}
+  }
+
+  @media(max-width:640px){
+    body{font-size:15px}
+    html,body{overflow-x:hidden}
+
+    /* ---- top bar: brand + sport on one line, account row beneath ---- */
+    .topbar{grid-template-columns:auto 1fr;gap:10px;row-gap:9px;padding:10px 14px}
+    .brand{font-size:15px;white-space:nowrap}
+    .brand .pip{width:9px;height:9px}
+    .sportpick{justify-self:end}
+    .sportpick select{padding:9px 34px 9px 14px;font-size:14px}
+    .sportpick .caret{right:13px}
+    .whoami{grid-column:1/-1;justify-self:stretch;justify-content:space-between;
+      gap:6px;font-size:13px;border-top:1px solid var(--line);padding-top:8px}
+    .sm-hide{display:none}          /* just the name, not "Signed in as …" */
+    .linkbtn{padding:4px 0;font-size:13px}
+
+    /* ---- page chrome: less padding, more room for content ---- */
+    .wrap{padding:14px}
+    .cols{gap:14px}
+    .panel-hd{padding:13px 14px}
+    .panel-bd{padding:14px}
+    .gate{padding:16px;margin:5vh auto}
+    .gate h1{font-size:27px}
+
+    /* ---- 16px keeps iOS from zooming the page in on focus ---- */
+    .field,input,select,textarea{font-size:16px}
+
+    /* ---- thumb-sized controls ---- */
+    .btn{padding:14px 18px}
+    .btn-lg{padding:22px}
+    .btn-ghost{padding:10px 13px;font-size:13.5px;min-height:42px}
+    .seg button{padding:12px}
+
+    /* ---- offer rows: buttons drop to their own line ---- */
+    .row{grid-template-columns:70px 1fr;gap:4px 12px;padding:13px 14px}
+    .rate{font-size:24px}
+    .rowacts{grid-column:1/-1;justify-content:flex-end;margin-top:4px}
+    .empty{padding:26px 14px}
+
+    /* ---- modals: use the whole screen ---- */
+    .scrim{padding:10px}
+    .modal{max-height:92vh}
+    .hit{grid-template-columns:70px 1fr}
+    .hit .rowacts{grid-column:1/-1;justify-content:flex-end}
+
+    /* ---- autocomplete: leave room for the on-screen keyboard ---- */
+    .suggest{max-height:42vh}
+    .suggest li{padding:11px 10px}
+
+    /* ---- example shots are tall phone screenshots: cap them so they don't
+       turn the panel into a mile of scrolling. Tap opens them full size. ---- */
+    .examples img{max-height:400px;width:auto;margin:0 auto}
+  }
+
+  /* Very narrow phones — stop the two number fields from squeezing. */
+  @media(max-width:380px){
+    .ownrow{grid-template-columns:1fr}
+  }
 </style>
 </head>
 <body data-sport="CFB">
@@ -180,7 +258,7 @@
       <span class="caret">▾</span>
     </div>
     <div class="whoami">
-      <span>Signed in as <b id="me"></b></span>
+      <span><span class="sm-hide">Signed in as </span><b id="me"></b></span>
       <button class="linkbtn" id="open-report">Report a user</button>
       <button class="linkbtn hide" id="open-admin">Admin</button>
       <button class="linkbtn" id="signout">Sign out</button>
@@ -245,11 +323,11 @@
             <button id="s-examples-toggle" class="btn-ghost" aria-expanded="false">Show example screenshots</button>
             <div id="s-examples" class="examples hide">
               <figure>
-                <img src="examples/find-stats-button.jpg" alt="Card page in the Real app with the Stats button circled at the top">
-                <figcaption>On the card page, tap "Stats" at the top.</figcaption>
+                <a href="examples/find-stats-button.jpg" target="_blank" rel="noopener"><img src="examples/find-stats-button.jpg" alt="Card page in the Real app with the Stats button circled at the top"></a>
+                <figcaption>On the card page, tap "Stats" at the top. <span class="tapfull">Tap the image for full size.</span></figcaption>
               </figure>
               <figure>
-                <img src="examples/stats-list.jpg" alt="Top players list showing boost value for each player">
+                <a href="examples/stats-list.jpg" target="_blank" rel="noopener"><img src="examples/stats-list.jpg" alt="Top players list showing boost value for each player"></a>
                 <figcaption>This is what the stats page looks like — screenshot this list.</figcaption>
               </figure>
             </div>
@@ -913,14 +991,18 @@ async function showMatches(raw){
           <span><span class="player">${esc(h.player)}</span><br><span class="who">buying: ${esc(h.buyer)}</span></span>
           <button class="btn-ghost" data-rep="${esc(h.buyer)}">Report</button>
         </div>
-        <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
-          <label style="margin:0;flex-shrink:0" for="own-${i}">You own</label>
-          <input id="own-${i}" data-owned="${i}" class="field num" type="number" min="0" step="1" style="width:80px" value="${h.owned!=null?h.owned:''}" placeholder="#">
-          <label style="margin:0 0 0 6px;flex-shrink:0" for="boost-${i}">Boost value</label>
-          <input id="boost-${i}" data-boost="${i}" class="field num" type="number" min="0" step="0.1" style="width:90px" value="${h.boost!=null?h.boost:''}" placeholder="#.#">
+        <div class="ownrow">
+          <div>
+            <label for="own-${i}">You own</label>
+            <input id="own-${i}" data-owned="${i}" class="field num" type="number" inputmode="numeric" min="0" step="1" value="${h.owned!=null?h.owned:''}" placeholder="#">
+          </div>
+          <div>
+            <label for="boost-${i}">Boost value</label>
+            <input id="boost-${i}" data-boost="${i}" class="field num" type="number" inputmode="decimal" min="0" step="0.1" value="${h.boost!=null?h.boost:''}" placeholder="#.#">
+          </div>
         </div>
         <div class="note" data-msg="${i}" style="margin-top:6px"></div>
-        <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
+        <div class="hitacts">
           <button class="btn-ghost" data-copy="${i}">Copy message</button>
           ${h.link ? `<a class="btn-ghost" href="${esc(h.link)}" target="_blank" rel="noopener">Message buyer</a>` : `<span class="nohit">No comment link on file for this buyer</span>`}
         </div>
