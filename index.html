@@ -197,7 +197,7 @@
             <div class="warn" id="b-instructions"></div>
             <div>
               <label for="b-player">Player</label>
-              <input id="b-player" class="field" autocomplete="off" placeholder="e.g. Travis Hunter">
+              <input id="b-player" class="field" autocomplete="off" placeholder="e.g. Julian Sayin">
             </div>
             <div>
               <label for="b-rate">Rate you'll pay</label>
@@ -455,7 +455,7 @@ $('#signout').addEventListener('click', async () => {
 function rateOptions(sel){
   return RATES.map(r => `<option value="${r}" ${r===sel?'selected':''}>${r} / 1</option>`).join('');
 }
-$('#b-rate').innerHTML = rateOptions(25);
+$('#b-rate').innerHTML = rateOptions(20);
 
 /* =========================================================
    Buyer instructions — comment under the pinned post, then paste
@@ -472,9 +472,16 @@ renderBuyInstructions();
 /* =========================================================
    Sport + mode
    ========================================================= */
+const PLAYER_EXAMPLES = { CFB:'Julian Sayin', FC:'Lamine Yamal', NFL:'Josh Allen' };
+function updatePlayerPlaceholder(){
+  $('#b-player').placeholder = 'e.g. ' + (PLAYER_EXAMPLES[sport] || '');
+}
+updatePlayerPlaceholder();
+
 $('#sport').addEventListener('change', e => {
   sport = e.target.value;
   document.body.dataset.sport = sport;
+  updatePlayerPlaceholder();
   render();
 });
 $('#tab-buy').addEventListener('click', ()=>setMode('buy'));
