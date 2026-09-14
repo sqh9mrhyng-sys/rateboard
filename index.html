@@ -104,6 +104,12 @@
   .note{font-size:12.5px;color:var(--mute);line-height:1.45}
   .warn{background:color-mix(in srgb,var(--bad) 13%,transparent);border:1px solid color-mix(in srgb,var(--bad) 40%,transparent);border-radius:8px;padding:11px 13px;font-size:12.5px;line-height:1.45}
 
+  /* ---------- example screenshots ---------- */
+  .examples{display:flex;flex-direction:column;gap:12px}
+  .examples figure{margin:0}
+  .examples img{width:100%;display:block;border-radius:8px;border:1px solid var(--line)}
+  .examples figcaption{font-size:12px;color:var(--mute);margin-top:6px}
+
   /* ---------- player/team autocomplete ---------- */
   .suggest{list-style:none;margin:6px 0 0;padding:4px;position:absolute;left:0;right:0;top:100%;z-index:50;
     background:var(--panel-2);border:1px solid var(--line);border-radius:8px;max-height:230px;overflow:auto;
@@ -235,8 +241,21 @@
         <div id="pane-sell" class="panel hide">
           <div class="panel-hd"><h2>Scan your stats</h2></div>
           <div class="panel-bd stack">
+            <div class="warn">to upload stats, go to the card page on real, on the top of the screen theres a button that says "stats" click that, and take a screenshot (take as many as you want) and submit below, if you dont know where to go or what the stats page should look like, expand the screenshots below, if theres players you dont want to sell select them or just ignore the options of people buying them</div>
+            <button id="s-examples-toggle" class="btn-ghost" aria-expanded="false">Show example screenshots</button>
+            <div id="s-examples" class="examples hide">
+              <figure>
+                <img src="examples/find-stats-button.jpg" alt="Card page in the Real app with the Stats button circled at the top">
+                <figcaption>On the card page, tap "Stats" at the top.</figcaption>
+              </figure>
+              <figure>
+                <img src="examples/stats-list.jpg" alt="Top players list showing boost value for each player">
+                <figcaption>This is what the stats page looks like — screenshot this list.</figcaption>
+              </figure>
+            </div>
             <input type="file" id="s-file" accept="image/*" multiple class="hide">
             <button id="s-pick" class="btn btn-lg">Upload stats screenshots</button>
+            <button id="s-exclude" class="btn-ghost">Exclude players/teams</button>
             <div id="s-files" class="note"></div>
             <button id="s-go" class="btn hide">Read screenshots</button>
             <p class="note">Reads the player names off your screenshots and shows the highest standing offer for each, in the sport you have selected.</p>
@@ -689,6 +708,62 @@ async function removeOffer(id){
 /* =========================================================
    Seller — screenshot scan
    ========================================================= */
+$('#s-examples-toggle').addEventListener('click', () => {
+  const btn = $('#s-examples-toggle'), box = $('#s-examples');
+  const nowHidden = box.classList.toggle('hide');
+  btn.textContent = nowHidden ? 'Show example screenshots' : 'Hide example screenshots';
+  btn.setAttribute('aria-expanded', String(!nowHidden));
+});
+
+/* ---- exclude list: players/teams a seller never wants surfaced ---- */
+const EXCLUDE_KEY = 'ratebrd_exclude_v1';
+function loadExcludes(){
+  try{ const v = JSON.parse(localStorage.getItem(EXCLUDE_KEY) || '[]'); return Array.isArray(v) ? v : []; }
+  catch(e){ return []; }
+}
+function saveExcludes(list){ try{ localStorage.setItem(EXCLUDE_KEY, JSON.stringify(list)); }catch(e){} }
+function isExcluded(name, list){ return (list || loadExcludes()).some(x => sameGuy(x, name)); }
+
+$('#s-exclude').addEventListener('click', excludeManager);
+
+function excludeManager(){
+  const box = modal('Exclude players/teams', `
+    <p class="note">Anything you add here is left out of your scan results from now on, even when someone has a standing offer on it.</p>
+    <div style="display:flex;gap:8px">
+      <input id="ex-add" class="field" placeholder="e.g. Julian Sayin, or a team name">
+      <button class="btn-ghost" id="ex-add-btn" style="flex-shrink:0">Add</button>
+    </div>
+    <div id="ex-list"></div>`);
+
+  const renderList = () => {
+    const list = loadExcludes();
+    box.querySelector('#ex-list').innerHTML = list.length
+      ? list.map((n,i)=>`<div class="hit" style="grid-template-columns:1fr auto"><span class="player">${esc(n)}</span><button class="btn-ghost" data-rm="${i}">Remove</button></div>`).join('')
+      : '<p class="nohit">Nothing excluded yet.</p>';
+  };
+  renderList();
+
+  const add = () => {
+    const input = box.querySelector('#ex-add');
+    const name = input.value.trim();
+    if(!name) return;
+    const list = loadExcludes();
+    if(!list.some(x => norm(x)===norm(name))) { list.push(name); saveExcludes(list); }
+    input.value = '';
+    renderList();
+  };
+  box.querySelector('#ex-add-btn').addEventListener('click', add);
+  box.querySelector('#ex-add').addEventListener('keydown', e => { if(e.key==='Enter') add(); });
+  box.addEventListener('click', e => {
+    const rm = e.target.closest('[data-rm]');
+    if(!rm) return;
+    const list = loadExcludes();
+    list.splice(+rm.dataset.rm, 1);
+    saveExcludes(list);
+    renderList();
+  });
+}
+
 $('#s-pick').addEventListener('click', ()=>$('#s-file').click());
 $('#s-file').addEventListener('change', e => {
   pending = [...e.target.files].slice(0,5);
@@ -770,8 +845,10 @@ async function showMatches(raw){
   const players = (raw||[]).map(p => typeof p === 'string' ? {name:p, boost:null, owned:null} : p)
                            .filter(p => p && p.name);
 
+  const excludes = loadExcludes();
   const hits = [];
   for(const p of players){
+    if(isExcluded(p.name, excludes)) continue;
     const best = live.filter(o => sameGuy(o.player, p.name)).sort((a,b) => b.rate - a.rate)[0];
     if(best) hits.push({ player:p.name, boost:p.boost, owned:p.owned, rate:best.rate, buyer: market.users[best.user]?.name || best.user, link: best.link || '' });
   }
