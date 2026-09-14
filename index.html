@@ -157,7 +157,7 @@
       </div>
       <div>
         <label for="g-pass">Board password</label>
-        <input id="g-pass" class="field" type="password" autocomplete="new-password" placeholder="At least 6 characters">
+        <input id="g-pass" class="field" type="password" autocomplete="current-password" placeholder="At least 4 characters">
       </div>
       <div class="warn">Don't reuse your real account password. This password is only for this board and it protects nothing else. Pick something you use nowhere else.</div>
       <div id="g-msg" class="note hide"></div>
@@ -274,7 +274,9 @@
    per-browser, so it just stays in localStorage.
    ========================================================= */
 const KEY = 'ratebrd_market_v1';
-const SESSION = 'ratebrd_session';
+const SESSION = 'ratebrd_session';    // legacy: bare username key
+const DEVICE  = 'ratebrd_device_v1';  // { key, name, ts } — remembers this browser
+const MIN_PASS = 4;
 const ADMINS = ['dennis'];            // <-- put your username(s) here
 const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL' };
 
@@ -289,6 +291,11 @@ const VERIFY_POST_ID = 'JaHBFYjOBj8igvOr';
 const TARGET_POST_PREFIX = 'https://www.realapp.com/' + VERIFY_POST_ID + '/';
 const RATES = (()=>{ const a=[]; for(let r=10;r<=120;r+=5) a.push(r); return a; })();
 
+// True when the last read of the shared board failed to reach the server, as
+// opposed to reaching it and finding nothing. resume() needs to tell those
+// apart so a dropped connection doesn't look like a deleted account.
+let lastGetFailed = false;
+
 const S = {
   async get(k){
     if(k === SESSION){
@@ -299,10 +306,12 @@ const S = {
       const r = await fetch('/api/kv?key=' + encodeURIComponent(k));
       if(!r.ok) throw new Error('bad response ' + r.status);
       const data = await r.json();
+      lastGetFailed = false;
       showConnBanner(false);
       return data.value!=null ? {value:data.value} : null;
     }catch(e){
       console.error('storage get failed:', e);
+      lastGetFailed = true;
       showConnBanner(true);
       return null;
     }
@@ -327,6 +336,32 @@ const S = {
     }
   }
 };
+
+/* ---- remembered device ---------------------------------------------
+   Which account this browser is signed in as. Survives closing the tab,
+   quitting the browser and restarting the machine — it only goes away on
+   Sign out, or if the account is deleted from the board.
+   -------------------------------------------------------------------- */
+function saveDevice(key, name){
+  try{ localStorage.setItem(DEVICE, JSON.stringify({ key, name, ts: Date.now() })); }catch(e){}
+  try{ localStorage.setItem(SESSION, key); }catch(e){}   // keep the old key in step
+}
+function loadDevice(){
+  try{
+    const raw = localStorage.getItem(DEVICE);
+    if(raw){
+      const d = JSON.parse(raw);
+      if(d && d.key) return d;
+    }
+    const legacy = localStorage.getItem(SESSION);        // signed in before this existed
+    if(legacy) return { key: legacy, name: legacy, ts: 0 };
+  }catch(e){}
+  return null;
+}
+function clearDevice(){
+  try{ localStorage.removeItem(DEVICE); }catch(e){}
+  try{ localStorage.removeItem(SESSION); }catch(e){}
+}
 
 const blank = () => ({ users:{}, offers:[], reports:[] });
 let market = blank();
@@ -430,7 +465,7 @@ async function doSignIn(){
   const u = $('#g-user').value.trim();
   const p = $('#g-pass').value;
   if(u.length < 2) return gateMsg('Enter your username.');
-  if(p.length < 6) return gateMsg('Password needs at least 6 characters.');
+  if(p.length < MIN_PASS) return gateMsg('Password needs at least ' + MIN_PASS + ' characters.');
 
   const key = u.toLowerCase();
   const h = await hash(p);
@@ -446,17 +481,29 @@ async function doSignIn(){
   }
 
   me = market.users[key]?.name || u;
-  await S.set(SESSION, key);
+  saveDevice(key, me);
   enter();
 }
 
+// Remembering the device: the signed-in account is kept in localStorage, so
+// coming back to the board on this browser skips the login screen. A flaky
+// network no longer kicks you back to it either — the board is only treated
+// as "signed out" when we actually reached the server and the account is
+// gone or removed.
 async function resume(){
-  const r = await S.get(SESSION);
-  if(!r || !r.value) return false;
+  const d = loadDevice();
+  if(!d || !d.key) return false;
+
+  me = d.name || d.key;              // trust the device first, verify after
   await pull();
-  const u = market.users[r.value];
-  if(!u || u.banned) return false;
+
+  if(lastGetFailed) return true;     // couldn't reach the board — stay signed in
+
+  const u = market.users[d.key];
+  if(!u || u.banned){ clearDevice(); me = null; return false; }
+
   me = u.name;
+  saveDevice(d.key, me);             // refresh the stamp on every visit
   return true;
 }
 
@@ -476,7 +523,7 @@ function enter(){
 }
 
 $('#signout').addEventListener('click', async () => {
-  await S.set(SESSION, '');
+  clearDevice();
   me = null;
   $('#app').classList.add('hide'); $('#gate').classList.remove('hide');
   $('#g-pass').value=''; gateMsg('');
