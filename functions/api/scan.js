@@ -7,8 +7,10 @@
 // environment variable named ANTHROPIC_API_KEY on this Pages project
 // (Settings > Environment variables), for both Production and Preview.
 const MODEL = 'claude-sonnet-4-6';
-const MAX_TOKENS = 1000;
-const MAX_BLOCKS = 8; // up to 5 screenshots plus a couple of text blocks, generous
+// Big enough for a long roster: ~25 tokens per player row, so this comfortably
+// covers a few hundred players read off one batch of screenshots.
+const MAX_TOKENS = 8000;
+const MAX_BLOCKS = 16; // up to 14 screenshots + a couple of text blocks
 
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
@@ -25,8 +27,8 @@ function isValidBlock(block) {
   if (block.type === 'image') {
     const src = block.source;
     return !!src && src.type === 'base64'
-    && typeof src.media_type === 'string' && src.media_type.startsWith('image/')
-    && typeof src.data === 'string' && src.data.length <= 8000000;
+      && typeof src.media_type === 'string' && src.media_type.startsWith('image/')
+      && typeof src.data === 'string' && src.data.length <= 8_000_000; // base64, generous per-image cap
   }
   return false;
 }
@@ -36,14 +38,14 @@ export async function onRequestPost({ request, env }) {
     return json({ error: 'scanning is not configured on this server yet' }, 500);
   }
 
-let body;
+  let body;
   try {
     body = await request.json();
   } catch (e) {
     return json({ error: 'bad json' }, 400);
   }
 
-const content = body && body.content;
+  const content = body && body.content;
   if (!Array.isArray(content) || content.length === 0 || content.length > MAX_BLOCKS) {
     return json({ error: 'bad content' }, 400);
   }
@@ -51,7 +53,7 @@ const content = body && body.content;
     return json({ error: 'bad content block' }, 400);
   }
 
-let upstream;
+  let upstream;
   try {
     upstream = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -66,7 +68,7 @@ let upstream;
     return json({ error: 'could not reach the scanning service' }, 502);
   }
 
-const text = await upstream.text();
+  const text = await upstream.text();
   return new Response(text, {
     status: upstream.status,
     headers: { 'content-type': 'application/json' }
