@@ -245,14 +245,15 @@ const SESSION = 'ratebrd_session';
 const ADMINS = ['dennis'];            // <-- put your username(s) here
 const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL' };
 
-// The post buyers must comment under before they can post a buy offer.
+// The post buyers must comment under before they can post a buy offer —
+// this is the link shown to them and where "this post" points.
 const TARGET_LINK = 'https://www.realapp.com/NeH4tgFKo9k';
-// The post ID is the first path segment after the domain — a buyer's own
-// comment link must share that same post ID (any trailing segment differs).
-// This is what actually verifies the link is a comment on the right post,
-// not just any realapp.com URL.
-const TARGET_POST_ID = (TARGET_LINK.match(/^https:\/\/www\.realapp\.com\/([^\/]+)/) || [])[1] || '';
-const TARGET_POST_PREFIX = 'https://www.realapp.com/' + TARGET_POST_ID + '/';
+// realapp's own comment permalinks use a different (longer) internal post ID
+// than the post's share link above — this is that ID. A buyer's submitted
+// comment link is checked against THIS, since that's what actually shows up
+// in a real comment URL under this post (e.g. .../JaHBFYjOBj8igvOr/<comment id>).
+const VERIFY_POST_ID = 'JaHBFYjOBj8igvOr';
+const TARGET_POST_PREFIX = 'https://www.realapp.com/' + VERIFY_POST_ID + '/';
 const RATES = (()=>{ const a=[]; for(let r=10;r<=120;r+=5) a.push(r); return a; })();
 
 const S = {
@@ -535,13 +536,11 @@ document.addEventListener('click', async e => {
    Buyer actions
    ========================================================= */
 function validCommentLink(link){
-  // Must be a link under the pinned post's own prefix, must have something
-  // after it (an actual comment ID), and can't just be the pinned post link
-  // itself (that's the post to comment ON, not a comment).
+  // Must be a link under the verified post prefix, with something after it
+  // (an actual comment ID) — confirms it's a real comment under the right post.
   return typeof link === 'string'
     && link.startsWith(TARGET_POST_PREFIX)
-    && link.length > TARGET_POST_PREFIX.length
-    && link !== TARGET_LINK;
+    && link.length > TARGET_POST_PREFIX.length;
 }
 
 $('#b-post').addEventListener('click', async () => {
@@ -549,7 +548,7 @@ $('#b-post').addEventListener('click', async () => {
   const rate = +$('#b-rate').value;
   const link = $('#b-link').value.trim();
   if(player.length < 2) return toast('Enter a player name.');
-  if(!validCommentLink(link)) return toast(`Paste your "buying ${player || 'X'}" comment link first.`);
+  if(!validCommentLink(link)) return toast('Paste the link to your comment under the pinned post first.');
 
   await push(m => {
     const i = m.offers.findIndex(o => o.user===me.toLowerCase() && o.sport===sport && norm(o.player)===norm(player));
