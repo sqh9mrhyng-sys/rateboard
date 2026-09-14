@@ -144,6 +144,17 @@
   .modal{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:100%;max-width:520px;max-height:86vh;overflow:auto}
   .modal .panel-hd{position:sticky;top:0;background:var(--panel)}
 
+  /* ---------- admin listing stats ---------- */
+  .statrow{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+  .stat{background:var(--panel-2);border:1px solid var(--line);border-radius:9px;padding:12px 14px}
+  .stat b{display:block;font-size:26px;font-weight:800;line-height:1.1;color:var(--accent)}
+  .stat span{font-size:12px;color:var(--mute)}
+  .subhd{margin:18px 0 0;font-size:13px;font-weight:600;color:var(--mute)}
+  .buyers{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .buyer{background:var(--panel-2);border:1px solid var(--line);border-radius:999px;
+    padding:4px 10px;font-size:12.5px;color:var(--mute)}
+  .buyer b{color:var(--accent);font-weight:700}
+
   .hit{display:grid;grid-template-columns:78px 1fr auto;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid var(--line)}
   .hit:last-child{border-bottom:none}
   .nohit{color:var(--mute);font-size:13px}
@@ -1004,7 +1015,7 @@ function excludeManager(){
 
 $('#s-pick').addEventListener('click', ()=>$('#s-file').click());
 $('#s-file').addEventListener('change', e => {
-  pending = [...e.target.files].slice(0,5);
+  pending = [...e.target.files].slice(0,14);
   $('#s-files').textContent = pending.length ? pending.map(f=>f.name).join(', ') : '';
   $('#s-go').classList.toggle('hide', !pending.length);
 });
@@ -1286,8 +1297,40 @@ async function adminPanel(){
   const open = market.reports.filter(r => r.status==='open').sort((a,b)=>b.ts-a.ts);
   const users = Object.entries(market.users).sort((a,b)=>a[0].localeCompare(b[0]));
 
+  // Listings summary. Offers from deleted accounts are off the board already,
+  // so they don't count here either. Two players with the same name in
+  // different sports are two different listings.
+  const liveOffers = market.offers.filter(o => !market.users[o.user]?.banned);
+  const groups = new Map();
+  for(const o of liveOffers){
+    const key = o.sport + '|' + norm(o.player);
+    if(!groups.has(key)) groups.set(key, { sport:o.sport, player:o.player, offers:[] });
+    groups.get(key).offers.push(o);
+  }
+  const contested = [...groups.values()]
+    .filter(g => g.offers.length > 1)
+    .sort((a,b) => b.offers.length - a.offers.length
+                || Math.max(...b.offers.map(o=>o.rate)) - Math.max(...a.offers.map(o=>o.rate)));
+  const nameOf = u => market.users[u]?.name || u;
+
   const box = modal('Admin', `
-    <h3 style="margin:0;font-size:14px;font-weight:600">Open reports</h3>
+    <h3 style="margin:0;font-size:14px;font-weight:600">Listings</h3>
+    <div class="statrow">
+      <div class="stat"><b class="num">${liveOffers.length}</b><span>total listings out</span></div>
+      <div class="stat"><b class="num">${groups.size}</b><span>unique players</span></div>
+    </div>
+    <h4 class="subhd">Players with more than one buyer (${contested.length})</h4>
+    ${contested.length ? contested.map(g => `
+      <div class="hit" style="display:block">
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline">
+          <span class="player">${esc(g.player)}</span>
+          <span class="who">${g.sport} — ${g.offers.length} buyers</span>
+        </div>
+        <div class="buyers">${g.offers.slice().sort((a,b)=>b.rate-a.rate).map(o =>
+          `<span class="buyer"><b class="num">${o.rate}</b>/1 ${esc(nameOf(o.user))}</span>`).join('')}</div>
+      </div>`).join('') : '<p class="nohit">Every listing is on a different player right now.</p>'}
+
+    <h3 style="margin:18px 0 0;font-size:14px;font-weight:600">Open reports</h3>
     ${open.length ? open.map(r=>`
       <div class="hit" style="grid-template-columns:1fr auto">
         <span><span class="player">${esc(r.target)}</span><br>
