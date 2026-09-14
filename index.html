@@ -245,13 +245,14 @@ const SESSION = 'ratebrd_session';
 const ADMINS = ['dennis'];            // <-- put your username(s) here
 const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL' };
 
-// Where buyers have to go before they can post a buy offer.
-const GROUP_LINK = 'https://www.realapp.com/zR4cAF3Fbkb';
-const TARGET_LINK = 'https://www.realapp.com/NeH4tgFKo9k';
-// Comment links a buyer submits must live UNDER the pinned post's own URL
-// (TARGET_LINK + "/<their comment id>") — this confirms the link is at
-// least a comment on the right pinned post, not just any realapp.com URL.
-const TARGET_POST_PREFIX = TARGET_LINK.replace(/\/+$/, '') + '/';
+// The post buyers must comment under before they can post a buy offer.
+const TARGET_LINK = 'https://www.realapp.com/JaHBFYjOBj8igvOr/178941446770300001';
+// The post ID is the first path segment after the domain — a buyer's own
+// comment link must share that same post ID (any trailing segment differs).
+// This is what actually verifies the link is a comment on the right post,
+// not just any realapp.com URL.
+const TARGET_POST_ID = (TARGET_LINK.match(/^https:\/\/www\.realapp\.com\/([^\/]+)/) || [])[1] || '';
+const TARGET_POST_PREFIX = 'https://www.realapp.com/' + TARGET_POST_ID + '/';
 const RATES = (()=>{ const a=[]; for(let r=10;r<=120;r+=5) a.push(r); return a; })();
 
 const S = {
@@ -456,19 +457,16 @@ function rateOptions(sel){
 $('#b-rate').innerHTML = rateOptions(25);
 
 /* =========================================================
-   Buyer instructions — join the group, comment "buying X" on the
-   pinned post, then paste back the link to that comment.
+   Buyer instructions — comment under the pinned post, then paste
+   back the link to that comment.
    ========================================================= */
 function renderBuyInstructions(){
-  const player = $('#b-player').value.trim();
   $('#b-instructions').innerHTML =
-    `To buy cards: join <a href="${esc(GROUP_LINK)}" target="_blank" rel="noopener">this group</a>, ` +
-    `then go to <a href="${esc(TARGET_LINK)}" target="_blank" rel="noopener">this post</a> and add a comment ` +
-    `that says <b>"buying ${esc(player || 'a player')}"</b>. Once you've created it, paste the link to ` +
-    `<b>your own comment</b> below — that's how sellers reach you.`;
+    `To buy cards, get the card link of the player or team you're upgrading, and post a comment under ` +
+    `<a href="${esc(TARGET_LINK)}" target="_blank" rel="noopener">this post</a> with your card and any extra ` +
+    `details you want to add. Once you have created the comment, paste it below (it is auto verified).`;
 }
 renderBuyInstructions();
-$('#b-player').addEventListener('input', renderBuyInstructions);
 
 /* =========================================================
    Sport + mode
