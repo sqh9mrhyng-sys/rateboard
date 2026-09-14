@@ -246,12 +246,12 @@ const ADMINS = ['dennis'];            // <-- put your username(s) here
 const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL' };
 
 // Where buyers have to go before they can post a buy offer.
-const GROUP_LINK = 'https://www.realapp.com/zr4caf3fbkb';
-const TARGET_LINK = 'https://www.realapp.com/a9hQFJYKeYbuLp4oKM/178892690465700001';
-// Comment links a buyer submits must live under the SAME post as TARGET_LINK
-// (same post ID, different trailing comment ID) — this confirms the link is
-// at least a comment on the right pinned post, not just any realapp.com URL.
-const TARGET_POST_PREFIX = TARGET_LINK.slice(0, TARGET_LINK.lastIndexOf('/') + 1);
+const GROUP_LINK = 'https://www.realapp.com/zR4cAF3Fbkb';
+const TARGET_LINK = 'https://www.realapp.com/NeH4tgFKo9k';
+// Comment links a buyer submits must live UNDER the pinned post's own URL
+// (TARGET_LINK + "/<their comment id>") — this confirms the link is at
+// least a comment on the right pinned post, not just any realapp.com URL.
+const TARGET_POST_PREFIX = TARGET_LINK.replace(/\/+$/, '') + '/';
 const RATES = (()=>{ const a=[]; for(let r=10;r<=120;r+=5) a.push(r); return a; })();
 
 const S = {
