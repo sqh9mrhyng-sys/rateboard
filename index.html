@@ -488,7 +488,25 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
 // García -> garcia, Sánchez -> sanchez, "Luis Garcia Jr." -> "luis garcia"
-const norm = s => String(s)
+// Letters that don't decompose into "plain letter + accent mark" on their own,
+// so stripping accents alone would leave them behind or drop them entirely.
+const ODD_LETTERS = {
+  'Æ':'AE','æ':'ae','Œ':'OE','œ':'oe','ß':'ss','Ø':'O','ø':'o','Ł':'L','ł':'l',
+  'Đ':'D','đ':'d','Ð':'D','ð':'d','Þ':'Th','þ':'th','İ':'I','ı':'i',
+  'Ħ':'H','ħ':'h','Ŋ':'N','ŋ':'n','Ŧ':'T','ŧ':'t','Ŀ':'L','ŀ':'l'
+};
+const deOdd = s => String(s).replace(/[ÆæŒœßØøŁłĐđÐðÞþİıĦħŊŋŦŧĿŀ]/g, c => ODD_LETTERS[c] || c);
+
+// The plain-English form of a name, which is what gets stored and shown:
+// Mbappé -> Mbappe, Vinícius Júnior -> Vinicius Junior, Ødegaard -> Odegaard.
+// Spaces, periods, apostrophes and hyphens survive, so "Mark Fletcher Jr." and
+// "Coleman-Williams" still read the way they should.
+const asciiName = s => deOdd(s)
+  .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+  .replace(/[^A-Za-z0-9 .'\-]/g,' ')
+  .replace(/\s+/g,' ').trim();
+
+const norm = s => deOdd(s)
   .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
   .toLowerCase()
   .replace(/[^a-z0-9 ]/g,' ')
@@ -876,7 +894,7 @@ function validCommentLink(link){
 }
 
 $('#b-post').addEventListener('click', async () => {
-  const player = $('#b-player').value.trim();
+  const player = asciiName($('#b-player').value);
   const rate = +$('#b-rate').value;
   const link = $('#b-link').value.trim();
   if(player.length < 2) return toast('Enter a player name.');
@@ -1012,7 +1030,9 @@ $('#s-go').addEventListener('click', async () => {
 Each row has: a small headshot on the left, the player's name, sometimes a checkmark after the name, a large decimal number on the right (the boost value), and beneath it two small numbers with card icons — the left one and the right one.
 
 Read every player row. Rules:
-- Keep names exactly as printed, including accents and suffixes: García, Sánchez, Jr.
+- Write every name using only plain English letters. Drop accents and special
+  characters, keeping the closest English letter: García -> Garcia, Sánchez -> Sanchez,
+  Mbappé -> Mbappe, Ødegaard -> Odegaard. Keep suffixes like Jr. and III as printed.
 - The checkmark is not part of the name. Ignore it.
 - Ignore all interface text: the clock and battery in the status bar, "Top players", "Close", "Boost value".
 - The first and last rows may be cut off mid-scroll. Include a row only if you can read the whole name.
@@ -1063,7 +1083,9 @@ async function showMatches(raw){
 
   // Accept either ["Name"] or [{name, boost, owned}]
   const players = (raw||[]).map(p => typeof p === 'string' ? {name:p, boost:null, owned:null} : p)
-                           .filter(p => p && p.name);
+                           .filter(p => p && p.name)
+                           .map(p => ({...p, name: asciiName(p.name)}))
+                           .filter(p => p.name);
 
   const excludes = loadExcludes();
   const hits = [];
@@ -1176,7 +1198,7 @@ function parseMinimumLines(text){
     const t = line.trim();
     if(!t) continue;
     const m = t.match(/^(.*?)[\s,\-–—]*?(\d{1,3})\s*(?:\/\s*1)?$/);
-    const player = m && m[1].trim().replace(/[.,:;\-–—]+$/,'').trim();
+    const player = m && asciiName(m[1].trim().replace(/[.,:;\-–—]+$/,''));
     const rate = m && +m[2];
     if(!player || player.length < 2 || !(rate > 0)) { bad.push(t); continue; }
     rows.push({ player, rate });
@@ -1232,7 +1254,7 @@ async function minimumsPanel(){
   };
 
   box.querySelector('#mn-add').addEventListener('click', async () => {
-    const player = box.querySelector('#mn-player').value.trim();
+    const player = asciiName(box.querySelector('#mn-player').value);
     const rate = +box.querySelector('#mn-rate').value;
     if(player.length < 2 || !(rate > 0)) return toast('Enter a player and a minimum rate.');
     const raised = await saveMins([{player, rate}]);
