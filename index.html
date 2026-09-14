@@ -104,6 +104,17 @@
   .note{font-size:12.5px;color:var(--mute);line-height:1.45}
   .warn{background:color-mix(in srgb,var(--bad) 13%,transparent);border:1px solid color-mix(in srgb,var(--bad) 40%,transparent);border-radius:8px;padding:11px 13px;font-size:12.5px;line-height:1.45}
 
+  /* ---------- player/team autocomplete ---------- */
+  .suggest{list-style:none;margin:6px 0 0;padding:4px;position:absolute;left:0;right:0;top:100%;z-index:50;
+    background:var(--panel-2);border:1px solid var(--line);border-radius:8px;max-height:230px;overflow:auto;
+    box-shadow:0 10px 24px rgba(0,0,0,.4)}
+  .suggest li{padding:8px 10px;border-radius:6px;cursor:pointer;font-size:13.5px;display:flex;align-items:center;gap:7px}
+  .suggest li .dot{color:var(--mute);font-size:11px}
+  .suggest li .team{color:var(--mute);font-size:12px;margin-left:auto}
+  .suggest li[aria-selected="true"],.suggest li:hover{background:color-mix(in srgb,var(--accent) 18%,transparent)}
+  .suggest li.hint{color:var(--mute);cursor:default}
+  .suggest li.hint:hover{background:none}
+
   /* ---------- gate ---------- */
   .gate{max-width:430px;margin:8vh auto;padding:22px}
   .gate h1{font-size:31px;font-weight:800;letter-spacing:-0.03em;margin:0 0 6px}
@@ -197,7 +208,10 @@
             <div class="warn" id="b-instructions"></div>
             <div>
               <label for="b-player">Player</label>
-              <input id="b-player" class="field" autocomplete="off" placeholder="e.g. Julian Sayin">
+              <div style="position:relative">
+                <input id="b-player" class="field" autocomplete="off" placeholder="e.g. Julian Sayin" role="combobox" aria-expanded="false" aria-autocomplete="list">
+                <ul id="b-suggest" class="suggest hide" role="listbox"></ul>
+              </div>
             </div>
             <div>
               <label for="b-rate">Rate you'll pay</label>
@@ -482,7 +496,88 @@ $('#sport').addEventListener('change', e => {
   sport = e.target.value;
   document.body.dataset.sport = sport;
   updatePlayerPlaceholder();
+  closeSuggest();
   render();
+});
+
+/* =========================================================
+   Player/team autocomplete — searches /api/players, which is
+   backed by a live roster index (built from public sports data,
+   cached in KV and refreshed in the background).
+   ========================================================= */
+let suggestTimer = null;
+let suggestItems = [];
+let suggestActive = -1;
+
+function closeSuggest(){
+  const box = $('#b-suggest');
+  box.classList.add('hide');
+  box.innerHTML = '';
+  suggestItems = []; suggestActive = -1;
+  $('#b-player').setAttribute('aria-expanded', 'false');
+}
+
+function renderSuggest(items, note){
+  const box = $('#b-suggest');
+  suggestItems = items;
+  suggestActive = -1;
+  const rows = items.map((it,i) =>
+    `<li role="option" data-i="${i}"><span class="dot">•</span> ${esc(it.name)} <span class="team">${esc(it.team)}</span></li>`
+  ).join('');
+  box.innerHTML = rows + (note ? `<li class="hint">${esc(note)}</li>` : '');
+  const show = items.length > 0 || !!note;
+  box.classList.toggle('hide', !show);
+  $('#b-player').setAttribute('aria-expanded', String(show));
+}
+
+async function runSuggest(q){
+  if(q.length < 2){ closeSuggest(); return; }
+  try{
+    const r = await fetch(`/api/players?sport=${encodeURIComponent(sport)}&q=${encodeURIComponent(q)}`);
+    const data = await r.json();
+    const items = data.players || [];
+    const note = !items.length
+      ? (data.building ? 'Still building the player list — try again in a bit' : 'No matches')
+      : (data.building ? 'Still indexing — more players will show up soon' : null);
+    renderSuggest(items, note);
+  }catch(e){ closeSuggest(); }
+}
+
+$('#b-player').addEventListener('input', e => {
+  clearTimeout(suggestTimer);
+  const q = e.target.value.trim();
+  suggestTimer = setTimeout(()=>runSuggest(q), 220);
+});
+$('#b-player').addEventListener('focus', e => {
+  const q = e.target.value.trim();
+  if(q.length >= 2) runSuggest(q);
+});
+$('#b-player').addEventListener('keydown', e => {
+  if($('#b-suggest').classList.contains('hide') || !suggestItems.length) return;
+  if(e.key === 'ArrowDown'){ e.preventDefault(); suggestActive = Math.min(suggestActive+1, suggestItems.length-1); highlightSuggest(); }
+  else if(e.key === 'ArrowUp'){ e.preventDefault(); suggestActive = Math.max(suggestActive-1, 0); highlightSuggest(); }
+  else if(e.key === 'Enter'){ if(suggestActive > -1){ e.preventDefault(); pickSuggest(suggestActive); } }
+  else if(e.key === 'Escape'){ closeSuggest(); }
+});
+function highlightSuggest(){
+  const lis = $('#b-suggest').querySelectorAll('li[role="option"]');
+  lis.forEach((li,i) => li.setAttribute('aria-selected', i===suggestActive ? 'true' : 'false'));
+  if(lis[suggestActive]) lis[suggestActive].scrollIntoView({block:'nearest'});
+}
+function pickSuggest(i){
+  const it = suggestItems[i];
+  if(!it) return;
+  $('#b-player').value = it.name;
+  closeSuggest();
+  $('#b-rate').focus();
+}
+$('#b-suggest').addEventListener('click', e => {
+  const li = e.target.closest('li[role="option"]');
+  if(!li) return;
+  pickSuggest(+li.dataset.i);
+});
+document.addEventListener('click', e => {
+  if(!e.target.closest('#b-player') && !e.target.closest('#b-suggest')) closeSuggest();
 });
 $('#tab-buy').addEventListener('click', ()=>setMode('buy'));
 $('#tab-sell').addEventListener('click', ()=>setMode('sell'));
@@ -563,6 +658,7 @@ $('#b-post').addEventListener('click', async () => {
     else m.offers.push({ id:uid(), user:me.toLowerCase(), sport, player, rate, link, ts:Date.now() });
   });
   $('#b-player').value=''; $('#b-link').value='';
+  closeSuggest();
   renderBuyInstructions();
   toast(`Posted ${player} at ${rate}/1`);
   render();
