@@ -248,9 +248,10 @@ const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL' };
 // Where buyers have to go before they can post a buy offer.
 const GROUP_LINK = 'https://www.realapp.com/zr4caf3fbkb';
 const TARGET_LINK = 'https://www.realapp.com/a9hQFJYKeYbuLp4oKM/178892690465700001';
-// Comment links a buyer submits should be their own comment on realapp.com —
-// this is a light sanity check, not a guarantee it's the right post.
-const COMMENT_LINK_PREFIX = 'https://www.realapp.com/';
+// Comment links a buyer submits must live under the SAME post as TARGET_LINK
+// (same post ID, different trailing comment ID) — this confirms the link is
+// at least a comment on the right pinned post, not just any realapp.com URL.
+const TARGET_POST_PREFIX = TARGET_LINK.slice(0, TARGET_LINK.lastIndexOf('/') + 1);
 const RATES = (()=>{ const a=[]; for(let r=10;r<=120;r+=5) a.push(r); return a; })();
 
 const S = {
@@ -536,7 +537,13 @@ document.addEventListener('click', async e => {
    Buyer actions
    ========================================================= */
 function validCommentLink(link){
-  return link.startsWith(COMMENT_LINK_PREFIX) && link.length > COMMENT_LINK_PREFIX.length;
+  // Must be a link under the pinned post's own prefix, must have something
+  // after it (an actual comment ID), and can't just be the pinned post link
+  // itself (that's the post to comment ON, not a comment).
+  return typeof link === 'string'
+    && link.startsWith(TARGET_POST_PREFIX)
+    && link.length > TARGET_POST_PREFIX.length
+    && link !== TARGET_LINK;
 }
 
 $('#b-post').addEventListener('click', async () => {
@@ -567,7 +574,7 @@ function editRate(id){
   box.querySelector('#e-save').addEventListener('click', async () => {
     const r = +box.querySelector('#e-rate').value;
     const link = box.querySelector('#e-link').value.trim();
-    if(!validCommentLink(link)) return toast('That doesn\'t look like a realapp.com comment link.');
+    if(!validCommentLink(link)) return toast('That doesn\'t look like a comment link on the pinned post.');
     await push(m => { const t = m.offers.find(x=>x.id===id); if(t) { t.rate = r; t.link = link; t.ts = Date.now(); } });
     box.remove(); toast(`${o.player} now ${r}/1`); render();
   });
@@ -622,11 +629,12 @@ Respond with only this JSON. No markdown fences, no other text:
 
 If you cannot read any rows, return {"players":[]}.` });
 
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetch('/api/scan', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:1000, messages:[{role:'user', content}] })
+      body: JSON.stringify({ content })
     });
     const data = await res.json();
+    if(!res.ok) throw new Error(data && data.error ? data.error : ('scan failed (' + res.status + ')'));
     const txt = (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
     const parsed = JSON.parse(txt.replace(/```json|```/g,'').trim());
     showMatches(parsed.players || []);
