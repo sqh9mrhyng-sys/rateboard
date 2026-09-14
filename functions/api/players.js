@@ -42,7 +42,7 @@ async function writeState(env, sport, state) {
 }
 
 async function fetchJSON(url) {
-  const r = await fetch(url, { headers: { accept: 'application/json' } });
+  const r = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (compatible; RateBoard/1.0)' } });
   if (!r.ok) throw new Error('fetch failed ' + r.status + ' ' + url);
   return r.json();
 }
@@ -125,9 +125,11 @@ export async function onRequestGet({ request, env, waitUntil }) {
 let state = await readState(env, sport);
   const complete = !!(state && state.updated);
   const staleByTime = complete && (Date.now() - state.updated > STALE_MS);
+  let lastError = null;
 
 if (!state) {
-  state = await buildChunk(env, sport).catch(() => state);
+  try { state = await buildChunk(env, sport); }
+  catch (e) { lastError = String((e && e.message) || e); }
 } else if (!complete || staleByTime) {
   const task = buildChunk(env, sport).catch(() => {});
   if (waitUntil) waitUntil(task); else await task;
@@ -150,6 +152,7 @@ const players = (state && state.players) || [];
 return json({
   players: matches,
   building: !(state && state.updated),
-  coverage: state ? `${state.doneIds.length}/${state.teams.length}` : '0/0'
+  coverage: state ? `${state.doneIds.length}/${state.teams.length}` : '0/0',
+  lastError
 });
 }
