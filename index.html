@@ -858,17 +858,19 @@ async function showMatches(raw){
   const rows = hits.filter(h => !seen.has(norm(h.player)) && seen.add(norm(h.player)));
 
   const box = modal('Your best sellers', rows.length ? `
-    <p class="note">Read ${players.length} player${players.length===1?'':'s'} off your screenshots. ${rows.length} ${rows.length===1?'has':'have'} a standing ${SPORTS[sport]} offer, highest first. The "you own" count is read from your screenshot when visible — double-check it before sending a message.</p>
+    <p class="note">Read ${players.length} player${players.length===1?'':'s'} off your screenshots. ${rows.length} ${rows.length===1?'has':'have'} a standing ${SPORTS[sport]} offer, highest first. The rate is per 1 boost — the "you own" count and boost value are both read from your screenshot when visible, so double-check them before sending a message.</p>
     <div>${rows.map((h,i)=>`
       <div class="hit" style="display:block">
         <div style="display:grid;grid-template-columns:78px 1fr auto;gap:12px;align-items:center">
           <span class="rate num">${h.rate}<small>/1</small></span>
-          <span><span class="player">${esc(h.player)}</span><br><span class="who">${h.boost!=null?esc(h.boost)+' boost — ':''}buying: ${esc(h.buyer)}</span></span>
+          <span><span class="player">${esc(h.player)}</span><br><span class="who">buying: ${esc(h.buyer)}</span></span>
           <button class="btn-ghost" data-rep="${esc(h.buyer)}">Report</button>
         </div>
         <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
           <label style="margin:0;flex-shrink:0" for="own-${i}">You own</label>
           <input id="own-${i}" data-owned="${i}" class="field num" type="number" min="0" step="1" style="width:80px" value="${h.owned!=null?h.owned:''}" placeholder="#">
+          <label style="margin:0 0 0 6px;flex-shrink:0" for="boost-${i}">Boost value</label>
+          <input id="boost-${i}" data-boost="${i}" class="field num" type="number" min="0" step="0.1" style="width:90px" value="${h.boost!=null?h.boost:''}" placeholder="#.#">
         </div>
         <div class="note" data-msg="${i}" style="margin-top:6px"></div>
         <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
@@ -881,16 +883,23 @@ async function showMatches(raw){
   if(!rows.length) return;
 
   const msgFor = i => {
-    const input = box.querySelector(`[data-owned="${i}"]`);
+    const ownedInput = box.querySelector(`[data-owned="${i}"]`);
+    const boostInput = box.querySelector(`[data-boost="${i}"]`);
     const msgEl = box.querySelector(`[data-msg="${i}"]`);
     const copyBtn = box.querySelector(`[data-copy="${i}"]`);
-    const n = +input.value;
-    if(!input.value || !(n > 0)){
+    const n = +ownedInput.value;
+    const boost = +boostInput.value;
+    if(!ownedInput.value || !(n > 0)){
       msgEl.textContent = 'Enter how many you own to generate a message.';
       copyBtn.disabled = true;
       return null;
     }
-    const total = Math.round(n * rows[i].rate * 100) / 100;
+    if(!boostInput.value || !(boost > 0)){
+      msgEl.textContent = 'Enter the boost value to generate a message — the rate is per 1 boost, not per card.';
+      copyBtn.disabled = true;
+      return null;
+    }
+    const total = Math.round(boost * rows[i].rate * 100) / 100;
     const text = `i have ${n} ${rows[i].player} offer ${total}`;
     msgEl.textContent = text;
     copyBtn.disabled = false;
@@ -900,6 +909,7 @@ async function showMatches(raw){
   rows.forEach((h,i) => {
     msgFor(i);
     box.querySelector(`[data-owned="${i}"]`).addEventListener('input', () => msgFor(i));
+    box.querySelector(`[data-boost="${i}"]`).addEventListener('input', () => msgFor(i));
   });
 
   box.addEventListener('click', async e => {
