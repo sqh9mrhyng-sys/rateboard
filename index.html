@@ -104,6 +104,9 @@
   .note{font-size:12.5px;color:var(--mute);line-height:1.45}
   .minnote{color:var(--accent);margin:6px 0 0}
   .warn{background:color-mix(in srgb,var(--bad) 13%,transparent);border:1px solid color-mix(in srgb,var(--bad) 40%,transparent);border-radius:8px;padding:11px 13px;font-size:12.5px;line-height:1.45}
+  /* The one thing on the buyer screen nobody is allowed to miss. */
+  .alarm{background:color-mix(in srgb,var(--bad) 22%,transparent);border:2px solid var(--bad);border-radius:8px;
+    padding:13px 15px;font-size:13.5px;font-weight:600;line-height:1.5;letter-spacing:.01em;text-transform:uppercase;color:var(--bone)}
 
   /* ---------- example screenshots ---------- */
   .examples{display:flex;flex-direction:column;gap:12px}
@@ -291,7 +294,23 @@
         <div id="pane-buy" class="panel">
           <div class="panel-hd"><h2>Post a buy offer</h2></div>
           <div class="panel-bd stack">
+            <div class="alarm">When done grinding please remove listing, if listing is not removed in a timely manner after you're done buying you will be banned</div>
             <div class="warn" id="b-instructions"></div>
+            <button id="b-guide-toggle" class="btn-ghost" aria-expanded="false">PICTURE GUIDES OF HOW TO SUBMIT COMMENT</button>
+            <div id="b-guide" class="examples hide">
+              <figure>
+                <a href="examples/buy-1-open-post.jpg" target="_blank" rel="noopener"><img src="examples/buy-1-open-post.jpg" alt="The buy offer form with the this post link circled"></a>
+                <figcaption>1. Tap "this post" to open the post on Real.</figcaption>
+              </figure>
+              <figure>
+                <a href="examples/buy-2-write-comment.jpg" target="_blank" rel="noopener"><img src="examples/buy-2-write-comment.jpg" alt="An example comment on Real showing a player card and the rate offered"></a>
+                <figcaption>2. Comment with your card and your rate, like this.</figcaption>
+              </figure>
+              <figure>
+                <a href="examples/buy-3-paste-link.jpg" target="_blank" rel="noopener"><img src="examples/buy-3-paste-link.jpg" alt="The buy offer form with the comment link box and Post offer button circled"></a>
+                <figcaption>3. Copy your comment's link, paste it below, then Post offer.</figcaption>
+              </figure>
+            </div>
             <div>
               <label for="b-player">Player</label>
               <div style="position:relative">
@@ -684,6 +703,13 @@ function renderBuyInstructions(){
     `details you want to add. Once you have created the comment, paste it below (it is auto verified).`;
 }
 renderBuyInstructions();
+
+$('#b-guide-toggle').addEventListener('click', () => {
+  const btn = $('#b-guide-toggle'), box = $('#b-guide');
+  const nowHidden = box.classList.toggle('hide');
+  btn.textContent = nowHidden ? 'PICTURE GUIDES OF HOW TO SUBMIT COMMENT' : 'HIDE PICTURE GUIDES';
+  btn.setAttribute('aria-expanded', String(!nowHidden));
+});
 
 /* =========================================================
    Sport + mode
