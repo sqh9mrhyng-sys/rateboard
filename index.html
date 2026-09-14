@@ -619,13 +619,26 @@ $('#signout').addEventListener('click', async () => {
    given player. Set by the board admin; they apply to everyone.
    ========================================================= */
 
-// The floor that applies to a player, or null. An exact name match wins;
-// otherwise fall back to the looser surname match so a floor set on
-// "Haaland" still covers "Erling Haaland". If more than one floor could
-// apply, the highest one does.
+// The floor that applies to a player, or null.
+//
+// Deliberately stricter than sameGuy(): two FULL names must match exactly,
+// so a floor on "Jeremiah Smith" never lands on "Jordan Smith". A surname on
+// its own still works in either direction — a floor written as "Haaland"
+// covers "Erling Haaland", and an offer posted as just "Smith" is still held
+// to the Smith floor, so the floor can't be dodged by dropping a first name.
+// If more than one floor could apply, the highest wins.
+function floorApplies(floorPlayer, offerPlayer){
+  const q = norm(floorPlayer), p = norm(offerPlayer);
+  if(!q || !p) return false;
+  if(q === p) return true;
+  const qw = q.split(' '), pw = p.split(' ');
+  if(qw.length === 1 || pw.length === 1) return qw[qw.length-1] === pw[pw.length-1];
+  return false;
+}
+
 function minimumFor(sportKey, player){
-  const hits = (market.minimums || []).filter(x => x.sport === sportKey &&
-    (norm(x.player) === norm(player) || sameGuy(x.player, player)));
+  const hits = (market.minimums || [])
+    .filter(x => x.sport === sportKey && floorApplies(x.player, player));
   if(!hits.length) return null;
   return hits.sort((a,b) => b.rate - a.rate)[0];
 }
@@ -1183,7 +1196,7 @@ async function minimumsPanel(){
         if(i > -1) m.minimums[i].rate = rate;
         else m.minimums.push({ id:uid(), sport, player, rate });
         for(const o of m.offers){
-          if(o.sport===sport && (norm(o.player)===norm(player) || sameGuy(o.player, player)) && o.rate < rate){
+          if(o.sport===sport && floorApplies(player, o.player) && o.rate < rate){
             o.rate = rate; raised++;
           }
         }
