@@ -524,16 +524,21 @@ const norm = s => deOdd(s)
   .replace(/\b(jr|sr|ii|iii|iv)\b/g,'')
   .replace(/\s+/g,' ').trim();
 
-// Match on surname, then confirm with the first initial. Avoids the substring
-// bug where an offer for "Will" would match every Will* on a screenshot.
-function sameGuy(a, b){
+// Do two written names refer to the same player?
+//
+// Strict on purpose. Matching on "same surname + same first initial" used to
+// link Matthew Coleman to a Malachi Coleman offer, and would do the same to
+// Jeremiah/Jordan Smith or Isaac/Ivan Brown — a seller would end up quoting a
+// buyer a price for a player that buyer never asked for. So two full names
+// have to match outright. A bare surname still matches in either direction,
+// which is what makes an offer written as just "Haaland" work.
+function samePlayer(a, b){
   const x = norm(a), y = norm(b);
   if(!x || !y) return false;
   if(x === y) return true;
-  const xp = x.split(' '), yp = y.split(' ');
-  if(xp[xp.length-1] !== yp[yp.length-1]) return false;
-  if(xp.length === 1 || yp.length === 1) return true;
-  return xp[0][0] === yp[0][0];
+  const xw = x.split(' '), yw = y.split(' ');
+  if(xw.length === 1 || yw.length === 1) return xw[xw.length-1] === yw[yw.length-1];
+  return false;
 }
 
 async function hash(str){
@@ -667,26 +672,12 @@ $('#signout').addEventListener('click', async () => {
    given player. Set by the board admin; they apply to everyone.
    ========================================================= */
 
-// The floor that applies to a player, or null.
-//
-// Deliberately stricter than sameGuy(): two FULL names must match exactly,
-// so a floor on "Jeremiah Smith" never lands on "Jordan Smith". A surname on
-// its own still works in either direction — a floor written as "Haaland"
-// covers "Erling Haaland", and an offer posted as just "Smith" is still held
-// to the Smith floor, so the floor can't be dodged by dropping a first name.
-// If more than one floor could apply, the highest wins.
-function floorApplies(floorPlayer, offerPlayer){
-  const q = norm(floorPlayer), p = norm(offerPlayer);
-  if(!q || !p) return false;
-  if(q === p) return true;
-  const qw = q.split(' '), pw = p.split(' ');
-  if(qw.length === 1 || pw.length === 1) return qw[qw.length-1] === pw[pw.length-1];
-  return false;
-}
-
+// The floor that applies to a player, or null. Uses the same strict name
+// rule as everything else, so a floor on "Jeremiah Smith" never lands on
+// "Jordan Smith". If more than one floor could apply, the highest wins.
 function minimumFor(sportKey, player){
   const hits = (market.minimums || [])
-    .filter(x => x.sport === sportKey && floorApplies(x.player, player));
+    .filter(x => x.sport === sportKey && samePlayer(x.player, player));
   if(!hits.length) return null;
   return hits.sort((a,b) => b.rate - a.rate)[0];
 }
@@ -971,7 +962,7 @@ function loadExcludes(){
   catch(e){ return []; }
 }
 function saveExcludes(list){ try{ localStorage.setItem(EXCLUDE_KEY, JSON.stringify(list)); }catch(e){} }
-function isExcluded(name, list){ return (list || loadExcludes()).some(x => sameGuy(x, name)); }
+function isExcluded(name, list){ return (list || loadExcludes()).some(x => samePlayer(x, name)); }
 
 $('#s-exclude').addEventListener('click', excludeManager);
 
@@ -1102,7 +1093,7 @@ async function showMatches(raw){
   const hits = [];
   for(const p of players){
     if(isExcluded(p.name, excludes)) continue;
-    const best = live.filter(o => sameGuy(o.player, p.name)).sort((a,b) => b.rate - a.rate)[0];
+    const best = live.filter(o => samePlayer(o.player, p.name)).sort((a,b) => b.rate - a.rate)[0];
     if(best) hits.push({ player:p.name, boost:p.boost, owned:p.owned, rate:best.rate, buyer: market.users[best.user]?.name || best.user, link: best.link || '' });
   }
   hits.sort((a,b) => b.rate - a.rate);
@@ -1255,7 +1246,7 @@ async function minimumsPanel(){
         if(i > -1) m.minimums[i].rate = rate;
         else m.minimums.push({ id:uid(), sport, player, rate });
         for(const o of m.offers){
-          if(o.sport===sport && floorApplies(player, o.player) && o.rate < rate){
+          if(o.sport===sport && samePlayer(player, o.player) && o.rate < rate){
             o.rate = rate; raised++;
           }
         }
