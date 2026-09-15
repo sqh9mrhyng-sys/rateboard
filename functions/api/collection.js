@@ -7,7 +7,7 @@
 //   - Per-IP: max 5 requests/min tracked in RATEBOARD_KV
 //   - KV cache: each username cached 10 min — RS only called once per 10 min
 
-const CACHE_TTL_SECONDS = 600;
+const CACHE_TTL_SECONDS = 86400; // 24 hours per chunk
 const IP_WINDOW_SECONDS = 60;
 const IP_MAX_REQUESTS   = 5;
 
@@ -185,33 +185,53 @@ export async function onRequestGet({ request, env }) {
 
   const rsSport = SPORT_RS_KEY[sport];
 
-  // Per-IP rate limit (only on first chunk to avoid counting loops)
+  const cacheKey = `col:${rsSport}:${username.toLowerCase()}:${start}`;
+
+  // 1. KV cache check — serve from cache if within 24h
+  if (env.RATEBOARD_KV) {
+    const cached = await env.RATEBOARD_KV.get(cacheKey);
+    if (cached) {
+      return new Response(cached, {
+        headers: { 'content-type': 'application/json', 'x-cache': 'HIT' }
+      });
+    }
+  }
+
+  // 2. Per-IP rate limit (only on first chunk)
   if (start === 0 && env.RATEBOARD_KV) {
     const ip = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || 'unknown';
     const allowed = await checkRateLimit(env.RATEBOARD_KV, ip);
     if (!allowed) return json({ error: 'Too many requests — try again in a minute' }, 429);
   }
 
-  // Resolve username → hashId (only needed on first chunk)
+  // 3. Resolve username → hashId (only needed on first chunk)
   if (!hashId) {
     try { hashId = await resolveHashId(username, auth); }
     catch (e) { return json({ error: 'Could not reach RS — try again shortly' }, 502); }
     if (!hashId) return json({ error: `RS user "${username}" not found` }, 404);
   }
 
-  // Fetch one chunk of cards
+  // 4. Fetch one chunk of cards from RS
   let chunk;
   try { chunk = await fetchCardChunk(hashId, rsSport, auth, start); }
   catch (e) { return json({ error: 'Could not load cards — try again shortly', detail: e.message }, 502); }
 
   const players = [...chunk.byPlayer.values()];
-
-  return json({
+  const result  = JSON.stringify({
     username,
     hashId,
     players,
     hasMore:   chunk.hasMore,
     nextStart: chunk.nextOffset,
     fetchedAt: Date.now(),
+  });
+
+  // 5. Cache chunk for 24 hours
+  if (env.RATEBOARD_KV) {
+    await env.RATEBOARD_KV.put(cacheKey, result, { expirationTtl: CACHE_TTL_SECONDS });
+  }
+
+  return new Response(result, {
+    headers: { 'content-type': 'application/json', 'x-cache': 'MISS' }
   });
 }
