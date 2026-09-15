@@ -400,7 +400,11 @@ const TARGET_LINK = 'https://www.realapp.com/NeH4tgFKo9k';
 // in a real comment URL under this post (e.g. .../JaHBFYjOBj8igvOr/<comment id>).
 const VERIFY_POST_ID = 'JaHBFYjOBj8igvOr';
 const TARGET_POST_PREFIX = 'https://www.realapp.com/' + VERIFY_POST_ID + '/';
-const RATES = (()=>{ const a=[]; for(let r=10;r<=120;r+=5) a.push(r); return a; })();
+// 8 is the bottom tier, shown as "minimum". It's offered on any player who
+// doesn't have a floor set — where a floor exists it's filtered out, so a
+// player you've priced can never be picked up at the minimum tier.
+const MIN_TIER = 8;
+const RATES = (()=>{ const a=[MIN_TIER]; for(let r=10;r<=120;r+=5) a.push(r); return a; })();
 
 // True when the last read of the shared board failed to reach the server, as
 // opposed to reaching it and finding nothing. resume() needs to tell those
@@ -687,11 +691,13 @@ function minimumFor(sportKey, player){
    ========================================================= */
 // `floor` drops every option below the player's minimum, so a rate that
 // would be rejected can't be picked in the first place.
+const rateLabel = r => r === MIN_TIER ? `minimum (${r} / 1)` : `${r} / 1`;
+
 function rateOptions(sel, floor){
   const usable = RATES.filter(r => !floor || r >= floor);
-  if(!usable.length) return `<option value="${floor}">${floor} / 1</option>`;
+  if(!usable.length) return `<option value="${floor}">${rateLabel(floor)}</option>`;
   const pick = usable.includes(sel) ? sel : usable[0];
-  return usable.map(r => `<option value="${r}" ${r===pick?'selected':''}>${r} / 1</option>`).join('');
+  return usable.map(r => `<option value="${r}" ${r===pick?'selected':''}>${rateLabel(r)}</option>`).join('');
 }
 $('#b-rate').innerHTML = rateOptions(20);
 
@@ -1391,6 +1397,14 @@ async function adminPanel(){
       <div class="stat"><b class="num">${liveOffers.length}</b><span>total listings out</span></div>
       <div class="stat"><b class="num">${groups.size}</b><span>unique players</span></div>
     </div>
+
+    <h4 class="subhd">Look up a user</h4>
+    <input id="lk-user" class="field" placeholder="Username — see everything they have listed" autocomplete="off">
+    <div id="lk-user-out"></div>
+
+    <h4 class="subhd">Look up a player</h4>
+    <input id="lk-player" class="field" placeholder="Player name — see who's buying them" autocomplete="off">
+    <div id="lk-player-out"></div>
     <h4 class="subhd">Players with more than one buyer (${contested.length})</h4>
     ${contested.length ? contested.map(g => `
       <div class="hit" style="display:block">
@@ -1421,6 +1435,58 @@ async function adminPanel(){
           : u.banned ? `<button class="btn-ghost" data-unban="${esc(k)}">Restore</button>`
                      : `<button class="btn-ghost btn-danger" data-ban="${esc(k)}">Delete account</button>`}
       </div>`).join('')}`);
+
+  // ---- lookups. These search loosely on purpose: typing "coleman" should
+  // turn up every Coleman, unlike offer matching which has to be exact.
+  const userOut = box.querySelector('#lk-user-out');
+  box.querySelector('#lk-user').addEventListener('input', e => {
+    const q = e.target.value.trim().toLowerCase();
+    if(q.length < 1){ userOut.innerHTML = ''; return; }
+    const found = Object.entries(market.users)
+      .filter(([k,u]) => k.includes(q) || String(u.name||'').toLowerCase().includes(q))
+      .sort((a,b) => a[0].localeCompare(b[0]))
+      .slice(0, 12);
+    if(!found.length){ userOut.innerHTML = '<p class="nohit">No account matches that.</p>'; return; }
+    userOut.innerHTML = found.map(([k,u]) => {
+      const theirs = market.offers.filter(o => o.user === k)
+        .sort((a,b) => b.rate - a.rate || a.player.localeCompare(b.player));
+      return `<div class="hit" style="display:block">
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline">
+          <span class="player">${esc(u.name || k)}</span>
+          <span class="who">${u.banned ? 'deleted — ' : ''}${theirs.length} listing${theirs.length===1?'':'s'}</span>
+        </div>
+        ${theirs.length ? `<div class="buyers">${theirs.map(o =>
+            `<span class="buyer"><b class="num">${o.rate}</b>/1 ${esc(o.player)} <em style="opacity:.6">${o.sport}</em></span>`).join('')}</div>`
+          : '<p class="nohit" style="margin-top:6px">Nothing listed.</p>'}
+      </div>`;
+    }).join('');
+  });
+
+  const playerOut = box.querySelector('#lk-player-out');
+  box.querySelector('#lk-player').addEventListener('input', e => {
+    const q = norm(e.target.value);
+    if(q.length < 2){ playerOut.innerHTML = ''; return; }
+    const found = new Map();
+    for(const o of liveOffers){
+      if(!norm(o.player).includes(q)) continue;
+      const key = o.sport + '|' + norm(o.player);
+      if(!found.has(key)) found.set(key, { sport:o.sport, player:o.player, offers:[] });
+      found.get(key).offers.push(o);
+    }
+    const list = [...found.values()]
+      .sort((a,b) => Math.max(...b.offers.map(o=>o.rate)) - Math.max(...a.offers.map(o=>o.rate)))
+      .slice(0, 12);
+    if(!list.length){ playerOut.innerHTML = '<p class="nohit">Nobody is buying anyone by that name.</p>'; return; }
+    playerOut.innerHTML = list.map(g => `
+      <div class="hit" style="display:block">
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline">
+          <span class="player">${esc(g.player)}</span>
+          <span class="who">${g.sport} — ${g.offers.length} buyer${g.offers.length===1?'':'s'}</span>
+        </div>
+        <div class="buyers">${g.offers.slice().sort((a,b)=>b.rate-a.rate).map(o =>
+          `<span class="buyer"><b class="num">${o.rate}</b>/1 ${esc(nameOf(o.user))}</span>`).join('')}</div>
+      </div>`).join('');
+  });
 
   box.addEventListener('click', async e => {
     const ban = e.target.closest('[data-ban]'), un = e.target.closest('[data-unban]'), cl = e.target.closest('[data-clear]');
