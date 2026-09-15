@@ -1156,8 +1156,8 @@ async function showMatches(raw){
   await pull();
   const live = market.offers.filter(o => o.sport===sport && !market.users[o.user]?.banned);
 
-  // Accept either ["Name"] or [{name, boost, owned, byRarity}]
-  const players = (raw||[]).map(p => typeof p === 'string' ? {name:p, boost:null, owned:null, byRarity:null} : p)
+  // Accept either ["Name"] or [{name, boost, owned, totalValue}]
+  const players = (raw||[]).map(p => typeof p === 'string' ? {name:p, boost:null, owned:null, totalValue:null} : p)
                            .filter(p => p && p.name)
                            .map(p => ({...p, name: asciiName(p.name)}))
                            .filter(p => p.name);
@@ -1167,7 +1167,7 @@ async function showMatches(raw){
   for(const p of players){
     if(isExcluded(p.name, excludes)) continue;
     const best = live.filter(o => samePlayer(o.player, p.name)).sort((a,b) => b.rate - a.rate)[0];
-    if(best) hits.push({ player:p.name, boost:p.boost, owned:p.owned, byRarity:p.byRarity||null, rate:best.rate, buyer: market.users[best.user]?.name || best.user, link: best.link || '' });
+    if(best) hits.push({ player:p.name, boost:p.boost, owned:p.owned, totalValue:p.totalValue||null, rate:best.rate, buyer: market.users[best.user]?.name || best.user, link: best.link || '' });
     else noBuyer.push(p);
   }
   hits.sort((a,b) => b.rate - a.rate);
@@ -1185,7 +1185,7 @@ async function showMatches(raw){
   const rows = hits.filter(h => !seen.has(norm(h.player)) && seen.add(norm(h.player)));
 
   const box = modal('Your best sellers', rows.length ? `
-    <p class="note">Read ${players.length} player${players.length===1?'':'s'} off your screenshots. ${rows.length} ${rows.length===1?'has':'have'} a standing ${SPORTS[sport]} offer, highest first. The rate is per 1 boost — the "you own" count and boost value are both read from your screenshot when visible, so double-check them before sending a message.</p>
+    <p class="note">Found ${players.length} player${players.length===1?'':'s'} in your collection. ${rows.length} ${rows.length===1?'has':'have'} a standing ${SPORTS[sport]} offer, highest first. The rate is per 1 total card value — update "You own" if it's off.</p>
     <div>${rows.map((h,i)=>`
       <div class="hit" style="display:block">
         <div style="display:grid;grid-template-columns:78px 1fr auto;gap:12px;align-items:center">
@@ -1193,14 +1193,7 @@ async function showMatches(raw){
           <span>
             <span class="player">${esc(h.player)}</span><br>
             <span class="who">buying: ${esc(h.buyer)}</span>
-            ${h.byRarity ? (() => {
-              const RLABEL = {1:'C',2:'U',3:'R',4:'E',5:'L'};
-              const RCOLOR = {1:'#0483D7',2:'#00A163',3:'#E66200',4:'#E31C25',5:'#7856ff'};
-              return '<br><span class="who" style="font-size:11.5px">' +
-                [5,4,3,2,1].filter(r => h.byRarity[r] > 0)
-                  .map(r => `<span style="color:${RCOLOR[r]}">${h.byRarity[r]}${RLABEL[r]}</span>`)
-                  .join(' · ') + '</span>';
-            })() : ''}
+            ${h.totalValue != null ? `<br><span class="who" style="font-size:11.5px">total value: ${h.totalValue}</span>` : ''}
           </span>
           <button class="btn-ghost" data-rep="${esc(h.buyer)}">Report</button>
         </div>
@@ -1208,10 +1201,6 @@ async function showMatches(raw){
           <div>
             <label for="own-${i}">You own</label>
             <input id="own-${i}" data-owned="${i}" class="field num" type="number" inputmode="numeric" min="0" step="1" value="${h.owned!=null?h.owned:''}" placeholder="#">
-          </div>
-          <div>
-            <label for="boost-${i}">Boost value</label>
-            <input id="boost-${i}" data-boost="${i}" class="field num" type="number" inputmode="decimal" min="0" step="0.1" value="${h.boost!=null?h.boost:''}" placeholder="#.#">
           </div>
         </div>
         <div class="note" data-msg="${i}" style="margin-top:6px"></div>
@@ -1234,21 +1223,15 @@ async function showMatches(raw){
 
   const msgFor = i => {
     const ownedInput = box.querySelector(`[data-owned="${i}"]`);
-    const boostInput = box.querySelector(`[data-boost="${i}"]`);
     const msgEl = box.querySelector(`[data-msg="${i}"]`);
     const copyBtn = box.querySelector(`[data-copy="${i}"]`);
     const n = +ownedInput.value;
-    const boost = +boostInput.value;
     if(!ownedInput.value || !(n > 0)){
       msgEl.textContent = 'Enter how many you own to generate a message.';
       copyBtn.disabled = true;
       return null;
     }
-    if(!boostInput.value || !(boost > 0)){
-      msgEl.textContent = 'Enter the boost value to generate a message — the rate is per 1 boost, not per card.';
-      copyBtn.disabled = true;
-      return null;
-    }
+    const boost = rows[i].boost || 0;
     const total = Math.round(boost * rows[i].rate * 100) / 100;
     const text = `i have ${n} ${rows[i].player} offer ${total}`;
     msgEl.textContent = text;
@@ -1259,7 +1242,6 @@ async function showMatches(raw){
   rows.forEach((h,i) => {
     msgFor(i);
     box.querySelector(`[data-owned="${i}"]`).addEventListener('input', () => msgFor(i));
-    box.querySelector(`[data-boost="${i}"]`).addEventListener('input', () => msgFor(i));
   });
 
   box.addEventListener('click', async e => {
@@ -1652,18 +1634,17 @@ $('#rs-go').addEventListener('click', async () => {
   btn.disabled = true;
   rsMsg('');
 
-  // Merge player data across chunks: sum totals + byRarity, keep highest maxValue
-  const merged = new Map(); // name → {name, total, byRarity, maxValue}
+  // Merge player data across chunks: sum totals + totalValue
+  const merged = new Map(); // name → {name, total, totalValue}
   function mergeChunk(players){
     for(const p of players){
       if(!p.name) continue;
       if(!merged.has(p.name)){
-        merged.set(p.name, { name:p.name, total:0, byRarity:{1:0,2:0,3:0,4:0,5:0}, maxValue:0 });
+        merged.set(p.name, { name:p.name, total:0, totalValue:0 });
       }
       const m = merged.get(p.name);
       m.total += p.total || 0;
-      if(p.byRarity) for(let r=1;r<=5;r++) m.byRarity[r] = (m.byRarity[r]||0) + (p.byRarity[r]||0);
-      if((p.maxValue||0) > m.maxValue) m.maxValue = p.maxValue;
+      m.totalValue = Math.round((m.totalValue + (p.totalValue || 0)) * 10) / 10;
     }
   }
 
@@ -1712,10 +1693,10 @@ $('#rs-go').addEventListener('click', async () => {
     }
 
     const raw = [...merged.values()].map(p => ({
-      name:     p.name,
-      boost:    p.maxValue || null,
-      owned:    p.total,
-      byRarity: p.byRarity,
+      name:       p.name,
+      boost:      p.totalValue || null,
+      owned:      p.total,
+      totalValue: p.totalValue,
     }));
 
     if(!raw.length){

@@ -143,12 +143,11 @@ async function fetchCardChunk(hashId, sport, auth, startOffset) {
       const rarity = card.rarity || 0;
       const value  = card.value  || 0;
       if (!byPlayer.has(pid)) {
-        byPlayer.set(pid, { name, playerId: pid, total: 0, byRarity: {1:0,2:0,3:0,4:0,5:0}, maxValue: 0 });
+        byPlayer.set(pid, { name, playerId: pid, total: 0, totalValue: 0 });
       }
       const p = byPlayer.get(pid);
       p.total++;
-      if (rarity >= 1 && rarity <= 5) p.byRarity[rarity]++;
-      if (value > p.maxValue) p.maxValue = value;
+      p.totalValue = Math.round((p.totalValue + value) * 10) / 10;
     }
 
     offset += 20;
