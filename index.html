@@ -369,6 +369,7 @@
             <div id="rs-lookup-wrap" class="hide">
               <button id="rs-go" class="btn">Pull my cards from Real</button>
               <div id="rs-msg" class="note hide" style="margin-top:6px"></div>
+              <p class="note" id="rs-fresh" style="margin:6px 0 0"></p>
             </div>
             <input type="file" id="s-file" accept="image/*" multiple class="hide">
             <button id="s-exclude" class="btn-ghost">Exclude players/teams</button>
@@ -1689,6 +1690,7 @@ function rsLookupVisible(){ return sport === 'FC' || sport === 'CFB' || sport ==
 
 function updateRsLookupVisibility(){
   const wrap = $('#rs-lookup-wrap');
+  updateFreshnessNote();
   if(rsLookupVisible()){
     wrap.classList.remove('hide');
     $('#rs-go').textContent = `Pull my ${SPORTS[sport]} cards from Real`;
@@ -1696,6 +1698,19 @@ function updateRsLookupVisibility(){
     wrap.classList.add('hide');
   }
 }
+
+// Cards come out of a cache that rolls over on the quarter hour, so a card
+// sold at 11:03 is still listed until 11:15. Say so rather than let people
+// think the reader is wrong.
+function updateFreshnessNote(){
+  const el = $('#rs-fresh');
+  if(!el) return;
+  const slot = 15 * 60 * 1000;
+  const next = new Date(Math.ceil(Date.now() / slot) * slot);
+  el.textContent = `Updates every 15 mins — on the hour and at :15, :30 and :45. Next update ${
+    next.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' })}.`;
+}
+setInterval(updateFreshnessNote, 30000);
 
 function rsMsg(text, isError){
   const el = $('#rs-msg');
