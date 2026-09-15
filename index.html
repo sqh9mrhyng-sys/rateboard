@@ -116,15 +116,14 @@
   .examples figcaption{font-size:12px;color:var(--mute);margin-top:6px}
   .tapfull{opacity:.75}
 
-  /* ---------- RS collection lookup ---------- */
-  .rs-divider{display:flex;align-items:center;gap:10px;color:var(--mute);font-size:12.5px;margin:2px 0}
-  .rs-divider::before,.rs-divider::after{content:'';flex:1;height:1px;background:var(--line)}
-
   /* ---------- seller results: owned / boost inputs ---------- */
   .ownrow{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px}
   .ownrow label{margin:0 0 4px}
   .ownrow input{width:100%}
   .hitacts{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+  .bidder{border-top:1px solid var(--line);margin-top:10px;padding-top:10px}
+  .bidder-hd{display:grid;grid-template-columns:70px 1fr auto;gap:10px;align-items:center}
+  .bidder .rate{font-size:22px}
   .hitacts .btn-ghost{flex:1 1 auto;text-align:center}
 
   /* ---------- player/team autocomplete ---------- */
@@ -358,30 +357,12 @@
         <div id="pane-sell" class="panel hide">
           <div class="panel-hd"><h2>Scan your stats</h2></div>
           <div class="panel-bd stack">
-            <div id="rs-lookup-wrap" class="hide">
-              <button id="rs-go" class="btn">Pull my cards from Real</button>
-              <div id="rs-msg" class="note hide" style="margin-top:6px"></div>
-            </div>
-            <div id="rs-divider" class="rs-divider hide">or upload screenshots</div>
             <div class="alarm">Screenshot reader down, fix will be out tonight</div>
-            <div class="warn">to upload stats, go to the card page on real, on the top of the screen theres a button that says "stats" click that, and take a screenshot (take as many as you want) and submit below, if you dont know where to go or what the stats page should look like, expand the screenshots below, if theres players you dont want to sell select them or just ignore the options of people buying them</div>
-            <button id="s-examples-toggle" class="btn-ghost" aria-expanded="false">Show example screenshots</button>
-            <div id="s-examples" class="examples hide">
-              <figure>
-                <a href="examples/find-stats-button.jpg" target="_blank" rel="noopener"><img src="examples/find-stats-button.jpg" alt="Card page in the Real app with the Stats button circled at the top"></a>
-                <figcaption>On the card page, tap "Stats" at the top. <span class="tapfull">Tap the image for full size.</span></figcaption>
-              </figure>
-              <figure>
-                <a href="examples/stats-list.jpg" target="_blank" rel="noopener"><img src="examples/stats-list.jpg" alt="Top players list showing boost value for each player"></a>
-                <figcaption>This is what the stats page looks like — screenshot this list.</figcaption>
-              </figure>
-            </div>
             <input type="file" id="s-file" accept="image/*" multiple class="hide">
             <button id="s-pick" class="btn btn-lg">Upload stats screenshots</button>
             <button id="s-exclude" class="btn-ghost">Exclude players/teams</button>
             <div id="s-files" class="note"></div>
             <button id="s-go" class="btn hide">Read screenshots</button>
-            <p class="note">Reads the player names off your screenshots and shows the highest standing offer for each, in the sport you have selected.</p>
           </div>
         </div>
       </aside>
@@ -711,7 +692,6 @@ function enter(){
     $('#open-min').classList.remove('hide');
   }
   applyMinimumToForm();
-  updateRsLookupVisibility();
   render();
 }
 
@@ -803,7 +783,6 @@ $('#sport').addEventListener('change', e => {
   updatePlayerPlaceholder();
   closeSuggest();
   applyMinimumToForm();
-  updateRsLookupVisibility();
   render();
 });
 
@@ -1007,13 +986,6 @@ async function removeOffer(id, asAdmin){
 /* =========================================================
    Seller — screenshot scan
    ========================================================= */
-$('#s-examples-toggle').addEventListener('click', () => {
-  const btn = $('#s-examples-toggle'), box = $('#s-examples');
-  const nowHidden = box.classList.toggle('hide');
-  btn.textContent = nowHidden ? 'Show example screenshots' : 'Hide example screenshots';
-  btn.setAttribute('aria-expanded', String(!nowHidden));
-});
-
 /* ---- exclude list: players/teams a seller never wants surfaced ---- */
 const EXCLUDE_KEY = 'ratebrd_exclude_v1';
 function loadExcludes(){
@@ -1156,8 +1128,8 @@ async function showMatches(raw){
   await pull();
   const live = market.offers.filter(o => o.sport===sport && !market.users[o.user]?.banned);
 
-  // Accept either ["Name"] or [{name, boost, owned, totalValue}]
-  const players = (raw||[]).map(p => typeof p === 'string' ? {name:p, boost:null, owned:null, totalValue:null} : p)
+  // Accept either ["Name"] or [{name, boost, owned}]
+  const players = (raw||[]).map(p => typeof p === 'string' ? {name:p, boost:null, owned:null} : p)
                            .filter(p => p && p.name)
                            .map(p => ({...p, name: asciiName(p.name)}))
                            .filter(p => p.name);
@@ -1166,11 +1138,15 @@ async function showMatches(raw){
   const hits = [], noBuyer = [];
   for(const p of players){
     if(isExcluded(p.name, excludes)) continue;
-    const best = live.filter(o => samePlayer(o.player, p.name)).sort((a,b) => b.rate - a.rate)[0];
-    if(best) hits.push({ player:p.name, boost:p.boost, owned:p.owned, totalValue:p.totalValue||null, rate:best.rate, buyer: market.users[best.user]?.name || best.user, link: best.link || '' });
+    // Everyone buying this player, best price first — not just the top bid,
+    // so a seller can go down the list if the highest bidder doesn't answer.
+    const buyers = live.filter(o => samePlayer(o.player, p.name))
+      .sort((a,b) => b.rate - a.rate)
+      .map(o => ({ rate:o.rate, buyer: market.users[o.user]?.name || o.user, link: o.link || '' }));
+    if(buyers.length) hits.push({ player:p.name, boost:p.boost, owned:p.owned, buyers });
     else noBuyer.push(p);
   }
-  hits.sort((a,b) => b.rate - a.rate);
+  hits.sort((a,b) => b.buyers[0].rate - a.buyers[0].rate);
 
   // Quicksell suggestions: nobody is buying them AND they aren't on the
   // keep list for this sport. Without a keep list we suggest nothing at all —
@@ -1185,29 +1161,31 @@ async function showMatches(raw){
   const rows = hits.filter(h => !seen.has(norm(h.player)) && seen.add(norm(h.player)));
 
   const box = modal('Your best sellers', rows.length ? `
-    <p class="note">Found ${players.length} player${players.length===1?'':'s'} in your collection. ${rows.length} ${rows.length===1?'has':'have'} a standing ${SPORTS[sport]} offer, highest first. The rate is per 1 total card value — update "You own" if it's off.</p>
+    <p class="note">Read ${players.length} player${players.length===1?'':'s'} off your screenshots. ${rows.length} ${rows.length===1?'has':'have'} a standing ${SPORTS[sport]} offer, best price first. Everyone buying each player is listed, so if the top bidder goes quiet you can work down. Rates are per 1 boost — the boost value is read off your screenshot, so check it before sending.</p>
     <div>${rows.map((h,i)=>`
       <div class="hit" style="display:block">
-        <div style="display:grid;grid-template-columns:78px 1fr auto;gap:12px;align-items:center">
-          <span class="rate num">${h.rate}<small>/1</small></span>
-          <span>
-            <span class="player">${esc(h.player)}</span><br>
-            <span class="who">buying: ${esc(h.buyer)}</span>
-            ${h.totalValue != null ? `<br><span class="who" style="font-size:11.5px">rating: ${h.totalValue >= 1000 ? (h.totalValue/1000).toFixed(1)+'k' : h.totalValue}</span>` : ''}
-          </span>
-          <button class="btn-ghost" data-rep="${esc(h.buyer)}">Report</button>
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline">
+          <span class="player">${esc(h.player)}</span>
+          <span class="who">${h.buyers.length} buyer${h.buyers.length===1?'':'s'}</span>
         </div>
-        <div class="ownrow">
-          <div>
-            <label for="own-${i}">Card count</label>
-            <input id="own-${i}" data-owned="${i}" class="field num" type="number" value="${h.owned!=null?h.owned:''}" readonly style="opacity:0.6;cursor:default">
-          </div>
+        <div style="margin-top:8px">
+          <label for="boost-${i}">Boost value</label>
+          <input id="boost-${i}" data-boost="${i}" class="field num" type="number" inputmode="decimal" min="0" step="0.1" value="${h.boost!=null?h.boost:''}" placeholder="#.#">
         </div>
-        <div class="note" data-msg="${i}" style="margin-top:6px"></div>
-        <div class="hitacts">
-          <button class="btn-ghost" data-copy="${i}">Copy message</button>
-          ${h.link ? `<a class="btn-ghost" href="${esc(h.link)}" target="_blank" rel="noopener">Message buyer</a>` : `<span class="nohit">No comment link on file for this buyer</span>`}
-        </div>
+        <div class="note hide" data-warn="${i}" style="margin-top:6px">Enter the boost value to work out what each buyer owes you.</div>
+        ${h.buyers.map((b,j)=>`
+          <div class="bidder">
+            <div class="bidder-hd">
+              <span class="rate num">${b.rate}<small>/1</small></span>
+              <span class="who">${esc(b.buyer)}</span>
+              <button class="btn-ghost" data-rep="${esc(b.buyer)}">Report</button>
+            </div>
+            <div class="note" data-msg="${i}-${j}"></div>
+            <div class="hitacts">
+              <button class="btn-ghost" data-copy="${i}-${j}">Copy message</button>
+              ${b.link ? `<a class="btn-ghost" href="${esc(b.link)}" target="_blank" rel="noopener">Message ${esc(b.buyer)}</a>` : `<span class="nohit">No comment link on file</span>`}
+            </div>
+          </div>`).join('')}
       </div>`).join('')}</div>`
     : `<p class="nohit">Read ${players.length} player${players.length===1?'':'s'}, but none of them have a standing ${SPORTS[sport]} offer right now. Check back, or switch sports if the screenshots were from a different one.</p>`);
 
@@ -1221,25 +1199,40 @@ async function showMatches(raw){
 
   if(!rows.length) return;
 
-  const msgFor = i => {
-    const ownedInput = box.querySelector(`[data-owned="${i}"]`);
-    const msgEl = box.querySelector(`[data-msg="${i}"]`);
-    const copyBtn = box.querySelector(`[data-copy="${i}"]`);
-    const n = +ownedInput.value;
-    const boost = rows[i].boost || 0;
-    const total = Math.round(boost * rows[i].rate * 100) / 100;
-    const text = `i have ${n} ${rows[i].player} offer ${total}`;
+  // One message per buyer:  i have <boost> <player> <what they owe>
+  // The amount is boost x that buyer's rate, rounded to the nearest 10.
+  const msgFor = (i, j) => {
+    const boostInput = box.querySelector(`[data-boost="${i}"]`);
+    const msgEl = box.querySelector(`[data-msg="${i}-${j}"]`);
+    const copyBtn = box.querySelector(`[data-copy="${i}-${j}"]`);
+    const warn = box.querySelector(`[data-warn="${i}"]`);
+    const boost = +boostInput.value;
+    if(!boostInput.value || !(boost > 0)){
+      warn.classList.remove('hide');
+      msgEl.textContent = '';
+      copyBtn.disabled = true;
+      return null;
+    }
+    warn.classList.add('hide');
+    const owed = Math.round(boost * rows[i].buyers[j].rate / 10) * 10;
+    const text = `i have ${boost} ${rows[i].player} ${owed}`;
     msgEl.textContent = text;
-    copyBtn.disabled = !(n > 0);
-    return n > 0 ? text : null;
+    copyBtn.disabled = false;
+    return text;
   };
 
-  rows.forEach((_,i) => msgFor(i));
+  const refresh = i => rows[i].buyers.forEach((b,j) => msgFor(i,j));
+
+  rows.forEach((h,i) => {
+    refresh(i);
+    box.querySelector(`[data-boost="${i}"]`).addEventListener('input', () => refresh(i));
+  });
 
   box.addEventListener('click', async e => {
     const cp = e.target.closest('[data-copy]');
     if(!cp) return;
-    const text = msgFor(cp.dataset.copy);
+    const [i, j] = String(cp.dataset.copy).split('-');
+    const text = msgFor(i, j);
     if(!text) return;
     const ok = await copyText(text);
     toast(ok ? 'Message copied' : 'Could not copy — select the text and copy it manually');
@@ -1576,15 +1569,14 @@ async function adminPanel(){
       // access is tied to the username, nobody could undo it from in here.
       if(k === me.toLowerCase()) return toast("That's your own account — you can't delete it.");
       if(!confirm(`Delete ${k}? Their offers come off the board.`)) return;
-      await push(m => {
-        if(m.users[k]) m.users[k].banned = true;
-        m.offers = m.offers.filter(o => o.user!==k);
-        m.reports.forEach(r => { if(r.target.toLowerCase()===k) r.status='closed'; });
-      });
+      const done = await patch('setBanned', { key:k, banned:true });
+      if(!done) return;
+      await push(m => { m.reports.forEach(r => { if(r.target.toLowerCase()===k) r.status='closed'; }); });
       box.remove(); toast(`${k} deleted`); render(); adminPanel();
     }
     if(un){
-      await push(m => { if(m.users[un.dataset.unban]) m.users[un.dataset.unban].banned = false; });
+      const done = await patch('setBanned', { key: un.dataset.unban, banned:false });
+      if(!done) return;
       box.remove(); toast('Account restored'); render(); adminPanel();
     }
     if(cl){
@@ -1593,120 +1585,6 @@ async function adminPanel(){
     }
   });
 }
-
-/* =========================================================
-   RS collection lookup — pulls cards directly from Real Sports
-   by username. Only available for FC (the only RS sport here).
-   Results feed straight into showMatches() so the UX is identical
-   to the screenshot path.
-   ========================================================= */
-function rsLookupVisible(){ return sport === 'FC' || sport === 'CFB' || sport === 'NFL'; }
-
-function updateRsLookupVisibility(){
-  const wrap = $('#rs-lookup-wrap');
-  const div  = $('#rs-divider');
-  if(rsLookupVisible()){
-    wrap.classList.remove('hide');
-    div.classList.remove('hide');
-    $('#rs-go').textContent = `Pull my ${SPORTS[sport]} cards from Real`;
-  } else {
-    wrap.classList.add('hide');
-    div.classList.add('hide');
-  }
-}
-
-function rsMsg(text, isError){
-  const el = $('#rs-msg');
-  el.textContent = text || '';
-  el.classList.toggle('hide', !text);
-  el.style.color = isError ? 'var(--bad)' : 'var(--mute)';
-}
-
-$('#rs-go').addEventListener('click', async () => {
-  const btn = $('#rs-go');
-  btn.disabled = true;
-  rsMsg('');
-
-  // Merge player data across chunks: sum totals + totalValue
-  const merged = new Map(); // name → {name, total, totalValue}
-  function mergeChunk(players){
-    for(const p of players){
-      if(!p.name) continue;
-      if(!merged.has(p.name)){
-        merged.set(p.name, { name:p.name, total:0, totalValue:0 });
-      }
-      const m = merged.get(p.name);
-      m.total += p.total || 0;
-      m.totalValue = Math.round((m.totalValue + (p.totalValue || 0)) * 10) / 10;
-    }
-  }
-
-  try{
-    let start = 0, hashId = null, chunk = 0;
-    while(true){
-      chunk++;
-      btn.innerHTML = `<span class="spin"></span> Fetching cards${chunk > 1 ? ' ('+chunk+')' : ''}…`;
-      const qs = `/api/collection?username=${encodeURIComponent(me)}&sport=${encodeURIComponent(sport)}&start=${start}` +
-        (hashId ? `&hashId=${encodeURIComponent(hashId)}` : '');
-
-      // On first chunk, check cache before staggering
-      if(chunk === 1){
-        const probe = await fetch(qs);
-        const cached = probe.headers.get('x-cache') === 'HIT';
-        if(!cached){
-          // Not cached — stagger to spread RS load across burst of users
-          const staggerMs = Math.floor(Math.random() * 10000);
-          btn.innerHTML = `<span class="spin"></span> Starting in ${Math.ceil(staggerMs/1000)}s…`;
-          await new Promise(r => setTimeout(r, staggerMs));
-          btn.innerHTML = `<span class="spin"></span> Fetching cards…`;
-        }
-        const data = await probe.json();
-        if(!probe.ok){
-          rsMsg((data.error || 'Could not load cards — try again.') + (data.detail ? ' (' + data.detail + ')' : ''), true);
-          return;
-        }
-        mergeChunk(data.players || []);
-        hashId = data.hashId || hashId;
-        if(!data.hasMore) break;
-        start = data.nextStart;
-        continue;
-      }
-
-      const res = await fetch(qs);
-      const data = await res.json();
-      if(!res.ok){
-        rsMsg((data.error || 'Could not load cards — try again.') + (data.detail ? ' (' + data.detail + ')' : ''), true);
-        return;
-      }
-      mergeChunk(data.players || []);
-      hashId = data.hashId || hashId;
-      if(!data.hasMore) break;
-      start = data.nextStart;
-      if(chunk > 50) break;
-    }
-
-    const raw = [...merged.values()].map(p => ({
-      name:       p.name,
-      boost:      p.totalValue || null,
-      owned:      p.total,
-      totalValue: p.totalValue,
-    }));
-
-    if(!raw.length){
-      rsMsg(`No FC cards found for "${me}" on Real Sports.`, true);
-      return;
-    }
-
-    rsMsg('');
-    showMatches(raw);
-  }catch(e){
-    console.error(e);
-    rsMsg('Could not reach the server — check your connection and try again.', true);
-  }finally{
-    btn.disabled = false;
-    btn.textContent = 'Pull my cards';
-  }
-});
 
 /* =========================================================
    Boot
