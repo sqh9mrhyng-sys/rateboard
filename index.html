@@ -1193,14 +1193,14 @@ async function showMatches(raw){
           <span>
             <span class="player">${esc(h.player)}</span><br>
             <span class="who">buying: ${esc(h.buyer)}</span>
-            ${h.totalValue != null ? `<br><span class="who" style="font-size:11.5px">boost: ${h.totalValue >= 1000 ? (h.totalValue/1000).toFixed(1)+'k' : h.totalValue}</span>` : ''}
+            ${h.totalValue != null ? `<br><span class="who" style="font-size:11.5px">rating: ${h.totalValue >= 1000 ? (h.totalValue/1000).toFixed(1)+'k' : h.totalValue}</span>` : ''}
           </span>
           <button class="btn-ghost" data-rep="${esc(h.buyer)}">Report</button>
         </div>
         <div class="ownrow">
           <div>
-            <label for="own-${i}">You own</label>
-            <input id="own-${i}" data-owned="${i}" class="field num" type="number" inputmode="numeric" min="0" step="1" value="${h.owned!=null?h.owned:''}" placeholder="#">
+            <label for="own-${i}">Card count</label>
+            <input id="own-${i}" data-owned="${i}" class="field num" type="number" value="${h.owned!=null?h.owned:''}" readonly style="opacity:0.6;cursor:default">
           </div>
         </div>
         <div class="note" data-msg="${i}" style="margin-top:6px"></div>
@@ -1226,23 +1226,15 @@ async function showMatches(raw){
     const msgEl = box.querySelector(`[data-msg="${i}"]`);
     const copyBtn = box.querySelector(`[data-copy="${i}"]`);
     const n = +ownedInput.value;
-    if(!ownedInput.value || !(n > 0)){
-      msgEl.textContent = 'Enter how many you own to generate a message.';
-      copyBtn.disabled = true;
-      return null;
-    }
     const boost = rows[i].boost || 0;
     const total = Math.round(boost * rows[i].rate * 100) / 100;
     const text = `i have ${n} ${rows[i].player} offer ${total}`;
     msgEl.textContent = text;
-    copyBtn.disabled = false;
-    return text;
+    copyBtn.disabled = !(n > 0);
+    return n > 0 ? text : null;
   };
 
-  rows.forEach((h,i) => {
-    msgFor(i);
-    box.querySelector(`[data-owned="${i}"]`).addEventListener('input', () => msgFor(i));
-  });
+  rows.forEach((_,i) => msgFor(i));
 
   box.addEventListener('click', async e => {
     const cp = e.target.closest('[data-copy]');
