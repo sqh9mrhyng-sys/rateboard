@@ -300,7 +300,7 @@
     <div class="cols">
 
       <!-- board -->
-      <section class="panel">
+      <section class="panel" id="board-panel">
         <div class="panel-hd">
           <h2 id="board-title">Standing buy offers</h2>
           <span class="count" id="board-count"></span>
@@ -372,6 +372,7 @@
             </div>
             <input type="file" id="s-file" accept="image/*" multiple class="hide">
             <button id="s-exclude" class="btn-ghost">Exclude players/teams</button>
+            <button id="s-hide-board" class="btn-ghost">Hide the buy offers board</button>
             <div id="s-files" class="note"></div>
             <button id="s-go" class="btn hide">Read screenshots</button>
           </div>
@@ -704,6 +705,8 @@ function enter(){
   }
   applyMinimumToForm();
   updateRsLookupVisibility();
+  applyBoardVisibility();
+  loadBlockedRoster(sport).then(applyMinimumToForm);
   render();
 }
 
@@ -727,6 +730,43 @@ function minimumFor(sportKey, player){
     .filter(x => x.sport === sportKey && samePlayer(x.player, player));
   if(!hits.length) return null;
   return hits.sort((a,b) => b.rate - a.rate)[0];
+}
+
+/* =========================================================
+   Off-limits teams
+   ---------------------------------------------------------
+   Nobody can post a buy offer on one of these, and a seller
+   holding one gets pointed straight at the house buyer.
+   ========================================================= */
+const BLOCKED_TEAM = {
+  NFL: {
+    code:  'SEA',
+    label: 'Seahawks',
+    buyer: 'dennis',
+    link:  'https://www.realapp.com/JaHBFYjOBj8igvOr/178951257852600001'
+  }
+};
+
+const blockedRoster = {};   // sport -> [name, ...]
+
+async function loadBlockedRoster(sportKey){
+  const cfg = BLOCKED_TEAM[sportKey];
+  if(!cfg) return [];
+  if(blockedRoster[sportKey]) return blockedRoster[sportKey];
+  try{
+    const r = await fetch(`/api/players?sport=${encodeURIComponent(sportKey)}&team=${encodeURIComponent(cfg.code)}`);
+    const d = await r.json();
+    blockedRoster[sportKey] = Array.isArray(d.players) ? d.players : [];
+  }catch(e){ blockedRoster[sportKey] = []; }
+  return blockedRoster[sportKey];
+}
+
+// The config for a player who is off limits, or null. Same strict name rule
+// as the minimums, so a block on one player never catches a different one.
+function blockedFor(sportKey, player){
+  const cfg = BLOCKED_TEAM[sportKey];
+  if(!cfg) return null;
+  return (blockedRoster[sportKey] || []).some(n => samePlayer(n, player)) ? cfg : null;
 }
 
 /* =========================================================
@@ -758,6 +798,12 @@ function applyMinimumToForm(){
     const keep = +$('#b-rate').value || 20;
     $('#b-rate').innerHTML = rateOptions(keep);
     note.classList.add('hide');
+  }
+  const blk = player.length >= 2 ? blockedFor(sport, player) : null;
+  $('#b-post').disabled = !!blk;
+  if(blk){
+    note.textContent = `${blk.label} players aren't open here — ${blk.buyer} buys all of them.`;
+    note.classList.remove('hide');
   }
 }
 
@@ -796,6 +842,8 @@ $('#sport').addEventListener('change', e => {
   closeSuggest();
   applyMinimumToForm();
   updateRsLookupVisibility();
+  applyBoardVisibility();
+  loadBlockedRoster(sport).then(applyMinimumToForm);
   render();
 });
 
@@ -834,7 +882,9 @@ async function runSuggest(q){
   try{
     const r = await fetch(`/api/players?sport=${encodeURIComponent(sport)}&q=${encodeURIComponent(q)}`);
     const data = await r.json();
-    const items = data.players || [];
+    const cfg = BLOCKED_TEAM[sport];
+    const items = (data.players || [])
+      .filter(it => !cfg || String(it.team || '').toUpperCase() !== cfg.code);
     const note = !items.length
       ? (data.building ? 'Still building the player list — try again in a bit' : 'No matches')
       : (data.building ? 'Still indexing — more players will show up soon' : null);
@@ -888,7 +938,24 @@ function setMode(m){
   $('#pane-buy').classList.toggle('hide', m!=='buy');
   $('#pane-mine').classList.toggle('hide', m!=='buy');
   $('#pane-sell').classList.toggle('hide', m!=='sell');
+  applyBoardVisibility();
 }
+
+/* The offer board is the whole point of the buyer tab, so this only ever
+   hides it while you're on the seller side. The choice sticks per browser. */
+const BOARD_HIDDEN = 'ratebrd_board_hidden';
+function boardHidden(){
+  try{ return localStorage.getItem(BOARD_HIDDEN) === '1'; }catch(e){ return false; }
+}
+function applyBoardVisibility(){
+  const off = boardHidden();
+  $('#board-panel').classList.toggle('hide', mode === 'sell' && off);
+  $('#s-hide-board').textContent = `${off ? 'Show' : 'Hide'} ${SPORTS[sport]} buy offers`;
+}
+$('#s-hide-board').addEventListener('click', () => {
+  try{ localStorage.setItem(BOARD_HIDDEN, boardHidden() ? '0' : '1'); }catch(e){}
+  applyBoardVisibility();
+});
 
 /* =========================================================
    Render
@@ -951,6 +1018,9 @@ $('#b-post').addEventListener('click', async () => {
   const link = $('#b-link').value.trim();
   if(player.length < 2) return toast('Enter a player name.');
   if(!validCommentLink(link)) return toast('Paste the link to your comment under the pinned post first.');
+
+  const blk = blockedFor(sport, player);
+  if(blk) return toast(`${blk.label} players can't be posted — ${blk.buyer} buys all of them.`);
 
   const min = minimumFor(sport, player);
   if(min && rate < min.rate){
@@ -1147,10 +1217,14 @@ async function showMatches(raw){
                            .map(p => ({...p, name: asciiName(p.name)}))
                            .filter(p => p.name);
 
+  await loadBlockedRoster(sport);
   const excludes = loadExcludes();
-  const hits = [], noBuyer = [];
+  const hits = [], noBuyer = [], blocked = [];
   for(const p of players){
     if(isExcluded(p.name, excludes)) continue;
+    // Off-limits team: one buyer takes all of them, so it never goes on the board.
+    const blk = blockedFor(sport, p.name);
+    if(blk){ blocked.push({ name:p.name, cfg:blk }); continue; }
     // Everyone standing on this player, best price first — not just the top one.
     const buyers = live.filter(o => samePlayer(o.player, p.name))
                        .sort((a,b) => b.rate - a.rate)
@@ -1203,6 +1277,19 @@ async function showMatches(raw){
           </div>`).join('')}
       </div>`).join('')}</div>`
     : `<p class="nohit">Read ${players.length} player${players.length===1?'':'s'}, but none of them have a standing ${SPORTS[sport]} offer right now. Check back, or switch sports if the pull was for a different one.</p>`);
+
+  if(blocked.length){
+    const cfg = blocked[0].cfg;
+    const bar = document.createElement('div');
+    bar.style.marginTop = '14px';
+    bar.innerHTML = `<div class="hit" style="display:block">
+      <div class="bidder-hd"><span class="player">${esc(cfg.label)} cards</span><span class="who">${blocked.length}</span></div>
+      <p class="note">${esc(cfg.buyer)} buys every ${esc(cfg.label)} card — message him direct for these, they don't go on the board.</p>
+      <div class="buyers">${blocked.map(b=>`<span class="buyer">${esc(b.name)}</span>`).join('')}</div>
+      <div class="hitacts"><a class="btn-ghost" href="${esc(cfg.link)}" target="_blank" rel="noopener">Message ${esc(cfg.buyer)}</a></div>
+    </div>`;
+    box.querySelector('.panel-bd').appendChild(bar);
+  }
 
   if(quicksells.length){
     const bar = document.createElement('div');
