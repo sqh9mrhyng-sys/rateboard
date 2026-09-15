@@ -1,0 +1,1719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rate Board — CFB / FC / NFL card offers</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --field:#1B2130;
+    --panel:#232B3D;
+    --panel-2:#2C3549;
+    --line:#3A4459;
+    --bone:#E9E7E1;
+    --mute:#98A2B8;
+    --accent:#E8A33D;
+    --accent-ink:#1B2130;
+    --bad:#F0685E;
+    --good:#4FD1A5;
+    --r:10px;
+  }
+  [data-sport="FC"]{ --accent:#3FD0A6; }
+  [data-sport="NFL"]{ --accent:#7E9BFF; }
+
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--field);
+    color:var(--bone);
+    font-family:'Archivo',ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:15px;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  .num{font-variant-numeric:tabular-nums;letter-spacing:-0.02em}
+  button,input,select,textarea{font:inherit;color:inherit}
+  button{cursor:pointer;border:none;background:none}
+  a{color:var(--accent)}
+
+  /* ---------- shell ---------- */
+  .topbar{
+    display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:16px;
+    padding:14px 22px;border-bottom:1px solid var(--line);
+    background:rgba(27,33,48,.94);position:sticky;top:0;z-index:40;backdrop-filter:blur(6px);
+  }
+  .brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:-0.02em}
+  .pip{width:11px;height:11px;border-radius:3px;background:var(--accent);transition:background .25s}
+  .sportpick{position:relative}
+  .sportpick select{
+    appearance:none;background:var(--panel);border:1px solid var(--line);color:var(--bone);
+    padding:9px 40px 9px 16px;border-radius:999px;font-weight:600;letter-spacing:.01em;
+  }
+  .sportpick select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .sportpick .caret{position:absolute;right:16px;top:50%;transform:translateY(-50%);pointer-events:none;color:var(--mute)}
+  .whoami{justify-self:end;display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--mute)}
+  .whoami b{color:var(--bone);font-weight:600}
+  .linkbtn{color:var(--mute);text-decoration:underline;text-underline-offset:3px;font-size:13.5px}
+  .linkbtn:hover{color:var(--bone)}
+
+  .wrap{max-width:1180px;margin:0 auto;padding:22px}
+  .cols{display:grid;grid-template-columns:1fr 380px;gap:22px;align-items:start}
+  @media(max-width:900px){.cols{grid-template-columns:1fr}}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+  .panel-hd{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+  .panel-hd h2{margin:0;font-size:16px;font-weight:600;letter-spacing:-0.01em}
+  .panel-hd .count{color:var(--mute);font-size:13px}
+  .panel-bd{padding:18px}
+
+  /* ---------- offer board ---------- */
+  .board{list-style:none;margin:0;padding:0}
+  .row{display:grid;grid-template-columns:96px 1fr auto;gap:14px;align-items:center;padding:12px 18px;border-bottom:1px solid var(--line)}
+  .row:last-child{border-bottom:none}
+  .rate{font-size:27px;font-weight:800;line-height:1;color:var(--accent)}
+  .rate small{font-size:13px;font-weight:500;color:var(--mute);margin-left:2px}
+  .who{font-size:13px;color:var(--mute)}
+  .player{font-weight:600;letter-spacing:-0.01em}
+  .rowacts{display:flex;gap:8px;align-items:center}
+  .mine{background:linear-gradient(90deg,color-mix(in srgb,var(--accent) 12%,transparent),transparent 60%)}
+
+  .empty{padding:34px 18px;color:var(--mute);text-align:center}
+  .empty b{display:block;color:var(--bone);font-weight:600;margin-bottom:4px}
+
+  /* ---------- controls ---------- */
+  label{display:block;font-size:13px;color:var(--mute);margin-bottom:6px}
+  .field{width:100%;background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:11px 13px}
+  .field:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:transparent}
+  select.field{appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--mute) 50%),linear-gradient(135deg,var(--mute) 50%,transparent 50%);background-position:calc(100% - 18px) 50%,calc(100% - 13px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+  .stack>*+*{margin-top:14px}
+  .btn{background:var(--accent);color:var(--accent-ink);font-weight:600;padding:11px 18px;border-radius:8px;width:100%;transition:filter .15s}
+  .btn:hover{filter:brightness(1.08)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn-ghost{background:transparent;border:1px solid var(--line);color:var(--bone);padding:7px 12px;border-radius:7px;font-size:13px}
+  .btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
+  .btn-danger:hover{border-color:var(--bad);color:var(--bad)}
+  .btn-lg{padding:26px;font-size:17px;border-radius:12px;text-align:center}
+
+  .seg{display:flex;background:var(--panel-2);border:1px solid var(--line);border-radius:999px;padding:3px;gap:3px}
+  .seg button{flex:1;padding:9px;border-radius:999px;font-weight:600;font-size:14px;color:var(--mute)}
+  .seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+
+  .note{font-size:12.5px;color:var(--mute);line-height:1.45}
+  .minnote{color:var(--accent);margin:6px 0 0}
+  .warn{background:color-mix(in srgb,var(--bad) 13%,transparent);border:1px solid color-mix(in srgb,var(--bad) 40%,transparent);border-radius:8px;padding:11px 13px;font-size:12.5px;line-height:1.45}
+  /* The one thing on the buyer screen nobody is allowed to miss. */
+  .alarm{background:color-mix(in srgb,var(--bad) 22%,transparent);border:2px solid var(--bad);border-radius:8px;
+    padding:13px 15px;font-size:13.5px;font-weight:600;line-height:1.5;letter-spacing:.01em;text-transform:uppercase;color:var(--bone)}
+
+  /* ---------- example screenshots ---------- */
+  .examples{display:flex;flex-direction:column;gap:12px}
+  .examples figure{margin:0}
+  .examples a{display:block}
+  .examples img{display:block;width:100%;max-width:100%;border-radius:8px;border:1px solid var(--line)}
+  .examples figcaption{font-size:12px;color:var(--mute);margin-top:6px}
+  .tapfull{opacity:.75}
+
+  /* ---------- RS collection lookup ---------- */
+  .rs-divider{display:flex;align-items:center;gap:10px;color:var(--mute);font-size:12.5px;margin:2px 0}
+  .rs-divider::before,.rs-divider::after{content:'';flex:1;height:1px;background:var(--line)}
+
+  /* ---------- seller results: owned / boost inputs ---------- */
+  .ownrow{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px}
+  .ownrow label{margin:0 0 4px}
+  .ownrow input{width:100%}
+  .hitacts{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+  .hitacts .btn-ghost{flex:1 1 auto;text-align:center}
+
+  /* ---------- player/team autocomplete ---------- */
+  .suggest{list-style:none;margin:6px 0 0;padding:4px;position:absolute;left:0;right:0;top:100%;z-index:50;
+    background:var(--panel-2);border:1px solid var(--line);border-radius:8px;max-height:230px;overflow:auto;
+    box-shadow:0 10px 24px rgba(0,0,0,.4)}
+  .suggest li{padding:8px 10px;border-radius:6px;cursor:pointer;font-size:13.5px;display:flex;align-items:center;gap:7px}
+  .suggest li .dot{color:var(--mute);font-size:11px}
+  .suggest li .team{color:var(--mute);font-size:12px;margin-left:auto}
+  .suggest li[aria-selected="true"],.suggest li:hover{background:color-mix(in srgb,var(--accent) 18%,transparent)}
+  .suggest li.hint{color:var(--mute);cursor:default}
+  .suggest li.hint:hover{background:none}
+
+  /* ---------- gate ---------- */
+  .gate{max-width:430px;margin:8vh auto;padding:22px}
+  .gate h1{font-size:31px;font-weight:800;letter-spacing:-0.03em;margin:0 0 6px}
+  .gate .sub{color:var(--mute);margin:0 0 26px}
+
+  /* ---------- modal ---------- */
+  .scrim{position:fixed;inset:0;background:rgba(10,13,20,.72);display:flex;align-items:center;justify-content:center;padding:20px;z-index:60}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:100%;max-width:520px;max-height:86vh;overflow:auto}
+  .modal .panel-hd{position:sticky;top:0;background:var(--panel)}
+
+  /* ---------- admin listing stats ---------- */
+  .statrow{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+  .stat{background:var(--panel-2);border:1px solid var(--line);border-radius:9px;padding:12px 14px}
+  .stat b{display:block;font-size:26px;font-weight:800;line-height:1.1;color:var(--accent)}
+  .stat span{font-size:12px;color:var(--mute)}
+  .subhd{margin:18px 0 0;font-size:13px;font-weight:600;color:var(--mute)}
+  .buyers{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .buyer{background:var(--panel-2);border:1px solid var(--line);border-radius:999px;
+    padding:4px 10px;font-size:12.5px;color:var(--mute)}
+  .buyer b{color:var(--accent);font-weight:700}
+  .killer{color:var(--mute);font-size:15px;line-height:1;padding:2px 2px 2px 6px;border-radius:4px}
+  .killer:hover{color:var(--bad)}
+
+  .hit{display:grid;grid-template-columns:78px 1fr auto;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid var(--line)}
+  .hit:last-child{border-bottom:none}
+  .nohit{color:var(--mute);font-size:13px}
+
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--bone);color:var(--field);padding:11px 18px;border-radius:999px;font-weight:600;font-size:14px;z-index:80}
+  .spin{display:inline-block;width:15px;height:15px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  @media(prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+  .hide{display:none!important}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+  /* =========================================================
+     Phones. Most people hit this board from their phone, right
+     after screenshotting the app, so this is the real layout.
+     ========================================================= */
+  @media(max-width:900px){
+    /* The reason you opened the board — post an offer, or scan your
+       stats — goes above the list instead of under all of it. */
+    .cols > aside{order:-1}
+  }
+
+  @media(max-width:640px){
+    body{font-size:15px}
+    html,body{overflow-x:hidden}
+
+    /* ---- top bar: brand + sport on one line, account row beneath ---- */
+    .topbar{grid-template-columns:auto 1fr;gap:10px;row-gap:9px;padding:10px 14px}
+    .brand{font-size:15px;white-space:nowrap}
+    .brand .pip{width:9px;height:9px}
+    .sportpick{justify-self:end}
+    .sportpick select{padding:9px 34px 9px 14px;font-size:14px}
+    .sportpick .caret{right:13px}
+    .whoami{grid-column:1/-1;justify-self:stretch;justify-content:space-between;
+      gap:6px;font-size:13px;border-top:1px solid var(--line);padding-top:8px}
+    .sm-hide{display:none}          /* just the name, not "Signed in as …" */
+    .linkbtn{padding:4px 0;font-size:13px}
+
+    /* ---- page chrome: less padding, more room for content ---- */
+    .wrap{padding:14px}
+    .cols{gap:14px}
+    .panel-hd{padding:13px 14px}
+    .panel-bd{padding:14px}
+    .gate{padding:16px;margin:5vh auto}
+    .gate h1{font-size:27px}
+
+    /* ---- 16px keeps iOS from zooming the page in on focus ---- */
+    .field,input,select,textarea{font-size:16px}
+
+    /* ---- thumb-sized controls ---- */
+    .btn{padding:14px 18px}
+    .btn-lg{padding:22px}
+    .btn-ghost{padding:10px 13px;font-size:13.5px;min-height:42px}
+    .seg button{padding:12px}
+
+    /* ---- offer rows: buttons drop to their own line ---- */
+    .row{grid-template-columns:70px 1fr;gap:4px 12px;padding:13px 14px}
+    .rate{font-size:24px}
+    .rowacts{grid-column:1/-1;justify-content:flex-end;margin-top:4px}
+    .empty{padding:26px 14px}
+
+    /* ---- modals: use the whole screen ---- */
+    .scrim{padding:10px}
+    .modal{max-height:92vh}
+    .hit{grid-template-columns:70px 1fr}
+    .hit .rowacts{grid-column:1/-1;justify-content:flex-end}
+
+    /* ---- autocomplete: leave room for the on-screen keyboard ---- */
+    .suggest{max-height:42vh}
+    .suggest li{padding:11px 10px}
+
+    /* ---- example shots are tall phone screenshots: cap them so they don't
+       turn the panel into a mile of scrolling. Tap opens them full size. ---- */
+    .examples img{max-height:400px;width:auto;margin:0 auto}
+  }
+
+  /* Very narrow phones — stop the two number fields from squeezing. */
+  @media(max-width:380px){
+    .ownrow{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body data-sport="CFB">
+
+<!-- ============ LOGIN GATE ============ -->
+<div id="gate" class="gate">
+  <h1>Rate Board</h1>
+  <p class="sub">Standing buy offers for CFB, FC and NFL cards. Post what you'll pay, or scan your stats and see who's paying most.</p>
+  <div class="panel">
+    <div class="panel-bd stack">
+      <div>
+        <label for="g-user">Your in-game username</label>
+        <input id="g-user" class="field" autocomplete="off" spellcheck="false" placeholder="Exactly as it appears in the app">
+      </div>
+      <div>
+        <label for="g-pass">Board password</label>
+        <input id="g-pass" class="field" type="password" autocomplete="current-password" placeholder="At least 4 characters">
+      </div>
+      <div class="warn">Don't reuse your real account password. This password is only for this board and it protects nothing else. Pick something you use nowhere else.</div>
+      <div id="g-msg" class="note hide"></div>
+      <button id="g-go" class="btn">Continue</button>
+      <p class="note">New username signs you up. Returning username signs you in.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============ APP ============ -->
+<div id="app" class="hide">
+  <header class="topbar">
+    <div class="brand"><span class="pip"></span> Rate Board</div>
+    <div class="sportpick">
+      <select id="sport" aria-label="Sport">
+        <option value="CFB">College football</option>
+        <option value="FC">FC</option>
+        <option value="NFL">NFL</option>
+      </select>
+      <span class="caret">▾</span>
+    </div>
+    <div class="whoami">
+      <span><span class="sm-hide">Signed in as </span><b id="me"></b></span>
+      <button class="linkbtn" id="open-report">Report a user</button>
+      <button class="linkbtn hide" id="open-min">Lists</button>
+      <button class="linkbtn hide" id="open-admin">Admin</button>
+      <button class="linkbtn" id="signout">Sign out</button>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <div id="offline" class="warn hide" style="margin-bottom:18px"></div>
+    <div class="cols">
+
+      <!-- board -->
+      <section class="panel">
+        <div class="panel-hd">
+          <h2 id="board-title">Standing buy offers</h2>
+          <span class="count" id="board-count"></span>
+        </div>
+        <ul class="board" id="board"></ul>
+      </section>
+
+      <!-- side -->
+      <aside class="stack">
+        <div class="seg" role="group" aria-label="Mode">
+          <button id="tab-buy" aria-pressed="true">Buyer</button>
+          <button id="tab-sell" aria-pressed="false">Seller</button>
+        </div>
+
+        <!-- BUYER -->
+        <div id="pane-buy" class="panel">
+          <div class="panel-hd"><h2>Post a buy offer</h2></div>
+          <div class="panel-bd stack">
+            <div class="alarm">When done grinding please remove listing, if listing is not removed in a timely manner after you're done buying you will be banned</div>
+            <div class="warn" id="b-instructions"></div>
+            <button id="b-guide-toggle" class="btn-ghost" aria-expanded="false">PICTURE GUIDES OF HOW TO SUBMIT COMMENT</button>
+            <div id="b-guide" class="examples hide">
+              <figure>
+                <a href="examples/buy-1-open-post.jpg" target="_blank" rel="noopener"><img src="examples/buy-1-open-post.jpg" alt="The buy offer form with the this post link circled"></a>
+                <figcaption>1. Tap "this post" to open the post on Real.</figcaption>
+              </figure>
+              <figure>
+                <a href="examples/buy-2-write-comment.jpg" target="_blank" rel="noopener"><img src="examples/buy-2-write-comment.jpg" alt="An example comment on Real showing a player card and the rate offered"></a>
+                <figcaption>2. Comment with your card and your rate, like this.</figcaption>
+              </figure>
+              <figure>
+                <a href="examples/buy-3-paste-link.jpg" target="_blank" rel="noopener"><img src="examples/buy-3-paste-link.jpg" alt="The buy offer form with the comment link box and Post offer button circled"></a>
+                <figcaption>3. Copy your comment's link, paste it below, then Post offer.</figcaption>
+              </figure>
+            </div>
+            <div>
+              <label for="b-player">Player</label>
+              <div style="position:relative">
+                <input id="b-player" class="field" autocomplete="off" placeholder="e.g. Julian Sayin" role="combobox" aria-expanded="false" aria-autocomplete="list">
+                <ul id="b-suggest" class="suggest hide" role="listbox"></ul>
+              </div>
+            </div>
+            <div>
+              <label for="b-rate">Rate you'll pay</label>
+              <select id="b-rate" class="field num"></select>
+              <p class="note minnote hide" id="b-min-note"></p>
+            </div>
+            <div>
+              <label for="b-link">Your comment link</label>
+              <input id="b-link" class="field" autocomplete="off" placeholder="https://www.realapp.com/...">
+            </div>
+            <button id="b-post" class="btn">Post offer</button>
+            <p class="note">Rates are per 1. Posting the same player twice replaces your earlier offer. A valid comment link is required — sellers use it to reach you.</p>
+          </div>
+        </div>
+
+        <div id="pane-mine" class="panel">
+          <div class="panel-hd"><h2>Your buys</h2><span class="count" id="mine-count"></span></div>
+          <ul class="board" id="mine"></ul>
+        </div>
+
+        <!-- SELLER -->
+        <div id="pane-sell" class="panel hide">
+          <div class="panel-hd"><h2>Scan your stats</h2></div>
+          <div class="panel-bd stack">
+            <div id="rs-lookup-wrap" class="hide">
+              <button id="rs-go" class="btn">Pull my cards from Real</button>
+              <div id="rs-msg" class="note hide" style="margin-top:6px"></div>
+            </div>
+            <div id="rs-divider" class="rs-divider hide">or upload screenshots</div>
+            <div class="alarm">Screenshot reader down, fix will be out tonight</div>
+            <div class="warn">to upload stats, go to the card page on real, on the top of the screen theres a button that says "stats" click that, and take a screenshot (take as many as you want) and submit below, if you dont know where to go or what the stats page should look like, expand the screenshots below, if theres players you dont want to sell select them or just ignore the options of people buying them</div>
+            <button id="s-examples-toggle" class="btn-ghost" aria-expanded="false">Show example screenshots</button>
+            <div id="s-examples" class="examples hide">
+              <figure>
+                <a href="examples/find-stats-button.jpg" target="_blank" rel="noopener"><img src="examples/find-stats-button.jpg" alt="Card page in the Real app with the Stats button circled at the top"></a>
+                <figcaption>On the card page, tap "Stats" at the top. <span class="tapfull">Tap the image for full size.</span></figcaption>
+              </figure>
+              <figure>
+                <a href="examples/stats-list.jpg" target="_blank" rel="noopener"><img src="examples/stats-list.jpg" alt="Top players list showing boost value for each player"></a>
+                <figcaption>This is what the stats page looks like — screenshot this list.</figcaption>
+              </figure>
+            </div>
+            <input type="file" id="s-file" accept="image/*" multiple class="hide">
+            <button id="s-pick" class="btn btn-lg">Upload stats screenshots</button>
+            <button id="s-exclude" class="btn-ghost">Exclude players/teams</button>
+            <div id="s-files" class="note"></div>
+            <button id="s-go" class="btn hide">Read screenshots</button>
+            <p class="note">Reads the player names off your screenshots and shows the highest standing offer for each, in the sport you have selected.</p>
+          </div>
+        </div>
+      </aside>
+
+    </div>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   Storage — the market (shared across everyone) lives in Cloudflare KV,
+   reached through a Pages Function at /api/kv. The session key is
+   per-browser, so it just stays in localStorage.
+   ========================================================= */
+const KEY = 'ratebrd_market_v1';
+const SESSION = 'ratebrd_session';    // legacy: bare username key
+const DEVICE  = 'ratebrd_device_v1';  // { key, name, ts } — remembers this browser
+const MIN_PASS = 4;
+const ADMINS = ['dennis'];            // <-- put your username(s) here
+const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL' };
+
+// The post buyers must comment under before they can post a buy offer —
+// this is the link shown to them and where "this post" points.
+const TARGET_LINK = 'https://www.realapp.com/NeH4tgFKo9k';
+// realapp's own comment permalinks use a different (longer) internal post ID
+// than the post's share link above — this is that ID. A buyer's submitted
+// comment link is checked against THIS, since that's what actually shows up
+// in a real comment URL under this post (e.g. .../JaHBFYjOBj8igvOr/<comment id>).
+const VERIFY_POST_ID = 'JaHBFYjOBj8igvOr';
+const TARGET_POST_PREFIX = 'https://www.realapp.com/' + VERIFY_POST_ID + '/';
+// 8 is the bottom tier, shown as "minimum". It's offered on any player who
+// doesn't have a floor set — where a floor exists it's filtered out, so a
+// player you've priced can never be picked up at the minimum tier.
+const MIN_TIER = 8;
+const RATES = (()=>{ const a=[MIN_TIER]; for(let r=10;r<=120;r+=5) a.push(r); return a; })();
+
+// True when the last read of the shared board failed to reach the server, as
+// opposed to reaching it and finding nothing. resume() needs to tell those
+// apart so a dropped connection doesn't look like a deleted account.
+let lastGetFailed = false;
+
+const S = {
+  async get(k){
+    if(k === SESSION){
+      try{ const v = localStorage.getItem(k); return v!=null ? {value:v} : null; }
+      catch(e){ return null; }
+    }
+    try{
+      const r = await fetch('/api/kv?key=' + encodeURIComponent(k));
+      if(!r.ok) throw new Error('bad response ' + r.status);
+      const data = await r.json();
+      lastGetFailed = false;
+      showConnBanner(false);
+      return data.value!=null ? {value:data.value} : null;
+    }catch(e){
+      console.error('storage get failed:', e);
+      lastGetFailed = true;
+      showConnBanner(true);
+      return null;
+    }
+  },
+  async set(k, v){
+    if(k === SESSION){
+      try{ localStorage.setItem(k, v); return true; }
+      catch(e){ return false; }
+    }
+    try{
+      const r = await fetch('/api/kv', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ key:k, value:v })
+      });
+      if(!r.ok) throw new Error('bad response ' + r.status);
+      showConnBanner(false);
+      return true;
+    }catch(e){
+      console.error('storage set failed:', e);
+      showConnBanner(true);
+      return false;
+    }
+  }
+};
+
+/* ---- remembered device ---------------------------------------------
+   Which account this browser is signed in as. Survives closing the tab,
+   quitting the browser and restarting the machine — it only goes away on
+   Sign out, or if the account is deleted from the board.
+   -------------------------------------------------------------------- */
+function saveDevice(key, name){
+  try{ localStorage.setItem(DEVICE, JSON.stringify({ key, name, ts: Date.now() })); }catch(e){}
+  try{ localStorage.setItem(SESSION, key); }catch(e){}   // keep the old key in step
+}
+function loadDevice(){
+  try{
+    const raw = localStorage.getItem(DEVICE);
+    if(raw){
+      const d = JSON.parse(raw);
+      if(d && d.key) return d;
+    }
+    const legacy = localStorage.getItem(SESSION);        // signed in before this existed
+    if(legacy) return { key: legacy, name: legacy, ts: 0 };
+  }catch(e){}
+  return null;
+}
+function clearDevice(){
+  try{ localStorage.removeItem(DEVICE); }catch(e){}
+  try{ localStorage.removeItem(SESSION); }catch(e){}
+}
+
+const blank = () => ({ users:{}, offers:[], reports:[], minimums:[], keeplist:[] });
+let market = blank();
+let me = null, sport = 'CFB', mode = 'buy', pending = [];
+
+async function pull(){
+  const r = await S.get(KEY);
+  market = r && r.value ? JSON.parse(r.value) : blank();
+  market.users ||= {}; market.offers ||= []; market.reports ||= []; market.minimums ||= []; market.keeplist ||= [];
+  return market;
+}
+
+// Whole-board write. Only safe when the read that came before it actually
+// worked: a failed read leaves `market` empty, and writing that back would
+// erase every account and listing on the board. So it refuses to write
+// anything it isn't sure about. Used for the admin-only edits; the everyday
+// ones go through patch() instead.
+async function push(mutate){
+  await pull();                       // re-read so we don't clobber other people
+  if(lastGetFailed || !Object.keys(market.users).length){
+    toast("Couldn't reach the board — nothing was changed. Try again.");
+    return false;
+  }
+  mutate(market);
+  const ok = await S.set(KEY, JSON.stringify(market));
+  if(!ok) toast('Could not save. Try again.');
+  return ok;
+}
+
+// Everyday edits — posting, changing and removing a listing, signing up.
+// The server does the read-and-write itself so nobody's listing gets written
+// over by someone else who loaded the page a moment earlier.
+async function patch(op, payload){
+  try{
+    const r = await fetch('/api/kv', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ op, ...payload })
+    });
+    const data = await r.json().catch(()=>({}));
+    if(!r.ok){
+      showConnBanner(true);
+      toast(data.error === 'board unavailable, nothing was changed'
+        ? "Couldn't reach the board — nothing was changed. Try again."
+        : (data.error || 'Could not save. Try again.'));
+      return false;
+    }
+    showConnBanner(false);
+    return true;
+  }catch(e){
+    console.error('patch failed:', e);
+    showConnBanner(true);
+    toast('Could not save — check your connection and try again.');
+    return false;
+  }
+}
+
+/* =========================================================
+   Helpers
+   ========================================================= */
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+// García -> garcia, Sánchez -> sanchez, "Luis Garcia Jr." -> "luis garcia"
+// Letters that don't decompose into "plain letter + accent mark" on their own,
+// so stripping accents alone would leave them behind or drop them entirely.
+const ODD_LETTERS = {
+  'Æ':'AE','æ':'ae','Œ':'OE','œ':'oe','ß':'ss','Ø':'O','ø':'o','Ł':'L','ł':'l',
+  'Đ':'D','đ':'d','Ð':'D','ð':'d','Þ':'Th','þ':'th','İ':'I','ı':'i',
+  'Ħ':'H','ħ':'h','Ŋ':'N','ŋ':'n','Ŧ':'T','ŧ':'t','Ŀ':'L','ŀ':'l'
+};
+const deOdd = s => String(s).replace(/[ÆæŒœßØøŁłĐđÐðÞþİıĦħŊŋŦŧĿŀ]/g, c => ODD_LETTERS[c] || c);
+
+// The plain-English form of a name, which is what gets stored and shown:
+// Mbappé -> Mbappe, Vinícius Júnior -> Vinicius Junior, Ødegaard -> Odegaard.
+// Spaces, periods, apostrophes and hyphens survive, so "Mark Fletcher Jr." and
+// "Coleman-Williams" still read the way they should.
+const asciiName = s => deOdd(s)
+  .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+  .replace(/[^A-Za-z0-9 .'\-]/g,' ')
+  .replace(/\s+/g,' ').trim();
+
+const norm = s => deOdd(s)
+  .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+  .toLowerCase()
+  .replace(/[^a-z0-9 ]/g,' ')
+  .replace(/\b(jr|sr|ii|iii|iv)\b/g,'')
+  .replace(/\s+/g,' ').trim();
+
+// Do two written names refer to the same player?
+//
+// Strict on purpose. Matching on "same surname + same first initial" used to
+// link Matthew Coleman to a Malachi Coleman offer, and would do the same to
+// Jeremiah/Jordan Smith or Isaac/Ivan Brown — a seller would end up quoting a
+// buyer a price for a player that buyer never asked for. So two full names
+// have to match outright. A bare surname still matches in either direction,
+// which is what makes an offer written as just "Haaland" work.
+function samePlayer(a, b){
+  const x = norm(a), y = norm(b);
+  if(!x || !y) return false;
+  if(x === y) return true;
+  const xw = x.split(' '), yw = y.split(' ');
+  if(xw.length === 1 || yw.length === 1) return xw[xw.length-1] === yw[yw.length-1];
+  return false;
+}
+
+async function hash(str){
+  const salted = 'rb1:' + str;
+  // crypto.subtle only exists in secure contexts. If it's missing (sandboxed
+  // iframe, file:// , plain http) fall back so signup still works.
+  if(window.crypto && crypto.subtle && crypto.subtle.digest){
+    try{
+      const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(salted));
+      return 's:' + [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
+    }catch(e){ /* fall through */ }
+  }
+  let h1 = 0x811c9dc5, h2 = 0x01000193;
+  for(let i=0;i<salted.length;i++){
+    const c = salted.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+    h2 = Math.imul(h2 + c, 0x85ebca6b) >>> 0;
+  }
+  return 'f:' + h1.toString(16).padStart(8,'0') + h2.toString(16).padStart(8,'0');
+}
+
+let toastT;
+function toast(msg){
+  document.querySelector('.toast')?.remove();
+  const d = document.createElement('div');
+  d.className='toast'; d.textContent = msg; d.setAttribute('role','status');
+  document.body.appendChild(d);
+  clearTimeout(toastT); toastT = setTimeout(()=>d.remove(), 3200);
+}
+
+function modal(title, bodyHTML){
+  const scrim = document.createElement('div');
+  scrim.className = 'scrim';
+  scrim.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+    <div class="panel-hd"><h2>${esc(title)}</h2><button class="btn-ghost" data-x>Close</button></div>
+    <div class="panel-bd stack">${bodyHTML}</div></div>`;
+  scrim.addEventListener('click', e => { if(e.target===scrim || e.target.hasAttribute('data-x')) scrim.remove(); });
+  document.addEventListener('keydown', function k(e){ if(e.key==='Escape'){ scrim.remove(); document.removeEventListener('keydown',k);} });
+  document.body.appendChild(scrim);
+  return scrim;
+}
+
+/* =========================================================
+   Gate
+   ========================================================= */
+$('#g-go').addEventListener('click', signIn);
+$('#g-pass').addEventListener('keydown', e => { if(e.key==='Enter') signIn(); });
+$('#g-user').addEventListener('keydown', e => { if(e.key==='Enter') $('#g-pass').focus(); });
+
+function gateMsg(t){ const m=$('#g-msg'); m.textContent=t; m.classList.toggle('hide', !t); m.style.color='var(--bad)'; }
+
+async function signIn(){
+  try{ await doSignIn(); }
+  catch(err){ console.error(err); gateMsg('Something broke: ' + (err && err.message ? err.message : err)); }
+}
+
+async function doSignIn(){
+  const u = $('#g-user').value.trim();
+  const p = $('#g-pass').value;
+  if(u.length < 2) return gateMsg('Enter your username.');
+  if(p.length < MIN_PASS) return gateMsg('Password needs at least ' + MIN_PASS + ' characters.');
+
+  const key = u.toLowerCase();
+  const h = await hash(p);
+  await pull();
+  const existing = market.users[key];
+
+  if(existing){
+    if(existing.banned) return gateMsg('This account has been removed from the board.');
+    if(existing.hash !== h) return gateMsg('Wrong password for that username.');
+  } else {
+    const ok = await patch('signup', { key, name:u, hash:h });
+    if(!ok) return gateMsg('Could not create the account. Try again.');
+    await pull();
+  }
+
+  me = market.users[key]?.name || u;
+  saveDevice(key, me);
+  enter();
+}
+
+// Remembering the device: the signed-in account is kept in localStorage, so
+// coming back to the board on this browser skips the login screen. A flaky
+// network no longer kicks you back to it either — the board is only treated
+// as "signed out" when we actually reached the server and the account is
+// gone or removed.
+async function resume(){
+  const d = loadDevice();
+  if(!d || !d.key) return false;
+
+  me = d.name || d.key;              // trust the device first, verify after
+  await pull();
+
+  if(lastGetFailed) return true;     // couldn't reach the board — stay signed in
+
+  const u = market.users[d.key];
+  if(!u || u.banned){ clearDevice(); me = null; return false; }
+
+  me = u.name;
+  saveDevice(d.key, me);             // refresh the stamp on every visit
+  return true;
+}
+
+function showConnBanner(broken){
+  const el = $('#offline');
+  if(!el) return;
+  el.classList.toggle('hide', !broken);
+  if(broken) el.textContent = "Couldn't reach the shared board right now. Your last action may not have saved — try again in a moment.";
+}
+
+function enter(){
+  $('#gate').classList.add('hide');
+  $('#app').classList.remove('hide');
+  $('#me').textContent = me;
+  if(ADMINS.includes(me.toLowerCase())){
+    $('#open-admin').classList.remove('hide');
+    $('#open-min').classList.remove('hide');
+  }
+  applyMinimumToForm();
+  updateRsLookupVisibility();
+  render();
+}
+
+$('#signout').addEventListener('click', async () => {
+  clearDevice();
+  me = null;
+  $('#app').classList.add('hide'); $('#gate').classList.remove('hide');
+  $('#g-pass').value=''; gateMsg('');
+});
+
+/* =========================================================
+   Floor prices — the least someone is allowed to offer for a
+   given player. Set by the board admin; they apply to everyone.
+   ========================================================= */
+
+// The floor that applies to a player, or null. Uses the same strict name
+// rule as everything else, so a floor on "Jeremiah Smith" never lands on
+// "Jordan Smith". If more than one floor could apply, the highest wins.
+function minimumFor(sportKey, player){
+  const hits = (market.minimums || [])
+    .filter(x => x.sport === sportKey && samePlayer(x.player, player));
+  if(!hits.length) return null;
+  return hits.sort((a,b) => b.rate - a.rate)[0];
+}
+
+/* =========================================================
+   Rate select
+   ========================================================= */
+// `floor` drops every option below the player's minimum, so a rate that
+// would be rejected can't be picked in the first place.
+const rateLabel = r => r === MIN_TIER ? `minimum (${r} / 1)` : `${r} / 1`;
+
+function rateOptions(sel, floor){
+  const usable = RATES.filter(r => !floor || r >= floor);
+  if(!usable.length) return `<option value="${floor}">${rateLabel(floor)}</option>`;
+  const pick = usable.includes(sel) ? sel : usable[0];
+  return usable.map(r => `<option value="${r}" ${r===pick?'selected':''}>${rateLabel(r)}</option>`).join('');
+}
+$('#b-rate').innerHTML = rateOptions(20);
+
+// Re-reads the floor for whatever player is currently typed and reshapes
+// the rate dropdown + note to match.
+function applyMinimumToForm(){
+  const player = $('#b-player').value.trim();
+  const note = $('#b-min-note');
+  const min = player.length >= 2 ? minimumFor(sport, player) : null;
+  if(min){
+    $('#b-rate').innerHTML = rateOptions(Math.max(+$('#b-rate').value || 0, min.rate), min.rate);
+    note.textContent = `Minimum for ${min.player} is ${min.rate}/1 — you can't offer less.`;
+    note.classList.remove('hide');
+  } else {
+    const keep = +$('#b-rate').value || 20;
+    $('#b-rate').innerHTML = rateOptions(keep);
+    note.classList.add('hide');
+  }
+}
+
+/* =========================================================
+   Buyer instructions — comment under the pinned post, then paste
+   back the link to that comment.
+   ========================================================= */
+function renderBuyInstructions(){
+  $('#b-instructions').innerHTML =
+    `To buy cards, get the card link of the player or team you're upgrading, and post a comment under ` +
+    `<a href="${esc(TARGET_LINK)}" target="_blank" rel="noopener">this post</a> with your card and any extra ` +
+    `details you want to add. Once you have created the comment, paste it below (it is auto verified).`;
+}
+renderBuyInstructions();
+
+$('#b-guide-toggle').addEventListener('click', () => {
+  const btn = $('#b-guide-toggle'), box = $('#b-guide');
+  const nowHidden = box.classList.toggle('hide');
+  btn.textContent = nowHidden ? 'PICTURE GUIDES OF HOW TO SUBMIT COMMENT' : 'HIDE PICTURE GUIDES';
+  btn.setAttribute('aria-expanded', String(!nowHidden));
+});
+
+/* =========================================================
+   Sport + mode
+   ========================================================= */
+const PLAYER_EXAMPLES = { CFB:'Julian Sayin', FC:'Lamine Yamal', NFL:'Josh Allen' };
+function updatePlayerPlaceholder(){
+  $('#b-player').placeholder = 'e.g. ' + (PLAYER_EXAMPLES[sport] || '');
+}
+updatePlayerPlaceholder();
+
+$('#sport').addEventListener('change', e => {
+  sport = e.target.value;
+  document.body.dataset.sport = sport;
+  updatePlayerPlaceholder();
+  closeSuggest();
+  applyMinimumToForm();
+  updateRsLookupVisibility();
+  render();
+});
+
+/* =========================================================
+   Player/team autocomplete — searches /api/players, which is
+   backed by a live roster index (built from public sports data,
+   cached in KV and refreshed in the background).
+   ========================================================= */
+let suggestTimer = null;
+let suggestItems = [];
+let suggestActive = -1;
+
+function closeSuggest(){
+  const box = $('#b-suggest');
+  box.classList.add('hide');
+  box.innerHTML = '';
+  suggestItems = []; suggestActive = -1;
+  $('#b-player').setAttribute('aria-expanded', 'false');
+}
+
+function renderSuggest(items, note){
+  const box = $('#b-suggest');
+  suggestItems = items;
+  suggestActive = -1;
+  const rows = items.map((it,i) =>
+    `<li role="option" data-i="${i}"><span class="dot">•</span> ${esc(it.name)} <span class="team">${esc(it.team)}</span></li>`
+  ).join('');
+  box.innerHTML = rows + (note ? `<li class="hint">${esc(note)}</li>` : '');
+  const show = items.length > 0 || !!note;
+  box.classList.toggle('hide', !show);
+  $('#b-player').setAttribute('aria-expanded', String(show));
+}
+
+async function runSuggest(q){
+  if(q.length < 2){ closeSuggest(); return; }
+  try{
+    const r = await fetch(`/api/players?sport=${encodeURIComponent(sport)}&q=${encodeURIComponent(q)}`);
+    const data = await r.json();
+    const items = data.players || [];
+    const note = !items.length
+      ? (data.building ? 'Still building the player list — try again in a bit' : 'No matches')
+      : (data.building ? 'Still indexing — more players will show up soon' : null);
+    renderSuggest(items, note);
+  }catch(e){ closeSuggest(); }
+}
+
+$('#b-player').addEventListener('input', e => {
+  clearTimeout(suggestTimer);
+  const q = e.target.value.trim();
+  suggestTimer = setTimeout(()=>{ runSuggest(q); applyMinimumToForm(); }, 220);
+});
+$('#b-player').addEventListener('focus', e => {
+  const q = e.target.value.trim();
+  if(q.length >= 2) runSuggest(q);
+});
+$('#b-player').addEventListener('keydown', e => {
+  if($('#b-suggest').classList.contains('hide') || !suggestItems.length) return;
+  if(e.key === 'ArrowDown'){ e.preventDefault(); suggestActive = Math.min(suggestActive+1, suggestItems.length-1); highlightSuggest(); }
+  else if(e.key === 'ArrowUp'){ e.preventDefault(); suggestActive = Math.max(suggestActive-1, 0); highlightSuggest(); }
+  else if(e.key === 'Enter'){ if(suggestActive > -1){ e.preventDefault(); pickSuggest(suggestActive); } }
+  else if(e.key === 'Escape'){ closeSuggest(); }
+});
+function highlightSuggest(){
+  const lis = $('#b-suggest').querySelectorAll('li[role="option"]');
+  lis.forEach((li,i) => li.setAttribute('aria-selected', i===suggestActive ? 'true' : 'false'));
+  if(lis[suggestActive]) lis[suggestActive].scrollIntoView({block:'nearest'});
+}
+function pickSuggest(i){
+  const it = suggestItems[i];
+  if(!it) return;
+  $('#b-player').value = it.name;
+  closeSuggest();
+  applyMinimumToForm();
+  $('#b-rate').focus();
+}
+$('#b-suggest').addEventListener('click', e => {
+  const li = e.target.closest('li[role="option"]');
+  if(!li) return;
+  pickSuggest(+li.dataset.i);
+});
+document.addEventListener('click', e => {
+  if(!e.target.closest('#b-player') && !e.target.closest('#b-suggest')) closeSuggest();
+});
+$('#tab-buy').addEventListener('click', ()=>setMode('buy'));
+$('#tab-sell').addEventListener('click', ()=>setMode('sell'));
+function setMode(m){
+  mode = m;
+  $('#tab-buy').setAttribute('aria-pressed', m==='buy');
+  $('#tab-sell').setAttribute('aria-pressed', m==='sell');
+  $('#pane-buy').classList.toggle('hide', m!=='buy');
+  $('#pane-mine').classList.toggle('hide', m!=='buy');
+  $('#pane-sell').classList.toggle('hide', m!=='sell');
+}
+
+/* =========================================================
+   Render
+   ========================================================= */
+async function render(){
+  await pull();
+  const live = market.offers
+    .filter(o => o.sport===sport && !market.users[o.user]?.banned)
+    .sort((a,b) => b.rate - a.rate || a.ts - b.ts);
+
+  $('#board-title').textContent = `${SPORTS[sport]} buy offers`;
+  $('#board-count').textContent = live.length ? `${live.length} standing` : '';
+  $('#board').innerHTML = live.length ? live.map(o => `
+    <li class="row ${o.user===me.toLowerCase()?'mine':''}">
+      <span class="rate num">${o.rate}<small>/1</small></span>
+      <span><span class="player">${esc(o.player)}</span><br><span class="who">${esc(market.users[o.user]?.name||o.user)}</span></span>
+      <span class="rowacts">${o.user===me.toLowerCase()
+        ? `<button class="btn-ghost" data-edit="${o.id}">Change rate</button><button class="btn-ghost btn-danger" data-del="${o.id}">Remove</button>`
+        : `<button class="btn-ghost" data-rep="${esc(market.users[o.user]?.name||o.user)}">Report</button>`}</span>
+    </li>`).join('')
+    : `<li class="empty"><b>Nothing on the board yet</b>Post the first ${SPORTS[sport]} offer and sellers will see it.</li>`;
+
+  const mine = live.filter(o => o.user===me.toLowerCase());
+  $('#mine-count').textContent = mine.length ? `${mine.length} in ${sport}` : '';
+  $('#mine').innerHTML = mine.length ? mine.map(o => `
+    <li class="row">
+      <span class="rate num">${o.rate}<small>/1</small></span>
+      <span class="player">${esc(o.player)}</span>
+      <span class="rowacts">
+        <button class="btn-ghost" data-edit="${o.id}">Change</button>
+        <button class="btn-ghost btn-danger" data-del="${o.id}">Remove</button>
+      </span>
+    </li>`).join('')
+    : `<li class="empty"><b>No offers in ${SPORTS[sport]}</b>Anything you post shows up here.</li>`;
+}
+
+document.addEventListener('click', async e => {
+  const ed = e.target.closest('[data-edit]');
+  const dl = e.target.closest('[data-del]');
+  const rp = e.target.closest('[data-rep]');
+  if(ed) return editRate(ed.dataset.edit);
+  if(dl) return removeOffer(dl.dataset.del);
+  if(rp) return reportUser(rp.dataset.rep);
+});
+
+/* =========================================================
+   Buyer actions
+   ========================================================= */
+function validCommentLink(link){
+  // Must be a link under the verified post prefix, with something after it
+  // (an actual comment ID) — confirms it's a real comment under the right post.
+  return typeof link === 'string'
+    && link.startsWith(TARGET_POST_PREFIX)
+    && link.length > TARGET_POST_PREFIX.length;
+}
+
+$('#b-post').addEventListener('click', async () => {
+  const player = asciiName($('#b-player').value);
+  const rate = +$('#b-rate').value;
+  const link = $('#b-link').value.trim();
+  if(player.length < 2) return toast('Enter a player name.');
+  if(!validCommentLink(link)) return toast('Paste the link to your comment under the pinned post first.');
+
+  const min = minimumFor(sport, player);
+  if(min && rate < min.rate){
+    applyMinimumToForm();
+    return toast(`${min.player} has a ${min.rate}/1 minimum — you can't offer less.`);
+  }
+
+  const posted = await patch('addOffer', {
+    offer: { id:uid(), user:me.toLowerCase(), sport, player, rate, link }
+  });
+  if(!posted) return;
+  $('#b-player').value=''; $('#b-link').value='';
+  closeSuggest();
+  renderBuyInstructions();
+  toast(`Posted ${player} at ${rate}/1`);
+  render();
+});
+
+function editRate(id){
+  const o = market.offers.find(x => x.id===id);
+  if(!o) return;
+  const min = minimumFor(o.sport, o.player);
+  const box = modal(`Change offer — ${o.player}`, `
+    <div><label for="e-rate">New rate</label><select id="e-rate" class="field num">${rateOptions(o.rate, min && min.rate)}</select>
+      ${min ? `<p class="note minnote">Minimum for ${esc(min.player)} is ${min.rate}/1 — you can't offer less.</p>` : ''}</div>
+    <div><label for="e-link">Your comment link</label><input id="e-link" class="field" value="${esc(o.link||'')}" placeholder="https://www.realapp.com/..."></div>
+    <button class="btn" id="e-save">Save</button>`);
+  box.querySelector('#e-save').addEventListener('click', async () => {
+    const r = +box.querySelector('#e-rate').value;
+    const link = box.querySelector('#e-link').value.trim();
+    if(min && r < min.rate) return toast(`${min.player} has a ${min.rate}/1 minimum.`);
+    if(!validCommentLink(link)) return toast('That doesn\'t look like a comment link on the pinned post.');
+    const saved = await patch('updateOffer', { id, user: me.toLowerCase(), rate: r, link });
+    if(!saved) return;
+    box.remove(); toast(`${o.player} now ${r}/1`); render();
+  });
+}
+
+async function removeOffer(id, asAdmin){
+  const o = market.offers.find(x => x.id===id);
+  const gone = await patch('removeOffer', asAdmin ? { id } : { id, user: me.toLowerCase() });
+  if(!gone) return;
+  toast(o ? `Removed ${o.player}` : 'Removed'); render();
+}
+
+/* =========================================================
+   Seller — screenshot scan
+   ========================================================= */
+$('#s-examples-toggle').addEventListener('click', () => {
+  const btn = $('#s-examples-toggle'), box = $('#s-examples');
+  const nowHidden = box.classList.toggle('hide');
+  btn.textContent = nowHidden ? 'Show example screenshots' : 'Hide example screenshots';
+  btn.setAttribute('aria-expanded', String(!nowHidden));
+});
+
+/* ---- exclude list: players/teams a seller never wants surfaced ---- */
+const EXCLUDE_KEY = 'ratebrd_exclude_v1';
+function loadExcludes(){
+  try{ const v = JSON.parse(localStorage.getItem(EXCLUDE_KEY) || '[]'); return Array.isArray(v) ? v : []; }
+  catch(e){ return []; }
+}
+function saveExcludes(list){ try{ localStorage.setItem(EXCLUDE_KEY, JSON.stringify(list)); }catch(e){} }
+function isExcluded(name, list){ return (list || loadExcludes()).some(x => samePlayer(x, name)); }
+
+$('#s-exclude').addEventListener('click', excludeManager);
+
+function excludeManager(){
+  const box = modal('Exclude players/teams', `
+    <p class="note">Anything you add here is left out of your scan results from now on, even when someone has a standing offer on it.</p>
+    <div style="display:flex;gap:8px">
+      <input id="ex-add" class="field" placeholder="e.g. Julian Sayin, or a team name">
+      <button class="btn-ghost" id="ex-add-btn" style="flex-shrink:0">Add</button>
+    </div>
+    <div id="ex-list"></div>`);
+
+  const renderList = () => {
+    const list = loadExcludes();
+    box.querySelector('#ex-list').innerHTML = list.length
+      ? list.map((n,i)=>`<div class="hit" style="grid-template-columns:1fr auto"><span class="player">${esc(n)}</span><button class="btn-ghost" data-rm="${i}">Remove</button></div>`).join('')
+      : '<p class="nohit">Nothing excluded yet.</p>';
+  };
+  renderList();
+
+  const add = () => {
+    const input = box.querySelector('#ex-add');
+    const name = input.value.trim();
+    if(!name) return;
+    const list = loadExcludes();
+    if(!list.some(x => norm(x)===norm(name))) { list.push(name); saveExcludes(list); }
+    input.value = '';
+    renderList();
+  };
+  box.querySelector('#ex-add-btn').addEventListener('click', add);
+  box.querySelector('#ex-add').addEventListener('keydown', e => { if(e.key==='Enter') add(); });
+  box.addEventListener('click', e => {
+    const rm = e.target.closest('[data-rm]');
+    if(!rm) return;
+    const list = loadExcludes();
+    list.splice(+rm.dataset.rm, 1);
+    saveExcludes(list);
+    renderList();
+  });
+}
+
+$('#s-pick').addEventListener('click', ()=>$('#s-file').click());
+$('#s-file').addEventListener('change', e => {
+  pending = [...e.target.files].slice(0,14);
+  $('#s-files').textContent = pending.length ? pending.map(f=>f.name).join(', ') : '';
+  $('#s-go').classList.toggle('hide', !pending.length);
+});
+
+const toB64 = f => new Promise((res, rej) => {
+  const r = new FileReader();
+  r.onload = () => res(r.result.split(',')[1]);
+  r.onerror = () => rej(new Error('Could not read ' + f.name));
+  r.readAsDataURL(f);
+});
+
+$('#s-go').addEventListener('click', async () => {
+  const btn = $('#s-go');
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Reading screenshots';
+  try{
+    const content = [];
+    for(const f of pending){
+      content.push({ type:'image', source:{ type:'base64', media_type:f.type||'image/png', data: await toB64(f) } });
+    }
+    content.push({ type:'text', text:
+`These are screenshots of a "Top players" list from a ${SPORTS[sport]} sports card app, sorted by Boost value.
+
+Each row has: a small headshot on the left, the player's name, sometimes a checkmark after the name, a large decimal number on the right (the boost value), and beneath it two small numbers with card icons — the left one and the right one.
+
+Read every player row. Rules:
+- Write every name using only plain English letters. Drop accents and special
+  characters, keeping the closest English letter: García -> Garcia, Sánchez -> Sanchez,
+  Mbappé -> Mbappe, Ødegaard -> Odegaard. Keep suffixes like Jr. and III as printed.
+- The checkmark is not part of the name. Ignore it.
+- Ignore all interface text: the clock and battery in the status bar, "Top players", "Close", "Boost value".
+- The first and last rows may be cut off mid-scroll. Include a row only if you can read the whole name.
+- boost is the large decimal on that row. Use null if it is cut off.
+- owned is the RIGHT-hand one of the two small numbers with card icons beneath the boost value — that's how many of that card the person owns. Use null if it is cut off or unclear. Do not confuse it with the left-hand number.
+
+Respond with only this JSON. No markdown fences, no other text:
+{"players":[{"name":"Shohei Ohtani","boost":100.8,"owned":3}]}
+
+If you cannot read any rows, return {"players":[]}.` });
+
+    const res = await fetch('/api/scan', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ content })
+    });
+    const data = await res.json();
+    if(!res.ok){
+      // Surface what actually went wrong. Telling someone to retake a
+      // perfectly good screenshot when the reader is switched off upstream
+      // just gets them retaking screenshots forever.
+      const msg = (data && data.error && (data.error.message || data.error)) || '';
+      if(/credit balance|quota|billing/i.test(String(msg)))
+        throw new Error('__notice__Screenshot reading is temporarily unavailable. Nothing wrong with your screenshots — the board owner has been told.');
+      if(res.status === 500 && /not configured/i.test(String(msg)))
+        throw new Error('__notice__Screenshot reading is not switched on yet. The board owner has been told.');
+      if(res.status === 429)
+        throw new Error('__notice__Too many scans at once — give it a minute and try again.');
+      throw new Error(String(msg) || ('scan failed (' + res.status + ')'));
+    }
+    const txt = (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
+    const parsed = JSON.parse(txt.replace(/```json|```/g,'').trim());
+    showMatches(parsed.players || []);
+  }catch(err){
+    console.error(err);
+    const m = String(err && err.message || '');
+    toast(m.startsWith('__notice__') ? m.slice(10)
+      : 'Could not read those screenshots. Try a clearer, uncropped image.');
+  }finally{
+    btn.disabled = false; btn.textContent = 'Read screenshots';
+  }
+});
+
+async function copyText(text){
+  try{
+    await navigator.clipboard.writeText(text);
+    return true;
+  }catch(e){
+    try{
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      return ok;
+    }catch(e2){ return false; }
+  }
+}
+
+async function showMatches(raw){
+  await pull();
+  const live = market.offers.filter(o => o.sport===sport && !market.users[o.user]?.banned);
+
+  // Accept either ["Name"] or [{name, boost, owned, totalValue}]
+  const players = (raw||[]).map(p => typeof p === 'string' ? {name:p, boost:null, owned:null, totalValue:null} : p)
+                           .filter(p => p && p.name)
+                           .map(p => ({...p, name: asciiName(p.name)}))
+                           .filter(p => p.name);
+
+  const excludes = loadExcludes();
+  const hits = [], noBuyer = [];
+  for(const p of players){
+    if(isExcluded(p.name, excludes)) continue;
+    const best = live.filter(o => samePlayer(o.player, p.name)).sort((a,b) => b.rate - a.rate)[0];
+    if(best) hits.push({ player:p.name, boost:p.boost, owned:p.owned, totalValue:p.totalValue||null, rate:best.rate, buyer: market.users[best.user]?.name || best.user, link: best.link || '' });
+    else noBuyer.push(p);
+  }
+  hits.sort((a,b) => b.rate - a.rate);
+
+  // Quicksell suggestions: nobody is buying them AND they aren't on the
+  // keep list for this sport. Without a keep list we suggest nothing at all —
+  // "no offer yet" on its own is never a reason to dump a card.
+  const keep = (market.keeplist || []).filter(k => k.sport === sport);
+  const qsSeen = new Set();
+  const quicksells = !keep.length ? [] : noBuyer
+    .filter(p => !keep.some(k => samePlayer(k.player, p.name)))
+    .filter(p => !qsSeen.has(norm(p.name)) && qsSeen.add(norm(p.name)));
+
+  const seen = new Set();
+  const rows = hits.filter(h => !seen.has(norm(h.player)) && seen.add(norm(h.player)));
+
+  const box = modal('Your best sellers', rows.length ? `
+    <p class="note">Found ${players.length} player${players.length===1?'':'s'} in your collection. ${rows.length} ${rows.length===1?'has':'have'} a standing ${SPORTS[sport]} offer, highest first. The rate is per 1 total card value — update "You own" if it's off.</p>
+    <div>${rows.map((h,i)=>`
+      <div class="hit" style="display:block">
+        <div style="display:grid;grid-template-columns:78px 1fr auto;gap:12px;align-items:center">
+          <span class="rate num">${h.rate}<small>/1</small></span>
+          <span>
+            <span class="player">${esc(h.player)}</span><br>
+            <span class="who">buying: ${esc(h.buyer)}</span>
+            ${h.totalValue != null ? `<br><span class="who" style="font-size:11.5px">rating: ${h.totalValue >= 1000 ? (h.totalValue/1000).toFixed(1)+'k' : h.totalValue}</span>` : ''}
+          </span>
+          <button class="btn-ghost" data-rep="${esc(h.buyer)}">Report</button>
+        </div>
+        <div class="ownrow">
+          <div>
+            <label for="own-${i}">Card count</label>
+            <input id="own-${i}" data-owned="${i}" class="field num" type="number" value="${h.owned!=null?h.owned:''}" readonly style="opacity:0.6;cursor:default">
+          </div>
+        </div>
+        <div class="note" data-msg="${i}" style="margin-top:6px"></div>
+        <div class="hitacts">
+          <button class="btn-ghost" data-copy="${i}">Copy message</button>
+          ${h.link ? `<a class="btn-ghost" href="${esc(h.link)}" target="_blank" rel="noopener">Message buyer</a>` : `<span class="nohit">No comment link on file for this buyer</span>`}
+        </div>
+      </div>`).join('')}</div>`
+    : `<p class="nohit">Read ${players.length} player${players.length===1?'':'s'}, but none of them have a standing ${SPORTS[sport]} offer right now. Check back, or switch sports if the screenshots were from a different one.</p>`);
+
+  if(quicksells.length){
+    const bar = document.createElement('div');
+    bar.style.marginTop = '14px';
+    bar.innerHTML = `<button class="btn-ghost" id="qs-open" style="width:100%">View recommended quicksells (${quicksells.length})</button>`;
+    box.querySelector('.panel-bd').appendChild(bar);
+    bar.querySelector('#qs-open').addEventListener('click', () => showQuicksells(quicksells));
+  }
+
+  if(!rows.length) return;
+
+  const msgFor = i => {
+    const ownedInput = box.querySelector(`[data-owned="${i}"]`);
+    const msgEl = box.querySelector(`[data-msg="${i}"]`);
+    const copyBtn = box.querySelector(`[data-copy="${i}"]`);
+    const n = +ownedInput.value;
+    const boost = rows[i].boost || 0;
+    const total = Math.round(boost * rows[i].rate * 100) / 100;
+    const text = `i have ${n} ${rows[i].player} offer ${total}`;
+    msgEl.textContent = text;
+    copyBtn.disabled = !(n > 0);
+    return n > 0 ? text : null;
+  };
+
+  rows.forEach((_,i) => msgFor(i));
+
+  box.addEventListener('click', async e => {
+    const cp = e.target.closest('[data-copy]');
+    if(!cp) return;
+    const text = msgFor(cp.dataset.copy);
+    if(!text) return;
+    const ok = await copyText(text);
+    toast(ok ? 'Message copied' : 'Could not copy — select the text and copy it manually');
+  });
+}
+
+// Players off the screenshots that nobody is buying and that aren't on the
+// keep list — i.e. safe to quicksell. Advice only; nothing is sold from here.
+function showQuicksells(list){
+  const box = modal('Recommended quicksells', `
+    <p class="note">Nobody on the board is buying these and none of them are on the ${SPORTS[sport]} keep list, so they're the safest ones to quicksell. Worth a second look yourself before you dump anything — the board only knows about offers people have actually posted.</p>
+    <div>${list.map(p => `
+      <div class="hit" style="grid-template-columns:1fr auto">
+        <span class="player">${esc(p.name)}</span>
+        <span class="who">${p.boost!=null ? esc(p.boost)+' boost' : ''}${p.owned!=null ? (p.boost!=null?' — ':'') + 'you own ' + esc(p.owned) : ''}</span>
+      </div>`).join('')}</div>
+    <button class="btn-ghost" id="qs-copy">Copy the list</button>`);
+
+  box.querySelector('#qs-copy').addEventListener('click', async () => {
+    const ok = await copyText(list.map(p => p.name).join('\n'));
+    toast(ok ? 'Quicksell list copied' : 'Could not copy — select the names and copy them manually');
+  });
+}
+
+/* =========================================================
+   Reports + admin
+   ========================================================= */
+$('#open-report').addEventListener('click', ()=>reportUser(''));
+
+function reportUser(target){
+  const box = modal('Report a user', `
+    <div><label for="r-who">Username</label><input id="r-who" class="field" value="${esc(target)}" placeholder="Who are you reporting?"></div>
+    <div><label for="r-why">What happened</label><textarea id="r-why" class="field" rows="4" placeholder="Scammed, fake screenshots, didn't pay…"></textarea></div>
+    <button class="btn" id="r-send">Send report</button>
+    <p class="note">Reports go to the board admin. Nothing is shared with the person you report.</p>`);
+  box.querySelector('#r-send').addEventListener('click', async () => {
+    const who = box.querySelector('#r-who').value.trim();
+    const why = box.querySelector('#r-why').value.trim();
+    if(who.length < 2 || why.length < 3) return toast('Add a username and a reason.');
+    await push(m => m.reports.push({ id:uid(), by:me, target:who, reason:why, ts:Date.now(), status:'open' }));
+    box.remove(); toast('Report sent');
+  });
+}
+
+$('#open-admin').addEventListener('click', adminPanel);
+
+// Accepts lines like "Lamine Yamal 35/1", "yamal 35", "Harry Kane - 25/1".
+// Returns { rows, bad } so the admin can see which lines didn't parse.
+function parseMinimumLines(text){
+  const rows = [], bad = [];
+  for(const line of String(text).split('\n')){
+    const t = line.trim();
+    if(!t) continue;
+    const m = t.match(/^(.*?)[\s,\-–—]*?(\d{1,3})\s*(?:\/\s*1)?$/);
+    const player = m && asciiName(m[1].trim().replace(/[.,:;\-–—]+$/,''));
+    const rate = m && +m[2];
+    if(!player || player.length < 2 || !(rate > 0)) { bad.push(t); continue; }
+    rows.push({ player, rate });
+  }
+  return { rows, bad };
+}
+
+// One player per line. A leading "12." ranking number is optional and stripped.
+function parseKeepLines(text){
+  const out = [], seen = new Set();
+  for(const line of String(text).split('\n')){
+    const player = asciiName(line.trim().replace(/^\d{1,4}[.)]?\s*/, ''));
+    if(player.length < 2) continue;
+    if(seen.has(norm(player))) continue;
+    seen.add(norm(player));
+    out.push(player);
+  }
+  return out;
+}
+
+$('#open-min').addEventListener('click', minimumsPanel);
+
+async function minimumsPanel(){
+  await pull();
+  const mins = (market.minimums||[]).filter(x => x.sport===sport)
+    .sort((a,b) => b.rate - a.rate || a.player.localeCompare(b.player));
+  const keepers = (market.keeplist||[]).filter(x => x.sport===sport);
+
+  const box = modal(`Lists — ${SPORTS[sport]}`, `
+    <p class="note">The least anyone is allowed to offer for these players. Buyers can't pick a lower rate, and existing offers below a new minimum are raised to it. Switch sports on the board to manage another list.</p>
+    <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+      <div style="flex:1 1 150px"><label for="mn-player">Player</label><input id="mn-player" class="field" placeholder="e.g. Lamine Yamal"></div>
+      <div style="width:110px"><label for="mn-rate">Minimum</label><input id="mn-rate" class="field num" type="number" inputmode="numeric" min="1" step="1" placeholder="35"></div>
+      <button class="btn-ghost" id="mn-add" style="min-height:44px">Add</button>
+    </div>
+    <details style="margin-top:4px">
+      <summary class="note" style="cursor:pointer">Paste a whole list</summary>
+      <textarea id="mn-bulk" class="field" rows="5" placeholder="Lamine Yamal 35/1&#10;Erling Haaland 30/1&#10;Harry Kane 25" style="margin-top:8px"></textarea>
+      <button class="btn-ghost" id="mn-bulk-add" style="margin-top:8px">Add all</button>
+    </details>
+    <h3 style="margin:16px 0 0;font-size:14px;font-weight:600">Current minimums (${mins.length})</h3>
+    <div id="mn-list">${mins.length ? mins.map(x=>`
+      <div class="hit" style="grid-template-columns:62px 1fr auto">
+        <span class="rate num">${x.rate}<small>/1</small></span>
+        <span class="player">${esc(x.player)}</span>
+        <button class="btn-ghost btn-danger" data-mnrm="${x.id}">Remove</button>
+      </div>`).join('') : '<p class="nohit">No minimums set for this sport.</p>'}</div>
+
+    <h3 style="margin:22px 0 0;font-size:14px;font-weight:600">Keep list — ${keepers.length} players</h3>
+    <p class="note">Players worth holding. After a scan, anyone whose card has no buyer <em>and</em> isn't on this list gets suggested as a quicksell. With the list empty, nothing is ever suggested.</p>
+    <details style="margin-top:4px">
+      <summary class="note" style="cursor:pointer">Paste a whole list (replaces the current one)</summary>
+      <textarea id="kp-bulk" class="field" rows="5" placeholder="Jeremiah Smith&#10;1. Malachi Toney&#10;2. Arch Manning" style="margin-top:8px"></textarea>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <button class="btn-ghost" id="kp-save">Replace list</button>
+        ${keepers.length ? `<button class="btn-ghost btn-danger" id="kp-clear">Clear list</button>` : ''}
+      </div>
+    </details>
+    ${keepers.length ? `<details style="margin-top:8px"><summary class="note" style="cursor:pointer">Show the ${keepers.length} names</summary>
+      <p class="note" style="margin-top:8px">${keepers.map(k=>esc(k.player)).join(' · ')}</p></details>` : ''}`);
+
+  // Saving a minimum also lifts any standing offer that now sits below it,
+  // so the floor can't be dodged by having posted early.
+  const saveMins = async rows => {
+    let raised = 0;
+    await push(m => {
+      m.minimums ||= [];
+      for(const {player, rate} of rows){
+        const i = m.minimums.findIndex(x => x.sport===sport && norm(x.player)===norm(player));
+        if(i > -1) m.minimums[i].rate = rate;
+        else m.minimums.push({ id:uid(), sport, player, rate });
+        for(const o of m.offers){
+          if(o.sport===sport && samePlayer(player, o.player) && o.rate < rate){
+            o.rate = rate; raised++;
+          }
+        }
+      }
+    });
+    return raised;
+  };
+
+  box.querySelector('#mn-add').addEventListener('click', async () => {
+    const player = asciiName(box.querySelector('#mn-player').value);
+    const rate = +box.querySelector('#mn-rate').value;
+    if(player.length < 2 || !(rate > 0)) return toast('Enter a player and a minimum rate.');
+    const raised = await saveMins([{player, rate}]);
+    box.remove(); render(); applyMinimumToForm(); minimumsPanel();
+    toast(`${player} minimum ${rate}/1` + (raised ? ` — raised ${raised} offer${raised===1?'':'s'}` : ''));
+  });
+
+  box.querySelector('#mn-bulk-add').addEventListener('click', async () => {
+    const { rows, bad } = parseMinimumLines(box.querySelector('#mn-bulk').value);
+    if(!rows.length) return toast('Nothing to add — use one player and rate per line.');
+    const raised = await saveMins(rows);
+    box.remove(); render(); applyMinimumToForm(); minimumsPanel();
+    toast(`Added ${rows.length} minimum${rows.length===1?'':'s'}` +
+      (raised ? `, raised ${raised} offer${raised===1?'':'s'}` : '') +
+      (bad.length ? ` — ${bad.length} line${bad.length===1?'':'s'} skipped` : ''));
+  });
+
+  box.querySelector('#kp-save').addEventListener('click', async () => {
+    const names = parseKeepLines(box.querySelector('#kp-bulk').value);
+    if(!names.length) return toast('Nothing to save — put one player per line.');
+    await push(m => {
+      m.keeplist = (m.keeplist||[]).filter(x => x.sport !== sport)
+        .concat(names.map((player, i) => ({ id:uid(), sport, player, rank:i+1 })));
+    });
+    box.remove(); minimumsPanel();
+    toast(`Keep list saved — ${names.length} player${names.length===1?'':'s'}`);
+  });
+
+  box.querySelector('#kp-clear')?.addEventListener('click', async () => {
+    if(!confirm(`Clear the ${SPORTS[sport]} keep list? Quicksells stop being suggested for this sport.`)) return;
+    await push(m => { m.keeplist = (m.keeplist||[]).filter(x => x.sport !== sport); });
+    box.remove(); minimumsPanel();
+    toast('Keep list cleared');
+  });
+
+  box.addEventListener('click', async e => {
+    const rm = e.target.closest('[data-mnrm]');
+    if(!rm) return;
+    await push(m => { m.minimums = (m.minimums||[]).filter(x => x.id !== rm.dataset.mnrm); });
+    box.remove(); render(); applyMinimumToForm(); minimumsPanel();
+    toast('Minimum removed');
+  });
+}
+
+async function adminPanel(){
+  await pull();
+  const open = market.reports.filter(r => r.status==='open').sort((a,b)=>b.ts-a.ts);
+  const users = Object.entries(market.users).sort((a,b)=>a[0].localeCompare(b[0]));
+
+  // Listings summary. Offers from deleted accounts are off the board already,
+  // so they don't count here either. Two players with the same name in
+  // different sports are two different listings.
+  const liveOffers = market.offers.filter(o => !market.users[o.user]?.banned);
+  const groups = new Map();
+  for(const o of liveOffers){
+    const key = o.sport + '|' + norm(o.player);
+    if(!groups.has(key)) groups.set(key, { sport:o.sport, player:o.player, offers:[] });
+    groups.get(key).offers.push(o);
+  }
+  const contested = [...groups.values()]
+    .filter(g => g.offers.length > 1)
+    .sort((a,b) => b.offers.length - a.offers.length
+                || Math.max(...b.offers.map(o=>o.rate)) - Math.max(...a.offers.map(o=>o.rate)));
+  const nameOf = u => market.users[u]?.name || u;
+
+  const box = modal('Admin', `
+    <h3 style="margin:0;font-size:14px;font-weight:600">Listings</h3>
+    <div class="statrow">
+      <div class="stat"><b class="num">${liveOffers.length}</b><span>total listings out</span></div>
+      <div class="stat"><b class="num">${groups.size}</b><span>unique players</span></div>
+    </div>
+
+    <h4 class="subhd">Look up a user</h4>
+    <input id="lk-user" class="field" placeholder="Username — see everything they have listed" autocomplete="off">
+    <div id="lk-user-out"></div>
+
+    <h4 class="subhd">Look up a player</h4>
+    <input id="lk-player" class="field" placeholder="Player name — see who's buying them" autocomplete="off">
+    <div id="lk-player-out"></div>
+    <h4 class="subhd">Players with more than one buyer (${contested.length})</h4>
+    ${contested.length ? contested.map(g => `
+      <div class="hit" style="display:block">
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline">
+          <span class="player">${esc(g.player)}</span>
+          <span class="who">${g.sport} — ${g.offers.length} buyers</span>
+        </div>
+        <div class="buyers">${g.offers.slice().sort((a,b)=>b.rate-a.rate).map(o =>
+          `<span class="buyer"><b class="num">${o.rate}</b>/1 ${esc(nameOf(o.user))}</span>`).join('')}</div>
+      </div>`).join('') : '<p class="nohit">Every listing is on a different player right now.</p>'}
+
+    <h3 style="margin:18px 0 0;font-size:14px;font-weight:600">Open reports</h3>
+    ${open.length ? open.map(r=>`
+      <div class="hit" style="grid-template-columns:1fr auto">
+        <span><span class="player">${esc(r.target)}</span><br>
+          <span class="who">${esc(r.reason)} — from ${esc(r.by)}, ${new Date(r.ts).toLocaleDateString()}</span></span>
+        <span class="rowacts">
+          <button class="btn-ghost btn-danger" data-ban="${esc(r.target.toLowerCase())}">Delete account</button>
+          <button class="btn-ghost" data-clear="${r.id}">Dismiss</button>
+        </span>
+      </div>`).join('') : '<p class="nohit">No open reports.</p>'}
+    <h3 style="margin:18px 0 0;font-size:14px;font-weight:600">All accounts (${users.length})</h3>
+    ${users.map(([k,u])=>`
+      <div class="hit" style="grid-template-columns:1fr auto">
+        <span><span class="player">${esc(u.name)}</span><br>
+          <span class="who">${u.banned ? 'deleted' : market.offers.filter(o=>o.user===k).length + ' offers'}</span></span>
+        ${k === me.toLowerCase() ? `<span class="who">this is you</span>`
+          : u.banned ? `<button class="btn-ghost" data-unban="${esc(k)}">Restore</button>`
+                     : `<button class="btn-ghost btn-danger" data-ban="${esc(k)}">Delete account</button>`}
+      </div>`).join('')}`);
+
+  // ---- lookups. These search loosely on purpose: typing "coleman" should
+  // turn up every Coleman, unlike offer matching which has to be exact.
+  const userOut = box.querySelector('#lk-user-out');
+  box.querySelector('#lk-user').addEventListener('input', e => {
+    const q = e.target.value.trim().toLowerCase();
+    if(q.length < 1){ userOut.innerHTML = ''; return; }
+    // Rank by how close the match is, not alphabetically — with hundreds of
+    // accounts an exact name was getting pushed off the end of the list.
+    const scored = Object.entries(market.users)
+      .map(([k,u]) => {
+        const name = String(u.name||'').toLowerCase();
+        let score = -1;
+        if(k === q || name === q) score = 0;
+        else if(k.startsWith(q) || name.startsWith(q)) score = 1;
+        else if(k.includes(q) || name.includes(q)) score = 2;
+        return { k, u, score };
+      })
+      .filter(x => x.score > -1)
+      .sort((a,b) => a.score - b.score || a.k.localeCompare(b.k));
+    const found = scored.slice(0, 25).map(x => [x.k, x.u]);
+    const hidden = scored.length - found.length;
+    if(!found.length){ userOut.innerHTML = '<p class="nohit">No account matches that.</p>'; return; }
+    userOut.innerHTML = found.map(([k,u]) => {
+      const theirs = market.offers.filter(o => o.user === k)
+        .sort((a,b) => b.rate - a.rate || a.player.localeCompare(b.player));
+      return `<div class="hit" style="display:block">
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline">
+          <span class="player">${esc(u.name || k)}</span>
+          <span class="who">${u.banned ? 'deleted — ' : ''}${theirs.length} listing${theirs.length===1?'':'s'}</span>
+        </div>
+        ${theirs.length ? `<div class="buyers">${theirs.map(o =>
+            `<span class="buyer"><b class="num">${o.rate}</b>/1 ${esc(o.player)} <em style="opacity:.6">${o.sport}</em>
+              <button class="killer" data-kill="${o.id}" title="Delete this listing">&times;</button></span>`).join('')}</div>`
+          : '<p class="nohit" style="margin-top:6px">Nothing listed.</p>'}
+      </div>`;
+    }).join('') + (hidden > 0 ? `<p class="nohit">+${hidden} more — keep typing to narrow it down.</p>` : '');
+  });
+
+  const playerOut = box.querySelector('#lk-player-out');
+  box.querySelector('#lk-player').addEventListener('input', e => {
+    const q = norm(e.target.value);
+    if(q.length < 2){ playerOut.innerHTML = ''; return; }
+    const found = new Map();
+    for(const o of liveOffers){
+      if(!norm(o.player).includes(q)) continue;
+      const key = o.sport + '|' + norm(o.player);
+      if(!found.has(key)) found.set(key, { sport:o.sport, player:o.player, offers:[] });
+      found.get(key).offers.push(o);
+    }
+    const list = [...found.values()]
+      .sort((a,b) => Math.max(...b.offers.map(o=>o.rate)) - Math.max(...a.offers.map(o=>o.rate)))
+      .slice(0, 12);
+    if(!list.length){ playerOut.innerHTML = '<p class="nohit">Nobody is buying anyone by that name.</p>'; return; }
+    playerOut.innerHTML = list.map(g => `
+      <div class="hit" style="display:block">
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline">
+          <span class="player">${esc(g.player)}</span>
+          <span class="who">${g.sport} — ${g.offers.length} buyer${g.offers.length===1?'':'s'}</span>
+        </div>
+        <div class="buyers">${g.offers.slice().sort((a,b)=>b.rate-a.rate).map(o =>
+          `<span class="buyer"><b class="num">${o.rate}</b>/1 ${esc(nameOf(o.user))}
+            <button class="killer" data-kill="${o.id}" title="Delete this listing">&times;</button></span>`).join('')}</div>
+      </div>`).join('');
+  });
+
+  box.addEventListener('click', async e => {
+    // Delete anyone's listing, straight from either lookup.
+    const kill = e.target.closest('[data-kill]');
+    if(kill){
+      const id = kill.dataset.kill;
+      const o = market.offers.find(x => x.id === id);
+      const who = o ? `${o.player} (${o.rate}/1) from ${nameOf(o.user)}` : 'this listing';
+      if(!confirm(`Delete ${who}?`)) return;
+      const gone = await patch('removeOffer', { id });
+      if(!gone) return;
+      toast('Listing deleted');
+      render();
+      box.remove(); adminPanel();
+      return;
+    }
+
+    const ban = e.target.closest('[data-ban]'), un = e.target.closest('[data-unban]'), cl = e.target.closest('[data-clear]');
+    if(ban){
+      const k = ban.dataset.ban;
+      // Deleting yourself locks you out of your own board — and since admin
+      // access is tied to the username, nobody could undo it from in here.
+      if(k === me.toLowerCase()) return toast("That's your own account — you can't delete it.");
+      if(!confirm(`Delete ${k}? Their offers come off the board.`)) return;
+      await push(m => {
+        if(m.users[k]) m.users[k].banned = true;
+        m.offers = m.offers.filter(o => o.user!==k);
+        m.reports.forEach(r => { if(r.target.toLowerCase()===k) r.status='closed'; });
+      });
+      box.remove(); toast(`${k} deleted`); render(); adminPanel();
+    }
+    if(un){
+      await push(m => { if(m.users[un.dataset.unban]) m.users[un.dataset.unban].banned = false; });
+      box.remove(); toast('Account restored'); render(); adminPanel();
+    }
+    if(cl){
+      await push(m => { const r = m.reports.find(x=>x.id===cl.dataset.clear); if(r) r.status='closed'; });
+      box.remove(); adminPanel();
+    }
+  });
+}
+
+/* =========================================================
+   RS collection lookup — pulls cards directly from Real Sports
+   by username. Only available for FC (the only RS sport here).
+   Results feed straight into showMatches() so the UX is identical
+   to the screenshot path.
+   ========================================================= */
+function rsLookupVisible(){ return sport === 'FC' || sport === 'CFB' || sport === 'NFL'; }
+
+function updateRsLookupVisibility(){
+  const wrap = $('#rs-lookup-wrap');
+  const div  = $('#rs-divider');
+  if(rsLookupVisible()){
+    wrap.classList.remove('hide');
+    div.classList.remove('hide');
+    $('#rs-go').textContent = `Pull my ${SPORTS[sport]} cards from Real`;
+  } else {
+    wrap.classList.add('hide');
+    div.classList.add('hide');
+  }
+}
+
+function rsMsg(text, isError){
+  const el = $('#rs-msg');
+  el.textContent = text || '';
+  el.classList.toggle('hide', !text);
+  el.style.color = isError ? 'var(--bad)' : 'var(--mute)';
+}
+
+$('#rs-go').addEventListener('click', async () => {
+  const btn = $('#rs-go');
+  btn.disabled = true;
+  rsMsg('');
+
+  // Merge player data across chunks: sum totals + totalValue
+  const merged = new Map(); // name → {name, total, totalValue}
+  function mergeChunk(players){
+    for(const p of players){
+      if(!p.name) continue;
+      if(!merged.has(p.name)){
+        merged.set(p.name, { name:p.name, total:0, totalValue:0 });
+      }
+      const m = merged.get(p.name);
+      m.total += p.total || 0;
+      m.totalValue = Math.round((m.totalValue + (p.totalValue || 0)) * 10) / 10;
+    }
+  }
+
+  try{
+    let start = 0, hashId = null, chunk = 0;
+    while(true){
+      chunk++;
+      btn.innerHTML = `<span class="spin"></span> Fetching cards${chunk > 1 ? ' ('+chunk+')' : ''}…`;
+      const qs = `/api/collection?username=${encodeURIComponent(me)}&sport=${encodeURIComponent(sport)}&start=${start}` +
+        (hashId ? `&hashId=${encodeURIComponent(hashId)}` : '');
+
+      // On first chunk, check cache before staggering
+      if(chunk === 1){
+        const probe = await fetch(qs);
+        const cached = probe.headers.get('x-cache') === 'HIT';
+        if(!cached){
+          // Not cached — stagger to spread RS load across burst of users
+          const staggerMs = Math.floor(Math.random() * 10000);
+          btn.innerHTML = `<span class="spin"></span> Starting in ${Math.ceil(staggerMs/1000)}s…`;
+          await new Promise(r => setTimeout(r, staggerMs));
+          btn.innerHTML = `<span class="spin"></span> Fetching cards…`;
+        }
+        const data = await probe.json();
+        if(!probe.ok){
+          rsMsg((data.error || 'Could not load cards — try again.') + (data.detail ? ' (' + data.detail + ')' : ''), true);
+          return;
+        }
+        mergeChunk(data.players || []);
+        hashId = data.hashId || hashId;
+        if(!data.hasMore) break;
+        start = data.nextStart;
+        continue;
+      }
+
+      const res = await fetch(qs);
+      const data = await res.json();
+      if(!res.ok){
+        rsMsg((data.error || 'Could not load cards — try again.') + (data.detail ? ' (' + data.detail + ')' : ''), true);
+        return;
+      }
+      mergeChunk(data.players || []);
+      hashId = data.hashId || hashId;
+      if(!data.hasMore) break;
+      start = data.nextStart;
+      if(chunk > 50) break;
+    }
+
+    const raw = [...merged.values()].map(p => ({
+      name:       p.name,
+      boost:      p.totalValue || null,
+      owned:      p.total,
+      totalValue: p.totalValue,
+    }));
+
+    if(!raw.length){
+      rsMsg(`No FC cards found for "${me}" on Real Sports.`, true);
+      return;
+    }
+
+    rsMsg('');
+    showMatches(raw);
+  }catch(e){
+    console.error(e);
+    rsMsg('Could not reach the server — check your connection and try again.', true);
+  }finally{
+    btn.disabled = false;
+    btn.textContent = 'Pull my cards';
+  }
+});
+
+/* =========================================================
+   Boot
+   ========================================================= */
+(async () => {
+  if(await resume()) enter();
+})();
+</script>
+</body>
+</html>
