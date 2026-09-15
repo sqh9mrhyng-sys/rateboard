@@ -116,6 +116,10 @@
   .examples figcaption{font-size:12px;color:var(--mute);margin-top:6px}
   .tapfull{opacity:.75}
 
+  /* ---------- RS collection lookup ---------- */
+  .rs-divider{display:flex;align-items:center;gap:10px;color:var(--mute);font-size:12.5px;margin:2px 0}
+  .rs-divider::before,.rs-divider::after{content:'';flex:1;height:1px;background:var(--line)}
+
   /* ---------- seller results: owned / boost inputs ---------- */
   .ownrow{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px}
   .ownrow label{margin:0 0 4px}
@@ -354,6 +358,11 @@
         <div id="pane-sell" class="panel hide">
           <div class="panel-hd"><h2>Scan your stats</h2></div>
           <div class="panel-bd stack">
+            <div id="rs-lookup-wrap" class="hide">
+              <button id="rs-go" class="btn">Pull my FC cards from Real</button>
+              <div id="rs-msg" class="note hide" style="margin-top:6px"></div>
+            </div>
+            <div id="rs-divider" class="rs-divider hide">or upload screenshots</div>
             <div class="alarm">Screenshot reader down, fix will be out tonight</div>
             <div class="warn">to upload stats, go to the card page on real, on the top of the screen theres a button that says "stats" click that, and take a screenshot (take as many as you want) and submit below, if you dont know where to go or what the stats page should look like, expand the screenshots below, if theres players you dont want to sell select them or just ignore the options of people buying them</div>
             <button id="s-examples-toggle" class="btn-ghost" aria-expanded="false">Show example screenshots</button>
@@ -702,6 +711,7 @@ function enter(){
     $('#open-min').classList.remove('hide');
   }
   applyMinimumToForm();
+  updateRsLookupVisibility();
   render();
 }
 
@@ -793,6 +803,7 @@ $('#sport').addEventListener('change', e => {
   updatePlayerPlaceholder();
   closeSuggest();
   applyMinimumToForm();
+  updateRsLookupVisibility();
   render();
 });
 
@@ -1597,6 +1608,72 @@ async function adminPanel(){
     }
   });
 }
+
+/* =========================================================
+   RS collection lookup — pulls cards directly from Real Sports
+   by username. Only available for FC (the only RS sport here).
+   Results feed straight into showMatches() so the UX is identical
+   to the screenshot path.
+   ========================================================= */
+function rsLookupVisible(){ return sport === 'FC'; }
+
+function updateRsLookupVisibility(){
+  const wrap = $('#rs-lookup-wrap');
+  const div  = $('#rs-divider');
+  if(rsLookupVisible()){
+    wrap.classList.remove('hide');
+    div.classList.remove('hide');
+  } else {
+    wrap.classList.add('hide');
+    div.classList.add('hide');
+  }
+}
+
+function rsMsg(text, isError){
+  const el = $('#rs-msg');
+  el.textContent = text || '';
+  el.classList.toggle('hide', !text);
+  el.style.color = isError ? 'var(--bad)' : 'var(--mute)';
+}
+
+$('#rs-go').addEventListener('click', async () => {
+  const btn = $('#rs-go');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span> Fetching your cards…';
+  rsMsg('');
+
+  try{
+    const res = await fetch(`/api/collection?username=${encodeURIComponent(me)}&sport=FC`);
+    const data = await res.json();
+
+    if(!res.ok){
+      rsMsg(data.error || 'Could not load collection — try again.', true);
+      return;
+    }
+
+    const raw = (data.players || []).map(item => {
+      // RS collection items: try common field shapes defensively
+      const name = item.entity?.name || item.name || item.label || '';
+      const boost = item.boostValue ?? item.boost_value ?? item.boost ?? null;
+      const owned = item.count ?? item.totalCount ?? item.owned ?? null;
+      return { name, boost, owned };
+    }).filter(p => p.name);
+
+    if(!raw.length){
+      rsMsg(`No FC cards found for "${me}" on Real Sports.`, true);
+      return;
+    }
+
+    rsMsg('');
+    showMatches(raw);
+  }catch(e){
+    console.error(e);
+    rsMsg('Could not reach the server — check your connection and try again.', true);
+  }finally{
+    btn.disabled = false;
+    btn.textContent = 'Pull my cards';
+  }
+});
 
 /* =========================================================
    Boot

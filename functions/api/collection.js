@@ -1,0 +1,204 @@
+// GET /api/collection?username=<rs_username>&sport=FC
+//
+// Looks up an RS user's card collection by username and returns their player
+// list + collection stats. Uses one shared RS_AUTH_TOKEN env var — no per-user
+// auth needed (RS collections are public).
+//
+// Rate limiting:
+//   - Per-IP: max 5 requests/min tracked in RATEBOARD_KV
+//   - KV cache: each username's collection cached 10 min, so RS only gets
+//     called once per username per 10 minutes regardless of traffic
+
+const CACHE_TTL_SECONDS = 600;   // 10 min collection cache per username
+const IP_WINDOW_SECONDS = 60;    // sliding window for per-IP limit
+const IP_MAX_REQUESTS   = 5;     // requests per IP per window
+
+// RS only has soccer for now; extend this map if more sports are added
+const SPORT_RS_KEY = { FC: 'soccer' };
+const SEASON = '2026';
+
+// ── hashidsEncode (inlined from RaxEdge — salt='realwebapp', minLen=16) ──────
+function hashidsEncode(number) {
+  const saltChars = Array.from('realwebapp');
+  const minLen = 16;
+  const keepUnique = c => [...new Set(c)];
+  const without = (c, x) => c.filter(ch => !x.includes(ch));
+  const only = (c, k) => c.filter(ch => k.includes(ch));
+  function shuffle(alpha, salt) {
+    if (!salt.length) return alpha;
+    let int, t = [...alpha];
+    for (let i = t.length - 1, v = 0, p = 0; i > 0; i--, v++) {
+      v %= salt.length; p += int = salt[v].codePointAt(0);
+      const j = (int + v + p) % i; [t[i], t[j]] = [t[j], t[i]];
+    }
+    return t;
+  }
+  function toAlpha(n, alpha) {
+    const id = []; let v = n;
+    do { id.unshift(alpha[v % alpha.length]); v = Math.floor(v / alpha.length); } while (v > 0);
+    return id;
+  }
+  let alpha = Array.from('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890');
+  let seps  = Array.from('cfhistuCFHISTU');
+  const uniq = keepUnique(alpha);
+  alpha = without(uniq, seps);
+  seps  = shuffle(only(seps, uniq), saltChars);
+  if (!seps.length || alpha.length / seps.length > 3.5) {
+    const sl = Math.ceil(alpha.length / 3.5);
+    if (sl > seps.length) { seps.push(...alpha.slice(0, sl - seps.length)); alpha = alpha.slice(sl - seps.length); }
+  }
+  alpha = shuffle(alpha, saltChars);
+  const gc = Math.ceil(alpha.length / 12);
+  let guards;
+  if (alpha.length < 3) { guards = seps.slice(0, gc); seps = seps.slice(gc); }
+  else { guards = alpha.slice(0, gc); alpha = alpha.slice(gc); }
+  const numId = number % 100;
+  let ret = [alpha[numId % alpha.length]];
+  const lottery = [...ret];
+  alpha = shuffle(alpha, lottery.concat(saltChars, alpha));
+  ret.push(...toAlpha(number, alpha));
+  if (ret.length < minLen) ret.unshift(guards[(numId + ret[0].codePointAt(0)) % guards.length]);
+  if (ret.length < minLen) ret.push(guards[(numId + ret[2].codePointAt(0)) % guards.length]);
+  const half = Math.floor(alpha.length / 2);
+  while (ret.length < minLen) {
+    alpha = shuffle(alpha, alpha);
+    ret.unshift(...alpha.slice(half)); ret.push(...alpha.slice(0, half));
+    const ex = ret.length - minLen;
+    if (ex > 0) ret = ret.slice(ex / 2, ex / 2 + minLen);
+  }
+  return ret.join('');
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+function json(obj, status = 200) {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: { 'content-type': 'application/json' }
+  });
+}
+
+function rsHeaders(auth) {
+  return {
+    'Accept': 'application/json',
+    'Origin': 'https://realsports.io',
+    'Referer': 'https://realsports.io/',
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.2 Safari/605.1.15',
+    'real-auth-info':    auth,
+    'real-device-type':  'desktop_web',
+    'real-device-uuid':  '310a20be-9ef8-4ee0-802f-5b1cffb5dd5e',
+    'real-version':      '36',
+    'real-request-token': hashidsEncode(Date.now()),
+  };
+}
+
+// ── per-IP rate limit (stored in KV) ─────────────────────────────────────────
+async function checkRateLimit(kv, ip) {
+  const key = `ratelimit:collection:${ip}`;
+  const raw = await kv.get(key);
+  const count = raw ? parseInt(raw, 10) : 0;
+  if (count >= IP_MAX_REQUESTS) return false;
+  // increment; set TTL only on first write so the window slides naturally
+  await kv.put(key, String(count + 1), { expirationTtl: IP_WINDOW_SECONDS });
+  return true;
+}
+
+// ── RS API calls ──────────────────────────────────────────────────────────────
+async function resolveHashId(username, auth) {
+  const url = `https://web.realapp.com/searchusers?query=${encodeURIComponent(username)}`;
+  const res = await fetch(url, { headers: rsHeaders(auth) });
+  if (!res.ok) throw new Error(`RS search ${res.status}`);
+  const data = await res.json();
+  const users = data.users || [];
+  const match = users.find(u => u.userName?.toLowerCase() === username.toLowerCase());
+  if (!match) return null;
+  return match.id; // hash ID string e.g. "DJ4YAdpv"
+}
+
+async function fetchStats(hashId, sport, auth) {
+  const url = `https://web.realapp.com/collection/${sport}/season/${SEASON}/user/${hashId}/stats`;
+  const res = await fetch(url, { headers: rsHeaders(auth) });
+  if (!res.ok) throw new Error(`RS stats ${res.status}`);
+  return res.json();
+}
+
+async function fetchAllPlayers(hashId, sport, auth) {
+  const players = [];
+  let offset = 0;
+  while (true) {
+    const base = `https://web.realapp.com/collection/${sport}/season/${SEASON}/entity/player/user/${hashId}/topentities`;
+    const url = offset === 0 ? base : `${base}?before=${offset}&sort=boostvalue`;
+    const res = await fetch(url, { headers: rsHeaders(auth) });
+    if (!res.ok) throw new Error(`RS collection ${res.status}`);
+    const data = await res.json();
+    const items = data.entities || data.items || [];
+    if (!items.length) break;
+    players.push(...items);
+    offset += 20;
+    if (offset > 2000) break; // safety cap
+  }
+  return players;
+}
+
+// ── main handler ──────────────────────────────────────────────────────────────
+export async function onRequestGet({ request, env }) {
+  const auth = env.RS_AUTH_TOKEN;
+  if (!auth) return json({ error: 'RS collection is not configured on this server' }, 500);
+
+  const url  = new URL(request.url);
+  const username = (url.searchParams.get('username') || '').trim();
+  const sport    = (url.searchParams.get('sport') || 'FC').toUpperCase();
+
+  if (!username) return json({ error: 'username is required' }, 400);
+  if (username.length > 50) return json({ error: 'username too long' }, 400);
+  if (!SPORT_RS_KEY[sport]) return json({ error: `unsupported sport: ${sport}` }, 400);
+
+  const rsSport = SPORT_RS_KEY[sport];
+
+  // 1. KV cache check
+  const cacheKey = `collection:${rsSport}:${username.toLowerCase()}`;
+  if (env.RATEBOARD_KV) {
+    const cached = await env.RATEBOARD_KV.get(cacheKey);
+    if (cached) {
+      return new Response(cached, {
+        headers: { 'content-type': 'application/json', 'x-cache': 'HIT' }
+      });
+    }
+  }
+
+  // 2. Per-IP rate limit
+  const ip = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || 'unknown';
+  if (env.RATEBOARD_KV) {
+    const allowed = await checkRateLimit(env.RATEBOARD_KV, ip);
+    if (!allowed) return json({ error: 'Too many requests — try again in a minute' }, 429);
+  }
+
+  // 3. Fetch from RS
+  let hashId;
+  try {
+    hashId = await resolveHashId(username, auth);
+  } catch (e) {
+    return json({ error: 'Could not reach RS — try again shortly' }, 502);
+  }
+  if (!hashId) return json({ error: `RS user "${username}" not found` }, 404);
+
+  let stats, players;
+  try {
+    [stats, players] = await Promise.all([
+      fetchStats(hashId, rsSport, auth),
+      fetchAllPlayers(hashId, rsSport, auth),
+    ]);
+  } catch (e) {
+    return json({ error: 'Could not load collection — try again shortly' }, 502);
+  }
+
+  const result = JSON.stringify({ username, hashId, stats, players, fetchedAt: Date.now() });
+
+  // 4. Store in KV cache
+  if (env.RATEBOARD_KV) {
+    await env.RATEBOARD_KV.put(cacheKey, result, { expirationTtl: CACHE_TTL_SECONDS });
+  }
+
+  return new Response(result, {
+    headers: { 'content-type': 'application/json', 'x-cache': 'MISS' }
+  });
+}
