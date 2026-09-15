@@ -1,21 +1,21 @@
-// GET /api/collection?username=<rs_username>&sport=FC
+// GET /api/collection?username=<rs_username>&sport=FC&start=<before>&hashId=<hashId>
 //
-// Pulls ALL of a user's cards from RS, groups by player, and returns
-// total owned + per-rarity counts. Uses one shared RS_AUTH_TOKEN env var.
+// Uses the /collection/.../topentities endpoint which returns players already
+// grouped with their total boost value and card counts — far fewer RS requests
+// than paginating individual cards.
 //
 // Rate limiting:
 //   - Per-IP: max 5 requests/min tracked in RATEBOARD_KV
-//   - KV cache: each username cached 10 min — RS only called once per 10 min
+//   - KV cache: 24h per chunk
 
-const CACHE_TTL_SECONDS = 86400; // 24 hours per chunk
+const CACHE_TTL_SECONDS = 86400;
 const IP_WINDOW_SECONDS = 60;
 const IP_MAX_REQUESTS   = 5;
 
 const SPORT_RS_KEY = { FC: 'soccer' };
 const SEASON = '2026';
-
-// rarity numbers → short label for display
-const RARITY_LABEL = { 1:'C', 2:'U', 3:'R', 4:'E', 5:'L' };
+const PAGE_SIZE   = 20;
+const CHUNK_PAGES = 44; // 44 pages × 20 players = 880 players per invocation
 
 // ── hashidsEncode (inlined — salt='realwebapp', minLen=16) ───────────────────
 function hashidsEncode(number) {
@@ -91,6 +91,17 @@ function rsHeaders(auth) {
   };
 }
 
+// "3.9k" → 3900, 68.9 → 68.9
+function parseBoost(v) {
+  if (typeof v === 'number') return Math.round(v * 10) / 10;
+  if (typeof v === 'string') {
+    const s = v.toLowerCase().trim();
+    if (s.endsWith('k')) return Math.round(parseFloat(s) * 1000 * 10) / 10;
+    return Math.round(parseFloat(s) * 10) / 10;
+  }
+  return 0;
+}
+
 // ── per-IP rate limit ─────────────────────────────────────────────────────────
 async function checkRateLimit(kv, ip) {
   const key = `ratelimit:collection:${ip}`;
@@ -112,62 +123,53 @@ async function resolveHashId(username, auth) {
   return match ? match.id : null;
 }
 
-const CHUNK_PAGES = 44; // pages per invocation — keeps total subrequests ≤ 45 (+ 1 for username lookup)
-
-// Fetches one chunk of cards starting at `startOffset`.
-// Returns { byPlayer (Map), hasMore, nextOffset }
-async function fetchCardChunk(hashId, sport, auth, startOffset) {
-  const byPlayer = new Map();
-  let offset = startOffset;
+// Fetches one chunk of the collection (sorted by boost value).
+// `startBefore` maps to the ?before= param (0, 20, 40, …).
+// Returns { players[], hasMore, nextBefore }
+async function fetchCollectionChunk(hashId, sport, auth, startBefore) {
+  const players = [];
+  let before = startBefore;
   let pagesRead = 0;
   let hasMore = false;
 
   while (pagesRead < CHUNK_PAGES) {
-    const url = `https://web.realapp.com/collectingcards/${sport}/season/${SEASON}/entity/play/user/${hashId}/cards` +
-      `?includeRecommendations=true&offset=${offset}&rarity=all&view=rating`;
+    const url = `https://web.realapp.com/collection/${sport}/season/${SEASON}/entity/player/user/${hashId}/topentities` +
+      `?before=${before}&sort=boostvalue`;
     const res = await fetch(url, { headers: rsHeaders(auth) });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      throw new Error(`RS cards ${res.status}: ${body.slice(0, 200)}`);
+      throw new Error(`RS collection ${res.status}: ${body.slice(0, 200)}`);
     }
     const data = await res.json();
-    const cards = data.cards || [];
-    if (!cards.length) break;
+    const entities = data.entities || [];
+    if (!entities.length) break;
 
-    for (const card of cards) {
-      const pid = card.playerId || card.primaryPlayer?.id;
-      if (!pid) continue;
-      const firstName = card.primaryPlayer?.firstName || '';
-      const lastName  = card.primaryPlayer?.lastName  || '';
-      const name = (firstName + ' ' + lastName).trim() || card.primaryPlayer?.displayName || String(pid);
-      const rarity = card.rarity || 0;
-      const value  = card.value  || 0;
-      if (!byPlayer.has(pid)) {
-        byPlayer.set(pid, { name, playerId: pid, total: 0, totalValue: 0 });
-      }
-      const p = byPlayer.get(pid);
-      p.total++;
-      p.totalValue = Math.round((p.totalValue + value) * 10) / 10;
+    for (const e of entities) {
+      const totalCards  = (e.secondaryValues && e.secondaryValues[1]) || 0;
+      const uniqueCards = (e.secondaryValues && e.secondaryValues[0]) || 0;
+      players.push({
+        name:       e.label || String(e.id),
+        playerId:   e.id,
+        total:      totalCards,
+        unique:     uniqueCards,
+        totalValue: parseBoost(e.primaryValue),
+      });
     }
 
-    offset += 20;
+    before += PAGE_SIZE;
     pagesRead++;
 
-    // If we got a full page there may be more — signal the next chunk
-    if (cards.length === 20 && pagesRead === CHUNK_PAGES) {
+    if (entities.length === PAGE_SIZE && pagesRead === CHUNK_PAGES) {
       hasMore = true;
     }
   }
 
-  return { byPlayer, hasMore, nextOffset: offset };
+  return { players, hasMore, nextBefore: before };
 }
 
 // ── main handler ──────────────────────────────────────────────────────────────
-// Supports chunked fetching for large collections:
-//   ?username=X&sport=FC              → chunk 0 (resolves username → hashId)
-//   ?username=X&sport=FC&hashId=Y&start=880 → subsequent chunks (skips username lookup)
-// Response includes { players, hasMore, nextStart, hashId } so the frontend
-// can loop until hasMore is false, merging player data across chunks.
+// ?username=X&sport=FC              → chunk starting at before=0
+// ?username=X&sport=FC&hashId=Y&start=880 → next chunk
 export async function onRequestGet({ request, env }) {
   const auth = env.RS_AUTH_TOKEN;
   if (!auth) return json({ error: 'RS collection is not configured on this server' }, 500);
@@ -182,9 +184,8 @@ export async function onRequestGet({ request, env }) {
   if (username.length > 50) return json({ error: 'username too long' }, 400);
   if (!SPORT_RS_KEY[sport]) return json({ error: `unsupported sport: ${sport}` }, 400);
 
-  const rsSport = SPORT_RS_KEY[sport];
-
-  const cacheKey = `col2:${rsSport}:${username.toLowerCase()}:${start}`;
+  const rsSport  = SPORT_RS_KEY[sport];
+  const cacheKey = `col3:${rsSport}:${username.toLowerCase()}:${start}`;
 
   // 1. KV cache check — serve from cache if within 24h
   if (env.RATEBOARD_KV) {
@@ -210,22 +211,21 @@ export async function onRequestGet({ request, env }) {
     if (!hashId) return json({ error: `RS user "${username}" not found` }, 404);
   }
 
-  // 4. Fetch one chunk of cards from RS
+  // 4. Fetch one chunk from the topentities endpoint
   let chunk;
-  try { chunk = await fetchCardChunk(hashId, rsSport, auth, start); }
-  catch (e) { return json({ error: 'Could not load cards — try again shortly', detail: e.message }, 502); }
+  try { chunk = await fetchCollectionChunk(hashId, rsSport, auth, start); }
+  catch (e) { return json({ error: 'Could not load collection — try again shortly', detail: e.message }, 502); }
 
-  const players = [...chunk.byPlayer.values()];
-  const result  = JSON.stringify({
+  const result = JSON.stringify({
     username,
     hashId,
-    players,
+    players:   chunk.players,
     hasMore:   chunk.hasMore,
-    nextStart: chunk.nextOffset,
+    nextStart: chunk.nextBefore,
     fetchedAt: Date.now(),
   });
 
-  // 5. Cache chunk for 24 hours
+  // 5. Cache for 24 hours
   if (env.RATEBOARD_KV) {
     await env.RATEBOARD_KV.put(cacheKey, result, { expirationTtl: CACHE_TTL_SECONDS });
   }

@@ -1193,7 +1193,7 @@ async function showMatches(raw){
           <span>
             <span class="player">${esc(h.player)}</span><br>
             <span class="who">buying: ${esc(h.buyer)}</span>
-            ${h.totalValue != null ? `<br><span class="who" style="font-size:11.5px">total value: ${h.totalValue}</span>` : ''}
+            ${h.totalValue != null ? `<br><span class="who" style="font-size:11.5px">boost: ${h.totalValue >= 1000 ? (h.totalValue/1000).toFixed(1)+'k' : h.totalValue}</span>` : ''}
           </span>
           <button class="btn-ghost" data-rep="${esc(h.buyer)}">Report</button>
         </div>
