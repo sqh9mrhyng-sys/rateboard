@@ -12,7 +12,7 @@ const CACHE_TTL_SECONDS = 86400;
 const IP_WINDOW_SECONDS = 60;
 const IP_MAX_REQUESTS   = 5;
 
-const SPORT_RS_KEY = { FC: 'soccer' };
+const SPORT_RS_KEY = { FC: 'soccer', CFB: 'ncaaf', NFL: 'nfl' };
 const SEASON = '2026';
 const PAGE_SIZE   = 20;
 const CHUNK_PAGES = 44; // 44 pages × 20 players = 880 players per invocation

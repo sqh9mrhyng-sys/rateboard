@@ -359,7 +359,7 @@
           <div class="panel-hd"><h2>Scan your stats</h2></div>
           <div class="panel-bd stack">
             <div id="rs-lookup-wrap" class="hide">
-              <button id="rs-go" class="btn">Pull my FC cards from Real</button>
+              <button id="rs-go" class="btn">Pull my cards from Real</button>
               <div id="rs-msg" class="note hide" style="margin-top:6px"></div>
             </div>
             <div id="rs-divider" class="rs-divider hide">or upload screenshots</div>
@@ -1600,7 +1600,7 @@ async function adminPanel(){
    Results feed straight into showMatches() so the UX is identical
    to the screenshot path.
    ========================================================= */
-function rsLookupVisible(){ return sport === 'FC'; }
+function rsLookupVisible(){ return sport === 'FC' || sport === 'CFB' || sport === 'NFL'; }
 
 function updateRsLookupVisibility(){
   const wrap = $('#rs-lookup-wrap');
@@ -1608,6 +1608,7 @@ function updateRsLookupVisibility(){
   if(rsLookupVisible()){
     wrap.classList.remove('hide');
     div.classList.remove('hide');
+    $('#rs-go').textContent = `Pull my ${SPORTS[sport]} cards from Real`;
   } else {
     wrap.classList.add('hide');
     div.classList.add('hide');
@@ -1645,7 +1646,7 @@ $('#rs-go').addEventListener('click', async () => {
     while(true){
       chunk++;
       btn.innerHTML = `<span class="spin"></span> Fetching cards${chunk > 1 ? ' ('+chunk+')' : ''}…`;
-      const qs = `/api/collection?username=${encodeURIComponent(me)}&sport=FC&start=${start}` +
+      const qs = `/api/collection?username=${encodeURIComponent(me)}&sport=${encodeURIComponent(sport)}&start=${start}` +
         (hashId ? `&hashId=${encodeURIComponent(hashId)}` : '');
 
       // On first chunk, check cache before staggering
