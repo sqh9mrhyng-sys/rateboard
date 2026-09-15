@@ -275,7 +275,7 @@
     <div class="whoami">
       <span><span class="sm-hide">Signed in as </span><b id="me"></b></span>
       <button class="linkbtn" id="open-report">Report a user</button>
-      <button class="linkbtn hide" id="open-min">Minimums</button>
+      <button class="linkbtn hide" id="open-min">Lists</button>
       <button class="linkbtn hide" id="open-admin">Admin</button>
       <button class="linkbtn" id="signout">Sign out</button>
     </div>
@@ -474,14 +474,14 @@ function clearDevice(){
   try{ localStorage.removeItem(SESSION); }catch(e){}
 }
 
-const blank = () => ({ users:{}, offers:[], reports:[], minimums:[] });
+const blank = () => ({ users:{}, offers:[], reports:[], minimums:[], keeplist:[] });
 let market = blank();
 let me = null, sport = 'CFB', mode = 'buy', pending = [];
 
 async function pull(){
   const r = await S.get(KEY);
   market = r && r.value ? JSON.parse(r.value) : blank();
-  market.users ||= {}; market.offers ||= []; market.reports ||= []; market.minimums ||= [];
+  market.users ||= {}; market.offers ||= []; market.reports ||= []; market.minimums ||= []; market.keeplist ||= [];
   return market;
 }
 async function push(mutate){
@@ -1090,13 +1090,23 @@ async function showMatches(raw){
                            .filter(p => p.name);
 
   const excludes = loadExcludes();
-  const hits = [];
+  const hits = [], noBuyer = [];
   for(const p of players){
     if(isExcluded(p.name, excludes)) continue;
     const best = live.filter(o => samePlayer(o.player, p.name)).sort((a,b) => b.rate - a.rate)[0];
     if(best) hits.push({ player:p.name, boost:p.boost, owned:p.owned, rate:best.rate, buyer: market.users[best.user]?.name || best.user, link: best.link || '' });
+    else noBuyer.push(p);
   }
   hits.sort((a,b) => b.rate - a.rate);
+
+  // Quicksell suggestions: nobody is buying them AND they aren't on the
+  // keep list for this sport. Without a keep list we suggest nothing at all —
+  // "no offer yet" on its own is never a reason to dump a card.
+  const keep = (market.keeplist || []).filter(k => k.sport === sport);
+  const qsSeen = new Set();
+  const quicksells = !keep.length ? [] : noBuyer
+    .filter(p => !keep.some(k => samePlayer(k.player, p.name)))
+    .filter(p => !qsSeen.has(norm(p.name)) && qsSeen.add(norm(p.name)));
 
   const seen = new Set();
   const rows = hits.filter(h => !seen.has(norm(h.player)) && seen.add(norm(h.player)));
@@ -1127,6 +1137,14 @@ async function showMatches(raw){
         </div>
       </div>`).join('')}</div>`
     : `<p class="nohit">Read ${players.length} player${players.length===1?'':'s'}, but none of them have a standing ${SPORTS[sport]} offer right now. Check back, or switch sports if the screenshots were from a different one.</p>`);
+
+  if(quicksells.length){
+    const bar = document.createElement('div');
+    bar.style.marginTop = '14px';
+    bar.innerHTML = `<button class="btn-ghost" id="qs-open" style="width:100%">View recommended quicksells (${quicksells.length})</button>`;
+    box.querySelector('.panel-bd').appendChild(bar);
+    bar.querySelector('#qs-open').addEventListener('click', () => showQuicksells(quicksells));
+  }
 
   if(!rows.length) return;
 
@@ -1170,6 +1188,24 @@ async function showMatches(raw){
   });
 }
 
+// Players off the screenshots that nobody is buying and that aren't on the
+// keep list — i.e. safe to quicksell. Advice only; nothing is sold from here.
+function showQuicksells(list){
+  const box = modal('Recommended quicksells', `
+    <p class="note">Nobody on the board is buying these and none of them are on the ${SPORTS[sport]} keep list, so they're the safest ones to quicksell. Worth a second look yourself before you dump anything — the board only knows about offers people have actually posted.</p>
+    <div>${list.map(p => `
+      <div class="hit" style="grid-template-columns:1fr auto">
+        <span class="player">${esc(p.name)}</span>
+        <span class="who">${p.boost!=null ? esc(p.boost)+' boost' : ''}${p.owned!=null ? (p.boost!=null?' — ':'') + 'you own ' + esc(p.owned) : ''}</span>
+      </div>`).join('')}</div>
+    <button class="btn-ghost" id="qs-copy">Copy the list</button>`);
+
+  box.querySelector('#qs-copy').addEventListener('click', async () => {
+    const ok = await copyText(list.map(p => p.name).join('\n'));
+    toast(ok ? 'Quicksell list copied' : 'Could not copy — select the names and copy them manually');
+  });
+}
+
 /* =========================================================
    Reports + admin
    ========================================================= */
@@ -1208,14 +1244,28 @@ function parseMinimumLines(text){
   return { rows, bad };
 }
 
+// One player per line. A leading "12." ranking number is optional and stripped.
+function parseKeepLines(text){
+  const out = [], seen = new Set();
+  for(const line of String(text).split('\n')){
+    const player = asciiName(line.trim().replace(/^\d{1,4}[.)]?\s*/, ''));
+    if(player.length < 2) continue;
+    if(seen.has(norm(player))) continue;
+    seen.add(norm(player));
+    out.push(player);
+  }
+  return out;
+}
+
 $('#open-min').addEventListener('click', minimumsPanel);
 
 async function minimumsPanel(){
   await pull();
   const mins = (market.minimums||[]).filter(x => x.sport===sport)
     .sort((a,b) => b.rate - a.rate || a.player.localeCompare(b.player));
+  const keepers = (market.keeplist||[]).filter(x => x.sport===sport);
 
-  const box = modal(`Minimum rates — ${SPORTS[sport]}`, `
+  const box = modal(`Lists — ${SPORTS[sport]}`, `
     <p class="note">The least anyone is allowed to offer for these players. Buyers can't pick a lower rate, and existing offers below a new minimum are raised to it. Switch sports on the board to manage another list.</p>
     <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
       <div style="flex:1 1 150px"><label for="mn-player">Player</label><input id="mn-player" class="field" placeholder="e.g. Lamine Yamal"></div>
@@ -1233,7 +1283,20 @@ async function minimumsPanel(){
         <span class="rate num">${x.rate}<small>/1</small></span>
         <span class="player">${esc(x.player)}</span>
         <button class="btn-ghost btn-danger" data-mnrm="${x.id}">Remove</button>
-      </div>`).join('') : '<p class="nohit">No minimums set for this sport.</p>'}</div>`);
+      </div>`).join('') : '<p class="nohit">No minimums set for this sport.</p>'}</div>
+
+    <h3 style="margin:22px 0 0;font-size:14px;font-weight:600">Keep list — ${keepers.length} players</h3>
+    <p class="note">Players worth holding. After a scan, anyone whose card has no buyer <em>and</em> isn't on this list gets suggested as a quicksell. With the list empty, nothing is ever suggested.</p>
+    <details style="margin-top:4px">
+      <summary class="note" style="cursor:pointer">Paste a whole list (replaces the current one)</summary>
+      <textarea id="kp-bulk" class="field" rows="5" placeholder="Jeremiah Smith&#10;1. Malachi Toney&#10;2. Arch Manning" style="margin-top:8px"></textarea>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <button class="btn-ghost" id="kp-save">Replace list</button>
+        ${keepers.length ? `<button class="btn-ghost btn-danger" id="kp-clear">Clear list</button>` : ''}
+      </div>
+    </details>
+    ${keepers.length ? `<details style="margin-top:8px"><summary class="note" style="cursor:pointer">Show the ${keepers.length} names</summary>
+      <p class="note" style="margin-top:8px">${keepers.map(k=>esc(k.player)).join(' · ')}</p></details>` : ''}`);
 
   // Saving a minimum also lifts any standing offer that now sits below it,
   // so the floor can't be dodged by having posted early.
@@ -1272,6 +1335,24 @@ async function minimumsPanel(){
     toast(`Added ${rows.length} minimum${rows.length===1?'':'s'}` +
       (raised ? `, raised ${raised} offer${raised===1?'':'s'}` : '') +
       (bad.length ? ` — ${bad.length} line${bad.length===1?'':'s'} skipped` : ''));
+  });
+
+  box.querySelector('#kp-save').addEventListener('click', async () => {
+    const names = parseKeepLines(box.querySelector('#kp-bulk').value);
+    if(!names.length) return toast('Nothing to save — put one player per line.');
+    await push(m => {
+      m.keeplist = (m.keeplist||[]).filter(x => x.sport !== sport)
+        .concat(names.map((player, i) => ({ id:uid(), sport, player, rank:i+1 })));
+    });
+    box.remove(); minimumsPanel();
+    toast(`Keep list saved — ${names.length} player${names.length===1?'':'s'}`);
+  });
+
+  box.querySelector('#kp-clear')?.addEventListener('click', async () => {
+    if(!confirm(`Clear the ${SPORTS[sport]} keep list? Quicksells stop being suggested for this sport.`)) return;
+    await push(m => { m.keeplist = (m.keeplist||[]).filter(x => x.sport !== sport); });
+    box.remove(); minimumsPanel();
+    toast('Keep list cleared');
   });
 
   box.addEventListener('click', async e => {
