@@ -45,8 +45,9 @@ function blank() {
 }
 
 async function readMarket(env) {
-  // cacheTtl 0 asks for the freshest copy this datacenter can give us.
-  const raw = await env.RATEBOARD_KV.get(KEY, { cacheTtl: 0 });
+  // No cacheTtl override here: KV rejects anything under 60 seconds, and the
+  // default already gives this datacenter's freshest copy.
+  const raw = await env.RATEBOARD_KV.get(KEY);
   let m = null;
   if (raw) { try { m = JSON.parse(raw); } catch (e) { m = null; } }
   if (!m || typeof m !== 'object') m = blank();
@@ -119,7 +120,7 @@ export async function onRequestGet({ request, env }) {
   if (!key || !ALLOWED_KEYS.has(key)) {
     return json({ error: 'unknown key' }, 400);
   }
-  const value = await env.RATEBOARD_KV.get(key, { cacheTtl: 0 });
+  const value = await env.RATEBOARD_KV.get(key);
   return json({ value });
 }
 
