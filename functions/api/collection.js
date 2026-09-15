@@ -150,7 +150,7 @@ async function fetchAllCards(hashId, sport, auth) {
     }
 
     offset += 20;
-    if (offset > 10000) break; // safety cap
+    if (offset >= 900) break; // stay under CF's 50-subrequest limit (1 search + 45 pages)
   }
 
   return [...byPlayer.values()];
