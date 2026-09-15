@@ -357,12 +357,24 @@
         <div id="pane-sell" class="panel hide">
           <div class="panel-hd"><h2>Scan your stats</h2></div>
           <div class="panel-bd stack">
-            <div class="alarm">Screenshot reader down, fix will be out tonight</div>
+            <div class="warn">to upload stats, go to the card page on real, on the top of the screen theres a button that says "stats" click that, and take a screenshot (take as many as you want) and submit below, if you dont know where to go or what the stats page should look like, expand the screenshots below, if theres players you dont want to sell select them or just ignore the options of people buying them</div>
+            <button id="s-examples-toggle" class="btn-ghost" aria-expanded="false">Show example screenshots</button>
+            <div id="s-examples" class="examples hide">
+              <figure>
+                <a href="examples/find-stats-button.jpg" target="_blank" rel="noopener"><img src="examples/find-stats-button.jpg" alt="Card page in the Real app with the Stats button circled at the top"></a>
+                <figcaption>On the card page, tap "Stats" at the top. <span class="tapfull">Tap the image for full size.</span></figcaption>
+              </figure>
+              <figure>
+                <a href="examples/stats-list.jpg" target="_blank" rel="noopener"><img src="examples/stats-list.jpg" alt="Top players list showing boost value for each player"></a>
+                <figcaption>This is what the stats page looks like — screenshot this list.</figcaption>
+              </figure>
+            </div>
             <input type="file" id="s-file" accept="image/*" multiple class="hide">
             <button id="s-pick" class="btn btn-lg">Upload stats screenshots</button>
             <button id="s-exclude" class="btn-ghost">Exclude players/teams</button>
             <div id="s-files" class="note"></div>
             <button id="s-go" class="btn hide">Read screenshots</button>
+            <p class="note">Reads the player names off your screenshots and shows everyone buying each one, best price first, in the sport you have selected.</p>
           </div>
         </div>
       </aside>
@@ -986,6 +998,13 @@ async function removeOffer(id, asAdmin){
 /* =========================================================
    Seller — screenshot scan
    ========================================================= */
+$('#s-examples-toggle').addEventListener('click', () => {
+  const btn = $('#s-examples-toggle'), box = $('#s-examples');
+  const nowHidden = box.classList.toggle('hide');
+  btn.textContent = nowHidden ? 'Show example screenshots' : 'Hide example screenshots';
+  btn.setAttribute('aria-expanded', String(!nowHidden));
+});
+
 /* ---- exclude list: players/teams a seller never wants surfaced ---- */
 const EXCLUDE_KEY = 'ratebrd_exclude_v1';
 function loadExcludes(){
