@@ -18,6 +18,60 @@ const KEY = 'ratebrd_market_v1';
 const MAX_VALUE_BYTES = 8_000_000; // 8 MB — room for many thousands of listings
 const MAX_OFFERS = 20_000;
 
+/* ---- backups -------------------------------------------------------------
+   Nobody sees these and nothing in the app reads them; they exist purely so
+   the board can be put back if a bad write ever flattens it again.
+
+   Two kinds. Eight rotating slots keep the last ~4 hours of healthy states,
+   one per half-hour bucket so this costs a couple of writes an hour rather
+   than one per listing. And one "safe" copy that is only ever replaced by a
+   board at least 80% the size of the one already in it — a wipe can't
+   overwrite it, which is the whole point.
+--------------------------------------------------------------------------- */
+const SNAP_SLOTS = 8;
+const SNAP_BUCKET_MS = 30 * 60 * 1000;
+const SNAP_PREFIX = 'ratebrd_snap_';
+const SAFE_KEY = 'ratebrd_snap_safe';
+
+function snapWrap(value, m, bucket) {
+  return JSON.stringify({
+    bucket, ts: Date.now(),
+    users: Object.keys(m.users || {}).length,
+    offers: (m.offers || []).length,
+    minimums: (m.minimums || []).length,
+    keeplist: (m.keeplist || []).length,
+    value
+  });
+}
+
+async function saveSnapshot(env, value, m) {
+  try {
+    const bucket = Math.floor(Date.now() / SNAP_BUCKET_MS);
+    const slotKey = SNAP_PREFIX + (bucket % SNAP_SLOTS);
+
+    // One write per bucket — if this slot already holds this bucket, skip.
+    const existing = await env.RATEBOARD_KV.get(slotKey);
+    let sameBucket = false;
+    if (existing) {
+      try { sameBucket = JSON.parse(existing).bucket === bucket; } catch (e) {}
+    }
+    if (sameBucket) return;
+
+    await env.RATEBOARD_KV.put(slotKey, snapWrap(value, m, bucket));
+
+    // The safe copy only moves forward to boards that haven't lost people.
+    const users = Object.keys(m.users || {}).length;
+    const safeRaw = await env.RATEBOARD_KV.get(SAFE_KEY);
+    let allowed = users > 0;
+    if (allowed && safeRaw) {
+      try { allowed = users >= Math.floor(JSON.parse(safeRaw).users * 0.8); } catch (e) {}
+    }
+    if (allowed) await env.RATEBOARD_KV.put(SAFE_KEY, snapWrap(value, m, bucket));
+  } catch (e) {
+    // A backup that fails must never take a real write down with it.
+  }
+}
+
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
     status,
@@ -116,6 +170,30 @@ function applyOp(m, body) {
 
 export async function onRequestGet({ request, env }) {
   const url = new URL(request.url);
+
+  // Backups. `?snap=list` shows what's stored and how big each one was;
+  // `?snap=3` or `?snap=safe` hands back that copy of the board.
+  const snap = url.searchParams.get('snap');
+  if (snap != null) {
+    if (snap === 'list') {
+      const out = [];
+      for (const s of [...Array(SNAP_SLOTS).keys(), 'safe']) {
+        const raw = await env.RATEBOARD_KV.get(SNAP_PREFIX + s);
+        if (!raw) { out.push({ slot: String(s), empty: true }); continue; }
+        try {
+          const d = JSON.parse(raw);
+          out.push({ slot: String(s), takenAt: new Date(d.ts).toISOString(),
+            users: d.users, offers: d.offers, minimums: d.minimums, keeplist: d.keeplist });
+        } catch (e) { out.push({ slot: String(s), unreadable: true }); }
+      }
+      return json({ snapshots: out });
+    }
+    if (!/^(safe|[0-7])$/.test(snap)) return json({ error: 'bad snapshot' }, 400);
+    const raw = await env.RATEBOARD_KV.get(SNAP_PREFIX + snap);
+    if (!raw) return json({ error: 'no such snapshot' }, 404);
+    return new Response(raw, { headers: { 'content-type': 'application/json' } });
+  }
+
   const key = url.searchParams.get('key');
   if (!key || !ALLOWED_KEYS.has(key)) {
     return json({ error: 'unknown key' }, 400);
@@ -124,7 +202,8 @@ export async function onRequestGet({ request, env }) {
   return json({ value });
 }
 
-export async function onRequestPost({ request, env }) {
+export async function onRequestPost({ request, env, waitUntil }) {
+  const later = waitUntil ? (p) => waitUntil(p) : async (p) => { await p; };
   let body;
   try {
     body = await request.json();
@@ -151,6 +230,7 @@ export async function onRequestPost({ request, env }) {
     const encoded = JSON.stringify(m);
     if (encoded.length > MAX_VALUE_BYTES) return json({ error: 'board is full' }, 413);
     await env.RATEBOARD_KV.put(KEY, encoded);
+    later(saveSnapshot(env, encoded, m));
     return json({ ok: true, offers: m.offers.length });
   }
 
@@ -163,5 +243,9 @@ export async function onRequestPost({ request, env }) {
     return json({ error: 'bad value' }, 400);
   }
   await env.RATEBOARD_KV.put(key, value);
+  try {
+    const m = JSON.parse(value);
+    if (m && typeof m === 'object') later(saveSnapshot(env, value, m));
+  } catch (e) {}
   return json({ ok: true });
 }
