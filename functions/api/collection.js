@@ -184,7 +184,7 @@ export async function onRequestGet({ request, env }) {
 
   const rsSport = SPORT_RS_KEY[sport];
 
-  const cacheKey = `col:${rsSport}:${username.toLowerCase()}:${start}`;
+  const cacheKey = `col2:${rsSport}:${username.toLowerCase()}:${start}`;
 
   // 1. KV cache check — serve from cache if within 24h
   if (env.RATEBOARD_KV) {
