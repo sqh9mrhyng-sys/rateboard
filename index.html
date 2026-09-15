@@ -1674,20 +1674,41 @@ $('#rs-go').addEventListener('click', async () => {
       btn.innerHTML = `<span class="spin"></span> Fetching cards${chunk > 1 ? ' ('+chunk+')' : ''}…`;
       const qs = `/api/collection?username=${encodeURIComponent(me)}&sport=FC&start=${start}` +
         (hashId ? `&hashId=${encodeURIComponent(hashId)}` : '');
+
+      // On first chunk, check cache before staggering
+      if(chunk === 1){
+        const probe = await fetch(qs);
+        const cached = probe.headers.get('x-cache') === 'HIT';
+        if(!cached){
+          // Not cached — stagger to spread RS load across burst of users
+          const staggerMs = Math.floor(Math.random() * 10000);
+          btn.innerHTML = `<span class="spin"></span> Starting in ${Math.ceil(staggerMs/1000)}s…`;
+          await new Promise(r => setTimeout(r, staggerMs));
+          btn.innerHTML = `<span class="spin"></span> Fetching cards…`;
+        }
+        const data = await probe.json();
+        if(!probe.ok){
+          rsMsg((data.error || 'Could not load cards — try again.') + (data.detail ? ' (' + data.detail + ')' : ''), true);
+          return;
+        }
+        mergeChunk(data.players || []);
+        hashId = data.hashId || hashId;
+        if(!data.hasMore) break;
+        start = data.nextStart;
+        continue;
+      }
+
       const res = await fetch(qs);
       const data = await res.json();
-
       if(!res.ok){
         rsMsg((data.error || 'Could not load cards — try again.') + (data.detail ? ' (' + data.detail + ')' : ''), true);
         return;
       }
-
       mergeChunk(data.players || []);
       hashId = data.hashId || hashId;
-
       if(!data.hasMore) break;
       start = data.nextStart;
-      if(chunk > 50) break; // absolute safety cap
+      if(chunk > 50) break;
     }
 
     const raw = [...merged.values()].map(p => ({
