@@ -1658,7 +1658,7 @@ $('#rs-go').addEventListener('click', async () => {
     const data = await res.json();
 
     if(!res.ok){
-      rsMsg(data.error || 'Could not load collection — try again.', true);
+      rsMsg((data.error || 'Could not load collection — try again.') + (data.detail ? ' (' + data.detail + ')' : ''), true);
       return;
     }
 

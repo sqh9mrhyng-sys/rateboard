@@ -122,7 +122,10 @@ async function fetchAllCards(hashId, sport, auth) {
     const url = `https://web.realapp.com/collectingcards/${sport}/season/${SEASON}/entity/play/user/${hashId}/cards` +
       `?includeRecommendations=true&offset=${offset}&rarity=all&view=rating`;
     const res = await fetch(url, { headers: rsHeaders(auth) });
-    if (!res.ok) throw new Error(`RS cards ${res.status}`);
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`RS cards ${res.status}: ${body.slice(0, 200)}`);
+    }
     const data = await res.json();
     const cards = data.cards || [];
     if (!cards.length) break;
@@ -195,7 +198,7 @@ export async function onRequestGet({ request, env }) {
   // 4. Fetch and group all cards
   let players;
   try { players = await fetchAllCards(hashId, rsSport, auth); }
-  catch (e) { return json({ error: 'Could not load cards — try again shortly' }, 502); }
+  catch (e) { return json({ error: 'Could not load cards — try again shortly', detail: e.message }, 502); }
 
   if (!players.length) return json({ error: `No cards found for "${username}"` }, 404);
 
