@@ -112,13 +112,17 @@ async function resolveHashId(username, auth) {
   return match ? match.id : null;
 }
 
-// Fetches all cards and groups them by player.
-// Returns array of { name, playerId, total, byRarity, maxValue }
-async function fetchAllCards(hashId, sport, auth) {
-  const byPlayer = new Map(); // playerId → { name, total, byRarity:{1..5}, maxValue }
-  let offset = 0;
+const CHUNK_PAGES = 44; // pages per invocation — keeps total subrequests ≤ 45 (+ 1 for username lookup)
 
-  while (true) {
+// Fetches one chunk of cards starting at `startOffset`.
+// Returns { byPlayer (Map), hasMore, nextOffset }
+async function fetchCardChunk(hashId, sport, auth, startOffset) {
+  const byPlayer = new Map();
+  let offset = startOffset;
+  let pagesRead = 0;
+  let hasMore = false;
+
+  while (pagesRead < CHUNK_PAGES) {
     const url = `https://web.realapp.com/collectingcards/${sport}/season/${SEASON}/entity/play/user/${hashId}/cards` +
       `?includeRecommendations=true&offset=${offset}&rarity=all&view=rating`;
     const res = await fetch(url, { headers: rsHeaders(auth) });
@@ -133,13 +137,11 @@ async function fetchAllCards(hashId, sport, auth) {
     for (const card of cards) {
       const pid = card.playerId || card.primaryPlayer?.id;
       if (!pid) continue;
-
       const firstName = card.primaryPlayer?.firstName || '';
       const lastName  = card.primaryPlayer?.lastName  || '';
       const name = (firstName + ' ' + lastName).trim() || card.primaryPlayer?.displayName || String(pid);
       const rarity = card.rarity || 0;
       const value  = card.value  || 0;
-
       if (!byPlayer.has(pid)) {
         byPlayer.set(pid, { name, playerId: pid, total: 0, byRarity: {1:0,2:0,3:0,4:0,5:0}, maxValue: 0 });
       }
@@ -150,13 +152,23 @@ async function fetchAllCards(hashId, sport, auth) {
     }
 
     offset += 20;
-    if (offset >= 900) break; // stay under CF's 50-subrequest limit (1 search + 45 pages)
+    pagesRead++;
+
+    // If we got a full page there may be more — signal the next chunk
+    if (cards.length === 20 && pagesRead === CHUNK_PAGES) {
+      hasMore = true;
+    }
   }
 
-  return [...byPlayer.values()];
+  return { byPlayer, hasMore, nextOffset: offset };
 }
 
 // ── main handler ──────────────────────────────────────────────────────────────
+// Supports chunked fetching for large collections:
+//   ?username=X&sport=FC              → chunk 0 (resolves username → hashId)
+//   ?username=X&sport=FC&hashId=Y&start=880 → subsequent chunks (skips username lookup)
+// Response includes { players, hasMore, nextStart, hashId } so the frontend
+// can loop until hasMore is false, merging player data across chunks.
 export async function onRequestGet({ request, env }) {
   const auth = env.RS_AUTH_TOKEN;
   if (!auth) return json({ error: 'RS collection is not configured on this server' }, 500);
@@ -164,52 +176,42 @@ export async function onRequestGet({ request, env }) {
   const url      = new URL(request.url);
   const username = (url.searchParams.get('username') || '').trim();
   const sport    = (url.searchParams.get('sport') || 'FC').toUpperCase();
+  const start    = Math.max(0, parseInt(url.searchParams.get('start') || '0', 10));
+  let   hashId   = (url.searchParams.get('hashId') || '').trim();
 
   if (!username) return json({ error: 'username is required' }, 400);
   if (username.length > 50) return json({ error: 'username too long' }, 400);
   if (!SPORT_RS_KEY[sport]) return json({ error: `unsupported sport: ${sport}` }, 400);
 
-  const rsSport  = SPORT_RS_KEY[sport];
-  const cacheKey = `collection2:${rsSport}:${username.toLowerCase()}`;
+  const rsSport = SPORT_RS_KEY[sport];
 
-  // 1. KV cache check
-  if (env.RATEBOARD_KV) {
-    const cached = await env.RATEBOARD_KV.get(cacheKey);
-    if (cached) {
-      return new Response(cached, {
-        headers: { 'content-type': 'application/json', 'x-cache': 'HIT' }
-      });
-    }
-  }
-
-  // 2. Per-IP rate limit
-  const ip = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || 'unknown';
-  if (env.RATEBOARD_KV) {
+  // Per-IP rate limit (only on first chunk to avoid counting loops)
+  if (start === 0 && env.RATEBOARD_KV) {
+    const ip = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || 'unknown';
     const allowed = await checkRateLimit(env.RATEBOARD_KV, ip);
     if (!allowed) return json({ error: 'Too many requests — try again in a minute' }, 429);
   }
 
-  // 3. Resolve username → hash ID
-  let hashId;
-  try { hashId = await resolveHashId(username, auth); }
-  catch (e) { return json({ error: 'Could not reach RS — try again shortly' }, 502); }
-  if (!hashId) return json({ error: `RS user "${username}" not found` }, 404);
-
-  // 4. Fetch and group all cards
-  let players;
-  try { players = await fetchAllCards(hashId, rsSport, auth); }
-  catch (e) { return json({ error: 'Could not load cards — try again shortly', detail: e.message }, 502); }
-
-  if (!players.length) return json({ error: `No cards found for "${username}"` }, 404);
-
-  const result = JSON.stringify({ username, hashId, players, fetchedAt: Date.now() });
-
-  // 5. Cache result
-  if (env.RATEBOARD_KV) {
-    await env.RATEBOARD_KV.put(cacheKey, result, { expirationTtl: CACHE_TTL_SECONDS });
+  // Resolve username → hashId (only needed on first chunk)
+  if (!hashId) {
+    try { hashId = await resolveHashId(username, auth); }
+    catch (e) { return json({ error: 'Could not reach RS — try again shortly' }, 502); }
+    if (!hashId) return json({ error: `RS user "${username}" not found` }, 404);
   }
 
-  return new Response(result, {
-    headers: { 'content-type': 'application/json', 'x-cache': 'MISS' }
+  // Fetch one chunk of cards
+  let chunk;
+  try { chunk = await fetchCardChunk(hashId, rsSport, auth, start); }
+  catch (e) { return json({ error: 'Could not load cards — try again shortly', detail: e.message }, 502); }
+
+  const players = [...chunk.byPlayer.values()];
+
+  return json({
+    username,
+    hashId,
+    players,
+    hasMore:   chunk.hasMore,
+    nextStart: chunk.nextOffset,
+    fetchedAt: Date.now(),
   });
 }

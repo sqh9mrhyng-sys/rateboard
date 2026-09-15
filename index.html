@@ -1650,24 +1650,52 @@ function rsMsg(text, isError){
 $('#rs-go').addEventListener('click', async () => {
   const btn = $('#rs-go');
   btn.disabled = true;
-  btn.innerHTML = '<span class="spin"></span> Fetching your cards…';
   rsMsg('');
 
-  try{
-    const res = await fetch(`/api/collection?username=${encodeURIComponent(me)}&sport=FC`);
-    const data = await res.json();
+  // Merge player data across chunks: sum totals + byRarity, keep highest maxValue
+  const merged = new Map(); // name → {name, total, byRarity, maxValue}
+  function mergeChunk(players){
+    for(const p of players){
+      if(!p.name) continue;
+      if(!merged.has(p.name)){
+        merged.set(p.name, { name:p.name, total:0, byRarity:{1:0,2:0,3:0,4:0,5:0}, maxValue:0 });
+      }
+      const m = merged.get(p.name);
+      m.total += p.total || 0;
+      if(p.byRarity) for(let r=1;r<=5;r++) m.byRarity[r] = (m.byRarity[r]||0) + (p.byRarity[r]||0);
+      if((p.maxValue||0) > m.maxValue) m.maxValue = p.maxValue;
+    }
+  }
 
-    if(!res.ok){
-      rsMsg((data.error || 'Could not load collection — try again.') + (data.detail ? ' (' + data.detail + ')' : ''), true);
-      return;
+  try{
+    let start = 0, hashId = null, chunk = 0;
+    while(true){
+      chunk++;
+      btn.innerHTML = `<span class="spin"></span> Fetching cards${chunk > 1 ? ' ('+chunk+')' : ''}…`;
+      const qs = `/api/collection?username=${encodeURIComponent(me)}&sport=FC&start=${start}` +
+        (hashId ? `&hashId=${encodeURIComponent(hashId)}` : '');
+      const res = await fetch(qs);
+      const data = await res.json();
+
+      if(!res.ok){
+        rsMsg((data.error || 'Could not load cards — try again.') + (data.detail ? ' (' + data.detail + ')' : ''), true);
+        return;
+      }
+
+      mergeChunk(data.players || []);
+      hashId = data.hashId || hashId;
+
+      if(!data.hasMore) break;
+      start = data.nextStart;
+      if(chunk > 50) break; // absolute safety cap
     }
 
-    const raw = (data.players || []).map(item => ({
-      name:     item.name,
-      boost:    item.maxValue || null,
-      owned:    item.total,
-      byRarity: item.byRarity || null,
-    })).filter(p => p.name);
+    const raw = [...merged.values()].map(p => ({
+      name:     p.name,
+      boost:    p.maxValue || null,
+      owned:    p.total,
+      byRarity: p.byRarity,
+    }));
 
     if(!raw.length){
       rsMsg(`No FC cards found for "${me}" on Real Sports.`, true);
