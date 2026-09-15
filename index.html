@@ -1417,14 +1417,18 @@ async function adminPanel(){
       <div class="hit" style="grid-template-columns:1fr auto">
         <span><span class="player">${esc(u.name)}</span><br>
           <span class="who">${u.banned ? 'deleted' : market.offers.filter(o=>o.user===k).length + ' offers'}</span></span>
-        ${u.banned ? `<button class="btn-ghost" data-unban="${esc(k)}">Restore</button>`
-                   : `<button class="btn-ghost btn-danger" data-ban="${esc(k)}">Delete account</button>`}
+        ${k === me.toLowerCase() ? `<span class="who">this is you</span>`
+          : u.banned ? `<button class="btn-ghost" data-unban="${esc(k)}">Restore</button>`
+                     : `<button class="btn-ghost btn-danger" data-ban="${esc(k)}">Delete account</button>`}
       </div>`).join('')}`);
 
   box.addEventListener('click', async e => {
     const ban = e.target.closest('[data-ban]'), un = e.target.closest('[data-unban]'), cl = e.target.closest('[data-clear]');
     if(ban){
       const k = ban.dataset.ban;
+      // Deleting yourself locks you out of your own board — and since admin
+      // access is tied to the username, nobody could undo it from in here.
+      if(k === me.toLowerCase()) return toast("That's your own account — you can't delete it.");
       if(!confirm(`Delete ${k}? Their offers come off the board.`)) return;
       await push(m => {
         if(m.users[k]) m.users[k].banned = true;
