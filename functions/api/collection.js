@@ -6,9 +6,11 @@
 //
 // Rate limiting:
 //   - Per-IP: max 5 requests/min tracked in RATEBOARD_KV
-//   - KV cache: 24h per chunk
+//   - KV cache: one quarter-hour slot, so everyone's cards refresh together
+//     on the hour and at :15, :30 and :45 rather than 24h after their own pull
 
-const CACHE_TTL_SECONDS = 86400;
+const CACHE_BUCKET_MS   = 15 * 60 * 1000;  // :00, :15, :30, :45
+const CACHE_TTL_SECONDS = 900;             // one slot; the key changes at the boundary anyway
 const IP_WINDOW_SECONDS = 60;
 const IP_MAX_REQUESTS   = 5;
 
@@ -185,9 +187,12 @@ export async function onRequestGet({ request, env }) {
   if (!SPORT_RS_KEY[sport]) return json({ error: `unsupported sport: ${sport}` }, 400);
 
   const rsSport  = SPORT_RS_KEY[sport];
-  const cacheKey = `col3:${rsSport}:${username.toLowerCase()}:${start}`;
+  // The slot number is part of the key, so a cached chunk is dead the moment
+  // the clock ticks past the next quarter hour — no rolling 15-minute window.
+  const slot     = Math.floor(Date.now() / CACHE_BUCKET_MS);
+  const cacheKey = `col4:${rsSport}:${username.toLowerCase()}:${start}:${slot}`;
 
-  // 1. KV cache check — serve from cache if within 24h
+  // 1. KV cache check — serve from cache if it's from this quarter-hour slot
   if (env.RATEBOARD_KV) {
     const cached = await env.RATEBOARD_KV.get(cacheKey);
     if (cached) {
