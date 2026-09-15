@@ -154,6 +154,8 @@
   .buyer{background:var(--panel-2);border:1px solid var(--line);border-radius:999px;
     padding:4px 10px;font-size:12.5px;color:var(--mute)}
   .buyer b{color:var(--accent);font-weight:700}
+  .killer{color:var(--mute);font-size:15px;line-height:1;padding:2px 2px 2px 6px;border-radius:4px}
+  .killer:hover{color:var(--bad)}
 
   .hit{display:grid;grid-template-columns:78px 1fr auto;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid var(--line)}
   .hit:last-child{border-bottom:none}
@@ -488,12 +490,49 @@ async function pull(){
   market.users ||= {}; market.offers ||= []; market.reports ||= []; market.minimums ||= []; market.keeplist ||= [];
   return market;
 }
+
+// Whole-board write. Only safe when the read that came before it actually
+// worked: a failed read leaves `market` empty, and writing that back would
+// erase every account and listing on the board. So it refuses to write
+// anything it isn't sure about. Used for the admin-only edits; the everyday
+// ones go through patch() instead.
 async function push(mutate){
   await pull();                       // re-read so we don't clobber other people
+  if(lastGetFailed || !Object.keys(market.users).length){
+    toast("Couldn't reach the board — nothing was changed. Try again.");
+    return false;
+  }
   mutate(market);
   const ok = await S.set(KEY, JSON.stringify(market));
   if(!ok) toast('Could not save. Try again.');
   return ok;
+}
+
+// Everyday edits — posting, changing and removing a listing, signing up.
+// The server does the read-and-write itself so nobody's listing gets written
+// over by someone else who loaded the page a moment earlier.
+async function patch(op, payload){
+  try{
+    const r = await fetch('/api/kv', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ op, ...payload })
+    });
+    const data = await r.json().catch(()=>({}));
+    if(!r.ok){
+      showConnBanner(true);
+      toast(data.error === 'board unavailable, nothing was changed'
+        ? "Couldn't reach the board — nothing was changed. Try again."
+        : (data.error || 'Could not save. Try again.'));
+      return false;
+    }
+    showConnBanner(false);
+    return true;
+  }catch(e){
+    console.error('patch failed:', e);
+    showConnBanner(true);
+    toast('Could not save — check your connection and try again.');
+    return false;
+  }
 }
 
 /* =========================================================
@@ -614,8 +653,9 @@ async function doSignIn(){
     if(existing.banned) return gateMsg('This account has been removed from the board.');
     if(existing.hash !== h) return gateMsg('Wrong password for that username.');
   } else {
-    const ok = await push(m => { m.users[key] = { name:u, hash:h, created:Date.now(), banned:false }; });
+    const ok = await patch('signup', { key, name:u, hash:h });
     if(!ok) return gateMsg('Could not create the account. Try again.');
+    await pull();
   }
 
   me = market.users[key]?.name || u;
@@ -914,11 +954,10 @@ $('#b-post').addEventListener('click', async () => {
     return toast(`${min.player} has a ${min.rate}/1 minimum — you can't offer less.`);
   }
 
-  await push(m => {
-    const i = m.offers.findIndex(o => o.user===me.toLowerCase() && o.sport===sport && norm(o.player)===norm(player));
-    if(i > -1){ m.offers[i].rate = rate; m.offers[i].player = player; m.offers[i].link = link; m.offers[i].ts = Date.now(); }
-    else m.offers.push({ id:uid(), user:me.toLowerCase(), sport, player, rate, link, ts:Date.now() });
+  const posted = await patch('addOffer', {
+    offer: { id:uid(), user:me.toLowerCase(), sport, player, rate, link }
   });
+  if(!posted) return;
   $('#b-player').value=''; $('#b-link').value='';
   closeSuggest();
   renderBuyInstructions();
@@ -940,14 +979,16 @@ function editRate(id){
     const link = box.querySelector('#e-link').value.trim();
     if(min && r < min.rate) return toast(`${min.player} has a ${min.rate}/1 minimum.`);
     if(!validCommentLink(link)) return toast('That doesn\'t look like a comment link on the pinned post.');
-    await push(m => { const t = m.offers.find(x=>x.id===id); if(t) { t.rate = r; t.link = link; t.ts = Date.now(); } });
+    const saved = await patch('updateOffer', { id, user: me.toLowerCase(), rate: r, link });
+    if(!saved) return;
     box.remove(); toast(`${o.player} now ${r}/1`); render();
   });
 }
 
-async function removeOffer(id){
+async function removeOffer(id, asAdmin){
   const o = market.offers.find(x => x.id===id);
-  await push(m => { m.offers = m.offers.filter(x => x.id!==id); });
+  const gone = await patch('removeOffer', asAdmin ? { id } : { id, user: me.toLowerCase() });
+  if(!gone) return;
   toast(o ? `Removed ${o.player}` : 'Removed'); render();
 }
 
@@ -1057,13 +1098,27 @@ If you cannot read any rows, return {"players":[]}.` });
       body: JSON.stringify({ content })
     });
     const data = await res.json();
-    if(!res.ok) throw new Error(data && data.error ? data.error : ('scan failed (' + res.status + ')'));
+    if(!res.ok){
+      // Surface what actually went wrong. Telling someone to retake a
+      // perfectly good screenshot when the reader is switched off upstream
+      // just gets them retaking screenshots forever.
+      const msg = (data && data.error && (data.error.message || data.error)) || '';
+      if(/credit balance|quota|billing/i.test(String(msg)))
+        throw new Error('__notice__Screenshot reading is temporarily unavailable. Nothing wrong with your screenshots — the board owner has been told.');
+      if(res.status === 500 && /not configured/i.test(String(msg)))
+        throw new Error('__notice__Screenshot reading is not switched on yet. The board owner has been told.');
+      if(res.status === 429)
+        throw new Error('__notice__Too many scans at once — give it a minute and try again.');
+      throw new Error(String(msg) || ('scan failed (' + res.status + ')'));
+    }
     const txt = (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
     const parsed = JSON.parse(txt.replace(/```json|```/g,'').trim());
     showMatches(parsed.players || []);
   }catch(err){
     console.error(err);
-    toast('Could not read those screenshots. Try a clearer, uncropped image.');
+    const m = String(err && err.message || '');
+    toast(m.startsWith('__notice__') ? m.slice(10)
+      : 'Could not read those screenshots. Try a clearer, uncropped image.');
   }finally{
     btn.disabled = false; btn.textContent = 'Read screenshots';
   }
@@ -1442,10 +1497,21 @@ async function adminPanel(){
   box.querySelector('#lk-user').addEventListener('input', e => {
     const q = e.target.value.trim().toLowerCase();
     if(q.length < 1){ userOut.innerHTML = ''; return; }
-    const found = Object.entries(market.users)
-      .filter(([k,u]) => k.includes(q) || String(u.name||'').toLowerCase().includes(q))
-      .sort((a,b) => a[0].localeCompare(b[0]))
-      .slice(0, 12);
+    // Rank by how close the match is, not alphabetically — with hundreds of
+    // accounts an exact name was getting pushed off the end of the list.
+    const scored = Object.entries(market.users)
+      .map(([k,u]) => {
+        const name = String(u.name||'').toLowerCase();
+        let score = -1;
+        if(k === q || name === q) score = 0;
+        else if(k.startsWith(q) || name.startsWith(q)) score = 1;
+        else if(k.includes(q) || name.includes(q)) score = 2;
+        return { k, u, score };
+      })
+      .filter(x => x.score > -1)
+      .sort((a,b) => a.score - b.score || a.k.localeCompare(b.k));
+    const found = scored.slice(0, 25).map(x => [x.k, x.u]);
+    const hidden = scored.length - found.length;
     if(!found.length){ userOut.innerHTML = '<p class="nohit">No account matches that.</p>'; return; }
     userOut.innerHTML = found.map(([k,u]) => {
       const theirs = market.offers.filter(o => o.user === k)
@@ -1456,10 +1522,11 @@ async function adminPanel(){
           <span class="who">${u.banned ? 'deleted — ' : ''}${theirs.length} listing${theirs.length===1?'':'s'}</span>
         </div>
         ${theirs.length ? `<div class="buyers">${theirs.map(o =>
-            `<span class="buyer"><b class="num">${o.rate}</b>/1 ${esc(o.player)} <em style="opacity:.6">${o.sport}</em></span>`).join('')}</div>`
+            `<span class="buyer"><b class="num">${o.rate}</b>/1 ${esc(o.player)} <em style="opacity:.6">${o.sport}</em>
+              <button class="killer" data-kill="${o.id}" title="Delete this listing">&times;</button></span>`).join('')}</div>`
           : '<p class="nohit" style="margin-top:6px">Nothing listed.</p>'}
       </div>`;
-    }).join('');
+    }).join('') + (hidden > 0 ? `<p class="nohit">+${hidden} more — keep typing to narrow it down.</p>` : '');
   });
 
   const playerOut = box.querySelector('#lk-player-out');
@@ -1484,11 +1551,27 @@ async function adminPanel(){
           <span class="who">${g.sport} — ${g.offers.length} buyer${g.offers.length===1?'':'s'}</span>
         </div>
         <div class="buyers">${g.offers.slice().sort((a,b)=>b.rate-a.rate).map(o =>
-          `<span class="buyer"><b class="num">${o.rate}</b>/1 ${esc(nameOf(o.user))}</span>`).join('')}</div>
+          `<span class="buyer"><b class="num">${o.rate}</b>/1 ${esc(nameOf(o.user))}
+            <button class="killer" data-kill="${o.id}" title="Delete this listing">&times;</button></span>`).join('')}</div>
       </div>`).join('');
   });
 
   box.addEventListener('click', async e => {
+    // Delete anyone's listing, straight from either lookup.
+    const kill = e.target.closest('[data-kill]');
+    if(kill){
+      const id = kill.dataset.kill;
+      const o = market.offers.find(x => x.id === id);
+      const who = o ? `${o.player} (${o.rate}/1) from ${nameOf(o.user)}` : 'this listing';
+      if(!confirm(`Delete ${who}?`)) return;
+      const gone = await patch('removeOffer', { id });
+      if(!gone) return;
+      toast('Listing deleted');
+      render();
+      box.remove(); adminPanel();
+      return;
+    }
+
     const ban = e.target.closest('[data-ban]'), un = e.target.closest('[data-unban]'), cl = e.target.closest('[data-clear]');
     if(ban){
       const k = ban.dataset.ban;
