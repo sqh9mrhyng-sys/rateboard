@@ -60,6 +60,22 @@ export async function onRequestGet({ request, env }) {
   const state = await readState(env, sport);
   const players = (state && state.players) || [];
 
+  // ?team=SEA returns that whole roster instead of doing a name search.
+  // The board uses this to know which players are off limits.
+  const team = (url.searchParams.get('team') || '').trim().toUpperCase();
+  if (team) {
+    const seen = new Set();
+    const roster = [];
+    for (const [rawName, t] of players) {
+      if (asciiName(t).toUpperCase() !== team) continue;
+      const name = asciiName(rawName);
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      roster.push(name);
+    }
+    return json({ team, players: roster, count: roster.length, updated: state ? state.updated : null });
+  }
+
   const matches = [];
   if (q.length >= 2) {
     // Both sides are flattened to plain letters before comparing, so "mbappe",
