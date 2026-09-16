@@ -5,7 +5,14 @@
 // than paginating individual cards.
 //
 // Rate limiting:
-//   - Per-IP: max 5 requests/min tracked in RATEBOARD_KV
+//   - Per-IP: max 5 requests/min
+//
+// Caching and rate limiting both run on the Cloudflare Cache API, NOT on KV.
+// KV has a hard daily write ceiling; caching a chunk per user per quarter hour
+// blows straight through it, and once it's gone every KV write throws, which
+// took this whole endpoint down with a 1101. The cache API has no write quota.
+// Nothing in here is allowed to throw on a cache failure — worst case we skip
+// the cache and read live.
 //   - KV cache: one quarter-hour slot, so everyone's cards refresh together
 //     on the hour and at :15, :30 and :45 rather than 24h after their own pull
 
@@ -104,13 +111,39 @@ function parseBoost(v) {
   return 0;
 }
 
+// ── cache helpers ─────────────────────────────────────────────────────────────
+// Cache keys have to be URLs, so they're built under a path that never routes
+// anywhere. Every call is wrapped: a cache miss and a cache failure look the
+// same to the caller, which is the point.
+function cacheKeyReq(origin, parts) {
+  return new Request(`${origin}/__cache/${parts.map(encodeURIComponent).join('/')}`, { method: 'GET' });
+}
+
+async function cacheGet(req) {
+  try {
+    const hit = await caches.default.match(req);
+    return hit ? await hit.text() : null;
+  } catch (e) { return null; }
+}
+
+async function cachePut(req, body, ttlSeconds) {
+  try {
+    await caches.default.put(req, new Response(body, {
+      headers: { 'content-type': 'application/json', 'cache-control': `max-age=${ttlSeconds}` }
+    }));
+  } catch (e) { /* caching is an optimisation, never a requirement */ }
+}
+
 // ── per-IP rate limit ─────────────────────────────────────────────────────────
-async function checkRateLimit(kv, ip) {
-  const key = `ratelimit:collection:${ip}`;
-  const raw = await kv.get(key);
+// Counted per colo rather than globally, which is plenty for stopping one
+// person hammering the button, and costs no KV writes.
+async function checkRateLimit(origin, ip) {
+  const minute = Math.floor(Date.now() / (IP_WINDOW_SECONDS * 1000));
+  const req = cacheKeyReq(origin, ['rl', ip, String(minute)]);
+  const raw = await cacheGet(req);
   const count = raw ? parseInt(raw, 10) : 0;
   if (count >= IP_MAX_REQUESTS) return false;
-  await kv.put(key, String(count + 1), { expirationTtl: IP_WINDOW_SECONDS });
+  await cachePut(req, String(count + 1), IP_WINDOW_SECONDS);
   return true;
 }
 
@@ -173,6 +206,7 @@ async function fetchCollectionChunk(hashId, sport, auth, startBefore) {
 // ?username=X&sport=FC              → chunk starting at before=0
 // ?username=X&sport=FC&hashId=Y&start=880 → next chunk
 export async function onRequestGet({ request, env }) {
+  const origin = new URL(request.url).origin;
   const auth = env.RS_AUTH_TOKEN;
   if (!auth) return json({ error: 'RS collection is not configured on this server' }, 500);
 
@@ -187,25 +221,24 @@ export async function onRequestGet({ request, env }) {
   if (!SPORT_RS_KEY[sport]) return json({ error: `unsupported sport: ${sport}` }, 400);
 
   const rsSport  = SPORT_RS_KEY[sport];
-  // The slot number is part of the key, so a cached chunk is dead the moment
-  // the clock ticks past the next quarter hour — no rolling 15-minute window.
-  const slot     = Math.floor(Date.now() / CACHE_BUCKET_MS);
-  const cacheKey = `col4:${rsSport}:${username.toLowerCase()}:${start}:${slot}`;
+  // The slot number is part of the cache key, so a cached chunk is dead the
+  // moment the clock ticks past the next quarter hour — not a rolling window.
+  const slot = Math.floor(Date.now() / CACHE_BUCKET_MS);
 
-  // 1. KV cache check — serve from cache if it's from this quarter-hour slot
-  if (env.RATEBOARD_KV) {
-    const cached = await env.RATEBOARD_KV.get(cacheKey);
-    if (cached) {
-      return new Response(cached, {
-        headers: { 'content-type': 'application/json', 'x-cache': 'HIT' }
-      });
-    }
+  // 1. Cache check — serve from cache if it's from this quarter-hour slot
+  const cacheReq = cacheKeyReq(origin, ['col', rsSport, username.toLowerCase(), String(start), String(slot)]);
+  const cached = await cacheGet(cacheReq);
+  if (cached) {
+    return new Response(cached, {
+      headers: { 'content-type': 'application/json', 'x-cache': 'HIT' }
+    });
   }
 
-  // 2. Per-IP rate limit (only on first chunk)
-  if (start === 0 && env.RATEBOARD_KV) {
+  // 2. Per-IP rate limit (only on first chunk, and only once we know we're
+  //    actually about to go out to RS)
+  if (start === 0) {
     const ip = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || 'unknown';
-    const allowed = await checkRateLimit(env.RATEBOARD_KV, ip);
+    const allowed = await checkRateLimit(origin, ip);
     if (!allowed) return json({ error: 'Too many requests — try again in a minute' }, 429);
   }
 
@@ -230,10 +263,8 @@ export async function onRequestGet({ request, env }) {
     fetchedAt: Date.now(),
   });
 
-  // 5. Cache for 24 hours
-  if (env.RATEBOARD_KV) {
-    await env.RATEBOARD_KV.put(cacheKey, result, { expirationTtl: CACHE_TTL_SECONDS });
-  }
+  // 5. Cache until this quarter-hour slot rolls over
+  await cachePut(cacheReq, result, CACHE_TTL_SECONDS);
 
   return new Response(result, {
     headers: { 'content-type': 'application/json', 'x-cache': 'MISS' }
