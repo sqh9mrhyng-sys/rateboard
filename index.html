@@ -103,6 +103,9 @@
 
   .note{font-size:12.5px;color:var(--mute);line-height:1.45}
   .minnote{color:var(--accent);margin:6px 0 0}
+  /* Admin-only controls sitting inside the public board — tinted so it's
+     obvious at a glance that these aren't what everyone else sees. */
+  .adminonly{border-color:color-mix(in srgb,var(--accent) 55%,transparent);color:var(--accent)}
   .warn{background:color-mix(in srgb,var(--bad) 13%,transparent);border:1px solid color-mix(in srgb,var(--bad) 40%,transparent);border-radius:8px;padding:11px 13px;font-size:12.5px;line-height:1.45}
   /* The buy instructions are the one thing everyone has to read, so they get
      real body copy size rather than the small print the other notes use. */
@@ -415,6 +418,7 @@ const SESSION = 'ratebrd_session';    // legacy: bare username key
 const DEVICE  = 'ratebrd_device_v1';  // { key, name, ts } — remembers this browser
 const MIN_PASS = 4;
 const ADMINS = ['dennis'];            // <-- put your username(s) here
+const isAdmin = () => !!me && ADMINS.includes(String(me).toLowerCase());
 const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL' };
 
 // The post buyers must comment under before they can post a buy offer —
@@ -1276,7 +1280,15 @@ async function doSignIn(){
 
   if(existing){
     if(existing.banned) return gateMsg('This account has been removed from the board.');
-    if(existing.hash !== h) return gateMsg('Wrong password for that username.');
+    if(!existing.hash){
+      // Password was reset by the admin — whatever they just typed becomes it.
+      const set = await patch('setPass', { key, hash:h });
+      if(!set) return gateMsg('Could not set that password. Try again.');
+      await pull();
+      toast('New password saved.');
+    } else if(existing.hash !== h){
+      return gateMsg('Wrong password for that username.');
+    }
   } else {
     const ok = await patch('signup', { key, name:u, hash:h });
     if(!ok) return gateMsg('Could not create the account. Try again.');
@@ -1304,6 +1316,8 @@ async function resume(){
 
   const u = market.users[d.key];
   if(!u || u.banned){ clearDevice(); me = null; return false; }
+  // Password was reset — this browser has to go back through the login.
+  if(!u.hash){ clearDevice(); me = null; return false; }
 
   me = u.name;
   saveDevice(d.key, me);             // refresh the stamp on every visit
@@ -1597,7 +1611,11 @@ async function render(){
       <span><span class="player">${esc(o.player)}</span><br><span class="who">${esc(market.users[o.user]?.name||o.user)}</span></span>
       <span class="rowacts">${o.user===me.toLowerCase()
         ? `<button class="btn-ghost" data-edit="${o.id}">Change rate</button><button class="btn-ghost btn-danger" data-del="${o.id}">Remove</button>`
-        : `<button class="btn-ghost" data-rep="${esc(market.users[o.user]?.name||o.user)}">Report</button>`}</span>
+        : `<button class="btn-ghost" data-rep="${esc(market.users[o.user]?.name||o.user)}">Report</button>` +
+          (isAdmin() ? `<button class="btn-ghost btn-danger" data-kill="${o.id}">Delete listing</button>` : '')}
+        ${isAdmin() ? (o.link
+          ? `<a class="btn-ghost adminonly" href="${esc(o.link)}" target="_blank" rel="noopener">Their comment</a>`
+          : `<span class="who adminonly">no comment link</span>`) : ''}</span>
     </li>`).join('')
     : `<li class="empty"><b>Nothing on the board yet</b>Post the first ${SPORTS[sport]} offer and sellers will see it.</li>`;
 
@@ -1619,9 +1637,20 @@ document.addEventListener('click', async e => {
   const ed = e.target.closest('[data-edit]');
   const dl = e.target.closest('[data-del]');
   const rp = e.target.closest('[data-rep]');
+  const kb = e.target.closest('#board [data-kill]');
   if(ed) return editRate(ed.dataset.edit);
   if(dl) return removeOffer(dl.dataset.del);
   if(rp) return reportUser(rp.dataset.rep);
+  if(kb){
+    if(!isAdmin()) return;
+    const o = market.offers.find(x => x.id === kb.dataset.kill);
+    const who = o ? `${o.player} (${o.rate}/1) from ${market.users[o.user]?.name || o.user}` : 'this listing';
+    if(!confirm(`Delete ${who}?`)) return;
+    const gone = await patch('removeOffer', { id: kb.dataset.kill });
+    if(!gone) return;
+    toast('Listing deleted');
+    render();
+  }
 });
 
 /* =========================================================
@@ -2259,6 +2288,7 @@ async function adminPanel(){
   const nameOf = u => market.users[u]?.name || u;
 
   const box = modal('Admin', `
+    <p class="note" id="ad-backup">Checking backups…</p>
     <h3 style="margin:0;font-size:14px;font-weight:600">Listings</h3>
     <div class="statrow">
       <div class="stat"><b class="num">${liveOffers.length}</b><span>total listings out</span></div>
@@ -2300,8 +2330,28 @@ async function adminPanel(){
           <span class="who">${u.banned ? 'deleted' : market.offers.filter(o=>o.user===k).length + ' offers'}</span></span>
         ${k === me.toLowerCase() ? `<span class="who">this is you</span>`
           : u.banned ? `<button class="btn-ghost" data-unban="${esc(k)}">Restore</button>`
-                     : `<button class="btn-ghost btn-danger" data-ban="${esc(k)}">Delete account</button>`}
+                     : `<button class="btn-ghost" data-reset="${esc(k)}">${u.hash ? 'Reset password' : 'awaiting new password'}</button>
+                        <button class="btn-ghost btn-danger" data-ban="${esc(k)}">Delete account</button>`}
       </div>`).join('')}`);
+
+  // ---- backup health. The backup writer runs in the background where a
+  // failure is silent, so the only way it stays honest is by being shown.
+  (async () => {
+    const el = box.querySelector('#ad-backup');
+    if(!el) return;
+    try{
+      const d = await (await fetch('/api/kv?snap=list')).json();
+      const n = d.newest;
+      if(!n){ el.textContent = 'No backups on file yet.'; el.style.color = 'var(--bad)'; return; }
+      const mins = n.ageMinutes;
+      const when = mins < 60 ? `${mins} min ago` : `${(mins/60).toFixed(1)} hrs ago`;
+      el.textContent = `Last backup ${when} — ${n.users} accounts, ${n.offers} listings.`;
+      el.style.color = mins > 90 ? 'var(--bad)' : 'var(--mute)';
+    }catch(e){
+      el.textContent = 'Could not check backups.';
+      el.style.color = 'var(--bad)';
+    }
+  })();
 
   // ---- lookups. These search loosely on purpose: typing "coleman" should
   // turn up every Coleman, unlike offer matching which has to be exact.
@@ -2333,6 +2383,8 @@ async function adminPanel(){
           <span class="player">${esc(u.name || k)}</span>
           <span class="who">${u.banned ? 'deleted — ' : ''}${theirs.length} listing${theirs.length===1?'':'s'}</span>
         </div>
+        <div class="hitacts"><button class="btn-ghost" data-reset="${esc(k)}">${
+          u.hash ? 'Reset password' : 'awaiting new password'}</button></div>
         ${theirs.length ? `<div class="buyers">${theirs.map(o =>
             `<span class="buyer"><b class="num">${o.rate}</b>/1 ${esc(o.player)} <em style="opacity:.6">${o.sport}</em>
               <button class="killer" data-kill="${o.id}" title="Delete this listing">&times;</button></span>`).join('')}</div>`
@@ -2380,6 +2432,22 @@ async function adminPanel(){
       if(!gone) return;
       toast('Listing deleted');
       render();
+      box.remove(); adminPanel();
+      return;
+    }
+
+    // Clear someone's password. Their listings stay exactly where they are;
+    // the next password they type on the login screen becomes the real one.
+    const rs = e.target.closest('[data-reset]');
+    if(rs){
+      const k = rs.dataset.reset;
+      const u = market.users[k];
+      if(u && !u.hash){ toast(`${u.name || k} is already waiting to set a new password.`); return; }
+      if(!confirm(`Reset the password for ${u?.name || k}?\n\nTheir listings stay up. The next password they type when logging in becomes their new one.`)) return;
+      const done = await patch('resetPass', { key: k });
+      if(!done) return;
+      await pull();
+      toast(`Password cleared for ${u?.name || k} — their next login sets it.`);
       box.remove(); adminPanel();
       return;
     }
