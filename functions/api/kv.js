@@ -163,6 +163,29 @@ async function applyOp(env, body) {
     return null;
   }
 
+  // Admin: clear someone's password so the next password they type becomes
+  // their new one. Listings are deliberately left alone.
+  if (op === 'resetPass') {
+    const key = str(body.key, 60);
+    if (!key) return 'bad user';
+    const res = await db.prepare("UPDATE users SET hash='' WHERE key=?").bind(key).run();
+    if (!res.meta || !res.meta.changes) return 'no such account';
+    return null;
+  }
+
+  // Claim a reset account. The WHERE clause is the whole security of this:
+  // it can only ever set a password on an account an admin already cleared,
+  // so it can't be used to take over a normal account.
+  if (op === 'setPass') {
+    const key = str(body.key, 60), hash = str(body.hash, 200);
+    if (!key || !hash) return 'bad reset';
+    const res = await db.prepare(
+      "UPDATE users SET hash=? WHERE key=? AND (hash='' OR hash IS NULL)"
+    ).bind(hash, key).run();
+    if (!res.meta || !res.meta.changes) return 'that account is not awaiting a reset';
+    return null;
+  }
+
   // One-time move of the old blob into the database.
   if (op === 'import') {
     const users = body.users || {}, offers = body.offers || [];
