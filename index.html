@@ -104,6 +104,25 @@
   .note{font-size:12.5px;color:var(--mute);line-height:1.45}
   .minnote{color:var(--accent);margin:6px 0 0}
   .warn{background:color-mix(in srgb,var(--bad) 13%,transparent);border:1px solid color-mix(in srgb,var(--bad) 40%,transparent);border-radius:8px;padding:11px 13px;font-size:12.5px;line-height:1.45}
+  /* The buy instructions are the one thing everyone has to read, so they get
+     real body copy size rather than the small print the other notes use. */
+  #b-instructions{font-size:15px;line-height:1.5;padding:14px 15px}
+  #b-instructions p{margin:0 0 11px}
+  #b-instructions p:last-child{margin-bottom:0}
+  #b-instructions .shout{font-weight:700;letter-spacing:.2px}
+
+  /* ---- top players ---- */
+  .tp-tools{position:sticky;top:0;z-index:2;background:var(--panel);padding:2px 0 10px;display:flex;flex-direction:column;gap:9px}
+  .tp-row{display:grid;grid-template-columns:38px 1fr auto;gap:10px;align-items:baseline;padding:9px 0;border-bottom:1px solid var(--line)}
+  .tp-row:last-child{border-bottom:none}
+  .tp-rank{color:var(--mute);font-size:12px;font-variant-numeric:tabular-nums}
+  .tp-name{font-weight:600}
+  .tp-taken{color:var(--bad)}
+  .tp-open{color:var(--good)}
+  .tp-val{color:var(--mute);font-size:13px;font-variant-numeric:tabular-nums}
+  .tp-buyers{grid-column:2/-1;font-size:12.5px;color:var(--mute);margin-top:4px;line-height:1.5}
+  .tp-buyers b{color:var(--bone);font-weight:600}
+  .tp-empty{color:var(--mute);font-size:13px;padding:14px 0}
   /* The one thing on the buyer screen nobody is allowed to miss. */
   .alarm{background:color-mix(in srgb,var(--bad) 22%,transparent);border:2px solid var(--bad);border-radius:8px;
     padding:13px 15px;font-size:13.5px;font-weight:600;line-height:1.5;letter-spacing:.01em;text-transform:uppercase;color:var(--bone)}
@@ -354,6 +373,7 @@
             </div>
             <button id="b-post" class="btn">Post offer</button>
             <p class="note">Rates are per 1. Posting the same player twice replaces your earlier offer. A valid comment link is required — sellers use it to reach you.</p>
+            <button id="b-top" class="btn-ghost">View top players</button>
           </div>
         </div>
 
@@ -409,6 +429,607 @@ const TARGET_POST_PREFIX = 'https://www.realapp.com/' + VERIFY_POST_ID + '/';
 // 8 is the bottom tier, shown as "minimum". It's offered on any player who
 // doesn't have a floor set — where a floor exists it's filtered out, so a
 // player you've priced can never be picked up at the minimum tier.
+// Top players by total card value, newest list the board owner supplied.
+// Display only — nothing here affects pricing, floors or matching.
+const TOP_PLAYERS_RAW = {
+  FC: `Erling Haaland|22167
+Kylian Mbappe|16039
+Lamine Yamal|13592
+Michael Olise|9667
+Harry Kane|9060
+Jude Bellingham|8636
+Raphinha|7543
+Bruno Fernandes|7010
+Vinicius Junior|6797
+Bukayo Saka|6766
+Ousmane Dembele|6362
+Declan Rice|5666
+Cole Palmer|5396
+Luis Diaz|4838
+Pedri|4481
+Dominik Szoboszlai|4359
+Khvicha Kvaratskhelia|4354
+Virgil van Dijk|4197
+Vitinha|4031
+Joao Pedro|3887
+Joshua Kimmich|3584
+Rayan Cherki|3508
+Federico Valverde|3343
+Enzo Fernandez|3101
+Nico Paz|3019
+Rodri|3016
+Desire Doue|2949
+Alexander Isak|2943
+Fermin Lopez|2930
+Lautaro Martinez|2849
+David Raya|2822
+Federico Dimarco|2674
+Julian Alvarez|2608
+Bruno Guimaraes|2589
+Florian Wirtz|2577
+Gabriel Magalhaes|2429
+Moises Caicedo|2412
+Phil Foden|2379
+Elliot Anderson|2338
+Arda Guler|2306
+Matheus Cunha|2277
+Antoine Semenyo|2272
+Pau Cubarsi|2222
+Donyell Malen|2212
+Martin Odegaard|2139
+Jeremy Doku|2081
+Yan Diomande|2080
+Ryan Gravenberch|2056
+Morgan Rogers|2051
+Serhou Guirassy|1930
+Bryan Mbeumo|1879
+Bradley Barcola|1780
+Ferran Torres|1710
+Anthony Gordon|1703
+Marc Guehi|1689
+Alejandro Grimaldo|1685
+Gianluigi Donnarumma|1680
+Nuno Mendes|1647
+Jamal Musiala|1646
+Aurelien Tchouameni|1629
+Joao Neves|1600
+Thibaut Courtois|1587
+Joan Garcia|1571
+Nicolo Barella|1509
+Viktor Gyokeres|1480
+Scott McTominay|1478
+Cody Gakpo|1468
+Hakan Calhanoglu|1391
+Kai Havertz|1366
+Kenan Yildiz|1331
+Kevin De Bruyne|1316
+Ollie Watkins|1257
+Achraf Hakimi|1186
+Marc Cucurella|1128
+Eberechi Eze|1111
+Manuel Locatelli|1103
+Dani Olmo|1090
+Igor Thiago|1080
+Martin Zubimendi|1057
+Weston McKennie|1050
+Nicolas Pepe|1023
+Marcus Rashford|1005
+Sandro Tonali|955
+Alexis Mac Allister|900
+Antony|886
+Mikel Oyarzabal|837
+Warren Zaire-Emery|827
+Alessandro Bastoni|791
+Dayot Upamecano|783
+James Garner|770
+Florian Thauvin|769
+Matheus Nunes|758
+Eric Garcia|748
+Pablo Fornals|682
+Youri Tielemans|673
+Marcus Thuram|673
+Gregor Kobel|643
+Mamadou Sangare|615
+Nico Schlotterbeck|607
+Pedro Porro|603
+Emiliano Martinez|600
+Christos Tzolis|583
+Jean Butez|551
+Karim Adeyemi|543
+Folarin Balogun|538
+Amad Diallo|534
+Luka Modric|527
+William Saliba|523
+Alisson Becker|520
+Jurrien Timber|515
+Pierre-Emerick Aubameyang|512
+Mateus Fernandes|500
+Benjamin Sesko|471
+Pedro Neto|470
+Kobbie Mainoo|457
+Josko Gvardiol|449
+Bernardo Silva|442
+Alphonso Davies|426
+Aleksandar Pavlovic|422
+Ibrahima Konate|413
+Paulo Dybala|400
+Lucas da Cunha|386
+David Raum|385
+Reece James|375
+Jordan Pickford|373
+Nico O'Reilly|373
+Jan Paul van Hecke|369
+Trent Alexander-Arnold|350
+Dean Huijsen|331
+Christian Pulisic|330
+Esteban Lepaul|330
+Deniz Undav|328
+Jules Kounde|323
+Fabian Ruiz|322
+Riccardo Calafiori|320
+Micky van de Ven|307
+Xavi Espart|301
+Rio Ngumoha|296
+Willian Pacho|293
+Marquinhos|286
+Morgan Gibbs-White|285
+Noni Madueke|281
+Ruben Dias|278
+Senne Lammens|272
+Rafael Leao|266
+Estevao|266
+Daniel Munoz|262
+Felix Nmecha|261
+Anthony Elanga|261
+Manuel Neuer|260
+Manuel Akanji|257
+Alexander Sorloth|256
+Marco Carnesecchi|253
+Ezri Konsa|248
+Martin Baturina|248
+Lee Kang-In|246
+Sergio Camello|230
+Adrien Rabiot|228
+Maxence Lacroix|227
+Alex Baena|222
+Myles Lewis-Skelly|221
+Omar Marmoush|219
+Harvey Barnes|218
+Ismael Saibari|218
+Marcos Llorente|217
+Mike Maignan|217
+Aleix Garcia|212
+Pascal Gross|210
+Piotr Zielinski|209
+Georges Mikautadze|196
+Richarlison|195
+Unai Simon|194
+Alvaro Valles|190
+Hugo Ekitike|188
+Iliman Ndiaye|184
+Mikel Merino|183
+Patrick Dorgu|181
+Antonio Nusa|176
+Cristian Romero|176
+Robert Sanchez|175
+Granit Xhaka|172
+Jeremy Jacquet|170
+Zion Suzuki|170
+Harry Maguire|168
+Jonathan Tah|165
+Joao Gomes|165
+Ben White|164
+Andrey Santos|161
+Kiernan Dewsbury-Hall|161
+Nicolas Jackson|160
+Gavi|159
+Endrick|156
+Johan Manzambi|156
+Denzel Dumfries|152
+Gabriel Martinelli|151
+Ademola Lookman|150
+Victor Munoz|148
+Malick Thiaw|147
+Nico Williams|147
+Giuliano Simeone|143
+Savio|143
+Piero Hincapie|143
+Assane Diao|142
+Joao Palhinha|142
+Yoane Wissa|142
+Levi Colwill|141
+Lucas Boye|138
+Malik Tillman|135
+Jeremie Frimpong|135
+John McGinn|133
+Goncalo Ramos|132
+Lisandro Martinez|130
+Ante Budimir|129
+Joao Cancelo|128
+Gerard Martin|127
+Matvey Safonov|127
+Chris Richards|127
+Mohammed Kudus|125
+Rasmus Hojlund|124
+Djed Spence|123
+Milos Kerkez|123
+Jonathan David|123
+Jan Oblak|122
+Dominic Calvert-Lewin|122
+Gabriel Jesus|121
+Lennart Karl|121
+Ronald Araujo|121
+Carlos Espi|120
+Marc Bernal|119
+Ismaila Sarr|118
+Marco Palestra|117
+Nick Woltemade|117
+Nathaniel Brown|116
+Berke Ozer|114
+Ayyoub Bouaddi|113
+Jobe Bellingham|113
+Mariano Diaz|112
+Max Dowman|111
+Ermedin Demirovic|110
+Roberto Fernandez|110
+Matias Soule|109
+Antonin Kinsky|109
+Romeo Lavia|109
+Tasos Douvikas|109
+Cristhian Mosquera|106
+Jorrel Hato|104
+Lucas Herrington|104
+James Maddison|103
+Konstantinos Karetsas|103
+Carlos Baleba|103
+Bart Verbruggen|103
+Jack Hinshelwood|102
+Mathys Tel|101
+Mile Svilar|100
+Kaoru Mitoma|100
+Anton Stach|100
+Konrad Laimer|100
+Abdukodir Khusanov|100
+Cristian Casseres|96
+Bremer|94
+Brian Madjo|94
+Patrik Schick|93
+Pape Gueye|92
+Rayan|92
+Marcus Tavernier|92
+Waldemar Anton|92
+Diogo Dalot|91
+Luke Shaw|91
+Luka Vuskovic|90
+Francesco Pio Esposito|90
+Yuito Suzuki|89
+Brian Brobbey|89
+Franco Mastantuono|89
+Lukas Hradecky|88
+Gonzalo Garcia|87
+Tyler Adams|86
+Angelo Stiller|84
+Alex Scott|84
+Gessime Yassine|82
+Kevin Schade|82
+Jean-Philippe Mateta|81
+Leny Yoro|81
+Harry Wilson|80
+Pierre-Emile Hojbjerg|79
+Adam Wharton|79
+Yassir Zabiri|79
+Pierre Kalulu|78
+James Trafford|76
+Josh Acheampong|76
+Maghnes Akliouche|75
+Troy Parrott|73
+Eduardo Camavinga|73
+Antonee Robinson|73
+Dominic Solanke|73
+Antonio Rudiger|73
+Lamine Camara|73
+Amine Gouiri|72
+Koke|72
+Lewis Hall|70
+Ethan Nwaneri|68
+Brahim Diaz|67
+Alejandro Balde|67
+Ayden Heaven|66
+Mykhailo Mudryk|65
+Maxim De Cuyper|64
+Alejandro Garnacho|64
+Nico Gonzalez|63
+Marcos Senesi|63
+Mathew Ryan|63
+Lukas Hornicek|62
+Julian Ryerson|62
+Francisco Conceicao|62
+Junior Kroupi|62
+Alvaro Carreras|62
+Igor Matanovic|61
+Daichi Kamada|61
+Vitaly Janelt|61
+Xavi Simons|61
+Brenden Aaronson|61
+Jack Grealish|60
+Manu Kone|60
+Pep Chavarria|59
+Malo Gusto|59
+Wesley Fofana|56
+Guglielmo Vicario|56
+Promise David|56
+Valentin Barco|56
+Dean Henderson|56
+Noussair Mazraoui|55
+Archie Gray|55
+Geovany Quenda|55
+Thierno Barry|55
+Destiny Udogie|54
+Trevoh Chalobah|54
+Caoimhin Kelleher|54
+Ibrahim Mbaye|54
+Rodrigo Mora|53
+Boubacar Kamara|53
+Andreas Christensen|53
+Konstantinos Tzolakis|53
+Lucas Bergvall|52
+Moise Kean|52
+Danny Welbeck|51
+James Tarkowski|51
+Josh King|50
+Matty Cash|49
+Joelinton|49
+Younes Ebnoutalib|49
+Mika Godts|49
+Maximilian Beier|49
+Ethan Ampadu|49
+Emiliano Buendia|48
+Olivier Giroud|48
+Andy Robertson|48
+Hamza Abdelkarim|48
+Lassine Sinayoko|48
+Wladimiro Falcone|47
+Randal Kolo Muani|46
+Giannis Konstantelias|46
+Ibrahim Maza|46
+Said El Mala|46
+Khephren Thuram|45
+Christopher Nkunku|45
+Yankuba Minteh|45
+Kim Min-Jae|45
+Paris Brunner|44
+Alex Freeman|44
+Marc Bartra|44
+Ao Tanaka|43
+Bazoumana Toure|43
+Can Uzun|43
+Fabio Silva|43
+Curtis Jones|42
+Enzo Le Fee|42
+William Osula|42
+Mason Mount|42
+Charles De Ketelaere|41
+Federico Chiesa|41
+Lois Openda|41
+Yasin Ayari|41
+Tom Bischof|41
+Kamory Doumbia|40
+Charalampos Kostoulas|40
+Maximilian Mittelstadt|40
+Giovanni Reyna|40
+Lewis Miley|40
+Mario Hermoso|40
+Oscar Bobb|39
+Tarik Muharemovic|39
+Trey Nyoni|39
+Jorgen Strand Larsen|39
+Matthijs de Ligt|39
+Neco Williams|39
+Yeremy Pino|39
+Jonathan Burkardt|38
+Rayan Ait-Nouri|38
+Shea Lacey|38
+Javi Guerra|38
+Amar Dedic|38
+Tyrique George|38
+Kerim Alajbegovic|38
+Rodrigo Bentancur|37
+Takefusa Kubo|36
+Ayase Ueda|36
+Julio Enciso|36
+Pablo Barrios|36
+Tyrick Mitchell|36
+Georginio Rutter|36
+Ethan Mbappe|35
+Dejan Kulusevski|35
+Yann Bisseck|35
+Alphadjo Cisse|35
+Luka Sucic|35
+Matias Fernandez-Pardo|34
+Timothy Weah|34
+Jamie Gittens|34
+Anan Khalaili|34
+Diego Gomez|33
+Ferdi Kadioglu|33
+Oliver McBurnie|33
+Haji Wright|33
+Igor Paixao|33
+Dan Burn|33
+Joshua Zirkzee|33
+Serge Gnabry|33
+Diego Moreira|33
+Loris Karius|33
+Lewis Dunk|32
+Mikey Moore|32
+Mohamed Belloumi|32
+Conor Gallagher|32
+Santiago Gimenez|32
+Tijjani Reijnders|31
+Jacob Ramsey|31
+Bilal El Khannouss|31
+Sean Steur|31
+Alex Iwobi|31
+Josip Stanisic|31
+Djordje Petrovic|31
+Samuel Chukwueze|30
+Kevin|30
+Antonio Raimondo|30
+Rodrygo|30
+Zavier Gozo|30
+Wesley|30
+Valentin Rongier|29
+Michael Kayode|29
+Justin Kluivert|29
+Maximo Perrone|28
+Morten Hjulmand|28
+Ionut Radu|28
+Rodrigo Riquelme|28
+Evanilson|28
+Chris Wood|28
+Cucho Hernandez|28
+Gianluca Mancini|27
+Noah Okafor|27
+Davide Frattesi|27
+Jayden Bogle|27
+Johan Vasquez|27
+Hakon Haraldsson|27
+Tiago Santos|27
+Malick Yalcouye|27
+Pape Matar Sarr|26
+Alberto Moleiro|26
+Mason Greenwood|25
+Christos Mandas|25
+Jacobo Ramon|25
+Ansu Fati|25
+Andrej Kramaric|25
+Malick Fofana|25
+Stanislav Lobotka|25
+Mikkel Damsgaard|25
+Johnny Cardoso|25
+Tajon Buchanan|25
+Harrison Armstrong|24
+Jesse Bisiwu|24
+Patrick Beach|24
+Marko Dmitrovic|24
+Kaishu Sano|24
+Joe Willock|24
+Robin Roefs|24
+Keane Lewis-Potter|24
+Daniel Svensson|23
+Josep Martinez|23
+Antonio Sivera|23
+Obed Vargas|22
+Hayden Hackney|22
+Tino Livramento|22
+Rico Lewis|22
+Ederson|21
+Jonas Urbig|21
+Giovanni Leoni|21
+Jaydee Canvot|21
+Ian Maatsen|21
+Hassane Kamara|21
+Mathis Albert|21
+Marco Grull|21
+Jamie Leweling|21
+Luis Milla|21
+Gianluca Busio|21
+Diogo Costa|20
+Paul Pogba|20
+Harvey Elliott|20
+Antonio Vergara|20
+Aymeric Laporte|20
+Petar Sucic|20
+Wilson Isidor|20
+Abde Ezzalzouli|20
+Romano Floriani Mussolini|20
+Nestory Irankunda|20
+Nilson Angulo|20
+Sven Botman|20
+Caleb Yirenkyi|20
+Mateo Kovacic|20
+Alex Remiro|20
+John Stones|19
+Willi Orban|19
+Alexis Saelemaekers|19
+Strahinja Pavlovic|19
+Michael Gregoritsch|19
+Inaki Williams|19
+Giovanni Di Lorenzo|19
+Toni Martinez|19
+Matthias Ginter|19
+Pau Torres|19
+Brennan Johnson|19
+Eddie Nketiah|19
+Nadiem Amiri|19
+Aladji Bamba|19
+Ousmane Diomande|18
+Isco|18
+Moritz Nicolas|18
+Adrien Thomasson|18
+Mike Penders|18
+Louis Mafouta|18
+Christoph Baumgartner|18
+Joe Rodon|18
+Liam Delap|18
+Hugo Bolin|18
+Adrien Truffert|18
+Jaka Bijol|18
+Jarrad Branthwaite|18
+Joey Veerman|18
+George Hemmings|18
+Victor Osimhen|18
+Marcel Sabitzer|18
+Dango Ouattara|18
+Quinten Timber|18
+Leon Goretzka|17
+Ritsu Doan|17
+Chris Fuhrich|17
+Samuele Inacio|17
+Elia Caprile|17
+Marc Pubill|17
+Carlos Soler|17
+Ridle Baku|17
+Robin Risser|17
+Orri Oskarsson|17
+Emile Smith Rowe|17
+David de Gea|17
+Jurgen Ekkelenkamp|17
+Joane Gadou|17
+David Soria|17
+Finn Dahmen|17
+Carlos Augusto|16
+Carney Chukwuemeka|16
+Yunus Musah|16
+Corentin Tolisso|16
+Fer Nino|16
+Conor Bradley|16
+Florian Lejeune|16
+Beto|16
+Maximilian Eggestein|16
+Dro Fernandez|16
+Victor Lindelof|16
+Emmanuel Emegha|16
+Yannik Engelhardt|16
+Fabian Rieder|16
+Zachary Athekame|16
+Phillip Tietz|15
+Jordan Henderson|15
+Kostas Tsimikas|15
+James Justin|15
+Wilson Odobert|15
+Abdul Fatawu|15
+Ainsley Maitland-Niles|15
+Senny Mayulu|15
+Takehiro Tomiyasu|15`
+};
+const TOP_PLAYERS = Object.fromEntries(Object.entries(TOP_PLAYERS_RAW).map(([sp, raw]) => [
+  sp,
+  raw.trim().split('\n').map(line => {
+    const i = line.lastIndexOf('|');
+    return { name: line.slice(0, i).trim(), value: +line.slice(i + 1) };
+  })
+]));
+
 const MIN_TIER = 8;
 const RATES = (()=>{ const a=[MIN_TIER]; for(let r=10;r<=120;r+=5) a.push(r); return a; })();
 
@@ -814,9 +1435,10 @@ function applyMinimumToForm(){
    ========================================================= */
 function renderBuyInstructions(){
   $('#b-instructions').innerHTML =
-    `To buy cards, get the card link of the player or team you're upgrading, and post a comment under ` +
+    `<p>To buy cards, get the card link of the player or team you're upgrading, and post a comment under ` +
     `<a href="${esc(TARGET_LINK)}" target="_blank" rel="noopener">this post</a> with your card and any extra ` +
-    `details you want to add. Once you have created the comment, paste it below (it is auto verified).`;
+    `details you want to add. Once you have created the comment, paste it below (it is auto verified).</p>` +
+    `<p class="shout">IF CONFUSED ABOUT PINNED COMMENT OR ANYTHING CLICK THE BOX THAT SAYS "PICTURE GUIDES OF HOW TO SUBMIT COMMENT"</p>`;
 }
 renderBuyInstructions();
 
@@ -1038,6 +1660,113 @@ $('#b-post').addEventListener('click', async () => {
   renderBuyInstructions();
   toast(`Posted ${player} at ${rate}/1`);
   render();
+});
+
+/* =========================================================
+   Top players
+   ---------------------------------------------------------
+   The owner's ranked list for the sport, coloured by whether
+   anyone on the board is already buying that player.
+   ========================================================= */
+function showTopPlayers(){
+  const list = TOP_PLAYERS[sport];
+  if(!list || !list.length){
+    modal(`Top ${SPORTS[sport]} players`,
+      `<p class="tp-empty">No top players list for ${esc(SPORTS[sport])} yet.</p>`);
+    return;
+  }
+
+  const live = market.offers.filter(o => o.sport===sport && !market.users[o.user]?.banned);
+
+  // Index the board once instead of re-matching every name against every offer.
+  // Mirrors samePlayer: exact match, or surname match when either side is one word.
+  const byKey = new Map();
+  const singles = [];
+  for(const o of live){
+    const k = norm(o.player);
+    if(!k) continue;
+    if(!byKey.has(k)) byKey.set(k, []);
+    byKey.get(k).push(o);
+    if(k.split(' ').length === 1) singles.push({ last:k, o });
+  }
+
+  const rows = list.map((p, i) => {
+    const k = norm(p.name);
+    let buyers = (byKey.get(k) || []).slice();
+    if(k){
+      const last = k.split(' ').pop();
+      for(const s of singles){
+        if(s.last === last && !buyers.includes(s.o)) buyers.push(s.o);
+      }
+    }
+    buyers.sort((a,b) => b.rate - a.rate);
+    return {
+      rank: i + 1,
+      name: p.name,
+      value: p.value,
+      key: k,
+      buyers: buyers.map(o => ({
+        rate: o.rate,
+        who: market.users[o.user]?.name || o.user,
+        link: o.link || ''
+      }))
+    };
+  });
+
+  const taken = rows.filter(r => r.buyers.length).length;
+
+  const box = modal(`Top ${SPORTS[sport]} players`, `
+    <div class="tp-tools">
+      <input id="tp-q" class="field" autocomplete="off" spellcheck="false" placeholder="Search a player">
+      <div class="seg" role="group" aria-label="Filter">
+        <button data-f="all"    aria-pressed="true">All</button>
+        <button data-f="taken"  aria-pressed="false">Being bought</button>
+        <button data-f="open"   aria-pressed="false">0 buyers</button>
+      </div>
+      <p class="note" id="tp-count"></p>
+    </div>
+    <div id="tp-list"></div>`);
+
+  let filter = 'all', query = '';
+
+  function draw(){
+    const q = norm(query);
+    const shown = rows.filter(r => {
+      if(filter === 'taken' && !r.buyers.length) return false;
+      if(filter === 'open'  &&  r.buyers.length) return false;
+      return !q || r.key.includes(q);
+    });
+
+    box.querySelector('#tp-count').textContent =
+      `${shown.length} of ${rows.length} shown — ${taken} already being bought, ${rows.length - taken} with no buyer.`;
+
+    box.querySelector('#tp-list').innerHTML = shown.length ? shown.map(r => `
+      <div class="tp-row">
+        <span class="tp-rank">${r.rank}</span>
+        <span class="tp-name ${r.buyers.length ? 'tp-taken' : 'tp-open'}">${esc(r.name)}</span>
+        <span class="tp-val">${r.value.toLocaleString()}</span>
+        ${r.buyers.length ? `<div class="tp-buyers">${r.buyers.map(b =>
+          `<b>${b.rate}/1</b> ${esc(b.who)}`).join(' &nbsp;·&nbsp; ')}</div>` : ''}
+      </div>`).join('')
+      : `<p class="tp-empty">Nothing matches that.</p>`;
+  }
+
+  box.querySelector('#tp-q').addEventListener('input', e => { query = e.target.value; draw(); });
+  box.querySelectorAll('[data-f]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      filter = btn.dataset.f;
+      box.querySelectorAll('[data-f]').forEach(b =>
+        b.setAttribute('aria-pressed', b === btn ? 'true' : 'false'));
+      draw();
+    });
+  });
+
+  draw();
+}
+
+$('#b-top').addEventListener('click', async () => {
+  await pull();
+  showTopPlayers();
 });
 
 function editRate(id){
