@@ -21,11 +21,19 @@ const ALLOWED_KEYS = new Set([KV_KEY]);
 const MAX_VALUE_BYTES = 8_000_000;
 const MAX_OFFERS = 20_000;
 
-/* ---- backups: unseen, and only so a bad write can be undone ---- */
-const SNAP_SLOTS = 8;
+/* ---- backups ----------------------------------------------------------
+   These live in D1 alongside the listings, NOT in KV. They used to be KV
+   writes, which put them on the same daily write budget as everything else
+   using KV; when that budget ran out the backups stopped for three hours and
+   said nothing, because they run in the background where a throw is silent.
+   D1 has no such ceiling, and saveSnapshot now RETURNS its failure so the
+   admin screen can show when the last good backup was taken. ------------- */
 const SNAP_BUCKET_MS = 30 * 60 * 1000;
-const SNAP_PREFIX = 'ratebrd_snap_';
-const SAFE_KEY = 'ratebrd_snap_safe';
+const SNAP_KEEP = 24;                    // rolling slots — 12 hours' worth
+const SNAP_DDL = `CREATE TABLE IF NOT EXISTS snapshots (
+  id TEXT PRIMARY KEY, ts INTEGER NOT NULL, users INTEGER NOT NULL,
+  offers INTEGER NOT NULL, minimums INTEGER NOT NULL, keeplist INTEGER NOT NULL,
+  body TEXT NOT NULL)`;
 
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
@@ -183,37 +191,52 @@ async function applyOp(env, body) {
 }
 
 /* ---- backups of the assembled board ---- */
-function snapWrap(board, bucket) {
-  return JSON.stringify({
-    bucket, ts: Date.now(),
-    users: Object.keys(board.users).length,
-    offers: board.offers.length,
-    minimums: board.minimums.length,
-    keeplist: board.keeplist.length,
-    value: JSON.stringify(board)
-  });
+async function writeSnap(db, id, board) {
+  await db.prepare(
+    `INSERT INTO snapshots (id, ts, users, offers, minimums, keeplist, body)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET ts=excluded.ts, users=excluded.users,
+       offers=excluded.offers, minimums=excluded.minimums,
+       keeplist=excluded.keeplist, body=excluded.body`
+  ).bind(id, Date.now(), Object.keys(board.users).length, board.offers.length,
+         board.minimums.length, board.keeplist.length, JSON.stringify(board)).run();
 }
 
-async function saveSnapshot(env) {
+// Returns {ok:true} or {ok:false, why}. A backup failing still must never
+// break a real write — but it must not vanish either, so callers can see it.
+async function saveSnapshot(env, force) {
+  const db = env.RATEBOARD_DB;
+  if (!db) return { ok: false, why: 'no database binding' };
   try {
-    const bucket = Math.floor(Date.now() / SNAP_BUCKET_MS);
-    const slotKey = SNAP_PREFIX + (bucket % SNAP_SLOTS);
-    const existing = await env.RATEBOARD_KV.get(slotKey);
-    if (existing) {
-      try { if (JSON.parse(existing).bucket === bucket) return; } catch (e) {}
-    }
-    const board = await readBoard(env);
-    await env.RATEBOARD_KV.put(slotKey, snapWrap(board, bucket));
+    await db.prepare(SNAP_DDL).run();
 
-    const users = Object.keys(board.users).length;
-    const safeRaw = await env.RATEBOARD_KV.get(SAFE_KEY);
-    let allowed = users > 0;
-    if (allowed && safeRaw) {
-      try { allowed = users >= Math.floor(JSON.parse(safeRaw).users * 0.8); } catch (e) {}
+    const bucket = Math.floor(Date.now() / SNAP_BUCKET_MS);
+    const id = String(bucket);
+    if (!force) {
+      const seen = await db.prepare('SELECT id FROM snapshots WHERE id = ?').bind(id).first();
+      if (seen) return { ok: true, skipped: 'already taken this half hour' };
     }
-    if (allowed) await env.RATEBOARD_KV.put(SAFE_KEY, snapWrap(board, bucket));
+
+    const board = await readBoard(env);
+    const users = Object.keys(board.users).length;
+    // Never let an empty or broken read overwrite a real backup.
+    if (!users) return { ok: false, why: 'board read came back empty' };
+
+    await writeSnap(db, id, board);
+
+    // The protected copy is only replaced while the board still looks whole,
+    // so a bad day can't quietly erase the last good state.
+    const prev = await db.prepare('SELECT users FROM snapshots WHERE id = ?').bind('safe').first();
+    if (!prev || users >= Math.floor(prev.users * 0.8)) await writeSnap(db, 'safe', board);
+
+    await db.prepare(
+      `DELETE FROM snapshots WHERE id <> 'safe' AND id NOT IN (
+         SELECT id FROM snapshots WHERE id <> 'safe' ORDER BY ts DESC LIMIT ?)`
+    ).bind(SNAP_KEEP).run();
+
+    return { ok: true, id, users, offers: board.offers.length };
   } catch (e) {
-    // A backup failing must never break a real write.
+    return { ok: false, why: String((e && e.message) || e) };
   }
 }
 
@@ -222,23 +245,31 @@ export async function onRequestGet({ request, env }) {
 
   const snap = url.searchParams.get('snap');
   if (snap != null) {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+
+    // Take one on demand, so a backup is never more than a click away.
+    if (snap === 'save') return json(await saveSnapshot(env, true));
+
+    try { await db.prepare(SNAP_DDL).run(); } catch (e) {}
+
     if (snap === 'list') {
-      const out = [];
-      for (const s of [...Array(SNAP_SLOTS).keys(), 'safe']) {
-        const raw = await env.RATEBOARD_KV.get(SNAP_PREFIX + s);
-        if (!raw) { out.push({ slot: String(s), empty: true }); continue; }
-        try {
-          const d = JSON.parse(raw);
-          out.push({ slot: String(s), takenAt: new Date(d.ts).toISOString(),
-            users: d.users, offers: d.offers, minimums: d.minimums, keeplist: d.keeplist });
-        } catch (e) { out.push({ slot: String(s), unreadable: true }); }
-      }
-      return json({ snapshots: out });
+      const rows = await db.prepare(
+        `SELECT id, ts, users, offers, minimums, keeplist FROM snapshots ORDER BY ts DESC`
+      ).all();
+      const snapshots = (rows.results || []).map(r => ({
+        slot: r.id, takenAt: new Date(r.ts).toISOString(),
+        ageMinutes: Math.round((Date.now() - r.ts) / 60000),
+        users: r.users, offers: r.offers, minimums: r.minimums, keeplist: r.keeplist
+      }));
+      return json({ snapshots, newest: snapshots[0] || null });
     }
-    if (!/^(safe|[0-7])$/.test(snap)) return json({ error: 'bad snapshot' }, 400);
-    const raw = await env.RATEBOARD_KV.get(SNAP_PREFIX + snap);
-    if (!raw) return json({ error: 'no such snapshot' }, 404);
-    return new Response(raw, { headers: { 'content-type': 'application/json' } });
+
+    if (!/^(safe|\d{1,12})$/.test(snap)) return json({ error: 'bad snapshot' }, 400);
+    const row = await db.prepare('SELECT * FROM snapshots WHERE id = ?').bind(snap).first();
+    if (!row) return json({ error: 'no such snapshot' }, 404);
+    return json({ bucket: row.id, ts: row.ts, users: row.users, offers: row.offers,
+      minimums: row.minimums, keeplist: row.keeplist, value: row.body });
   }
 
   const key = url.searchParams.get('key');
