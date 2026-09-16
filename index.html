@@ -368,6 +368,8 @@
             <div>
               <label for="b-rate">Rate you'll pay</label>
               <select id="b-rate" class="field num"></select>
+              <input id="b-rate-custom" class="field num hide" type="number" min="1" max="9999" step="1"
+                     inputmode="numeric" placeholder="Type any rate, e.g. 31" style="margin-top:8px">
               <p class="note minnote hide" id="b-min-note"></p>
             </div>
             <div>
@@ -1412,29 +1414,59 @@ function blockedFor(sportKey, player){
 // would be rejected can't be picked in the first place.
 const rateLabel = r => r === MIN_TIER ? `minimum (${r} / 1)` : `${r} / 1`;
 
+const CUSTOM_MAX = 9999;
+
+// `sel` may be a rate, or the string 'custom'. A rate that isn't one of the
+// preset tiers (someone's existing 31/1, say) also lands on Custom, so
+// reopening the form never silently snaps their rate to something else.
 function rateOptions(sel, floor){
   const usable = RATES.filter(r => !floor || r >= floor);
-  if(!usable.length) return `<option value="${floor}">${rateLabel(floor)}</option>`;
-  const pick = usable.includes(sel) ? sel : usable[0];
-  return usable.map(r => `<option value="${r}" ${r===pick?'selected':''}>${rateLabel(r)}</option>`).join('');
+  const pick = usable.includes(sel) ? sel
+             : (sel === 'custom' || (+sel > 0 && !RATES.includes(+sel))) ? 'custom'
+             : (usable[0] || 'custom');
+  const opts = usable.map(r => `<option value="${r}" ${r===pick?'selected':''}>${rateLabel(r)}</option>`);
+  return opts.join('') + `<option value="custom" ${pick==='custom'?'selected':''}>Custom…</option>`;
+}
+
+// Shows the number box only while Custom is picked, and keeps whatever was
+// typed when the dropdown gets rebuilt underneath it.
+function syncCustomRate(sel, input){
+  const on = sel.value === 'custom';
+  input.classList.toggle('hide', !on);
+  return on;
+}
+
+// The rate a select+input pair is actually offering, or NaN if it isn't usable.
+function readRate(sel, input, floor){
+  if(sel.value !== 'custom') return +sel.value;
+  const v = Math.round(+input.value);
+  if(!Number.isFinite(v) || v < 1 || v > CUSTOM_MAX) return NaN;
+  if(floor && v < floor) return NaN;
+  return v;
 }
 $('#b-rate').innerHTML = rateOptions(20);
+$('#b-rate').addEventListener('change', () => {
+  if(syncCustomRate($('#b-rate'), $('#b-rate-custom'))) $('#b-rate-custom').focus();
+});
 
 // Re-reads the floor for whatever player is currently typed and reshapes
 // the rate dropdown + note to match.
 function applyMinimumToForm(){
   const player = $('#b-player').value.trim();
   const note = $('#b-min-note');
+  const sel = $('#b-rate'), cust = $('#b-rate-custom');
+  const wasCustom = sel.value === 'custom';
   const min = player.length >= 2 ? minimumFor(sport, player) : null;
   if(min){
-    $('#b-rate').innerHTML = rateOptions(Math.max(+$('#b-rate').value || 0, min.rate), min.rate);
-    note.textContent = `Minimum for ${min.player} is ${min.rate}/1 — you can't offer less.`;
+    sel.innerHTML = rateOptions(wasCustom ? 'custom' : Math.max(+sel.value || 0, min.rate), min.rate);
+    note.textContent = `Minimum for ${min.player} is ${min.rate}/1 — you can't offer less` +
+      (wasCustom ? `, custom included.` : `.`);
     note.classList.remove('hide');
   } else {
-    const keep = +$('#b-rate').value || 20;
-    $('#b-rate').innerHTML = rateOptions(keep);
+    sel.innerHTML = rateOptions(wasCustom ? 'custom' : (+sel.value || 20));
     note.classList.add('hide');
   }
+  syncCustomRate(sel, cust);
   const blk = player.length >= 2 ? blockedFor(sport, player) : null;
   $('#b-post').disabled = !!blk;
   if(blk){
@@ -1666,7 +1698,6 @@ function validCommentLink(link){
 
 $('#b-post').addEventListener('click', async () => {
   const player = asciiName($('#b-player').value);
-  const rate = +$('#b-rate').value;
   const link = $('#b-link').value.trim();
   if(player.length < 2) return toast('Enter a player name.');
   if(!validCommentLink(link)) return toast('Paste the link to your comment under the pinned post first.');
@@ -1675,6 +1706,16 @@ $('#b-post').addEventListener('click', async () => {
   if(blk) return toast(`${blk.label} players can't be posted — ${blk.buyer} buys all of them.`);
 
   const min = minimumFor(sport, player);
+  const rate = readRate($('#b-rate'), $('#b-rate-custom'), min && min.rate);
+  if(!Number.isFinite(rate)){
+    if($('#b-rate').value === 'custom'){
+      const typed = Math.round(+$('#b-rate-custom').value);
+      if(min && typed >= 1 && typed < min.rate)
+        return toast(`${min.player} has a ${min.rate}/1 minimum — you can't offer less.`);
+      return toast(`Type the rate you'll pay — a whole number from 1 to ${CUSTOM_MAX}.`);
+    }
+    return toast('Pick the rate you\'ll pay.');
+  }
   if(min && rate < min.rate){
     applyMinimumToForm();
     return toast(`${min.player} has a ${min.rate}/1 minimum — you can't offer less.`);
@@ -1804,12 +1845,27 @@ function editRate(id){
   const min = minimumFor(o.sport, o.player);
   const box = modal(`Change offer — ${o.player}`, `
     <div><label for="e-rate">New rate</label><select id="e-rate" class="field num">${rateOptions(o.rate, min && min.rate)}</select>
+      <input id="e-rate-custom" class="field num hide" type="number" min="1" max="${CUSTOM_MAX}" step="1"
+             inputmode="numeric" placeholder="Type any rate, e.g. 31" style="margin-top:8px"
+             value="${RATES.includes(o.rate) ? '' : o.rate}">
       ${min ? `<p class="note minnote">Minimum for ${esc(min.player)} is ${min.rate}/1 — you can't offer less.</p>` : ''}</div>
     <div><label for="e-link">Your comment link</label><input id="e-link" class="field" value="${esc(o.link||'')}" placeholder="https://www.realapp.com/..."></div>
     <button class="btn" id="e-save">Save</button>`);
+  const eSel = box.querySelector('#e-rate'), eCust = box.querySelector('#e-rate-custom');
+  syncCustomRate(eSel, eCust);
+  eSel.addEventListener('change', () => { if(syncCustomRate(eSel, eCust)) eCust.focus(); });
+
   box.querySelector('#e-save').addEventListener('click', async () => {
-    const r = +box.querySelector('#e-rate').value;
     const link = box.querySelector('#e-link').value.trim();
+    const r = readRate(eSel, eCust, min && min.rate);
+    if(!Number.isFinite(r)){
+      if(eSel.value === 'custom'){
+        const typed = Math.round(+eCust.value);
+        if(min && typed >= 1 && typed < min.rate) return toast(`${min.player} has a ${min.rate}/1 minimum.`);
+        return toast(`Type the rate you'll pay — a whole number from 1 to ${CUSTOM_MAX}.`);
+      }
+      return toast('Pick the rate you\'ll pay.');
+    }
     if(min && r < min.rate) return toast(`${min.player} has a ${min.rate}/1 minimum.`);
     if(!validCommentLink(link)) return toast('That doesn\'t look like a comment link on the pinned post.');
     const saved = await patch('updateOffer', { id, user: me.toLowerCase(), rate: r, link });
