@@ -25,27 +25,53 @@
    people loading the board in the same moment now cost one query instead of
    hundreds, and any write clears the cache so nobody sees their own listing
    missing right after posting it. ------------------------------------- */
-const BOARD_CACHE_TTL = 10;
+const BOARD_CACHE_TTL = 10;      // the copy everyone is normally served
+const BOARD_STALE_TTL = 21600;   // 6h fallback, used ONLY when the database says no
 
 function boardCacheReq(origin) {
   return new Request(`${origin}/__cache/board/v2`, { method: 'GET' });
 }
+function boardStaleReq(origin) {
+  return new Request(`${origin}/__cache/board-last-good/v2`, { method: 'GET' });
+}
 
-async function cachedBoardBody(env, origin) {
+async function cacheRead(req) {
   try {
-    const hit = await caches.default.match(boardCacheReq(origin));
-    if (hit) return await hit.text();
-  } catch (e) { /* cache unavailable — fall through to the database */ }
-
-  const body = JSON.stringify(await readBoard(env));
+    const hit = await caches.default.match(req);
+    return hit ? await hit.text() : null;
+  } catch (e) { return null; }
+}
+async function cacheWrite(req, body, ttl) {
   try {
-    await caches.default.put(boardCacheReq(origin), new Response(body, {
-      headers: { 'content-type': 'application/json', 'cache-control': `max-age=${BOARD_CACHE_TTL}` }
+    await caches.default.put(req, new Response(body, {
+      headers: { 'content-type': 'application/json', 'cache-control': `max-age=${ttl}` }
     }));
   } catch (e) { /* caching is an optimisation, never a requirement */ }
+}
+
+// Fresh copy if there is one, otherwise the database. If the database refuses
+// — a quota, an outage — fall back to the last good copy rather than handing
+// back an error, because an error here reads to everyone as "board is empty".
+async function cachedBoardBody(env, origin) {
+  const fresh = await cacheRead(boardCacheReq(origin));
+  if (fresh) return fresh;
+
+  let body;
+  try {
+    body = JSON.stringify(await readBoard(env));
+  } catch (e) {
+    const stale = await cacheRead(boardStaleReq(origin));
+    if (stale) return stale;
+    throw e;
+  }
+
+  await cacheWrite(boardCacheReq(origin), body, BOARD_CACHE_TTL);
+  await cacheWrite(boardStaleReq(origin), body, BOARD_STALE_TTL);
   return body;
 }
 
+// Only the short-lived copy is dropped on a write. The last-good fallback is
+// left alone on purpose — it is the thing that keeps the board readable.
 async function bustBoard(origin) {
   try { await caches.default.delete(boardCacheReq(origin)); } catch (e) {}
 }
