@@ -16,6 +16,40 @@
 // It used to all be one JSON blob in KV that every browser read, edited and
 // wrote back whole. Two people posting within the same moment meant the
 // second write erased the first — at volume most listings were being lost.
+/* ---- the board read is the expensive thing here ------------------------
+   Assembling the board scans both tables whole — every account and every
+   listing, about a thousand rows a time. D1 bills reads by the ROW, so a few
+   thousand page loads a day is all it takes to hit the daily ceiling, and
+   once that's gone every query fails and the board reads as empty.
+   So the assembled board is cached at the edge for a few seconds. Hundreds of
+   people loading the board in the same moment now cost one query instead of
+   hundreds, and any write clears the cache so nobody sees their own listing
+   missing right after posting it. ------------------------------------- */
+const BOARD_CACHE_TTL = 10;
+
+function boardCacheReq(origin) {
+  return new Request(`${origin}/__cache/board/v2`, { method: 'GET' });
+}
+
+async function cachedBoardBody(env, origin) {
+  try {
+    const hit = await caches.default.match(boardCacheReq(origin));
+    if (hit) return await hit.text();
+  } catch (e) { /* cache unavailable — fall through to the database */ }
+
+  const body = JSON.stringify(await readBoard(env));
+  try {
+    await caches.default.put(boardCacheReq(origin), new Response(body, {
+      headers: { 'content-type': 'application/json', 'cache-control': `max-age=${BOARD_CACHE_TTL}` }
+    }));
+  } catch (e) { /* caching is an optimisation, never a requirement */ }
+  return body;
+}
+
+async function bustBoard(origin) {
+  try { await caches.default.delete(boardCacheReq(origin)); } catch (e) {}
+}
+
 const KV_KEY = 'ratebrd_market_v1';
 const ALLOWED_KEYS = new Set([KV_KEY]);
 const MAX_VALUE_BYTES = 8_000_000;
@@ -274,25 +308,32 @@ export async function onRequestGet({ request, env }) {
     // Take one on demand, so a backup is never more than a click away.
     if (snap === 'save') return json(await saveSnapshot(env, true));
 
-    try { await db.prepare(SNAP_DDL).run(); } catch (e) {}
+    // Everything below talks to the database, and the database can refuse —
+    // a quota, a hiccup. Report that as JSON instead of throwing, which
+    // Cloudflare turns into an opaque 1101 error page.
+    try {
+      try { await db.prepare(SNAP_DDL).run(); } catch (e) {}
 
-    if (snap === 'list') {
-      const rows = await db.prepare(
-        `SELECT id, ts, users, offers, minimums, keeplist FROM snapshots ORDER BY ts DESC`
-      ).all();
-      const snapshots = (rows.results || []).map(r => ({
-        slot: r.id, takenAt: new Date(r.ts).toISOString(),
-        ageMinutes: Math.round((Date.now() - r.ts) / 60000),
-        users: r.users, offers: r.offers, minimums: r.minimums, keeplist: r.keeplist
-      }));
-      return json({ snapshots, newest: snapshots[0] || null });
+      if (snap === 'list') {
+        const rows = await db.prepare(
+          `SELECT id, ts, users, offers, minimums, keeplist FROM snapshots ORDER BY ts DESC`
+        ).all();
+        const snapshots = (rows.results || []).map(r => ({
+          slot: r.id, takenAt: new Date(r.ts).toISOString(),
+          ageMinutes: Math.round((Date.now() - r.ts) / 60000),
+          users: r.users, offers: r.offers, minimums: r.minimums, keeplist: r.keeplist
+        }));
+        return json({ snapshots, newest: snapshots[0] || null });
+      }
+
+      if (!/^(safe|\d{1,12})$/.test(snap)) return json({ error: 'bad snapshot' }, 400);
+      const row = await db.prepare('SELECT * FROM snapshots WHERE id = ?').bind(snap).first();
+      if (!row) return json({ error: 'no such snapshot' }, 404);
+      return json({ bucket: row.id, ts: row.ts, users: row.users, offers: row.offers,
+        minimums: row.minimums, keeplist: row.keeplist, value: row.body });
+    } catch (e) {
+      return json({ error: 'could not read backups', detail: String((e && e.message) || e) }, 503);
     }
-
-    if (!/^(safe|\d{1,12})$/.test(snap)) return json({ error: 'bad snapshot' }, 400);
-    const row = await db.prepare('SELECT * FROM snapshots WHERE id = ?').bind(snap).first();
-    if (!row) return json({ error: 'no such snapshot' }, 404);
-    return json({ bucket: row.id, ts: row.ts, users: row.users, offers: row.offers,
-      minimums: row.minimums, keeplist: row.keeplist, value: row.body });
   }
 
   const key = url.searchParams.get('key');
@@ -305,15 +346,16 @@ export async function onRequestGet({ request, env }) {
   }
 
   try {
-    const board = await readBoard(env);
-    return json({ value: JSON.stringify(board) });
+    return json({ value: await cachedBoardBody(env, new URL(request.url).origin) });
   } catch (e) {
-    return json({ error: 'could not read the board' }, 503);
+    // Say WHY. A generic failure here is what made a quota look like an outage.
+    return json({ error: 'could not read the board', detail: String((e && e.message) || e) }, 503);
   }
 }
 
 export async function onRequestPost({ request, env, waitUntil }) {
   const later = waitUntil ? (p) => waitUntil(p) : async (p) => { await p; };
+  const origin = new URL(request.url).origin;
   let body;
   try { body = await request.json(); }
   catch (e) { return json({ error: 'bad json' }, 400); }
@@ -323,6 +365,9 @@ export async function onRequestPost({ request, env, waitUntil }) {
     try { err = await applyOp(env, body); }
     catch (e) { return json({ error: 'could not save: ' + (e && e.message || e) }, 503); }
     if (err) return json({ error: err }, 400);
+    // Clear the cached board before answering, so the very next read — almost
+    // always this same person checking their listing landed — sees the change.
+    await bustBoard(origin);
     later(saveSnapshot(env));
     return json({ ok: true });
   }
@@ -344,6 +389,7 @@ export async function onRequestPost({ request, env, waitUntil }) {
     minimums: incoming.minimums || [],
     keeplist: incoming.keeplist || []
   }));
+  await bustBoard(origin);
   later(saveSnapshot(env));
   return json({ ok: true });
 }
