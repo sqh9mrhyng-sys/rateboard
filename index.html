@@ -127,6 +127,22 @@
   .tp-buyers{grid-column:2/-1;font-size:12.5px;color:var(--mute);margin-top:4px;line-height:1.5}
   .tp-buyers b{color:var(--bone);font-weight:600}
   .tp-empty{color:var(--mute);font-size:13px;padding:14px 0}
+  /* ---- UFC fighter details ---- */
+  .fx{display:flex;flex-wrap:wrap;gap:5px;margin-top:4px}
+  .fx span{font-size:11.5px;padding:2px 7px;border-radius:999px;background:var(--panel-2);border:1px solid var(--line);
+    color:var(--bone);white-space:nowrap;font-variant-numeric:tabular-nums}
+  .fx .st-active{border-color:color-mix(in srgb,var(--good) 55%,transparent);color:var(--good)}
+  .fx .st-retired{color:var(--mute)}
+  .fx .st-out{color:var(--mute);border-style:dashed}
+  .fx b{font-weight:600}
+  .tp-shows{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--mute)}
+  .tp-shows label{display:inline-flex;align-items:center;gap:4px;margin:0;padding:3px 8px;border:1px solid var(--line);
+    border-radius:999px;cursor:pointer;color:var(--bone);font-size:12px}
+  .tp-shows input{margin:0;accent-color:var(--accent)}
+  .suggest li{flex-wrap:wrap}
+  .suggest li .fx{flex-basis:100%;margin:2px 0 0 14px}
+  #b-fighter{margin-top:8px}
+  #b-fighter .fx span{font-size:12px}
   /* The one thing on the buyer screen nobody is allowed to miss. */
   .alarm{background:color-mix(in srgb,var(--bad) 22%,transparent);border:2px solid var(--bad);border-radius:8px;
     padding:13px 15px;font-size:13.5px;font-weight:600;line-height:1.5;letter-spacing:.01em;text-transform:uppercase;color:var(--bone)}
@@ -385,6 +401,7 @@
                 <input id="b-player" class="field" autocomplete="off" placeholder="e.g. Julian Sayin" role="combobox" aria-expanded="false" aria-autocomplete="list">
                 <ul id="b-suggest" class="suggest hide" role="listbox"></ul>
               </div>
+              <div id="b-fighter"></div>
             </div>
             <div>
               <label for="b-rate">Rate you'll pay</label>
@@ -1058,6 +1075,570 @@ const TOP_PLAYERS = Object.fromEntries(Object.entries(TOP_PLAYERS_RAW).map(([sp,
   })
 ]));
 
+// UFC purchases list, as supplied: name | odds | purchases | earnings.
+// Iconic is always earnings x 20 on the source sheet, so it's derived here.
+// "-" means no figure. Display only — odds here are NOT enforced as minimums.
+const UFC_LIST = `Sean O'Malley|60/1|5462|1936
+Ilia Topuria|60/1|3256|1110
+Max Holloway|70/1|3018|4281
+Islam Makhachev|50/1|2928|2046
+Jon Jones|50/1|2759|3169
+Alex Pereira|40/1|2665|1489
+Charles Oliveira|50/1|2634|3036
+Anderson Silva|50/1|2251|4200
+Israel Adesanya|20/1|1715|2004
+Paddy Pimblett|50/1|1668|-
+Joshua Van|60/1|1604|1362
+Alistair Overeem|40/1|1564|4238
+Conor McGregor|50/1|1461|1502
+Sean Strickland|20/1|1459|2637
+Alexander Volkanovski|40/1|1393|2472
+Georges St-Pierre|40/1|1131|3593
+Merab Dvalishvili|20/1|1102|1875
+Dustin Poirier|20/1|1038|3231
+Khamzat Chimaev|25/1|1006|989
+Donald Cerrone|20/1|910|3838
+Justin Gaethje|20/1|902|1530
+Kevin Holland|15/1|875|2352
+Jim Miller|15/1|844|3298
+Payton Talbott|70/1|840|-
+Derrick Lewis|15/1|745|2832
+Mauricio Rua|25/1|710|3709
+Quillan Salkilld|70/1|703|-
+Jose Aldo|15/1|699|2966
+Khabib Nurmagomedov|20/1|693|1640
+Tom Aspinall|40/1|692|1010
+Michael Bisping|15/1|670|3332
+Gegard Mousasi|20/1|667|3665
+Demetrious Johnson|15/1|659|2564
+Nate Diaz|20/1|650|2872
+Rafael Dos Anjos|15/1|631|3010
+Nick Diaz|15/1|587|3042
+Carlos Prates|50/1|582|1003
+Andrei Arlovski|20/1|581|3504
+Diego Lopes|30/1|578|936
+Leon Edwards|min|541|1753
+Wanderlei Silva|15/1|526|3398
+Shavkat Rakhmonov|15/1|503|-
+Daniel Cormier|15/1|494|2543
+Dricus Du Plessis|min|480|1277
+Dan Henderson|15/1|469|3357
+Quinton Jackson|15/1|425|2740
+Alexandre Pantoja|15/1|419|1629
+Neil Magny|min|416|3243
+Cub Swanson|min|414|2749
+Robbie Lawler|min|414|2836
+Bo Nickal|min|413|-
+Kamaru Usman|15/1|406|2325
+Fabricio Werdum|min|403|2892
+Ateba Gautier|min|399|-
+Tracy Cortez|min|393|-
+Bobby Green|15/1|392|3010
+Lyoto Machida|min|392|3097
+Arman Tsarukyan|25/1|390|1310
+Robert Whittaker|min|383|2456
+Petr Yan|15/1|382|1720
+Michael Morales|35/1|369|-
+Tatsuro Taira|15/1|369|1021
+Tommy McMillen|90/1|368|-
+Frankie Edgar|min|361|2835
+Jiri Prochazka|min|357|-
+Aljamain Sterling|min|349|2455
+Josh Hokit|50/1|343|-
+Clay Guida|min|337|2452
+Vitor Belfort|min|337|2988
+Ian Garry|20/1|333|1299
+Gable Steveson|min|330|-
+Raul Rosas Jr.|min|326|-
+Kazushi Sakuraba|min|324|2957
+Urijah Faber|min|314|2753
+Mirko Filipovic|min|302|3434
+Jack Della Maddalena|min|297|1156
+Mauricio Ruffy|min|296|-
+Jessica Andrade|min|291|2577
+Ovince Saint Preux|min|285|2506
+Jean Silva|min|274|-
+Valentina Shevchenko|min|274|2197
+Umar Nurmagomedov|min|272|1067
+Song Yadong|min|271|1647
+Belal Muhammad|min|269|1885
+Rich Franklin|min|268|2853
+Marlon Vera|min|256|1901
+Edson Barboza|min|253|2390
+Jorge Masvidal|min|248|2425
+Antonio Rodrigo Nogueira|min|246|2579
+Joaquin Buckley|min|240|1474
+Shara Magomedov|min|238|-
+Amanda Nunes|min|234|2403
+Demian Maia|min|232|2489
+Zhang Weili|min|229|1589
+Michael Johnson|min|224|2263
+Gilbert Melendez|min|222|2487
+Joseph Benavidez|min|221|2578
+Tony Ferguson|min|221|2036
+BJ Penn|min|216|2617
+Magomed Ankalaev|min|212|1675
+Diego Sanchez|min|208|2538
+Dan Hooker|min|203|1881
+Stipe Miocic|min|199|2077
+Alex Caceres|min|197|2235
+Caio Borralho|min|193|1093
+Junior Dos Santos|min|193|2422
+Matt Brown|min|191|2343
+Glover Teixeira|min|185|2414
+Brandon Moreno|min|184|1694
+Alexa Grasso|min|182|1185
+Josh Barnett|min|180|2395
+Alexander Volkov|min|180|2185
+Chuck Liddell|min|180|2339
+Anthony Pettis|min|178|1986
+Jeremy Stephens|min|176|2231
+TJ Dillashaw|min|174|2002
+Khalil Rountree Jr.|min|173|1318
+Chase Hooper|min|173|1300
+Lone'er Kavanagh|min|171|-
+Curtis Blaydes|min|170|1978
+Tim Means|min|170|2160
+Randy Couture|min|169|2459
+Rose Namajunas|min|168|1622
+Darren Elkins|min|167|2169
+Matt Hughes|min|165|2467
+Mackenzie Dern|min|164|1428
+Michael Page|min|162|-
+Benoit Saint Denis|min|162|1253
+Fedor Emelianenko|min|161|2624
+Tyron Woodley|min|161|1940
+Joanna Jedrzejczyk|min|161|2124
+Carlos Condit|min|159|2176
+Jacare Souza|min|158|2312
+Ciryl Gane|min|156|1800
+Thiago Santos|min|154|2131
+Bilal Hasan|min|154|-
+Cory Sandhagen|min|147|1754
+Rogerio Nogueira|min|145|2206
+Stephen Thompson|min|143|1977
+Tito Ortiz|min|140|2272
+Maycee Barber|min|137|1347
+Benson Henderson|min|137|2143
+Francis Ngannou|min|136|1464
+Angela Hill|min|136|2117
+Cain Velasquez|min|135|2096
+Malcolm Wellmaker|min|133|-
+Kevin Vallejos|min|132|-
+Shinya Aoki|min|131|2495
+Nate Marquardt|min|131|2007
+Kai Asakura|min|129|-
+Anthony Smith|min|127|1923
+Gilbert Burns|min|124|1905
+Deiveson Figueiredo|min|123|1736
+Brad Tavares|min|122|1927
+Myktybek Orolbai|min|122|-
+Dominick Cruz|min|121|1896
+Lerone Murphy|min|121|1175
+Jake Matthews|min|121|1911
+Josh Thomson|min|120|2198
+Jared Cannonier|min|120|1682
+Vicente Luque|min|119|1987
+Beneil Dariush|min|119|2025
+Brendan Allen|min|119|1694
+Terrance McKinney|min|118|1085
+Manel Kape|min|117|1052
+Rob Font|min|112|1957
+Chael Sonnen|min|112|1482
+Cody Garbrandt|min|111|1313
+Thiago Alves|min|111|2026
+Sean Brady|min|108|1105
+Yair Rodriguez|min|107|1641
+Mark Hunt|min|107|2078
+Frank Mir|min|107|1978
+Magomed Zaynukov|min|106|-
+Navajo Stirling|min|106|-
+Renato Moicano|min|105|1660
+Yves Edwards|min|105|1923
+Francisco Trinaldo|min|105|2032
+Igor Vovchanchyn|min|105|2200
+Colby Covington|min|104|1668
+Kelvin Gastelum|min|103|1883
+Movsar Evloev|min|103|1009
+Bryce Mitchell|min|103|-
+Ignacio Bahamondes|min|102|1028
+Baisangur Susurkaev|min|101|-
+Tatsuya Kawajiri|min|100|2182
+Derek Brunson|min|100|1855
+Jan Blachowicz|min|99|1830
+Takanori Gomi|min|97|2067
+Brock Lesnar|min|97|-
+Waldo Cortes-Acosta|min|96|1396
+Rashad Evans|min|96|1948
+Melquizael Costa|min|95|-
+Drew Dober|min|93|1943
+Regina Tarin|min|93|-
+Michael Chandler|min|92|-
+Rani Yahya|min|91|1864
+Cristiane Justino|min|90|1983
+Chan Sung Jung|min|89|1199
+Dan Ige|min|89|1490
+Jacobe Smith|min|89|-
+Arnold Allen|min|88|1370
+Andre Fili|min|88|1554
+Gleison Tibau|min|87|1690
+Robelis Despaigne|min|87|-
+Ben Rothwell|min|86|1832
+Jake Shields|min|85|1789
+Jamahal Hill|min|85|1269
+Carlos Ulberg|min|85|1323
+Luke Rockhold|min|85|1842
+Johny Hendricks|min|84|1736
+Henry Cejudo|min|84|1402
+Luke Riley|min|83|-
+Iwo Baraniewski|min|83|-
+Ed Herman|min|83|1717
+Mitch Raposo|min|82|-
+Yushin Okami|min|82|1743
+Brandon Royval|min|81|1108
+Randy Brown|min|81|1733
+CM Punk|min|81|-
+Vinicius Oliveira|min|79|-
+Steve Erceg|min|79|-
+Nassourdine Imavov|min|79|1268
+Marcin Tybura|min|78|1783
+Marwan Rahiki|min|78|-
+Nik Lentz|min|78|1742
+Paulo Costa|min|77|1074
+Johnny Walker|min|77|1322
+Anthony Johnson|min|77|1659
+Gillian Robertson|min|76|1627
+Rafael Fiziev|min|76|981
+Natalia Silva|min|75|936
+Ikuhisa Minowa|min|75|1978
+Ricardo Lamas|min|75|1748
+Erin Blanchfield|min|75|-
+Ethyn Ewing|min|75|-
+Joe Lauzon|min|74|1755
+Miesha Tate|min|74|1638
+Chris Leben|min|74|1773
+Alexander Gustafsson|min|73|1525
+Raphael Assuncao|min|73|1783
+Tim Elliott|min|73|1383
+Jack Hermansson|min|72|1635
+Ross Pearson|min|72|1588
+Mansur Abdul-Malik|min|72|-
+Ronda Rousey|min|71|1274
+Damian Pinas|min|71|-
+Rei Tsuruya|min|71|-
+Ryan Bader|min|71|1868
+Elijah Smith|min|70|-
+Josh Koscheck|min|69|1786
+Uros Medic|min|68|1090
+Court McGee|min|68|1580
+Gerald Meerschaert|min|68|1575
+Alex Morono|min|68|1661
+Ailin Perez|min|68|-
+Reinier de Ridder|min|67|-
+Muhammad Mokaev|min|65|-
+Raquel Pennington|min|65|1587
+Yoel Romero|min|65|1231
+Islam Dulatov|min|65|-
+Gregory Rodrigues|min|65|1431
+Jalin Turner|min|64|1309
+Zhang Mingyang|min|64|-
+Renan Barao|min|64|1511
+Charles Jourdain|min|64|1325
+Mark Coleman|min|64|1991
+Tai Tuivasa|min|63|1199
+Chris Weidman|min|63|1602
+Marvin Vettori|min|62|1396
+Ken Shamrock|min|61|1217
+Stefan Struve|min|60|1609
+Akbar Abdullaev|min|60|-
+JooSang Yoo|min|58|-
+Rick Story|min|57|1630
+Kai Kara-France|min|57|1129
+Li Jingliang|min|57|1449
+Gary Goodridge|min|57|1795
+Brian Ortega|min|56|1132
+Joel Alvarez|min|56|-
+Dooho Choi|min|56|-
+Kyoji Horiguchi|min|56|1143
+Grant Dawson|min|54|1450
+Jon Fitch|min|54|1716
+Joe Pyfer|min|54|921
+Aleksandre Topuria|min|54|-
+Ty Miller|min|54|-
+Abdul Rakhman Yakhyaev|min|54|-
+Tallison Teixeira|min|53|-
+Kevin Lee|min|53|1538
+Tim Boetsch|min|53|1603
+Steven Asplund|min|53|-
+Heath Herring|min|52|1735
+Kayla Harrison|min|52|-
+Luana Santos|min|52|-
+Mateusz Gamrot|min|52|1142
+John Makdessi|min|51|1536
+Salahdine Parnasse|min|51|-
+David Martinez|min|51|-
+Eddie Wineland|min|51|1520
+Michel Pereira|min|51|1219
+Gabriel Gonzaga|min|51|1531
+Asu Almabayev|min|50|-
+Nikita Krylov|min|50|1636
+Josh Emmett|min|50|1249
+Valter Walker|min|50|-
+Patrick Cote|min|50|1556
+Forrest Griffin|min|50|1569
+Ronald Humphrey|min|50|-
+Michael Chiesa|min|49|1647
+Santiago Ponzinibbio|min|49|1538
+Holly Holm|min|49|1348
+Chris Lytle|min|48|1544
+Kennedy Nzechukwu|min|48|1310
+Bryan Battle|min|48|-
+Daniel Rodriguez|min|48|1436
+Mario Bautista|min|47|1357
+Anthony Wint|min|47|-
+Michal Oleksiejczuk|min|47|1378
+Tabatha Ricci|min|47|-
+Dennis Siver|min|46|1640
+George Bush|min|46|-
+Scott Jorgensen|min|46|1457
+Dustin Jacoby|min|46|1592
+Uriah Hall|min|45|1321
+Yaroslav Amosov|min|45|-
+Chad Mendes|min|45|1582
+Paige VanZant|min|45|-
+Don Frye|min|44|1324
+Mario Pinto|min|44|-
+Michael Oliveira|min|44|-
+Shamil Gaziev|min|44|-
+Pedro Munhoz|min|43|1378
+Andre Lima|min|43|-
+Mike Pyle|min|43|1554
+Alex Oliveira|min|42|1474
+Dominick Reyes|min|42|1398
+Jailton Almeida|min|42|-
+Nathaniel Wood|min|41|1306
+Jose Delgado|min|41|-
+Loopy Godinez|min|41|1022
+Youssef Zalal|min|41|1021
+Kenny Florian|min|40|1582
+Jairzinho Rozenstruik|min|40|1388
+Kevin Randleman|min|40|1209
+Tatiana Suarez|min|40|-
+Danny Castillo|min|40|1489
+Mike Malott|min|40|-
+Aaron Pico|min|40|-
+Cheick Kongo|min|40|1812
+Krzysztof Jotko|min|39|1263
+Eddie Alvarez|min|39|-
+Jens Pulver|min|39|1328
+Alexander Hernandez|min|38|1217
+Elizeu Zaleski dos Santos|min|38|1354
+Roy Nelson|min|38|1321
+Fatima Kline|min|38|-
+Esteban Ribovics|min|38|-
+Joanne Wood|min|37|1353
+Tecia Torres|min|37|1570
+John Lineker|min|36|1514
+Alice Pereira|min|36|-
+Thales Leites|min|36|1499
+Hayato Sakurai|min|36|1745
+Julian Erosa|min|36|1209
+Ariane Lipski|min|35|-
+Lerryan Douglas|min|35|-
+Charles Johnson|min|35|1153
+Evan Dunham|min|-|1652
+Thiago Silva|min|-|1634
+Alonzo Menifield|min|-|1599
+Melvin Guillard|min|-|1585
+Yoshihiro Akiyama|min|-|1566
+Tim Sylvia|min|-|1487
+Diego Ferreira|min|-|1484
+Evan Tanner|min|-|1460
+Dong Hyun Kim|min|-|1438
+Antonio Silva|min|-|1436
+Sergei Kharitonov|min|-|1411
+Mark Munoz|min|-|1409
+Joe Stevenson|min|-|1404
+Muhammed Lawal|min|-|1382
+Corey Anderson|min|-|1372
+Kazuhiro Nakamura|min|-|1361
+Ion Cutelaba|min|-|1360
+Phil Davis|min|-|1359
+Brian Stann|min|-|1358
+Eryk Anders|min|-|1357
+Jake Ellenberger|min|-|1356
+Iuri Alcantara|min|-|1355
+Chris Gutierrez|min|-|1355
+Renato Sobral|min|-|1354
+Marcos Rogerio de Lima|min|-|1346
+Marina Rodriguez|min|-|1344
+Matt Lindland|min|-|1342
+Bryan Barberena|min|-|1341
+Steve Garcia|min|-|1339
+Jared Gordon|min|-|1336
+Sam Alvey|min|-|1334
+Keith Jardine|min|-|1332
+Anthony Hernandez|min|-|1330
+Karolina Kowalkiewicz|min|-|1323
+Dennis Bermudez|min|-|1303
+Chris Cariaso|min|-|1300
+Martin Kampmann|min|-|1298
+Davey Grant|min|-|1294
+Tim Kennedy|min|-|1291
+Rousimar Palhares|min|-|1290
+Paul Craig|min|-|1289
+Brandon Vera|min|-|1288
+Royce Gracie|min|-|1285
+John Dodson|min|-|1283
+Ryan Spann|min|-|1276
+CB Dollaway|min|-|1262
+Raoni Barcelos|min|-|1262
+Takeya Mizugaki|min|-|1254
+Alex Perez|min|-|1253
+Mike Swick|min|-|1251
+Sarah Kaufman|min|-|1250
+Cung Le|min|-|1248
+Travis Browne|min|-|1247
+Tarec Saffiedine|min|-|1245
+Yan Xiaonan|min|-|1245
+Ricco Rodriguez|min|-|1244
+Murilo Rua|min|-|1244
+Matt Wiman|min|-|1240
+Montel Jackson|min|-|1240
+Gray Maynard|min|-|1237
+Chris Camozzi|min|-|1237
+Edmen Shahbazyan|min|-|1234
+Rory MacDonald|min|-|1232
+KJ Noons|min|-|1231
+Sara McMann|min|-|1225
+Nasrat Haqparast|min|-|1223
+Rafael Natal|min|-|1219
+Gian Villante|min|-|1218
+Volkan Oezdemir|min|-|1215
+Cole Miller|min|-|1214
+Miguel Torres|min|-|1212
+Amanda Lemos|min|-|1204
+Jonathan Martinez|min|-|1204
+Ricky Simon|min|-|1203
+Katlyn Cerminara|min|-|1201
+Tyson Griffin|min|-|1190
+Akira Shoji|min|-|1189
+Joe Riggs|min|-|1182
+Pedro Rizzo|min|-|1179
+Louis Smolka|min|-|1179
+Al Iaquinta|min|-|1175
+Serghei Spivac|min|-|1174
+Roman Dolidze|min|-|1173
+Niko Price|min|-|1172
+James Krause|min|-|1170
+JJ Aldrich|min|-|1170
+Paul Daley|min|-|1167
+Michelle Waterson-Gomez|min|-|1155
+Matt Mitrione|min|-|1154
+Anthony Njokuani|min|-|1152
+Paulo Filho|min|-|1150
+Spencer Fisher|min|-|1147
+Aleksei Oleinik|min|-|1147
+Lorenz Larkin|min|-|1145
+Chidi Njokuani|min|-|1144
+Gunnar Nelson|min|-|1142
+Ben Saunders|min|-|1140
+Geoff Neal|min|-|1140
+Sam Stout|min|-|1137
+Joselyne Edwards|min|-|1137
+Manvel Gamburyan|min|-|1135
+David Abbott|min|-|1129
+Matt Hamill|min|-|1128
+Jamie Varner|min|-|1128
+Mike Pierce|min|-|1127
+Carla Esparza|min|-|1121
+Phil Baroni|min|-|1120
+Sergio Pettis|min|-|1119
+Germaine de Randamie|min|-|1112
+Thiago Tavares|min|-|1107
+Max Griffin|min|-|1105
+James Vick|min|-|1102
+Norma Dumont|min|-|1097
+Billy Quarantillo|min|-|1093
+Paul Felder|min|-|1091
+Sergei Pavlovich|min|-|1091
+Alan Jouban|min|-|1088
+Zak Cummings|min|-|1087
+Jorge Rivera|min|-|1085
+Devin Clark|min|-|1084
+Punahele Soriano|min|-|1084
+Alan Belcher|min|-|1082
+Thiago Moises|min|-|1078
+Sean Sherk|min|-|1073
+Drakkar Klose|min|-|1073
+Mitsuhiro Ishida|min|-|1071
+Guy Mezger|min|-|1068
+Rafael Cavalcante|min|-|1068
+Christian Leroy Duncan|min|-|1060
+Marcus Davis|min|-|1055
+Dustin Ortiz|min|-|1051
+Alexis Davis|min|-|1051
+Michel Prazeres|min|-|1025
+Stephan Bonnar|min|-|1024
+Frank Shamrock|min|-|1023
+Joachim Hansen|min|-|1021
+Irene Aldana|min|-|1021
+Julianna Pena|min|-|1020
+Jasmine Jasudavicius|min|-|1019
+Gabriel Benitez|min|-|1017
+John Moraga|min|-|1016
+JunYong Park|min|-|1014
+Karol Rosa|min|-|1013
+Kendall Grove|min|-|1009
+George Roop|min|-|1003
+Rustam Khabilov|min|-|1000
+Brian Kelleher|min|-|999
+Liz Carmouche|min|-|992
+Randa Markos|min|-|991
+Nicolas Dalby|min|-|991
+Julio Arce|min|-|990
+Macy Chiasson|min|-|990
+Pat Healy|min|-|985
+Aaron Simpson|min|-|982
+Giga Chikadze|min|-|982
+Carlos Newton|min|-|981
+Hideo Tokoro|min|-|981
+Walt Harris|min|-|979
+Dan Severn|min|-|976
+Marc-Andre Barriault|min|-|976
+Miles Johns|min|-|975
+Mark Kerr|min|-|968
+Scott Holtzman|min|-|967
+Sumudaerji|min|-|938
+Kyler Phillips|min|-|937
+Virna Jandiroba|min|-|936
+Kyle Noke|min|-|934
+Brad Pickett|min|-|931
+Yancy Medeiros|min|-|931
+Karo Parisyan|min|-|930
+Ricardo Almeida|min|-|929
+Molly McCann|min|-|927
+Mike Perry|min|-|925
+Mark Bocek|min|-|924
+Andrea Lee|min|-|924
+Erick Silva|min|-|923
+Cody Durden|min|-|923
+Denise Gomes|min|-|923
+TJ Grant|min|-|919
+Adrian Yanez|min|-|917`.trim().split('\n').map((line, i) => {
+  const [name, odds, purchases, earnings] = line.split('|');
+  const num = v => (v === '-' || v === '' || v == null) ? null : +v;
+  const e = num(earnings);
+  return { rank: i + 1, name, odds: odds === '-' ? null : odds, purchases: num(purchases),
+           earnings: e, iconic: e == null ? null : e * 20 };
+});
+// Built on first use: norm() is defined further down the script.
+let UFC_BY_KEY = null;
+function ufcListEntry(name){
+  if(!UFC_BY_KEY) UFC_BY_KEY = new Map(UFC_LIST.map(f => [norm(f.name), f]));
+  return UFC_BY_KEY.get(norm(name)) || null;
+}
+
 const MIN_TIER = 8;
 const RATES = (()=>{ const a=[MIN_TIER]; for(let r=10;r<=120;r+=5) a.push(r); return a; })();
 
@@ -1473,7 +2054,18 @@ $('#b-rate').addEventListener('change', () => {
 
 // Re-reads the floor for whatever player is currently typed and reshapes
 // the rate dropdown + note to match.
+function applyFighterCard(){
+  const el = $('#b-fighter');
+  if(!el) return;
+  const player = $('#b-player').value.trim();
+  if(sport !== 'UFC' || player.length < 3){ el.innerHTML = ''; return; }
+  const known = ufcListEntry(player) || ufcMetaFor(player);
+  el.innerHTML = known ? ufcDetailChips(player) : '';
+  if(!ufcMeta) loadUfcMeta().then(() => { if($('#b-player').value.trim() === player) el.innerHTML = (ufcListEntry(player) || ufcMetaFor(player)) ? ufcDetailChips(player) : ''; });
+}
+
 function applyMinimumToForm(){
+  applyFighterCard();
   const player = $('#b-player').value.trim();
   const note = $('#b-min-note');
   const sel = $('#b-rate'), cust = $('#b-rate-custom');
@@ -1560,7 +2152,8 @@ function renderSuggest(items, note){
   suggestItems = items;
   suggestActive = -1;
   const rows = items.map((it,i) =>
-    `<li role="option" data-i="${i}"><span class="dot">•</span> ${esc(it.name)} <span class="team">${esc(it.team)}</span></li>`
+    `<li role="option" data-i="${i}"><span class="dot">•</span> ${esc(it.name)} <span class="team">${esc(it.team)}</span>${
+      sport === 'UFC' ? ufcDetailChips(it.name) : ''}</li>`
   ).join('');
   box.innerHTML = rows + (note ? `<li class="hint">${esc(note)}</li>` : '');
   const show = items.length > 0 || !!note;
@@ -1574,8 +2167,19 @@ async function runSuggest(q){
     const r = await fetch(`/api/players?sport=${encodeURIComponent(sport)}&q=${encodeURIComponent(q)}`);
     const data = await r.json();
     const cfg = BLOCKED_TEAM[sport];
-    const items = (data.players || [])
+    let items = (data.players || [])
       .filter(it => !cfg || String(it.team || '').toUpperCase() !== cfg.code);
+    // UFC: fighters on the purchases list come first, most-bought first, so
+    // "sean" lands on O'Malley and Strickland before the whole A-Z roster.
+    if(sport === 'UFC'){
+      await loadUfcMeta();
+      const nq = norm(q);
+      const listed = UFC_LIST.filter(f => norm(f.name).includes(nq))
+        .sort((a,b) => (b.purchases ?? -1) - (a.purchases ?? -1))
+        .map(f => ({ name: f.name, team: (items.find(it => norm(it.name) === norm(f.name)) || {}).team || '' }));
+      const seen = new Set(listed.map(x => norm(x.name)));
+      items = listed.concat(items.filter(it => !seen.has(norm(it.name)))).slice(0, 15);
+    }
     const note = !items.length
       ? (data.building ? 'Still building the player list — try again in a bit' : 'No matches')
       : (data.building ? 'Still indexing — more players will show up soon' : null);
@@ -1755,12 +2359,151 @@ $('#b-post').addEventListener('click', async () => {
 });
 
 /* =========================================================
+   UFC fighter details
+   ---------------------------------------------------------
+   Purchases / earnings / odds come from the owner's list; status
+   and age come live from UFC.com via /api/ufc, which refreshes
+   a few fighters at a time in the background.
+   ========================================================= */
+let ufcMeta = null, ufcMetaAt = 0, ufcMetaLoading = null;
+function loadUfcMeta(force){
+  if(!force && ufcMeta && Date.now() - ufcMetaAt < 5*60*1000) return Promise.resolve(ufcMeta);
+  if(ufcMetaLoading) return ufcMetaLoading;
+  ufcMetaLoading = fetch('/api/ufc').then(r => r.json()).then(d => {
+    const m = new Map();
+    for(const [name, f] of Object.entries(d.fighters || {})) m.set(norm(name), f);
+    ufcMeta = m; ufcMetaAt = Date.now(); return m;
+  }).catch(() => ufcMeta || new Map()).finally(() => { ufcMetaLoading = null; });
+  return ufcMetaLoading;
+}
+function ufcMetaFor(name){ return ufcMeta ? (ufcMeta.get(norm(name)) || null) : null; }
+
+const UFC_FIELDS = [
+  { k:'status',    label:'Status / age' },
+  { k:'odds',      label:'Odds' },
+  { k:'purchases', label:'Purchases' },
+  { k:'earnings',  label:'Earnings' },
+  { k:'iconic',    label:'Iconic' }
+];
+const UFC_HIDE_KEY = 'ratebrd_ufc_hide';
+function ufcHidden(){
+  try{ return new Set(JSON.parse(localStorage.getItem(UFC_HIDE_KEY) || '[]')); }catch(e){ return new Set(); }
+}
+function setUfcHidden(set){
+  try{ localStorage.setItem(UFC_HIDE_KEY, JSON.stringify([...set])); }catch(e){}
+}
+
+// "Active · 31", "Retired", "Not fighting" — UFC.com's own labels.
+function ufcStatusChip(name){
+  const m = ufcMetaFor(name);
+  if(!m || !m.status) return '';
+  const st = m.status.toLowerCase();
+  if(st === 'active') return `<span class="st-active">Active${m.age ? ' · ' + esc(m.age) : ''}</span>`;
+  if(st === 'retired') return `<span class="st-retired">Retired</span>`;
+  return `<span class="st-out">${esc(m.status.charAt(0).toUpperCase() + m.status.slice(1).toLowerCase())}</span>`;
+}
+
+// The chips for one fighter, honouring whatever the viewer has hidden.
+function ufcDetailChips(name, hidden){
+  hidden = hidden || ufcHidden();
+  const f = ufcListEntry(name);
+  const n = v => v == null ? '—' : v.toLocaleString();
+  const parts = [];
+  if(!hidden.has('status')){ const c = ufcStatusChip(name); if(c) parts.push(c); }
+  if(f){
+    if(!hidden.has('odds') && f.odds) parts.push(`<span>odds <b>${esc(f.odds)}</b></span>`);
+    if(!hidden.has('purchases')) parts.push(`<span><b>${n(f.purchases)}</b> purchases</span>`);
+    if(!hidden.has('earnings'))  parts.push(`<span><b>${n(f.earnings)}</b> earnings</span>`);
+    if(!hidden.has('iconic'))    parts.push(`<span><b>${n(f.iconic)}</b> iconic</span>`);
+  }
+  return parts.length ? `<div class="fx">${parts.join('')}</div>` : '';
+}
+
+function ufcShowToggles(hidden){
+  return `<div class="tp-shows"><span>Show:</span>${UFC_FIELDS.map(x =>
+    `<label><input type="checkbox" data-show="${x.k}" ${hidden.has(x.k) ? '' : 'checked'}>${x.label}</label>`).join('')}</div>`;
+}
+
+/* =========================================================
    Top players
    ---------------------------------------------------------
    The owner's ranked list for the sport, coloured by whether
    anyone on the board is already buying that player.
    ========================================================= */
+async function showTopUfc(){
+  await loadUfcMeta();
+  const live = market.offers.filter(o => o.sport==='UFC' && !market.users[o.user]?.banned);
+  const rows = UFC_LIST.map(f => {
+    const buyers = live.filter(o => samePlayer(o.player, f.name)).sort((a,b) => b.rate - a.rate)
+      .map(o => ({ rate:o.rate, who: market.users[o.user]?.name || o.user }));
+    return { ...f, key: norm(f.name), buyers };
+  });
+  const taken = rows.filter(r => r.buyers.length).length;
+
+  let hidden = ufcHidden(), filter = 'all', query = '';
+  let sortBy = 'purchases';
+  try{ sortBy = localStorage.getItem('ratebrd_ufc_sort') || 'purchases'; }catch(e){}
+
+  const box = modal('Top UFC fighters', `
+    <div class="tp-tools">
+      <input id="tp-q" class="field" autocomplete="off" spellcheck="false" placeholder="Search a fighter">
+      <div class="seg" role="group" aria-label="Filter">
+        <button data-f="all" aria-pressed="true">All</button>
+        <button data-f="taken" aria-pressed="false">Being bought</button>
+        <button data-f="open" aria-pressed="false">0 buyers</button>
+      </div>
+      <div class="seg" role="group" aria-label="Sort by">
+        <button data-s="purchases">Purchases</button>
+        <button data-s="earnings">Earnings</button>
+        <button data-s="iconic">Iconic</button>
+      </div>
+      <div id="tp-shows"></div>
+      <p class="note" id="tp-count"></p>
+    </div>
+    <div id="tp-list"></div>`);
+
+  const byNum = k => (a,b) => (b[k] ?? -1) - (a[k] ?? -1) || (b.purchases ?? -1) - (a.purchases ?? -1);
+
+  function draw(){
+    const q = norm(query);
+    const sorted = rows.slice().sort(byNum(sortBy));
+    const shown = sorted.filter(r => {
+      if(filter === 'taken' && !r.buyers.length) return false;
+      if(filter === 'open'  &&  r.buyers.length) return false;
+      return !q || r.key.includes(q);
+    });
+    box.querySelector('#tp-shows').innerHTML = ufcShowToggles(hidden);
+    box.querySelector('#tp-count').textContent =
+      `${shown.length} of ${rows.length} shown — ${taken} already being bought, ${rows.length - taken} with no buyer.`;
+    box.querySelector('#tp-list').innerHTML = shown.length ? shown.map(r => `
+      <div class="tp-row">
+        <span class="tp-rank">${sorted.indexOf(r) + 1}</span>
+        <span class="tp-name ${r.buyers.length ? 'tp-taken' : 'tp-open'}">${esc(r.name)}</span>
+        <span class="tp-val"></span>
+        <div class="tp-buyers" style="margin-top:0">${ufcDetailChips(r.name, hidden)}
+          ${r.buyers.length ? `<div style="margin-top:5px">${r.buyers.map(b =>
+            `<b>${b.rate}/1</b> ${esc(b.who)}`).join(' &nbsp;·&nbsp; ')}</div>` : ''}</div>
+      </div>`).join('') : `<p class="tp-empty">Nothing matches that.</p>`;
+    box.querySelectorAll('[data-s]').forEach(b => b.setAttribute('aria-pressed', b.dataset.s === sortBy ? 'true' : 'false'));
+  }
+
+  box.querySelector('#tp-q').addEventListener('input', e => { query = e.target.value; draw(); });
+  box.addEventListener('click', e => {
+    const f = e.target.closest('[data-f]'), so = e.target.closest('[data-s]');
+    if(f){ filter = f.dataset.f; box.querySelectorAll('[data-f]').forEach(b => b.setAttribute('aria-pressed', b === f ? 'true' : 'false')); draw(); }
+    if(so){ sortBy = so.dataset.s; try{ localStorage.setItem('ratebrd_ufc_sort', sortBy); }catch(err){} draw(); }
+  });
+  box.addEventListener('change', e => {
+    const c = e.target.closest('[data-show]');
+    if(!c) return;
+    if(c.checked) hidden.delete(c.dataset.show); else hidden.add(c.dataset.show);
+    setUfcHidden(hidden); draw(); applyFighterCard();
+  });
+  draw();
+}
+
 function showTopPlayers(){
+  if(sport === 'UFC') return showTopUfc();
   const list = TOP_PLAYERS[sport];
   if(!list || !list.length){
     modal(`Top ${SPORTS[sport]} players`,
