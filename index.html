@@ -135,6 +135,7 @@
   .fx .st-retired{color:var(--mute)}
   .fx .st-out{color:var(--mute);border-style:dashed}
   .fx b{font-weight:600}
+  .rd-flag{font-size:11.5px;color:var(--mute);justify-self:end}
   .tp-shows{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--mute)}
   .tp-shows label{display:inline-flex;align-items:center;gap:4px;margin:0;padding:3px 8px;border:1px solid var(--line);
     border-radius:999px;cursor:pointer;color:var(--bone);font-size:12px}
@@ -2060,7 +2061,8 @@ function applyFighterCard(){
   const player = $('#b-player').value.trim();
   if(sport !== 'UFC' || player.length < 3){ el.innerHTML = ''; return; }
   const known = ufcListEntry(player) || ufcMetaFor(player);
-  el.innerHTML = known ? ufcDetailChips(player) : '';
+  el.innerHTML = known ? ufcDetailChips(player) +
+    `<button class="linkbtn rd-flag" data-rd-card="${esc(player)}" style="margin-top:4px">Report incorrect data</button>` : '';
   if(!ufcMeta) loadUfcMeta().then(() => { if($('#b-player').value.trim() === player) el.innerHTML = (ufcListEntry(player) || ufcMetaFor(player)) ? ufcDetailChips(player) : ''; });
 }
 
@@ -2385,7 +2387,7 @@ function ufcMetaFor(name){ return ufcMeta ? (ufcMeta.get(norm(name)) || null) : 
 
 const UFC_FIELDS = [
   { k:'status',    label:'Status / age' },
-  { k:'odds',      label:'Odds' },
+  { k:'minimum',   label:'Minimum' },
   { k:'purchases', label:'Purchases' },
   { k:'earnings',  label:'Earnings' },
   { k:'iconic',    label:'Iconic' }
@@ -2398,30 +2400,102 @@ function setUfcHidden(set){
   try{ localStorage.setItem(UFC_HIDE_KEY, JSON.stringify([...set])); }catch(e){}
 }
 
-// "Active · 31", "Retired", "Not fighting" — UFC.com's own labels.
-function ufcStatusChip(name){
+// The board's own status, built from UFC.com:
+//   on the UFC roster and fought in the last 18 months (or has a bout booked) -> Active
+//   on the UFC roster but no fight in 18+ months                              -> Inactive
+//   not on the UFC roster (UFC says Retired / Not Fighting / Released)        -> Retired
+// An admin correction beats all of it.
+const INACTIVE_AFTER_MS = 548 * 24 * 60 * 60 * 1000;   // ~18 months
+function ufcStatus(name){
   const m = ufcMetaFor(name);
-  if(!m || !m.status) return '';
-  const st = m.status.toLowerCase();
-  if(st === 'active') return `<span class="st-active">Active${m.age ? ' · ' + esc(m.age) : ''}</span>`;
-  if(st === 'retired') return `<span class="st-retired">Retired</span>`;
-  return `<span class="st-out">${esc(m.status.charAt(0).toUpperCase() + m.status.slice(1).toLowerCase())}</span>`;
+  const ov = (m && m.override) || {};
+  const age = ov.age || (m && m.age) || '';
+  if(ov.status) return { label: ov.status, age };
+  if(!m || !m.status) return null;
+  if(m.status.toLowerCase() !== 'active') return { label: 'Retired', age };
+  if(m.nextFight) return { label: 'Active', age };
+  const last = m.lastFight ? Date.parse(m.lastFight) : 0;
+  if(last && Date.now() - last > INACTIVE_AFTER_MS) return { label: 'Inactive', age, lastFight: m.lastFight };
+  return { label: 'Active', age };
+}
+function ufcStatusChip(name){
+  const st = ufcStatus(name);
+  if(!st) return '';
+  const l = st.label.toLowerCase();
+  if(l === 'active') return `<span class="st-active">Active${st.age ? ' · ' + esc(st.age) : ''}</span>`;
+  if(l === 'inactive') return `<span class="st-out" title="${st.lastFight ? 'Last fight ' + esc(st.lastFight) : ''}">Inactive${st.age ? ' · ' + esc(st.age) : ''}</span>`;
+  return `<span class="st-retired">${esc(st.label)}</span>`;
+}
+
+// List figures with any admin correction laid over them.
+function ufcValues(name){
+  const f = ufcListEntry(name);
+  const ov = (ufcMetaFor(name) || {}).override || {};
+  if(!f && !Object.keys(ov).length) return null;
+  const num = v => (v == null || v === '' || v === '-') ? null : +v;
+  const earnings = ov.earnings != null ? num(ov.earnings) : (f ? f.earnings : null);
+  return {
+    minimum:   ov.minimum || (f ? f.odds : null),
+    purchases: ov.purchases != null ? num(ov.purchases) : (f ? f.purchases : null),
+    earnings,
+    iconic:    earnings == null ? null : earnings * 20
+  };
+}
+// "60/1" -> 60, "min" -> the bottom tier, nothing -> -1 (sorts last).
+function minimumRank(v){
+  if(!v) return -1;
+  if(/^min/i.test(v)) return MIN_TIER;
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : -1;
 }
 
 // The chips for one fighter, honouring whatever the viewer has hidden.
 function ufcDetailChips(name, hidden){
   hidden = hidden || ufcHidden();
-  const f = ufcListEntry(name);
+  const f = ufcValues(name);
   const n = v => v == null ? '—' : v.toLocaleString();
   const parts = [];
   if(!hidden.has('status')){ const c = ufcStatusChip(name); if(c) parts.push(c); }
   if(f){
-    if(!hidden.has('odds') && f.odds) parts.push(`<span>odds <b>${esc(f.odds)}</b></span>`);
+    if(!hidden.has('minimum') && f.minimum) parts.push(`<span>minimum <b>${esc(f.minimum)}</b></span>`);
     if(!hidden.has('purchases')) parts.push(`<span><b>${n(f.purchases)}</b> purchases</span>`);
     if(!hidden.has('earnings'))  parts.push(`<span><b>${n(f.earnings)}</b> earnings</span>`);
     if(!hidden.has('iconic'))    parts.push(`<span><b>${n(f.iconic)}</b> iconic</span>`);
   }
   return parts.length ? `<div class="fx">${parts.join('')}</div>` : '';
+}
+
+const DATA_FIELDS = [
+  ['status','Active / inactive / retired'], ['age','Age'], ['minimum','Minimum'],
+  ['purchases','Purchases'], ['earnings','Earnings'], ['other','Something else']
+];
+function reportDataForm(prefill){
+  const names = UFC_LIST.map(f => `<option value="${esc(f.name)}">`).join('');
+  const box = modal('Report incorrect data', `
+    <p class="note">Tell the board admin what's wrong. They'll check it and fix it.</p>
+    <div><label for="rd-name">Fighter</label>
+      <input id="rd-name" class="field" list="rd-names" maxlength="80" autocomplete="off" value="${esc(prefill || '')}" placeholder="Fighter name">
+      <datalist id="rd-names">${names}</datalist></div>
+    <div id="rd-now"></div>
+    <div><label for="rd-field">What's wrong</label>
+      <select id="rd-field" class="field">${DATA_FIELDS.map(([k,l]) => `<option value="${k}">${l}</option>`).join('')}</select></div>
+    <div><label for="rd-value">What it should be</label>
+      <input id="rd-value" class="field" maxlength="60" autocomplete="off" placeholder="e.g. 32, Retired, 25/1, 1,850"></div>
+    <div><label for="rd-note">Anything else (optional)</label>
+      <input id="rd-note" class="field" maxlength="300" autocomplete="off" placeholder="Where you saw it, a link, etc."></div>
+    <button class="btn" id="rd-send">Send report</button>`);
+  const nameEl = box.querySelector('#rd-name'), nowEl = box.querySelector('#rd-now');
+  const showNow = () => { nowEl.innerHTML = nameEl.value.trim().length > 2 ? ufcDetailChips(nameEl.value.trim(), new Set()) : ''; };
+  nameEl.addEventListener('input', showNow); showNow();
+  box.querySelector('#rd-send').addEventListener('click', async () => {
+    const player = asciiName(nameEl.value), field = box.querySelector('#rd-field').value;
+    const value = box.querySelector('#rd-value').value.trim(), note = box.querySelector('#rd-note').value.trim();
+    if(player.length < 2) return toast('Which fighter?');
+    if(!value && !note) return toast('Say what it should be, or add a note.');
+    const ok = await patch('dataReport', { by: me, sport: 'UFC', player, field, value, note });
+    if(!ok) return;
+    box.remove(); toast('Thanks — sent to the admin.');
+  });
 }
 
 function ufcShowToggles(hidden){
@@ -2448,6 +2522,7 @@ async function showTopUfc(){
   let hidden = ufcHidden(), filter = 'all', query = '';
   let sortBy = 'purchases';
   try{ sortBy = localStorage.getItem('ratebrd_ufc_sort') || 'purchases'; }catch(e){}
+  if(!['purchases','minimum','earnings'].includes(sortBy)) sortBy = 'purchases';
 
   const box = modal('Top UFC fighters', `
     <div class="tp-tools">
@@ -2459,15 +2534,23 @@ async function showTopUfc(){
       </div>
       <div class="seg" role="group" aria-label="Sort by">
         <button data-s="purchases">Purchases</button>
+        <button data-s="minimum">Minimums</button>
         <button data-s="earnings">Earnings</button>
-        <button data-s="iconic">Iconic</button>
       </div>
       <div id="tp-shows"></div>
-      <p class="note" id="tp-count"></p>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <p class="note" id="tp-count" style="margin:0"></p>
+        <button class="btn-ghost" data-rd="">Report incorrect data</button>
+      </div>
     </div>
     <div id="tp-list"></div>`);
 
-  const byNum = k => (a,b) => (b[k] ?? -1) - (a[k] ?? -1) || (b.purchases ?? -1) - (a.purchases ?? -1);
+  const val = (r, k) => {
+    const v = ufcValues(r.name) || {};
+    if(k === 'minimum') return minimumRank(v.minimum);
+    return v[k] ?? -1;
+  };
+  const byNum = k => (a,b) => val(b,k) - val(a,k) || val(b,'purchases') - val(a,'purchases');
 
   function draw(){
     const q = norm(query);
@@ -2484,7 +2567,7 @@ async function showTopUfc(){
       <div class="tp-row">
         <span class="tp-rank">${sorted.indexOf(r) + 1}</span>
         <span class="tp-name ${r.buyers.length ? 'tp-taken' : 'tp-open'}">${esc(r.name)}</span>
-        <span class="tp-val"></span>
+        <button class="linkbtn rd-flag" data-rd="${esc(r.name)}" title="Report incorrect data">Report data</button>
         <div class="tp-buyers" style="margin-top:0">${ufcDetailChips(r.name, hidden)}
           ${r.buyers.length ? `<div style="margin-top:5px">${r.buyers.map(b =>
             `<b>${b.rate}/1</b> ${esc(b.who)}`).join(' &nbsp;·&nbsp; ')}</div>` : ''}</div>
@@ -2494,6 +2577,8 @@ async function showTopUfc(){
 
   box.querySelector('#tp-q').addEventListener('input', e => { query = e.target.value; draw(); });
   box.addEventListener('click', e => {
+    const rd = e.target.closest('[data-rd]');
+    if(rd) return reportDataForm(rd.dataset.rd);
     const f = e.target.closest('[data-f]'), so = e.target.closest('[data-s]');
     if(f){ filter = f.dataset.f; box.querySelectorAll('[data-f]').forEach(b => b.setAttribute('aria-pressed', b === f ? 'true' : 'false')); draw(); }
     if(so){ sortBy = so.dataset.s; try{ localStorage.setItem('ratebrd_ufc_sort', sortBy); }catch(err){} draw(); }
@@ -2603,6 +2688,11 @@ function showTopPlayers(){
 
   draw();
 }
+
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-rd-card]');
+  if(b) reportDataForm(b.dataset.rdCard);
+});
 
 $('#b-top').addEventListener('click', async () => {
   await pull();
@@ -3177,6 +3267,10 @@ async function adminPanel(){
       <summary><span>Reports</span><span class="count ${open.length ? 'hot' : ''}">${open.length} open</span></summary>
       ${open.length ? open.map(reportCard).join('') : '<p class="nohit">No open reports.</p>'}
     </details>
+    <details class="ad-drop" id="ad-data">
+      <summary><span>Data reports</span><span class="count" id="ad-data-count">…</span></summary>
+      <div id="ad-data-list"><p class="nohit">Loading…</p></div>
+    </details>
     <p class="note" id="ad-backup">Checking backups…</p>
     <h3 style="margin:0;font-size:14px;font-weight:600">Listings</h3>
     <div class="statrow">
@@ -3212,6 +3306,73 @@ async function adminPanel(){
                      : `<button class="btn-ghost" data-reset="${esc(k)}">${u.hash ? 'Reset password' : 'awaiting new password'}</button>
                         <button class="btn-ghost btn-danger" data-ban="${esc(k)}">Delete account</button>`}
       </div>`).join('')}`);
+
+  // ---- data reports: someone says a figure is wrong. Review, then either
+  // apply the fix (saved as a correction that the daily UFC.com refresh
+  // won't undo) or dismiss it.
+  const FIXABLE = ['status','age','minimum','purchases','earnings'];
+  const fieldLabel = k => (DATA_FIELDS.find(x => x[0] === k) || [k, k])[1];
+  let dataReports = [];
+  const drawDataReports = () => {
+    const list = box.querySelector('#ad-data-list'), cnt = box.querySelector('#ad-data-count');
+    cnt.textContent = `${dataReports.length} open`;
+    cnt.classList.toggle('hot', dataReports.length > 0);
+    if(dataReports.length) box.querySelector('#ad-data').open = true;
+    list.innerHTML = dataReports.length ? dataReports.map(r => `
+      <div class="hit rep-card">
+        <div class="rep-top">
+          <span><span class="player">${esc(r.player)}</span> <span class="who">${esc(r.sport || '')}</span><br>
+            <span class="who"><b>${esc(fieldLabel(r.field))}</b>${r.value ? ` should be <b>${esc(r.value)}</b>` : ''}
+            — from ${esc(r.by_user)}, ${new Date(r.ts).toLocaleDateString()}</span>
+            ${r.note ? `<br><span class="who">"${esc(r.note)}"</span>` : ''}</span>
+          <span class="rowacts">
+            ${FIXABLE.includes(r.field) ? `<button class="btn-ghost" data-dfix="${esc(r.id)}">Apply fix</button>` : ''}
+            <button class="btn-ghost" data-ddis="${esc(r.id)}">Dismiss</button>
+          </span>
+        </div>
+        <div class="rep-list"><span class="who">Showing now:</span>${ufcDetailChips(r.player, new Set()) || '<span class="who">nothing on file</span>'}</div>
+      </div>`).join('') : '<p class="nohit">No open data reports.</p>';
+  };
+  (async () => {
+    try{
+      await loadUfcMeta(true);
+      const d = await (await fetch('/api/kv?datareports=1')).json();
+      dataReports = d.reports || [];
+    }catch(e){ dataReports = []; }
+    drawDataReports();
+  })();
+  box.addEventListener('click', async e => {
+    const fx = e.target.closest('[data-dfix]'), ds = e.target.closest('[data-ddis]');
+    if(!fx && !ds) return;
+    const id = (fx || ds).dataset[fx ? 'dfix' : 'ddis'];
+    const r = dataReports.find(x => x.id === id);
+    if(!r) return;
+    if(fx){
+      const canonical = (ufcListEntry(r.player) || {}).name || r.player;
+      let v = prompt(`Set ${fieldLabel(r.field).toLowerCase()} for ${canonical} to:\n(leave blank to clear an earlier fix)`, r.value || '');
+      if(v === null) return;
+      v = v.trim().replace(/,/g, '');
+      if(r.field === 'status' && v){
+        const l = v.toLowerCase();
+        v = l.startsWith('act') ? 'Active' : l.startsWith('inact') ? 'Inactive' : l.startsWith('ret') ? 'Retired' : '';
+        if(!v) return toast('Status has to be Active, Inactive or Retired.');
+      }
+      if(r.field === 'minimum' && v && !/^min/i.test(v) && !/^\d+(\/1)?$/.test(v)) return toast('Minimum should look like 25/1 or min.');
+      if(r.field === 'minimum' && /^\d+$/.test(v)) v = v + '/1';
+      if(['age','purchases','earnings'].includes(r.field) && v && !/^\d+$/.test(v)) return toast('That should be a whole number.');
+      try{
+        const res = await fetch('/api/ufc', { method:'POST', headers:{'content-type':'application/json'},
+          body: JSON.stringify({ overrides: { [canonical]: { [r.field]: v } } }) });
+        if(!res.ok) throw new Error(res.status);
+      }catch(err){ return toast('Could not save the fix. Try again.'); }
+      await loadUfcMeta(true);
+    }
+    const done = await patch('resolveDataReport', { id, status: fx ? 'fixed' : 'dismissed' });
+    if(!done) return;
+    dataReports = dataReports.filter(x => x.id !== id);
+    drawDataReports();
+    toast(fx ? 'Fixed.' : 'Dismissed.');
+  });
 
   // ---- backup health. The backup writer runs in the background where a
   // failure is silent, so the only way it stays honest is by being shown.
