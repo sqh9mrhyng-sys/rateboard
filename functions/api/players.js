@@ -55,7 +55,7 @@ export async function onRequestGet({ request, env }) {
   const url = new URL(request.url);
   const sport = (url.searchParams.get('sport') || '').toUpperCase();
   const q = (url.searchParams.get('q') || '').trim().toLowerCase();
-  if (!['CFB', 'NFL', 'FC'].includes(sport)) return json({ error: 'bad sport' }, 400);
+  if (!['CFB', 'NFL', 'FC', 'UFC'].includes(sport)) return json({ error: 'bad sport' }, 400);
 
   const state = await readState(env, sport);
   const players = (state && state.players) || [];
@@ -124,7 +124,7 @@ export async function onRequestPost({ request, env }) {
   catch (e) { return json({ error: 'bad json' }, 400); }
 
   const sport = String(body && body.sport || '').toUpperCase();
-  if (!['CFB', 'NFL', 'FC'].includes(sport)) return json({ error: 'bad sport' }, 400, CORS_HEADERS);
+  if (!['CFB', 'NFL', 'FC', 'UFC'].includes(sport)) return json({ error: 'bad sport' }, 400, CORS_HEADERS);
 
   const players = body && body.players;
   if (!Array.isArray(players) || players.length === 0 || players.length > MAX_PLAYERS) {
