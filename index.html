@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Rate Board — CFB / FC / NFL card offers</title>
+<title>Rate Board — CFB / FC / NFL / UFC card offers</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800&display=swap" rel="stylesheet">
@@ -23,6 +23,7 @@
   }
   [data-sport="FC"]{ --accent:#3FD0A6; }
   [data-sport="NFL"]{ --accent:#7E9BFF; }
+  [data-sport="UFC"]{ --accent:#E5484D; }
 
   *{box-sizing:border-box}
   html,body{margin:0;padding:0}
@@ -178,6 +179,25 @@
 
   /* ---------- admin listing stats ---------- */
   .statrow{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+  /* ---- admin: reports dropdown ---- */
+  .sm-sort{margin:4px 0 2px}
+  .ad-drop{border:1px solid var(--line);border-radius:10px;padding:0 12px;background:var(--panel-2)}
+  .ad-drop summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;
+    padding:12px 0;font-weight:600;font-size:14px}
+  .ad-drop summary::-webkit-details-marker{display:none}
+  .ad-drop summary::after{content:'▾';color:var(--mute);margin-left:8px}
+  .ad-drop[open] summary::after{content:'▴'}
+  .ad-drop summary .count{margin-left:auto;font-weight:500}
+  .ad-drop summary .count.hot{color:var(--bad)}
+  .ad-drop[open]{padding-bottom:8px}
+  .rep-card{display:block !important;border-top:1px solid var(--line)}
+  .rep-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap}
+  .rep-list{margin-top:8px;display:flex;flex-direction:column;gap:4px}
+  .rep-item{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:13px;
+    padding:5px 8px;border-radius:6px;background:var(--panel)}
+  .rep-item em{color:var(--mute);font-style:normal;font-size:11.5px;margin-left:4px}
+  .rep-acts{display:flex;align-items:center;gap:6px;flex-shrink:0}
+  .rep-acts .btn-ghost{padding:4px 9px;min-height:0;font-size:12px}
   .stat{background:var(--panel-2);border:1px solid var(--line);border-radius:9px;padding:12px 14px}
   .stat b{display:block;font-size:26px;font-weight:800;line-height:1.1;color:var(--accent)}
   .stat span{font-size:12px;color:var(--mute)}
@@ -277,7 +297,7 @@
 <!-- ============ LOGIN GATE ============ -->
 <div id="gate" class="gate">
   <h1>Rate Board</h1>
-  <p class="sub">Standing buy offers for CFB, FC and NFL cards. Post what you'll pay, or scan your stats and see who's paying most.</p>
+  <p class="sub">Standing buy offers for CFB, FC, NFL and UFC cards. Post what you'll pay, or scan your stats and see who's paying most.</p>
   <div class="panel">
     <div class="panel-bd stack">
       <div>
@@ -305,6 +325,7 @@
         <option value="CFB">College football</option>
         <option value="FC">FC</option>
         <option value="NFL">NFL</option>
+        <option value="UFC">UFC</option>
       </select>
       <span class="caret">▾</span>
     </div>
@@ -396,6 +417,7 @@
               <div id="rs-msg" class="note hide" style="margin-top:6px"></div>
               <p class="note" id="rs-fresh" style="margin:6px 0 0"></p>
             </div>
+            <p class="note hide" id="rs-none">Card pull isn't set up for this sport yet.</p>
             <input type="file" id="s-file" accept="image/*" multiple class="hide">
             <button id="s-exclude" class="btn-ghost">Exclude players/teams</button>
             <button id="s-hide-board" class="btn-ghost">Hide the buy offers board</button>
@@ -421,7 +443,7 @@ const DEVICE  = 'ratebrd_device_v1';  // { key, name, ts } — remembers this br
 const MIN_PASS = 4;
 const ADMINS = ['dennis'];            // <-- put your username(s) here
 const isAdmin = () => !!me && ADMINS.includes(String(me).toLowerCase());
-const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL' };
+const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL', UFC:'UFC' };
 
 // The post buyers must comment under before they can post a buy offer —
 // this is the link shown to them and where "this post" points.
@@ -1498,7 +1520,7 @@ $('#b-guide-toggle').addEventListener('click', () => {
 /* =========================================================
    Sport + mode
    ========================================================= */
-const PLAYER_EXAMPLES = { CFB:'Julian Sayin', FC:'Lamine Yamal', NFL:'Josh Allen' };
+const PLAYER_EXAMPLES = { CFB:'Julian Sayin', FC:'Lamine Yamal', NFL:'Josh Allen', UFC:'Jon Jones' };
 function updatePlayerPlaceholder(){
   $('#b-player').placeholder = 'e.g. ' + (PLAYER_EXAMPLES[sport] || '');
 }
@@ -2069,9 +2091,13 @@ async function showMatches(raw){
   const fmtVal = v => v == null ? '' : (v >= 1000 ? (v/1000).toFixed(1)+'k' : v);
 
   const box = modal('Your best sellers', rows.length ? `
-    <p class="note">Found ${players.length} player${players.length===1?'':'s'} in your collection. ${rows.length} ${rows.length===1?'has':'have'} a standing ${SPORTS[sport]} offer — ${totalBuyers} buyer${totalBuyers===1?'':'s'} in total, best price first.</p>
-    <div>${rows.map((h,i)=>`
-      <div class="hit" style="display:block">
+    <p class="note">Found ${players.length} player${players.length===1?'':'s'} in your collection. ${rows.length} ${rows.length===1?'has':'have'} a standing ${SPORTS[sport]} offer — ${totalBuyers} buyer${totalBuyers===1?'':'s'} in total.</p>
+    <div class="seg sm-sort" role="group" aria-label="Sort by">
+      <button data-sort="rate">Best rate</button>
+      <button data-sort="value">Card value</button>
+    </div>
+    <div id="sm-list">${rows.map((h,i)=>`
+      <div class="hit" data-i="${i}" style="display:block">
         <div class="bidder-hd">
           <span class="player">${esc(h.player)}</span>
           ${h.value != null ? `<span class="who">rating ${fmtVal(h.value)}</span>` : ''}
@@ -2092,6 +2118,31 @@ async function showMatches(raw){
           </div>`).join('')}
       </div>`).join('')}</div>`
     : `<p class="nohit">Read ${players.length} player${players.length===1?'':'s'}, but none of them have a standing ${SPORTS[sport]} offer right now. Check back, or switch sports if the pull was for a different one.</p>`);
+
+  // ---- sort. "Best rate" is the original order; "Card value" puts the cards
+  // you hold the most of first — 1,200 of an 8/1 guy ahead of 100 of a 50/1.
+  // Nodes are moved, not re-rendered, so the copy buttons keep pointing at
+  // the right row.
+  const SORT_KEY = 'ratebrd_sell_sort';
+  const orders = {
+    rate:  (a,b) => rows[b].buyers[0].rate - rows[a].buyers[0].rate
+                 || (rows[b].value ?? -1) - (rows[a].value ?? -1),
+    value: (a,b) => (rows[b].value ?? -1) - (rows[a].value ?? -1)
+                 || rows[b].buyers[0].rate - rows[a].buyers[0].rate
+  };
+  const applySort = mode => {
+    if(!orders[mode]) mode = 'rate';
+    const list = box.querySelector('#sm-list');
+    if(!list) return;
+    const nodes = [...list.children];
+    nodes.sort((x,y) => orders[mode](+x.dataset.i, +y.dataset.i)).forEach(n => list.appendChild(n));
+    box.querySelectorAll('[data-sort]').forEach(b => b.setAttribute('aria-pressed', b.dataset.sort === mode ? 'true' : 'false'));
+    try{ localStorage.setItem(SORT_KEY, mode); }catch(e){}
+  };
+  box.querySelectorAll('[data-sort]').forEach(b => b.addEventListener('click', () => applySort(b.dataset.sort)));
+  let savedSort = 'rate';
+  try{ savedSort = localStorage.getItem(SORT_KEY) || 'rate'; }catch(e){}
+  applySort(savedSort);
 
   if(blocked.length){
     const cfg = blocked[0].cfg;
@@ -2343,7 +2394,41 @@ async function adminPanel(){
                 || Math.max(...b.offers.map(o=>o.rate)) - Math.max(...a.offers.map(o=>o.rate)));
   const nameOf = u => market.users[u]?.name || u;
 
+  // A report is only useful next to what the person actually has up, so each
+  // one carries their listings and the comment behind every listing.
+  const reportCard = r => {
+    const k = String(r.target || '').trim().toLowerCase();
+    const acct = market.users[k];
+    const theirs = market.offers.filter(o => o.user === k)
+      .sort((a,b) => a.sport.localeCompare(b.sport) || b.rate - a.rate);
+    return `<div class="hit rep-card">
+      <div class="rep-top">
+        <span><span class="player">${esc(r.target)}</span>${acct ? '' : ' <span class="who">(no account by that name)</span>'}<br>
+          <span class="who">${esc(r.reason)} — from ${esc(r.by)}, ${new Date(r.ts).toLocaleDateString()}</span></span>
+        <span class="rowacts">
+          ${acct && !acct.banned ? `<button class="btn-ghost btn-danger" data-ban="${esc(k)}">Delete account</button>` : ''}
+          <button class="btn-ghost" data-clear="${r.id}">Dismiss</button>
+        </span>
+      </div>
+      <div class="rep-list">
+        <span class="who">${theirs.length} listing${theirs.length===1?'':'s'}${theirs.length ? ' — every comment they posted:' : ''}</span>
+        ${theirs.map(o => `<div class="rep-item">
+            <span><b class="num">${o.rate}</b>/1 ${esc(o.player)} <em>${o.sport}</em></span>
+            <span class="rep-acts">
+              ${o.link ? `<a class="btn-ghost adminonly" href="${esc(o.link)}" target="_blank" rel="noopener">Comment</a>`
+                       : `<span class="who">no link</span>`}
+              <button class="killer" data-kill="${o.id}" title="Delete this listing">&times;</button>
+            </span>
+          </div>`).join('')}
+      </div>
+    </div>`;
+  };
+
   const box = modal('Admin', `
+    <details class="ad-drop" ${open.length ? 'open' : ''}>
+      <summary><span>Reports</span><span class="count ${open.length ? 'hot' : ''}">${open.length} open</span></summary>
+      ${open.length ? open.map(reportCard).join('') : '<p class="nohit">No open reports.</p>'}
+    </details>
     <p class="note" id="ad-backup">Checking backups…</p>
     <h3 style="margin:0;font-size:14px;font-weight:600">Listings</h3>
     <div class="statrow">
@@ -2369,16 +2454,6 @@ async function adminPanel(){
           `<span class="buyer"><b class="num">${o.rate}</b>/1 ${esc(nameOf(o.user))}</span>`).join('')}</div>
       </div>`).join('') : '<p class="nohit">Every listing is on a different player right now.</p>'}
 
-    <h3 style="margin:18px 0 0;font-size:14px;font-weight:600">Open reports</h3>
-    ${open.length ? open.map(r=>`
-      <div class="hit" style="grid-template-columns:1fr auto">
-        <span><span class="player">${esc(r.target)}</span><br>
-          <span class="who">${esc(r.reason)} — from ${esc(r.by)}, ${new Date(r.ts).toLocaleDateString()}</span></span>
-        <span class="rowacts">
-          <button class="btn-ghost btn-danger" data-ban="${esc(r.target.toLowerCase())}">Delete account</button>
-          <button class="btn-ghost" data-clear="${r.id}">Dismiss</button>
-        </span>
-      </div>`).join('') : '<p class="nohit">No open reports.</p>'}
     <h3 style="margin:18px 0 0;font-size:14px;font-weight:600">All accounts (${users.length})</h3>
     ${users.map(([k,u])=>`
       <div class="hit" style="grid-template-columns:1fr auto">
@@ -2543,6 +2618,8 @@ function rsLookupVisible(){ return sport === 'FC' || sport === 'CFB' || sport ==
 
 function updateRsLookupVisibility(){
   const wrap = $('#rs-lookup-wrap');
+  const none = $('#rs-none');
+  if(none) none.classList.toggle('hide', rsLookupVisible());
   updateFreshnessNote();
   if(rsLookupVisible()){
     wrap.classList.remove('hide');
