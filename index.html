@@ -2176,7 +2176,12 @@ async function runSuggest(q){
       const nq = norm(q);
       const listed = UFC_LIST.filter(f => norm(f.name).includes(nq))
         .sort((a,b) => (b.purchases ?? -1) - (a.purchases ?? -1))
-        .map(f => ({ name: f.name, team: (items.find(it => norm(it.name) === norm(f.name)) || {}).team || '' }));
+        .map(f => {
+          const api = items.find(it => norm(it.name) === norm(f.name));
+          const m = ufcMetaFor(f.name);
+          const fromUfc = m ? [String(m.division || '').replace(/\s*Division$/i, ''), m.record].filter(Boolean).join(' ') : '';
+          return { name: f.name, team: (api && api.team) || fromUfc };
+        });
       const seen = new Set(listed.map(x => norm(x.name)));
       items = listed.concat(items.filter(it => !seen.has(norm(it.name)))).slice(0, 15);
     }
