@@ -88,6 +88,11 @@ const MAX_OFFERS = 20_000;
    said nothing, because they run in the background where a throw is silent.
    D1 has no such ceiling, and saveSnapshot now RETURNS its failure so the
    admin screen can show when the last good backup was taken. ------------- */
+const DATA_REPORTS_DDL = `CREATE TABLE IF NOT EXISTS data_reports (
+  id TEXT PRIMARY KEY, ts INTEGER NOT NULL, by_user TEXT NOT NULL, sport TEXT,
+  player TEXT NOT NULL, field TEXT NOT NULL, value TEXT, note TEXT,
+  status TEXT NOT NULL DEFAULT 'open')`;
+
 const SNAP_BUCKET_MS = 30 * 60 * 1000;
 const SNAP_KEEP = 24;                    // rolling slots — 12 hours' worth
 const SNAP_DDL = `CREATE TABLE IF NOT EXISTS snapshots (
@@ -246,6 +251,28 @@ async function applyOp(env, body) {
     return null;
   }
 
+  // Someone flags a wrong figure (age, minimum, earnings, status...). Kept in
+  // the database so a burst of reports can't overwrite one another.
+  if (op === 'dataReport') {
+    const by = str(body.by, 60), player = str(body.player, 80), field = str(body.field, 20);
+    if (!by || !player || !field) return 'bad report';
+    await db.prepare(DATA_REPORTS_DDL).run();
+    await db.prepare(
+      `INSERT INTO data_reports (id, ts, by_user, sport, player, field, value, note, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open')`
+    ).bind(uid(), Date.now(), by, str(body.sport, 8) || '', player, field,
+           str(body.value, 60) || '', str(body.note, 300) || '').run();
+    return null;
+  }
+
+  if (op === 'resolveDataReport') {
+    const id = str(body.id, 40), status = body.status === 'fixed' ? 'fixed' : 'dismissed';
+    if (!id) return 'bad id';
+    await db.prepare(DATA_REPORTS_DDL).run();
+    await db.prepare('UPDATE data_reports SET status=? WHERE id=?').bind(status, id).run();
+    return null;
+  }
+
   // One-time move of the old blob into the database.
   if (op === 'import') {
     const users = body.users || {}, offers = body.offers || [];
@@ -325,6 +352,20 @@ async function saveSnapshot(env, force) {
 
 export async function onRequestGet({ request, env }) {
   const url = new URL(request.url);
+
+  // Open data-correction reports, newest first, for the admin screen.
+  if (url.searchParams.get('datareports') != null) {
+    try {
+      const db = env.RATEBOARD_DB;
+      await db.prepare(DATA_REPORTS_DDL).run();
+      const rows = await db.prepare(
+        `SELECT id, ts, by_user, sport, player, field, value, note FROM data_reports
+         WHERE status='open' ORDER BY ts DESC LIMIT 300`).all();
+      return json({ reports: rows.results || [] });
+    } catch (e) {
+      return json({ error: 'could not read data reports', detail: String((e && e.message) || e) }, 503);
+    }
+  }
 
   const snap = url.searchParams.get('snap');
   if (snap != null) {

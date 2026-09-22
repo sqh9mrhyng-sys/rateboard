@@ -13,6 +13,9 @@
 //   GET  /api/ufc                 -> { fighters: { [name]: {...} }, updated }
 //   GET  /api/ufc?probe=<slug>    -> fetch one athlete page now (diagnostics)
 //   POST /api/ufc  {fighters}     -> merge details in (used to seed the list)
+//   POST /api/ufc  {overrides}    -> admin corrections: {name: {field: value}};
+//                                    an empty value removes that correction.
+//                                    Corrections survive the daily refresh.
 
 const KV_KEY = 'ufc_meta_v1';
 const STALE_MS = 24 * 60 * 60 * 1000;      // refresh each fighter about daily
@@ -49,8 +52,27 @@ function parseAthlete(html) {
     status: m(/c-bio__label">\s*Status\s*<\/div>\s*<div class="c-bio__text">\s*([^<]+?)\s*</i),
     age: m(/field--name-age[^>]*>\s*(\d+)\s*</),
     record: m(/hero-profile__division-body"[^>]*>([^<]+)</).replace(/\s*\(W-L-D\)\s*/i, ''),
-    division: m(/hero-profile__division-title"[^>]*>([^<]+)</)
+    division: m(/hero-profile__division-title"[^>]*>([^<]+)</),
+    ...fightDates(html)
   };
+}
+
+// Most recent completed bout, and the next booked one if there is one. The
+// page lists bouts newest first, but upcoming cards can sit at the top too,
+// so every date is read and split around today.
+function fightDates(html) {
+  const now = Date.now();
+  let last = 0, next = 0;
+  const re = /athlete-results__date"[^>]*>\s*([^<]+?)\s*</g;
+  let m;
+  while ((m = re.exec(html))) {
+    const t = Date.parse(m[1].replace(/\./g, ''));
+    if (!t) continue;
+    if (t <= now) { if (t > last) last = t; }
+    else if (!next || t < next) next = t;
+  }
+  const iso = t => t ? new Date(t).toISOString().slice(0, 10) : '';
+  return { lastFight: iso(last), nextFight: iso(next) };
 }
 
 async function fetchAthlete(slug) {
@@ -90,21 +112,25 @@ async function trickle(env) {
     store.lastRefresh = now;
     await env.RATEBOARD_KV.put(KV_KEY, JSON.stringify(store));
 
+    const fresh = {};
     for (const [name, f] of due) {
       try {
         const r = await fetchAthlete(f.slug);
-        if (r.ok) {
-          store.fighters[name] = { ...f, ...r, ok: undefined, ts: Date.now(), failedAt: 0 };
-          delete store.fighters[name].ok;
-        } else {
-          store.fighters[name] = { ...f, failedAt: Date.now(), lastHttp: r.http };
-        }
+        if (r.ok) { const { ok, ...live } = r; fresh[name] = { ...live, ts: Date.now(), failedAt: 0 }; }
+        else fresh[name] = { failedAt: Date.now(), lastHttp: r.http };
       } catch (e) {
-        store.fighters[name] = { ...f, failedAt: Date.now() };
+        fresh[name] = { failedAt: Date.now() };
       }
     }
-    store.updated = Date.now();
-    await env.RATEBOARD_KV.put(KV_KEY, JSON.stringify(store));
+    // Re-read before writing and lay only the refreshed fields on top, so an
+    // admin correction saved while we were fetching isn't written over.
+    const latest = await readStore(env);
+    for (const [name, patch] of Object.entries(fresh)) {
+      latest.fighters[name] = { ...(latest.fighters[name] || {}), ...patch };
+    }
+    latest.lastRefresh = now;
+    latest.updated = Date.now();
+    await env.RATEBOARD_KV.put(KV_KEY, JSON.stringify(latest));
   } catch (e) { /* background freshness is best-effort; stored data stands */ }
 }
 
@@ -137,7 +163,9 @@ export async function onRequestGet({ request, env, waitUntil }) {
   const out = {};
   for (const [name, f] of Object.entries(store.fighters)) {
     out[name] = { status: f.status || '', age: f.age || '', record: f.record || '',
-                  division: f.division || '', ufcName: f.ufcName || '', ts: f.ts || 0 };
+                  division: f.division || '', ufcName: f.ufcName || '',
+                  lastFight: f.lastFight || '', nextFight: f.nextFight || '',
+                  override: f.override || null, ts: f.ts || 0 };
   }
   const body = JSON.stringify({ fighters: out, updated: store.updated || 0 });
   try {
@@ -154,10 +182,39 @@ export async function onRequestGet({ request, env, waitUntil }) {
 export async function onRequestPost({ request, env }) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ error: 'bad json' }, 400); }
+  const store = await readStore(env);
+  const bust = async () => {
+    try { await caches.default.delete(new Request(`${new URL(request.url).origin}/__cache/ufc-meta/v1`)); } catch (e) {}
+  };
+
+  // Admin corrections. Kept apart from the live fields, so the daily refresh
+  // from UFC.com never undoes a fix.
+  const OVERRIDABLE = ['status', 'age', 'minimum', 'purchases', 'earnings'];
+  if (body && body.overrides && typeof body.overrides === 'object') {
+    let n = 0;
+    for (const [rawName, o] of Object.entries(body.overrides)) {
+      const name = String(rawName).slice(0, 80).trim();
+      if (!name || !o || typeof o !== 'object') continue;
+      const f = store.fighters[name] || (store.fighters[name] = { ts: Date.now() });
+      const ov = { ...(f.override || {}) };
+      for (const k of OVERRIDABLE) {
+        if (!(k in o)) continue;
+        const v = String(o[k] == null ? '' : o[k]).slice(0, 40).trim();
+        if (v) ov[k] = v; else delete ov[k];
+      }
+      f.override = Object.keys(ov).length ? ov : undefined;
+      if (!f.override) delete f.override;
+      n++;
+    }
+    store.updated = Date.now();
+    await env.RATEBOARD_KV.put(KV_KEY, JSON.stringify(store));
+    await bust();
+    return json({ ok: true, overridden: n });
+  }
+
   const incoming = body && body.fighters;
   if (!incoming || typeof incoming !== 'object') return json({ error: 'no fighters' }, 400);
 
-  const store = await readStore(env);
   let n = 0;
   for (const [rawName, f] of Object.entries(incoming)) {
     const name = String(rawName).slice(0, 80).trim();
@@ -167,12 +224,14 @@ export async function onRequestPost({ request, env }) {
     store.fighters[name] = {
       slug: pick('slug'), ufcName: pick('ufcName'), status: pick('status'),
       age: pick('age'), record: pick('record'), division: pick('division'),
-      ts: Number(f.ts) || prev.ts || Date.now(), failedAt: 0
+      lastFight: pick('lastFight'), nextFight: ('nextFight' in f) ? String(f.nextFight || '').slice(0, 10) : (prev.nextFight || ''),
+      ts: Number(f.ts) || prev.ts || Date.now(), failedAt: 0,
+      ...(prev.override ? { override: prev.override } : {})
     };
     n++;
   }
   store.updated = Date.now();
   await env.RATEBOARD_KV.put(KV_KEY, JSON.stringify(store));
-  try { await caches.default.delete(new Request(`${new URL(request.url).origin}/__cache/ufc-meta/v1`)); } catch (e) {}
+  await bust();
   return json({ ok: true, merged: n, total: Object.keys(store.fighters).length });
 }
