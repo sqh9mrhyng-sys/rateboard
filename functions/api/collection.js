@@ -24,7 +24,7 @@ const IP_MAX_REQUESTS   = 20;
 const SPORT_RS_KEY = { FC: 'soccer', CFB: 'ncaaf', NFL: 'nfl' };
 const SEASON = '2026';
 const PAGE_SIZE   = 20;
-const CHUNK_PAGES = 44; // 44 pages × 20 players = 880 players per invocation
+const CHUNK_PAGES = 15; // 15 pages × 20 players = 300 players per invocation
 
 // ── hashidsEncode (inlined — salt='realwebapp', minLen=16) ───────────────────
 function hashidsEncode(number) {
@@ -178,11 +178,14 @@ async function fetchCollectionChunk(hashId, sport, auth, startBefore) {
     const url = `https://web.realapp.com/collection/${sport}/season/${SEASON}/entity/player/user/${hashId}/topentities` +
       `?before=${before}&sort=boostvalue`;
     let res = await fetch(url, { headers: rsHeaders(auth) });
-    // RS rate-limits the collection endpoint under heavy sequential fetches.
-    // One retry after a short pause is enough to clear it in most cases.
+    // RS rate-limits the shared token under heavy sequential fetches.
+    // Retry up to 3 times with increasing backoff before giving up.
     if (res.status === 429) {
-      await new Promise(r => setTimeout(r, 1500));
-      res = await fetch(url, { headers: rsHeaders(auth) });
+      for (const wait of [2000, 4000, 6000]) {
+        await new Promise(r => setTimeout(r, wait));
+        res = await fetch(url, { headers: rsHeaders(auth) });
+        if (res.status !== 429) break;
+      }
     }
     if (!res.ok) {
       const body = await res.text().catch(() => '');
