@@ -19,7 +19,7 @@
 const CACHE_BUCKET_MS   = 15 * 60 * 1000;  // :00, :15, :30, :45
 const CACHE_TTL_SECONDS = 900;             // one slot; the key changes at the boundary anyway
 const IP_WINDOW_SECONDS = 60;
-const IP_MAX_REQUESTS   = 5;
+const IP_MAX_REQUESTS   = 20;
 
 const SPORT_RS_KEY = { FC: 'soccer', CFB: 'ncaaf', NFL: 'nfl' };
 const SEASON = '2026';
@@ -137,13 +137,20 @@ async function cachePut(req, body, ttlSeconds) {
 // ── per-IP rate limit ─────────────────────────────────────────────────────────
 // Counted per colo rather than globally, which is plenty for stopping one
 // person hammering the button, and costs no KV writes.
+// Each request appends a timestamp entry; the list is trimmed to the window
+// before counting, so the check is correct even under concurrent load.
 async function checkRateLimit(origin, ip) {
-  const minute = Math.floor(Date.now() / (IP_WINDOW_SECONDS * 1000));
-  const req = cacheKeyReq(origin, ['rl', ip, String(minute)]);
+  const now = Date.now();
+  const windowMs = IP_WINDOW_SECONDS * 1000;
+  const req = cacheKeyReq(origin, ['rl2', ip]);
   const raw = await cacheGet(req);
-  const count = raw ? parseInt(raw, 10) : 0;
-  if (count >= IP_MAX_REQUESTS) return false;
-  await cachePut(req, String(count + 1), IP_WINDOW_SECONDS);
+  let hits = [];
+  try { if (raw) hits = JSON.parse(raw); } catch (e) { hits = []; }
+  // Drop entries outside the current window
+  hits = hits.filter(t => now - t < windowMs);
+  if (hits.length >= IP_MAX_REQUESTS) return false;
+  hits.push(now);
+  await cachePut(req, JSON.stringify(hits), IP_WINDOW_SECONDS);
   return true;
 }
 
