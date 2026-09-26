@@ -16,8 +16,8 @@
 //   - KV cache: one quarter-hour slot, so everyone's cards refresh together
 //     on the hour and at :15, :30 and :45 rather than 24h after their own pull
 
-const CACHE_BUCKET_MS   = 15 * 60 * 1000;  // :00, :15, :30, :45
-const CACHE_TTL_SECONDS = 900;             // one slot; the key changes at the boundary anyway
+const CACHE_BUCKET_MS   = 2 * 60 * 60 * 1000; // 2-hour slots
+const CACHE_TTL_SECONDS = 7200;               // 2 hours — reduces RS token pressure
 const IP_WINDOW_SECONDS = 60;
 const IP_MAX_REQUESTS   = 20;
 
