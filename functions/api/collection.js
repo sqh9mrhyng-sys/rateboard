@@ -177,7 +177,13 @@ async function fetchCollectionChunk(hashId, sport, auth, startBefore) {
   while (pagesRead < CHUNK_PAGES) {
     const url = `https://web.realapp.com/collection/${sport}/season/${SEASON}/entity/player/user/${hashId}/topentities` +
       `?before=${before}&sort=boostvalue`;
-    const res = await fetch(url, { headers: rsHeaders(auth) });
+    let res = await fetch(url, { headers: rsHeaders(auth) });
+    // RS rate-limits the collection endpoint under heavy sequential fetches.
+    // One retry after a short pause is enough to clear it in most cases.
+    if (res.status === 429) {
+      await new Promise(r => setTimeout(r, 1500));
+      res = await fetch(url, { headers: rsHeaders(auth) });
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       throw new Error(`RS collection ${res.status}: ${body.slice(0, 200)}`);
