@@ -3523,7 +3523,7 @@ async function adminPanel(){
    Results feed straight into showMatches() so the UX is identical
    to the screenshot path.
    ========================================================= */
-function rsLookupVisible(){ return sport === 'FC' || sport === 'CFB' || sport === 'NFL'; }
+function rsLookupVisible(){ return sport === 'FC' || sport === 'CFB' || sport === 'NFL' || sport === 'UFC'; }
 
 function updateRsLookupVisibility(){
   const wrap = $('#rs-lookup-wrap');
@@ -3538,15 +3538,13 @@ function updateRsLookupVisibility(){
   }
 }
 
-// Cards come out of a cache that rolls over on the quarter hour, so a card
-// sold at 11:03 is still listed until 11:15. Say so rather than let people
-// think the reader is wrong.
+// Cards come out of a cache that rolls over every 2 hours.
 function updateFreshnessNote(){
   const el = $('#rs-fresh');
   if(!el) return;
-  const slot = 15 * 60 * 1000;
+  const slot = 2 * 60 * 60 * 1000;
   const next = new Date(Math.ceil(Date.now() / slot) * slot);
-  el.textContent = `Updates every 15 mins — on the hour and at :15, :30 and :45. Next update ${
+  el.textContent = `Collection data updates every 2 hours. Next update ${
     next.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' })}.`;
 }
 setInterval(updateFreshnessNote, 30000);
@@ -3629,7 +3627,7 @@ $('#rs-go').addEventListener('click', async () => {
     }));
 
     if(!raw.length){
-      rsMsg(`No FC cards found for "${me}" on Real Sports.`, true);
+      rsMsg(`No ${SPORTS[sport]} cards found for "${me}" on Real Sports.`, true);
       return;
     }
 

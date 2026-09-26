@@ -21,8 +21,13 @@ const CACHE_TTL_SECONDS = 7200;               // 2 hours — reduces RS token pr
 const IP_WINDOW_SECONDS = 60;
 const IP_MAX_REQUESTS   = 20;
 
-const SPORT_RS_KEY = { FC: 'soccer', CFB: 'ncaaf', NFL: 'nfl' };
-const SEASON = '2026';
+// rs = RS API sport string, season = RS season, entity = RS entity type
+const SPORT_CONFIG = {
+  FC:  { rs: 'soccer', season: '2026', entity: 'player' },
+  CFB: { rs: 'ncaaf',  season: '2026', entity: 'player' },
+  NFL: { rs: 'nfl',    season: '2026', entity: 'player' },
+  UFC: { rs: 'ufc',    season: '2023', entity: 'team'   },
+};
 const PAGE_SIZE   = 20;
 const CHUNK_PAGES = 15; // 15 pages × 20 players = 300 players per invocation
 
@@ -168,14 +173,14 @@ async function resolveHashId(username, auth) {
 // Fetches one chunk of the collection (sorted by boost value).
 // `startBefore` maps to the ?before= param (0, 20, 40, …).
 // Returns { players[], hasMore, nextBefore }
-async function fetchCollectionChunk(hashId, sport, auth, startBefore) {
+async function fetchCollectionChunk(hashId, sport, season, entity, auth, startBefore) {
   const players = [];
   let before = startBefore;
   let pagesRead = 0;
   let hasMore = false;
 
   while (pagesRead < CHUNK_PAGES) {
-    const url = `https://web.realapp.com/collection/${sport}/season/${SEASON}/entity/player/user/${hashId}/topentities` +
+    const url = `https://web.realapp.com/collection/${sport}/season/${season}/entity/${entity}/user/${hashId}/topentities` +
       `?before=${before}&sort=boostvalue`;
     let res = await fetch(url, { headers: rsHeaders(auth) });
     // RS rate-limits the shared token under heavy sequential fetches.
@@ -234,9 +239,9 @@ export async function onRequestGet({ request, env }) {
 
   if (!username) return json({ error: 'username is required' }, 400);
   if (username.length > 50) return json({ error: 'username too long' }, 400);
-  if (!SPORT_RS_KEY[sport]) return json({ error: `unsupported sport: ${sport}` }, 400);
+  if (!SPORT_CONFIG[sport]) return json({ error: `unsupported sport: ${sport}` }, 400);
 
-  const rsSport  = SPORT_RS_KEY[sport];
+  const { rs: rsSport, season, entity } = SPORT_CONFIG[sport];
   // The slot number is part of the cache key, so a cached chunk is dead the
   // moment the clock ticks past the next quarter hour — not a rolling window.
   const slot = Math.floor(Date.now() / CACHE_BUCKET_MS);
@@ -267,7 +272,7 @@ export async function onRequestGet({ request, env }) {
 
   // 4. Fetch one chunk from the topentities endpoint
   let chunk;
-  try { chunk = await fetchCollectionChunk(hashId, rsSport, auth, start); }
+  try { chunk = await fetchCollectionChunk(hashId, rsSport, season, entity, auth, start); }
   catch (e) { return json({ error: 'Could not load collection — try again shortly', detail: e.message }, 502); }
 
   const result = JSON.stringify({
