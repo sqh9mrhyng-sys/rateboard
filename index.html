@@ -3281,7 +3281,7 @@ async function copyListPanel(){
 
   function draw(){
     const b = boardAsText(which);
-    box.querySelector('#cl-text').value = b.text || `Nothing on the ${SPORTS[which]} board yet.`;
+    box.querySelector('#cl-text').value = b.players ? b.text : `Nothing on the ${SPORTS[which]} board yet.`;
     box.querySelector('#cl-count').textContent =
       `${SPORTS[which]} — ${b.players} player${b.players===1?'':'s'}, ${b.offers} listing${b.offers===1?'':'s'}. `
       + `Highest rate first; players on the same rate are ordered by how many people are buying them, then by last name.`;
