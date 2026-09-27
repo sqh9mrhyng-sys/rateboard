@@ -3251,11 +3251,14 @@ function boardAsText(sportKey){
     ? ['Seahawks / rates vary / https://www.realapp.com/JaHBFYjOBj8igvOr/179049777342700001']
     : [];
 
+  // Header line, so whoever reads the pasted list knows how it's ordered.
+  const header = 'sorted by rates first, if multiple players have same rate then last name alphabetical';
+
   return {
     players: list.length,
     offers: live.length,
     // A player and their buyers run together; three blank lines between players.
-    text: pinned.concat(list.map(g => [g.player, ...g.offers.map(o =>
+    text: [header].concat(pinned, list.map(g => [g.player, ...g.offers.map(o =>
       `@${market.users[o.user]?.name || o.user} / ${o.rate}/1 / ${o.link || 'no comment link'}`
     )].join('\n'))).join('\n\n\n\n')
   };
