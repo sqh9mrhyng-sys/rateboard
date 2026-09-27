@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Rate Board — CFB / FC / NFL / UFC card offers</title>
+<title>Rate Board — CFB / FC / NFL / UFC / NHL card offers</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800&display=swap" rel="stylesheet">
@@ -24,6 +24,7 @@
   [data-sport="FC"]{ --accent:#3FD0A6; }
   [data-sport="NFL"]{ --accent:#7E9BFF; }
   [data-sport="UFC"]{ --accent:#E5484D; }
+  [data-sport="NHL"]{ --accent:#6FC3E8; }
 
   *{box-sizing:border-box}
   html,body{margin:0;padding:0}
@@ -322,7 +323,7 @@
 <!-- ============ LOGIN GATE ============ -->
 <div id="gate" class="gate">
   <h1>Rate Board</h1>
-  <p class="sub">Standing buy offers for CFB, FC, NFL and UFC cards. Post what you'll pay, or scan your stats and see who's paying most.</p>
+  <p class="sub">Standing buy offers for CFB, FC, NFL, UFC and NHL cards. Post what you'll pay, or scan your stats and see who's paying most.</p>
   <div class="panel">
     <div class="panel-bd stack">
       <div>
@@ -351,6 +352,7 @@
         <option value="FC">FC</option>
         <option value="NFL">NFL</option>
         <option value="UFC">UFC</option>
+        <option value="NHL">NHL</option>
       </select>
       <span class="caret">▾</span>
     </div>
@@ -444,7 +446,7 @@
               <div id="rs-msg" class="note hide" style="margin-top:6px"></div>
               <p class="note" id="rs-fresh" style="margin:6px 0 0"></p>
             </div>
-            <p class="note hide" id="rs-none">Card pull isn't set up for this sport yet.</p>
+            <p class="note hide" id="rs-none"></p>
             <input type="file" id="s-file" accept="image/*" multiple class="hide">
             <button id="s-exclude" class="btn-ghost">Exclude players/teams</button>
             <button id="s-hide-board" class="btn-ghost">Hide the buy offers board</button>
@@ -470,7 +472,7 @@ const DEVICE  = 'ratebrd_device_v1';  // { key, name, ts } — remembers this br
 const MIN_PASS = 4;
 const ADMINS = ['dennis'];            // <-- put your username(s) here
 const isAdmin = () => !!me && ADMINS.includes(String(me).toLowerCase());
-const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL', UFC:'UFC' };
+const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL', UFC:'UFC', NHL:'NHL' };
 
 // The post buyers must comment under before they can post a buy offer —
 // this is the link shown to them and where "this post" points.
@@ -2119,7 +2121,7 @@ $('#b-guide-toggle').addEventListener('click', () => {
 /* =========================================================
    Sport + mode
    ========================================================= */
-const PLAYER_EXAMPLES = { CFB:'Julian Sayin', FC:'Lamine Yamal', NFL:'Josh Allen', UFC:'Jon Jones' };
+const PLAYER_EXAMPLES = { CFB:'Julian Sayin', FC:'Lamine Yamal', NFL:'Josh Allen', UFC:'Jon Jones', NHL:'Connor McDavid' };
 function updatePlayerPlaceholder(){
   $('#b-player').placeholder = 'e.g. ' + (PLAYER_EXAMPLES[sport] || '');
 }
@@ -3205,13 +3207,20 @@ function boardAsText(sportKey){
     .map(g => ({ ...g, offers: g.offers.slice().sort((a,b) => b.rate - a.rate || a.ts - b.ts) }))
     .sort((a,b) => b.offers[0].rate - a.offers[0].rate || a.player.localeCompare(b.player));
 
+  // The house Seahawks list is one standing offer with mixed rates, so it
+  // goes in as a fixed line rather than being built from listings — and it
+  // sits above everything else every time.
+  const pinned = sportKey === 'NFL'
+    ? ['Seahawks / rates vary / https://www.realapp.com/JaHBFYjOBj8igvOr/179049777342700001']
+    : [];
+
   return {
     players: list.length,
     offers: live.length,
     // A blank line between buyers, three between players.
-    text: list.map(g => g.player + '\n\n' + g.offers.map(o =>
+    text: pinned.concat(list.map(g => g.player + '\n\n' + g.offers.map(o =>
       `@${market.users[o.user]?.name || o.user} / ${o.rate}/1 / ${o.link || 'no comment link'}`
-    ).join('\n\n')).join('\n\n\n\n')
+    ).join('\n\n'))).join('\n\n\n\n')
   };
 }
 
@@ -3753,6 +3762,9 @@ function rsLookupVisible(){ return sport === 'FC' || sport === 'CFB' || sport ==
 function updateRsLookupVisibility(){
   const wrap = $('#rs-lookup-wrap');
   const none = $('#rs-none');
+  if(none) none.textContent = sport === 'NHL'
+    ? 'Will add after gens drop.'
+    : "Card pull isn't set up for this sport yet.";
   if(none) none.classList.toggle('hide', rsLookupVisible());
   updateFreshnessNote();
   if(rsLookupVisible()){
