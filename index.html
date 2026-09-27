@@ -3012,7 +3012,7 @@ async function showMatches(raw){
       wrap.innerHTML = `<p class="nohit">No one is buying more than one of your ${SPORTS[sport]} cards right now. Best rate and card value still work.</p>`;
       return;
     }
-    wrap.innerHTML = `<p class="note">${list.length} buyer${list.length===1?'':'s'} want more than one of your cards — sell the lot in one message.</p>` +
+    wrap.innerHTML = `<p class="note">${list.length} buyer${list.length===1?'':'s'} want${list.length===1?'s':''} more than one of your cards — sell the lot in one message.</p>` +
       list.map((e,k) => `
       <div class="hit" style="display:block">
         <div class="bidder-hd">
