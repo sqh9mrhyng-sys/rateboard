@@ -3228,9 +3228,21 @@ function boardAsText(sportKey){
     if(!groups.has(k)) groups.set(k, { player: o.player, offers: [] });
     groups.get(k).offers.push(o);
   }
+  // Surname for sorting: the last word that isn't a suffix, so Ernest Jones IV
+  // files under Jones and a one-word name files under itself.
+  const SUFFIX = /^(jr|sr|ii|iii|iv|v)$/i;
+  const lastName = n => {
+    const w = asciiName(n).split(' ').filter(x => x && !SUFFIX.test(x.replace(/\./g, '')));
+    return (w[w.length - 1] || n).toLowerCase();
+  };
+
+  // Highest rate first; within a rate, the players with the most buyers;
+  // then alphabetical by last name.
   const list = [...groups.values()]
     .map(g => ({ ...g, offers: g.offers.slice().sort((a,b) => b.rate - a.rate || a.ts - b.ts) }))
-    .sort((a,b) => b.offers[0].rate - a.offers[0].rate || a.player.localeCompare(b.player));
+    .sort((a,b) => b.offers[0].rate - a.offers[0].rate
+                || b.offers.length - a.offers.length
+                || lastName(a.player).localeCompare(lastName(b.player)));
 
   // The house Seahawks list is one standing offer with mixed rates, so it
   // goes in as a fixed line rather than being built from listings — and it
@@ -3242,10 +3254,10 @@ function boardAsText(sportKey){
   return {
     players: list.length,
     offers: live.length,
-    // A blank line between buyers, three between players.
-    text: pinned.concat(list.map(g => g.player + '\n\n' + g.offers.map(o =>
+    // A player and their buyers run together; three blank lines between players.
+    text: pinned.concat(list.map(g => [g.player, ...g.offers.map(o =>
       `@${market.users[o.user]?.name || o.user} / ${o.rate}/1 / ${o.link || 'no comment link'}`
-    ).join('\n\n'))).join('\n\n\n\n')
+    )].join('\n'))).join('\n\n\n\n')
   };
 }
 
@@ -3268,7 +3280,8 @@ async function copyListPanel(){
     const b = boardAsText(which);
     box.querySelector('#cl-text').value = b.text || `Nothing on the ${SPORTS[which]} board yet.`;
     box.querySelector('#cl-count').textContent =
-      `${SPORTS[which]} — ${b.players} player${b.players===1?'':'s'}, ${b.offers} listing${b.offers===1?'':'s'}, highest rate first.`;
+      `${SPORTS[which]} — ${b.players} player${b.players===1?'':'s'}, ${b.offers} listing${b.offers===1?'':'s'}. `
+      + `Highest rate first; players on the same rate are ordered by how many people are buying them, then by last name.`;
     box.querySelector('#cl-copy').textContent = `Copy ${SPORTS[which]}`;
     box.querySelectorAll('[data-cs]').forEach(x => x.setAttribute('aria-pressed', x.dataset.cs === which ? 'true' : 'false'));
   }
