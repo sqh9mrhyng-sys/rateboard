@@ -2906,7 +2906,7 @@ async function showMatches(raw){
     // Everyone standing on this player, best price first — not just the top one.
     const buyers = live.filter(o => samePlayer(o.player, p.name))
                        .sort((a,b) => b.rate - a.rate)
-                       .map(o => ({ rate:o.rate, buyer: market.users[o.user]?.name || o.user, link: o.link || '' }));
+                       .map(o => ({ user:o.user, rate:o.rate, buyer: market.users[o.user]?.name || o.user, link: o.link || '' }));
     if(buyers.length) hits.push({
       player: p.name,
       value: p.totalValue != null ? p.totalValue : (p.boost != null ? p.boost : null),
@@ -2948,7 +2948,9 @@ async function showMatches(raw){
     <div class="seg sm-sort" role="group" aria-label="Sort by">
       <button data-sort="rate">Best rate</button>
       <button data-sort="value">Card value</button>
+      <button data-sort="orders">Big orders</button>
     </div>
+    <div id="sm-orders" class="hide"></div>
     <div id="sm-list">${rows.map((h,i)=>`
       <div class="hit" data-i="${i}" style="display:block">
         <div class="bidder-hd">
@@ -2983,12 +2985,76 @@ async function showMatches(raw){
     value: (a,b) => (rows[b].value ?? -1) - (rows[a].value ?? -1)
                  || rows[b].buyers[0].rate - rows[a].buyers[0].rate
   };
+  // "Big orders" flips the whole thing round: instead of a block per player,
+  // a block per buyer who wants more than one of your cards, so the lot can
+  // go in a single message to one person.
+  const bigOrders = () => {
+    const per = new Map();
+    rows.forEach((h, i) => h.buyers.forEach(b => {
+      if(!per.has(b.user)) per.set(b.user, { who: b.buyer, link: b.link, cards: [] });
+      const e = per.get(b.user);
+      if(!e.link && b.link) e.link = b.link;
+      e.cards.push({ player: h.player, value: h.value, rate: b.rate,
+                     owed: h.value > 0 ? Math.round(h.value * b.rate / 10) * 10 : null });
+    }));
+    return [...per.values()]
+      .filter(e => e.cards.length > 1)
+      .map(e => ({ ...e,
+        cards: e.cards.sort((a,b) => (b.owed ?? -1) - (a.owed ?? -1)),
+        total: e.cards.reduce((n,c) => n + (c.owed || 0), 0) }))
+      .sort((a,b) => b.cards.length - a.cards.length || b.total - a.total);
+  };
+
+  const drawOrders = () => {
+    const wrap = box.querySelector('#sm-orders');
+    const list = bigOrders();
+    if(!list.length){
+      wrap.innerHTML = `<p class="nohit">No one is buying more than one of your ${SPORTS[sport]} cards right now. Best rate and card value still work.</p>`;
+      return;
+    }
+    wrap.innerHTML = `<p class="note">${list.length} buyer${list.length===1?'':'s'} want more than one of your cards — sell the lot in one message.</p>` +
+      list.map((e,k) => `
+      <div class="hit" style="display:block">
+        <div class="bidder-hd">
+          <span class="player">${esc(e.who)}</span>
+          <span class="who">${e.cards.length} of your cards</span>
+          ${e.total ? `<span class="who">${e.total.toLocaleString()} total</span>` : ''}
+        </div>
+        ${e.cards.map(c => `<div class="bidder">
+          <span class="rate num">${c.rate}<small>/1</small></span>
+          <span><span class="player">${esc(c.player)}</span>
+            <div class="note">${c.owed != null ? `${c.value} × ${c.rate}/1 = ${c.owed.toLocaleString()}`
+                                                : 'no rating read for this card'}</div></span>
+          <span></span></div>`).join('')}
+        <div class="hitacts">
+          <button class="btn-ghost" data-ocopy="${k}">Copy message</button>
+          ${e.link ? `<a class="btn-ghost" href="${esc(e.link)}" target="_blank" rel="noopener">Message ${esc(e.who)}</a>`
+                   : `<span class="nohit">No comment link on file</span>`}
+          <button class="btn-ghost" data-rep="${esc(e.who)}">Report</button>
+        </div>
+      </div>`).join('');
+    wrap.querySelectorAll('[data-ocopy]').forEach(btn => btn.addEventListener('click', async () => {
+      const e = list[+btn.dataset.ocopy];
+      const lines = e.cards.filter(c => c.owed != null).map(c => `i have ${c.value} ${c.player} ${c.owed}`);
+      if(!lines.length) return toast('No ratings read for these cards.');
+      const text = lines.join('\n') + (lines.length > 1 ? `\ntotal ${e.total.toLocaleString()}` : '');
+      const ok = await copyText(text);
+      toast(ok ? `Message for ${e.who} copied` : 'Could not copy — select the text and copy it manually');
+    }));
+  };
+
   const applySort = mode => {
-    if(!orders[mode]) mode = 'rate';
+    if(mode !== 'orders' && !orders[mode]) mode = 'rate';
     const list = box.querySelector('#sm-list');
     if(!list) return;
-    const nodes = [...list.children];
-    nodes.sort((x,y) => orders[mode](+x.dataset.i, +y.dataset.i)).forEach(n => list.appendChild(n));
+    const showOrders = mode === 'orders';
+    box.querySelector('#sm-orders').classList.toggle('hide', !showOrders);
+    list.classList.toggle('hide', showOrders);
+    if(showOrders) drawOrders();
+    else {
+      const nodes = [...list.children];
+      nodes.sort((x,y) => orders[mode](+x.dataset.i, +y.dataset.i)).forEach(n => list.appendChild(n));
+    }
     box.querySelectorAll('[data-sort]').forEach(b => b.setAttribute('aria-pressed', b.dataset.sort === mode ? 'true' : 'false'));
     try{ localStorage.setItem(SORT_KEY, mode); }catch(e){}
   };
@@ -3142,9 +3208,10 @@ function boardAsText(sportKey){
   return {
     players: list.length,
     offers: live.length,
-    text: list.map(g => [g.player, ...g.offers.map(o =>
+    // A blank line between buyers, three between players.
+    text: list.map(g => g.player + '\n\n' + g.offers.map(o =>
       `@${market.users[o.user]?.name || o.user} / ${o.rate}/1 / ${o.link || 'no comment link'}`
-    )].join('\n')).join('\n\n')
+    ).join('\n\n')).join('\n\n\n\n')
   };
 }
 
