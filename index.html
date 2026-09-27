@@ -165,6 +165,8 @@
   .ownrow label{margin:0 0 4px}
   .ownrow input{width:100%}
   .hitacts{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+  .cl-text{width:100%;min-height:46vh;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:12.5px;line-height:1.5;resize:vertical;white-space:pre}
   .haul{background:color-mix(in srgb,var(--accent) 12%,transparent);
     border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);
     border-radius:10px;padding:12px 14px;margin:4px 0 2px;text-align:center}
@@ -355,6 +357,7 @@
     <div class="whoami">
       <span><span class="sm-hide">Signed in as </span><b id="me"></b></span>
       <button class="linkbtn" id="open-report">Report a user</button>
+      <button class="linkbtn hide" id="open-copy">Copy list</button>
       <button class="linkbtn hide" id="open-min">Lists</button>
       <button class="linkbtn hide" id="open-admin">Admin</button>
       <button class="linkbtn" id="signout">Sign out</button>
@@ -1950,6 +1953,7 @@ function enter(){
   if(ADMINS.includes(me.toLowerCase())){
     $('#open-admin').classList.remove('hide');
     $('#open-min').classList.remove('hide');
+    $('#open-copy').classList.remove('hide');
   }
   applyMinimumToForm();
   updateRsLookupVisibility();
@@ -3090,6 +3094,76 @@ function reportUser(target){
     box.remove(); toast('Report sent');
   });
 }
+
+/* =========================================================
+   Copy list
+   ---------------------------------------------------------
+   The board as plain text, ready to paste somewhere else.
+   Players highest rate first, and under each one everyone
+   buying them. Built fresh from the board every time it's
+   opened or refreshed.
+   ========================================================= */
+function boardAsText(sportKey){
+  const live = market.offers.filter(o => o.sport === sportKey && !market.users[o.user]?.banned);
+  const groups = new Map();
+  for(const o of live){
+    const k = norm(o.player);
+    if(!groups.has(k)) groups.set(k, { player: o.player, offers: [] });
+    groups.get(k).offers.push(o);
+  }
+  const list = [...groups.values()]
+    .map(g => ({ ...g, offers: g.offers.slice().sort((a,b) => b.rate - a.rate || a.ts - b.ts) }))
+    .sort((a,b) => b.offers[0].rate - a.offers[0].rate || a.player.localeCompare(b.player));
+
+  return {
+    players: list.length,
+    offers: live.length,
+    text: list.map(g => [g.player, ...g.offers.map(o =>
+      `@${market.users[o.user]?.name || o.user} / ${o.rate}/1 / ${o.link || 'no comment link'}`
+    )].join('\n')).join('\n\n')
+  };
+}
+
+async function copyListPanel(){
+  await pull();
+  let which = sport;
+  const box = modal('Copy list', `
+    <div class="seg" role="group" aria-label="Sport">
+      ${Object.keys(SPORTS).map(k => `<button data-cs="${k}">${k}</button>`).join('')}
+    </div>
+    <p class="note" id="cl-count"></p>
+    <textarea id="cl-text" class="field cl-text" readonly spellcheck="false"></textarea>
+    <div class="hitacts">
+      <button class="btn" id="cl-copy">Copy</button>
+      <button class="btn-ghost" id="cl-refresh">Refresh</button>
+    </div>
+    <p class="note">Rebuilt from the live board each time you open or refresh this.</p>`);
+
+  function draw(){
+    const b = boardAsText(which);
+    box.querySelector('#cl-text').value = b.text || `Nothing on the ${SPORTS[which]} board yet.`;
+    box.querySelector('#cl-count').textContent =
+      `${SPORTS[which]} — ${b.players} player${b.players===1?'':'s'}, ${b.offers} listing${b.offers===1?'':'s'}, highest rate first.`;
+    box.querySelector('#cl-copy').textContent = `Copy ${SPORTS[which]}`;
+    box.querySelectorAll('[data-cs]').forEach(x => x.setAttribute('aria-pressed', x.dataset.cs === which ? 'true' : 'false'));
+  }
+
+  box.addEventListener('click', async e => {
+    const sp = e.target.closest('[data-cs]');
+    if(sp){ which = sp.dataset.cs; return draw(); }
+    if(e.target.closest('#cl-refresh')){
+      await pull(); draw(); toast('Refreshed from the board');
+      return;
+    }
+    if(e.target.closest('#cl-copy')){
+      const ok = await copyText(box.querySelector('#cl-text').value);
+      toast(ok ? `${SPORTS[which]} list copied` : 'Could not copy — select the text and copy it manually');
+    }
+  });
+
+  draw();
+}
+$('#open-copy').addEventListener('click', copyListPanel);
 
 $('#open-admin').addEventListener('click', adminPanel);
 
