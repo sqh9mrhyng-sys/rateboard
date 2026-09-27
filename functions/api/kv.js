@@ -130,7 +130,8 @@ async function readSide(env) {
   let m = null;
   if (raw) { try { m = JSON.parse(raw); } catch (e) { m = null; } }
   if (!m || typeof m !== 'object') m = {};
-  return { reports: m.reports || [], minimums: m.minimums || [], keeplist: m.keeplist || [] };
+  return { reports: m.reports || [], minimums: m.minimums || [], keeplist: m.keeplist || [],
+           house: m.house || [] };
 }
 
 /* ---- assemble the board in the shape the page already expects ---- */
@@ -152,7 +153,7 @@ async function readBoard(env) {
       id: o.id, user: o.user, sport: o.sport, player: o.player,
       rate: o.rate, link: o.link || '', ts: o.ts
     })),
-    reports: side.reports, minimums: side.minimums, keeplist: side.keeplist
+    reports: side.reports, minimums: side.minimums, keeplist: side.keeplist, house: side.house
   };
 }
 
@@ -454,7 +455,8 @@ export async function onRequestPost({ request, env, waitUntil }) {
   await env.RATEBOARD_KV.put(KV_KEY, JSON.stringify({
     reports: incoming.reports || [],
     minimums: incoming.minimums || [],
-    keeplist: incoming.keeplist || []
+    keeplist: incoming.keeplist || [],
+    house: incoming.house || []
   }));
   await bustBoard(origin);
   later(saveSnapshot(env));
