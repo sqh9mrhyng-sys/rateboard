@@ -2942,9 +2942,9 @@ async function showMatches(raw){
   const box = modal('Your best sellers', rows.length ? `
     <p class="note">Found ${players.length} player${players.length===1?'':'s'} in your collection. ${rows.length} ${rows.length===1?'has':'have'} a standing ${SPORTS[sport]} offer — ${totalBuyers} buyer${totalBuyers===1?'':'s'} in total.</p>
     ${haul ? `<div class="haul">
-      <b class="num">${haul.toLocaleString()}</b>
-      <span>selling every card to its highest buyer</span>
-      <small>${Math.round(haul * 0.9).toLocaleString()} after 10%</small>
+      <b class="num" id="haul-n">${haul.toLocaleString()}</b>
+      <span id="haul-sub">selling every card to its highest buyer</span>
+      <small id="haul-net">${Math.round(haul * 0.9).toLocaleString()} after 10%</small>
       ${unpriced ? `<small>${unpriced} card${unpriced===1?'':'s'} left out — no rating read</small>` : ''}
     </div>` : ''}
     <div class="seg sm-sort" role="group" aria-label="Sort by">
@@ -3004,7 +3004,7 @@ async function showMatches(raw){
       .map(e => ({ ...e,
         cards: e.cards.sort((a,b) => (b.owed ?? -1) - (a.owed ?? -1)),
         total: e.cards.reduce((n,c) => n + (c.owed || 0), 0) }))
-      .sort((a,b) => b.cards.length - a.cards.length || b.total - a.total);
+      .sort((a,b) => b.total - a.total || b.cards.length - a.cards.length);
   };
 
   const drawOrders = () => {
@@ -3045,6 +3045,30 @@ async function showMatches(raw){
     }));
   };
 
+  // On Big orders the headline has to mean something different: what these
+  // multi-card buyers would actually pay. A card wanted by two of them counts
+  // once, at the better of their two rates — summing the blocks would count it
+  // twice and overstate the haul.
+  const setHaul = mode => {
+    const n = box.querySelector('#haul-n');
+    if(!n) return;
+    let amount = haul, sub = 'selling every card to its highest buyer';
+    if(mode === 'orders'){
+      const best = new Map();
+      bigOrders().forEach(e => e.cards.forEach(c => {
+        if(c.owed == null) return;
+        best.set(c.player, Math.max(best.get(c.player) || 0, c.owed));
+      }));
+      amount = [...best.values()].reduce((a,b) => a + b, 0);
+      sub = best.size
+        ? `selling ${best.size} card${best.size===1?'':'s'} through these buyers`
+        : 'nothing to sell in one go yet';
+    }
+    n.textContent = amount.toLocaleString();
+    box.querySelector('#haul-sub').textContent = sub;
+    box.querySelector('#haul-net').textContent = `${Math.round(amount * 0.9).toLocaleString()} after 10%`;
+  };
+
   const applySort = mode => {
     if(mode !== 'orders' && !orders[mode]) mode = 'rate';
     const list = box.querySelector('#sm-list');
@@ -3058,6 +3082,7 @@ async function showMatches(raw){
       nodes.sort((x,y) => orders[mode](+x.dataset.i, +y.dataset.i)).forEach(n => list.appendChild(n));
     }
     box.querySelectorAll('[data-sort]').forEach(b => b.setAttribute('aria-pressed', b.dataset.sort === mode ? 'true' : 'false'));
+    setHaul(mode);
     try{ localStorage.setItem(SORT_KEY, mode); }catch(e){}
   };
   box.querySelectorAll('[data-sort]').forEach(b => b.addEventListener('click', () => applySort(b.dataset.sort)));
