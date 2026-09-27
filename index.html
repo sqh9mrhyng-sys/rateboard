@@ -1958,7 +1958,6 @@ function enter(){
   applyMinimumToForm();
   updateRsLookupVisibility();
   applyBoardVisibility();
-  loadBlockedRoster(sport).then(applyMinimumToForm);
   render();
 }
 
@@ -1990,36 +1989,32 @@ function minimumFor(sportKey, player){
    Nobody can post a buy offer on one of these, and a seller
    holding one gets pointed straight at the house buyer.
    ========================================================= */
-const BLOCKED_TEAM = {
-  NFL: {
-    code:  'SEA',
-    label: 'Seahawks',
-    buyer: 'dennis',
-    link:  'https://www.realapp.com/JaHBFYjOBj8igvOr/178951257852600001'
-  }
+const HOUSE = {
+  buyer: 'dennis',
+  label: 'Seahawks',
+  link:  'https://www.realapp.com/JaHBFYjOBj8igvOr/178951257852600001'
 };
 
-const blockedRoster = {};   // sport -> [name, ...]
+// Suffix-sensitive name key. The ordinary norm() throws Jr/Sr/II/III/IV away,
+// which is right nearly everywhere but wrong here: Seattle's Byron Murphy II
+// and Minnesota's Byron Murphy Jr. are two different people, and collapsing
+// them sent Vikings cards to the house buyer.
+const normSuffix = s => deOdd(String(s)).normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+  .toLowerCase().replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
 
-async function loadBlockedRoster(sportKey){
-  const cfg = BLOCKED_TEAM[sportKey];
-  if(!cfg) return [];
-  if(blockedRoster[sportKey]) return blockedRoster[sportKey];
-  try{
-    const r = await fetch(`/api/players?sport=${encodeURIComponent(sportKey)}&team=${encodeURIComponent(cfg.code)}`);
-    const d = await r.json();
-    blockedRoster[sportKey] = Array.isArray(d.players) ? d.players : [];
-  }catch(e){ blockedRoster[sportKey] = []; }
-  return blockedRoster[sportKey];
+// A house-list entry for this player, or null.
+//   exact  - the suffix matches too, so it is definitely the right man
+//   loose  - same name, different or missing suffix: flagged, never assumed
+function houseFor(sportKey, player){
+  for(const h of (market.house || [])){
+    if(h.sport !== sportKey) continue;
+    if(normSuffix(h.player) === normSuffix(player)) return { ...h, exact: true };
+    if(samePlayer(h.player, player)) return { ...h, exact: false };
+  }
+  return null;
 }
-
-// The config for a player who is off limits, or null. Same strict name rule
-// as the minimums, so a block on one player never catches a different one.
-function blockedFor(sportKey, player){
-  const cfg = BLOCKED_TEAM[sportKey];
-  if(!cfg) return null;
-  return (blockedRoster[sportKey] || []).some(n => samePlayer(n, player)) ? cfg : null;
-}
+const houseList = sportKey => (market.house || []).filter(h => h.sport === sportKey)
+  .sort((a,b) => b.rate - a.rate || a.player.localeCompare(b.player));
 
 /* =========================================================
    Rate select
@@ -2093,10 +2088,10 @@ function applyMinimumToForm(){
     note.classList.add('hide');
   }
   syncCustomRate(sel, cust);
-  const blk = player.length >= 2 ? blockedFor(sport, player) : null;
-  $('#b-post').disabled = !!blk;
-  if(blk){
-    note.textContent = `${blk.label} players aren't open here — ${blk.buyer} buys all of them.`;
+  const hs = player.length >= 2 ? houseFor(sport, player) : null;
+  $('#b-post').disabled = !!(hs && hs.exact);
+  if(hs && hs.exact){
+    note.textContent = `${hs.player} is one of ${HOUSE.buyer}'s — he buys him at ${hs.rate}/1. The rest of the ${HOUSE.label} are open.`;
     note.classList.remove('hide');
   }
 }
@@ -2138,7 +2133,6 @@ $('#sport').addEventListener('change', e => {
   applyMinimumToForm();
   updateRsLookupVisibility();
   applyBoardVisibility();
-  loadBlockedRoster(sport).then(applyMinimumToForm);
   render();
 });
 
@@ -2178,9 +2172,8 @@ async function runSuggest(q){
   try{
     const r = await fetch(`/api/players?sport=${encodeURIComponent(sport)}&q=${encodeURIComponent(q)}`);
     const data = await r.json();
-    const cfg = BLOCKED_TEAM[sport];
     let items = (data.players || [])
-      .filter(it => !cfg || String(it.team || '').toUpperCase() !== cfg.code);
+      .filter(it => { const h = houseFor(sport, it.name); return !(h && h.exact); });
     // UFC: fighters on the purchases list come first, most-bought first, so
     // "sean" lands on O'Malley and Strickland before the whole A-Z roster.
     if(sport === 'UFC'){
@@ -2345,8 +2338,8 @@ $('#b-post').addEventListener('click', async () => {
   if(player.length < 2) return toast('Enter a player name.');
   if(!validCommentLink(link)) return toast('Paste the link to your comment under the pinned post first.');
 
-  const blk = blockedFor(sport, player);
-  if(blk) return toast(`${blk.label} players can't be posted — ${blk.buyer} buys all of them.`);
+  const hs = houseFor(sport, player);
+  if(hs && hs.exact) return toast(`${hs.player} is on ${HOUSE.buyer}'s list at ${hs.rate}/1 — you can't post him.`);
 
   const min = minimumFor(sport, player);
   const rate = readRate($('#b-rate'), $('#b-rate-custom'), min && min.rate);
@@ -2902,14 +2895,14 @@ async function showMatches(raw){
                            .map(p => ({...p, name: asciiName(p.name)}))
                            .filter(p => p.name);
 
-  await loadBlockedRoster(sport);
   const excludes = loadExcludes();
   const hits = [], noBuyer = [], blocked = [];
   for(const p of players){
     if(isExcluded(p.name, excludes)) continue;
-    // Off-limits team: one buyer takes all of them, so it never goes on the board.
-    const blk = blockedFor(sport, p.name);
-    if(blk){ blocked.push({ name:p.name, cfg:blk }); continue; }
+    // On the house list: bought at a set rate, so it never goes on the board.
+    const hs = houseFor(sport, p.name);
+    if(hs){ blocked.push({ name:p.name, cfg:hs,
+      value: p.totalValue != null ? p.totalValue : (p.boost != null ? p.boost : null) }); continue; }
     // Everyone standing on this player, best price first — not just the top one.
     const buyers = live.filter(o => samePlayer(o.player, p.name))
                        .sort((a,b) => b.rate - a.rate)
@@ -3005,16 +2998,47 @@ async function showMatches(raw){
   applySort(savedSort);
 
   if(blocked.length){
-    const cfg = blocked[0].cfg;
+    // One block for the whole house list, and one message covering every card
+    // they hold — not a separate conversation per player.
+    const sure = blocked.filter(b => b.cfg.exact);
+    const check = blocked.filter(b => !b.cfg.exact);
+    const owed = b => (b.value > 0) ? Math.round(b.value * b.cfg.rate / 10) * 10 : null;
+    const total = sure.reduce((n,b) => n + (owed(b) || 0), 0);
+
+    const line = b => `<div class="bidder">
+        <span class="rate num">${b.cfg.rate}<small>/1</small></span>
+        <span><span class="player">${esc(b.name)}</span>
+          <div class="note">${b.value > 0 ? `${b.value} × ${b.cfg.rate}/1 = ${owed(b).toLocaleString()}`
+                                           : 'no rating read for this card'}</div></span>
+        <span></span>
+      </div>`;
+
+    const msg = sure.filter(b => b.value > 0)
+      .map(b => `i have ${b.value} ${b.name} ${owed(b)}`).join('\n')
+      + (sure.filter(b => b.value > 0).length > 1 ? `\ntotal ${total.toLocaleString()}` : '');
+
     const bar = document.createElement('div');
     bar.style.marginTop = '14px';
     bar.innerHTML = `<div class="hit" style="display:block">
-      <div class="bidder-hd"><span class="player">${esc(cfg.label)} cards</span><span class="who">${blocked.length}</span></div>
-      <p class="note">${esc(cfg.buyer)} buys every ${esc(cfg.label)} card — message him direct for these, they don't go on the board.</p>
-      <div class="buyers">${blocked.map(b=>`<span class="buyer">${esc(b.name)}</span>`).join('')}</div>
-      <div class="hitacts"><a class="btn-ghost" href="${esc(cfg.link)}" target="_blank" rel="noopener">Message ${esc(cfg.buyer)}</a></div>
+      <div class="bidder-hd"><span class="player">${esc(HOUSE.buyer)} buys these</span>
+        <span class="who">${blocked.length} card${blocked.length===1?'':'s'}</span>
+        ${total ? `<span class="who">${total.toLocaleString()} total</span>` : ''}</div>
+      ${sure.map(line).join('')}
+      ${check.length ? `<p class="note" style="margin-top:8px">${check.map(b =>
+        `<b>${esc(b.name)}</b> — more than one player goes by that name. ${esc(HOUSE.buyer)} only buys
+         ${esc(b.cfg.player)}; if that's the card you have, mention it in your message.`).join('<br>')}</p>` : ''}
+      <div class="hitacts">
+        ${msg ? `<button class="btn-ghost" id="hs-copy">Copy message</button>` : ''}
+        <a class="btn-ghost" href="${esc(HOUSE.link)}" target="_blank" rel="noopener">Message ${esc(HOUSE.buyer)}</a>
+      </div>
+      ${msg ? `<div class="note" style="margin-top:6px;white-space:pre-wrap">${esc(msg)}</div>` : ''}
     </div>`;
     box.querySelector('.panel-bd').appendChild(bar);
+    const cp = bar.querySelector('#hs-copy');
+    if(cp) cp.addEventListener('click', async () => {
+      const ok = await copyText(msg);
+      toast(ok ? 'Message copied' : 'Could not copy — select the text and copy it manually');
+    });
   }
 
   if(quicksells.length){
@@ -3203,6 +3227,7 @@ async function minimumsPanel(){
   const mins = (market.minimums||[]).filter(x => x.sport===sport)
     .sort((a,b) => b.rate - a.rate || a.player.localeCompare(b.player));
   const keepers = (market.keeplist||[]).filter(x => x.sport===sport);
+  const house = houseList(sport);
 
   const box = modal(`Lists — ${SPORTS[sport]}`, `
     <p class="note">The least anyone is allowed to offer for these players. Buyers can't pick a lower rate, and existing offers below a new minimum are raised to it. Switch sports on the board to manage another list.</p>
@@ -3235,7 +3260,48 @@ async function minimumsPanel(){
       </div>
     </details>
     ${keepers.length ? `<details style="margin-top:8px"><summary class="note" style="cursor:pointer">Show the ${keepers.length} names</summary>
-      <p class="note" style="margin-top:8px">${keepers.map(k=>esc(k.player)).join(' · ')}</p></details>` : ''}`);
+      <p class="note" style="margin-top:8px">${keepers.map(k=>esc(k.player)).join(' · ')}</p></details>` : ''}
+
+    <h3 style="margin:22px 0 0;font-size:14px;font-weight:600">${esc(HOUSE.buyer)} buys — ${house.length} players</h3>
+    <p class="note">Only you buy these, at the rate you set here. Nobody else can post them, and sellers get one message covering every one they hold. Everyone else in the sport stays open to the whole board.</p>
+    <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+      <div style="flex:1 1 150px"><label for="hs-player">Player</label><input id="hs-player" class="field" placeholder="e.g. Jaxon Smith-Njigba"></div>
+      <div style="width:110px"><label for="hs-rate">Rate</label><input id="hs-rate" class="field num" type="number" inputmode="numeric" min="1" step="1" placeholder="8"></div>
+      <button class="btn-ghost" id="hs-add" style="min-height:44px">Add</button>
+    </div>
+    <div id="hs-list" style="margin-top:8px">${house.length ? house.map(x=>`
+      <div class="hit" style="grid-template-columns:62px 1fr auto">
+        <span class="rate num">${x.rate}<small>/1</small></span>
+        <span class="player">${esc(x.player)}</span>
+        <button class="btn-ghost btn-danger" data-hsrm="${esc(x.id)}">Remove</button>
+      </div>`).join('') : '<p class="nohit">Nobody on your list for this sport.</p>'}</div>`);
+
+  box.querySelector('#hs-add').addEventListener('click', async () => {
+    const player = asciiName(box.querySelector('#hs-player').value);
+    const rate = +box.querySelector('#hs-rate').value;
+    if(player.length < 2 || !(rate > 0)) return toast('Enter a player and a rate.');
+    const ok = await push(m => {
+      m.house ||= [];
+      const i = m.house.findIndex(x => x.sport===sport && normSuffix(x.player)===normSuffix(player));
+      if(i > -1) m.house[i].rate = rate;
+      else m.house.push({ id: uid(), sport, player, rate });
+    });
+    if(!ok) return;
+    box.remove(); render(); applyMinimumToForm(); minimumsPanel();
+    toast(`${player} — you buy at ${rate}/1`);
+  });
+
+  box.addEventListener('click', async e => {
+    const rm = e.target.closest('[data-hsrm]');
+    if(!rm) return;
+    const row = (market.house||[]).find(x => x.id === rm.dataset.hsrm);
+    if(!row) return;
+    if(!confirm(`Take ${row.player} off your list?\n\nAnyone will be able to post offers on him.`)) return;
+    const ok = await push(m => { m.house = (m.house||[]).filter(x => x.id !== row.id); });
+    if(!ok) return;
+    box.remove(); render(); applyMinimumToForm(); minimumsPanel();
+    toast(`${row.player} is open to everyone now`);
+  });
 
   // Saving a minimum also lifts any standing offer that now sits below it,
   // so the floor can't be dodged by having posted early.
