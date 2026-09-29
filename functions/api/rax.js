@@ -483,6 +483,43 @@ export async function onRequestGet({ request, env }) {
       }), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
     }
 
+    // Reconciliation: the per-game rax summed per player should reproduce the
+    // season leaderboard exactly. Anything else means the join is wrong.
+    if (glArg === 'check') {
+      try {
+        const totals = await db.prepare(
+          `SELECT playerId, player, COUNT(*) AS games,
+                  SUM(rax) AS raxTotal, ROUND(SUM(rating), 2) AS ratingTotal,
+                  SUM(CASE WHEN rax IS NULL THEN 1 ELSE 0 END) AS gamesWithoutRax
+             FROM gamelog WHERE sport = ? AND season = ?
+            GROUP BY playerId ORDER BY raxTotal DESC LIMIT 10`)
+          .bind(sport, Number(season)).all();
+        const tally = await db.prepare(
+          `SELECT COUNT(*) AS rows, COUNT(DISTINCT playerId) AS players,
+                  SUM(CASE WHEN rax IS NULL THEN 1 ELSE 0 END) AS rowsWithoutRax
+             FROM gamelog WHERE sport = ? AND season = ?`).bind(sport, Number(season)).first();
+        return json({ tally, topByRaxTotal: (totals && totals.results) || [] });
+      } catch (e) { return json({ error: String((e && e.message) || e) }, 500); }
+    }
+
+    // One player's game log, for spot checks.
+    if (glArg === 'player') {
+      const pid = String(url.searchParams.get('pid') || '').replace(/[^0-9]/g, '');
+      if (!pid) return json({ error: 'pass &pid=<playerId>' }, 400);
+      try {
+        const r = await db.prepare(
+          `SELECT day, seasonType, opponent, homeAway, teamScore, oppScore, result,
+                  rax, rating, min, pts, reb, ast, fg, fg3, ft, tsPct, fantasyPts
+             FROM gamelog WHERE sport = ? AND season = ? AND playerId = ?
+            ORDER BY day DESC`).bind(sport, Number(season), Number(pid)).all();
+        const rows = (r && r.results) || [];
+        return json({ playerId: Number(pid), games: rows.length,
+                      raxTotal: rows.reduce((a, x) => a + (x.rax || 0), 0),
+                      ratingTotal: Math.round(rows.reduce((a, x) => a + (x.rating || 0), 0) * 100) / 100,
+                      rows });
+      } catch (e) { return json({ error: String((e && e.message) || e) }, 500); }
+    }
+
     if (glArg === 'csv') {
       const { readable, writable } = new TransformStream();
       const w = writable.getWriter();
@@ -715,7 +752,7 @@ export async function onRequestGet({ request, env }) {
       });
     }
 
-    return json({ error: 'gamelog must be one of: probe, go, 1, status, rax, raxgo, raxstatus, csv' }, 400);
+    return json({ error: 'gamelog must be one of: probe, go, 1, status, rax, raxgo, raxstatus, check, player, csv' }, 400);
   }
 
   // A page that drives the collector to the end on its own, so the whole
