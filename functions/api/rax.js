@@ -93,7 +93,8 @@ const GAMELOG_DDL = `CREATE TABLE IF NOT EXISTS gamelog (
   player TEXT, team TEXT, jersey INTEGER, position TEXT,
   day TEXT, seasonType TEXT, opponent TEXT, homeAway TEXT,
   teamScore INTEGER, oppScore INTEGER, result TEXT,
-  rax REAL,
+  rating REAL,
+  rax INTEGER,
   played INTEGER, min INTEGER, pts INTEGER, reb INTEGER, oreb INTEGER, dreb INTEGER,
   ast INTEGER, stl INTEGER, blk INTEGER, tov INTEGER, pf INTEGER, plusMinus INTEGER,
   fg TEXT, fgPct REAL, fg3 TEXT, fg3Pct REAL, ft TEXT, ftPct REAL, tsPct REAL,
@@ -102,9 +103,21 @@ const GAMELOG_DDL = `CREATE TABLE IF NOT EXISTS gamelog (
 )`;
 
 const GAMELOG_COLS = ['sport','season','playerId','gameId','player','team','jersey','position',
-  'day','seasonType','opponent','homeAway','teamScore','oppScore','result','rax',
+  'day','seasonType','opponent','homeAway','teamScore','oppScore','result','rax','rating',
   'played','min','pts','reb','oreb','dreb','ast','stl','blk','tov','pf','plusMinus',
   'fg','fgPct','fg3','fg3Pct','ft','ftPct','tsPct','fantasyPts','comments'];
+
+// rax is filled by its own pass from the earnings screen, so the box-score
+// insert leaves that column alone rather than blanking it.
+const GAMELOG_FEED_COLS = GAMELOG_COLS.filter(c => c !== 'rax');
+
+// Earlier versions stored the game rating in a column called rax. Both
+// statements are no-ops once they have run.
+async function migrateGamelog(db) {
+  await db.prepare(GAMELOG_DDL).run();
+  try { await db.prepare('ALTER TABLE gamelog RENAME COLUMN rax TO rating').run(); } catch (e) {}
+  try { await db.prepare('ALTER TABLE gamelog ADD COLUMN rax INTEGER').run(); } catch (e) {}
+}
 
 // Turns one box score from the season feed into a flat row.
 function gamelogRow(sport, season, b) {
@@ -120,7 +133,7 @@ function gamelogRow(sport, season, b) {
   const oppTeam = isHome ? (b.awayTeam || {}) : (b.homeTeam || {});
   const p = b.player || {};
   const t = b.team || {};
-  const rax = Number(b.value);
+  const rating = Number(b.value);
 
   return {
     sport, season: Number(season), playerId: b.playerId, gameId: b.gameId,
@@ -131,7 +144,7 @@ function gamelogRow(sport, season, b) {
     teamScore: isHome ? b.homeTeamScore : b.awayTeamScore,
     oppScore: isHome ? b.awayTeamScore : b.homeTeamScore,
     result: b.gameResultLabel || null,
-    rax: Number.isFinite(rax) ? rax : null,
+    rating: Number.isFinite(rating) ? rating : null,
     played: b.played ? 1 : 0,
     min: numv('min'), pts: numv('pts'), reb: numv('reb'), oreb: numv('oreb'), dreb: numv('dreb'),
     ast: numv('ast'), stl: numv('stl'), blk: numv('blk'), tov: numv('to'), pf: numv('pf'),
@@ -394,8 +407,8 @@ export async function onRequestGet({ request, env }) {
   if (url.searchParams.get('probeEarnings')) {
     const box = String(url.searchParams.get('probeEarnings')).replace(/[^0-9]/g, '');
     const pid = /^\d+$/.test(probePlayer || '') ? probePlayer : '5041935';
-    if (!box) return json({ error: 'probeEarnings needs a playerBoxScoreId' }, 400);
-    const u = `https://web.realapp.com/userpassearnings/${sport}/season/${season}/entity/player/${pid}?playerBoxScoreId=${box}`;
+    const u = `https://web.realapp.com/userpassearnings/${sport}/season/${season}/entity/player/${pid}`
+            + (box ? `?playerBoxScoreId=${box}` : '');
     try {
       return json({ playerId: pid, playerBoxScoreId: box, raw: await rsGet(u, auth) });
     } catch (e) { return json({ error: String((e && e.message) || e) }, 502); }
@@ -442,14 +455,22 @@ export async function onRequestGet({ request, env }) {
       const store = await readGames();
       const done = await readDone();
       const have = store.ids.filter(id => done[id]).length;
-      let rows = null;
+      let rows = null, withRax = null, sharedDays = null;
       try {
-        const r = await db.prepare('SELECT COUNT(*) AS n FROM gamelog WHERE sport = ? AND season = ?')
-                          .bind(sport, Number(season)).first();
-        rows = r ? r.n : null;
+        const r = await db.prepare(
+          `SELECT COUNT(*) AS n, SUM(CASE WHEN rax IS NOT NULL THEN 1 ELSE 0 END) AS r
+             FROM gamelog WHERE sport = ? AND season = ?`).bind(sport, Number(season)).first();
+        rows = r ? r.n : null; withRax = r ? r.r : null;
+        // Two games on one day would make the day an ambiguous key for rax.
+        const d = await db.prepare(
+          `SELECT COUNT(*) AS n FROM (SELECT playerId, day FROM gamelog
+             WHERE sport = ? AND season = ? GROUP BY playerId, day HAVING COUNT(*) > 1)`)
+          .bind(sport, Number(season)).first();
+        sharedDays = d ? d.n : null;
       } catch (e) {}
       return json({ players: store.ids.length, playersDone: have,
-                    remaining: Math.max(0, store.ids.length - have), gameRows: rows });
+                    remaining: Math.max(0, store.ids.length - have),
+                    gameRows: rows, rowsWithRax: withRax, playerDaysWithTwoGames: sharedDays });
     }
 
     if (glArg === 'go') {
@@ -503,6 +524,115 @@ export async function onRequestGet({ request, env }) {
       });
     }
 
+    // Whole-number rax per game, from the earnings screen. One call covers a
+    // player's whole season, and the rows are matched back to the game log by
+    // date. A day carrying two games is left alone rather than guessed at.
+    if (glArg === 'rax' || glArg === 'raxgo' || glArg === 'raxstatus') {
+      const RAX_DONE_KEY = `gamelog_rax_${sport}_${season}`;
+      const readRaxDone = async () => {
+        try {
+          const raw = await env.RATEBOARD_KV.get(RAX_DONE_KEY);
+          const o = raw ? JSON.parse(raw) : null;
+          return (o && o.done) ? o.done : {};
+        } catch (e) { return {}; }
+      };
+      const earningsUrl = id =>
+        `https://web.realapp.com/userpassearnings/${sport}/season/${season}/entity/player/${id}`;
+
+      if (glArg === 'raxstatus') {
+        const store = await readGames();
+        const done = await readRaxDone();
+        const have = store.ids.filter(id => done[id]).length;
+        return json({ players: store.ids.length, playersDone: have,
+                      remaining: Math.max(0, store.ids.length - have) });
+      }
+
+      if (glArg === 'raxgo') {
+        const q = `sport=${encodeURIComponent(sport)}&season=${encodeURIComponent(season)}`;
+        return new Response(runnerHtml({
+          title: `Rax per game - ${sport} ${season}`,
+          passUrl: `/api/rax?${q}&gamelog=rax&limit=700`,
+          dlUrl: `/api/rax?${q}&gamelog=csv`,
+          dlLabel: 'Download the game-by-game CSV'
+        }), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+      }
+
+      const LIMIT = Math.min(800, Math.max(25, parseInt(url.searchParams.get('limit') || '700', 10) || 700));
+      const { readable, writable } = new TransformStream();
+      const w = writable.getWriter();
+      const enc = new TextEncoder();
+      const send = t => w.write(enc.encode(t));
+
+      (async () => {
+        try {
+          await migrateGamelog(db);
+          const store = await readGames();
+          if (!store.ids.length) {
+            await send('no player list yet - run the games collector first.\n');
+            await w.close();
+            return;
+          }
+          const done = await readRaxDone();
+          const todo = store.ids.filter(id => !done[id]).slice(0, LIMIT);
+          if (!todo.length) {
+            await send(`nothing left - all ${store.ids.length} players have their rax.\n`);
+            await send(`##STATE ${store.ids.length} ${store.ids.length} 0\n`);
+            await w.close();
+            return;
+          }
+          await send(`pulling rax per game for ${todo.length} of ${store.ids.length} players...\n`);
+
+          const sql = `UPDATE gamelog SET rax = ? WHERE sport = ? AND season = ? AND playerId = ? AND day = ?`;
+          let n = 0, updates = 0, skipped = 0, firstError = '';
+          for (const id of todo) {
+            try {
+              const d = await rsGet(earningsUrl(id), auth);
+              const list = (d && d.earnings) || [];
+              const stmts = [];
+              for (const e of list) {
+                if (!e || !e.day || e.earnings == null) continue;
+                if (Array.isArray(e.playerBoxScoreIds) && e.playerBoxScoreIds.length > 1) { skipped++; continue; }
+                stmts.push(db.prepare(sql).bind(Number(e.earnings), sport, Number(season), Number(id), e.day));
+              }
+              for (let i = 0; i < stmts.length; i += 40) {
+                const batch = stmts.slice(i, i + 40);
+                if (batch.length) await db.batch(batch);
+              }
+              updates += stmts.length;
+              done[id] = 1;
+            } catch (e) {
+              if (!firstError) {
+                firstError = String((e && e.message) || e).slice(0, 300);
+                await send(`  ! ${firstError.replace(/\n/g, ' ')}\n`);
+              }
+            }
+            n++;
+            if (n % 50 === 0) {
+              await env.RATEBOARD_KV.put(RAX_DONE_KEY, JSON.stringify({ done, updated: Date.now() }));
+              await send(`  ${n} / ${todo.length}  (${updates} game rows given a rax figure)\n`);
+            }
+            await sleep(120);
+          }
+          await env.RATEBOARD_KV.put(RAX_DONE_KEY, JSON.stringify({ done, updated: Date.now() }));
+
+          const have = store.ids.filter(id => done[id]).length;
+          const left = store.ids.length - have;
+          await send(`\n${n} players this run, ${updates} game rows updated`
+                     + (skipped ? `, ${skipped} skipped for sharing a date with another game` : '') + '.\n');
+          await send(left > 0 ? `${have} of ${store.ids.length} players done - ${left} to go.\n`
+                              : `all ${store.ids.length} players done.\n`);
+          await send(`##STATE ${have} ${store.ids.length} ${left}\n`);
+        } catch (e) {
+          await send(`\nstopped: ${String((e && e.message) || e).replace(/\n/g, ' ')}\n`);
+        }
+        await w.close();
+      })();
+
+      return new Response(readable, {
+        headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }
+      });
+    }
+
     if (glArg === '1') {
       const LIMIT = Math.min(800, Math.max(25, parseInt(url.searchParams.get('limit') || '700', 10) || 700));
       const { readable, writable } = new TransformStream();
@@ -512,7 +642,7 @@ export async function onRequestGet({ request, env }) {
 
       (async () => {
         try {
-          await db.prepare(GAMELOG_DDL).run();
+          await migrateGamelog(db);
           const store = await readGames();
           if (!store.ids.length) {
             await send('no player list yet - open the same link with &games=1&rebuild=1 first.\n');
@@ -529,7 +659,7 @@ export async function onRequestGet({ request, env }) {
           }
           await send(`collecting game logs for ${todo.length} of ${store.ids.length} players...\n`);
 
-          const place = '(' + GAMELOG_COLS.map(() => '?').join(',') + ')';
+          const place = '(' + GAMELOG_FEED_COLS.map(() => '?').join(',') + ')';
           let n = 0, rowsWritten = 0, firstError = '';
           for (const id of todo) {
             try {
@@ -539,10 +669,10 @@ export async function onRequestGet({ request, env }) {
               // One statement per row: D1 caps how many values a single query
               // may bind, so rows go in as a batch of small statements instead
               // of one wide insert.
-              const sql = `INSERT OR REPLACE INTO gamelog (${GAMELOG_COLS.join(',')}) VALUES ${place}`;
+              const sql = `INSERT OR REPLACE INTO gamelog (${GAMELOG_FEED_COLS.join(',')}) VALUES ${place}`;
               for (let i = 0; i < rows.length; i += 40) {
                 const batch = rows.slice(i, i + 40).map(r =>
-                  db.prepare(sql).bind(...GAMELOG_COLS.map(c => r[c] === undefined ? null : r[c])));
+                  db.prepare(sql).bind(...GAMELOG_FEED_COLS.map(c => r[c] === undefined ? null : r[c])));
                 if (batch.length) await db.batch(batch);
               }
               rowsWritten += rows.length;
@@ -579,7 +709,7 @@ export async function onRequestGet({ request, env }) {
       });
     }
 
-    return json({ error: 'gamelog must be one of: probe, go, 1, status, csv' }, 400);
+    return json({ error: 'gamelog must be one of: probe, go, 1, status, rax, raxgo, raxstatus, csv' }, 400);
   }
 
   // A page that drives the collector to the end on its own, so the whole
