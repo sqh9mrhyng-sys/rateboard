@@ -423,6 +423,33 @@ async function pass(){
     });
   }
 
+  // ?preview=1 — the top 20 by rax, rendered in the browser rather than
+  // downloaded, as a quick check that the columns line up before pulling the
+  // whole season. Owners/followers here come from each player's own screen,
+  // which is also a cross-check on the purchases figure in the big list.
+  if (url.searchParams.get('preview') === '1') {
+    try {
+      const store = await readGames();
+      const rows = rowsOf(await rsGet(page(0), auth)).slice(0, 20);
+      const out = [];
+      for (const r of rows) {
+        let owners = '', followers = '';
+        try {
+          const d = await rsGet(`https://web.realapp.com/players/${r.id}/sport/${sport}`, auth);
+          owners = (d && d.player && d.player.passCount) || '';
+          followers = (d && d.player && d.player.followCount) || '';
+        } catch (e) {}
+        out.push({ player: r.label || '', rax: r.value, owners, followers,
+                   gamesPlayed: store.games[String(r.id)] == null ? null : store.games[String(r.id)],
+                   playerId: r.id });
+        await sleep(120);
+      }
+      return json({ sport, season, topByRax: out,
+                    gamesCollected: store.ids.filter(id => store.games[id] != null).length,
+                    playersKnown: store.ids.length });
+    } catch (e) { return json({ error: String((e && e.message) || e) }, 502); }
+  }
+
   // ?combined=1&format=csv — one row per player with BOTH numbers.
   // Purchases are collected first into a lookup, then the earnings walk streams
   // rows as it goes, joined on player id. The purchases pass writes a progress
