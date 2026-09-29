@@ -490,6 +490,15 @@ const DEVICE  = 'ratebrd_device_v1';  // { key, name, ts } — remembers this br
 const MIN_PASS = 4;
 const ADMINS = ['dennis'];            // <-- put your username(s) here
 const isAdmin = () => !!me && ADMINS.includes(String(me).toLowerCase());
+
+// Admins always; anyone else only if they have been granted it on the admin
+// screen. The grant list travels with the board, so it holds on any device.
+const gameDataList = () => (market.gamedata || []).map(x => String(x).toLowerCase());
+const canSeeGameData = () => isAdmin() || (!!me && gameDataList().includes(String(me).toLowerCase()));
+function applyGameDataVisibility(){
+  const b = $('#open-cbb');
+  if(b) b.classList.toggle('hide', !canSeeGameData());
+}
 const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL', UFC:'UFC', NHL:'NHL' };
 
 // The post buyers must comment under before they can post a buy offer —
@@ -1744,7 +1753,7 @@ function clearDevice(){
   try{ localStorage.removeItem(SESSION); }catch(e){}
 }
 
-const blank = () => ({ users:{}, offers:[], reports:[], minimums:[], keeplist:[] });
+const blank = () => ({ users:{}, offers:[], reports:[], minimums:[], keeplist:[], gamedata:[] });
 let market = blank();
 let me = null, sport = 'CFB', mode = 'buy', pending = [];
 
@@ -1752,6 +1761,7 @@ async function pull(){
   const r = await S.get(KEY);
   market = r && r.value ? JSON.parse(r.value) : blank();
   market.users ||= {}; market.offers ||= []; market.reports ||= []; market.minimums ||= []; market.keeplist ||= [];
+  market.gamedata ||= [];
   return market;
 }
 
@@ -1974,11 +1984,11 @@ function enter(){
     $('#open-admin').classList.remove('hide');
     $('#open-min').classList.remove('hide');
     $('#open-copy').classList.remove('hide');
-    $('#open-cbb').classList.remove('hide');
   }
   applyMinimumToForm();
   updateRsLookupVisibility();
   applyBoardVisibility();
+  applyGameDataVisibility();
   render();
 }
 
@@ -3412,7 +3422,7 @@ async function cbbPanel(){
   }
 
   function drawHead(){
-    $b('#cb-head').innerHTML = '<tr>' + cols().map(([k,label,align]) =>
+    $b('#cb-head').innerHTML = '<tr><th class="l" style="width:1%">#</th>' + cols().map(([k,label,align]) =>
       `<th class="${align === 'l' ? 'l' : ''}${st.sort === k ? ' on' : ''}" data-sc="${k}">`
       + `${esc(label)}${st.sort === k ? (st.dir === 'desc' ? ' ↓' : ' ↑') : ''}</th>`).join('') + '</tr>';
   }
@@ -3426,8 +3436,9 @@ async function cbbPanel(){
 
     drawHead();
     const rows = d.rows || [];
-    $b('#cb-body').innerHTML = rows.length ? rows.map(r =>
+    $b('#cb-body').innerHTML = rows.length ? rows.map((r, i) =>
       `<tr class="${st.mode === 'players' ? 'clickable' : ''}" data-pn="${esc(r.player || '')}">`
+      + `<td class="l dim">${(st.offset + i + 1).toLocaleString()}</td>`
       + cols().map(([k,,align]) => {
           let v = r[k];
           if(k === 'day' && v) v = String(v).slice(5);
@@ -3435,7 +3446,7 @@ async function cbbPanel(){
           if(v == null || v === '') v = '<span class="dim">—</span>';
           return `<td class="${align === 'l' ? 'l' : ''}">${typeof v === 'string' && v.startsWith('<') ? v : esc(String(v))}</td>`;
         }).join('') + '</tr>').join('')
-      : `<tr><td class="l" colspan="${cols().length}">Nothing matches those filters.</td></tr>`;
+      : `<tr><td class="l" colspan="${cols().length + 1}">Nothing matches those filters.</td></tr>`;
 
     const total = d.total == null ? rows.length : d.total;
     $b('#cb-count').textContent = st.mode === 'players'
@@ -3820,6 +3831,13 @@ async function adminPanel(){
           `<span class="buyer"><b class="num">${o.rate}</b>/1 ${esc(nameOf(o.user))}</span>`).join('')}</div>
       </div>`).join('') : '<p class="nohit">Every listing is on a different player right now.</p>'}
 
+    <h3 style="margin:18px 0 0;font-size:14px;font-weight:600">Game data access</h3>
+    <div class="hit" style="grid-template-columns:1fr auto;align-items:center">
+      <select class="field" id="gd-who"></select>
+      <button class="btn-ghost btn-danger" id="gd-revoke">Revoke</button>
+    </div>
+    <p class="note" id="gd-note"></p>
+
     <h3 style="margin:18px 0 0;font-size:14px;font-weight:600">All accounts (${users.length})</h3>
     ${users.map(([k,u])=>`
       <div class="hit" style="grid-template-columns:1fr auto">
@@ -3828,8 +3846,27 @@ async function adminPanel(){
         ${k === me.toLowerCase() ? `<span class="who">this is you</span>`
           : u.banned ? `<button class="btn-ghost" data-unban="${esc(k)}">Restore</button>`
                      : `<button class="btn-ghost" data-reset="${esc(k)}">${u.hash ? 'Reset password' : 'awaiting new password'}</button>
+                        <button class="btn-ghost" data-gd="${esc(k)}">${
+                          gameDataList().includes(k) ? 'Revoke game data' : 'Grant access to game data'}</button>
                         <button class="btn-ghost btn-danger" data-ban="${esc(k)}">Delete account</button>`}
       </div>`).join('')}`);
+
+  // Everyone currently holding game data access, so it can be taken back from
+  // one place rather than hunting through the account list.
+  (function drawGameData(){
+    const sel = box.querySelector('#gd-who'), note = box.querySelector('#gd-note');
+    if(!sel) return;
+    const granted = gameDataList().filter(k => market.users[k]);
+    sel.innerHTML = granted.length
+      ? granted.map(k => `<option value="${esc(k)}">${esc(market.users[k].name || k)}</option>`).join('')
+      : '<option value="">Nobody yet</option>';
+    sel.disabled = !granted.length;
+    const revoke = box.querySelector('#gd-revoke');
+    if(revoke) revoke.disabled = !granted.length;
+    if(note) note.textContent = granted.length
+      ? `${granted.length} ${granted.length === 1 ? 'person has' : 'people have'} access, plus admins. Grant it from the account list below.`
+      : 'Only admins can see game data. Grant it to someone from the account list below.';
+  })();
 
   // ---- data reports: someone says a figure is wrong. Review, then either
   // apply the fix (saved as a correction that the daily UFC.com refresh
@@ -3996,6 +4033,41 @@ async function adminPanel(){
       if(!gone) return;
       toast('Listing deleted');
       render();
+      box.remove(); adminPanel();
+      return;
+    }
+
+    // Game data access. The grant list is part of the board, so it follows
+    // the person to whatever device they sign in on.
+    const gd = e.target.closest('[data-gd]');
+    if(gd){
+      const k = gd.dataset.gd;
+      const u = market.users[k];
+      const had = gameDataList().includes(k);
+      if(had && !confirm(`Take game data access away from ${u?.name || k}?`)) return;
+      const ok = await push(m => {
+        const list = (m.gamedata || []).map(x => String(x).toLowerCase()).filter(x => x !== k);
+        m.gamedata = had ? list : list.concat([k]);
+      });
+      if(!ok) return;
+      toast(had ? `${u?.name || k} can no longer see game data` : `${u?.name || k} can now see game data`);
+      applyGameDataVisibility();
+      box.remove(); adminPanel();
+      return;
+    }
+
+    if(e.target.closest('#gd-revoke')){
+      const sel = box.querySelector('#gd-who');
+      const k = sel && sel.value;
+      if(!k) return toast('Nobody has game data access yet.');
+      const u = market.users[k];
+      if(!confirm(`Take game data access away from ${u?.name || k}?`)) return;
+      const ok = await push(m => {
+        m.gamedata = (m.gamedata || []).map(x => String(x).toLowerCase()).filter(x => x !== k);
+      });
+      if(!ok) return;
+      toast(`${u?.name || k} can no longer see game data`);
+      applyGameDataVisibility();
       box.remove(); adminPanel();
       return;
     }
