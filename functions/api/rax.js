@@ -13,6 +13,7 @@
 
 const PAGE = 20;
 const CHUNK_PAGES = 8;               // pages per request, so one call stays quick
+const ALL_MAX_PAGES = 250;           // ?all=1 ceiling: 250 x 20 = 5,000 players
 const GAP_MS = 350;                  // breathing room between pages
 const RETRIES = 3;                   // RS answers 429 under load
 const SPORTS = new Set(['ncaam', 'ncaaf', 'nfl', 'soccer', 'nba', 'mlb', 'nhl', 'ufc', 'wnba']);
@@ -148,14 +149,16 @@ export async function onRequestGet({ request, env }) {
     }
   }
 
-  // One call walks a handful of pages and reports where to pick up, so the
-  // caller can work through a whole season without any single request
-  // running long enough to be killed.
+  // ?all=1 walks the entire season in one go and hands back the finished file.
+  // It's slow by design — the pages are spaced out so RS doesn't throttle — but
+  // it means the whole thing is one click rather than a loop somewhere else.
   const start = Math.max(0, parseInt(url.searchParams.get('start') || '0', 10));
+  const wantsAll = url.searchParams.get('all') === '1';
   const out = [];
   let next = start, done = false;
+  const limit = wantsAll ? ALL_MAX_PAGES : CHUNK_PAGES;
   try {
-    for (let i = 0; i < CHUNK_PAGES; i++) {
+    for (let i = 0; i < limit; i++) {
       if (i) await sleep(GAP_MS);
       const rows = rowsOf(await rsGet(page(next), auth));
       out.push(...rows);
@@ -166,15 +169,27 @@ export async function onRequestGet({ request, env }) {
     return json({ error: String((e && e.message) || e), got: out.length, nextStart: next }, 502);
   }
 
-  if (url.searchParams.get('format') === 'csv') {   // single chunk only
+  if (url.searchParams.get('format') === 'csv') {
     const cell = v => {
       const s = v == null ? '' : String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const cols = [...new Set(out.flatMap(r => Object.keys(r)))]
-      .filter(k => out.some(r => r[k] == null || typeof r[k] !== 'object'));
+    // Flatten the useful bits of each row: the leaderboard nests the player
+    // under `entity`, and everything else on the row is chrome.
+    const rows = out.map(r => ({
+      player:    r.label || '',
+      rax:       r.value,
+      playerId:  r.id,
+      teamId:    r.entity && r.entity.teamId,
+      jersey:    r.entity && r.entity.jersey,
+      firstName: r.entity && r.entity.firstName,
+      lastName:  r.entity && r.entity.lastName,
+      sport:     r.sport,
+      season
+    }));
+    const cols = Object.keys(rows[0] || { player: '', rax: '' });
     const csv = [cols.join(',')]
-      .concat(out.map(r => cols.map(c => cell(r[c])).join(',')))
+      .concat(rows.map(r => cols.map(c => cell(r[c])).join(',')))
       .join('\n');
     return new Response(csv, {
       headers: {
