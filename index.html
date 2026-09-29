@@ -3345,6 +3345,7 @@ async function copyListPanel(){
 const CBB_PLAYER_COLS = [
   ['player','Player','l'], ['team','Team','l'], ['games','G'],
   ['rax','Rax'], ['raxPerGame','Rax/G'], ['bestRax','Best'],
+  ['owners','Owners'], ['ownersChange','7d'],
   ['rating','Rating'], ['ratingPerGame','Rtg/G'],
   ['min','MIN'], ['pts','PTS'], ['reb','REB'], ['ast','AST'],
   ['stl','STL'], ['blk','BLK'], ['tov','TO'], ['fantasyPts','FP']
@@ -3443,6 +3444,9 @@ async function cbbPanel(){
           let v = r[k];
           if(k === 'day' && v) v = String(v).slice(5);
           if(k === 'rating' && v != null && v !== '') v = Number(v).toFixed(2);
+          if(k === 'owners' && v != null && v !== '') v = Number(v).toLocaleString();
+          if(k === 'ownersChange' && v != null && v !== '')
+            v = (Number(v) > 0 ? '+' : '') + Number(v).toLocaleString();
           if(v == null || v === '') v = '<span class="dim">—</span>';
           return `<td class="${align === 'l' ? 'l' : ''}">${typeof v === 'string' && v.startsWith('<') ? v : esc(String(v))}</td>`;
         }).join('') + '</tr>').join('')
