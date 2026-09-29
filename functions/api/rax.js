@@ -134,7 +134,7 @@ export async function onRequestGet({ request, env }) {
   // Probes for the two other RS screens, so their payloads can be read before
   // anything is built on them. Both are fixed shapes, not a free-form proxy.
   const probePlayer = url.searchParams.get('probePlayer');
-  if (probePlayer && /^\d+$/.test(probePlayer)) {
+  if (probePlayer && /^\d+$/.test(probePlayer) && !url.searchParams.get('probeSub')) {
     try {
       const d = await rsGet(`https://web.realapp.com/players/${probePlayer}/sport/${sport}`, auth);
       const shape = (o, depth = 0) => {
@@ -152,6 +152,27 @@ export async function onRequestGet({ request, env }) {
       };
       return json({ keys: Object.keys(d || {}), shape: shape(d) });
     } catch (e) { return json({ error: String((e && e.message) || e) }, 502); }
+  }
+
+  // Probe a fixed sub-screen of a player page (the feed / stats / owners
+  // panels). The suffix is whitelisted, so this stays a set of named screens
+  // rather than an open path.
+  const SUBS = {
+    seasonfeed: 'seasonfeed?limit=10&season=SEASON&view=recent&viewFrame=default',
+    stats:      'stats?season=SEASON',
+    seasonstats:'seasonstats?season=SEASON',
+    owners:     'owners?season=SEASON',
+    holders:    'holders?season=SEASON'
+  };
+  const probeSub = url.searchParams.get('probeSub');
+  if (probeSub && probePlayer && /^\d+$/.test(probePlayer)) {
+    const suffix = SUBS[probeSub.toLowerCase()];
+    if (!suffix) return json({ error: 'sub not allowed', allowed: Object.keys(SUBS) }, 400);
+    const u = `https://web.realapp.com/players/${probePlayer}/sport/${sport}/${suffix.replace('SEASON', season)}`;
+    try {
+      const d = await rsGet(u, auth);
+      return json({ sub: probeSub, raw: d });
+    } catch (e) { return json({ sub: probeSub, error: String((e && e.message) || e) }, 502); }
   }
 
   if (url.searchParams.get('probeLeaders')) {
