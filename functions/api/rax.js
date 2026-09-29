@@ -252,6 +252,111 @@ export async function onRequestGet({ request, env }) {
     }
   }
 
+  // Games played is only on a player's own season screen, one player at a
+  // time, and RS has no bulk version of it. A Worker can only make so many
+  // outbound calls in one request, so the figures are collected a slice at a
+  // time into KV and the CSV reads them from there. Re-opening the collector
+  // picks up where it left off; it is finished when it says every player has
+  // a figure.
+  //
+  //   ?games=1            -> collect the next slice (default 800 players)
+  //   ?games=1&rebuild=1  -> rebuild the player list first
+  //   ?games=status       -> how far along it is, without fetching anything
+  const GAMES_KEY = `games_${sport}_${season}`;
+  const readGames = async () => {
+    try {
+      const raw = await env.RATEBOARD_KV.get(GAMES_KEY);
+      const o = raw ? JSON.parse(raw) : null;
+      return (o && typeof o === 'object') ? { ids: o.ids || [], games: o.games || {}, updated: o.updated || 0 }
+                                          : { ids: [], games: {}, updated: 0 };
+    } catch (e) { return { ids: [], games: {}, updated: 0 }; }
+  };
+
+  const gamesArg = url.searchParams.get('games');
+  if (gamesArg === 'status') {
+    const st = await readGames();
+    const have = st.ids.filter(id => st.games[id] != null).length;
+    return json({ players: st.ids.length, withGames: have,
+                  remaining: Math.max(0, st.ids.length - have),
+                  updated: st.updated ? new Date(st.updated).toISOString() : null });
+  }
+
+  if (gamesArg === '1') {
+    const LIMIT = Math.min(850, Math.max(25, parseInt(url.searchParams.get('limit') || '800', 10) || 800));
+    const { readable, writable } = new TransformStream();
+    const w = writable.getWriter();
+    const enc = new TextEncoder();
+    const send = t => w.write(enc.encode(t));
+
+    (async () => {
+      try {
+        const store = await readGames();
+
+        if (!store.ids.length || url.searchParams.get('rebuild') === '1') {
+          await send(`building the ${sport} ${season} player list...\n`);
+          const ids = [];
+          let before = 0;
+          for (let i = 0; i < ALL_MAX_PAGES; i++) {
+            if (i) await sleep(GAP_MS);
+            const rows = rowsOf(await rsGet(
+              `https://web.realapp.com/userpassshop/${sport}/season/${season}/entity/player/section/earningstotal?before=${before}`, auth));
+            for (const r of rows) if (r && r.id != null) ids.push(String(r.id));
+            before += PAGE;
+            await send(`  ${ids.length} players\n`);
+            if (rows.length < PAGE) break;
+          }
+          store.ids = ids;
+          await env.RATEBOARD_KV.put(GAMES_KEY, JSON.stringify(store));
+          await send(`player list: ${ids.length}\n`);
+        }
+
+        const missing = store.ids.filter(id => store.games[id] == null).slice(0, LIMIT);
+        if (!missing.length) {
+          await send(`nothing left to collect - all ${store.ids.length} players have a games figure.\n`);
+          await w.close();
+          return;
+        }
+        await send(`collecting games played for ${missing.length} of ${store.ids.length} players...\n`);
+
+        let done = 0, blank = 0;
+        for (const id of missing) {
+          try {
+            const d = await rsGet(
+              `https://web.realapp.com/players/${id}/sport/${sport}/seasonfeed?limit=1&season=${season}&view=recent&viewFrame=default`, auth);
+            const g = d && d.statsInfo && d.statsInfo.games;
+            store.games[id] = (g == null ? 0 : Number(g) || 0);
+            if (g == null) blank++;
+          } catch (e) {
+            // Leave this one unset so the next run retries it.
+          }
+          done++;
+          if (done % 50 === 0) {
+            store.updated = Date.now();
+            await env.RATEBOARD_KV.put(GAMES_KEY, JSON.stringify(store));
+            await send(`  ${done} / ${missing.length}\n`);
+          }
+          await sleep(120);
+        }
+        store.updated = Date.now();
+        await env.RATEBOARD_KV.put(GAMES_KEY, JSON.stringify(store));
+
+        const have = store.ids.filter(id => store.games[id] != null).length;
+        const left = store.ids.length - have;
+        await send(`\ncollected ${done} this run${blank ? ` (${blank} had no stats line)` : ''}.\n`);
+        await send(left > 0
+          ? `${have} of ${store.ids.length} players done - ${left} to go. Reload this page to continue.\n`
+          : `all ${store.ids.length} players have a games figure. The CSV will include it now.\n`);
+      } catch (e) {
+        await send(`\nstopped: ${String((e && e.message) || e).replace(/\n/g, ' ')}\n`);
+      }
+      await w.close();
+    })();
+
+    return new Response(readable, {
+      headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }
+    });
+  }
+
   // ?combined=1&format=csv — one row per player with BOTH numbers.
   // Purchases are collected first into a lookup, then the earnings walk streams
   // rows as it goes, joined on player id. The purchases pass writes a progress
@@ -288,7 +393,8 @@ export async function onRequestGet({ request, env }) {
           await send(`# purchases collected: ${seen}\n`);
         });
 
-        await send(['rank', 'player', 'rax', 'purchases', 'playerId', 'teamId',
+        const gs = (await readGames()).games || {};
+        await send(['rank', 'player', 'rax', 'purchases', 'gamesPlayed', 'playerId', 'teamId',
                     'jersey', 'firstName', 'lastName', 'sport', 'season'].join(',') + '\n');
         let n = 0;
         await walk('earningstotal', async rows => {
@@ -296,6 +402,7 @@ export async function onRequestGet({ request, env }) {
             n++;
             const e = r.entity || {};
             await send([n, r.label || '', r.value, purchases.has(r.id) ? purchases.get(r.id) : '',
+                        gs[String(r.id)] == null ? '' : gs[String(r.id)],
                         r.id, e.teamId, e.jersey, e.firstName, e.lastName, r.sport, season]
                        .map(cell).join(',') + '\n');
           }
