@@ -502,6 +502,24 @@ export async function onRequestGet({ request, env }) {
       } catch (e) { return json({ error: String((e && e.message) || e) }, 500); }
     }
 
+    // A game a player earned nothing for simply has no entry on the earnings
+    // screen, so a blank here means zero, not unknown - the per-player totals
+    // reconcile exactly with those games counted as 0. Only run once every
+    // player has been through the rax pass.
+    if (glArg === 'zerofill') {
+      try {
+        const store = await readGames();
+        const raw = await env.RATEBOARD_KV.get(`gamelog_rax_${sport}_${season}`);
+        const done = raw ? (JSON.parse(raw).done || {}) : {};
+        const left = store.ids.filter(id => !done[id]).length;
+        if (left) return json({ error: `${left} players have not been through the rax pass yet - not safe to fill blanks`, remaining: left }, 409);
+        const r = await db.prepare(
+          'UPDATE gamelog SET rax = 0 WHERE sport = ? AND season = ? AND rax IS NULL')
+          .bind(sport, Number(season)).run();
+        return json({ ok: true, filled: (r && r.meta && r.meta.changes) || null });
+      } catch (e) { return json({ error: String((e && e.message) || e) }, 500); }
+    }
+
     // One player's game log, for spot checks.
     if (glArg === 'player') {
       const pid = String(url.searchParams.get('pid') || '').replace(/[^0-9]/g, '');
@@ -752,7 +770,7 @@ export async function onRequestGet({ request, env }) {
       });
     }
 
-    return json({ error: 'gamelog must be one of: probe, go, 1, status, rax, raxgo, raxstatus, check, player, csv' }, 400);
+    return json({ error: 'gamelog must be one of: probe, go, 1, status, rax, raxgo, raxstatus, check, zerofill, player, csv' }, 400);
   }
 
   // A page that drives the collector to the end on its own, so the whole
