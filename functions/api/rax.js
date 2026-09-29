@@ -250,7 +250,7 @@ export async function onRequestGet({ request, env }) {
   // Probes for the two other RS screens, so their payloads can be read before
   // anything is built on them. Both are fixed shapes, not a free-form proxy.
   const probePlayer = url.searchParams.get('probePlayer');
-  if (probePlayer && /^\d+$/.test(probePlayer) && !url.searchParams.get('probeSub')) {
+  if (probePlayer && /^\d+$/.test(probePlayer) && !url.searchParams.get('probeSub') && !url.searchParams.get('gamelog')) {
     try {
       const d = await rsGet(`https://web.realapp.com/players/${probePlayer}/sport/${sport}`, auth);
       const shape = (o, depth = 0) => {
@@ -517,25 +517,28 @@ export async function onRequestGet({ request, env }) {
           await send(`collecting game logs for ${todo.length} of ${store.ids.length} players...\n`);
 
           const place = '(' + GAMELOG_COLS.map(() => '?').join(',') + ')';
-          let n = 0, rowsWritten = 0;
+          let n = 0, rowsWritten = 0, firstError = '';
           for (const id of todo) {
             try {
               const d = await rsGet(feedUrl(id, 200), auth);
               const bs = (d && d.playerBoxScores) || [];
               const rows = bs.filter(b => b && b.gameId != null).map(b => gamelogRow(sport, season, b));
-              for (let i = 0; i < rows.length; i += 20) {
-                const slice = rows.slice(i, i + 20);
-                const binds = [];
-                for (const r of slice) for (const c of GAMELOG_COLS) binds.push(r[c] === undefined ? null : r[c]);
-                await db.prepare(
-                  `INSERT OR REPLACE INTO gamelog (${GAMELOG_COLS.join(',')}) VALUES ` +
-                  slice.map(() => place).join(',')
-                ).bind(...binds).run();
+              // One statement per row: D1 caps how many values a single query
+              // may bind, so rows go in as a batch of small statements instead
+              // of one wide insert.
+              const sql = `INSERT OR REPLACE INTO gamelog (${GAMELOG_COLS.join(',')}) VALUES ${place}`;
+              for (let i = 0; i < rows.length; i += 40) {
+                const batch = rows.slice(i, i + 40).map(r =>
+                  db.prepare(sql).bind(...GAMELOG_COLS.map(c => r[c] === undefined ? null : r[c])));
+                if (batch.length) await db.batch(batch);
               }
               rowsWritten += rows.length;
               done[id] = 1;
             } catch (e) {
-              // leave unmarked so the next pass retries this player
+              if (!firstError) {
+                firstError = String((e && e.message) || e).slice(0, 300);
+                await send(`  ! ${firstError.replace(/\n/g, ' ')}\n`);
+              }
             }
             n++;
             if (n % 50 === 0) {
