@@ -814,11 +814,11 @@ export async function onRequestGet({ request, env }) {
               }
             }
             n++;
-            if (n % 50 === 0) {
+            if (n % 10 === 0) {
               await env.RATEBOARD_KV.put(RAX_DONE_KEY, JSON.stringify({ done, updated: Date.now() }));
               await send(`  ${n} / ${todo.length}  (${updates} game rows given a rax figure)\n`);
             }
-            await sleep(120);
+            await sleep(80);
           }
           await env.RATEBOARD_KV.put(RAX_DONE_KEY, JSON.stringify({ done, updated: Date.now() }));
 
@@ -897,11 +897,11 @@ export async function onRequestGet({ request, env }) {
               }
             }
             n++;
-            if (n % 50 === 0) {
+            if (n % 10 === 0) {
               await env.RATEBOARD_KV.put(DONE_KEY, JSON.stringify({ done, updated: Date.now() }));
               await send(`  ${n} / ${todo.length}  (${rowsWritten} game rows)\n`);
             }
-            await sleep(120);
+            await sleep(80);
           }
           await env.RATEBOARD_KV.put(DONE_KEY, JSON.stringify({ done, updated: Date.now() }));
 
@@ -1060,12 +1060,12 @@ async function pass(){
             // Leave this one unset so the next run retries it.
           }
           done++;
-          if (done % 50 === 0) {
+          if (done % 10 === 0) {
             store.updated = Date.now();
             await env.RATEBOARD_KV.put(GAMES_KEY, JSON.stringify(store));
             await send(`  ${done} / ${missing.length}\n`);
           }
-          await sleep(120);
+          await sleep(80);
         }
         store.updated = Date.now();
         await env.RATEBOARD_KV.put(GAMES_KEY, JSON.stringify(store));
@@ -1107,7 +1107,7 @@ async function pass(){
         out.push({ player: r.label || '', rax: r.value, owners, followers,
                    gamesPlayed: store.games[String(r.id)] == null ? null : store.games[String(r.id)],
                    playerId: r.id });
-        await sleep(120);
+        await sleep(80);
       }
       return json({ sport, season, topByRax: out,
                     gamesCollected: store.ids.filter(id => store.games[id] != null).length,
