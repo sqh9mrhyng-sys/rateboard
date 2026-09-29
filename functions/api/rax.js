@@ -240,7 +240,7 @@ async function rsGet(url, auth) {
 // The list rows come back under a few possible keys depending on the section,
 // so take whichever array is actually there rather than assuming one shape.
 function rowsOf(data) {
-  for (const k of ['entities', 'items', 'results', 'players', 'data']) {
+  for (const k of ['entities', 'items', 'results', 'players', 'data', 'listings']) {
     if (Array.isArray(data && data[k])) return data[k];
   }
   return [];
@@ -424,6 +424,7 @@ export async function onRequestGet({ request, env }) {
       const arr = rows.length ? rows : (Array.isArray(d) ? d : []);
       return json({
         topLevelKeys: Object.keys(d || {}),
+        listingCount: d && d.listingCount,
         rowCount: arr.length,
         firstRowKeys: arr[0] ? Object.keys(arr[0]) : [],
         firstRow: arr[0] || null,
