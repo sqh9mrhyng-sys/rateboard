@@ -401,6 +401,38 @@ export async function onRequestGet({ request, env }) {
     } catch (e) { return { ids: [], games: {}, updated: 0 }; }
   };
 
+  // A capability sweep: which sports RS answers for, which season number is
+  // live for each, and how big the player list is. Used to plan what can be
+  // collected rather than guessing at it.
+  if (url.searchParams.get('scan') === 'sports') {
+    const CANDIDATES = ['ncaam', 'ncaaf', 'nfl', 'nba', 'mlb', 'nhl', 'soccer', 'wnba', 'ufc',
+                        'golf', 'pga', 'pgatour', 'tennis', 'mma'];
+    const YEARS = [2026, 2025];
+    const out = [];
+    for (const sp of CANDIDATES) {
+      const entry = { sport: sp, seasons: {} };
+      for (const y of YEARS) {
+        try {
+          const d = await rsGet(
+            `https://web.realapp.com/userpassshop/${sp}/season/${y}/entity/player/section/earningstotal?before=0`, auth);
+          const rows = rowsOf(d);
+          entry.seasons[y] = { ok: true, rows: rows.length,
+                               top: rows[0] ? `${rows[0].label} (${rows[0].value})` : null };
+        } catch (e) {
+          entry.seasons[y] = { ok: false, why: String((e && e.message) || e).slice(0, 90) };
+        }
+        await sleep(200);
+      }
+      try {
+        const sd = await rsGet(`https://web.realapp.com/playerstatleaders/${sp}/seasons?mode=averages`, auth);
+        entry.seasonsPayload = JSON.stringify(sd).slice(0, 700);
+      } catch (e) { entry.seasonsPayload = 'n/a'; }
+      await sleep(200);
+      out.push(entry);
+    }
+    return json({ scanned: out.length, results: out });
+  }
+
   // What a card actually earned for one game. "userpass" in the path is a
   // warning that this may be scoped to the signed-in account's own card rather
   // than to the player, which is the first thing to check here.
