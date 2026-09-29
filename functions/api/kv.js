@@ -131,7 +131,7 @@ async function readSide(env) {
   if (raw) { try { m = JSON.parse(raw); } catch (e) { m = null; } }
   if (!m || typeof m !== 'object') m = {};
   return { reports: m.reports || [], minimums: m.minimums || [], keeplist: m.keeplist || [],
-           house: m.house || [] };
+           house: m.house || [], gamedata: m.gamedata || [] };
 }
 
 /* ---- assemble the board in the shape the page already expects ---- */
@@ -153,7 +153,8 @@ async function readBoard(env) {
       id: o.id, user: o.user, sport: o.sport, player: o.player,
       rate: o.rate, link: o.link || '', ts: o.ts
     })),
-    reports: side.reports, minimums: side.minimums, keeplist: side.keeplist, house: side.house
+    reports: side.reports, minimums: side.minimums, keeplist: side.keeplist, house: side.house,
+    gamedata: side.gamedata
   };
 }
 
@@ -456,7 +457,8 @@ export async function onRequestPost({ request, env, waitUntil }) {
     reports: incoming.reports || [],
     minimums: incoming.minimums || [],
     keeplist: incoming.keeplist || [],
-    house: incoming.house || []
+    house: incoming.house || [],
+    gamedata: incoming.gamedata || []
   }));
   await bustBoard(origin);
   later(saveSnapshot(env));

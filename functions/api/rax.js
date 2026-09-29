@@ -18,7 +18,8 @@ const LIST_MAX_PAGES = 700;          // player-list ceiling: 700 x 20 = 14,000
 const LIST_CHUNK_PAGES = 60;         // pages per call, so a scheduled run finishes in time
 const GAP_MS = 350;                  // breathing room between pages
 const RETRIES = 3;                   // RS answers 429 under load
-const SPORTS = new Set(['ncaam', 'ncaaf', 'nfl', 'soccer', 'nba', 'mlb', 'nhl', 'ufc', 'wnba']);
+const SPORTS = new Set(['ncaam', 'ncaaf', 'nfl', 'soccer', 'nba', 'mlb', 'nhl', 'ufc', 'wnba',
+                        'golf', 'tennis']);
 const SECTIONS = new Set(['earningstotal', 'hotseason']);   // earnings | purchases
 
 function json(obj, status = 200) {
