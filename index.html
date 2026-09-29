@@ -203,6 +203,23 @@
   .modal{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:100%;max-width:520px;max-height:86vh;overflow:auto}
   .modal .panel-hd{position:sticky;top:0;background:var(--panel)}
 
+  /* ---------- CBB data explorer ---------- */
+  .modal.wide{max-width:1040px}
+  .dtbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .dtbar .field{width:auto;flex:0 1 auto;padding:8px 10px;font-size:13px;min-width:0}
+  .dtbar .field.grow{flex:1 1 150px}
+  .dtwrap{overflow:auto;max-height:50vh;border:1px solid var(--line);border-radius:10px}
+  table.dt{border-collapse:collapse;width:100%;font-size:12.5px;white-space:nowrap}
+  table.dt th,table.dt td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:right}
+  table.dt th.l,table.dt td.l{text-align:left}
+  table.dt thead th{position:sticky;top:0;z-index:1;background:var(--panel-2);cursor:pointer;
+                    user-select:none;font-weight:600;color:var(--mute)}
+  table.dt thead th.on{color:var(--accent)}
+  table.dt tbody tr:hover{background:var(--panel-2)}
+  table.dt tbody tr.clickable{cursor:pointer}
+  table.dt td.dim{color:var(--mute)}
+  .dtfoot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
+
   /* ---------- admin listing stats ---------- */
   .statrow{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
   /* ---- admin: reports dropdown ---- */
@@ -360,6 +377,7 @@
       <span><span class="sm-hide">Signed in as </span><b id="me"></b></span>
       <button class="linkbtn" id="open-report">Report a user</button>
       <button class="linkbtn hide" id="open-copy">Copy list</button>
+      <button class="linkbtn hide" id="open-cbb">CBB data</button>
       <button class="linkbtn hide" id="open-min">Lists</button>
       <button class="linkbtn hide" id="open-admin">Admin</button>
       <button class="linkbtn" id="signout">Sign out</button>
@@ -1956,6 +1974,7 @@ function enter(){
     $('#open-admin').classList.remove('hide');
     $('#open-min').classList.remove('hide');
     $('#open-copy').classList.remove('hide');
+    $('#open-cbb').classList.remove('hide');
   }
   applyMinimumToForm();
   updateRsLookupVisibility();
@@ -3304,6 +3323,208 @@ async function copyListPanel(){
 
   draw();
 }
+
+/* =========================================================
+   CBB data explorer (admin only)
+
+   Reads the college-basketball game log collected into D1 and
+   served by /api/rax. Aggregates per player, or lists every
+   game, with the filters and sort handled server side so the
+   browser never holds all 77k rows.
+   ========================================================= */
+const CBB_PLAYER_COLS = [
+  ['player','Player','l'], ['team','Team','l'], ['games','G'],
+  ['rax','Rax'], ['raxPerGame','Rax/G'], ['bestRax','Best'],
+  ['rating','Rating'], ['ratingPerGame','Rtg/G'],
+  ['min','MIN'], ['pts','PTS'], ['reb','REB'], ['ast','AST'],
+  ['stl','STL'], ['blk','BLK'], ['tov','TO'], ['fantasyPts','FP']
+];
+const CBB_GAME_COLS = [
+  ['day','Date','l'], ['player','Player','l'], ['team','Team','l'],
+  ['opponent','Opp','l'], ['homeAway','H/A','l'], ['result','W/L','l'],
+  ['rax','Rax'], ['rating','Rating'],
+  ['min','MIN'], ['pts','PTS'], ['reb','REB'], ['ast','AST'],
+  ['stl','STL'], ['blk','BLK'], ['tov','TO'], ['plusMinus','+/-'],
+  ['fg','FG','l'], ['fg3','3FG','l'], ['ft','FT','l'],
+  ['tsPct','TS%'], ['fantasyPts','FP'], ['comments','Cmts']
+];
+
+async function cbbPanel(){
+  const st = { mode:'players', sort:'rax', dir:'desc', offset:0, limit:100,
+               q:'', team:'', seasonType:'', homeAway:'', result:'',
+               from:'', to:'', minGames:'', playedOnly:'', season:'2026' };
+
+  const box = modal('CBB data — 2025-26', `
+    <div class="seg" role="group" aria-label="View">
+      <button data-cm="players" aria-pressed="true">By player</button>
+      <button data-cm="games" aria-pressed="false">Every game</button>
+    </div>
+    <div class="dtbar">
+      <input class="field grow" id="cb-q" placeholder="Player name" autocomplete="off">
+      <select class="field" id="cb-team"><option value="">Any team</option></select>
+      <select class="field" id="cb-type">
+        <option value="">Reg + post</option>
+        <option value="regularseason">Regular only</option>
+        <option value="postseason">Postseason only</option>
+      </select>
+      <select class="field" id="cb-ha"><option value="">Home + away</option>
+        <option value="home">Home</option><option value="away">Away</option></select>
+      <select class="field" id="cb-res"><option value="">W + L</option>
+        <option value="W">Wins</option><option value="L">Losses</option></select>
+    </div>
+    <div class="dtbar">
+      <input class="field" id="cb-from" placeholder="From YYYY-MM-DD" autocomplete="off" style="flex:0 1 150px">
+      <input class="field" id="cb-to" placeholder="To YYYY-MM-DD" autocomplete="off" style="flex:0 1 150px">
+      <input class="field" id="cb-mg" placeholder="Min games" inputmode="numeric" style="flex:0 1 110px">
+      <button class="btn-ghost" id="cb-played" aria-pressed="false">Played only</button>
+      <button class="btn-ghost" id="cb-clear">Clear</button>
+    </div>
+    <p class="note" id="cb-count">Loading&hellip;</p>
+    <div class="dtwrap"><table class="dt"><thead id="cb-head"></thead><tbody id="cb-body"></tbody></table></div>
+    <div class="dtfoot">
+      <span class="note" id="cb-page"></span>
+      <span class="hitacts" style="gap:8px">
+        <button class="btn-ghost" id="cb-prev">Previous</button>
+        <button class="btn-ghost" id="cb-next">Next</button>
+        <button class="btn" id="cb-dl">Download this view</button>
+      </span>
+    </div>
+    <p class="note">Rax is what the player earned that game, in whole numbers. Rating is the
+      performance score the app shows. Click a player to see their games.</p>`);
+  box.querySelector('.modal').classList.add('wide');
+
+  const $b = sel => box.querySelector(sel);
+  const cols = () => st.mode === 'players' ? CBB_PLAYER_COLS : CBB_GAME_COLS;
+
+  function qs(extra){
+    const p = new URLSearchParams({ sport:'ncaam', season: st.season, gamelog:'query',
+      mode: st.mode, sort: st.sort, dir: st.dir });
+    if(st.mode === 'players'){ p.set('limit', st.limit); p.set('offset', st.offset); }
+    else { p.set('limit', st.limit); p.set('offset', st.offset); }
+    for(const k of ['q','team','seasonType','homeAway','result','from','to','minGames','playedOnly']){
+      if(st[k]) p.set(k, st[k]);
+    }
+    for(const k in (extra||{})) p.set(k, extra[k]);
+    return '/api/rax?' + p.toString();
+  }
+
+  function drawHead(){
+    $b('#cb-head').innerHTML = '<tr>' + cols().map(([k,label,align]) =>
+      `<th class="${align === 'l' ? 'l' : ''}${st.sort === k ? ' on' : ''}" data-sc="${k}">`
+      + `${esc(label)}${st.sort === k ? (st.dir === 'desc' ? ' ↓' : ' ↑') : ''}</th>`).join('') + '</tr>';
+  }
+
+  async function load(){
+    $b('#cb-count').textContent = 'Loading…';
+    let d;
+    try { d = await (await fetch(qs())).json(); }
+    catch(e){ $b('#cb-count').textContent = 'Could not reach the server.'; return; }
+    if(d.error){ $b('#cb-count').textContent = d.error; $b('#cb-body').innerHTML = ''; return; }
+
+    drawHead();
+    const rows = d.rows || [];
+    $b('#cb-body').innerHTML = rows.length ? rows.map(r =>
+      `<tr class="${st.mode === 'players' ? 'clickable' : ''}" data-pn="${esc(r.player || '')}">`
+      + cols().map(([k,,align]) => {
+          let v = r[k];
+          if(k === 'day' && v) v = String(v).slice(5);
+          if(v == null || v === '') v = '<span class="dim">—</span>';
+          return `<td class="${align === 'l' ? 'l' : ''}">${typeof v === 'string' && v.startsWith('<') ? v : esc(String(v))}</td>`;
+        }).join('') + '</tr>').join('')
+      : `<tr><td class="l" colspan="${cols().length}">Nothing matches those filters.</td></tr>`;
+
+    const total = d.total == null ? rows.length : d.total;
+    $b('#cb-count').textContent = st.mode === 'players'
+      ? `${total.toLocaleString()} player${total === 1 ? '' : 's'}`
+      : `${total.toLocaleString()} game${total === 1 ? '' : 's'}`;
+    const upto = Math.min(st.offset + rows.length, total);
+    $b('#cb-page').textContent = total ? `Showing ${(st.offset+1).toLocaleString()}–${upto.toLocaleString()}` : '';
+    $b('#cb-prev').disabled = st.offset <= 0;
+    $b('#cb-next').disabled = st.offset + st.limit >= total;
+  }
+
+  // Teams for the dropdown.
+  (async () => {
+    try {
+      const f = await (await fetch(`/api/rax?sport=ncaam&season=${st.season}&gamelog=facets`)).json();
+      if(f && f.teams) $b('#cb-team').insertAdjacentHTML('beforeend',
+        f.teams.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join(''));
+    } catch(e){}
+  })();
+
+  let typing;
+  box.addEventListener('input', e => {
+    const id = e.target.id;
+    const map = { 'cb-q':'q', 'cb-from':'from', 'cb-to':'to', 'cb-mg':'minGames' };
+    if(!map[id]) return;
+    st[map[id]] = e.target.value.trim();
+    st.offset = 0;
+    clearTimeout(typing);
+    typing = setTimeout(load, 300);
+  });
+
+  box.addEventListener('change', e => {
+    const map = { 'cb-team':'team', 'cb-type':'seasonType', 'cb-ha':'homeAway', 'cb-res':'result' };
+    if(!map[e.target.id]) return;
+    st[map[e.target.id]] = e.target.value;
+    st.offset = 0;
+    load();
+  });
+
+  box.addEventListener('click', e => {
+    const m = e.target.closest('[data-cm]');
+    if(m){
+      if(st.mode === m.dataset.cm) return;
+      st.mode = m.dataset.cm;
+      st.sort = 'rax'; st.dir = 'desc'; st.offset = 0;
+      box.querySelectorAll('[data-cm]').forEach(x =>
+        x.setAttribute('aria-pressed', x.dataset.cm === st.mode ? 'true' : 'false'));
+      return load();
+    }
+
+    const th = e.target.closest('[data-sc]');
+    if(th){
+      const k = th.dataset.sc;
+      if(st.sort === k) st.dir = st.dir === 'desc' ? 'asc' : 'desc';
+      else { st.sort = k; st.dir = (k === 'player' || k === 'team' || k === 'day' || k === 'opponent') ? 'asc' : 'desc'; }
+      st.offset = 0;
+      return load();
+    }
+
+    const tr = e.target.closest('tr.clickable');
+    if(tr && tr.dataset.pn){
+      st.mode = 'games'; st.q = tr.dataset.pn; st.sort = 'day'; st.dir = 'desc'; st.offset = 0;
+      $b('#cb-q').value = tr.dataset.pn;
+      box.querySelectorAll('[data-cm]').forEach(x =>
+        x.setAttribute('aria-pressed', x.dataset.cm === 'games' ? 'true' : 'false'));
+      return load();
+    }
+
+    if(e.target.closest('#cb-played')){
+      st.playedOnly = st.playedOnly ? '' : '1';
+      e.target.closest('#cb-played').setAttribute('aria-pressed', st.playedOnly ? 'true' : 'false');
+      st.offset = 0;
+      return load();
+    }
+
+    if(e.target.closest('#cb-clear')){
+      Object.assign(st, { q:'', team:'', seasonType:'', homeAway:'', result:'',
+                          from:'', to:'', minGames:'', playedOnly:'', offset:0 });
+      $b('#cb-q').value = ''; $b('#cb-from').value = ''; $b('#cb-to').value = ''; $b('#cb-mg').value = '';
+      $b('#cb-team').value = ''; $b('#cb-type').value = ''; $b('#cb-ha').value = ''; $b('#cb-res').value = '';
+      $b('#cb-played').setAttribute('aria-pressed', 'false');
+      return load();
+    }
+
+    if(e.target.closest('#cb-prev')){ st.offset = Math.max(0, st.offset - st.limit); return load(); }
+    if(e.target.closest('#cb-next')){ st.offset = st.offset + st.limit; return load(); }
+    if(e.target.closest('#cb-dl')){ window.open(qs({ format:'csv' }), '_blank'); }
+  });
+
+  load();
+}
+$('#open-cbb').addEventListener('click', cbbPanel);
+
 $('#open-copy').addEventListener('click', copyListPanel);
 
 $('#open-admin').addEventListener('click', adminPanel);
