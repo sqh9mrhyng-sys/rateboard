@@ -403,6 +403,35 @@ export async function onRequestGet({ request, env }) {
     } catch (e) { return { ids: [], games: {}, updated: 0, building: null }; }
   };
 
+  // The card marketplace. Listings page by an end-time cursor plus an offset,
+  // which is what the app itself uses.
+  if (url.searchParams.get('probeMarket')) {
+    const which = url.searchParams.get('probeMarket');
+    const B = 'https://web.realapp.com';
+    try {
+      if (which === 'config') {
+        const d = await rsGet(`${B}/cardmarketplaceconfiguration`, auth);
+        return json({ keys: Object.keys(d || {}), raw: JSON.stringify(d).slice(0, 2500) });
+      }
+      const p = new URLSearchParams();
+      for (const k of ['sport', 'season', 'listingType', 'rarity', 'prestige', 'cohort',
+                       'beforeEndsAt', 'offset']) {
+        const v = url.searchParams.get('m_' + k);
+        if (v != null) p.set(k, v);
+      }
+      const d = await rsGet(`${B}/cardmarketplacelistings?${p.toString()}`, auth);
+      const rows = rowsOf(d);
+      const arr = rows.length ? rows : (Array.isArray(d) ? d : []);
+      return json({
+        topLevelKeys: Object.keys(d || {}),
+        rowCount: arr.length,
+        firstRowKeys: arr[0] ? Object.keys(arr[0]) : [],
+        firstRow: arr[0] || null,
+        lastRowEnds: arr.length ? (arr[arr.length - 1].endsAt || null) : null
+      });
+    } catch (e) { return json({ error: String((e && e.message) || e) }, 502); }
+  }
+
   // Hunting for the market side: which shop sections exist beyond the two we
   // use, and whether there is a listings/auction endpoint at all.
   if (url.searchParams.get('scan') === 'market') {
