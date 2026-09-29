@@ -175,6 +175,50 @@ export async function onRequestGet({ request, env }) {
     } catch (e) { return json({ sub: probeSub, error: String((e && e.message) || e) }, 502); }
   }
 
+  // Try a fixed list of candidate URL shapes and report which ones answer.
+  // Used once, to find the screens behind "games played" and the owners count.
+  if (url.searchParams.get('probeMany')) {
+    const which = url.searchParams.get('probeMany').toLowerCase();
+    const pid = /^\d+$/.test(probePlayer || '') ? probePlayer : '5041935';
+    const B = 'https://web.realapp.com';
+    const LISTS = {
+      leaders: [
+        `${B}/playerstatleaders/${sport}/season/${season}?mode=totals&statType=50&before=0`,
+        `${B}/playerstatleaders/${sport}/season/${season}/stat/50?mode=totals&before=0`,
+        `${B}/playerstatleaders/${sport}/season/${season}/statType/50?mode=totals&before=0`,
+        `${B}/playerstatleaders/${sport}/seasons/${season}?mode=totals&statType=50`,
+        `${B}/playerstatleaders/${sport}?season=${season}&statType=50&mode=totals&before=0`,
+        `${B}/playerstatleaders/${sport}/${season}/50?mode=totals&before=0`
+      ],
+      owners: [
+        `${B}/players/${pid}/sport/${sport}/owners?season=${season}`,
+        `${B}/players/${pid}/sport/${sport}/holders?season=${season}`,
+        `${B}/players/${pid}/sport/${sport}/collectors?season=${season}`,
+        `${B}/players/${pid}/sport/${sport}/passholders?season=${season}`,
+        `${B}/userpassshop/${sport}/season/${season}/entity/player/${pid}`,
+        `${B}/userpassshop/${sport}/season/${season}/entity/player/${pid}/owners`,
+        `${B}/collection/${sport}/season/${season}/entity/player/${pid}/owners`
+      ]
+    };
+    const list = LISTS[which];
+    if (!list) return json({ error: 'probeMany must be leaders or owners' }, 400);
+    const out = [];
+    for (const u of list) {
+      const tail = u.replace(B, '');
+      try {
+        const d = await rsGet(u, auth);
+        const rows = rowsOf(d);
+        out.push({ path: tail, ok: true, keys: Object.keys(d || {}).slice(0, 25),
+                   rowCount: rows.length, firstRowKeys: rows[0] ? Object.keys(rows[0]).slice(0, 30) : [],
+                   sample: JSON.stringify(d).slice(0, 600) });
+      } catch (e) {
+        out.push({ path: tail, ok: false, why: String((e && e.message) || e).slice(0, 160) });
+      }
+      await sleep(250);
+    }
+    return json({ probeMany: which, results: out });
+  }
+
   if (url.searchParams.get('probeLeaders')) {
     const mode = (url.searchParams.get('mode') || 'averages').replace(/[^a-z]/g, '');
     try {
