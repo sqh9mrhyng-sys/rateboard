@@ -14,6 +14,7 @@
 const PAGE = 20;
 const CHUNK_PAGES = 8;               // pages per request, so one call stays quick
 const ALL_MAX_PAGES = 250;           // ?all=1 ceiling: 250 x 20 = 5,000 players
+const LIST_MAX_PAGES = 700;          // player-list ceiling: 700 x 20 = 14,000
 const GAP_MS = 350;                  // breathing room between pages
 const RETRIES = 3;                   // RS answers 429 under load
 const SPORTS = new Set(['ncaam', 'ncaaf', 'nfl', 'soccer', 'nba', 'mlb', 'nhl', 'ufc', 'wnba']);
@@ -272,6 +273,63 @@ export async function onRequestGet({ request, env }) {
     } catch (e) { return { ids: [], games: {}, updated: 0 }; }
   };
 
+  // A page that drives the collector to the end on its own, so the whole
+  // season can be gathered from one click instead of a dozen reloads.
+  if (url.searchParams.get('games') === 'go') {
+    const q = `sport=${encodeURIComponent(sport)}&season=${encodeURIComponent(season)}`;
+    const html = `<!doctype html><meta charset="utf-8">
+<title>Games played - ${sport} ${season}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root{color-scheme:light dark}
+  body{font:15px/1.5 system-ui,sans-serif;margin:0;padding:20px;max-width:760px}
+  h1{font-size:18px;margin:0 0 4px}
+  p{margin:0 0 14px;opacity:.75}
+  #bar{height:10px;border-radius:5px;background:#8883;overflow:hidden;margin:14px 0}
+  #fill{height:100%;width:0;background:#2b8a3e;transition:width .4s}
+  #log{white-space:pre-wrap;font:12px/1.45 ui-monospace,monospace;background:#8881;
+       border-radius:8px;padding:10px;max-height:50vh;overflow:auto}
+  a.btn{display:inline-block;margin-top:14px;padding:9px 14px;border-radius:8px;
+        background:#2b8a3e;color:#fff;text-decoration:none;font-weight:600}
+  a.btn[hidden]{display:none}
+</style>
+<h1>Games played &mdash; ${sport} ${season}</h1>
+<p id="sub">Starting&hellip; leave this tab open.</p>
+<div id="bar"><div id="fill"></div></div>
+<div id="log"></div>
+<a class="btn" id="dl" hidden href="/api/rax?${q}&combined=1&format=csv">Download the CSV</a>
+<script>
+const sub=document.getElementById('sub'),fill=document.getElementById('fill'),
+      log=document.getElementById('log'),dl=document.getElementById('dl');
+let stalled=0;
+function say(t){log.textContent+=t;log.scrollTop=log.scrollHeight}
+async function pass(){
+  const r=await fetch('/api/rax?${q}&games=1&limit=800',{cache:'no-store'});
+  const rd=r.body.getReader(),dec=new TextDecoder();let buf='',state=null;
+  for(;;){const{done,value}=await rd.read();if(done)break;
+    const t=dec.decode(value,{stream:true});buf+=t;say(t);
+    const m=buf.match(/##STATE (\\d+) (\\d+) (\\d+)/);
+    if(m)state={have:+m[1],total:+m[2],left:+m[3]};}
+  return state;
+}
+(async()=>{
+  for(let i=0;i<40;i++){
+    let s=null;
+    try{s=await pass()}catch(e){say('\\nnetwork hiccup: '+e+'\\nretrying...\\n');await new Promise(r=>setTimeout(r,4000));continue}
+    if(!s){say('\\n(building the player list - continuing)\\n');await new Promise(r=>setTimeout(r,1500));continue}
+    fill.style.width=(100*s.have/Math.max(1,s.total)).toFixed(1)+'%';
+    sub.textContent=s.have.toLocaleString()+' of '+s.total.toLocaleString()+' players done';
+    if(s.left<=0){sub.textContent='Done - '+s.total.toLocaleString()+' players.';dl.hidden=false;return}
+    if(s.left===stalled){say('\\nno progress on that pass - stopping.\\n');dl.hidden=false;return}
+    stalled=s.left;
+    say('\\n--- next pass ---\\n');
+  }
+  sub.textContent='Stopped after 40 passes - reopen this page to carry on.';dl.hidden=false;
+})();
+</script>`;
+    return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+  }
+
   const gamesArg = url.searchParams.get('games');
   if (gamesArg === 'status') {
     const st = await readGames();
@@ -296,7 +354,7 @@ export async function onRequestGet({ request, env }) {
           await send(`building the ${sport} ${season} player list...\n`);
           const ids = [];
           let before = 0;
-          for (let i = 0; i < ALL_MAX_PAGES; i++) {
+          for (let i = 0; i < LIST_MAX_PAGES; i++) {
             if (i) await sleep(GAP_MS);
             const rows = rowsOf(await rsGet(
               `https://web.realapp.com/userpassshop/${sport}/season/${season}/entity/player/section/earningstotal?before=${before}`, auth));
@@ -306,13 +364,20 @@ export async function onRequestGet({ request, env }) {
             if (rows.length < PAGE) break;
           }
           store.ids = ids;
+          if (url.searchParams.get('rebuild') === '1') store.games = {};
           await env.RATEBOARD_KV.put(GAMES_KEY, JSON.stringify(store));
           await send(`player list: ${ids.length}\n`);
+          // Building the list uses most of one request's outbound-call budget,
+          // so the games themselves start on the next pass.
+          await send(`list saved - collecting starts on the next pass.\n`);
+          await w.close();
+          return;
         }
 
         const missing = store.ids.filter(id => store.games[id] == null).slice(0, LIMIT);
         if (!missing.length) {
           await send(`nothing left to collect - all ${store.ids.length} players have a games figure.\n`);
+          await send(`##STATE ${store.ids.length} ${store.ids.length} 0\n`);
           await w.close();
           return;
         }
@@ -344,8 +409,9 @@ export async function onRequestGet({ request, env }) {
         const left = store.ids.length - have;
         await send(`\ncollected ${done} this run${blank ? ` (${blank} had no stats line)` : ''}.\n`);
         await send(left > 0
-          ? `${have} of ${store.ids.length} players done - ${left} to go. Reload this page to continue.\n`
+          ? `${have} of ${store.ids.length} players done - ${left} to go.\n`
           : `all ${store.ids.length} players have a games figure. The CSV will include it now.\n`);
+        await send(`##STATE ${have} ${store.ids.length} ${left}\n`);
       } catch (e) {
         await send(`\nstopped: ${String((e && e.message) || e).replace(/\n/g, ' ')}\n`);
       }
