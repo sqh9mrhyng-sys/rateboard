@@ -20,6 +20,11 @@ const BASE = 'https://rateboard-cgi.pages.dev/api/rax';
 // Add or reorder freely — anything already done is skipped in a single cheap
 // status call.
 const JOBS = [
+  // Already fully collected, so this one only ever takes its daily owner
+  // snapshot. A finished season still needs to be listed here or its
+  // ownership history never starts.
+  { sport: 'ncaam', season: 2026 },   // 2025-26
+
   { sport: 'ncaam', season: 2025 },   // 2024-25
   { sport: 'ncaam', season: 2024 },   // 2023-24
 
