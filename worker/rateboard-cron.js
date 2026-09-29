@@ -21,7 +21,18 @@ const BASE = 'https://rateboard-cgi.pages.dev/api/rax';
 // status call.
 const JOBS = [
   { sport: 'ncaam', season: 2025 },   // 2024-25
-  { sport: 'ncaam', season: 2024 }    // 2023-24
+  { sport: 'ncaam', season: 2024 },   // 2023-24
+
+  // Golf, newest first. Only 2026 is queued until the shape has been checked:
+  // the game-log table is built around team sports, so a golf round may not
+  // fill it sensibly. The rest go in once 2026 looks right.
+  { sport: 'golf', season: 2026 }
+  // { sport: 'golf', season: 2025 }, { sport: 'golf', season: 2024 },
+  // { sport: 'golf', season: 2023 }, { sport: 'golf', season: 2022 },
+  // { sport: 'golf', season: 2021 }, { sport: 'golf', season: 2020 },
+  // { sport: 'golf', season: 2019 }, { sport: 'golf', season: 2018 },
+  // { sport: 'golf', season: 2017 }, { sport: 'golf', season: 2016 },
+  // { sport: 'golf', season: 2015 }, { sport: 'golf', season: 2014 }
 ];
 
 // Players per firing. At roughly a third of a second each this keeps a run
