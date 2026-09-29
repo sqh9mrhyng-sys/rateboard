@@ -377,7 +377,7 @@
       <span><span class="sm-hide">Signed in as </span><b id="me"></b></span>
       <button class="linkbtn" id="open-report">Report a user</button>
       <button class="linkbtn hide" id="open-copy">Copy list</button>
-      <button class="linkbtn hide" id="open-cbb">CBB data</button>
+      <button class="linkbtn hide" id="open-cbb">Game data</button>
       <button class="linkbtn hide" id="open-min">Lists</button>
       <button class="linkbtn hide" id="open-admin">Admin</button>
       <button class="linkbtn" id="signout">Sign out</button>
@@ -3352,9 +3352,12 @@ const CBB_GAME_COLS = [
 async function cbbPanel(){
   const st = { mode:'players', sort:'rax', dir:'desc', offset:0, limit:100,
                q:'', team:'', seasonType:'', homeAway:'', result:'',
-               from:'', to:'', minGames:'', playedOnly:'', season:'2026' };
+               from:'', to:'', minGames:'', playedOnly:'', sport:'ncaam', season:'2026' };
 
-  const box = modal('CBB data — 2025-26', `
+  const box = modal('Game data', `
+    <div class="dtbar">
+      <select class="field grow" id="cb-season"><option value="ncaam|2026">Loading seasons…</option></select>
+    </div>
     <div class="seg" role="group" aria-label="View">
       <button data-cm="players" aria-pressed="true">By player</button>
       <button data-cm="games" aria-pressed="false">Every game</button>
@@ -3397,7 +3400,7 @@ async function cbbPanel(){
   const cols = () => st.mode === 'players' ? CBB_PLAYER_COLS : CBB_GAME_COLS;
 
   function qs(extra){
-    const p = new URLSearchParams({ sport:'ncaam', season: st.season, gamelog:'query',
+    const p = new URLSearchParams({ sport: st.sport, season: st.season, gamelog:'query',
       mode: st.mode, sort: st.sort, dir: st.dir });
     if(st.mode === 'players'){ p.set('limit', st.limit); p.set('offset', st.offset); }
     else { p.set('limit', st.limit); p.set('offset', st.offset); }
@@ -3444,13 +3447,33 @@ async function cbbPanel(){
     $b('#cb-next').disabled = st.offset + st.limit >= total;
   }
 
-  // Teams for the dropdown.
-  (async () => {
+  // Teams for the dropdown, refreshed whenever the season changes.
+  async function loadTeams(){
+    const sel = $b('#cb-team');
+    sel.innerHTML = '<option value="">Any team</option>';
     try {
-      const f = await (await fetch(`/api/rax?sport=ncaam&season=${st.season}&gamelog=facets`)).json();
-      if(f && f.teams) $b('#cb-team').insertAdjacentHTML('beforeend',
+      const f = await (await fetch(`/api/rax?sport=${st.sport}&season=${st.season}&gamelog=facets`)).json();
+      if(f && f.teams) sel.insertAdjacentHTML('beforeend',
         f.teams.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join(''));
     } catch(e){}
+  }
+
+  // Only the sport-seasons that have actually been collected are offered.
+  const SPORT_LABEL = { ncaam:'CBB', ncaaf:'CFB', nfl:'NFL', nba:'NBA', nhl:'NHL',
+                        mlb:'MLB', wnba:'WNBA', soccer:'FC', golf:'Golf', ufc:'UFC' };
+  (async () => {
+    try {
+      const d = await (await fetch('/api/rax?sport=ncaam&season=2026&gamelog=seasons')).json();
+      const rows = (d && d.seasons) || [];
+      if(!rows.length){ $b('#cb-season').innerHTML = '<option>Nothing collected yet</option>'; return; }
+      $b('#cb-season').innerHTML = rows.map(r =>
+        `<option value="${esc(r.sport)}|${r.season}">${esc(SPORT_LABEL[r.sport] || r.sport)} ${r.season}`
+        + ` — ${Number(r.players).toLocaleString()} players, ${Number(r.rows).toLocaleString()} games</option>`).join('');
+      const first = rows[0];
+      st.sport = first.sport; st.season = String(first.season);
+      await loadTeams();
+      load();
+    } catch(e){ $b('#cb-season').innerHTML = '<option>Could not load seasons</option>'; }
   })();
 
   let typing;
@@ -3464,7 +3487,13 @@ async function cbbPanel(){
     typing = setTimeout(load, 300);
   });
 
-  box.addEventListener('change', e => {
+  box.addEventListener('change', async e => {
+    if(e.target.id === 'cb-season'){
+      const [sp, se] = String(e.target.value).split('|');
+      st.sport = sp; st.season = se; st.team = ''; st.offset = 0;
+      await loadTeams();
+      return load();
+    }
     const map = { 'cb-team':'team', 'cb-type':'seasonType', 'cb-ha':'homeAway', 'cb-res':'result' };
     if(!map[e.target.id]) return;
     st[map[e.target.id]] = e.target.value;
@@ -3521,8 +3550,6 @@ async function cbbPanel(){
     if(e.target.closest('#cb-next')){ st.offset = st.offset + st.limit; return load(); }
     if(e.target.closest('#cb-dl')){ window.open(qs({ format:'csv' }), '_blank'); }
   });
-
-  load();
 }
 $('#open-cbb').addEventListener('click', cbbPanel);
 
