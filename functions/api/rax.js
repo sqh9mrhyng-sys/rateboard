@@ -77,6 +77,121 @@ function hashidsEncode(number) {
   return ret.join('');
 }
 
+
+// ---------------------------------------------------------------------------
+// Game-by-game logs
+//
+// Every game a player appeared in comes back on their season feed, each with
+// the rax that game earned plus the full box line. One player per call, so the
+// season is gathered a slice at a time into D1 and exported from there.
+
+const GAMELOG_DDL = `CREATE TABLE IF NOT EXISTS gamelog (
+  sport TEXT NOT NULL,
+  season INTEGER NOT NULL,
+  playerId INTEGER NOT NULL,
+  gameId INTEGER NOT NULL,
+  player TEXT, team TEXT, jersey INTEGER, position TEXT,
+  day TEXT, seasonType TEXT, opponent TEXT, homeAway TEXT,
+  teamScore INTEGER, oppScore INTEGER, result TEXT,
+  rax REAL,
+  played INTEGER, min INTEGER, pts INTEGER, reb INTEGER, oreb INTEGER, dreb INTEGER,
+  ast INTEGER, stl INTEGER, blk INTEGER, tov INTEGER, pf INTEGER, plusMinus INTEGER,
+  fg TEXT, fgPct REAL, fg3 TEXT, fg3Pct REAL, ft TEXT, ftPct REAL, tsPct REAL,
+  fantasyPts REAL, comments INTEGER,
+  PRIMARY KEY (sport, season, playerId, gameId)
+)`;
+
+const GAMELOG_COLS = ['sport','season','playerId','gameId','player','team','jersey','position',
+  'day','seasonType','opponent','homeAway','teamScore','oppScore','result','rax',
+  'played','min','pts','reb','oreb','dreb','ast','stl','blk','tov','pf','plusMinus',
+  'fg','fgPct','fg3','fg3Pct','ft','ftPct','tsPct','fantasyPts','comments'];
+
+// Turns one box score from the season feed into a flat row.
+function gamelogRow(sport, season, b) {
+  const sv = {};
+  for (const x of (b.statValues || [])) if (x && x.label) sv[x.label] = x;
+  const val = k => { const x = sv[k]; return x && x.value != null ? x.value : null; };
+  const numv = k => { const v = val(k); const n = Number(v); return Number.isFinite(n) ? n : null; };
+  const pct = k => { const x = sv[k]; if (!x) return null;
+    const n = Number(String(x.secondaryValue == null ? '' : x.secondaryValue).replace('%', ''));
+    return Number.isFinite(n) ? n : null; };
+
+  const isHome = b.homeTeamId != null && b.teamId != null && b.homeTeamId === b.teamId;
+  const oppTeam = isHome ? (b.awayTeam || {}) : (b.homeTeam || {});
+  const p = b.player || {};
+  const t = b.team || {};
+  const rax = Number(b.value);
+
+  return {
+    sport, season: Number(season), playerId: b.playerId, gameId: b.gameId,
+    player: [p.firstName, p.lastName].filter(Boolean).join(' ').trim() || null,
+    team: t.key || null, jersey: p.jersey == null ? null : Number(p.jersey), position: b.position || null,
+    day: b.day || null, seasonType: b.seasonType || null,
+    opponent: oppTeam.key || null, homeAway: isHome ? 'home' : 'away',
+    teamScore: isHome ? b.homeTeamScore : b.awayTeamScore,
+    oppScore: isHome ? b.awayTeamScore : b.homeTeamScore,
+    result: b.gameResultLabel || null,
+    rax: Number.isFinite(rax) ? rax : null,
+    played: b.played ? 1 : 0,
+    min: numv('min'), pts: numv('pts'), reb: numv('reb'), oreb: numv('oreb'), dreb: numv('dreb'),
+    ast: numv('ast'), stl: numv('stl'), blk: numv('blk'), tov: numv('to'), pf: numv('pf'),
+    plusMinus: numv('+/-'),
+    fg: val('fg') == null ? null : String(val('fg')), fgPct: pct('fg') != null ? pct('fg') : numv('fg%'),
+    fg3: val('3fg') == null ? null : String(val('3fg')), fg3Pct: pct('3fg'),
+    ft: val('fts') == null ? null : String(val('fts')), ftPct: pct('fts'),
+    tsPct: numv('ts%'),
+    fantasyPts: b.fantasyStats && b.fantasyStats.default != null ? Number(b.fantasyStats.default) : null,
+    comments: b.commentCount == null ? null : Number(b.commentCount)
+  };
+}
+
+// A page that keeps calling a collector until it reports nothing left, so a
+// whole season can be gathered from one click.
+function runnerHtml(opts) {
+  const esc = t => String(t).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+  return '<!doctype html><meta charset="utf-8">'
+    + '<title>' + esc(opts.title) + '</title>'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    + '<style>'
+    + ':root{color-scheme:light dark}'
+    + 'body{font:15px/1.5 system-ui,sans-serif;margin:0;padding:20px;max-width:760px}'
+    + 'h1{font-size:18px;margin:0 0 4px}p{margin:0 0 14px;opacity:.75}'
+    + '#bar{height:10px;border-radius:5px;background:#8883;overflow:hidden;margin:14px 0}'
+    + '#fill{height:100%;width:0;background:#2b8a3e;transition:width .4s}'
+    + '#log{white-space:pre-wrap;font:12px/1.45 ui-monospace,monospace;background:#8881;'
+    + 'border-radius:8px;padding:10px;max-height:50vh;overflow:auto}'
+    + 'a.btn{display:inline-block;margin-top:14px;padding:9px 14px;border-radius:8px;'
+    + 'background:#2b8a3e;color:#fff;text-decoration:none;font-weight:600}a.btn[hidden]{display:none}'
+    + '</style>'
+    + '<h1>' + esc(opts.title) + '</h1>'
+    + '<p id="sub">Starting&hellip; leave this tab open.</p>'
+    + '<div id="bar"><div id="fill"></div></div><div id="log"></div>'
+    + '<a class="btn" id="dl" hidden href="' + esc(opts.dlUrl) + '">' + esc(opts.dlLabel || 'Download the CSV') + '</a>'
+    + '<script>\n'
+    + 'var PASS=' + JSON.stringify(opts.passUrl) + ';\n'
+    + 'var sub=document.getElementById("sub"),fill=document.getElementById("fill"),'
+    + 'log=document.getElementById("log"),dl=document.getElementById("dl"),stalled=-1;\n'
+    + 'function say(t){log.textContent+=t;log.scrollTop=log.scrollHeight}\n'
+    + 'async function pass(){\n'
+    + '  var r=await fetch(PASS,{cache:"no-store"});\n'
+    + '  var rd=r.body.getReader(),dec=new TextDecoder(),buf="",state=null;\n'
+    + '  for(;;){var c=await rd.read();if(c.done)break;var t=dec.decode(c.value,{stream:true});\n'
+    + '    buf+=t;say(t);var m=buf.match(/##STATE (\\d+) (\\d+) (\\d+)/);\n'
+    + '    if(m)state={have:+m[1],total:+m[2],left:+m[3]};}\n'
+    + '  return state;}\n'
+    + '(async function(){\n'
+    + '  for(var i=0;i<60;i++){var s=null;\n'
+    + '    try{s=await pass()}catch(e){say("\\nnetwork hiccup: "+e+"\\nretrying...\\n");await new Promise(r=>setTimeout(r,4000));continue}\n'
+    + '    if(!s){say("\\n(setting up - continuing)\\n");await new Promise(r=>setTimeout(r,1500));continue}\n'
+    + '    fill.style.width=(100*s.have/Math.max(1,s.total)).toFixed(1)+"%";\n'
+    + '    sub.textContent=s.have.toLocaleString()+" of "+s.total.toLocaleString()+" players done";\n'
+    + '    if(s.left<=0){sub.textContent="Done - "+s.total.toLocaleString()+" players.";dl.hidden=false;return}\n'
+    + '    if(s.left===stalled){say("\\nno progress on that pass - stopping.\\n");dl.hidden=false;return}\n'
+    + '    stalled=s.left;say("\\n--- next pass ---\\n");}\n'
+    + '  sub.textContent="Stopped after 60 passes - reopen this page to carry on.";dl.hidden=false;})();\n'
+    + '</' + 'script>';
+}
+
 function rsHeaders(auth) {
   return {
     'Accept': 'application/json',
@@ -272,6 +387,184 @@ export async function onRequestGet({ request, env }) {
                                           : { ids: [], games: {}, updated: 0 };
     } catch (e) { return { ids: [], games: {}, updated: 0 }; }
   };
+
+  // ---- game-by-game -------------------------------------------------------
+  //   ?gamelog=probe    -> one player's feed at a high limit, to see how many
+  //                        games come back in a single call
+  //   ?gamelog=go       -> collect the whole season, hands-off
+  //   ?gamelog=1        -> collect one slice
+  //   ?gamelog=status   -> progress
+  //   ?gamelog=csv      -> the export
+  const glArg = url.searchParams.get('gamelog');
+  if (glArg) {
+    const db = env.RATEBOARD_DB;
+    const DONE_KEY = `gamelog_done_${sport}_${season}`;
+    const feedUrl = (id, limit) =>
+      `https://web.realapp.com/players/${id}/sport/${sport}/seasonfeed?limit=${limit}&season=${season}&view=recent&viewFrame=default`;
+
+    const readDone = async () => {
+      try {
+        const raw = await env.RATEBOARD_KV.get(DONE_KEY);
+        const o = raw ? JSON.parse(raw) : null;
+        return (o && o.done) ? o.done : {};
+      } catch (e) { return {}; }
+    };
+
+    if (glArg === 'probe') {
+      const pid = /^\d+$/.test(probePlayer || '') ? probePlayer : '5041935';
+      const lim = Math.min(400, Math.max(1, parseInt(url.searchParams.get('limit') || '200', 10) || 200));
+      try {
+        const d = await rsGet(feedUrl(pid, lim), auth);
+        const bs = (d && d.playerBoxScores) || [];
+        return json({
+          playerId: pid, askedFor: lim, gamesReturned: bs.length,
+          gamesInStatsLine: d && d.statsInfo ? d.statsInfo.games : null,
+          complete: !!(d && d.statsInfo && bs.length >= d.statsInfo.games),
+          sampleRow: bs.length ? gamelogRow(sport, season, bs[0]) : null
+        });
+      } catch (e) { return json({ error: String((e && e.message) || e) }, 502); }
+    }
+
+    if (glArg === 'status') {
+      const store = await readGames();
+      const done = await readDone();
+      const have = store.ids.filter(id => done[id]).length;
+      let rows = null;
+      try {
+        const r = await db.prepare('SELECT COUNT(*) AS n FROM gamelog WHERE sport = ? AND season = ?')
+                          .bind(sport, Number(season)).first();
+        rows = r ? r.n : null;
+      } catch (e) {}
+      return json({ players: store.ids.length, playersDone: have,
+                    remaining: Math.max(0, store.ids.length - have), gameRows: rows });
+    }
+
+    if (glArg === 'go') {
+      const q = `sport=${encodeURIComponent(sport)}&season=${encodeURIComponent(season)}`;
+      return new Response(runnerHtml({
+        title: `Game logs - ${sport} ${season}`,
+        passUrl: `/api/rax?${q}&gamelog=1&limit=700`,
+        dlUrl: `/api/rax?${q}&gamelog=csv`,
+        dlLabel: 'Download the game-by-game CSV'
+      }), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+    }
+
+    if (glArg === 'csv') {
+      const { readable, writable } = new TransformStream();
+      const w = writable.getWriter();
+      const enc = new TextEncoder();
+      const cell = v => {
+        const t = v == null ? '' : String(v);
+        return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+      };
+      (async () => {
+        try {
+          await w.write(enc.encode(GAMELOG_COLS.join(',') + '\n'));
+          const CHUNK = 4000;
+          let offset = 0;
+          for (;;) {
+            const r = await db.prepare(
+              `SELECT ${GAMELOG_COLS.join(', ')} FROM gamelog WHERE sport = ? AND season = ?
+               ORDER BY playerId, day, gameId LIMIT ? OFFSET ?`)
+              .bind(sport, Number(season), CHUNK, offset).all();
+            const rows = (r && r.results) || [];
+            if (!rows.length) break;
+            let out = '';
+            for (const row of rows) out += GAMELOG_COLS.map(c => cell(row[c])).join(',') + '\n';
+            await w.write(enc.encode(out));
+            offset += rows.length;
+            if (rows.length < CHUNK) break;
+          }
+          await w.write(enc.encode(`# ${offset} game rows\n`));
+        } catch (e) {
+          await w.write(enc.encode(`# stopped: ${String((e && e.message) || e).replace(/\n/g, ' ')}\n`));
+        }
+        await w.close();
+      })();
+      return new Response(readable, {
+        headers: {
+          'content-type': 'text/csv; charset=utf-8',
+          'content-disposition': `attachment; filename="${sport}-${season}-game-by-game.csv"`,
+          'cache-control': 'no-store'
+        }
+      });
+    }
+
+    if (glArg === '1') {
+      const LIMIT = Math.min(800, Math.max(25, parseInt(url.searchParams.get('limit') || '700', 10) || 700));
+      const { readable, writable } = new TransformStream();
+      const w = writable.getWriter();
+      const enc = new TextEncoder();
+      const send = t => w.write(enc.encode(t));
+
+      (async () => {
+        try {
+          await db.prepare(GAMELOG_DDL).run();
+          const store = await readGames();
+          if (!store.ids.length) {
+            await send('no player list yet - open the same link with &games=1&rebuild=1 first.\n');
+            await w.close();
+            return;
+          }
+          const done = await readDone();
+          const todo = store.ids.filter(id => !done[id]).slice(0, LIMIT);
+          if (!todo.length) {
+            await send(`nothing left - all ${store.ids.length} players have their game log.\n`);
+            await send(`##STATE ${store.ids.length} ${store.ids.length} 0\n`);
+            await w.close();
+            return;
+          }
+          await send(`collecting game logs for ${todo.length} of ${store.ids.length} players...\n`);
+
+          const place = '(' + GAMELOG_COLS.map(() => '?').join(',') + ')';
+          let n = 0, rowsWritten = 0;
+          for (const id of todo) {
+            try {
+              const d = await rsGet(feedUrl(id, 200), auth);
+              const bs = (d && d.playerBoxScores) || [];
+              const rows = bs.filter(b => b && b.gameId != null).map(b => gamelogRow(sport, season, b));
+              for (let i = 0; i < rows.length; i += 20) {
+                const slice = rows.slice(i, i + 20);
+                const binds = [];
+                for (const r of slice) for (const c of GAMELOG_COLS) binds.push(r[c] === undefined ? null : r[c]);
+                await db.prepare(
+                  `INSERT OR REPLACE INTO gamelog (${GAMELOG_COLS.join(',')}) VALUES ` +
+                  slice.map(() => place).join(',')
+                ).bind(...binds).run();
+              }
+              rowsWritten += rows.length;
+              done[id] = 1;
+            } catch (e) {
+              // leave unmarked so the next pass retries this player
+            }
+            n++;
+            if (n % 50 === 0) {
+              await env.RATEBOARD_KV.put(DONE_KEY, JSON.stringify({ done, updated: Date.now() }));
+              await send(`  ${n} / ${todo.length}  (${rowsWritten} game rows)\n`);
+            }
+            await sleep(120);
+          }
+          await env.RATEBOARD_KV.put(DONE_KEY, JSON.stringify({ done, updated: Date.now() }));
+
+          const have = store.ids.filter(id => done[id]).length;
+          const left = store.ids.length - have;
+          await send(`\ncollected ${n} players this run, ${rowsWritten} game rows.\n`);
+          await send(left > 0 ? `${have} of ${store.ids.length} players done - ${left} to go.\n`
+                              : `all ${store.ids.length} players done.\n`);
+          await send(`##STATE ${have} ${store.ids.length} ${left}\n`);
+        } catch (e) {
+          await send(`\nstopped: ${String((e && e.message) || e).replace(/\n/g, ' ')}\n`);
+        }
+        await w.close();
+      })();
+
+      return new Response(readable, {
+        headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }
+      });
+    }
+
+    return json({ error: 'gamelog must be one of: probe, go, 1, status, csv' }, 400);
+  }
 
   // A page that drives the collector to the end on its own, so the whole
   // season can be gathered from one click instead of a dozen reloads.
