@@ -388,6 +388,19 @@ export async function onRequestGet({ request, env }) {
     } catch (e) { return { ids: [], games: {}, updated: 0 }; }
   };
 
+  // What a card actually earned for one game. "userpass" in the path is a
+  // warning that this may be scoped to the signed-in account's own card rather
+  // than to the player, which is the first thing to check here.
+  if (url.searchParams.get('probeEarnings')) {
+    const box = String(url.searchParams.get('probeEarnings')).replace(/[^0-9]/g, '');
+    const pid = /^\d+$/.test(probePlayer || '') ? probePlayer : '5041935';
+    if (!box) return json({ error: 'probeEarnings needs a playerBoxScoreId' }, 400);
+    const u = `https://web.realapp.com/userpassearnings/${sport}/season/${season}/entity/player/${pid}?playerBoxScoreId=${box}`;
+    try {
+      return json({ playerId: pid, playerBoxScoreId: box, raw: await rsGet(u, auth) });
+    } catch (e) { return json({ error: String((e && e.message) || e) }, 502); }
+  }
+
   // ---- game-by-game -------------------------------------------------------
   //   ?gamelog=probe    -> one player's feed at a high limit, to see how many
   //                        games come back in a single call
