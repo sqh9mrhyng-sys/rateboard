@@ -697,6 +697,17 @@ export async function onRequestGet({ request, env }) {
       }
     }
 
+    // Which sport-seasons actually hold data, so the explorer can offer them
+    // rather than assuming one season exists.
+    if (glArg === 'seasons') {
+      try {
+        const r = await db.prepare(
+          `SELECT sport, season, COUNT(*) AS rows, COUNT(DISTINCT playerId) AS players
+             FROM gamelog GROUP BY sport, season ORDER BY sport, season DESC`).all();
+        return json({ seasons: (r && r.results) || [] });
+      } catch (e) { return json({ error: String((e && e.message) || e) }, 500); }
+    }
+
     // The distinct teams and opponents present, to fill the filter dropdowns.
     if (glArg === 'facets') {
       try {
@@ -997,7 +1008,7 @@ export async function onRequestGet({ request, env }) {
       });
     }
 
-    return json({ error: 'gamelog must be one of: probe, go, 1, status, rax, raxgo, raxstatus, check, zerofill, player, query, facets, csv' }, 400);
+    return json({ error: 'gamelog must be one of: probe, go, 1, status, rax, raxgo, raxstatus, check, zerofill, player, query, seasons, facets, csv' }, 400);
   }
 
   // A page that drives the collector to the end on its own, so the whole
