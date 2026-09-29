@@ -149,9 +149,55 @@ export async function onRequestGet({ request, env }) {
     }
   }
 
-  // ?all=1 walks the entire season in one go and hands back the finished file.
-  // It's slow by design — the pages are spaced out so RS doesn't throttle — but
-  // it means the whole thing is one click rather than a loop somewhere else.
+  // ?all=1&format=csv streams: a season runs to thousands of players and the
+  // pages have to be spaced out, so waiting for the whole walk before replying
+  // would time out. Instead the response opens immediately and each page is
+  // written as it arrives, and the browser saves it as it goes.
+  if (url.searchParams.get('all') === '1' && url.searchParams.get('format') === 'csv') {
+    const { readable, writable } = new TransformStream();
+    const w = writable.getWriter();
+    const enc = new TextEncoder();
+    const cell = v => {
+      const t = v == null ? '' : String(v);
+      return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+    };
+    const COLS = ['rank', 'player', 'rax', 'playerId', 'teamId', 'jersey', 'firstName', 'lastName', 'sport', 'season'];
+
+    (async () => {
+      let n = 0, before = 0;
+      try {
+        await w.write(enc.encode(COLS.join(',') + '\n'));
+        for (let i = 0; i < ALL_MAX_PAGES; i++) {
+          if (i) await sleep(GAP_MS);
+          const rows = rowsOf(await rsGet(page(before), auth));
+          for (const r of rows) {
+            n++;
+            const e = r.entity || {};
+            await w.write(enc.encode([
+              n, r.label || '', r.value, r.id, e.teamId, e.jersey,
+              e.firstName, e.lastName, r.sport, season
+            ].map(cell).join(',') + '\n'));
+          }
+          before += PAGE;
+          if (rows.length < PAGE) break;
+        }
+      } catch (e) {
+        // Partial file beats no file — say where it stopped, in the file.
+        await w.write(enc.encode(`# stopped after ${n} players: ${String((e && e.message) || e).replace(/\n/g, ' ')}\n`));
+      }
+      await w.close();
+    })();
+
+    return new Response(readable, {
+      headers: {
+        'content-type': 'text/csv; charset=utf-8',
+        'content-disposition': `attachment; filename="${sport}-${season}-rax.csv"`,
+        'cache-control': 'no-store'
+      }
+    });
+  }
+
+  // ?all=1 without csv still walks in one go, for a quick look in the browser.
   const start = Math.max(0, parseInt(url.searchParams.get('start') || '0', 10));
   const wantsAll = url.searchParams.get('all') === '1';
   const out = [];
