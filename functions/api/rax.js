@@ -12,7 +12,9 @@
 // proxy for the account token sitting in RS_AUTH_TOKEN.
 
 const PAGE = 20;
-const MAX_PAGES = 300;               // hard stop; 300 x 20 = 6,000 players
+const CHUNK_PAGES = 8;               // pages per request, so one call stays quick
+const GAP_MS = 350;                  // breathing room between pages
+const RETRIES = 3;                   // RS answers 429 under load
 const SPORTS = new Set(['ncaam', 'ncaaf', 'nfl', 'soccer', 'nba', 'mlb', 'nhl', 'ufc', 'wnba']);
 const SECTIONS = new Set(['earningstotal']);
 
@@ -87,13 +89,21 @@ function rsHeaders(auth) {
   };
 }
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// RS throttles hard when pages are pulled back to back, so each page is spaced
+// out and a 429 is waited on rather than thrown straight at the caller.
 async function rsGet(url, auth) {
-  const res = await fetch(url, { headers: rsHeaders(auth) });
-  if (!res.ok) {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, { headers: rsHeaders(auth) });
+    if (res.ok) return res.json();
     const body = await res.text().catch(() => '');
+    if (res.status === 429 && attempt < RETRIES) {
+      await sleep(1500 * (attempt + 1));
+      continue;
+    }
     throw new Error(`RS ${res.status}: ${body.slice(0, 200)}`);
   }
-  return res.json();
 }
 
 // The list rows come back under a few possible keys depending on the section,
@@ -138,20 +148,25 @@ export async function onRequestGet({ request, env }) {
     }
   }
 
+  // One call walks a handful of pages and reports where to pick up, so the
+  // caller can work through a whole season without any single request
+  // running long enough to be killed.
+  const start = Math.max(0, parseInt(url.searchParams.get('start') || '0', 10));
   const out = [];
+  let next = start, done = false;
   try {
-    for (let i = 0; i < MAX_PAGES; i++) {
-      const data = await rsGet(page(i * PAGE), auth);
-      const rows = rowsOf(data);
-      if (!rows.length) break;
+    for (let i = 0; i < CHUNK_PAGES; i++) {
+      if (i) await sleep(GAP_MS);
+      const rows = rowsOf(await rsGet(page(next), auth));
       out.push(...rows);
-      if (rows.length < PAGE) break;
+      next += PAGE;
+      if (rows.length < PAGE) { done = true; break; }
     }
   } catch (e) {
-    return json({ error: String((e && e.message) || e), gotSoFar: out.length }, 502);
+    return json({ error: String((e && e.message) || e), got: out.length, nextStart: next }, 502);
   }
 
-  if (url.searchParams.get('format') === 'csv') {
+  if (url.searchParams.get('format') === 'csv') {   // single chunk only
     const cell = v => {
       const s = v == null ? '' : String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -169,5 +184,5 @@ export async function onRequestGet({ request, env }) {
     });
   }
 
-  return json({ sport, season, section, count: out.length, players: out });
+  return json({ sport, season, section, count: out.length, done, nextStart: done ? null : next, players: out });
 }
