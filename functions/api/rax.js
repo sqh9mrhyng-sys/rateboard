@@ -15,6 +15,7 @@ const PAGE = 20;
 const CHUNK_PAGES = 8;               // pages per request, so one call stays quick
 const ALL_MAX_PAGES = 250;           // ?all=1 ceiling: 250 x 20 = 5,000 players
 const LIST_MAX_PAGES = 700;          // player-list ceiling: 700 x 20 = 14,000
+const LIST_CHUNK_PAGES = 60;         // pages per call, so a scheduled run finishes in time
 const GAP_MS = 350;                  // breathing room between pages
 const RETRIES = 3;                   // RS answers 429 under load
 const SPORTS = new Set(['ncaam', 'ncaaf', 'nfl', 'soccer', 'nba', 'mlb', 'nhl', 'ufc', 'wnba']);
@@ -396,9 +397,10 @@ export async function onRequestGet({ request, env }) {
     try {
       const raw = await env.RATEBOARD_KV.get(GAMES_KEY);
       const o = raw ? JSON.parse(raw) : null;
-      return (o && typeof o === 'object') ? { ids: o.ids || [], games: o.games || {}, updated: o.updated || 0 }
-                                          : { ids: [], games: {}, updated: 0 };
-    } catch (e) { return { ids: [], games: {}, updated: 0 }; }
+      return (o && typeof o === 'object')
+        ? { ids: o.ids || [], games: o.games || {}, updated: o.updated || 0, building: o.building || null }
+        : { ids: [], games: {}, updated: 0, building: null };
+    } catch (e) { return { ids: [], games: {}, updated: 0, building: null }; }
   };
 
   // A capability sweep: which sports RS answers for, which season number is
@@ -986,6 +988,7 @@ async function pass(){
     const have = st.ids.filter(id => st.games[id] != null).length;
     return json({ players: st.ids.length, withGames: have,
                   remaining: Math.max(0, st.ids.length - have),
+                  listBuilding: st.building ? st.building.ids.length : null,
                   updated: st.updated ? new Date(st.updated).toISOString() : null });
   }
 
@@ -1001,25 +1004,37 @@ async function pass(){
         const store = await readGames();
 
         if (!store.ids.length || url.searchParams.get('rebuild') === '1') {
-          await send(`building the ${sport} ${season} player list...\n`);
-          const ids = [];
-          let before = 0;
-          for (let i = 0; i < LIST_MAX_PAGES; i++) {
+          // Built a chunk at a time and parked in KV between calls. A full
+          // list is a couple of minutes of paging, which is longer than a
+          // scheduled run gets, so it has to survive being stopped part way.
+          if (url.searchParams.get('rebuild') === '1') store.building = null;
+          const part = store.building || { ids: [], before: 0 };
+          await send(`building the ${sport} ${season} player list (${part.ids.length} so far)...\n`);
+
+          let finished = false;
+          for (let i = 0; i < LIST_CHUNK_PAGES; i++) {
             if (i) await sleep(GAP_MS);
             const rows = rowsOf(await rsGet(
-              `https://web.realapp.com/userpassshop/${sport}/season/${season}/entity/player/section/earningstotal?before=${before}`, auth));
-            for (const r of rows) if (r && r.id != null) ids.push(String(r.id));
-            before += PAGE;
-            await send(`  ${ids.length} players\n`);
-            if (rows.length < PAGE) break;
+              `https://web.realapp.com/userpassshop/${sport}/season/${season}/entity/player/section/earningstotal?before=${part.before}`, auth));
+            for (const r of rows) if (r && r.id != null) part.ids.push(String(r.id));
+            part.before += PAGE;
+            await send(`  ${part.ids.length} players\n`);
+            if (rows.length < PAGE) { finished = true; break; }
+            if (part.before >= LIST_MAX_PAGES * PAGE) { finished = true; break; }
           }
-          store.ids = ids;
-          if (url.searchParams.get('rebuild') === '1') store.games = {};
-          await env.RATEBOARD_KV.put(GAMES_KEY, JSON.stringify(store));
-          await send(`player list: ${ids.length}\n`);
-          // Building the list uses most of one request's outbound-call budget,
-          // so the games themselves start on the next pass.
-          await send(`list saved - collecting starts on the next pass.\n`);
+
+          if (finished) {
+            store.ids = part.ids;
+            store.building = null;
+            if (url.searchParams.get('rebuild') === '1') store.games = {};
+            await env.RATEBOARD_KV.put(GAMES_KEY, JSON.stringify(store));
+            await send(`player list: ${part.ids.length}\n`);
+            await send(`list saved - collecting starts on the next pass.\n`);
+          } else {
+            store.building = part;
+            await env.RATEBOARD_KV.put(GAMES_KEY, JSON.stringify(store));
+            await send(`${part.ids.length} players so far - continuing on the next pass.\n`);
+          }
           await w.close();
           return;
         }
