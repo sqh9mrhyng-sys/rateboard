@@ -669,7 +669,13 @@ export async function onRequestGet({ request, env }) {
               // One statement per row: D1 caps how many values a single query
               // may bind, so rows go in as a batch of small statements instead
               // of one wide insert.
-              const sql = `INSERT OR REPLACE INTO gamelog (${GAMELOG_FEED_COLS.join(',')}) VALUES ${place}`;
+              // Upsert rather than replace: a plain REPLACE would drop the
+              // rax figure written by the other pass.
+              const keyCols = ['sport', 'season', 'playerId', 'gameId'];
+              const sets = GAMELOG_FEED_COLS.filter(c => !keyCols.includes(c))
+                                            .map(c => `${c}=excluded.${c}`).join(', ');
+              const sql = `INSERT INTO gamelog (${GAMELOG_FEED_COLS.join(',')}) VALUES ${place} `
+                        + `ON CONFLICT(${keyCols.join(',')}) DO UPDATE SET ${sets}`;
               for (let i = 0; i < rows.length; i += 40) {
                 const batch = rows.slice(i, i + 40).map(r =>
                   db.prepare(sql).bind(...GAMELOG_FEED_COLS.map(c => r[c] === undefined ? null : r[c])));
