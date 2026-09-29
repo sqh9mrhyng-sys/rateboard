@@ -17,7 +17,7 @@ const ALL_MAX_PAGES = 250;           // ?all=1 ceiling: 250 x 20 = 5,000 players
 const GAP_MS = 350;                  // breathing room between pages
 const RETRIES = 3;                   // RS answers 429 under load
 const SPORTS = new Set(['ncaam', 'ncaaf', 'nfl', 'soccer', 'nba', 'mlb', 'nhl', 'ufc', 'wnba']);
-const SECTIONS = new Set(['earningstotal']);
+const SECTIONS = new Set(['earningstotal', 'hotseason']);   // earnings | purchases
 
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj, null, 2), {
@@ -185,6 +185,70 @@ export async function onRequestGet({ request, env }) {
     } catch (e) {
       return json({ error: String((e && e.message) || e) }, 502);
     }
+  }
+
+  // ?combined=1&format=csv — one row per player with BOTH numbers.
+  // Purchases are collected first into a lookup, then the earnings walk streams
+  // rows as it goes, joined on player id. The purchases pass writes a progress
+  // line per page so the connection never sits silent long enough to be cut.
+  if (url.searchParams.get('combined') === '1') {
+    const { readable, writable } = new TransformStream();
+    const w = writable.getWriter();
+    const enc = new TextEncoder();
+    const send = t => w.write(enc.encode(t));
+    const cell = v => {
+      const t = v == null ? '' : String(v);
+      return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+    };
+    const walk = async (sec, onPage) => {
+      let before = 0;
+      for (let i = 0; i < ALL_MAX_PAGES; i++) {
+        if (i) await sleep(GAP_MS);
+        const rows = rowsOf(await rsGet(
+          `https://web.realapp.com/userpassshop/${sport}/season/${season}/entity/player/section/${sec}?before=${before}`, auth));
+        await onPage(rows);
+        before += PAGE;
+        if (rows.length < PAGE) break;
+      }
+    };
+
+    (async () => {
+      const purchases = new Map();
+      try {
+        await send(`# building ${sport} ${season}: purchases first, then earnings\n`);
+        let seen = 0;
+        await walk('hotseason', async rows => {
+          for (const r of rows) purchases.set(r.id, r.value);
+          seen += rows.length;
+          await send(`# purchases collected: ${seen}\n`);
+        });
+
+        await send(['rank', 'player', 'rax', 'purchases', 'playerId', 'teamId',
+                    'jersey', 'firstName', 'lastName', 'sport', 'season'].join(',') + '\n');
+        let n = 0;
+        await walk('earningstotal', async rows => {
+          for (const r of rows) {
+            n++;
+            const e = r.entity || {};
+            await send([n, r.label || '', r.value, purchases.has(r.id) ? purchases.get(r.id) : '',
+                        r.id, e.teamId, e.jersey, e.firstName, e.lastName, r.sport, season]
+                       .map(cell).join(',') + '\n');
+          }
+        });
+        await send(`# done: ${n} players, ${purchases.size} with a purchases figure\n`);
+      } catch (e) {
+        await send(`# stopped: ${String((e && e.message) || e).replace(/\n/g, ' ')}\n`);
+      }
+      await w.close();
+    })();
+
+    return new Response(readable, {
+      headers: {
+        'content-type': 'text/csv; charset=utf-8',
+        'content-disposition': `attachment; filename="${sport}-${season}-rax-and-purchases.csv"`,
+        'cache-control': 'no-store'
+      }
+    });
   }
 
   // ?all=1&format=csv streams: a season runs to thousands of players and the
