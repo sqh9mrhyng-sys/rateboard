@@ -131,6 +131,44 @@ export async function onRequestGet({ request, env }) {
   const page = before =>
     `https://web.realapp.com/userpassshop/${sport}/season/${season}/entity/player/section/${section}?before=${before}`;
 
+  // Probes for the two other RS screens, so their payloads can be read before
+  // anything is built on them. Both are fixed shapes, not a free-form proxy.
+  const probePlayer = url.searchParams.get('probePlayer');
+  if (probePlayer && /^\d+$/.test(probePlayer)) {
+    try {
+      const d = await rsGet(`https://web.realapp.com/players/${probePlayer}/sport/${sport}`, auth);
+      const shape = (o, depth = 0) => {
+        if (Array.isArray(o)) return [`array(${o.length})`, o.length && depth < 2 ? shape(o[0], depth + 1) : null];
+        if (o && typeof o === 'object') {
+          const out = {};
+          for (const [k, v] of Object.entries(o)) {
+            out[k] = (v && typeof v === 'object')
+              ? (depth < 2 ? shape(v, depth + 1) : Array.isArray(v) ? `array(${v.length})` : 'object')
+              : v;
+          }
+          return out;
+        }
+        return o;
+      };
+      return json({ keys: Object.keys(d || {}), shape: shape(d) });
+    } catch (e) { return json({ error: String((e && e.message) || e) }, 502); }
+  }
+
+  if (url.searchParams.get('probeLeaders')) {
+    const mode = (url.searchParams.get('mode') || 'averages').replace(/[^a-z]/g, '');
+    try {
+      const d = await rsGet(`https://web.realapp.com/playerstatleaders/${sport}/seasons?mode=${mode}`, auth);
+      const firstArray = o => {
+        if (Array.isArray(o)) return o;
+        if (o && typeof o === 'object') for (const v of Object.values(o)) { const r = firstArray(v); if (r) return r; }
+        return null;
+      };
+      const rows = firstArray(d) || [];
+      return json({ topLevelKeys: Object.keys(d || {}), rowCount: rows.length,
+                    firstRowKeys: rows[0] ? Object.keys(rows[0]) : [], firstRow: rows[0] || null });
+    } catch (e) { return json({ error: String((e && e.message) || e) }, 502); }
+  }
+
   // Probe: hand back the first page untouched, plus the keys on one row, so
   // the payload can be inspected before anything is built on top of it.
   if (url.searchParams.get('probe')) {
