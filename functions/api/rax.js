@@ -483,6 +483,124 @@ export async function onRequestGet({ request, env }) {
       }), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
     }
 
+    // Filtered, sorted views over the game log, for the explorer on the board.
+    // Every filter is bound and every sort key is checked against a list, so
+    // nothing from the query string reaches the SQL as text.
+    if (glArg === 'query') {
+      const mode = url.searchParams.get('mode') === 'games' ? 'games' : 'players';
+      const P = k => (url.searchParams.get(k) || '').trim();
+
+      const where = ['sport = ?', 'season = ?'];
+      const binds = [sport, Number(season)];
+      const eq = (param, col, ok) => {
+        const v = P(param);
+        if (!v) return;
+        if (ok && !ok.includes(v)) return;
+        where.push(`${col} = ?`); binds.push(v);
+      };
+      if (P('q')) { where.push('player LIKE ?'); binds.push('%' + P('q').replace(/[%_]/g, '') + '%'); }
+      eq('team', 'team');
+      eq('opponent', 'opponent');
+      eq('seasonType', 'seasonType', ['regularseason', 'postseason']);
+      eq('homeAway', 'homeAway', ['home', 'away']);
+      eq('result', 'result', ['W', 'L']);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(P('from'))) { where.push('day >= ?'); binds.push(P('from')); }
+      if (/^\d{4}-\d{2}-\d{2}$/.test(P('to')))   { where.push('day <= ?'); binds.push(P('to')); }
+      if (P('playedOnly') === '1') where.push('played = 1');
+      const W = where.join(' AND ');
+
+      const PLAYER_SORTS = ['rax','raxPerGame','rating','ratingPerGame','games','player','team',
+                            'min','pts','reb','ast','stl','blk','tov','fantasyPts','bestRax'];
+      const GAME_SORTS = ['day','player','team','opponent','rax','rating','min','pts','reb','ast',
+                          'stl','blk','tov','pf','plusMinus','tsPct','fantasyPts','comments'];
+      const allowed = mode === 'players' ? PLAYER_SORTS : GAME_SORTS;
+      let sort = P('sort');
+      if (!allowed.includes(sort)) sort = mode === 'players' ? 'rax' : 'rax';
+      const dir = P('dir') === 'asc' ? 'ASC' : 'DESC';
+
+      const asCsv = P('format') === 'csv';
+      const limit = asCsv ? 50000
+        : Math.min(500, Math.max(1, parseInt(P('limit') || '100', 10) || 100));
+      const offset = asCsv ? 0 : Math.max(0, parseInt(P('offset') || '0', 10) || 0);
+      const minGames = Math.max(0, parseInt(P('minGames') || '0', 10) || 0);
+
+      const PLAYER_COLS = ['playerId','player','team','games','rax','raxPerGame','bestRax',
+                           'rating','ratingPerGame','min','pts','reb','ast','stl','blk','tov','fantasyPts'];
+      const GAME_COLS = ['day','player','team','opponent','homeAway','result','teamScore','oppScore',
+                         'seasonType','rax','rating','min','pts','reb','ast','stl','blk','tov','pf',
+                         'plusMinus','fg','fg3','ft','tsPct','fantasyPts','comments','playerId'];
+
+      const playerSql = (order, lim) => `
+        SELECT playerId, MAX(player) AS player, MAX(team) AS team, COUNT(*) AS games,
+               SUM(rax) AS rax, ROUND(AVG(rax), 2) AS raxPerGame, MAX(rax) AS bestRax,
+               ROUND(SUM(rating), 2) AS rating, ROUND(AVG(rating), 2) AS ratingPerGame,
+               ROUND(AVG(min), 1) AS min, ROUND(AVG(pts), 1) AS pts, ROUND(AVG(reb), 1) AS reb,
+               ROUND(AVG(ast), 1) AS ast, ROUND(AVG(stl), 1) AS stl, ROUND(AVG(blk), 1) AS blk,
+               ROUND(AVG(tov), 1) AS tov, ROUND(AVG(fantasyPts), 1) AS fantasyPts
+          FROM gamelog WHERE ${W}
+         GROUP BY playerId HAVING COUNT(*) >= ?
+         ORDER BY ${order} ${dir} ${lim}`;
+      const gameSql = (order, lim) => `
+        SELECT ${GAME_COLS.join(', ')} FROM gamelog WHERE ${W}
+         ORDER BY ${order} ${dir} ${lim}`;
+
+      try {
+        if (asCsv) {
+          const cols = mode === 'players' ? PLAYER_COLS : GAME_COLS;
+          const sql = mode === 'players'
+            ? playerSql(sort, `LIMIT ${limit}`)
+            : gameSql(sort, `LIMIT ${limit}`);
+          const args = mode === 'players' ? binds.concat([minGames]) : binds;
+          const r = await db.prepare(sql).bind(...args).all();
+          const cell = v => {
+            const t = v == null ? '' : String(v);
+            return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+          };
+          let out = cols.join(',') + '\n';
+          for (const row of ((r && r.results) || [])) out += cols.map(c => cell(row[c])).join(',') + '\n';
+          return new Response(out, {
+            headers: {
+              'content-type': 'text/csv; charset=utf-8',
+              'content-disposition': `attachment; filename="${sport}-${season}-${mode}.csv"`,
+              'cache-control': 'no-store'
+            }
+          });
+        }
+
+        const sql = mode === 'players'
+          ? playerSql(sort, `LIMIT ? OFFSET ?`)
+          : gameSql(sort, `LIMIT ? OFFSET ?`);
+        const args = (mode === 'players' ? binds.concat([minGames]) : binds).concat([limit, offset]);
+        const r = await db.prepare(sql).bind(...args).all();
+
+        const countSql = mode === 'players'
+          ? `SELECT COUNT(*) AS n FROM (SELECT playerId FROM gamelog WHERE ${W} GROUP BY playerId HAVING COUNT(*) >= ?)`
+          : `SELECT COUNT(*) AS n FROM gamelog WHERE ${W}`;
+        const c = await db.prepare(countSql)
+          .bind(...(mode === 'players' ? binds.concat([minGames]) : binds)).first();
+
+        return json({ mode, sort, dir: dir.toLowerCase(), limit, offset,
+                      total: c ? c.n : null,
+                      columns: mode === 'players' ? PLAYER_COLS : GAME_COLS,
+                      rows: (r && r.results) || [] });
+      } catch (e) {
+        return json({ error: String((e && e.message) || e) }, 500);
+      }
+    }
+
+    // The distinct teams and opponents present, to fill the filter dropdowns.
+    if (glArg === 'facets') {
+      try {
+        const t = await db.prepare(
+          `SELECT DISTINCT team AS k FROM gamelog WHERE sport = ? AND season = ? AND team IS NOT NULL ORDER BY team`)
+          .bind(sport, Number(season)).all();
+        const d = await db.prepare(
+          `SELECT MIN(day) AS first, MAX(day) AS last FROM gamelog WHERE sport = ? AND season = ?`)
+          .bind(sport, Number(season)).first();
+        return json({ teams: ((t && t.results) || []).map(x => x.k), dates: d || null });
+      } catch (e) { return json({ error: String((e && e.message) || e) }, 500); }
+    }
+
     // Reconciliation: the per-game rax summed per player should reproduce the
     // season leaderboard exactly. Anything else means the join is wrong.
     if (glArg === 'check') {
@@ -770,7 +888,7 @@ export async function onRequestGet({ request, env }) {
       });
     }
 
-    return json({ error: 'gamelog must be one of: probe, go, 1, status, rax, raxgo, raxstatus, check, zerofill, player, csv' }, 400);
+    return json({ error: 'gamelog must be one of: probe, go, 1, status, rax, raxgo, raxstatus, check, zerofill, player, query, facets, csv' }, 400);
   }
 
   // A page that drives the collector to the end on its own, so the whole
