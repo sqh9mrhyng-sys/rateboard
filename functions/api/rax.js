@@ -16,6 +16,7 @@ const CHUNK_PAGES = 8;               // pages per request, so one call stays qui
 const ALL_MAX_PAGES = 250;           // ?all=1 ceiling: 250 x 20 = 5,000 players
 const LIST_MAX_PAGES = 700;          // player-list ceiling: 700 x 20 = 14,000
 const LIST_CHUNK_PAGES = 60;         // pages per call, so a scheduled run finishes in time
+const OWNERS_CHUNK_PAGES = 45;       // the same, with room for the database writes
 const GAP_MS = 350;                  // breathing room between pages
 const RETRIES = 3;                   // RS answers 429 under load
 const SPORTS = new Set(['ncaam', 'ncaaf', 'nfl', 'soccer', 'nba', 'mlb', 'nhl', 'ufc', 'wnba',
@@ -102,6 +103,16 @@ const GAMELOG_DDL = `CREATE TABLE IF NOT EXISTS gamelog (
   fg TEXT, fgPct REAL, fg3 TEXT, fg3Pct REAL, ft TEXT, ftPct REAL, tsPct REAL,
   fantasyPts REAL, comments INTEGER,
   PRIMARY KEY (sport, season, playerId, gameId)
+)`;
+
+const OWNERS_DDL = `CREATE TABLE IF NOT EXISTS owners (
+  sport TEXT NOT NULL,
+  season INTEGER NOT NULL,
+  playerId INTEGER NOT NULL,
+  day TEXT NOT NULL,
+  owners INTEGER,
+  player TEXT,
+  PRIMARY KEY (sport, season, playerId, day)
 )`;
 
 const GAMELOG_COLS = ['sport','season','playerId','gameId','player','team','jersey','position',
@@ -524,6 +535,104 @@ export async function onRequestGet({ request, env }) {
     } catch (e) { return json({ error: String((e && e.message) || e) }, 502); }
   }
 
+  // How many people hold each player's card, snapshotted once a day.
+  //
+  // This is a season-level figure, not a per-game one, so it lives in its own
+  // table keyed by the day it was taken. One leaderboard walk covers a whole
+  // sport-season - no per-player calls - but the walk is longer than a
+  // scheduled run gets, so it is done in chunks with the cursor parked in KV.
+  //
+  //   ?owners=1       -> collect the next chunk of today's snapshot
+  //   ?owners=status  -> how far along today's snapshot is
+  if (url.searchParams.get('owners')) {
+    const which = url.searchParams.get('owners');
+    const db = env.RATEBOARD_DB;
+    const OWN_KEY = `owners_${sport}_${season}`;
+    const today = new Date().toISOString().slice(0, 10);
+
+    const readOwn = async () => {
+      try {
+        const raw = await env.RATEBOARD_KV.get(OWN_KEY);
+        const o = raw ? JSON.parse(raw) : null;
+        if (!o || o.day !== today) return { day: today, before: 0, seen: 0, done: false };
+        return { day: o.day, before: o.before || 0, seen: o.seen || 0, done: !!o.done };
+      } catch (e) { return { day: today, before: 0, seen: 0, done: false }; }
+    };
+
+    if (which === 'status') {
+      const st = await readOwn();
+      let rows = null, days = null;
+      try {
+        const r = await db.prepare(
+          `SELECT COUNT(*) AS n, COUNT(DISTINCT day) AS d FROM owners WHERE sport = ? AND season = ?`)
+          .bind(sport, Number(season)).first();
+        rows = r ? r.n : null; days = r ? r.d : null;
+      } catch (e) {}
+      return json({ day: st.day, done: st.done, collectedToday: st.seen,
+                    totalRows: rows, snapshotDays: days });
+    }
+
+    if (which !== '1') return json({ error: 'owners must be 1 or status' }, 400);
+
+    const { readable, writable } = new TransformStream();
+    const w = writable.getWriter();
+    const enc = new TextEncoder();
+    const send = t => w.write(enc.encode(t));
+
+    (async () => {
+      try {
+        await db.prepare(OWNERS_DDL).run();
+        const st = await readOwn();
+        if (st.done) {
+          await send(`today's snapshot is already complete (${st.seen} players).\n`);
+          await send(`##STATE ${st.seen} ${st.seen} 0\n`);
+          await w.close();
+          return;
+        }
+        await send(`owner counts for ${sport} ${season}, ${today} (${st.seen} so far)...\n`);
+
+        const sql = `INSERT OR REPLACE INTO owners (sport, season, playerId, day, owners, player)
+                     VALUES (?, ?, ?, ?, ?, ?)`;
+        let finished = false;
+        for (let i = 0; i < OWNERS_CHUNK_PAGES; i++) {
+          if (i) await sleep(GAP_MS);
+          const rows = rowsOf(await rsGet(
+            `https://web.realapp.com/userpassshop/${sport}/season/${season}/entity/player/section/hotseason?before=${st.before}`, auth));
+          const stmts = [];
+          for (const r of rows) {
+            if (!r || r.id == null) continue;
+            stmts.push(db.prepare(sql).bind(
+              sport, Number(season), Number(r.id), today,
+              Number(r.value) || 0, r.label || null));
+          }
+          for (let j = 0; j < stmts.length; j += 40) {
+            const batch = stmts.slice(j, j + 40);
+            if (batch.length) await db.batch(batch);
+          }
+          st.seen += stmts.length;
+          st.before += PAGE;
+          await send(`  ${st.seen} players\n`);
+          if (rows.length < PAGE) { finished = true; break; }
+          if (st.before >= LIST_MAX_PAGES * PAGE) { finished = true; break; }
+        }
+
+        st.done = finished;
+        await env.RATEBOARD_KV.put(OWN_KEY, JSON.stringify(st));
+        await send(finished
+          ? `\nsnapshot complete: ${st.seen} players.\n`
+          : `\n${st.seen} so far - continuing on the next pass.\n`);
+        await send(`##STATE ${st.seen} ${st.seen} ${finished ? 0 : 1}\n`);
+      } catch (e) {
+        await send(`\nstopped: ${String((e && e.message) || e).replace(/\n/g, ' ')}\n`);
+      }
+      await w.close();
+    })();
+
+    return new Response(readable, {
+      headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }
+    });
+  }
+
   // ---- game-by-game -------------------------------------------------------
   //   ?gamelog=probe    -> one player's feed at a high limit, to see how many
   //                        games come back in a single call
@@ -620,7 +729,8 @@ export async function onRequestGet({ request, env }) {
       const W = where.join(' AND ');
 
       const PLAYER_SORTS = ['rax','raxPerGame','rating','ratingPerGame','games','player','team',
-                            'min','pts','reb','ast','stl','blk','tov','fantasyPts','bestRax'];
+                            'min','pts','reb','ast','stl','blk','tov','fantasyPts','bestRax',
+                            'owners','ownersChange'];
       const GAME_SORTS = ['day','player','team','opponent','rax','rating','min','pts','reb','ast',
                           'stl','blk','tov','pf','plusMinus','tsPct','fantasyPts','comments'];
       const allowed = mode === 'players' ? PLAYER_SORTS : GAME_SORTS;
@@ -635,13 +745,26 @@ export async function onRequestGet({ request, env }) {
       const minGames = Math.max(0, parseInt(P('minGames') || '0', 10) || 0);
 
       const PLAYER_COLS = ['playerId','player','team','games','rax','raxPerGame','bestRax',
-                           'rating','ratingPerGame','min','pts','reb','ast','stl','blk','tov','fantasyPts'];
+                           'owners','ownersChange','rating','ratingPerGame','min','pts','reb',
+                           'ast','stl','blk','tov','fantasyPts'];
       const GAME_COLS = ['day','player','team','opponent','homeAway','result','teamScore','oppScore',
                          'seasonType','rax','rating','min','pts','reb','ast','stl','blk','tov','pf',
                          'plusMinus','fg','fg3','ft','tsPct','fantasyPts','comments','playerId'];
 
+      // Owner counts live in their own daily-snapshot table. The newest figure
+      // is joined per player, alongside the one from a week back so the change
+      // can be sorted on.
+      const ownerPick = (extra) => `
+        (SELECT ow.owners FROM owners ow
+          WHERE ow.sport = ? AND ow.season = ? AND ow.playerId = gamelog.playerId ${extra}
+          ORDER BY ow.day DESC LIMIT 1)`;
+      const ownerBinds = [sport, Number(season), sport, Number(season)];
+
       const playerSql = (order, lim) => `
         SELECT playerId, MAX(player) AS player, MAX(team) AS team, COUNT(*) AS games,
+               ${ownerPick('')} AS owners,
+               ${ownerPick("AND ow.day <= date('now', '-7 day')")} AS ownersWeekAgo,
+               ${ownerPick('')} - ${ownerPick("AND ow.day <= date('now', '-7 day')")} AS ownersChange,
                SUM(rax) AS rax, ROUND(AVG(rax), 2) AS raxPerGame, MAX(rax) AS bestRax,
                ROUND(SUM(rating), 2) AS rating, ROUND(AVG(rating), 2) AS ratingPerGame,
                ROUND(AVG(min), 1) AS min, ROUND(AVG(pts), 1) AS pts, ROUND(AVG(reb), 1) AS reb,
@@ -660,7 +783,9 @@ export async function onRequestGet({ request, env }) {
           const sql = mode === 'players'
             ? playerSql(sort, `LIMIT ${limit}`)
             : gameSql(sort, `LIMIT ${limit}`);
-          const args = mode === 'players' ? binds.concat([minGames]) : binds;
+          const args = mode === 'players'
+            ? ownerBinds.concat(ownerBinds).concat(binds).concat([minGames])
+            : binds;
           const r = await db.prepare(sql).bind(...args).all();
           const cell = v => {
             const t = v == null ? '' : String(v);
@@ -680,7 +805,9 @@ export async function onRequestGet({ request, env }) {
         const sql = mode === 'players'
           ? playerSql(sort, `LIMIT ? OFFSET ?`)
           : gameSql(sort, `LIMIT ? OFFSET ?`);
-        const args = (mode === 'players' ? binds.concat([minGames]) : binds).concat([limit, offset]);
+        const args = (mode === 'players'
+          ? ownerBinds.concat(ownerBinds).concat(binds).concat([minGames])
+          : binds).concat([limit, offset]);
         const r = await db.prepare(sql).bind(...args).all();
 
         const countSql = mode === 'players'
