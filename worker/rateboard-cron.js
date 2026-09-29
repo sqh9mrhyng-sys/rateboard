@@ -83,7 +83,16 @@ async function step(job) {
     return `${tag}: filled ${z.json && z.json.filled} blank rax values`;
   }
 
-  return null;   // nothing left for this season
+  // 5. Owner counts, one snapshot a day. Cheap - a single leaderboard walk
+  //    covers the whole season - so it re-arms every day once the rest of a
+  //    season is finished, building ownership history over time.
+  const ow = await get(`${q}&owners=status`);
+  if (ow.json && !ow.json.done) {
+    await get(`${q}&owners=1`);
+    return `${tag}: owner counts, ${ow.json.collectedToday} players so far today`;
+  }
+
+  return null;   // nothing left for this season today
 }
 
 export default {
@@ -119,6 +128,9 @@ export default {
       out.push(`  players in list : ${gs.json ? gs.json.players : '?'}`);
       out.push(`  game logs done  : ${gl.json ? `${gl.json.playersDone} (${gl.json.gameRows} rows)` : '?'}`);
       out.push(`  rax done        : ${rx.json ? rx.json.playersDone : '?'}`);
+      const ow = await get(`${q}&owners=status`);
+      out.push(`  owners today    : ${ow.json ? `${ow.json.collectedToday}${ow.json.done ? ' (done)' : ''}`
+                                              + ` over ${ow.json.snapshotDays || 0} day(s)` : '?'}`);
       out.push('');
     }
     return new Response(out.join('\n'), { headers: { 'content-type': 'text/plain' } });
