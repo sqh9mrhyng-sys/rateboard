@@ -403,6 +403,51 @@ export async function onRequestGet({ request, env }) {
     } catch (e) { return { ids: [], games: {}, updated: 0, building: null }; }
   };
 
+  // Hunting for the market side: which shop sections exist beyond the two we
+  // use, and whether there is a listings/auction endpoint at all.
+  if (url.searchParams.get('scan') === 'market') {
+    const SECTIONS = ['earningstotal', 'hotseason', 'trending', 'new', 'newest', 'recent',
+                      'ending', 'endingsoon', 'auction', 'auctions', 'listings', 'forsale',
+                      'pricehigh', 'pricelow', 'movers', 'gainers', 'losers', 'featured',
+                      'popular', 'hot', 'hotweek', 'hotday', 'topsellers', 'available'];
+    const PATHS = ['auctions', 'market', 'marketplace', 'listings', 'userpassauctions',
+                   'userpassmarket', 'userpasslistings', 'packs', 'userpasspacks',
+                   'shop', 'userpassshop', 'orders', 'trades'];
+    const B = 'https://web.realapp.com';
+    const sections = [], paths = [];
+
+    for (const sec of SECTIONS) {
+      try {
+        const d = await rsGet(`${B}/userpassshop/${sport}/season/${season}/entity/player/section/${sec}?before=0`, auth);
+        const rows = rowsOf(d);
+        sections.push({ section: sec, ok: true, rows: rows.length,
+                        firstRowKeys: rows[0] ? Object.keys(rows[0]) : [],
+                        sample: rows[0] ? `${rows[0].label} = ${rows[0].value}` : null });
+      } catch (e) {
+        sections.push({ section: sec, ok: false, why: String((e && e.message) || e).slice(0, 70) });
+      }
+      await sleep(180);
+    }
+
+    for (const path of PATHS) {
+      for (const suffix of [`/${sport}`, `/${sport}/season/${season}`, '']) {
+        try {
+          const d = await rsGet(`${B}/${path}${suffix}`, auth);
+          paths.push({ path: path + suffix, ok: true,
+                       keys: Object.keys(d || {}).slice(0, 20),
+                       sample: JSON.stringify(d).slice(0, 300) });
+          break;                                  // first shape that answers wins
+        } catch (e) {
+          const msg = String((e && e.message) || e);
+          if (suffix === '') paths.push({ path, ok: false, why: msg.slice(0, 70) });
+        }
+        await sleep(150);
+      }
+    }
+    return json({ sections: sections.filter(x => !x.ok || x.rows > 0), paths: paths.filter(x => x.ok) ,
+                  sectionsTried: SECTIONS.length, pathsTried: PATHS.length });
+  }
+
   // A capability sweep: which sports RS answers for, which season number is
   // live for each, and how big the player list is. Used to plan what can be
   // collected rather than guessing at it.
