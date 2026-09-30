@@ -122,6 +122,24 @@
   .lkstats{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:9px;margin:12px 0}
   .lkstat{background:var(--panel-2);border-radius:8px;padding:9px 11px;font-size:12px;color:var(--mute)}
   .lkstat b{display:block;font-size:17px;color:var(--bone);margin-top:2px}
+  .calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:8px}
+  .calhd{text-align:center;font-size:11px;color:var(--mute);padding:2px 0}
+  .calday{background:var(--panel-2);border:1px solid transparent;border-radius:7px;
+          padding:5px 6px;min-height:54px;text-align:left;font-size:11px;color:var(--mute);width:100%}
+  .calday.blank{background:transparent}
+  .calday:disabled{cursor:default}
+  .calday.has{cursor:pointer}
+  .calday.has:hover{border-color:var(--accent)}
+  .calday.on{border-color:var(--accent)}
+  .calday .dn{display:block;color:var(--bone)}
+  .calday .ce{display:block;color:var(--good);font-weight:600;font-size:12.5px;margin-top:2px}
+  .calday .cm{display:block;color:var(--bad);font-size:11px}
+  /* A claim that the daily cap left behind: still listed, but plainly not
+     counted, with the rax it cost sitting next to it. */
+  .lkrow.lost{opacity:.55}
+  .lkrow.lost .miss{color:var(--bad)}
+  .lkname{cursor:pointer;border-bottom:1px dotted var(--line)}
+  .lkname:hover{color:var(--accent)}
   .note{font-size:12.5px;color:var(--mute);line-height:1.45}
   .minnote{color:var(--accent);margin:6px 0 0}
   /* Admin-only controls sitting inside the public board — tinted so it's
@@ -3446,12 +3464,70 @@ const CB_LEVELS = [
   ['Iconic 16', 220, 22700], ['Iconic 17', 226, 26000], ['Iconic 18', 233, 29000],
   ['Iconic 19', 240, 34500], ['Iconic 20', 250, 40000]
 ];
-const LOADOUT_KEY = 'rateboard_loadout_v1';
-function loadoutRead(){
-  try { return JSON.parse(localStorage.getItem(LOADOUT_KEY) || '[]') || []; } catch(e){ return []; }
+const LOADOUT_KEY  = 'rateboard_loadout_v1';    // the single-loadout version
+const LOADOUTS_KEY = 'rateboard_loadouts_v2';
+
+// Several named loadouts, each with its own claims-per-day setting. Anything
+// left behind by the single-loadout version is carried over on first read.
+function loadoutsRead(){
+  let d = null;
+  try { d = JSON.parse(localStorage.getItem(LOADOUTS_KEY) || 'null'); } catch(e){}
+  if(d && d.sets && Object.keys(d.sets).length){
+    if(!d.sets[d.active]) d.active = Object.keys(d.sets)[0];
+    return d;
+  }
+  let old = [];
+  try { old = JSON.parse(localStorage.getItem(LOADOUT_KEY) || '[]') || []; } catch(e){}
+  return { active: 'Loadout 1', sets: { 'Loadout 1': { claims: 3, cards: old } } };
 }
-function loadoutWrite(v){
-  try { localStorage.setItem(LOADOUT_KEY, JSON.stringify(v)); } catch(e){}
+function loadoutsWrite(d){
+  try { localStorage.setItem(LOADOUTS_KEY, JSON.stringify(d)); } catch(e){}
+}
+function loadoutCur(d){
+  if(!d.sets[d.active]) d.sets[d.active] = { claims: 3, cards: [] };
+  const set = d.sets[d.active];
+  if(!Array.isArray(set.cards)) set.cards = [];
+  if(set.claims !== 2 && set.claims !== 3) set.claims = 3;
+  return set;
+}
+
+// Real only lets a card be claimed a set number of times per sport per day, so
+// a day is scored the way the app would score it: the best few for each sport
+// count, and everything past that is rax left on the table. Seasons don't
+// matter here - two golf cards are two golf claims whatever year they are.
+function claimDays(cards, claims){
+  const byDay = new Map();
+  cards.forEach((c, i) => {
+    for(const g of (c.games || [])){
+      const day = String(g[0] || '').slice(0, 10);
+      const rax = Math.round((Number(g[1]) || 0) * (Number(c.mult) || 1));
+      if(!day || !rax) continue;
+      if(!byDay.has(day)) byDay.set(day, []);
+      byDay.get(day).push({ i, sport: c.sport, season: c.season, name: c.name,
+                            level: c.level, mult: c.mult, rax });
+    }
+  });
+  const out = new Map();
+  for(const [day, list] of byDay){
+    const bySport = new Map();
+    for(const r of list){
+      if(!bySport.has(r.sport)) bySport.set(r.sport, []);
+      bySport.get(r.sport).push(r);
+    }
+    let earned = 0, missed = 0;
+    const rows = [];
+    for(const rs of bySport.values()){
+      rs.sort((a, b) => b.rax - a.rax);
+      rs.forEach((r, n) => {
+        const counts = n < claims;
+        if(counts) earned += r.rax; else missed += r.rax;
+        rows.push(Object.assign({ counts }, r));
+      });
+    }
+    rows.sort((a, b) => (b.counts - a.counts) || (b.rax - a.rax));
+    out.set(day, { earned, missed, rows });
+  }
+  return out;
 }
 
 const CB_SPORT_LABEL = { ncaam:'CBB', ncaaf:'CFB', nfl:'NFL', nba:'NBA', nhl:'NHL',
@@ -3790,6 +3866,7 @@ async function cbbPanel(){
     }
     if(!lkP){ $b('#lk-detail').innerHTML = '<p class="note" style="margin-top:12px">No data for that player.</p>'; return; }
     lkP.sport = sport; lkP.season = season; lkP.player = name;
+    lkP.playerId = lkP.playerId || null;
     lkDetail();
   }
 
@@ -3848,26 +3925,133 @@ async function cbbPanel(){
     </div>`;
   }
 
+  // --- loadouts ----------------------------------------------------------
+  let lkCal = false, lkMonth = '', lkDay = '', lkNaming = '';
+
+  const MONTHS = ['January','February','March','April','May','June','July',
+                  'August','September','October','November','December'];
+
+  function monthLabel(ym){
+    const [y, m] = ym.split('-');
+    return `${MONTHS[Number(m) - 1] || m} ${y}`;
+  }
+
+  function lkCalendar(days){
+    const months = [...new Set([...days.keys()].map(d => d.slice(0, 7)))].sort();
+    if(!months.length) return '<p class="note" style="margin-top:10px">No dated games in this loadout yet.</p>';
+    if(!months.includes(lkMonth)) lkMonth = months[months.length - 1];
+
+    const [y, m] = lkMonth.split('-').map(Number);
+    const first = new Date(Date.UTC(y, m - 1, 1));
+    const lead = first.getUTCDay();
+    const len = new Date(Date.UTC(y, m, 0)).getUTCDate();
+
+    let mEarned = 0, mMissed = 0;
+    for(const [d, v] of days) if(d.slice(0, 7) === lkMonth){ mEarned += v.earned; mMissed += v.missed; }
+
+    const cells = [];
+    for(let i = 0; i < lead; i++) cells.push('<div class="calday blank"></div>');
+    for(let d = 1; d <= len; d++){
+      const key = `${lkMonth}-${String(d).padStart(2, '0')}`;
+      const v = days.get(key);
+      cells.push(`<button class="calday${v ? ' has' : ''}${lkDay === key ? ' on' : ''}"`
+        + `${v ? ` data-calday="${key}"` : ' disabled'}>`
+        + `<span class="dn">${d}</span>`
+        + (v ? `<span class="ce">${v.earned.toLocaleString()}</span>` : '')
+        + (v && v.missed ? `<span class="cm">-${v.missed.toLocaleString()}</span>` : '')
+        + '</button>');
+    }
+
+    const sel = days.get(lkDay);
+    return `<div style="margin-top:12px">
+      <div class="dtbar">
+        <select class="field" id="lk-month">${months.map(mm =>
+          `<option value="${esc(mm)}"${mm === lkMonth ? ' selected' : ''}>${esc(monthLabel(mm))}</option>`).join('')}</select>
+        <span class="note">${mEarned.toLocaleString()} rax this month${
+          mMissed ? ` · <span style="color:var(--bad)">${mMissed.toLocaleString()} missed</span>` : ''}</span>
+      </div>
+      <div class="calgrid">${['S','M','T','W','T','F','S'].map(d =>
+        `<div class="calhd">${d}</div>`).join('')}${cells.join('')}</div>
+      ${sel ? `<div class="lkcard" style="margin-top:12px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline">
+          <b>${esc(lkDay)}</b>
+          <span class="note">${sel.earned.toLocaleString()} claimed${
+            sel.missed ? ` · <span style="color:var(--bad)">${sel.missed.toLocaleString()} missed</span>` : ''}</span>
+        </div>
+        ${sel.rows.map(r =>
+          `<div class="lkrow${r.counts ? '' : ' lost'}">`
+          + `<span><span class="lkname" data-open="${esc(r.sport)}|${esc(String(r.season))}|${esc(r.name)}">`
+          + `${esc(r.name)}</span> <span class="note">${esc(CB_SPORT_LABEL[r.sport] || r.sport)} `
+          + `${esc(String(r.season))} · ${esc(r.level)} ${r.mult}x</span></span>`
+          + (r.counts
+              ? `<span>${r.rax.toLocaleString()}</span>`
+              : `<span class="miss">not claimed - ${r.rax.toLocaleString()} missed</span>`)
+          + '</div>').join('')}
+      </div>` : '<p class="note" style="margin-top:10px">Pick a day to see everything that earned on it.</p>'}
+    </div>`;
+  }
+
   function lkBag(){
-    const bag = loadoutRead();
-    if(!bag.length){
-      $b('#lk-bag').innerHTML = '<p class="note" style="margin-top:12px">'
-        + 'Loadout is empty. Open a player, pick a card level and add it here.</p>';
+    const all = loadoutsRead();
+    const set = loadoutCur(all);
+    const names = Object.keys(all.sets);
+    const cards = set.cards;
+    const days = claimDays(cards, set.claims);
+
+    let earned = 0, missed = 0;
+    for(const v of days.values()){ earned += v.earned; missed += v.missed; }
+    const raw = cards.reduce((t, x) => t + Math.round((Number(x.rax) || 0) * (Number(x.mult) || 1)), 0);
+
+    const head = `<div class="dtbar">
+        ${names.map(n => `<button class="btn-ghost" data-loadout="${esc(n)}"`
+          + ` aria-pressed="${n === all.active ? 'true' : 'false'}">${esc(n)}</button>`).join('')}
+        <button class="btn-ghost" id="lk-new">+ New loadout</button>
+      </div>
+      ${lkNaming ? `<div class="dtbar" style="margin-top:8px">
+        <input class="field grow" id="lk-name" placeholder="${lkNaming === 'rename' ? 'New name' : 'Loadout name'}"
+               value="${lkNaming === 'rename' ? esc(all.active) : ''}" autocomplete="off">
+        <button class="btn" id="lk-namesave">Save</button>
+        <button class="btn-ghost" id="lk-namecancel">Cancel</button>
+      </div>` : ''}
+      <div class="dtbar" style="margin-top:8px">
+        <span class="note">Claims per day, per sport</span>
+        <button class="btn-ghost" data-claims="2" aria-pressed="${set.claims === 2 ? 'true' : 'false'}">2</button>
+        <button class="btn-ghost" data-claims="3" aria-pressed="${set.claims === 3 ? 'true' : 'false'}">3</button>
+        <button class="btn-ghost" id="lk-cal" aria-pressed="${lkCal ? 'true' : 'false'}">Calendar</button>
+        <button class="btn-ghost" id="lk-rename">Rename</button>
+        <button class="btn-ghost" id="lk-delete">Delete</button>
+      </div>`;
+
+    if(!cards.length){
+      $b('#lk-bag').innerHTML = `<div class="lkcard">${head}
+        <p class="note" style="margin-top:10px">This loadout is empty.
+        Open a player, pick a card level and add it here.</p></div>`;
       return;
     }
-    const total = bag.reduce((t, x) => t + (Number(x.rax) || 0) * (Number(x.mult) || 1), 0);
-    $b('#lk-bag').innerHTML = `<div class="lkcard">
-      <div style="display:flex;justify-content:space-between;align-items:baseline">
-        <b>Loadout</b><span class="note">${bag.length} card${bag.length === 1 ? '' : 's'}</span></div>
-      ${bag.map((x, i) =>
-        `<div class="lkrow"><span>${esc(x.name)} <span class="note">${
-           esc(CB_SPORT_LABEL[x.sport] || x.sport)} ${esc(String(x.season))} · ${esc(x.level)} ${x.mult}x · `
-        + `${Number(x.rax || 0).toLocaleString()} base</span></span>`
-        + `<span>${Math.round((Number(x.rax) || 0) * (Number(x.mult) || 1)).toLocaleString()}`
-        + ` <button class="btn-ghost" data-bagrm="${i}" style="margin-left:10px;padding:3px 9px">Remove</button></span></div>`).join('')}
+
+    $b('#lk-bag').innerHTML = `<div class="lkcard">${head}
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:12px">
+        <b>${esc(all.active)}</b>
+        <span class="note">${cards.length} card${cards.length === 1 ? '' : 's'}</span></div>
+      ${cards.map((x, i) => {
+        const tot = Math.round((Number(x.rax) || 0) * (Number(x.mult) || 1));
+        return `<div class="lkrow">`
+          + `<span><span class="lkname" data-open="${esc(x.sport)}|${esc(String(x.season))}|${esc(x.name)}">`
+          + `${esc(x.name)}</span> <span class="note">${esc(CB_SPORT_LABEL[x.sport] || x.sport)} `
+          + `${esc(String(x.season))} · ${esc(x.level)} ${x.mult}x · ${Number(x.rax || 0).toLocaleString()} base`
+          + `${x.games && x.games.length ? ` · ${x.games.length} dated games` : ' · no dated games'}</span></span>`
+          + `<span>${tot.toLocaleString()}`
+          + ` <button class="btn-ghost" data-bagrm="${i}" style="margin-left:10px;padding:3px 9px">Remove</button></span>`
+          + '</div>';
+      }).join('')}
       <div class="lkrow" style="font-weight:600;border-top:1px solid var(--line)">
-        <span>Total</span><span>${Math.round(total).toLocaleString()} rax</span></div>
-      <div style="margin-top:10px"><button class="btn-ghost" id="lk-clearbag">Clear loadout</button></div>
+        <span>Claimable at ${set.claims} a day</span><span>${earned.toLocaleString()} rax</span></div>
+      ${missed ? `<div class="lkrow" style="color:var(--bad)">
+        <span>Left on the table</span><span>${missed.toLocaleString()} rax</span></div>` : ''}
+      <div class="lkrow note"><span>Every game added up, no daily cap</span>
+        <span>${raw.toLocaleString()} rax</span></div>
+      ${lkCal ? lkCalendar(days) : ''}
+      <div style="margin-top:10px"><button class="btn-ghost" id="lk-clearbag">Clear this loadout</button></div>
     </div>`;
   }
 
@@ -3901,6 +4085,7 @@ async function cbbPanel(){
 
   let typing;
   box.addEventListener('input', e => {
+    if(e.target.id === 'lk-name') return;
     if(e.target.id === 'lk-q'){
       clearTimeout(lkTyping);
       lkTyping = setTimeout(lkSearch, 300);
@@ -3918,6 +4103,7 @@ async function cbbPanel(){
 
   box.addEventListener('change', e => {
     if(e.target.id === 'lk-lvl'){ lkLevel = +e.target.value; return lkDetail(); }
+    if(e.target.id === 'lk-month'){ lkMonth = e.target.value; lkDay = ''; return lkBag(); }
     const map = { 'cb-team':'team', 'cb-conf':'conference', 'cb-type':'seasonType',
                   'cb-ha':'homeAway', 'cb-res':'result' };
     if(!map[e.target.id]) return;
@@ -3942,21 +4128,107 @@ async function cbbPanel(){
       if(lkLevel < 0) return toast('Pick a card level first.');
       const L = CB_LEVELS[lkLevel];
       const rax = lkGames.reduce((t, g) => t + (Number(g.rax) || 0), 0);
-      const bag = loadoutRead();
-      bag.push({ name: lkP.player, sport: lkP.sport, season: lkP.season,
-                 level: L[0], mult: L[1], rax });
-      loadoutWrite(bag);
+      // Dates and base rax travel with the card, so the calendar can work out
+      // which claims a day's cap would actually have let through.
+      const games = lkGames
+        .filter(g => g.day && Number(g.rax))
+        .map(g => [String(g.day).slice(0, 10), Number(g.rax)]);
+      const all = loadoutsRead();
+      const set = loadoutCur(all);
+      const key = `${lkP.sport}|${lkP.season}|${lkP.player}`;
+      const at = set.cards.findIndex(c => `${c.sport}|${c.season}|${c.name}` === key);
+      const card = { playerId: lkP.playerId, name: lkP.player, sport: lkP.sport,
+                     season: lkP.season, level: L[0], mult: L[1], rax, games };
+      const already = at >= 0;
+      if(already) set.cards[at] = card; else set.cards.push(card);
+      loadoutsWrite(all);
       lkBag();
-      return toast(`${lkP.player} added to the loadout.`);
+      return toast(already
+        ? `${lkP.player} updated to ${L[0]} in ${all.active}.`
+        : `${lkP.player} added to ${all.active}.`);
     }
-    const rm = e.target.closest('[data-bagrm]');
-    if(rm){
-      const bag = loadoutRead();
-      bag.splice(+rm.dataset.bagrm, 1);
-      loadoutWrite(bag);
+
+    const open = e.target.closest('[data-open]');
+    if(open){
+      const [sp, se, ...rest] = open.dataset.open.split('|');
+      const name = rest.join('|');
+      $b('#lk-q').value = name;
+      await lkSearch();
+      return lkOpen(sp, +se, name);
+    }
+
+    const lo = e.target.closest('[data-loadout]');
+    if(lo){
+      const all = loadoutsRead();
+      all.active = lo.dataset.loadout;
+      lkDay = ''; lkMonth = ''; lkNaming = '';
+      loadoutsWrite(all);
       return lkBag();
     }
-    if(e.target.closest('#lk-clearbag')){ loadoutWrite([]); return lkBag(); }
+
+    const cl = e.target.closest('[data-claims]');
+    if(cl){
+      const all = loadoutsRead();
+      loadoutCur(all).claims = +cl.dataset.claims;
+      loadoutsWrite(all);
+      return lkBag();
+    }
+
+    const cd = e.target.closest('[data-calday]');
+    if(cd){ lkDay = lkDay === cd.dataset.calday ? '' : cd.dataset.calday; return lkBag(); }
+
+    if(e.target.closest('#lk-cal')){ lkCal = !lkCal; return lkBag(); }
+    if(e.target.closest('#lk-new')){ lkNaming = 'new'; lkBag(); const f = $b('#lk-name'); if(f) f.focus(); return; }
+    if(e.target.closest('#lk-rename')){ lkNaming = 'rename'; lkBag(); const f = $b('#lk-name'); if(f) f.focus(); return; }
+    if(e.target.closest('#lk-namecancel')){ lkNaming = ''; return lkBag(); }
+
+    if(e.target.closest('#lk-namesave')){
+      const raw = ($b('#lk-name').value || '').trim().slice(0, 40);
+      if(!raw) return toast('Give the loadout a name.');
+      const all = loadoutsRead();
+      if(all.sets[raw] && !(lkNaming === 'rename' && raw === all.active)){
+        return toast('There is already a loadout by that name.');
+      }
+      if(lkNaming === 'rename'){
+        const keep = {};
+        for(const k of Object.keys(all.sets)) keep[k === all.active ? raw : k] = all.sets[k];
+        all.sets = keep;
+      } else {
+        all.sets[raw] = { claims: loadoutCur(all).claims, cards: [] };
+      }
+      all.active = raw;
+      lkNaming = ''; lkDay = ''; lkMonth = '';
+      loadoutsWrite(all);
+      return lkBag();
+    }
+
+    if(e.target.closest('#lk-delete')){
+      const all = loadoutsRead();
+      const names = Object.keys(all.sets);
+      if(names.length < 2) return toast('This is the only loadout - clear it instead.');
+      delete all.sets[all.active];
+      all.active = Object.keys(all.sets)[0];
+      lkDay = ''; lkMonth = ''; lkNaming = '';
+      loadoutsWrite(all);
+      return lkBag();
+    }
+
+    const rm = e.target.closest('[data-bagrm]');
+    if(rm){
+      const all = loadoutsRead();
+      loadoutCur(all).cards.splice(+rm.dataset.bagrm, 1);
+      lkDay = '';
+      loadoutsWrite(all);
+      return lkBag();
+    }
+
+    if(e.target.closest('#lk-clearbag')){
+      const all = loadoutsRead();
+      loadoutCur(all).cards = [];
+      lkDay = '';
+      loadoutsWrite(all);
+      return lkBag();
+    }
 
     const pair = e.target.closest('[data-pair]');
     if(pair){
