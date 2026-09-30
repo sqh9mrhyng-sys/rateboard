@@ -709,8 +709,23 @@ export async function onRequestGet({ request, env }) {
       const mode = url.searchParams.get('mode') === 'games' ? 'games' : 'players';
       const P = k => (url.searchParams.get(k) || '').trim();
 
-      const where = ['sport = ?', 'season = ?'];
-      const binds = [sport, Number(season)];
+      // One or more sport-seasons, given as "ncaam:2026,ncaam:2025". Falls back
+      // to the single sport/season params so older links keep working.
+      const pairs = [];
+      for (const bit of (P('seasons') ? P('seasons').split(',') : []).slice(0, 30)) {
+        const [sp, se] = String(bit).split(':');
+        if (SPORTS.has(String(sp).toLowerCase()) && /^\d{4}$/.test(se)) {
+          pairs.push([String(sp).toLowerCase(), Number(se)]);
+        }
+      }
+      if (!pairs.length) pairs.push([sport, Number(season)]);
+
+      const scope = '(' + pairs.map(() => '(sport = ? AND season = ?)').join(' OR ') + ')';
+      const scopeBinds = [];
+      for (const [sp, se] of pairs) scopeBinds.push(sp, se);
+
+      const where = [scope];
+      const binds = scopeBinds.slice();
       const eq = (param, col, ok) => {
         const v = P(param);
         if (!v) return;
@@ -730,7 +745,7 @@ export async function onRequestGet({ request, env }) {
 
       const PLAYER_SORTS = ['rax','raxPerGame','rating','ratingPerGame','games','player','team',
                             'min','pts','reb','ast','stl','blk','tov','fantasyPts','bestRax',
-                            'owners','ownersChange'];
+                            'owners','ownersChange','seasons'];
       const GAME_SORTS = ['day','player','team','opponent','rax','rating','min','pts','reb','ast',
                           'stl','blk','tov','pf','plusMinus','tsPct','fantasyPts','comments'];
       const allowed = mode === 'players' ? PLAYER_SORTS : GAME_SORTS;
@@ -744,27 +759,31 @@ export async function onRequestGet({ request, env }) {
       const offset = asCsv ? 0 : Math.max(0, parseInt(P('offset') || '0', 10) || 0);
       const minGames = Math.max(0, parseInt(P('minGames') || '0', 10) || 0);
 
-      const PLAYER_COLS = ['playerId','player','team','games','rax','raxPerGame','bestRax',
+      const PLAYER_COLS = ['playerId','player','team','seasons','games','rax','raxPerGame','bestRax',
                            'owners','ownersChange','rating','ratingPerGame','min','pts','reb',
                            'ast','stl','blk','tov','fantasyPts'];
       const GAME_COLS = ['day','player','team','opponent','homeAway','result','teamScore','oppScore',
                          'seasonType','rax','rating','min','pts','reb','ast','stl','blk','tov','pf',
                          'plusMinus','fg','fg3','ft','tsPct','fantasyPts','comments','playerId'];
 
-      // Owner counts live in their own daily-snapshot table. The newest figure
-      // is joined per player, alongside the one from a week back so the change
-      // can be sorted on.
-      const ownerPick = (extra) => `
-        (SELECT ow.owners FROM owners ow
-          WHERE ow.sport = ? AND ow.season = ? AND ow.playerId = gamelog.playerId ${extra}
-          ORDER BY ow.day DESC LIMIT 1)`;
-      const ownerBinds = [sport, Number(season), sport, Number(season)];
+      // Owner counts live in their own daily-snapshot table. For each selected
+      // season the newest snapshot is taken, then summed - so with several
+      // seasons picked this is how many of that player's cards are held across
+      // all of them. `cutoff` gives the same figure as of a week ago.
+      const ownerScope = '(' + pairs.map(() => '(ow.sport = ? AND ow.season = ?)').join(' OR ') + ')';
+      const ownerPick = (cutoff) => `
+        (SELECT SUM(ow.owners) FROM owners ow
+          WHERE ow.playerId = gamelog.playerId AND ${ownerScope}
+            AND ow.day = (SELECT MAX(d.day) FROM owners d
+                           WHERE d.sport = ow.sport AND d.season = ow.season${cutoff}))`;
+      const ownerBinds = scopeBinds.concat(scopeBinds);
 
       const playerSql = (order, lim) => `
         SELECT playerId, MAX(player) AS player, MAX(team) AS team, COUNT(*) AS games,
+               COUNT(DISTINCT season) AS seasons,
                ${ownerPick('')} AS owners,
-               ${ownerPick("AND ow.day <= date('now', '-7 day')")} AS ownersWeekAgo,
-               ${ownerPick('')} - ${ownerPick("AND ow.day <= date('now', '-7 day')")} AS ownersChange,
+               ${ownerPick(" AND d.day <= date('now', '-7 day')")} AS ownersWeekAgo,
+               ${ownerPick('')} - ${ownerPick(" AND d.day <= date('now', '-7 day')")} AS ownersChange,
                SUM(rax) AS rax, ROUND(AVG(rax), 2) AS raxPerGame, MAX(rax) AS bestRax,
                ROUND(SUM(rating), 2) AS rating, ROUND(AVG(rating), 2) AS ratingPerGame,
                ROUND(AVG(min), 1) AS min, ROUND(AVG(pts), 1) AS pts, ROUND(AVG(reb), 1) AS reb,
@@ -817,6 +836,7 @@ export async function onRequestGet({ request, env }) {
           .bind(...(mode === 'players' ? binds.concat([minGames]) : binds)).first();
 
         return json({ mode, sort, dir: dir.toLowerCase(), limit, offset,
+                      pairs: pairs.map(([sp, se]) => `${sp}:${se}`),
                       total: c ? c.n : null,
                       columns: mode === 'players' ? PLAYER_COLS : GAME_COLS,
                       rows: (r && r.results) || [] });
@@ -839,12 +859,21 @@ export async function onRequestGet({ request, env }) {
     // The distinct teams and opponents present, to fill the filter dropdowns.
     if (glArg === 'facets') {
       try {
+        const fp = [];
+        for (const bit of ((url.searchParams.get('seasons') || '').split(',')).slice(0, 30)) {
+          const [sp, se] = String(bit).split(':');
+          if (SPORTS.has(String(sp).toLowerCase()) && /^\d{4}$/.test(se)) fp.push([String(sp).toLowerCase(), Number(se)]);
+        }
+        if (!fp.length) fp.push([sport, Number(season)]);
+        const fScope = '(' + fp.map(() => '(sport = ? AND season = ?)').join(' OR ') + ')';
+        const fBinds = [];
+        for (const [sp, se] of fp) fBinds.push(sp, se);
         const t = await db.prepare(
-          `SELECT DISTINCT team AS k FROM gamelog WHERE sport = ? AND season = ? AND team IS NOT NULL ORDER BY team`)
-          .bind(sport, Number(season)).all();
+          `SELECT DISTINCT team AS k FROM gamelog WHERE ${fScope} AND team IS NOT NULL ORDER BY team`)
+          .bind(...fBinds).all();
         const d = await db.prepare(
-          `SELECT MIN(day) AS first, MAX(day) AS last FROM gamelog WHERE sport = ? AND season = ?`)
-          .bind(sport, Number(season)).first();
+          `SELECT MIN(day) AS first, MAX(day) AS last FROM gamelog WHERE ${fScope}`)
+          .bind(...fBinds).first();
         return json({ teams: ((t && t.results) || []).map(x => x.k), dates: d || null });
       } catch (e) { return json({ error: String((e && e.message) || e) }, 500); }
     }
