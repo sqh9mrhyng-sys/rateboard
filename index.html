@@ -3335,22 +3335,34 @@ async function copyListPanel(){
 }
 
 /* =========================================================
-   CBB data explorer (admin only)
+   Game data explorer (admin, plus anyone granted access)
 
-   Reads the college-basketball game log collected into D1 and
-   served by /api/rax. Aggregates per player, or lists every
-   game, with the filters and sort handled server side so the
-   browser never holds all 77k rows.
+   Reads the game logs collected into D1 and served by /api/rax.
+   Several sport-seasons can be looked at together: a player is
+   then one row summed across whichever of them they appear in.
+   Filtering, sorting and paging all happen server side, so the
+   browser never holds the whole table.
    ========================================================= */
-const CBB_PLAYER_COLS = [
-  ['player','Player','l'], ['team','Team','l'], ['games','G'],
+
+// Always present, whatever the sport - these are the figures every sport has.
+const CB_CORE_COLS = [
+  ['player','Player','l'], ['team','Team','l'], ['seasons','Sn'], ['games','G'],
   ['rax','Rax'], ['raxPerGame','Rax/G'], ['bestRax','Best'],
   ['owners','Owners'], ['ownersChange','7d'],
-  ['rating','Rating'], ['ratingPerGame','Rtg/G'],
+  ['rating','Rating'], ['ratingPerGame','Rtg/G']
+];
+
+// Sport-specific box score columns. Only sports whose data has actually been
+// looked at are listed; anything else shows the core columns until its first
+// season lands and the real shape can be checked.
+const CB_BASKETBALL = [
   ['min','MIN'], ['pts','PTS'], ['reb','REB'], ['ast','AST'],
   ['stl','STL'], ['blk','BLK'], ['tov','TO'], ['fantasyPts','FP']
 ];
-const CBB_GAME_COLS = [
+const CB_SPORT_STATS = { ncaam: CB_BASKETBALL, nba: CB_BASKETBALL, wnba: CB_BASKETBALL };
+const cbStats = sp => CB_SPORT_STATS[sp] || [];
+
+const CB_GAME_COLS = [
   ['day','Date','l'], ['player','Player','l'], ['team','Team','l'],
   ['opponent','Opp','l'], ['homeAway','H/A','l'], ['result','W/L','l'],
   ['rax','Rax'], ['rating','Rating'],
@@ -3360,15 +3372,48 @@ const CBB_GAME_COLS = [
   ['tsPct','TS%'], ['fantasyPts','FP'], ['comments','Cmts']
 ];
 
+// What each heading means. The core half never changes; the rest is added
+// for whichever sports are on screen.
+const CB_KEY_CORE = [
+  ['Sn', 'Seasons the player appears in, out of those selected'],
+  ['G', 'Games played'],
+  ['Rax', 'Total rax earned — whole numbers, as the app pays them'],
+  ['Rax/G', 'Rax per game'],
+  ['Best', 'Most rax earned in a single game'],
+  ['Owners', 'People holding this card, from the most recent daily snapshot'],
+  ['7d', 'Change in owners over the past week — blank until a week of snapshots exists'],
+  ['Rating', 'Total performance rating, the score the app shows on a card'],
+  ['Rtg/G', 'Rating per game']
+];
+const CB_KEY_SPORT = {
+  ncaam: [['MIN','Minutes per game'], ['PTS','Points per game'], ['REB','Rebounds per game'],
+          ['AST','Assists per game'], ['STL','Steals per game'], ['BLK','Blocks per game'],
+          ['TO','Turnovers per game'], ['FP','Fantasy points per game']]
+};
+CB_KEY_SPORT.nba = CB_KEY_SPORT.ncaam;
+CB_KEY_SPORT.wnba = CB_KEY_SPORT.ncaam;
+
+const CB_KEY_GAMES = [
+  ['Date','Day the game was played'], ['Opp','Opponent'], ['H/A','Home or away'],
+  ['W/L','Result'], ['Rax','Rax earned for that game'], ['Rating','Rating for that game'],
+  ['+/-','Plus-minus'], ['FG','Field goals made / attempted'], ['3FG','Three-pointers made / attempted'],
+  ['FT','Free throws made / attempted'], ['TS%','True shooting percentage'],
+  ['FP','Fantasy points'], ['Cmts','Comments on that game in the app']
+];
+
+const CB_SPORT_LABEL = { ncaam:'CBB', ncaaf:'CFB', nfl:'NFL', nba:'NBA', nhl:'NHL',
+                         mlb:'MLB', wnba:'WNBA', soccer:'FC', golf:'Golf', ufc:'UFC', tennis:'Tennis' };
+
 async function cbbPanel(){
   const st = { mode:'players', sort:'rax', dir:'desc', offset:0, limit:100,
                q:'', team:'', seasonType:'', homeAway:'', result:'',
-               from:'', to:'', minGames:'', playedOnly:'', sport:'ncaam', season:'2026' };
+               from:'', to:'', minGames:'', playedOnly:'',
+               pairs:[], extra:[] };
+  let available = [];
 
   const box = modal('Game data', `
-    <div class="dtbar">
-      <select class="field grow" id="cb-season"><option value="ncaam|2026">Loading seasons…</option></select>
-    </div>
+    <div class="dtbar" id="cb-seasons"><span class="note">Loading seasons&hellip;</span></div>
+    <p class="note" id="cb-scope"></p>
     <div class="seg" role="group" aria-label="View">
       <button data-cm="players" aria-pressed="true">By player</button>
       <button data-cm="games" aria-pressed="false">Every game</button>
@@ -3391,8 +3436,10 @@ async function cbbPanel(){
       <input class="field" id="cb-to" placeholder="To YYYY-MM-DD" autocomplete="off" style="flex:0 1 150px">
       <input class="field" id="cb-mg" placeholder="Min games" inputmode="numeric" style="flex:0 1 110px">
       <button class="btn-ghost" id="cb-played" aria-pressed="false">Played only</button>
+      <button class="btn-ghost" id="cb-cols">Columns</button>
       <button class="btn-ghost" id="cb-clear">Clear</button>
     </div>
+    <div class="dtbar hide" id="cb-colbar"></div>
     <p class="note" id="cb-count">Loading&hellip;</p>
     <div class="dtwrap"><table class="dt"><thead id="cb-head"></thead><tbody id="cb-body"></tbody></table></div>
     <div class="dtfoot">
@@ -3403,23 +3450,94 @@ async function cbbPanel(){
         <button class="btn" id="cb-dl">Download this view</button>
       </span>
     </div>
-    <p class="note">Rax is what the player earned that game, in whole numbers. Rating is the
-      performance score the app shows. Click a player to see their games.</p>`);
+    <details id="cb-key" style="margin-top:6px">
+      <summary class="note" style="cursor:pointer">What the columns mean</summary>
+      <div class="note" id="cb-key-body" style="margin-top:8px"></div>
+    </details>`);
   box.querySelector('.modal').classList.add('wide');
 
   const $b = sel => box.querySelector(sel);
-  const cols = () => st.mode === 'players' ? CBB_PLAYER_COLS : CBB_GAME_COLS;
+  const sportsOn = () => [...new Set(st.pairs.map(p => p.split('|')[0]))];
+
+  // With one sport, its own stats show. With several, only the ones they all
+  // share stay on — the rest can be put back from the Columns button.
+  function consensusStats(){
+    const sps = sportsOn();
+    if(!sps.length) return [];
+    let keep = cbStats(sps[0]).map(c => c[0]);
+    for(const sp of sps.slice(1)){
+      const theirs = cbStats(sp).map(c => c[0]);
+      keep = keep.filter(k => theirs.includes(k));
+    }
+    return keep;
+  }
+  function allStats(){
+    const seen = new Map();
+    for(const sp of sportsOn()) for(const c of cbStats(sp)) seen.set(c[0], c);
+    return [...seen.values()];
+  }
+  function cols(){
+    if(st.mode === 'games') return CB_GAME_COLS;
+    const on = consensusStats().concat(st.extra.filter(k => !consensusStats().includes(k)));
+    const byKey = new Map(allStats().map(c => [c[0], c]));
+    return CB_CORE_COLS.concat(on.map(k => byKey.get(k)).filter(Boolean));
+  }
 
   function qs(extra){
-    const p = new URLSearchParams({ sport: st.sport, season: st.season, gamelog:'query',
-      mode: st.mode, sort: st.sort, dir: st.dir });
-    if(st.mode === 'players'){ p.set('limit', st.limit); p.set('offset', st.offset); }
-    else { p.set('limit', st.limit); p.set('offset', st.offset); }
+    const p = new URLSearchParams({ gamelog:'query', mode: st.mode, sort: st.sort, dir: st.dir,
+      seasons: st.pairs.map(x => x.replace('|', ':')).join(','),
+      limit: st.limit, offset: st.offset });
+    const first = (st.pairs[0] || 'ncaam|2026').split('|');
+    p.set('sport', first[0]); p.set('season', first[1]);
     for(const k of ['q','team','seasonType','homeAway','result','from','to','minGames','playedOnly']){
       if(st[k]) p.set(k, st[k]);
     }
     for(const k in (extra||{})) p.set(k, extra[k]);
     return '/api/rax?' + p.toString();
+  }
+
+  function drawSeasons(){
+    $b('#cb-seasons').innerHTML = available.map(r => {
+      const key = `${r.sport}|${r.season}`;
+      return `<button class="btn-ghost" data-pair="${esc(key)}" aria-pressed="${st.pairs.includes(key) ? 'true' : 'false'}">`
+        + `${esc(CB_SPORT_LABEL[r.sport] || r.sport)} ${r.season}</button>`;
+    }).join('') || '<span class="note">Nothing collected yet.</span>';
+    const sps = sportsOn();
+    $b('#cb-scope').textContent = !st.pairs.length
+      ? 'Pick at least one season.'
+      : st.pairs.length === 1
+        ? ''
+        : `${st.pairs.length} seasons together — a player is one row, summed across the ones they appear in.`
+          + (sps.length > 1 ? ' Different sports selected, so only shared columns are shown.' : '');
+  }
+
+  function drawCols(){
+    const cons = consensusStats();
+    const opts = allStats().filter(c => !cons.includes(c[0]));
+    $b('#cb-colbar').innerHTML = opts.length
+      ? opts.map(([k, label]) =>
+          `<button class="btn-ghost" data-col="${esc(k)}" aria-pressed="${st.extra.includes(k) ? 'true' : 'false'}">${esc(label)}</button>`).join('')
+      : '<span class="note">Every column for this selection is already shown.</span>';
+  }
+
+  function drawKey(){
+    const sps = sportsOn();
+    let rows = CB_KEY_CORE.slice();
+    if(st.mode === 'games') rows = CB_KEY_GAMES.slice();
+    const extra = [];
+    for(const sp of sps) for(const kv of (CB_KEY_SPORT[sp] || [])){
+      if(!extra.some(x => x[0] === kv[0]) && !rows.some(x => x[0] === kv[0])) extra.push(kv);
+    }
+    const shown = cols().map(c => c[1]);
+    const all = rows.concat(extra).filter(kv => shown.includes(kv[0]));
+    const missing = sps.filter(sp => !CB_KEY_SPORT[sp]);
+    $b('#cb-key-body').innerHTML =
+      all.map(([k, v]) => `<div><b>${esc(k)}</b> — ${esc(v)}</div>`).join('')
+      + (missing.length
+          ? `<div style="margin-top:8px;opacity:.75">No column guide yet for ${
+              esc(missing.map(s => CB_SPORT_LABEL[s] || s).join(', '))
+             } — its data has not been collected and checked, so only the shared columns are shown.</div>`
+          : '');
   }
 
   function drawHead(){
@@ -3429,13 +3547,18 @@ async function cbbPanel(){
   }
 
   async function load(){
+    if(!st.pairs.length){
+      $b('#cb-count').textContent = 'Pick at least one season.';
+      $b('#cb-body').innerHTML = ''; $b('#cb-head').innerHTML = '';
+      return;
+    }
     $b('#cb-count').textContent = 'Loading…';
     let d;
     try { d = await (await fetch(qs())).json(); }
     catch(e){ $b('#cb-count').textContent = 'Could not reach the server.'; return; }
     if(d.error){ $b('#cb-count').textContent = d.error; $b('#cb-body').innerHTML = ''; return; }
 
-    drawHead();
+    drawHead(); drawKey();
     const rows = d.rows || [];
     $b('#cb-body').innerHTML = rows.length ? rows.map((r, i) =>
       `<tr class="${st.mode === 'players' ? 'clickable' : ''}" data-pn="${esc(r.player || '')}">`
@@ -3462,53 +3585,39 @@ async function cbbPanel(){
     $b('#cb-next').disabled = st.offset + st.limit >= total;
   }
 
-  // Teams for the dropdown, refreshed whenever the season changes.
   async function loadTeams(){
     const sel = $b('#cb-team');
     sel.innerHTML = '<option value="">Any team</option>';
+    if(!st.pairs.length) return;
     try {
-      const f = await (await fetch(`/api/rax?sport=${st.sport}&season=${st.season}&gamelog=facets`)).json();
+      const f = await (await fetch(qs({ gamelog:'facets' }))).json();
       if(f && f.teams) sel.insertAdjacentHTML('beforeend',
         f.teams.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join(''));
     } catch(e){}
   }
 
-  // Only the sport-seasons that have actually been collected are offered.
-  const SPORT_LABEL = { ncaam:'CBB', ncaaf:'CFB', nfl:'NFL', nba:'NBA', nhl:'NHL',
-                        mlb:'MLB', wnba:'WNBA', soccer:'FC', golf:'Golf', ufc:'UFC' };
   (async () => {
     try {
       const d = await (await fetch('/api/rax?sport=ncaam&season=2026&gamelog=seasons')).json();
-      const rows = (d && d.seasons) || [];
-      if(!rows.length){ $b('#cb-season').innerHTML = '<option>Nothing collected yet</option>'; return; }
-      $b('#cb-season').innerHTML = rows.map(r =>
-        `<option value="${esc(r.sport)}|${r.season}">${esc(SPORT_LABEL[r.sport] || r.sport)} ${r.season}`
-        + ` — ${Number(r.players).toLocaleString()} players, ${Number(r.rows).toLocaleString()} games</option>`).join('');
-      const first = rows[0];
-      st.sport = first.sport; st.season = String(first.season);
+      available = (d && d.seasons) || [];
+      if(available.length) st.pairs = [`${available[0].sport}|${available[0].season}`];
+      drawSeasons(); drawCols();
       await loadTeams();
       load();
-    } catch(e){ $b('#cb-season').innerHTML = '<option>Could not load seasons</option>'; }
+    } catch(e){ $b('#cb-seasons').innerHTML = '<span class="note">Could not load seasons.</span>'; }
   })();
 
   let typing;
   box.addEventListener('input', e => {
-    const id = e.target.id;
     const map = { 'cb-q':'q', 'cb-from':'from', 'cb-to':'to', 'cb-mg':'minGames' };
-    if(!map[id]) return;
-    st[map[id]] = e.target.value.trim();
+    if(!map[e.target.id]) return;
+    st[map[e.target.id]] = e.target.value.trim();
     st.offset = 0;
     clearTimeout(typing);
     typing = setTimeout(load, 300);
   });
 
-  box.addEventListener('change', async e => {
-    if(e.target.id === 'cb-season'){
-      const [sp, se] = String(e.target.value).split('|');
-      st.sport = sp; st.season = se; st.team = ''; st.offset = 0;
-      await loadTeams();
-      return load();
-    }
+  box.addEventListener('change', e => {
     const map = { 'cb-team':'team', 'cb-type':'seasonType', 'cb-ha':'homeAway', 'cb-res':'result' };
     if(!map[e.target.id]) return;
     st[map[e.target.id]] = e.target.value;
@@ -3516,7 +3625,29 @@ async function cbbPanel(){
     load();
   });
 
-  box.addEventListener('click', e => {
+  box.addEventListener('click', async e => {
+    const pair = e.target.closest('[data-pair]');
+    if(pair){
+      const key = pair.dataset.pair;
+      st.pairs = st.pairs.includes(key) ? st.pairs.filter(x => x !== key) : st.pairs.concat([key]);
+      st.team = ''; st.offset = 0;
+      st.extra = st.extra.filter(k => allStats().some(c => c[0] === k));
+      drawSeasons(); drawCols();
+      await loadTeams();
+      return load();
+    }
+
+    const col = e.target.closest('[data-col]');
+    if(col){
+      const k = col.dataset.col;
+      st.extra = st.extra.includes(k) ? st.extra.filter(x => x !== k) : st.extra.concat([k]);
+      if(!cols().some(c => c[0] === st.sort)){ st.sort = 'rax'; st.dir = 'desc'; }
+      drawCols();
+      return load();
+    }
+
+    if(e.target.closest('#cb-cols')){ $b('#cb-colbar').classList.toggle('hide'); return; }
+
     const m = e.target.closest('[data-cm]');
     if(m){
       if(st.mode === m.dataset.cm) return;
@@ -3531,7 +3662,7 @@ async function cbbPanel(){
     if(th){
       const k = th.dataset.sc;
       if(st.sort === k) st.dir = st.dir === 'desc' ? 'asc' : 'desc';
-      else { st.sort = k; st.dir = (k === 'player' || k === 'team' || k === 'day' || k === 'opponent') ? 'asc' : 'desc'; }
+      else { st.sort = k; st.dir = ['player','team','day','opponent'].includes(k) ? 'asc' : 'desc'; }
       st.offset = 0;
       return load();
     }
