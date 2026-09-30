@@ -546,6 +546,72 @@ export async function onRequestGet({ request, env }) {
     } catch (e) { return json({ error: String((e && e.message) || e) }, 502); }
   }
 
+  // One call that answers "what needs doing next?" across the whole queue.
+  //
+  // Without this the driver has to ask every season about every phase on every
+  // firing, which at forty-odd seasons is hundreds of requests a minute for
+  // nothing. Here the checks are internal reads, and a season with nothing left
+  // today is remembered in a single marker so it is skipped until tomorrow.
+  if (url.searchParams.get('queue') === 'next') {
+    const db = env.RATEBOARD_DB;
+    const CLEAR_KEY = 'queue_clear_v1';
+    const today = new Date().toISOString().slice(0, 10);
+
+    const jobs = [];
+    for (const bit of (url.searchParams.get('jobs') || '').split(',').slice(0, 120)) {
+      const [sp, se] = String(bit).split(':');
+      if (SPORTS.has(String(sp).toLowerCase()) && /^\d{4}$/.test(se)) {
+        jobs.push([String(sp).toLowerCase(), Number(se)]);
+      }
+    }
+    if (!jobs.length) return json({ phase: null, why: 'no jobs given' });
+
+    let clear = {};
+    try { clear = JSON.parse((await env.RATEBOARD_KV.get(CLEAR_KEY)) || '{}') || {}; } catch (e) {}
+
+    const kv = async k => { try { return JSON.parse((await env.RATEBOARD_KV.get(k)) || 'null'); } catch (e) { return null; } };
+    let changed = false;
+
+    for (const [sp, se] of jobs) {
+      const key = `${sp}:${se}`;
+      if (clear[key] === today) continue;
+
+      const games = await kv(`games_${sp}_${se}`);
+      const ids = (games && games.ids) || [];
+      if (!ids.length) return json({ sport: sp, season: se, phase: 'list' });
+
+      const glDone = (await kv(`gamelog_done_${sp}_${se}`)) || {};
+      const doneMap = glDone.done || {};
+      if (ids.some(id => !doneMap[id])) return json({ sport: sp, season: se, phase: 'gamelog' });
+
+      const rxDone = (await kv(`gamelog_rax_${sp}_${se}`)) || {};
+      const raxMap = rxDone.done || {};
+      if (ids.some(id => !raxMap[id])) return json({ sport: sp, season: se, phase: 'rax' });
+
+      try {
+        const blanks = await db.prepare(
+          `SELECT COUNT(*) AS n FROM gamelog WHERE sport = ? AND season = ? AND rax IS NULL`)
+          .bind(sp, se).first();
+        if (blanks && blanks.n > 0) return json({ sport: sp, season: se, phase: 'zerofill' });
+
+        const noConf = await db.prepare(
+          `SELECT COUNT(*) AS n FROM (SELECT DISTINCT team FROM gamelog
+             WHERE sport = ? AND season = ? AND team IS NOT NULL AND conference IS NULL)`)
+          .bind(sp, se).first();
+        if (noConf && noConf.n > 0) return json({ sport: sp, season: se, phase: 'conf' });
+      } catch (e) {}
+
+      const own = await kv(`owners_${sp}_${se}`);
+      if (!own || own.day !== today || !own.done) return json({ sport: sp, season: se, phase: 'owners' });
+
+      clear[key] = today;
+      changed = true;
+    }
+
+    if (changed) { try { await env.RATEBOARD_KV.put(CLEAR_KEY, JSON.stringify(clear)); } catch (e) {} }
+    return json({ phase: null });
+  }
+
   // Conference, for rows gathered before the column existed. Teams are filled
   // one at a time: pick a player from a team that has none, read the
   // conference off their feed, then stamp every row for that team and season.
