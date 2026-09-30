@@ -289,7 +289,10 @@ export async function onRequestGet({ request, env }) {
   const probePlayer = url.searchParams.get('probePlayer');
   if (probePlayer && /^\d+$/.test(probePlayer) && !url.searchParams.get('probeSub') && !url.searchParams.get('gamelog')) {
     try {
-      const d = await rsGet(`https://web.realapp.com/players/${probePlayer}/sport/${sport}`, auth);
+      // With a season, to find out whether the pass count can be asked for per
+      // season rather than only for the current card.
+      const d = await rsGet(
+        `https://web.realapp.com/players/${probePlayer}/sport/${sport}?season=${season}`, auth);
       const shape = (o, depth = 0) => {
         if (Array.isArray(o)) return [`array(${o.length})`, o.length && depth < 2 ? shape(o[0], depth + 1) : null];
         if (o && typeof o === 'object') {
