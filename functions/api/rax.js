@@ -1116,6 +1116,12 @@ export async function onRequestGet({ request, env }) {
     const db = env.RATEBOARD_DB;
     const sp = SPORTS.has(sport) ? sport : 'golf';
 
+    // The reading side can be hit before any collector has run, and the
+    // tournament table and position column are created by the collectors, so
+    // make sure they exist rather than answering with a database error.
+    try { await db.prepare(TOURNAMENT_DDL).run(); } catch (e) {}
+    try { await db.prepare('ALTER TABLE gamelog ADD COLUMN position TEXT').run(); } catch (e) {}
+
     // The cut line is the highest score to par that still made the weekend.
     // Null until the finishing positions have been collected.
     const EVENT_COLS = `
