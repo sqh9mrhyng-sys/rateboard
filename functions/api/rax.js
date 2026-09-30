@@ -273,6 +273,143 @@ function rowsOf(data) {
   return [];
 }
 
+// Owner counts for the players the shop leaderboard never lists. That list is
+// ordered by ownership and stops well short of the full field, so anyone held
+// by a handful of people is absent from it and renders blank rather than as
+// the small number they actually are. The player endpoint answers per season -
+// players/{id}/sport/{sport}?season=2024 gives that season's card - so the
+// leftovers are filled in one at a time from there.
+async function ownerTopSlice(env, sport, season, auth, statusOnly) {
+  {
+    const which = statusOnly ? 'status' : '1';
+    const db = env.RATEBOARD_DB;
+    const KEY = `ownertop_${sport}_${season}`;
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Walks by player id rather than by "who is still missing". Plenty of
+    // players have no card for a given season at all - the endpoint answers
+    // for a different year and the answer is thrown away - and those would
+    // otherwise come back as missing on every single pass, so the walk would
+    // never get past them.
+    const MISSING = `SELECT g.playerId AS id, MAX(g.player) AS player
+                       FROM gamelog g
+                      WHERE g.sport = ? AND g.season = ? AND g.playerId > ?
+                        AND NOT EXISTS (SELECT 1 FROM owners o
+                                         WHERE o.sport = g.sport AND o.season = g.season
+                                           AND o.playerId = g.playerId)
+                      GROUP BY g.playerId
+                      ORDER BY g.playerId LIMIT ?`;
+
+    const readTop = async () => {
+      try {
+        const o = JSON.parse((await env.RATEBOARD_KV.get(KEY)) || 'null');
+        return { doneDay: (o && o.doneDay) || '', filled: (o && o.filled) || 0,
+                 afterId: (o && o.afterId) || 0 };
+      } catch (e) { return { doneDay: '', filled: 0, afterId: 0 }; }
+    };
+
+    if (which === 'status') {
+      const st = await readTop();
+      let missing = null, left = null;
+      try {
+        const r = await db.prepare(
+          `SELECT COUNT(*) AS n FROM (${MISSING.replace('LIMIT ?', 'LIMIT 100000')})`)
+          .bind(sport, Number(season), 0).first();
+        missing = r ? r.n : null;
+        const l = await db.prepare(
+          `SELECT COUNT(*) AS n FROM (${MISSING.replace('LIMIT ?', 'LIMIT 100000')})`)
+          .bind(sport, Number(season), st.afterId).first();
+        left = l ? l.n : null;
+      } catch (e) {}
+      return json({ missing, stillToTry: left, filledSoFar: st.filled,
+                    afterId: st.afterId, lastFinished: st.doneDay || null });
+    }
+
+
+    const { readable, writable } = new TransformStream();
+    const w = writable.getWriter();
+    const enc = new TextEncoder();
+    const send = t => w.write(enc.encode(t));
+
+    (async () => {
+      try {
+        await db.prepare(OWNERS_DDL).run();
+        const st = await readTop();
+
+        const res = await db.prepare(MISSING)
+          .bind(sport, Number(season), st.afterId, OWNERTOP_CHUNK + 1).all();
+        const rows = (res && res.results) || [];
+        if (!rows.length) {
+          st.doneDay = today;
+          st.afterId = 0;
+          await env.RATEBOARD_KV.put(KEY, JSON.stringify(st));
+          await send(`every player already has an owner count.\n`);
+          await send(`##STATE ${st.filled} ${st.filled} 0\n`);
+          await w.close();
+          return;
+        }
+
+        const batch = rows.slice(0, OWNERTOP_CHUNK);
+        await send(`filling owner counts one player at a time for ${sport} ${season}` +
+                   ` (${rows.length > OWNERTOP_CHUNK ? 'more than ' : ''}${batch.length} left,` +
+                   ` from player ${batch[0].id})...\n`);
+
+        const sql = `INSERT OR REPLACE INTO owners (sport, season, playerId, day, owners, player)
+                     VALUES (?, ?, ?, ?, ?, ?)`;
+        const stmts = [];
+        let asked = 0;
+        for (const r of batch) {
+          if (asked) await sleep(GAP_MS);
+          asked++;
+          let count = null, name = r.player || null;
+          try {
+            const d = await rsGet(
+              `https://web.realapp.com/players/${r.id}/sport/${sport}?season=${season}`, auth);
+            const pl = d && d.player;
+            // Only trust the number when the card really is this season's -
+            // without a season the endpoint answers with the current one, and
+            // storing that against 2024 would be worse than leaving it blank.
+            const info = d && d.userPassInfo;
+            const ok = !info || info.season == null || Number(info.season) === Number(season);
+            // A null count on the right season's card means nobody owns one,
+            // which is a real answer worth storing - a blank would just send
+            // the same player back round on every future pass.
+            if (pl && ok) count = pl.passCount == null ? 0 : (Number(pl.passCount) || 0);
+            if (pl && (pl.firstName || pl.lastName)) {
+              name = `${pl.firstName || ''} ${pl.lastName || ''}`.trim() || name;
+            }
+          } catch (e) {}
+          if (count == null) continue;
+          stmts.push(db.prepare(sql).bind(
+            sport, Number(season), Number(r.id), today, count, name));
+        }
+
+        for (let j = 0; j < stmts.length; j += 40) {
+          const slice = stmts.slice(j, j + 40);
+          if (slice.length) await db.batch(slice);
+        }
+        st.filled += stmts.length;
+        st.afterId = Number(batch[batch.length - 1].id) || st.afterId;
+
+        const finished = rows.length <= OWNERTOP_CHUNK;
+        if (finished) { st.doneDay = today; st.afterId = 0; }
+        await env.RATEBOARD_KV.put(KEY, JSON.stringify(st));
+        await send(finished
+          ? `\nfilled ${stmts.length} of ${batch.length} - that is the last of them.\n`
+          : `\nfilled ${stmts.length} of ${batch.length} - continuing on the next pass.\n`);
+        await send(`##STATE ${st.filled} ${st.filled} ${finished ? 0 : 1}\n`);
+      } catch (e) {
+        await send(`\nstopped: ${String((e && e.message) || e).replace(/\n/g, ' ')}\n`);
+      }
+      await w.close();
+    })();
+
+    return new Response(readable, {
+      headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }
+    });
+  }
+}
+
 export async function onRequestGet({ request, env }) {
   const auth = env.RS_AUTH_TOKEN;
   if (!auth) return json({ error: 'RS_AUTH_TOKEN is not set on this deployment' }, 500);
@@ -673,7 +810,7 @@ export async function onRequestGet({ request, env }) {
       if (!own || own.day !== today || !own.done) return json({ sport: sp, season: se, phase: 'owners' });
 
       const top = await kv(`ownertop_${sp}_${se}`);
-      if (!top || !top.doneDay || top.doneDay < weekAgo) return await heavy(sp, se, 'ownertop');
+      if (!top || !top.doneDay || top.doneDay < weekAgo) return await heavy(sp, se, 'owners');
 
       clear[key] = today;
       changed = true;
@@ -772,6 +909,14 @@ export async function onRequestGet({ request, env }) {
   //
   //   ?owners=1       -> collect the next chunk of today's snapshot
   //   ?owners=status  -> how far along today's snapshot is
+  if (url.searchParams.get('ownertop')) {
+    const which = url.searchParams.get('ownertop');
+    if (which !== '1' && which !== 'status') {
+      return json({ error: 'ownertop must be 1 or status' }, 400);
+    }
+    return await ownerTopSlice(env, sport, Number(season), auth, which === 'status');
+  }
+
   if (url.searchParams.get('owners')) {
     const which = url.searchParams.get('owners');
     const db = env.RATEBOARD_DB;
@@ -801,6 +946,13 @@ export async function onRequestGet({ request, env }) {
     }
 
     if (which !== '1') return json({ error: 'owners must be 1 or status' }, 400);
+
+    // Once the day's leaderboard walk is finished there is nothing left for
+    // this phase to do, so the slice goes to filling in the players that walk
+    // never reaches. Keeping it under the same phase name means the deployed
+    // cron driver needs no new phase to know about.
+    const already = await readOwn();
+    if (already.done) return await ownerTopSlice(env, sport, Number(season), auth, false);
 
     const { readable, writable } = new TransformStream();
     const w = writable.getWriter();
@@ -850,142 +1002,6 @@ export async function onRequestGet({ request, env }) {
           ? `\nsnapshot complete: ${st.seen} players.\n`
           : `\n${st.seen} so far - continuing on the next pass.\n`);
         await send(`##STATE ${st.seen} ${st.seen} ${finished ? 0 : 1}\n`);
-      } catch (e) {
-        await send(`\nstopped: ${String((e && e.message) || e).replace(/\n/g, ' ')}\n`);
-      }
-      await w.close();
-    })();
-
-    return new Response(readable, {
-      headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }
-    });
-  }
-
-  // Owner counts for the players the shop leaderboard never lists. That list
-  // is ordered by ownership and stops well short of the full field, so anyone
-  // held by a handful of people is absent from it and renders blank rather
-  // than as the small number they actually are. The player endpoint answers
-  // per season - players/{id}/sport/{sport}?season=2024 gives that season's
-  // card - so the leftovers are filled in one at a time from there.
-  if (url.searchParams.get('ownertop')) {
-    const which = url.searchParams.get('ownertop');
-    const db = env.RATEBOARD_DB;
-    const KEY = `ownertop_${sport}_${season}`;
-    const today = new Date().toISOString().slice(0, 10);
-
-    // Walks by player id rather than by "who is still missing". Plenty of
-    // players have no card for a given season at all - the endpoint answers
-    // for a different year and the answer is thrown away - and those would
-    // otherwise come back as missing on every single pass, so the walk would
-    // never get past them.
-    const MISSING = `SELECT g.playerId AS id, MAX(g.player) AS player
-                       FROM gamelog g
-                      WHERE g.sport = ? AND g.season = ? AND g.playerId > ?
-                        AND NOT EXISTS (SELECT 1 FROM owners o
-                                         WHERE o.sport = g.sport AND o.season = g.season
-                                           AND o.playerId = g.playerId)
-                      GROUP BY g.playerId
-                      ORDER BY g.playerId LIMIT ?`;
-
-    const readTop = async () => {
-      try {
-        const o = JSON.parse((await env.RATEBOARD_KV.get(KEY)) || 'null');
-        return { doneDay: (o && o.doneDay) || '', filled: (o && o.filled) || 0,
-                 afterId: (o && o.afterId) || 0 };
-      } catch (e) { return { doneDay: '', filled: 0, afterId: 0 }; }
-    };
-
-    if (which === 'status') {
-      const st = await readTop();
-      let missing = null, left = null;
-      try {
-        const r = await db.prepare(
-          `SELECT COUNT(*) AS n FROM (${MISSING.replace('LIMIT ?', 'LIMIT 100000')})`)
-          .bind(sport, Number(season), 0).first();
-        missing = r ? r.n : null;
-        const l = await db.prepare(
-          `SELECT COUNT(*) AS n FROM (${MISSING.replace('LIMIT ?', 'LIMIT 100000')})`)
-          .bind(sport, Number(season), st.afterId).first();
-        left = l ? l.n : null;
-      } catch (e) {}
-      return json({ missing, stillToTry: left, filledSoFar: st.filled,
-                    afterId: st.afterId, lastFinished: st.doneDay || null });
-    }
-
-    if (which !== '1') return json({ error: 'ownertop must be 1 or status' }, 400);
-
-    const { readable, writable } = new TransformStream();
-    const w = writable.getWriter();
-    const enc = new TextEncoder();
-    const send = t => w.write(enc.encode(t));
-
-    (async () => {
-      try {
-        await db.prepare(OWNERS_DDL).run();
-        const st = await readTop();
-
-        const res = await db.prepare(MISSING)
-          .bind(sport, Number(season), st.afterId, OWNERTOP_CHUNK + 1).all();
-        const rows = (res && res.results) || [];
-        if (!rows.length) {
-          st.doneDay = today;
-          st.afterId = 0;
-          await env.RATEBOARD_KV.put(KEY, JSON.stringify(st));
-          await send(`every player already has an owner count.\n`);
-          await send(`##STATE ${st.filled} ${st.filled} 0\n`);
-          await w.close();
-          return;
-        }
-
-        const batch = rows.slice(0, OWNERTOP_CHUNK);
-        await send(`filling owner counts one player at a time for ${sport} ${season}` +
-                   ` (${rows.length > OWNERTOP_CHUNK ? 'more than ' : ''}${batch.length} left,` +
-                   ` from player ${batch[0].id})...\n`);
-
-        const sql = `INSERT OR REPLACE INTO owners (sport, season, playerId, day, owners, player)
-                     VALUES (?, ?, ?, ?, ?, ?)`;
-        const stmts = [];
-        let asked = 0;
-        for (const r of batch) {
-          if (asked) await sleep(GAP_MS);
-          asked++;
-          let count = null, name = r.player || null;
-          try {
-            const d = await rsGet(
-              `https://web.realapp.com/players/${r.id}/sport/${sport}?season=${season}`, auth);
-            const pl = d && d.player;
-            // Only trust the number when the card really is this season's -
-            // without a season the endpoint answers with the current one, and
-            // storing that against 2024 would be worse than leaving it blank.
-            const info = d && d.userPassInfo;
-            const ok = !info || info.season == null || Number(info.season) === Number(season);
-            // A null count on the right season's card means nobody owns one,
-            // which is a real answer worth storing - a blank would just send
-            // the same player back round on every future pass.
-            if (pl && ok) count = pl.passCount == null ? 0 : (Number(pl.passCount) || 0);
-            if (pl && (pl.firstName || pl.lastName)) {
-              name = `${pl.firstName || ''} ${pl.lastName || ''}`.trim() || name;
-            }
-          } catch (e) {}
-          if (count == null) continue;
-          stmts.push(db.prepare(sql).bind(
-            sport, Number(season), Number(r.id), today, count, name));
-        }
-
-        for (let j = 0; j < stmts.length; j += 40) {
-          const slice = stmts.slice(j, j + 40);
-          if (slice.length) await db.batch(slice);
-        }
-        st.filled += stmts.length;
-        st.afterId = Number(batch[batch.length - 1].id) || st.afterId;
-
-        const finished = rows.length <= OWNERTOP_CHUNK;
-        if (finished) { st.doneDay = today; st.afterId = 0; }
-        await env.RATEBOARD_KV.put(KEY, JSON.stringify(st));
-        await send(finished
-          ? `\nfilled ${stmts.length} of ${batch.length} - that is the last of them.\n`
-          : `\nfilled ${stmts.length} of ${batch.length} - continuing on the next pass.\n`);
-        await send(`##STATE ${st.filled} ${st.filled} ${finished ? 0 : 1}\n`);
       } catch (e) {
         await send(`\nstopped: ${String((e && e.message) || e).replace(/\n/g, ' ')}\n`);
       }
