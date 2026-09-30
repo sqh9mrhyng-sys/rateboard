@@ -4008,7 +4008,8 @@ async function cbbPanel(){
         <button class="btn-ghost" id="lk-new">+ New loadout</button>
       </div>
       ${lkNaming ? `<div class="dtbar" style="margin-top:8px">
-        <input class="field grow" id="lk-name" placeholder="${lkNaming === 'rename' ? 'New name' : 'Loadout name'}"
+        <input class="field" id="lk-name" style="flex:1 1 180px;min-width:0"
+               placeholder="${lkNaming === 'rename' ? 'New name' : 'Loadout name'}"
                value="${lkNaming === 'rename' ? esc(all.active) : ''}" autocomplete="off">
         <button class="btn" id="lk-namesave">Save</button>
         <button class="btn-ghost" id="lk-namecancel">Cancel</button>
@@ -4154,7 +4155,12 @@ async function cbbPanel(){
       const name = rest.join('|');
       $b('#lk-q').value = name;
       await lkSearch();
-      return lkOpen(sp, +se, name);
+      await lkOpen(sp, +se, name);
+      // The loadout sits below the detail, so opening a card from down there
+      // would otherwise look like nothing happened.
+      const d = $b('#lk-detail');
+      if(d) d.scrollIntoView({ behavior:'smooth', block:'start' });
+      return;
     }
 
     const lo = e.target.closest('[data-loadout]');
