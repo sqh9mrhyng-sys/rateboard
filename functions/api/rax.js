@@ -21,6 +21,8 @@ const OWNERS_CHUNK_PAGES = 45;
 // shop list, so the leftovers are asked for one at a time. This is the size of
 // one tick's worth of those.
 const OWNERTOP_CHUNK = 45;
+// Players per pass of the tournament-name and finishing-position walk.
+const GOLFMETA_CHUNK = 25;
 // While the queue is resting between seasons, the backfill keeps going but at
 // a slower drip - the rest exists so the account doesn't look like a crawler,
 // and 45 player lookups a minute for two hours would undo that.
@@ -114,6 +116,15 @@ const GAMELOG_DDL = `CREATE TABLE IF NOT EXISTS gamelog (
   PRIMARY KEY (sport, season, playerId, gameId)
 )`;
 
+// One row per event. Golf's game rows carry a gameId but nothing that names
+// the tournament, and the name is the only thing that ties the same event
+// together across years.
+const TOURNAMENT_DDL = `CREATE TABLE IF NOT EXISTS tournament (
+  sport TEXT NOT NULL, season INTEGER NOT NULL, gameId INTEGER NOT NULL,
+  name TEXT, course TEXT, day TEXT,
+  PRIMARY KEY (sport, season, gameId)
+)`;
+
 const OWNERS_DDL = `CREATE TABLE IF NOT EXISTS owners (
   sport TEXT NOT NULL,
   season INTEGER NOT NULL,
@@ -148,6 +159,12 @@ async function migrateGamelog(db) {
     'CREATE INDEX IF NOT EXISTS owners_latest ON owners (sport, season, day)').run(); } catch (e) {}
   try { await db.prepare(
     'CREATE INDEX IF NOT EXISTS gamelog_scope ON gamelog (sport, season, playerId)').run(); } catch (e) {}
+  try { await db.prepare('ALTER TABLE gamelog ADD COLUMN position TEXT').run(); } catch (e) {}
+  try { await db.prepare(TOURNAMENT_DDL).run(); } catch (e) {}
+  try { await db.prepare(
+    'CREATE INDEX IF NOT EXISTS gamelog_event ON gamelog (sport, season, gameId)').run(); } catch (e) {}
+  try { await db.prepare(
+    'CREATE INDEX IF NOT EXISTS tournament_name ON tournament (sport, name)').run(); } catch (e) {}
 }
 
 // Turns one box score from the season feed into a flat row.
@@ -804,7 +821,7 @@ export async function onRequestGet({ request, env }) {
       return json({ sport: sp, season: se, phase });
     };
 
-    let ownersJob = null, topJob = null;
+    let ownersJob = null, topJob = null, golfJob = null;
     for (const [sp, se] of jobs) {
       const key = `${sp}:${se}`;
       if (clear[key] === today) continue;
@@ -844,6 +861,11 @@ export async function onRequestGet({ request, env }) {
       const top = await kv(`ownertop_${sp}_${se}`);
       if (!top || !top.doneDay || top.doneDay < weekAgo) { if (!topJob) topJob = [sp, se]; continue; }
 
+      if (sp === 'golf') {
+        const gm = await kv(`golfmeta_${sp}_${se}`);
+        if (!gm || !gm.doneDay) { if (!golfJob) golfJob = [sp, se]; continue; }
+      }
+
       clear[key] = today;
       changed = true;
     }
@@ -851,6 +873,7 @@ export async function onRequestGet({ request, env }) {
     if (changed) { try { await env.RATEBOARD_KV.put(CLEAR_KEY, JSON.stringify(clear)); } catch (e) {} }
     if (ownersJob) return json({ sport: ownersJob[0], season: ownersJob[1], phase: 'owners' });
     if (topJob)    return json({ sport: topJob[0],    season: topJob[1],    phase: 'owners' });
+    if (golfJob)   return json({ sport: golfJob[0],   season: golfJob[1],   phase: 'conf' });
     return json({ phase: null });
   }
 
@@ -876,6 +899,16 @@ export async function onRequestGet({ request, env }) {
       } catch (e) { return json({ error: String((e && e.message) || e) }, 500); }
     }
     if (which !== '1') return json({ error: 'conf must be 1 or status' }, 400);
+
+    // Golf has no conferences to fill, so for golf this slot is spent on the
+    // tournament walk instead. Keeping the phase name means the deployed cron
+    // driver needs no new phase to know about.
+    if (sport === 'golf') {
+      const u = new URL(url.toString());
+      u.searchParams.delete('conf');
+      u.searchParams.set('golfmeta', '1');
+      return await onRequestGet({ request: new Request(u.toString(), request), env });
+    }
 
     const { readable, writable } = new TransformStream();
     const w = writable.getWriter();
@@ -943,6 +976,212 @@ export async function onRequestGet({ request, env }) {
   //
   //   ?owners=1       -> collect the next chunk of today's snapshot
   //   ?owners=status  -> how far along today's snapshot is
+
+  // Tournament names, courses and finishing positions. Golf's stored rows have
+  // the event's id and each player's score to par, but nothing that names the
+  // event or says who missed the cut - both of those live in the same feed the
+  // game logs come from, so this walks it again and fills them in.
+  if (url.searchParams.get('golfmeta')) {
+    const which = url.searchParams.get('golfmeta');
+    const db = env.RATEBOARD_DB;
+    const KEY = `golfmeta_${sport}_${season}`;
+    const today = new Date().toISOString().slice(0, 10);
+
+    const readMeta = async () => {
+      try {
+        const o = JSON.parse((await env.RATEBOARD_KV.get(KEY)) || 'null');
+        return { at: (o && o.at) || 0, doneDay: (o && o.doneDay) || '' };
+      } catch (e) { return { at: 0, doneDay: '' }; }
+    };
+
+    let ids = [];
+    try {
+      const g = JSON.parse((await env.RATEBOARD_KV.get(`games_${sport}_${season}`)) || 'null');
+      ids = (g && g.ids) || [];
+    } catch (e) {}
+
+    if (which === 'status') {
+      const st = await readMeta();
+      let events = null, placed = null;
+      try {
+        const t = await db.prepare(
+          'SELECT COUNT(*) AS n FROM tournament WHERE sport = ? AND season = ?')
+          .bind(sport, Number(season)).first();
+        events = t ? t.n : null;
+        const p = await db.prepare(
+          'SELECT COUNT(*) AS n FROM gamelog WHERE sport = ? AND season = ? AND position IS NOT NULL')
+          .bind(sport, Number(season)).first();
+        placed = p ? p.n : null;
+      } catch (e) {}
+      return json({ players: ids.length, walked: st.at, events, rowsWithPosition: placed,
+                    lastFinished: st.doneDay || null });
+    }
+
+    if (which !== '1') return json({ error: 'golfmeta must be 1 or status' }, 400);
+
+    const { readable, writable } = new TransformStream();
+    const w = writable.getWriter();
+    const enc = new TextEncoder();
+    const send = t => w.write(enc.encode(t));
+
+    (async () => {
+      try {
+        await migrateGamelog(db);
+        const st = await readMeta();
+        if (!ids.length) {
+          await send(`no player list for ${sport} ${season} yet.\n`);
+          await send('##STATE 0 0 0\n');
+          await w.close();
+          return;
+        }
+        if (st.at >= ids.length) {
+          st.doneDay = today; st.at = 0;
+          await env.RATEBOARD_KV.put(KEY, JSON.stringify(st));
+          await send('every player already walked.\n');
+          await send('##STATE 0 0 0\n');
+          await w.close();
+          return;
+        }
+
+        const batch = ids.slice(st.at, st.at + GOLFMETA_CHUNK);
+        await send(`tournament names and finishes for ${sport} ${season},` +
+                   ` players ${st.at + 1}-${st.at + batch.length} of ${ids.length}...\n`);
+
+        const events = new Map();
+        const places = [];
+        for (let i = 0; i < batch.length; i++) {
+          if (i) await sleep(GAP_MS);
+          try {
+            const d = await rsGet(
+              `https://web.realapp.com/players/${batch[i]}/sport/${sport}` +
+              `/seasonfeed?limit=80&season=${season}&view=recent&viewFrame=default`, auth);
+            for (const b of ((d && d.playerBoxScores) || [])) {
+              if (!b || b.gameId == null) continue;
+              const name = b.tournamentName || null;
+              const course = (b.scoreCard && b.scoreCard.additionalInfo &&
+                              b.scoreCard.additionalInfo.courseLabel) || null;
+              if (name && !events.has(b.gameId)) {
+                events.set(b.gameId, { name, course, day: b.day || null });
+              }
+              const pos = b.positionDisplay || b.position || null;
+              if (pos) places.push([Number(b.gameId), Number(b.playerId), String(pos)]);
+            }
+          } catch (e) {}
+        }
+
+        const stmts = [];
+        for (const [gid, e] of events) {
+          stmts.push(db.prepare(
+            `INSERT INTO tournament (sport, season, gameId, name, course, day)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(sport, season, gameId) DO UPDATE SET
+               name = excluded.name, course = excluded.course, day = excluded.day`)
+            .bind(sport, Number(season), Number(gid), e.name, e.course, e.day));
+        }
+        for (const [gid, pid, pos] of places) {
+          stmts.push(db.prepare(
+            'UPDATE gamelog SET position = ? WHERE sport = ? AND season = ? AND playerId = ? AND gameId = ?')
+            .bind(pos, sport, Number(season), pid, gid));
+        }
+        for (let j = 0; j < stmts.length; j += 40) {
+          const slice = stmts.slice(j, j + 40);
+          if (slice.length) await db.batch(slice);
+        }
+
+        st.at += batch.length;
+        const finished = st.at >= ids.length;
+        if (finished) { st.doneDay = today; st.at = 0; }
+        await env.RATEBOARD_KV.put(KEY, JSON.stringify(st));
+        await send(`\n${events.size} events named, ${places.length} finishes recorded` +
+                   (finished ? ' - that is the whole field.\n' : ' - continuing next pass.\n'));
+        await send(`##STATE ${st.at} ${ids.length} ${finished ? 0 : 1}\n`);
+      } catch (e) {
+        await send(`\nstopped: ${String((e && e.message) || e).replace(/\n/g, ' ')}\n`);
+      }
+      await w.close();
+    })();
+
+    return new Response(readable, {
+      headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }
+    });
+  }
+
+  // Reading side of the golf screen.
+  //   ?golf=seasons                       -> which golf seasons have events
+  //   ?golf=tournaments&season=2024       -> every event that season
+  //   ?golf=history&name=The%20Open...    -> that event across every year
+  //   ?golf=board&season=2024&gameId=...  -> one event's rax leaderboard
+  if (url.searchParams.get('golf')) {
+    const which = url.searchParams.get('golf');
+    const db = env.RATEBOARD_DB;
+    const sp = SPORTS.has(sport) ? sport : 'golf';
+
+    // The cut line is the highest score to par that still made the weekend.
+    // Null until the finishing positions have been collected.
+    const EVENT_COLS = `
+      COUNT(*) AS players,
+      SUM(g.rax) AS totalRax,
+      ROUND(AVG(g.rax), 2) AS avgRax,
+      MAX(g.rax) AS bestRax,
+      SUM(CASE WHEN g.position IS NOT NULL AND g.position <> 'CUT' THEN 1 ELSE 0 END) AS madeCut,
+      SUM(CASE WHEN g.position = 'CUT' THEN 1 ELSE 0 END) AS missedCut,
+      MAX(CASE WHEN g.position IS NOT NULL AND g.position <> 'CUT' THEN g.plusMinus END) AS cutLine`;
+
+    try {
+      if (which === 'seasons') {
+        const r = await db.prepare(
+          `SELECT season, COUNT(DISTINCT gameId) AS events FROM gamelog
+            WHERE sport = ? AND gameId IS NOT NULL GROUP BY season ORDER BY season DESC`)
+          .bind(sp).all();
+        return json({ sport: sp, seasons: (r && r.results) || [] });
+      }
+
+      if (which === 'tournaments') {
+        const r = await db.prepare(
+          `SELECT g.gameId, MIN(g.day) AS day, t.name, t.course, ${EVENT_COLS}
+             FROM gamelog g LEFT JOIN tournament t
+               ON t.sport = g.sport AND t.season = g.season AND t.gameId = g.gameId
+            WHERE g.sport = ? AND g.season = ? AND g.gameId IS NOT NULL
+            GROUP BY g.gameId ORDER BY day ASC`)
+          .bind(sp, Number(season)).all();
+        return json({ sport: sp, season: Number(season), rows: (r && r.results) || [] });
+      }
+
+      if (which === 'history') {
+        const name = (url.searchParams.get('name') || '').trim();
+        if (!name) return json({ error: 'name is required' }, 400);
+        const r = await db.prepare(
+          `SELECT g.season, g.gameId, MIN(g.day) AS day, t.course, ${EVENT_COLS}
+             FROM gamelog g JOIN tournament t
+               ON t.sport = g.sport AND t.season = g.season AND t.gameId = g.gameId
+            WHERE g.sport = ? AND t.name = ?
+            GROUP BY g.season, g.gameId ORDER BY g.season DESC`)
+          .bind(sp, name).all();
+        return json({ sport: sp, name, rows: (r && r.results) || [] });
+      }
+
+      if (which === 'board') {
+        const gid = parseInt(url.searchParams.get('gameId') || '', 10);
+        if (!gid) return json({ error: 'gameId is required' }, 400);
+        const lim = Math.min(400, Math.max(1, parseInt(url.searchParams.get('limit') || '200', 10) || 200));
+        const head = await db.prepare(
+          `SELECT g.gameId, MIN(g.day) AS day, t.name, t.course, ${EVENT_COLS}
+             FROM gamelog g LEFT JOIN tournament t
+               ON t.sport = g.sport AND t.season = g.season AND t.gameId = g.gameId
+            WHERE g.sport = ? AND g.season = ? AND g.gameId = ?`)
+          .bind(sp, Number(season), gid).first();
+        const r = await db.prepare(
+          `SELECT player, team, rax, rating, plusMinus AS toPar, position
+             FROM gamelog WHERE sport = ? AND season = ? AND gameId = ?
+            ORDER BY rax DESC LIMIT ?`)
+          .bind(sp, Number(season), gid, lim).all();
+        return json({ event: head || null, rows: (r && r.results) || [] });
+      }
+
+      return json({ error: 'golf must be seasons, tournaments, history or board' }, 400);
+    } catch (e) { return json({ error: String((e && e.message) || e) }, 500); }
+  }
+
   if (url.searchParams.get('ownertop')) {
     const which = url.searchParams.get('ownertop');
     if (which !== '1' && which !== 'status') {
