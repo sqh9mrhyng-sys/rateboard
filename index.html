@@ -103,6 +103,25 @@
   .seg button{flex:1;padding:9px;border-radius:999px;font-weight:600;font-size:14px;color:var(--mute)}
   .seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
 
+  /* Selected seasons and toggles were only marked with aria-pressed, which
+     shows nothing on screen. This is what makes the active ones obvious. */
+  .btn-ghost[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+  .sgrp{border:1px solid var(--line);border-radius:9px;margin-bottom:6px}
+  .sgrp > summary{cursor:pointer;padding:9px 12px;font-size:13.5px;font-weight:600;list-style:none;display:flex;gap:10px;align-items:center}
+  .sgrp > summary::-webkit-details-marker{display:none}
+  .sgrp > summary::before{content:'\25B8';color:var(--mute);font-weight:400}
+  .sgrp[open] > summary::before{content:'\25BE'}
+  .sgrp[open] > summary{border-bottom:1px solid var(--line)}
+  .sgrp .seasons{display:flex;flex-wrap:wrap;gap:8px;padding:10px 12px}
+  .sgrp .tick{margin-left:auto;color:var(--accent);font-size:12px;font-weight:600}
+  .lkcard{border:1px solid var(--line);border-radius:9px;padding:12px 14px;margin-top:12px}
+  .lkrow{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 2px;border-bottom:1px solid var(--line)}
+  .lkrow:last-child{border-bottom:0}
+  .lkrow[data-lk]{cursor:pointer}
+  .lkrow[data-lk]:hover{color:var(--accent)}
+  .lkstats{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:9px;margin:12px 0}
+  .lkstat{background:var(--panel-2);border-radius:8px;padding:9px 11px;font-size:12px;color:var(--mute)}
+  .lkstat b{display:block;font-size:17px;color:var(--bone);margin-top:2px}
   .note{font-size:12.5px;color:var(--mute);line-height:1.45}
   .minnote{color:var(--accent);margin:6px 0 0}
   /* Admin-only controls sitting inside the public board — tinted so it's
@@ -3409,6 +3428,32 @@ const CB_COLLEGE = ['ncaam', 'ncaaf'];
 // Postseason is called different things by different sports.
 const CB_POST_LABEL = { soccer: 'World Cup' };
 
+// Card levels. Only the multiplier changes what a card is worth on this
+// screen - the rating is carried for reference and nothing is computed from it.
+const CB_LEVELS = [
+  ['Common', 2, 10], ['Uncommon', 3, 20], ['Rare', 4, 50], ['Epic', 10, 100],
+  ['Legendary 1', 25, 380], ['Legendary 2', 28, 520], ['Legendary 3', 32, 720],
+  ['Legendary 4', 35, 1000], ['Legendary 5', 40, 1180],
+  ['Mystic 1', 75, 1380], ['Mystic 2', 79, 1560], ['Mystic 3', 83, 1760],
+  ['Mystic 4', 87, 1980], ['Mystic 5', 91, 2220], ['Mystic 6', 95, 2480],
+  ['Mystic 7', 98, 2760], ['Mystic 8', 101, 3000], ['Mystic 9', 103, 3180],
+  ['Mystic 10', 105, 3250],
+  ['Iconic 1', 150, 3380], ['Iconic 2', 153, 3820], ['Iconic 3', 156, 4320],
+  ['Iconic 4', 159, 4920], ['Iconic 5', 163, 5620], ['Iconic 6', 167, 6420],
+  ['Iconic 7', 171, 7320], ['Iconic 8', 175, 8320], ['Iconic 9', 180, 9420],
+  ['Iconic 10', 185, 10620], ['Iconic 11', 190, 12000], ['Iconic 12', 196, 13600],
+  ['Iconic 13', 202, 15400], ['Iconic 14', 208, 17500], ['Iconic 15', 214, 19900],
+  ['Iconic 16', 220, 22700], ['Iconic 17', 226, 26000], ['Iconic 18', 233, 29000],
+  ['Iconic 19', 240, 34500], ['Iconic 20', 250, 40000]
+];
+const LOADOUT_KEY = 'rateboard_loadout_v1';
+function loadoutRead(){
+  try { return JSON.parse(localStorage.getItem(LOADOUT_KEY) || '[]') || []; } catch(e){ return []; }
+}
+function loadoutWrite(v){
+  try { localStorage.setItem(LOADOUT_KEY, JSON.stringify(v)); } catch(e){}
+}
+
 const CB_SPORT_LABEL = { ncaam:'CBB', ncaaf:'CFB', nfl:'NFL', nba:'NBA', nhl:'NHL',
                          mlb:'MLB', wnba:'WNBA', soccer:'FC', golf:'Golf', ufc:'UFC', tennis:'Tennis' };
 
@@ -3421,13 +3466,14 @@ async function cbbPanel(){
   let available = [];
 
   const box = modal('Game data', `
-    <div class="dtbar" id="cb-seasons"><span class="note">Loading seasons&hellip;</span></div>
+    <div id="cb-seasons"><span class="note">Loading seasons&hellip;</span></div>
     <p class="note" id="cb-scope"></p>
     <div class="seg" role="group" aria-label="View">
       <button data-cm="players" aria-pressed="true">By player</button>
       <button data-cm="games" aria-pressed="false">Every game</button>
+      <button data-cm="lookup" aria-pressed="false">Players</button>
     </div>
-    <div class="dtbar">
+    <div class="dtbar cb-filt">
       <input class="field grow" id="cb-q" placeholder="Player name" autocomplete="off">
       <select class="field" id="cb-conf"><option value="">Any conference</option></select>
       <select class="field" id="cb-team"><option value="">Any team</option></select>
@@ -3441,14 +3487,14 @@ async function cbbPanel(){
       <select class="field" id="cb-res"><option value="">W + L</option>
         <option value="W">Wins</option><option value="L">Losses</option></select>
     </div>
-    <div class="dtbar">
+    <div class="dtbar cb-filt">
       <input class="field" id="cb-from" placeholder="From MM-DD" autocomplete="off" style="flex:0 1 120px">
       <input class="field" id="cb-to" placeholder="To MM-DD" autocomplete="off" style="flex:0 1 120px">
       <button class="btn-ghost" id="cb-exact" aria-pressed="false">Exact dates</button>
       <input class="field" id="cb-mg" placeholder="Min games" inputmode="numeric" style="flex:0 1 110px">
       <button class="btn-ghost" id="cb-played" aria-pressed="false">Played only</button>
     </div>
-    <div class="dtbar">
+    <div class="dtbar cb-filt">
       <input class="field" id="cb-mino" placeholder="Min owners" inputmode="numeric" style="flex:0 1 120px">
       <input class="field" id="cb-maxo" placeholder="Max owners" inputmode="numeric" style="flex:0 1 120px">
       <input class="field" id="cb-minr" placeholder="Min rax" inputmode="numeric" style="flex:0 1 110px">
@@ -3456,10 +3502,17 @@ async function cbbPanel(){
       <button class="btn-ghost" id="cb-cols">Columns</button>
       <button class="btn-ghost" id="cb-clear">Clear</button>
     </div>
-    <div class="dtbar hide" id="cb-colbar"></div>
+    <div class="dtbar hide cb-filt" id="cb-colbar"></div>
+    <div id="cb-lookup" class="hide">
+      <input class="field" id="lk-q" placeholder="Search a player by name" autocomplete="off" style="width:100%">
+      <p class="note" id="lk-note" style="margin-top:8px"></p>
+      <div id="lk-results"></div>
+      <div id="lk-detail"></div>
+      <div id="lk-bag"></div>
+    </div>
     <p class="note" id="cb-count">Loading&hellip;</p>
-    <div class="dtwrap"><table class="dt"><thead id="cb-head"></thead><tbody id="cb-body"></tbody></table></div>
-    <div class="dtfoot">
+    <div class="dtwrap" id="cb-table"><table class="dt"><thead id="cb-head"></thead><tbody id="cb-body"></tbody></table></div>
+    <div class="dtfoot" id="cb-foot">
       <span class="note" id="cb-page"></span>
       <span class="hitacts" style="gap:8px">
         <button class="btn-ghost" id="cb-prev">Previous</button>
@@ -3523,19 +3576,43 @@ async function cbbPanel(){
     return '/api/rax?' + p.toString();
   }
 
+  // One block per sport, opened to reveal its seasons, so a 40-season list
+  // doesn't arrive as one wall of chips. Whatever is on stays highlighted and
+  // is spelled out underneath, so it's never a guess which data is in view.
   function drawSeasons(){
-    $b('#cb-seasons').innerHTML = available.map(r => {
-      const key = `${r.sport}|${r.season}`;
-      return `<button class="btn-ghost" data-pair="${esc(key)}" aria-pressed="${st.pairs.includes(key) ? 'true' : 'false'}">`
-        + `${esc(CB_SPORT_LABEL[r.sport] || r.sport)} ${r.season}</button>`;
-    }).join('') || '<span class="note">Nothing collected yet.</span>';
+    const bySport = new Map();
+    for(const r of available){
+      if(!bySport.has(r.sport)) bySport.set(r.sport, []);
+      bySport.get(r.sport).push(r.season);
+    }
+    const open = new Set([...$b('#cb-seasons').querySelectorAll('details[open]')].map(d => d.dataset.sp));
+    const html = [...bySport.entries()].map(([sp, seasons]) => {
+      const on = seasons.filter(se => st.pairs.includes(`${sp}|${se}`));
+      const isOpen = open.size ? open.has(sp) : (on.length > 0 || bySport.size === 1);
+      return `<details class="sgrp" data-sp="${esc(sp)}"${isOpen ? ' open' : ''}>`
+        + `<summary>${esc(CB_SPORT_LABEL[sp] || sp)}`
+        + `<span class="note">${seasons.length} season${seasons.length === 1 ? '' : 's'}</span>`
+        + (on.length ? `<span class="tick">${on.length} selected</span>` : '')
+        + '</summary><div class="seasons">'
+        + seasons.map(se => {
+            const key = `${sp}|${se}`;
+            return `<button class="btn-ghost" data-pair="${esc(key)}" `
+              + `aria-pressed="${st.pairs.includes(key) ? 'true' : 'false'}">${esc(String(se))}</button>`;
+          }).join('')
+        + '</div></details>';
+    }).join('');
+    $b('#cb-seasons').innerHTML = html || '<span class="note">Nothing collected yet.</span>';
+
     const sps = sportsOn();
+    const names = st.pairs.map(k => {
+      const [sp, se] = k.split('|');
+      return `${CB_SPORT_LABEL[sp] || sp} ${se}`;
+    });
     $b('#cb-scope').textContent = !st.pairs.length
       ? 'Pick at least one season.'
-      : st.pairs.length === 1
-        ? ''
-        : `${st.pairs.length} seasons — each player gets a row per season.`
-          + (sps.length > 1 ? ' Different sports selected, so only shared columns are shown.' : '');
+      : `Showing ${names.join(', ')}`
+        + (st.pairs.length > 1 ? ' — each player gets a row per season.' : '')
+        + (sps.length > 1 ? ' Different sports selected, so only shared columns are shown.' : '');
   }
 
   // Golf has no opponent or result; conferences are a college thing. Anything
@@ -3650,6 +3727,167 @@ async function cbbPanel(){
     } catch(e){}
   }
 
+
+  // --- Players tab -------------------------------------------------------
+  // Its own query builder: the filter bar belongs to the other two views and
+  // is hidden here, so none of it should silently narrow a player search.
+  function lkQs(extra){
+    const p = new URLSearchParams({ gamelog:'query', sort:'rax', dir:'desc', limit:40, offset:0 });
+    const first = (st.pairs[0] || 'ncaam|2026').split('|');
+    p.set('sport', first[0]); p.set('season', first[1]);
+    p.set('seasons', st.pairs.map(x => x.replace('|', ':')).join(','));
+    for(const k in (extra||{})) p.set(k, extra[k]);
+    return '/api/rax?' + p.toString();
+  }
+
+  let lkTyping, lkGames = [], lkP = null, lkLevel = -1;
+  const lkMult = () => lkLevel >= 0 && CB_LEVELS[lkLevel] ? CB_LEVELS[lkLevel][1] : 1;
+  const lkIsPost = g => /post|playoff|world/i.test(String(g.seasonType || ''));
+
+  async function lkSearch(){
+    const q = $b('#lk-q').value.trim();
+    $b('#lk-detail').innerHTML = '';
+    lkP = null;
+    if(!st.pairs.length){
+      $b('#lk-note').textContent = 'Pick at least one season above first.';
+      $b('#lk-results').innerHTML = ''; return;
+    }
+    if(q.length < 2){
+      $b('#lk-note').textContent = 'Type at least two letters of a name.';
+      $b('#lk-results').innerHTML = ''; return;
+    }
+    $b('#lk-note').textContent = 'Searching…';
+    let d;
+    try { d = await (await fetch(lkQs({ mode:'players', q }))).json(); }
+    catch(e){ $b('#lk-note').textContent = 'Could not reach the server.'; return; }
+    if(d.error){ $b('#lk-note').textContent = d.error; return; }
+    const rows = d.rows || [];
+    $b('#lk-note').textContent = rows.length
+      ? `${rows.length} match${rows.length === 1 ? '' : 'es'} — pick one.`
+      : 'No player by that name in the selected seasons.';
+    $b('#lk-results').innerHTML = rows.map(r =>
+      `<div class="lkrow" data-lk="${esc(r.sport)}|${esc(String(r.season))}|${esc(r.player || '')}">`
+      + `<span>${esc(r.player || '')} <span class="note">${esc(CB_SPORT_LABEL[r.sport] || r.sport)} `
+      + `${esc(String(r.season))}${r.team ? ' · ' + esc(r.team) : ''}</span></span>`
+      + `<span>${Number(r.rax || 0).toLocaleString()} rax</span></div>`).join('');
+  }
+
+  async function lkOpen(sport, season, name){
+    lkLevel = -1;
+    $b('#lk-detail').innerHTML = '<p class="note" style="margin-top:12px">Loading…</p>';
+    const one = { sport, season, seasons:`${sport}:${season}`, q:name };
+    try {
+      const [pr, gr] = await Promise.all([
+        fetch(lkQs(Object.assign({ mode:'players', limit:10 }, one))).then(r => r.json()),
+        fetch(lkQs(Object.assign({ mode:'games', sort:'day', dir:'asc', limit:500 }, one))).then(r => r.json())
+      ]);
+      const rows = pr.rows || [];
+      lkP = rows.find(r => r.player === name) || rows[0] || null;
+      lkGames = (gr.rows || []).filter(r => r.player === name);
+    } catch(e){
+      $b('#lk-detail').innerHTML = '<p class="note" style="margin-top:12px">Could not load that player.</p>';
+      return;
+    }
+    if(!lkP){ $b('#lk-detail').innerHTML = '<p class="note" style="margin-top:12px">No data for that player.</p>'; return; }
+    lkP.sport = sport; lkP.season = season; lkP.player = name;
+    lkDetail();
+  }
+
+  function lkDetail(){
+    if(!lkP) return;
+    const mult = lkMult();
+    const gs = lkGames;
+    const played = gs.filter(g => Number(g.rax) > 0);
+    const reg = gs.filter(g => !lkIsPost(g)), post = gs.filter(lkIsPost);
+    const sum = a => a.reduce((t, g) => t + (Number(g.rax) || 0), 0);
+    const per = a => a.length ? sum(a) / a.length : null;
+    const M = n => n == null ? '—' : Math.round(n * mult).toLocaleString();
+    const A = n => n == null ? '—' : (n * mult).toLocaleString(undefined, { maximumFractionDigits:1 });
+    const postLabel = CB_POST_LABEL[lkP.sport] || 'Postseason';
+    const lvl = lkLevel >= 0 ? CB_LEVELS[lkLevel] : null;
+
+    $b('#lk-detail').innerHTML = `<div class="lkcard">
+      <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+        <b style="font-size:19px">${esc(lkP.player)}</b>
+        <span class="note">${esc(CB_SPORT_LABEL[lkP.sport] || lkP.sport)} ${esc(String(lkP.season))}${
+          lkP.team ? ' · ' + esc(lkP.team) : ''}</span>
+      </div>
+      <div class="dtbar" style="margin-top:8px">
+        <button class="btn-ghost" id="lk-plus" aria-pressed="${lkLevel >= 0 ? 'true' : 'false'}"
+                style="font-size:16px;padding:4px 12px">+</button>
+        <span class="note">${lvl ? `${esc(lvl[0])} — ${lvl[1]}x, ${lvl[2].toLocaleString()} rating`
+                                 : 'Base rax. Pick a card level to apply its multiplier.'}</span>
+      </div>
+      <div class="dtbar ${lkLevel >= 0 ? '' : 'hide'}" id="lk-rarity" style="margin-top:8px">
+        <select class="field grow" id="lk-lvl">
+          <option value="-1">No multiplier (base rax)</option>
+          ${CB_LEVELS.map((L, i) =>
+            `<option value="${i}"${i === lkLevel ? ' selected' : ''}>${esc(L[0])} — ${L[1]}x</option>`).join('')}
+        </select>
+        <button class="btn" id="lk-add">Add to loadout</button>
+      </div>
+      <div class="lkstats">
+        <div class="lkstat">Total rax<b>${M(sum(gs))}</b></div>
+        <div class="lkstat">Rax per game<b>${A(per(gs))}</b></div>
+        <div class="lkstat">Regular season per game<b>${A(per(reg))}</b></div>
+        <div class="lkstat">${esc(postLabel)} per game<b>${A(per(post))}</b></div>
+        <div class="lkstat">Owners<b>${lkP.owners == null ? '—' : Number(lkP.owners).toLocaleString()}</b></div>
+        <div class="lkstat">Games<b>${gs.length.toLocaleString()}</b></div>
+      </div>
+      <p class="note">${played.length.toLocaleString()} of ${gs.length.toLocaleString()} games earned rax${
+        mult > 1 ? ` · every rax figure below is multiplied by ${mult}x` : ''}</p>
+      <div class="dtwrap" style="margin-top:8px"><table class="dt">
+        <thead><tr><th class="l">Date</th><th class="l">Opponent</th><th>Rax</th></tr></thead>
+        <tbody>${gs.length ? gs.map(g =>
+          `<tr><td class="l">${esc(String(g.day || '').slice(0, 10))}${
+             lkIsPost(g) ? ` <span class="note">${esc(postLabel)}</span>` : ''}</td>`
+          + `<td class="l">${g.opponent ? esc(g.opponent) : '<span class="dim">—</span>'}</td>`
+          + `<td>${g.rax == null ? '<span class="dim">—</span>' : M(Number(g.rax))}</td></tr>`).join('')
+          : '<tr><td class="l" colspan="3">No games stored for this player.</td></tr>'}</tbody>
+      </table></div>
+    </div>`;
+  }
+
+  function lkBag(){
+    const bag = loadoutRead();
+    if(!bag.length){
+      $b('#lk-bag').innerHTML = '<p class="note" style="margin-top:12px">'
+        + 'Loadout is empty. Open a player, pick a card level and add it here.</p>';
+      return;
+    }
+    const total = bag.reduce((t, x) => t + (Number(x.rax) || 0) * (Number(x.mult) || 1), 0);
+    $b('#lk-bag').innerHTML = `<div class="lkcard">
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <b>Loadout</b><span class="note">${bag.length} card${bag.length === 1 ? '' : 's'}</span></div>
+      ${bag.map((x, i) =>
+        `<div class="lkrow"><span>${esc(x.name)} <span class="note">${
+           esc(CB_SPORT_LABEL[x.sport] || x.sport)} ${esc(String(x.season))} · ${esc(x.level)} ${x.mult}x · `
+        + `${Number(x.rax || 0).toLocaleString()} base</span></span>`
+        + `<span>${Math.round((Number(x.rax) || 0) * (Number(x.mult) || 1)).toLocaleString()}`
+        + ` <button class="btn-ghost" data-bagrm="${i}" style="margin-left:10px;padding:3px 9px">Remove</button></span></div>`).join('')}
+      <div class="lkrow" style="font-weight:600;border-top:1px solid var(--line)">
+        <span>Total</span><span>${Math.round(total).toLocaleString()} rax</span></div>
+      <div style="margin-top:10px"><button class="btn-ghost" id="lk-clearbag">Clear loadout</button></div>
+    </div>`;
+  }
+
+  // The three views share one modal, so switching hides everything that
+  // belongs to the other side rather than leaving dead controls on screen.
+  function applyMode(){
+    const lk = st.mode === 'lookup';
+    $b('#cb-lookup').classList.toggle('hide', !lk);
+    $b('#cb-table').classList.toggle('hide', lk);
+    $b('#cb-count').classList.toggle('hide', lk);
+    $b('#cb-key').classList.toggle('hide', lk);
+    $b('#cb-foot').classList.toggle('hide', lk);
+    box.querySelectorAll('.cb-filt').forEach(x => {
+      if(lk) x.classList.add('hide');
+      else if(x.id !== 'cb-colbar') x.classList.remove('hide');
+    });
+    if(lk){ lkBag(); lkSearch(); }
+    else applyFilterVisibility();
+  }
+
   (async () => {
     try {
       const d = await (await fetch('/api/rax?sport=ncaam&season=2026&gamelog=seasons')).json();
@@ -3663,6 +3901,11 @@ async function cbbPanel(){
 
   let typing;
   box.addEventListener('input', e => {
+    if(e.target.id === 'lk-q'){
+      clearTimeout(lkTyping);
+      lkTyping = setTimeout(lkSearch, 300);
+      return;
+    }
     const map = { 'cb-q':'q', 'cb-from':'from', 'cb-to':'to', 'cb-mg':'minGames',
                   'cb-mino':'minOwners', 'cb-maxo':'maxOwners',
                   'cb-minr':'minRax', 'cb-maxr':'maxRax' };
@@ -3674,6 +3917,7 @@ async function cbbPanel(){
   });
 
   box.addEventListener('change', e => {
+    if(e.target.id === 'lk-lvl'){ lkLevel = +e.target.value; return lkDetail(); }
     const map = { 'cb-team':'team', 'cb-conf':'conference', 'cb-type':'seasonType',
                   'cb-ha':'homeAway', 'cb-res':'result' };
     if(!map[e.target.id]) return;
@@ -3683,6 +3927,37 @@ async function cbbPanel(){
   });
 
   box.addEventListener('click', async e => {
+    const lkr = e.target.closest('[data-lk]');
+    if(lkr){
+      const [sp, se, ...rest] = lkr.dataset.lk.split('|');
+      return lkOpen(sp, +se, rest.join('|'));
+    }
+    if(e.target.closest('#lk-plus')){
+      const r = $b('#lk-rarity');
+      if(r) r.classList.toggle('hide');
+      return;
+    }
+    if(e.target.closest('#lk-add')){
+      if(!lkP) return;
+      if(lkLevel < 0) return toast('Pick a card level first.');
+      const L = CB_LEVELS[lkLevel];
+      const rax = lkGames.reduce((t, g) => t + (Number(g.rax) || 0), 0);
+      const bag = loadoutRead();
+      bag.push({ name: lkP.player, sport: lkP.sport, season: lkP.season,
+                 level: L[0], mult: L[1], rax });
+      loadoutWrite(bag);
+      lkBag();
+      return toast(`${lkP.player} added to the loadout.`);
+    }
+    const rm = e.target.closest('[data-bagrm]');
+    if(rm){
+      const bag = loadoutRead();
+      bag.splice(+rm.dataset.bagrm, 1);
+      loadoutWrite(bag);
+      return lkBag();
+    }
+    if(e.target.closest('#lk-clearbag')){ loadoutWrite([]); return lkBag(); }
+
     const pair = e.target.closest('[data-pair]');
     if(pair){
       const key = pair.dataset.pair;
@@ -3691,6 +3966,7 @@ async function cbbPanel(){
       st.extra = st.extra.filter(k => allStats().some(c => c[0] === k));
       drawSeasons(); drawCols(); applyFilterVisibility();
       await loadTeams();
+      if(st.mode === 'lookup'){ $b('#lk-detail').innerHTML = ''; return lkSearch(); }
       return load();
     }
 
@@ -3723,7 +3999,8 @@ async function cbbPanel(){
       st.sort = 'rax'; st.dir = 'desc'; st.offset = 0;
       box.querySelectorAll('[data-cm]').forEach(x =>
         x.setAttribute('aria-pressed', x.dataset.cm === st.mode ? 'true' : 'false'));
-      return load();
+      applyMode();
+      return st.mode === 'lookup' ? undefined : load();
     }
 
     const th = e.target.closest('[data-sc]');
