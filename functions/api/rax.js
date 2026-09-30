@@ -17,6 +17,7 @@ const ALL_MAX_PAGES = 250;           // ?all=1 ceiling: 250 x 20 = 5,000 players
 const LIST_MAX_PAGES = 700;          // player-list ceiling: 700 x 20 = 14,000
 const LIST_CHUNK_PAGES = 60;         // pages per call, so a scheduled run finishes in time
 const OWNERS_CHUNK_PAGES = 45;       // the same, with room for the database writes
+const CONF_CHUNK = 60;               // teams per conference-backfill pass
 const GAP_MS = 350;                  // breathing room between pages
 const RETRIES = 3;                   // RS answers 429 under load
 const SPORTS = new Set(['ncaam', 'ncaaf', 'nfl', 'soccer', 'nba', 'mlb', 'nhl', 'ufc', 'wnba',
@@ -93,7 +94,7 @@ const GAMELOG_DDL = `CREATE TABLE IF NOT EXISTS gamelog (
   season INTEGER NOT NULL,
   playerId INTEGER NOT NULL,
   gameId INTEGER NOT NULL,
-  player TEXT, team TEXT, jersey INTEGER, position TEXT,
+  player TEXT, team TEXT, conference TEXT, jersey INTEGER, position TEXT,
   day TEXT, seasonType TEXT, opponent TEXT, homeAway TEXT,
   teamScore INTEGER, oppScore INTEGER, result TEXT,
   rating REAL,
@@ -115,7 +116,7 @@ const OWNERS_DDL = `CREATE TABLE IF NOT EXISTS owners (
   PRIMARY KEY (sport, season, playerId, day)
 )`;
 
-const GAMELOG_COLS = ['sport','season','playerId','gameId','player','team','jersey','position',
+const GAMELOG_COLS = ['sport','season','playerId','gameId','player','team','conference','jersey','position',
   'day','seasonType','opponent','homeAway','teamScore','oppScore','result','rax','rating',
   'played','min','pts','reb','oreb','dreb','ast','stl','blk','tov','pf','plusMinus',
   'fg','fgPct','fg3','fg3Pct','ft','ftPct','tsPct','fantasyPts','comments'];
@@ -130,6 +131,7 @@ async function migrateGamelog(db) {
   await db.prepare(GAMELOG_DDL).run();
   try { await db.prepare('ALTER TABLE gamelog RENAME COLUMN rax TO rating').run(); } catch (e) {}
   try { await db.prepare('ALTER TABLE gamelog ADD COLUMN rax INTEGER').run(); } catch (e) {}
+  try { await db.prepare('ALTER TABLE gamelog ADD COLUMN conference TEXT').run(); } catch (e) {}
 }
 
 // Turns one box score from the season feed into a flat row.
@@ -151,7 +153,8 @@ function gamelogRow(sport, season, b) {
   return {
     sport, season: Number(season), playerId: b.playerId, gameId: b.gameId,
     player: [p.firstName, p.lastName].filter(Boolean).join(' ').trim() || null,
-    team: t.key || null, jersey: p.jersey == null ? null : Number(p.jersey), position: b.position || null,
+    team: t.key || null, conference: t.conference || null,
+    jersey: p.jersey == null ? null : Number(p.jersey), position: b.position || null,
     day: b.day || null, seasonType: b.seasonType || null,
     opponent: oppTeam.key || null, homeAway: isHome ? 'home' : 'away',
     teamScore: isHome ? b.homeTeamScore : b.awayTeamScore,
@@ -535,6 +538,86 @@ export async function onRequestGet({ request, env }) {
     } catch (e) { return json({ error: String((e && e.message) || e) }, 502); }
   }
 
+  // Conference, for rows gathered before the column existed. Teams are filled
+  // one at a time: pick a player from a team that has none, read the
+  // conference off their feed, then stamp every row for that team and season.
+  if (url.searchParams.get('conf')) {
+    const which = url.searchParams.get('conf');
+    const db = env.RATEBOARD_DB;
+
+    if (which === 'status') {
+      try {
+        const r = await db.prepare(
+          `SELECT COUNT(DISTINCT team) AS teams,
+                  SUM(CASE WHEN conference IS NULL THEN 1 ELSE 0 END) AS rowsMissing
+             FROM gamelog WHERE sport = ? AND season = ?`).bind(sport, Number(season)).first();
+        const m = await db.prepare(
+          `SELECT COUNT(*) AS n FROM (SELECT DISTINCT team FROM gamelog
+             WHERE sport = ? AND season = ? AND team IS NOT NULL AND conference IS NULL)`)
+          .bind(sport, Number(season)).first();
+        return json({ teams: r ? r.teams : null, rowsMissing: r ? r.rowsMissing : null,
+                      teamsMissing: m ? m.n : null });
+      } catch (e) { return json({ error: String((e && e.message) || e) }, 500); }
+    }
+    if (which !== '1') return json({ error: 'conf must be 1 or status' }, 400);
+
+    const { readable, writable } = new TransformStream();
+    const w = writable.getWriter();
+    const enc = new TextEncoder();
+    const send = t => w.write(enc.encode(t));
+
+    (async () => {
+      try {
+        await migrateGamelog(db);
+        const todo = await db.prepare(
+          `SELECT team, MIN(playerId) AS pid FROM gamelog
+            WHERE sport = ? AND season = ? AND team IS NOT NULL AND conference IS NULL
+            GROUP BY team LIMIT ?`).bind(sport, Number(season), CONF_CHUNK).all();
+        const rows = (todo && todo.results) || [];
+        if (!rows.length) {
+          await send(`every team already has a conference for ${sport} ${season}.\n`);
+          await send(`##STATE 1 1 0\n`);
+          await w.close();
+          return;
+        }
+        await send(`filling conferences for ${rows.length} teams...\n`);
+
+        let done = 0, blank = 0;
+        for (const r of rows) {
+          let conf = null;
+          try {
+            const d = await rsGet(
+              `https://web.realapp.com/players/${r.pid}/sport/${sport}/seasonfeed?limit=1&season=${season}&view=recent&viewFrame=default`, auth);
+            const bs = (d && d.playerBoxScores) || [];
+            for (const b of bs) {
+              for (const t of [b.team, b.homeTeam, b.awayTeam]) {
+                if (t && t.key === r.team && t.conference) { conf = t.conference; break; }
+              }
+              if (conf) break;
+            }
+          } catch (e) {}
+          // A blank is recorded too, so a team with no conference is not
+          // retried forever.
+          await db.prepare(
+            `UPDATE gamelog SET conference = ? WHERE sport = ? AND season = ? AND team = ?`)
+            .bind(conf || '-', sport, Number(season), r.team).run();
+          if (!conf) blank++;
+          done++;
+          await sleep(80);
+        }
+        await send(`\n${done} teams filled${blank ? `, ${blank} with no conference listed` : ''}.\n`);
+        await send(`##STATE ${done} ${done} 1\n`);
+      } catch (e) {
+        await send(`\nstopped: ${String((e && e.message) || e).replace(/\n/g, ' ')}\n`);
+      }
+      await w.close();
+    })();
+
+    return new Response(readable, {
+      headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }
+    });
+  }
+
   // How many people hold each player's card, snapshotted once a day.
   //
   // This is a season-level figure, not a per-game one, so it lives in its own
@@ -734,18 +817,31 @@ export async function onRequestGet({ request, env }) {
       };
       if (P('q')) { where.push('player LIKE ?'); binds.push('%' + P('q').replace(/[%_]/g, '') + '%'); }
       eq('team', 'team');
+      eq('conference', 'conference');
       eq('opponent', 'opponent');
       eq('seasonType', 'seasonType', ['regularseason', 'postseason']);
       eq('homeAway', 'homeAway', ['home', 'away']);
       eq('result', 'result', ['W', 'L']);
       if (/^\d{4}-\d{2}-\d{2}$/.test(P('from'))) { where.push('day >= ?'); binds.push(P('from')); }
       if (/^\d{4}-\d{2}-\d{2}$/.test(P('to')))   { where.push('day <= ?'); binds.push(P('to')); }
+      // A month-day window applies to every season at once. When the start is
+      // later in the year than the end the range wraps over new year, which is
+      // the normal case for a winter season.
+      const md = k => /^\d{2}-\d{2}$/.test(P(k)) ? P(k) : '';
+      if (md('fromMD') && md('toMD')) {
+        if (md('fromMD') <= md('toMD')) {
+          where.push('substr(day, 6) BETWEEN ? AND ?'); binds.push(md('fromMD'), md('toMD'));
+        } else {
+          where.push('(substr(day, 6) >= ? OR substr(day, 6) <= ?)'); binds.push(md('fromMD'), md('toMD'));
+        }
+      } else if (md('fromMD')) { where.push('substr(day, 6) >= ?'); binds.push(md('fromMD')); }
+      else if (md('toMD'))     { where.push('substr(day, 6) <= ?'); binds.push(md('toMD')); }
       if (P('playedOnly') === '1') where.push('played = 1');
       const W = where.join(' AND ');
 
       const PLAYER_SORTS = ['rax','raxPerGame','rating','ratingPerGame','games','player','team',
                             'min','pts','reb','ast','stl','blk','tov','fantasyPts','bestRax',
-                            'owners','ownersChange','seasons'];
+                            'owners','ownersChange','season','conference'];
       const GAME_SORTS = ['day','player','team','opponent','rax','rating','min','pts','reb','ast',
                           'stl','blk','tov','pf','plusMinus','tsPct','fantasyPts','comments'];
       const allowed = mode === 'players' ? PLAYER_SORTS : GAME_SORTS;
@@ -759,28 +855,41 @@ export async function onRequestGet({ request, env }) {
       const offset = asCsv ? 0 : Math.max(0, parseInt(P('offset') || '0', 10) || 0);
       const minGames = Math.max(0, parseInt(P('minGames') || '0', 10) || 0);
 
-      const PLAYER_COLS = ['playerId','player','team','seasons','games','rax','raxPerGame','bestRax',
-                           'owners','ownersChange','rating','ratingPerGame','min','pts','reb',
+      const PLAYER_COLS = ['playerId','player','team','conference','season','games','rax','raxPerGame',
+                           'bestRax','owners','ownersChange','rating','ratingPerGame','min','pts','reb',
                            'ast','stl','blk','tov','fantasyPts'];
-      const GAME_COLS = ['day','player','team','opponent','homeAway','result','teamScore','oppScore',
+      const GAME_COLS = ['day','player','team','conference','opponent','homeAway','result','teamScore','oppScore',
                          'seasonType','rax','rating','min','pts','reb','ast','stl','blk','tov','pf',
                          'plusMinus','fg','fg3','ft','tsPct','fantasyPts','comments','playerId'];
 
-      // Owner counts live in their own daily-snapshot table. For each selected
-      // season the newest snapshot is taken, then summed - so with several
-      // seasons picked this is how many of that player's cards are held across
-      // all of them. `cutoff` gives the same figure as of a week ago.
-      const ownerScope = '(' + pairs.map(() => '(ow.sport = ? AND ow.season = ?)').join(' OR ') + ')';
+      // One row per player per season - a player in three seasons is three
+      // rows, each with that season's own figures. Owners come from the newest
+      // daily snapshot for that same sport and season.
       const ownerPick = (cutoff) => `
-        (SELECT SUM(ow.owners) FROM owners ow
-          WHERE ow.playerId = gamelog.playerId AND ${ownerScope}
+        (SELECT ow.owners FROM owners ow
+          WHERE ow.sport = gamelog.sport AND ow.season = gamelog.season
+            AND ow.playerId = gamelog.playerId
             AND ow.day = (SELECT MAX(d.day) FROM owners d
                            WHERE d.sport = ow.sport AND d.season = ow.season${cutoff}))`;
-      const ownerBinds = scopeBinds.concat(scopeBinds);
 
-      const playerSql = (order, lim) => `
-        SELECT playerId, MAX(player) AS player, MAX(team) AS team, COUNT(*) AS games,
-               COUNT(DISTINCT season) AS seasons,
+      // Ranges on the aggregates are applied outside the grouping, where the
+      // totals actually exist.
+      const outer = [];
+      const outerBinds = [];
+      const range = (param, col) => {
+        const v = P(param);
+        if (!/^\d+$/.test(v)) return;
+        outer.push(`${col} ?`); outerBinds.push(Number(v));
+      };
+      const rangeGe = (param, col) => { const v = P(param); if (/^\d+$/.test(v)) { outer.push(`${col} >= ?`); outerBinds.push(Number(v)); } };
+      const rangeLe = (param, col) => { const v = P(param); if (/^\d+$/.test(v)) { outer.push(`${col} <= ?`); outerBinds.push(Number(v)); } };
+      rangeGe('minOwners', 'owners'); rangeLe('maxOwners', 'owners');
+      rangeGe('minRax', 'rax');       rangeLe('maxRax', 'rax');
+      const OUTER = outer.length ? ' WHERE ' + outer.join(' AND ') : '';
+
+      const playerInner = `
+        SELECT playerId, sport, season, MAX(player) AS player, MAX(team) AS team,
+               MAX(conference) AS conference, COUNT(*) AS games,
                ${ownerPick('')} AS owners,
                ${ownerPick(" AND d.day <= date('now', '-7 day')")} AS ownersWeekAgo,
                ${ownerPick('')} - ${ownerPick(" AND d.day <= date('now', '-7 day')")} AS ownersChange,
@@ -790,8 +899,10 @@ export async function onRequestGet({ request, env }) {
                ROUND(AVG(ast), 1) AS ast, ROUND(AVG(stl), 1) AS stl, ROUND(AVG(blk), 1) AS blk,
                ROUND(AVG(tov), 1) AS tov, ROUND(AVG(fantasyPts), 1) AS fantasyPts
           FROM gamelog WHERE ${W}
-         GROUP BY playerId HAVING COUNT(*) >= ?
-         ORDER BY ${order} ${dir} ${lim}`;
+         GROUP BY playerId, sport, season HAVING COUNT(*) >= ?`;
+
+      const playerSql = (order, lim) =>
+        `SELECT * FROM (${playerInner})${OUTER} ORDER BY ${order} ${dir} ${lim}`;
       const gameSql = (order, lim) => `
         SELECT ${GAME_COLS.join(', ')} FROM gamelog WHERE ${W}
          ORDER BY ${order} ${dir} ${lim}`;
@@ -803,7 +914,7 @@ export async function onRequestGet({ request, env }) {
             ? playerSql(sort, `LIMIT ${limit}`)
             : gameSql(sort, `LIMIT ${limit}`);
           const args = mode === 'players'
-            ? ownerBinds.concat(ownerBinds).concat(binds).concat([minGames])
+            ? binds.concat([minGames]).concat(outerBinds)
             : binds;
           const r = await db.prepare(sql).bind(...args).all();
           const cell = v => {
@@ -825,15 +936,15 @@ export async function onRequestGet({ request, env }) {
           ? playerSql(sort, `LIMIT ? OFFSET ?`)
           : gameSql(sort, `LIMIT ? OFFSET ?`);
         const args = (mode === 'players'
-          ? ownerBinds.concat(ownerBinds).concat(binds).concat([minGames])
+          ? binds.concat([minGames]).concat(outerBinds)
           : binds).concat([limit, offset]);
         const r = await db.prepare(sql).bind(...args).all();
 
         const countSql = mode === 'players'
-          ? `SELECT COUNT(*) AS n FROM (SELECT playerId FROM gamelog WHERE ${W} GROUP BY playerId HAVING COUNT(*) >= ?)`
+          ? `SELECT COUNT(*) AS n FROM (${playerInner})${OUTER}`
           : `SELECT COUNT(*) AS n FROM gamelog WHERE ${W}`;
         const c = await db.prepare(countSql)
-          .bind(...(mode === 'players' ? binds.concat([minGames]) : binds)).first();
+          .bind(...(mode === 'players' ? binds.concat([minGames]).concat(outerBinds) : binds)).first();
 
         return json({ mode, sort, dir: dir.toLowerCase(), limit, offset,
                       pairs: pairs.map(([sp, se]) => `${sp}:${se}`),
@@ -871,10 +982,16 @@ export async function onRequestGet({ request, env }) {
         const t = await db.prepare(
           `SELECT DISTINCT team AS k FROM gamelog WHERE ${fScope} AND team IS NOT NULL ORDER BY team`)
           .bind(...fBinds).all();
+        const cf = await db.prepare(
+          `SELECT DISTINCT conference AS k FROM gamelog
+            WHERE ${fScope} AND conference IS NOT NULL AND conference <> '-' ORDER BY conference`)
+          .bind(...fBinds).all();
         const d = await db.prepare(
           `SELECT MIN(day) AS first, MAX(day) AS last FROM gamelog WHERE ${fScope}`)
           .bind(...fBinds).first();
-        return json({ teams: ((t && t.results) || []).map(x => x.k), dates: d || null });
+        return json({ teams: ((t && t.results) || []).map(x => x.k),
+                      conferences: ((cf && cf.results) || []).map(x => x.k),
+                      dates: d || null });
       } catch (e) { return json({ error: String((e && e.message) || e) }, 500); }
     }
 
