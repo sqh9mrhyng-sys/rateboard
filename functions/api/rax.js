@@ -994,10 +994,15 @@ export async function onRequestGet({ request, env }) {
       } catch (e) { return { at: 0, doneDay: '' }; }
     };
 
+    // Finishing positions already come down with the game logs, so this walk
+    // exists only to learn each event's name - and every event shows up in the
+    // feed of any player who entered it. A sample off the top of the earnings
+    // list covers the whole calendar without walking the entire field.
+    const GOLFMETA_SAMPLE = 60;
     let ids = [];
     try {
       const g = JSON.parse((await env.RATEBOARD_KV.get(`games_${sport}_${season}`)) || 'null');
-      ids = (g && g.ids) || [];
+      ids = ((g && g.ids) || []).slice(0, GOLFMETA_SAMPLE);
     } catch (e) {}
 
     if (which === 'status') {
