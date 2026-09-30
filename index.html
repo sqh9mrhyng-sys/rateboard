@@ -3346,7 +3346,7 @@ async function copyListPanel(){
 
 // Always present, whatever the sport - these are the figures every sport has.
 const CB_CORE_COLS = [
-  ['player','Player','l'], ['team','Team','l'], ['seasons','Sn'], ['games','G'],
+  ['player','Player','l'], ['team','Team','l'], ['season','Season'], ['games','G'],
   ['rax','Rax'], ['raxPerGame','Rax/G'], ['bestRax','Best'],
   ['owners','Owners'], ['ownersChange','7d'],
   ['rating','Rating'], ['ratingPerGame','Rtg/G']
@@ -3375,7 +3375,8 @@ const CB_GAME_COLS = [
 // What each heading means. The core half never changes; the rest is added
 // for whichever sports are on screen.
 const CB_KEY_CORE = [
-  ['Sn', 'Seasons the player appears in, out of those selected'],
+  ['Season', 'Which season the row is for — a player picked across several seasons gets a row each'],
+  ['Conf', 'Conference, for college sports'],
   ['G', 'Games played'],
   ['Rax', 'Total rax earned — whole numbers, as the app pays them'],
   ['Rax/G', 'Rax per game'],
@@ -3401,13 +3402,21 @@ const CB_KEY_GAMES = [
   ['FP','Fantasy points'], ['Cmts','Comments on that game in the app']
 ];
 
+// Golf has no opponent, no home or away, and no win or loss, so those filters
+// are hidden for it. Conferences only mean anything for the college sports.
+const CB_NO_MATCHUP = ['golf', 'tennis', 'ufc'];
+const CB_COLLEGE = ['ncaam', 'ncaaf'];
+// Postseason is called different things by different sports.
+const CB_POST_LABEL = { soccer: 'World Cup' };
+
 const CB_SPORT_LABEL = { ncaam:'CBB', ncaaf:'CFB', nfl:'NFL', nba:'NBA', nhl:'NHL',
                          mlb:'MLB', wnba:'WNBA', soccer:'FC', golf:'Golf', ufc:'UFC', tennis:'Tennis' };
 
 async function cbbPanel(){
   const st = { mode:'players', sort:'rax', dir:'desc', offset:0, limit:100,
-               q:'', team:'', seasonType:'', homeAway:'', result:'',
-               from:'', to:'', minGames:'', playedOnly:'',
+               q:'', team:'', conference:'', seasonType:'', homeAway:'', result:'',
+               from:'', to:'', minGames:'', playedOnly:'', exact:false,
+               minOwners:'', maxOwners:'', minRax:'', maxRax:'',
                pairs:[], extra:[] };
   let available = [];
 
@@ -3420,6 +3429,7 @@ async function cbbPanel(){
     </div>
     <div class="dtbar">
       <input class="field grow" id="cb-q" placeholder="Player name" autocomplete="off">
+      <select class="field" id="cb-conf"><option value="">Any conference</option></select>
       <select class="field" id="cb-team"><option value="">Any team</option></select>
       <select class="field" id="cb-type">
         <option value="">Reg + post</option>
@@ -3432,10 +3442,17 @@ async function cbbPanel(){
         <option value="W">Wins</option><option value="L">Losses</option></select>
     </div>
     <div class="dtbar">
-      <input class="field" id="cb-from" placeholder="From YYYY-MM-DD" autocomplete="off" style="flex:0 1 150px">
-      <input class="field" id="cb-to" placeholder="To YYYY-MM-DD" autocomplete="off" style="flex:0 1 150px">
+      <input class="field" id="cb-from" placeholder="From MM-DD" autocomplete="off" style="flex:0 1 120px">
+      <input class="field" id="cb-to" placeholder="To MM-DD" autocomplete="off" style="flex:0 1 120px">
+      <button class="btn-ghost" id="cb-exact" aria-pressed="false">Exact dates</button>
       <input class="field" id="cb-mg" placeholder="Min games" inputmode="numeric" style="flex:0 1 110px">
       <button class="btn-ghost" id="cb-played" aria-pressed="false">Played only</button>
+    </div>
+    <div class="dtbar">
+      <input class="field" id="cb-mino" placeholder="Min owners" inputmode="numeric" style="flex:0 1 120px">
+      <input class="field" id="cb-maxo" placeholder="Max owners" inputmode="numeric" style="flex:0 1 120px">
+      <input class="field" id="cb-minr" placeholder="Min rax" inputmode="numeric" style="flex:0 1 110px">
+      <input class="field" id="cb-maxr" placeholder="Max rax" inputmode="numeric" style="flex:0 1 110px">
       <button class="btn-ghost" id="cb-cols">Columns</button>
       <button class="btn-ghost" id="cb-clear">Clear</button>
     </div>
@@ -3480,7 +3497,12 @@ async function cbbPanel(){
     if(st.mode === 'games') return CB_GAME_COLS;
     const on = consensusStats().concat(st.extra.filter(k => !consensusStats().includes(k)));
     const byKey = new Map(allStats().map(c => [c[0], c]));
-    return CB_CORE_COLS.concat(on.map(k => byKey.get(k)).filter(Boolean));
+    let core = CB_CORE_COLS.slice();
+    if(sportsOn().some(sp => CB_COLLEGE.includes(sp))){
+      const at = core.findIndex(c => c[0] === 'season');
+      core.splice(at, 0, ['conference','Conf','l']);
+    }
+    return core.concat(on.map(k => byKey.get(k)).filter(Boolean));
   }
 
   function qs(extra){
@@ -3489,9 +3511,14 @@ async function cbbPanel(){
       limit: st.limit, offset: st.offset });
     const first = (st.pairs[0] || 'ncaam|2026').split('|');
     p.set('sport', first[0]); p.set('season', first[1]);
-    for(const k of ['q','team','seasonType','homeAway','result','from','to','minGames','playedOnly']){
+    for(const k of ['q','team','conference','seasonType','homeAway','result','minGames','playedOnly',
+                    'minOwners','maxOwners','minRax','maxRax']){
       if(st[k]) p.set(k, st[k]);
     }
+    // Month-day by default, so one window covers every season at once; exact
+    // dates are there when a single run of days is what you want.
+    if(st.from) p.set(st.exact ? 'from' : 'fromMD', st.from);
+    if(st.to)   p.set(st.exact ? 'to'   : 'toMD',   st.to);
     for(const k in (extra||{})) p.set(k, extra[k]);
     return '/api/rax?' + p.toString();
   }
@@ -3507,8 +3534,29 @@ async function cbbPanel(){
       ? 'Pick at least one season.'
       : st.pairs.length === 1
         ? ''
-        : `${st.pairs.length} seasons together — a player is one row, summed across the ones they appear in.`
+        : `${st.pairs.length} seasons — each player gets a row per season.`
           + (sps.length > 1 ? ' Different sports selected, so only shared columns are shown.' : '');
+  }
+
+  // Golf has no opponent or result; conferences are a college thing. Anything
+  // irrelevant to every selected sport is taken off the bar rather than left
+  // there returning nothing.
+  function applyFilterVisibility(){
+    const sps = sportsOn();
+    const anyMatchup = sps.some(sp => !CB_NO_MATCHUP.includes(sp));
+    const anyCollege = sps.some(sp => CB_COLLEGE.includes(sp));
+    $b('#cb-ha').classList.toggle('hide', !anyMatchup);
+    $b('#cb-res').classList.toggle('hide', !anyMatchup);
+    $b('#cb-conf').classList.toggle('hide', !anyCollege);
+    if(!anyMatchup){ st.homeAway = ''; st.result = ''; $b('#cb-ha').value = ''; $b('#cb-res').value = ''; }
+    if(!anyCollege){ st.conference = ''; $b('#cb-conf').value = ''; }
+
+    const post = sps.map(sp => CB_POST_LABEL[sp]).filter(Boolean);
+    const label = post.length === sps.filter(sp => CB_POST_LABEL[sp] || true).length && post.length
+      ? post[0] : 'Postseason';
+    const sel = $b('#cb-type');
+    sel.options[0].textContent = `Reg + ${label.toLowerCase()}`;
+    sel.options[2].textContent = `${label} only`;
   }
 
   function drawCols(){
@@ -3567,6 +3615,7 @@ async function cbbPanel(){
           let v = r[k];
           if(k === 'day' && v) v = String(v).slice(5);
           if(k === 'rating' && v != null && v !== '') v = Number(v).toFixed(2);
+          if(k === 'conference' && v === '-') v = '';
           if(k === 'owners' && v != null && v !== '') v = Number(v).toLocaleString();
           if(k === 'ownersChange' && v != null && v !== '')
             v = (Number(v) > 0 ? '+' : '') + Number(v).toLocaleString();
@@ -3586,13 +3635,18 @@ async function cbbPanel(){
   }
 
   async function loadTeams(){
-    const sel = $b('#cb-team');
+    const sel = $b('#cb-team'), cf = $b('#cb-conf');
     sel.innerHTML = '<option value="">Any team</option>';
+    cf.innerHTML = '<option value="">Any conference</option>';
     if(!st.pairs.length) return;
     try {
       const f = await (await fetch(qs({ gamelog:'facets' }))).json();
       if(f && f.teams) sel.insertAdjacentHTML('beforeend',
         f.teams.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join(''));
+      if(f && f.conferences && f.conferences.length) cf.insertAdjacentHTML('beforeend',
+        f.conferences.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join(''));
+      else if(CB_COLLEGE.some(sp => sportsOn().includes(sp)))
+        cf.insertAdjacentHTML('beforeend', '<option value="" disabled>Still being filled in…</option>');
     } catch(e){}
   }
 
@@ -3601,7 +3655,7 @@ async function cbbPanel(){
       const d = await (await fetch('/api/rax?sport=ncaam&season=2026&gamelog=seasons')).json();
       available = (d && d.seasons) || [];
       if(available.length) st.pairs = [`${available[0].sport}|${available[0].season}`];
-      drawSeasons(); drawCols();
+      drawSeasons(); drawCols(); applyFilterVisibility();
       await loadTeams();
       load();
     } catch(e){ $b('#cb-seasons').innerHTML = '<span class="note">Could not load seasons.</span>'; }
@@ -3609,7 +3663,9 @@ async function cbbPanel(){
 
   let typing;
   box.addEventListener('input', e => {
-    const map = { 'cb-q':'q', 'cb-from':'from', 'cb-to':'to', 'cb-mg':'minGames' };
+    const map = { 'cb-q':'q', 'cb-from':'from', 'cb-to':'to', 'cb-mg':'minGames',
+                  'cb-mino':'minOwners', 'cb-maxo':'maxOwners',
+                  'cb-minr':'minRax', 'cb-maxr':'maxRax' };
     if(!map[e.target.id]) return;
     st[map[e.target.id]] = e.target.value.trim();
     st.offset = 0;
@@ -3618,7 +3674,8 @@ async function cbbPanel(){
   });
 
   box.addEventListener('change', e => {
-    const map = { 'cb-team':'team', 'cb-type':'seasonType', 'cb-ha':'homeAway', 'cb-res':'result' };
+    const map = { 'cb-team':'team', 'cb-conf':'conference', 'cb-type':'seasonType',
+                  'cb-ha':'homeAway', 'cb-res':'result' };
     if(!map[e.target.id]) return;
     st[map[e.target.id]] = e.target.value;
     st.offset = 0;
@@ -3630,9 +3687,9 @@ async function cbbPanel(){
     if(pair){
       const key = pair.dataset.pair;
       st.pairs = st.pairs.includes(key) ? st.pairs.filter(x => x !== key) : st.pairs.concat([key]);
-      st.team = ''; st.offset = 0;
+      st.team = ''; st.conference = ''; st.offset = 0;
       st.extra = st.extra.filter(k => allStats().some(c => c[0] === k));
-      drawSeasons(); drawCols();
+      drawSeasons(); drawCols(); applyFilterVisibility();
       await loadTeams();
       return load();
     }
@@ -3647,6 +3704,17 @@ async function cbbPanel(){
     }
 
     if(e.target.closest('#cb-cols')){ $b('#cb-colbar').classList.toggle('hide'); return; }
+
+    if(e.target.closest('#cb-exact')){
+      st.exact = !st.exact;
+      const b = e.target.closest('#cb-exact');
+      b.setAttribute('aria-pressed', st.exact ? 'true' : 'false');
+      $b('#cb-from').placeholder = st.exact ? 'From YYYY-MM-DD' : 'From MM-DD';
+      $b('#cb-to').placeholder   = st.exact ? 'To YYYY-MM-DD'   : 'To MM-DD';
+      st.from = ''; st.to = ''; $b('#cb-from').value = ''; $b('#cb-to').value = '';
+      st.offset = 0;
+      return load();
+    }
 
     const m = e.target.closest('[data-cm]');
     if(m){
@@ -3684,10 +3752,13 @@ async function cbbPanel(){
     }
 
     if(e.target.closest('#cb-clear')){
-      Object.assign(st, { q:'', team:'', seasonType:'', homeAway:'', result:'',
-                          from:'', to:'', minGames:'', playedOnly:'', offset:0 });
-      $b('#cb-q').value = ''; $b('#cb-from').value = ''; $b('#cb-to').value = ''; $b('#cb-mg').value = '';
-      $b('#cb-team').value = ''; $b('#cb-type').value = ''; $b('#cb-ha').value = ''; $b('#cb-res').value = '';
+      Object.assign(st, { q:'', team:'', conference:'', seasonType:'', homeAway:'', result:'',
+                          from:'', to:'', minGames:'', playedOnly:'', offset:0,
+                          minOwners:'', maxOwners:'', minRax:'', maxRax:'' });
+      for(const id of ['#cb-q','#cb-from','#cb-to','#cb-mg','#cb-mino','#cb-maxo','#cb-minr','#cb-maxr'])
+        $b(id).value = '';
+      $b('#cb-team').value = ''; $b('#cb-conf').value = ''; $b('#cb-type').value = '';
+      $b('#cb-ha').value = ''; $b('#cb-res').value = '';
       $b('#cb-played').setAttribute('aria-pressed', 'false');
       return load();
     }
@@ -4120,7 +4191,9 @@ async function adminPanel(){
           <span class="who">${u.banned ? 'deleted — ' : ''}${theirs.length} listing${theirs.length===1?'':'s'}</span>
         </div>
         <div class="hitacts"><button class="btn-ghost" data-reset="${esc(k)}">${
-          u.hash ? 'Reset password' : 'awaiting new password'}</button></div>
+          u.hash ? 'Reset password' : 'awaiting new password'}</button>
+          <button class="btn-ghost" data-gd="${esc(k)}">${
+            gameDataList().includes(k) ? 'Revoke game data' : 'Grant access to game data'}</button></div>
         ${theirs.length ? `<div class="buyers">${theirs.map(o =>
             `<span class="buyer"><b class="num">${o.rate}</b>/1 ${esc(o.player)} <em style="opacity:.6">${o.sport}</em>
               <button class="killer" data-kill="${o.id}" title="Delete this listing">&times;</button></span>`).join('')}</div>`
