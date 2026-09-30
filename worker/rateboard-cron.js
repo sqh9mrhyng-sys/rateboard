@@ -31,6 +31,10 @@ const JOBS = [
   // Golf, newest first. The table is built around team sports, so a golf round
   // may not fill every column sensibly - 2026 runs first and will show whether
   // the shape holds before the older years get there.
+  // FC / soccer. 2025 is the 2025-26 season, 2026 the 2026-27 one.
+  { sport: 'soccer', season: 2026 },
+  { sport: 'soccer', season: 2025 },
+
   { sport: 'golf', season: 2026 },
   { sport: 'golf', season: 2025 }, { sport: 'golf', season: 2024 },
   { sport: 'golf', season: 2023 }, { sport: 'golf', season: 2022 },
@@ -88,7 +92,15 @@ async function step(job) {
     return `${tag}: filled ${z.json && z.json.filled} blank rax values`;
   }
 
-  // 5. Owner counts, one snapshot a day. Cheap - a single leaderboard walk
+  // 5. Conference, for rows collected before that column existed. Finite work
+  //    that finishes once and stays finished.
+  const cf = await get(`${q}&conf=status`);
+  if (cf.json && cf.json.teamsMissing > 0) {
+    await get(`${q}&conf=1`);
+    return `${tag}: conferences, ${cf.json.teamsMissing} teams to go`;
+  }
+
+  // 6. Owner counts, one snapshot a day. Cheap - a single leaderboard walk
   //    covers the whole season - so it re-arms every day once the rest of a
   //    season is finished, building ownership history over time.
   const ow = await get(`${q}&owners=status`);
