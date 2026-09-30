@@ -132,6 +132,14 @@ async function migrateGamelog(db) {
   try { await db.prepare('ALTER TABLE gamelog RENAME COLUMN rax TO rating').run(); } catch (e) {}
   try { await db.prepare('ALTER TABLE gamelog ADD COLUMN rax INTEGER').run(); } catch (e) {}
   try { await db.prepare('ALTER TABLE gamelog ADD COLUMN conference TEXT').run(); } catch (e) {}
+  // Without these the per-player owner lookup rescans the snapshot table for
+  // every row, which turns a season view into a half-minute wait.
+  try { await db.prepare(
+    'CREATE INDEX IF NOT EXISTS owners_lookup ON owners (sport, season, playerId, day)').run(); } catch (e) {}
+  try { await db.prepare(
+    'CREATE INDEX IF NOT EXISTS owners_latest ON owners (sport, season, day)').run(); } catch (e) {}
+  try { await db.prepare(
+    'CREATE INDEX IF NOT EXISTS gamelog_scope ON gamelog (sport, season, playerId)').run(); } catch (e) {}
 }
 
 // Turns one box score from the season feed into a flat row.
