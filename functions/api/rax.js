@@ -706,10 +706,24 @@ export async function onRequestGet({ request, env }) {
   // firing, which at forty-odd seasons is hundreds of requests a minute for
   // nothing. Here the checks are internal reads, and a season with nothing left
   // today is remembered in a single marker so it is skipped until tomorrow.
-  if (url.searchParams.get('queue') === 'next') {
+  if (['next', 'resume'].includes(url.searchParams.get('queue'))) {
     const db = env.RATEBOARD_DB;
     const CLEAR_KEY = 'queue_clear_v1';
     const today = new Date().toISOString().slice(0, 10);
+
+    // Cancels the current rest. For when a hold was set by something that was
+    // not really a season's worth of collecting - the clock then says the
+    // account has been working hard when it has been idle. Clearing lastJob
+    // too, so the next job doesn't immediately start another rest for being a
+    // different sport from whatever set this one.
+    if (url.searchParams.get('queue') === 'resume') {
+      let was = {};
+      try { was = JSON.parse((await env.RATEBOARD_KV.get('queue_pace_v1')) || '{}') || {}; } catch (e) {}
+      await env.RATEBOARD_KV.put('queue_pace_v1', JSON.stringify({ lastJob: '', holdUntil: 0 }));
+      return json({ resumed: true,
+                    wasRestingUntil: was.holdUntil ? new Date(was.holdUntil).toISOString() : null,
+                    wasAfter: was.reason || null });
+    }
     // A finished top-up is rechecked weekly rather than never, so players who
     // join a season later still pick up a count. With nothing missing the
     // recheck is one database query and no requests to Real at all.
