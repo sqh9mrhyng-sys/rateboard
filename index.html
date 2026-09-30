@@ -4221,7 +4221,7 @@ async function cbbPanel(){
     const named = gfEvents.filter(r => r.name).length;
     $b('#gf-note').textContent = `${gfEvents.length} events`
       + (named < gfEvents.length
-          ? ` · ${gfEvents.length - named} still waiting on names and cut lines`
+          ? ` · ${gfEvents.length - named} still waiting on a tournament name`
           : '');
     $b('#gf-list').innerHTML = gfEvents.length ? `<div class="dtwrap" style="margin-top:10px"><table class="dt">
       <thead><tr><th class="l">Date</th><th class="l">Tournament</th><th>Field</th>
