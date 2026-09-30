@@ -20,28 +20,48 @@ const BASE = 'https://rateboard-cgi.pages.dev/api/rax';
 // Add or reorder freely — anything already done is skipped in a single cheap
 // status call.
 const JOBS = [
-  // Already fully collected, so this one only ever takes its daily owner
-  // snapshot. A finished season still needs to be listed here or its
-  // ownership history never starts.
-  { sport: 'ncaam', season: 2026 },   // 2025-26
+  // Already collected, so these only take their daily owner snapshot.
+  { sport: 'ncaam', season: 2026 },   // CBB 2025-26
+  { sport: 'ncaam', season: 2025 },   // CBB 2024-25
+  { sport: 'ncaam', season: 2024 },   // CBB 2023-24
 
-  { sport: 'ncaam', season: 2025 },   // 2024-25
-  { sport: 'ncaam', season: 2024 },   // 2023-24
-
-  // Golf, newest first. The table is built around team sports, so a golf round
-  // may not fill every column sensibly - 2026 runs first and will show whether
-  // the shape holds before the older years get there.
-  // FC / soccer. 2025 is the 2025-26 season, 2026 the 2026-27 one.
+  // FC. 2026 is the 2026-27 season, 2025 the 2025-26 one.
   { sport: 'soccer', season: 2026 },
   { sport: 'soccer', season: 2025 },
 
+  // Golf, newest first. Plain calendar years.
   { sport: 'golf', season: 2026 },
   { sport: 'golf', season: 2025 }, { sport: 'golf', season: 2024 },
   { sport: 'golf', season: 2023 }, { sport: 'golf', season: 2022 },
   { sport: 'golf', season: 2021 }, { sport: 'golf', season: 2020 },
   { sport: 'golf', season: 2019 }, { sport: 'golf', season: 2018 },
   { sport: 'golf', season: 2017 }, { sport: 'golf', season: 2016 },
-  { sport: 'golf', season: 2015 }, { sport: 'golf', season: 2014 }
+  { sport: 'golf', season: 2015 }, { sport: 'golf', season: 2014 },
+
+  // MLB, plain calendar years.
+  { sport: 'mlb', season: 2026 }, { sport: 'mlb', season: 2025 },
+  { sport: 'mlb', season: 2024 }, { sport: 'mlb', season: 2023 },
+  { sport: 'mlb', season: 2022 },
+
+  // NBA. 2026 is 2025-26, back to 2023 which is 2022-23.
+  { sport: 'nba', season: 2026 }, { sport: 'nba', season: 2025 },
+  { sport: 'nba', season: 2024 }, { sport: 'nba', season: 2023 },
+
+  // NHL. 2026 is 2026-27, back to 2023 which is 2023-24.
+  { sport: 'nhl', season: 2026 }, { sport: 'nhl', season: 2025 },
+  { sport: 'nhl', season: 2024 }, { sport: 'nhl', season: 2023 },
+
+  // WNBA, plain calendar years.
+  { sport: 'wnba', season: 2026 }, { sport: 'wnba', season: 2025 },
+  { sport: 'wnba', season: 2024 },
+
+  // NFL. 2026 is 2026-27, back to 2023 which is 2023-24.
+  { sport: 'nfl', season: 2026 }, { sport: 'nfl', season: 2025 },
+  { sport: 'nfl', season: 2024 }, { sport: 'nfl', season: 2023 },
+
+  // CFB last - much the biggest, since it covers FBS and FCS.
+  { sport: 'ncaaf', season: 2026 }, { sport: 'ncaaf', season: 2025 },
+  { sport: 'ncaaf', season: 2024 }, { sport: 'ncaaf', season: 2023 }
 ];
 
 // Players per firing. At roughly a third of a second each this keeps a run
@@ -57,70 +77,36 @@ async function get(path) {
 
 // Runs the next outstanding slice for one season. Returns a short line
 // describing what it did, or null when this season is finished.
-async function step(job) {
-  const q = `sport=${job.sport}&season=${job.season}`;
-  const tag = `${job.sport} ${job.season}`;
+const JOB_LIST = JOBS.map(j => `${j.sport}:${j.season}`).join(',');
 
-  // 1. The player list. Everything else reads from it.
-  const gs = await get(`${q}&games=status`);
-  if (!gs.json) return `${tag}: could not read status`;
-  if (!gs.json.players) {
-    await get(`${q}&games=1&limit=25`);          // builds the list, then stops
-    return `${tag}: building the player list`;
-  }
+// Asks the board what needs doing next across the whole queue, then does that
+// one bounded slice. Two requests a firing however long the queue gets.
+async function step() {
+  const n = await get(`queue=next&jobs=${encodeURIComponent(JOB_LIST)}`);
+  if (!n.json) return 'could not read the queue';
+  if (!n.json.phase) return null;
 
-  // 2. Box scores. This also gives games played, so the separate
-  //    games-played pass is not needed for a new season.
-  const gl = await get(`${q}&gamelog=status`);
-  if (gl.json && gl.json.remaining > 0) {
-    await get(`${q}&gamelog=1&limit=${SLICE}`);
-    return `${tag}: game logs, ${gl.json.remaining} players to go`;
-  }
+  const { sport, season, phase } = n.json;
+  const q = `sport=${sport}&season=${season}`;
+  const tag = `${sport} ${season}`;
 
-  // 3. Whole-number rax per game.
-  const rx = await get(`${q}&gamelog=raxstatus`);
-  if (rx.json && rx.json.remaining > 0) {
-    await get(`${q}&gamelog=rax&limit=${SLICE}`);
-    return `${tag}: rax per game, ${rx.json.remaining} players to go`;
-  }
-
-  // 4. Blanks mean the player earned nothing that game. Safe only once every
-  //    player has been through the rax pass, which is what we just confirmed.
-  if (gl.json && gl.json.rowsWithRax != null && gl.json.gameRows != null
-      && gl.json.rowsWithRax < gl.json.gameRows) {
-    const z = await get(`${q}&gamelog=zerofill`);
-    return `${tag}: filled ${z.json && z.json.filled} blank rax values`;
-  }
-
-  // 5. Conference, for rows collected before that column existed. Finite work
-  //    that finishes once and stays finished.
-  const cf = await get(`${q}&conf=status`);
-  if (cf.json && cf.json.teamsMissing > 0) {
-    await get(`${q}&conf=1`);
-    return `${tag}: conferences, ${cf.json.teamsMissing} teams to go`;
-  }
-
-  // 6. Owner counts, one snapshot a day. Cheap - a single leaderboard walk
-  //    covers the whole season - so it re-arms every day once the rest of a
-  //    season is finished, building ownership history over time.
-  const ow = await get(`${q}&owners=status`);
-  if (ow.json && !ow.json.done) {
-    await get(`${q}&owners=1`);
-    return `${tag}: owner counts, ${ow.json.collectedToday} players so far today`;
-  }
-
-  return null;   // nothing left for this season today
+  if (phase === 'list')     { await get(`${q}&games=1&limit=25`);            return `${tag}: building the player list`; }
+  if (phase === 'gamelog')  { await get(`${q}&gamelog=1&limit=${SLICE}`);    return `${tag}: game logs`; }
+  if (phase === 'rax')      { await get(`${q}&gamelog=rax&limit=${SLICE}`);  return `${tag}: rax per game`; }
+  if (phase === 'zerofill') { await get(`${q}&gamelog=zerofill`);            return `${tag}: filling blank rax`; }
+  if (phase === 'conf')     { await get(`${q}&conf=1`);                      return `${tag}: conferences`; }
+  if (phase === 'owners')   { await get(`${q}&owners=1`);                    return `${tag}: owner counts`; }
+  return `${tag}: unknown phase ${phase}`;
 }
 
 export default {
   async scheduled(event, env, ctx) {
-    for (const job of JOBS) {
-      let line = null;
-      try { line = await step(job); }
-      catch (e) { console.log(`${job.sport} ${job.season}: ${e && e.message}`); return; }
-      if (line) { console.log(line); return; }    // one slice per firing
+    try {
+      const line = await step();
+      console.log(line || 'nothing outstanding');
+    } catch (e) {
+      console.log('failed: ' + (e && e.message));
     }
-    console.log('nothing outstanding');
   },
 
   // Visiting the Worker shows how far along everything is, and ?run=1 does one
@@ -128,27 +114,26 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.searchParams.get('run') === '1') {
-      for (const job of JOBS) {
-        const line = await step(job);
-        if (line) return new Response(line + '\n', { headers: { 'content-type': 'text/plain' } });
-      }
-      return new Response('nothing outstanding\n', { headers: { 'content-type': 'text/plain' } });
+      const line = await step();
+      return new Response((line || 'nothing outstanding') + '\n',
+        { headers: { 'content-type': 'text/plain' } });
     }
 
-    const out = [];
+    // Progress for everything in the queue. One row a season, so a long queue
+    // stays readable.
+    const out = ['queue: ' + JOBS.length + ' seasons', ''];
+    const next = await get(`queue=next&jobs=${encodeURIComponent(JOB_LIST)}`);
+    out.push(next.json && next.json.phase
+      ? `working on: ${next.json.sport} ${next.json.season} — ${next.json.phase}`
+      : 'working on: nothing outstanding right now');
+    out.push('');
+
     for (const job of JOBS) {
       const q = `sport=${job.sport}&season=${job.season}`;
-      const gs = await get(`${q}&games=status`);
       const gl = await get(`${q}&gamelog=status`);
-      const rx = await get(`${q}&gamelog=raxstatus`);
-      out.push(`${job.sport} ${job.season}`);
-      out.push(`  players in list : ${gs.json ? gs.json.players : '?'}`);
-      out.push(`  game logs done  : ${gl.json ? `${gl.json.playersDone} (${gl.json.gameRows} rows)` : '?'}`);
-      out.push(`  rax done        : ${rx.json ? rx.json.playersDone : '?'}`);
-      const ow = await get(`${q}&owners=status`);
-      out.push(`  owners today    : ${ow.json ? `${ow.json.collectedToday}${ow.json.done ? ' (done)' : ''}`
-                                              + ` over ${ow.json.snapshotDays || 0} day(s)` : '?'}`);
-      out.push('');
+      const j = gl.json || {};
+      out.push(`${job.sport} ${job.season}`.padEnd(14)
+        + `${j.players || 0} players, ${j.playersDone || 0} done, ${(j.gameRows || 0).toLocaleString()} rows`);
     }
     return new Response(out.join('\n'), { headers: { 'content-type': 'text/plain' } });
   }
