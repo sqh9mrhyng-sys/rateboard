@@ -84,6 +84,9 @@ const JOB_LIST = JOBS.map(j => `${j.sport}:${j.season}`).join(',');
 async function step() {
   const n = await get(`queue=next&jobs=${encodeURIComponent(JOB_LIST)}`);
   if (!n.json) return 'could not read the queue';
+  if (n.json.resting) {
+    return `resting ${n.json.minutesLeft}m (${n.json.after || 'pacing'})`;
+  }
   if (!n.json.phase) return null;
 
   const { sport, season, phase } = n.json;
@@ -96,6 +99,7 @@ async function step() {
   if (phase === 'zerofill') { await get(`${q}&gamelog=zerofill`);            return `${tag}: filling blank rax`; }
   if (phase === 'conf')     { await get(`${q}&conf=1`);                      return `${tag}: conferences`; }
   if (phase === 'owners')   { await get(`${q}&owners=1`);                    return `${tag}: owner counts`; }
+  if (phase === 'ownertop') { await get(`${q}&ownertop=1`);                  return `${tag}: owner counts for players the shop list misses`; }
   return `${tag}: unknown phase ${phase}`;
 }
 
@@ -123,9 +127,11 @@ export default {
     // stays readable.
     const out = ['queue: ' + JOBS.length + ' seasons', ''];
     const next = await get(`queue=next&jobs=${encodeURIComponent(JOB_LIST)}`);
-    out.push(next.json && next.json.phase
-      ? `working on: ${next.json.sport} ${next.json.season} — ${next.json.phase}`
-      : 'working on: nothing outstanding right now');
+    out.push(next.json && next.json.resting
+      ? `resting for ${next.json.minutesLeft} more minutes — ${next.json.after || 'pacing'}`
+      : next.json && next.json.phase
+        ? `working on: ${next.json.sport} ${next.json.season} — ${next.json.phase}`
+        : 'working on: nothing outstanding right now');
     out.push('');
 
     for (const job of JOBS) {
