@@ -3648,6 +3648,7 @@ async function cbbPanel(){
       <button data-cm="players" aria-pressed="true">By player</button>
       <button data-cm="games" aria-pressed="false">Every game</button>
       <button data-cm="lookup" aria-pressed="false">Players</button>
+      <button data-cm="golf" aria-pressed="false">Golf</button>
     </div>
     <div class="dtbar cb-filt">
       <input class="field grow" id="cb-q" placeholder="Player name" autocomplete="off">
@@ -3685,6 +3686,14 @@ async function cbbPanel(){
       <div id="lk-results"></div>
       <div id="lk-detail"></div>
       <div id="lk-bag"></div>
+    </div>
+    <div id="cb-golf" class="hide">
+      <div class="dtbar">
+        <select class="field" id="gf-season"></select>
+        <span class="note" id="gf-note"></span>
+      </div>
+      <div id="gf-list"></div>
+      <div id="gf-detail"></div>
     </div>
     <p class="note" id="cb-count">Loading&hellip;</p>
     <div class="dtwrap" id="cb-table"><table class="dt"><thead id="cb-head"></thead><tbody id="cb-body"></tbody></table></div>
@@ -4177,20 +4186,148 @@ async function cbbPanel(){
     </div>`;
   }
 
-  // The three views share one modal, so switching hides everything that
+
+  // --- Golf tournaments --------------------------------------------------
+  let gfSeason = '', gfEvents = null, gfOpen = null, gfBoardYear = '';
+
+  const gfName = r => r.name || `Event of ${String(r.day || '').slice(0, 10)}`;
+
+  async function gfInit(){
+    if(gfEvents) return;
+    try {
+      const d = await (await fetch('/api/rax?golf=seasons&sport=golf')).json();
+      const seasons = (d.seasons || []).filter(x => x.events);
+      if(!seasons.length){
+        $b('#gf-note').textContent = 'No golf events collected yet.';
+        return;
+      }
+      $b('#gf-season').innerHTML = seasons.map(x =>
+        `<option value="${x.season}">${x.season} — ${x.events} events</option>`).join('');
+      gfSeason = gfSeason || String(seasons[0].season);
+      $b('#gf-season').value = gfSeason;
+      await gfLoad();
+    } catch(e){ $b('#gf-note').textContent = 'Could not reach the server.'; }
+  }
+
+  async function gfLoad(){
+    gfOpen = null;
+    $b('#gf-detail').innerHTML = '';
+    $b('#gf-note').textContent = 'Loading…';
+    let d;
+    try { d = await (await fetch(`/api/rax?golf=tournaments&sport=golf&season=${gfSeason}`)).json(); }
+    catch(e){ $b('#gf-note').textContent = 'Could not reach the server.'; return; }
+    if(d.error){ $b('#gf-note').textContent = d.error; return; }
+    gfEvents = d.rows || [];
+    const named = gfEvents.filter(r => r.name).length;
+    $b('#gf-note').textContent = `${gfEvents.length} events`
+      + (named < gfEvents.length
+          ? ` · ${gfEvents.length - named} still waiting on names and cut lines`
+          : '');
+    $b('#gf-list').innerHTML = gfEvents.length ? `<div class="dtwrap" style="margin-top:10px"><table class="dt">
+      <thead><tr><th class="l">Date</th><th class="l">Tournament</th><th>Field</th>
+        <th>Made cut</th><th>Cut line</th><th>Total rax</th><th>Rax per player</th></tr></thead>
+      <tbody>${gfEvents.map(r =>
+        `<tr class="clickable" data-gid="${r.gameId}">`
+        + `<td class="l">${esc(String(r.day || '').slice(0, 10))}</td>`
+        + `<td class="l">${esc(gfName(r))}${r.course ? ` <span class="note">${esc(r.course)}</span>` : ''}</td>`
+        + `<td>${Number(r.players || 0).toLocaleString()}</td>`
+        + `<td>${r.madeCut ? Number(r.madeCut).toLocaleString() : '<span class="dim">—</span>'}</td>`
+        + `<td>${r.cutLine == null ? '<span class="dim">—</span>' : gfPar(r.cutLine)}</td>`
+        + `<td>${Number(r.totalRax || 0).toLocaleString()}</td>`
+        + `<td>${r.avgRax == null ? '—' : Number(r.avgRax).toFixed(1)}</td></tr>`).join('')}
+      </tbody></table></div>`
+      : '<p class="note" style="margin-top:10px">Nothing collected for that season.</p>';
+  }
+
+  const gfPar = v => v == null ? '—' : (Number(v) > 0 ? '+' + v : Number(v) === 0 ? 'E' : String(v));
+
+  async function gfShow(gid, year){
+    const season = year || gfSeason;
+    $b('#gf-detail').innerHTML = '<p class="note" style="margin-top:12px">Loading…</p>';
+    let b, hist = { rows: [] };
+    try {
+      b = await (await fetch(`/api/rax?golf=board&sport=golf&season=${season}&gameId=${gid}`)).json();
+      const nm = b.event && b.event.name;
+      if(nm) hist = await (await fetch(
+        `/api/rax?golf=history&sport=golf&name=${encodeURIComponent(nm)}`)).json();
+    } catch(e){
+      $b('#gf-detail').innerHTML = '<p class="note" style="margin-top:12px">Could not load that event.</p>';
+      return;
+    }
+    const ev = b.event || {};
+    gfOpen = { gid, season };
+    const rows = b.rows || [];
+    const years = (hist.rows || []);
+
+    $b('#gf-detail').innerHTML = `<div class="lkcard">
+      <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+        <b style="font-size:19px">${esc(gfName(ev))}</b>
+        <span class="note">${esc(String(ev.day || '').slice(0, 10))}${
+          ev.course ? ' · ' + esc(ev.course) : ''}</span>
+      </div>
+      <div class="lkstats">
+        <div class="lkstat">Field<b>${Number(ev.players || 0).toLocaleString()}</b></div>
+        <div class="lkstat">Made cut<b>${ev.madeCut ? Number(ev.madeCut).toLocaleString() : '—'}</b></div>
+        <div class="lkstat">Missed cut<b>${ev.missedCut ? Number(ev.missedCut).toLocaleString() : '—'}</b></div>
+        <div class="lkstat">Cut line<b>${gfPar(ev.cutLine)}</b></div>
+        <div class="lkstat">Total rax<b>${Number(ev.totalRax || 0).toLocaleString()}</b></div>
+        <div class="lkstat">Rax per player<b>${ev.avgRax == null ? '—' : Number(ev.avgRax).toFixed(1)}</b></div>
+      </div>
+      ${years.length > 1 ? `<div style="margin-top:6px">
+        <b style="font-size:14px">Every year of this tournament</b>
+        <div class="dtwrap" style="margin-top:6px"><table class="dt">
+          <thead><tr><th class="l">Year</th><th>Field</th><th>Made cut</th><th>Cut line</th>
+            <th>Total rax</th><th>Rax per player</th><th>Best</th></tr></thead>
+          <tbody>${years.map(y =>
+            `<tr class="clickable" data-gyear="${y.season}" data-gid2="${y.gameId}">`
+            + `<td class="l">${y.season}${String(y.season) === String(season) ? ' <span class="note">shown</span>' : ''}</td>`
+            + `<td>${Number(y.players || 0).toLocaleString()}</td>`
+            + `<td>${y.madeCut ? Number(y.madeCut).toLocaleString() : '<span class="dim">—</span>'}</td>`
+            + `<td>${y.cutLine == null ? '<span class="dim">—</span>' : gfPar(y.cutLine)}</td>`
+            + `<td>${Number(y.totalRax || 0).toLocaleString()}</td>`
+            + `<td>${y.avgRax == null ? '—' : Number(y.avgRax).toFixed(1)}</td>`
+            + `<td>${Number(y.bestRax || 0).toLocaleString()}</td></tr>`).join('')}
+          </tbody></table></div>
+        <p class="note" style="margin-top:6px">Click a year to swap the leaderboard below to it.</p>
+      </div>` : `<p class="note">${years.length === 1
+          ? 'Only one year of this tournament has been collected so far.'
+          : 'This event has no name yet, so its other years cannot be matched up.'}</p>`}
+      <div style="margin-top:14px">
+        <b style="font-size:14px">Rax leaderboard — ${esc(String(season))}</b>
+        <div class="dtwrap" style="margin-top:6px"><table class="dt">
+          <thead><tr><th class="l" style="width:1%">#</th><th class="l">Player</th><th class="l">Country</th>
+            <th class="l">Finish</th><th>To par</th><th>Rax</th><th>Rating</th></tr></thead>
+          <tbody>${rows.length ? rows.map((r, i) =>
+            `<tr><td class="l dim">${i + 1}</td><td class="l">${esc(r.player || '')}</td>`
+            + `<td class="l">${esc(r.team || '')}</td>`
+            + `<td class="l">${r.position ? esc(r.position) : '<span class="dim">—</span>'}</td>`
+            + `<td>${gfPar(r.toPar)}</td>`
+            + `<td>${Number(r.rax || 0).toLocaleString()}</td>`
+            + `<td>${r.rating == null ? '—' : Number(r.rating).toFixed(2)}</td></tr>`).join('')
+            : '<tr><td class="l" colspan="7">No rows for that event.</td></tr>'}
+          </tbody></table></div>
+      </div>
+    </div>`;
+  }
+
+  // The views share one modal, so switching hides everything that
   // belongs to the other side rather than leaving dead controls on screen.
   function applyMode(){
     const lk = st.mode === 'lookup';
+    const gf = st.mode === 'golf';
+    const table = !lk && !gf;
     $b('#cb-lookup').classList.toggle('hide', !lk);
-    $b('#cb-table').classList.toggle('hide', lk);
-    $b('#cb-count').classList.toggle('hide', lk);
-    $b('#cb-key').classList.toggle('hide', lk);
-    $b('#cb-foot').classList.toggle('hide', lk);
+    $b('#cb-golf').classList.toggle('hide', !gf);
+    $b('#cb-table').classList.toggle('hide', !table);
+    $b('#cb-count').classList.toggle('hide', !table);
+    $b('#cb-key').classList.toggle('hide', !table);
+    $b('#cb-foot').classList.toggle('hide', !table);
     box.querySelectorAll('.cb-filt').forEach(x => {
-      if(lk) x.classList.add('hide');
+      if(!table) x.classList.add('hide');
       else if(x.id !== 'cb-colbar') x.classList.remove('hide');
     });
     if(lk){ lkBag(); lkSearch(); }
+    else if(gf) gfInit();
     else applyFilterVisibility();
   }
 
@@ -4227,6 +4364,7 @@ async function cbbPanel(){
   box.addEventListener('change', e => {
     if(e.target.id === 'lk-lvl'){ lkLevel = +e.target.value; return lkDetail(); }
     if(e.target.id === 'lk-month'){ lkMonth = e.target.value; lkDay = ''; return lkBag(); }
+    if(e.target.id === 'gf-season'){ gfSeason = e.target.value; return gfLoad(); }
     if(e.target.dataset && e.target.dataset.lvl != null){
       const L = CB_LEVELS[+e.target.value];
       if(!L) return;
@@ -4326,6 +4464,12 @@ async function cbbPanel(){
       lkBag();
       return toast(`${name} built - five cards, nothing left on the table at 3 a day.`);
     }
+
+    const gy = e.target.closest('[data-gyear]');
+    if(gy) return gfShow(gy.dataset.gid2, gy.dataset.gyear);
+
+    const gid = e.target.closest('[data-gid]');
+    if(gid) return gfShow(gid.dataset.gid, gfSeason);
 
     if(e.target.closest('#lk-opt')){ lkOptOpen = !lkOptOpen; lkOptNote = ''; return lkBag(); }
 
