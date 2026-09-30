@@ -3493,13 +3493,15 @@ function loadoutCur(d){
 
 // Real only lets a card be claimed a set number of times per sport per day, so
 // a day is scored the way the app would score it: the best few for each sport
-// count, and everything past that is rax left on the table. Seasons don't
-// matter here - two golf cards are two golf claims whatever year they are.
+// count, and everything past that is rax left on the table. The year is not
+// part of the day - four golf cards that all played on 30 September, in four
+// different seasons, are four claims competing for the same three slots.
 function claimDays(cards, claims){
   const byDay = new Map();
   cards.forEach((c, i) => {
     for(const g of (c.games || [])){
-      const day = String(g[0] || '').slice(0, 10);
+      const raw = String(g[0] || '');
+      const day = raw.length > 5 ? raw.slice(5, 10) : raw;   // MM-DD, year dropped
       const rax = Math.round((Number(g[1]) || 0) * (Number(c.mult) || 1));
       if(!day || !rax) continue;
       if(!byDay.has(day)) byDay.set(day, []);
@@ -3528,6 +3530,32 @@ function claimDays(cards, claims){
     out.set(day, { earned, missed, rows });
   }
   return out;
+}
+
+
+// A ready-made CBB loadout. Worked out against every collected CBB season by
+// scoring all five-card combinations of the 40 biggest earners against the
+// three-a-day cap: these five are both the five highest-earning cards and a
+// set that never puts four of them on the same calendar day, so nothing is
+// left on the table. Rax and dates are each card's own, so changing a level
+// below re-scores everything from the real numbers.
+const CBB_STARTER = [
+  {playerId:4600663,name:"Zach Edey",sport:'ncaam',season:2024,rax:708,g:'1106:12,1110:11,1113:16,1120:14,1121:13,1122:15,1128:10,1201:19,1204:19,1209:15,1216:15,1221:10,1229:11,0102:11,0105:11,0109:7,0113:23,0116:14,0120:21,0123:10,0128:17,0131:22,0204:11,0210:17,0215:13,0218:14,0222:15,0225:22,0302:20,0305:17,0310:17,0315:19,0316:17,0322:42,0324:35,0329:27,0331:45,0406:26,0408:35'},
+  {playerId:5041935,name:"Cameron Boozer",sport:'ncaam',season:2026,rax:568,g:'1104:10,1108:15,1111:13,1114:30,1118:10,1121:10,1123:19,1127:19,1202:15,1206:16,1216:11,1220:15,1231:15,0103:13,0106:18,0110:10,0114:12,0117:23,0124:18,0126:11,0131:14,0203:14,0207:11,0210:10,0214:13,0216:13,0221:14,0224:16,0228:11,0302:15,0307:18,0312:13,0313:15,0319:21,0321:23,0327:21,0329:23'},
+  {playerId:5175737,name:"Yaxel Lendeborg",sport:'ncaam',season:2025,rax:536,g:'1104:15,1107:13,1110:18,1115:12,1118:11,1122:10,1123:9,1125:12,1201:9,1206:12,1215:15,1218:5,1222:15,1231:10,0104:9,0107:22,0112:15,0115:11,0121:17,0126:12,0129:22,0201:17,0203:12,0211:16,0216:19,0219:17,0223:13,0227:11,0302:6,0306:13,0309:7,0314:28,0315:17,0316:15,0319:21,0323:35,0326:15'},
+  {playerId:5041939,name:"Cooper Flagg",sport:'ncaam',season:2025,rax:529,g:'1104:12,1108:12,1112:12,1116:11,1122:14,1126:6,1129:8,1204:16,1208:12,1210:7,1217:14,1221:5,1231:19,0104:14,0107:12,0111:25,0114:9,0118:15,0125:10,0127:14,0201:16,0205:8,0208:10,0212:15,0215:13,0217:13,0222:9,0225:12,0301:12,0303:20,0308:13,0313:3,0321:22,0323:27,0327:40,0329:15,0405:34'},
+  {playerId:4433569,name:"Johni Broome",sport:'ncaam',season:2025,rax:513,g:'1106:9,1109:15,1113:14,1118:24,1125:15,1126:17,1127:18,1204:10,1208:8,1214:17,1217:2,1221:14,1230:13,0104:15,0107:15,0111:5,0125:13,0129:14,0201:13,0204:11,0208:14,0211:11,0215:15,0219:11,0222:20,0226:14,0301:6,0304:4,0308:21,0314:11,0315:13,0320:13,0322:18,0328:25,0330:34,0405:21'}
+];
+
+function starterCards(){
+  return CBB_STARTER.map(p => ({
+    playerId: p.playerId, name: p.name, sport: p.sport, season: p.season,
+    level: CB_LEVELS[0][0], mult: CB_LEVELS[0][1], rax: p.rax,
+    games: p.g.split(',').map(bit => {
+      const [md, rax] = bit.split(':');
+      return [`${md.slice(0, 2)}-${md.slice(2)}`, Number(rax)];
+    })
+  }));
 }
 
 const CB_SPORT_LABEL = { ncaam:'CBB', ncaaf:'CFB', nfl:'NFL', nba:'NBA', nhl:'NHL',
@@ -3931,26 +3959,21 @@ async function cbbPanel(){
   const MONTHS = ['January','February','March','April','May','June','July',
                   'August','September','October','November','December'];
 
-  function monthLabel(ym){
-    const [y, m] = ym.split('-');
-    return `${MONTHS[Number(m) - 1] || m} ${y}`;
-  }
+  // 29 for February so a leap day never goes missing.
+  const MONTH_LEN = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const monthLabel = mm => MONTHS[Number(mm) - 1] || mm;
+  const dayLabel = md => `${monthLabel(md.slice(0, 2))} ${Number(md.slice(3))}`;
 
   function lkCalendar(days){
-    const months = [...new Set([...days.keys()].map(d => d.slice(0, 7)))].sort();
+    const months = [...new Set([...days.keys()].map(d => d.slice(0, 2)))].sort();
     if(!months.length) return '<p class="note" style="margin-top:10px">No dated games in this loadout yet.</p>';
-    if(!months.includes(lkMonth)) lkMonth = months[months.length - 1];
-
-    const [y, m] = lkMonth.split('-').map(Number);
-    const first = new Date(Date.UTC(y, m - 1, 1));
-    const lead = first.getUTCDay();
-    const len = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    if(!months.includes(lkMonth)) lkMonth = months[0];
 
     let mEarned = 0, mMissed = 0;
-    for(const [d, v] of days) if(d.slice(0, 7) === lkMonth){ mEarned += v.earned; mMissed += v.missed; }
+    for(const [d, v] of days) if(d.slice(0, 2) === lkMonth){ mEarned += v.earned; mMissed += v.missed; }
 
+    const len = MONTH_LEN[Number(lkMonth) - 1] || 31;
     const cells = [];
-    for(let i = 0; i < lead; i++) cells.push('<div class="calday blank"></div>');
     for(let d = 1; d <= len; d++){
       const key = `${lkMonth}-${String(d).padStart(2, '0')}`;
       const v = days.get(key);
@@ -3967,14 +3990,15 @@ async function cbbPanel(){
       <div class="dtbar">
         <select class="field" id="lk-month">${months.map(mm =>
           `<option value="${esc(mm)}"${mm === lkMonth ? ' selected' : ''}>${esc(monthLabel(mm))}</option>`).join('')}</select>
-        <span class="note">${mEarned.toLocaleString()} rax this month${
+        <span class="note">${mEarned.toLocaleString()} rax in ${esc(monthLabel(lkMonth))}${
           mMissed ? ` · <span style="color:var(--bad)">${mMissed.toLocaleString()} missed</span>` : ''}</span>
       </div>
-      <div class="calgrid">${['S','M','T','W','T','F','S'].map(d =>
-        `<div class="calhd">${d}</div>`).join('')}${cells.join('')}</div>
+      <p class="note" style="margin-top:6px">A day is a calendar day, not a date -
+        cards from different seasons that played on the same day of the year share the same claims.</p>
+      <div class="calgrid">${cells.join('')}</div>
       ${sel ? `<div class="lkcard" style="margin-top:12px">
         <div style="display:flex;justify-content:space-between;align-items:baseline">
-          <b>${esc(lkDay)}</b>
+          <b>${esc(dayLabel(lkDay))}</b>
           <span class="note">${sel.earned.toLocaleString()} claimed${
             sel.missed ? ` · <span style="color:var(--bad)">${sel.missed.toLocaleString()} missed</span>` : ''}</span>
         </div>
@@ -4006,6 +4030,7 @@ async function cbbPanel(){
         ${names.map(n => `<button class="btn-ghost" data-loadout="${esc(n)}"`
           + ` aria-pressed="${n === all.active ? 'true' : 'false'}">${esc(n)}</button>`).join('')}
         <button class="btn-ghost" id="lk-new">+ New loadout</button>
+        <button class="btn-ghost" id="lk-starter">CBB starter</button>
       </div>
       ${lkNaming ? `<div class="dtbar" style="margin-top:8px">
         <input class="field" id="lk-name" style="flex:1 1 180px;min-width:0"
@@ -4039,10 +4064,15 @@ async function cbbPanel(){
         return `<div class="lkrow">`
           + `<span><span class="lkname" data-open="${esc(x.sport)}|${esc(String(x.season))}|${esc(x.name)}">`
           + `${esc(x.name)}</span> <span class="note">${esc(CB_SPORT_LABEL[x.sport] || x.sport)} `
-          + `${esc(String(x.season))} · ${esc(x.level)} ${x.mult}x · ${Number(x.rax || 0).toLocaleString()} base`
+          + `${esc(String(x.season))} · ${Number(x.rax || 0).toLocaleString()} base`
           + `${x.games && x.games.length ? ` · ${x.games.length} dated games` : ' · no dated games'}</span></span>`
-          + `<span>${tot.toLocaleString()}`
-          + ` <button class="btn-ghost" data-bagrm="${i}" style="margin-left:10px;padding:3px 9px">Remove</button></span>`
+          + `<span style="display:flex;align-items:center;gap:8px">`
+          + `<select class="field" data-lvl="${i}" style="padding:3px 6px;font-size:12px">`
+          + CB_LEVELS.map((L, n) =>
+              `<option value="${n}"${L[0] === x.level ? ' selected' : ''}>${esc(L[0])} ${L[1]}x</option>`).join('')
+          + `</select>`
+          + `<b>${tot.toLocaleString()}</b>`
+          + `<button class="btn-ghost" data-bagrm="${i}" style="padding:3px 9px">Remove</button></span>`
           + '</div>';
       }).join('')}
       <div class="lkrow" style="font-weight:600;border-top:1px solid var(--line)">
@@ -4105,6 +4135,16 @@ async function cbbPanel(){
   box.addEventListener('change', e => {
     if(e.target.id === 'lk-lvl'){ lkLevel = +e.target.value; return lkDetail(); }
     if(e.target.id === 'lk-month'){ lkMonth = e.target.value; lkDay = ''; return lkBag(); }
+    if(e.target.dataset && e.target.dataset.lvl != null){
+      const L = CB_LEVELS[+e.target.value];
+      if(!L) return;
+      const all = loadoutsRead();
+      const card = loadoutCur(all).cards[+e.target.dataset.lvl];
+      if(!card) return;
+      card.level = L[0]; card.mult = L[1];
+      loadoutsWrite(all);
+      return lkBag();
+    }
     const map = { 'cb-team':'team', 'cb-conf':'conference', 'cb-type':'seasonType',
                   'cb-ha':'homeAway', 'cb-res':'result' };
     if(!map[e.target.id]) return;
@@ -4182,6 +4222,18 @@ async function cbbPanel(){
 
     const cd = e.target.closest('[data-calday]');
     if(cd){ lkDay = lkDay === cd.dataset.calday ? '' : cd.dataset.calday; return lkBag(); }
+
+    if(e.target.closest('#lk-starter')){
+      const all = loadoutsRead();
+      let name = 'CBB starter', n = 2;
+      while(all.sets[name]) name = `CBB starter ${n++}`;
+      all.sets[name] = { claims: 3, cards: starterCards() };
+      all.active = name;
+      lkDay = ''; lkMonth = ''; lkNaming = ''; lkCal = true;
+      loadoutsWrite(all);
+      lkBag();
+      return toast(`${name} built - five cards, nothing left on the table at 3 a day.`);
+    }
 
     if(e.target.closest('#lk-cal')){ lkCal = !lkCal; return lkBag(); }
     if(e.target.closest('#lk-new')){ lkNaming = 'new'; lkBag(); const f = $b('#lk-name'); if(f) f.focus(); return; }
