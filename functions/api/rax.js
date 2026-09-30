@@ -20,7 +20,11 @@ const OWNERS_CHUNK_PAGES = 45;
 // The leaderboard walk misses anyone too lightly owned to make it onto the
 // shop list, so the leftovers are asked for one at a time. This is the size of
 // one tick's worth of those.
-const OWNERTOP_CHUNK = 45;       // the same, with room for the database writes
+const OWNERTOP_CHUNK = 45;
+// While the queue is resting between seasons, the backfill keeps going but at
+// a slower drip - the rest exists so the account doesn't look like a crawler,
+// and 45 player lookups a minute for two hours would undo that.
+const OWNERTOP_REST_CHUNK = 12;
 const CONF_CHUNK = 60;               // teams per conference-backfill pass
 const GAP_MS = 350;                  // breathing room between pages
 const RETRIES = 3;                   // RS answers 429 under load
@@ -291,6 +295,12 @@ async function ownerTopSlice(env, sport, season, auth, statusOnly) {
     // for a different year and the answer is thrown away - and those would
     // otherwise come back as missing on every single pass, so the walk would
     // never get past them.
+    let chunk = OWNERTOP_CHUNK;
+    try {
+      const pace = JSON.parse((await env.RATEBOARD_KV.get('queue_pace_v1')) || '{}') || {};
+      if (pace.holdUntil && pace.holdUntil > Date.now()) chunk = OWNERTOP_REST_CHUNK;
+    } catch (e) {}
+
     const MISSING = `SELECT g.playerId AS id, MAX(g.player) AS player
                        FROM gamelog g
                       WHERE g.sport = ? AND g.season = ? AND g.playerId > ?
@@ -337,7 +347,7 @@ async function ownerTopSlice(env, sport, season, auth, statusOnly) {
         const st = await readTop();
 
         const res = await db.prepare(MISSING)
-          .bind(sport, Number(season), st.afterId, OWNERTOP_CHUNK + 1).all();
+          .bind(sport, Number(season), st.afterId, chunk + 1).all();
         const rows = (res && res.results) || [];
         if (!rows.length) {
           st.doneDay = today;
@@ -349,9 +359,9 @@ async function ownerTopSlice(env, sport, season, auth, statusOnly) {
           return;
         }
 
-        const batch = rows.slice(0, OWNERTOP_CHUNK);
+        const batch = rows.slice(0, chunk);
         await send(`filling owner counts one player at a time for ${sport} ${season}` +
-                   ` (${rows.length > OWNERTOP_CHUNK ? 'more than ' : ''}${batch.length} left,` +
+                   ` (${rows.length > chunk ? 'more than ' : ''}${batch.length} left,` +
                    ` from player ${batch[0].id})...\n`);
 
         const sql = `INSERT OR REPLACE INTO owners (sport, season, playerId, day, owners, player)
@@ -391,7 +401,7 @@ async function ownerTopSlice(env, sport, season, auth, statusOnly) {
         st.filled += stmts.length;
         st.afterId = Number(batch[batch.length - 1].id) || st.afterId;
 
-        const finished = rows.length <= OWNERTOP_CHUNK;
+        const finished = rows.length <= chunk;
         if (finished) { st.doneDay = today; st.afterId = 0; }
         await env.RATEBOARD_KV.put(KEY, JSON.stringify(st));
         await send(finished
@@ -744,11 +754,14 @@ export async function onRequestGet({ request, env }) {
         if (!own || own.day !== today || !own.done) {
           return json({ sport: sp, season: se, phase: 'owners' });
         }
-        // The per-player top-up costs a request each, so it waits for the rest
-        // to end - but this season is not marked finished for the day either,
-        // or the top-up would be skipped until tomorrow.
+        // A rest is dead time for collection, so the per-player backfill uses
+        // it - at the slower chunk the helper picks while a hold is on. The
+        // season is not marked finished for the day while that is outstanding.
         const top = await kv(`ownertop_${sp}_${se}`);
-        if (!top || !top.doneDay || top.doneDay < weekAgo) continue;
+        if (!top || !top.doneDay || top.doneDay < weekAgo) {
+          if (changed) { try { await env.RATEBOARD_KV.put(CLEAR_KEY, JSON.stringify(clear)); } catch (e) {} }
+          return json({ sport: sp, season: se, phase: 'owners' });
+        }
         clear[key] = today;
         changed = true;
       }
@@ -777,6 +790,7 @@ export async function onRequestGet({ request, env }) {
       return json({ sport: sp, season: se, phase });
     };
 
+    let ownersJob = null, topJob = null;
     for (const [sp, se] of jobs) {
       const key = `${sp}:${se}`;
       if (clear[key] === today) continue;
@@ -806,17 +820,23 @@ export async function onRequestGet({ request, env }) {
         if (noConf && noConf.n > 0) return await heavy(sp, se, 'conf');
       } catch (e) {}
 
+      // Owner work is remembered rather than done here: a season still waiting
+      // to be collected at all matters more than topping up one that is
+      // finished, so the loop runs to the end first and these only happen if
+      // nothing is left to collect.
       const own = await kv(`owners_${sp}_${se}`);
-      if (!own || own.day !== today || !own.done) return json({ sport: sp, season: se, phase: 'owners' });
+      if (!own || own.day !== today || !own.done) { if (!ownersJob) ownersJob = [sp, se]; continue; }
 
       const top = await kv(`ownertop_${sp}_${se}`);
-      if (!top || !top.doneDay || top.doneDay < weekAgo) return await heavy(sp, se, 'owners');
+      if (!top || !top.doneDay || top.doneDay < weekAgo) { if (!topJob) topJob = [sp, se]; continue; }
 
       clear[key] = today;
       changed = true;
     }
 
     if (changed) { try { await env.RATEBOARD_KV.put(CLEAR_KEY, JSON.stringify(clear)); } catch (e) {} }
+    if (ownersJob) return json({ sport: ownersJob[0], season: ownersJob[1], phase: 'owners' });
+    if (topJob)    return json({ sport: topJob[0],    season: topJob[1],    phase: 'owners' });
     return json({ phase: null });
   }
 
