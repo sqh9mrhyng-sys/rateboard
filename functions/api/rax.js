@@ -572,33 +572,85 @@ export async function onRequestGet({ request, env }) {
     const kv = async k => { try { return JSON.parse((await env.RATEBOARD_KV.get(k)) || 'null'); } catch (e) { return null; } };
     let changed = false;
 
+    // Pacing. Collecting flat out for two days straight is the kind of pattern
+    // that gets an account looked at, so the queue rests between seasons and
+    // longer between sports. The rests are randomised rather than exact,
+    // because a gap of precisely 45 minutes every time is itself a signature.
+    const PACE_KEY = 'queue_pace_v1';
+    const rest = (base, jitter) => base - jitter / 2 + Math.floor(Math.random() * jitter);
+    const SEASON_REST = () => rest(45 * 60 * 1000, 20 * 60 * 1000);   // about 35-55 min
+    const SPORT_REST  = () => rest(2 * 60 * 60 * 1000, 40 * 60 * 1000); // about 1h40-2h20
+    let pace = {};
+    try { pace = JSON.parse((await env.RATEBOARD_KV.get(PACE_KEY)) || '{}') || {}; } catch (e) {}
+    const now = Date.now();
+    const holding = pace.holdUntil && pace.holdUntil > now;
+
+    // While resting, the heavy collection waits, but a season that is already
+    // finished still takes its daily owner snapshot - that is one leaderboard
+    // walk, not a crawl, and skipping it would leave gaps in the history.
+    if (holding) {
+      for (const [sp, se] of jobs) {
+        const key = `${sp}:${se}`;
+        if (!clear[key] || clear[key] === today) continue;
+        const own = await kv(`owners_${sp}_${se}`);
+        if (!own || own.day !== today || !own.done) {
+          return json({ sport: sp, season: se, phase: 'owners' });
+        }
+        clear[key] = today;
+        changed = true;
+      }
+      if (changed) { try { await env.RATEBOARD_KV.put(CLEAR_KEY, JSON.stringify(clear)); } catch (e) {} }
+      return json({ phase: null, resting: true, until: new Date(pace.holdUntil).toISOString(),
+                    minutesLeft: Math.ceil((pace.holdUntil - now) / 60000), after: pace.reason || null });
+    }
+
+    // Hands back the work, unless this is a different season from the one last
+    // worked on - in which case that one just finished, and a rest starts.
+    const heavy = async (sp, se, phase) => {
+      const key = `${sp}:${se}`;
+      if (pace.lastJob && pace.lastJob !== key) {
+        const prevSport = String(pace.lastJob).split(':')[0];
+        const movedOn = prevSport !== sp;
+        const wait = movedOn ? SPORT_REST() : SEASON_REST();
+        const next = { lastJob: key, holdUntil: Date.now() + wait,
+                       reason: movedOn ? `finished ${prevSport}` : `finished ${pace.lastJob}` };
+        try { await env.RATEBOARD_KV.put(PACE_KEY, JSON.stringify(next)); } catch (e) {}
+        return json({ phase: null, resting: true, until: new Date(next.holdUntil).toISOString(),
+                      minutesLeft: Math.ceil(wait / 60000), after: next.reason });
+      }
+      if (!pace.lastJob) {
+        try { await env.RATEBOARD_KV.put(PACE_KEY, JSON.stringify({ lastJob: key, holdUntil: 0 })); } catch (e) {}
+      }
+      return json({ sport: sp, season: se, phase });
+    };
+
     for (const [sp, se] of jobs) {
       const key = `${sp}:${se}`;
       if (clear[key] === today) continue;
 
       const games = await kv(`games_${sp}_${se}`);
       const ids = (games && games.ids) || [];
-      if (!ids.length) return json({ sport: sp, season: se, phase: 'list' });
+      if (!ids.length) return await heavy(sp, se, 'list');
 
       const glDone = (await kv(`gamelog_done_${sp}_${se}`)) || {};
       const doneMap = glDone.done || {};
-      if (ids.some(id => !doneMap[id])) return json({ sport: sp, season: se, phase: 'gamelog' });
+      if (ids.some(id => !doneMap[id])) return await heavy(sp, se, 'gamelog');
 
       const rxDone = (await kv(`gamelog_rax_${sp}_${se}`)) || {};
       const raxMap = rxDone.done || {};
-      if (ids.some(id => !raxMap[id])) return json({ sport: sp, season: se, phase: 'rax' });
+      if (ids.some(id => !raxMap[id])) return await heavy(sp, se, 'rax');
 
       try {
         const blanks = await db.prepare(
           `SELECT COUNT(*) AS n FROM gamelog WHERE sport = ? AND season = ? AND rax IS NULL`)
           .bind(sp, se).first();
-        if (blanks && blanks.n > 0) return json({ sport: sp, season: se, phase: 'zerofill' });
+        if (blanks && blanks.n > 0) return await heavy(sp, se, 'zerofill');
 
         const noConf = await db.prepare(
           `SELECT COUNT(*) AS n FROM (SELECT DISTINCT team FROM gamelog
              WHERE sport = ? AND season = ? AND team IS NOT NULL AND conference IS NULL)`)
           .bind(sp, se).first();
-        if (noConf && noConf.n > 0) return json({ sport: sp, season: se, phase: 'conf' });
+        if (noConf && noConf.n > 0) return await heavy(sp, se, 'conf');
       } catch (e) {}
 
       const own = await kv(`owners_${sp}_${se}`);
