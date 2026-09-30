@@ -1117,6 +1117,63 @@ export async function onRequestGet({ request, env }) {
     }
 
     // Filtered, sorted views over the game log, for the explorer on the board.
+    // Everything the loadout optimiser needs, in one request: the biggest
+    // earners in a scope and every dated game they scored in. Fetching this
+    // player by player from the browser would be a hundred round trips.
+    if (glArg === 'top') {
+      const db = env.RATEBOARD_DB;
+      const pairs = [];
+      for (const bit of ((url.searchParams.get('seasons') || '').split(',')).slice(0, 30)) {
+        const [sp, se] = String(bit).split(':');
+        if (SPORTS.has(String(sp).toLowerCase()) && /^\d{4}$/.test(se)) {
+          pairs.push([String(sp).toLowerCase(), Number(se)]);
+        }
+      }
+      if (!pairs.length) pairs.push([sport, Number(season)]);
+      const scope = '(' + pairs.map(() => '(sport = ? AND season = ?)').join(' OR ') + ')';
+      const binds = [];
+      for (const [sp, se] of pairs) binds.push(sp, se);
+
+      const n = Math.min(200, Math.max(5, parseInt(url.searchParams.get('limit') || '90', 10) || 90));
+
+      try {
+        const top = await db.prepare(
+          `SELECT playerId, sport, season, MAX(player) AS player, MAX(team) AS team,
+                  SUM(rax) AS rax, COUNT(*) AS games
+             FROM gamelog WHERE ${scope} AND rax IS NOT NULL
+            GROUP BY playerId, sport, season
+            ORDER BY SUM(rax) DESC LIMIT ?`).bind(...binds, n).all();
+        const rows = (top && top.results) || [];
+        if (!rows.length) return json({ players: [] });
+
+        // One IN-list per sport-season keeps the bind count sane; D1 allows
+        // around a hundred parameters a statement.
+        const out = [];
+        for (const [sp, se] of pairs) {
+          const ids = rows.filter(r => r.sport === sp && r.season === se).map(r => r.playerId);
+          for (let i = 0; i < ids.length; i += 60) {
+            const slice = ids.slice(i, i + 60);
+            if (!slice.length) continue;
+            const g = await db.prepare(
+              `SELECT playerId, day, rax FROM gamelog
+                WHERE sport = ? AND season = ? AND rax > 0 AND day IS NOT NULL
+                  AND playerId IN (${slice.map(() => '?').join(',')})`).bind(sp, se, ...slice).all();
+            for (const r of (g && g.results) || []) {
+              out.push({ sport: sp, season: se, playerId: r.playerId, day: r.day, rax: r.rax });
+            }
+          }
+        }
+
+        const byKey = new Map();
+        for (const r of rows) byKey.set(`${r.sport}|${r.season}|${r.playerId}`, { ...r, games: [] });
+        for (const g of out) {
+          const e = byKey.get(`${g.sport}|${g.season}|${g.playerId}`);
+          if (e) e.games.push([String(g.day).slice(5, 10), g.rax]);
+        }
+        return json({ players: [...byKey.values()].filter(p => p.games.length) });
+      } catch (e) { return json({ error: String((e && e.message) || e) }, 500); }
+    }
+
     // Every filter is bound and every sort key is checked against a list, so
     // nothing from the query string reaches the SQL as text.
     if (glArg === 'query') {
