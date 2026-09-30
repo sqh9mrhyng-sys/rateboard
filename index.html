@@ -3464,6 +3464,9 @@ const CB_LEVELS = [
   ['Iconic 16', 220, 22700], ['Iconic 17', 226, 26000], ['Iconic 18', 233, 29000],
   ['Iconic 19', 240, 34500], ['Iconic 20', 250, 40000]
 ];
+// How much of a loadout's rax may be lost to the daily cap before the
+// optimiser stops adding players.
+const LK_WASTE_CAP = 0.10;
 const LOADOUT_KEY  = 'rateboard_loadout_v1';    // the single-loadout version
 const LOADOUTS_KEY = 'rateboard_loadouts_v2';
 
@@ -3496,6 +3499,75 @@ function loadoutCur(d){
 // count, and everything past that is rax left on the table. The year is not
 // part of the day - four golf cards that all played on 30 September, in four
 // different seasons, are four claims competing for the same three slots.
+// Builds the biggest-earning set of cards it can for a claim cap, by adding
+// whichever candidate gains the most claimable rax next and stopping before
+// the waste goes past the ceiling. Everything is scored at one card level, so
+// the comparison is between the players rather than between their upgrades.
+function optimiseLoadout(pool, claims, opts){
+  const cap = (opts && opts.maxWaste != null ? opts.maxWaste : 0.10);
+  const maxCards = (opts && opts.maxCards) || 30;
+  const anchor = (opts && opts.anchor) || null;
+
+  // Day -> the rax each chosen card scored on it, kept sorted, so scoring a
+  // candidate is a merge rather than a re-sort of everything.
+  const days = new Map();
+  let claimed = 0, missed = 0;
+  const chosen = [];
+
+  const scoreAdd = (cand, commit) => {
+    let dClaimed = 0, dMissed = 0;
+    for(const [day, rax] of cand.games){
+      const key = cand.sport + '|' + day;
+      let list = days.get(key);
+      if(!list){ list = []; if(commit) days.set(key, list); }
+      // Where this value lands among the day's existing claims for its sport.
+      let rank = 0;
+      for(const v of list) if(v > rax) rank++;
+      if(rank < claims){
+        dClaimed += rax;
+        // It pushes whatever was sitting in the last slot out of the money.
+        if(list.length >= claims){
+          const sorted = list.slice().sort((a, b) => b - a);
+          dClaimed -= sorted[claims - 1];
+          dMissed  += sorted[claims - 1];
+        }
+      } else {
+        dMissed += rax;
+      }
+      if(commit) list.push(rax);
+    }
+    return { dClaimed, dMissed };
+  };
+
+  const take = cand => {
+    const d = scoreAdd(cand, true);
+    claimed += d.dClaimed; missed += d.dMissed;
+    chosen.push(cand);
+  };
+
+  const left = pool.slice();
+  if(anchor){
+    const at = left.findIndex(c => c.key === anchor);
+    if(at >= 0) take(left.splice(at, 1)[0]);
+  }
+
+  while(chosen.length < maxCards && left.length){
+    let best = -1, bestGain = 0, bestD = null;
+    for(let i = 0; i < left.length; i++){
+      const d = scoreAdd(left[i], false);
+      if(d.dClaimed <= bestGain) continue;
+      const tot = claimed + d.dClaimed + missed + d.dMissed;
+      if(tot > 0 && (missed + d.dMissed) / tot > cap) continue;   // would break the ceiling
+      best = i; bestGain = d.dClaimed; bestD = d;
+    }
+    if(best < 0) break;
+    take(left.splice(best, 1)[0]);
+  }
+
+  return { chosen, claimed, missed,
+           waste: claimed + missed > 0 ? missed / (claimed + missed) : 0 };
+}
+
 function claimDays(cards, claims){
   const byDay = new Map();
   cards.forEach((c, i) => {
@@ -3955,6 +4027,7 @@ async function cbbPanel(){
 
   // --- loadouts ----------------------------------------------------------
   let lkCal = false, lkMonth = '', lkDay = '', lkNaming = '';
+  let lkOptOpen = false, lkOptClaims = 3, lkOptAnchor = '', lkOptMax = 12, lkOptNote = '';
 
   const MONTHS = ['January','February','March','April','May','June','July',
                   'August','September','October','November','December'];
@@ -4031,7 +4104,25 @@ async function cbbPanel(){
           + ` aria-pressed="${n === all.active ? 'true' : 'false'}">${esc(n)}</button>`).join('')}
         <button class="btn-ghost" id="lk-new">+ New loadout</button>
         <button class="btn-ghost" id="lk-starter">Build the CBB starter</button>
+        <button class="btn-ghost" id="lk-opt" aria-pressed="${lkOptOpen ? 'true' : 'false'}">Optimised loadout</button>
       </div>
+      ${lkOptOpen ? `<div class="lkcard" style="margin-top:10px">
+        <b>Build the best loadout</b>
+        <p class="note" style="margin-top:4px">Uses the seasons selected at the top of this screen.
+          Everything is compared at one card level, so the answer is about which players to hold,
+          not which to upgrade. Overlaps are allowed up to ${Math.round(LK_WASTE_CAP * 100)}% of the total.</p>
+        <div class="dtbar" style="margin-top:10px">
+          <span class="note">Claims per day</span>
+          <button class="btn-ghost" data-optclaims="2" aria-pressed="${lkOptClaims === 2 ? 'true' : 'false'}">2</button>
+          <button class="btn-ghost" data-optclaims="3" aria-pressed="${lkOptClaims === 3 ? 'true' : 'false'}">3</button>
+          <input class="field" id="lk-optanchor" placeholder="Build around this player (optional)"
+                 value="${esc(lkOptAnchor)}" style="flex:1 1 220px;min-width:0">
+          <input class="field" id="lk-optmax" placeholder="Max cards" inputmode="numeric"
+                 value="${esc(String(lkOptMax))}" style="flex:0 1 110px">
+          <button class="btn" id="lk-optgo">Build it</button>
+        </div>
+        <p class="note" id="lk-optnote" style="margin-top:8px">${esc(lkOptNote)}</p>
+      </div>` : ''}
       ${lkNaming ? `<div class="dtbar" style="margin-top:8px">
         <input class="field" id="lk-name" style="flex:1 1 180px;min-width:0"
                placeholder="${lkNaming === 'rename' ? 'New name' : 'Loadout name'}"
@@ -4117,6 +4208,7 @@ async function cbbPanel(){
   let typing;
   box.addEventListener('input', e => {
     if(e.target.id === 'lk-name') return;
+    if(e.target.id === 'lk-optanchor' || e.target.id === 'lk-optmax') return;
     if(e.target.id === 'lk-q'){
       clearTimeout(lkTyping);
       lkTyping = setTimeout(lkSearch, 300);
@@ -4233,6 +4325,84 @@ async function cbbPanel(){
       loadoutsWrite(all);
       lkBag();
       return toast(`${name} built - five cards, nothing left on the table at 3 a day.`);
+    }
+
+    if(e.target.closest('#lk-opt')){ lkOptOpen = !lkOptOpen; lkOptNote = ''; return lkBag(); }
+
+    const oc = e.target.closest('[data-optclaims]');
+    if(oc){
+      lkOptAnchor = ($b('#lk-optanchor') || {}).value || lkOptAnchor;
+      lkOptMax = +(($b('#lk-optmax') || {}).value) || lkOptMax;
+      lkOptClaims = +oc.dataset.optclaims;
+      return lkBag();
+    }
+
+    if(e.target.closest('#lk-optgo')){
+      if(!st.pairs.length) return toast('Pick at least one season at the top first.');
+      lkOptAnchor = (($b('#lk-optanchor') || {}).value || '').trim();
+      lkOptMax = Math.min(30, Math.max(1, +(($b('#lk-optmax') || {}).value) || 12));
+      lkOptNote = 'Reading the biggest earners in that scope…';
+      lkBag();
+
+      let pool;
+      try {
+        const seasons = st.pairs.map(x => x.replace('|', ':')).join(',');
+        const first = (st.pairs[0] || 'ncaam|2026').split('|');
+        const d = await (await fetch(`/api/rax?gamelog=top&sport=${first[0]}&season=${first[1]}`
+          + `&seasons=${encodeURIComponent(seasons)}&limit=90`)).json();
+        if(d.error) throw new Error(d.error);
+        pool = (d.players || []).map(p => ({
+          key: `${p.sport}|${p.season}|${p.player}`,
+          playerId: p.playerId, name: p.player, sport: p.sport, season: p.season,
+          rax: p.rax, games: p.games
+        }));
+      } catch(err){
+        lkOptNote = 'Could not read the player data for that scope.';
+        return lkBag();
+      }
+      if(!pool.length){
+        lkOptNote = 'No collected games in the selected seasons yet.';
+        return lkBag();
+      }
+
+      let anchorKey = null;
+      if(lkOptAnchor){
+        const want = lkOptAnchor.toLowerCase();
+        const hit = pool.find(c => c.name.toLowerCase().includes(want));
+        if(hit) anchorKey = hit.key;
+        else {
+          lkOptNote = `"${lkOptAnchor}" is not among the top earners in that scope, `
+            + 'so the build ignored it. Clear the box or pick a bigger scorer.';
+        }
+      }
+
+      const r = optimiseLoadout(pool, lkOptClaims, {
+        maxWaste: LK_WASTE_CAP, maxCards: lkOptMax, anchor: anchorKey });
+      if(!r.chosen.length){
+        lkOptNote = 'Nothing could be added inside the waste ceiling.';
+        return lkBag();
+      }
+
+      const all = loadoutsRead();
+      const label = [...new Set(st.pairs.map(k => {
+        const [sp, se] = k.split('|');
+        return `${CB_SPORT_LABEL[sp] || sp} ${se}`;
+      }))].join(' + ');
+      let name = `Best of ${label}`.slice(0, 40), n = 2;
+      while(all.sets[name]) name = `${`Best of ${label}`.slice(0, 36)} ${n++}`;
+      all.sets[name] = { claims: lkOptClaims, cards: r.chosen.map(c => ({
+        playerId: c.playerId, name: c.name, sport: c.sport, season: c.season,
+        level: CB_LEVELS[0][0], mult: CB_LEVELS[0][1],
+        rax: c.games.reduce((t, g) => t + g[1], 0), games: c.games })) };
+      all.active = name;
+      lkDay = ''; lkMonth = ''; lkNaming = ''; lkCal = true;
+      lkOptNote = `${r.chosen.length} cards · ${r.claimed.toLocaleString()} base rax claimable at `
+        + `${lkOptClaims} a day · ${r.missed.toLocaleString()} lost to overlaps `
+        + `(${(100 * r.waste).toFixed(1)}%)`
+        + (anchorKey ? ` · built around ${pool.find(c => c.key === anchorKey).name}` : '');
+      loadoutsWrite(all);
+      lkBag();
+      return toast(`${name} built.`);
     }
 
     if(e.target.closest('#lk-cal')){ lkCal = !lkCal; return lkBag(); }
