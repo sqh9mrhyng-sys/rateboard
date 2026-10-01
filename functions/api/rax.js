@@ -300,6 +300,16 @@ function rowsOf(data) {
 // the small number they actually are. The player endpoint answers per season -
 // players/{id}/sport/{sport}?season=2024 gives that season's card - so the
 // leftovers are filled in one at a time from there.
+// Whether the per-player owner backfill still has anyone left for this season.
+async function ownerTopOutstanding(env, sport, season){
+  try {
+    const o = JSON.parse((await env.RATEBOARD_KV.get(`ownertop_${sport}_${season}`)) || 'null');
+    if (!o || !o.doneDay) return true;
+    const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+    return o.doneDay < weekAgo;
+  } catch (e) { return true; }
+}
+
 async function ownerTopSlice(env, sport, season, auth, statusOnly) {
   {
     const which = statusOnly ? 'status' : '1';
@@ -723,7 +733,7 @@ export async function onRequestGet({ request, env }) {
   // firing, which at forty-odd seasons is hundreds of requests a minute for
   // nothing. Here the checks are internal reads, and a season with nothing left
   // today is remembered in a single marker so it is skipped until tomorrow.
-  if (['next', 'resume'].includes(url.searchParams.get('queue'))) {
+  if (['next', 'resume', 'stuck'].includes(url.searchParams.get('queue'))) {
     const db = env.RATEBOARD_DB;
     const CLEAR_KEY = 'queue_clear_v1';
     const today = new Date().toISOString().slice(0, 10);
@@ -733,6 +743,18 @@ export async function onRequestGet({ request, env }) {
     // account has been working hard when it has been idle. Clearing lastJob
     // too, so the next job doesn't immediately start another rest for being a
     // different sport from whatever set this one.
+    if (url.searchParams.get('queue') === 'stuck') {
+      let st = {};
+      try { st = JSON.parse((await env.RATEBOARD_KV.get('queue_stuck_v1')) || '{}') || {}; } catch (e) {}
+      const skip = st.skip || {};
+      if (url.searchParams.get('clear') === '1') {
+        await env.RATEBOARD_KV.put('queue_stuck_v1', JSON.stringify({ skip: {} }));
+        return json({ cleared: Object.keys(skip) });
+      }
+      return json({ setAsideToday: Object.entries(skip).filter(([, d]) => d === today).map(([k]) => k),
+                    watching: st.tag || null, passes: st.n || 0 });
+    }
+
     if (url.searchParams.get('queue') === 'resume') {
       let was = {};
       try { was = JSON.parse((await env.RATEBOARD_KV.get('queue_pace_v1')) || '{}') || {}; } catch (e) {}
@@ -771,6 +793,33 @@ export async function onRequestGet({ request, env }) {
     const SPORT_REST  = () => rest(2 * 60 * 60 * 1000, 40 * 60 * 1000); // about 1h40-2h20
     let pace = {};
     try { pace = JSON.parse((await env.RATEBOARD_KV.get(PACE_KEY)) || '{}') || {}; } catch (e) {}
+
+    // A phase that keeps being handed out while its own progress number stays
+    // put is not working, and asking for it again every minute wedges the whole
+    // queue behind it. After a few fruitless passes the phase is set aside for
+    // the day and the queue moves on to work it can actually do.
+    const STUCK_KEY = 'queue_stuck_v1';
+    const STUCK_PASSES = 6;
+    let stuck = {};
+    try { stuck = JSON.parse((await env.RATEBOARD_KV.get(STUCK_KEY)) || '{}') || {}; } catch (e) {}
+    if (!stuck.skip || typeof stuck.skip !== 'object') stuck.skip = {};
+
+    const setAside = (sp, se, phase) => stuck.skip[`${sp}:${se}:${phase}`] === today;
+
+    // Records this hand-out and says whether the phase has stopped moving.
+    const wedged = async (sp, se, phase, progress) => {
+      const tag = `${sp}:${se}:${phase}`;
+      if (stuck.tag === tag && stuck.progress === progress) stuck.n = (stuck.n || 0) + 1;
+      else { stuck.tag = tag; stuck.progress = progress; stuck.n = 1; }
+      let out = false;
+      if (stuck.n > STUCK_PASSES) {
+        stuck.skip[tag] = today;
+        stuck.tag = ''; stuck.n = 0; stuck.progress = null;
+        out = true;
+      }
+      try { await env.RATEBOARD_KV.put(STUCK_KEY, JSON.stringify(stuck)); } catch (e) {}
+      return out;
+    };
     const now = Date.now();
     const holding = pace.holdUntil && pace.holdUntil > now;
 
@@ -826,30 +875,49 @@ export async function onRequestGet({ request, env }) {
       const key = `${sp}:${se}`;
       if (clear[key] === today) continue;
 
+      // Each phase reports a number that must move for it to count as working.
+      const pick = async (phase, progress) => {
+        if (setAside(sp, se, phase)) return null;
+        if (await wedged(sp, se, phase, progress)) return null;
+        return await heavy(sp, se, phase);
+      };
+
       const games = await kv(`games_${sp}_${se}`);
       const ids = (games && games.ids) || [];
-      if (!ids.length) return await heavy(sp, se, 'list');
+      if (!ids.length) {
+        const r = await pick('list', 0);
+        if (r) return r;
+        continue;                       // without a player list nothing else can run
+      }
+
+      let served = null;
 
       const glDone = (await kv(`gamelog_done_${sp}_${se}`)) || {};
       const doneMap = glDone.done || {};
-      if (ids.some(id => !doneMap[id])) return await heavy(sp, se, 'gamelog');
+      const doneN = ids.filter(id => doneMap[id]).length;
+      if (doneN < ids.length) served = await pick('gamelog', doneN);
 
       const rxDone = (await kv(`gamelog_rax_${sp}_${se}`)) || {};
       const raxMap = rxDone.done || {};
-      if (ids.some(id => !raxMap[id])) return await heavy(sp, se, 'rax');
+      const raxN = ids.filter(id => raxMap[id]).length;
+      if (!served && raxN < ids.length) served = await pick('rax', raxN);
 
       try {
-        const blanks = await db.prepare(
-          `SELECT COUNT(*) AS n FROM gamelog WHERE sport = ? AND season = ? AND rax IS NULL`)
-          .bind(sp, se).first();
-        if (blanks && blanks.n > 0) return await heavy(sp, se, 'zerofill');
-
-        const noConf = await db.prepare(
-          `SELECT COUNT(*) AS n FROM (SELECT DISTINCT team FROM gamelog
-             WHERE sport = ? AND season = ? AND team IS NOT NULL AND conference IS NULL)`)
-          .bind(sp, se).first();
-        if (noConf && noConf.n > 0) return await heavy(sp, se, 'conf');
+        if (!served) {
+          const blanks = await db.prepare(
+            `SELECT COUNT(*) AS n FROM gamelog WHERE sport = ? AND season = ? AND rax IS NULL`)
+            .bind(sp, se).first();
+          if (blanks && blanks.n > 0) served = await pick('zerofill', blanks.n);
+        }
+        if (!served) {
+          const noConf = await db.prepare(
+            `SELECT COUNT(*) AS n FROM (SELECT DISTINCT team FROM gamelog
+               WHERE sport = ? AND season = ? AND team IS NOT NULL AND conference IS NULL)`)
+            .bind(sp, se).first();
+          if (noConf && noConf.n > 0) served = await pick('conf', noConf.n);
+        }
       } catch (e) {}
+      if (served) return served;
 
       // Owner work is remembered rather than done here: a season still waiting
       // to be collected at all matters more than topping up one that is
@@ -873,7 +941,7 @@ export async function onRequestGet({ request, env }) {
     if (changed) { try { await env.RATEBOARD_KV.put(CLEAR_KEY, JSON.stringify(clear)); } catch (e) {} }
     if (ownersJob) return json({ sport: ownersJob[0], season: ownersJob[1], phase: 'owners' });
     if (topJob)    return json({ sport: topJob[0],    season: topJob[1],    phase: 'owners' });
-    if (golfJob)   return json({ sport: golfJob[0],   season: golfJob[1],   phase: 'conf' });
+    if (golfJob)   return json({ sport: golfJob[0],   season: golfJob[1],   phase: 'owners' });
     return json({ phase: null });
   }
 
@@ -900,15 +968,6 @@ export async function onRequestGet({ request, env }) {
     }
     if (which !== '1') return json({ error: 'conf must be 1 or status' }, 400);
 
-    // Golf has no conferences to fill, so for golf this slot is spent on the
-    // tournament walk instead. Keeping the phase name means the deployed cron
-    // driver needs no new phase to know about.
-    if (sport === 'golf') {
-      const u = new URL(url.toString());
-      u.searchParams.delete('conf');
-      u.searchParams.set('golfmeta', '1');
-      return await onRequestGet({ request: new Request(u.toString(), request), env });
-    }
 
     const { readable, writable } = new TransformStream();
     const w = writable.getWriter();
@@ -1236,7 +1295,17 @@ export async function onRequestGet({ request, env }) {
     // never reaches. Keeping it under the same phase name means the deployed
     // cron driver needs no new phase to know about.
     const already = await readOwn();
-    if (already.done) return await ownerTopSlice(env, sport, Number(season), auth, false);
+    if (already.done) {
+      const topLeft = await ownerTopOutstanding(env, sport, Number(season));
+      if (topLeft) return await ownerTopSlice(env, sport, Number(season), auth, false);
+      if (sport === 'golf') {
+        const u = new URL(url.toString());
+        u.searchParams.delete('owners');
+        u.searchParams.set('golfmeta', '1');
+        return await onRequestGet({ request: new Request(u.toString(), request), env });
+      }
+      return await ownerTopSlice(env, sport, Number(season), auth, false);
+    }
 
     const { readable, writable } = new TransformStream();
     const w = writable.getWriter();
