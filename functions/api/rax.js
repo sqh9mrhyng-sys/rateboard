@@ -924,14 +924,23 @@ export async function onRequestGet({ request, env }) {
       // finished, so the loop runs to the end first and these only happen if
       // nothing is left to collect.
       const own = await kv(`owners_${sp}_${se}`);
-      if (!own || own.day !== today || !own.done) { if (!ownersJob) ownersJob = [sp, se]; continue; }
+      if (!own || own.day !== today || !own.done) {
+        if (!ownersJob && !setAside(sp, se, 'owners')) ownersJob = [sp, se, (own && own.seen) || 0];
+        continue;
+      }
 
       const top = await kv(`ownertop_${sp}_${se}`);
-      if (!top || !top.doneDay || top.doneDay < weekAgo) { if (!topJob) topJob = [sp, se]; continue; }
+      if (!top || !top.doneDay || top.doneDay < weekAgo) {
+        if (!topJob && !setAside(sp, se, 'owners')) topJob = [sp, se, (top && top.filled) || 0];
+        continue;
+      }
 
       if (sp === 'golf') {
         const gm = await kv(`golfmeta_${sp}_${se}`);
-        if (!gm || !gm.doneDay) { if (!golfJob) golfJob = [sp, se]; continue; }
+        if (!gm || !gm.doneDay) {
+          if (!golfJob && !setAside(sp, se, 'owners')) golfJob = [sp, se, (gm && gm.at) || 0];
+          continue;
+        }
       }
 
       clear[key] = today;
@@ -939,9 +948,12 @@ export async function onRequestGet({ request, env }) {
     }
 
     if (changed) { try { await env.RATEBOARD_KV.put(CLEAR_KEY, JSON.stringify(clear)); } catch (e) {} }
-    if (ownersJob) return json({ sport: ownersJob[0], season: ownersJob[1], phase: 'owners' });
-    if (topJob)    return json({ sport: topJob[0],    season: topJob[1],    phase: 'owners' });
-    if (golfJob)   return json({ sport: golfJob[0],   season: golfJob[1],   phase: 'owners' });
+    for (const job of [ownersJob, topJob, golfJob]) {
+      if (!job) continue;
+      const [sp, se, progress] = job;
+      if (await wedged(sp, se, 'owners', progress)) continue;
+      return json({ sport: sp, season: se, phase: 'owners' });
+    }
     return json({ phase: null });
   }
 
@@ -1093,7 +1105,9 @@ export async function onRequestGet({ request, env }) {
         await migrateGamelog(db);
         const st = await readMeta();
         if (!ids.length) {
-          await send(`no player list for ${sport} ${season} yet.\n`);
+          st.doneDay = today; st.at = 0;
+          await env.RATEBOARD_KV.put(KEY, JSON.stringify(st));
+          await send(`no player list for ${sport} ${season}, nothing to walk.\n`);
           await send('##STATE 0 0 0\n');
           await w.close();
           return;
