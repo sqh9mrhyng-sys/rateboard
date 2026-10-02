@@ -1243,8 +1243,10 @@ export async function onRequestGet({ request, env }) {
     try { await db.prepare(TOURNAMENT_DDL).run(); } catch (e) {}
     try { await db.prepare('ALTER TABLE gamelog ADD COLUMN position TEXT').run(); } catch (e) {}
 
-    // The cut line is the highest score to par that still made the weekend.
-    // Null until the finishing positions have been collected.
+    // Players who miss the cut stop after two rounds, so their score to par is
+    // a 36 hole number while everyone else's is a 72 hole one. That makes the
+    // best score among the players who missed the only honest read on where
+    // the cut fell - you needed to beat it to play the weekend.
     const EVENT_COLS = `
       COUNT(*) AS players,
       SUM(g.rax) AS totalRax,
@@ -1252,7 +1254,7 @@ export async function onRequestGet({ request, env }) {
       MAX(g.rax) AS bestRax,
       SUM(CASE WHEN g.position IS NOT NULL AND g.position <> 'CUT' THEN 1 ELSE 0 END) AS madeCut,
       SUM(CASE WHEN g.position = 'CUT' THEN 1 ELSE 0 END) AS missedCut,
-      MAX(CASE WHEN g.position IS NOT NULL AND g.position <> 'CUT' THEN g.plusMinus END) AS cutLine`;
+      MIN(CASE WHEN g.position = 'CUT' THEN g.plusMinus END) AS cutLine`;
 
     try {
       if (which === 'seasons') {
