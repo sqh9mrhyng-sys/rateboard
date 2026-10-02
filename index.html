@@ -4288,7 +4288,7 @@ async function cbbPanel(){
           : '');
     $b('#gf-list').innerHTML = gfEvents.length ? `<div class="dtwrap" style="margin-top:10px"><table class="dt">
       <thead><tr><th class="l">Date</th><th class="l">Tournament</th><th>Field</th>
-        <th>Made cut</th><th>Cut line</th><th>Total rax</th><th>Rax per player</th></tr></thead>
+        <th>Made cut</th><th>Cut at</th><th>Total rax</th><th>Rax per player</th></tr></thead>
       <tbody>${gfEvents.map(r =>
         `<tr class="clickable" data-gid="${r.gameId}">`
         + `<td class="l">${esc(String(r.day || '').slice(0, 10))}</td>`
@@ -4344,7 +4344,7 @@ async function cbbPanel(){
 
     $b('#gf-list').innerHTML = rows.length ? `<div class="dtwrap" style="margin-top:10px"><table class="dt">
       <thead><tr><th class="l">Tournament</th><th>Years</th><th>Avg field</th><th>Avg made cut</th>
-        <th>Avg cut line</th><th>Avg rax per player</th><th>Avg total rax</th><th>Best</th></tr></thead>
+        <th>Avg cut at</th><th>Avg rax per player</th><th>Avg total rax</th><th>Best</th></tr></thead>
       <tbody>${rows.map(g =>
         `<tr class="clickable" data-gall="${esc(g.name)}">`
         + `<td class="l">${esc(g.name)}<span class="note"> ${g.seasons.join(', ')}</span></td>`
@@ -4371,13 +4371,13 @@ async function cbbPanel(){
         <div class="lkstat">Years<b>${g.years}</b></div>
         <div class="lkstat">Avg field<b>${g.avgField == null ? '—' : Math.round(g.avgField)}</b></div>
         <div class="lkstat">Avg made cut<b>${g.avgMade == null ? '—' : Math.round(g.avgMade)}</b></div>
-        <div class="lkstat">Avg cut line<b>${g.avgCut == null ? '—' : gfPar(Math.round(g.avgCut))}</b></div>
+        <div class="lkstat">Avg cut at<b>${g.avgCut == null ? '—' : gfPar(Math.round(g.avgCut))}</b></div>
         <div class="lkstat">Avg rax per player<b>${g.avgRax == null ? '—' : g.avgRax.toFixed(1)}</b></div>
         <div class="lkstat">Best single rax<b>${g.best.toLocaleString()}</b></div>
       </div>
       <div class="dtwrap" style="margin-top:6px"><table class="dt">
         <thead><tr><th class="l">Year</th><th class="l">Date</th><th>Field</th><th>Made cut</th>
-          <th>Cut line</th><th>Total rax</th><th>Rax per player</th></tr></thead>
+          <th>Cut at</th><th>Total rax</th><th>Rax per player</th></tr></thead>
         <tbody>${g.events.slice().sort((a, b) => b.season - a.season).map(e =>
           `<tr class="clickable" data-gyear="${e.season}" data-gid2="${e.gameId}">`
           + `<td class="l">${e.season}</td><td class="l">${esc(String(e.day || '').slice(0, 10))}</td>`
@@ -4428,14 +4428,14 @@ async function cbbPanel(){
         <div class="lkstat">Field<b>${Number(ev.players || 0).toLocaleString()}</b></div>
         <div class="lkstat">Made cut<b>${ev.madeCut ? Number(ev.madeCut).toLocaleString() : '—'}</b></div>
         <div class="lkstat">Missed cut<b>${ev.missedCut ? Number(ev.missedCut).toLocaleString() : '—'}</b></div>
-        <div class="lkstat">Cut line<b>${gfPar(ev.cutLine)}</b></div>
+        <div class="lkstat">Cut at<b>${gfPar(ev.cutLine)}</b></div>
         <div class="lkstat">Total rax<b>${Number(ev.totalRax || 0).toLocaleString()}</b></div>
         <div class="lkstat">Rax per player<b>${ev.avgRax == null ? '—' : Number(ev.avgRax).toFixed(1)}</b></div>
       </div>
       ${years.length > 1 ? `<div style="margin-top:6px">
         <b style="font-size:14px">Every year of this tournament</b>
         <div class="dtwrap" style="margin-top:6px"><table class="dt">
-          <thead><tr><th class="l">Year</th><th>Field</th><th>Made cut</th><th>Cut line</th>
+          <thead><tr><th class="l">Year</th><th>Field</th><th>Made cut</th><th>Cut at</th>
             <th>Total rax</th><th>Rax per player</th><th>Best</th></tr></thead>
           <tbody>${years.map(y =>
             `<tr class="clickable" data-gyear="${y.season}" data-gid2="${y.gameId}">`
