@@ -1052,6 +1052,49 @@ export async function onRequestGet({ request, env }) {
   // the event's id and each player's score to par, but nothing that names the
   // event or says who missed the cut - both of those live in the same feed the
   // game logs come from, so this walks it again and fills them in.
+  // Puts a season back in the queue. Real keeps adding players and fixtures to
+  // a running season, and the collectors skip anyone already walked, so the
+  // only way to pick those up is to forget what was walked. The rows already
+  // in the database are kept - the game-log insert updates in place - so this
+  // tops a season up rather than rebuilding it.
+  if (url.searchParams.get('requeue') === '1') {
+    if (!SPORTS.has(sport) || !/^\d{4}$/.test(season)) {
+      return json({ error: 'requeue needs a known sport and a four digit season' }, 400);
+    }
+    const keys = [`games_${sport}_${season}`,
+                  `gamelog_done_${sport}_${season}`,
+                  `gamelog_rax_${sport}_${season}`,
+                  `golfmeta_${sport}_${season}`];
+    const gone = [];
+    for (const k of keys) {
+      try { await env.RATEBOARD_KV.delete(k); gone.push(k); } catch (e) {}
+    }
+    // Also drop today's "this season is finished" flag, and any phase the
+    // watchdog set aside, so the queue looks at it again on the next tick.
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const clear = JSON.parse((await env.RATEBOARD_KV.get('queue_clear_v1')) || '{}') || {};
+      delete clear[`${sport}:${season}`];
+      await env.RATEBOARD_KV.put('queue_clear_v1', JSON.stringify(clear));
+      const st = JSON.parse((await env.RATEBOARD_KV.get('queue_stuck_v1')) || '{}') || {};
+      if (st.skip) {
+        for (const k of Object.keys(st.skip)) if (k.startsWith(`${sport}:${season}:`)) delete st.skip[k];
+      }
+      st.tag = ''; st.n = 0; st.progress = null;
+      await env.RATEBOARD_KV.put('queue_stuck_v1', JSON.stringify(st));
+    } catch (e) {}
+
+    let rows = null;
+    try {
+      const r = await env.RATEBOARD_DB.prepare(
+        'SELECT COUNT(*) AS n FROM gamelog WHERE sport = ? AND season = ?')
+        .bind(sport, Number(season)).first();
+      rows = r ? r.n : null;
+    } catch (e) {}
+    return json({ requeued: `${sport} ${season}`, forgot: gone, rowsKept: rows,
+                  note: 'the queue will rebuild the player list and walk everyone again' });
+  }
+
   if (url.searchParams.get('golfmeta')) {
     const which = url.searchParams.get('golfmeta');
     const db = env.RATEBOARD_DB;
@@ -1229,6 +1272,18 @@ export async function onRequestGet({ request, env }) {
             GROUP BY g.gameId ORDER BY day ASC`)
           .bind(sp, Number(season)).all();
         return json({ sport: sp, season: Number(season), rows: (r && r.results) || [] });
+      }
+
+      // Every event in every collected season, in one go. The naming and the
+      // all-time grouping happen on the page, because the names are a hand
+      // written list there rather than anything stored here.
+      if (which === 'allevents') {
+        const r = await db.prepare(
+          `SELECT g.season, g.gameId, MIN(g.day) AS day, ${EVENT_COLS}
+             FROM gamelog g
+            WHERE g.sport = ? AND g.gameId IS NOT NULL
+            GROUP BY g.season, g.gameId ORDER BY day ASC`).bind(sp).all();
+        return json({ sport: sp, rows: (r && r.results) || [] });
       }
 
       if (which === 'history') {
