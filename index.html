@@ -412,6 +412,7 @@
     </div>
     <div class="whoami">
       <span><span class="sm-hide">Signed in as </span><b id="me"></b></span>
+      <button class="linkbtn hide" id="open-preview">View as member</button>
       <button class="linkbtn" id="open-full">Full price</button>
       <button class="linkbtn" id="open-report">Report a user</button>
       <button class="linkbtn hide" id="open-copy">Copy list</button>
@@ -423,6 +424,10 @@
   </header>
 
   <div class="wrap">
+    <div id="previewbar" class="warn hide" style="margin-bottom:18px">
+      You are looking at the board the way a regular member sees it. Admin controls are hidden.
+      <button class="linkbtn" id="preview-off" style="margin-left:8px">Back to admin</button>
+    </div>
     <div id="offline" class="warn hide" style="margin-bottom:18px"></div>
     <div class="cols">
 
@@ -527,7 +532,14 @@ const SESSION = 'ratebrd_session';    // legacy: bare username key
 const DEVICE  = 'ratebrd_device_v1';  // { key, name, ts } — remembers this browser
 const MIN_PASS = 4;
 const ADMINS = ['dennis'];            // <-- put your username(s) here
-const isAdmin = () => !!me && ADMINS.includes(String(me).toLowerCase());
+
+// Preview mode. An admin sees extra buttons on almost every row, which makes
+// it hard to tell what a normal member actually gets. Turning this on makes
+// isAdmin() answer no for the whole page, so every one of those branches
+// hides itself without a second code path to keep in step.
+let previewMember = false;
+const reallyAdmin = () => !!me && ADMINS.includes(String(me).toLowerCase());
+const isAdmin = () => reallyAdmin() && !previewMember;
 
 // Admins always; anyone else only if they have been granted it on the admin
 // screen. The grant list travels with the board, so it holds on any device.
@@ -536,6 +548,24 @@ const canSeeGameData = () => isAdmin() || (!!me && gameDataList().includes(Strin
 function applyGameDataVisibility(){
   const b = $('#open-cbb');
   if(b) b.classList.toggle('hide', !canSeeGameData());
+}
+
+// Everything an admin gets, shown or hidden in one place, so preview mode is a
+// single switch rather than a rule repeated in a dozen spots.
+function applyAdminVisibility(){
+  const on = isAdmin();
+  for(const id of ['#open-admin', '#open-min', '#open-copy']){
+    const b = $(id);
+    if(b) b.classList.toggle('hide', !on);
+  }
+  const t = $('#open-preview');
+  if(t){
+    t.classList.toggle('hide', !reallyAdmin());
+    t.textContent = previewMember ? 'Back to admin' : 'View as member';
+  }
+  const banner = $('#previewbar');
+  if(banner) banner.classList.toggle('hide', !previewMember);
+  applyGameDataVisibility();
 }
 const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL', UFC:'UFC', NHL:'NHL' };
 
@@ -548,7 +578,7 @@ const TARGET_LINK = 'https://www.realapp.com/NeH4tgFKo9k';
 // in a real comment URL under this post (e.g. .../JaHBFYjOBj8igvOr/<comment id>).
 // The full price board runs under its own Real post, so its comment links are
 // checked against that one rather than the buy board's.
-const FULL_POST_ID = 'eyHtdFO13N';
+const FULL_POST_ID = 'dNHytgFJWO2';
 const FULL_POST_URL = 'https://www.realapp.com/' + FULL_POST_ID;
 const FULL_POST_PREFIX = FULL_POST_URL + '/';
 // A post drops off the board 90 minutes after it goes up.
@@ -2027,11 +2057,7 @@ function enter(){
   $('#gate').classList.add('hide');
   $('#app').classList.remove('hide');
   $('#me').textContent = me;
-  if(ADMINS.includes(me.toLowerCase())){
-    $('#open-admin').classList.remove('hide');
-    $('#open-min').classList.remove('hide');
-    $('#open-copy').classList.remove('hide');
-  }
+  applyAdminVisibility();
   applyMinimumToForm();
   updateRsLookupVisibility();
   applyBoardVisibility();
@@ -2138,15 +2164,95 @@ $('#b-rate').addEventListener('change', () => {
 
 // Re-reads the floor for whatever player is currently typed and reshapes
 // the rate dropdown + note to match.
+
+/* =========================================================
+   Card stats on the buy form — the same chips UFC fighters have had, now for
+   every sport, built from the collected game data. The top earners for the
+   running season are pulled once and kept, so typing a name costs nothing;
+   anyone outside that list is looked up on demand.
+   ========================================================= */
+const BOARD_TO_DATA = { CFB:'ncaaf', FC:'soccer', NFL:'nfl', NHL:'nhl' };
+const DATA_SEASON = { ncaaf:2026, soccer:2026, nfl:2026, nhl:2026 };
+
+const statCache = new Map();        // data sport -> Map(normalised name -> {rax, owners})
+const statLoading = new Map();
+const statMiss = new Map();         // one-off lookups, including the ones that found nothing
+
+function loadStats(dataSport){
+  if(statCache.has(dataSport)) return Promise.resolve(statCache.get(dataSport));
+  if(statLoading.has(dataSport)) return statLoading.get(dataSport);
+  const se = DATA_SEASON[dataSport];
+  const url = `/api/rax?gamelog=query&mode=players&sport=${dataSport}&season=${se}`
+    + `&seasons=${dataSport}:${se}&sort=rax&dir=desc&limit=500`;
+  const job = fetch(url).then(r => r.json()).then(d => {
+    const m = new Map();
+    for(const r of (d.rows || [])) m.set(norm(r.player), { rax: r.rax, owners: r.owners });
+    statCache.set(dataSport, m);
+    return m;
+  }).catch(() => {
+    const m = new Map(); statCache.set(dataSport, m); return m;
+  }).finally(() => statLoading.delete(dataSport));
+  statLoading.set(dataSport, job);
+  return job;
+}
+
+function statsFor(name){
+  const ds = BOARD_TO_DATA[sport];
+  if(!ds) return null;
+  const top = statCache.get(ds);
+  const key = ds + '|' + norm(name);
+  return (top && top.get(norm(name))) || statMiss.get(key) || null;
+}
+
+// For a player outside the top list — one request, remembered either way so a
+// name that genuinely has no data is not asked for twice.
+async function lookupStats(name){
+  const ds = BOARD_TO_DATA[sport];
+  if(!ds || !name) return null;
+  await loadStats(ds);
+  const key = ds + '|' + norm(name);
+  const have = statsFor(name);
+  if(have || statMiss.has(key)) return have;
+  const se = DATA_SEASON[ds];
+  try {
+    const d = await (await fetch(`/api/rax?gamelog=query&mode=players&sport=${ds}&season=${se}`
+      + `&seasons=${ds}:${se}&q=${encodeURIComponent(name)}&sort=rax&dir=desc&limit=5`)).json();
+    const hit = (d.rows || []).find(r => norm(r.player) === norm(name));
+    const val = hit ? { rax: hit.rax, owners: hit.owners } : null;
+    statMiss.set(key, val);
+    return val;
+  } catch(e){ return null; }
+}
+
+function statChips(name){
+  const f = statsFor(name);
+  if(!f || (f.rax == null && f.owners == null)) return '';
+  const n = v => v == null ? '—' : Number(v).toLocaleString();
+  const parts = [];
+  if(f.rax != null) parts.push(`<span><b>${n(f.rax)}</b> rax</span>`);
+  if(f.owners != null) parts.push(`<span><b>${n(f.owners)}</b> owners</span>`);
+  return parts.length ? `<div class="fx">${parts.join('')}</div>` : '';
+}
+
 function applyFighterCard(){
   const el = $('#b-fighter');
   if(!el) return;
   const player = $('#b-player').value.trim();
-  if(sport !== 'UFC' || player.length < 3){ el.innerHTML = ''; return; }
-  const known = ufcListEntry(player) || ufcMetaFor(player);
-  el.innerHTML = known ? ufcDetailChips(player) +
-    `<button class="linkbtn rd-flag" data-rd-card="${esc(player)}" style="margin-top:4px">Report incorrect data</button>` : '';
-  if(!ufcMeta) loadUfcMeta().then(() => { if($('#b-player').value.trim() === player) el.innerHTML = (ufcListEntry(player) || ufcMetaFor(player)) ? ufcDetailChips(player) : ''; });
+  if(player.length < 3){ el.innerHTML = ''; return; }
+
+  if(sport === 'UFC'){
+    const known = ufcListEntry(player) || ufcMetaFor(player);
+    el.innerHTML = known ? ufcDetailChips(player) +
+      `<button class="linkbtn rd-flag" data-rd-card="${esc(player)}" style="margin-top:4px">Report incorrect data</button>` : '';
+    if(!ufcMeta) loadUfcMeta().then(() => { if($('#b-player').value.trim() === player) el.innerHTML = (ufcListEntry(player) || ufcMetaFor(player)) ? ufcDetailChips(player) : ''; });
+    return;
+  }
+
+  // Every other sport gets its rax and owner count from the collected data.
+  el.innerHTML = statChips(player);
+  lookupStats(player).then(() => {
+    if($('#b-player').value.trim() === player) el.innerHTML = statChips(player);
+  });
 }
 
 function applyMinimumToForm(){
@@ -2237,7 +2343,7 @@ function renderSuggest(items, note){
   suggestActive = -1;
   const rows = items.map((it,i) =>
     `<li role="option" data-i="${i}"><span class="dot">•</span> ${esc(it.name)} <span class="team">${esc(it.team)}</span>${
-      sport === 'UFC' ? ufcDetailChips(it.name) : ''}</li>`
+      sport === 'UFC' ? ufcDetailChips(it.name) : statChips(it.name)}</li>`
   ).join('');
   box.innerHTML = rows + (note ? `<li class="hint">${esc(note)}</li>` : '');
   const show = items.length > 0 || !!note;
@@ -2247,6 +2353,7 @@ function renderSuggest(items, note){
 
 async function runSuggest(q){
   if(q.length < 2){ closeSuggest(); return; }
+  if(BOARD_TO_DATA[sport]) await loadStats(BOARD_TO_DATA[sport]);
   try{
     const r = await fetch(`/api/players?sport=${encodeURIComponent(sport)}&q=${encodeURIComponent(q)}`);
     const data = await r.json();
@@ -5080,8 +5187,12 @@ async function fullPricePanel(){
     if(e.target.closest('#fp-go')){
       if(!picked) return toast('Pick the player from the list first.');
       const link = $f('#fp-link').value.trim();
-      if(!link.startsWith(FULL_POST_PREFIX) || link.length <= FULL_POST_PREFIX.length){
-        return toast('That link is not a comment under the full price post.');
+      // Real's share link and the id that shows up inside a comment URL are not
+      // always the same string, so this checks the shape - a Real link with a
+      // comment id on the end - rather than insisting on one exact prefix and
+      // turning away comments that are perfectly real.
+      if(!/^https:\/\/(www\.)?realapp\.com\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+/.test(link)){
+        return toast('Paste the link to your comment under the full price post.');
       }
       const btn = $f('#fp-go');
       btn.disabled = true;
@@ -5101,6 +5212,17 @@ async function fullPricePanel(){
   // Keep the countdowns honest while the panel is open.
   const tick = setInterval(() => { if(!document.body.contains(box)) return clearInterval(tick); drawLists(); }, 60000);
 }
+
+// Preview mode flips one flag and redraws; nothing else needs to know.
+function setPreview(on){
+  previewMember = !!on;
+  applyAdminVisibility();
+  applyBoardVisibility();
+  render();
+  toast(previewMember ? 'Showing the board as a member sees it.' : 'Admin controls are back.');
+}
+$('#open-preview').addEventListener('click', () => setPreview(!previewMember));
+$('#preview-off').addEventListener('click', () => setPreview(false));
 
 $('#open-full').addEventListener('click', fullPricePanel);
 
