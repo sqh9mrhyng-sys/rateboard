@@ -447,6 +447,67 @@ async function ownerTopSlice(env, sport, season, auth, statusOnly) {
   }
 }
 
+
+// Forgetting what has been walked is all a requeue is: the rows stay, and the
+// game-log insert updates in place, so the collector tops a season up rather
+// than building it again.
+async function forgetWalk(env, sport, season) {
+  const keys = [`games_${sport}_${season}`,
+                `gamelog_done_${sport}_${season}`,
+                `gamelog_rax_${sport}_${season}`,
+                `golfmeta_${sport}_${season}`];
+  const gone = [];
+  for (const k of keys) {
+    try { await env.RATEBOARD_KV.delete(k); gone.push(k); } catch (e) {}
+  }
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const clear = JSON.parse((await env.RATEBOARD_KV.get('queue_clear_v1')) || '{}') || {};
+    delete clear[`${sport}:${season}`];
+    await env.RATEBOARD_KV.put('queue_clear_v1', JSON.stringify(clear));
+    const st = JSON.parse((await env.RATEBOARD_KV.get('queue_stuck_v1')) || '{}') || {};
+    if (st.skip) {
+      for (const k of Object.keys(st.skip)) if (k.startsWith(`${sport}:${season}:`)) delete st.skip[k];
+    }
+    st.tag = ''; st.n = 0; st.progress = null;
+    await env.RATEBOARD_KV.put('queue_stuck_v1', JSON.stringify(st));
+  } catch (e) {}
+  return gone;
+}
+
+// A running season keeps gaining players and fixtures, so each one gets picked
+// up again once a week on its own day - spread out so two big sports never
+// land together. Days are Sunday 0 .. Saturday 6, read in Alaska time, and the
+// slot opens in the morning there.
+const RESCAN_DAY = { ncaaf: 0, soccer: 1, nfl: 2, ncaam: 3, nba: 4, nhl: 5, mlb: 6, wnba: 6, golf: 6 };
+const RESCAN_SEASON = { ncaaf: 2026, soccer: 2026, nfl: 2026, ncaam: 2026, nba: 2026,
+                        nhl: 2026, mlb: 2026, wnba: 2026, golf: 2026 };
+const RESCAN_KEY = 'queue_rescan_v1';
+
+// Alaska runs eight hours behind UTC, so 7am there is 15:00 UTC.
+function alaskaNow() {
+  const t = new Date(Date.now() - 8 * 3600 * 1000);
+  return { day: t.getUTCDay(), hour: t.getUTCHours(), stamp: t.toISOString().slice(0, 10) };
+}
+
+async function weeklyRescan(env) {
+  const now = alaskaNow();
+  if (now.hour < 7) return null;            // morning, not the small hours
+  let seen = {};
+  try { seen = JSON.parse((await env.RATEBOARD_KV.get(RESCAN_KEY)) || '{}') || {}; } catch (e) {}
+  for (const [sp, day] of Object.entries(RESCAN_DAY)) {
+    if (day !== now.day) continue;
+    if (seen[sp] === now.stamp) continue;   // already done this week
+    const se = RESCAN_SEASON[sp];
+    if (!se) continue;
+    await forgetWalk(env, sp, se);
+    seen[sp] = now.stamp;
+    try { await env.RATEBOARD_KV.put(RESCAN_KEY, JSON.stringify(seen)); } catch (e) {}
+    return `${sp} ${se}`;
+  }
+  return null;
+}
+
 export async function onRequestGet({ request, env }) {
   const auth = env.RS_AUTH_TOKEN;
   if (!auth) return json({ error: 'RS_AUTH_TOKEN is not set on this deployment' }, 500);
@@ -733,7 +794,7 @@ export async function onRequestGet({ request, env }) {
   // firing, which at forty-odd seasons is hundreds of requests a minute for
   // nothing. Here the checks are internal reads, and a season with nothing left
   // today is remembered in a single marker so it is skipped until tomorrow.
-  if (['next', 'resume', 'stuck'].includes(url.searchParams.get('queue'))) {
+  if (['next', 'resume', 'stuck', 'rescan'].includes(url.searchParams.get('queue'))) {
     const db = env.RATEBOARD_DB;
     const CLEAR_KEY = 'queue_clear_v1';
     const today = new Date().toISOString().slice(0, 10);
@@ -743,6 +804,18 @@ export async function onRequestGet({ request, env }) {
     // account has been working hard when it has been idle. Clearing lastJob
     // too, so the next job doesn't immediately start another rest for being a
     // different sport from whatever set this one.
+    if (url.searchParams.get('queue') === 'rescan') {
+      let seen = {};
+      try { seen = JSON.parse((await env.RATEBOARD_KV.get(RESCAN_KEY)) || '{}') || {}; } catch (e) {}
+      const names = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+      const at = alaskaNow();
+      return json({
+        alaskaNow: `${names[at.day]} ${String(at.hour).padStart(2, '0')}:00`,
+        schedule: Object.fromEntries(Object.entries(RESCAN_DAY)
+          .map(([sp, d]) => [sp, { day: names[d], season: RESCAN_SEASON[sp], lastRun: seen[sp] || null }]))
+      });
+    }
+
     if (url.searchParams.get('queue') === 'stuck') {
       let st = {};
       try { st = JSON.parse((await env.RATEBOARD_KV.get('queue_stuck_v1')) || '{}') || {}; } catch (e) {}
@@ -802,6 +875,11 @@ export async function onRequestGet({ request, env }) {
     const STUCK_PASSES = 6;
     let stuck = {};
     try { stuck = JSON.parse((await env.RATEBOARD_KV.get(STUCK_KEY)) || '{}') || {}; } catch (e) {}
+
+    // Once a week, on that sport's day, the running season goes back in the
+    // queue. This only forgets what has been walked, so the next pass tops the
+    // season up with whatever Real has added since.
+    const rescanned = await weeklyRescan(env);
     if (!stuck.skip || typeof stuck.skip !== 'object') stuck.skip = {};
 
     const setAside = (sp, se, phase) => stuck.skip[`${sp}:${se}:${phase}`] === today;
@@ -1061,28 +1139,7 @@ export async function onRequestGet({ request, env }) {
     if (!SPORTS.has(sport) || !/^\d{4}$/.test(season)) {
       return json({ error: 'requeue needs a known sport and a four digit season' }, 400);
     }
-    const keys = [`games_${sport}_${season}`,
-                  `gamelog_done_${sport}_${season}`,
-                  `gamelog_rax_${sport}_${season}`,
-                  `golfmeta_${sport}_${season}`];
-    const gone = [];
-    for (const k of keys) {
-      try { await env.RATEBOARD_KV.delete(k); gone.push(k); } catch (e) {}
-    }
-    // Also drop today's "this season is finished" flag, and any phase the
-    // watchdog set aside, so the queue looks at it again on the next tick.
-    try {
-      const today = new Date().toISOString().slice(0, 10);
-      const clear = JSON.parse((await env.RATEBOARD_KV.get('queue_clear_v1')) || '{}') || {};
-      delete clear[`${sport}:${season}`];
-      await env.RATEBOARD_KV.put('queue_clear_v1', JSON.stringify(clear));
-      const st = JSON.parse((await env.RATEBOARD_KV.get('queue_stuck_v1')) || '{}') || {};
-      if (st.skip) {
-        for (const k of Object.keys(st.skip)) if (k.startsWith(`${sport}:${season}:`)) delete st.skip[k];
-      }
-      st.tag = ''; st.n = 0; st.progress = null;
-      await env.RATEBOARD_KV.put('queue_stuck_v1', JSON.stringify(st));
-    } catch (e) {}
+    const gone = await forgetWalk(env, sport, season);
 
     let rows = null;
     try {
