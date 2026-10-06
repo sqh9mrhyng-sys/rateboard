@@ -1886,6 +1886,25 @@ async function patch(op, payload){
   }
 }
 
+// Same as patch, but hands back the server's own words instead of turning
+// every refusal into a toast — the full price board needs to tell "someone
+// already has this player" apart from a real failure.
+async function patchFull(post){
+  try{
+    const r = await fetch('/api/kv', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ op:'addFull', post })
+    });
+    const data = await r.json().catch(()=>({}));
+    if(r.ok){ showConnBanner(false); return true; }
+    showConnBanner(true);
+    return data.error || 'Could not save. Try again.';
+  }catch(e){
+    showConnBanner(true);
+    return 'Could not save — check your connection and try again.';
+  }
+}
+
 /* =========================================================
    Helpers
    ========================================================= */
@@ -5026,7 +5045,25 @@ async function cbbPanel(){
    phone, so a post stops showing after 90 minutes. The row survives a week,
    which is what makes putting the same one back up a single click.
    ========================================================= */
-const fullLive = p => Date.now() - Number(p.ts || 0) < FULL_LIVE_MS;
+// A pack is used once a day and the day turns over at 7am, so hiding a player
+// lasts until the next 7am - ten to seven means ten minutes, not a whole day.
+const USED_KEY = 'ratebrd_used_packs';
+function nextSevenAm(from){
+  const t = new Date(from);
+  t.setHours(7, 0, 0, 0);
+  if(t.getTime() <= from) t.setDate(t.getDate() + 1);
+  return t.getTime();
+}
+function usedRead(){
+  let raw = {};
+  try { raw = JSON.parse(localStorage.getItem(USED_KEY) || '{}') || {}; } catch(e){}
+  const now = Date.now(), out = {};
+  for(const [k, until] of Object.entries(raw)) if(Number(until) > now) out[k] = Number(until);
+  return out;
+}
+function usedWrite(v){ try { localStorage.setItem(USED_KEY, JSON.stringify(v)); } catch(e){} }
+
+const fullLive = p => p.state !== 'queued' && Date.now() - Number(p.ts || 0) < FULL_LIVE_MS;
 const fullLeft = p => Math.max(0, Math.ceil((FULL_LIVE_MS - (Date.now() - Number(p.ts || 0))) / 60000));
 
 async function fullPricePanel(){
@@ -5034,9 +5071,18 @@ async function fullPricePanel(){
   let picked = null;                    // the player chosen from the dropdown
   let seasons = [];
 
+  let mode = 'buy';
+
   const box = modal('Full price', `
-    <div class="warn">Posts come off this board automatically <b>90 minutes</b> after they go up.
-      Yours are kept below for a week, so putting one back up is one click.</div>
+    <div class="seg" role="group" aria-label="View">
+      <button data-fpmode="buy" aria-pressed="true">Buying</button>
+      <button data-fpmode="sell" aria-pressed="false">Selling</button>
+      <button data-fpmode="used" aria-pressed="false">Used packs</button>
+    </div>
+    <div id="fp-buy">
+    <div class="warn" style="margin-top:12px">Posts come off this board automatically <b>90 minutes</b> after they go up.
+      Yours are kept below for a week, so putting one back up is one click.
+      One person can be buying a player at a time — if someone has them already you can wait in line.</div>
     <p class="note">Comment your card under
       <a href="${FULL_POST_URL}" target="_blank" rel="noopener">this post</a>,
       then paste the link to your comment here. Pick the player first so everyone
@@ -5055,14 +5101,81 @@ async function fullPricePanel(){
     <h4 class="subhd">On the board now</h4>
     <div id="fp-live"></div>
     <h4 class="subhd">Yours, ready to repost</h4>
-    <div id="fp-mine"></div>`);
+    <div id="fp-mine"></div>
+    </div>
+
+    <div id="fp-sell" class="hide">
+      <p class="note" style="margin-top:12px">Everyone buying right now, most owned card first.
+        Hit <b>Used</b> once you have sold them your pack and they drop off your list until 7am.</p>
+      <div id="fp-sell-list"></div>
+    </div>
+
+    <div id="fp-used" class="hide">
+      <p class="note" style="margin-top:12px">Players you have already used a pack on today.
+        They come back on their own at the next 7am.</p>
+      <div class="dtbar" style="margin-top:8px">
+        <select class="field" id="fp-usedpick" style="flex:1 1 240px;min-width:0"></select>
+        <button class="btn" id="fp-usedadd">Mark used</button>
+      </div>
+      <div id="fp-used-list"></div>
+    </div>`);
 
   const $f = sel => box.querySelector(sel);
+
+  // Seller side: one row per player being bought, biggest card first, with
+  // anything marked used today taken out.
+  const drawSell = () => {
+    const used = usedRead();
+    const live = (market.fullprice || []).filter(fullLive)
+      .filter(p => !used[norm(p.player)])
+      .sort((a, b) => (Number(b.owners) || 0) - (Number(a.owners) || 0));
+    const queued = (market.fullprice || []).filter(p => p.state === 'queued');
+
+    $f('#fp-sell-list').innerHTML = live.length ? live.map(p => {
+      const waiting = queued.filter(q => norm(q.player) === norm(p.player)).length;
+      return `<div class="hit"><div class="rep-top">
+        <span><span class="player">${esc(p.player)}</span>
+          <span class="who">${p.owners == null ? 'owners unknown'
+              : Number(p.owners).toLocaleString() + ' owners'}${
+            p.rax != null ? ` · ${Number(p.rax).toLocaleString()} rax` : ''} ·
+            ${esc(sportSeason(p.sport, p.season))} — ${esc(market.users[p.user]?.name || p.user)},
+            ${fullLeft(p)} min left${waiting ? ` · ${waiting} waiting` : ''}</span></span>
+        <span class="rowacts">
+          ${p.link ? `<a class="btn-ghost" href="${esc(p.link)}" target="_blank" rel="noopener">Comment</a>` : ''}
+          <button class="btn-ghost" data-fpused="${esc(p.player)}">Used</button>
+        </span></div></div>`;
+    }).join('') : '<p class="nohit">Nobody is buying right now.</p>';
+  };
+
+  const drawUsed = () => {
+    const used = usedRead();
+    const keys = Object.keys(used);
+    const live = (market.fullprice || []).filter(fullLive);
+    const names = [...new Set(live.map(p => p.player))].sort((a, b) => a.localeCompare(b));
+    const pick = $f('#fp-usedpick');
+    if(pick) pick.innerHTML = names.length
+      ? names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('')
+      : '<option value="">nobody is buying right now</option>';
+
+    $f('#fp-used-list').innerHTML = keys.length ? keys.map(k => {
+      const shown = (live.find(p => norm(p.player) === k) || {}).player || k;
+      const mins = Math.max(0, Math.round((used[k] - Date.now()) / 60000));
+      const hrs = Math.floor(mins / 60);
+      return `<div class="hit"><div class="rep-top">
+        <span><span class="player">${esc(shown)}</span>
+          <span class="who">back in ${hrs ? hrs + 'h ' : ''}${mins % 60}m</span></span>
+        <span class="rowacts">
+          <button class="btn-ghost" data-fpunuse="${esc(k)}">Un-hide</button>
+        </span></div></div>`;
+    }).join('') : '<p class="nohit">Nothing hidden right now.</p>';
+  };
 
   const drawLists = () => {
     const all = (market.fullprice || []).slice().sort((a, b) => b.ts - a.ts);
     const live = all.filter(fullLive);
-    const mine = all.filter(p => p.user === me.toLowerCase() && !fullLive(p));
+    const mine = all.filter(p => p.user === me.toLowerCase() && !fullLive(p) && p.state !== 'queued');
+    const waiting = all.filter(p => p.state === 'queued' && p.user === me.toLowerCase());
+    drawSell(); drawUsed();
 
     $f('#fp-live').innerHTML = live.length ? live.map(p => `<div class="hit">
       <div class="rep-top">
@@ -5077,6 +5190,12 @@ async function fullPricePanel(){
             ? `<button class="btn-ghost btn-danger" data-fpdel="${esc(p.id)}">Remove</button>` : ''}
         </span>
       </div></div>`).join('') : '<p class="nohit">Nothing up right now.</p>';
+
+    const queueNote = waiting.length
+      ? `<p class="note" style="margin-top:6px">You are waiting on ${
+          waiting.map(w => esc(w.player)).join(', ')} — your post goes up on its own when the person ahead comes down.</p>`
+      : '';
+    $f('#fp-live').innerHTML += queueNote;
 
     $f('#fp-mine').innerHTML = mine.length ? mine.map(p => `<div class="hit">
       <div class="rep-top">
@@ -5148,6 +5267,46 @@ async function fullPricePanel(){
   });
 
   box.addEventListener('click', async e => {
+    const m = e.target.closest('[data-fpmode]');
+    if(m){
+      mode = m.dataset.fpmode;
+      box.querySelectorAll('[data-fpmode]').forEach(x =>
+        x.setAttribute('aria-pressed', x.dataset.fpmode === mode ? 'true' : 'false'));
+      $f('#fp-buy').classList.toggle('hide', mode !== 'buy');
+      $f('#fp-sell').classList.toggle('hide', mode !== 'sell');
+      $f('#fp-used').classList.toggle('hide', mode !== 'used');
+      drawLists();
+      return;
+    }
+
+    const u = e.target.closest('[data-fpused]');
+    if(u){
+      const used = usedRead();
+      used[norm(u.dataset.fpused)] = nextSevenAm(Date.now());
+      usedWrite(used);
+      drawLists();
+      return toast(`${u.dataset.fpused} hidden until 7am.`);
+    }
+
+    if(e.target.closest('#fp-usedadd')){
+      const name = ($f('#fp-usedpick') || {}).value;
+      if(!name) return toast('Nobody is buying right now.');
+      const used = usedRead();
+      used[norm(name)] = nextSevenAm(Date.now());
+      usedWrite(used);
+      drawLists();
+      return toast(`${name} hidden until 7am.`);
+    }
+
+    const un = e.target.closest('[data-fpunuse]');
+    if(un){
+      const used = usedRead();
+      delete used[un.dataset.fpunuse];
+      usedWrite(used);
+      drawLists();
+      return;
+    }
+
     const pick = e.target.closest('[data-fppick]');
     if(pick){
       picked = { player: pick.dataset.fppick,
@@ -5164,13 +5323,20 @@ async function fullPricePanel(){
     if(again){
       const old = (market.fullprice || []).find(p => p.id === again.dataset.fpagain);
       if(!old) return;
+      const base = { user: me.toLowerCase(), sport: old.sport, season: old.season,
+                     player: old.player, rax: old.rax, owners: old.owners, link: old.link };
       again.disabled = true;
-      const ok = await patch('addFull', { post: {
-        user: me.toLowerCase(), sport: old.sport, season: old.season,
-        player: old.player, rax: old.rax, owners: old.owners, link: old.link } });
-      if(!ok){ again.disabled = false; return; }
+      let res = await patchFull(base);
+      if(res === 'player taken'){
+        again.disabled = false;
+        if(!confirm(`Somebody is already buying ${old.player}.\n\nJoin the queue? Your post goes up on its own when theirs comes down.`)) return;
+        again.disabled = true;
+        res = await patchFull(Object.assign({ queue: true }, base));
+      }
+      again.disabled = false;
+      if(res !== true){ if(typeof res === 'string') toast(res); return; }
       await pull(); drawLists();
-      toast(`${old.player} is back up for 90 minutes.`);
+      toast(`${old.player} is back up.`);
       return;
     }
 
@@ -5195,17 +5361,38 @@ async function fullPricePanel(){
         return toast('Paste the link to your comment under the full price post.');
       }
       const btn = $f('#fp-go');
+      const base = { user: me.toLowerCase(), sport: $f('#fp-sport').value,
+                     season: Number($f('#fp-season').value) || null,
+                     player: picked.player, rax: picked.rax, owners: picked.owners, link };
+
+      // If someone already has this player up, offer the queue rather than
+      // just refusing. patchFull tells us which it was.
       btn.disabled = true;
-      const ok = await patch('addFull', { post: {
-        user: me.toLowerCase(), sport: $f('#fp-sport').value,
-        season: Number($f('#fp-season').value) || null,
-        player: picked.player, rax: picked.rax, owners: picked.owners, link } });
+      let res = await patchFull(base);
+      if(res === 'player taken'){
+        btn.disabled = false;
+        const ahead = (market.fullprice || []).filter(p =>
+          p.state === 'queued' && norm(p.player) === norm(picked.player)).length;
+        const ask = ahead
+          ? `Somebody is already buying ${picked.player}, and ${ahead} ${ahead === 1 ? 'person is' : 'people are'} waiting.\n\nJoin the queue? Your post goes up on its own when it is your turn.`
+          : `Somebody is already buying ${picked.player}.\n\nJoin the queue? Your post goes up on its own the moment theirs comes down.`;
+        if(!confirm(ask)) return;
+        btn.disabled = true;
+        res = await patchFull(Object.assign({ queue: true }, base));
+      }
       btn.disabled = false;
-      if(!ok) return;
+      if(res !== true){
+        if(typeof res === 'string') toast(res);
+        return;
+      }
       $f('#fp-link').value = ''; $f('#fp-q').value = ''; picked = null;
       $f('#fp-chosen').textContent = '';
       await pull(); drawLists();
-      toast('Up for the next 90 minutes.');
+      const mineNow = (market.fullprice || []).find(p =>
+        p.user === me.toLowerCase() && norm(p.player) === norm(base.player));
+      toast(mineNow && mineNow.state === 'queued'
+        ? 'You are in the queue — it goes up on its own.'
+        : 'Up for the next 90 minutes.');
     }
   });
 
