@@ -93,6 +93,16 @@ const DATA_REPORTS_DDL = `CREATE TABLE IF NOT EXISTS data_reports (
   player TEXT NOT NULL, field TEXT NOT NULL, value TEXT, note TEXT,
   status TEXT NOT NULL DEFAULT 'open')`;
 
+// Full price posts. They are meant to be fleeting - a post stops showing after
+// 90 minutes - but the row is kept for a week so whoever wrote it can put the
+// same card back up without hunting for the comment link again.
+const FULL_LIVE_MS = 90 * 60 * 1000;
+const FULL_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_FULL = 4_000;
+const FULL_DDL = `CREATE TABLE IF NOT EXISTS fullprice (
+  id TEXT PRIMARY KEY, user TEXT NOT NULL, sport TEXT NOT NULL, season INTEGER,
+  player TEXT NOT NULL, rax INTEGER, owners INTEGER, link TEXT, ts INTEGER NOT NULL)`;
+
 const SNAP_BUCKET_MS = 30 * 60 * 1000;
 const SNAP_KEEP = 24;                    // rolling slots — 12 hours' worth
 const SNAP_DDL = `CREATE TABLE IF NOT EXISTS snapshots (
@@ -143,6 +153,13 @@ async function readBoard(env) {
     env.RATEBOARD_DB.prepare(
       'SELECT key, name, hash, created, banned FROM users').all()
   ]);
+  let fullRes = { results: [] };
+  try {
+    await env.RATEBOARD_DB.prepare(FULL_DDL).run();
+    fullRes = await env.RATEBOARD_DB.prepare(
+      'SELECT id, user, sport, season, player, rax, owners, link, ts FROM fullprice WHERE ts > ?')
+      .bind(Date.now() - FULL_KEEP_MS).all();
+  } catch (e) {}
   const users = {};
   for (const u of (usersRes.results || [])) {
     users[u.key] = { name: u.name, hash: u.hash, created: u.created, banned: !!u.banned };
@@ -152,6 +169,10 @@ async function readBoard(env) {
     offers: (offersRes.results || []).map(o => ({
       id: o.id, user: o.user, sport: o.sport, player: o.player,
       rate: o.rate, link: o.link || '', ts: o.ts
+    })),
+    fullprice: (fullRes.results || []).map(f => ({
+      id: f.id, user: f.user, sport: f.sport, season: f.season, player: f.player,
+      rax: f.rax, owners: f.owners, link: f.link || '', ts: f.ts
     })),
     reports: side.reports, minimums: side.minimums, keeplist: side.keeplist, house: side.house,
     gamedata: side.gamedata
@@ -193,6 +214,37 @@ async function applyOp(env, body) {
        DO UPDATE SET rate = excluded.rate, player = excluded.player,
                      link = excluded.link, ts = excluded.ts`
     ).bind(str(o.id, 40) || uid(), user, sport, player, norm(player), rate, link, Date.now()).run();
+    return null;
+  }
+
+  if (op === 'addFull') {
+    const f = body.post || {};
+    const user = str(f.user, 60), player = str(f.player, 80), sport = str(f.sport, 12);
+    const link = str(f.link, 300) || '';
+    if (!user || !player || !sport) return 'bad post';
+    await db.prepare(FULL_DDL).run();
+
+    // Clear out anything past keeping before adding, so the table cannot creep.
+    try { await db.prepare('DELETE FROM fullprice WHERE ts <= ?')
+            .bind(Date.now() - FULL_KEEP_MS).run(); } catch (e) {}
+    const count = await db.prepare('SELECT COUNT(*) AS n FROM fullprice').first();
+    if (count && count.n >= MAX_FULL) return 'full price board is full';
+
+    await db.prepare(
+      `INSERT INTO fullprice (id, user, sport, season, player, rax, owners, link, ts)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(uid(), user, sport, Number(f.season) || null, player,
+           Number(f.rax) || null, Number(f.owners) || null, link, Date.now()).run();
+    return null;
+  }
+
+  if (op === 'removeFull') {
+    const id = str(body.id, 40);
+    if (!id) return 'bad id';
+    await db.prepare(FULL_DDL).run();
+    const owner = str(body.user, 60);
+    if (owner) await db.prepare('DELETE FROM fullprice WHERE id=? AND user=?').bind(id, owner).run();
+    else await db.prepare('DELETE FROM fullprice WHERE id=?').bind(id).run();
     return null;
   }
 
