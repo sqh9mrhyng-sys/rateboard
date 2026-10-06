@@ -99,9 +99,52 @@ const DATA_REPORTS_DDL = `CREATE TABLE IF NOT EXISTS data_reports (
 const FULL_LIVE_MS = 90 * 60 * 1000;
 const FULL_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_FULL = 4_000;
+// `state` is live, queued or done. Only one live post per player at a time -
+// a second buyer joins the queue and is promoted the moment the one ahead
+// comes down, which is why ts is set at promotion rather than at posting.
 const FULL_DDL = `CREATE TABLE IF NOT EXISTS fullprice (
   id TEXT PRIMARY KEY, user TEXT NOT NULL, sport TEXT NOT NULL, season INTEGER,
-  player TEXT NOT NULL, rax INTEGER, owners INTEGER, link TEXT, ts INTEGER NOT NULL)`;
+  player TEXT NOT NULL, rax INTEGER, owners INTEGER, link TEXT, ts INTEGER NOT NULL,
+  state TEXT NOT NULL DEFAULT 'live', player_key TEXT, queued_at INTEGER)`;
+
+// Older databases predate the queue, so the columns are added if missing.
+async function fullMigrate(db) {
+  await db.prepare(FULL_DDL).run();
+  for (const sql of [
+    `ALTER TABLE fullprice ADD COLUMN state TEXT NOT NULL DEFAULT 'live'`,
+    'ALTER TABLE fullprice ADD COLUMN player_key TEXT',
+    'ALTER TABLE fullprice ADD COLUMN queued_at INTEGER'
+  ]) { try { await db.prepare(sql).run(); } catch (e) {} }
+  try { await db.prepare(
+    'CREATE INDEX IF NOT EXISTS fullprice_slot ON fullprice (player_key, state)').run(); } catch (e) {}
+}
+
+// Whoever has been waiting longest for this player takes the free slot.
+async function promoteNext(db, key) {
+  if (!key) return;
+  const live = await db.prepare(
+    "SELECT COUNT(*) AS n FROM fullprice WHERE player_key = ? AND state = 'live'").bind(key).first();
+  if (live && live.n > 0) return;
+  const next = await db.prepare(
+    "SELECT id FROM fullprice WHERE player_key = ? AND state = 'queued' ORDER BY queued_at ASC LIMIT 1")
+    .bind(key).first();
+  if (!next) return;
+  await db.prepare("UPDATE fullprice SET state = 'live', ts = ? WHERE id = ?")
+    .bind(Date.now(), next.id).run();
+}
+
+// A post that has run its 90 minutes stops being live and lets the queue move.
+async function expireFull(db) {
+  const cutoff = Date.now() - FULL_LIVE_MS;
+  const done = await db.prepare(
+    "SELECT DISTINCT player_key AS k FROM fullprice WHERE state = 'live' AND ts <= ?")
+    .bind(cutoff).all();
+  const keys = ((done && done.results) || []).map(r => r.k).filter(Boolean);
+  if (!keys.length) return;
+  await db.prepare("UPDATE fullprice SET state = 'done' WHERE state = 'live' AND ts <= ?")
+    .bind(cutoff).run();
+  for (const k of keys) await promoteNext(db, k);
+}
 
 const SNAP_BUCKET_MS = 30 * 60 * 1000;
 const SNAP_KEEP = 24;                    // rolling slots — 12 hours' worth
@@ -155,9 +198,11 @@ async function readBoard(env) {
   ]);
   let fullRes = { results: [] };
   try {
-    await env.RATEBOARD_DB.prepare(FULL_DDL).run();
+    await fullMigrate(env.RATEBOARD_DB);
+    await expireFull(env.RATEBOARD_DB);
     fullRes = await env.RATEBOARD_DB.prepare(
-      'SELECT id, user, sport, season, player, rax, owners, link, ts FROM fullprice WHERE ts > ?')
+      `SELECT id, user, sport, season, player, rax, owners, link, ts, state, queued_at
+         FROM fullprice WHERE ts > ? OR state = 'queued'`)
       .bind(Date.now() - FULL_KEEP_MS).all();
   } catch (e) {}
   const users = {};
@@ -172,7 +217,8 @@ async function readBoard(env) {
     })),
     fullprice: (fullRes.results || []).map(f => ({
       id: f.id, user: f.user, sport: f.sport, season: f.season, player: f.player,
-      rax: f.rax, owners: f.owners, link: f.link || '', ts: f.ts
+      rax: f.rax, owners: f.owners, link: f.link || '', ts: f.ts,
+      state: f.state || 'live', queuedAt: f.queued_at || null
     })),
     reports: side.reports, minimums: side.minimums, keeplist: side.keeplist, house: side.house,
     gamedata: side.gamedata
@@ -222,29 +268,51 @@ async function applyOp(env, body) {
     const user = str(f.user, 60), player = str(f.player, 80), sport = str(f.sport, 12);
     const link = str(f.link, 300) || '';
     if (!user || !player || !sport) return 'bad post';
-    await db.prepare(FULL_DDL).run();
+    await fullMigrate(db);
+    await expireFull(db);
 
     // Clear out anything past keeping before adding, so the table cannot creep.
-    try { await db.prepare('DELETE FROM fullprice WHERE ts <= ?')
+    try { await db.prepare("DELETE FROM fullprice WHERE ts <= ? AND state <> 'queued'")
             .bind(Date.now() - FULL_KEEP_MS).run(); } catch (e) {}
     const count = await db.prepare('SELECT COUNT(*) AS n FROM fullprice').first();
     if (count && count.n >= MAX_FULL) return 'full price board is full';
 
+    const key = norm(player);
+
+    // One buyer per player at a time. A second one only goes on if they said
+    // they wanted to wait, and then they wait behind anyone already waiting.
+    const held = await db.prepare(
+      "SELECT user FROM fullprice WHERE player_key = ? AND state = 'live' LIMIT 1").bind(key).first();
+    if (held) {
+      if (held.user === user) return 'you already have that player up';
+      if (!f.queue) return 'player taken';
+    }
+    const mine = await db.prepare(
+      "SELECT id FROM fullprice WHERE player_key = ? AND user = ? AND state = 'queued' LIMIT 1")
+      .bind(key, user).first();
+    if (mine) return 'you are already in that queue';
+
+    const state = held ? 'queued' : 'live';
     await db.prepare(
-      `INSERT INTO fullprice (id, user, sport, season, player, rax, owners, link, ts)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO fullprice (id, user, sport, season, player, rax, owners, link, ts, state, player_key, queued_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(uid(), user, sport, Number(f.season) || null, player,
-           Number(f.rax) || null, Number(f.owners) || null, link, Date.now()).run();
+           Number(f.rax) || null, Number(f.owners) || null, link, Date.now(),
+           state, key, Date.now()).run();
     return null;
   }
 
   if (op === 'removeFull') {
     const id = str(body.id, 40);
     if (!id) return 'bad id';
-    await db.prepare(FULL_DDL).run();
+    await fullMigrate(db);
     const owner = str(body.user, 60);
+    const row = await db.prepare('SELECT player_key, state FROM fullprice WHERE id = ?')
+      .bind(id).first();
     if (owner) await db.prepare('DELETE FROM fullprice WHERE id=? AND user=?').bind(id, owner).run();
     else await db.prepare('DELETE FROM fullprice WHERE id=?').bind(id).run();
+    // Taking a live post down hands the player to whoever is next in line.
+    if (row && row.state === 'live') await promoteNext(db, row.player_key);
     return null;
   }
 
