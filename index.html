@@ -412,6 +412,7 @@
     </div>
     <div class="whoami">
       <span><span class="sm-hide">Signed in as </span><b id="me"></b></span>
+      <button class="linkbtn" id="open-full">Full price</button>
       <button class="linkbtn" id="open-report">Report a user</button>
       <button class="linkbtn hide" id="open-copy">Copy list</button>
       <button class="linkbtn hide" id="open-cbb">Game data</button>
@@ -545,6 +546,14 @@ const TARGET_LINK = 'https://www.realapp.com/NeH4tgFKo9k';
 // than the post's share link above — this is that ID. A buyer's submitted
 // comment link is checked against THIS, since that's what actually shows up
 // in a real comment URL under this post (e.g. .../JaHBFYjOBj8igvOr/<comment id>).
+// The full price board runs under its own Real post, so its comment links are
+// checked against that one rather than the buy board's.
+const FULL_POST_ID = 'eyHtdFO13N';
+const FULL_POST_URL = 'https://www.realapp.com/' + FULL_POST_ID;
+const FULL_POST_PREFIX = FULL_POST_URL + '/';
+// A post drops off the board 90 minutes after it goes up.
+const FULL_LIVE_MS = 90 * 60 * 1000;
+
 const VERIFY_POST_ID = 'JaHBFYjOBj8igvOr';
 const TARGET_POST_PREFIX = 'https://www.realapp.com/' + VERIFY_POST_ID + '/';
 // 8 is the bottom tier, shown as "minimum". It's offered on any player who
@@ -1799,6 +1808,7 @@ async function pull(){
   market = r && r.value ? JSON.parse(r.value) : blank();
   market.users ||= {}; market.offers ||= []; market.reports ||= []; market.minimums ||= []; market.keeplist ||= [];
   market.gamedata ||= [];
+  market.fullprice ||= [];
   return market;
 }
 
@@ -3520,9 +3530,14 @@ const CB_LEVELS = [
   ['Iconic 16', 220, 22700], ['Iconic 17', 226, 26000], ['Iconic 18', 233, 29000],
   ['Iconic 19', 240, 34500], ['Iconic 20', 250, 40000]
 ];
-// How much of a loadout's rax may be lost to the daily cap before the
-// optimiser stops adding players.
-const LK_WASTE_CAP = 0.10;
+// How much of a loadout's rax may be lost to the daily cap before the builder
+// stops adding players. Zero means it will only add a card that costs nothing;
+// the Players tab lets this be raised.
+const LK_WASTE_DEFAULT = 0;
+function wasteCap(all){
+  const v = Number(all && all.cap);
+  return Number.isFinite(v) && v >= 0 && v <= 90 ? v / 100 : LK_WASTE_DEFAULT;
+}
 const LOADOUT_KEY  = 'rateboard_loadout_v1';    // the single-loadout version
 const LOADOUTS_KEY = 'rateboard_loadouts_v2';
 
@@ -3687,6 +3702,27 @@ function optimiseLoadout(pool, claims, opts){
            waste: claimed + missed > 0 ? missed / (claimed + missed) : 0 };
 }
 
+// Which year a stored season number actually is. Checked against the game
+// dates rather than assumed: NFL, NHL, CFB and FC file a season under the year
+// it starts, NBA and CBB under the year it ends, and the rest run inside one
+// calendar year.
+const CB_SEASON_SPAN = { nfl:'start', nhl:'start', ncaaf:'start', soccer:'start',
+                         nba:'end', ncaam:'end' };
+function seasonLabel(sport, season){
+  const y = Number(season);
+  if(!y) return String(season ?? '');
+  const span = CB_SEASON_SPAN[sport];
+  if(span === 'start') return `${y}-${y + 1}`;
+  if(span === 'end')   return `${y - 1}-${y}`;
+  return String(y);
+}
+// The season each sport is running right now. Preset bests leave it out: it is
+// half finished, so it would drag a preset's per-game picture around every week.
+const CB_CURRENT = { ncaaf:2026, ncaam:2026, nfl:2026, nba:2026, nhl:2026,
+                     soccer:2026, mlb:2026, wnba:2026, golf:2026 };
+const sportSeason = (sport, season) =>
+  `${CB_SPORT_LABEL[sport] || sport} ${seasonLabel(sport, season)}`;
+
 const CB_SPORT_LABEL = { ncaam:'CBB', ncaaf:'CFB', nfl:'NFL', nba:'NBA', nhl:'NHL',
                          mlb:'MLB', wnba:'WNBA', soccer:'FC', golf:'Golf', ufc:'UFC', tennis:'Tennis' };
 
@@ -3840,7 +3876,8 @@ async function cbbPanel(){
         + seasons.map(se => {
             const key = `${sp}|${se}`;
             return `<button class="btn-ghost" data-pair="${esc(key)}" `
-              + `aria-pressed="${st.pairs.includes(key) ? 'true' : 'false'}">${esc(String(se))}</button>`;
+              + `aria-pressed="${st.pairs.includes(key) ? 'true' : 'false'}">`
+              + `${esc(seasonLabel(sp, se))}</button>`;
           }).join('')
         + '</div></details>';
     }).join('');
@@ -3849,7 +3886,7 @@ async function cbbPanel(){
     const sps = sportsOn();
     const names = st.pairs.map(k => {
       const [sp, se] = k.split('|');
-      return `${CB_SPORT_LABEL[sp] || sp} ${se}`;
+      return sportSeason(sp, se);
     });
     $b('#cb-scope').textContent = !st.pairs.length
       ? 'Pick at least one season.'
@@ -4013,8 +4050,8 @@ async function cbbPanel(){
       : 'No player by that name in the selected seasons.';
     $b('#lk-results').innerHTML = rows.map(r =>
       `<div class="lkrow" data-lk="${esc(r.sport)}|${esc(String(r.season))}|${esc(r.player || '')}">`
-      + `<span>${esc(r.player || '')} <span class="note">${esc(CB_SPORT_LABEL[r.sport] || r.sport)} `
-      + `${esc(String(r.season))}${r.team ? ' · ' + esc(r.team) : ''}</span></span>`
+      + `<span>${esc(r.player || '')} <span class="note">${esc(sportSeason(r.sport, r.season))}`
+      + `${r.team ? ' · ' + esc(r.team) : ''}</span></span>`
       + `<span>${Number(r.rax || 0).toLocaleString()} rax</span></div>`).join('');
   }
 
@@ -4056,7 +4093,7 @@ async function cbbPanel(){
     $b('#lk-detail').innerHTML = `<div class="lkcard">
       <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
         <b style="font-size:19px">${esc(lkP.player)}</b>
-        <span class="note">${esc(CB_SPORT_LABEL[lkP.sport] || lkP.sport)} ${esc(String(lkP.season))}${
+        <span class="note">${esc(sportSeason(lkP.sport, lkP.season))}${
           lkP.team ? ' · ' + esc(lkP.team) : ''}</span>
       </div>
       <div class="dtbar" style="margin-top:8px">
@@ -4097,7 +4134,7 @@ async function cbbPanel(){
 
   // --- loadouts ----------------------------------------------------------
   let lkCal = false, lkMonth = '', lkDay = '', lkNaming = '';
-  let lkOptOpen = false, lkOptClaims = 3, lkOptAnchor = '', lkOptMax = 12, lkOptNote = '';
+  let lkOptClaims = 3, lkOptAnchor = '', lkOptMax = 20, lkOptNote = '';
 
   const MONTHS = ['January','February','March','April','May','June','July',
                   'August','September','October','November','December'];
@@ -4149,8 +4186,8 @@ async function cbbPanel(){
         ${sel.rows.map(r =>
           `<div class="lkrow${r.counts ? '' : ' lost'}">`
           + `<span><span class="lkname" data-open="${esc(r.sport)}|${esc(String(r.season))}|${esc(r.name)}">`
-          + `${esc(r.name)}</span> <span class="note">${esc(CB_SPORT_LABEL[r.sport] || r.sport)} `
-          + `${esc(String(r.season))} · ${esc(r.level)} ${r.mult}x</span></span>`
+          + `${esc(r.name)}</span> <span class="note">${esc(sportSeason(r.sport, r.season))}`
+          + ` · ${esc(r.level)} ${r.mult}x</span></span>`
           + (r.counts
               ? `<span>${r.rax.toLocaleString()}${
                   r.slot === 'extra' ? ' <span class="note">spare claim</span>' : ''}</span>`
@@ -4171,27 +4208,33 @@ async function cbbPanel(){
     for(const v of days.values()){ earned += v.earned; missed += v.missed; }
     const raw = cards.reduce((t, x) => t + Math.round((Number(x.rax) || 0) * (Number(x.mult) || 1)), 0);
 
+    const capPct = Math.round(wasteCap(all) * 100);
+    const presetSports = [...new Set(available.map(r => r.sport))]
+      .filter(sp => available.some(r => r.sport === sp && r.season !== CB_CURRENT[sp]))
+      .sort((a, b) => (CB_SPORT_LABEL[a] || a).localeCompare(CB_SPORT_LABEL[b] || b));
+
     const head = `<div class="dtbar">
         ${names.map(n => `<button class="btn-ghost" data-loadout="${esc(n)}"`
           + ` aria-pressed="${n === all.active ? 'true' : 'false'}">${esc(n)}</button>`).join('')}
-        <button class="btn-ghost" id="lk-new">+ New loadout</button>
-        <button class="btn-ghost" id="lk-starter">Build the CBB starter</button>
-        <button class="btn-ghost" id="lk-opt" aria-pressed="${lkOptOpen ? 'true' : 'false'}">Optimised loadout</button>
+        <button class="btn-ghost" id="lk-new">+ New</button>
+        <button class="btn-ghost" id="lk-rename">Rename</button>
+        <button class="btn-ghost" id="lk-delete">Delete</button>
       </div>
-      ${lkOptOpen ? `<div class="lkcard" style="margin-top:10px">
-        <b>Build the best loadout</b>
-        <p class="note" style="margin-top:4px">Pick the sports and seasons at the top of this screen,
-          name a player to build around if you want one, and this finds the set that claims the most.
-          It scores at ${set.claims} ${set.claims === 2 ? 'claims' : 'claims'} a day using the switch below,
-          compares everyone at one card level, and stops before more than
-          ${Math.round(LK_WASTE_CAP * 100)}% of the rax is lost to overlaps.</p>
-        <div class="dtbar" style="margin-top:10px">
-          <input class="field" id="lk-optanchor" placeholder="Build around this player (optional)"
-                 value="${esc(lkOptAnchor)}" style="flex:1 1 260px;min-width:0">
-          <button class="btn" id="lk-optgo">Build it</button>
-        </div>
-        <p class="note" id="lk-optnote" style="margin-top:8px">${esc(lkOptNote)}</p>
-      </div>` : ''}
+      <div class="dtbar" style="margin-top:8px">
+        <select class="field" id="lk-preset" style="flex:1 1 240px;min-width:0">
+          <option value="">Build a best-of…</option>
+          <option value="scope">Best of the seasons picked at the top</option>
+          ${presetSports.length ? `<optgroup label="Best of one sport, past seasons only">
+            ${presetSports.map(sp =>
+              `<option value="sport:${esc(sp)}">Best ${esc(CB_SPORT_LABEL[sp] || sp)}</option>`).join('')}
+          </optgroup>` : ''}
+          <option value="starter">CBB starter (hand-picked)</option>
+        </select>
+        <input class="field" id="lk-optanchor" placeholder="Around this player (optional)"
+               value="${esc(lkOptAnchor)}" style="flex:1 1 200px;min-width:0">
+        <button class="btn" id="lk-optgo">Build</button>
+      </div>
+      <p class="note" id="lk-optnote" style="margin-top:6px">${esc(lkOptNote)}</p>
       ${lkNaming ? `<div class="dtbar" style="margin-top:8px">
         <input class="field" id="lk-name" style="flex:1 1 180px;min-width:0"
                placeholder="${lkNaming === 'rename' ? 'New name' : 'Loadout name'}"
@@ -4203,9 +4246,11 @@ async function cbbPanel(){
         <span class="note">Daily claims</span>
         <button class="btn-ghost" data-claims="2" aria-pressed="${set.claims === 2 ? 'true' : 'false'}">2 a sport</button>
         <button class="btn-ghost" data-claims="3" aria-pressed="${set.claims === 3 ? 'true' : 'false'}">2 a sport + 1</button>
+        <span class="note" style="margin-left:8px">Overlaps may cost</span>
+        <input class="field" id="lk-cap" inputmode="numeric" value="${capPct}"
+               style="flex:0 1 72px;text-align:right" aria-label="Overlap percentage allowed">
+        <span class="note">% of the rax</span>
         <button class="btn-ghost" id="lk-cal" aria-pressed="${lkCal ? 'true' : 'false'}">Calendar</button>
-        <button class="btn-ghost" id="lk-rename">Rename</button>
-        <button class="btn-ghost" id="lk-delete">Delete</button>
       </div>`;
 
     if(!cards.length){
@@ -4223,8 +4268,8 @@ async function cbbPanel(){
         const tot = Math.round((Number(x.rax) || 0) * (Number(x.mult) || 1));
         return `<div class="lkrow">`
           + `<span><span class="lkname" data-open="${esc(x.sport)}|${esc(String(x.season))}|${esc(x.name)}">`
-          + `${esc(x.name)}</span> <span class="note">${esc(CB_SPORT_LABEL[x.sport] || x.sport)} `
-          + `${esc(String(x.season))} · ${Number(x.rax || 0).toLocaleString()} base`
+          + `${esc(x.name)}</span> <span class="note">${esc(sportSeason(x.sport, x.season))}`
+          + ` · ${Number(x.rax || 0).toLocaleString()} base`
           + `${x.games && x.games.length ? ` · ${x.games.length} dated games` : ' · no dated games'}</span></span>`
           + `<span style="display:flex;align-items:center;gap:8px">`
           + `<select class="field" data-lvl="${i}" style="padding:3px 6px;font-size:12px">`
@@ -4504,7 +4549,7 @@ async function cbbPanel(){
   let typing;
   box.addEventListener('input', e => {
     if(e.target.id === 'lk-name') return;
-    if(e.target.id === 'lk-optanchor') return;
+    if(e.target.id === 'lk-optanchor' || e.target.id === 'lk-cap') return;
     if(e.target.id === 'lk-q'){
       clearTimeout(lkTyping);
       lkTyping = setTimeout(lkSearch, 300);
@@ -4524,6 +4569,13 @@ async function cbbPanel(){
     if(e.target.id === 'lk-lvl'){ lkLevel = +e.target.value; return lkDetail(); }
     if(e.target.id === 'lk-month'){ lkMonth = e.target.value; lkDay = ''; return lkBag(); }
     if(e.target.id === 'gf-season'){ gfSeason = e.target.value; return gfLoad(); }
+    if(e.target.id === 'lk-cap'){
+      const all = loadoutsRead();
+      const v = Math.max(0, Math.min(90, Math.round(Number(e.target.value) || 0)));
+      all.cap = v;
+      loadoutsWrite(all);
+      return;
+    }
     if(e.target.dataset && e.target.dataset.lvl != null){
       const L = CB_LEVELS[+e.target.value];
       if(!L) return;
@@ -4612,18 +4664,6 @@ async function cbbPanel(){
     const cd = e.target.closest('[data-calday]');
     if(cd){ lkDay = lkDay === cd.dataset.calday ? '' : cd.dataset.calday; return lkBag(); }
 
-    if(e.target.closest('#lk-starter')){
-      const all = loadoutsRead();
-      let name = 'CBB starter', n = 2;
-      while(all.sets[name]) name = `CBB starter ${n++}`;
-      all.sets[name] = { claims: 3, cards: starterCards() };
-      all.active = name;
-      lkDay = ''; lkMonth = ''; lkNaming = ''; lkCal = true;
-      loadoutsWrite(all);
-      lkBag();
-      return toast(`${name} built - five cards, nothing left on the table at 3 a day.`);
-    }
-
     const ga = e.target.closest('[data-gall]');
     if(ga) return gfGroup(ga.dataset.gall);
 
@@ -4633,21 +4673,50 @@ async function cbbPanel(){
     const gid = e.target.closest('[data-gid]');
     if(gid) return gfShow(gid.dataset.gid, gfSeason);
 
-    if(e.target.closest('#lk-opt')){ lkOptOpen = !lkOptOpen; lkOptNote = ''; return lkBag(); }
-
     if(e.target.closest('#lk-optgo')){
-      if(!st.pairs.length) return toast('Pick at least one season at the top first.');
+      const what = ($b('#lk-preset') || {}).value || '';
+      if(!what) return toast('Pick what to build from the list first.');
+
+      const all0 = loadoutsRead();
       lkOptAnchor = (($b('#lk-optanchor') || {}).value || '').trim();
-      lkOptClaims = loadoutCur(loadoutsRead()).claims;
-      lkOptNote = 'Reading the biggest earners in that scope…';
+      lkOptClaims = loadoutCur(all0).claims;
+
+      // The hand-picked set is not a search, so it short-circuits everything.
+      if(what === 'starter'){
+        const all = loadoutsRead();
+        let name = 'CBB starter', n = 2;
+        while(all.sets[name]) name = `CBB starter ${n++}`;
+        all.sets[name] = { claims: 3, cards: starterCards() };
+        all.active = name;
+        lkDay = ''; lkMonth = ''; lkNaming = ''; lkCal = true;
+        lkOptNote = 'Five hand-picked CBB cards, nothing lost to overlaps at two a sport plus one.';
+        loadoutsWrite(all);
+        lkBag();
+        return toast(`${name} built.`);
+      }
+
+      // Either the seasons picked at the top, or every past season of one sport.
+      let pairs = [], label = '';
+      if(what === 'scope'){
+        if(!st.pairs.length) return toast('Pick at least one season at the top first.');
+        pairs = st.pairs.map(x => x.split('|'));
+        label = [...new Set(pairs.map(([sp, se]) => sportSeason(sp, se)))].join(' + ');
+      } else {
+        const sp = what.slice(6);
+        pairs = available.filter(r => r.sport === sp && r.season !== CB_CURRENT[sp])
+                         .map(r => [sp, r.season]);
+        if(!pairs.length) return toast('No finished seasons collected for that sport yet.');
+        label = `${CB_SPORT_LABEL[sp] || sp}, past seasons`;
+      }
+
+      lkOptNote = 'Reading the biggest earners…';
       lkBag();
 
       let pool;
       try {
-        const seasons = st.pairs.map(x => x.replace('|', ':')).join(',');
-        const first = (st.pairs[0] || 'ncaam|2026').split('|');
-        const d = await (await fetch(`/api/rax?gamelog=top&sport=${first[0]}&season=${first[1]}`
-          + `&seasons=${encodeURIComponent(seasons)}&limit=90`)).json();
+        const seasons = pairs.map(([sp, se]) => `${sp}:${se}`).join(',');
+        const d = await (await fetch(`/api/rax?gamelog=top&sport=${pairs[0][0]}&season=${pairs[0][1]}`
+          + `&seasons=${encodeURIComponent(seasons)}&limit=120`)).json();
         if(d.error) throw new Error(d.error);
         pool = (d.players || []).map(p => ({
           key: `${p.sport}|${p.season}|${p.player}`,
@@ -4659,7 +4728,7 @@ async function cbbPanel(){
         return lkBag();
       }
       if(!pool.length){
-        lkOptNote = 'No collected games in the selected seasons yet.';
+        lkOptNote = 'No collected games in those seasons yet.';
         return lkBag();
       }
 
@@ -4674,18 +4743,17 @@ async function cbbPanel(){
         }
       }
 
+      const cap = wasteCap(all0);
       const r = optimiseLoadout(pool, lkOptClaims, {
-        maxWaste: LK_WASTE_CAP, maxCards: lkOptMax, anchor: anchorKey });
+        maxWaste: cap, maxCards: lkOptMax, anchor: anchorKey });
       if(!r.chosen.length){
-        lkOptNote = 'Nothing could be added inside the waste ceiling.';
+        lkOptNote = cap === 0
+          ? 'Nothing fits with no overlaps allowed. Raise the percentage and build again.'
+          : 'Nothing could be added inside that overlap ceiling.';
         return lkBag();
       }
 
       const all = loadoutsRead();
-      const label = [...new Set(st.pairs.map(k => {
-        const [sp, se] = k.split('|');
-        return `${CB_SPORT_LABEL[sp] || sp} ${se}`;
-      }))].join(' + ');
       let name = `Best of ${label}`.slice(0, 40), n = 2;
       while(all.sets[name]) name = `${`Best of ${label}`.slice(0, 36)} ${n++}`;
       all.sets[name] = { claims: lkOptClaims, cards: r.chosen.map(c => ({
@@ -4695,8 +4763,9 @@ async function cbbPanel(){
       all.active = name;
       lkDay = ''; lkMonth = ''; lkNaming = ''; lkCal = true;
       lkOptNote = `${r.chosen.length} cards · ${r.claimed.toLocaleString()} base rax claimable at `
-        + `${lkOptClaims} a day · ${r.missed.toLocaleString()} lost to overlaps `
-        + `(${(100 * r.waste).toFixed(1)}%)`
+        + `${lkOptClaims === 2 ? 'two a sport' : 'two a sport plus one'} · `
+        + (r.missed ? `${r.missed.toLocaleString()} lost to overlaps (${(100 * r.waste).toFixed(1)}%)`
+                    : 'nothing lost to overlaps')
         + (anchorKey ? ` · built around ${pool.find(c => c.key === anchorKey).name}` : '');
       loadoutsWrite(all);
       lkBag();
@@ -4843,6 +4912,198 @@ async function cbbPanel(){
     if(e.target.closest('#cb-dl')){ window.open(qs({ format:'csv' }), '_blank'); }
   });
 }
+
+/* =========================================================
+   Full price — open to everyone. Posts are short lived on purpose: a card
+   offered at full price is only worth listing while the person is at their
+   phone, so a post stops showing after 90 minutes. The row survives a week,
+   which is what makes putting the same one back up a single click.
+   ========================================================= */
+const fullLive = p => Date.now() - Number(p.ts || 0) < FULL_LIVE_MS;
+const fullLeft = p => Math.max(0, Math.ceil((FULL_LIVE_MS - (Date.now() - Number(p.ts || 0))) / 60000));
+
+async function fullPricePanel(){
+  await pull();
+  let picked = null;                    // the player chosen from the dropdown
+  let seasons = [];
+
+  const box = modal('Full price', `
+    <div class="warn">Posts come off this board automatically <b>90 minutes</b> after they go up.
+      Yours are kept below for a week, so putting one back up is one click.</div>
+    <p class="note">Comment your card under
+      <a href="${FULL_POST_URL}" target="_blank" rel="noopener">this post</a>,
+      then paste the link to your comment here. Pick the player first so everyone
+      can see what the card has earned and how many people hold one.</p>
+
+    <div class="dtbar" style="margin-top:10px">
+      <select class="field" id="fp-sport" style="flex:1 1 140px;min-width:0"></select>
+      <select class="field" id="fp-season" style="flex:1 1 140px;min-width:0"></select>
+    </div>
+    <input class="field" id="fp-q" placeholder="Player name" autocomplete="off" style="margin-top:8px">
+    <div id="fp-hits"></div>
+    <p class="note" id="fp-chosen" style="margin-top:6px"></p>
+    <input class="field" id="fp-link" placeholder="Your comment link" autocomplete="off" style="margin-top:8px">
+    <button class="btn" id="fp-go" style="margin-top:8px;width:100%">Post at full price</button>
+
+    <h4 class="subhd">On the board now</h4>
+    <div id="fp-live"></div>
+    <h4 class="subhd">Yours, ready to repost</h4>
+    <div id="fp-mine"></div>`);
+
+  const $f = sel => box.querySelector(sel);
+
+  const drawLists = () => {
+    const all = (market.fullprice || []).slice().sort((a, b) => b.ts - a.ts);
+    const live = all.filter(fullLive);
+    const mine = all.filter(p => p.user === me.toLowerCase() && !fullLive(p));
+
+    $f('#fp-live').innerHTML = live.length ? live.map(p => `<div class="hit">
+      <div class="rep-top">
+        <span><span class="player">${esc(p.player)}</span>
+          <span class="who">${esc(sportSeason(p.sport, p.season))}${
+            p.rax != null ? ` · ${Number(p.rax).toLocaleString()} rax` : ''}${
+            p.owners != null ? ` · ${Number(p.owners).toLocaleString()} owners` : ''}
+            — ${esc(market.users[p.user]?.name || p.user)}, ${fullLeft(p)} min left</span></span>
+        <span class="rowacts">
+          ${p.link ? `<a class="btn-ghost" href="${esc(p.link)}" target="_blank" rel="noopener">Comment</a>` : ''}
+          ${(p.user === me.toLowerCase() || isAdmin())
+            ? `<button class="btn-ghost btn-danger" data-fpdel="${esc(p.id)}">Remove</button>` : ''}
+        </span>
+      </div></div>`).join('') : '<p class="nohit">Nothing up right now.</p>';
+
+    $f('#fp-mine').innerHTML = mine.length ? mine.map(p => `<div class="hit">
+      <div class="rep-top">
+        <span><span class="player">${esc(p.player)}</span>
+          <span class="who">${esc(sportSeason(p.sport, p.season))} — posted ${
+            new Date(p.ts).toLocaleDateString()}</span></span>
+        <span class="rowacts">
+          <button class="btn-ghost" data-fpagain="${esc(p.id)}">Post again</button>
+          <button class="btn-ghost btn-danger" data-fpdel="${esc(p.id)}">Forget</button>
+        </span>
+      </div></div>`).join('')
+      : '<p class="nohit">Nothing of yours has expired yet.</p>';
+  };
+
+  // The season list follows the sport, and both come from what has actually
+  // been collected rather than a hard coded list.
+  const drawSeasons = () => {
+    const sp = $f('#fp-sport').value;
+    const mine = seasons.filter(r => r.sport === sp).sort((a, b) => b.season - a.season);
+    $f('#fp-season').innerHTML = mine.map(r =>
+      `<option value="${r.season}">${esc(seasonLabel(sp, r.season))}</option>`).join('')
+      || '<option value="">nothing collected</option>';
+  };
+
+  (async () => {
+    try {
+      const d = await (await fetch('/api/rax?sport=ncaam&season=2026&gamelog=seasons')).json();
+      seasons = (d && d.seasons) || [];
+    } catch (e) {}
+    const sports = [...new Set(seasons.map(r => r.sport))]
+      .sort((a, b) => (CB_SPORT_LABEL[a] || a).localeCompare(CB_SPORT_LABEL[b] || b));
+    $f('#fp-sport').innerHTML = sports.map(sp =>
+      `<option value="${esc(sp)}">${esc(CB_SPORT_LABEL[sp] || sp)}</option>`).join('')
+      || '<option value="">nothing collected</option>';
+    drawSeasons();
+    drawLists();
+  })();
+
+  let typing;
+  box.addEventListener('input', e => {
+    if(e.target.id !== 'fp-q') return;
+    clearTimeout(typing);
+    typing = setTimeout(async () => {
+      const q = e.target.value.trim();
+      picked = null; $f('#fp-chosen').textContent = '';
+      if(q.length < 2){ $f('#fp-hits').innerHTML = ''; return; }
+      const sp = $f('#fp-sport').value, se = $f('#fp-season').value;
+      if(!sp || !se) return;
+      let d;
+      try {
+        d = await (await fetch(`/api/rax?gamelog=query&mode=players&sport=${sp}&season=${se}`
+          + `&seasons=${sp}:${se}&q=${encodeURIComponent(q)}&sort=rax&dir=desc&limit=25`)).json();
+      } catch(err){ $f('#fp-hits').innerHTML = '<p class="nohit">Could not reach the data.</p>'; return; }
+      const rows = (d && d.rows) || [];
+      $f('#fp-hits').innerHTML = rows.length ? rows.map(r =>
+        `<div class="lkrow" data-fppick="${esc(r.player)}" data-fprax="${r.rax || 0}"
+              data-fpown="${r.owners == null ? '' : r.owners}">
+          <span>${esc(r.player)} <span class="note">${esc(r.team || '')}</span></span>
+          <span class="note">${Number(r.rax || 0).toLocaleString()} rax · ${
+            r.owners == null ? 'owners unknown' : Number(r.owners).toLocaleString() + ' owners'}</span>
+        </div>`).join('')
+        : '<p class="nohit">No player by that name in that season.</p>';
+    }, 300);
+  });
+
+  box.addEventListener('change', e => {
+    if(e.target.id === 'fp-sport'){ drawSeasons(); $f('#fp-hits').innerHTML = ''; picked = null; }
+    if(e.target.id === 'fp-season'){ $f('#fp-hits').innerHTML = ''; picked = null; $f('#fp-chosen').textContent = ''; }
+  });
+
+  box.addEventListener('click', async e => {
+    const pick = e.target.closest('[data-fppick]');
+    if(pick){
+      picked = { player: pick.dataset.fppick,
+                 rax: Number(pick.dataset.fprax) || null,
+                 owners: pick.dataset.fpown === '' ? null : Number(pick.dataset.fpown) };
+      $f('#fp-hits').innerHTML = '';
+      $f('#fp-q').value = picked.player;
+      $f('#fp-chosen').textContent = `${picked.player} — ${Number(picked.rax || 0).toLocaleString()} rax`
+        + (picked.owners == null ? '' : `, ${picked.owners.toLocaleString()} owners`);
+      return;
+    }
+
+    const again = e.target.closest('[data-fpagain]');
+    if(again){
+      const old = (market.fullprice || []).find(p => p.id === again.dataset.fpagain);
+      if(!old) return;
+      again.disabled = true;
+      const ok = await patch('addFull', { post: {
+        user: me.toLowerCase(), sport: old.sport, season: old.season,
+        player: old.player, rax: old.rax, owners: old.owners, link: old.link } });
+      if(!ok){ again.disabled = false; return; }
+      await pull(); drawLists();
+      toast(`${old.player} is back up for 90 minutes.`);
+      return;
+    }
+
+    const del = e.target.closest('[data-fpdel]');
+    if(del){
+      del.disabled = true;
+      const ok = await patch('removeFull', { id: del.dataset.fpdel,
+                                             user: isAdmin() ? '' : me.toLowerCase() });
+      if(!ok){ del.disabled = false; return; }
+      await pull(); drawLists();
+      return;
+    }
+
+    if(e.target.closest('#fp-go')){
+      if(!picked) return toast('Pick the player from the list first.');
+      const link = $f('#fp-link').value.trim();
+      if(!link.startsWith(FULL_POST_PREFIX) || link.length <= FULL_POST_PREFIX.length){
+        return toast('That link is not a comment under the full price post.');
+      }
+      const btn = $f('#fp-go');
+      btn.disabled = true;
+      const ok = await patch('addFull', { post: {
+        user: me.toLowerCase(), sport: $f('#fp-sport').value,
+        season: Number($f('#fp-season').value) || null,
+        player: picked.player, rax: picked.rax, owners: picked.owners, link } });
+      btn.disabled = false;
+      if(!ok) return;
+      $f('#fp-link').value = ''; $f('#fp-q').value = ''; picked = null;
+      $f('#fp-chosen').textContent = '';
+      await pull(); drawLists();
+      toast('Up for the next 90 minutes.');
+    }
+  });
+
+  // Keep the countdowns honest while the panel is open.
+  const tick = setInterval(() => { if(!document.body.contains(box)) return clearInterval(tick); drawLists(); }, 60000);
+}
+
+$('#open-full').addEventListener('click', fullPricePanel);
+
 $('#open-cbb').addEventListener('click', cbbPanel);
 
 $('#open-copy').addEventListener('click', copyListPanel);
@@ -5079,9 +5340,9 @@ async function adminPanel(){
   };
 
   const box = modal('Admin', `
-    <details class="ad-drop" ${open.length ? 'open' : ''}>
-      <summary><span>Reports</span><span class="count ${open.length ? 'hot' : ''}">${open.length} open</span></summary>
-      ${open.length ? open.map(reportCard).join('') : '<p class="nohit">No open reports.</p>'}
+    <details class="ad-drop" id="ad-reports" ${open.length ? 'open' : ''}>
+      <summary><span>Reports</span><span class="count ${open.length ? 'hot' : ''}" id="ad-rep-count">${open.length} open</span></summary>
+      <div id="ad-rep-list">${open.length ? open.map(reportCard).join('') : '<p class="nohit">No open reports.</p>'}</div>
     </details>
     <details class="ad-drop" id="ad-data">
       <summary><span>Data reports</span><span class="count" id="ad-data-count">…</span></summary>
@@ -5304,6 +5565,62 @@ async function adminPanel(){
       </div>`).join('');
   });
 
+  // The two lookups already rebuild themselves from whatever is in `market`
+  // when something is typed, so replaying that is all it takes to show the
+  // change without disturbing what the admin has on screen.
+  const refreshLookups = () => {
+    for(const id of ['#lk-user', '#lk-player']){
+      const f = box.querySelector(id);
+      if(f && f.value.trim()) f.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  };
+
+  // Keeps the revoke list and the per-row grant buttons honest after a change,
+  // without rebuilding anything the admin is part way through using.
+  const redrawGrants = () => {
+    const sel = box.querySelector('#gd-who');
+    if(sel){
+      const list = gameDataList();
+      sel.innerHTML = list.length
+        ? list.map(k => `<option value="${esc(k)}">${esc(market.users[k]?.name || k)}</option>`).join('')
+        : '<option value="">nobody yet</option>';
+    }
+    for(const b of box.querySelectorAll('[data-gd]')){
+      const on = gameDataList().includes(b.dataset.gd);
+      b.textContent = on ? 'Remove game data' : 'Grant game data';
+      b.classList.toggle('adminonly', !on);
+    }
+  };
+
+  // Redraws just the reports block. Rebuilding the whole panel threw away the
+  // scroll position and whatever was typed into the lookup boxes, which is a
+  // lot to lose for dismissing one report.
+  const redrawReports = () => {
+    const live = market.reports.filter(r => r.status === 'open').sort((a, b) => b.ts - a.ts);
+    const list = box.querySelector('#ad-rep-list');
+    const cnt = box.querySelector('#ad-rep-count');
+    if(list) list.innerHTML = live.length
+      ? live.map(reportCard).join('') : '<p class="nohit">No open reports.</p>';
+    if(cnt){
+      cnt.textContent = `${live.length} open`;
+      cnt.classList.toggle('hot', live.length > 0);
+    }
+  };
+
+  // Takes one listing row out of wherever it is on screen, and tidies up the
+  // report card it belonged to if that was its last one.
+  const dropListingRow = id => {
+    for(const btn of box.querySelectorAll(`[data-kill="${CSS.escape(id)}"]`)){
+      const row = btn.closest('.rep-item') || btn.closest('.hit') || btn.parentElement;
+      const holder = row && row.parentElement;
+      if(row) row.remove();
+      if(holder && holder.classList.contains('rep-list') && !holder.querySelector('.rep-item')){
+        const head = holder.querySelector('.who');
+        if(head) head.textContent = 'no listings left';
+      }
+    }
+  };
+
   box.addEventListener('click', async e => {
     // Delete anyone's listing, straight from either lookup.
     const kill = e.target.closest('[data-kill]');
@@ -5312,11 +5629,13 @@ async function adminPanel(){
       const o = market.offers.find(x => x.id === id);
       const who = o ? `${o.player} (${o.rate}/1) from ${nameOf(o.user)}` : 'this listing';
       if(!confirm(`Delete ${who}?`)) return;
+      kill.disabled = true;
       const gone = await patch('removeOffer', { id });
-      if(!gone) return;
+      if(!gone){ kill.disabled = false; return; }
+      market.offers = market.offers.filter(x => x.id !== id);
+      dropListingRow(id);
       toast('Listing deleted');
       render();
-      box.remove(); adminPanel();
       return;
     }
 
@@ -5335,7 +5654,7 @@ async function adminPanel(){
       if(!ok) return;
       toast(had ? `${u?.name || k} can no longer see game data` : `${u?.name || k} can now see game data`);
       applyGameDataVisibility();
-      box.remove(); adminPanel();
+      redrawGrants(); refreshLookups();
       return;
     }
 
@@ -5351,7 +5670,7 @@ async function adminPanel(){
       if(!ok) return;
       toast(`${u?.name || k} can no longer see game data`);
       applyGameDataVisibility();
-      box.remove(); adminPanel();
+      redrawGrants(); refreshLookups();
       return;
     }
 
@@ -5363,11 +5682,12 @@ async function adminPanel(){
       const u = market.users[k];
       if(u && !u.hash){ toast(`${u.name || k} is already waiting to set a new password.`); return; }
       if(!confirm(`Reset the password for ${u?.name || k}?\n\nTheir listings stay up. The next password they type when logging in becomes their new one.`)) return;
+      rs.disabled = true;
       const done = await patch('resetPass', { key: k });
-      if(!done) return;
+      if(!done){ rs.disabled = false; return; }
       await pull();
       toast(`Password cleared for ${u?.name || k} — their next login sets it.`);
-      box.remove(); adminPanel();
+      refreshLookups();
       return;
     }
 
@@ -5378,20 +5698,34 @@ async function adminPanel(){
       // access is tied to the username, nobody could undo it from in here.
       if(k === me.toLowerCase()) return toast("That's your own account — you can't delete it.");
       if(!confirm(`Delete ${k}? Their offers come off the board.`)) return;
-      await push(m => {
+      ban.disabled = true;
+      const done = await push(m => {
         if(m.users[k]) m.users[k].banned = true;
         m.offers = m.offers.filter(o => o.user!==k);
         m.reports.forEach(r => { if(r.target.toLowerCase()===k) r.status='closed'; });
       });
-      box.remove(); toast(`${k} deleted`); render(); adminPanel();
+      if(!done){ ban.disabled = false; return; }
+      toast(`${k} deleted`); render(); redrawReports(); refreshLookups();
+      return;
     }
     if(un){
-      await push(m => { if(m.users[un.dataset.unban]) m.users[un.dataset.unban].banned = false; });
-      box.remove(); toast('Account restored'); render(); adminPanel();
+      un.disabled = true;
+      const done = await push(m => { if(m.users[un.dataset.unban]) m.users[un.dataset.unban].banned = false; });
+      if(!done){ un.disabled = false; return; }
+      toast('Account restored'); render(); redrawReports(); refreshLookups();
+      return;
     }
     if(cl){
-      await push(m => { const r = m.reports.find(x=>x.id===cl.dataset.clear); if(r) r.status='closed'; });
-      box.remove(); adminPanel();
+      // Take the card off screen straight away - the write is confirmed before
+      // anything else changes, and putting it back on a failure is less jarring
+      // than the whole panel blinking.
+      const card = cl.closest('.rep-card');
+      if(card) card.style.opacity = '.4';
+      cl.disabled = true;
+      const done = await push(m => { const r = m.reports.find(x=>x.id===cl.dataset.clear); if(r) r.status='closed'; });
+      if(!done){ if(card) card.style.opacity = ''; cl.disabled = false; return; }
+      redrawReports();
+      return;
     }
   });
 }
