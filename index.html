@@ -2910,8 +2910,8 @@ async function showTopPlayers(){
   const taken = rows.filter(r => r.buyers.length).length;
 
   const box = modal(`Top ${SPORTS[sport]} players`, `
-    <p class="note">${liveTop
-      ? `Ranked by rax earned this season, from the collected game data.`
+    <p class="note" id="tp-src">${liveTop
+      ? `This season's collected game data.`
       : `From the saved card-value list — no game data collected for this sport yet.`}</p>
     <div class="tp-tools">
       <input id="tp-q" class="field" autocomplete="off" spellcheck="false" placeholder="Search a player">
@@ -2920,15 +2920,31 @@ async function showTopPlayers(){
         <button data-f="taken"  aria-pressed="false">Being bought</button>
         <button data-f="open"   aria-pressed="false">0 buyers</button>
       </div>
+      ${liveTop ? `<div class="seg" role="group" aria-label="Sort by">
+        <button data-s="rax"    aria-pressed="true">Rax earned</button>
+        <button data-s="owners" aria-pressed="false">Owners</button>
+      </div>` : ''}
       <p class="note" id="tp-count"></p>
     </div>
     <div id="tp-list"></div>`);
 
-  let filter = 'all', query = '';
+  let filter = 'all', query = '', sortKey = liveTop ? 'rax' : 'value';
+
+  // Rank follows whichever sort is on, and is worked out before the search
+  // and the buyer filters narrow the list - so a player keeps the number they
+  // hold on the whole board, not their position in whatever is on screen.
+  function ordered(){
+    if(sortKey === 'value') return rows;
+    return rows.slice().sort((a, b) =>
+      (Number(b[sortKey]) || 0) - (Number(a[sortKey]) || 0) ||
+      String(a.name).localeCompare(String(b.name)));
+  }
 
   function draw(){
     const q = norm(query);
-    const shown = rows.filter(r => {
+    const all = ordered();
+    all.forEach((r, i) => { r.rank = i + 1; });
+    const shown = all.filter(r => {
       if(filter === 'taken' && !r.buyers.length) return false;
       if(filter === 'open'  &&  r.buyers.length) return false;
       return !q || r.key.includes(q);
@@ -2952,6 +2968,14 @@ async function showTopPlayers(){
   }
 
   box.querySelector('#tp-q').addEventListener('input', e => { query = e.target.value; draw(); });
+  box.querySelectorAll('[data-s]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      sortKey = btn.dataset.s;
+      box.querySelectorAll('[data-s]').forEach(b =>
+        b.setAttribute('aria-pressed', b === btn ? 'true' : 'false'));
+      draw();
+    });
+  });
   box.querySelectorAll('[data-f]').forEach(btn => {
     btn.addEventListener('click', () => {
       filter = btn.dataset.f;
@@ -3635,7 +3659,7 @@ async function copyListPanel(){
 
 // Always present, whatever the sport - these are the figures every sport has.
 const CB_CORE_COLS = [
-  ['player','Player','l'], ['team','Team','l'], ['season','Season'], ['games','G'],
+  ['player','Player','l'], ['sport','Sport','l'], ['team','Team','l'], ['season','Season'], ['games','G'],
   ['rax','Rax'], ['raxPerGame','Rax/G'], ['bestRax','Best'],
   ['owners','Owners'], ['ownersChange','7d'],
   ['rating','Rating'], ['ratingPerGame','Rtg/G']
@@ -3652,7 +3676,7 @@ const CB_SPORT_STATS = { ncaam: CB_BASKETBALL, nba: CB_BASKETBALL, wnba: CB_BASK
 const cbStats = sp => CB_SPORT_STATS[sp] || [];
 
 const CB_GAME_COLS = [
-  ['day','Date','l'], ['player','Player','l'], ['team','Team','l'],
+  ['day','Date','l'], ['player','Player','l'], ['sport','Sport','l'], ['team','Team','l'],
   ['opponent','Opp','l'], ['homeAway','H/A','l'], ['result','W/L','l'],
   ['rax','Rax'], ['rating','Rating'],
   ['min','MIN'], ['pts','PTS'], ['reb','REB'], ['ast','AST'],
@@ -4013,6 +4037,7 @@ async function cbbPanel(){
       <input class="field" id="cb-maxr" placeholder="Max rax" inputmode="numeric" style="flex:0 1 110px">
       <button class="btn-ghost" id="cb-cols">Columns</button>
       <button class="btn-ghost" id="cb-clear">Clear</button>
+      <button class="btn" id="cb-refresh" disabled>Up to date</button>
     </div>
     <div class="dtbar hide cb-filt" id="cb-colbar"></div>
     <div id="cb-lookup" class="hide">
@@ -4025,6 +4050,8 @@ async function cbbPanel(){
     <div id="cb-golf" class="hide">
       <div class="dtbar">
         <select class="field" id="gf-season"></select>
+        <input class="field" id="gf-q" autocomplete="off" spellcheck="false"
+               placeholder="Search a tournament or course" style="max-width:260px">
         <span class="note" id="gf-note"></span>
       </div>
       <div id="gf-list"></div>
@@ -4205,6 +4232,7 @@ async function cbbPanel(){
       + cs.map(([k,,align]) => {
           let v = r[k];
           if(k === 'day' && v) v = String(v).slice(5);
+          if(k === 'sport' && v) v = CB_SPORT_LABEL[v] || String(v).toUpperCase();
           if(k === 'rating' && v != null && v !== '') v = Number(v).toFixed(2);
           if(k === 'conference' && v === '-') v = '';
           if(k === 'owners' && v != null && v !== '') v = Number(v).toLocaleString();
@@ -4214,6 +4242,21 @@ async function cbbPanel(){
           return `<td class="${align === 'l' ? 'l' : ''}">${typeof v === 'string' && v.startsWith('<') ? v : esc(String(v))}</td>`;
         }).join('') + '</tr>';
   }
+
+  // Picking seasons and filters only stages the change - nothing is fetched
+  // until Refresh is pressed. Half a dozen settings can be set up in a row
+  // without each one firing its own query at the database. Sorting, paging
+  // and drilling into a player still act at once: those are asking to see
+  // something now, not building up a question.
+  let dirty = false;
+  function paintRefresh(){
+    const b = $b('#cb-refresh');
+    if(!b) return;
+    b.disabled = !dirty;
+    b.textContent = dirty ? 'Refresh' : 'Up to date';
+    b.classList.toggle('btn-ghost', !dirty);
+  }
+  function queue(){ dirty = true; paintRefresh(); }
 
   // Changing a setting used to fire a query and then sit on the old one until
   // it came back, so flicking through seasons stacked up several heavy
@@ -4226,9 +4269,11 @@ async function cbbPanel(){
     if(!st.pairs.length){
       $b('#cb-count').textContent = 'Pick at least one season.';
       $b('#cb-body').innerHTML = ''; $b('#cb-head').innerHTML = '';
+      dirty = false; paintRefresh();
       return;
     }
     const seq = ++loadSeq;
+    dirty = false; paintRefresh();
     if(loadAbort) loadAbort.abort();
     loadAbort = new AbortController();
     if(paintTimer){ cancelAnimationFrame(paintTimer); paintTimer = 0; }
@@ -4576,8 +4621,55 @@ async function cbbPanel(){
 
   // --- Golf tournaments --------------------------------------------------
   let gfSeason = '', gfEvents = null, gfOpen = null, gfBoardYear = '';
+  // Search and column sort are done here on rows already fetched, so neither
+  // one goes back to the server.
+  let gfQuery = '', gfKind = 'season', gfSort = 'day', gfDir = 'asc';
+  let gfGroupRows = [];
+  let gfBoard = null, gfBoardSort = 'finish';
 
-  const gfKey = r => GOLF_EVENTS[String(r.day || '').slice(0, 10)] || null;
+  const gfDefaultSort = kind => kind === 'all'
+    ? { sort: 'avgRax', dir: 'desc' } : { sort: 'day', dir: 'asc' };
+
+  // 1, T4, CUT, WD, DQ - everything that is not a number goes to the bottom,
+  // in the order a leaderboard prints it.
+  function gfFinish(pos){
+    const t = String(pos || '').toUpperCase().trim();
+    if(!t) return 9e6;
+    if(t === 'CUT' || t === 'MDF') return 1e6;
+    if(t === 'WD') return 2e6;
+    if(t === 'DQ') return 3e6;
+    const n = parseInt(t.replace(/^T/, ''), 10);
+    return Number.isFinite(n) ? n : 9e6;
+  }
+  const gfCutCell = pos => {
+    const t = String(pos || '').toUpperCase().trim();
+    if(t === 'CUT') return '<span style="color:var(--bad)">Missed</span>';
+    if(t === 'MDF') return 'Made (MDF)';
+    if(t === 'WD' || t === 'DQ') return t;
+    return t ? 'Made' : '<span class="dim">—</span>';
+  };
+
+  function gfCmp(key, dir){
+    const f = dir === 'asc' ? 1 : -1;
+    return (a, b) => {
+      let x = a[key], y = b[key];
+      if(key === 'name'){ x = gfName(a); y = gfName(b); }
+      const xs = x == null || x === '', ys = y == null || y === '';
+      if(xs && ys) return 0;
+      if(xs) return 1;                 // blanks sit at the bottom either way
+      if(ys) return -1;
+      if(typeof x === 'number' || typeof y === 'number' || (!isNaN(x) && !isNaN(y) && key !== 'day'))
+        return (Number(x) - Number(y)) * f;
+      return String(x).localeCompare(String(y)) * f;
+    };
+  }
+
+  const gfHead = (key, label, left) =>
+    `<th class="${left ? 'l ' : ''}gfsort${gfSort === key ? ' on' : ''}" data-gs="${key}">`
+    + `${label}${gfSort === key ? (gfDir === 'desc' ? ' ↓' : ' ↑') : ''}</th>`;
+
+  const gfKey = r => GOLF_EVENTS[String(r.day || '').slice(0, 10)]
+                    || (r && r.name ? String(r.name) : null);
   const gfName = r => gfKey(r) || `Event of ${String(r.day || '').slice(0, 10)}`;
 
   async function gfInit(){
@@ -4607,15 +4699,58 @@ async function cbbPanel(){
     catch(e){ $b('#gf-note').textContent = 'Could not reach the server.'; return; }
     if(d.error){ $b('#gf-note').textContent = d.error; return; }
     gfEvents = d.rows || [];
-    const named = gfEvents.filter(r => r.name).length;
-    $b('#gf-note').textContent = `${gfEvents.length} events`
-      + (named < gfEvents.length
-          ? ` · ${gfEvents.length - named} still waiting on a tournament name`
-          : '');
-    $b('#gf-list').innerHTML = gfEvents.length ? `<div class="dtwrap" style="margin-top:10px"><table class="dt">
-      <thead><tr><th class="l">Date</th><th class="l">Tournament</th><th>Field</th>
-        <th>Made cut</th><th>Cut at</th><th>Total rax</th><th>Rax per player</th></tr></thead>
-      <tbody>${gfEvents.map(r =>
+    gfKind = 'season';
+    ({ sort: gfSort, dir: gfDir } = gfDefaultSort('season'));
+    gfPaint();
+  }
+
+  // The one place either table is drawn. Search and sort happen over rows
+  // already in hand, so neither one costs a request.
+  function gfPaint(){
+    const q = norm(gfQuery);
+    if(gfKind === 'all'){
+      const rows = gfGroupRows.filter(g => !q || norm(g.name).includes(q)
+        || g.seasons.join(' ').includes(q));
+      rows.sort(gfCmp(gfSort, gfDir));
+      $b('#gf-note').textContent = gfGroupRows.length
+        ? `${rows.length} of ${gfGroupRows.length} tournaments shown` : '';
+      $b('#gf-list').innerHTML = rows.length ? `<div class="dtwrap" style="margin-top:10px"><table class="dt">
+        <thead><tr>${gfHead('name','Tournament',1)}${gfHead('years','Years')}${gfHead('avgField','Avg field')}
+          ${gfHead('avgMade','Avg made cut')}${gfHead('avgCut','Avg cut at')}
+          ${gfHead('avgRax','Avg rax per player')}${gfHead('avgTotal','Avg total rax')}
+          ${gfHead('best','Best')}</tr></thead>
+        <tbody>${rows.map(g =>
+          `<tr class="clickable" data-gall="${esc(g.name)}">`
+          + `<td class="l">${esc(g.name)}<span class="note"> ${g.seasons.join(', ')}</span></td>`
+          + `<td>${g.years}</td>`
+          + `<td>${g.avgField == null ? '—' : Math.round(g.avgField).toLocaleString()}</td>`
+          + `<td>${g.avgMade == null ? '—' : Math.round(g.avgMade).toLocaleString()}</td>`
+          + `<td>${g.avgCut == null ? '<span class="dim">—</span>' : gfPar(Math.round(g.avgCut))}</td>`
+          + `<td>${g.avgRax == null ? '—' : g.avgRax.toFixed(1)}</td>`
+          + `<td>${g.avgTotal == null ? '—' : Math.round(g.avgTotal).toLocaleString()}</td>`
+          + `<td>${g.best.toLocaleString()}</td></tr>`).join('')}
+        </tbody></table></div>`
+        : `<p class="note" style="margin-top:10px">${gfGroupRows.length
+            ? 'Nothing matches that.' : 'No named tournaments yet.'}</p>`;
+      return;
+    }
+
+    const all = gfEvents || [];
+    const rows = all.filter(r => !q
+      || norm(gfName(r)).includes(q)
+      || norm(r.course || '').includes(q)
+      || String(r.day || '').includes(q));
+    rows.sort(gfCmp(gfSort, gfDir));
+    const named = all.filter(r => r.name).length;
+    $b('#gf-note').textContent = all.length
+      ? `${rows.length} of ${all.length} events shown`
+        + (named < all.length ? ` · ${all.length - named} still waiting on a tournament name` : '')
+      : '';
+    $b('#gf-list').innerHTML = rows.length ? `<div class="dtwrap" style="margin-top:10px"><table class="dt">
+      <thead><tr>${gfHead('day','Date',1)}${gfHead('name','Tournament',1)}${gfHead('players','Field')}
+        ${gfHead('madeCut','Made cut')}${gfHead('cutLine','Cut at')}${gfHead('totalRax','Total rax')}
+        ${gfHead('avgRax','Rax per player')}</tr></thead>
+      <tbody>${rows.map(r =>
         `<tr class="clickable" data-gid="${r.gameId}">`
         + `<td class="l">${esc(String(r.day || '').slice(0, 10))}</td>`
         + `<td class="l">${esc(gfName(r))}${r.course ? ` <span class="note">${esc(r.course)}</span>` : ''}</td>`
@@ -4625,7 +4760,8 @@ async function cbbPanel(){
         + `<td>${Number(r.totalRax || 0).toLocaleString()}</td>`
         + `<td>${r.avgRax == null ? '—' : Number(r.avgRax).toFixed(1)}</td></tr>`).join('')}
       </tbody></table></div>`
-      : '<p class="note" style="margin-top:10px">Nothing collected for that season.</p>';
+      : `<p class="note" style="margin-top:10px">${all.length
+          ? 'Nothing matches that.' : 'Nothing collected for that season.'}</p>`;
   }
 
 
@@ -4664,26 +4800,13 @@ async function cbbPanel(){
     })).sort((a, b) => (b.avgRax || 0) - (a.avgRax || 0));
 
     gfEvents = null;
-    $b('#gf-note').textContent = `${rows.length} tournaments across every season`
-      + (dropped ? ` · ${dropped} 2022 major${dropped === 1 ? '' : 's'} left out` : '')
-      + (unnamed ? ` · ${unnamed} events not named yet, so they are not grouped` : '');
-
-    $b('#gf-list').innerHTML = rows.length ? `<div class="dtwrap" style="margin-top:10px"><table class="dt">
-      <thead><tr><th class="l">Tournament</th><th>Years</th><th>Avg field</th><th>Avg made cut</th>
-        <th>Avg cut at</th><th>Avg rax per player</th><th>Avg total rax</th><th>Best</th></tr></thead>
-      <tbody>${rows.map(g =>
-        `<tr class="clickable" data-gall="${esc(g.name)}">`
-        + `<td class="l">${esc(g.name)}<span class="note"> ${g.seasons.join(', ')}</span></td>`
-        + `<td>${g.years}</td>`
-        + `<td>${g.avgField == null ? '—' : Math.round(g.avgField).toLocaleString()}</td>`
-        + `<td>${g.avgMade == null ? '—' : Math.round(g.avgMade).toLocaleString()}</td>`
-        + `<td>${g.avgCut == null ? '<span class="dim">—</span>' : gfPar(Math.round(g.avgCut))}</td>`
-        + `<td>${g.avgRax == null ? '—' : g.avgRax.toFixed(1)}</td>`
-        + `<td>${g.avgTotal == null ? '—' : Math.round(g.avgTotal).toLocaleString()}</td>`
-        + `<td>${g.best.toLocaleString()}</td></tr>`).join('')}
-      </tbody></table></div>`
-      : '<p class="note" style="margin-top:10px">No named tournaments yet.</p>';
+    gfGroupRows = rows;
     window.__gfGroups = rows;
+    gfKind = 'all';
+    ({ sort: gfSort, dir: gfDir } = gfDefaultSort('all'));
+    gfPaint();
+    $b('#gf-note').textContent += (dropped ? ` · ${dropped} 2022 major${dropped === 1 ? '' : 's'} left out` : '')
+      + (unnamed ? ` · ${unnamed} events not named yet, so they are not grouped` : '');
   }
 
   // Clicking an all time row opens that tournament year by year.
@@ -4778,21 +4901,48 @@ async function cbbPanel(){
           ? 'Only one year of this tournament has been collected so far.'
           : 'This event has no name yet, so its other years cannot be matched up.'}</p>`}
       <div style="margin-top:14px">
-        <b style="font-size:14px">Rax leaderboard — ${esc(String(season))}</b>
-        <div class="dtwrap" style="margin-top:6px"><table class="dt">
-          <thead><tr><th class="l" style="width:1%">#</th><th class="l">Player</th><th class="l">Country</th>
-            <th class="l">Finish</th><th>To par</th><th>Rax</th><th>Rating</th></tr></thead>
-          <tbody>${rows.length ? rows.map((r, i) =>
-            `<tr><td class="l dim">${i + 1}</td><td class="l">${esc(r.player || '')}</td>`
-            + `<td class="l">${esc(r.team || '')}</td>`
-            + `<td class="l">${r.position ? esc(r.position) : '<span class="dim">—</span>'}</td>`
-            + `<td>${gfPar(r.toPar)}</td>`
-            + `<td>${Number(r.rax || 0).toLocaleString()}</td>`
-            + `<td>${r.rating == null ? '—' : Number(r.rating).toFixed(2)}</td></tr>`).join('')
-            : '<tr><td class="l" colspan="7">No rows for that event.</td></tr>'}
-          </tbody></table></div>
+        <div id="gf-lb"></div>
       </div>
     </div>`;
+    gfBoard = { rows, season };
+    gfDrawBoard();
+  }
+
+  // The leaderboard on its own, so the finish/rax toggle redraws this table
+  // and nothing else on the card. Finish order is how the tournament actually
+  // ended; rax order is who earned the most from it - they are not the same,
+  // because a long shot who makes the cut can out-earn a better finisher.
+  function gfDrawBoard(){
+    const el = $b('#gf-lb');
+    if(!el || !gfBoard) return;
+    const { season } = gfBoard;
+    const rows = gfBoard.rows.slice().sort(gfBoardSort === 'rax'
+      ? (a, b) => (Number(b.rax) || 0) - (Number(a.rax) || 0)
+      : (a, b) => gfFinish(a.position) - gfFinish(b.position)
+                  || (Number(b.rax) || 0) - (Number(a.rax) || 0));
+    const made = gfBoard.rows.filter(r => String(r.position || '').toUpperCase() !== 'CUT').length;
+    el.innerHTML = `
+      <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+        <b style="font-size:14px">Leaderboard — ${esc(String(season))}</b>
+        <div class="seg" role="group" aria-label="Order">
+          <button data-gbs="finish" aria-pressed="${gfBoardSort === 'finish'}">Finish</button>
+          <button data-gbs="rax"    aria-pressed="${gfBoardSort === 'rax'}">Rax earned</button>
+        </div>
+        <span class="note">${made.toLocaleString()} made the cut of ${gfBoard.rows.length.toLocaleString()}</span>
+      </div>
+      <div class="dtwrap" style="margin-top:6px"><table class="dt">
+        <thead><tr><th class="l" style="width:1%">#</th><th class="l">Player</th><th class="l">Country</th>
+          <th class="l">Finish</th><th class="l">Cut</th><th>To par</th><th>Rax</th><th>Rating</th></tr></thead>
+        <tbody>${rows.length ? rows.map((r, i) =>
+          `<tr><td class="l dim">${i + 1}</td><td class="l">${esc(r.player || '')}</td>`
+          + `<td class="l">${esc(r.team || '')}</td>`
+          + `<td class="l">${r.position ? esc(r.position) : '<span class="dim">—</span>'}</td>`
+          + `<td class="l">${gfCutCell(r.position)}</td>`
+          + `<td>${gfPar(r.toPar)}</td>`
+          + `<td>${Number(r.rax || 0).toLocaleString()}</td>`
+          + `<td>${r.rating == null ? '—' : Number(r.rating).toFixed(2)}</td></tr>`).join('')
+          : '<tr><td class="l" colspan="8">No rows for that event.</td></tr>'}
+        </tbody></table></div>`;
   }
 
   // The views share one modal, so switching hides everything that
@@ -4836,14 +4986,22 @@ async function cbbPanel(){
       lkTyping = setTimeout(lkSearch, 300);
       return;
     }
+    if(e.target.id === 'gf-q'){ gfQuery = e.target.value; return gfPaint(); }
     const map = { 'cb-q':'q', 'cb-from':'from', 'cb-to':'to', 'cb-mg':'minGames',
                   'cb-mino':'minOwners', 'cb-maxo':'maxOwners',
                   'cb-minr':'minRax', 'cb-maxr':'maxRax' };
     if(!map[e.target.id]) return;
     st[map[e.target.id]] = e.target.value.trim();
     st.offset = 0;
-    clearTimeout(typing);
-    typing = setTimeout(load, 300);
+    queue();
+  });
+
+  // Enter in any of those boxes is the same as pressing Refresh.
+  box.addEventListener('keydown', e => {
+    if(e.key !== 'Enter') return;
+    if(!/^cb-(q|from|to|mg|mino|maxo|minr|maxr)$/.test(e.target.id || '')) return;
+    e.preventDefault();
+    if(dirty) load();
   });
 
   box.addEventListener('change', e => {
@@ -4872,7 +5030,7 @@ async function cbbPanel(){
     if(!map[e.target.id]) return;
     st[map[e.target.id]] = e.target.value;
     st.offset = 0;
-    load();
+    queue();
   });
 
   box.addEventListener('click', async e => {
@@ -4950,6 +5108,17 @@ async function cbbPanel(){
 
     const gy = e.target.closest('[data-gyear]');
     if(gy) return gfShow(gy.dataset.gid2, gy.dataset.gyear);
+
+    const gs = e.target.closest('[data-gs]');
+    if(gs){
+      const k = gs.dataset.gs;
+      if(gfSort === k) gfDir = gfDir === 'desc' ? 'asc' : 'desc';
+      else { gfSort = k; gfDir = (k === 'day' || k === 'name') ? 'asc' : 'desc'; }
+      return gfPaint();
+    }
+
+    const gbs = e.target.closest('[data-gbs]');
+    if(gbs){ gfBoardSort = gbs.dataset.gbs; return gfDrawBoard(); }
 
     const gid = e.target.closest('[data-gid]');
     if(gid) return gfShow(gid.dataset.gid, gfSeason);
@@ -5115,7 +5284,7 @@ async function cbbPanel(){
       drawSeasons(); drawCols(); applyFilterVisibility();
       await loadTeams();
       if(st.mode === 'lookup'){ $b('#lk-detail').innerHTML = ''; return lkSearch(); }
-      return load();
+      return queue();
     }
 
     const col = e.target.closest('[data-col]');
@@ -5124,7 +5293,7 @@ async function cbbPanel(){
       st.extra = st.extra.includes(k) ? st.extra.filter(x => x !== k) : st.extra.concat([k]);
       if(!cols().some(c => c[0] === st.sort)){ st.sort = 'rax'; st.dir = 'desc'; }
       drawCols();
-      return load();
+      return queue();
     }
 
     if(e.target.closest('#cb-cols')){ $b('#cb-colbar').classList.toggle('hide'); return; }
@@ -5137,7 +5306,7 @@ async function cbbPanel(){
       $b('#cb-to').placeholder   = st.exact ? 'To YYYY-MM-DD'   : 'To MM-DD';
       st.from = ''; st.to = ''; $b('#cb-from').value = ''; $b('#cb-to').value = '';
       st.offset = 0;
-      return load();
+      return queue();
     }
 
     const m = e.target.closest('[data-cm]');
@@ -5173,7 +5342,7 @@ async function cbbPanel(){
       st.playedOnly = st.playedOnly ? '' : '1';
       e.target.closest('#cb-played').setAttribute('aria-pressed', st.playedOnly ? 'true' : 'false');
       st.offset = 0;
-      return load();
+      return queue();
     }
 
     if(e.target.closest('#cb-clear')){
@@ -5188,6 +5357,7 @@ async function cbbPanel(){
       return load();
     }
 
+    if(e.target.closest('#cb-refresh')){ return load(); }
     if(e.target.closest('#cb-prev')){ st.offset = Math.max(0, st.offset - st.limit); return load(); }
     if(e.target.closest('#cb-next')){ st.offset = st.offset + st.limit; return load(); }
     if(e.target.closest('#cb-dl')){ window.open(qs({ format:'csv' }), '_blank'); }
