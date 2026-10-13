@@ -93,6 +93,15 @@ const DATA_REPORTS_DDL = `CREATE TABLE IF NOT EXISTS data_reports (
   player TEXT NOT NULL, field TEXT NOT NULL, value TEXT, note TEXT,
   status TEXT NOT NULL DEFAULT 'open')`;
 
+// Feature requests from members. Same shape of problem as a data report - a
+// burst of them must not overwrite one another - so they get their own table
+// rather than a slot in the board blob. Status is open, done or declined.
+const FEATURES_DDL = `CREATE TABLE IF NOT EXISTS features (
+  id TEXT PRIMARY KEY, ts INTEGER NOT NULL, by_user TEXT NOT NULL, kind TEXT,
+  title TEXT NOT NULL, detail TEXT, status TEXT NOT NULL DEFAULT 'open')`;
+// One person cannot fill the queue on their own.
+const MAX_OPEN_PER_USER = 12;
+
 // Full price posts. They are meant to be fleeting - a post stops showing after
 // 90 minutes - but the row is kept for a week so whoever wrote it can put the
 // same card back up without hunting for the comment link again.
@@ -395,6 +404,31 @@ async function applyOp(env, body) {
     return null;
   }
 
+  // A member asks for something. Title is required, detail optional; the board
+  // owner reads these on the admin screen and closes them out.
+  if (op === 'featureRequest') {
+    const by = str(body.by, 60), title = str(body.title, 120);
+    if (!by || !title) return 'bad request';
+    await db.prepare(FEATURES_DDL).run();
+    const mine = await db.prepare(
+      `SELECT COUNT(*) AS n FROM features WHERE by_user=? AND status='open'`).bind(by).first();
+    if (mine && Number(mine.n) >= MAX_OPEN_PER_USER) return 'you already have a lot of open requests';
+    await db.prepare(
+      `INSERT INTO features (id, ts, by_user, kind, title, detail, status)
+       VALUES (?, ?, ?, ?, ?, ?, 'open')`
+    ).bind(uid(), Date.now(), by, str(body.kind, 20) || '', title,
+           str(body.detail, 1000) || '').run();
+    return null;
+  }
+
+  if (op === 'resolveFeature') {
+    const id = str(body.id, 40), status = body.status === 'done' ? 'done' : 'declined';
+    if (!id) return 'bad id';
+    await db.prepare(FEATURES_DDL).run();
+    await db.prepare('UPDATE features SET status=? WHERE id=?').bind(status, id).run();
+    return null;
+  }
+
   // One-time move of the old blob into the database.
   if (op === 'import') {
     const users = body.users || {}, offers = body.offers || [];
@@ -486,6 +520,20 @@ export async function onRequestGet({ request, env }) {
       return json({ reports: rows.results || [] });
     } catch (e) {
       return json({ error: 'could not read data reports', detail: String((e && e.message) || e) }, 503);
+    }
+  }
+
+  // Open feature requests, newest first, for the admin screen.
+  if (url.searchParams.get('features') != null) {
+    try {
+      const db = env.RATEBOARD_DB;
+      await db.prepare(FEATURES_DDL).run();
+      const rows = await db.prepare(
+        `SELECT id, ts, by_user, kind, title, detail FROM features
+         WHERE status='open' ORDER BY ts DESC LIMIT 300`).all();
+      return json({ requests: rows.results || [] });
+    } catch (e) {
+      return json({ error: 'could not read feature requests', detail: String((e && e.message) || e) }, 503);
     }
   }
 
