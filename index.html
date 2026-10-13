@@ -578,9 +578,13 @@ const TARGET_LINK = 'https://www.realapp.com/NeH4tgFKo9k';
 // in a real comment URL under this post (e.g. .../JaHBFYjOBj8igvOr/<comment id>).
 // The full price board runs under its own Real post, so its comment links are
 // checked against that one rather than the buy board's.
+// Two different ids for the same post, the same split the buy board has: the
+// one in the share link people click, and the one that shows up inside a real
+// comment URL. A submitted link is checked against the second.
 const FULL_POST_ID = 'dNHytgFJWO2';
 const FULL_POST_URL = 'https://www.realapp.com/' + FULL_POST_ID;
-const FULL_POST_PREFIX = FULL_POST_URL + '/';
+const FULL_VERIFY_ID = 'gKHxFVBxvBDc0dm6';
+const FULL_POST_PREFIX = 'https://www.realapp.com/' + FULL_VERIFY_ID + '/';
 // A post drops off the board 90 minutes after it goes up.
 const FULL_LIVE_MS = 90 * 60 * 1000;
 
@@ -5048,11 +5052,41 @@ async function cbbPanel(){
 // A pack is used once a day and the day turns over at 7am, so hiding a player
 // lasts until the next 7am - ten to seven means ten minutes, not a whole day.
 const USED_KEY = 'ratebrd_used_packs';
+
+// Everyone's day has to turn over at the same moment, so the cutoff is 7am in
+// New York rather than 7am wherever the person happens to be. Reading the
+// clock through Intl keeps it right either side of a daylight saving change.
+const ET = 'America/New_York';
+function etWall(ts){
+  const f = new Intl.DateTimeFormat('en-CA', { timeZone: ET, hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const p = {};
+  for(const part of f.formatToParts(new Date(ts))) if(part.type !== 'literal') p[part.type] = +part.value;
+  return { y: p.year, m: p.month, d: p.day, h: p.hour % 24, mi: p.minute, s: p.second };
+}
+// The instant at which New York's clock reads this wall time. Starts from the
+// standard offset and corrects itself, which settles it on either side of a
+// daylight saving jump.
+function fromEtWall(y, m, d, h, mi, s){
+  const want = Date.UTC(y, m - 1, d, h, mi, s || 0);
+  let guess = want + 5 * 3600 * 1000;
+  for(let i = 0; i < 3; i++){
+    const w = etWall(guess);
+    const got = Date.UTC(w.y, w.m - 1, w.d, w.h, w.mi, w.s);
+    if(got === want) break;
+    guess += want - got;
+  }
+  return guess;
+}
 function nextSevenAm(from){
-  const t = new Date(from);
-  t.setHours(7, 0, 0, 0);
-  if(t.getTime() <= from) t.setDate(t.getDate() + 1);
-  return t.getTime();
+  const w = etWall(from);
+  let t = fromEtWall(w.y, w.m, w.d, 7, 0, 0);
+  if(t <= from){
+    const nd = new Date(Date.UTC(w.y, w.m - 1, w.d) + 86400000);
+    t = fromEtWall(nd.getUTCFullYear(), nd.getUTCMonth() + 1, nd.getUTCDate(), 7, 0, 0);
+  }
+  return t;
 }
 function usedRead(){
   let raw = {};
@@ -5062,6 +5096,18 @@ function usedRead(){
   return out;
 }
 function usedWrite(v){ try { localStorage.setItem(USED_KEY, JSON.stringify(v)); } catch(e){} }
+
+// Hidden players are keyed by flattened name, so the spelling is kept too -
+// otherwise a player nobody is buying would show in the list as a bare key.
+const USED_NAMES_KEY = 'ratebrd_used_names';
+function usedNames(){
+  try { return JSON.parse(localStorage.getItem(USED_NAMES_KEY) || '{}') || {}; } catch(e){ return {}; }
+}
+function usedName(name){
+  const m = usedNames();
+  m[norm(name)] = name;
+  try { localStorage.setItem(USED_NAMES_KEY, JSON.stringify(m)); } catch(e){}
+}
 
 const fullLive = p => p.state !== 'queued' && Date.now() - Number(p.ts || 0) < FULL_LIVE_MS;
 const fullLeft = p => Math.max(0, Math.ceil((FULL_LIVE_MS - (Date.now() - Number(p.ts || 0))) / 60000));
@@ -5117,6 +5163,12 @@ async function fullPricePanel(){
         <select class="field" id="fp-usedpick" style="flex:1 1 240px;min-width:0"></select>
         <button class="btn" id="fp-usedadd">Mark used</button>
       </div>
+      <p class="note" style="margin-top:10px">Nobody buying them yet? Pick any player here instead.</p>
+      <div class="dtbar" style="margin-top:6px">
+        <select class="field" id="fp-usedsport" style="flex:0 1 130px;min-width:0"></select>
+        <select class="field" id="fp-usedany" style="flex:1 1 220px;min-width:0"></select>
+        <button class="btn" id="fp-usedanyadd">Mark used</button>
+      </div>
       <div id="fp-used-list"></div>
     </div>`);
 
@@ -5147,6 +5199,31 @@ async function fullPricePanel(){
     }).join('') : '<p class="nohit">Nobody is buying right now.</p>';
   };
 
+  // Players for the second dropdown, by sport, kept once they are fetched.
+  const anyPool = new Map();
+  async function loadAnyPlayers(sp){
+    if(anyPool.has(sp)) return anyPool.get(sp);
+    const se = (CB_CURRENT && CB_CURRENT[sp]) || 2026;
+    let names = [];
+    try {
+      const d = await (await fetch(`/api/rax?gamelog=query&mode=players&sport=${sp}&season=${se}`
+        + `&seasons=${sp}:${se}&sort=rax&dir=desc&limit=400`)).json();
+      names = [...new Set((d.rows || []).map(r => r.player))].sort((a, b) => a.localeCompare(b));
+    } catch(e){}
+    anyPool.set(sp, names);
+    return names;
+  }
+  async function drawAnyPlayers(){
+    const sel = $f('#fp-usedsport');
+    if(!sel || !sel.value) return;
+    const list = $f('#fp-usedany');
+    list.innerHTML = '<option value="">loading…</option>';
+    const names = await loadAnyPlayers(sel.value);
+    list.innerHTML = names.length
+      ? names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('')
+      : '<option value="">nothing collected for that sport</option>';
+  }
+
   const drawUsed = () => {
     const used = usedRead();
     const keys = Object.keys(used);
@@ -5158,12 +5235,12 @@ async function fullPricePanel(){
       : '<option value="">nobody is buying right now</option>';
 
     $f('#fp-used-list').innerHTML = keys.length ? keys.map(k => {
-      const shown = (live.find(p => norm(p.player) === k) || {}).player || k;
+      const shown = (live.find(p => norm(p.player) === k) || {}).player || usedNames()[k] || k;
       const mins = Math.max(0, Math.round((used[k] - Date.now()) / 60000));
       const hrs = Math.floor(mins / 60);
       return `<div class="hit"><div class="rep-top">
         <span><span class="player">${esc(shown)}</span>
-          <span class="who">back in ${hrs ? hrs + 'h ' : ''}${mins % 60}m</span></span>
+          <span class="who">back at 7am Eastern, in ${hrs ? hrs + 'h ' : ''}${mins % 60}m</span></span>
         <span class="rowacts">
           <button class="btn-ghost" data-fpunuse="${esc(k)}">Un-hide</button>
         </span></div></div>`;
@@ -5225,13 +5302,18 @@ async function fullPricePanel(){
       const d = await (await fetch('/api/rax?sport=ncaam&season=2026&gamelog=seasons')).json();
       seasons = (d && d.seasons) || [];
     } catch (e) {}
+    // NFL first, because that is what most of the board is trading.
     const sports = [...new Set(seasons.map(r => r.sport))]
-      .sort((a, b) => (CB_SPORT_LABEL[a] || a).localeCompare(CB_SPORT_LABEL[b] || b));
-    $f('#fp-sport').innerHTML = sports.map(sp =>
+      .sort((a, b) => (a === 'nfl' ? -1 : b === 'nfl' ? 1 : 0)
+                   || (CB_SPORT_LABEL[a] || a).localeCompare(CB_SPORT_LABEL[b] || b));
+    const opts = sports.map(sp =>
       `<option value="${esc(sp)}">${esc(CB_SPORT_LABEL[sp] || sp)}</option>`).join('')
       || '<option value="">nothing collected</option>';
+    $f('#fp-sport').innerHTML = opts;
+    $f('#fp-usedsport').innerHTML = opts;
     drawSeasons();
     drawLists();
+    drawAnyPlayers();
   })();
 
   let typing;
@@ -5264,6 +5346,7 @@ async function fullPricePanel(){
   box.addEventListener('change', e => {
     if(e.target.id === 'fp-sport'){ drawSeasons(); $f('#fp-hits').innerHTML = ''; picked = null; }
     if(e.target.id === 'fp-season'){ $f('#fp-hits').innerHTML = ''; picked = null; $f('#fp-chosen').textContent = ''; }
+    if(e.target.id === 'fp-usedsport') drawAnyPlayers();
   });
 
   box.addEventListener('click', async e => {
@@ -5284,8 +5367,9 @@ async function fullPricePanel(){
       const used = usedRead();
       used[norm(u.dataset.fpused)] = nextSevenAm(Date.now());
       usedWrite(used);
+      usedName(u.dataset.fpused);
       drawLists();
-      return toast(`${u.dataset.fpused} hidden until 7am.`);
+      return toast(`${u.dataset.fpused} hidden until 7am Eastern.`);
     }
 
     if(e.target.closest('#fp-usedadd')){
@@ -5294,8 +5378,20 @@ async function fullPricePanel(){
       const used = usedRead();
       used[norm(name)] = nextSevenAm(Date.now());
       usedWrite(used);
+      usedName(name);
       drawLists();
-      return toast(`${name} hidden until 7am.`);
+      return toast(`${name} hidden until 7am Eastern.`);
+    }
+
+    if(e.target.closest('#fp-usedanyadd')){
+      const name = ($f('#fp-usedany') || {}).value;
+      if(!name) return toast('Pick a player first.');
+      const used = usedRead();
+      used[norm(name)] = nextSevenAm(Date.now());
+      usedWrite(used);
+      usedName(name);
+      drawLists();
+      return toast(`${name} hidden until 7am Eastern.`);
     }
 
     const un = e.target.closest('[data-fpunuse]');
@@ -5353,12 +5449,8 @@ async function fullPricePanel(){
     if(e.target.closest('#fp-go')){
       if(!picked) return toast('Pick the player from the list first.');
       const link = $f('#fp-link').value.trim();
-      // Real's share link and the id that shows up inside a comment URL are not
-      // always the same string, so this checks the shape - a Real link with a
-      // comment id on the end - rather than insisting on one exact prefix and
-      // turning away comments that are perfectly real.
-      if(!/^https:\/\/(www\.)?realapp\.com\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+/.test(link)){
-        return toast('Paste the link to your comment under the full price post.');
+      if(!link.startsWith(FULL_POST_PREFIX) || link.length <= FULL_POST_PREFIX.length){
+        return toast('That is not a comment under the full price post. Open your comment and copy its link.');
       }
       const btn = $f('#fp-go');
       const base = { user: me.toLowerCase(), sport: $f('#fp-sport').value,
