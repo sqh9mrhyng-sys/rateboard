@@ -415,6 +415,7 @@
       <button class="linkbtn hide" id="open-preview">View as member</button>
       <button class="linkbtn" id="open-full">Full price</button>
       <button class="linkbtn" id="open-report">Report a user</button>
+      <button class="linkbtn" id="open-feature">Request a feature</button>
       <button class="linkbtn hide" id="open-copy">Copy list</button>
       <button class="linkbtn hide" id="open-cbb">Game data</button>
       <button class="linkbtn hide" id="open-min">Lists</button>
@@ -2197,24 +2198,41 @@ $('#b-rate').addEventListener('change', () => {
 const BOARD_TO_DATA = { CFB:'ncaaf', FC:'soccer', NFL:'nfl', NHL:'nhl' };
 const DATA_SEASON = { ncaaf:2026, soccer:2026, nfl:2026, nhl:2026 };
 
-const statCache = new Map();        // data sport -> Map(normalised name -> {rax, owners})
+// Everything collected here is thrown away after an hour, so a board left open
+// all day still picks up the overnight scans instead of showing yesterday's
+// owner counts until someone reloads.
+const STAT_TTL_MS = 60 * 60 * 1000;
+
+const statCache = new Map();        // data sport -> { at, map:Map(name -> {rax, owners}) }
 const statLoading = new Map();
-const statMiss = new Map();         // one-off lookups, including the ones that found nothing
+const statQuery = new Map();        // data sport|typed text -> when it was asked
+
+// The top list only ever held 500 names, which covers the NFL and not much of
+// college football's 7,600. Anything it misses is filled in by the per-query
+// lookup below, so the list is just the part that costs nothing to have ready.
+function statMap(ds, make){
+  const hit = statCache.get(ds);
+  if(hit && Date.now() - hit.at < STAT_TTL_MS) return hit.map;
+  if(hit) statCache.delete(ds);
+  if(!make) return null;
+  const m = new Map();
+  statCache.set(ds, { at: Date.now(), map: m });
+  return m;
+}
 
 function loadStats(dataSport){
-  if(statCache.has(dataSport)) return Promise.resolve(statCache.get(dataSport));
+  const have = statMap(dataSport);
+  if(have) return Promise.resolve(have);
   if(statLoading.has(dataSport)) return statLoading.get(dataSport);
   const se = DATA_SEASON[dataSport];
   const url = `/api/rax?gamelog=query&mode=players&sport=${dataSport}&season=${se}`
     + `&seasons=${dataSport}:${se}&sort=rax&dir=desc&limit=500`;
   const job = fetch(url).then(r => r.json()).then(d => {
-    const m = new Map();
+    const m = statMap(dataSport, true);
     for(const r of (d.rows || [])) m.set(norm(r.player), { rax: r.rax, owners: r.owners });
-    statCache.set(dataSport, m);
     return m;
-  }).catch(() => {
-    const m = new Map(); statCache.set(dataSport, m); return m;
-  }).finally(() => statLoading.delete(dataSport));
+  }).catch(() => statMap(dataSport, true))
+    .finally(() => statLoading.delete(dataSport));
   statLoading.set(dataSport, job);
   return job;
 }
@@ -2222,29 +2240,34 @@ function loadStats(dataSport){
 function statsFor(name){
   const ds = BOARD_TO_DATA[sport];
   if(!ds) return null;
-  const top = statCache.get(ds);
-  const key = ds + '|' + norm(name);
-  return (top && top.get(norm(name))) || statMiss.get(key) || null;
+  const top = statMap(ds);
+  return (top && top.get(norm(name))) || null;
 }
 
-// For a player outside the top list — one request, remembered either way so a
-// name that genuinely has no data is not asked for twice.
-async function lookupStats(name){
+// One request for whatever is being typed, not one per name on the dropdown.
+// The server already matches on a fragment, so a single call covers every
+// suggestion on screen and the chip under the field at the same time.
+async function lookupMany(text){
   const ds = BOARD_TO_DATA[sport];
-  if(!ds || !name) return null;
-  await loadStats(ds);
-  const key = ds + '|' + norm(name);
-  const have = statsFor(name);
-  if(have || statMiss.has(key)) return have;
+  const q = String(text || '').trim();
+  if(!ds || q.length < 2) return;
+  const key = ds + '|' + norm(q);
+  const asked = statQuery.get(key);
+  if(asked && Date.now() - asked < STAT_TTL_MS) return;
   const se = DATA_SEASON[ds];
   try {
     const d = await (await fetch(`/api/rax?gamelog=query&mode=players&sport=${ds}&season=${se}`
-      + `&seasons=${ds}:${se}&q=${encodeURIComponent(name)}&sort=rax&dir=desc&limit=5`)).json();
-    const hit = (d.rows || []).find(r => norm(r.player) === norm(name));
-    const val = hit ? { rax: hit.rax, owners: hit.owners } : null;
-    statMiss.set(key, val);
-    return val;
-  } catch(e){ return null; }
+      + `&seasons=${ds}:${se}&q=${encodeURIComponent(q)}&sort=rax&dir=desc&limit=40`)).json();
+    const m = statMap(ds, true);
+    for(const r of (d.rows || [])) m.set(norm(r.player), { rax: r.rax, owners: r.owners });
+    statQuery.set(key, Date.now());
+  } catch(e){}
+}
+
+// Kept for the single-name path; it is lookupMany with the name as the query.
+async function lookupStats(name){
+  await lookupMany(name);
+  return statsFor(name);
 }
 
 function statChips(name){
@@ -2273,7 +2296,8 @@ function applyFighterCard(){
 
   // Every other sport gets its rax and owner count from the collected data.
   el.innerHTML = statChips(player);
-  lookupStats(player).then(() => {
+  const ds = BOARD_TO_DATA[sport];
+  if(ds) loadStats(ds).then(() => lookupMany(player)).then(() => {
     if($('#b-player').value.trim() === player) el.innerHTML = statChips(player);
   });
 }
@@ -2376,7 +2400,7 @@ function renderSuggest(items, note){
 
 async function runSuggest(q){
   if(q.length < 2){ closeSuggest(); return; }
-  if(BOARD_TO_DATA[sport]) await loadStats(BOARD_TO_DATA[sport]);
+  if(BOARD_TO_DATA[sport]){ await loadStats(BOARD_TO_DATA[sport]); await lookupMany(q); }
   try{
     const r = await fetch(`/api/players?sport=${encodeURIComponent(sport)}&q=${encodeURIComponent(q)}`);
     const data = await r.json();
@@ -2803,9 +2827,40 @@ async function showTopUfc(){
   draw();
 }
 
-function showTopPlayers(){
+// The ranked list for a sport, taken from this season's collected games rather
+// than a list typed in by hand: rax earned and owner count, straight from the
+// same data the game screen reads. Held for an hour, then pulled again.
+const topLiveCache = new Map();     // board sport -> { at, rows }
+const TOP_LIVE_LIMIT = 400;
+
+async function topLive(bs){
+  const ds = BOARD_TO_DATA[bs];
+  if(!ds) return null;
+  const hit = topLiveCache.get(bs);
+  if(hit && Date.now() - hit.at < STAT_TTL_MS) return hit.rows;
+  const se = DATA_SEASON[ds];
+  try {
+    const d = await (await fetch(`/api/rax?gamelog=query&mode=players&sport=${ds}&season=${se}`
+      + `&seasons=${ds}:${se}&sort=rax&dir=desc&limit=${TOP_LIVE_LIMIT}`)).json();
+    const rows = (d.rows || [])
+      .filter(r => r.player)
+      .map(r => ({ name: r.player, team: r.team || '', rax: r.rax, owners: r.owners,
+                   games: r.games }));
+    if(!rows.length) return null;
+    topLiveCache.set(bs, { at: Date.now(), rows });
+    // The same pull feeds the chips on the buy form, so it is not wasted.
+    const m = statMap(ds, true);
+    for(const r of rows) m.set(norm(r.name), { rax: r.rax, owners: r.owners });
+    return rows;
+  } catch(e){ return null; }
+}
+
+async function showTopPlayers(){
   if(sport === 'UFC') return showTopUfc();
-  const list = TOP_PLAYERS[sport];
+  // Live season data first; the hand-typed card-value list is the fallback for
+  // a sport with nothing collected yet.
+  const liveTop = await topLive(sport);
+  const list = liveTop || TOP_PLAYERS[sport];
   if(!list || !list.length){
     modal(`Top ${SPORTS[sport]} players`,
       `<p class="tp-empty">No top players list for ${esc(SPORTS[sport])} yet.</p>`);
@@ -2839,6 +2894,9 @@ function showTopPlayers(){
     return {
       rank: i + 1,
       name: p.name,
+      team: p.team || '',
+      rax: p.rax,
+      owners: p.owners,
       value: p.value,
       key: k,
       buyers: buyers.map(o => ({
@@ -2852,6 +2910,9 @@ function showTopPlayers(){
   const taken = rows.filter(r => r.buyers.length).length;
 
   const box = modal(`Top ${SPORTS[sport]} players`, `
+    <p class="note">${liveTop
+      ? `Ranked by rax earned this season, from the collected game data.`
+      : `From the saved card-value list — no game data collected for this sport yet.`}</p>
     <div class="tp-tools">
       <input id="tp-q" class="field" autocomplete="off" spellcheck="false" placeholder="Search a player">
       <div class="seg" role="group" aria-label="Filter">
@@ -2880,7 +2941,10 @@ function showTopPlayers(){
       <div class="tp-row">
         <span class="tp-rank">${r.rank}</span>
         <span class="tp-name ${r.buyers.length ? 'tp-taken' : 'tp-open'}">${esc(r.name)}</span>
-        <span class="tp-val">${r.value.toLocaleString()}</span>
+        <span class="tp-val">${r.rax != null
+          ? `${Number(r.rax).toLocaleString()} rax${r.owners != null
+              ? ` &middot; ${Number(r.owners).toLocaleString()} owners` : ''}`
+          : (r.value != null ? Number(r.value).toLocaleString() : '')}</span>
         ${r.buyers.length ? `<div class="tp-buyers">${r.buyers.map(b =>
           `<b>${b.rate}/1</b> ${esc(b.who)}`).join(' &nbsp;·&nbsp; ')}</div>` : ''}
       </div>`).join('')
@@ -2907,7 +2971,7 @@ document.addEventListener('click', e => {
 
 $('#b-top').addEventListener('click', async () => {
   await pull();
-  showTopPlayers();
+  await showTopPlayers();
 });
 
 function editRate(id){
@@ -3402,6 +3466,54 @@ function showQuicksells(list){
    Reports + admin
    ========================================================= */
 $('#open-report').addEventListener('click', ()=>reportUser(''));
+
+/* =========================================================
+   Feature requests
+   ---------------------------------------------------------
+   Anyone signed in can ask for something. They go to the database rather than
+   into the board blob, so two people asking at once can't overwrite each
+   other, and they show up on the admin screen to be worked through.
+   ========================================================= */
+const FEATURE_KINDS = [
+  ['feature', 'Something new'],
+  ['change',  'Change how something works'],
+  ['data',    'Missing or wrong data'],
+  ['bug',     'Something is broken']
+];
+
+function featureForm(){
+  if(!me) return toast('Sign in first so I know who asked.');
+  const box = modal('Request a feature', `
+    <p class="note">Tell me what you want and why. I read every one of these.</p>
+    <div><label for="fr-kind">What kind</label>
+      <select id="fr-kind" class="field">${FEATURE_KINDS.map(([k, l]) =>
+        `<option value="${k}">${esc(l)}</option>`).join('')}</select></div>
+    <div><label for="fr-title">In one line</label>
+      <input id="fr-title" class="field" maxlength="120" autocomplete="off"
+             placeholder="e.g. let me sort the board by owners"></div>
+    <div><label for="fr-detail">Any detail (optional)</label>
+      <textarea id="fr-detail" class="field" rows="4" maxlength="1000"
+                placeholder="What you're trying to do, and what gets in the way."></textarea></div>
+    <button class="btn" id="fr-send">Send it</button>`);
+
+  const send = box.querySelector('#fr-send');
+  send.addEventListener('click', async () => {
+    const title = box.querySelector('#fr-title').value.trim();
+    if(title.length < 4) return toast('Give it a line I can read at a glance.');
+    send.disabled = true;
+    const ok = await patch('featureRequest', {
+      by: me,
+      kind: box.querySelector('#fr-kind').value,
+      title,
+      detail: box.querySelector('#fr-detail').value.trim()
+    });
+    send.disabled = false;
+    if(ok){ box.remove(); toast('Sent — thanks. I will take a look.'); }
+  });
+  box.querySelector('#fr-title').focus();
+}
+
+$('#open-feature').addEventListener('click', featureForm);
 
 function reportUser(target){
   const box = modal('Report a user', `
@@ -4084,24 +4196,13 @@ async function cbbPanel(){
       + `${esc(label)}${st.sort === k ? (st.dir === 'desc' ? ' ↓' : ' ↑') : ''}</th>`).join('') + '</tr>';
   }
 
-  async function load(){
-    if(!st.pairs.length){
-      $b('#cb-count').textContent = 'Pick at least one season.';
-      $b('#cb-body').innerHTML = ''; $b('#cb-head').innerHTML = '';
-      return;
-    }
-    $b('#cb-count').textContent = 'Loading…';
-    let d;
-    try { d = await (await fetch(qs())).json(); }
-    catch(e){ $b('#cb-count').textContent = 'Could not reach the server.'; return; }
-    if(d.error){ $b('#cb-count').textContent = d.error; $b('#cb-body').innerHTML = ''; return; }
-
-    drawHead(); drawKey();
-    const rows = d.rows || [];
-    $b('#cb-body').innerHTML = rows.length ? rows.map((r, i) =>
-      `<tr class="${st.mode === 'players' ? 'clickable' : ''}" data-pn="${esc(r.player || '')}">`
+  // One row's cells. The column list is worked out once per table and handed
+  // in, because building it per row meant rebuilding the whole stat set a
+  // hundred times for a single page.
+  function rowHtml(r, i, cs){
+    return `<tr class="${st.mode === 'players' ? 'clickable' : ''}" data-pn="${esc(r.player || '')}">`
       + `<td class="l dim">${(st.offset + i + 1).toLocaleString()}</td>`
-      + cols().map(([k,,align]) => {
+      + cs.map(([k,,align]) => {
           let v = r[k];
           if(k === 'day' && v) v = String(v).slice(5);
           if(k === 'rating' && v != null && v !== '') v = Number(v).toFixed(2);
@@ -4111,8 +4212,58 @@ async function cbbPanel(){
             v = (Number(v) > 0 ? '+' : '') + Number(v).toLocaleString();
           if(v == null || v === '') v = '<span class="dim">—</span>';
           return `<td class="${align === 'l' ? 'l' : ''}">${typeof v === 'string' && v.startsWith('<') ? v : esc(String(v))}</td>`;
-        }).join('') + '</tr>').join('')
-      : `<tr><td class="l" colspan="${cols().length + 1}">Nothing matches those filters.</td></tr>`;
+        }).join('') + '</tr>';
+  }
+
+  // Changing a setting used to fire a query and then sit on the old one until
+  // it came back, so flicking through seasons stacked up several heavy
+  // requests and painted them in whatever order they finished. Each load now
+  // cancels the one before it and only the newest is allowed to draw.
+  let loadSeq = 0, loadAbort = null, paintTimer = 0;
+  const RENDER_CHUNK = 20;
+
+  async function load(){
+    if(!st.pairs.length){
+      $b('#cb-count').textContent = 'Pick at least one season.';
+      $b('#cb-body').innerHTML = ''; $b('#cb-head').innerHTML = '';
+      return;
+    }
+    const seq = ++loadSeq;
+    if(loadAbort) loadAbort.abort();
+    loadAbort = new AbortController();
+    if(paintTimer){ cancelAnimationFrame(paintTimer); paintTimer = 0; }
+    $b('#cb-count').textContent = 'Loading…';
+    let d;
+    try { d = await (await fetch(qs(), { signal: loadAbort.signal })).json(); }
+    catch(e){
+      if(e && e.name === 'AbortError') return;      // a newer setting took over
+      if(seq === loadSeq) $b('#cb-count').textContent = 'Could not reach the server.';
+      return;
+    }
+    if(seq !== loadSeq) return;
+    if(d.error){ $b('#cb-count').textContent = d.error; $b('#cb-body').innerHTML = ''; return; }
+
+    drawHead(); drawKey();
+    const rows = d.rows || [];
+    const cs = cols();
+    const body = $b('#cb-body');
+    body.innerHTML = '';
+    if(!rows.length){
+      body.innerHTML = `<tr><td class="l" colspan="${cs.length + 1}">Nothing matches those filters.</td></tr>`;
+    } else {
+      // Painted in slices, so a full page of rows never blocks the tab long
+      // enough for the browser to offer to kill it.
+      let i = 0;
+      const step = () => {
+        if(seq !== loadSeq) return;
+        const slice = [];
+        for(const end = Math.min(i + RENDER_CHUNK, rows.length); i < end; i++)
+          slice.push(rowHtml(rows[i], i, cs));
+        body.insertAdjacentHTML('beforeend', slice.join(''));
+        paintTimer = i < rows.length ? requestAnimationFrame(step) : 0;
+      };
+      step();
+    }
 
     const total = d.total == null ? rows.length : d.total;
     $b('#cb-count').textContent = st.mode === 'players'
@@ -5749,6 +5900,10 @@ async function adminPanel(){
       <summary><span>Data reports</span><span class="count" id="ad-data-count">…</span></summary>
       <div id="ad-data-list"><p class="nohit">Loading…</p></div>
     </details>
+    <details class="ad-drop" id="ad-feat">
+      <summary><span>Feature requests</span><span class="count" id="ad-feat-count">…</span></summary>
+      <div id="ad-feat-list"><p class="nohit">Loading…</p></div>
+    </details>
     <p class="note" id="ad-backup">Checking backups…</p>
     <h3 style="margin:0;font-size:14px;font-weight:600">Listings</h3>
     <div class="statrow">
@@ -5844,6 +5999,51 @@ async function adminPanel(){
       dataReports = d.reports || [];
     }catch(e){ dataReports = []; }
     drawDataReports();
+  })();
+
+  // ---- feature requests: what members have asked for. Marking one done or
+  // dismissing it redraws this list only, so the panel never jumps back to
+  // the top or loses whatever else is open.
+  const kindLabel = k => (FEATURE_KINDS.find(x => x[0] === k) || [k, k || 'request'])[1];
+  let featReqs = [];
+  const drawFeatures = () => {
+    const list = box.querySelector('#ad-feat-list'), cnt = box.querySelector('#ad-feat-count');
+    if(!list || !cnt) return;
+    cnt.textContent = `${featReqs.length} open`;
+    cnt.classList.toggle('hot', featReqs.length > 0);
+    list.innerHTML = featReqs.length ? featReqs.map(r => `
+      <div class="hit rep-card">
+        <div class="rep-top">
+          <span><span class="player">${esc(r.title)}</span>
+            <span class="who">${esc(kindLabel(r.kind))}</span><br>
+            <span class="who">from ${esc(r.by_user)}, ${new Date(r.ts).toLocaleDateString()}</span>
+            ${r.detail ? `<br><span class="who">"${esc(r.detail)}"</span>` : ''}</span>
+          <span class="rowacts">
+            <button class="btn-ghost" data-fdone="${esc(r.id)}">Mark done</button>
+            <button class="btn-ghost" data-fdis="${esc(r.id)}">Dismiss</button>
+          </span>
+        </div>
+      </div>`).join('') : '<p class="nohit">No open feature requests.</p>';
+  };
+  const dropFeature = async (id, status) => {
+    const ok = await patch('resolveFeature', { id, status });
+    if(!ok) return;
+    featReqs = featReqs.filter(x => x.id !== id);
+    drawFeatures();
+    toast(status === 'done' ? 'Marked done.' : 'Dismissed.');
+  };
+  box.addEventListener('click', e => {
+    const done = e.target.closest('[data-fdone]');
+    if(done) return dropFeature(done.dataset.fdone, 'done');
+    const dis = e.target.closest('[data-fdis]');
+    if(dis) return dropFeature(dis.dataset.fdis, 'declined');
+  });
+  (async () => {
+    try{
+      const d = await (await fetch('/api/kv?features=1')).json();
+      featReqs = d.requests || [];
+    }catch(e){ featReqs = []; }
+    drawFeatures();
   })();
   box.addEventListener('click', async e => {
     const fx = e.target.closest('[data-dfix]'), ds = e.target.closest('[data-ddis]');
