@@ -1674,10 +1674,10 @@ export async function onRequestGet({ request, env }) {
       if (P('playedOnly') === '1') where.push('played = 1');
       const W = where.join(' AND ');
 
-      const PLAYER_SORTS = ['rax','raxPerGame','rating','ratingPerGame','games','player','team',
+      const PLAYER_SORTS = ['sport','rax','raxPerGame','rating','ratingPerGame','games','player','team',
                             'min','pts','reb','ast','stl','blk','tov','fantasyPts','bestRax',
                             'owners','ownersChange','season','conference'];
-      const GAME_SORTS = ['day','player','team','opponent','rax','rating','min','pts','reb','ast',
+      const GAME_SORTS = ['day','sport','player','team','opponent','rax','rating','min','pts','reb','ast',
                           'stl','blk','tov','pf','plusMinus','tsPct','fantasyPts','comments'];
       const allowed = mode === 'players' ? PLAYER_SORTS : GAME_SORTS;
       let sort = P('sort');
@@ -1690,10 +1690,10 @@ export async function onRequestGet({ request, env }) {
       const offset = asCsv ? 0 : Math.max(0, parseInt(P('offset') || '0', 10) || 0);
       const minGames = Math.max(0, parseInt(P('minGames') || '0', 10) || 0);
 
-      const PLAYER_COLS = ['playerId','player','team','conference','season','games','rax','raxPerGame',
+      const PLAYER_COLS = ['playerId','sport','player','team','conference','season','games','rax','raxPerGame',
                            'bestRax','owners','ownersChange','rating','ratingPerGame','min','pts','reb',
                            'ast','stl','blk','tov','fantasyPts'];
-      const GAME_COLS = ['day','player','team','conference','opponent','homeAway','result','teamScore','oppScore',
+      const GAME_COLS = ['day','sport','player','team','conference','opponent','homeAway','result','teamScore','oppScore',
                          'seasonType','rax','rating','min','pts','reb','ast','stl','blk','tov','pf',
                          'plusMinus','fg','fg3','ft','tsPct','fantasyPts','comments','playerId'];
 
