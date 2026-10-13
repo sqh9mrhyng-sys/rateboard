@@ -26,6 +26,7 @@ const SPORT_CONFIG = {
   FC:  { rs: 'soccer', season: '2026', entity: 'player' },
   CFB: { rs: 'ncaaf',  season: '2026', entity: 'player' },
   NFL: { rs: 'nfl',    season: '2026', entity: 'player' },
+  NHL: { rs: 'nhl',    season: '2026', entity: 'player' },
   UFC: { rs: 'ufc',    season: '2023', entity: 'team'   },
 };
 const PAGE_SIZE   = 20;
