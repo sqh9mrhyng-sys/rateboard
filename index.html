@@ -6503,18 +6503,18 @@ async function adminPanel(){
 
 /* =========================================================
    RS collection lookup — pulls cards directly from Real Sports
-   by username. Only available for FC (the only RS sport here).
+   by username. Every board sport except the ones with no RS
+   collection endpoint set up; RS_LOOKUP_SPORTS is the list.
    Results feed straight into showMatches() so the UX is identical
    to the screenshot path.
    ========================================================= */
-function rsLookupVisible(){ return sport === 'FC' || sport === 'CFB' || sport === 'NFL' || sport === 'UFC'; }
+const RS_LOOKUP_SPORTS = ['FC', 'CFB', 'NFL', 'NHL', 'UFC'];
+function rsLookupVisible(){ return RS_LOOKUP_SPORTS.includes(sport); }
 
 function updateRsLookupVisibility(){
   const wrap = $('#rs-lookup-wrap');
   const none = $('#rs-none');
-  if(none) none.textContent = sport === 'NHL'
-    ? 'Will add after gens drop.'
-    : "Card pull isn't set up for this sport yet.";
+  if(none) none.textContent = "Card pull isn't set up for this sport yet.";
   if(none) none.classList.toggle('hide', rsLookupVisible());
   updateFreshnessNote();
   if(rsLookupVisible()){
