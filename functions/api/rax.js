@@ -557,7 +557,16 @@ export async function onRequestGet({ request, env }) {
     stats:      'stats?season=SEASON',
     seasonstats:'seasonstats?season=SEASON',
     owners:     'owners?season=SEASON',
-    holders:    'holders?season=SEASON'
+    holders:    'holders?season=SEASON',
+    // Hunting for the play by play behind the Plays tab on a player profile,
+    // where every reception, rush and sack carries its own rating. The feed
+    // already takes a view, so these are the same call with the view swapped,
+    // plus two guesses at a dedicated route. Fixed shapes, same as the rest.
+    playsview:  'seasonfeed?limit=10&season=SEASON&view=plays&viewFrame=default',
+    playsframe: 'seasonfeed?limit=10&season=SEASON&view=recent&viewFrame=plays',
+    topview:    'seasonfeed?limit=10&season=SEASON&view=top&viewFrame=default',
+    plays:      'plays?season=SEASON',
+    playfeed:   'playfeed?limit=10&season=SEASON'
   };
   const probeSub = url.searchParams.get('probeSub');
   if (probeSub && probePlayer && /^\d+$/.test(probePlayer)) {
