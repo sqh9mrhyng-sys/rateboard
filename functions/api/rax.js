@@ -561,8 +561,8 @@ export async function onRequestGet({ request, env }) {
       at = Number(a0) || 0;
       if (s0 && !Number.isNaN(Date.parse(s0))) stamp = s0;
     } catch (e) {}
-    if (!stamp || !at) stamp = new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString();
-    let seen = 0, pages = 0, done = false;
+    if (!stamp || !at) stamp = new Date().toISOString();
+    let seen = 0, pages = 0, fresh = 0, done = false;
     for (let i = 0; i < MARKET_PAGES; i++) {
       const u = `https://web.realapp.com/cardmarketplacelistings`
         + `?beforeEndsAt=${encodeURIComponent(stamp)}&cohort=all&listingType=${type}`
@@ -600,11 +600,26 @@ export async function onRequestGet({ request, env }) {
           Array.isArray(r.linkedCardIds) ? r.linkedCardIds.length : 1,
           r.endsAt || null, now));
       }
+      let before = 0;
+      try {
+        const h = await db.prepare(
+          `SELECT COUNT(*) AS n FROM market WHERE sport=? AND season=? AND listingType=?`
+        ).bind(sport, Number(season), type).first();
+        before = Number((h && h.n) || 0);
+      } catch (e) {}
       if (batch.length) {
         try { await db.batch(batch); seen += batch.length; } catch (e) {}
       }
+      let after = before;
+      try {
+        const h = await db.prepare(
+          `SELECT COUNT(*) AS n FROM market WHERE sport=? AND season=? AND listingType=?`
+        ).bind(sport, Number(season), type).first();
+        after = Number((h && h.n) || 0);
+      } catch (e) {}
+      fresh += after - before;
       at += rows.length;
-      if (rows.length < 10 || at >= 20000) { done = true; break; }
+      if (rows.length < 10 || after === before || at >= 20000) { done = true; break; }
       await sleep(60);
     }
     if (done) at = 0;                              // round the loop again next time
@@ -626,7 +641,7 @@ export async function onRequestGet({ request, env }) {
       ).bind(sport, Number(season), type).first();
       held = Number((h && h.n) || 0);
     } catch (e) {}
-    return json({ sport, season, listingType: type, pages, fetched: seen, held,
+    return json({ sport, season, listingType: type, pages, fetched: seen, fresh, held,
                   nextOffset: at, lap: done, dropped });
   }
 
