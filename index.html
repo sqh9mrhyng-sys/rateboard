@@ -503,6 +503,11 @@
         <div id="pane-sell" class="panel hide">
           <div class="panel-hd"><h2>Scan your stats</h2></div>
           <div class="panel-bd stack">
+            <div>
+              <label for="ot-seg" style="display:block">Offer time</label>
+              <div class="seg" id="ot-seg" role="group" aria-label="Offer time"></div>
+              <p class="note" id="ot-note" style="margin-top:6px"></p>
+            </div>
             <div id="rs-lookup-wrap" class="hide">
               <button id="rs-go" class="btn">Pull my cards from Real</button>
               <div id="rs-msg" class="note hide" style="margin-top:6px"></div>
@@ -3165,6 +3170,51 @@ If you cannot read any rows, return {"players":[]}.` });
   }
 });
 
+/* =========================================================
+   Offer time
+   ---------------------------------------------------------
+   How long the seller is giving the buyer to send. Picked once and remembered
+   on this device, then tacked onto every message copied off this screen, so it
+   never has to be typed by hand. "None" leaves messages exactly as they were.
+   ========================================================= */
+const OFFER_TIME_KEY = 'ratebrd_offer_time';
+const OFFER_TIMES = [['', 'None'], ['1hr', '1hr'], ['4hr', '4hr'], ['12hr', '12hr'], ['24hr', '24hr']];
+let offerTime = '';
+try { offerTime = localStorage.getItem(OFFER_TIME_KEY) || ''; } catch(e){ offerTime = ''; }
+if(!OFFER_TIMES.some(t => t[0] === offerTime)) offerTime = '';
+
+const offerSuffix = () => offerTime ? `send ${offerTime}` : '';
+
+// A message with several cards already runs over several lines, so the note
+// goes on its own line there and stays inline on a one-card message.
+function withOfferTime(text){
+  const suffix = offerSuffix();
+  if(!suffix || !text) return text;
+  return text + (text.includes('\n') ? '\n' : ' ') + suffix;
+}
+
+function drawOfferTime(){
+  const seg = $('#ot-seg'), note = $('#ot-note');
+  if(!seg) return;
+  seg.innerHTML = OFFER_TIMES.map(([v, label]) =>
+    `<button type="button" data-ot="${v}" aria-pressed="${v === offerTime}">${label}</button>`).join('');
+  if(note) note.textContent = offerTime
+    ? `Every message you copy ends with "send ${offerTime}".`
+    : 'Messages are copied as they are. Pick a time to add it to every one.';
+}
+
+document.addEventListener('click', e => {
+  const b = e.target.closest('#ot-seg [data-ot]');
+  if(!b) return;
+  offerTime = b.dataset.ot;
+  try { localStorage.setItem(OFFER_TIME_KEY, offerTime); } catch(err){}
+  drawOfferTime();
+  // Anything already showing a preview redraws itself so what is on screen
+  // matches what the copy button will put on the clipboard.
+  document.dispatchEvent(new CustomEvent('offertime'));
+});
+drawOfferTime();
+
 async function copyText(text){
   try{
     await navigator.clipboard.writeText(text);
@@ -3334,7 +3384,7 @@ async function showMatches(raw){
       const lines = e.cards.filter(c => c.owed != null).map(c => `i have ${c.value} ${c.player} ${c.owed}`);
       if(!lines.length) return toast('No ratings read for these cards.');
       const text = lines.join('\n') + (lines.length > 1 ? `\ntotal ${e.total.toLocaleString()}` : '');
-      const ok = await copyText(text);
+      const ok = await copyText(withOfferTime(text));
       toast(ok ? `Message for ${e.who} copied` : 'Could not copy — select the text and copy it manually');
     }));
   };
@@ -3418,13 +3468,17 @@ async function showMatches(raw){
         ${msg ? `<button class="btn-ghost" id="hs-copy">Copy message</button>` : ''}
         <a class="btn-ghost" href="${esc(HOUSE.link)}" target="_blank" rel="noopener">Message ${esc(HOUSE.buyer)}</a>
       </div>
-      ${msg ? `<div class="note" style="margin-top:6px;white-space:pre-wrap">${esc(msg)}</div>` : ''}
+      ${msg ? `<div class="note" id="hs-msg" style="margin-top:6px;white-space:pre-wrap">${esc(withOfferTime(msg))}</div>` : ''}
     </div>`;
     box.querySelector('.panel-bd').appendChild(bar);
     const cp = bar.querySelector('#hs-copy');
     if(cp) cp.addEventListener('click', async () => {
-      const ok = await copyText(msg);
+      const ok = await copyText(withOfferTime(msg));
       toast(ok ? 'Message copied' : 'Could not copy — select the text and copy it manually');
+    });
+    document.addEventListener('offertime', () => {
+      const el = bar.querySelector('#hs-msg');
+      if(el) el.textContent = withOfferTime(msg);
     });
   }
 
@@ -3449,13 +3503,18 @@ async function showMatches(raw){
       return null;
     }
     const owed = Math.round(bv * rows[i].buyers[j].rate / 10) * 10;
-    const text = `i have ${bv} ${rows[i].player} ${owed}`;
+    const text = withOfferTime(`i have ${bv} ${rows[i].player} ${owed}`);
     msgEl.textContent = text;
     copyBtn.disabled = false;
     return text;
   };
 
-  rows.forEach((h,i) => h.buyers.forEach((_,j) => msgFor(i,j)));
+  const redrawMsgs = () => rows.forEach((h,i) => h.buyers.forEach((_,j) => msgFor(i,j)));
+  redrawMsgs();
+  // Stops firing once this panel has been closed.
+  document.addEventListener('offertime', () => {
+    if(document.body.contains(box)) redrawMsgs();
+  });
 
   box.addEventListener('click', async e => {
     const cp = e.target.closest('[data-copy]');
