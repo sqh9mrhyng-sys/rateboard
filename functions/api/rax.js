@@ -514,6 +514,13 @@ async function marketReady(db) {
 const CLOSING_WINDOW_MS = 12 * 60 * 1000;
 const CLOSING_EVERY_MS  = 10 * 60 * 1000;
 const CLOSING_KEY = 'market_closing_v1';
+// Off unless switched on. The sweep competes with the game log queue for the
+// tick and makes requests to Real nobody is reading, so it stays dark until
+// someone asks for it: /api/rax?market=watch&on=1
+const WATCH_KEY = 'market_watch_v1';
+async function marketWatchOn(env) {
+  try { return (await env.RATEBOARD_KV.get(WATCH_KEY)) === 'on'; } catch (e) { return false; }
+}
 const VANISHED_MS = 15 * 60 * 1000;
 
 function marketRow(r) {
@@ -746,6 +753,14 @@ export async function onRequestGet({ request, env }) {
     } catch (e) {}
     return json({ sport, season, listingType: type, pages, fetched: seen, fresh, held,
                   newRows: at, cursor: done ? null : cursor, lap: done, dropped, retired });
+  }
+
+  if (url.searchParams.get('market') === 'watch') {
+    const on = url.searchParams.get('on');
+    if (on === '1' || on === '0') {
+      try { await env.RATEBOARD_KV.put(WATCH_KEY, on === '1' ? 'on' : 'off'); } catch (e) {}
+    }
+    return json({ watching: await marketWatchOn(env) });
   }
 
   if (url.searchParams.get('market') === 'closing') {
@@ -1145,7 +1160,7 @@ export async function onRequestGet({ request, env }) {
     // every ten minutes the ones about to finish are read one last time and
     // the ones already gone are settled. It rides the existing tick rather
     // than needing its own schedule.
-    if (url.searchParams.get('queue') === 'next' && db) {
+    if (url.searchParams.get('queue') === 'next' && db && await marketWatchOn(env)) {
       let last = 0;
       try { last = Number(await env.RATEBOARD_KV.get(CLOSING_KEY)) || 0; } catch (e) {}
       if (Date.now() - last > CLOSING_EVERY_MS) {
