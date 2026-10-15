@@ -415,6 +415,7 @@
       <button class="linkbtn hide" id="open-preview">View as member</button>
       <button class="linkbtn" id="open-full">Full price</button>
       <button class="linkbtn" id="open-report">Report a user</button>
+      <button class="linkbtn" id="open-bell">Alerts</button>
       <button class="linkbtn" id="open-feature">Request a feature</button>
       <button class="linkbtn hide" id="open-copy">Copy list</button>
       <button class="linkbtn hide" id="open-cbb">Game data</button>
@@ -2502,8 +2503,12 @@ $('#s-hide-board').addEventListener('click', () => {
 /* =========================================================
    Render
    ========================================================= */
+let openCounted = false;
 async function render(){
   await pull();
+  // One open a day per person; the server ignores the repeats.
+  if(me && !openCounted){ openCounted = true; track('open'); }
+  updateBell();
   const live = market.offers
     .filter(o => o.sport===sport && !market.users[o.user]?.banned)
     .sort((a,b) => b.rate - a.rate || a.ts - b.ts);
@@ -3215,7 +3220,17 @@ document.addEventListener('click', e => {
 });
 drawOfferTime();
 
+// Fire and forget. A counter that fails is not worth a message to anyone.
+function track(kind){
+  try {
+    fetch('/api/kv', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ op:'track', kind, by: kind === 'open' ? (me || '') : '' }) })
+      .catch(() => {});
+  } catch(e){}
+}
+
 async function copyText(text){
+  track('copy');
   try{
     await navigator.clipboard.writeText(text);
     return true;
@@ -3597,6 +3612,172 @@ function featureForm(){
 }
 
 $('#open-feature').addEventListener('click', featureForm);
+
+/* =========================================================
+   Alerts
+   ---------------------------------------------------------
+   Two things a member wants to know without hunting for them: somebody else
+   has posted on a player they are buying, and how their rate compares; and
+   that they have been reported, with what was said but not by whom.
+
+   Everything here is worked out from the board already in the browser, so
+   opening the bell costs nothing. "New" is anything since this device last
+   opened it.
+   ========================================================= */
+const SEEN_KEY = 'ratebrd_alerts_seen';
+const seenAt  = () => { try { return Number(localStorage.getItem(SEEN_KEY)) || 0; } catch(e){ return 0; } };
+const markSeen = () => { try { localStorage.setItem(SEEN_KEY, String(Date.now())); } catch(e){} };
+const meKey = () => String(me || '').toLowerCase();
+
+function etDayKey(ts){
+  const w = etWall(ts == null ? Date.now() : ts);
+  return `${w.y}-${String(w.m).padStart(2,'0')}-${String(w.d).padStart(2,'0')}`;
+}
+function etDayRange(key){
+  const [y, m, d] = String(key).split('-').map(Number);
+  const start = fromEtWall(y, m, d, 0, 0, 0);
+  const nd = new Date(Date.UTC(y, m - 1, d) + 86400000);
+  const end = fromEtWall(nd.getUTCFullYear(), nd.getUTCMonth() + 1, nd.getUTCDate(), 0, 0, 0);
+  return [start, end];
+}
+
+function alertItems(){
+  const out = { rivals: [], reports: [] };
+  if(!me) return out;
+  const k = meKey();
+  const live = (market.offers || []).filter(o => !(market.users[o.user] || {}).banned);
+  const mine = live.filter(o => String(o.user).toLowerCase() === k);
+  for(const my of mine){
+    for(const o of live){
+      if(String(o.user).toLowerCase() === k) continue;
+      if(o.sport !== my.sport || !samePlayer(o.player, my.player)) continue;
+      out.rivals.push({
+        ts: o.ts || 0, player: my.player, sport: o.sport,
+        who: (market.users[o.user] || {}).name || o.user,
+        theirs: o.rate, mine: my.rate, diff: o.rate - my.rate, link: o.link || ''
+      });
+    }
+  }
+  out.rivals.sort((a, b) => b.ts - a.ts);
+  // The reporter is deliberately not carried through.
+  out.reports = (market.reports || [])
+    .filter(r => String(r.target || '').toLowerCase() === k)
+    .map(r => ({ ts: r.ts || 0, reason: r.reason || '', status: r.status || 'open' }))
+    .sort((a, b) => b.ts - a.ts);
+  return out;
+}
+
+function unreadCount(){
+  if(!me) return 0;
+  const since = seenAt(), a = alertItems();
+  return a.rivals.filter(x => x.ts > since).length + a.reports.filter(x => x.ts > since).length;
+}
+
+function updateBell(){
+  const b = $('#open-bell');
+  if(!b) return;
+  b.classList.toggle('hide', !me);
+  const n = unreadCount();
+  b.textContent = n ? `Alerts (${n})` : 'Alerts';
+}
+
+// Yesterday's board activity. New users, listings, reports and requests all
+// carry their own timestamps; opens and copies come from the counters.
+async function digestFor(dayKey){
+  const [from, to] = etDayRange(dayKey);
+  const inDay = ts => Number(ts) >= from && Number(ts) < to;
+  const out = {
+    users:   Object.values(market.users || {}).filter(u => inDay(u.created)),
+    offers:  (market.offers || []).filter(o => inDay(o.ts)),
+    reports: (market.reports || []).filter(r => inDay(r.ts)),
+    counts:  { opens: 0, copies: 0 },
+    feats:   []
+  };
+  try { out.counts = await (await fetch('/api/kv?counts=' + encodeURIComponent(dayKey))).json(); }
+  catch(e){}
+  try {
+    const d = await (await fetch('/api/kv?features=1')).json();
+    out.feats = (d.requests || []).filter(f => inDay(f.ts));
+  } catch(e){}
+  return out;
+}
+
+async function alertsPanel(){
+  await pull();
+  const a = alertItems();
+  const since = seenAt();
+  const isNew = x => x.ts > since;
+  const when = ts => ts ? new Date(ts).toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }) : '';
+  const tag = x => isNew(x) ? '<span class="who" style="color:var(--accent)">new</span>' : '';
+
+  const rivals = a.rivals.length ? a.rivals.map(r => `
+    <div class="hit" style="grid-template-columns:1fr auto">
+      <span><span class="player">${esc(r.player)}</span> <span class="who">${esc(r.sport)}</span> ${tag(r)}<br>
+        <span class="who">${esc(r.who)} pays <b>${r.theirs}/1</b> — ${
+          r.diff > 0 ? `<b style="color:var(--bad)">${r.diff} more than you</b>`
+          : r.diff < 0 ? `${Math.abs(r.diff)} less than your ${r.mine}/1`
+          : `the same as you`}</span><br>
+        <span class="who">${when(r.ts)}</span></span>
+      ${r.link ? `<a class="btn-ghost" href="${esc(r.link)}" target="_blank" rel="noopener">Their comment</a>` : ''}
+    </div>`).join('') : '<p class="nohit">Nobody else is buying a player you have listed.</p>';
+
+  const reps = a.reports.length ? a.reports.map(r => `
+    <div class="hit" style="display:block">
+      <span class="player">Report against you</span> ${tag(r)}
+      <span class="who"> ${esc(r.status)}</span><br>
+      <span class="who">"${esc(r.reason)}" — ${when(r.ts)}</span>
+    </div>`).join('') : '<p class="nohit">No reports against you.</p>';
+
+  const box = modal('Alerts', `
+    <h3 style="margin:0;font-size:14px;font-weight:600">Same players as you (${a.rivals.length})</h3>
+    <div>${rivals}</div>
+    <h3 style="margin:18px 0 0;font-size:14px;font-weight:600">Reports (${a.reports.length})</h3>
+    <p class="note">What was said, without who said it.</p>
+    <div>${reps}</div>
+    ${isAdmin() ? `
+      <h3 style="margin:22px 0 0;font-size:14px;font-weight:600">Daily digest</h3>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-top:6px">
+        <div><label for="dg-day">Day</label><input id="dg-day" class="field" type="date"></div>
+        <button class="btn-ghost" id="dg-go" style="min-height:44px">Show</button>
+      </div>
+      <div id="dg-out"><p class="nohit">Loading…</p></div>` : ''}`);
+
+  markSeen(); updateBell();
+
+  if(!isAdmin()) return;
+  const dayInput = box.querySelector('#dg-day');
+  const yest = etDayKey(Date.now() - 86400000);
+  dayInput.value = yest;
+
+  const drawDigest = async (key) => {
+    const out = box.querySelector('#dg-out');
+    out.innerHTML = '<p class="nohit">Loading…</p>';
+    const d = await digestFor(key);
+    out.innerHTML = `
+      <div class="statrow" style="margin-top:10px">
+        <div class="stat"><b class="num">${d.counts.opens ?? 0}</b><span>people opened it</span></div>
+        <div class="stat"><b class="num">${d.users.length}</b><span>new users</span></div>
+        <div class="stat"><b class="num">${d.offers.length}</b><span>new listings</span></div>
+        <div class="stat"><b class="num">${d.counts.copies ?? 0}</b><span>messages copied</span></div>
+        <div class="stat"><b class="num">${d.reports.length}</b><span>reports</span></div>
+        <div class="stat"><b class="num">${d.feats.length}</b><span>feature requests</span></div>
+      </div>
+      ${d.reports.length ? `<h4 class="subhd">Reports that day</h4>${d.reports.map(r => `
+        <div class="hit" style="display:block"><span class="player">${esc(r.target)}</span>
+          <span class="who"> ${esc(r.status || '')}</span><br>
+          <span class="who">"${esc(r.reason || '')}" — from ${esc(r.by || 'unknown')}</span></div>`).join('')}` : ''}
+      ${d.feats.length ? `<h4 class="subhd">Feature requests that day</h4>${d.feats.map(f => `
+        <div class="hit" style="display:block"><span class="player">${esc(f.title)}</span>
+          <span class="who"> from ${esc(f.by_user)}</span>
+          ${f.detail ? `<br><span class="who">"${esc(f.detail)}"</span>` : ''}</div>`).join('')}` : ''}
+      <p class="note" style="margin-top:10px">New listings counts the ones still up — anything posted and taken
+      down that day is not in it. Feature requests counts the ones still open.</p>`;
+  };
+  box.querySelector('#dg-go').addEventListener('click', () => drawDigest(dayInput.value || yest));
+  drawDigest(yest);
+}
+
+$('#open-bell').addEventListener('click', alertsPanel);
 
 function reportUser(target){
   const box = modal('Report a user', `
