@@ -490,7 +490,7 @@ const MARKET_DDL = `CREATE TABLE IF NOT EXISTS market (
   endsAt TEXT, seenAt INTEGER NOT NULL)`;
 const MARKET_IDX = `CREATE INDEX IF NOT EXISTS market_sp ON market (sport, season, playerId)`;
 const MARKET_CURSOR = 'market_cursor_v1';
-const MARKET_PAGES = 35;          // pages of ten per tick, inside the time budget
+const MARKET_PAGES = 10;          // pages of ten per tick, inside the time budget
 const MARKET_STALE_MS = 6 * 60 * 60 * 1000;
 
 async function marketReady(db) {
@@ -565,32 +565,37 @@ export async function onRequestGet({ request, env }) {
       pages++;
       if (!rows.length) { done = true; break; }
       const now = Date.now();
+      // One batched write a page. A round trip per listing was slow enough to
+      // run the request out of time before the first lap finished.
+      const stmt = db.prepare(
+        `INSERT INTO market (id, sport, season, listingType, playerId, player, value,
+                             minBid, buyNow, bids, cards, endsAt, seenAt)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(id) DO UPDATE SET minBid=excluded.minBid, buyNow=excluded.buyNow,
+           bids=excluded.bids, value=excluded.value, endsAt=excluded.endsAt,
+           seenAt=excluded.seenAt`);
+      const batch = [];
       for (const r of rows) {
         const c = r.card || {};
         const pp = c.primaryPlayer || {};
         const name = [pp.firstName, pp.lastName].filter(Boolean).join(' ') || null;
-        try {
-          await db.prepare(
-            `INSERT INTO market (id, sport, season, listingType, playerId, player, value,
-                                 minBid, buyNow, bids, cards, endsAt, seenAt)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-             ON CONFLICT(id) DO UPDATE SET minBid=excluded.minBid, buyNow=excluded.buyNow,
-               bids=excluded.bids, value=excluded.value, endsAt=excluded.endsAt,
-               seenAt=excluded.seenAt`
-          ).bind(Number(r.id), sport, Number(season), String(r.listingType || ''),
-                 r.playerId == null ? null : Number(r.playerId), name,
-                 r.value == null ? null : Number(r.value),
-                 r.minBidPrice == null ? null : Number(r.minBidPrice),
-                 r.buyNowPrice == null ? null : Number(r.buyNowPrice),
-                 Number(r.numBids || 0),
-                 Array.isArray(r.linkedCardIds) ? r.linkedCardIds.length : 1,
-                 r.endsAt || null, now).run();
-          seen++;
-        } catch (e) {}
+        if (!r.id) continue;
+        batch.push(stmt.bind(
+          Number(r.id), sport, Number(season), String(r.listingType || ''),
+          r.playerId == null ? null : Number(r.playerId), name,
+          r.value == null ? null : Number(r.value),
+          r.minBidPrice == null ? null : Number(r.minBidPrice),
+          r.buyNowPrice == null ? null : Number(r.buyNowPrice),
+          Number(r.numBids || 0),
+          Array.isArray(r.linkedCardIds) ? r.linkedCardIds.length : 1,
+          r.endsAt || null, now));
+      }
+      if (batch.length) {
+        try { await db.batch(batch); seen += batch.length; } catch (e) {}
       }
       at += rows.length;
       if (rows.length < 10) { done = true; break; }
-      await sleep(120);
+      await sleep(60);
     }
     if (done) at = 0;                              // round the loop again next time
     try { await env.RATEBOARD_KV.put(key, String(at)); } catch (e) {}
