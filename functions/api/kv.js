@@ -93,6 +93,24 @@ const DATA_REPORTS_DDL = `CREATE TABLE IF NOT EXISTS data_reports (
   player TEXT NOT NULL, field TEXT NOT NULL, value TEXT, note TEXT,
   status TEXT NOT NULL DEFAULT 'open')`;
 
+// Two things the board never recorded: how many different people opened it on a
+// given day, and how many messages were copied. New users, listings, reports
+// and feature requests all carry their own timestamps already, so they need no
+// counter - these two have nowhere else to come from. One row per person per
+// day for opens (so a refresh does not count twice), one running total a day
+// for copies. Nothing here identifies what was copied.
+const COUNTS_DDL = `CREATE TABLE IF NOT EXISTS daily_counts (
+  day TEXT NOT NULL, metric TEXT NOT NULL, who TEXT NOT NULL DEFAULT '',
+  n INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, metric, who))`;
+
+// The day a count belongs to, in Eastern time, so a digest covering "yesterday"
+// means the same thing to the board as it does to the person reading it.
+function etDay(ts) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date(ts == null ? Date.now() : ts));
+}
+
 // Feature requests from members. Same shape of problem as a data report - a
 // burst of them must not overwrite one another - so they get their own table
 // rather than a slot in the board blob. Status is open, done or declined.
@@ -421,6 +439,26 @@ async function applyOp(env, body) {
     return null;
   }
 
+  // One ping per person per day for 'open', one tick per copied message.
+  if (op === 'track') {
+    const kind = str(body.kind, 10);
+    if (kind !== 'open' && kind !== 'copy') return 'bad kind';
+    const day = etDay();
+    await db.prepare(COUNTS_DDL).run();
+    if (kind === 'open') {
+      const who = str(body.by, 60);
+      if (!who) return null;                       // signed out: nothing to count
+      await db.prepare(
+        `INSERT INTO daily_counts (day, metric, who, n) VALUES (?, 'open', ?, 1)
+         ON CONFLICT(day, metric, who) DO NOTHING`).bind(day, who.toLowerCase()).run();
+    } else {
+      await db.prepare(
+        `INSERT INTO daily_counts (day, metric, who, n) VALUES (?, 'copy', '', 1)
+         ON CONFLICT(day, metric, who) DO UPDATE SET n = n + 1`).bind(day).run();
+    }
+    return null;
+  }
+
   if (op === 'resolveFeature') {
     const id = str(body.id, 40), status = body.status === 'done' ? 'done' : 'declined';
     if (!id) return 'bad id';
@@ -520,6 +558,22 @@ export async function onRequestGet({ request, env }) {
       return json({ reports: rows.results || [] });
     } catch (e) {
       return json({ error: 'could not read data reports', detail: String((e && e.message) || e) }, 503);
+    }
+  }
+
+  // The two counters for one Eastern day, for the admin digest.
+  if (url.searchParams.get('counts') != null) {
+    const day = (url.searchParams.get('counts') || '').slice(0, 10) || etDay();
+    try {
+      const db = env.RATEBOARD_DB;
+      await db.prepare(COUNTS_DDL).run();
+      const opens = await db.prepare(
+        `SELECT COUNT(*) AS n FROM daily_counts WHERE day=? AND metric='open'`).bind(day).first();
+      const copies = await db.prepare(
+        `SELECT COALESCE(SUM(n), 0) AS n FROM daily_counts WHERE day=? AND metric='copy'`).bind(day).first();
+      return json({ day, opens: Number((opens && opens.n) || 0), copies: Number((copies && copies.n) || 0) });
+    } catch (e) {
+      return json({ error: 'could not read counts', detail: String((e && e.message) || e) }, 503);
     }
   }
 
