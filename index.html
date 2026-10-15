@@ -419,6 +419,7 @@
       <button class="linkbtn" id="open-feature">Request a feature</button>
       <button class="linkbtn hide" id="open-copy">Copy list</button>
       <button class="linkbtn hide" id="open-cbb">Game data</button>
+      <button class="linkbtn hide" id="open-market">Market data</button>
       <button class="linkbtn hide" id="open-min">Lists</button>
       <button class="linkbtn hide" id="open-admin">Admin</button>
       <button class="linkbtn" id="signout">Sign out</button>
@@ -555,6 +556,16 @@ const canSeeGameData = () => isAdmin() || (!!me && gameDataList().includes(Strin
 function applyGameDataVisibility(){
   const b = $('#open-cbb');
   if(b) b.classList.toggle('hide', !canSeeGameData());
+  applyMarketVisibility();
+}
+
+// Market data is granted separately from game data - someone can have one
+// without the other.
+const marketDataList = () => (market.marketdata || []).map(x => String(x).toLowerCase());
+const canSeeMarket = () => isAdmin() || (!!me && marketDataList().includes(String(me).toLowerCase()));
+function applyMarketVisibility(){
+  const b = $('#open-market');
+  if(b) b.classList.toggle('hide', !canSeeMarket());
 }
 
 // Everything an admin gets, shown or hidden in one place, so preview mode is a
@@ -1840,7 +1851,7 @@ function clearDevice(){
   try{ localStorage.removeItem(SESSION); }catch(e){}
 }
 
-const blank = () => ({ users:{}, offers:[], reports:[], minimums:[], keeplist:[], gamedata:[] });
+const blank = () => ({ users:{}, offers:[], reports:[], minimums:[], keeplist:[], gamedata:[], marketdata:[] });
 let market = blank();
 let me = null, sport = 'CFB', mode = 'buy', pending = [];
 
@@ -1849,6 +1860,7 @@ async function pull(){
   market = r && r.value ? JSON.parse(r.value) : blank();
   market.users ||= {}; market.offers ||= []; market.reports ||= []; market.minimums ||= []; market.keeplist ||= [];
   market.gamedata ||= [];
+  market.marketdata ||= [];
   market.fullprice ||= [];
   return market;
 }
@@ -3778,6 +3790,140 @@ async function alertsPanel(){
 }
 
 $('#open-bell').addEventListener('click', alertsPanel);
+
+/* =========================================================
+   Market data
+   ---------------------------------------------------------
+   What is on the Real marketplace right now, gathered into one row per
+   player: how many listings are up, how much rating is on sale across them,
+   and what the market is charging for a point of it. That last number is the
+   one worth reading - a bundle at 14 rax a point and one at 38 are the same
+   cards at very different prices.
+
+   It is a rolling picture, not a history. Listings expire, so the sweep keeps
+   going round and anything it stops finding is dropped.
+   ========================================================= */
+let mkPairs = [], mkType = 'userpassfull', mkRows = [], mkSort = 'totalRating';
+
+async function marketPanel(){
+  const box = modal('Market data', `
+    <p class="note" id="mk-note">Loading…</p>
+    <div id="mk-seasons" class="dtbar" style="flex-wrap:wrap;gap:6px"></div>
+    <div class="dtbar" style="margin-top:8px;flex-wrap:wrap;gap:8px">
+      <div class="seg" role="group" aria-label="Listing type">
+        <button data-mkt="userpassfull" aria-pressed="true">Bulk passes</button>
+        <button data-mkt="card" aria-pressed="false">Single cards</button>
+        <button data-mkt="all" aria-pressed="false">Both</button>
+      </div>
+      ${isAdmin() ? `<button class="btn-ghost" id="mk-sweep">Collect a slice now</button>` : ''}
+    </div>
+    <div class="dtwrap" style="margin-top:10px"><table class="dt" id="mk-table"></table></div>`);
+
+  let available = [];
+  try {
+    const d = await (await fetch('/api/rax?market=seasons')).json();
+    available = d.seasons || [];
+  } catch(e){}
+
+  function drawPicker(){
+    const bySport = new Map();
+    for(const r of available){
+      if(!bySport.has(r.sport)) bySport.set(r.sport, []);
+      bySport.get(r.sport).push(r);
+    }
+    box.querySelector('#mk-seasons').innerHTML = bySport.size
+      ? [...bySport.entries()].map(([sp, list]) => list.map(r => {
+          const key = `${sp}:${r.season}`;
+          return `<button class="btn-ghost${mkPairs.includes(key) ? ' on' : ''}" data-mkp="${key}"
+            aria-pressed="${mkPairs.includes(key)}">${esc(sportSeason(sp, r.season))}
+            <span class="note"> ${Number(r.listings).toLocaleString()}</span></button>`;
+        }).join('')).join('')
+      : '<p class="note">Nothing collected yet. Use "Collect a slice now" to start filling it.</p>';
+  }
+
+  function drawTable(){
+    const t = box.querySelector('#mk-table');
+    if(!mkRows.length){
+      t.innerHTML = `<tbody><tr><td class="l">${mkPairs.length
+        ? 'Nothing collected for that selection yet.' : 'Pick a season above.'}</td></tr></tbody>`;
+      return;
+    }
+    const rows = mkRows.slice().sort((a, b) =>
+      (Number(b[mkSort]) || 0) - (Number(a[mkSort]) || 0));
+    const head = [['season','Year','l'], ['sport','Sport','l'], ['player','Player','l'],
+                  ['listings','Listings'], ['totalRating','Rating on sale'],
+                  ['raxPerRating','Rax per rating']];
+    t.innerHTML = `<thead><tr>${head.map(([k, label, l]) =>
+        `<th class="${l ? 'l ' : ''}${mkSort === k ? 'on' : ''}" data-mks="${k}">${label}${
+          mkSort === k ? ' ↓' : ''}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        <td class="l">${esc(seasonLabel(r.sport, r.season))}</td>
+        <td class="l">${esc(CB_SPORT_LABEL[r.sport] || r.sport)}</td>
+        <td class="l">${esc(r.player || '')}</td>
+        <td>${Number(r.listings).toLocaleString()}</td>
+        <td>${r.totalRating == null ? '—' : Number(r.totalRating).toLocaleString()}</td>
+        <td>${r.raxPerRating == null ? '—' : Number(r.raxPerRating).toFixed(2)}</td>
+      </tr>`).join('')}</tbody>`;
+  }
+
+  async function load(){
+    const note = box.querySelector('#mk-note');
+    if(!mkPairs.length){ mkRows = []; note.textContent = 'Pick a season above.'; return drawTable(); }
+    note.textContent = 'Loading…';
+    const first = mkPairs[0].split(':');
+    try {
+      const d = await (await fetch(`/api/rax?market=board&sport=${first[0]}&season=${first[1]}`
+        + `&seasons=${encodeURIComponent(mkPairs.join(','))}&listingType=${mkType}`)).json();
+      mkRows = d.rows || [];
+      const fresh = mkRows.reduce((t, r) => Math.max(t, Number(r.seenAt) || 0), 0);
+      note.textContent = `${mkRows.length.toLocaleString()} players on sale`
+        + (fresh ? ` · last swept ${new Date(fresh).toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' })}` : '');
+    } catch(e){ note.textContent = 'Could not reach the server.'; mkRows = []; }
+    drawTable();
+  }
+
+  box.addEventListener('click', async e => {
+    const p = e.target.closest('[data-mkp]');
+    if(p){
+      const k = p.dataset.mkp;
+      mkPairs = mkPairs.includes(k) ? mkPairs.filter(x => x !== k) : mkPairs.concat([k]);
+      drawPicker(); return load();
+    }
+    const t = e.target.closest('[data-mkt]');
+    if(t){
+      mkType = t.dataset.mkt;
+      box.querySelectorAll('[data-mkt]').forEach(b =>
+        b.setAttribute('aria-pressed', b === t ? 'true' : 'false'));
+      return load();
+    }
+    const h = e.target.closest('[data-mks]');
+    if(h){ mkSort = h.dataset.mks; return drawTable(); }
+    const sw = e.target.closest('#mk-sweep');
+    if(sw){
+      const sp = (mkPairs[0] || 'nfl:2026').split(':');
+      sw.disabled = true; sw.textContent = 'Collecting…';
+      try {
+        const d = await (await fetch(`/api/rax?market=collect&sport=${sp[0]}&season=${sp[1]}`
+          + `&listingType=${mkType === 'all' ? 'userpassfull' : mkType}`)).json();
+        toast(d.error ? d.error
+          : `Stored ${d.stored} listings${d.lap ? ' — finished a full lap' : ''}`);
+      } catch(e){ toast('Collect failed.'); }
+      sw.disabled = false; sw.textContent = 'Collect a slice now';
+      try {
+        const d = await (await fetch('/api/rax?market=seasons')).json();
+        available = d.seasons || [];
+      } catch(e){}
+      drawPicker(); return load();
+    }
+  });
+
+  drawPicker();
+  if(!mkPairs.length && available.length) mkPairs = [`${available[0].sport}:${available[0].season}`];
+  drawPicker();
+  load();
+}
+
+$('#open-market').addEventListener('click', marketPanel);
 
 function reportUser(target){
   const box = modal('Report a user', `
@@ -6356,6 +6502,8 @@ async function adminPanel(){
                      : `<button class="btn-ghost" data-reset="${esc(k)}">${u.hash ? 'Reset password' : 'awaiting new password'}</button>
                         <button class="btn-ghost" data-gd="${esc(k)}">${
                           gameDataList().includes(k) ? 'Revoke game data' : 'Grant access to game data'}</button>
+                        <button class="btn-ghost" data-md="${esc(k)}">${
+                          marketDataList().includes(k) ? 'Revoke market data' : 'Grant access to market data'}</button>
                         <button class="btn-ghost btn-danger" data-ban="${esc(k)}">Delete account</button>`}
       </div>`).join('')}`);
 
@@ -6665,6 +6813,23 @@ async function adminPanel(){
       if(!ok) return;
       toast(had ? `${u?.name || k} can no longer see game data` : `${u?.name || k} can now see game data`);
       applyGameDataVisibility();
+      redrawGrants(); refreshLookups();
+      return;
+    }
+
+    const md = e.target.closest('[data-md]');
+    if(md){
+      const k = md.dataset.md;
+      const u = market.users[k];
+      const had = marketDataList().includes(k);
+      if(had && !confirm(`Take market data access away from ${u?.name || k}?`)) return;
+      const ok = await push(m => {
+        const list = (m.marketdata || []).map(x => String(x).toLowerCase()).filter(x => x !== k);
+        m.marketdata = had ? list : list.concat([k]);
+      });
+      if(!ok) return;
+      toast(had ? `${u?.name || k} can no longer see market data` : `${u?.name || k} can now see market data`);
+      applyMarketVisibility();
       redrawGrants(); refreshLookups();
       return;
     }
