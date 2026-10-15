@@ -479,6 +479,25 @@ async function forgetWalk(env, sport, season) {
 // up again once a week on its own day - spread out so two big sports never
 // land together. Days are Sunday 0 .. Saturday 6, read in Alaska time, and the
 // slot opens in the morning there.
+// The marketplace, as collected. One row per open listing, replaced as the
+// sweep comes round again. Listings expire, so this is a rolling picture of
+// what is on sale now rather than a history - seenAt says how fresh a row is
+// and anything the sweep stops finding is dropped.
+const MARKET_DDL = `CREATE TABLE IF NOT EXISTS market (
+  id INTEGER PRIMARY KEY, sport TEXT NOT NULL, season INTEGER NOT NULL,
+  listingType TEXT, playerId INTEGER, player TEXT,
+  value REAL, minBid INTEGER, buyNow INTEGER, bids INTEGER, cards INTEGER,
+  endsAt TEXT, seenAt INTEGER NOT NULL)`;
+const MARKET_IDX = `CREATE INDEX IF NOT EXISTS market_sp ON market (sport, season, playerId)`;
+const MARKET_CURSOR = 'market_cursor_v1';
+const MARKET_PAGES = 35;          // pages of ten per tick, inside the time budget
+const MARKET_STALE_MS = 6 * 60 * 60 * 1000;
+
+async function marketReady(db) {
+  await db.prepare(MARKET_DDL).run();
+  await db.prepare(MARKET_IDX).run();
+}
+
 const RESCAN_DAY = { ncaaf: 0, soccer: 1, nfl: 2, ncaam: 3, nba: 4, nhl: 5, mlb: 6, wnba: 6, golf: 6 };
 const RESCAN_SEASON = { ncaaf: 2026, soccer: 2026, nfl: 2026, ncaam: 2026, nba: 2026,
                         nhl: 2026, mlb: 2026, wnba: 2026, golf: 2026 };
@@ -522,6 +541,117 @@ export async function onRequestGet({ request, env }) {
 
   const page = before =>
     `https://web.realapp.com/userpassshop/${sport}/season/${season}/entity/player/section/${section}?before=${before}`;
+
+  // Walk the marketplace a slice at a time, keeping the place in KV so the
+  // next tick carries on. Same shape as the game log collector.
+  if (url.searchParams.get('market') === 'collect') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    const type = (url.searchParams.get('listingType') || 'userpassfull').toLowerCase();
+    if (!/^[a-z]{1,16}$/.test(type)) return json({ error: 'bad listingType' }, 400);
+    await marketReady(db);
+    const key = `${MARKET_CURSOR}:${sport}:${season}:${type}`;
+    let at = 0;
+    try { at = Number(await env.RATEBOARD_KV.get(key)) || 0; } catch (e) {}
+    const stamp = new Date().toISOString();
+    let seen = 0, pages = 0, done = false;
+    for (let i = 0; i < MARKET_PAGES; i++) {
+      const u = `https://web.realapp.com/cardmarketplacelistings`
+        + `?beforeEndsAt=${encodeURIComponent(stamp)}&cohort=all&listingType=${type}`
+        + `&offset=${at}&prestige=all&rarity=all&season=${season}&sport=${sport}`;
+      let rows;
+      try { rows = rowsOf(await rsGet(u, auth)); }
+      catch (e) { break; }
+      pages++;
+      if (!rows.length) { done = true; break; }
+      const now = Date.now();
+      for (const r of rows) {
+        const c = r.card || {};
+        const pp = c.primaryPlayer || {};
+        const name = [pp.firstName, pp.lastName].filter(Boolean).join(' ') || null;
+        try {
+          await db.prepare(
+            `INSERT INTO market (id, sport, season, listingType, playerId, player, value,
+                                 minBid, buyNow, bids, cards, endsAt, seenAt)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(id) DO UPDATE SET minBid=excluded.minBid, buyNow=excluded.buyNow,
+               bids=excluded.bids, value=excluded.value, endsAt=excluded.endsAt,
+               seenAt=excluded.seenAt`
+          ).bind(Number(r.id), sport, Number(season), String(r.listingType || ''),
+                 r.playerId == null ? null : Number(r.playerId), name,
+                 r.value == null ? null : Number(r.value),
+                 r.minBidPrice == null ? null : Number(r.minBidPrice),
+                 r.buyNowPrice == null ? null : Number(r.buyNowPrice),
+                 Number(r.numBids || 0),
+                 Array.isArray(r.linkedCardIds) ? r.linkedCardIds.length : 1,
+                 r.endsAt || null, now).run();
+          seen++;
+        } catch (e) {}
+      }
+      at += rows.length;
+      if (rows.length < 10) { done = true; break; }
+      await sleep(120);
+    }
+    if (done) at = 0;                              // round the loop again next time
+    try { await env.RATEBOARD_KV.put(key, String(at)); } catch (e) {}
+    // Anything the sweep has stopped finding has sold or expired.
+    let dropped = 0;
+    if (done) {
+      try {
+        const r = await db.prepare(
+          `DELETE FROM market WHERE sport=? AND season=? AND listingType=? AND seenAt < ?`
+        ).bind(sport, Number(season), type, Date.now() - MARKET_STALE_MS).run();
+        dropped = (r && r.meta && r.meta.changes) || 0;
+      } catch (e) {}
+    }
+    return json({ sport, season, listingType: type, pages, stored: seen, nextOffset: at, lap: done, dropped });
+  }
+
+  // One row per player: how many listings, how much rating is on sale, and
+  // what the market is charging for a point of it.
+  if (url.searchParams.get('market') === 'board') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    await marketReady(db);
+    const pairs = String(url.searchParams.get('seasons') || `${sport}:${season}`)
+      .split(',').map(x => x.trim()).filter(Boolean).slice(0, 24)
+      .map(x => x.split(':')).filter(([sp, se]) => SPORTS.has(sp) && /^\d{4}$/.test(se || ''));
+    if (!pairs.length) return json({ error: 'pick at least one season' }, 400);
+    const type = (url.searchParams.get('listingType') || 'userpassfull').toLowerCase();
+    const where = pairs.map(() => '(sport=? AND season=?)').join(' OR ');
+    const binds = pairs.flatMap(([sp, se]) => [sp, Number(se)]);
+    const typeClause = type === 'all' ? '' : ' AND listingType=?';
+    if (type !== 'all') binds.push(type);
+    try {
+      const q = await db.prepare(
+        `SELECT sport, season, playerId, MAX(player) AS player,
+                COUNT(*) AS listings, ROUND(SUM(value), 1) AS totalRating,
+                SUM(COALESCE(buyNow, minBid)) AS totalRax,
+                ROUND(SUM(COALESCE(buyNow, minBid)) * 1.0 / NULLIF(SUM(value), 0), 2) AS raxPerRating,
+                MAX(seenAt) AS seenAt
+           FROM market WHERE (${where})${typeClause} AND player IS NOT NULL
+          GROUP BY sport, season, playerId
+          ORDER BY totalRating DESC LIMIT 1000`).bind(...binds).all();
+      return json({ rows: q.results || [], listingType: type });
+    } catch (e) {
+      return json({ error: 'could not read market', detail: String((e && e.message) || e) }, 503);
+    }
+  }
+
+  // Which sport and season pairs have anything collected, for the picker.
+  if (url.searchParams.get('market') === 'seasons') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    await marketReady(db);
+    try {
+      const q = await db.prepare(
+        `SELECT sport, season, COUNT(*) AS listings, MAX(seenAt) AS seenAt
+           FROM market GROUP BY sport, season ORDER BY sport, season DESC`).all();
+      return json({ seasons: q.results || [] });
+    } catch (e) {
+      return json({ error: 'could not read market seasons' }, 503);
+    }
+  }
 
   // The card marketplace. This one was not guessed: the Marketplace screen
   // calls it as the list scrolls, and these are its own parameter names.
