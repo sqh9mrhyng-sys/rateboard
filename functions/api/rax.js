@@ -523,6 +523,40 @@ export async function onRequestGet({ request, env }) {
   const page = before =>
     `https://web.realapp.com/userpassshop/${sport}/season/${season}/entity/player/section/${section}?before=${before}`;
 
+  // The card marketplace. This one was not guessed: the Marketplace screen
+  // calls it as the list scrolls, and these are its own parameter names.
+  // Fixed shape like the shop proxy above - sport and season are validated,
+  // every filter is a short word from the app's own vocabulary, and the
+  // cursor is a timestamp. Not a free-form proxy.
+  if (url.searchParams.get('market') != null) {
+    const word = (v, d) => {
+      const x = String(v == null ? d : v).toLowerCase();
+      return /^[a-z0-9]{1,16}$/.test(x) ? x : null;
+    };
+    const listingType = word(url.searchParams.get('listingType'), 'all');
+    const rarity      = word(url.searchParams.get('rarity'), 'all');
+    const cohort      = word(url.searchParams.get('cohort'), 'all');
+    const prestige    = word(url.searchParams.get('prestige'), 'all');
+    if (!listingType || !rarity || !cohort || !prestige) return json({ error: 'bad filter' }, 400);
+    const offset = Math.max(0, Math.min(10000, parseInt(url.searchParams.get('offset') || '0', 10) || 0));
+    const raw = url.searchParams.get('before');
+    const before = raw && !Number.isNaN(Date.parse(raw)) ? new Date(raw).toISOString() : new Date().toISOString();
+    const u = `https://web.realapp.com/cardmarketplacelistings`
+      + `?beforeEndsAt=${encodeURIComponent(before)}&cohort=${cohort}&listingType=${listingType}`
+      + `&offset=${offset}&prestige=${prestige}&rarity=${rarity}&season=${season}&sport=${sport}`;
+    try {
+      const d = await rsGet(u, auth);
+      const rows = rowsOf(d);
+      if (url.searchParams.get('shape') != null) {
+        return json({ topKeys: Object.keys(d || {}), count: rows.length,
+                      firstRowKeys: rows[0] ? Object.keys(rows[0]) : [], first: rows[0] || null });
+      }
+      return json({ sport, season, listingType, rarity, offset, before, count: rows.length, rows });
+    } catch (e) {
+      return json({ error: 'marketplace fetch failed', detail: String((e && e.message) || e) }, 502);
+    }
+  }
+
   // Probes for the two other RS screens, so their payloads can be read before
   // anything is built on them. Both are fixed shapes, not a free-form proxy.
   const probePlayer = url.searchParams.get('probePlayer');
@@ -557,16 +591,7 @@ export async function onRequestGet({ request, env }) {
     stats:      'stats?season=SEASON',
     seasonstats:'seasonstats?season=SEASON',
     owners:     'owners?season=SEASON',
-    holders:    'holders?season=SEASON',
-    // Hunting for the play by play behind the Plays tab on a player profile,
-    // where every reception, rush and sack carries its own rating. The feed
-    // already takes a view, so these are the same call with the view swapped,
-    // plus two guesses at a dedicated route. Fixed shapes, same as the rest.
-    playsview:  'seasonfeed?limit=10&season=SEASON&view=plays&viewFrame=default',
-    playsframe: 'seasonfeed?limit=10&season=SEASON&view=recent&viewFrame=plays',
-    topview:    'seasonfeed?limit=10&season=SEASON&view=top&viewFrame=default',
-    plays:      'plays?season=SEASON',
-    playfeed:   'playfeed?limit=10&season=SEASON'
+    holders:    'holders?season=SEASON'
   };
   const probeSub = url.searchParams.get('probeSub');
   if (probeSub && probePlayer && /^\d+$/.test(probePlayer)) {
