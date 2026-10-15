@@ -490,12 +490,18 @@ const MARKET_DDL = `CREATE TABLE IF NOT EXISTS market (
   endsAt TEXT, seenAt INTEGER NOT NULL)`;
 const MARKET_IDX = `CREATE INDEX IF NOT EXISTS market_sp ON market (sport, season, playerId)`;
 const MARKET_CURSOR = 'market_cursor_v1';
-const MARKET_PAGES = 10;          // pages of ten per tick, inside the time budget
+// A single card listing that ends is worth nothing once it is gone, so it is
+// deleted. A bulk pass is the opposite - what a 380-rating pass actually went
+// for is the whole point - so those are kept and only marked gone.
+const MARKET_KEEP = 'userpassfull';
+const MARKET_PAGES = 60;          // pages of ten per tick, inside the time budget
 const MARKET_STALE_MS = 6 * 60 * 60 * 1000;
 
 async function marketReady(db) {
   await db.prepare(MARKET_DDL).run();
   await db.prepare(MARKET_IDX).run();
+  // Added after the table existed, so it is a patch rather than part of the DDL.
+  try { await db.prepare('ALTER TABLE market ADD COLUMN goneAt INTEGER').run(); } catch (e) {}
 }
 
 const RESCAN_DAY = { ncaaf: 0, soccer: 1, nfl: 2, ncaam: 3, nba: 4, nhl: 5, mlb: 6, wnba: 6, golf: 6 };
@@ -563,6 +569,7 @@ export async function onRequestGet({ request, env }) {
     } catch (e) {}
     if (!stamp || !at) stamp = new Date().toISOString();
     let seen = 0, pages = 0, fresh = 0, done = false;
+    const lapSeen = new Set();
     for (let i = 0; i < MARKET_PAGES; i++) {
       const u = `https://web.realapp.com/cardmarketplacelistings`
         + `?beforeEndsAt=${encodeURIComponent(stamp)}&cohort=all&listingType=${type}`
@@ -600,38 +607,38 @@ export async function onRequestGet({ request, env }) {
           Array.isArray(r.linkedCardIds) ? r.linkedCardIds.length : 1,
           r.endsAt || null, now));
       }
-      let before = 0;
-      try {
-        const h = await db.prepare(
-          `SELECT COUNT(*) AS n FROM market WHERE sport=? AND season=? AND listingType=?`
-        ).bind(sport, Number(season), type).first();
-        before = Number((h && h.n) || 0);
-      } catch (e) {}
+      // Counting rows in the table twice a page tripled the round trips and
+      // was what capped a slice at ten pages. Whether the feed has started
+      // repeating is answerable from the ids already seen in this request.
+      let isNew = 0;
+      for (const r of rows) { if (r.id && !lapSeen.has(r.id)) { lapSeen.add(r.id); isNew++; } }
+      fresh += isNew;
       if (batch.length) {
         try { await db.batch(batch); seen += batch.length; } catch (e) {}
       }
-      let after = before;
-      try {
-        const h = await db.prepare(
-          `SELECT COUNT(*) AS n FROM market WHERE sport=? AND season=? AND listingType=?`
-        ).bind(sport, Number(season), type).first();
-        after = Number((h && h.n) || 0);
-      } catch (e) {}
-      fresh += after - before;
       at += rows.length;
-      if (rows.length < 10 || after === before || at >= 20000) { done = true; break; }
-      await sleep(60);
+      if (rows.length < 10 || isNew === 0 || at >= 40000) { done = true; break; }
+      await sleep(25);
     }
     if (done) at = 0;                              // round the loop again next time
     try { await env.RATEBOARD_KV.put(key, done ? '0|' : `${at}|${stamp}`); } catch (e) {}
     // Anything the sweep has stopped finding has sold or expired.
-    let dropped = 0;
+    let dropped = 0, retired = 0;
     if (done) {
+      const cutoff = Date.now() - MARKET_STALE_MS;
       try {
-        const r = await db.prepare(
-          `DELETE FROM market WHERE sport=? AND season=? AND listingType=? AND seenAt < ?`
-        ).bind(sport, Number(season), type, Date.now() - MARKET_STALE_MS).run();
-        dropped = (r && r.meta && r.meta.changes) || 0;
+        if (type === MARKET_KEEP) {
+          const r = await db.prepare(
+            `UPDATE market SET goneAt=? WHERE sport=? AND season=? AND listingType=?
+               AND goneAt IS NULL AND seenAt < ?`
+          ).bind(Date.now(), sport, Number(season), type, cutoff).run();
+          retired = (r && r.meta && r.meta.changes) || 0;
+        } else {
+          const r = await db.prepare(
+            `DELETE FROM market WHERE sport=? AND season=? AND listingType=? AND seenAt < ?`
+          ).bind(sport, Number(season), type, cutoff).run();
+          dropped = (r && r.meta && r.meta.changes) || 0;
+        }
       } catch (e) {}
     }
     let held = 0;
@@ -642,7 +649,7 @@ export async function onRequestGet({ request, env }) {
       held = Number((h && h.n) || 0);
     } catch (e) {}
     return json({ sport, season, listingType: type, pages, fetched: seen, fresh, held,
-                  nextOffset: at, lap: done, dropped });
+                  nextOffset: at, lap: done, dropped, retired });
   }
 
   // One row per player: how many listings, how much rating is on sale, and
@@ -668,6 +675,7 @@ export async function onRequestGet({ request, env }) {
                 ROUND(SUM(COALESCE(buyNow, minBid)) * 1.0 / NULLIF(SUM(value), 0), 2) AS raxPerRating,
                 MAX(seenAt) AS seenAt
            FROM market WHERE (${where})${typeClause} AND player IS NOT NULL
+                  AND goneAt IS NULL
           GROUP BY sport, season, playerId
           ORDER BY totalRating DESC LIMIT 1000`).bind(...binds).all();
       return json({ rows: q.results || [], listingType: type });
