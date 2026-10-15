@@ -551,9 +551,17 @@ export async function onRequestGet({ request, env }) {
     if (!/^[a-z]{1,16}$/.test(type)) return json({ error: 'bad listingType' }, 400);
     await marketReady(db);
     const key = `${MARKET_CURSOR}:${sport}:${season}:${type}`;
-    let at = 0;
-    try { at = Number(await env.RATEBOARD_KV.get(key)) || 0; } catch (e) {}
-    const stamp = new Date().toISOString();
+    // The window has to stay still for a whole lap. Taking a fresh "ending
+    // before now" on every slice slides the list under the cursor and the same
+    // listings come back round again.
+    let at = 0, stamp = '';
+    try {
+      const saved = String((await env.RATEBOARD_KV.get(key)) || '');
+      const [a0, s0] = saved.split('|');
+      at = Number(a0) || 0;
+      if (s0 && !Number.isNaN(Date.parse(s0))) stamp = s0;
+    } catch (e) {}
+    if (!stamp || !at) stamp = new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString();
     let seen = 0, pages = 0, done = false;
     for (let i = 0; i < MARKET_PAGES; i++) {
       const u = `https://web.realapp.com/cardmarketplacelistings`
@@ -577,8 +585,10 @@ export async function onRequestGet({ request, env }) {
       const batch = [];
       for (const r of rows) {
         const c = r.card || {};
-        const pp = c.primaryPlayer || {};
-        const name = [pp.firstName, pp.lastName].filter(Boolean).join(' ') || null;
+        // A single play card carries primaryPlayer; a full pass carries entity.
+        const pp = c.entity || c.primaryPlayer || {};
+        const name = [pp.firstName, pp.lastName].filter(Boolean).join(' ')
+                     || (typeof c.label === 'string' ? c.label : '') || null;
         if (!r.id) continue;
         batch.push(stmt.bind(
           Number(r.id), sport, Number(season), String(r.listingType || ''),
@@ -594,11 +604,11 @@ export async function onRequestGet({ request, env }) {
         try { await db.batch(batch); seen += batch.length; } catch (e) {}
       }
       at += rows.length;
-      if (rows.length < 10) { done = true; break; }
+      if (rows.length < 10 || at >= 20000) { done = true; break; }
       await sleep(60);
     }
     if (done) at = 0;                              // round the loop again next time
-    try { await env.RATEBOARD_KV.put(key, String(at)); } catch (e) {}
+    try { await env.RATEBOARD_KV.put(key, done ? '0|' : `${at}|${stamp}`); } catch (e) {}
     // Anything the sweep has stopped finding has sold or expired.
     let dropped = 0;
     if (done) {
@@ -609,7 +619,15 @@ export async function onRequestGet({ request, env }) {
         dropped = (r && r.meta && r.meta.changes) || 0;
       } catch (e) {}
     }
-    return json({ sport, season, listingType: type, pages, stored: seen, nextOffset: at, lap: done, dropped });
+    let held = 0;
+    try {
+      const h = await db.prepare(
+        `SELECT COUNT(*) AS n FROM market WHERE sport=? AND season=? AND listingType=?`
+      ).bind(sport, Number(season), type).first();
+      held = Number((h && h.n) || 0);
+    } catch (e) {}
+    return json({ sport, season, listingType: type, pages, fetched: seen, held,
+                  nextOffset: at, lap: done, dropped });
   }
 
   // One row per player: how many listings, how much rating is on sale, and
