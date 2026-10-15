@@ -557,23 +557,22 @@ export async function onRequestGet({ request, env }) {
     if (!/^[a-z]{1,16}$/.test(type)) return json({ error: 'bad listingType' }, 400);
     await marketReady(db);
     const key = `${MARKET_CURSOR}:${sport}:${season}:${type}`;
-    // The window has to stay still for a whole lap. Taking a fresh "ending
-    // before now" on every slice slides the list under the cursor and the same
-    // listings come back round again.
+    // offset does nothing: the feed pages on endsAt. Handing back the last
+    // row's end time walks forward through the list, one page at a time, with
+    // the anchor row repeating at the top of each page.
     let at = 0, stamp = '';
     try {
       const saved = String((await env.RATEBOARD_KV.get(key)) || '');
-      const [a0, s0] = saved.split('|');
-      at = Number(a0) || 0;
-      if (s0 && !Number.isNaN(Date.parse(s0))) stamp = s0;
+      if (saved && !Number.isNaN(Date.parse(saved))) stamp = saved;
     } catch (e) {}
-    if (!stamp || !at) stamp = new Date().toISOString();
+    if (!stamp) stamp = new Date().toISOString();
+    let cursor = stamp;
     let seen = 0, pages = 0, fresh = 0, done = false;
     const lapSeen = new Set();
     for (let i = 0; i < MARKET_PAGES; i++) {
       const u = `https://web.realapp.com/cardmarketplacelistings`
-        + `?beforeEndsAt=${encodeURIComponent(stamp)}&cohort=all&listingType=${type}`
-        + `&offset=${at}&prestige=all&rarity=all&season=${season}&sport=${sport}`;
+        + `?beforeEndsAt=${encodeURIComponent(cursor)}&cohort=all&listingType=${type}`
+        + `&offset=0&prestige=all&rarity=all&season=${season}&sport=${sport}`;
       let rows;
       try { rows = rowsOf(await rsGet(u, auth)); }
       catch (e) { break; }
@@ -616,12 +615,17 @@ export async function onRequestGet({ request, env }) {
       if (batch.length) {
         try { await db.batch(batch); seen += batch.length; } catch (e) {}
       }
-      at += rows.length;
+      at += isNew;
+      const last = rows[rows.length - 1];
+      // Without a usable end time there is nowhere to page to, so stop rather
+      // than ask for the same page again.
+      if (!last || !last.endsAt || last.endsAt === cursor) { done = true; break; }
+      cursor = last.endsAt;
       if (rows.length < 10 || isNew === 0 || at >= 40000) { done = true; break; }
       await sleep(25);
     }
-    if (done) at = 0;                              // round the loop again next time
-    try { await env.RATEBOARD_KV.put(key, done ? '0|' : `${at}|${stamp}`); } catch (e) {}
+    // A finished lap starts again from the soonest ending listing.
+    try { await env.RATEBOARD_KV.put(key, done ? '' : cursor); } catch (e) {}
     // Anything the sweep has stopped finding has sold or expired.
     let dropped = 0, retired = 0;
     if (done) {
@@ -649,7 +653,7 @@ export async function onRequestGet({ request, env }) {
       held = Number((h && h.n) || 0);
     } catch (e) {}
     return json({ sport, season, listingType: type, pages, fetched: seen, fresh, held,
-                  nextOffset: at, lap: done, dropped, retired });
+                  newRows: at, cursor: done ? null : cursor, lap: done, dropped, retired });
   }
 
   // One row per player: how many listings, how much rating is on sale, and
