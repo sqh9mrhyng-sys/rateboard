@@ -500,8 +500,99 @@ const MARKET_STALE_MS = 6 * 60 * 60 * 1000;
 async function marketReady(db) {
   await db.prepare(MARKET_DDL).run();
   await db.prepare(MARKET_IDX).run();
-  // Added after the table existed, so it is a patch rather than part of the DDL.
-  try { await db.prepare('ALTER TABLE market ADD COLUMN goneAt INTEGER').run(); } catch (e) {}
+  // Added after the table existed, so these are patches rather than DDL.
+  for (const col of ['goneAt INTEGER', 'curBid INTEGER', 'closedAt INTEGER',
+                     'sold INTEGER', 'soldRax INTEGER']) {
+    try { await db.prepare(`ALTER TABLE market ADD COLUMN ${col}`).run(); } catch (e) {}
+  }
+}
+
+// How a bulk listing ended is never stated outright - it just leaves the feed.
+// So the last sighting before it ends is the evidence, and it is read two ways:
+// a listing that reaches its end time with bids on it went for the top bid, and
+// one that disappears while it still had time left was bought outright.
+const CLOSING_WINDOW_MS = 12 * 60 * 1000;
+const CLOSING_EVERY_MS  = 10 * 60 * 1000;
+const CLOSING_KEY = 'market_closing_v1';
+const VANISHED_MS = 15 * 60 * 1000;
+
+function marketRow(r) {
+  const c = r.card || {};
+  const pp = c.entity || c.primaryPlayer || {};
+  return {
+    id: Number(r.id),
+    player: [pp.firstName, pp.lastName].filter(Boolean).join(' ')
+            || (typeof c.label === 'string' ? c.label : '') || null,
+    playerId: r.playerId == null ? null : Number(r.playerId),
+    value: r.value == null ? null : Number(r.value),
+    minBid: r.minBidPrice == null ? null : Number(r.minBidPrice),
+    buyNow: r.buyNowPrice == null ? null : Number(r.buyNowPrice),
+    curBid: r.currentBidAmount == null ? null : Number(r.currentBidAmount),
+    bids: Number(r.numBids || 0),
+    cards: Array.isArray(r.linkedCardIds) ? r.linkedCardIds.length : 1,
+    endsAt: r.endsAt || null
+  };
+}
+
+// Everything bulk that ends in the next few minutes, so nothing closes without
+// its last state on record.
+async function marketClosing(env, db, auth, sport, season) {
+  await marketReady(db);
+  const stmt = db.prepare(
+    `INSERT INTO market (id, sport, season, listingType, playerId, player, value,
+                         minBid, buyNow, curBid, bids, cards, endsAt, seenAt)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET minBid=excluded.minBid, buyNow=excluded.buyNow,
+       curBid=excluded.curBid, bids=excluded.bids, value=excluded.value,
+       endsAt=excluded.endsAt, seenAt=excluded.seenAt, goneAt=NULL`);
+  const until = Date.now() + CLOSING_WINDOW_MS;
+  let cursor = new Date().toISOString(), pages = 0, seen = 0;
+  for (let i = 0; i < 20; i++) {
+    const u = `https://web.realapp.com/cardmarketplacelistings`
+      + `?beforeEndsAt=${encodeURIComponent(cursor)}&cohort=all&listingType=${MARKET_KEEP}`
+      + `&offset=0&prestige=all&rarity=all&season=${season}&sport=${sport}`;
+    let rows;
+    try { rows = rowsOf(await rsGet(u, auth)); } catch (e) { break; }
+    pages++;
+    if (!rows.length) break;
+    const now = Date.now();
+    const batch = [];
+    for (const r of rows) {
+      const m = marketRow(r);
+      if (!m.id) continue;
+      batch.push(stmt.bind(m.id, sport, Number(season), MARKET_KEEP, m.playerId, m.player,
+                           m.value, m.minBid, m.buyNow, m.curBid, m.bids, m.cards, m.endsAt, now));
+    }
+    if (batch.length) { try { await db.batch(batch); seen += batch.length; } catch (e) {} }
+    const last = rows[rows.length - 1];
+    if (!last || !last.endsAt || last.endsAt === cursor) break;
+    if (Date.parse(last.endsAt) > until) break;         // past the window
+    cursor = last.endsAt;
+    await sleep(25);
+  }
+  return { pages, seen };
+}
+
+// Decide how the ones that have gone ended.
+async function marketSettle(db) {
+  const now = Date.now();
+  let ended = 0, bought = 0;
+  try {
+    const a = await db.prepare(
+      `UPDATE market SET closedAt=?, sold=CASE WHEN bids > 0 THEN 1 ELSE 0 END,
+              soldRax=CASE WHEN bids > 0 THEN COALESCE(curBid, minBid) ELSE NULL END
+         WHERE listingType=? AND closedAt IS NULL AND endsAt IS NOT NULL
+           AND endsAt <= ?`).bind(now, MARKET_KEEP, new Date(now).toISOString()).run();
+    ended = (a && a.meta && a.meta.changes) || 0;
+  } catch (e) {}
+  try {
+    const b = await db.prepare(
+      `UPDATE market SET closedAt=?, sold=1, soldRax=COALESCE(buyNow, curBid, minBid)
+         WHERE listingType=? AND closedAt IS NULL AND seenAt < ?
+           AND endsAt > ?`).bind(now, MARKET_KEEP, now - VANISHED_MS, new Date(now).toISOString()).run();
+    bought = (b && b.meta && b.meta.changes) || 0;
+  } catch (e) {}
+  return { ended, bought };
 }
 
 const RESCAN_DAY = { ncaaf: 0, soccer: 1, nfl: 2, ncaam: 3, nba: 4, nhl: 5, mlb: 6, wnba: 6, golf: 6 };
@@ -583,11 +674,11 @@ export async function onRequestGet({ request, env }) {
       // run the request out of time before the first lap finished.
       const stmt = db.prepare(
         `INSERT INTO market (id, sport, season, listingType, playerId, player, value,
-                             minBid, buyNow, bids, cards, endsAt, seenAt)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                             minBid, buyNow, curBid, bids, cards, endsAt, seenAt)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(id) DO UPDATE SET minBid=excluded.minBid, buyNow=excluded.buyNow,
-           bids=excluded.bids, value=excluded.value, endsAt=excluded.endsAt,
-           seenAt=excluded.seenAt`);
+           curBid=excluded.curBid, bids=excluded.bids, value=excluded.value,
+           endsAt=excluded.endsAt, seenAt=excluded.seenAt, goneAt=NULL`);
       const batch = [];
       for (const r of rows) {
         const c = r.card || {};
@@ -602,6 +693,7 @@ export async function onRequestGet({ request, env }) {
           r.value == null ? null : Number(r.value),
           r.minBidPrice == null ? null : Number(r.minBidPrice),
           r.buyNowPrice == null ? null : Number(r.buyNowPrice),
+          r.currentBidAmount == null ? null : Number(r.currentBidAmount),
           Number(r.numBids || 0),
           Array.isArray(r.linkedCardIds) ? r.linkedCardIds.length : 1,
           r.endsAt || null, now));
@@ -656,6 +748,45 @@ export async function onRequestGet({ request, env }) {
                   newRows: at, cursor: done ? null : cursor, lap: done, dropped, retired });
   }
 
+  if (url.searchParams.get('market') === 'closing') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    const swept = await marketClosing(env, db, auth, sport, season);
+    const settled = await marketSettle(db);
+    return json({ sport, season, ...swept, ...settled });
+  }
+
+  // How a player's bulk passes have actually traded: how many were put up, how
+  // many found a buyer, and what those buyers paid for a point of rating.
+  if (url.searchParams.get('market') === 'player') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    await marketReady(db);
+    const pid = parseInt(url.searchParams.get('playerId') || '', 10);
+    if (!Number.isFinite(pid)) return json({ error: 'bad playerId' }, 400);
+    try {
+      const sum = await db.prepare(
+        `SELECT COUNT(*) AS listed,
+                SUM(CASE WHEN sold=1 THEN 1 ELSE 0 END) AS sold,
+                SUM(CASE WHEN closedAt IS NULL THEN 1 ELSE 0 END) AS open,
+                ROUND(SUM(CASE WHEN sold=1 THEN soldRax ELSE 0 END) * 1.0
+                      / NULLIF(SUM(CASE WHEN sold=1 THEN value ELSE 0 END), 0), 2) AS soldRaxPerRating,
+                ROUND(SUM(CASE WHEN closedAt IS NULL THEN COALESCE(buyNow, minBid) ELSE 0 END) * 1.0
+                      / NULLIF(SUM(CASE WHEN closedAt IS NULL THEN value ELSE 0 END), 0), 2) AS askRaxPerRating,
+                MAX(player) AS player
+           FROM market WHERE playerId=? AND sport=? AND season=? AND listingType=?`
+      ).bind(pid, sport, Number(season), MARKET_KEEP).first();
+      const recent = await db.prepare(
+        `SELECT id, value, minBid, buyNow, curBid, bids, cards, endsAt, closedAt, sold, soldRax
+           FROM market WHERE playerId=? AND sport=? AND season=? AND listingType=?
+          ORDER BY COALESCE(closedAt, 9e15) DESC, endsAt DESC LIMIT 40`
+      ).bind(pid, sport, Number(season), MARKET_KEEP).all();
+      return json({ playerId: pid, sport, season, summary: sum || {}, recent: recent.results || [] });
+    } catch (e) {
+      return json({ error: 'could not read player market', detail: String((e && e.message) || e) }, 503);
+    }
+  }
+
   // One row per player: how many listings, how much rating is on sale, and
   // what the market is charging for a point of it.
   if (url.searchParams.get('market') === 'board') {
@@ -666,7 +797,7 @@ export async function onRequestGet({ request, env }) {
       .split(',').map(x => x.trim()).filter(Boolean).slice(0, 24)
       .map(x => x.split(':')).filter(([sp, se]) => SPORTS.has(sp) && /^\d{4}$/.test(se || ''));
     if (!pairs.length) return json({ error: 'pick at least one season' }, 400);
-    const type = (url.searchParams.get('listingType') || 'userpassfull').toLowerCase();
+    const type = MARKET_KEEP;          // single cards are out of this view for now
     const where = pairs.map(() => '(sport=? AND season=?)').join(' OR ');
     const binds = pairs.flatMap(([sp, se]) => [sp, Number(se)]);
     const typeClause = type === 'all' ? '' : ' AND listingType=?';
@@ -679,7 +810,7 @@ export async function onRequestGet({ request, env }) {
                 ROUND(SUM(COALESCE(buyNow, minBid)) * 1.0 / NULLIF(SUM(value), 0), 2) AS raxPerRating,
                 MAX(seenAt) AS seenAt
            FROM market WHERE (${where})${typeClause} AND player IS NOT NULL
-                  AND goneAt IS NULL
+                  AND closedAt IS NULL
           GROUP BY sport, season, playerId
           ORDER BY totalRating DESC LIMIT 1000`).bind(...binds).all();
       return json({ rows: q.results || [], listingType: type });
@@ -1010,6 +1141,21 @@ export async function onRequestGet({ request, env }) {
   // today is remembered in a single marker so it is skipped until tomorrow.
   if (['next', 'resume', 'stuck', 'rescan'].includes(url.searchParams.get('queue'))) {
     const db = env.RATEBOARD_DB;
+    // Bulk listings close constantly and say nothing about how they ended, so
+    // every ten minutes the ones about to finish are read one last time and
+    // the ones already gone are settled. It rides the existing tick rather
+    // than needing its own schedule.
+    if (url.searchParams.get('queue') === 'next' && db) {
+      let last = 0;
+      try { last = Number(await env.RATEBOARD_KV.get(CLOSING_KEY)) || 0; } catch (e) {}
+      if (Date.now() - last > CLOSING_EVERY_MS) {
+        try { await env.RATEBOARD_KV.put(CLOSING_KEY, String(Date.now())); } catch (e) {}
+        for (const [sp, se] of Object.entries(RESCAN_SEASON)) {
+          try { await marketClosing(env, db, auth, sp, se); } catch (e) {}
+        }
+        try { await marketSettle(db); } catch (e) {}
+      }
+    }
     const CLEAR_KEY = 'queue_clear_v1';
     const today = new Date().toISOString().slice(0, 10);
 
