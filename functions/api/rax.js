@@ -820,6 +820,15 @@ export async function onRequestGet({ request, env }) {
       }
     } catch (e) {}
     if (!tagRar.size) return json({ error: 'no tags collected yet for this sport' }, 400);
+    // Clear every score so the ordinary forward walk redoes the season. Used
+    // when the rules or the tag table have changed under it.
+    if (url.searchParams.get('reset') === '1') {
+      try {
+        await db.prepare('UPDATE plays SET rarity=NULL WHERE sport=? AND season=?')
+          .bind(sport, Number(season)).run();
+      } catch (e) { return json({ error: 'could not clear scores' }, 503); }
+      return json({ sport, season, cleared: true });
+    }
     let rows = [];
     try {
       const r = await db.prepare(
