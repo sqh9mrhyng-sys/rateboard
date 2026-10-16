@@ -783,14 +783,17 @@ export async function onRequestGet({ request, env }) {
     const pgVal = String(url.searchParams.get('pgv') || '0').replace(/[^0-9]/g, '') || '0';
     const q = new URLSearchParams({ limit: String(lim) });
     if (pgName) q.set(pgName, pgVal);
-    const SUBS_G = { stats: 'stats', plays: `plays?${q.toString()}`, plain: 'plays' };
+    const SUBS_G = { stats: 'stats', plays: `plays?${q.toString()}`, plain: 'plays',
+                     feed: 'feed?version=2&view=all&viewFrame=default' };
     const which = String(url.searchParams.get('sub') || 'plays').toLowerCase();
     const tail = SUBS_G[which];
     if (!tail) return json({ error: 'sub must be stats, plays or playstop' }, 400);
     try {
       const d = await rsGet(`https://web.realapp.com/games/${gid}/sport/${sport}/${tail}`, auth);
       const rows = rowsOf(d);
-      const arr = Array.isArray(d && d.plays) ? d.plays : rows;
+      const arr = Array.isArray(d && d.plays) ? d.plays
+                : Array.isArray(d && d.feed) ? d.feed
+                : Array.isArray(d && d.items) ? d.items : rows;
       // Which plays mint a card is the question, so report how the category
       // field lines up with play type rather than a sample of rows.
       const withCat = arr.filter(r => r.collectingCategoryId != null);
