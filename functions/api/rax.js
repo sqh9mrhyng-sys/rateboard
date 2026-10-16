@@ -479,6 +479,73 @@ async function forgetWalk(env, sport, season) {
 // up again once a week on its own day - spread out so two big sports never
 // land together. Days are Sunday 0 .. Saturday 6, read in Alaska time, and the
 // slot opens in the morning there.
+/* ---- plays ------------------------------------------------------------
+   One row per play, from two feeds that each show part of the picture: a
+   player's top plays for a season, and the last stretch of each game. Neither
+   is complete - Real serves no full play list - so this is the high end of
+   the rating range rather than every snap, which is also where the cards
+   worth anything live. `cat` is Real's own collectingCategoryId and is null
+   on a play that mints nothing, so it doubles as the card filter.
+   ---------------------------------------------------------------------- */
+const PLAYS_DDL = `CREATE TABLE IF NOT EXISTS plays (
+  id INTEGER PRIMARY KEY, sport TEXT NOT NULL, season INTEGER NOT NULL,
+  seasonType TEXT, gameId INTEGER, day TEXT,
+  label TEXT, type TEXT, subType TEXT, cat INTEGER, value REAL,
+  playerId INTEGER, player TEXT, player2Id INTEGER, player2 TEXT,
+  teamId INTEGER, oppTeamId INTEGER,
+  period INTEGER, clock TEXT, down INTEGER, togo INTEGER, yards INTEGER,
+  epa REAL, tags TEXT, seenAt INTEGER NOT NULL)`;
+const TAGS_DDL = `CREATE TABLE IF NOT EXISTS tags (
+  id INTEGER NOT NULL, sport TEXT NOT NULL, label TEXT, rarity INTEGER,
+  seenAt INTEGER NOT NULL, PRIMARY KEY (id, sport))`;
+const PLAYS_CURSOR = 'plays_cursor_v1';
+const PLAYS_PER_TICK = 24;        // players or games per call
+
+async function playsReady(db) {
+  await db.prepare(PLAYS_DDL).run();
+  await db.prepare(TAGS_DDL).run();
+  for (const ix of [
+    'CREATE INDEX IF NOT EXISTS plays_sp ON plays (sport, season, playerId)',
+    'CREATE INDEX IF NOT EXISTS plays_game ON plays (gameId)',
+    'CREATE INDEX IF NOT EXISTS plays_cat ON plays (sport, season, cat)'
+  ]) { try { await db.prepare(ix).run(); } catch (e) {} }
+}
+
+const playName = o => o ? [o.firstName, o.lastName].filter(Boolean).join(' ') || null : null;
+
+function playStmt(db) {
+  return db.prepare(
+    `INSERT INTO plays (id, sport, season, seasonType, gameId, day, label, type, subType,
+                        cat, value, playerId, player, player2Id, player2, teamId, oppTeamId,
+                        period, clock, down, togo, yards, epa, tags, seenAt)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET value=excluded.value, cat=excluded.cat,
+       label=excluded.label, tags=excluded.tags, seenAt=excluded.seenAt`);
+}
+
+function playBind(stmt, r, sport, season) {
+  const ai = r.additionalInfo || {};
+  const cl = (r.display && r.display.clock) || {};
+  return stmt.bind(
+    Number(r.id), sport, Number(r.season || season), r.seasonType || null,
+    r.gameId == null ? null : Number(r.gameId), r.day || null,
+    r.label || r.metricLabel || null, r.type || null, r.subType || null,
+    r.collectingCategoryId == null ? null : Number(r.collectingCategoryId),
+    r.value == null ? null : Number(r.value),
+    r.primaryPlayerId == null ? null : Number(r.primaryPlayerId), playName(r.primaryPlayer),
+    r.secondaryPlayerId == null ? null : Number(r.secondaryPlayerId), playName(r.secondaryPlayer),
+    r.teamId == null ? null : Number(r.teamId),
+    r.opponentTeamId == null ? null : Number(r.opponentTeamId),
+    r.period == null ? null : Number(r.period),
+    cl.time || null,
+    ai.down == null ? null : Number(ai.down),
+    ai.distanceToGo == null ? null : Number(ai.distanceToGo),
+    ai.totalYardsGained == null ? null : Number(ai.totalYardsGained),
+    ai.epa == null ? null : Number(ai.epa),
+    Array.isArray(r.tags) ? r.tags.join(',') : null,
+    Date.now());
+}
+
 const RESCAN_DAY = { ncaaf: 0, soccer: 1, nfl: 2, ncaam: 3, nba: 4, nhl: 5, mlb: 6, wnba: 6, golf: 6 };
 const RESCAN_SEASON = { ncaaf: 2026, soccer: 2026, nfl: 2026, ncaam: 2026, nba: 2026,
                         nhl: 2026, mlb: 2026, wnba: 2026, golf: 2026 };
@@ -525,6 +592,109 @@ export async function onRequestGet({ request, env }) {
 
   // Walk the marketplace a slice at a time, keeping the place in KV so the
   // next tick carries on. Same shape as the game log collector.
+  // Collect plays. Two sources, same table, deduped on the play id: each
+  // player's top plays for the season, and the tail of each game.
+  if (url.searchParams.get('plays') === 'collect') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    const from = url.searchParams.get('from') === 'games' ? 'games' : 'players';
+    await playsReady(db);
+    const key = `${PLAYS_CURSOR}:${from}:${sport}:${season}`;
+    let after = 0;
+    try { after = Number(await env.RATEBOARD_KV.get(key)) || 0; } catch (e) {}
+
+    // Both lists come from the game log, which already knows every player and
+    // every game of a season.
+    const q = from === 'games'
+      ? `SELECT DISTINCT gameId AS n FROM gamelog WHERE sport=? AND season=? AND gameId > ?
+           ORDER BY gameId LIMIT ?`
+      : `SELECT DISTINCT playerId AS n FROM gamelog WHERE sport=? AND season=? AND playerId > ?
+           ORDER BY playerId LIMIT ?`;
+    let ids = [];
+    try {
+      const r = await db.prepare(q).bind(sport, Number(season), after, PLAYS_PER_TICK).all();
+      ids = (r.results || []).map(x => Number(x.n)).filter(Boolean);
+    } catch (e) { return json({ error: 'could not read the game log', detail: String((e && e.message) || e) }, 503); }
+
+    if (!ids.length) {
+      try { await env.RATEBOARD_KV.put(key, '0'); } catch (e) {}
+      return json({ sport, season, from, lap: true, done: 0, stored: 0 });
+    }
+
+    const stmt = playStmt(db);
+    let stored = 0, asked = 0;
+    for (const id of ids) {
+      const u = from === 'games'
+        ? `https://web.realapp.com/games/${id}/sport/${sport}/plays`
+        : `https://web.realapp.com/players/${id}/sport/${sport}/plays/top?limit=50&viewFrame=season`;
+      let d;
+      try { d = await rsGet(u, auth); } catch (e) { continue; }
+      asked++;
+      const rows = Array.isArray(d && d.plays) ? d.plays : rowsOf(d);
+      const batch = [];
+      for (const r of rows) {
+        if (!r || !r.id) continue;
+        if (r.seasonType && r.seasonType !== 'regularseason' && r.seasonType !== 'postseason') continue;
+        batch.push(playBind(stmt, r, sport, season));
+      }
+      if (batch.length) { try { await db.batch(batch); stored += batch.length; } catch (e) {} }
+      await sleep(40);
+    }
+    after = ids[ids.length - 1];
+    try { await env.RATEBOARD_KV.put(key, String(after)); } catch (e) {}
+    let held = 0;
+    try {
+      const h = await db.prepare('SELECT COUNT(*) AS n FROM plays WHERE sport=? AND season=?')
+        .bind(sport, Number(season)).first();
+      held = Number((h && h.n) || 0);
+    } catch (e) {}
+    return json({ sport, season, from, asked, stored, held, nextAfter: after, lap: false });
+  }
+
+  // The tag dictionary. Plays carry tag ids but nothing that says what a tag
+  // is or what rarity it carries - cards do, in traits[], so a handful of
+  // marketplace cards fills the table in.
+  if (url.searchParams.get('plays') === 'tags') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    await playsReady(db);
+    const stmt = db.prepare(
+      `INSERT INTO tags (id, sport, label, rarity, seenAt) VALUES (?,?,?,?,?)
+       ON CONFLICT(id, sport) DO UPDATE SET label=excluded.label, rarity=excluded.rarity,
+         seenAt=excluded.seenAt`);
+    let cursor = new Date().toISOString(), found = 0, pages = 0;
+    for (let i = 0; i < 12; i++) {
+      const u = `https://web.realapp.com/cardmarketplacelistings`
+        + `?beforeEndsAt=${encodeURIComponent(cursor)}&cohort=all&listingType=card`
+        + `&offset=0&prestige=all&rarity=all&season=${season}&sport=${sport}`;
+      let rows;
+      try { rows = rowsOf(await rsGet(u, auth)); } catch (e) { break; }
+      pages++;
+      if (!rows.length) break;
+      const batch = [], seen = new Set();
+      for (const r of rows) {
+        for (const t of ((r.card && r.card.traits) || [])) {
+          if (!t || t.id == null || seen.has(t.id)) continue;
+          seen.add(t.id);
+          batch.push(stmt.bind(Number(t.id), sport, t.label || null,
+                               t.rarity == null ? null : Number(t.rarity), Date.now()));
+        }
+      }
+      if (batch.length) { try { await db.batch(batch); found += batch.length; } catch (e) {} }
+      const last = rows[rows.length - 1];
+      if (!last || !last.endsAt || last.endsAt === cursor) break;
+      cursor = last.endsAt;
+      await sleep(40);
+    }
+    let held = 0, byRarity = {};
+    try {
+      const h = await db.prepare('SELECT rarity, COUNT(*) AS n FROM tags WHERE sport=? GROUP BY rarity')
+        .bind(sport).all();
+      for (const row of (h.results || [])) { byRarity[row.rarity] = Number(row.n); held += Number(row.n); }
+    } catch (e) {}
+    return json({ sport, season, pages, written: found, tagsHeld: held, byRarity });
+  }
+
   // Game level reads. The team tab on a game page calls .../stats, and the
   // player endpoint spells its play feed /plays, so those are the two fixed
   // shapes here. gameId is digits, sport is validated above.
