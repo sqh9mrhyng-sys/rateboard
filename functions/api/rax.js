@@ -716,6 +716,12 @@ export async function onRequestGet({ request, env }) {
       after = 0;
       try { await env.RATEBOARD_KV.put(key, '0'); } catch (e) {}
     }
+    // Jump the walk to a point, for picking up only the newest games.
+    const afterArg = url.searchParams.get('after');
+    if (afterArg != null && /^\d+$/.test(afterArg)) {
+      after = Number(afterArg);
+      try { await env.RATEBOARD_KV.put(key, String(after)); } catch (e) {}
+    }
 
     // Both lists come from the game log, which already knows every player and
     // every game of a season.
@@ -853,6 +859,46 @@ export async function onRequestGet({ request, env }) {
         .bind(sport, Number(season), day).all();
       return json({ day, games: r.results || [] });
     } catch (e) { return json({ error: 'could not read the game log' }, 503); }
+  }
+
+  if (url.searchParams.get('plays') === 'orphans') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    await playsReady(db);
+    try {
+      const r = await db.prepare(
+        `SELECT p.gameId, COUNT(*) AS plays, MIN(p.seasonType) AS seasonType,
+                MIN(p.season) AS playSeason,
+                (SELECT MIN(g.day) FROM gamelog g WHERE g.sport=p.sport AND g.gameId=p.gameId) AS day,
+                (SELECT MIN(g.season) FROM gamelog g WHERE g.sport=p.sport AND g.gameId=p.gameId) AS logSeason
+           FROM plays p
+          WHERE p.sport=?1 AND p.season=?2
+            AND p.gameId NOT IN (SELECT DISTINCT gameId FROM gamelog
+                                  WHERE sport=?1 AND season=?2 AND gameId IS NOT NULL)
+          GROUP BY p.gameId ORDER BY p.gameId`).bind(sport, Number(season)).all();
+      return json({ sport, season, orphanGames: r.results || [] });
+    } catch (e) {
+      return json({ error: 'could not look for orphans', detail: String((e && e.message) || e) }, 503);
+    }
+  }
+
+  // Remove every play of one game. Used when a game turns out to belong to
+  // another season, or needs collecting again from scratch.
+  if (url.searchParams.get('plays') === 'drop') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    const ids = String(url.searchParams.get('gameId') || '')
+      .split(',').map(x => x.trim()).filter(x => /^\d+$/.test(x)).slice(0, 50);
+    if (!ids.length) return json({ error: 'gameId required' }, 400);
+    let removed = 0;
+    for (const g of ids) {
+      try {
+        const r = await db.prepare('DELETE FROM plays WHERE sport=? AND gameId=?')
+          .bind(sport, Number(g)).run();
+        removed += (r && r.meta && r.meta.changes) || 0;
+      } catch (e) {}
+    }
+    return json({ sport, dropped: ids, rowsRemoved: removed });
   }
 
   if (url.searchParams.get('plays') === 'diag') {
