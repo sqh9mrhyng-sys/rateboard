@@ -731,11 +731,16 @@ export async function onRequestGet({ request, env }) {
          altRarity = CASE WHEN tags.rarity = excluded.rarity THEN tags.altRarity
            ELSE TRIM(COALESCE(tags.altRarity, '') || ',' || CAST(excluded.rarity AS TEXT), ',') END,
          seenAt=excluded.seenAt`);
+    // The top-end tags only sit on top-end cards, so the harvest can be
+    // pointed straight at them instead of waiting for one to drift past.
+    const rarityFilter = String(url.searchParams.get('rarity') || 'all')
+      .replace(/[^a-z0-9]/gi, '').slice(0, 20) || 'all';
     let cursor = new Date().toISOString(), found = 0, pages = 0;
     for (let i = 0; i < 12; i++) {
       const u = `https://web.realapp.com/cardmarketplacelistings`
         + `?beforeEndsAt=${encodeURIComponent(cursor)}&cohort=all&listingType=card`
-        + `&offset=0&prestige=all&rarity=all&season=${season}&sport=${sport}`;
+        + `&offset=0&prestige=all&rarity=${encodeURIComponent(rarityFilter)}`
+        + `&season=${season}&sport=${sport}`;
       let rows;
       try { rows = rowsOf(await rsGet(u, auth)); } catch (e) { break; }
       pages++;
@@ -761,7 +766,14 @@ export async function onRequestGet({ request, env }) {
         .bind(sport).all();
       for (const row of (h.results || [])) { byRarity[row.rarity] = Number(row.n); held += Number(row.n); }
     } catch (e) {}
-    return json({ sport, season, pages, written: found, tagsHeld: held, byRarity });
+    const haveK = new Set();
+    try {
+      const t2 = await db.prepare('SELECT label FROM tags WHERE sport=?').bind(sport).all();
+      for (const r of (t2.results || [])) haveK.add(tagKey(r.label));
+    } catch (e) {}
+    return json({ sport, season, rarity: rarityFilter, pages, written: found,
+      tagsHeld: held, byRarity,
+      missingRuleTags: Object.keys(RARITY_RULES).filter(k => !haveK.has(k)) });
   }
 
   if (url.searchParams.get('plays') === 'diag') {
