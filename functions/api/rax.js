@@ -504,7 +504,11 @@ const PLAYS_CURSOR = 'plays_cursor_v1';
 const PLAYS_SPORTS = [
   { sport: 'nfl', season: 2026 }
 ];
-const PLAYS_PER_TICK = 24;        // players or games per call
+// A game's feed comes back whole - every snap, around 175 rows for an NFL
+// game - so games are taken a few at a time. Players are a thin top-plays
+// list and can be walked in bigger strides.
+const PLAYS_PER_TICK = 24;        // players per call
+const GAMES_PER_TICK = 6;         // games per call, each one a full game
 
 async function playsReady(db) {
   await db.prepare(PLAYS_DDL).run();
@@ -608,6 +612,12 @@ export async function onRequestGet({ request, env }) {
     const key = `${PLAYS_CURSOR}:${from}:${sport}:${season}`;
     let after = 0;
     try { after = Number(await env.RATEBOARD_KV.get(key)) || 0; } catch (e) {}
+    // reset=1 sends the walk back to the start, for when the feed behind it
+    // changes and everything collected before is worth re-reading.
+    if (url.searchParams.get('reset') === '1') {
+      after = 0;
+      try { await env.RATEBOARD_KV.put(key, '0'); } catch (e) {}
+    }
 
     // Both lists come from the game log, which already knows every player and
     // every game of a season.
@@ -618,7 +628,8 @@ export async function onRequestGet({ request, env }) {
            ORDER BY playerId LIMIT ?`;
     let ids = [];
     try {
-      const r = await db.prepare(q).bind(sport, Number(season), after, PLAYS_PER_TICK).all();
+      const r = await db.prepare(q).bind(sport, Number(season), after,
+                     from === 'games' ? GAMES_PER_TICK : PLAYS_PER_TICK).all();
       ids = (r.results || []).map(x => Number(x.n)).filter(Boolean);
     } catch (e) { return json({ error: 'could not read the game log', detail: String((e && e.message) || e) }, 503); }
 
@@ -631,7 +642,7 @@ export async function onRequestGet({ request, env }) {
     let stored = 0, asked = 0;
     for (const id of ids) {
       const u = from === 'games'
-        ? `https://web.realapp.com/games/${id}/sport/${sport}/plays`
+        ? `https://web.realapp.com/games/${id}/sport/${sport}/feed?version=2&view=all&viewFrame=default`
         : `https://web.realapp.com/players/${id}/sport/${sport}/plays/top?limit=50&viewFrame=season`;
       let d;
       try { d = await rsGet(u, auth); } catch (e) { continue; }
@@ -1065,7 +1076,10 @@ export async function onRequestGet({ request, env }) {
                  : n % 2 === 0 ? 'games' : null;
       if (step) {
         const sp = PLAYS_SPORTS[Math.floor(n / 2) % PLAYS_SPORTS.length];
-        const side = step === 'games' ? (n % 4 === 0 ? 'games' : 'players') : null;
+        // The game feed carries every play in the game, so it alone is a
+        // complete pass. The player top-plays feed is kept for sports whose
+        // game feed is thinner, but NFL does not need it.
+        const side = step === 'games' ? 'games' : null;
         const u = new URL(url);
         u.search = side
           ? `?plays=collect&from=${side}&sport=${sp.sport}&season=${sp.season}`
