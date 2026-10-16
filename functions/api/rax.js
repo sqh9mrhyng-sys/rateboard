@@ -563,9 +563,14 @@ const RARITY_RULES = {
 
 // Real files every field goal attempt under its made-FG category, misses
 // included, so they are excluded here. Used by every read that counts cards.
+// COALESCE throughout: subType and label are null on an ordinary kick, and a
+// null inside NOT(...) makes the whole test null, which drops the row.
 const CARD_SQL = `cat IS NOT NULL AND NOT (cat = 205 AND (
-  subType = 'BlockedKick' OR label LIKE '%miss%' OR label LIKE '%no good%'
-  OR label LIKE '%blocked%' OR label LIKE '%wide %' OR label LIKE '%short%'))`;
+  COALESCE(subType,'') = 'BlockedKick'
+  OR COALESCE(label,'') LIKE '%miss%'
+  OR COALESCE(label,'') LIKE '%no good%'
+  OR COALESCE(label,'') LIKE '%blocked%'
+  OR COALESCE(label,'') LIKE '%wide%'))`;
 
 const PLAYS_CURSOR = 'plays_cursor_v1';
 // Which seasons the tick walks. Add a line here and the cron picks it up; the
