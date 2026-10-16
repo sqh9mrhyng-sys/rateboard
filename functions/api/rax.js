@@ -558,6 +558,9 @@ const RARITY_RULES = {
   dot:            { td: 4 },
   burst:          { td: 4 },
   '2nddown':      { fg: 4 },
+  // Rare everywhere, stated. Pinned because the harvested base read it as
+  // epic off a single listing and nothing else on the play outranks it.
+  snipe:          { '*': 3 },
   pick6:          { def: 4 }
 };
 
