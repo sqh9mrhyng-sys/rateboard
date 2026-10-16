@@ -850,6 +850,63 @@ export async function onRequestGet({ request, env }) {
     return json(out);
   }
 
+  if (url.searchParams.get('plays') === 'player') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    await playsReady(db);
+    const pid = parseInt(url.searchParams.get('playerId') || '0', 10);
+    if (!pid) return json({ error: 'playerId required' }, 400);
+    const out = { sport, season, playerId: pid };
+    try {
+      const head = await db.prepare(
+        `SELECT MAX(player) AS player, COUNT(*) AS allPlays,
+                SUM(CASE WHEN cat IS NOT NULL THEN 1 ELSE 0 END) AS plays,
+                COUNT(DISTINCT gameId) AS games,
+                ROUND(AVG(CASE WHEN cat IS NOT NULL THEN value END), 2) AS avgRating,
+                ROUND(MAX(value), 1) AS bestRating
+           FROM plays WHERE sport=? AND season=? AND playerId=?`)
+        .bind(sport, Number(season), pid).first();
+      Object.assign(out, head || {});
+      const rar = await db.prepare(
+        `SELECT COALESCE(rarity,0) AS r, COUNT(*) AS n FROM plays
+          WHERE sport=? AND season=? AND playerId=? AND cat IS NOT NULL
+          GROUP BY r ORDER BY r`).bind(sport, Number(season), pid).all();
+      out.byRarity = {};
+      for (const x of (rar.results || [])) out.byRarity[x.r] = Number(x.n);
+      const fam = await db.prepare(
+        `SELECT cat, type, subType, COUNT(*) AS n,
+                ROUND(AVG(value),2) AS avgRating, ROUND(MAX(value),1) AS bestRating
+           FROM plays WHERE sport=? AND season=? AND playerId=? AND cat IS NOT NULL
+          GROUP BY cat, type, subType ORDER BY n DESC`)
+        .bind(sport, Number(season), pid).all();
+      out.kinds = (fam.results || []).map(x => Object.assign({}, x,
+        { family: playFamily(x.cat == null ? null : Number(x.cat), x.type, x.subType) }));
+      const top = await db.prepare(
+        `SELECT id, day, gameId, label, value, COALESCE(rarity,0) AS rarity, cat, tags
+           FROM plays WHERE sport=? AND season=? AND playerId=? AND cat IS NOT NULL
+          ORDER BY rarity DESC, value DESC LIMIT 40`)
+        .bind(sport, Number(season), pid).all();
+      out.top = top.results || [];
+    } catch (e) {
+      return json({ error: 'could not read the player', detail: String((e && e.message) || e) }, 503);
+    }
+    // Tag names for whatever showed up, so the detail can print them.
+    try {
+      const ids = new Set();
+      for (const r of out.top) for (const b of String(r.tags || '').split(',')) {
+        const n = Number(b); if (n) ids.add(n);
+      }
+      out.tagNames = {};
+      if (ids.size) {
+        const t = await db.prepare(
+          `SELECT id, label FROM tags WHERE sport=? AND id IN (${[...ids].join(',')})`)
+          .bind(sport).all();
+        for (const x of (t.results || [])) out.tagNames[x.id] = x.label;
+      }
+    } catch (e) {}
+    return json(out);
+  }
+
   // A play's rarity is the highest rarity among its tags, which is how the
   // game decides it. Worked out here rather than at write time, because the
   // tag table is still filling in while plays are being collected.
@@ -922,6 +979,9 @@ export async function onRequestGet({ request, env }) {
     if (!db) return json({ error: 'no database binding' }, 503);
     await playsReady(db);
     const q = String(url.searchParams.get('q') || '').slice(0, 60);
+    // Odds off a handful of plays say nothing, so the board starts at ten.
+    const minPlays = Math.max(0, Math.min(500,
+      parseInt(url.searchParams.get('min') || '10', 10) || 0));
     try {
       const rowsQ = await db.prepare(
         `SELECT playerId, MAX(player) AS player,
@@ -934,13 +994,14 @@ export async function onRequestGet({ request, env }) {
            FROM plays
           WHERE sport=? AND season=? AND cat IS NOT NULL AND player IS NOT NULL
             AND (?3 = '' OR player LIKE ?4)
-          GROUP BY playerId ORDER BY plays DESC, legendary DESC LIMIT 4000`)
-        .bind(sport, Number(season), q, `%${q}%`).all();
+          GROUP BY playerId HAVING COUNT(*) >= ?5
+          ORDER BY plays DESC, legendary DESC LIMIT 4000`)
+        .bind(sport, Number(season), q, `%${q}%`, minPlays).all();
       const tot = await db.prepare(
         `SELECT COUNT(*) AS all_, SUM(CASE WHEN cat IS NOT NULL THEN 1 ELSE 0 END) AS cards,
                 SUM(CASE WHEN rarity IS NULL THEN 1 ELSE 0 END) AS unscored, MAX(seenAt) AS seenAt
            FROM plays WHERE sport=? AND season=?`).bind(sport, Number(season)).first();
-      return json({ sport, season, q, rows: rowsQ.results || [], totals: tot || {} });
+      return json({ sport, season, q, minPlays, rows: rowsQ.results || [], totals: tot || {} });
     } catch (e) {
       return json({ error: 'could not read the play board', detail: String((e && e.message) || e) }, 503);
     }
