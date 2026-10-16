@@ -532,7 +532,14 @@ export async function onRequestGet({ request, env }) {
     const gid = String(url.searchParams.get('probeGame') || '').replace(/[^0-9]/g, '');
     if (!gid) return json({ error: 'bad gameId' }, 400);
     const lim = Math.max(1, Math.min(1000, parseInt(url.searchParams.get('limit') || '25', 10) || 25));
-    const SUBS_G = { stats: 'stats', plays: `plays?limit=${lim}`, plain: 'plays' };
+    // limit is ignored by this one, so the cursor has to be found by name.
+    // Only the handful the rest of this API already uses are allowed through.
+    const PG = ['start', 'offset', 'page', 'before', 'after', 'sequence', 'cursor'];
+    const pgName = PG.includes(String(url.searchParams.get('pg') || '')) ? url.searchParams.get('pg') : null;
+    const pgVal = String(url.searchParams.get('pgv') || '0').replace(/[^0-9]/g, '') || '0';
+    const q = new URLSearchParams({ limit: String(lim) });
+    if (pgName) q.set(pgName, pgVal);
+    const SUBS_G = { stats: 'stats', plays: `plays?${q.toString()}`, plain: 'plays' };
     const which = String(url.searchParams.get('sub') || 'plays').toLowerCase();
     const tail = SUBS_G[which];
     if (!tail) return json({ error: 'sub must be stats, plays or playstop' }, 400);
@@ -548,7 +555,9 @@ export async function onRequestGet({ request, env }) {
         const k = r.collectingCategoryId == null ? 'none' : String(r.collectingCategoryId);
         (byCat[k] = byCat[k] || []).push(`${r.type}/${r.subType}`);
       }
-      return json({ gameId: gid, sub: which, keys: Object.keys(d || {}), count: arr.length,
+      return json({ gameId: gid, sub: which, paged: pgName ? `${pgName}=${pgVal}` : 'none',
+        firstId: arr[0] ? arr[0].id : null, lastId: arr.length ? arr[arr.length - 1].id : null,
+        keys: Object.keys(d || {}), count: arr.length,
         firstRowKeys: arr[0] ? Object.keys(arr[0]) : [],
         withCategory: withCat.length,
         categories: Object.fromEntries(Object.entries(byCat).map(([k, v]) =>
