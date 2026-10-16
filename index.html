@@ -434,13 +434,11 @@
       </div>
       <nav class="navrow" aria-label="Board sections">
         <button class="linkbtn hide" id="open-preview">View as member</button>
-        <button class="linkbtn" id="open-full">Full price</button>
         <button class="linkbtn" id="open-report">Report a user</button>
         <button class="linkbtn" id="open-bell">Alerts</button>
         <button class="linkbtn" id="open-feature">Request a feature</button>
         <button class="linkbtn hide" id="open-copy">Copy list</button>
         <button class="linkbtn hide" id="open-cbb">Game data</button>
-        <button class="linkbtn hide" id="open-market">Market data</button>
         <button class="linkbtn hide" id="open-min">Lists</button>
         <button class="linkbtn hide" id="open-admin">Admin</button>
       </nav>
@@ -577,17 +575,8 @@ const canSeeGameData = () => isAdmin() || (!!me && gameDataList().includes(Strin
 function applyGameDataVisibility(){
   const b = $('#open-cbb');
   if(b) b.classList.toggle('hide', !canSeeGameData());
-  applyMarketVisibility();
 }
 
-// Market data is granted separately from game data - someone can have one
-// without the other.
-const marketDataList = () => (market.marketdata || []).map(x => String(x).toLowerCase());
-const canSeeMarket = () => isAdmin() || (!!me && marketDataList().includes(String(me).toLowerCase()));
-function applyMarketVisibility(){
-  const b = $('#open-market');
-  if(b) b.classList.toggle('hide', !canSeeMarket());
-}
 
 // Everything an admin gets, shown or hidden in one place, so preview mode is a
 // single switch rather than a rule repeated in a dozen spots.
@@ -617,16 +606,6 @@ const TARGET_LINK = 'https://www.realapp.com/NeH4tgFKo9k';
 // in a real comment URL under this post (e.g. .../JaHBFYjOBj8igvOr/<comment id>).
 // The full price board runs under its own Real post, so its comment links are
 // checked against that one rather than the buy board's.
-// Two different ids for the same post, the same split the buy board has: the
-// one in the share link people click, and the one that shows up inside a real
-// comment URL. A submitted link is checked against the second.
-const FULL_POST_ID = 'dNHytgFJWO2';
-const FULL_POST_URL = 'https://www.realapp.com/' + FULL_POST_ID;
-const FULL_VERIFY_ID = 'gKHxFVBxvBDc0dm6';
-const FULL_POST_PREFIX = 'https://www.realapp.com/' + FULL_VERIFY_ID + '/';
-// A post drops off the board 90 minutes after it goes up.
-const FULL_LIVE_MS = 90 * 60 * 1000;
-
 const VERIFY_POST_ID = 'JaHBFYjOBj8igvOr';
 const TARGET_POST_PREFIX = 'https://www.realapp.com/' + VERIFY_POST_ID + '/';
 // 8 is the bottom tier, shown as "minimum". It's offered on any player who
@@ -1872,7 +1851,7 @@ function clearDevice(){
   try{ localStorage.removeItem(SESSION); }catch(e){}
 }
 
-const blank = () => ({ users:{}, offers:[], reports:[], minimums:[], keeplist:[], gamedata:[], marketdata:[] });
+const blank = () => ({ users:{}, offers:[], reports:[], minimums:[], keeplist:[], gamedata:[] });
 let market = blank();
 let me = null, sport = 'CFB', mode = 'buy', pending = [];
 
@@ -1881,8 +1860,6 @@ async function pull(){
   market = r && r.value ? JSON.parse(r.value) : blank();
   market.users ||= {}; market.offers ||= []; market.reports ||= []; market.minimums ||= []; market.keeplist ||= [];
   market.gamedata ||= [];
-  market.marketdata ||= [];
-  market.fullprice ||= [];
   return market;
 }
 
@@ -1927,25 +1904,6 @@ async function patch(op, payload){
     showConnBanner(true);
     toast('Could not save — check your connection and try again.');
     return false;
-  }
-}
-
-// Same as patch, but hands back the server's own words instead of turning
-// every refusal into a toast — the full price board needs to tell "someone
-// already has this player" apart from a real failure.
-async function patchFull(post){
-  try{
-    const r = await fetch('/api/kv', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ op:'addFull', post })
-    });
-    const data = await r.json().catch(()=>({}));
-    if(r.ok){ showConnBanner(false); return true; }
-    showConnBanner(true);
-    return data.error || 'Could not save. Try again.';
-  }catch(e){
-    showConnBanner(true);
-    return 'Could not save — check your connection and try again.';
   }
 }
 
@@ -3884,174 +3842,6 @@ async function alertsPanel(){
 
 $('#open-bell').addEventListener('click', alertsPanel);
 
-/* =========================================================
-   Market data
-   ---------------------------------------------------------
-   What is on the Real marketplace right now, gathered into one row per
-   player: how many listings are up, how much rating is on sale across them,
-   and what the market is charging for a point of it. That last number is the
-   one worth reading - a bundle at 14 rax a point and one at 38 are the same
-   cards at very different prices.
-
-   It is a rolling picture, not a history. Listings expire, so the sweep keeps
-   going round and anything it stops finding is dropped.
-   ========================================================= */
-let mkPairs = [], mkType = 'userpassfull', mkRows = [], mkSort = 'totalRating';
-
-async function marketPanel(){
-  const box = modal('Market data', `
-    <p class="note" id="mk-note">Loading…</p>
-    <div id="mk-seasons" class="dtbar" style="flex-wrap:wrap;gap:6px"></div>
-    <div class="dtbar" style="margin-top:8px;flex-wrap:wrap;gap:8px">
-      <span class="note">Bulk passes only. Single cards are out of this view for now.</span>
-      ${isAdmin() ? `<button class="btn-ghost" id="mk-sweep">Sweep now</button>` : ''}
-    </div>
-    <div class="dtwrap" style="margin-top:10px"><table class="dt" id="mk-table"></table></div>
-    <div id="mk-detail"></div>`);
-
-  let available = [];
-  try {
-    const d = await (await fetch('/api/rax?market=seasons')).json();
-    available = d.seasons || [];
-  } catch(e){}
-
-  function drawPicker(){
-    const bySport = new Map();
-    for(const r of available){
-      if(!bySport.has(r.sport)) bySport.set(r.sport, []);
-      bySport.get(r.sport).push(r);
-    }
-    box.querySelector('#mk-seasons').innerHTML = bySport.size
-      ? [...bySport.entries()].map(([sp, list]) => list.map(r => {
-          const key = `${sp}:${r.season}`;
-          return `<button class="btn-ghost${mkPairs.includes(key) ? ' on' : ''}" data-mkp="${key}"
-            aria-pressed="${mkPairs.includes(key)}">${esc(sportSeason(sp, r.season))}
-            <span class="note"> ${Number(r.listings).toLocaleString()}</span></button>`;
-        }).join('')).join('')
-      : '<p class="note">Nothing collected yet. Use "Collect a slice now" to start filling it.</p>';
-  }
-
-  function drawTable(){
-    const t = box.querySelector('#mk-table');
-    if(!mkRows.length){
-      t.innerHTML = `<tbody><tr><td class="l">${mkPairs.length
-        ? 'Nothing collected for that selection yet.' : 'Pick a season above.'}</td></tr></tbody>`;
-      return;
-    }
-    const rows = mkRows.slice().sort((a, b) =>
-      (Number(b[mkSort]) || 0) - (Number(a[mkSort]) || 0));
-    const head = [['season','Year','l'], ['sport','Sport','l'], ['player','Player','l'],
-                  ['listings','Listings'], ['totalRating','Rating on sale'],
-                  ['raxPerRating','Rax per rating']];
-    t.innerHTML = `<thead><tr>${head.map(([k, label, l]) =>
-        `<th class="${l ? 'l ' : ''}${mkSort === k ? 'on' : ''}" data-mks="${k}">${label}${
-          mkSort === k ? ' ↓' : ''}</th>`).join('')}</tr></thead>
-      <tbody>${rows.map(r => `<tr class="clickable"
-          data-mkpl="${r.playerId}" data-mksp="${esc(r.sport)}" data-mkse="${r.season}">
-        <td class="l">${esc(seasonLabel(r.sport, r.season))}</td>
-        <td class="l">${esc(CB_SPORT_LABEL[r.sport] || r.sport)}</td>
-        <td class="l">${esc(r.player || '')}</td>
-        <td>${Number(r.listings).toLocaleString()}</td>
-        <td>${r.totalRating == null ? '—' : Number(r.totalRating).toLocaleString()}</td>
-        <td>${r.raxPerRating == null ? '—' : Number(r.raxPerRating).toFixed(2)}</td>
-      </tr>`).join('')}</tbody>`;
-  }
-
-  async function load(){
-    const note = box.querySelector('#mk-note');
-    if(!mkPairs.length){ mkRows = []; note.textContent = 'Pick a season above.'; return drawTable(); }
-    note.textContent = 'Loading…';
-    const first = mkPairs[0].split(':');
-    try {
-      const d = await (await fetch(`/api/rax?market=board&sport=${first[0]}&season=${first[1]}`
-        + `&seasons=${encodeURIComponent(mkPairs.join(','))}&listingType=${mkType}`)).json();
-      mkRows = d.rows || [];
-      const fresh = mkRows.reduce((t, r) => Math.max(t, Number(r.seenAt) || 0), 0);
-      note.textContent = `${mkRows.length.toLocaleString()} players on sale`
-        + (fresh ? ` · last swept ${new Date(fresh).toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' })}` : '');
-    } catch(e){ note.textContent = 'Could not reach the server.'; mkRows = []; }
-    drawTable();
-  }
-
-  async function showPlayer(pid, sp, se){
-    const el = box.querySelector('#mk-detail');
-    el.innerHTML = '<p class="note" style="margin-top:12px">Loading…</p>';
-    let d;
-    try {
-      d = await (await fetch(`/api/rax?market=player&playerId=${encodeURIComponent(pid)}`
-        + `&sport=${encodeURIComponent(sp)}&season=${encodeURIComponent(se)}`)).json();
-    } catch(err){ el.innerHTML = '<p class="note">Could not load that player.</p>'; return; }
-    if(d.error){ el.innerHTML = `<p class="note">${esc(d.error)}</p>`; return; }
-    const sm = d.summary || {};
-    const n = v => v == null ? '—' : Number(v).toLocaleString();
-    el.innerHTML = `<div class="lkcard">
-      <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
-        <b style="font-size:19px">${esc(sm.player || 'Player')}</b>
-        <span class="note">${esc(sportSeason(sp, se))} · bulk passes</span>
-      </div>
-      <div class="lkstats">
-        <div class="lkstat">Listed<b>${n(sm.listed)}</b></div>
-        <div class="lkstat">Sold<b>${n(sm.sold)}</b></div>
-        <div class="lkstat">Open now<b>${n(sm.open)}</b></div>
-        <div class="lkstat">Sold rax per rating<b>${sm.soldRaxPerRating == null ? '—' : Number(sm.soldRaxPerRating).toFixed(2)}</b></div>
-        <div class="lkstat">Asking now<b>${sm.askRaxPerRating == null ? '—' : Number(sm.askRaxPerRating).toFixed(2)}</b></div>
-      </div>
-      <p class="note">How a pass ended is never stated outright, so it is read from the last
-      sighting: bids on it when the clock ran out means it went at the top bid, and vanishing
-      with time left means it was bought outright.</p>
-      <div class="dtwrap" style="margin-top:8px"><table class="dt">
-        <thead><tr><th class="l">Ended</th><th>Cards</th><th>Rating</th><th>Min</th>
-          <th>Buy now</th><th>Bids</th><th>Went for</th><th>Rax/rating</th></tr></thead>
-        <tbody>${(d.recent || []).map(r => `<tr>
-          <td class="l">${r.closedAt ? new Date(r.closedAt).toLocaleDateString([], { month:'short', day:'numeric' })
-            : '<span class="dim">open</span>'}</td>
-          <td>${n(r.cards)}</td><td>${r.value == null ? '—' : Number(r.value).toFixed(1)}</td>
-          <td>${n(r.minBid)}</td><td>${n(r.buyNow)}</td><td>${n(r.bids)}</td>
-          <td>${r.sold ? n(r.soldRax) : (r.closedAt ? '<span class="dim">unsold</span>' : '—')}</td>
-          <td>${r.sold && r.value ? (r.soldRax / r.value).toFixed(2) : '—'}</td>
-        </tr>`).join('')}</tbody></table></div>
-    </div>`;
-    el.scrollIntoView({ behavior:'smooth', block:'start' });
-  }
-
-  box.addEventListener('click', async e => {
-    const row = e.target.closest('[data-mkpl]');
-    if(row) return showPlayer(row.dataset.mkpl, row.dataset.mksp, row.dataset.mkse);
-    const p = e.target.closest('[data-mkp]');
-    if(p){
-      const k = p.dataset.mkp;
-      mkPairs = mkPairs.includes(k) ? mkPairs.filter(x => x !== k) : mkPairs.concat([k]);
-      drawPicker(); return load();
-    }
-    const h = e.target.closest('[data-mks]');
-    if(h){ mkSort = h.dataset.mks; return drawTable(); }
-    const sw = e.target.closest('#mk-sweep');
-    if(sw){
-      const sp = (mkPairs[0] || 'nfl:2026').split(':');
-      sw.disabled = true; sw.textContent = 'Collecting…';
-      try {
-        const d = await (await fetch(`/api/rax?market=collect&sport=${sp[0]}&season=${sp[1]}`
-          + `&listingType=userpassfull`)).json();
-        const c = await (await fetch(`/api/rax?market=closing&sport=${sp[0]}&season=${sp[1]}`)).json();
-        toast(d.error ? d.error
-          : `${d.newRows || 0} new, ${c.ended || 0} ended, ${c.bought || 0} bought outright`);
-      } catch(e){ toast('Collect failed.'); }
-      sw.disabled = false; sw.textContent = 'Collect a slice now';
-      try {
-        const d = await (await fetch('/api/rax?market=seasons')).json();
-        available = d.seasons || [];
-      } catch(e){}
-      drawPicker(); return load();
-    }
-  });
-
-  drawPicker();
-  if(!mkPairs.length && available.length) mkPairs = [`${available[0].sport}:${available[0].season}`];
-  drawPicker();
-  load();
-}
-
-$('#open-market').addEventListener('click', marketPanel);
 
 function reportUser(target){
   const box = modal('Report a user', `
@@ -5878,467 +5668,6 @@ async function cbbPanel(){
   });
 }
 
-/* =========================================================
-   Full price — open to everyone. Posts are short lived on purpose: a card
-   offered at full price is only worth listing while the person is at their
-   phone, so a post stops showing after 90 minutes. The row survives a week,
-   which is what makes putting the same one back up a single click.
-   ========================================================= */
-// A pack is used once a day and the day turns over at 7am, so hiding a player
-// lasts until the next 7am - ten to seven means ten minutes, not a whole day.
-const USED_KEY = 'ratebrd_used_packs';
-
-// Everyone's day has to turn over at the same moment, so the cutoff is 7am in
-// New York rather than 7am wherever the person happens to be. Reading the
-// clock through Intl keeps it right either side of a daylight saving change.
-const ET = 'America/New_York';
-function etWall(ts){
-  const f = new Intl.DateTimeFormat('en-CA', { timeZone: ET, hour12: false,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  const p = {};
-  for(const part of f.formatToParts(new Date(ts))) if(part.type !== 'literal') p[part.type] = +part.value;
-  return { y: p.year, m: p.month, d: p.day, h: p.hour % 24, mi: p.minute, s: p.second };
-}
-// The instant at which New York's clock reads this wall time. Starts from the
-// standard offset and corrects itself, which settles it on either side of a
-// daylight saving jump.
-function fromEtWall(y, m, d, h, mi, s){
-  const want = Date.UTC(y, m - 1, d, h, mi, s || 0);
-  let guess = want + 5 * 3600 * 1000;
-  for(let i = 0; i < 3; i++){
-    const w = etWall(guess);
-    const got = Date.UTC(w.y, w.m - 1, w.d, w.h, w.mi, w.s);
-    if(got === want) break;
-    guess += want - got;
-  }
-  return guess;
-}
-function nextSevenAm(from){
-  const w = etWall(from);
-  let t = fromEtWall(w.y, w.m, w.d, 7, 0, 0);
-  if(t <= from){
-    const nd = new Date(Date.UTC(w.y, w.m - 1, w.d) + 86400000);
-    t = fromEtWall(nd.getUTCFullYear(), nd.getUTCMonth() + 1, nd.getUTCDate(), 7, 0, 0);
-  }
-  return t;
-}
-function usedRead(){
-  let raw = {};
-  try { raw = JSON.parse(localStorage.getItem(USED_KEY) || '{}') || {}; } catch(e){}
-  const now = Date.now(), out = {};
-  for(const [k, until] of Object.entries(raw)) if(Number(until) > now) out[k] = Number(until);
-  return out;
-}
-function usedWrite(v){ try { localStorage.setItem(USED_KEY, JSON.stringify(v)); } catch(e){} }
-
-// Hidden players are keyed by flattened name, so the spelling is kept too -
-// otherwise a player nobody is buying would show in the list as a bare key.
-const USED_NAMES_KEY = 'ratebrd_used_names';
-function usedNames(){
-  try { return JSON.parse(localStorage.getItem(USED_NAMES_KEY) || '{}') || {}; } catch(e){ return {}; }
-}
-function usedName(name){
-  const m = usedNames();
-  m[norm(name)] = name;
-  try { localStorage.setItem(USED_NAMES_KEY, JSON.stringify(m)); } catch(e){}
-}
-
-const fullLive = p => p.state !== 'queued' && Date.now() - Number(p.ts || 0) < FULL_LIVE_MS;
-const fullLeft = p => Math.max(0, Math.ceil((FULL_LIVE_MS - (Date.now() - Number(p.ts || 0))) / 60000));
-
-async function fullPricePanel(){
-  await pull();
-  let picked = null;                    // the player chosen from the dropdown
-  let seasons = [];
-
-  let mode = 'buy';
-
-  const box = modal('Full price', `
-    <div class="seg" role="group" aria-label="View">
-      <button data-fpmode="buy" aria-pressed="true">Buying</button>
-      <button data-fpmode="sell" aria-pressed="false">Selling</button>
-      <button data-fpmode="used" aria-pressed="false">Used packs</button>
-    </div>
-    <div id="fp-buy">
-    <div class="warn" style="margin-top:12px">Posts come off this board automatically <b>90 minutes</b> after they go up.
-      Yours are kept below for a week, so putting one back up is one click.
-      One person can be buying a player at a time — if someone has them already you can wait in line.</div>
-    <p class="note">Comment your card under
-      <a href="${FULL_POST_URL}" target="_blank" rel="noopener">this post</a>,
-      then paste the link to your comment here. Pick the player first so everyone
-      can see what the card has earned and how many people hold one.</p>
-
-    <div class="dtbar" style="margin-top:10px">
-      <select class="field" id="fp-sport" style="flex:1 1 140px;min-width:0"></select>
-      <select class="field" id="fp-season" style="flex:1 1 140px;min-width:0"></select>
-    </div>
-    <input class="field" id="fp-q" placeholder="Player name" autocomplete="off" style="margin-top:8px">
-    <div id="fp-hits"></div>
-    <p class="note" id="fp-chosen" style="margin-top:6px"></p>
-    <input class="field" id="fp-link" placeholder="Your comment link" autocomplete="off" style="margin-top:8px">
-    <button class="btn" id="fp-go" style="margin-top:8px;width:100%">Post at full price</button>
-
-    <h4 class="subhd">On the board now</h4>
-    <div id="fp-live"></div>
-    <h4 class="subhd">Yours, ready to repost</h4>
-    <div id="fp-mine"></div>
-    </div>
-
-    <div id="fp-sell" class="hide">
-      <p class="note" style="margin-top:12px">Everyone buying right now, most owned card first.
-        Hit <b>Used</b> once you have sold them your pack and they drop off your list until 7am.</p>
-      <div id="fp-sell-list"></div>
-    </div>
-
-    <div id="fp-used" class="hide">
-      <p class="note" style="margin-top:12px">Players you have already used a pack on today.
-        They come back on their own at the next 7am.</p>
-      <div class="dtbar" style="margin-top:8px">
-        <select class="field" id="fp-usedpick" style="flex:1 1 240px;min-width:0"></select>
-        <button class="btn" id="fp-usedadd">Mark used</button>
-      </div>
-      <p class="note" style="margin-top:10px">Nobody buying them yet? Pick any player here instead.</p>
-      <div class="dtbar" style="margin-top:6px">
-        <select class="field" id="fp-usedsport" style="flex:0 1 130px;min-width:0"></select>
-        <select class="field" id="fp-usedany" style="flex:1 1 220px;min-width:0"></select>
-        <button class="btn" id="fp-usedanyadd">Mark used</button>
-      </div>
-      <div id="fp-used-list"></div>
-    </div>`);
-
-  const $f = sel => box.querySelector(sel);
-
-  // Seller side: one row per player being bought, biggest card first, with
-  // anything marked used today taken out.
-  const drawSell = () => {
-    const used = usedRead();
-    const live = (market.fullprice || []).filter(fullLive)
-      .filter(p => !used[norm(p.player)])
-      .sort((a, b) => (Number(b.owners) || 0) - (Number(a.owners) || 0));
-    const queued = (market.fullprice || []).filter(p => p.state === 'queued');
-
-    $f('#fp-sell-list').innerHTML = live.length ? live.map(p => {
-      const waiting = queued.filter(q => norm(q.player) === norm(p.player)).length;
-      return `<div class="hit"><div class="rep-top">
-        <span><span class="player">${esc(p.player)}</span>
-          <span class="who">${p.owners == null ? 'owners unknown'
-              : Number(p.owners).toLocaleString() + ' owners'}${
-            p.rax != null ? ` · ${Number(p.rax).toLocaleString()} rax` : ''} ·
-            ${esc(sportSeason(p.sport, p.season))} — ${esc(market.users[p.user]?.name || p.user)},
-            ${fullLeft(p)} min left${waiting ? ` · ${waiting} waiting` : ''}</span></span>
-        <span class="rowacts">
-          ${p.link ? `<a class="btn-ghost" href="${esc(p.link)}" target="_blank" rel="noopener">Comment</a>` : ''}
-          <button class="btn-ghost" data-fpused="${esc(p.player)}">Used</button>
-        </span></div></div>`;
-    }).join('') : '<p class="nohit">Nobody is buying right now.</p>';
-  };
-
-  // Players for the second dropdown, by sport, kept once they are fetched.
-  const anyPool = new Map();
-  async function loadAnyPlayers(sp){
-    if(anyPool.has(sp)) return anyPool.get(sp);
-    const se = (CB_CURRENT && CB_CURRENT[sp]) || 2026;
-    let names = [];
-    try {
-      const d = await (await fetch(`/api/rax?gamelog=query&mode=players&sport=${sp}&season=${se}`
-        + `&seasons=${sp}:${se}&sort=rax&dir=desc&limit=400`)).json();
-      names = [...new Set((d.rows || []).map(r => r.player))].sort((a, b) => a.localeCompare(b));
-    } catch(e){}
-    anyPool.set(sp, names);
-    return names;
-  }
-  async function drawAnyPlayers(){
-    const sel = $f('#fp-usedsport');
-    if(!sel || !sel.value) return;
-    const list = $f('#fp-usedany');
-    list.innerHTML = '<option value="">loading…</option>';
-    const names = await loadAnyPlayers(sel.value);
-    list.innerHTML = names.length
-      ? names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('')
-      : '<option value="">nothing collected for that sport</option>';
-  }
-
-  const drawUsed = () => {
-    const used = usedRead();
-    const keys = Object.keys(used);
-    const live = (market.fullprice || []).filter(fullLive);
-    const names = [...new Set(live.map(p => p.player))].sort((a, b) => a.localeCompare(b));
-    const pick = $f('#fp-usedpick');
-    if(pick) pick.innerHTML = names.length
-      ? names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('')
-      : '<option value="">nobody is buying right now</option>';
-
-    $f('#fp-used-list').innerHTML = keys.length ? keys.map(k => {
-      const shown = (live.find(p => norm(p.player) === k) || {}).player || usedNames()[k] || k;
-      const mins = Math.max(0, Math.round((used[k] - Date.now()) / 60000));
-      const hrs = Math.floor(mins / 60);
-      return `<div class="hit"><div class="rep-top">
-        <span><span class="player">${esc(shown)}</span>
-          <span class="who">back at 7am Eastern, in ${hrs ? hrs + 'h ' : ''}${mins % 60}m</span></span>
-        <span class="rowacts">
-          <button class="btn-ghost" data-fpunuse="${esc(k)}">Un-hide</button>
-        </span></div></div>`;
-    }).join('') : '<p class="nohit">Nothing hidden right now.</p>';
-  };
-
-  const drawLists = () => {
-    const all = (market.fullprice || []).slice().sort((a, b) => b.ts - a.ts);
-    const live = all.filter(fullLive);
-    const mine = all.filter(p => p.user === me.toLowerCase() && !fullLive(p) && p.state !== 'queued');
-    const waiting = all.filter(p => p.state === 'queued' && p.user === me.toLowerCase());
-    drawSell(); drawUsed();
-
-    $f('#fp-live').innerHTML = live.length ? live.map(p => `<div class="hit">
-      <div class="rep-top">
-        <span><span class="player">${esc(p.player)}</span>
-          <span class="who">${esc(sportSeason(p.sport, p.season))}${
-            p.rax != null ? ` · ${Number(p.rax).toLocaleString()} rax` : ''}${
-            p.owners != null ? ` · ${Number(p.owners).toLocaleString()} owners` : ''}
-            — ${esc(market.users[p.user]?.name || p.user)}, ${fullLeft(p)} min left</span></span>
-        <span class="rowacts">
-          ${p.link ? `<a class="btn-ghost" href="${esc(p.link)}" target="_blank" rel="noopener">Comment</a>` : ''}
-          ${(p.user === me.toLowerCase() || isAdmin())
-            ? `<button class="btn-ghost btn-danger" data-fpdel="${esc(p.id)}">Remove</button>` : ''}
-        </span>
-      </div></div>`).join('') : '<p class="nohit">Nothing up right now.</p>';
-
-    const queueNote = waiting.length
-      ? `<p class="note" style="margin-top:6px">You are waiting on ${
-          waiting.map(w => esc(w.player)).join(', ')} — your post goes up on its own when the person ahead comes down.</p>`
-      : '';
-    $f('#fp-live').innerHTML += queueNote;
-
-    $f('#fp-mine').innerHTML = mine.length ? mine.map(p => `<div class="hit">
-      <div class="rep-top">
-        <span><span class="player">${esc(p.player)}</span>
-          <span class="who">${esc(sportSeason(p.sport, p.season))} — posted ${
-            new Date(p.ts).toLocaleDateString()}</span></span>
-        <span class="rowacts">
-          <button class="btn-ghost" data-fpagain="${esc(p.id)}">Post again</button>
-          <button class="btn-ghost btn-danger" data-fpdel="${esc(p.id)}">Forget</button>
-        </span>
-      </div></div>`).join('')
-      : '<p class="nohit">Nothing of yours has expired yet.</p>';
-  };
-
-  // The season list follows the sport, and both come from what has actually
-  // been collected rather than a hard coded list.
-  const drawSeasons = () => {
-    const sp = $f('#fp-sport').value;
-    const mine = seasons.filter(r => r.sport === sp).sort((a, b) => b.season - a.season);
-    $f('#fp-season').innerHTML = mine.map(r =>
-      `<option value="${r.season}">${esc(seasonLabel(sp, r.season))}</option>`).join('')
-      || '<option value="">nothing collected</option>';
-  };
-
-  (async () => {
-    try {
-      const d = await (await fetch('/api/rax?sport=ncaam&season=2026&gamelog=seasons')).json();
-      seasons = (d && d.seasons) || [];
-    } catch (e) {}
-    // NFL first, because that is what most of the board is trading.
-    const sports = [...new Set(seasons.map(r => r.sport))]
-      .sort((a, b) => (a === 'nfl' ? -1 : b === 'nfl' ? 1 : 0)
-                   || (CB_SPORT_LABEL[a] || a).localeCompare(CB_SPORT_LABEL[b] || b));
-    const opts = sports.map(sp =>
-      `<option value="${esc(sp)}">${esc(CB_SPORT_LABEL[sp] || sp)}</option>`).join('')
-      || '<option value="">nothing collected</option>';
-    $f('#fp-sport').innerHTML = opts;
-    $f('#fp-usedsport').innerHTML = opts;
-    drawSeasons();
-    drawLists();
-    drawAnyPlayers();
-  })();
-
-  let typing;
-  box.addEventListener('input', e => {
-    if(e.target.id !== 'fp-q') return;
-    clearTimeout(typing);
-    typing = setTimeout(async () => {
-      const q = e.target.value.trim();
-      picked = null; $f('#fp-chosen').textContent = '';
-      if(q.length < 2){ $f('#fp-hits').innerHTML = ''; return; }
-      const sp = $f('#fp-sport').value, se = $f('#fp-season').value;
-      if(!sp || !se) return;
-      let d;
-      try {
-        d = await (await fetch(`/api/rax?gamelog=query&mode=players&sport=${sp}&season=${se}`
-          + `&seasons=${sp}:${se}&q=${encodeURIComponent(q)}&sort=rax&dir=desc&limit=25`)).json();
-      } catch(err){ $f('#fp-hits').innerHTML = '<p class="nohit">Could not reach the data.</p>'; return; }
-      const rows = (d && d.rows) || [];
-      $f('#fp-hits').innerHTML = rows.length ? rows.map(r =>
-        `<div class="lkrow" data-fppick="${esc(r.player)}" data-fprax="${r.rax || 0}"
-              data-fpown="${r.owners == null ? '' : r.owners}">
-          <span>${esc(r.player)} <span class="note">${esc(r.team || '')}</span></span>
-          <span class="note">${Number(r.rax || 0).toLocaleString()} rax · ${
-            r.owners == null ? 'owners unknown' : Number(r.owners).toLocaleString() + ' owners'}</span>
-        </div>`).join('')
-        : '<p class="nohit">No player by that name in that season.</p>';
-    }, 300);
-  });
-
-  box.addEventListener('change', e => {
-    if(e.target.id === 'fp-sport'){ drawSeasons(); $f('#fp-hits').innerHTML = ''; picked = null; }
-    if(e.target.id === 'fp-season'){ $f('#fp-hits').innerHTML = ''; picked = null; $f('#fp-chosen').textContent = ''; }
-    if(e.target.id === 'fp-usedsport') drawAnyPlayers();
-  });
-
-  box.addEventListener('click', async e => {
-    const m = e.target.closest('[data-fpmode]');
-    if(m){
-      mode = m.dataset.fpmode;
-      box.querySelectorAll('[data-fpmode]').forEach(x =>
-        x.setAttribute('aria-pressed', x.dataset.fpmode === mode ? 'true' : 'false'));
-      $f('#fp-buy').classList.toggle('hide', mode !== 'buy');
-      $f('#fp-sell').classList.toggle('hide', mode !== 'sell');
-      $f('#fp-used').classList.toggle('hide', mode !== 'used');
-      drawLists();
-      return;
-    }
-
-    const u = e.target.closest('[data-fpused]');
-    if(u){
-      const used = usedRead();
-      used[norm(u.dataset.fpused)] = nextSevenAm(Date.now());
-      usedWrite(used);
-      usedName(u.dataset.fpused);
-      drawLists();
-      return toast(`${u.dataset.fpused} hidden until 7am Eastern.`);
-    }
-
-    if(e.target.closest('#fp-usedadd')){
-      const name = ($f('#fp-usedpick') || {}).value;
-      if(!name) return toast('Nobody is buying right now.');
-      const used = usedRead();
-      used[norm(name)] = nextSevenAm(Date.now());
-      usedWrite(used);
-      usedName(name);
-      drawLists();
-      return toast(`${name} hidden until 7am Eastern.`);
-    }
-
-    if(e.target.closest('#fp-usedanyadd')){
-      const name = ($f('#fp-usedany') || {}).value;
-      if(!name) return toast('Pick a player first.');
-      const used = usedRead();
-      used[norm(name)] = nextSevenAm(Date.now());
-      usedWrite(used);
-      usedName(name);
-      drawLists();
-      return toast(`${name} hidden until 7am Eastern.`);
-    }
-
-    const un = e.target.closest('[data-fpunuse]');
-    if(un){
-      const used = usedRead();
-      delete used[un.dataset.fpunuse];
-      usedWrite(used);
-      drawLists();
-      return;
-    }
-
-    const pick = e.target.closest('[data-fppick]');
-    if(pick){
-      picked = { player: pick.dataset.fppick,
-                 rax: Number(pick.dataset.fprax) || null,
-                 owners: pick.dataset.fpown === '' ? null : Number(pick.dataset.fpown) };
-      $f('#fp-hits').innerHTML = '';
-      $f('#fp-q').value = picked.player;
-      $f('#fp-chosen').textContent = `${picked.player} — ${Number(picked.rax || 0).toLocaleString()} rax`
-        + (picked.owners == null ? '' : `, ${picked.owners.toLocaleString()} owners`);
-      return;
-    }
-
-    const again = e.target.closest('[data-fpagain]');
-    if(again){
-      const old = (market.fullprice || []).find(p => p.id === again.dataset.fpagain);
-      if(!old) return;
-      const base = { user: me.toLowerCase(), sport: old.sport, season: old.season,
-                     player: old.player, rax: old.rax, owners: old.owners, link: old.link };
-      again.disabled = true;
-      let res = await patchFull(base);
-      if(res === 'player taken'){
-        again.disabled = false;
-        if(!confirm(`Somebody is already buying ${old.player}.\n\nJoin the queue? Your post goes up on its own when theirs comes down.`)) return;
-        again.disabled = true;
-        res = await patchFull(Object.assign({ queue: true }, base));
-      }
-      again.disabled = false;
-      if(res !== true){ if(typeof res === 'string') toast(res); return; }
-      await pull(); drawLists();
-      toast(`${old.player} is back up.`);
-      return;
-    }
-
-    const del = e.target.closest('[data-fpdel]');
-    if(del){
-      del.disabled = true;
-      const ok = await patch('removeFull', { id: del.dataset.fpdel,
-                                             user: isAdmin() ? '' : me.toLowerCase() });
-      if(!ok){ del.disabled = false; return; }
-      await pull(); drawLists();
-      return;
-    }
-
-    if(e.target.closest('#fp-go')){
-      if(!picked) return toast('Pick the player from the list first.');
-      const link = $f('#fp-link').value.trim();
-      if(!link.startsWith(FULL_POST_PREFIX) || link.length <= FULL_POST_PREFIX.length){
-        return toast('That is not a comment under the full price post. Open your comment and copy its link.');
-      }
-      const btn = $f('#fp-go');
-      const base = { user: me.toLowerCase(), sport: $f('#fp-sport').value,
-                     season: Number($f('#fp-season').value) || null,
-                     player: picked.player, rax: picked.rax, owners: picked.owners, link };
-
-      // If someone already has this player up, offer the queue rather than
-      // just refusing. patchFull tells us which it was.
-      btn.disabled = true;
-      let res = await patchFull(base);
-      if(res === 'player taken'){
-        btn.disabled = false;
-        const ahead = (market.fullprice || []).filter(p =>
-          p.state === 'queued' && norm(p.player) === norm(picked.player)).length;
-        const ask = ahead
-          ? `Somebody is already buying ${picked.player}, and ${ahead} ${ahead === 1 ? 'person is' : 'people are'} waiting.\n\nJoin the queue? Your post goes up on its own when it is your turn.`
-          : `Somebody is already buying ${picked.player}.\n\nJoin the queue? Your post goes up on its own the moment theirs comes down.`;
-        if(!confirm(ask)) return;
-        btn.disabled = true;
-        res = await patchFull(Object.assign({ queue: true }, base));
-      }
-      btn.disabled = false;
-      if(res !== true){
-        if(typeof res === 'string') toast(res);
-        return;
-      }
-      $f('#fp-link').value = ''; $f('#fp-q').value = ''; picked = null;
-      $f('#fp-chosen').textContent = '';
-      await pull(); drawLists();
-      const mineNow = (market.fullprice || []).find(p =>
-        p.user === me.toLowerCase() && norm(p.player) === norm(base.player));
-      toast(mineNow && mineNow.state === 'queued'
-        ? 'You are in the queue — it goes up on its own.'
-        : 'Up for the next 90 minutes.');
-    }
-  });
-
-  // Keep the countdowns honest while the panel is open.
-  const tick = setInterval(() => { if(!document.body.contains(box)) return clearInterval(tick); drawLists(); }, 60000);
-}
-
-// Preview mode flips one flag and redraws; nothing else needs to know.
-function setPreview(on){
-  previewMember = !!on;
-  applyAdminVisibility();
-  applyBoardVisibility();
-  render();
-  toast(previewMember ? 'Showing the board as a member sees it.' : 'Admin controls are back.');
-}
-$('#open-preview').addEventListener('click', () => setPreview(!previewMember));
-$('#preview-off').addEventListener('click', () => setPreview(false));
-
-$('#open-full').addEventListener('click', fullPricePanel);
 
 $('#open-cbb').addEventListener('click', cbbPanel);
 
@@ -6630,8 +5959,6 @@ async function adminPanel(){
                      : `<button class="btn-ghost" data-reset="${esc(k)}">${u.hash ? 'Reset password' : 'awaiting new password'}</button>
                         <button class="btn-ghost" data-gd="${esc(k)}">${
                           gameDataList().includes(k) ? 'Revoke game data' : 'Grant access to game data'}</button>
-                        <button class="btn-ghost" data-md="${esc(k)}">${
-                          marketDataList().includes(k) ? 'Revoke market data' : 'Grant access to market data'}</button>
                         <button class="btn-ghost btn-danger" data-ban="${esc(k)}">Delete account</button>`}
       </div>`).join('')}`);
 
@@ -6941,23 +6268,6 @@ async function adminPanel(){
       if(!ok) return;
       toast(had ? `${u?.name || k} can no longer see game data` : `${u?.name || k} can now see game data`);
       applyGameDataVisibility();
-      redrawGrants(); refreshLookups();
-      return;
-    }
-
-    const md = e.target.closest('[data-md]');
-    if(md){
-      const k = md.dataset.md;
-      const u = market.users[k];
-      const had = marketDataList().includes(k);
-      if(had && !confirm(`Take market data access away from ${u?.name || k}?`)) return;
-      const ok = await push(m => {
-        const list = (m.marketdata || []).map(x => String(x).toLowerCase()).filter(x => x !== k);
-        m.marketdata = had ? list : list.concat([k]);
-      });
-      if(!ok) return;
-      toast(had ? `${u?.name || k} can no longer see market data` : `${u?.name || k} can now see market data`);
-      applyMarketVisibility();
       redrawGrants(); refreshLookups();
       return;
     }
