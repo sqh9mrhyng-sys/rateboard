@@ -740,6 +740,10 @@ export async function onRequestGet({ request, env }) {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
     await playsReady(db);
+    // The top-end tags only sit on top-end cards, so the harvest can be
+    // pointed straight at them instead of waiting for one to drift past.
+    const rarityFilter = String(url.searchParams.get('rarity') || 'all')
+      .replace(/[^a-z0-9]/gi, '').slice(0, 20) || 'all';
     const baseSweep = () => rarityFilter === 'all';
     const stmt = db.prepare(baseSweep()
       ? `INSERT INTO tags (id, sport, label, rarity, seenAt) VALUES (?,?,?,?,?)
@@ -750,10 +754,6 @@ export async function onRequestGet({ request, env }) {
       : `INSERT INTO tags (id, sport, label, rarity, seenAt) VALUES (?,?,?,NULL,?)
          ON CONFLICT(id, sport) DO UPDATE SET label=excluded.label,
            seenAt=excluded.seenAt`);
-    // The top-end tags only sit on top-end cards, so the harvest can be
-    // pointed straight at them instead of waiting for one to drift past.
-    const rarityFilter = String(url.searchParams.get('rarity') || 'all')
-      .replace(/[^a-z0-9]/gi, '').slice(0, 20) || 'all';
     if (url.searchParams.get('clear') === '1') {
       try { await db.prepare('UPDATE tags SET rarity=NULL WHERE sport=?').bind(sport).run(); }
       catch (e) {}
