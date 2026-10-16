@@ -746,9 +746,14 @@ export async function onRequestGet({ request, env }) {
       .replace(/[^a-z0-9]/gi, '').slice(0, 20) || 'all';
     const baseSweep = () => rarityFilter === 'all';
     const stmt = db.prepare(baseSweep()
+      // The base is the tag's floor: a play's context only ever raises it, so
+      // the lowest reading ever seen is the one that is not context-inflated.
       ? `INSERT INTO tags (id, sport, label, rarity, seenAt) VALUES (?,?,?,?,?)
          ON CONFLICT(id, sport) DO UPDATE SET label=excluded.label,
-           rarity=excluded.rarity, seenAt=excluded.seenAt`
+           rarity=MIN(COALESCE(tags.rarity, 99), COALESCE(excluded.rarity, 99)),
+           altRarity = CASE WHEN tags.rarity = excluded.rarity THEN tags.altRarity
+             ELSE TRIM(COALESCE(tags.altRarity, '') || ',' || CAST(excluded.rarity AS TEXT), ',') END,
+           seenAt=excluded.seenAt`
       // Targeted sweeps exist to learn a rare tag's id and name. Their rarity
       // reading is that card's context, not the tag's base, so it is not kept.
       : `INSERT INTO tags (id, sport, label, rarity, seenAt) VALUES (?,?,?,NULL,?)
