@@ -740,17 +740,25 @@ export async function onRequestGet({ request, env }) {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
     await playsReady(db);
-    const stmt = db.prepare(
-      `INSERT INTO tags (id, sport, label, rarity, seenAt) VALUES (?,?,?,?,?)
-       ON CONFLICT(id, sport) DO UPDATE SET label=excluded.label,
-         rarity=MAX(tags.rarity, excluded.rarity),
-         altRarity = CASE WHEN tags.rarity = excluded.rarity THEN tags.altRarity
-           ELSE TRIM(COALESCE(tags.altRarity, '') || ',' || CAST(excluded.rarity AS TEXT), ',') END,
-         seenAt=excluded.seenAt`);
+    const baseSweep = () => rarityFilter === 'all';
+    const stmt = db.prepare(baseSweep()
+      ? `INSERT INTO tags (id, sport, label, rarity, seenAt) VALUES (?,?,?,?,?)
+         ON CONFLICT(id, sport) DO UPDATE SET label=excluded.label,
+           rarity=excluded.rarity, seenAt=excluded.seenAt`
+      // Targeted sweeps exist to learn a rare tag's id and name. Their rarity
+      // reading is that card's context, not the tag's base, so it is not kept.
+      : `INSERT INTO tags (id, sport, label, rarity, seenAt) VALUES (?,?,?,NULL,?)
+         ON CONFLICT(id, sport) DO UPDATE SET label=excluded.label,
+           seenAt=excluded.seenAt`);
     // The top-end tags only sit on top-end cards, so the harvest can be
     // pointed straight at them instead of waiting for one to drift past.
     const rarityFilter = String(url.searchParams.get('rarity') || 'all')
       .replace(/[^a-z0-9]/gi, '').slice(0, 20) || 'all';
+    if (url.searchParams.get('clear') === '1') {
+      try { await db.prepare('UPDATE tags SET rarity=NULL WHERE sport=?').bind(sport).run(); }
+      catch (e) {}
+      return json({ sport, clearedTagRarities: true });
+    }
     let cursor = new Date().toISOString(), found = 0, pages = 0;
     for (let i = 0; i < 12; i++) {
       const u = `https://web.realapp.com/cardmarketplacelistings`
@@ -766,8 +774,10 @@ export async function onRequestGet({ request, env }) {
         for (const t of ((r.card && r.card.traits) || [])) {
           if (!t || t.id == null || seen.has(t.id)) continue;
           seen.add(t.id);
-          batch.push(stmt.bind(Number(t.id), sport, t.label || null,
-                               t.rarity == null ? null : Number(t.rarity), Date.now()));
+          batch.push(baseSweep()
+            ? stmt.bind(Number(t.id), sport, t.label || null,
+                        t.rarity == null ? null : Number(t.rarity), Date.now())
+            : stmt.bind(Number(t.id), sport, t.label || null, Date.now()));
         }
       }
       if (batch.length) { try { await db.batch(batch); found += batch.length; } catch (e) {} }
