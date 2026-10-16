@@ -4312,6 +4312,7 @@ async function cbbPanel(){
       <button data-cm="games" aria-pressed="false">Every game</button>
       <button data-cm="lookup" aria-pressed="false">Players</button>
       <button data-cm="golf" aria-pressed="false">Golf</button>
+      <button data-cm="pack" aria-pressed="false">Pack data</button>
     </div>
     <div class="dtbar cb-filt">
       <input class="field grow" id="cb-q" placeholder="Player name" autocomplete="off">
@@ -4360,6 +4361,18 @@ async function cbbPanel(){
       </div>
       <div id="gf-list"></div>
       <div id="gf-detail"></div>
+    </div>
+    <div id="cb-pack" class="hide">
+      <div class="dtbar">
+        <select class="field" id="pk-season"></select>
+        <input class="field" id="pk-q" autocomplete="off" spellcheck="false"
+               placeholder="Search a player" style="max-width:240px">
+        <button class="btn-ghost" id="pk-refresh">Refresh</button>
+        <span class="note" id="pk-note"></span>
+      </div>
+      <p class="note" id="pk-caveat"></p>
+      <div class="dtwrap"><table class="dt">
+        <thead id="pk-head"></thead><tbody id="pk-body"></tbody></table></div>
     </div>
     <p class="note" id="cb-count">Loading&hellip;</p>
     <div class="dtwrap" id="cb-table"><table class="dt"><thead id="cb-head"></thead><tbody id="cb-body"></tbody></table></div>
@@ -4976,6 +4989,77 @@ async function cbbPanel(){
                     || (r && r.name ? String(r.name) : null);
   const gfName = r => gfKey(r) || `Event of ${String(r.day || '').slice(0, 10)}`;
 
+  /* ---- pack data ------------------------------------------------------
+     Plays rather than games. One row per player: how many card-minting
+     plays we hold for them and how many of those land in each rarity. A
+     play's rarity is the highest rarity among its tags, which is how Real
+     decides it, and it is worked out server side against the tag table.
+     -------------------------------------------------------------------- */
+  const PK_SEASONS = [['nfl|2026','NFL 2026-2027']];
+  const PK_COLS = [
+    ['player','Player','l'], ['plays','Plays'], ['legendary','Legendary'],
+    ['epic','Epic'], ['bestRating','Best'], ['avgRating','Avg']
+  ];
+  let pkRows = null, pkTotals = {}, pkSort = 'plays', pkDir = 'desc', pkQ = '', pkPair = 'nfl|2026';
+
+  function pkInit(){
+    const sel = $b('#pk-season');
+    if(!sel.options.length){
+      sel.innerHTML = PK_SEASONS.map(([v, l]) =>
+        `<option value="${v}">${esc(l)}</option>`).join('');
+    }
+    if(pkRows) return pkPaint();
+    pkLoad();
+  }
+
+  async function pkLoad(){
+    const [sport, season] = pkPair.split('|');
+    $b('#pk-note').textContent = 'Loading\u2026';
+    $b('#pk-body').innerHTML = '';
+    try {
+      const d = await (await fetch(
+        `/api/rax?plays=board&sport=${encodeURIComponent(sport)}&season=${encodeURIComponent(season)}`)).json();
+      if(d.error) throw new Error(d.error);
+      pkRows = d.rows || [];
+      pkTotals = d.totals || {};
+    } catch(e){
+      pkRows = [];
+      $b('#pk-note').textContent = 'Could not load pack data.';
+      return;
+    }
+    pkPaint();
+  }
+
+  function pkPaint(){
+    if(!pkRows) return;
+    const q = pkQ.trim().toLowerCase();
+    let rows = q ? pkRows.filter(r => String(r.player || '').toLowerCase().includes(q))
+                 : pkRows.slice();
+    const num = pkSort !== 'player';
+    rows.sort((a, b) => {
+      const x = num ? Number(a[pkSort] || 0) : String(a.player || '').toLowerCase();
+      const y = num ? Number(b[pkSort] || 0) : String(b.player || '').toLowerCase();
+      return (x < y ? -1 : x > y ? 1 : 0) * (pkDir === 'desc' ? -1 : 1);
+    });
+    $b('#pk-head').innerHTML = '<tr>' + PK_COLS.map(([k, label, al]) =>
+      `<th data-pc="${k}" class="sortable${al === 'l' ? ' l' : ''}"${
+        pkSort === k ? ` aria-sort="${pkDir === 'desc' ? 'descending' : 'ascending'}"` : ''
+      }>${esc(label)}</th>`).join('') + '</tr>';
+    $b('#pk-body').innerHTML = rows.map(r => '<tr>' + PK_COLS.map(([k, , al]) =>
+      `<td${al === 'l' ? ' class="l"' : ''}>${
+        r[k] == null || r[k] === '' ? '\u2014' : esc(String(r[k]))
+      }</td>`).join('') + '</tr>').join('');
+    $b('#pk-note').textContent = `${rows.length} player${rows.length === 1 ? '' : 's'}`
+      + (q ? ` matching "${pkQ.trim()}"` : '');
+    const held = Number(pkTotals.all_ || 0), cards = Number(pkTotals.cards || 0);
+    const unscored = Number(pkTotals.unscored || 0);
+    $b('#pk-caveat').innerHTML = esc(
+      `Built from ${cards.toLocaleString()} card-minting plays out of ${held.toLocaleString()} `
+      + `collected. Real serves no full play list, so this is the top of the rating range `
+      + `rather than every snap, and collection is still running \u2014 counts will climb.`
+      + (unscored ? ` ${unscored.toLocaleString()} plays have no rarity worked out yet.` : ''));
+  }
+
   async function gfInit(){
     if(gfEvents) return;
     try {
@@ -5254,7 +5338,9 @@ async function cbbPanel(){
   function applyMode(){
     const lk = st.mode === 'lookup';
     const gf = st.mode === 'golf';
-    const table = !lk && !gf;
+    const pk = st.mode === 'pack';
+    const table = !lk && !gf && !pk;
+    $b('#cb-pack').classList.toggle('hide', !pk);
     $b('#cb-lookup').classList.toggle('hide', !lk);
     $b('#cb-golf').classList.toggle('hide', !gf);
     $b('#cb-table').classList.toggle('hide', !table);
@@ -5267,6 +5353,7 @@ async function cbbPanel(){
     });
     if(lk){ lkBag(); lkSearch(); }
     else if(gf) gfInit();
+    else if(pk) pkInit();
     else applyFilterVisibility();
   }
 
@@ -5291,6 +5378,7 @@ async function cbbPanel(){
       return;
     }
     if(e.target.id === 'gf-q'){ gfQuery = e.target.value; return gfPaint(); }
+    if(e.target.id === 'pk-q'){ pkQ = e.target.value; return pkPaint(); }
     const map = { 'cb-q':'q', 'cb-from':'from', 'cb-to':'to', 'cb-mg':'minGames',
                   'cb-mino':'minOwners', 'cb-maxo':'maxOwners',
                   'cb-minr':'minRax', 'cb-maxr':'maxRax' };
@@ -5312,6 +5400,7 @@ async function cbbPanel(){
     if(e.target.id === 'lk-lvl'){ lkLevel = +e.target.value; return lkDetail(); }
     if(e.target.id === 'lk-month'){ lkMonth = e.target.value; lkDay = ''; return lkBag(); }
     if(e.target.id === 'gf-season'){ gfSeason = e.target.value; return gfLoad(); }
+    if(e.target.id === 'pk-season'){ pkPair = e.target.value; pkRows = null; return pkLoad(); }
     if(e.target.id === 'lk-cap'){
       const all = loadoutsRead();
       const v = Math.max(0, Math.min(90, Math.round(Number(e.target.value) || 0)));
@@ -5613,6 +5702,15 @@ async function cbbPanel(){
       return queue();
     }
 
+    const pc = e.target.closest('[data-pc]');
+    if(pc){
+      const k = pc.dataset.pc;
+      if(pkSort === k) pkDir = pkDir === 'desc' ? 'asc' : 'desc';
+      else { pkSort = k; pkDir = k === 'player' ? 'asc' : 'desc'; }
+      return pkPaint();
+    }
+    if(e.target.closest('#pk-refresh')){ pkRows = null; return pkLoad(); }
+
     const m = e.target.closest('[data-cm]');
     if(m){
       if(st.mode === m.dataset.cm) return;
@@ -5621,7 +5719,7 @@ async function cbbPanel(){
       box.querySelectorAll('[data-cm]').forEach(x =>
         x.setAttribute('aria-pressed', x.dataset.cm === st.mode ? 'true' : 'false'));
       applyMode();
-      return st.mode === 'lookup' ? undefined : load();
+      return (st.mode === 'lookup' || st.mode === 'pack') ? undefined : load();
     }
 
     const th = e.target.closest('[data-sc]');
