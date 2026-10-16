@@ -531,7 +531,8 @@ export async function onRequestGet({ request, env }) {
   if (url.searchParams.get('probeGame') != null) {
     const gid = String(url.searchParams.get('probeGame') || '').replace(/[^0-9]/g, '');
     if (!gid) return json({ error: 'bad gameId' }, 400);
-    const SUBS_G = { stats: 'stats', plays: 'plays', playstop: 'plays/top?limit=400' };
+    const lim = Math.max(1, Math.min(1000, parseInt(url.searchParams.get('limit') || '25', 10) || 25));
+    const SUBS_G = { stats: 'stats', plays: `plays?limit=${lim}`, plain: 'plays' };
     const which = String(url.searchParams.get('sub') || 'plays').toLowerCase();
     const tail = SUBS_G[which];
     if (!tail) return json({ error: 'sub must be stats, plays or playstop' }, 400);
@@ -539,11 +540,22 @@ export async function onRequestGet({ request, env }) {
       const d = await rsGet(`https://web.realapp.com/games/${gid}/sport/${sport}/${tail}`, auth);
       const rows = rowsOf(d);
       const arr = Array.isArray(d && d.plays) ? d.plays : rows;
+      // Which plays mint a card is the question, so report how the category
+      // field lines up with play type rather than a sample of rows.
+      const withCat = arr.filter(r => r.collectingCategoryId != null);
+      const byCat = {};
+      for (const r of arr) {
+        const k = r.collectingCategoryId == null ? 'none' : String(r.collectingCategoryId);
+        (byCat[k] = byCat[k] || []).push(`${r.type}/${r.subType}`);
+      }
       return json({ gameId: gid, sub: which, keys: Object.keys(d || {}), count: arr.length,
-                    firstRowKeys: arr[0] ? Object.keys(arr[0]) : [],
-                    sample: arr.slice(0, 3).map(r => ({ id: r.id, label: r.label, value: r.value,
-                      type: r.type, subType: r.subType, cat: r.collectingCategoryId,
-                      seasonType: r.seasonType, tags: r.tags })) });
+        firstRowKeys: arr[0] ? Object.keys(arr[0]) : [],
+        withCategory: withCat.length,
+        categories: Object.fromEntries(Object.entries(byCat).map(([k, v]) =>
+          [k, { n: v.length, kinds: [...new Set(v)].slice(0, 8) }])),
+        tagsSeen: [...new Set(arr.flatMap(r => Array.isArray(r.tags) ? r.tags : []))].length,
+        sample: arr.slice(0, 4).map(r => ({ label: r.label, value: r.value,
+          cat: r.collectingCategoryId, type: r.type, subType: r.subType, tags: r.tags })) });
     } catch (e) {
       return json({ gameId: gid, sub: which, error: String((e && e.message) || e).slice(0, 160) }, 502);
     }
