@@ -514,6 +514,7 @@ async function playsReady(db) {
   await db.prepare(PLAYS_DDL).run();
   await db.prepare(TAGS_DDL).run();
   try { await db.prepare('ALTER TABLE plays ADD COLUMN rarity INTEGER').run(); } catch (e) {}
+  try { await db.prepare('ALTER TABLE tags ADD COLUMN altRarity TEXT').run(); } catch (e) {}
   for (const ix of [
     'CREATE INDEX IF NOT EXISTS plays_sp ON plays (sport, season, playerId)',
     'CREATE INDEX IF NOT EXISTS plays_game ON plays (gameId)',
@@ -677,7 +678,10 @@ export async function onRequestGet({ request, env }) {
     await playsReady(db);
     const stmt = db.prepare(
       `INSERT INTO tags (id, sport, label, rarity, seenAt) VALUES (?,?,?,?,?)
-       ON CONFLICT(id, sport) DO UPDATE SET label=excluded.label, rarity=excluded.rarity,
+       ON CONFLICT(id, sport) DO UPDATE SET label=excluded.label,
+         rarity=MAX(tags.rarity, excluded.rarity),
+         altRarity = CASE WHEN tags.rarity = excluded.rarity THEN tags.altRarity
+           ELSE TRIM(COALESCE(tags.altRarity, '') || ',' || CAST(excluded.rarity AS TEXT), ',') END,
          seenAt=excluded.seenAt`);
     let cursor = new Date().toISOString(), found = 0, pages = 0;
     for (let i = 0; i < 12; i++) {
@@ -710,6 +714,34 @@ export async function onRequestGet({ request, env }) {
       for (const row of (h.results || [])) { byRarity[row.rarity] = Number(row.n); held += Number(row.n); }
     } catch (e) {}
     return json({ sport, season, pages, written: found, tagsHeld: held, byRarity });
+  }
+
+  if (url.searchParams.get('plays') === 'diag') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    await playsReady(db);
+    const out = {};
+    try {
+      const t = await db.prepare(
+        `SELECT id, label, rarity, altRarity FROM tags WHERE sport=? ORDER BY rarity DESC, label`)
+        .bind(sport).all();
+      out.tags = (t.results || []);
+      out.conflicting = out.tags.filter(x => x.altRarity).map(x => x.label);
+    } catch (e) {}
+    try {
+      const c = await db.prepare(
+        `SELECT cat, type, subType, COUNT(*) AS n FROM plays WHERE sport=? AND season=?
+         GROUP BY cat, type, subType ORDER BY cat, n DESC`).bind(sport, Number(season)).all();
+      out.categories = (c.results || []);
+    } catch (e) {}
+    try {
+      const u = await db.prepare(
+        `SELECT COUNT(*) AS plays, COUNT(DISTINCT gameId) AS games,
+                COUNT(DISTINCT playerId) AS players FROM plays WHERE sport=? AND season=?`)
+        .bind(sport, Number(season)).first();
+      out.held = u || {};
+    } catch (e) {}
+    return json(out);
   }
 
   // A play's rarity is the highest rarity among its tags, which is how the
