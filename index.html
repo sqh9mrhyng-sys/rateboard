@@ -268,6 +268,8 @@
   .pkbox-n{font-size:1.25rem;font-weight:700;line-height:1.2}
   .pkbox-l{font-size:.78rem;opacity:.75}
   .pkbox-s{font-size:.72rem;opacity:.55;margin-top:2px}
+  /* a value sitting on the pack floor rather than genuinely reaching it */
+  .floored{text-decoration:underline dotted;text-underline-offset:3px;opacity:.85}
   @media (max-width:640px){
     .pkgrid{grid-template-columns:repeat(auto-fit,minmax(88px,1fr))}
     .pkbox-n{font-size:1.05rem}
@@ -4381,6 +4383,7 @@ async function cbbPanel(){
         <input class="field" id="pk-min" inputmode="numeric" value="10"
                placeholder="Min plays" style="flex:0 1 110px">
         <button class="btn-ghost" id="pk-top" aria-pressed="false">Show Mystic &amp; Iconic</button>
+        <button class="btn-ghost" id="pk-truth" aria-pressed="false">True Avg x3</button>
         <button class="btn-ghost" id="pk-refresh">Refresh</button>
         <span class="note" id="pk-note"></span>
       </div>
@@ -4459,14 +4462,22 @@ async function cbbPanel(){
   // One block per sport, opened to reveal its seasons, so a 40-season list
   // doesn't arrive as one wall of chips. Whatever is on stays highlighted and
   // is spelled out underneath, so it's never a guess which data is in view.
+  // Pack data is built from plays, which golf and FC do not have, and NFL
+  // is the one anybody opens first.
+  const PK_HIDE = ['golf', 'fc'];
+  const PK_FIRST = 'nfl';
   function drawSeasons(){
     const bySport = new Map();
     for(const r of available){
+      if(st.mode === 'pack' && PK_HIDE.includes(String(r.sport).toLowerCase())) continue;
       if(!bySport.has(r.sport)) bySport.set(r.sport, []);
       bySport.get(r.sport).push(r.season);
     }
     const open = new Set([...$b('#cb-seasons').querySelectorAll('details[open]')].map(d => d.dataset.sp));
-    const html = [...bySport.entries()].map(([sp, seasons]) => {
+    const order = [...bySport.entries()].sort((x, y) =>
+      (String(y[0]).toLowerCase() === PK_FIRST && st.mode === 'pack' ? 1 : 0)
+      - (String(x[0]).toLowerCase() === PK_FIRST && st.mode === 'pack' ? 1 : 0));
+    const html = order.map(([sp, seasons]) => {
       const on = seasons.filter(se => st.pairs.includes(`${sp}|${se}`));
       const isOpen = open.size ? open.has(sp) : (on.length > 0 || bySport.size === 1);
       return `<details class="sgrp" data-sp="${esc(sp)}"${isOpen ? ' open' : ''}>`
@@ -5025,6 +5036,7 @@ async function cbbPanel(){
     ['full', 'Full price', 415]
   ];
   const PACK_LADDER = [
+    ['Rare', 10, 80],           ['Epic', 15, 180],
     ['Legendary 1', 25, 380],   ['Legendary 2', 28, 520],   ['Legendary 3', 32, 720],
     ['Legendary 4', 35, 1000],  ['Legendary 5', 40, 1180],
     ['Mystic 1', 75, 1380],     ['Mystic 2', 79, 1560],     ['Mystic 3', 83, 1760],
@@ -5040,6 +5052,30 @@ async function cbbPanel(){
     ['Iconic 19', 240, 34500],  ['Iconic 20', 250, 40000]
   ];
   const packRating = avg => Math.max(PACK_FLOOR, (Number(avg) || 0) * 3);
+
+  /* A pack also yields a booster matching the BEST of its three cards, so
+     the expected booster is each tier's multiplier weighted by the chance
+     that tier is the highest one drawn. Rare and below share one booster. */
+  const BOOST_MULT = [10, 15, 25, 50, 100];   // low, epic, legendary, mystic, iconic
+  // chance all three cards come from a pool of `a` out of `n`
+  const allFrom = (a, n) => (n < 3) ? 0
+    : a < 3 ? 0 : (a * (a - 1) * (a - 2)) / (n * (n - 1) * (n - 2));
+
+  function avgBooster(r){
+    const n = Number(r.plays) || 0;
+    if(n < 3) return null;
+    const ic = Number(r.iconic) || 0, my = Number(r.mystic) || 0;
+    const lg = Number(r.legendary) || 0, ep = Number(r.epic) || 0;
+    const low = Math.max(0, n - ic - my - lg - ep);
+    const upTo = [low, low + ep, low + ep + lg, low + ep + lg + my, n]
+      .map(a => a >= n ? 1 : allFrom(a, n));
+    let prev = 0, out = 0;
+    for(let i = 0; i < upTo.length; i++){
+      out += (upTo[i] - prev) * BOOST_MULT[i];
+      prev = upTo[i];
+    }
+    return out;
+  }
   const rax = n => Math.round(n).toLocaleString();
 
   const RAR_NAMES = { 1:'Common', 2:'Uncommon', 3:'Rare', 4:'Epic',
@@ -5058,7 +5094,8 @@ async function cbbPanel(){
     ['player','Player','l'], ['plays','Plays'],
     ['legendary','Legendary'], ['legOdds','Leg odds'],
     ['epic','Epic'], ['epicOdds','Epic odds'],
-    ['bestRating','Best'], ['avgRating','Avg'], ['avg3','Avg x3']
+    ['bestRating','Best'], ['avgRating','Avg'], ['avg3','Avg x3'],
+    ['boost','Avg booster']
   ];
   const PK_TOP = [
     ['iconic','Iconic'], ['iconOdds','Iconic odds'],
@@ -5072,6 +5109,7 @@ async function cbbPanel(){
 
   let pkRows = null, pkTotals = {}, pkSort = 'plays', pkDir = 'desc', pkQ = '';
   let pkMin = 10, pkShowTop = false, pkPairKey = '', pkOpen = null, pkPrice = 'self';
+  let pkTrue = false, pkRar = 'all';
 
   // FC has no play cards, so it is not offered here. Everything else comes
   // from the same season picker at the top of the panel.
@@ -5113,7 +5151,11 @@ async function cbbPanel(){
       epicOdds: packOdds(n, r.epic),
       mysOdds:  packOdds(n, r.mystic),
       iconOdds: packOdds(n, r.iconic),
-      avg3: r.avgRating == null ? null : Math.round(Number(r.avgRating) * 3 * 100) / 100
+      // The floor means a sub-10 total is played as 10; the true figure is
+      // kept alongside so the table can show either.
+      avg3true: r.avgRating == null ? null : Math.round(Number(r.avgRating) * 3 * 100) / 100,
+      avg3: r.avgRating == null ? null : Math.round(packRating(r.avgRating) * 100) / 100,
+      boost: avgBooster(r)
     });
   }
 
@@ -5134,12 +5176,23 @@ async function cbbPanel(){
         pkSort === k ? ` aria-sort="${pkDir === 'desc' ? 'descending' : 'ascending'}"` : ''
       }>${esc(label)}</th>`).join('') + '</tr>';
     const isOdds = k => /Odds$/.test(k);
+    const cellText = (r, k) => {
+      if(isOdds(k)) return pct(r[k]);
+      if(k === 'boost') return r.boost == null ? '—' : r.boost.toFixed(2) + 'x';
+      if(k === 'avg3'){
+        if(r.avg3 == null) return '—';
+        if(pkTrue) return String(r.avg3true);
+        // Floored to the pack minimum: marked, because it is not a real total.
+        return r.avg3true < PACK_FLOOR
+          ? `<span class="floored" title="Actually ${r.avg3true}, boosted to the ${PACK_FLOOR} floor">${PACK_FLOOR}</span>`
+          : String(r.avg3);
+      }
+      return r[k] == null || r[k] === '' ? '—' : esc(String(r[k]));
+    };
     $b('#pk-body').innerHTML = rows.map(r =>
       `<tr class="clickable" data-pid="${r.playerId}">` + cs.map(([k, , al]) =>
-        `<td${al === 'l' ? ' class="l"' : ''}>${
-          isOdds(k) ? pct(r[k])
-          : r[k] == null || r[k] === '' ? '—' : esc(String(r[k]))
-        }</td>`).join('') + '</tr>').join('');
+        `<td${al === 'l' ? ' class="l"' : ''}>${cellText(r, k)}</td>`).join('')
+      + '</tr>').join('');
     const label = pkPairKey.replace('|', ' ').toUpperCase();
     $b('#pk-note').textContent = `${label} · ${rows.length} player${rows.length === 1 ? '' : 's'}`
       + ` with ${pkMin}+ card plays` + (q ? ` matching "${pkQ.trim()}"` : '');
@@ -5210,7 +5263,18 @@ async function cbbPanel(){
       + `<td>${k.bestRating == null ? '—' : k.bestRating}</td></tr>`).join('');
 
     const names = d.tagNames || {};
-    const top = (d.top || []).slice(0, 20).map(r => {
+    // Only the tiers this player actually has, so the chips mean something.
+    const haveTiers = [7, 6, 5, 4, 3, 2, 1].filter(t => (rar[t] || 0) > 0);
+    if(pkRar !== 'all' && !haveTiers.includes(Number(pkRar))) pkRar = 'all';
+    const chips = `<div class="seg" role="group" aria-label="Rarity" id="pk-rar">`
+      + `<button data-pr="all" aria-pressed="${pkRar === 'all' ? 'true' : 'false'}">All ${n}</button>`
+      + haveTiers.map(t =>
+          `<button data-pr="${t}" aria-pressed="${String(pkRar) === String(t) ? 'true' : 'false'}">`
+          + `${esc(RAR_NAMES[t])} ${rar[t]}</button>`).join('')
+      + '</div>';
+    const shown = (d.top || []).filter(r =>
+      pkRar === 'all' || String(r.rarity) === String(pkRar));
+    const top = shown.slice(0, 60).map(r => {
       const tg = String(r.tags || '').split(',').map(x => names[Number(x)])
         .filter(Boolean).map(x => '#' + String(x).replace(/\s+/g, '')).join(' ');
       return `<tr><td class="l">${esc(r.day || '—')}</td>`
@@ -5254,7 +5318,8 @@ async function cbbPanel(){
         <div class="dtwrap"><table class="dt"><thead><tr>
           <th class="l">Play kind</th><th class="l">Family</th><th>N</th><th>Avg</th><th>Best</th>
         </tr></thead><tbody>${kinds || ''}</tbody></table></div>
-        <p class="note" style="margin-top:10px">Best plays held</p>
+        <p class="note" style="margin-top:10px">Best plays held, highest rating first</p>
+        ${chips}
         <div class="dtwrap"><table class="dt"><thead><tr>
           <th class="l">Date</th><th class="l">Play</th><th>Rating</th>
           <th class="l">Rarity</th><th class="l">Tags</th>
@@ -5554,6 +5619,7 @@ async function cbbPanel(){
       if(!table) x.classList.add('hide');
       else if(x.id !== 'cb-colbar') x.classList.remove('hide');
     });
+    drawSeasons();
     if(lk){ lkBag(); lkSearch(); }
     else if(gf) gfInit();
     else if(pk) pkInit();
@@ -5930,6 +5996,17 @@ async function cbbPanel(){
       e.target.closest('#pk-top').setAttribute('aria-pressed', pkShowTop ? 'true' : 'false');
       if(pkOpen){ const id = pkOpen; pkOpen = null; pkOpenPlayer(id); }
       return pkPaint();
+    }
+    if(e.target.closest('#pk-truth')){
+      pkTrue = !pkTrue;
+      e.target.closest('#pk-truth').setAttribute('aria-pressed', pkTrue ? 'true' : 'false');
+      return pkPaint();
+    }
+    const pr = e.target.closest('#pk-rar [data-pr]');
+    if(pr){
+      pkRar = pr.dataset.pr;
+      if(pkOpen){ const id = pkOpen; pkOpen = null; pkOpenPlayer(id); }
+      return;
     }
     if(e.target.closest('#pk-close')){
       $b('#pk-detail').innerHTML = ''; pkOpen = null; return;
