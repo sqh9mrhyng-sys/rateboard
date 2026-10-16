@@ -498,6 +498,54 @@ const PLAYS_DDL = `CREATE TABLE IF NOT EXISTS plays (
 const TAGS_DDL = `CREATE TABLE IF NOT EXISTS tags (
   id INTEGER NOT NULL, sport TEXT NOT NULL, label TEXT, rarity INTEGER,
   seenAt INTEGER NOT NULL, PRIMARY KEY (id, sport))`;
+/* ---- rarity --------------------------------------------------------
+   A tag's rarity depends on the play it sits on, not on the tag alone:
+   "1st down" is the commonest tag in football and Legendary on a field
+   goal. The marketplace only ever shows a tag in one context, so the
+   harvested number is a base, and these rules override it per family.
+   Levels: 1 common, 2 uncommon, 3 rare, 4 epic, 5 legendary, 6 mystic,
+   7 iconic. Supplied by Dennis, who plays the game.
+   ------------------------------------------------------------------ */
+const normTag = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const TAG_ALIASES = { twominutedrill: '2minutedrill' };
+const tagKey = label => {
+  const n = normTag(label);
+  return TAG_ALIASES[n] || n;
+};
+// family: rush | pass | td | fg | def | other
+function playFamily(cat, type, subType) {
+  const t = String(type || ''), st = String(subType || '');
+  if (cat === 206) return 'def';
+  if (cat === 205) return 'fg';
+  if (t === 'Touchdown') return 'td';
+  if (cat === 201) return 'rush';
+  if (cat === 202) return 'pass';
+  if (st === 'Rush') return 'rush';
+  if (st === 'PassCompleted') return 'pass';
+  return 'other';
+}
+// tag -> { family: level }, '*' meaning any family
+const RARITY_RULES = {
+  selfpasstd:    { '*': 7 },
+  octopus:       { '*': 5 },
+  beastmode:     { rush: 5, td: 5 },
+  marathon:      { rush: 5, td: 5 },
+  imposter:      { pass: 5, td: 5 },
+  haymaker:      { pass: 5, td: 5 },
+  lateral:       { td: 6 },
+  thiccsix:      { td: 5 },
+  '2minutedrill':{ td: 5 },
+  rip:           { td: 5 },
+  flash:         { td: 5 },
+  gamewinner:    { td: 5, fg: 5, def: 5 },
+  walkoff:       { td: 5, fg: 5, def: 5 },
+  '1stdown':     { fg: 5 },
+  deadeye:       { fg: 5 },
+  fumble6:       { def: 5 },
+  kickreturn:    { def: 5 },
+  puntreturn:    { def: 5 }
+};
+
 const PLAYS_CURSOR = 'plays_cursor_v1';
 // Which seasons the tick walks. Add a line here and the cron picks it up; the
 // worker itself holds nothing and never needs redeploying.
@@ -751,16 +799,19 @@ export async function onRequestGet({ request, env }) {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
     await playsReady(db);
-    let tagRar = new Map();
+    let tagRar = new Map(), tagKeyById = new Map();
     try {
-      const t = await db.prepare('SELECT id, rarity FROM tags WHERE sport=?').bind(sport).all();
-      for (const r of (t.results || [])) tagRar.set(Number(r.id), Number(r.rarity) || 0);
+      const t = await db.prepare('SELECT id, rarity, label FROM tags WHERE sport=?').bind(sport).all();
+      for (const r of (t.results || [])) {
+        tagRar.set(Number(r.id), Number(r.rarity) || 0);
+        tagKeyById.set(Number(r.id), tagKey(r.label));
+      }
     } catch (e) {}
     if (!tagRar.size) return json({ error: 'no tags collected yet for this sport' }, 400);
     let rows = [];
     try {
       const r = await db.prepare(
-        `SELECT id, tags FROM plays WHERE sport=? AND season=? AND tags IS NOT NULL
+        `SELECT id, tags, cat, type, subType FROM plays WHERE sport=? AND season=? AND tags IS NOT NULL
          ${url.searchParams.get('all') === '1' ? '' : 'AND rarity IS NULL'}
          ORDER BY id LIMIT 4000`).bind(sport, Number(season)).all();
       rows = r.results || [];
@@ -768,22 +819,33 @@ export async function onRequestGet({ request, env }) {
     const stmt = db.prepare('UPDATE plays SET rarity=? WHERE id=?');
     const batch = [];
     let unknown = 0;
+    const fam = {};
     for (const r of rows) {
+      const f = playFamily(r.cat == null ? null : Number(r.cat), r.type, r.subType);
       let best = 0, miss = false;
       for (const bit of String(r.tags).split(',')) {
         const id = Number(bit);
         if (!id) continue;
         if (!tagRar.has(id)) { miss = true; continue; }
-        best = Math.max(best, tagRar.get(id));
+        // The harvested number is the floor; a rule for this family wins.
+        let lvl = tagRar.get(id);
+        const rule = RARITY_RULES[tagKeyById.get(id)];
+        if (rule) lvl = Math.max(lvl, rule[f] || rule['*'] || 0);
+        best = Math.max(best, lvl);
       }
       if (miss) unknown++;
+      fam[f] = (fam[f] || 0) + 1;
       batch.push(stmt.bind(best || 0, Number(r.id)));
     }
     for (let i = 0; i < batch.length; i += 200) {
       try { await db.batch(batch.slice(i, i + 200)); } catch (e) {}
     }
+    // Which of the named top-end tags we still have no id for: until one
+    // turns up in a listing, a play carrying it cannot be recognised.
+    const haveKeys = new Set([...tagKeyById.values()]);
+    const missingRuleTags = Object.keys(RARITY_RULES).filter(k => !haveKeys.has(k));
     return json({ sport, season, scored: batch.length, tagsKnown: tagRar.size,
-                  playsWithAnUnknownTag: unknown });
+                  playsWithAnUnknownTag: unknown, families: fam, missingRuleTags });
   }
 
   // One row per player: how many card plays they have and how many are the
@@ -796,12 +858,14 @@ export async function onRequestGet({ request, env }) {
       const q = await db.prepare(
         `SELECT playerId, MAX(player) AS player,
                 COUNT(*) AS plays,
-                SUM(CASE WHEN rarity >= 5 THEN 1 ELSE 0 END) AS legendary,
+                SUM(CASE WHEN rarity = 7 THEN 1 ELSE 0 END) AS iconic,
+                SUM(CASE WHEN rarity = 6 THEN 1 ELSE 0 END) AS mystic,
+                SUM(CASE WHEN rarity = 5 THEN 1 ELSE 0 END) AS legendary,
                 SUM(CASE WHEN rarity = 4 THEN 1 ELSE 0 END) AS epic,
                 ROUND(AVG(value), 2) AS avgRating, ROUND(MAX(value), 1) AS bestRating
            FROM plays
           WHERE sport=? AND season=? AND cat IS NOT NULL AND player IS NOT NULL
-          GROUP BY playerId ORDER BY plays DESC, legendary DESC LIMIT 2000`)
+          GROUP BY playerId ORDER BY plays DESC, legendary DESC LIMIT 4000`)
         .bind(sport, Number(season)).all();
       const tot = await db.prepare(
         `SELECT COUNT(*) AS all_, SUM(CASE WHEN cat IS NOT NULL THEN 1 ELSE 0 END) AS cards,
