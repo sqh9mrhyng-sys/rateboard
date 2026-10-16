@@ -896,6 +896,19 @@ export async function onRequestGet({ request, env }) {
             AND seasonType IN ('regularseason','postseason')`)
         .bind(sport, Number(season), pid).first();
       out.gamesPlayed = Number((gp || {}).n) || null;
+      // Their team's games are the better yardstick; see the board endpoint.
+      const tm = await db.prepare(
+        `SELECT MAX(team) AS team FROM gamelog WHERE sport=? AND season=? AND playerId=?`)
+        .bind(sport, Number(season), pid).first();
+      if (tm && tm.team) {
+        const tg = await db.prepare(
+          `SELECT COUNT(DISTINCT gameId) AS n FROM gamelog
+            WHERE sport=? AND season=? AND team=?
+              AND seasonType IN ('regularseason','postseason')`)
+          .bind(sport, Number(season), tm.team).first();
+        out.team = tm.team;
+        out.teamGames = Number((tg || {}).n) || null;
+      }
       const rar = await db.prepare(
         `SELECT COALESCE(rarity,0) AS r, COUNT(*) AS n FROM plays
           WHERE sport=? AND season=? AND playerId=? AND ${CARD_SQL}
@@ -1035,28 +1048,60 @@ export async function onRequestGet({ request, env }) {
         `SELECT COUNT(*) AS all_, SUM(CASE WHEN ${CARD_SQL} THEN 1 ELSE 0 END) AS cards,
                 SUM(CASE WHEN rarity IS NULL THEN 1 ELSE 0 END) AS unscored, MAX(seenAt) AS seenAt
            FROM plays WHERE sport=? AND season=?`).bind(sport, Number(season)).first();
-      // How much of each player's season we actually hold. The game log is
-      // the full schedule, so gamesSeen against it is the coverage.
+      /* How much of each player's season we hold. The player's own game log
+         rows are NOT a safe denominator: the log has gaps, so a player can
+         look complete only because the log never heard about the games we
+         are missing. A team's games are the union over all its players, so
+         they are far closer to the real schedule. */
       const rows = rowsQ.results || [];
       try {
         const g = await db.prepare(
-          `SELECT playerId, COUNT(DISTINCT gameId) AS gamesPlayed FROM gamelog
+          `SELECT playerId, COUNT(DISTINCT gameId) AS own, MAX(team) AS team FROM gamelog
             WHERE sport=? AND season=? AND seasonType IN ('regularseason','postseason')
             GROUP BY playerId`).bind(sport, Number(season)).all();
-        const played = new Map();
-        for (const r of (g.results || [])) played.set(Number(r.playerId), Number(r.gamesPlayed));
-        for (const r of rows) r.gamesPlayed = played.get(Number(r.playerId)) || null;
+        const t = await db.prepare(
+          `SELECT team, COUNT(DISTINCT gameId) AS n FROM gamelog
+            WHERE sport=? AND season=? AND seasonType IN ('regularseason','postseason')
+            GROUP BY team`).bind(sport, Number(season)).all();
+        const teamGames = new Map();
+        for (const r of (t.results || [])) teamGames.set(r.team, Number(r.n));
+        const own = new Map();
+        for (const r of (g.results || [])) own.set(Number(r.playerId), r);
+        for (const r of rows) {
+          const o = own.get(Number(r.playerId));
+          r.logGames = o ? Number(o.own) : null;        // games the log has for them
+          r.teamGames = o ? (teamGames.get(o.team) || null) : null;  // their team's games
+          r.team = o ? o.team : null;
+        }
       } catch (e) {}
       // Season-wide progress, so the page can say how far along the sweep is.
+      /* Two separate gaps, reported separately because they have different
+         causes: the game log may be behind the real schedule, and the play
+         sweep may be behind the game log. */
       let progress = {};
       try {
         const p1 = await db.prepare(
-          `SELECT COUNT(DISTINCT gameId) AS n FROM gamelog WHERE sport=? AND season=?
-             AND seasonType IN ('regularseason','postseason')`).bind(sport, Number(season)).first();
+          `SELECT COUNT(DISTINCT gameId) AS n, MAX(day) AS newest FROM gamelog
+            WHERE sport=? AND season=? AND seasonType IN ('regularseason','postseason')`)
+          .bind(sport, Number(season)).first();
         const p2 = await db.prepare(
           `SELECT COUNT(DISTINCT gameId) AS n FROM plays WHERE sport=? AND season=?`)
           .bind(sport, Number(season)).first();
-        progress = { gamesTotal: Number((p1 || {}).n) || 0, gamesCollected: Number((p2 || {}).n) || 0 };
+        const p3 = await db.prepare(
+          `SELECT MAX(n) AS mx, MIN(n) AS mn, COUNT(*) AS teams FROM (
+             SELECT team, COUNT(DISTINCT gameId) AS n FROM gamelog
+              WHERE sport=? AND season=? AND seasonType IN ('regularseason','postseason')
+              GROUP BY team)`).bind(sport, Number(season)).first();
+        const mx = Number((p3 || {}).mx) || 0, teams = Number((p3 || {}).teams) || 0;
+        progress = {
+          logGames: Number((p1 || {}).n) || 0,
+          logNewestDay: (p1 || {}).newest || null,
+          collectedGames: Number((p2 || {}).n) || 0,
+          teams, teamGamesMax: mx, teamGamesMin: Number((p3 || {}).mn) || 0,
+          // If the log were complete every team would show the same count, and
+          // teams x games / 2 would equal the games held.
+          expectedIfComplete: teams && mx ? Math.round(teams * mx / 2) : 0
+        };
       } catch (e) {}
       return json({ sport, season, q, minPlays, rows, progress, totals: tot || {} });
     } catch (e) {
