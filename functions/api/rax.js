@@ -576,6 +576,25 @@ const CARD_SQL = `cat IS NOT NULL AND NOT (cat = 205 AND (
   OR COALESCE(label,'') LIKE '%wide%'
   OR COALESCE(label,'') LIKE '%doink%'))`;
 
+/* A completed pass mints a card for the receiver AND the quarterback. Real
+   files the receiver as the primary player and the passer as the secondary,
+   so a player's plays are their primary rows plus the completions they threw.
+   No other play type credits its secondary: the second name on a sack or an
+   interception is the victim, who gets nothing. */
+const PASS_CREDIT = `(type='PassCompleted'
+  OR (type='Touchdown' AND subType='PassCompleted')
+  OR (type='TwoPointConversion' AND subType='PassCompleted'))`;
+// Every card play, once per player who earns a card from it.
+const CREDITED = `
+  SELECT playerId AS pid, player AS pname, gameId, rarity, value, cat,
+         type, subType, id, day, tags
+    FROM plays WHERE sport=?1 AND season=?2 AND ${CARD_SQL}
+  UNION ALL
+  SELECT player2Id AS pid, player2 AS pname, gameId, rarity, value, cat,
+         type, subType, id, day, tags
+    FROM plays WHERE sport=?1 AND season=?2 AND ${CARD_SQL}
+     AND player2Id IS NOT NULL AND ${PASS_CREDIT}`;
+
 const PLAYS_CURSOR = 'plays_cursor_v1';
 // Which seasons the tick walks. Add a line here and the cron picks it up; the
 // worker itself holds nothing and never needs redeploying.
@@ -882,12 +901,11 @@ export async function onRequestGet({ request, env }) {
     const out = { sport, season, playerId: pid };
     try {
       const head = await db.prepare(
-        `SELECT MAX(player) AS player, COUNT(*) AS allPlays,
-                SUM(CASE WHEN ${CARD_SQL} THEN 1 ELSE 0 END) AS plays,
+        `WITH credited AS (${CREDITED})
+         SELECT MAX(pname) AS player, COUNT(*) AS plays, COUNT(*) AS allPlays,
                 COUNT(DISTINCT gameId) AS games,
-                ROUND(AVG(CASE WHEN ${CARD_SQL} THEN value END), 2) AS avgRating,
-                ROUND(MAX(value), 1) AS bestRating
-           FROM plays WHERE sport=? AND season=? AND playerId=?`)
+                ROUND(AVG(value), 2) AS avgRating, ROUND(MAX(value), 1) AS bestRating
+           FROM credited WHERE pid = ?3`)
         .bind(sport, Number(season), pid).first();
       Object.assign(out, head || {});
       const gp = await db.prepare(
@@ -910,15 +928,17 @@ export async function onRequestGet({ request, env }) {
         out.teamGames = Number((tg || {}).n) || null;
       }
       const rar = await db.prepare(
-        `SELECT COALESCE(rarity,0) AS r, COUNT(*) AS n FROM plays
-          WHERE sport=? AND season=? AND playerId=? AND ${CARD_SQL}
-          GROUP BY r ORDER BY r`).bind(sport, Number(season), pid).all();
+        `WITH credited AS (${CREDITED})
+         SELECT COALESCE(rarity,0) AS r, COUNT(*) AS n FROM credited
+          WHERE pid = ?3 GROUP BY r ORDER BY r`)
+        .bind(sport, Number(season), pid).all();
       out.byRarity = {};
       for (const x of (rar.results || [])) out.byRarity[x.r] = Number(x.n);
       const fam = await db.prepare(
-        `SELECT cat, type, subType, COUNT(*) AS n,
+        `WITH credited AS (${CREDITED})
+         SELECT cat, type, subType, COUNT(*) AS n,
                 ROUND(AVG(value),2) AS avgRating, ROUND(MAX(value),1) AS bestRating
-           FROM plays WHERE sport=? AND season=? AND playerId=? AND ${CARD_SQL}
+           FROM credited WHERE pid = ?3
           GROUP BY cat, type, subType ORDER BY n DESC`)
         .bind(sport, Number(season), pid).all();
       out.kinds = (fam.results || []).map(x => Object.assign({}, x,
@@ -926,11 +946,12 @@ export async function onRequestGet({ request, env }) {
       // The game feed rarely carries a date, but the game log always knows
       // when the game was, so the day comes from there.
       const top = await db.prepare(
-        `SELECT p.id, COALESCE(p.day, (SELECT g.day FROM gamelog g
-             WHERE g.sport=p.sport AND g.gameId=p.gameId LIMIT 1)) AS day,
-                p.gameId, p.label, p.value, COALESCE(p.rarity,0) AS rarity, p.cat, p.tags
-           FROM plays p WHERE p.sport=? AND p.season=? AND p.playerId=? AND ${CARD_SQL.replace(/\b(cat|subType|label)\b/g, 'p.$1')}
-          ORDER BY p.value DESC LIMIT 250`)
+        `WITH credited AS (${CREDITED})
+         SELECT c.id, COALESCE(c.day, (SELECT g.day FROM gamelog g
+             WHERE g.sport=?1 AND g.gameId=c.gameId LIMIT 1)) AS day,
+                c.gameId, p.label, c.value, COALESCE(c.rarity,0) AS rarity, c.cat, c.tags
+           FROM credited c JOIN plays p ON p.id = c.id
+          WHERE c.pid = ?3 ORDER BY c.value DESC LIMIT 250`)
         .bind(sport, Number(season), pid).all();
       out.top = top.results || [];
     } catch (e) {
@@ -1030,7 +1051,8 @@ export async function onRequestGet({ request, env }) {
       parseInt(url.searchParams.get('min') || '10', 10) || 0));
     try {
       const rowsQ = await db.prepare(
-        `SELECT playerId, MAX(player) AS player,
+        `WITH credited AS (${CREDITED})
+         SELECT pid AS playerId, MAX(pname) AS player,
                 COUNT(*) AS plays,
                 SUM(CASE WHEN rarity = 7 THEN 1 ELSE 0 END) AS iconic,
                 SUM(CASE WHEN rarity = 6 THEN 1 ELSE 0 END) AS mystic,
@@ -1038,10 +1060,9 @@ export async function onRequestGet({ request, env }) {
                 SUM(CASE WHEN rarity = 4 THEN 1 ELSE 0 END) AS epic,
                 COUNT(DISTINCT gameId) AS gamesSeen,
                 ROUND(AVG(value), 2) AS avgRating, ROUND(MAX(value), 1) AS bestRating
-           FROM plays
-          WHERE sport=? AND season=? AND ${CARD_SQL} AND player IS NOT NULL
-            AND (?3 = '' OR player LIKE ?4)
-          GROUP BY playerId HAVING COUNT(*) >= ?5
+           FROM credited
+          WHERE pname IS NOT NULL AND (?3 = '' OR pname LIKE ?4)
+          GROUP BY pid HAVING COUNT(*) >= ?5
           ORDER BY plays DESC, legendary DESC LIMIT 4000`)
         .bind(sport, Number(season), q, `%${q}%`, minPlays).all();
       const tot = await db.prepare(
