@@ -559,7 +559,11 @@ export async function onRequestGet({ request, env }) {
     stats:      'stats?season=SEASON',
     seasonstats:'seasonstats?season=SEASON',
     owners:     'owners?season=SEASON',
-    holders:    'holders?season=SEASON'
+    holders:    'holders?season=SEASON',
+    // The play by play, found by watching the Plays tab on a player profile
+    // call it. Every play carries its own rating, and its rarity comes from
+    // the tags on it rather than from the rating.
+    playstop:   'plays/top?limit=10&viewFrame=season'
   };
   const probeSub = url.searchParams.get('probeSub');
   if (probeSub && probePlayer && /^\d+$/.test(probePlayer)) {
