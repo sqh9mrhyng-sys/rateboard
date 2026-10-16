@@ -499,11 +499,17 @@ const TAGS_DDL = `CREATE TABLE IF NOT EXISTS tags (
   id INTEGER NOT NULL, sport TEXT NOT NULL, label TEXT, rarity INTEGER,
   seenAt INTEGER NOT NULL, PRIMARY KEY (id, sport))`;
 const PLAYS_CURSOR = 'plays_cursor_v1';
+// Which seasons the tick walks. Add a line here and the cron picks it up; the
+// worker itself holds nothing and never needs redeploying.
+const PLAYS_SPORTS = [
+  { sport: 'nfl', season: 2026 }
+];
 const PLAYS_PER_TICK = 24;        // players or games per call
 
 async function playsReady(db) {
   await db.prepare(PLAYS_DDL).run();
   await db.prepare(TAGS_DDL).run();
+  try { await db.prepare('ALTER TABLE plays ADD COLUMN rarity INTEGER').run(); } catch (e) {}
   for (const ix of [
     'CREATE INDEX IF NOT EXISTS plays_sp ON plays (sport, season, playerId)',
     'CREATE INDEX IF NOT EXISTS plays_game ON plays (gameId)',
@@ -693,6 +699,74 @@ export async function onRequestGet({ request, env }) {
       for (const row of (h.results || [])) { byRarity[row.rarity] = Number(row.n); held += Number(row.n); }
     } catch (e) {}
     return json({ sport, season, pages, written: found, tagsHeld: held, byRarity });
+  }
+
+  // A play's rarity is the highest rarity among its tags, which is how the
+  // game decides it. Worked out here rather than at write time, because the
+  // tag table is still filling in while plays are being collected.
+  if (url.searchParams.get('plays') === 'score') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    await playsReady(db);
+    let tagRar = new Map();
+    try {
+      const t = await db.prepare('SELECT id, rarity FROM tags WHERE sport=?').bind(sport).all();
+      for (const r of (t.results || [])) tagRar.set(Number(r.id), Number(r.rarity) || 0);
+    } catch (e) {}
+    if (!tagRar.size) return json({ error: 'no tags collected yet for this sport' }, 400);
+    let rows = [];
+    try {
+      const r = await db.prepare(
+        `SELECT id, tags FROM plays WHERE sport=? AND season=? AND tags IS NOT NULL
+         ORDER BY id LIMIT 4000`).bind(sport, Number(season)).all();
+      rows = r.results || [];
+    } catch (e) { return json({ error: 'could not read plays' }, 503); }
+    const stmt = db.prepare('UPDATE plays SET rarity=? WHERE id=?');
+    const batch = [];
+    let unknown = 0;
+    for (const r of rows) {
+      let best = 0, miss = false;
+      for (const bit of String(r.tags).split(',')) {
+        const id = Number(bit);
+        if (!id) continue;
+        if (!tagRar.has(id)) { miss = true; continue; }
+        best = Math.max(best, tagRar.get(id));
+      }
+      if (miss) unknown++;
+      batch.push(stmt.bind(best || null, Number(r.id)));
+    }
+    for (let i = 0; i < batch.length; i += 200) {
+      try { await db.batch(batch.slice(i, i + 200)); } catch (e) {}
+    }
+    return json({ sport, season, scored: batch.length, tagsKnown: tagRar.size,
+                  playsWithAnUnknownTag: unknown });
+  }
+
+  // One row per player: how many card plays they have and how many are the
+  // top tier. Everything else is in the table behind it.
+  if (url.searchParams.get('plays') === 'board') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    await playsReady(db);
+    try {
+      const q = await db.prepare(
+        `SELECT playerId, MAX(player) AS player,
+                COUNT(*) AS plays,
+                SUM(CASE WHEN rarity >= 5 THEN 1 ELSE 0 END) AS legendary,
+                SUM(CASE WHEN rarity = 4 THEN 1 ELSE 0 END) AS epic,
+                ROUND(AVG(value), 2) AS avgRating, ROUND(MAX(value), 1) AS bestRating
+           FROM plays
+          WHERE sport=? AND season=? AND cat IS NOT NULL AND player IS NOT NULL
+          GROUP BY playerId ORDER BY plays DESC, legendary DESC LIMIT 2000`)
+        .bind(sport, Number(season)).all();
+      const tot = await db.prepare(
+        `SELECT COUNT(*) AS all_, SUM(CASE WHEN cat IS NOT NULL THEN 1 ELSE 0 END) AS cards,
+                SUM(CASE WHEN rarity IS NULL THEN 1 ELSE 0 END) AS unscored, MAX(seenAt) AS seenAt
+           FROM plays WHERE sport=? AND season=?`).bind(sport, Number(season)).first();
+      return json({ sport, season, rows: q.results || [], totals: tot || {} });
+    } catch (e) {
+      return json({ error: 'could not read the play board', detail: String((e && e.message) || e) }, 503);
+    }
   }
 
   // Game level reads. The team tab on a game page calls .../stats, and the
@@ -972,6 +1046,30 @@ export async function onRequestGet({ request, env }) {
   // today is remembered in a single marker so it is skipped until tomorrow.
   if (['next', 'resume', 'stuck', 'rescan'].includes(url.searchParams.get('queue'))) {
     const db = env.RATEBOARD_DB;
+    // Plays ride the same tick as the game log, on their own clock so the two
+    // never ask Real for things at the same moment.
+    if (url.searchParams.get('queue') === 'next' && db) {
+      const PK = 'plays_tick_v1';
+      let st = {};
+      try { st = JSON.parse((await env.RATEBOARD_KV.get(PK)) || '{}') || {}; } catch (e) {}
+      const n = Number(st.n || 0) + 1;
+      st.n = n;
+      try { await env.RATEBOARD_KV.put(PK, JSON.stringify(st)); } catch (e) {}
+      // Every other tick, and only one source at a time, so this and the game
+      // log never ask Real for two things at once. Tags and scoring are cheap
+      // but pointless to repeat often, so they get the half hour mark.
+      const step = n % 30 === 0 ? 'tags' : n % 30 === 15 ? 'score'
+                 : n % 2 === 0 ? 'games' : null;
+      if (step) {
+        const sp = PLAYS_SPORTS[Math.floor(n / 2) % PLAYS_SPORTS.length];
+        const side = step === 'games' ? (n % 4 === 0 ? 'games' : 'players') : null;
+        const u = new URL(url);
+        u.search = side
+          ? `?plays=collect&from=${side}&sport=${sp.sport}&season=${sp.season}`
+          : `?plays=${step}&sport=${sp.sport}&season=${sp.season}`;
+        try { await onRequestGet({ request: new Request(u.toString(), request), env }); } catch (e) {}
+      }
+    }
     const CLEAR_KEY = 'queue_clear_v1';
     const today = new Date().toISOString().slice(0, 10);
 
