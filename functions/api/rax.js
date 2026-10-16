@@ -570,7 +570,8 @@ const CARD_SQL = `cat IS NOT NULL AND NOT (cat = 205 AND (
   OR COALESCE(label,'') LIKE '%miss%'
   OR COALESCE(label,'') LIKE '%no good%'
   OR COALESCE(label,'') LIKE '%blocked%'
-  OR COALESCE(label,'') LIKE '%wide%'))`;
+  OR COALESCE(label,'') LIKE '%wide%'
+  OR COALESCE(label,'') LIKE '%doink%'))`;
 
 const PLAYS_CURSOR = 'plays_cursor_v1';
 // Which seasons the tick walks. Add a line here and the cron picks it up; the
@@ -907,7 +908,7 @@ export async function onRequestGet({ request, env }) {
              WHERE g.sport=p.sport AND g.gameId=p.gameId LIMIT 1)) AS day,
                 p.gameId, p.label, p.value, COALESCE(p.rarity,0) AS rarity, p.cat, p.tags
            FROM plays p WHERE p.sport=? AND p.season=? AND p.playerId=? AND ${CARD_SQL.replace(/\b(cat|subType|label)\b/g, 'p.$1')}
-          ORDER BY p.rarity DESC, p.value DESC LIMIT 40`)
+          ORDER BY p.value DESC LIMIT 250`)
         .bind(sport, Number(season), pid).all();
       out.top = top.results || [];
     } catch (e) {
