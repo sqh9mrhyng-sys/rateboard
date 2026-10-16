@@ -599,8 +599,15 @@ const PLAYS_CURSOR = 'plays_cursor_v1';
 // Which seasons the tick walks. Add a line here and the cron picks it up; the
 // worker itself holds nothing and never needs redeploying.
 const PLAYS_SPORTS = [
-  { sport: 'nfl', season: 2026 }
+  { sport: 'nfl', season: 2026, rolling: true },   // in progress, re-swept forever
+  { sport: 'nfl', season: 2025 },
+  { sport: 'nfl', season: 2024 },
+  { sport: 'nfl', season: 2023 }
 ];
+// A finished season is swept once and then left alone. The flag is set when
+// its walk laps, so the cron stops spending ticks on it.
+const sweptKey = (sp, se) => `plays_swept_${sp}_${se}`;
+const SCORE_BATCH = 8000;        // plays rescored per call
 // A game's feed comes back whole - every snap, around 175 rows for an NFL
 // game - so games are taken a few at a time. Players are a thin top-plays
 // list and can be walked in bigger strides.
@@ -615,7 +622,10 @@ async function playsReady(db) {
   for (const ix of [
     'CREATE INDEX IF NOT EXISTS plays_sp ON plays (sport, season, playerId)',
     'CREATE INDEX IF NOT EXISTS plays_game ON plays (gameId)',
-    'CREATE INDEX IF NOT EXISTS plays_cat ON plays (sport, season, cat)'
+    'CREATE INDEX IF NOT EXISTS plays_cat ON plays (sport, season, cat)',
+    // The quarterback side of a completed pass is looked up by this.
+    'CREATE INDEX IF NOT EXISTS plays_p2 ON plays (sport, season, player2Id)',
+    'CREATE INDEX IF NOT EXISTS plays_score ON plays (sport, season, rarity)'
   ]) { try { await db.prepare(ix).run(); } catch (e) {} }
 }
 
@@ -739,6 +749,11 @@ export async function onRequestGet({ request, env }) {
 
     if (!ids.length) {
       try { await env.RATEBOARD_KV.put(key, '0'); } catch (e) {}
+      // A completed season needs one pass, not endless ones.
+      const cfg = PLAYS_SPORTS.find(x => x.sport === sport && String(x.season) === String(season));
+      if (cfg && !cfg.rolling) {
+        try { await env.RATEBOARD_KV.put(sweptKey(sport, season), '1'); } catch (e) {}
+      }
       return json({ sport, season, from, lap: true, done: 0, stored: 0 });
     }
 
@@ -1093,7 +1108,7 @@ export async function onRequestGet({ request, env }) {
       const r = await db.prepare(
         `SELECT id, tags, cat, type, subType FROM plays WHERE sport=? AND season=? AND tags IS NOT NULL
          ${url.searchParams.get('all') === '1' ? '' : 'AND rarity IS NULL'}
-         ORDER BY id LIMIT 4000`).bind(sport, Number(season)).all();
+         ORDER BY id LIMIT ${SCORE_BATCH}`).bind(sport, Number(season)).all();
       rows = r.results || [];
     } catch (e) { return json({ error: 'could not read plays' }, 503); }
     const stmt = db.prepare('UPDATE plays SET rarity=? WHERE id=?');
@@ -1508,28 +1523,40 @@ export async function onRequestGet({ request, env }) {
       const n = Number(st.n || 0) + 1;
       st.n = n;
       try { await env.RATEBOARD_KV.put(PK, JSON.stringify(st)); } catch (e) {}
-      // Every other tick, and only one source at a time, so this and the game
-      // log never ask Real for two things at once. Tags and scoring are cheap
-      // but pointless to repeat often, so they get the half hour mark.
-      const step = n % 30 === 0 ? 'tags' : n % 30 === 15 ? 'score'
+      /* One job per tick, never two calls to Real at once. Scoring has to
+         keep pace with collection now that whole back seasons are coming in,
+         so it runs every fifth tick rather than twice an hour. */
+      const step = n % 30 === 0 ? 'tags' : n % 5 === 2 ? 'score'
                  : n % 2 === 0 ? 'games' : null;
       if (step) {
-        const sp = PLAYS_SPORTS[Math.floor(n / 2) % PLAYS_SPORTS.length];
-        // The game feed carries every play in the game, so it alone is a
-        // complete pass. The player top-plays feed is kept for sports whose
-        // game feed is thinner, but NFL does not need it.
-        const side = step === 'games' ? 'games' : null;
-        const u = new URL(url);
-        // The tag sweep rotates through the rarity tiers: the top-end tags
-        // sit only on top-end cards, which are seldom listed, so a plain
-        // sweep would almost never see one.
-        const tiers = ['all', '7', '6', '5', '4'];
-        const tier = tiers[Math.floor(n / 30) % tiers.length];
-        u.search = side
-          ? `?plays=collect&from=${side}&sport=${sp.sport}&season=${sp.season}`
-          : `?plays=${step}&sport=${sp.sport}&season=${sp.season}`
-            + (step === 'tags' ? `&rarity=${tier}` : '');
-        try { await onRequestGet({ request: new Request(u.toString(), request), env }); } catch (e) {}
+        // Seasons already swept to completion are skipped; the live season is
+        // flagged rolling and is never considered finished.
+        const live = [];
+        for (const x of PLAYS_SPORTS) {
+          if (x.rolling) { live.push(x); continue; }
+          let swept = null;
+          try { swept = await env.RATEBOARD_KV.get(sweptKey(x.sport, x.season)); } catch (e) {}
+          if (!swept) live.push(x);
+        }
+        // Nothing left to collect: keep scoring and harvesting tags on the
+        // live season so the dictionary and ratings stay current.
+        const pool = live.length ? live : PLAYS_SPORTS.filter(x => x.rolling);
+        if (pool.length) {
+          const sp = step === 'games'
+            ? pool[Math.floor(n / 2) % pool.length]
+            : PLAYS_SPORTS[Math.floor(n / 5) % PLAYS_SPORTS.length];
+          const u = new URL(url);
+          // The tag sweep rotates through the rarity tiers: the top-end tags
+          // sit only on top-end cards, which are seldom listed, so a plain
+          // sweep would almost never see one.
+          const tiers = ['all', '7', '6', '5', '4'];
+          const tier = tiers[Math.floor(n / 30) % tiers.length];
+          u.search = step === 'games'
+            ? `?plays=collect&from=games&sport=${sp.sport}&season=${sp.season}`
+            : `?plays=${step}&sport=${sp.sport}&season=${sp.season}`
+              + (step === 'tags' ? `&rarity=${tier}` : '');
+          try { await onRequestGet({ request: new Request(u.toString(), request), env }); } catch (e) {}
+        }
       }
     }
     const CLEAR_KEY = 'queue_clear_v1';
