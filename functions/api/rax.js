@@ -525,6 +525,30 @@ export async function onRequestGet({ request, env }) {
 
   // Walk the marketplace a slice at a time, keeping the place in KV so the
   // next tick carries on. Same shape as the game log collector.
+  // Game level reads. The team tab on a game page calls .../stats, and the
+  // player endpoint spells its play feed /plays, so those are the two fixed
+  // shapes here. gameId is digits, sport is validated above.
+  if (url.searchParams.get('probeGame') != null) {
+    const gid = String(url.searchParams.get('probeGame') || '').replace(/[^0-9]/g, '');
+    if (!gid) return json({ error: 'bad gameId' }, 400);
+    const SUBS_G = { stats: 'stats', plays: 'plays', playstop: 'plays/top?limit=400' };
+    const which = String(url.searchParams.get('sub') || 'plays').toLowerCase();
+    const tail = SUBS_G[which];
+    if (!tail) return json({ error: 'sub must be stats, plays or playstop' }, 400);
+    try {
+      const d = await rsGet(`https://web.realapp.com/games/${gid}/sport/${sport}/${tail}`, auth);
+      const rows = rowsOf(d);
+      const arr = Array.isArray(d && d.plays) ? d.plays : rows;
+      return json({ gameId: gid, sub: which, keys: Object.keys(d || {}), count: arr.length,
+                    firstRowKeys: arr[0] ? Object.keys(arr[0]) : [],
+                    sample: arr.slice(0, 3).map(r => ({ id: r.id, label: r.label, value: r.value,
+                      type: r.type, subType: r.subType, cat: r.collectingCategoryId,
+                      seasonType: r.seasonType, tags: r.tags })) });
+    } catch (e) {
+      return json({ gameId: gid, sub: which, error: String((e && e.message) || e).slice(0, 160) }, 502);
+    }
+  }
+
   // The tag list. Rarity is not on a play - it comes from the tags on it, and
   // this is what the tag picker calls. Fixed shape: sport is validated, type
   // is a short word, and the play id is digits only.
