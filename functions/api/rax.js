@@ -612,7 +612,7 @@ const SCORE_BATCH = 8000;        // plays rescored per call
 // game - so games are taken a few at a time. Players are a thin top-plays
 // list and can be walked in bigger strides.
 const PLAYS_PER_TICK = 24;        // players per call
-const GAMES_PER_TICK = 6;         // games per call, each one a full game
+const GAMES_PER_TICK = 10;        // games per call, each one a full game
 
 async function playsReady(db) {
   await db.prepare(PLAYS_DDL).run();
