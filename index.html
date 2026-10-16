@@ -5011,6 +5011,37 @@ async function cbbPanel(){
      play's rarity is the highest rarity among its tags, which is how Real
      decides it, and it is worked out server side against the tag table.
      -------------------------------------------------------------------- */
+  /* ---- pack economics -------------------------------------------------
+     A pack is three cards and its rating is the player's average play
+     rating times three, floored at 10: if the three cards fall short, one
+     of them is boosted up to make 10. Rating accumulates across packs, and
+     each rarity step needs a fixed total. Ladder and prices from Dennis.
+     -------------------------------------------------------------------- */
+  const PACK_FLOOR = 10;
+  const PACK_PRICES = [
+    ['self', 'Pack yourself', 200],
+    ['swap', 'Swapping', 241],
+    ['back160', '160 back', 271],
+    ['full', 'Full price', 415]
+  ];
+  const PACK_LADDER = [
+    ['Legendary 1', 25, 380],   ['Legendary 2', 28, 520],   ['Legendary 3', 32, 720],
+    ['Legendary 4', 35, 1000],  ['Legendary 5', 40, 1180],
+    ['Mystic 1', 75, 1380],     ['Mystic 2', 79, 1560],     ['Mystic 3', 83, 1760],
+    ['Mystic 4', 87, 1980],     ['Mystic 5', 91, 2220],     ['Mystic 6', 95, 2480],
+    ['Mystic 7', 98, 2760],     ['Mystic 8', 101, 3000],    ['Mystic 9', 103, 3180],
+    ['Mystic 10', 105, 3250],
+    ['Iconic 1', 150, 3380],    ['Iconic 2', 153, 3820],    ['Iconic 3', 156, 4320],
+    ['Iconic 4', 159, 4920],    ['Iconic 5', 163, 5620],    ['Iconic 6', 167, 6420],
+    ['Iconic 7', 171, 7320],    ['Iconic 8', 175, 8320],    ['Iconic 9', 180, 9420],
+    ['Iconic 10', 185, 10620],  ['Iconic 11', 190, 12000],  ['Iconic 12', 196, 13600],
+    ['Iconic 13', 202, 15400],  ['Iconic 14', 208, 17500],  ['Iconic 15', 214, 19900],
+    ['Iconic 16', 220, 22700],  ['Iconic 17', 226, 26000],  ['Iconic 18', 233, 29000],
+    ['Iconic 19', 240, 34500],  ['Iconic 20', 250, 40000]
+  ];
+  const packRating = avg => Math.max(PACK_FLOOR, (Number(avg) || 0) * 3);
+  const rax = n => Math.round(n).toLocaleString();
+
   const RAR_NAMES = { 1:'Common', 2:'Uncommon', 3:'Rare', 4:'Epic',
                       5:'Legendary', 6:'Mystic', 7:'Iconic' };
   // A pack is three cards drawn from a player's card plays without
@@ -5040,7 +5071,7 @@ async function cbbPanel(){
     : PK_BASE;
 
   let pkRows = null, pkTotals = {}, pkSort = 'plays', pkDir = 'desc', pkQ = '';
-  let pkMin = 10, pkShowTop = false, pkPairKey = '', pkOpen = null;
+  let pkMin = 10, pkShowTop = false, pkPairKey = '', pkOpen = null, pkPrice = 'self';
 
   // FC has no play cards, so it is not offered here. Everything else comes
   // from the same season picker at the top of the panel.
@@ -5126,6 +5157,24 @@ async function cbbPanel(){
      Boxes rather than another table: the counts that matter, what kinds of
      play they come from, and the best plays we hold with their tags.
      -------------------------------------------------------------------- */
+  function packLadderRows(avg){
+    if(avg == null) return '';
+    const per = packRating(avg);
+    const price = (PACK_PRICES.find(p => p[0] === pkPrice) || PACK_PRICES[0])[2];
+    let prevPacks = 0;
+    return PACK_LADDER.map(([name, mult, need], i) => {
+      const packs = Math.ceil(need / per);
+      const stepNeed = need - (i ? PACK_LADDER[i - 1][2] : 0);
+      const stepPacks = packs - prevPacks;
+      prevPacks = packs;
+      return `<tr><td class="l">${esc(name)}</td><td>${mult}x</td>`
+        + `<td>${need.toLocaleString()}</td><td>${stepNeed.toLocaleString()}</td>`
+        + `<td>${packs.toLocaleString()}</td>`
+        + `<td>${rax(packs * price)}</td>`
+        + `<td>${rax(stepPacks * price)}</td></tr>`;
+    }).join('');
+  }
+
   async function pkOpenPlayer(pid){
     const box = $b('#pk-detail');
     if(pkOpen === pid){ box.innerHTML = ''; pkOpen = null; return; }
@@ -5147,9 +5196,12 @@ async function cbbPanel(){
       + `<div class="pkbox-l">${esc(label)}</div>`
       + (sub ? `<div class="pkbox-s">${esc(sub)}</div>` : '') + '</div>';
 
-    const tiers = [7, 6, 5, 4, 3, 2, 1].filter(t => pkShowTop || t <= 5);
+    // Rare and below all behave the same for packs, so they share one box.
+    const tiers = (pkShowTop ? [7, 6, 5, 4] : [5, 4]);
+    const low = (rar[3] || 0) + (rar[2] || 0) + (rar[1] || 0) + (rar[0] || 0);
     const tierBoxes = tiers.map(t =>
-      cell(RAR_NAMES[t], rar[t] || 0, pct(packOdds(n, rar[t] || 0)))).join('');
+      cell(RAR_NAMES[t], rar[t] || 0, pct(packOdds(n, rar[t] || 0)))).join('')
+      + cell('Rare or below', low, '');
 
     const kinds = (d.kinds || []).slice(0, 10).map(k =>
       `<tr><td class="l">${esc(k.type + (k.subType ? ' / ' + k.subType : ''))}</td>`
@@ -5183,6 +5235,22 @@ async function cbbPanel(){
           ${tierBoxes}
         </div>
         <p class="note">Each tier box shows the count and the chance of at least one in a pack.</p>
+        <div class="dtbar" style="margin:10px 0 6px">
+          <b>Packs to each rarity</b>
+          <select class="field" id="pk-price" style="max-width:190px">
+            ${PACK_PRICES.map(([k, label, cost]) =>
+              `<option value="${k}"${k === pkPrice ? ' selected' : ''}>${esc(label)} \u2014 ${cost}</option>`).join('')}
+          </select>
+          <span class="note">${
+            d.avgRating == null ? 'No rating yet'
+            : `${Number(d.avgRating).toFixed(2)} avg \u00d7 3 = ${(d.avgRating * 3).toFixed(2)}`
+              + (d.avgRating * 3 < PACK_FLOOR ? `, floored to ${PACK_FLOOR}` : '')
+              + ` rating per pack`}</span>
+        </div>
+        <div class="dtwrap"><table class="dt"><thead><tr>
+          <th class="l">Rarity</th><th>Mult</th><th>Rating</th><th>From prev</th>
+          <th>Packs</th><th>Cost</th><th>From prev</th>
+        </tr></thead><tbody>${packLadderRows(d.avgRating)}</tbody></table></div>
         <div class="dtwrap"><table class="dt"><thead><tr>
           <th class="l">Play kind</th><th class="l">Family</th><th>N</th><th>Avg</th><th>Best</th>
         </tr></thead><tbody>${kinds || ''}</tbody></table></div>
@@ -5541,6 +5609,11 @@ async function cbbPanel(){
     if(e.target.id === 'lk-lvl'){ lkLevel = +e.target.value; return lkDetail(); }
     if(e.target.id === 'lk-month'){ lkMonth = e.target.value; lkDay = ''; return lkBag(); }
     if(e.target.id === 'gf-season'){ gfSeason = e.target.value; return gfLoad(); }
+    if(e.target.id === 'pk-price'){
+      pkPrice = e.target.value;
+      if(pkOpen){ const id = pkOpen; pkOpen = null; pkOpenPlayer(id); }
+      return;
+    }
 
     if(e.target.id === 'lk-cap'){
       const all = loadoutsRead();
