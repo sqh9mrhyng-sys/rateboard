@@ -538,9 +538,16 @@ export async function onRequestGet({ request, env }) {
     if (term && /^[a-zA-Z0-9 ]{1,24}$/.test(term)) q.set('search', term);
     try {
       const d = await rsGet(`https://web.realapp.com/tagsearch/${sport}?${q.toString()}`, auth);
-      const rows = rowsOf(d);
-      return json({ type, keys: Object.keys(d || {}), count: rows.length,
-                    firstRowKeys: rows[0] ? Object.keys(rows[0]) : [], rows: rows.slice(0, 200) });
+      // The reply keys this under tags / categorizedTags rather than the rows
+      // shape the rest of the API uses, so take it as it comes.
+      const tags = Array.isArray(d && d.tags) ? d.tags : rowsOf(d);
+      return json({ type, keys: Object.keys(d || {}), count: tags.length,
+                    firstRowKeys: tags[0] ? Object.keys(tags[0]) : [],
+                    categories: Array.isArray(d && d.categorizedTags)
+                      ? d.categorizedTags.map(c => ({ keys: Object.keys(c || {}),
+                          label: c.label || c.name || null,
+                          n: Array.isArray(c.tags) ? c.tags.length : null })) : null,
+                    tags: tags.slice(0, 150) });
     } catch (e) {
       return json({ error: 'tagsearch failed', detail: String((e && e.message) || e) }, 502);
     }
