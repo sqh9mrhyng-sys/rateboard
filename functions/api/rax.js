@@ -890,6 +890,12 @@ export async function onRequestGet({ request, env }) {
            FROM plays WHERE sport=? AND season=? AND playerId=?`)
         .bind(sport, Number(season), pid).first();
       Object.assign(out, head || {});
+      const gp = await db.prepare(
+        `SELECT COUNT(DISTINCT gameId) AS n FROM gamelog
+          WHERE sport=? AND season=? AND playerId=?
+            AND seasonType IN ('regularseason','postseason')`)
+        .bind(sport, Number(season), pid).first();
+      out.gamesPlayed = Number((gp || {}).n) || null;
       const rar = await db.prepare(
         `SELECT COALESCE(rarity,0) AS r, COUNT(*) AS n FROM plays
           WHERE sport=? AND season=? AND playerId=? AND ${CARD_SQL}
@@ -1017,6 +1023,7 @@ export async function onRequestGet({ request, env }) {
                 SUM(CASE WHEN rarity = 6 THEN 1 ELSE 0 END) AS mystic,
                 SUM(CASE WHEN rarity = 5 THEN 1 ELSE 0 END) AS legendary,
                 SUM(CASE WHEN rarity = 4 THEN 1 ELSE 0 END) AS epic,
+                COUNT(DISTINCT gameId) AS gamesSeen,
                 ROUND(AVG(value), 2) AS avgRating, ROUND(MAX(value), 1) AS bestRating
            FROM plays
           WHERE sport=? AND season=? AND ${CARD_SQL} AND player IS NOT NULL
@@ -1028,7 +1035,30 @@ export async function onRequestGet({ request, env }) {
         `SELECT COUNT(*) AS all_, SUM(CASE WHEN ${CARD_SQL} THEN 1 ELSE 0 END) AS cards,
                 SUM(CASE WHEN rarity IS NULL THEN 1 ELSE 0 END) AS unscored, MAX(seenAt) AS seenAt
            FROM plays WHERE sport=? AND season=?`).bind(sport, Number(season)).first();
-      return json({ sport, season, q, minPlays, rows: rowsQ.results || [], totals: tot || {} });
+      // How much of each player's season we actually hold. The game log is
+      // the full schedule, so gamesSeen against it is the coverage.
+      const rows = rowsQ.results || [];
+      try {
+        const g = await db.prepare(
+          `SELECT playerId, COUNT(DISTINCT gameId) AS gamesPlayed FROM gamelog
+            WHERE sport=? AND season=? AND seasonType IN ('regularseason','postseason')
+            GROUP BY playerId`).bind(sport, Number(season)).all();
+        const played = new Map();
+        for (const r of (g.results || [])) played.set(Number(r.playerId), Number(r.gamesPlayed));
+        for (const r of rows) r.gamesPlayed = played.get(Number(r.playerId)) || null;
+      } catch (e) {}
+      // Season-wide progress, so the page can say how far along the sweep is.
+      let progress = {};
+      try {
+        const p1 = await db.prepare(
+          `SELECT COUNT(DISTINCT gameId) AS n FROM gamelog WHERE sport=? AND season=?
+             AND seasonType IN ('regularseason','postseason')`).bind(sport, Number(season)).first();
+        const p2 = await db.prepare(
+          `SELECT COUNT(DISTINCT gameId) AS n FROM plays WHERE sport=? AND season=?`)
+          .bind(sport, Number(season)).first();
+        progress = { gamesTotal: Number((p1 || {}).n) || 0, gamesCollected: Number((p2 || {}).n) || 0 };
+      } catch (e) {}
+      return json({ sport, season, q, minPlays, rows, progress, totals: tot || {} });
     } catch (e) {
       return json({ error: 'could not read the play board', detail: String((e && e.message) || e) }, 503);
     }
