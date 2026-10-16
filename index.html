@@ -57,6 +57,8 @@
   .sportpick select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   .sportpick .caret{position:absolute;right:16px;top:50%;transform:translateY(-50%);pointer-events:none;color:var(--mute)}
   .whoami{justify-self:end;display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--mute)}
+  .idbit{display:flex;align-items:center;gap:10px;white-space:nowrap}
+  .navrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
   .whoami b{color:var(--bone);font-weight:600}
   .linkbtn{color:var(--mute);text-decoration:underline;text-underline-offset:3px;font-size:13.5px}
   .linkbtn:hover{color:var(--bone)}
@@ -321,10 +323,23 @@
     .sportpick{justify-self:end}
     .sportpick select{padding:9px 34px 9px 14px;font-size:14px}
     .sportpick .caret{right:13px}
-    .whoami{grid-column:1/-1;justify-self:stretch;justify-content:space-between;
-      gap:6px;font-size:13px;border-top:1px solid var(--line);padding-top:8px}
+    /* Eleven underlined links on one line was unreadable on a phone. Who you
+       are sits on its own row; the sections become chips that wrap, three to
+       a line, so the row count grows with the board instead of the text
+       shrinking to fit. */
+    .whoami{grid-column:1/-1;justify-self:stretch;display:flex;flex-direction:column;
+      align-items:stretch;gap:8px;font-size:13px;border-top:1px solid var(--line);padding-top:8px}
+    .idbit{justify-content:space-between;width:100%}
+    .navrow{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-start}
     .sm-hide{display:none}          /* just the name, not "Signed in as …" */
     .linkbtn{padding:4px 0;font-size:13px}
+    .navrow .linkbtn{
+      flex:1 1 auto;min-width:calc(33.333% - 4px);
+      padding:10px 8px;font-size:12.5px;text-align:center;text-decoration:none;
+      color:var(--bone);background:var(--panel-2);
+      border:1px solid var(--line);border-radius:9px;
+    }
+    .navrow .linkbtn:active{background:var(--panel)}
 
     /* ---- page chrome: less padding, more room for content ---- */
     .wrap{padding:14px}
@@ -411,18 +426,22 @@
       <span class="caret">▾</span>
     </div>
     <div class="whoami">
-      <span><span class="sm-hide">Signed in as </span><b id="me"></b></span>
-      <button class="linkbtn hide" id="open-preview">View as member</button>
-      <button class="linkbtn" id="open-full">Full price</button>
-      <button class="linkbtn" id="open-report">Report a user</button>
-      <button class="linkbtn" id="open-bell">Alerts</button>
-      <button class="linkbtn" id="open-feature">Request a feature</button>
-      <button class="linkbtn hide" id="open-copy">Copy list</button>
-      <button class="linkbtn hide" id="open-cbb">Game data</button>
-      <button class="linkbtn hide" id="open-market">Market data</button>
-      <button class="linkbtn hide" id="open-min">Lists</button>
-      <button class="linkbtn hide" id="open-admin">Admin</button>
-      <button class="linkbtn" id="signout">Sign out</button>
+      <div class="idbit">
+        <span><span class="sm-hide">Signed in as </span><b id="me"></b></span>
+        <button class="linkbtn" id="signout">Sign out</button>
+      </div>
+      <nav class="navrow" aria-label="Board sections">
+        <button class="linkbtn hide" id="open-preview">View as member</button>
+        <button class="linkbtn" id="open-full">Full price</button>
+        <button class="linkbtn" id="open-report">Report a user</button>
+        <button class="linkbtn" id="open-bell">Alerts</button>
+        <button class="linkbtn" id="open-feature">Request a feature</button>
+        <button class="linkbtn hide" id="open-copy">Copy list</button>
+        <button class="linkbtn hide" id="open-cbb">Game data</button>
+        <button class="linkbtn hide" id="open-market">Market data</button>
+        <button class="linkbtn hide" id="open-min">Lists</button>
+        <button class="linkbtn hide" id="open-admin">Admin</button>
+      </nav>
     </div>
   </header>
 
@@ -3323,9 +3342,12 @@ async function showMatches(raw){
       <button data-sort="value">Card value</button>
       <button data-sort="orders">Big orders</button>
     </div>
+    <input id="sm-q" class="field" autocomplete="off" spellcheck="false"
+           placeholder="Search your cards by player" style="margin-top:8px">
+    <p class="note hide" id="sm-qn"></p>
     <div id="sm-orders" class="hide"></div>
     <div id="sm-list">${rows.map((h,i)=>`
-      <div class="hit" data-i="${i}" style="display:block">
+      <div class="hit" data-i="${i}" data-pname="${esc(norm(h.player))}" style="display:block">
         <div class="bidder-hd">
           <span class="player">${esc(h.player)}</span>
           ${h.value != null ? `<span class="who">rating ${fmtVal(h.value)}</span>` : ''}
@@ -3447,6 +3469,8 @@ async function showMatches(raw){
     const showOrders = mode === 'orders';
     box.querySelector('#sm-orders').classList.toggle('hide', !showOrders);
     list.classList.toggle('hide', showOrders);
+    const q = box.querySelector('#sm-q');
+    if(q) q.classList.toggle('hide', showOrders);
     if(showOrders) drawOrders();
     else {
       const nodes = [...list.children];
@@ -3456,7 +3480,31 @@ async function showMatches(raw){
     setHaul(mode);
     try{ localStorage.setItem(SORT_KEY, mode); }catch(e){}
   };
-  box.querySelectorAll('[data-sort]').forEach(b => b.addEventListener('click', () => applySort(b.dataset.sort)));
+  // Filtering hides rows rather than redrawing them, so the copy buttons and
+  // their messages stay wired up and sorting still works on what is left.
+  const smFilter = () => {
+    const q = norm((box.querySelector('#sm-q') || {}).value || '');
+    const list = box.querySelector('#sm-list');
+    const note = box.querySelector('#sm-qn');
+    if(!list) return;
+    let shown = 0;
+    for(const row of list.children){
+      const hit = !q || (row.dataset.pname || '').includes(q);
+      row.hidden = !hit;
+      if(hit) shown++;
+    }
+    if(note){
+      note.textContent = q ? `${shown} of ${list.children.length} shown` : '';
+      note.classList.toggle('hide', !q);
+    }
+  };
+  const smq = box.querySelector('#sm-q');
+  if(smq) smq.addEventListener('input', smFilter);
+
+  box.querySelectorAll('[data-sort]').forEach(b => b.addEventListener('click', () => {
+    applySort(b.dataset.sort);
+    smFilter();
+  }));
   let savedSort = 'rate';
   try{ savedSort = localStorage.getItem(SORT_KEY) || 'rate'; }catch(e){}
   applySort(savedSort);
@@ -3636,6 +3684,33 @@ $('#open-feature').addEventListener('click', featureForm);
    opening the bell costs nothing. "New" is anything since this device last
    opened it.
    ========================================================= */
+// Everything the board has gained that a member can actually use. Newest
+// first. Anything only an admin sees stays off this list - it is here so the
+// community can tell what changed without being told.
+const WHATS_NEW = [
+  { at:'2026-10-16', title:'The top of the page on a phone',
+    note:'Who you are sits on its own row and the sections are chips that wrap, instead of eleven links squeezed onto one line.' },
+  { at:'2026-10-16', title:'Search your pulled cards',
+    note:'After pulling your collection, type a name to find that player instead of scrolling.' },
+  { at:'2026-10-16', title:'This list',
+    note:'Anything new on the board shows up here from now on.' },
+  { at:'2026-10-15', title:'Offer time',
+    note:'Pick 1, 4, 12 or 24 hours on the seller screen and every message you copy ends with it.' },
+  { at:'2026-10-15', title:'Cards refresh every 30 minutes',
+    note:'Was two hours, so what you pull is closer to what you actually hold.' },
+  { at:'2026-10-15', title:'Alerts',
+    note:'Tells you when somebody else lists a player you are buying, and by how much they differ. Reports against you show what was said, never who said it.' },
+  { at:'2026-10-14', title:'NHL card pull',
+    note:'Pull my cards from Real now works for NHL as well.' },
+  { at:'2026-10-13', title:'Request a feature',
+    note:'Ask for anything. Dennis reads every one of them.' },
+  { at:'2026-10-13', title:'Owners and earnings while you type',
+    note:'Typing a player on the buy form shows their rax and owner count, for every name rather than just the big ones.' },
+  { at:'2026-10-13', title:'Top players comes from this season',
+    note:'Ranked on rax actually earned, and sortable by owners.' }
+];
+const whatsNewTs = e => Date.parse(e.at + 'T12:00:00Z') || 0;
+
 const SEEN_KEY = 'ratebrd_alerts_seen';
 const seenAt  = () => { try { return Number(localStorage.getItem(SEEN_KEY)) || 0; } catch(e){ return 0; } };
 const markSeen = () => { try { localStorage.setItem(SEEN_KEY, String(Date.now())); } catch(e){} };
@@ -3680,15 +3755,17 @@ function alertItems(){
 }
 
 function unreadCount(){
-  if(!me) return 0;
-  const since = seenAt(), a = alertItems();
-  return a.rivals.filter(x => x.ts > since).length + a.reports.filter(x => x.ts > since).length;
+  const since = seenAt();
+  const fresh = WHATS_NEW.filter(e => whatsNewTs(e) > since).length;
+  if(!me) return fresh;
+  const a = alertItems();
+  return a.rivals.filter(x => x.ts > since).length
+       + a.reports.filter(x => x.ts > since).length + fresh;
 }
 
 function updateBell(){
   const b = $('#open-bell');
   if(!b) return;
-  b.classList.toggle('hide', !me);
   const n = unreadCount();
   b.textContent = n ? `Alerts (${n})` : 'Alerts';
 }
@@ -3740,8 +3817,22 @@ async function alertsPanel(){
       <span class="who">"${esc(r.reason)}" — ${when(r.ts)}</span>
     </div>`).join('') : '<p class="nohit">No reports against you.</p>';
 
+  const since2 = seenAt();
+  const news = WHATS_NEW.map(e => ({ ...e, ts: whatsNewTs(e) }))
+    .sort((x, y) => y.ts - x.ts);
+  const newsHtml = news.map(e => `
+    <div class="hit" style="display:block">
+      <span class="player">${esc(e.title)}</span>
+      ${e.ts > since2 ? '<span class="who" style="color:var(--accent)">new</span>' : ''}
+      <span class="who"> ${new Date(e.ts).toLocaleDateString([], { month:'short', day:'numeric' })}</span>
+      <br><span class="who">${esc(e.note)}</span>
+    </div>`).join('');
+
   const box = modal('Alerts', `
-    <h3 style="margin:0;font-size:14px;font-weight:600">Same players as you (${a.rivals.length})</h3>
+    <h3 style="margin:0;font-size:14px;font-weight:600">What's new (${news.length})</h3>
+    <p class="note">Everything added to the board lately.</p>
+    <div>${newsHtml}</div>
+    <h3 style="margin:22px 0 0;font-size:14px;font-weight:600">Same players as you (${a.rivals.length})</h3>
     <div>${rivals}</div>
     <h3 style="margin:18px 0 0;font-size:14px;font-weight:600">Reports (${a.reports.length})</h3>
     <p class="note">What was said, without who said it.</p>
