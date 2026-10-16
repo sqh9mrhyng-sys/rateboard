@@ -921,8 +921,9 @@ export async function onRequestGet({ request, env }) {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
     await playsReady(db);
+    const q = String(url.searchParams.get('q') || '').slice(0, 60);
     try {
-      const q = await db.prepare(
+      const rowsQ = await db.prepare(
         `SELECT playerId, MAX(player) AS player,
                 COUNT(*) AS plays,
                 SUM(CASE WHEN rarity = 7 THEN 1 ELSE 0 END) AS iconic,
@@ -932,13 +933,14 @@ export async function onRequestGet({ request, env }) {
                 ROUND(AVG(value), 2) AS avgRating, ROUND(MAX(value), 1) AS bestRating
            FROM plays
           WHERE sport=? AND season=? AND cat IS NOT NULL AND player IS NOT NULL
+            AND (?3 = '' OR player LIKE ?4)
           GROUP BY playerId ORDER BY plays DESC, legendary DESC LIMIT 4000`)
-        .bind(sport, Number(season)).all();
+        .bind(sport, Number(season), q, `%${q}%`).all();
       const tot = await db.prepare(
         `SELECT COUNT(*) AS all_, SUM(CASE WHEN cat IS NOT NULL THEN 1 ELSE 0 END) AS cards,
                 SUM(CASE WHEN rarity IS NULL THEN 1 ELSE 0 END) AS unscored, MAX(seenAt) AS seenAt
            FROM plays WHERE sport=? AND season=?`).bind(sport, Number(season)).first();
-      return json({ sport, season, rows: q.results || [], totals: tot || {} });
+      return json({ sport, season, q, rows: rowsQ.results || [], totals: tot || {} });
     } catch (e) {
       return json({ error: 'could not read the play board', detail: String((e && e.message) || e) }, 503);
     }
