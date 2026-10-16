@@ -792,6 +792,21 @@ export async function onRequestGet({ request, env }) {
       missingRuleTags: Object.keys(RARITY_RULES).filter(k => !haveK.has(k)) });
   }
 
+  // Find a game id from the log by day, to check one game by hand.
+  if (url.searchParams.get('plays') === 'findgame') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    const day = String(url.searchParams.get('day') || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return json({ error: 'day must be YYYY-MM-DD' }, 400);
+    try {
+      const r = await db.prepare(
+        `SELECT DISTINCT gameId, day, team, opponent, seasonType FROM gamelog
+          WHERE sport=? AND season=? AND day=? ORDER BY gameId`)
+        .bind(sport, Number(season), day).all();
+      return json({ day, games: r.results || [] });
+    } catch (e) { return json({ error: 'could not read the game log' }, 503); }
+  }
+
   if (url.searchParams.get('plays') === 'diag') {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
