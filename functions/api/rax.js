@@ -525,6 +525,27 @@ export async function onRequestGet({ request, env }) {
 
   // Walk the marketplace a slice at a time, keeping the place in KV so the
   // next tick carries on. Same shape as the game log collector.
+  // The tag list. Rarity is not on a play - it comes from the tags on it, and
+  // this is what the tag picker calls. Fixed shape: sport is validated, type
+  // is a short word, and the play id is digits only.
+  if (url.searchParams.get('probeTags') != null) {
+    const type = String(url.searchParams.get('type') || 'tags').toLowerCase();
+    if (!/^[a-z]{1,16}$/.test(type)) return json({ error: 'bad type' }, 400);
+    const playId = String(url.searchParams.get('playId') || '').replace(/[^0-9]/g, '');
+    const q = new URLSearchParams({ type });
+    if (playId) q.set('playId', playId);
+    const term = String(url.searchParams.get('q') || '');
+    if (term && /^[a-zA-Z0-9 ]{1,24}$/.test(term)) q.set('search', term);
+    try {
+      const d = await rsGet(`https://web.realapp.com/tagsearch/${sport}?${q.toString()}`, auth);
+      const rows = rowsOf(d);
+      return json({ type, keys: Object.keys(d || {}), count: rows.length,
+                    firstRowKeys: rows[0] ? Object.keys(rows[0]) : [], rows: rows.slice(0, 200) });
+    } catch (e) {
+      return json({ error: 'tagsearch failed', detail: String((e && e.message) || e) }, 502);
+    }
+  }
+
   // Probes for the two other RS screens, so their payloads can be read before
   // anything is built on them. Both are fixed shapes, not a free-form proxy.
   const probePlayer = url.searchParams.get('probePlayer');
@@ -562,14 +583,19 @@ export async function onRequestGet({ request, env }) {
     holders:    'holders?season=SEASON',
     // The play by play, found by watching the Plays tab on a player profile
     // call it. Every play carries its own rating, and its rarity comes from
-    // the tags on it rather than from the rating.
-    playstop:   'plays/top?limit=10&viewFrame=season'
+    // the tags on it rather than from the rating. limit and viewFrame are
+    // settable so the ceiling on "top" can be measured.
+    playstop:   'plays/top?limit=LIMIT&viewFrame=FRAME'
   };
   const probeSub = url.searchParams.get('probeSub');
   if (probeSub && probePlayer && /^\d+$/.test(probePlayer)) {
     const suffix = SUBS[probeSub.toLowerCase()];
     if (!suffix) return json({ error: 'sub not allowed', allowed: Object.keys(SUBS) }, 400);
-    const u = `https://web.realapp.com/players/${probePlayer}/sport/${sport}/${suffix.replace('SEASON', season)}`;
+    const lim = Math.max(1, Math.min(2000, parseInt(url.searchParams.get('probeLimit') || '10', 10) || 10));
+    const frame = /^[a-z]{1,12}$/.test(String(url.searchParams.get('probeFrame') || 'season').toLowerCase())
+      ? String(url.searchParams.get('probeFrame') || 'season').toLowerCase() : 'season';
+    const u = `https://web.realapp.com/players/${probePlayer}/sport/${sport}/`
+      + suffix.replace('SEASON', season).replace('LIMIT', String(lim)).replace('FRAME', frame);
     try {
       const d = await rsGet(u, auth);
       return json({ sub: probeSub, raw: d });
