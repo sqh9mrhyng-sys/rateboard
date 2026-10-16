@@ -2289,6 +2289,16 @@ export async function onRequestGet({ request, env }) {
                     gameRows: rows, rowsWithRax: withRax, playerDaysWithTwoGames: sharedDays });
     }
 
+    // The pass marks each player done and never returns to them, so a season
+    // that is still being played goes stale the moment the pass finishes.
+    // This clears the done map; the writes are upserts, so a repeat pass is
+    // safe and simply picks up whatever games are new.
+    if (glArg === 'redo') {
+      try { await env.RATEBOARD_KV.delete(DONE_KEY); } catch (e) {}
+      return json({ sport, season, reset: true,
+        note: 'run gamelog=1 passes to refresh, or gamelog=go for the runner' });
+    }
+
     if (glArg === 'go') {
       const q = `sport=${encodeURIComponent(sport)}&season=${encodeURIComponent(season)}`;
       return new Response(runnerHtml({
