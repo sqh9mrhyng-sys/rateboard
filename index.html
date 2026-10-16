@@ -270,6 +270,8 @@
   .pkbox-s{font-size:.72rem;opacity:.55;margin-top:2px}
   /* a value sitting on the pack floor rather than genuinely reaching it */
   .floored{text-decoration:underline dotted;text-underline-offset:3px;opacity:.85}
+  .covfull{opacity:.65}
+  .covpart{color:var(--warn,#e5a33d);font-weight:600}
   @media (max-width:640px){
     .pkgrid{grid-template-columns:repeat(auto-fit,minmax(88px,1fr))}
     .pkbox-n{font-size:1.05rem}
@@ -586,9 +588,20 @@ const isAdmin = () => reallyAdmin() && !previewMember;
 // screen. The grant list travels with the board, so it holds on any device.
 const gameDataList = () => (market.gamedata || []).map(x => String(x).toLowerCase());
 const canSeeGameData = () => isAdmin() || (!!me && gameDataList().includes(String(me).toLowerCase()));
+// Pack data can be granted on its own: these people open the same panel but
+// see only that one tab.
+const packDataList = () => (market.packdata || []).map(x => String(x).toLowerCase());
+const canSeePackData = () => canSeeGameData()
+  || (!!me && packDataList().includes(String(me).toLowerCase()));
+const packOnly = () => canSeePackData() && !canSeeGameData();
 function applyGameDataVisibility(){
   const b = $('#open-cbb');
-  if(b) b.classList.toggle('hide', !canSeeGameData());
+  // The button opens for anyone with either grant; the panel itself decides
+  // how many tabs they get.
+  if(b){
+    b.classList.toggle('hide', !canSeePackData());
+    b.textContent = packOnly() ? 'Pack data' : 'Game data';
+  }
 }
 
 
@@ -1865,7 +1878,7 @@ function clearDevice(){
   try{ localStorage.removeItem(SESSION); }catch(e){}
 }
 
-const blank = () => ({ users:{}, offers:[], reports:[], minimums:[], keeplist:[], gamedata:[] });
+const blank = () => ({ users:{}, offers:[], reports:[], minimums:[], keeplist:[], gamedata:[], packdata:[] });
 let market = blank();
 let me = null, sport = 'CFB', mode = 'buy', pending = [];
 
@@ -1874,6 +1887,7 @@ async function pull(){
   market = r && r.value ? JSON.parse(r.value) : blank();
   market.users ||= {}; market.offers ||= []; market.reports ||= []; market.minimums ||= []; market.keeplist ||= [];
   market.gamedata ||= [];
+  market.packdata ||= [];
   return market;
 }
 
@@ -4318,7 +4332,9 @@ async function cbbPanel(){
                pairs:[], extra:[] };
   let available = [];
 
-  const box = modal('Game data', `
+  const only = packOnly();
+  if(only) st.mode = 'pack';
+  const box = modal(only ? 'Pack data' : 'Game data', `
     <div id="cb-seasons"><span class="note">Loading seasons&hellip;</span></div>
     <p class="note" id="cb-scope"></p>
     <div class="seg" role="group" aria-label="View">
@@ -4326,7 +4342,7 @@ async function cbbPanel(){
       <button data-cm="games" aria-pressed="false">Every game</button>
       <button data-cm="lookup" aria-pressed="false">Players</button>
       <button data-cm="golf" aria-pressed="false">Golf</button>
-      <button data-cm="pack" aria-pressed="false">Pack data</button>
+      <button data-cm="pack" aria-pressed="${only ? 'true' : 'false'}">Pack data</button>
     </div>
     <div class="dtbar cb-filt">
       <input class="field grow" id="cb-q" placeholder="Player name" autocomplete="off">
@@ -4388,6 +4404,7 @@ async function cbbPanel(){
         <span class="note" id="pk-note"></span>
       </div>
       <div id="pk-detail"></div>
+      <p class="note" id="pk-progress"></p>
       <p class="note" id="pk-caveat"></p>
       <div class="dtwrap"><table class="dt">
         <thead id="pk-head"></thead><tbody id="pk-body"></tbody></table></div>
@@ -5091,7 +5108,7 @@ async function cbbPanel(){
   const pct = v => !v ? '0%' : (v * 100 < 1 ? (v * 100).toFixed(2) : (v * 100).toFixed(1)) + '%';
 
   const PK_BASE = [
-    ['player','Player','l'], ['plays','Plays'],
+    ['player','Player','l'], ['cover','Games','l'], ['plays','Plays'],
     ['legendary','Legendary'], ['legOdds','Leg odds'],
     ['epic','Epic'], ['epicOdds','Epic odds'],
     ['bestRating','Best'], ['avgRating','Avg'], ['avg3','Avg x3'],
@@ -5109,7 +5126,7 @@ async function cbbPanel(){
 
   let pkRows = null, pkTotals = {}, pkSort = 'plays', pkDir = 'desc', pkQ = '';
   let pkMin = 10, pkShowTop = false, pkPairKey = '', pkOpen = null, pkPrice = 'self';
-  let pkTrue = false, pkRar = 'all';
+  let pkTrue = false, pkRar = 'all', pkProgress = {};
 
   // FC has no play cards, so it is not offered here. Everything else comes
   // from the same season picker at the top of the panel.
@@ -5145,6 +5162,7 @@ async function cbbPanel(){
       if(d.error) throw new Error(d.error);
       pkRows = d.rows || [];
       pkTotals = d.totals || {};
+      pkProgress = d.progress || {};
     } catch(e){
       pkRows = [];
       $b('#pk-note').textContent = 'Could not load pack data for this season.';
@@ -5164,7 +5182,10 @@ async function cbbPanel(){
       // kept alongside so the table can show either.
       avg3true: r.avgRating == null ? null : Math.round(Number(r.avgRating) * 3 * 100) / 100,
       avg3: r.avgRating == null ? null : Math.round(packRating(r.avgRating) * 100) / 100,
-      boost: avgBooster(r)
+      boost: avgBooster(r),
+      // Games we hold plays for against games they actually played: the only
+      // honest read on whether a player's numbers are finished or partial.
+      cover: r.gamesPlayed ? (Number(r.gamesSeen) || 0) / r.gamesPlayed : null
     });
   }
 
@@ -5188,6 +5209,13 @@ async function cbbPanel(){
     const cellText = (r, k) => {
       if(isOdds(k)) return pct(r[k]);
       if(k === 'boost') return r.boost == null ? '—' : r.boost.toFixed(2) + 'x';
+      if(k === 'cover'){
+        if(!r.gamesPlayed) return '—';
+        const seen = Number(r.gamesSeen) || 0, done = seen >= r.gamesPlayed;
+        return `<span class="${done ? 'covfull' : 'covpart'}" `
+          + `title="${done ? 'Every game collected' : 'Still collecting this player'}">`
+          + `${seen}/${r.gamesPlayed}</span>`;
+      }
       if(k === 'avg3'){
         if(r.avg3 == null) return '—';
         if(pkTrue) return String(r.avg3true);
@@ -5207,6 +5235,13 @@ async function cbbPanel(){
       + ` with ${pkMin}+ card plays` + (q ? ` matching "${pkQ.trim()}"` : '');
     const held = Number(pkTotals.all_ || 0), cards = Number(pkTotals.cards || 0);
     const unscored = Number(pkTotals.unscored || 0);
+    const gt = Number(pkProgress.gamesTotal) || 0, gc = Number(pkProgress.gamesCollected) || 0;
+    const full = rows.filter(r => r.gamesPlayed && (r.gamesSeen || 0) >= r.gamesPlayed).length;
+    $b('#pk-progress').innerHTML = !gt ? '' :
+      `<b>Harvest ${Math.round(gc / gt * 100)}% done</b> \u00b7 ${gc.toLocaleString()} of `
+      + `${gt.toLocaleString()} games collected \u00b7 ${full} of ${rows.length} players complete. `
+      + `<span class="note">A player's Games column shows how much of their own season is in. `
+      + `Anyone short of their full count has numbers that will still move.</span>`;
     $b('#pk-caveat').textContent =
       `Odds are the chance of at least one card of that tier in a 3-card player pack, `
       + `drawn without replacement from that player's card-minting plays. `
@@ -5301,7 +5336,8 @@ async function cbbPanel(){
         </div>
         <div class="pkgrid">
           ${cell('Card plays', n, `${d.allPlays || 0} total`)}
-          ${cell('Games', d.games || 0, '')}
+          ${cell('Games', `${d.games || 0}${d.gamesPlayed ? '/' + d.gamesPlayed : ''}`,
+                 d.gamesPlayed && d.games >= d.gamesPlayed ? 'complete' : 'still collecting')}
           ${cell('Best', d.bestRating == null ? '—' : d.bestRating, '')}
           ${cell('Avg', d.avgRating == null ? '—' : d.avgRating,
                  d.avgRating == null ? '' : `x3 = ${(d.avgRating * 3).toFixed(2)}`)}
@@ -5629,6 +5665,8 @@ async function cbbPanel(){
       else if(x.id !== 'cb-colbar') x.classList.remove('hide');
     });
     drawSeasons();
+    if(only) box.querySelectorAll('[data-cm]').forEach(x =>
+      x.classList.toggle('hide', x.dataset.cm !== 'pack'));
     if(lk){ lkBag(); lkSearch(); }
     else if(gf) gfInit();
     else if(pk) pkInit();
@@ -5642,6 +5680,7 @@ async function cbbPanel(){
       if(available.length) st.pairs = [`${available[0].sport}|${available[0].season}`];
       drawSeasons(); drawCols(); applyFilterVisibility();
       await loadTeams();
+      if(only){ applyMode(); return; }
       load();
     } catch(e){ $b('#cb-seasons').innerHTML = '<span class="note">Could not load seasons.</span>'; }
   })();
@@ -6369,6 +6408,8 @@ async function adminPanel(){
                      : `<button class="btn-ghost" data-reset="${esc(k)}">${u.hash ? 'Reset password' : 'awaiting new password'}</button>
                         <button class="btn-ghost" data-gd="${esc(k)}">${
                           gameDataList().includes(k) ? 'Revoke game data' : 'Grant access to game data'}</button>
+                        <button class="btn-ghost" data-pd="${esc(k)}">${
+                          packDataList().includes(k) ? 'Revoke pack data' : 'Grant pack data only'}</button>
                         <button class="btn-ghost btn-danger" data-ban="${esc(k)}">Delete account</button>`}
       </div>`).join('')}`);
 
@@ -6553,7 +6594,9 @@ async function adminPanel(){
         <div class="hitacts"><button class="btn-ghost" data-reset="${esc(k)}">${
           u.hash ? 'Reset password' : 'awaiting new password'}</button>
           <button class="btn-ghost" data-gd="${esc(k)}">${
-            gameDataList().includes(k) ? 'Revoke game data' : 'Grant access to game data'}</button></div>
+            gameDataList().includes(k) ? 'Revoke game data' : 'Grant access to game data'}</button>
+          <button class="btn-ghost" data-pd="${esc(k)}">${
+            packDataList().includes(k) ? 'Revoke pack data' : 'Grant pack data only'}</button></div>
         ${theirs.length ? `<div class="buyers">${theirs.map(o =>
             `<span class="buyer"><b class="num">${o.rate}</b>/1 ${esc(o.player)} <em style="opacity:.6">${o.sport}</em>
               <button class="killer" data-kill="${o.id}" title="Delete this listing">&times;</button></span>`).join('')}</div>`
@@ -6608,6 +6651,11 @@ async function adminPanel(){
       sel.innerHTML = list.length
         ? list.map(k => `<option value="${esc(k)}">${esc(market.users[k]?.name || k)}</option>`).join('')
         : '<option value="">nobody yet</option>';
+    }
+    for(const b of box.querySelectorAll('[data-pd]')){
+      const on = packDataList().includes(b.dataset.pd);
+      b.textContent = on ? 'Revoke pack data' : 'Grant pack data only';
+      b.classList.toggle('adminonly', !on);
     }
     for(const b of box.querySelectorAll('[data-gd]')){
       const on = gameDataList().includes(b.dataset.gd);
@@ -6677,6 +6725,26 @@ async function adminPanel(){
       });
       if(!ok) return;
       toast(had ? `${u?.name || k} can no longer see game data` : `${u?.name || k} can now see game data`);
+      applyGameDataVisibility();
+      redrawGrants(); refreshLookups();
+      return;
+    }
+
+    // Pack data on its own. Same shape as the game data grant; the two are
+    // independent, and full game data access already includes pack data.
+    const pd = e.target.closest('[data-pd]');
+    if(pd){
+      const k = pd.dataset.pd;
+      const u = market.users[k];
+      const had = packDataList().includes(k);
+      if(had && !confirm(`Take pack data access away from ${u?.name || k}?`)) return;
+      const ok = await push(m => {
+        const list = (m.packdata || []).map(x => String(x).toLowerCase()).filter(x => x !== k);
+        m.packdata = had ? list : list.concat([k]);
+      });
+      if(!ok) return;
+      toast(had ? `${u?.name || k} can no longer see pack data`
+                : `${u?.name || k} can now see pack data`);
       applyGameDataVisibility();
       redrawGrants(); refreshLookups();
       return;
