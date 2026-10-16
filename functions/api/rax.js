@@ -507,7 +507,7 @@ const TAGS_DDL = `CREATE TABLE IF NOT EXISTS tags (
    7 iconic. Supplied by Dennis, who plays the game.
    ------------------------------------------------------------------ */
 const normTag = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-const TAG_ALIASES = { twominutedrill: '2minutedrill' };
+const TAG_ALIASES = { twominutedrill: '2minutedrill', '2ptconversion': '2pt' };
 const tagKey = label => {
   const n = normTag(label);
   return TAG_ALIASES[n] || n;
@@ -526,24 +526,40 @@ function playFamily(cat, type, subType) {
 }
 // tag -> { family: level }, '*' meaning any family
 const RARITY_RULES = {
-  selfpasstd:    { '*': 7 },
-  octopus:       { '*': 5 },
-  beastmode:     { rush: 5, td: 5 },
-  marathon:      { rush: 5, td: 5 },
-  imposter:      { pass: 5, td: 5 },
-  haymaker:      { pass: 5, td: 5 },
-  lateral:       { td: 6 },
-  thiccsix:      { td: 5 },
-  '2minutedrill':{ td: 5 },
-  rip:           { td: 5 },
-  flash:         { td: 5 },
-  gamewinner:    { td: 5, fg: 5, def: 5 },
-  walkoff:       { td: 5, fg: 5, def: 5 },
-  '1stdown':     { fg: 5 },
-  deadeye:       { fg: 5 },
-  fumble6:       { def: 5 },
-  kickreturn:    { def: 5 },
-  puntreturn:    { def: 5 }
+  // legendary and above
+  selfpasstd:     { '*': 7 },
+  octopus:        { '*': 5 },
+  beastmode:      { rush: 5, td: 5 },
+  marathon:       { rush: 5, td: 5 },
+  imposter:       { pass: 5, td: 5 },
+  haymaker:       { pass: 5, td: 5 },
+  thiccsix:       { td: 5 },
+  rip:            { td: 5 },
+  gamewinner:     { td: 5, fg: 5, def: 5 },
+  walkoff:        { td: 5, fg: 5, def: 5 },
+  '1stdown':      { fg: 5 },
+  deadeye:        { fg: 5 },
+  fumble6:        { def: 5 },
+  kickreturn:     { def: 5 },
+  puntreturn:     { def: 5 },
+  // tags that climb a tier on a touchdown
+  lateral:        { rush: 4, pass: 4, td: 6 },
+  '2minutedrill': { rush: 4, fg: 4, td: 5 },
+  flash:          { rush: 4, td: 5 },
+  // epic
+  '2pt':          { rush: 4, pass: 4 },
+  bomb:           { pass: 4 },
+  '4thdown':      { td: 4, def: 4 },
+  gametying:      { td: 4, fg: 4 },
+  reverse:        { td: 4 },
+  backfield:      { td: 4 },
+  openfield:      { td: 4 },
+  gains:          { td: 4 },
+  dot:            { td: 4 },
+  burst:          { td: 4 },
+  '2nddown':      { fg: 4 },
+  snipe:          { fg: 4 },
+  pick6:          { def: 4 }
 };
 
 const PLAYS_CURSOR = 'plays_cursor_v1';
@@ -849,9 +865,9 @@ export async function onRequestGet({ request, env }) {
         if (!id) continue;
         if (!tagRar.has(id)) { miss = true; continue; }
         // The harvested number is the floor; a rule for this family wins.
-        let lvl = tagRar.get(id);
         const rule = RARITY_RULES[tagKeyById.get(id)];
-        if (rule) lvl = Math.max(lvl, rule[f] || rule['*'] || 0);
+        const ruled = rule ? (rule[f] != null ? rule[f] : rule['*']) : null;
+        const lvl = ruled != null ? ruled : tagRar.get(id);
         best = Math.max(best, lvl);
       }
       if (miss) unknown++;
