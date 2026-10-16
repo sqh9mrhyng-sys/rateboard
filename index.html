@@ -5185,7 +5185,7 @@ async function cbbPanel(){
       boost: avgBooster(r),
       // Games we hold plays for against games they actually played: the only
       // honest read on whether a player's numbers are finished or partial.
-      cover: r.gamesPlayed ? (Number(r.gamesSeen) || 0) / r.gamesPlayed : null
+      cover: r.teamGames ? (Number(r.gamesSeen) || 0) / r.teamGames : null
     });
   }
 
@@ -5210,11 +5210,18 @@ async function cbbPanel(){
       if(isOdds(k)) return pct(r[k]);
       if(k === 'boost') return r.boost == null ? '—' : r.boost.toFixed(2) + 'x';
       if(k === 'cover'){
-        if(!r.gamesPlayed) return '—';
-        const seen = Number(r.gamesSeen) || 0, done = seen >= r.gamesPlayed;
-        return `<span class="${done ? 'covfull' : 'covpart'}" `
-          + `title="${done ? 'Every game collected' : 'Still collecting this player'}">`
-          + `${seen}/${r.gamesPlayed}</span>`;
+        if(!r.teamGames) return '—';
+        const seen = Number(r.gamesSeen) || 0, done = seen >= r.teamGames;
+        const logged = Number(r.logGames) || 0;
+        // Two reasons a player can be short: the sweep has not reached their
+        // games, or the game log never had them. The tooltip says which.
+        const why = done ? 'Every game their team has played is collected'
+          : logged < r.teamGames
+            ? `Game log only has ${logged} of ${r.teamGames} ${r.team || ''} games, so ${
+                r.teamGames - logged} cannot be collected yet`
+            : 'Sweep has not reached the rest of their games';
+        return `<span class="${done ? 'covfull' : 'covpart'}" title="${esc(why)}">`
+          + `${seen}/${r.teamGames}</span>`;
       }
       if(k === 'avg3'){
         if(r.avg3 == null) return '—';
@@ -5235,13 +5242,22 @@ async function cbbPanel(){
       + ` with ${pkMin}+ card plays` + (q ? ` matching "${pkQ.trim()}"` : '');
     const held = Number(pkTotals.all_ || 0), cards = Number(pkTotals.cards || 0);
     const unscored = Number(pkTotals.unscored || 0);
-    const gt = Number(pkProgress.gamesTotal) || 0, gc = Number(pkProgress.gamesCollected) || 0;
-    const full = rows.filter(r => r.gamesPlayed && (r.gamesSeen || 0) >= r.gamesPlayed).length;
-    $b('#pk-progress').innerHTML = !gt ? '' :
-      `<b>Harvest ${Math.round(gc / gt * 100)}% done</b> \u00b7 ${gc.toLocaleString()} of `
-      + `${gt.toLocaleString()} games collected \u00b7 ${full} of ${rows.length} players complete. `
-      + `<span class="note">A player's Games column shows how much of their own season is in. `
-      + `Anyone short of their full count has numbers that will still move.</span>`;
+    const P = pkProgress || {};
+    const logN = Number(P.logGames) || 0, got = Number(P.collectedGames) || 0;
+    const exp = Number(P.expectedIfComplete) || 0;
+    const full = rows.filter(r => r.teamGames && (r.gamesSeen || 0) >= r.teamGames).length;
+    // Two gaps with different causes, so they are stated separately rather
+    // than rolled into one misleading percentage.
+    $b('#pk-progress').innerHTML = !logN ? '' :
+      `<b>Play sweep:</b> ${got.toLocaleString()} of ${logN.toLocaleString()} known games `
+      + `(${Math.round(got / logN * 100)}%). `
+      + (exp && logN < exp
+          ? `<b>Game log itself is short:</b> ${logN} games held but teams have played up to `
+            + `${P.teamGamesMax} each, which would be about ${exp}. `
+            + `Players on teams with missing log entries cannot be completed until the game `
+            + `log catches up. `
+          : `<b>Game log looks complete</b> at up to ${P.teamGamesMax} games per team. `)
+      + `${full} of ${rows.length} shown players have every team game collected.`;
     $b('#pk-caveat').textContent =
       `Odds are the chance of at least one card of that tier in a 3-card player pack, `
       + `drawn without replacement from that player's card-minting plays. `
@@ -5336,8 +5352,8 @@ async function cbbPanel(){
         </div>
         <div class="pkgrid">
           ${cell('Card plays', n, `${d.allPlays || 0} total`)}
-          ${cell('Games', `${d.games || 0}${d.gamesPlayed ? '/' + d.gamesPlayed : ''}`,
-                 d.gamesPlayed && d.games >= d.gamesPlayed ? 'complete' : 'still collecting')}
+          ${cell('Games', `${d.games || 0}${d.teamGames ? '/' + d.teamGames : ''}`,
+                 d.teamGames && d.games >= d.teamGames ? 'complete' : 'partial')}
           ${cell('Best', d.bestRating == null ? '—' : d.bestRating, '')}
           ${cell('Avg', d.avgRating == null ? '—' : d.avgRating,
                  d.avgRating == null ? '' : `x3 = ${(d.avgRating * 3).toFixed(2)}`)}
