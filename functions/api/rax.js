@@ -1190,9 +1190,15 @@ export async function onRequestGet({ request, env }) {
         // game feed is thinner, but NFL does not need it.
         const side = step === 'games' ? 'games' : null;
         const u = new URL(url);
+        // The tag sweep rotates through the rarity tiers: the top-end tags
+        // sit only on top-end cards, which are seldom listed, so a plain
+        // sweep would almost never see one.
+        const tiers = ['all', '7', '6', '5', '4'];
+        const tier = tiers[Math.floor(n / 30) % tiers.length];
         u.search = side
           ? `?plays=collect&from=${side}&sport=${sp.sport}&season=${sp.season}`
-          : `?plays=${step}&sport=${sp.sport}&season=${sp.season}`;
+          : `?plays=${step}&sport=${sp.sport}&season=${sp.season}`
+            + (step === 'tags' ? `&rarity=${tier}` : '');
         try { await onRequestGet({ request: new Request(u.toString(), request), env }); } catch (e) {}
       }
     }
