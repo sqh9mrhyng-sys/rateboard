@@ -849,7 +849,8 @@ export async function onRequestGet({ request, env }) {
       const k = await db.prepare(
         `SELECT label, subType, COUNT(*) AS n, ROUND(AVG(value),2) AS avgRating
            FROM plays WHERE sport=? AND season=? AND cat=205
-          GROUP BY label, subType ORDER BY n DESC LIMIT 30`)
+             AND label NOT LIKE '%-yd FG'
+          GROUP BY label, subType ORDER BY n DESC LIMIT 40`)
         .bind(sport, Number(season)).all();
       out.fieldGoalLabels = k.results || [];
     } catch (e) {}
