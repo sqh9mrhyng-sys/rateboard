@@ -881,10 +881,14 @@ export async function onRequestGet({ request, env }) {
         .bind(sport, Number(season), pid).all();
       out.kinds = (fam.results || []).map(x => Object.assign({}, x,
         { family: playFamily(x.cat == null ? null : Number(x.cat), x.type, x.subType) }));
+      // The game feed rarely carries a date, but the game log always knows
+      // when the game was, so the day comes from there.
       const top = await db.prepare(
-        `SELECT id, day, gameId, label, value, COALESCE(rarity,0) AS rarity, cat, tags
-           FROM plays WHERE sport=? AND season=? AND playerId=? AND cat IS NOT NULL
-          ORDER BY rarity DESC, value DESC LIMIT 40`)
+        `SELECT p.id, COALESCE(p.day, (SELECT g.day FROM gamelog g
+             WHERE g.sport=p.sport AND g.gameId=p.gameId LIMIT 1)) AS day,
+                p.gameId, p.label, p.value, COALESCE(p.rarity,0) AS rarity, p.cat, p.tags
+           FROM plays p WHERE p.sport=? AND p.season=? AND p.playerId=? AND p.cat IS NOT NULL
+          ORDER BY p.rarity DESC, p.value DESC LIMIT 40`)
         .bind(sport, Number(season), pid).all();
       out.top = top.results || [];
     } catch (e) {
