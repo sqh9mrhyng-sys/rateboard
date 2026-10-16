@@ -58,7 +58,9 @@
   .sportpick .caret{position:absolute;right:16px;top:50%;transform:translateY(-50%);pointer-events:none;color:var(--mute)}
   .whoami{justify-self:end;display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--mute)}
   .idbit{display:flex;align-items:center;gap:10px;white-space:nowrap}
-  .navrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+  /* On a wide screen this stays the single line it has always been; the
+     wrapping chip treatment is a phone thing and lives in the media query. */
+  .navrow{display:flex;align-items:center;gap:10px;flex-wrap:nowrap;justify-content:flex-end}
   .whoami b{color:var(--bone);font-weight:600}
   .linkbtn{color:var(--mute);text-decoration:underline;text-underline-offset:3px;font-size:13.5px}
   .linkbtn:hover{color:var(--bone)}
