@@ -1213,11 +1213,15 @@ export async function onRequestGet({ request, env }) {
           `SELECT COUNT(DISTINCT gameId) AS n FROM plays WHERE sport=? AND season=?`)
           .bind(sport, Number(season)).first();
         const p3 = await db.prepare(
-          `SELECT MAX(n) AS mx, MIN(n) AS mn, COUNT(*) AS teams FROM (
+          `SELECT MAX(n) AS mx, MIN(n) AS mn, COUNT(*) AS teams, SUM(n) AS total FROM (
              SELECT team, COUNT(DISTINCT gameId) AS n FROM gamelog
               WHERE sport=? AND season=? AND seasonType IN ('regularseason','postseason')
               GROUP BY team)`).bind(sport, Number(season)).first();
         const mx = Number((p3 || {}).mx) || 0, teams = Number((p3 || {}).teams) || 0;
+        // Teams on a bye have played fewer, so the expected total is the sum
+        // of what each team has actually played, halved - not max x teams,
+        // which reads as a shortfall every bye week.
+        const totalTeamGames = Number((p3 || {}).total) || 0;
         progress = {
           logGames: Number((p1 || {}).n) || 0,
           logNewestDay: (p1 || {}).newest || null,
@@ -1225,7 +1229,7 @@ export async function onRequestGet({ request, env }) {
           teams, teamGamesMax: mx, teamGamesMin: Number((p3 || {}).mn) || 0,
           // If the log were complete every team would show the same count, and
           // teams x games / 2 would equal the games held.
-          expectedIfComplete: teams && mx ? Math.round(teams * mx / 2) : 0
+          expectedIfComplete: totalTeamGames ? Math.round(totalTeamGames / 2) : 0
         };
       } catch (e) {}
       return json({ sport, season, q, minPlays, rows, progress, totals: tot || {} });
