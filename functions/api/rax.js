@@ -729,6 +729,7 @@ export async function onRequestGet({ request, env }) {
     try {
       const r = await db.prepare(
         `SELECT id, tags FROM plays WHERE sport=? AND season=? AND tags IS NOT NULL
+         ${url.searchParams.get('all') === '1' ? '' : 'AND rarity IS NULL'}
          ORDER BY id LIMIT 4000`).bind(sport, Number(season)).all();
       rows = r.results || [];
     } catch (e) { return json({ error: 'could not read plays' }, 503); }
@@ -744,7 +745,7 @@ export async function onRequestGet({ request, env }) {
         best = Math.max(best, tagRar.get(id));
       }
       if (miss) unknown++;
-      batch.push(stmt.bind(best || null, Number(r.id)));
+      batch.push(stmt.bind(best || 0, Number(r.id)));
     }
     for (let i = 0; i < batch.length; i += 200) {
       try { await db.batch(batch.slice(i, i + 200)); } catch (e) {}
