@@ -4464,7 +4464,7 @@ async function cbbPanel(){
   // is spelled out underneath, so it's never a guess which data is in view.
   // Pack data is built from plays, which golf and FC do not have, and NFL
   // is the one anybody opens first.
-  const PK_HIDE = ['golf', 'fc'];
+  const PK_HIDE = ['golf', 'fc', 'soccer'];   // FC is keyed 'soccer' internally
   const PK_FIRST = 'nfl';
   function drawSeasons(){
     const bySport = new Map();
@@ -5113,8 +5113,17 @@ async function cbbPanel(){
 
   // FC has no play cards, so it is not offered here. Everything else comes
   // from the same season picker at the top of the panel.
-  const pkPair = () => (st.pairs.find(x => !/^FC\|/i.test(x) && !/^fc\|/i.test(x))
-                        || st.pairs[0] || 'nfl|2026');
+  // Ignore any selection on a sport this tab does not cover, and fall back
+  // to the newest NFL season rather than showing an empty board.
+  const pkUsable = k => !PK_HIDE.includes(String(k).split('|')[0].toLowerCase());
+  function pkPair(){
+    const picked = st.pairs.filter(pkUsable);
+    if(picked.length) return picked[0];
+    const nfl = available.filter(r => String(r.sport).toLowerCase() === PK_FIRST)
+      .map(r => `${r.sport}|${r.season}`).sort().reverse();
+    return nfl[0] || (available.filter(r => pkUsable(r.sport))
+      .map(r => `${r.sport}|${r.season}`)[0]) || 'nfl|2026';
+  }
 
   function pkInit(){
     const key = pkPair();
