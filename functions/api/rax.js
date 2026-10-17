@@ -921,6 +921,50 @@ export async function onRequestGet({ request, env }) {
 
   // Only the seasons that actually hold plays, so the tab can offer those
   // and nothing else.
+  /* The whole tag dictionary, with what each tag is worth on each kind of
+     play. A tag's rarity is not one number: the harvested base is what the
+     marketplace showed, and the rules override it per family. Both are
+     reported so a wrong-looking card can be traced to whichever one set it. */
+  if (url.searchParams.get('plays') === 'tagboard') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    await playsReady(db);
+    const FAMS = ['rush', 'pass', 'td', 'fg', 'def'];
+    try {
+      const r = await db.prepare(
+        `SELECT id, sport, label, rarity, altRarity FROM tags ORDER BY sport, label`).all();
+      const rows = (r.results || []).map(t => {
+        const key = tagKey(t.label);
+        const rule = RARITY_RULES[key] || null;
+        const base = t.rarity == null ? null : Number(t.rarity);
+        const out = {
+          id: t.id, sport: t.sport, label: t.label, key,
+          base, ruled: !!rule,
+          // Every reading ever seen for this tag, which is how a contextual
+          // tag gives itself away.
+          seen: t.altRarity ? [...new Set(String(t.altRarity).split(',')
+            .map(x => Number(x)).filter(Boolean))].sort() : []
+        };
+        let top = base || 0;
+        for (const f of FAMS) {
+          const v = rule ? (rule[f] != null ? rule[f] : rule['*']) : null;
+          out[f] = v != null ? v : base;
+          if (out[f] != null) top = Math.max(top, out[f]);
+        }
+        out.top = top || null;
+        return out;
+      });
+      const bySport = {};
+      for (const x of rows) bySport[x.sport] = (bySport[x.sport] || 0) + 1;
+      // Rules naming a tag whose id has never been seen cannot fire at all.
+      const have = new Set(rows.map(x => x.key));
+      return json({ rows, bySport, families: FAMS,
+        unresolvedRules: Object.keys(RARITY_RULES).filter(k => !have.has(k)) });
+    } catch (e) {
+      return json({ error: 'could not read the tags', detail: String((e && e.message) || e) }, 503);
+    }
+  }
+
   if (url.searchParams.get('plays') === 'seasons') {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
