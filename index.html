@@ -5138,7 +5138,7 @@ async function cbbPanel(){
      from the shared picker. That picker spans every sport the board tracks,
      including ones with no play data at all, which is how golf kept leaking
      into this tab. */
-  let pkSeasons = null, pkPick = '';
+  let pkSeasons = null, pkPicks = [];   // several seasons may be on at once
 
   async function pkInit(){
     if(!pkSeasons){
@@ -5149,16 +5149,16 @@ async function cbbPanel(){
       // Newest first, and whatever holds the most is the sensible default.
       pkSeasons.sort((a, b) => Number(b.season) - Number(a.season)
         || String(a.sport).localeCompare(String(b.sport)));
-      if(!pkPick && pkSeasons.length){
-        pkPick = `${pkSeasons[0].sport}|${pkSeasons[0].season}`;
+      if(!pkPicks.length && pkSeasons.length){
+        pkPicks = [`${pkSeasons[0].sport}|${pkSeasons[0].season}`];
       }
     }
     pkDrawSeasons();
-    if(!pkPick){
+    if(!pkPicks.length){
       $b('#pk-note').textContent = 'No play data collected yet.';
       return;
     }
-    if(pkRows && pkPick === pkPairKey) return pkPaint();
+    if(pkRows && pkPicks.join(',') === pkPairKey) return pkPaint();
     pkLoad();
   }
 
@@ -5172,14 +5172,13 @@ async function cbbPanel(){
     bar.innerHTML = '<span class="note">Season</span>' + pkSeasons.map(x => {
       const key = `${x.sport}|${x.season}`;
       return `<button class="btn-ghost" data-pks="${esc(key)}" `
-        + `aria-pressed="${key === pkPick ? 'true' : 'false'}" `
+        + `aria-pressed="${pkPicks.includes(key) ? 'true' : 'false'}" `
         + `title="${Number(x.plays).toLocaleString()} plays across ${x.games} games">`
         + `${esc(seasonLabel(x.sport, x.season))} `
         + `<span class="note">${x.games}g</span></button>`;
     }).join('');
   }
 
-  const pkPair = () => pkPick || 'nfl|2026';
 
   async function pkLoad(){
     pkPairKey = pkPicks.join(',');
@@ -6068,12 +6067,12 @@ async function cbbPanel(){
     }
     const pks = e.target.closest('[data-pks]');
     if(pks){
-      if(pkPick === pks.dataset.pks) return;
-      pkPick = pks.dataset.pks;
+      const k = pks.dataset.pks;
+      pkPicks = pkPicks.includes(k) ? pkPicks.filter(x => x !== k) : pkPicks.concat([k]);
       pkRows = null; pkOpen = null;
       $b('#pk-detail').innerHTML = '';
       pkDrawSeasons();
-      return pkLoad();
+      return pkPicks.length ? pkLoad() : pkInit();
     }
     if(e.target.closest('#pk-refresh')){ pkSeasons = null; pkRows = null; return pkInit(); }
     if(e.target.closest('#pk-top')){
