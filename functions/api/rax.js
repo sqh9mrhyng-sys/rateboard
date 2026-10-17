@@ -586,11 +586,11 @@ const PASS_CREDIT = `(type='PassCompleted'
   OR (type='TwoPointConversion' AND subType='PassCompleted'))`;
 // Every card play, once per player who earns a card from it.
 const CREDITED = `
-  SELECT playerId AS pid, player AS pname, gameId, rarity, value, cat,
+  SELECT playerId AS pid, player AS pname, season, gameId, rarity, value, cat,
          type, subType, id, day, tags
     FROM plays WHERE sport=?1 AND season=?2 AND ${CARD_SQL}
   UNION ALL
-  SELECT player2Id AS pid, player2 AS pname, gameId, rarity, value, cat,
+  SELECT player2Id AS pid, player2 AS pname, season, gameId, rarity, value, cat,
          type, subType, id, day, tags
     FROM plays WHERE sport=?1 AND season=?2 AND ${CARD_SQL}
      AND player2Id IS NOT NULL AND ${PASS_CREDIT}`;
@@ -1010,6 +1010,217 @@ export async function onRequestGet({ request, env }) {
       out.held = u || {};
     } catch (e) {}
     return json(out);
+  }
+
+  if (url.searchParams.get('plays') === 'player') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    await playsReady(db);
+    const pid = parseInt(url.searchParams.get('playerId') || '0', 10);
+    if (!pid) return json({ error: 'playerId required' }, 400);
+    const out = { sport, season, playerId: pid };
+    try {
+      const head = await db.prepare(
+        `WITH credited AS (${CREDITED})
+         SELECT MAX(pname) AS player, COUNT(*) AS plays, COUNT(*) AS allPlays,
+                COUNT(DISTINCT gameId) AS games,
+                ROUND(AVG(value), 2) AS avgRating, ROUND(MAX(value), 1) AS bestRating
+           FROM credited WHERE pid = ?3`)
+        .bind(sport, Number(season), pid).first();
+      Object.assign(out, head || {});
+      const cov = await db.prepare(
+        `SELECT MAX(team) AS team, COUNT(DISTINCT gameId) AS played,
+                COUNT(DISTINCT CASE WHEN gameId IN
+                  (SELECT DISTINCT gameId FROM plays WHERE sport=?1 AND season=?2)
+                  THEN gameId END) AS swept
+           FROM gamelog WHERE sport=?1 AND season=?2 AND playerId=?3
+             AND seasonType IN ('regularseason','postseason')`)
+        .bind(sport, Number(season), pid).first();
+      if (cov) {
+        out.team = cov.team || null;
+        out.gamesPlayed = Number(cov.played) || null;
+        out.gamesCollected = Number(cov.swept) || null;
+      }
+      const rar = await db.prepare(
+        `WITH credited AS (${CREDITED})
+         SELECT COALESCE(rarity,0) AS r, COUNT(*) AS n FROM credited
+          WHERE pid = ?3 GROUP BY r ORDER BY r`)
+        .bind(sport, Number(season), pid).all();
+      out.byRarity = {};
+      for (const x of (rar.results || [])) out.byRarity[x.r] = Number(x.n);
+      const fam = await db.prepare(
+        `WITH credited AS (${CREDITED})
+         SELECT cat, type, subType, COUNT(*) AS n,
+                ROUND(AVG(value),2) AS avgRating, ROUND(MAX(value),1) AS bestRating
+           FROM credited WHERE pid = ?3
+          GROUP BY cat, type, subType ORDER BY n DESC`)
+        .bind(sport, Number(season), pid).all();
+      out.kinds = (fam.results || []).map(x => Object.assign({}, x,
+        { family: playFamily(x.cat == null ? null : Number(x.cat), x.type, x.subType) }));
+      // The game feed rarely carries a date, but the game log always knows
+      // when the game was, so the day comes from there.
+      const top = await db.prepare(
+        `WITH credited AS (${CREDITED})
+         SELECT c.id, COALESCE(c.day, (SELECT g.day FROM gamelog g
+             WHERE g.sport=?1 AND g.gameId=c.gameId LIMIT 1)) AS day,
+                c.gameId, p.label, c.value, COALESCE(c.rarity,0) AS rarity, c.cat, c.tags
+           FROM credited c JOIN plays p ON p.id = c.id
+          WHERE c.pid = ?3 ORDER BY c.value DESC LIMIT 250`)
+        .bind(sport, Number(season), pid).all();
+      out.top = top.results || [];
+    } catch (e) {
+      return json({ error: 'could not read the player', detail: String((e && e.message) || e) }, 503);
+    }
+    // Tag names for whatever showed up, so the detail can print them.
+    try {
+      const ids = new Set();
+      for (const r of out.top) for (const b of String(r.tags || '').split(',')) {
+        const n = Number(b); if (n) ids.add(n);
+      }
+      out.tagNames = {};
+      if (ids.size) {
+        const t = await db.prepare(
+          `SELECT id, label FROM tags WHERE sport=? AND id IN (${[...ids].join(',')})`)
+          .bind(sport).all();
+        for (const x of (t.results || [])) out.tagNames[x.id] = x.label;
+      }
+    } catch (e) {}
+    return json(out);
+  }
+
+  // A play's rarity is the highest rarity among its tags, which is how the
+  // game decides it. Worked out here rather than at write time, because the
+  // tag table is still filling in while plays are being collected.
+  if (url.searchParams.get('plays') === 'score') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    await playsReady(db);
+    let tagRar = new Map(), tagKeyById = new Map();
+    try {
+      const t = await db.prepare('SELECT id, rarity, label FROM tags WHERE sport=?').bind(sport).all();
+      for (const r of (t.results || [])) {
+        tagRar.set(Number(r.id), Number(r.rarity) || 0);
+        tagKeyById.set(Number(r.id), tagKey(r.label));
+      }
+    } catch (e) {}
+    if (!tagRar.size) return json({ error: 'no tags collected yet for this sport' }, 400);
+    // Clear every score so the ordinary forward walk redoes the season. Used
+    // when the rules or the tag table have changed under it.
+    if (url.searchParams.get('reset') === '1') {
+      try {
+        await db.prepare('UPDATE plays SET rarity=NULL WHERE sport=? AND season=?')
+          .bind(sport, Number(season)).run();
+      } catch (e) { return json({ error: 'could not clear scores' }, 503); }
+      return json({ sport, season, cleared: true });
+    }
+    let rows = [];
+    try {
+      const r = await db.prepare(
+        `SELECT id, tags, cat, type, subType FROM plays WHERE sport=? AND season=? AND tags IS NOT NULL
+         ${url.searchParams.get('all') === '1' ? '' : 'AND rarity IS NULL'}
+         ORDER BY id LIMIT ${SCORE_BATCH}`).bind(sport, Number(season)).all();
+      rows = r.results || [];
+    } catch (e) { return json({ error: 'could not read plays' }, 503); }
+    const stmt = db.prepare('UPDATE plays SET rarity=? WHERE id=?');
+    const batch = [];
+    let unknown = 0;
+    const fam = {};
+    for (const r of rows) {
+      const f = playFamily(r.cat == null ? null : Number(r.cat), r.type, r.subType);
+      let best = 0, miss = false;
+      for (const bit of String(r.tags).split(',')) {
+        const id = Number(bit);
+        if (!id) continue;
+        if (!tagRar.has(id)) { miss = true; continue; }
+        // The harvested number is the floor; a rule for this family wins.
+        const rule = RARITY_RULES[tagKeyById.get(id)];
+        const ruled = rule ? (rule[f] != null ? rule[f] : rule['*']) : null;
+        const lvl = ruled != null ? ruled : tagRar.get(id);
+        best = Math.max(best, lvl);
+      }
+      if (miss) unknown++;
+      fam[f] = (fam[f] || 0) + 1;
+      batch.push(stmt.bind(best || 0, Number(r.id)));
+    }
+    for (let i = 0; i < batch.length; i += 200) {
+      try { await db.batch(batch.slice(i, i + 200)); } catch (e) {}
+    }
+    // Which of the named top-end tags we still have no id for: until one
+    // turns up in a listing, a play carrying it cannot be recognised.
+    const haveKeys = new Set([...tagKeyById.values()]);
+    const missingRuleTags = Object.keys(RARITY_RULES).filter(k => !haveKeys.has(k));
+    return json({ sport, season, scored: batch.length, tagsKnown: tagRar.size,
+                  playsWithAnUnknownTag: unknown, families: fam, missingRuleTags });
+  }
+
+  // One row per player: how many card plays they have and how many are the
+  // top tier. Everything else is in the table behind it.
+  if (url.searchParams.get('plays') === 'board') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    await playsReady(db);
+    const q = String(url.searchParams.get('q') || '').slice(0, 60);
+    // Odds off a handful of plays say nothing, so the board starts at ten.
+    const minPlays = Math.max(0, Math.min(500,
+      parseInt(url.searchParams.get('min') || '10', 10) || 0));
+
+    /* One or many seasons. Each is queried on its own and the results are
+       concatenated, so a player who appears in three seasons gets three rows
+       rather than one blended one - their 2023 odds and their 2026 odds are
+       different questions. */
+    const pairs = [];
+    for (const bit of String(url.searchParams.get('seasons') || '').split(',').slice(0, 12)) {
+      const [sp, se] = String(bit).split(':');
+      if (sp && /^\d{4}$/.test(String(se || ''))) pairs.push({ sport: sp, season: Number(se) });
+    }
+    if (!pairs.length) pairs.push({ sport, season: Number(season) });
+
+    const rows = [];
+    for (const pr of pairs) {
+      try {
+        const r = await db.prepare(
+          `WITH credited AS (${CREDITED})
+           SELECT pid AS playerId, MAX(pname) AS player, MAX(season) AS season,
+                  COUNT(*) AS plays,
+                  SUM(CASE WHEN rarity = 7 THEN 1 ELSE 0 END) AS iconic,
+                  SUM(CASE WHEN rarity = 6 THEN 1 ELSE 0 END) AS mystic,
+                  SUM(CASE WHEN rarity = 5 THEN 1 ELSE 0 END) AS legendary,
+                  SUM(CASE WHEN rarity = 4 THEN 1 ELSE 0 END) AS epic,
+                  ROUND(AVG(value), 2) AS avgRating, ROUND(MAX(value), 1) AS bestRating
+             FROM credited
+            WHERE pname IS NOT NULL AND (?3 = '' OR pname LIKE ?4)
+            GROUP BY pid HAVING COUNT(*) >= ?5
+            ORDER BY plays DESC LIMIT 4000`)
+          .bind(pr.sport, pr.season, q, `%${q}%`, minPlays).all();
+        const got = r.results || [];
+
+        // Season earnings and the latest owner count, both from the game log
+        // side of the house rather than the play feed.
+        const extra = new Map();
+        try {
+          const e = await db.prepare(
+            `SELECT playerId, SUM(rax) AS earnings, MAX(team) AS team,
+                    (SELECT ow.owners FROM owners ow
+                      WHERE ow.sport=?1 AND ow.season=?2 AND ow.playerId=gamelog.playerId
+                      ORDER BY ow.day DESC LIMIT 1) AS owners
+               FROM gamelog WHERE sport=?1 AND season=?2
+                AND seasonType IN ('regularseason','postseason')
+              GROUP BY playerId`).bind(pr.sport, pr.season).all();
+          for (const x of (e.results || [])) extra.set(Number(x.playerId), x);
+        } catch (err) {}
+        for (const x of got) {
+          const ex = extra.get(Number(x.playerId));
+          x.sport = pr.sport;
+          x.season = pr.season;
+          x.earnings = ex ? Number(ex.earnings) || 0 : null;
+          x.owners = ex && ex.owners != null ? Number(ex.owners) : null;
+          x.team = ex ? ex.team : null;
+          rows.push(x);
+        }
+      } catch (e) { /* one bad season must not take the rest down */ }
+    }
+    rows.sort((a, b) => b.plays - a.plays);
+    return json({ seasons: pairs, q, minPlays, rows });
   }
 
   if (url.searchParams.get('plays') === 'player') {
