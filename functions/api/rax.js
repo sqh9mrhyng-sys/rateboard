@@ -769,10 +769,10 @@ export async function onRequestGet({ request, env }) {
     if (!ids.length) {
       try { await env.RATEBOARD_KV.put(key, '0'); } catch (e) {}
       // A completed season needs one pass, not endless ones.
-      const cfg = PLAYS_SPORTS.find(x => x.sport === sport && String(x.season) === String(season));
-      if (cfg && !cfg.rolling) {
-        try { await env.RATEBOARD_KV.put(sweptKey(sport, season), '1'); } catch (e) {}
-      }
+      // Mark it lapped whether or not it is a rolling season: a rolling one
+      // still needs revisiting for new games, just far less often than a
+      // season being filled for the first time.
+      try { await env.RATEBOARD_KV.put(sweptKey(sport, season), '1'); } catch (e) {}
       return json({ sport, season, from, lap: true, done: 0, stored: 0 });
     }
 
@@ -1822,18 +1822,19 @@ export async function onRequestGet({ request, env }) {
       const step = n % 30 === 0 ? 'tags' : n % 5 === 2 ? 'score'
                  : n % 2 === 0 ? 'games' : null;
       if (step) {
-        // Seasons already swept to completion are skipped; the live season is
-        // flagged rolling and is never considered finished.
-        const live = [];
+        /* Seasons that have never been round once come first: an empty
+           season is worth far more ticks than a finished one. A rolling
+           season that has lapped gets a turn every twelfth game tick, which
+           is enough to pick up new games without starving the backlog. */
+        const fresh = [], done = [];
         for (const x of PLAYS_SPORTS) {
-          if (x.rolling) { live.push(x); continue; }
-          let swept = null;
-          try { swept = await env.RATEBOARD_KV.get(sweptKey(x.sport, x.season)); } catch (e) {}
-          if (!swept) live.push(x);
+          let lapped = null;
+          try { lapped = await env.RATEBOARD_KV.get(sweptKey(x.sport, x.season)); } catch (e) {}
+          (lapped ? done : fresh).push(x);
         }
-        // Nothing left to collect: keep scoring and harvesting tags on the
-        // live season so the dictionary and ratings stay current.
-        const pool = live.length ? live : PLAYS_SPORTS.filter(x => x.rolling);
+        const rolling = done.filter(x => x.rolling);
+        const pool = (fresh.length && !(n % 12 === 0 && rolling.length)) ? fresh
+                   : (rolling.length ? rolling : (fresh.length ? fresh : PLAYS_SPORTS));
         if (pool.length) {
           const sp = step === 'games'
             ? pool[Math.floor(n / 2) % pool.length]
