@@ -278,6 +278,17 @@
   .pksec>summary::before{content:'\25B8';display:inline-block;opacity:.6;
     transition:transform .15s}
   .pksec[open]>summary::before{transform:rotate(90deg)}
+  /* rarity pills in the tag tracker, cool to hot as the tier climbs */
+  .rar{display:inline-block;padding:1px 7px;border-radius:999px;font-size:.78rem;
+    border:1px solid currentColor;opacity:.9}
+  .rar1{color:#8a95a3}
+  .rar2{color:#5aa469}
+  .rar3{color:#4a8fd4}
+  .rar4{color:#9b6fd4}
+  .rar5{color:#e5a33d}
+  .rar6{color:#e0624a}
+  .rar7{color:#d94f8a}
+  .rar.ruled{font-weight:700;border-style:dashed}
   .covfull{opacity:.65}
   .covpart{color:var(--warn,#e5a33d);font-weight:600}
   @media (max-width:640px){
@@ -4351,6 +4362,7 @@ async function cbbPanel(){
       <button data-cm="lookup" aria-pressed="false">Players</button>
       <button data-cm="golf" aria-pressed="false">Golf</button>
       <button data-cm="pack" aria-pressed="${only ? 'true' : 'false'}">Pack data</button>
+      <button data-cm="tags" aria-pressed="false">Tag tracker</button>
     </div>
     <div class="dtbar cb-filt">
       <input class="field grow" id="cb-q" placeholder="Player name" autocomplete="off">
@@ -4399,6 +4411,29 @@ async function cbbPanel(){
       </div>
       <div id="gf-list"></div>
       <div id="gf-detail"></div>
+    </div>
+    <div id="cb-tags" class="hide">
+      <div class="dtbar" id="tg-sports"></div>
+      <div class="dtbar">
+        <input class="field" id="tg-q" autocomplete="off" spellcheck="false"
+               placeholder="Search a tag" style="max-width:220px">
+        <select class="field" id="tg-rar" style="max-width:170px">
+          <option value="">Any rarity</option>
+          <option value="7">Iconic</option>
+          <option value="6">Mystic</option>
+          <option value="5">Legendary</option>
+          <option value="4">Epic</option>
+          <option value="3">Rare</option>
+          <option value="2">Uncommon</option>
+          <option value="1">Common</option>
+          <option value="none">Unknown</option>
+        </select>
+        <button class="btn-ghost" id="tg-refresh">Refresh</button>
+        <span class="note" id="tg-note"></span>
+      </div>
+      <p class="note" id="tg-warn"></p>
+      <div class="dtwrap"><table class="dt">
+        <thead id="tg-head"></thead><tbody id="tg-body"></tbody></table></div>
     </div>
     <div id="cb-pack" class="hide">
       <div class="dtbar" id="pk-seasons"><span class="note">Loading seasons&hellip;</span></div>
@@ -5397,6 +5432,106 @@ async function cbbPanel(){
     box.scrollIntoView({ block: 'nearest' });
   }
 
+  /* ---- tag tracker ----------------------------------------------------
+     The dictionary behind every rarity on the board. A tag is not worth one
+     fixed amount: the harvested base is whatever the marketplace last showed,
+     and a rule can override it per play family, which is why the same tag can
+     be Common on a catch and Legendary on a field goal.
+     -------------------------------------------------------------------- */
+  const TG_FAMS = [['rush','Rush'], ['pass','Pass'], ['td','TD'], ['fg','FG'], ['def','Def']];
+  const TG_COLS = [['label','Tag','l'], ['sport','Sport','l'], ['base','Base','l']]
+    .concat(TG_FAMS.map(([k, l]) => [k, l, 'l']))
+    .concat([['seenTxt','Seen as','l'], ['id','ID']]);
+  let tgRows = null, tgSport = 'all', tgSort = 'label', tgDir = 'asc';
+  let tgQ = '', tgRar = '', tgWarn = '';
+
+  async function tgInit(){
+    if(tgRows) return tgPaint();
+    $b('#tg-note').textContent = 'Loading\u2026';
+    try {
+      const d = await (await fetch('/api/rax?plays=tagboard')).json();
+      if(d.error) throw new Error(d.error);
+      tgRows = d.rows || [];
+      tgWarn = (d.unresolvedRules || []).length
+        ? `${d.unresolvedRules.length} rule${d.unresolvedRules.length === 1 ? '' : 's'} `
+          + `cannot fire yet \u2014 no tag id has been seen for: `
+          + d.unresolvedRules.join(', ')
+        : '';
+    } catch(e){
+      tgRows = [];
+      $b('#tg-note').textContent = 'Could not load the tag dictionary.';
+      return;
+    }
+    tgDrawSports();
+    tgPaint();
+  }
+
+  function tgDrawSports(){
+    const bar = $b('#tg-sports');
+    if(!bar || !tgRows) return;
+    const counts = {};
+    for(const r of tgRows) counts[r.sport] = (counts[r.sport] || 0) + 1;
+    const sports = Object.keys(counts).sort();
+    bar.innerHTML = '<span class="note">Sport</span>'
+      + `<button class="btn-ghost" data-tgs="all" aria-pressed="${tgSport === 'all' ? 'true' : 'false'}">`
+      + `All <span class="note">${tgRows.length}</span></button>`
+      + sports.map(sp =>
+          `<button class="btn-ghost" data-tgs="${esc(sp)}" `
+          + `aria-pressed="${tgSport === sp ? 'true' : 'false'}">`
+          + `${esc(CB_SPORT_LABEL[sp] || sp.toUpperCase())} `
+          + `<span class="note">${counts[sp]}</span></button>`).join('');
+  }
+
+  // A rarity cell says the tier, and whether a rule or the harvest set it.
+  function tgCell(r, k){
+    if(k === 'id') return String(r.id);
+    if(k === 'sport') return esc((CB_SPORT_LABEL[r.sport] || r.sport).toUpperCase());
+    if(k === 'label') return `<b>#${esc(String(r.label || '').replace(/\s+/g, ''))}</b>`;
+    if(k === 'seenTxt')
+      return r.seen && r.seen.length > 1
+        ? `<span class="covpart" title="This tag has been seen at more than one rarity">`
+          + `${r.seen.map(x => RAR_NAMES[x] || x).join(', ')}</span>`
+        : '<span class="note">' + (r.seen && r.seen.length ? (RAR_NAMES[r.seen[0]] || r.seen[0]) : '\u2014') + '</span>';
+    const v = r[k];
+    if(v == null) return '<span class="note">unknown</span>';
+    const ruled = r.ruled && r[k] !== r.base;
+    return `<span class="rar rar${v}${ruled ? ' ruled' : ''}"`
+      + (ruled ? ' title="Set by a rule, not the harvested base"' : '')
+      + `>${esc(RAR_NAMES[v] || String(v))}</span>`;
+  }
+
+  function tgPaint(){
+    if(!tgRows) return;
+    const q = tgQ.trim().toLowerCase();
+    let rows = tgRows.filter(r => {
+      if(tgSport !== 'all' && r.sport !== tgSport) return false;
+      if(q && !String(r.label || '').toLowerCase().includes(q)) return false;
+      if(tgRar === 'none') return r.base == null;
+      if(tgRar) return TG_FAMS.some(([f]) => String(r[f]) === tgRar)
+                     || String(r.base) === tgRar;
+      return true;
+    });
+    const num = ['base', 'id', 'top'].concat(TG_FAMS.map(x => x[0]));
+    rows.sort((a, b) => {
+      const k = tgSort;
+      const x = num.includes(k) ? (a[k] == null ? -1 : Number(a[k]))
+                                : String(a[k] || '').toLowerCase();
+      const y = num.includes(k) ? (b[k] == null ? -1 : Number(b[k]))
+                                : String(b[k] || '').toLowerCase();
+      return (x < y ? -1 : x > y ? 1 : 0) * (tgDir === 'desc' ? -1 : 1);
+    });
+    $b('#tg-head').innerHTML = '<tr>' + TG_COLS.map(([k, label, al]) =>
+      `<th data-tgc="${k}" class="sortable${al === 'l' ? ' l' : ''}"${
+        tgSort === k ? ` aria-sort="${tgDir === 'desc' ? 'descending' : 'ascending'}"` : ''
+      }>${esc(label)}</th>`).join('') + '</tr>';
+    $b('#tg-body').innerHTML = rows.map(r => '<tr>' + TG_COLS.map(([k, , al]) =>
+      `<td${al === 'l' ? ' class="l"' : ''}>${tgCell(r, k)}</td>`).join('') + '</tr>').join('');
+    const unknown = rows.filter(r => r.base == null).length;
+    $b('#tg-note').textContent = `${rows.length} tag${rows.length === 1 ? '' : 's'}`
+      + (unknown ? `, ${unknown} with no base rarity yet` : '');
+    $b('#tg-warn').textContent = tgWarn;
+  }
+
   async function gfInit(){
     if(gfEvents) return;
     try {
@@ -5676,8 +5811,10 @@ async function cbbPanel(){
     const lk = st.mode === 'lookup';
     const gf = st.mode === 'golf';
     const pk = st.mode === 'pack';
-    const table = !lk && !gf && !pk;
+    const tg = st.mode === 'tags';
+    const table = !lk && !gf && !pk && !tg;
     $b('#cb-pack').classList.toggle('hide', !pk);
+    $b('#cb-tags').classList.toggle('hide', !tg);
     $b('#cb-lookup').classList.toggle('hide', !lk);
     $b('#cb-golf').classList.toggle('hide', !gf);
     $b('#cb-table').classList.toggle('hide', !table);
@@ -5690,14 +5827,16 @@ async function cbbPanel(){
     });
     // Pack data keeps its own season list, built from what has actually been
     // collected, so the shared picker is put away entirely.
-    $b('#cb-seasons').classList.toggle('hide', pk);
-    $b('#cb-scope').classList.toggle('hide', pk);
-    if(!pk) drawSeasons();
+    // Neither of these tabs is scoped by the shared season picker.
+    $b('#cb-seasons').classList.toggle('hide', pk || tg);
+    $b('#cb-scope').classList.toggle('hide', pk || tg);
+    if(!pk && !tg) drawSeasons();
     if(only) box.querySelectorAll('[data-cm]').forEach(x =>
       x.classList.toggle('hide', x.dataset.cm !== 'pack'));
     if(lk){ lkBag(); lkSearch(); }
     else if(gf) gfInit();
     else if(pk) pkInit();
+    else if(tg) tgInit();
     else applyFilterVisibility();
   }
 
@@ -5724,6 +5863,7 @@ async function cbbPanel(){
     }
     if(e.target.id === 'gf-q'){ gfQuery = e.target.value; return gfPaint(); }
     if(e.target.id === 'pk-q'){ pkQ = e.target.value; return pkPaint(); }
+    if(e.target.id === 'tg-q'){ tgQ = e.target.value; return tgPaint(); }
     if(e.target.id === 'pk-min'){
       pkMin = Math.max(0, parseInt(e.target.value, 10) || 0);
       clearTimeout(pkTyping);
@@ -5751,6 +5891,7 @@ async function cbbPanel(){
     if(e.target.id === 'lk-lvl'){ lkLevel = +e.target.value; return lkDetail(); }
     if(e.target.id === 'lk-month'){ lkMonth = e.target.value; lkDay = ''; return lkBag(); }
     if(e.target.id === 'gf-season'){ gfSeason = e.target.value; return gfLoad(); }
+    if(e.target.id === 'tg-rar'){ tgRar = e.target.value; return tgPaint(); }
     if(e.target.id === 'pk-price'){
       pkPrice = e.target.value;
       if(pkOpen){ const id = pkOpen, k = pkOpenKey; pkOpen = null; pkOpenPlayer(id, k); }
@@ -6065,6 +6206,17 @@ async function cbbPanel(){
       else { pkSort = k; pkDir = k === 'player' ? 'asc' : 'desc'; }
       return pkPaint();
     }
+    const tgs = e.target.closest('[data-tgs]');
+    if(tgs){ tgSport = tgs.dataset.tgs; tgDrawSports(); return tgPaint(); }
+    const tgc = e.target.closest('[data-tgc]');
+    if(tgc){
+      const k = tgc.dataset.tgc;
+      if(tgSort === k) tgDir = tgDir === 'desc' ? 'asc' : 'desc';
+      else { tgSort = k; tgDir = ['label', 'sport'].includes(k) ? 'asc' : 'desc'; }
+      return tgPaint();
+    }
+    if(e.target.closest('#tg-refresh')){ tgRows = null; return tgInit(); }
+
     const pks = e.target.closest('[data-pks]');
     if(pks){
       const k = pks.dataset.pks;
@@ -6106,7 +6258,7 @@ async function cbbPanel(){
       box.querySelectorAll('[data-cm]').forEach(x =>
         x.setAttribute('aria-pressed', x.dataset.cm === st.mode ? 'true' : 'false'));
       applyMode();
-      return (st.mode === 'lookup' || st.mode === 'pack') ? undefined : load();
+      return ['lookup', 'pack', 'tags'].includes(st.mode) ? undefined : load();
     }
 
     const th = e.target.closest('[data-sc]');
