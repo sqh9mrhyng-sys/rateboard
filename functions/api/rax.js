@@ -524,8 +524,10 @@ function playFamily(cat, type, subType) {
   if (st === 'PassCompleted') return 'pass';
   return 'other';
 }
-// tag -> { family: level }, '*' meaning any family
-const RARITY_RULES = {
+// tag -> { family: level }, '*' meaning any family. Kept per sport: the same
+// tag is not worth the same in both codes - a self-pass touchdown is Iconic
+// in the NFL and merely Legendary in college.
+const RULES_NFL = {
   // legendary and above
   selfpasstd:     { '*': 7 },
   octopus:        { '*': 5 },
@@ -548,9 +550,10 @@ const RARITY_RULES = {
   flash:          { rush: 4, td: 5 },
   // epic
   '2pt':          { rush: 4, pass: 4 },
-  bomb:           { pass: 4 },
+  bomb:           { pass: 4, td: 4 },
   '4thdown':      { td: 4, def: 4 },
   gametying:      { td: 4, fg: 4 },
+  directsnap:     { td: 4 },
   reverse:        { td: 4 },
   backfield:      { td: 4 },
   openfield:      { td: 4 },
@@ -558,51 +561,67 @@ const RARITY_RULES = {
   dot:            { td: 4 },
   burst:          { td: 4 },
   '2nddown':      { fg: 4 },
-  // Rare everywhere, stated. Pinned because the harvested base read it as
-  // epic off a single listing and nothing else on the play outranks it.
+  pick6:          { def: 4 },
+  // rare, pinned because a single listing can misread them
   snipe:          { '*': 3 },
-  pick6:          { def: 4 }
+  lob:            { '*': 3 }
 };
 
-// Real files every field goal attempt under its made-FG category, misses
-// included, so they are excluded here. Used by every read that counts cards.
-// COALESCE throughout: subType and label are null on an ordinary kick, and a
-// null inside NOT(...) makes the whole test null, which drops the row.
-const CARD_SQL = `cat IS NOT NULL AND NOT (cat = 205 AND (
-  COALESCE(subType,'') = 'BlockedKick'
-  OR COALESCE(label,'') LIKE '%miss%'
-  OR COALESCE(label,'') LIKE '%no good%'
-  OR COALESCE(label,'') LIKE '%blocked%'
-  OR COALESCE(label,'') LIKE '%wide%'
-  OR COALESCE(label,'') LIKE '%doink%'))`;
+const RULES_NCAAF = {
+  // legendary
+  octopus:        { td: 5, pass: 5, rush: 5 },
+  imposter:       { td: 5, pass: 5 },
+  haymaker:       { td: 5, pass: 5 },
+  beastmode:      { td: 5, rush: 5 },
+  marathon:       { td: 5, rush: 5 },
+  selfpasstd:     { td: 5 },
+  thiccsix:       { td: 5 },
+  rip:            { td: 5 },
+  gamewinner:     { td: 5, fg: 5, def: 5 },
+  walkoff:        { td: 5, fg: 5 },
+  '1stdown':      { fg: 5 },
+  deadeye:        { fg: 5 },
+  fumble6:        { def: 5 },
+  kickreturn:     { def: 5 },
+  puntreturn:     { def: 5 },
+  '2minutedrill': { td: 5, fg: 4, rush: 4 },
+  flash:          { td: 5, rush: 4 },
+  // epic
+  '4thdown':      { td: 4, def: 4 },
+  gametying:      { td: 4, fg: 4 },
+  pick6:          { def: 4 },
+  directsnap:     { td: 4 },
+  reverse:        { td: 4 },
+  backfield:      { td: 4 },
+  openfield:      { td: 4 },
+  gains:          { td: 4 },
+  dot:            { td: 4 },
+  burst:          { td: 4 },
+  bomb:           { td: 4, pass: 4 },
+  '2nddown':      { fg: 4 },
+  '2pt':          { pass: 4, rush: 4 },
+  lateral:        { pass: 4, rush: 4 },
+  // rare
+  snipe:          { '*': 3 },
+  lob:            { '*': 3 }
+};
 
-/* A completed pass mints a card for the receiver AND the quarterback. Real
-   files the receiver as the primary player and the passer as the secondary,
-   so a player's plays are their primary rows plus the completions they threw.
-   No other play type credits its secondary: the second name on a sack or an
-   interception is the victim, who gets nothing. */
-const PASS_CREDIT = `(type='PassCompleted'
-  OR (type='Touchdown' AND subType='PassCompleted')
-  OR (type='TwoPointConversion' AND subType='PassCompleted'))`;
-// Every card play, once per player who earns a card from it.
-const CREDITED = `
-  SELECT playerId AS pid, player AS pname, season, gameId, rarity, value, cat,
-         type, subType, id, day, tags
-    FROM plays WHERE sport=?1 AND season=?2 AND ${CARD_SQL}
-  UNION ALL
-  SELECT player2Id AS pid, player2 AS pname, season, gameId, rarity, value, cat,
-         type, subType, id, day, tags
-    FROM plays WHERE sport=?1 AND season=?2 AND ${CARD_SQL}
-     AND player2Id IS NOT NULL AND ${PASS_CREDIT}`;
+const RULES_BY_SPORT = { nfl: RULES_NFL, ncaaf: RULES_NCAAF };
+// An unlisted sport gets no overrides at all rather than another code's.
+const rulesFor = sp => RULES_BY_SPORT[String(sp || '').toLowerCase()] || {};
 
 const PLAYS_CURSOR = 'plays_cursor_v1';
 // Which seasons the tick walks. Add a line here and the cron picks it up; the
 // worker itself holds nothing and never needs redeploying.
 const PLAYS_SPORTS = [
-  { sport: 'nfl', season: 2026, rolling: true },   // in progress, re-swept forever
-  { sport: 'nfl', season: 2025 },
-  { sport: 'nfl', season: 2024 },
-  { sport: 'nfl', season: 2023 }
+  { sport: 'nfl',   season: 2026, rolling: true },  // in progress, re-swept forever
+  { sport: 'ncaaf', season: 2026, rolling: true },
+  { sport: 'nfl',   season: 2025 },
+  { sport: 'nfl',   season: 2024 },
+  { sport: 'nfl',   season: 2023 },
+  { sport: 'ncaaf', season: 2025 },
+  { sport: 'ncaaf', season: 2024 },
+  { sport: 'ncaaf', season: 2023 }
 ];
 // A finished season is swept once and then left alone. The flag is set when
 // its walk laps, so the cron stops spending ticks on it.
@@ -858,7 +877,7 @@ export async function onRequestGet({ request, env }) {
     } catch (e) {}
     return json({ sport, season, rarity: rarityFilter, pages, written: found,
       tagsHeld: held, byRarity,
-      missingRuleTags: Object.keys(RARITY_RULES).filter(k => !haveK.has(k)) });
+      missingRuleTags: Object.keys(rulesFor(sport)).filter(k => !haveK.has(k)) });
   }
 
   // Find a game id from the log by day, to check one game by hand.
@@ -935,7 +954,7 @@ export async function onRequestGet({ request, env }) {
         `SELECT id, sport, label, rarity, altRarity FROM tags ORDER BY sport, label`).all();
       const rows = (r.results || []).map(t => {
         const key = tagKey(t.label);
-        const rule = RARITY_RULES[key] || null;
+        const rule = rulesFor(t.sport)[key] || null;
         const base = t.rarity == null ? null : Number(t.rarity);
         const out = {
           id: t.id, sport: t.sport, label: t.label, key,
@@ -959,7 +978,8 @@ export async function onRequestGet({ request, env }) {
       // Rules naming a tag whose id has never been seen cannot fire at all.
       const have = new Set(rows.map(x => x.key));
       return json({ rows, bySport, families: FAMS,
-        unresolvedRules: Object.keys(RARITY_RULES).filter(k => !have.has(k)) });
+        unresolvedRules: [...new Set(Object.keys(RULES_NFL).concat(Object.keys(RULES_NCAAF)))]
+          .filter(k => !have.has(k)) });
     } catch (e) {
       return json({ error: 'could not read the tags', detail: String((e && e.message) || e) }, 503);
     }
@@ -1168,6 +1188,7 @@ export async function onRequestGet({ request, env }) {
     const stmt = db.prepare('UPDATE plays SET rarity=? WHERE id=?');
     const batch = [];
     let unknown = 0;
+    const RULES = rulesFor(sport);
     const fam = {};
     for (const r of rows) {
       const f = playFamily(r.cat == null ? null : Number(r.cat), r.type, r.subType);
@@ -1177,7 +1198,7 @@ export async function onRequestGet({ request, env }) {
         if (!id) continue;
         if (!tagRar.has(id)) { miss = true; continue; }
         // The harvested number is the floor; a rule for this family wins.
-        const rule = RARITY_RULES[tagKeyById.get(id)];
+        const rule = RULES[tagKeyById.get(id)];
         const ruled = rule ? (rule[f] != null ? rule[f] : rule['*']) : null;
         const lvl = ruled != null ? ruled : tagRar.get(id);
         best = Math.max(best, lvl);
@@ -1192,7 +1213,7 @@ export async function onRequestGet({ request, env }) {
     // Which of the named top-end tags we still have no id for: until one
     // turns up in a listing, a play carrying it cannot be recognised.
     const haveKeys = new Set([...tagKeyById.values()]);
-    const missingRuleTags = Object.keys(RARITY_RULES).filter(k => !haveKeys.has(k));
+    const missingRuleTags = Object.keys(RULES).filter(k => !haveKeys.has(k));
     return json({ sport, season, scored: batch.length, tagsKnown: tagRar.size,
                   playsWithAnUnknownTag: unknown, families: fam, missingRuleTags });
   }
@@ -1379,6 +1400,7 @@ export async function onRequestGet({ request, env }) {
     const stmt = db.prepare('UPDATE plays SET rarity=? WHERE id=?');
     const batch = [];
     let unknown = 0;
+    const RULES = rulesFor(sport);
     const fam = {};
     for (const r of rows) {
       const f = playFamily(r.cat == null ? null : Number(r.cat), r.type, r.subType);
@@ -1388,7 +1410,7 @@ export async function onRequestGet({ request, env }) {
         if (!id) continue;
         if (!tagRar.has(id)) { miss = true; continue; }
         // The harvested number is the floor; a rule for this family wins.
-        const rule = RARITY_RULES[tagKeyById.get(id)];
+        const rule = RULES[tagKeyById.get(id)];
         const ruled = rule ? (rule[f] != null ? rule[f] : rule['*']) : null;
         const lvl = ruled != null ? ruled : tagRar.get(id);
         best = Math.max(best, lvl);
@@ -1403,7 +1425,7 @@ export async function onRequestGet({ request, env }) {
     // Which of the named top-end tags we still have no id for: until one
     // turns up in a listing, a play carrying it cannot be recognised.
     const haveKeys = new Set([...tagKeyById.values()]);
-    const missingRuleTags = Object.keys(RARITY_RULES).filter(k => !haveKeys.has(k));
+    const missingRuleTags = Object.keys(RULES).filter(k => !haveKeys.has(k));
     return json({ sport, season, scored: batch.length, tagsKnown: tagRar.size,
                   playsWithAnUnknownTag: unknown, families: fam, missingRuleTags });
   }
