@@ -1240,7 +1240,7 @@ export async function onRequestGet({ request, env }) {
     }
     if (!pairs.length) pairs.push({ sport, season: Number(season) });
 
-    const rows = [];
+    const rows = [], errors = [];
     for (const pr of pairs) {
       try {
         const r = await db.prepare(
@@ -1282,10 +1282,16 @@ export async function onRequestGet({ request, env }) {
           x.team = ex ? ex.team : null;
           rows.push(x);
         }
-      } catch (e) { /* one bad season must not take the rest down */ }
+      } catch (e) {
+        // One bad season must not take the rest down, but swallowing the
+        // reason turns a broken query into an empty table, which is worse.
+        errors.push({ sport: pr.sport, season: pr.season,
+                      error: String((e && e.message) || e).slice(0, 300) });
+      }
     }
     rows.sort((a, b) => b.plays - a.plays);
-    return json({ seasons: pairs, q, minPlays, rows });
+    return json(Object.assign({ seasons: pairs, q, minPlays, rows },
+      errors.length ? { errors } : {}));
   }
 
   if (url.searchParams.get('plays') === 'player') {
