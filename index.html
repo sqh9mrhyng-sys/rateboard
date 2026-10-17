@@ -5182,8 +5182,8 @@ async function cbbPanel(){
         pkSeasons = (d.seasons || []).filter(x => Number(x.plays) > 0);
       } catch(e){ pkSeasons = []; }
       // Newest first, and whatever holds the most is the sensible default.
-      pkSeasons.sort((a, b) => Number(b.season) - Number(a.season)
-        || String(a.sport).localeCompare(String(b.sport)));
+      pkSeasons.sort((a, b) => String(a.sport).localeCompare(String(b.sport))
+        || Number(b.season) - Number(a.season));
       if(!pkPicks.length && pkSeasons.length){
         pkPicks = [`${pkSeasons[0].sport}|${pkSeasons[0].season}`];
       }
@@ -5209,7 +5209,8 @@ async function cbbPanel(){
       return `<button class="btn-ghost" data-pks="${esc(key)}" `
         + `aria-pressed="${pkPicks.includes(key) ? 'true' : 'false'}" `
         + `title="${Number(x.plays).toLocaleString()} plays across ${x.games} games">`
-        + `${esc(seasonLabel(x.sport, x.season))} `
+        + `${esc((CB_SPORT_LABEL[x.sport] || x.sport.toUpperCase()) + ' '
+                   + seasonLabel(x.sport, x.season))} `
         + `<span class="note">${x.games}g</span></button>`;
     }).join('');
   }
@@ -5247,7 +5248,9 @@ async function cbbPanel(){
       avg3true: r.avgRating == null ? null : Math.round(Number(r.avgRating) * 3 * 100) / 100,
       avg3: r.avgRating == null ? null : Math.round(packRating(r.avgRating) * 100) / 100,
       boost: avgBooster(r),
-      seasonLbl: r.season == null ? null : seasonLabel(r.sport || 'nfl', r.season)
+      seasonLbl: r.season == null ? null
+        : (CB_SPORT_LABEL[r.sport] || String(r.sport || '').toUpperCase()) + ' '
+          + seasonLabel(r.sport || 'nfl', r.season)
     });
   }
 
