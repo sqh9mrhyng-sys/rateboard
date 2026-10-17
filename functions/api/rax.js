@@ -610,6 +610,37 @@ const RULES_BY_SPORT = { nfl: RULES_NFL, ncaaf: RULES_NCAAF };
 // An unlisted sport gets no overrides at all rather than another code's.
 const rulesFor = sp => RULES_BY_SPORT[String(sp || '').toLowerCase()] || {};
 
+/* Real files every field goal attempt under its made-FG category, misses
+   included, so they are excluded here. COALESCE throughout: subType and label
+   are null on an ordinary kick, and a null inside NOT(...) makes the whole
+   test null, which silently drops the row. */
+const CARD_SQL = `cat IS NOT NULL AND NOT (cat = 205 AND (
+  COALESCE(subType,'') = 'BlockedKick'
+  OR COALESCE(label,'') LIKE '%miss%'
+  OR COALESCE(label,'') LIKE '%no good%'
+  OR COALESCE(label,'') LIKE '%blocked%'
+  OR COALESCE(label,'') LIKE '%wide%'
+  OR COALESCE(label,'') LIKE '%doink%'))`;
+
+/* A completed pass mints a card for the receiver AND the quarterback. Real
+   files the receiver as the primary player and the passer as the secondary,
+   so a player's plays are their primary rows plus the completions they threw.
+   No other play type credits its secondary: the second name on a sack or an
+   interception is the victim, who gets nothing. */
+const PASS_CREDIT = `(type='PassCompleted'
+  OR (type='Touchdown' AND subType='PassCompleted')
+  OR (type='TwoPointConversion' AND subType='PassCompleted'))`;
+// Every card play, once per player who earns a card from it.
+const CREDITED = `
+  SELECT playerId AS pid, player AS pname, season, gameId, rarity, value, cat,
+         type, subType, id, day, tags
+    FROM plays WHERE sport=?1 AND season=?2 AND ${CARD_SQL}
+  UNION ALL
+  SELECT player2Id AS pid, player2 AS pname, season, gameId, rarity, value, cat,
+         type, subType, id, day, tags
+    FROM plays WHERE sport=?1 AND season=?2 AND ${CARD_SQL}
+     AND player2Id IS NOT NULL AND ${PASS_CREDIT}`;
+
 const PLAYS_CURSOR = 'plays_cursor_v1';
 // Which seasons the tick walks. Add a line here and the cron picks it up; the
 // worker itself holds nothing and never needs redeploying.
