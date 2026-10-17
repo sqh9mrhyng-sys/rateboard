@@ -919,6 +919,22 @@ export async function onRequestGet({ request, env }) {
     return json({ sport, season, games: out });
   }
 
+  // Only the seasons that actually hold plays, so the tab can offer those
+  // and nothing else.
+  if (url.searchParams.get('plays') === 'seasons') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    await playsReady(db);
+    try {
+      const r = await db.prepare(
+        `SELECT sport, season, COUNT(*) AS plays, COUNT(DISTINCT gameId) AS games,
+                COUNT(DISTINCT playerId) AS players
+           FROM plays GROUP BY sport, season
+          HAVING COUNT(*) > 0 ORDER BY sport, season DESC`).all();
+      return json({ seasons: r.results || [] });
+    } catch (e) { return json({ error: 'could not list seasons' }, 503); }
+  }
+
   if (url.searchParams.get('plays') === 'orphans') {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
@@ -1012,24 +1028,18 @@ export async function onRequestGet({ request, env }) {
            FROM credited WHERE pid = ?3`)
         .bind(sport, Number(season), pid).first();
       Object.assign(out, head || {});
-      const gp = await db.prepare(
-        `SELECT COUNT(DISTINCT gameId) AS n FROM gamelog
-          WHERE sport=? AND season=? AND playerId=?
-            AND seasonType IN ('regularseason','postseason')`)
+      const cov = await db.prepare(
+        `SELECT MAX(team) AS team, COUNT(DISTINCT gameId) AS played,
+                COUNT(DISTINCT CASE WHEN gameId IN
+                  (SELECT DISTINCT gameId FROM plays WHERE sport=?1 AND season=?2)
+                  THEN gameId END) AS swept
+           FROM gamelog WHERE sport=?1 AND season=?2 AND playerId=?3
+             AND seasonType IN ('regularseason','postseason')`)
         .bind(sport, Number(season), pid).first();
-      out.gamesPlayed = Number((gp || {}).n) || null;
-      // Their team's games are the better yardstick; see the board endpoint.
-      const tm = await db.prepare(
-        `SELECT MAX(team) AS team FROM gamelog WHERE sport=? AND season=? AND playerId=?`)
-        .bind(sport, Number(season), pid).first();
-      if (tm && tm.team) {
-        const tg = await db.prepare(
-          `SELECT COUNT(DISTINCT gameId) AS n FROM gamelog
-            WHERE sport=? AND season=? AND team=?
-              AND seasonType IN ('regularseason','postseason')`)
-          .bind(sport, Number(season), tm.team).first();
-        out.team = tm.team;
-        out.teamGames = Number((tg || {}).n) || null;
+      if (cov) {
+        out.team = cov.team || null;
+        out.gamesPlayed = Number(cov.played) || null;
+        out.gamesCollected = Number(cov.swept) || null;
       }
       const rar = await db.prepare(
         `WITH credited AS (${CREDITED})
@@ -1179,23 +1189,25 @@ export async function onRequestGet({ request, env }) {
          are missing. A team's games are the union over all its players, so
          they are far closer to the real schedule. */
       const rows = rowsQ.results || [];
+      /* Coverage is about whether we have swept the games a player appeared
+         in, not whether they happened to mint a card in them. A quiet game
+         with no collectible play is still a collected game. */
       try {
         const g = await db.prepare(
-          `SELECT playerId, COUNT(DISTINCT gameId) AS own, MAX(team) AS team FROM gamelog
-            WHERE sport=? AND season=? AND seasonType IN ('regularseason','postseason')
+          `SELECT playerId, MAX(team) AS team,
+                  COUNT(DISTINCT gameId) AS played,
+                  COUNT(DISTINCT CASE WHEN gameId IN
+                    (SELECT DISTINCT gameId FROM plays WHERE sport=?1 AND season=?2)
+                    THEN gameId END) AS swept
+             FROM gamelog
+            WHERE sport=?1 AND season=?2 AND seasonType IN ('regularseason','postseason')
             GROUP BY playerId`).bind(sport, Number(season)).all();
-        const t = await db.prepare(
-          `SELECT team, COUNT(DISTINCT gameId) AS n FROM gamelog
-            WHERE sport=? AND season=? AND seasonType IN ('regularseason','postseason')
-            GROUP BY team`).bind(sport, Number(season)).all();
-        const teamGames = new Map();
-        for (const r of (t.results || [])) teamGames.set(r.team, Number(r.n));
         const own = new Map();
         for (const r of (g.results || [])) own.set(Number(r.playerId), r);
         for (const r of rows) {
           const o = own.get(Number(r.playerId));
-          r.logGames = o ? Number(o.own) : null;        // games the log has for them
-          r.teamGames = o ? (teamGames.get(o.team) || null) : null;  // their team's games
+          r.gamesPlayed = o ? Number(o.played) : null;
+          r.gamesCollected = o ? Number(o.swept) : null;
           r.team = o ? o.team : null;
         }
       } catch (e) {}
