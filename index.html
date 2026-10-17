@@ -5184,8 +5184,12 @@ async function cbbPanel(){
       // Newest first, and whatever holds the most is the sensible default.
       pkSeasons.sort((a, b) => String(a.sport).localeCompare(String(b.sport))
         || Number(b.season) - Number(a.season));
+      // Open on whichever season actually holds the most, not whatever sorts
+      // first: a season two days into collection shows an empty board and
+      // reads as a broken tab.
       if(!pkPicks.length && pkSeasons.length){
-        pkPicks = [`${pkSeasons[0].sport}|${pkSeasons[0].season}`];
+        const best = pkSeasons.reduce((a, b) => Number(b.plays) > Number(a.plays) ? b : a);
+        pkPicks = [`${best.sport}|${best.season}`];
       }
     }
     pkDrawSeasons();
@@ -5291,8 +5295,15 @@ async function cbbPanel(){
       + `data-pkk="${esc((r.sport || 'nfl') + '|' + r.season)}">` + cs.map(([k, , al]) =>
         `<td${al === 'l' ? ' class="l"' : ''}>${cellText(r, k)}</td>`).join('')
       + '</tr>').join('');
-    $b('#pk-note').textContent = `${rows.length} row${rows.length === 1 ? '' : 's'}`
-      + ` with ${pkMin}+ card plays` + (q ? ` matching "${pkQ.trim()}"` : '');
+    const picked = pkSeasons ? pkSeasons.filter(x => pkPicks.includes(`${x.sport}|${x.season}`)) : [];
+    const games = picked.reduce((n, x) => n + Number(x.games || 0), 0);
+    $b('#pk-note').textContent = rows.length
+      ? `${rows.length} row${rows.length === 1 ? '' : 's'} with ${pkMin}+ card plays`
+        + (q ? ` matching "${pkQ.trim()}"` : '')
+      : (q ? `No player matching "${pkQ.trim()}"`
+           : `Nothing yet \u2014 only ${games} game${games === 1 ? '' : 's'} collected `
+             + `for this season, so no one has ${pkMin}+ card plays. Lower the minimum `
+             + `or pick a season with more games.`);
     $b('#pk-caveat').textContent = '';
   }
 
