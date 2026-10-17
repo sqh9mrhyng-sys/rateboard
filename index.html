@@ -270,6 +270,14 @@
   .pkbox-s{font-size:.72rem;opacity:.55;margin-top:2px}
   /* a value sitting on the pack floor rather than genuinely reaching it */
   .floored{text-decoration:underline dotted;text-underline-offset:3px;opacity:.85}
+  /* collapsible profile sections */
+  .pksec{border-top:1px solid var(--line);margin-top:10px;padding-top:8px}
+  .pksec>summary{cursor:pointer;font-weight:600;display:flex;gap:10px;
+    align-items:baseline;list-style:none}
+  .pksec>summary::-webkit-details-marker{display:none}
+  .pksec>summary::before{content:'\25B8';display:inline-block;opacity:.6;
+    transition:transform .15s}
+  .pksec[open]>summary::before{transform:rotate(90deg)}
   .covfull{opacity:.65}
   .covpart{color:var(--warn,#e5a33d);font-weight:600}
   @media (max-width:640px){
@@ -4405,7 +4413,6 @@ async function cbbPanel(){
         <span class="note" id="pk-note"></span>
       </div>
       <div id="pk-detail"></div>
-      <p class="note" id="pk-progress"></p>
       <p class="note" id="pk-caveat"></p>
       <div class="dtwrap"><table class="dt">
         <thead id="pk-head"></thead><tbody id="pk-body"></tbody></table></div>
@@ -5101,7 +5108,8 @@ async function cbbPanel(){
   const pct = v => !v ? '0%' : (v * 100 < 1 ? (v * 100).toFixed(2) : (v * 100).toFixed(1)) + '%';
 
   const PK_BASE = [
-    ['player','Player','l'], ['cover','Games','l'], ['plays','Plays'],
+    ['player','Player','l'], ['seasonLbl','Season','l'],
+    ['earnings','Rax'], ['owners','Owners'], ['plays','Plays'],
     ['legendary','Legendary'], ['legOdds','Leg odds'],
     ['epic','Epic'], ['epicOdds','Epic odds'],
     ['bestRating','Best'], ['avgRating','Avg'], ['avg3','Avg x3'],
@@ -5113,13 +5121,16 @@ async function cbbPanel(){
   ];
   // The top two tiers are off by default: almost every row is zero, and the
   // columns crowd out the ones that are actually read.
-  const pkCols = () => pkShowTop
-    ? PK_BASE.slice(0, 2).concat(PK_TOP, PK_BASE.slice(2))
-    : PK_BASE;
+  // The season column only earns its place when more than one is selected.
+  const pkCols = () => {
+    const base = pkPicks.length > 1 ? PK_BASE : PK_BASE.filter(c => c[0] !== 'seasonLbl');
+    const at = pkPicks.length > 1 ? 2 : 1;
+    return pkShowTop ? base.slice(0, at).concat(PK_TOP, base.slice(at)) : base;
+  };
 
   let pkRows = null, pkTotals = {}, pkSort = 'plays', pkDir = 'desc', pkQ = '';
   let pkMin = 10, pkShowTop = false, pkPairKey = '', pkOpen = null, pkPrice = 'self';
-  let pkTrue = false, pkRar = 'all', pkProgress = {};
+  let pkTrue = false, pkRar = 'all', pkOpenKey = '';
 
   // FC has no play cards, so it is not offered here. Everything else comes
   // from the same season picker at the top of the panel.
@@ -5171,23 +5182,20 @@ async function cbbPanel(){
   const pkPair = () => pkPick || 'nfl|2026';
 
   async function pkLoad(){
-    const key = pkPair();
-    pkPairKey = key;
-    const [sport, season] = key.split('|');
+    pkPairKey = pkPicks.join(',');
+    const seasons = pkPicks.map(k => k.replace('|', ':')).join(',');
     $b('#pk-note').textContent = 'Loading…';
     $b('#pk-body').innerHTML = '';
     $b('#pk-detail').innerHTML = '';
     pkOpen = null;
     try {
-      const d = await (await fetch(`/api/rax?plays=board&sport=${encodeURIComponent(sport)}`
-        + `&season=${encodeURIComponent(season)}&min=${pkMin}`)).json();
+      const d = await (await fetch(
+        `/api/rax?plays=board&seasons=${encodeURIComponent(seasons)}&min=${pkMin}`)).json();
       if(d.error) throw new Error(d.error);
       pkRows = d.rows || [];
-      pkTotals = d.totals || {};
-      pkProgress = d.progress || {};
     } catch(e){
       pkRows = [];
-      $b('#pk-note').textContent = 'Could not load pack data for this season.';
+      $b('#pk-note').textContent = 'Could not load pack data.';
       return;
     }
     pkPaint();
@@ -5205,9 +5213,7 @@ async function cbbPanel(){
       avg3true: r.avgRating == null ? null : Math.round(Number(r.avgRating) * 3 * 100) / 100,
       avg3: r.avgRating == null ? null : Math.round(packRating(r.avgRating) * 100) / 100,
       boost: avgBooster(r),
-      // Games we hold plays for against games they actually played: the only
-      // honest read on whether a player's numbers are finished or partial.
-      cover: r.gamesPlayed ? (Number(r.gamesCollected) || 0) / r.gamesPlayed : null
+      seasonLbl: r.season == null ? null : seasonLabel(r.sport || 'nfl', r.season)
     });
   }
 
@@ -5231,17 +5237,8 @@ async function cbbPanel(){
     const cellText = (r, k) => {
       if(isOdds(k)) return pct(r[k]);
       if(k === 'boost') return r.boost == null ? '—' : r.boost.toFixed(2) + 'x';
-      if(k === 'cover'){
-        if(!r.gamesPlayed) return '—';
-        const got = Number(r.gamesCollected) || 0, done = got >= r.gamesPlayed;
-        // Games they appeared in that have been swept. A game where they
-        // minted nothing still counts as collected.
-        const why = done
-          ? 'Every game they played has been collected'
-          : `${r.gamesPlayed - got} of their games not swept yet`;
-        return `<span class="${done ? 'covfull' : 'covpart'}" title="${esc(why)}">`
-          + `${got}/${r.gamesPlayed}</span>`;
-      }
+      if(k === 'earnings' || k === 'owners')
+        return r[k] == null ? '—' : Number(r[k]).toLocaleString();
       if(k === 'avg3'){
         if(r.avg3 == null) return '—';
         if(pkTrue) return String(r.avg3true);
@@ -5253,36 +5250,13 @@ async function cbbPanel(){
       return r[k] == null || r[k] === '' ? '—' : esc(String(r[k]));
     };
     $b('#pk-body').innerHTML = rows.map(r =>
-      `<tr class="clickable" data-pid="${r.playerId}">` + cs.map(([k, , al]) =>
+      `<tr class="clickable" data-pid="${r.playerId}" `
+      + `data-pkk="${esc((r.sport || 'nfl') + '|' + r.season)}">` + cs.map(([k, , al]) =>
         `<td${al === 'l' ? ' class="l"' : ''}>${cellText(r, k)}</td>`).join('')
       + '</tr>').join('');
-    const label = pkPairKey.replace('|', ' ').toUpperCase();
-    $b('#pk-note').textContent = `${label} · ${rows.length} player${rows.length === 1 ? '' : 's'}`
+    $b('#pk-note').textContent = `${rows.length} row${rows.length === 1 ? '' : 's'}`
       + ` with ${pkMin}+ card plays` + (q ? ` matching "${pkQ.trim()}"` : '');
-    const held = Number(pkTotals.all_ || 0), cards = Number(pkTotals.cards || 0);
-    const unscored = Number(pkTotals.unscored || 0);
-    const P = pkProgress || {};
-    const logN = Number(P.logGames) || 0, got = Number(P.collectedGames) || 0;
-    const exp = Number(P.expectedIfComplete) || 0;
-    const full = rows.filter(r => r.gamesPlayed && (r.gamesCollected || 0) >= r.gamesPlayed).length;
-    // Two gaps with different causes, so they are stated separately rather
-    // than rolled into one misleading percentage.
-    $b('#pk-progress').innerHTML = !logN ? '' :
-      `<b>Play sweep:</b> ${got.toLocaleString()} of ${logN.toLocaleString()} known games `
-      + `(${Math.round(got / logN * 100)}%). `
-      + (exp && logN < exp
-          ? `<b>Game log itself is short:</b> ${logN} games held but teams have played up to `
-            + `${P.teamGamesMax} each, which would be about ${exp}. `
-            + `Players on teams with missing log entries cannot be completed until the game `
-            + `log catches up. `
-          : `<b>Game log looks complete</b> at up to ${P.teamGamesMax} games per team. `)
-      + `${full} of ${rows.length} shown players have every team game collected.`;
-    $b('#pk-caveat').textContent =
-      `Odds are the chance of at least one card of that tier in a 3-card player pack, `
-      + `drawn without replacement from that player's card-minting plays. `
-      + `Built from ${cards.toLocaleString()} card plays out of ${held.toLocaleString()} collected`
-      + (unscored ? `; ${unscored.toLocaleString()} not yet scored` : '')
-      + `. Collection is still running, so counts and odds will move.`;
+    $b('#pk-caveat').textContent = '';
   }
 
   /* ---- one player ------------------------------------------------------
@@ -5307,12 +5281,13 @@ async function cbbPanel(){
     }).join('');
   }
 
-  async function pkOpenPlayer(pid){
+  async function pkOpenPlayer(pid, pairKey){
     const box = $b('#pk-detail');
-    if(pkOpen === pid){ box.innerHTML = ''; pkOpen = null; return; }
-    pkOpen = pid;
+    const key = pairKey || pkOpenKey || pkPicks[0] || 'nfl|2026';
+    if(pkOpen === pid && pkOpenKey === key){ box.innerHTML = ''; pkOpen = null; return; }
+    pkOpen = pid; pkOpenKey = key;
     box.innerHTML = '<p class="note">Loading player…</p>';
-    const [sport, season] = (pkPairKey || 'nfl|2026').split('|');
+    const [sport, season] = key.split('|');
     let d;
     try {
       d = await (await fetch(`/api/rax?plays=player&sport=${encodeURIComponent(sport)}`
@@ -5363,47 +5338,62 @@ async function cbbPanel(){
         + `<td class="l">${esc(tg)}</td></tr>`;
     }).join('');
 
+    /* Four collapsible sections. Nothing but the headline numbers is open
+       to begin with: opening a player should not bury the table under three
+       tables they did not ask for. */
     box.innerHTML = `
       <div class="pkcard">
         <div class="pkhead">
           <b>${esc(d.player || 'Player')}</b>
+          <span class="note">${esc([d.team, seasonLabel(sport, season)].filter(Boolean).join(' \u00b7 '))}</span>
           <button class="linkbtn" id="pk-close">Close</button>
         </div>
         <div class="pkgrid">
-          ${cell('Card plays', n, `${d.allPlays || 0} total`)}
-          ${cell('Games', `${d.gamesCollected || 0}${d.gamesPlayed ? '/' + d.gamesPlayed : ''}`,
-                 d.gamesPlayed && d.gamesCollected >= d.gamesPlayed ? 'all collected' : 'partial')}
-          ${cell('Best', d.bestRating == null ? '—' : d.bestRating, '')}
-          ${cell('Avg', d.avgRating == null ? '—' : d.avgRating,
+          ${cell('Card plays', n, '')}
+          ${cell('Best', d.bestRating == null ? '\u2014' : d.bestRating, '')}
+          ${cell('Avg', d.avgRating == null ? '\u2014' : d.avgRating,
                  d.avgRating == null ? '' : `x3 = ${(d.avgRating * 3).toFixed(2)}`)}
-          ${tierBoxes}
         </div>
-        <p class="note">Each tier box shows the count and the chance of at least one in a pack.</p>
-        <div class="dtbar" style="margin:10px 0 6px">
-          <b>Packs to each rarity</b>
-          <select class="field" id="pk-price" style="max-width:190px">
-            ${PACK_PRICES.map(([k, label, cost]) =>
-              `<option value="${k}"${k === pkPrice ? ' selected' : ''}>${esc(label)} \u2014 ${cost}</option>`).join('')}
-          </select>
-          <span class="note">${
-            d.avgRating == null ? 'No rating yet'
-            : `${Number(d.avgRating).toFixed(2)} avg \u00d7 3 = ${(d.avgRating * 3).toFixed(2)}`
-              + (d.avgRating * 3 < PACK_FLOOR ? `, floored to ${PACK_FLOOR}` : '')
-              + ` rating per pack`}</span>
-        </div>
-        <div class="dtwrap"><table class="dt"><thead><tr>
-          <th class="l">Rarity</th><th>Mult</th><th>Rating</th><th>From prev</th>
-          <th>Packs</th><th>Cost</th><th>From prev</th>
-        </tr></thead><tbody>${packLadderRows(d.avgRating)}</tbody></table></div>
-        <div class="dtwrap"><table class="dt"><thead><tr>
-          <th class="l">Play kind</th><th class="l">Family</th><th>N</th><th>Avg</th><th>Best</th>
-        </tr></thead><tbody>${kinds || ''}</tbody></table></div>
-        <p class="note" style="margin-top:10px">Best plays held, highest rating first</p>
-        ${chips}
-        <div class="dtwrap"><table class="dt"><thead><tr>
-          <th class="l">Date</th><th class="l">Play</th><th>Rating</th>
-          <th class="l">Rarity</th><th class="l">Tags</th>
-        </tr></thead><tbody>${top || ''}</tbody></table></div>
+
+        <details class="pksec">
+          <summary>Rarity breakdown<span class="note">count and pack odds per tier</span></summary>
+          <div class="pkgrid" style="margin-top:10px">${tierBoxes}</div>
+        </details>
+
+        <details class="pksec">
+          <summary>Packs to each rarity<span class="note">cost to reach every tier</span></summary>
+          <div class="dtbar" style="margin:10px 0 6px">
+            <select class="field" id="pk-price" style="max-width:190px">
+              ${PACK_PRICES.map(([k, label, cost]) =>
+                `<option value="${k}"${k === pkPrice ? ' selected' : ''}>${esc(label)} \u2014 ${cost}</option>`).join('')}
+            </select>
+            <span class="note">${
+              d.avgRating == null ? 'No rating yet'
+              : `${Number(d.avgRating).toFixed(2)} avg \u00d7 3 = ${(d.avgRating * 3).toFixed(2)}`
+                + (d.avgRating * 3 < PACK_FLOOR ? `, floored to ${PACK_FLOOR}` : '')
+                + ` rating per pack`}</span>
+          </div>
+          <div class="dtwrap"><table class="dt"><thead><tr>
+            <th class="l">Rarity</th><th>Mult</th><th>Rating</th><th>From prev</th>
+            <th>Packs</th><th>Cost</th><th>From prev</th>
+          </tr></thead><tbody>${packLadderRows(d.avgRating)}</tbody></table></div>
+        </details>
+
+        <details class="pksec">
+          <summary>Play kinds<span class="note">what their cards are made of</span></summary>
+          <div class="dtwrap" style="margin-top:10px"><table class="dt"><thead><tr>
+            <th class="l">Play kind</th><th class="l">Family</th><th>N</th><th>Avg</th><th>Best</th>
+          </tr></thead><tbody>${kinds || ''}</tbody></table></div>
+        </details>
+
+        <details class="pksec">
+          <summary>Best plays held<span class="note">highest rating first</span></summary>
+          ${chips}
+          <div class="dtwrap"><table class="dt"><thead><tr>
+            <th class="l">Date</th><th class="l">Play</th><th>Rating</th>
+            <th class="l">Rarity</th><th class="l">Tags</th>
+          </tr></thead><tbody>${top || ''}</tbody></table></div>
+        </details>
       </div>`;
     box.scrollIntoView({ block: 'nearest' });
   }
@@ -5764,7 +5754,7 @@ async function cbbPanel(){
     if(e.target.id === 'gf-season'){ gfSeason = e.target.value; return gfLoad(); }
     if(e.target.id === 'pk-price'){
       pkPrice = e.target.value;
-      if(pkOpen){ const id = pkOpen; pkOpen = null; pkOpenPlayer(id); }
+      if(pkOpen){ const id = pkOpen, k = pkOpenKey; pkOpen = null; pkOpenPlayer(id, k); }
       return;
     }
 
@@ -6089,7 +6079,7 @@ async function cbbPanel(){
     if(e.target.closest('#pk-top')){
       pkShowTop = !pkShowTop;
       e.target.closest('#pk-top').setAttribute('aria-pressed', pkShowTop ? 'true' : 'false');
-      if(pkOpen){ const id = pkOpen; pkOpen = null; pkOpenPlayer(id); }
+      if(pkOpen){ const id = pkOpen, k = pkOpenKey; pkOpen = null; pkOpenPlayer(id, k); }
       return pkPaint();
     }
     if(e.target.closest('#pk-truth')){
@@ -6100,14 +6090,14 @@ async function cbbPanel(){
     const pr = e.target.closest('#pk-rar [data-pr]');
     if(pr){
       pkRar = pr.dataset.pr;
-      if(pkOpen){ const id = pkOpen; pkOpen = null; pkOpenPlayer(id); }
+      if(pkOpen){ const id = pkOpen, k = pkOpenKey; pkOpen = null; pkOpenPlayer(id, k); }
       return;
     }
     if(e.target.closest('#pk-close')){
       $b('#pk-detail').innerHTML = ''; pkOpen = null; return;
     }
     const prow = e.target.closest('#pk-body tr[data-pid]');
-    if(prow) return pkOpenPlayer(Number(prow.dataset.pid));
+    if(prow) return pkOpenPlayer(Number(prow.dataset.pid), prow.dataset.pkk);
 
     const m = e.target.closest('[data-cm]');
     if(m){
