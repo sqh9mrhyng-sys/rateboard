@@ -1638,13 +1638,18 @@ export async function onRequestGet({ request, env }) {
         playerId: pid, topKeys: Object.keys(d || {}),
         boxScores: bs.length,
         rowKeys: first ? Object.keys(first) : [],
-        sample: bs.slice(0, 3).map(r => ({
-          gameId: r.gameId, day: r.day, label: r.label, metricLabel: r.metricLabel,
-          value: r.value, rating: r.rating, performanceValue: r.performanceValue,
-          cat: r.collectingCategoryId, seasonType: r.seasonType,
-          tags: r.tags, traits: r.traits, traitIds: r.traitIds, crowdTags: r.crowdTags,
-          tagCount: tagsOf(r).length
-        }))
+        // performanceTags is the one that matters: `tags` is every play tag
+        // from the game concatenated, not the performance card's own.
+        sample: bs.slice(0, 4).map(r => ({
+          gameId: r.gameId, day: r.day, value: r.value, seasonType: r.seasonType,
+          performanceTags: r.performanceTags,
+          performanceTagsManual: r.performanceTagsManual,
+          playTagCount: (r.tags || []).length,
+          topStats: r.topStats, label: r.label
+        })),
+        perfData: d && d.perfData ? (Array.isArray(d.perfData)
+          ? { count: d.perfData.length, first: d.perfData[0] }
+          : Object.keys(d.perfData)) : null
       });
     } catch (e) { return json({ error: String((e && e.message) || e).slice(0, 200) }, 502); }
   }
