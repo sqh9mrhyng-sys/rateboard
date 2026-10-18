@@ -4436,7 +4436,7 @@ async function cbbPanel(){
         <thead id="tg-head"></thead><tbody id="tg-body"></tbody></table></div>
     </div>
     <div id="cb-pack" class="hide">
-      <div class="dtbar" id="pk-seasons"><span class="note">Loading seasons&hellip;</span></div>
+      <div id="pk-seasons"><span class="note">Loading seasons&hellip;</span></div>
       <div class="dtbar">
         <input class="field" id="pk-q" autocomplete="off" spellcheck="false"
                placeholder="Search a player" style="max-width:240px">
@@ -4448,6 +4448,7 @@ async function cbbPanel(){
         <span class="note" id="pk-note"></span>
       </div>
       <div id="pk-detail"></div>
+      <div class="dtbar" id="pk-pager" style="margin-top:8px"></div>
       <p class="note" id="pk-caveat"></p>
       <div class="dtwrap"><table class="dt">
         <thead id="pk-head"></thead><tbody id="pk-body"></tbody></table></div>
@@ -5166,6 +5167,9 @@ async function cbbPanel(){
   let pkRows = null, pkTotals = {}, pkSort = 'plays', pkDir = 'desc', pkQ = '';
   let pkMin = 10, pkShowTop = false, pkPairKey = '', pkOpen = null, pkPrice = 'self';
   let pkTrue = false, pkRar = 'all', pkOpenKey = '';
+  // A phone will not thank you for four thousand rows in one table.
+  const PK_PAGE = 100;
+  let pkPage = 0;
 
   // FC has no play cards, so it is not offered here. Everything else comes
   // from the same season picker at the top of the panel.
@@ -5208,14 +5212,31 @@ async function cbbPanel(){
       bar.innerHTML = '<span class="note">Nothing collected yet.</span>';
       return;
     }
-    bar.innerHTML = '<span class="note">Season</span>' + pkSeasons.map(x => {
-      const key = `${x.sport}|${x.season}`;
-      return `<button class="btn-ghost" data-pks="${esc(key)}" `
-        + `aria-pressed="${pkPicks.includes(key) ? 'true' : 'false'}" `
-        + `title="${Number(x.plays).toLocaleString()} plays across ${x.games} games">`
-        + `${esc((CB_SPORT_LABEL[x.sport] || x.sport.toUpperCase()) + ' '
-                   + seasonLabel(x.sport, x.season))} `
-        + `<span class="note">${x.games}g</span></button>`;
+    // Grouped by sport, the way the main season picker does it, so a long
+    // list of years does not run across the width of the panel.
+    const bySport = new Map();
+    for(const x of pkSeasons){
+      if(!bySport.has(x.sport)) bySport.set(x.sport, []);
+      bySport.get(x.sport).push(x);
+    }
+    const open = new Set([...bar.querySelectorAll('details[open]')].map(d => d.dataset.sp));
+    bar.innerHTML = [...bySport.entries()].map(([sp, list]) => {
+      const on = list.filter(x => pkPicks.includes(`${x.sport}|${x.season}`)).length;
+      const isOpen = open.size ? open.has(sp) : (on > 0 || bySport.size === 1);
+      return `<details class="sgrp" data-sp="${esc(sp)}"${isOpen ? ' open' : ''}>`
+        + `<summary>${esc(CB_SPORT_LABEL[sp] || sp.toUpperCase())}`
+        + `<span class="note">${list.length} season${list.length === 1 ? '' : 's'}</span>`
+        + (on ? `<span class="tick">${on} selected</span>` : '')
+        + '</summary><div class="seasons">'
+        + list.map(x => {
+            const key = `${x.sport}|${x.season}`;
+            return `<button class="btn-ghost" data-pks="${esc(key)}" `
+              + `aria-pressed="${pkPicks.includes(key) ? 'true' : 'false'}" `
+              + `title="${Number(x.plays).toLocaleString()} plays across ${x.games} games">`
+              + `${esc(seasonLabel(x.sport, x.season))} `
+              + `<span class="note">${x.games}g</span></button>`;
+          }).join('')
+        + '</div></details>';
     }).join('');
   }
 
@@ -5269,6 +5290,12 @@ async function cbbPanel(){
       const y = num ? Number(b[pkSort] || 0) : String(b.player || '').toLowerCase();
       return (x < y ? -1 : x > y ? 1 : 0) * (pkDir === 'desc' ? -1 : 1);
     });
+    // Sorting and filtering run over everything; only a page is drawn.
+    const total = rows.length;
+    const pages = Math.max(1, Math.ceil(total / PK_PAGE));
+    if(pkPage >= pages) pkPage = pages - 1;
+    if(pkPage < 0) pkPage = 0;
+    rows = rows.slice(pkPage * PK_PAGE, (pkPage + 1) * PK_PAGE);
     const cs = pkCols();
     $b('#pk-head').innerHTML = '<tr>' + cs.map(([k, label, al]) =>
       `<th data-pc="${k}" class="sortable${al === 'l' ? ' l' : ''}"${
@@ -5297,13 +5324,21 @@ async function cbbPanel(){
       + '</tr>').join('');
     const picked = pkSeasons ? pkSeasons.filter(x => pkPicks.includes(`${x.sport}|${x.season}`)) : [];
     const games = picked.reduce((n, x) => n + Number(x.games || 0), 0);
-    $b('#pk-note').textContent = rows.length
-      ? `${rows.length} row${rows.length === 1 ? '' : 's'} with ${pkMin}+ card plays`
+    $b('#pk-note').textContent = total
+      ? `${total.toLocaleString()} row${total === 1 ? '' : 's'} with ${pkMin}+ card plays`
         + (q ? ` matching "${pkQ.trim()}"` : '')
+        + (pages > 1 ? ` \u00b7 showing ${pkPage * PK_PAGE + 1}\u2013`
+            + `${pkPage * PK_PAGE + rows.length}` : '')
       : (q ? `No player matching "${pkQ.trim()}"`
            : `Nothing yet \u2014 only ${games} game${games === 1 ? '' : 's'} collected `
              + `for this season, so no one has ${pkMin}+ card plays. Lower the minimum `
              + `or pick a season with more games.`);
+    $b('#pk-pager').innerHTML = pages > 1
+      ? `<button class="btn-ghost" data-pkp="prev"${pkPage ? '' : ' disabled'}>Previous</button>`
+        + `<span class="note">Page ${pkPage + 1} of ${pages}</span>`
+        + `<button class="btn-ghost" data-pkp="next"`
+        + `${pkPage >= pages - 1 ? ' disabled' : ''}>Next</button>`
+      : '';
     $b('#pk-caveat').textContent = '';
   }
 
@@ -5876,7 +5911,7 @@ async function cbbPanel(){
       return;
     }
     if(e.target.id === 'gf-q'){ gfQuery = e.target.value; return gfPaint(); }
-    if(e.target.id === 'pk-q'){ pkQ = e.target.value; return pkPaint(); }
+    if(e.target.id === 'pk-q'){ pkQ = e.target.value; pkPage = 0; return pkPaint(); }
     if(e.target.id === 'tg-q'){ tgQ = e.target.value; return tgPaint(); }
     if(e.target.id === 'pk-min'){
       pkMin = Math.max(0, parseInt(e.target.value, 10) || 0);
@@ -6218,6 +6253,7 @@ async function cbbPanel(){
       const k = pc.dataset.pc;
       if(pkSort === k) pkDir = pkDir === 'desc' ? 'asc' : 'desc';
       else { pkSort = k; pkDir = k === 'player' ? 'asc' : 'desc'; }
+      pkPage = 0;
       return pkPaint();
     }
     const tgs = e.target.closest('[data-tgs]');
@@ -6235,10 +6271,17 @@ async function cbbPanel(){
     if(pks){
       const k = pks.dataset.pks;
       pkPicks = pkPicks.includes(k) ? pkPicks.filter(x => x !== k) : pkPicks.concat([k]);
-      pkRows = null; pkOpen = null;
+      pkRows = null; pkOpen = null; pkPage = 0;
       $b('#pk-detail').innerHTML = '';
       pkDrawSeasons();
       return pkPicks.length ? pkLoad() : pkInit();
+    }
+    const pkp = e.target.closest('[data-pkp]');
+    if(pkp){
+      pkPage += pkp.dataset.pkp === 'next' ? 1 : -1;
+      pkPaint();
+      $b('#pk-head').scrollIntoView({ block: 'nearest' });
+      return;
     }
     if(e.target.closest('#pk-refresh')){ pkSeasons = null; pkRows = null; return pkInit(); }
     if(e.target.closest('#pk-top')){
