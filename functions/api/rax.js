@@ -1639,6 +1639,28 @@ export async function onRequestGet({ request, env }) {
     if (!tail) return json({ error: 'sub must be stats, plays or playstop' }, 400);
     try {
       const d = await rsGet(`https://web.realapp.com/games/${gid}/sport/${sport}/${tail}`, auth);
+      // What the feed holds besides plays: the per-game performance entries,
+      // which are their own card type with their own tags.
+      if (url.searchParams.get('perf') === '1') {
+        const bs = (d && d.matchPlayerBoxScores) || [];
+        const first = bs[0] || null;
+        const tagIds = [...new Set(bs.flatMap(r =>
+          [].concat(r.tags || [], r.traitIds || [], r.crowdTags || [])
+            .map(x => (x && x.id != null) ? Number(x.id) : Number(x))
+            .filter(n => Number.isFinite(n))))];
+        return json({
+          gameId: gid, boxScores: bs.length,
+          keys: first ? Object.keys(first) : [],
+          distinctTagIds: tagIds.length, sampleTagIds: tagIds.slice(0, 40),
+          sample: bs.slice(0, 3).map(r => ({
+            playerId: r.playerId, player: playName(r.player) || r.playerName || null,
+            value: r.value, performanceValue: r.performanceValue,
+            rating: r.rating, label: r.label, metricLabel: r.metricLabel,
+            cat: r.collectingCategoryId, tags: r.tags, traitIds: r.traitIds,
+            crowdTags: r.crowdTags, seasonType: r.seasonType
+          }))
+        });
+      }
       const rows = rowsOf(d);
       const arr = Array.isArray(d && d.plays) ? d.plays
                 : Array.isArray(d && d.feed) ? d.feed
