@@ -716,21 +716,43 @@ const PLAYS_CURSOR = 'plays_cursor_v1';
 // Which seasons the tick walks. Add a line here and the cron picks it up; the
 // worker itself holds nothing and never needs redeploying.
 const PLAYS_SPORTS = [
-  { sport: 'nfl',   season: 2026, rolling: true },  // in progress, re-swept forever
-  { sport: 'ncaaf', season: 2026, rolling: true },
+  // Lowest pri collects first. The whole backlog is worked in this order and
+  // nothing below a tier gets a game tick while anything in it is unfinished.
+  { sport: 'mlb',   season: 2026, rolling: true, pri: 1 },
+  { sport: 'mlb',   season: 2025, pri: 2 },
+  { sport: 'mlb',   season: 2024, pri: 3 },
+  { sport: 'mlb',   season: 2023, pri: 4 },
+  { sport: 'mlb',   season: 2022, pri: 5 },
+  // Current seasons next - a weekend's games land here and are picked up as
+  // soon as the MLB backfill is through.
+  { sport: 'nfl',   season: 2026, rolling: true, pri: 6 },
+  { sport: 'ncaaf', season: 2026, rolling: true, pri: 6 },
+  // Anything still owed from the finished seasons.
+  { sport: 'nfl',   season: 2025, pri: 7 },
+  { sport: 'nfl',   season: 2024, pri: 7 },
+  { sport: 'nfl',   season: 2023, pri: 7 },
+  { sport: 'ncaaf', season: 2025, pri: 7 },
+  { sport: 'ncaaf', season: 2024, pri: 7 },
+  { sport: 'ncaaf', season: 2023, pri: 7 }
+];
+// Performance box scores are collected only once every play queue above has
+// lapped, so they never compete with the sweep for a tick.
+const PERF_QUEUE = [
+  { sport: 'nfl',   season: 2026 },
   { sport: 'nfl',   season: 2025 },
   { sport: 'nfl',   season: 2024 },
   { sport: 'nfl',   season: 2023 },
+  { sport: 'ncaaf', season: 2026 },
   { sport: 'ncaaf', season: 2025 },
   { sport: 'ncaaf', season: 2024 },
   { sport: 'ncaaf', season: 2023 },
-  { sport: 'mlb',   season: 2026, rolling: true },
+  { sport: 'mlb',   season: 2026 },
   { sport: 'mlb',   season: 2025 },
   { sport: 'mlb',   season: 2024 },
-  { sport: 'mlb',   season: 2023 }
+  { sport: 'mlb',   season: 2023 },
+  { sport: 'mlb',   season: 2022 }
 ];
-// A finished season is swept once and then left alone. The flag is set when
-// its walk laps, so the cron stops spending ticks on it.
+const perfDoneKey = (sp, se) => `perf_done_${sp}_${se}`;
 const sweptKey = (sp, se) => `plays_swept_${sp}_${se}`;
 const SCORE_BATCH = 8000;        // plays rescored per call
 // A game's feed comes back whole - every snap, around 175 rows for an NFL
@@ -1119,6 +1141,9 @@ export async function onRequestGet({ request, env }) {
     } catch (e) { return json({ error: 'could not read the game log' }, 503); }
     if (!ids.length) {
       try { await env.RATEBOARD_KV.put(key, '0'); } catch (e) {}
+      // Lapped: every player in the game log has been asked for this season.
+      // The flag retires it from the cron so the next season gets the ticks.
+      try { await env.RATEBOARD_KV.put(perfDoneKey(sport, season), '1'); } catch (e) {}
       return json({ sport, season, lap: true, stored: 0 });
     }
     const stmt = db.prepare(
@@ -2088,10 +2113,11 @@ export async function onRequestGet({ request, env }) {
       const step = n % 30 === 0 ? 'tags' : n % 5 === 2 ? 'score'
                  : n % 2 === 0 ? 'games' : null;
       if (step) {
-        /* Seasons that have never been round once come first: an empty
-           season is worth far more ticks than a finished one. A rolling
-           season that has lapped gets a turn every twelfth game tick, which
-           is enough to pick up new games without starving the backlog. */
+        /* Strict order. Every queue line carries a pri; the lowest pri with
+           anything left takes the tick, so the backlog is worked in the order
+           it is written rather than all at once. A rolling season that has
+           already lapped still gets every twelfth game tick, which is enough
+           to pick up a weekend's new games without stalling the backfill. */
         const fresh = [], done = [];
         for (const x of PLAYS_SPORTS) {
           let lapped = null;
@@ -2099,11 +2125,33 @@ export async function onRequestGet({ request, env }) {
           (lapped ? done : fresh).push(x);
         }
         const rolling = done.filter(x => x.rolling);
-        const pool = (fresh.length && !(n % 12 === 0 && rolling.length)) ? fresh
-                   : (rolling.length ? rolling : (fresh.length ? fresh : PLAYS_SPORTS));
-        if (pool.length) {
+        let pool = [];
+        if (fresh.length && !(n % 12 === 0 && rolling.length)) {
+          const top = Math.min(...fresh.map(x => Number(x.pri) || 99));
+          pool = fresh.filter(x => (Number(x.pri) || 99) === top);
+        } else if (rolling.length) {
+          pool = rolling;
+        }
+        /* Nothing fresh left anywhere: the sweep is through, so the game tick
+           is spent on performance box scores instead - first unfinished line
+           of PERF_QUEUE. Rolling refresh still gets its twelfth tick. */
+        let perfJob = null;
+        if (!fresh.length && !(n % 12 === 0 && rolling.length)) {
+          for (const x of PERF_QUEUE) {
+            let fin = null;
+            try { fin = await env.RATEBOARD_KV.get(perfDoneKey(x.sport, x.season)); } catch (e) {}
+            if (!fin) { perfJob = x; break; }
+          }
+          if (perfJob) pool = [];
+        }
+        if (perfJob && step === 'games') {
+          const u = new URL(url);
+          u.search = `?perf=collect&sport=${perfJob.sport}&season=${perfJob.season}`;
+          try { await onRequestGet({ request: new Request(u.toString(), request), env }); } catch (e) {}
+        } else if (pool.length || step !== 'games') {
+          const base = pool.length ? pool : PLAYS_SPORTS;
           const sp = step === 'games'
-            ? pool[Math.floor(n / 2) % pool.length]
+            ? base[Math.floor(n / 2) % base.length]
             : PLAYS_SPORTS[Math.floor(n / 5) % PLAYS_SPORTS.length];
           const u = new URL(url);
           // The tag sweep rotates through the rarity tiers: the top-end tags
