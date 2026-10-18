@@ -1494,13 +1494,22 @@ export async function onRequestGet({ request, env }) {
         const extra = new Map();
         try {
           const e = await db.prepare(
-            `SELECT playerId, SUM(rax) AS earnings, MAX(team) AS team,
-                    (SELECT ow.owners FROM owners ow
-                      WHERE ow.sport=?1 AND ow.season=?2 AND ow.playerId=gamelog.playerId
-                      ORDER BY ow.day DESC LIMIT 1) AS owners
-               FROM gamelog WHERE sport=?1 AND season=?2
-                AND seasonType IN ('regularseason','postseason')
-              GROUP BY playerId`).bind(pr.sport, pr.season).all();
+            /* The owner count used to be a correlated subquery, which meant
+               one index seek per player - seven thousand of them for a CFB
+               season, and the reason loading several seasons at once blew
+               through D1's CPU limit. One windowed pass does the same job. */
+            `WITH latest AS (
+               SELECT playerId, owners FROM (
+                 SELECT playerId, owners,
+                        ROW_NUMBER() OVER (PARTITION BY playerId ORDER BY day DESC) AS rn
+                   FROM owners WHERE sport=?1 AND season=?2)
+                WHERE rn = 1)
+             SELECT g.playerId AS playerId, SUM(g.rax) AS earnings,
+                    MAX(g.team) AS team, l.owners AS owners
+               FROM gamelog g LEFT JOIN latest l ON l.playerId = g.playerId
+              WHERE g.sport=?1 AND g.season=?2
+                AND g.seasonType IN ('regularseason','postseason')
+              GROUP BY g.playerId`).bind(pr.sport, pr.season).all();
           for (const x of (e.results || [])) extra.set(Number(x.playerId), x);
         } catch (err) {}
         for (const x of got) {
