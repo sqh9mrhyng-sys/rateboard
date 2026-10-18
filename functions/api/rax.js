@@ -686,6 +686,32 @@ const CREDITED = `
     FROM plays WHERE sport=?1 AND season=?2 AND ${CARD_SQL}
      AND player2Id IS NOT NULL AND ${PASS_CREDIT}`;
 
+/* ---- performances ---------------------------------------------------
+   A performance is the player's whole game line: its own card, its own
+   rating, and its own tags - Hundo, Carrier, Air-Hundo and the rest, which
+   describe the game rather than a snap. They come from the player
+   seasonfeed, the same call the game log is built from, in a
+   `performanceTags` field distinct from the play tags on the same row.
+   Held only; nothing reads this yet.
+   -------------------------------------------------------------------- */
+const PERF_DDL = `CREATE TABLE IF NOT EXISTS performances (
+  id INTEGER PRIMARY KEY, sport TEXT NOT NULL, season INTEGER NOT NULL,
+  playerId INTEGER, player TEXT, gameId INTEGER, day TEXT, seasonType TEXT,
+  teamId INTEGER, oppTeamId INTEGER, team TEXT, opponent TEXT,
+  value REAL, rarity INTEGER, tags TEXT, stats TEXT,
+  played INTEGER, started INTEGER, seenAt INTEGER NOT NULL)`;
+const PERF_CURSOR = 'perf_cursor_v1';
+const PERF_PER_TICK = 60;     // players per call; one call covers their season
+
+async function perfReady(db) {
+  await db.prepare(PERF_DDL).run();
+  for (const ix of [
+    'CREATE INDEX IF NOT EXISTS perf_sp ON performances (sport, season, playerId)',
+    'CREATE INDEX IF NOT EXISTS perf_game ON performances (sport, season, gameId)',
+    'CREATE INDEX IF NOT EXISTS perf_rar ON performances (sport, season, rarity)'
+  ]) { try { await db.prepare(ix).run(); } catch (e) {} }
+}
+
 const PLAYS_CURSOR = 'plays_cursor_v1';
 // Which seasons the tick walks. Add a line here and the cron picks it up; the
 // worker itself holds nothing and never needs redeploying.
@@ -1068,6 +1094,100 @@ export async function onRequestGet({ request, env }) {
     } catch (e) {
       return json({ error: 'could not read the tags', detail: String((e && e.message) || e) }, 503);
     }
+  }
+
+  /* Walk players out of the game log and keep every box score they have for
+     the season. One request per player covers their whole season, so this is
+     far cheaper per row than the play sweep. */
+  if (url.searchParams.get('perf') === 'collect') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    await perfReady(db);
+    const key = `${PERF_CURSOR}:${sport}:${season}`;
+    let after = 0;
+    try { after = Number(await env.RATEBOARD_KV.get(key)) || 0; } catch (e) {}
+    if (url.searchParams.get('reset') === '1') {
+      after = 0;
+      try { await env.RATEBOARD_KV.put(key, '0'); } catch (e) {}
+    }
+    let ids = [];
+    try {
+      const r = await db.prepare(
+        `SELECT DISTINCT playerId AS n FROM gamelog WHERE sport=? AND season=? AND playerId > ?
+           ORDER BY playerId LIMIT ?`).bind(sport, Number(season), after, PERF_PER_TICK).all();
+      ids = (r.results || []).map(x => Number(x.n)).filter(Boolean);
+    } catch (e) { return json({ error: 'could not read the game log' }, 503); }
+    if (!ids.length) {
+      try { await env.RATEBOARD_KV.put(key, '0'); } catch (e) {}
+      return json({ sport, season, lap: true, stored: 0 });
+    }
+    const stmt = db.prepare(
+      `INSERT INTO performances (id, sport, season, playerId, player, gameId, day,
+         seasonType, teamId, oppTeamId, team, opponent, value, rarity, tags, stats,
+         played, started, seenAt)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(id) DO UPDATE SET value=excluded.value, tags=excluded.tags,
+         stats=excluded.stats, day=excluded.day, seenAt=excluded.seenAt`);
+    let stored = 0, asked = 0, withTags = 0;
+    for (const id of ids) {
+      let d;
+      try {
+        d = await rsGet(`https://web.realapp.com/players/${id}/sport/${sport}`
+          + `/seasonfeed?limit=80&season=${season}&view=recent&viewFrame=default`, auth);
+      } catch (e) { continue; }
+      asked++;
+      const batch = [];
+      for (const r of ((d && d.playerBoxScores) || [])) {
+        if (!r || r.id == null) continue;
+        if (r.seasonType && r.seasonType !== 'regularseason' && r.seasonType !== 'postseason') continue;
+        const tg = [].concat(r.performanceTags || [], r.performanceTagsManual || [])
+          .map(x => (x && x.id != null) ? Number(x.id) : Number(x))
+          .filter(n => Number.isFinite(n));
+        if (tg.length) withTags++;
+        batch.push(stmt.bind(
+          Number(r.id), sport, Number(r.season || season),
+          r.playerId == null ? null : Number(r.playerId), playName(r.player),
+          r.gameId == null ? null : Number(r.gameId), r.day || null, r.seasonType || null,
+          r.teamId == null ? null : Number(r.teamId),
+          r.opponentTeamId == null ? null : Number(r.opponentTeamId),
+          (r.team && r.team.key) || null, (r.awayTeam && r.awayTeam.key) || null,
+          r.value == null ? null : Math.abs(Number(r.value)),
+          null,
+          tg.length ? tg.join(',') : null,
+          r.topStats ? JSON.stringify(r.topStats).slice(0, 900) : null,
+          r.played ? 1 : 0, r.started ? 1 : 0, Date.now()));
+      }
+      for (let i = 0; i < batch.length; i += 200) {
+        try { await db.batch(batch.slice(i, i + 200)); stored += batch.slice(i, i + 200).length; }
+        catch (e) {}
+      }
+      await sleep(30);
+    }
+    after = ids[ids.length - 1];
+    try { await env.RATEBOARD_KV.put(key, String(after)); } catch (e) {}
+    let held = 0;
+    try {
+      const h = await db.prepare('SELECT COUNT(*) AS n FROM performances WHERE sport=? AND season=?')
+        .bind(sport, Number(season)).first();
+      held = Number((h && h.n) || 0);
+    } catch (e) {}
+    return json({ sport, season, asked, stored, rowsWithTags: withTags, held,
+                  nextAfter: after, lap: false });
+  }
+
+  // What is held, so the fill can be watched without a page for it.
+  if (url.searchParams.get('perf') === 'seasons') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    await perfReady(db);
+    try {
+      const r = await db.prepare(
+        `SELECT sport, season, COUNT(*) AS rows_, COUNT(DISTINCT playerId) AS players,
+                COUNT(DISTINCT gameId) AS games,
+                SUM(CASE WHEN tags IS NOT NULL THEN 1 ELSE 0 END) AS withTags
+           FROM performances GROUP BY sport, season ORDER BY sport, season DESC`).all();
+      return json({ seasons: r.results || [] });
+    } catch (e) { return json({ error: 'could not read performances' }, 503); }
   }
 
   if (url.searchParams.get('plays') === 'seasons') {
