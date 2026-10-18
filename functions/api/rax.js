@@ -1621,6 +1621,34 @@ export async function onRequestGet({ request, env }) {
   // Game level reads. The team tab on a game page calls .../stats, and the
   // player endpoint spells its play feed /plays, so those are the two fixed
   // shapes here. gameId is digits, sport is validated above.
+  /* A performance is the player's whole game line, a separate card type from
+     the plays. The game feed carries an empty box-score array, but the player
+     seasonfeed is what the game log already reads, so look there. */
+  if (url.searchParams.get('perfProbe') != null) {
+    const pid = String(url.searchParams.get('perfProbe') || '').replace(/[^0-9]/g, '');
+    if (!pid) return json({ error: 'perfProbe needs a playerId' }, 400);
+    try {
+      const d = await rsGet(`https://web.realapp.com/players/${pid}/sport/${sport}`
+        + `/seasonfeed?limit=5&season=${season}&view=recent&viewFrame=default`, auth);
+      const bs = (d && d.playerBoxScores) || [];
+      const first = bs[0] || null;
+      const tagsOf = r => [].concat(r.tags || [], r.traitIds || [], r.traits || [],
+                                    r.crowdTags || []);
+      return json({
+        playerId: pid, topKeys: Object.keys(d || {}),
+        boxScores: bs.length,
+        rowKeys: first ? Object.keys(first) : [],
+        sample: bs.slice(0, 3).map(r => ({
+          gameId: r.gameId, day: r.day, label: r.label, metricLabel: r.metricLabel,
+          value: r.value, rating: r.rating, performanceValue: r.performanceValue,
+          cat: r.collectingCategoryId, seasonType: r.seasonType,
+          tags: r.tags, traits: r.traits, traitIds: r.traitIds, crowdTags: r.crowdTags,
+          tagCount: tagsOf(r).length
+        }))
+      });
+    } catch (e) { return json({ error: String((e && e.message) || e).slice(0, 200) }, 502); }
+  }
+
   if (url.searchParams.get('probeGame') != null) {
     const gid = String(url.searchParams.get('probeGame') || '').replace(/[^0-9]/g, '');
     if (!gid) return json({ error: 'bad gameId' }, 400);
