@@ -5241,24 +5241,52 @@ async function cbbPanel(){
   }
 
 
+  /* One request per season, never all of them in one. A season is a full
+     scan of the play table on the database's side, so asking for a dozen in
+     a single call ran D1 out of CPU and the whole board came back empty.
+     Seasons are fetched one at a time and the table fills in as they land,
+     so a big selection shows its first rows immediately instead of waiting
+     on the slowest one. */
+  let pkLoadToken = 0;
   async function pkLoad(){
     pkPairKey = pkPicks.join(',');
-    const seasons = pkPicks.map(k => k.replace('|', ':')).join(',');
-    $b('#pk-note').textContent = 'Loading…';
+    const mine = ++pkLoadToken;
+    const picks = pkPicks.slice();
     $b('#pk-body').innerHTML = '';
     $b('#pk-detail').innerHTML = '';
     pkOpen = null;
-    try {
-      const d = await (await fetch(
-        `/api/rax?plays=board&seasons=${encodeURIComponent(seasons)}&min=${pkMin}`)).json();
-      if(d.error) throw new Error(d.error);
-      pkRows = d.rows || [];
-    } catch(e){
-      pkRows = [];
-      $b('#pk-note').textContent = 'Could not load pack data.';
+    pkRows = [];
+    const failed = [];
+    for(let i = 0; i < picks.length; i++){
+      if(mine !== pkLoadToken) return;            // a newer load took over
+      const pair = picks[i].replace('|', ':');
+      $b('#pk-note').textContent = picks.length > 1
+        ? `Loading season ${i + 1} of ${picks.length}…` : 'Loading…';
+      try {
+        const d = await (await fetch(
+          `/api/rax?plays=board&seasons=${encodeURIComponent(pair)}&min=${pkMin}`)).json();
+        if(mine !== pkLoadToken) return;
+        if(d.error) throw new Error(d.error);
+        if(d.errors && d.errors.length) throw new Error(d.errors[0].error || 'query failed');
+        pkRows = pkRows.concat(d.rows || []);
+        pkRows.sort((a, b) => Number(b.plays || 0) - Number(a.plays || 0));
+        pkPage = 0;
+        pkPaint();                                 // show what has arrived
+      } catch(e){
+        failed.push(pair.replace(':', ' '));
+      }
+    }
+    if(mine !== pkLoadToken) return;
+    if(!pkRows.length){
+      $b('#pk-note').textContent = failed.length
+        ? 'Could not load pack data.' : 'No players for this selection.';
       return;
     }
     pkPaint();
+    if(failed.length){
+      const n = $b('#pk-note');
+      n.textContent = n.textContent + ` · ${failed.join(', ')} could not be loaded`;
+    }
   }
 
   function pkRow(r){
