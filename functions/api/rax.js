@@ -512,9 +512,15 @@ const tagKey = label => {
   const n = normTag(label);
   return TAG_ALIASES[n] || n;
 };
-// family: rush | pass | td | fg | def | other
+/* family: football -> rush | pass | td | fg | def
+          baseball -> single | double | triple | homer | strikeout
+   Real's own collecting category is the reliable signal in both codes.
+   Baseball: 101 single, 102 double, 103 triple, 104 home run, 105 strikeout. */
+const MLB_FAMILY = { 101: 'single', 102: 'double', 103: 'triple',
+                     104: 'homer', 105: 'strikeout' };
 function playFamily(cat, type, subType) {
   const t = String(type || ''), st = String(subType || '');
+  if (cat != null && MLB_FAMILY[cat]) return MLB_FAMILY[cat];
   if (cat === 206) return 'def';
   if (cat === 205) return 'fg';
   if (t === 'Touchdown') return 'td';
@@ -606,7 +612,46 @@ const RULES_NCAAF = {
   lob:            { '*': 3 }
 };
 
-const RULES_BY_SPORT = { nfl: RULES_NFL, ncaaf: RULES_NCAAF };
+/* Baseball. Only four hit types and the strikeout mint anything, and the
+   same tag swings three tiers across them - a Missile is Legendary on a
+   single and Mystic on a triple. */
+const RULES_MLB = {
+  // iconic / mystic
+  ultimateslam:     { homer: 7 },
+  '500club':        { homer: 6 },
+  missile:          { single: 5, double: 5, triple: 6, homer: 6 },
+  // legendary
+  scorched:         { double: 5 },
+  insidethepark:    { homer: 5 },
+  immaculateinning: { strikeout: 5 },
+  '4kinning':       { strikeout: 5 },
+  gametying:        { triple: 5 },
+  twostrikes:       { triple: 5 },
+  fullcount:        { triple: 5 },
+  grounder:         { triple: 5 },
+  workingit:        { double: 5, homer: 5, single: 4, strikeout: 4 },
+  battle:           { double: 5, homer: 5, single: 4 },
+  popup:            { double: 5, single: 4 },
+  greenlight:       { double: 5, homer: 5, single: 4 },
+  walkoff:          { double: 5, homer: 5, single: 4 },
+  gas:              { triple: 5, double: 4, homer: 4 },
+  rope:             { triple: 5, homer: 4 },
+  rocket:           { triple: 5, single: 4, double: 4, homer: 4 },
+  gamewinner:       { triple: 5, double: 4 },
+  pinchhitter:      { homer: 5, single: 4, double: 4, triple: 4 },
+  // epic
+  leadoff:          { triple: 4 },
+  firstpitch:       { triple: 4 },
+  goahead:          { triple: 4 },
+  lucky:            { triple: 4, homer: 4 },
+  moonshot:         { homer: 4 },
+  towering:         { homer: 4 },
+  laser:            { homer: 4 },
+  grandslam:        { homer: 4 },
+  curves:           { strikeout: 4 }
+};
+
+const RULES_BY_SPORT = { nfl: RULES_NFL, ncaaf: RULES_NCAAF, mlb: RULES_MLB };
 // An unlisted sport gets no overrides at all rather than another code's.
 const rulesFor = sp => RULES_BY_SPORT[String(sp || '').toLowerCase()] || {};
 
@@ -652,7 +697,11 @@ const PLAYS_SPORTS = [
   { sport: 'nfl',   season: 2023 },
   { sport: 'ncaaf', season: 2025 },
   { sport: 'ncaaf', season: 2024 },
-  { sport: 'ncaaf', season: 2023 }
+  { sport: 'ncaaf', season: 2023 },
+  { sport: 'mlb',   season: 2026, rolling: true },
+  { sport: 'mlb',   season: 2025 },
+  { sport: 'mlb',   season: 2024 },
+  { sport: 'mlb',   season: 2023 }
 ];
 // A finished season is swept once and then left alone. The flag is set when
 // its walk laps, so the cron stops spending ticks on it.
@@ -699,7 +748,11 @@ function playBind(stmt, r, sport, season) {
     r.gameId == null ? null : Number(r.gameId), r.day || null,
     r.label || r.metricLabel || null, r.type || null, r.subType || null,
     r.collectingCategoryId == null ? null : Number(r.collectingCategoryId),
-    r.value == null ? null : Number(r.value),
+    // Baseball scores a strikeout negative from the batter's side; the card
+    // is worth the size of it, so -7.8 is a 7.8.
+    r.value == null ? null
+      : (sport === 'mlb' && r.collectingCategoryId != null
+          ? Math.abs(Number(r.value)) : Number(r.value)),
     r.primaryPlayerId == null ? null : Number(r.primaryPlayerId), playName(r.primaryPlayer),
     r.secondaryPlayerId == null ? null : Number(r.secondaryPlayerId), playName(r.secondaryPlayer),
     r.teamId == null ? null : Number(r.teamId),
@@ -1009,7 +1062,8 @@ export async function onRequestGet({ request, env }) {
       // Rules naming a tag whose id has never been seen cannot fire at all.
       const have = new Set(rows.map(x => x.key));
       return json({ rows, bySport, families: FAMS,
-        unresolvedRules: [...new Set(Object.keys(RULES_NFL).concat(Object.keys(RULES_NCAAF)))]
+        unresolvedRules: [...new Set(Object.keys(RULES_NFL)
+          .concat(Object.keys(RULES_NCAAF), Object.keys(RULES_MLB)))]
           .filter(k => !have.has(k)) });
     } catch (e) {
       return json({ error: 'could not read the tags', detail: String((e && e.message) || e) }, 503);
