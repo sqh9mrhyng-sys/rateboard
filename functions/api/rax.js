@@ -534,6 +534,14 @@ const MLB_FAMILY = { 101: 'single', 102: 'double', 103: 'triple',
 const NBA_FAMILY = { 1: 'dunk', 2: 'layup', 3: 'mid', 4: 'three', 5: 'ft' };
 // The women's game files its plays the same way, down to the category ids.
 const HOOPS = new Set(['nba', 'wnba']);
+/* Hockey. One row, two or three earners, and a different thing to each of
+   them: a shot on goal is a shot for the man who took it and a save for the
+   man who stopped it; a goal is a goal for the scorer and an assist for the
+   one or two who set it up. */
+const NHL_FAMILY = {
+  301: { 1: 'goal', 2: 'assist', 3: 'assist' },
+  303: { 1: 'shot', 2: 'save' }
+};
 /* A fumble recovery is a rare card at best. Only carrying it in lifts it, and
    that play is a touchdown in its own right. Without this, a tag that is
    legendary somewhere else - Beast mode on a run, Imposter on a throw - keeps
@@ -548,8 +556,12 @@ function fumbleCap(cat, type, subType) {
   return (/fumble/i.test(t) || /fumble/i.test(st)) ? FUMBLE_CAP : null;
 }
 
-function playFamily(cat, type, subType, sportOf) {
+function playFamily(cat, type, subType, sportOf, slot) {
   const t = String(type || ''), st = String(subType || '');
+  if (sportOf === 'nhl') {
+    const m = cat == null ? null : NHL_FAMILY[cat];
+    return (m && m[slot || 1]) || 'other';
+  }
   if (HOOPS.has(sportOf) && cat != null && NBA_FAMILY[cat]) return NBA_FAMILY[cat];
   if (cat != null && MLB_FAMILY[cat]) return MLB_FAMILY[cat];
   if (cat === 206) return 'def';
@@ -746,8 +758,37 @@ const RULES_WNBA = {
   bank:        { three: 4 }
 };
 
+/* Hockey, from Dennis's table. Families are what the play is to the man
+   being credited, not what kind of play it was. */
+const RULES_NHL = {
+  // iconic / mystic
+  ovechkin:      { goal: 7, assist: 6 },
+  goaliegoal:    { goal: 6 },
+  // legendary
+  deflection:    { goal: 5 },
+  wraparound:    { goal: 5 },
+  centericer:    { goal: 5 },
+  lacrosse:      { goal: 5, shot: 5, save: 5 },
+  batted:        { goal: 5, shot: 5, save: 5 },
+  hattie:        { goal: 5, assist: 5 },
+  dagger:        { goal: 5, assist: 5 },
+  lateregwinner: { goal: 5, assist: 5 },
+  skateoff:      { goal: 5, assist: 5 },
+  // epic
+  overtime:      { goal: 4, assist: 4 },
+  shorthand:     { goal: 4, assist: 4 },
+  emptynet:      { goal: 4, assist: 4 },
+  gamewinner:    { goal: 4, assist: 4 },
+  shootout:      { goal: 4 },
+  slapshot:      { goal: 4 },
+  tipin:         { goal: 4 },
+  backhand:      { goal: 4 },
+  bomb:          { goal: 4 },
+  snipe:         { goal: 4 }
+};
+
 const RULES_BY_SPORT = { nfl: RULES_NFL, ncaaf: RULES_NCAAF, mlb: RULES_MLB,
-                         nba: RULES_NBA, wnba: RULES_WNBA };
+                         nba: RULES_NBA, wnba: RULES_WNBA, nhl: RULES_NHL };
 
 /* The marketplace only ever shows a tag on one card, so the rarity harvested
    from it is whatever that card happened to be - Moonshot reads 4 because the
@@ -757,7 +798,8 @@ const RULES_BY_SPORT = { nfl: RULES_NFL, ncaaf: RULES_NCAAF, mlb: RULES_MLB,
    All three are complete: every football play tag reading epic or better
    already has a rule, and the ones that did not turned out to be performance
    tags, which no longer reach a play at all. */
-const CLOSED_RULES = { mlb: true, nfl: true, ncaaf: true, nba: true, wnba: true };
+const CLOSED_RULES = { mlb: true, nfl: true, ncaaf: true, nba: true, wnba: true,
+                       nhl: true };
 const BASE_CEILING = 3;
 const baseCeiling = sp => CLOSED_RULES[String(sp || '').toLowerCase()] ? BASE_CEILING : 7;
 
@@ -820,6 +862,10 @@ const PASS_CREDIT = `(type='PassCompleted'
    and the pitcher is credited off the secondary name instead. Category 105
    is baseball's alone, so football is untouched by it. */
 const STRIKEOUT = `COALESCE(cat, 0) = 105`;
+/* Every hockey play has a second man who earns from it - the goalie on a shot,
+   the assist on a goal - rather than the handful of play types that credit a
+   second name in the other codes. */
+const HOCKEY_SECOND = `COALESCE(cat, 0) IN (301, 303)`;
 // Every card play, once per player who earns a card from it.
 const CREDITED = `
   SELECT playerId AS pid, player AS pname, season, gameId, rarity, value, cat,
@@ -827,11 +873,20 @@ const CREDITED = `
     FROM plays WHERE sport=?1 AND season=?2 AND ${CARD_SQL}
      AND NOT ${STRIKEOUT}
   UNION ALL
-  SELECT player2Id AS pid, player2 AS pname, season, gameId, rarity, value, cat,
+  SELECT player2Id AS pid, player2 AS pname, season, gameId,
+         COALESCE(rarity2, rarity) AS rarity, value, cat,
          type, subType, id, day, tags
     FROM plays WHERE sport=?1 AND season=?2 AND ${CARD_SQL}
      AND player2Id IS NOT NULL AND player2Id <> COALESCE(playerId, -1)
-     AND (${PASS_CREDIT} OR ${STRIKEOUT})`;
+     AND (${PASS_CREDIT} OR ${STRIKEOUT} OR ${HOCKEY_SECOND})
+  UNION ALL
+  /* Hockey's second assist. No other sport files a third earner. */
+  SELECT player3Id AS pid, player3 AS pname, season, gameId,
+         COALESCE(rarity3, rarity) AS rarity, value, cat,
+         type, subType, id, day, tags
+    FROM plays WHERE sport=?1 AND season=?2 AND ${CARD_SQL}
+     AND player3Id IS NOT NULL AND player3Id <> COALESCE(playerId, -1)
+     AND player3Id <> COALESCE(player2Id, -1) AND cat = 301`;
 
 /* ---- performances ---------------------------------------------------
    A performance is the player's whole game line: its own card, its own
@@ -889,7 +944,12 @@ const PLAYS_SPORTS = [
   // The women's game. Three seasons is all Real holds.
   { sport: 'wnba',  season: 2026, rolling: true, pri: 12 },
   { sport: 'wnba',  season: 2025, pri: 13 },
-  { sport: 'wnba',  season: 2024, pri: 14 }
+  { sport: 'wnba',  season: 2024, pri: 14 },
+  // Hockey last.
+  { sport: 'nhl',   season: 2026, rolling: true, pri: 15 },
+  { sport: 'nhl',   season: 2025, pri: 16 },
+  { sport: 'nhl',   season: 2024, pri: 17 },
+  { sport: 'nhl',   season: 2023, pri: 18 }
 ];
 // Performance box scores are collected only once every play queue above has
 // lapped, so they never compete with the sweep for a tick.
@@ -913,7 +973,11 @@ const PERF_QUEUE = [
   { sport: 'nba',   season: 2023 },
   { sport: 'wnba',  season: 2026 },
   { sport: 'wnba',  season: 2025 },
-  { sport: 'wnba',  season: 2024 }
+  { sport: 'wnba',  season: 2024 },
+  { sport: 'nhl',   season: 2026 },
+  { sport: 'nhl',   season: 2025 },
+  { sport: 'nhl',   season: 2024 },
+  { sport: 'nhl',   season: 2023 }
 ];
 const perfDoneKey = (sp, se) => `perf_done_${sp}_${se}`;
 const sweptKey = (sp, se) => `plays_swept_${sp}_${se}`;
@@ -929,7 +993,7 @@ const GAMES_PER_TICK = 10;        // games per call, each one a full game
 /* Measured at about a sixth of a second a game with five in the air, so a
    hundred and fifty of them is twenty-five seconds - comfortably inside the
    minute between ticks, and no faster a burst than before, just a longer one. */
-const GAMES_PER_TICK_BY_SPORT = { mlb: 150, ncaaf: 90, nfl: 60, nba: 120, wnba: 120 };
+const GAMES_PER_TICK_BY_SPORT = { mlb: 150, ncaaf: 90, nfl: 60, nba: 120, wnba: 120, nhl: 120 };
 /* How many of those feeds are in the air at once. Five keeps the call well
    inside its minute while asking Real for no more per second than a person
    clicking through games quickly would. */
@@ -952,6 +1016,15 @@ async function playsReady(db) {
      cannot tell them apart and had been letting a performance tag's rarity
      land on a play. */
   try { await db.prepare('ALTER TABLE tags ADD COLUMN kind TEXT').run(); } catch (e) {}
+  /* Hockey puts up to three earners on one play - a goal carries its scorer
+     and both assists - and what the play is worth depends on which of them
+     you are asking about: the same row is a goal for the scorer and an assist
+     for the man who fed him. So the third name gets a column, and so does the
+     rarity of each side. */
+  for (const c of ['player3Id INTEGER', 'player3 TEXT',
+                   'rarity2 INTEGER', 'rarity3 INTEGER']) {
+    try { await db.prepare(`ALTER TABLE plays ADD COLUMN ${c}`).run(); } catch (e) {}
+  }
   try { await db.prepare('ALTER TABLE tags ADD COLUMN altRarity TEXT').run(); } catch (e) {}
   for (const ix of [
     'CREATE INDEX IF NOT EXISTS plays_sp ON plays (sport, season, playerId)',
@@ -968,9 +1041,10 @@ const playName = o => o ? [o.firstName, o.lastName].filter(Boolean).join(' ') ||
 function playStmt(db) {
   return db.prepare(
     `INSERT INTO plays (id, sport, season, seasonType, gameId, day, label, type, subType,
-                        cat, value, playerId, player, player2Id, player2, teamId, oppTeamId,
+                        cat, value, playerId, player, player2Id, player2,
+                        player3Id, player3, teamId, oppTeamId,
                         period, clock, down, togo, yards, epa, tags, seenAt)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      /* The key is (id, sport) now: a college play and a pro one can carry the
         same id, and naming only the id here matches no constraint at all, so
         every insert fails. The conflict target has to be the whole key. */
@@ -979,6 +1053,7 @@ function playStmt(db) {
        label=excluded.label, type=excluded.type, subType=excluded.subType,
        playerId=excluded.playerId, player=excluded.player,
        player2Id=excluded.player2Id, player2=excluded.player2,
+       player3Id=excluded.player3Id, player3=excluded.player3,
        tags=excluded.tags, seenAt=excluded.seenAt`);
 }
 
@@ -997,6 +1072,9 @@ function playBind(stmt, r, sport, season) {
           ? Math.abs(Number(r.value)) : Number(r.value)),
     r.primaryPlayerId == null ? null : Number(r.primaryPlayerId), playName(r.primaryPlayer),
     r.secondaryPlayerId == null ? null : Number(r.secondaryPlayerId), playName(r.secondaryPlayer),
+    // Hockey's second assist. The fourth name on a goal is the goalie it went
+    // past, who earns nothing for it, so it is not kept.
+    r.tertiaryPlayerId == null ? null : Number(r.tertiaryPlayerId), playName(r.tertiaryPlayer),
     r.teamId == null ? null : Number(r.teamId),
     r.opponentTeamId == null ? null : Number(r.opponentTeamId),
     r.period == null ? null : Number(r.period),
@@ -1748,8 +1826,8 @@ export async function onRequestGet({ request, env }) {
            nothing, so counting them would leave every finished season
            stuck short of full for ever. */
         `SELECT sport, season, COUNT(DISTINCT gameId) AS games
-           FROM gamelog WHERE sport IN ('nfl','ncaaf','mlb','nba','wnba')
-            AND (${['nfl', 'ncaaf', 'mlb', 'nba', 'wnba'].map(sp =>
+           FROM gamelog WHERE sport IN ('nfl','ncaaf','mlb','nba','wnba','nhl')
+            AND (${['nfl', 'ncaaf', 'mlb', 'nba', 'wnba', 'nhl'].map(sp =>
                  `(sport='${sp}' AND seasonType IN (${seasonTypeSql(sp)}))`).join(' OR ')})
           GROUP BY sport, season`).all();
       for (const x of (r.results || [])) logged.set(`${x.sport}|${x.season}`, Number(x.games) || 0);
@@ -2025,8 +2103,9 @@ export async function onRequestGet({ request, env }) {
     const CEIL = baseCeiling(sport);
     const fam = {};
     for (const r of rows) {
-      const f = playFamily(r.cat == null ? null : Number(r.cat), r.type, r.subType,
-                           String(sport || '').toLowerCase());
+      const spl = String(sport || '').toLowerCase();
+      const cat = r.cat == null ? null : Number(r.cat);
+      const f = playFamily(cat, r.type, r.subType, spl, 1);
       let best = 0, miss = false;
       for (const bit of String(r.tags).split(',')) {
         const id = Number(bit);
@@ -2041,12 +2120,35 @@ export async function onRequestGet({ request, env }) {
         best = Math.max(best, lvl);
       }
       if (miss) unknown++;
-      const cap = fumbleCap(r.cat == null ? null : Number(r.cat), r.type, r.subType);
+      const cap = fumbleCap(cat, r.type, r.subType);
       if (cap != null && best > cap) best = cap;
       fam[f] = (fam[f] || 0) + 1;
-      const lvl = best || 0;
-      if (!byLevel.has(lvl)) byLevel.set(lvl, []);
-      byLevel.get(lvl).push(Number(r.id));
+      /* The second and third names on the play are worth working out again:
+         in hockey the same row is a goal to one man and an assist to another.
+         Everywhere else the family is the same for all of them, so this costs
+         one comparison and the answer is reused. */
+      const slots = { 1: best || 0 };
+      for (const slot of [2, 3]) {
+        const f2 = playFamily(cat, r.type, r.subType, spl, slot);
+        if (f2 === f) { slots[slot] = slots[1]; continue; }
+        let b2 = 0;
+        for (const bit of String(r.tags).split(',')) {
+          const id = Number(bit);
+          if (!id || notPlay.has(id)) continue;
+          const key = tagKeyById.get(id) || PINS[id] || null;
+          const rule = key ? RULES[key] : null;
+          const ruled = rule ? (rule[f2] != null ? rule[f2] : rule['*']) : null;
+          if (ruled == null && !tagRar.has(id)) continue;
+          b2 = Math.max(b2, ruled != null ? ruled : Math.min(tagRar.get(id), CEIL));
+        }
+        slots[slot] = b2;
+      }
+      for (const slot of [1, 2, 3]) {
+        const col = slot === 1 ? 'rarity' : `rarity${slot}`;
+        const k = `${col}|${slots[slot]}`;
+        if (!byLevel.has(k)) byLevel.set(k, []);
+        byLevel.get(k).push(Number(r.id));
+      }
     }
     /* The ids go into the statement as numbers rather than as bound values:
        D1 allows only a hundred bound parameters per statement, and binding
@@ -2054,13 +2156,17 @@ export async function onRequestGet({ request, env }) {
        for ever. They come from this database as integers and are coerced
        again here, so nothing but a number can reach the text. */
     const writes = [];
-    for (const [lvl, ids] of byLevel) {
+    for (const [k, ids] of byLevel) {
+      const [col, lvlText] = String(k).split('|');
+      const lvl = Number(lvlText);
+      // The column name is one of three literals chosen above, never input.
+      const COL = col === 'rarity2' ? 'rarity2' : col === 'rarity3' ? 'rarity3' : 'rarity';
       for (let i = 0; i < ids.length; i += 800) {
         const list = ids.slice(i, i + 800).map(x => Number(x))
           .filter(Number.isFinite).join(',');
         if (!list) continue;
         writes.push(db.prepare(
-          `UPDATE plays SET rarity=? WHERE sport=? AND id IN (${list})`).bind(lvl, sport));
+          `UPDATE plays SET ${COL}=? WHERE sport=? AND id IN (${list})`).bind(lvl, sport));
       }
     }
     for (let i = 0; i < writes.length; i += 10) {
@@ -2286,8 +2392,9 @@ export async function onRequestGet({ request, env }) {
     const CEIL = baseCeiling(sport);
     const fam = {};
     for (const r of rows) {
-      const f = playFamily(r.cat == null ? null : Number(r.cat), r.type, r.subType,
-                           String(sport || '').toLowerCase());
+      const spl = String(sport || '').toLowerCase();
+      const cat = r.cat == null ? null : Number(r.cat);
+      const f = playFamily(cat, r.type, r.subType, spl, 1);
       let best = 0, miss = false;
       for (const bit of String(r.tags).split(',')) {
         const id = Number(bit);
@@ -2302,12 +2409,35 @@ export async function onRequestGet({ request, env }) {
         best = Math.max(best, lvl);
       }
       if (miss) unknown++;
-      const cap = fumbleCap(r.cat == null ? null : Number(r.cat), r.type, r.subType);
+      const cap = fumbleCap(cat, r.type, r.subType);
       if (cap != null && best > cap) best = cap;
       fam[f] = (fam[f] || 0) + 1;
-      const lvl = best || 0;
-      if (!byLevel.has(lvl)) byLevel.set(lvl, []);
-      byLevel.get(lvl).push(Number(r.id));
+      /* The second and third names on the play are worth working out again:
+         in hockey the same row is a goal to one man and an assist to another.
+         Everywhere else the family is the same for all of them, so this costs
+         one comparison and the answer is reused. */
+      const slots = { 1: best || 0 };
+      for (const slot of [2, 3]) {
+        const f2 = playFamily(cat, r.type, r.subType, spl, slot);
+        if (f2 === f) { slots[slot] = slots[1]; continue; }
+        let b2 = 0;
+        for (const bit of String(r.tags).split(',')) {
+          const id = Number(bit);
+          if (!id || notPlay.has(id)) continue;
+          const key = tagKeyById.get(id) || PINS[id] || null;
+          const rule = key ? RULES[key] : null;
+          const ruled = rule ? (rule[f2] != null ? rule[f2] : rule['*']) : null;
+          if (ruled == null && !tagRar.has(id)) continue;
+          b2 = Math.max(b2, ruled != null ? ruled : Math.min(tagRar.get(id), CEIL));
+        }
+        slots[slot] = b2;
+      }
+      for (const slot of [1, 2, 3]) {
+        const col = slot === 1 ? 'rarity' : `rarity${slot}`;
+        const k = `${col}|${slots[slot]}`;
+        if (!byLevel.has(k)) byLevel.set(k, []);
+        byLevel.get(k).push(Number(r.id));
+      }
     }
     /* The ids go into the statement as numbers rather than as bound values:
        D1 allows only a hundred bound parameters per statement, and binding
@@ -2315,13 +2445,17 @@ export async function onRequestGet({ request, env }) {
        for ever. They come from this database as integers and are coerced
        again here, so nothing but a number can reach the text. */
     const writes = [];
-    for (const [lvl, ids] of byLevel) {
+    for (const [k, ids] of byLevel) {
+      const [col, lvlText] = String(k).split('|');
+      const lvl = Number(lvlText);
+      // The column name is one of three literals chosen above, never input.
+      const COL = col === 'rarity2' ? 'rarity2' : col === 'rarity3' ? 'rarity3' : 'rarity';
       for (let i = 0; i < ids.length; i += 800) {
         const list = ids.slice(i, i + 800).map(x => Number(x))
           .filter(Number.isFinite).join(',');
         if (!list) continue;
         writes.push(db.prepare(
-          `UPDATE plays SET rarity=? WHERE sport=? AND id IN (${list})`).bind(lvl, sport));
+          `UPDATE plays SET ${COL}=? WHERE sport=? AND id IN (${list})`).bind(lvl, sport));
       }
     }
     for (let i = 0; i < writes.length; i += 10) {
