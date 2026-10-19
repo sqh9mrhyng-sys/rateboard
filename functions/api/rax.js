@@ -1387,6 +1387,54 @@ export async function onRequestGet({ request, env }) {
   /* What the cron is actually doing, for the admin bar on the board. Two
      grouped reads rather than one per season, so a glance at it costs the
      database about as much as loading one season of the table. */
+  /* Games the log knows about that have no plays. The walk is a one-way
+     cursor, so a game that lands in the log after the cursor has gone past
+     its id is never picked up until the whole season is walked again - and a
+     finished season never is. This finds them, and fill=1 collects them. */
+  if (url.searchParams.get('plays') === 'gaps') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    await playsReady(db);
+    let miss = [];
+    try {
+      const r = await db.prepare(
+        `SELECT DISTINCT g.gameId AS id FROM gamelog g
+          WHERE g.sport=?1 AND g.season=?2
+            AND g.seasonType IN ('regularseason','postseason')
+            AND NOT EXISTS (SELECT 1 FROM plays p
+                             WHERE p.sport=?1 AND p.season=?2 AND p.gameId=g.gameId)
+          ORDER BY g.gameId LIMIT 400`).bind(sport, Number(season)).all();
+      miss = (r.results || []).map(x => Number(x.id)).filter(Boolean);
+    } catch (e) {
+      return json({ error: 'could not look for gaps', detail: String((e && e.message) || e) }, 503);
+    }
+    if (url.searchParams.get('fill') !== '1') {
+      return json({ sport, season, missing: miss.length, gameIds: miss.slice(0, 60) });
+    }
+    const take = miss.slice(0, Math.max(1, Math.min(40,
+      parseInt(url.searchParams.get('n') || '20', 10) || 20)));
+    const stmt = playStmt(db);
+    let stored = 0, asked = 0;
+    for (const id of take) {
+      let d;
+      try {
+        d = await rsGet(`https://web.realapp.com/games/${id}/sport/${sport}`
+          + `/feed?version=2&view=all&viewFrame=default`, auth);
+      } catch (e) { continue; }
+      asked++;
+      const rows = Array.isArray(d && d.plays) ? d.plays : rowsOf(d);
+      const batch = [];
+      for (const r of rows) {
+        if (!r || !r.id) continue;
+        if (r.seasonType && r.seasonType !== 'regularseason' && r.seasonType !== 'postseason') continue;
+        batch.push(playBind(stmt, r, sport, season));
+      }
+      if (batch.length) { try { await db.batch(batch); stored += batch.length; } catch (e) {} }
+      await sleep(40);
+    }
+    return json({ sport, season, stillMissing: miss.length - asked, asked, stored });
+  }
+
   if (url.searchParams.get('plays') === 'progress') {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
@@ -1394,8 +1442,12 @@ export async function onRequestGet({ request, env }) {
     const logged = new Map(), got = new Map();
     try {
       const r = await db.prepare(
+        /* Preseason and spring training sit in the game log but mint
+           nothing, so counting them would leave every finished season
+           stuck short of full for ever. */
         `SELECT sport, season, COUNT(DISTINCT gameId) AS games
            FROM gamelog WHERE sport IN ('nfl','ncaaf','mlb')
+            AND seasonType IN ('regularseason','postseason')
           GROUP BY sport, season`).all();
       for (const x of (r.results || [])) logged.set(`${x.sport}|${x.season}`, Number(x.games) || 0);
     } catch (e) {}
