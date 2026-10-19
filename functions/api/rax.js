@@ -912,6 +912,21 @@ function playBind(stmt, r, sport, season) {
     Date.now());
 }
 
+/* Which kinds of game mint cards. Baseball adds 'allstar', which is what
+   Real files the World Baseball Classic under - the international games, and
+   the tune-ups a national side plays against a club. Every hit and strikeout
+   in those counts, and the filter had been throwing all of them away. The
+   MLB All-Star Game itself sits in the same bucket and now counts too. */
+const SEASON_TYPES = {
+  mlb: ['regularseason', 'postseason', 'allstar']
+};
+const SEASON_TYPES_DEFAULT = ['regularseason', 'postseason'];
+const seasonTypesFor = sp =>
+  SEASON_TYPES[String(sp || '').toLowerCase()] || SEASON_TYPES_DEFAULT;
+const keepsPlays = (sp, st) => !st || seasonTypesFor(sp).includes(String(st));
+// For putting the same list into SQL. The values are ours, not anyone's input.
+const seasonTypeSql = sp => seasonTypesFor(sp).map(x => `'${x}'`).join(',');
+
 const RESCAN_DAY = { ncaaf: 0, soccer: 1, nfl: 2, ncaam: 3, nba: 4, nhl: 5, mlb: 6, wnba: 6, golf: 6 };
 const RESCAN_SEASON = { ncaaf: 2026, soccer: 2026, nfl: 2026, ncaam: 2026, nba: 2026,
                         nhl: 2026, mlb: 2026, wnba: 2026, golf: 2026 };
@@ -1018,7 +1033,7 @@ export async function onRequestGet({ request, env }) {
       const batch = [];
       for (const r of rows) {
         if (!r || !r.id || !Number.isFinite(Number(r.id))) continue;
-        if (r.seasonType && r.seasonType !== 'regularseason' && r.seasonType !== 'postseason') continue;
+        if (!keepsPlays(sport, r.seasonType)) continue;
         batch.push(playBind(stmt, r, sport, season));
       }
       /* Chunked, and the count is what actually landed. An unchunked batch
@@ -1238,7 +1253,7 @@ export async function onRequestGet({ request, env }) {
       const batch = [];
       for (const r of rows) {
         if (!r || !r.id || !Number.isFinite(Number(r.id))) continue;
-        if (r.seasonType && r.seasonType !== 'regularseason' && r.seasonType !== 'postseason') continue;
+        if (!keepsPlays(sport, r.seasonType)) continue;
         batch.push(playBind(stmt, r, sport, season));
       }
       let wrote = 0;
@@ -1346,7 +1361,7 @@ export async function onRequestGet({ request, env }) {
       const batch = [];
       for (const r of ((d && d.playerBoxScores) || [])) {
         if (!r || r.id == null) continue;
-        if (r.seasonType && r.seasonType !== 'regularseason' && r.seasonType !== 'postseason') continue;
+        if (!keepsPlays(sport, r.seasonType)) continue;
         const tg = [].concat(r.performanceTags || [], r.performanceTagsManual || [])
           .map(x => (x && x.id != null) ? Number(x.id) : Number(x))
           .filter(n => Number.isFinite(n));
@@ -1549,7 +1564,7 @@ export async function onRequestGet({ request, env }) {
       const r = await db.prepare(
         `SELECT DISTINCT g.gameId AS id FROM gamelog g
           WHERE g.sport=?1 AND g.season=?2
-            AND g.seasonType IN ('regularseason','postseason')
+            AND g.seasonType IN (${seasonTypeSql(sport)})
             AND NOT EXISTS (SELECT 1 FROM plays p
                              WHERE p.sport=?1 AND p.season=?2 AND p.gameId=g.gameId)
           ORDER BY g.gameId LIMIT 400`).bind(sport, Number(season)).all();
@@ -1575,7 +1590,7 @@ export async function onRequestGet({ request, env }) {
       const batch = [];
       for (const r of rows) {
         if (!r || !r.id || !Number.isFinite(Number(r.id))) continue;
-        if (r.seasonType && r.seasonType !== 'regularseason' && r.seasonType !== 'postseason') continue;
+        if (!keepsPlays(sport, r.seasonType)) continue;
         batch.push(playBind(stmt, r, sport, season));
       }
       /* Chunked, and the count is what actually landed. An unchunked batch
@@ -1602,7 +1617,8 @@ export async function onRequestGet({ request, env }) {
            stuck short of full for ever. */
         `SELECT sport, season, COUNT(DISTINCT gameId) AS games
            FROM gamelog WHERE sport IN ('nfl','ncaaf','mlb')
-            AND seasonType IN ('regularseason','postseason')
+            AND (${['nfl', 'ncaaf', 'mlb'].map(sp =>
+                 `(sport='${sp}' AND seasonType IN (${seasonTypeSql(sp)}))`).join(' OR ')})
           GROUP BY sport, season`).all();
       for (const x of (r.results || [])) logged.set(`${x.sport}|${x.season}`, Number(x.games) || 0);
     } catch (e) {}
@@ -1772,7 +1788,7 @@ export async function onRequestGet({ request, env }) {
                   (SELECT DISTINCT gameId FROM plays WHERE sport=?1 AND season=?2)
                   THEN gameId END) AS swept
            FROM gamelog WHERE sport=?1 AND season=?2 AND playerId=?3
-             AND seasonType IN ('regularseason','postseason')`)
+             AND seasonType IN (${seasonTypeSql(sport)})`)
         .bind(sport, Number(season), pid).first();
       if (cov) {
         out.team = cov.team || null;
@@ -1985,7 +2001,7 @@ export async function onRequestGet({ request, env }) {
                     MAX(g.team) AS team, l.owners AS owners
                FROM gamelog g LEFT JOIN latest l ON l.playerId = g.playerId
               WHERE g.sport=?1 AND g.season=?2
-                AND g.seasonType IN ('regularseason','postseason')
+                AND g.seasonType IN (${seasonTypeSql(pr.sport)})
               GROUP BY g.playerId`).bind(pr.sport, pr.season).all();
           for (const x of (e.results || [])) extra.set(Number(x.playerId), x);
         } catch (err) {}
@@ -2032,7 +2048,7 @@ export async function onRequestGet({ request, env }) {
                   (SELECT DISTINCT gameId FROM plays WHERE sport=?1 AND season=?2)
                   THEN gameId END) AS swept
            FROM gamelog WHERE sport=?1 AND season=?2 AND playerId=?3
-             AND seasonType IN ('regularseason','postseason')`)
+             AND seasonType IN (${seasonTypeSql(sport)})`)
         .bind(sport, Number(season), pid).first();
       if (cov) {
         out.team = cov.team || null;
@@ -2232,7 +2248,7 @@ export async function onRequestGet({ request, env }) {
                     (SELECT DISTINCT gameId FROM plays WHERE sport=?1 AND season=?2)
                     THEN gameId END) AS swept
              FROM gamelog
-            WHERE sport=?1 AND season=?2 AND seasonType IN ('regularseason','postseason')
+            WHERE sport=?1 AND season=?2 AND seasonType IN (${seasonTypeSql(sport)})
             GROUP BY playerId`).bind(sport, Number(season)).all();
         const own = new Map();
         for (const r of (g.results || [])) own.set(Number(r.playerId), r);
@@ -2251,7 +2267,7 @@ export async function onRequestGet({ request, env }) {
       try {
         const p1 = await db.prepare(
           `SELECT COUNT(DISTINCT gameId) AS n, MAX(day) AS newest FROM gamelog
-            WHERE sport=? AND season=? AND seasonType IN ('regularseason','postseason')`)
+            WHERE sport=? AND season=? AND seasonType IN (${seasonTypeSql(sport)})`)
           .bind(sport, Number(season)).first();
         const p2 = await db.prepare(
           `SELECT COUNT(DISTINCT gameId) AS n FROM plays WHERE sport=? AND season=?`)
@@ -2259,7 +2275,7 @@ export async function onRequestGet({ request, env }) {
         const p3 = await db.prepare(
           `SELECT MAX(n) AS mx, MIN(n) AS mn, COUNT(*) AS teams, SUM(n) AS total FROM (
              SELECT team, COUNT(DISTINCT gameId) AS n FROM gamelog
-              WHERE sport=? AND season=? AND seasonType IN ('regularseason','postseason')
+              WHERE sport=? AND season=? AND seasonType IN (${seasonTypeSql(sport)})
               GROUP BY team)`).bind(sport, Number(season)).first();
         const mx = Number((p3 || {}).mx) || 0, teams = Number((p3 || {}).teams) || 0;
         // Teams on a bye have played fewer, so the expected total is the sum
