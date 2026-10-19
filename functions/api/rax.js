@@ -1029,8 +1029,12 @@ export async function onRequestGet({ request, env }) {
     if (!db) return json({ error: 'no database binding' }, 503);
     await playsReady(db);
     const day = String(url.searchParams.get('day') || '').slice(0, 10);
+    const gid = String(url.searchParams.get('gameId') || '').replace(/[^0-9]/g, '');
     const q = String(url.searchParams.get('q') || '').slice(0, 60);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return json({ error: 'day must be YYYY-MM-DD' }, 400);
+    // Back seasons were collected before the day column was filled, so a game
+    // id has to work as well as a date.
+    if (!gid && !/^\d{4}-\d{2}-\d{2}$/.test(day))
+      return json({ error: 'need a gameId, or a day as YYYY-MM-DD' }, 400);
     const known = new Map();
     try {
       const t = await db.prepare('SELECT id, label, rarity FROM tags WHERE sport=?').bind(sport).all();
@@ -1041,9 +1045,11 @@ export async function onRequestGet({ request, env }) {
       const r = await db.prepare(
         `SELECT id, day, clock, period, label, type, subType, cat, value, rarity,
                 player, player2, tags
-           FROM plays WHERE sport=?1 AND day=?2 AND tags IS NOT NULL
+           FROM plays WHERE sport=?1 AND tags IS NOT NULL
+            AND (?5 = '' OR gameId = CAST(?5 AS INTEGER))
+            AND (?5 <> '' OR day = ?2)
             AND (?3 = '' OR COALESCE(player,'') LIKE ?4 OR COALESCE(player2,'') LIKE ?4)
-          ORDER BY id LIMIT 120`).bind(sport, day, q, `%${q}%`).all();
+          ORDER BY id LIMIT 300`).bind(sport, day, q, `%${q}%`, gid).all();
       rows = r.results || [];
     } catch (e) { return json({ error: 'could not read plays', detail: String((e && e.message) || e) }, 503); }
     const unknownIds = new Set();
@@ -1057,7 +1063,7 @@ export async function onRequestGet({ request, env }) {
                type: r.type, subType: r.subType, cat: r.cat, value: r.value,
                scored: r.rarity, player: r.player, player2: r.player2, tags };
     });
-    return json({ sport, season, day, q, plays: out, unknownTagIds: [...unknownIds] });
+    return json({ sport, season, day, gameId: gid || null, q, plays: out, unknownTagIds: [...unknownIds] });
   }
 
   if (url.searchParams.get('plays') === 'findgame') {
