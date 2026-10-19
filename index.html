@@ -711,7 +711,7 @@ function opsRows(list){
       + opsBar(q.scored, q.plays, 'sc')
       + `</div><div class="opsnum">`
       + `${Number(q.gamesCollected).toLocaleString()}/${Number(q.gamesLogged).toLocaleString()} games<br>`
-      + `${opsPct(q.scored, q.plays)}% scored</div></div>`;
+      + `${opsPct(q.scored, q.plays)}% rated</div></div>`;
   }).join('');
 }
 async function opsPaint(){
@@ -733,11 +733,15 @@ async function opsPaint(){
     const plays = q.reduce((a, x) => a + x.plays, 0);
     const sc    = q.reduce((a, x) => a + x.scored, 0);
     $b2('#ops-sub').textContent = `${games.toLocaleString()} of ${logd.toLocaleString()} games`
-      + ` · ${opsPct(sc, plays)}% scored · tick ${Number(d.tick).toLocaleString()}`;
+      + ` · ${opsPct(sc, plays)}% of plays rated · tick ${Number(d.tick).toLocaleString()}`;
     const order = q.slice().sort((a, b) => (a.pri - b.pri) || (b.season - a.season));
     const perf = (d.perf || []).reduce((a, x) => a + Number(x.rows_ || 0), 0);
     const perfLeft = (d.perfQueue || []).filter(x => !x.done).length;
     $b2('#ops-body').innerHTML = opsRows(order)
+      + `<p class="note" style="margin:10px 0 0">Orange: games collected out of`
+      + ` the games Real lists. Grey: plays given a rarity, out of the plays`
+      + ` that carry tags - a period marker or an empty kickoff can never have`
+      + ` one, so they are left out of the count.</p>`
       + `<div class="opshd">Performances</div>`
       + `<p class="note" style="margin:0">${perf.toLocaleString()} rows held`
       + ` · ${perfLeft} of ${(d.perfQueue || []).length} seasons still to collect`
