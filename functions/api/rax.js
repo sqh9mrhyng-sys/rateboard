@@ -518,6 +518,20 @@ const tagKey = label => {
    Baseball: 101 single, 102 double, 103 triple, 104 home run, 105 strikeout. */
 const MLB_FAMILY = { 101: 'single', 102: 'double', 103: 'triple',
                      104: 'homer', 105: 'strikeout' };
+/* A fumble recovery is a rare card at best. Only carrying it in lifts it, and
+   that play is a touchdown in its own right. Without this, a tag that is
+   legendary somewhere else - Beast mode on a run, Imposter on a throw - keeps
+   its harvested number when it turns up on the recovery, because the rules
+   have nothing to say about that context and the marketplace base is the only
+   number left. */
+const FUMBLE_CAP = 3;
+function fumbleCap(cat, type, subType) {
+  if (Number(cat) !== 206) return null;
+  const t = String(type || ''), st = String(subType || '');
+  if (t === 'Touchdown') return null;
+  return (/fumble/i.test(t) || /fumble/i.test(st)) ? FUMBLE_CAP : null;
+}
+
 function playFamily(cat, type, subType) {
   const t = String(type || ''), st = String(subType || '');
   if (cat != null && MLB_FAMILY[cat]) return MLB_FAMILY[cat];
@@ -794,6 +808,12 @@ const SCORE_BATCH = 8000;        // plays rescored per call
 // list and can be walked in bigger strides.
 const PLAYS_PER_TICK = 24;        // players per call
 const GAMES_PER_TICK = 10;        // games per call, each one a full game
+/* A baseball game's feed is around eighty plays where a football game's is
+   nearer a hundred and seventy-five, so more of them fit in a tick without
+   the call running any longer than a football one already does. */
+const GAMES_PER_TICK_BY_SPORT = { mlb: 24, ncaaf: 12, nfl: 10 };
+const gamesPerTick = sp => GAMES_PER_TICK_BY_SPORT[String(sp || '').toLowerCase()]
+  || GAMES_PER_TICK;
 
 async function playsReady(db) {
   await db.prepare(PLAYS_DDL).run();
@@ -933,7 +953,7 @@ export async function onRequestGet({ request, env }) {
     let ids = [];
     try {
       const r = await db.prepare(q).bind(sport, Number(season), after,
-                     from === 'games' ? GAMES_PER_TICK : PLAYS_PER_TICK).all();
+                     from === 'games' ? gamesPerTick(sport) : PLAYS_PER_TICK).all();
       ids = (r.results || []).map(x => Number(x.n)).filter(Boolean);
     } catch (e) { return json({ error: 'could not read the game log', detail: String((e && e.message) || e) }, 503); }
 
@@ -1556,6 +1576,8 @@ export async function onRequestGet({ request, env }) {
         best = Math.max(best, lvl);
       }
       if (miss) unknown++;
+      const cap = fumbleCap(r.cat == null ? null : Number(r.cat), r.type, r.subType);
+      if (cap != null && best > cap) best = cap;
       fam[f] = (fam[f] || 0) + 1;
       batch.push(stmt.bind(best || 0, Number(r.id)));
     }
@@ -1789,6 +1811,8 @@ export async function onRequestGet({ request, env }) {
         best = Math.max(best, lvl);
       }
       if (miss) unknown++;
+      const cap = fumbleCap(r.cat == null ? null : Number(r.cat), r.type, r.subType);
+      if (cap != null && best > cap) best = cap;
       fam[f] = (fam[f] || 0) + 1;
       batch.push(stmt.bind(best || 0, Number(r.id)));
     }
@@ -2322,8 +2346,10 @@ export async function onRequestGet({ request, env }) {
       /* One job per tick, never two calls to Real at once. Scoring has to
          keep pace with collection now that whole back seasons are coming in,
          so it runs every fifth tick rather than twice an hour. */
-      const step = n % 30 === 0 ? 'tags' : n % 5 === 2 ? 'score'
-                 : n % 2 === 0 ? 'games' : null;
+      /* Collecting used to take every other tick and idle on the rest. The
+         idle half is now spent collecting too, which is most of the speed-up;
+         scoring and the tag sweep keep the ticks they had. */
+      const step = n % 30 === 0 ? 'tags' : n % 5 === 2 ? 'score' : 'games';
       if (step) {
         /* Strict order. Every queue line carries a pri; the lowest pri with
            anything left takes the tick, so the backlog is worked in the order
@@ -2363,7 +2389,7 @@ export async function onRequestGet({ request, env }) {
         } else if (pool.length || step !== 'games') {
           const base = pool.length ? pool : PLAYS_SPORTS;
           const sp = step === 'games'
-            ? base[Math.floor(n / 2) % base.length]
+            ? base[n % base.length]
             : PLAYS_SPORTS[Math.floor(n / 5) % PLAYS_SPORTS.length];
           const u = new URL(url);
           // The tag sweep rotates through the rarity tiers: the top-end tags
