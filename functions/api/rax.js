@@ -677,9 +677,10 @@ const RULES_BY_SPORT = { nfl: RULES_NFL, ncaaf: RULES_NCAAF, mlb: RULES_MLB };
    listing was a home run, and that 4 then followed Moonshot onto a single.
    Where the rule table is complete, every context above rare is written down,
    so a harvested reading above rare that no rule backs is not believed.
-   Baseball's table is complete. Football's is not yet, so it keeps the old
-   behaviour until its dictionary is filled in the same way. */
-const CLOSED_RULES = { mlb: true };
+   All three are complete: every football play tag reading epic or better
+   already has a rule, and the ones that did not turned out to be performance
+   tags, which no longer reach a play at all. */
+const CLOSED_RULES = { mlb: true, nfl: true, ncaaf: true };
 const BASE_CEILING = 3;
 const baseCeiling = sp => CLOSED_RULES[String(sp || '').toLowerCase()] ? BASE_CEILING : 7;
 
@@ -839,6 +840,12 @@ async function playsReady(db) {
      written from the hashtags. Keying off the label silently dropped the
      rule. */
   try { await db.prepare('ALTER TABLE tags ADD COLUMN hash TEXT').run(); } catch (e) {}
+  /* Real sorts its own tags into kinds: 'play' for the ones that sit on a
+     snap, 'playerboxscore' for the performance tags - Hundo, Air-force,
+     Marksman - and team and game ones above those. The marketplace harvest
+     cannot tell them apart and had been letting a performance tag's rarity
+     land on a play. */
+  try { await db.prepare('ALTER TABLE tags ADD COLUMN kind TEXT').run(); } catch (e) {}
   try { await db.prepare('ALTER TABLE tags ADD COLUMN altRarity TEXT').run(); } catch (e) {}
   for (const ix of [
     'CREATE INDEX IF NOT EXISTS plays_sp ON plays (sport, season, playerId)',
@@ -1032,19 +1039,21 @@ export async function onRequestGet({ request, env }) {
       return json({ error: 'tagsearch failed', detail: String((e && e.message) || e) }, 502);
     }
     const stmt = db.prepare(
-      `INSERT INTO tags (id, sport, label, hash, rarity, seenAt) VALUES (?,?,?,?,NULL,?)
+      `INSERT INTO tags (id, sport, label, hash, kind, rarity, seenAt) VALUES (?,?,?,?,?,NULL,?)
        ON CONFLICT(id, sport) DO UPDATE SET label=excluded.label,
-         hash=excluded.hash, seenAt=excluded.seenAt`);
+         hash=excluded.hash, kind=excluded.kind, seenAt=excluded.seenAt`);
     const batch = [];
+    const kinds = {};
     for (const t of tags) {
       if (!t || t.id == null) continue;
+      kinds[t.type || 'unknown'] = (kinds[t.type || 'unknown'] || 0) + 1;
       batch.push(stmt.bind(Number(t.id), sport, t.label || t.name || null,
-                           t.hashTag || null, Date.now()));
+                           t.hashTag || null, t.type || null, Date.now()));
     }
     for (let i = 0; i < batch.length; i += 200) {
       try { await db.batch(batch.slice(i, i + 200)); } catch (e) {}
     }
-    return json({ sport, named: batch.length });
+    return json({ sport, named: batch.length, kinds });
   }
 
   if (url.searchParams.get('plays') === 'tags') {
@@ -1541,10 +1550,14 @@ export async function onRequestGet({ request, env }) {
     if (!db) return json({ error: 'no database binding' }, 503);
     await playsReady(db);
     let tagRar = new Map(), tagKeyById = new Map();
+    const notPlay = new Set();
     try {
-      const t = await db.prepare('SELECT id, rarity, label, hash FROM tags WHERE sport=?')
+      const t = await db.prepare('SELECT id, rarity, label, hash, kind FROM tags WHERE sport=?')
         .bind(sport).all();
       for (const r of (t.results || [])) {
+        // A performance tag belongs to a whole game, never to a snap. An
+        // unseeded tag has no kind yet and is left alone.
+        if (r.kind && r.kind !== 'play') { notPlay.add(Number(r.id)); continue; }
         tagRar.set(Number(r.id), Number(r.rarity) || 0);
         // The hashtag is what the rules are named after; the label is only
         // what the app prints.
@@ -1581,7 +1594,7 @@ export async function onRequestGet({ request, env }) {
       let best = 0, miss = false;
       for (const bit of String(r.tags).split(',')) {
         const id = Number(bit);
-        if (!id) continue;
+        if (!id || notPlay.has(id)) continue;
         // A pinned id has a name even when the tag table has never seen it.
         const key = tagKeyById.get(id) || PINS[id] || null;
         // The harvested number is the floor; a rule for this family wins.
@@ -1777,10 +1790,14 @@ export async function onRequestGet({ request, env }) {
     if (!db) return json({ error: 'no database binding' }, 503);
     await playsReady(db);
     let tagRar = new Map(), tagKeyById = new Map();
+    const notPlay = new Set();
     try {
-      const t = await db.prepare('SELECT id, rarity, label, hash FROM tags WHERE sport=?')
+      const t = await db.prepare('SELECT id, rarity, label, hash, kind FROM tags WHERE sport=?')
         .bind(sport).all();
       for (const r of (t.results || [])) {
+        // A performance tag belongs to a whole game, never to a snap. An
+        // unseeded tag has no kind yet and is left alone.
+        if (r.kind && r.kind !== 'play') { notPlay.add(Number(r.id)); continue; }
         tagRar.set(Number(r.id), Number(r.rarity) || 0);
         // The hashtag is what the rules are named after; the label is only
         // what the app prints.
@@ -1817,7 +1834,7 @@ export async function onRequestGet({ request, env }) {
       let best = 0, miss = false;
       for (const bit of String(r.tags).split(',')) {
         const id = Number(bit);
-        if (!id) continue;
+        if (!id || notPlay.has(id)) continue;
         // A pinned id has a name even when the tag table has never seen it.
         const key = tagKeyById.get(id) || PINS[id] || null;
         // The harvested number is the floor; a rule for this family wins.
