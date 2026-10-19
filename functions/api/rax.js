@@ -799,6 +799,11 @@ async function playsReady(db) {
   await db.prepare(PLAYS_DDL).run();
   await db.prepare(TAGS_DDL).run();
   try { await db.prepare('ALTER TABLE plays ADD COLUMN rarity INTEGER').run(); } catch (e) {}
+  /* Real's display label and its hashtag are not the same word - tag 2202
+     reads "Self-pass-touchdown" but hashes to "selfpasstd", and the rules are
+     written from the hashtags. Keying off the label silently dropped the
+     rule. */
+  try { await db.prepare('ALTER TABLE tags ADD COLUMN hash TEXT').run(); } catch (e) {}
   try { await db.prepare('ALTER TABLE tags ADD COLUMN altRarity TEXT').run(); } catch (e) {}
   for (const ix of [
     'CREATE INDEX IF NOT EXISTS plays_sp ON plays (sport, season, playerId)',
@@ -992,12 +997,14 @@ export async function onRequestGet({ request, env }) {
       return json({ error: 'tagsearch failed', detail: String((e && e.message) || e) }, 502);
     }
     const stmt = db.prepare(
-      `INSERT INTO tags (id, sport, label, rarity, seenAt) VALUES (?,?,?,NULL,?)
-       ON CONFLICT(id, sport) DO UPDATE SET label=excluded.label, seenAt=excluded.seenAt`);
+      `INSERT INTO tags (id, sport, label, hash, rarity, seenAt) VALUES (?,?,?,?,NULL,?)
+       ON CONFLICT(id, sport) DO UPDATE SET label=excluded.label,
+         hash=excluded.hash, seenAt=excluded.seenAt`);
     const batch = [];
     for (const t of tags) {
       if (!t || t.id == null) continue;
-      batch.push(stmt.bind(Number(t.id), sport, t.label || t.name || null, Date.now()));
+      batch.push(stmt.bind(Number(t.id), sport, t.label || t.name || null,
+                           t.hashTag || null, Date.now()));
     }
     for (let i = 0; i < batch.length; i += 200) {
       try { await db.batch(batch.slice(i, i + 200)); } catch (e) {}
@@ -1500,10 +1507,13 @@ export async function onRequestGet({ request, env }) {
     await playsReady(db);
     let tagRar = new Map(), tagKeyById = new Map();
     try {
-      const t = await db.prepare('SELECT id, rarity, label FROM tags WHERE sport=?').bind(sport).all();
+      const t = await db.prepare('SELECT id, rarity, label, hash FROM tags WHERE sport=?')
+        .bind(sport).all();
       for (const r of (t.results || [])) {
         tagRar.set(Number(r.id), Number(r.rarity) || 0);
-        tagKeyById.set(Number(r.id), tagKey(r.label));
+        // The hashtag is what the rules are named after; the label is only
+        // what the app prints.
+        tagKeyById.set(Number(r.id), tagKey(r.hash || r.label));
       }
     } catch (e) {}
     if (!tagRar.size) return json({ error: 'no tags collected yet for this sport' }, 400);
@@ -1730,10 +1740,13 @@ export async function onRequestGet({ request, env }) {
     await playsReady(db);
     let tagRar = new Map(), tagKeyById = new Map();
     try {
-      const t = await db.prepare('SELECT id, rarity, label FROM tags WHERE sport=?').bind(sport).all();
+      const t = await db.prepare('SELECT id, rarity, label, hash FROM tags WHERE sport=?')
+        .bind(sport).all();
       for (const r of (t.results || [])) {
         tagRar.set(Number(r.id), Number(r.rarity) || 0);
-        tagKeyById.set(Number(r.id), tagKey(r.label));
+        // The hashtag is what the rules are named after; the label is only
+        // what the app prints.
+        tagKeyById.set(Number(r.id), tagKey(r.hash || r.label));
       }
     } catch (e) {}
     if (!tagRar.size) return json({ error: 'no tags collected yet for this sport' }, 400);
