@@ -527,6 +527,11 @@ const tagKey = label => {
    Baseball: 101 single, 102 double, 103 triple, 104 home run, 105 strikeout. */
 const MLB_FAMILY = { 101: 'single', 102: 'double', 103: 'triple',
                      104: 'homer', 105: 'strikeout' };
+/* Basketball. Real's own category already says what counts: a made shot or a
+   trip to the line. A block, a rebound, an assist, a steal, a missed field
+   goal - none of them carry a category, so none of them is a play. A missed
+   free throw does, which is right: 0/2 is still a card. */
+const NBA_FAMILY = { 1: 'dunk', 2: 'layup', 3: 'mid', 4: 'three', 5: 'ft' };
 /* A fumble recovery is a rare card at best. Only carrying it in lifts it, and
    that play is a touchdown in its own right. Without this, a tag that is
    legendary somewhere else - Beast mode on a run, Imposter on a throw - keeps
@@ -541,8 +546,9 @@ function fumbleCap(cat, type, subType) {
   return (/fumble/i.test(t) || /fumble/i.test(st)) ? FUMBLE_CAP : null;
 }
 
-function playFamily(cat, type, subType) {
+function playFamily(cat, type, subType, sportOf) {
   const t = String(type || ''), st = String(subType || '');
+  if (sportOf === 'nba' && cat != null && NBA_FAMILY[cat]) return NBA_FAMILY[cat];
   if (cat != null && MLB_FAMILY[cat]) return MLB_FAMILY[cat];
   if (cat === 206) return 'def';
   if (cat === 205) return 'fg';
@@ -679,7 +685,38 @@ const RULES_MLB = {
   towering:         { homer: 4 }
 };
 
-const RULES_BY_SPORT = { nfl: RULES_NFL, ncaaf: RULES_NCAAF, mlb: RULES_MLB };
+/* Basketball, from Dennis's table. Families are the five kinds of shot.
+   walkoff is legendary on any made shot here; in the Finals it is worth more
+   than that, which needs a way of telling a Finals game apart and is not in
+   yet. */
+const RULES_NBA = {
+  // legendary on a made shot, and their epic contexts
+  blazing:     { layup: 5, dunk: 5, mid: 5, three: 5, ft: 4 },
+  crunchtime:  { layup: 5, dunk: 5, mid: 5, three: 5, ft: 5 },
+  equalizing:  { layup: 5, dunk: 5, mid: 5, three: 5, ft: 5 },
+  dagger:      { layup: 5, dunk: 5, mid: 5, three: 5, ft: 4 },
+  gameicing:   { layup: 5, dunk: 5, mid: 5, three: 5, ft: 5 },
+  gamewinner:  { layup: 5, dunk: 5, mid: 5, three: 5, ft: 5 },
+  walkoff:     { layup: 5, dunk: 5, mid: 5, three: 5 },
+  over:        { dunk: 5, mid: 5, layup: 4, three: 4, ft: 4 },
+  fadeaway:    { three: 5 },
+  floater:     { three: 5 },
+  halfcourter: { three: 5 },
+  kingnugget:  { ft: 5 },
+  // epic
+  clutchtime:  { layup: 4, dunk: 4, mid: 4, three: 4, ft: 4 },
+  overtime:    { dunk: 4, mid: 4 },
+  firstpoints: { dunk: 4, ft: 4 },
+  reverse:     { dunk: 4 },
+  streaking:   { dunk: 4, mid: 4, three: 4 },
+  offsteal:    { mid: 4 },
+  maestro:     { mid: 4 },
+  snipe:       { three: 4 },
+  bank:        { three: 4 }
+};
+
+const RULES_BY_SPORT = { nfl: RULES_NFL, ncaaf: RULES_NCAAF, mlb: RULES_MLB,
+                         nba: RULES_NBA };
 
 /* The marketplace only ever shows a tag on one card, so the rarity harvested
    from it is whatever that card happened to be - Moonshot reads 4 because the
@@ -689,7 +726,7 @@ const RULES_BY_SPORT = { nfl: RULES_NFL, ncaaf: RULES_NCAAF, mlb: RULES_MLB };
    All three are complete: every football play tag reading epic or better
    already has a rule, and the ones that did not turned out to be performance
    tags, which no longer reach a play at all. */
-const CLOSED_RULES = { mlb: true, nfl: true, ncaaf: true };
+const CLOSED_RULES = { mlb: true, nfl: true, ncaaf: true, nba: true };
 const BASE_CEILING = 3;
 const baseCeiling = sp => CLOSED_RULES[String(sp || '').toLowerCase()] ? BASE_CEILING : 7;
 
@@ -806,7 +843,12 @@ const PLAYS_SPORTS = [
   { sport: 'nfl',   season: 2023, pri: 7 },
   { sport: 'ncaaf', season: 2025, pri: 7 },
   { sport: 'ncaaf', season: 2024, pri: 7 },
-  { sport: 'ncaaf', season: 2023, pri: 7 }
+  { sport: 'ncaaf', season: 2023, pri: 7 },
+  // Basketball, newest first.
+  { sport: 'nba',   season: 2026, rolling: true, pri: 8 },
+  { sport: 'nba',   season: 2025, pri: 9 },
+  { sport: 'nba',   season: 2024, pri: 10 },
+  { sport: 'nba',   season: 2023, pri: 11 }
 ];
 // Performance box scores are collected only once every play queue above has
 // lapped, so they never compete with the sweep for a tick.
@@ -823,7 +865,11 @@ const PERF_QUEUE = [
   { sport: 'mlb',   season: 2025 },
   { sport: 'mlb',   season: 2024 },
   { sport: 'mlb',   season: 2023 },
-  { sport: 'mlb',   season: 2022 }
+  { sport: 'mlb',   season: 2022 },
+  { sport: 'nba',   season: 2026 },
+  { sport: 'nba',   season: 2025 },
+  { sport: 'nba',   season: 2024 },
+  { sport: 'nba',   season: 2023 }
 ];
 const perfDoneKey = (sp, se) => `perf_done_${sp}_${se}`;
 const sweptKey = (sp, se) => `plays_swept_${sp}_${se}`;
@@ -839,7 +885,7 @@ const GAMES_PER_TICK = 10;        // games per call, each one a full game
 /* Measured at about a sixth of a second a game with five in the air, so a
    hundred and fifty of them is twenty-five seconds - comfortably inside the
    minute between ticks, and no faster a burst than before, just a longer one. */
-const GAMES_PER_TICK_BY_SPORT = { mlb: 150, ncaaf: 90, nfl: 60 };
+const GAMES_PER_TICK_BY_SPORT = { mlb: 150, ncaaf: 90, nfl: 60, nba: 120 };
 /* How many of those feeds are in the air at once. Five keeps the call well
    inside its minute while asking Real for no more per second than a person
    clicking through games quickly would. */
@@ -1019,6 +1065,30 @@ export async function onRequestGet({ request, env }) {
 
     if (!ids.length) {
       try { await env.RATEBOARD_KV.put(key, '0'); } catch (e) {}
+      /* The walk only ever goes forward, so a game that reached the log after
+         the cursor passed its id was never collected - and a finished season
+         is never walked again, so it would stay missing for good. Before
+         calling a season done, look for those and take them. */
+      let left = 0;
+      if (from === 'games') {
+        try {
+          const r = await db.prepare(
+            `SELECT COUNT(*) AS n FROM (
+               SELECT DISTINCT g.gameId AS id FROM gamelog g
+                WHERE g.sport=?1 AND g.season=?2
+                  AND g.seasonType IN (${seasonTypeSql(sport)})
+                  AND NOT EXISTS (SELECT 1 FROM plays p
+                                   WHERE p.sport=?1 AND p.season=?2 AND p.gameId=g.gameId)
+                LIMIT 500)`).bind(sport, Number(season)).first();
+          left = Number((r && r.n) || 0);
+        } catch (e) {}
+      }
+      if (left) {
+        const u = new URL(url);
+        u.search = `?plays=gaps&sport=${sport}&season=${season}&fill=1&n=40`;
+        try { await onRequestGet({ request: new Request(u.toString(), request), env }); } catch (e) {}
+        return json({ sport, season, from, lap: true, fillingGaps: left });
+      }
       // A completed season needs one pass, not endless ones.
       // Mark it lapped whether or not it is a rolling season: a rolling one
       // still needs revisiting for new games, just far less often than a
@@ -1634,8 +1704,8 @@ export async function onRequestGet({ request, env }) {
            nothing, so counting them would leave every finished season
            stuck short of full for ever. */
         `SELECT sport, season, COUNT(DISTINCT gameId) AS games
-           FROM gamelog WHERE sport IN ('nfl','ncaaf','mlb')
-            AND (${['nfl', 'ncaaf', 'mlb'].map(sp =>
+           FROM gamelog WHERE sport IN ('nfl','ncaaf','mlb','nba')
+            AND (${['nfl', 'ncaaf', 'mlb', 'nba'].map(sp =>
                  `(sport='${sp}' AND seasonType IN (${seasonTypeSql(sp)}))`).join(' OR ')})
           GROUP BY sport, season`).all();
       for (const x of (r.results || [])) logged.set(`${x.sport}|${x.season}`, Number(x.games) || 0);
@@ -1911,7 +1981,8 @@ export async function onRequestGet({ request, env }) {
     const CEIL = baseCeiling(sport);
     const fam = {};
     for (const r of rows) {
-      const f = playFamily(r.cat == null ? null : Number(r.cat), r.type, r.subType);
+      const f = playFamily(r.cat == null ? null : Number(r.cat), r.type, r.subType,
+                           String(sport || '').toLowerCase());
       let best = 0, miss = false;
       for (const bit of String(r.tags).split(',')) {
         const id = Number(bit);
@@ -2171,7 +2242,8 @@ export async function onRequestGet({ request, env }) {
     const CEIL = baseCeiling(sport);
     const fam = {};
     for (const r of rows) {
-      const f = playFamily(r.cat == null ? null : Number(r.cat), r.type, r.subType);
+      const f = playFamily(r.cat == null ? null : Number(r.cat), r.type, r.subType,
+                           String(sport || '').toLowerCase());
       let best = 0, miss = false;
       for (const bit of String(r.tags).split(',')) {
         const id = Number(bit);
