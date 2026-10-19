@@ -119,6 +119,10 @@
   .seg{display:flex;background:var(--panel-2);border:1px solid var(--line);border-radius:999px;padding:3px;gap:3px}
   .seg button{flex:1;padding:9px;border-radius:999px;font-weight:600;font-size:14px;color:var(--mute)}
   .seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+  /* Four views read better as a square than as one long strip, and it keeps
+     the labels full size on a phone. */
+  .seg-2up{display:grid;grid-template-columns:1fr 1fr;border-radius:14px}
+  .seg-2up button{border-radius:11px}
 
   /* Selected seasons and toggles were only marked with aria-pressed, which
      shows nothing on screen. This is what makes the active ones obvious. */
@@ -4438,16 +4442,14 @@ async function cbbPanel(){
   const only = packOnly();
   if(only) st.mode = 'pack';
   const box = pageShell(only ? 'Pack data' : 'Game data', `
-    <div id="cb-seasons"><span class="note">Loading seasons&hellip;</span></div>
-    <p class="note" id="cb-scope"></p>
-    <div class="seg" role="group" aria-label="View">
+    <div class="seg seg-2up" role="group" aria-label="View">
       <button data-cm="players" aria-pressed="true">By player</button>
       <button data-cm="games" aria-pressed="false">Every game</button>
-      <button data-cm="lookup" aria-pressed="false">Players</button>
-      <button data-cm="golf" aria-pressed="false">Golf</button>
       <button data-cm="pack" aria-pressed="${only ? 'true' : 'false'}">Pack data</button>
-      <button data-cm="tags" aria-pressed="false">Tag tracker</button>
+      <button data-cm="golf" aria-pressed="false">Golf</button>
     </div>
+    <div id="cb-seasons"><span class="note">Loading seasons&hellip;</span></div>
+    <p class="note" id="cb-scope"></p>
     <div class="dtbar cb-filt">
       <input class="field grow" id="cb-q" placeholder="Player name" autocomplete="off">
       <select class="field" id="cb-conf"><option value="">Any conference</option></select>
@@ -4479,13 +4481,6 @@ async function cbbPanel(){
       <button class="btn" id="cb-refresh" disabled>Up to date</button>
     </div>
     <div class="dtbar hide cb-filt" id="cb-colbar"></div>
-    <div id="cb-lookup" class="hide">
-      <input class="field" id="lk-q" placeholder="Search a player by name" autocomplete="off" style="width:100%">
-      <p class="note" id="lk-note" style="margin-top:8px"></p>
-      <div id="lk-results"></div>
-      <div id="lk-detail"></div>
-      <div id="lk-bag"></div>
-    </div>
     <div id="cb-golf" class="hide">
       <div class="dtbar">
         <select class="field" id="gf-season"></select>
@@ -4495,29 +4490,6 @@ async function cbbPanel(){
       </div>
       <div id="gf-list"></div>
       <div id="gf-detail"></div>
-    </div>
-    <div id="cb-tags" class="hide">
-      <div class="dtbar" id="tg-sports"></div>
-      <div class="dtbar">
-        <input class="field" id="tg-q" autocomplete="off" spellcheck="false"
-               placeholder="Search a tag" style="max-width:220px">
-        <select class="field" id="tg-rar" style="max-width:170px">
-          <option value="">Any rarity</option>
-          <option value="7">Iconic</option>
-          <option value="6">Mystic</option>
-          <option value="5">Legendary</option>
-          <option value="4">Epic</option>
-          <option value="3">Rare</option>
-          <option value="2">Uncommon</option>
-          <option value="1">Common</option>
-          <option value="none">Unknown</option>
-        </select>
-        <button class="btn-ghost" id="tg-refresh">Refresh</button>
-        <span class="note" id="tg-note"></span>
-      </div>
-      <p class="note" id="tg-warn"></p>
-      <div class="dtwrap"><table class="dt">
-        <thead id="tg-head"></thead><tbody id="tg-body"></tbody></table></div>
     </div>
     <div id="cb-pack" class="hide">
       <div id="pk-seasons"><span class="note">Loading seasons&hellip;</span></div>
@@ -5969,14 +5941,10 @@ async function cbbPanel(){
   // The views share one modal, so switching hides everything that
   // belongs to the other side rather than leaving dead controls on screen.
   function applyMode(){
-    const lk = st.mode === 'lookup';
     const gf = st.mode === 'golf';
     const pk = st.mode === 'pack';
-    const tg = st.mode === 'tags';
-    const table = !lk && !gf && !pk && !tg;
+    const table = !gf && !pk;
     $b('#cb-pack').classList.toggle('hide', !pk);
-    $b('#cb-tags').classList.toggle('hide', !tg);
-    $b('#cb-lookup').classList.toggle('hide', !lk);
     $b('#cb-golf').classList.toggle('hide', !gf);
     $b('#cb-table').classList.toggle('hide', !table);
     $b('#cb-count').classList.toggle('hide', !table);
@@ -5986,18 +5954,16 @@ async function cbbPanel(){
       if(!table) x.classList.add('hide');
       else if(x.id !== 'cb-colbar') x.classList.remove('hide');
     });
-    // Pack data keeps its own season list, built from what has actually been
-    // collected, so the shared picker is put away entirely.
-    // Neither of these tabs is scoped by the shared season picker.
-    $b('#cb-seasons').classList.toggle('hide', pk || tg);
-    $b('#cb-scope').classList.toggle('hide', pk || tg);
-    if(!pk && !tg) drawSeasons();
+    /* Pack data and golf each carry their own picker - pack data a list of
+       what has actually been collected, golf a tournament list - so the
+       shared sport-and-season blocks are put away for both. */
+    $b('#cb-seasons').classList.toggle('hide', pk || gf);
+    $b('#cb-scope').classList.toggle('hide', pk || gf);
+    if(!pk && !gf) drawSeasons();
     if(only) box.querySelectorAll('[data-cm]').forEach(x =>
       x.classList.toggle('hide', x.dataset.cm !== 'pack'));
-    if(lk){ lkBag(); lkSearch(); }
-    else if(gf) gfInit();
+    if(gf) gfInit();
     else if(pk) pkInit();
-    else if(tg) tgInit();
     else applyFilterVisibility();
   }
 
@@ -6334,7 +6300,6 @@ async function cbbPanel(){
       st.extra = st.extra.filter(k => allStats().some(c => c[0] === k));
       drawSeasons(); drawCols(); applyFilterVisibility();
       await loadTeams();
-      if(st.mode === 'lookup'){ $b('#lk-detail').innerHTML = ''; return lkSearch(); }
       return queue();
     }
 
@@ -6427,7 +6392,7 @@ async function cbbPanel(){
       box.querySelectorAll('[data-cm]').forEach(x =>
         x.setAttribute('aria-pressed', x.dataset.cm === st.mode ? 'true' : 'false'));
       applyMode();
-      return ['lookup', 'pack', 'tags'].includes(st.mode) ? undefined : load();
+      return st.mode === 'pack' ? undefined : load();
     }
 
     const th = e.target.closest('[data-sc]');
