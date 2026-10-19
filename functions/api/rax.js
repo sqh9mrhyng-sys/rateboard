@@ -546,9 +546,9 @@ const RULES_NFL = {
   gamewinner:     { td: 5, fg: 5, def: 5 },
   walkoff:        { td: 5, fg: 5, def: 5 },
   '1stdown':      { fg: 5 },
-  deadeye:        { fg: 5 },
+  deadeye:        { '*': 5 },
   fumble6:        { def: 5 },
-  kickreturn:     { def: 5 },
+  kickreturn:     { '*': 5 },
   puntreturn:     { def: 5 },
   // tags that climb a tier on a touchdown
   lateral:        { rush: 4, pass: 4, td: 6 },
@@ -578,18 +578,18 @@ const RULES_NCAAF = {
   octopus:        { td: 5, pass: 5, rush: 5 },
   imposter:       { td: 5, pass: 5 },
   haymaker:       { td: 5, pass: 5 },
-  beastmode:      { td: 5, rush: 5 },
+  beastmode:      { '*': 5 },
   marathon:       { td: 5, rush: 5 },
   selfpasstd:     { td: 5 },
   thiccsix:       { td: 5 },
   rip:            { td: 5 },
-  gamewinner:     { td: 5, fg: 5, def: 5 },
-  walkoff:        { td: 5, fg: 5 },
+  gamewinner:     { '*': 5 },
+  walkoff:        { '*': 5 },
   '1stdown':      { fg: 5 },
   deadeye:        { fg: 5 },
   fumble6:        { def: 5 },
-  kickreturn:     { def: 5 },
-  puntreturn:     { def: 5 },
+  kickreturn:     { '*': 5 },
+  puntreturn:     { '*': 5 },
   '2minutedrill': { td: 5, fg: 4, rush: 4 },
   flash:          { td: 5, rush: 4 },
   // epic
@@ -605,8 +605,9 @@ const RULES_NCAAF = {
   burst:          { td: 4 },
   bomb:           { td: 4, pass: 4 },
   '2nddown':      { fg: 4 },
-  '2pt':          { pass: 4, rush: 4 },
-  lateral:        { pass: 4, rush: 4 },
+  '2pt':          { '*': 4 },
+  // Epic everywhere but a touchdown, which takes it to mystic.
+  lateral:        { td: 6, '*': 4 },
   // rare
   snipe:          { '*': 3 },
   lob:            { '*': 3 }
@@ -622,7 +623,7 @@ const RULES_MLB = {
   missile:          { single: 5, double: 5, triple: 6, homer: 6 },
   // legendary
   scorched:         { double: 5 },
-  insidethepark:    { homer: 5 },
+  insidethepark:    { '*': 5 },
   immaculateinning: { strikeout: 5 },
   '4kinning':       { strikeout: 5 },
   gametying:        { triple: 5 },
@@ -647,8 +648,8 @@ const RULES_MLB = {
   moonshot:         { homer: 4 },
   towering:         { homer: 4 },
   laser:            { homer: 4 },
-  grandslam:        { homer: 4 },
-  curves:           { strikeout: 4 }
+  grandslam:        { '*': 4 },
+  curves:           { '*': 4 }
 };
 
 const RULES_BY_SPORT = { nfl: RULES_NFL, ncaaf: RULES_NCAAF, mlb: RULES_MLB };
@@ -1020,6 +1021,45 @@ export async function onRequestGet({ request, env }) {
   }
 
   // Find a game id from the log by day, to check one game by hand.
+  /* Find a play by day and name and spell out its tags, naming any whose id
+     the tag table does not know. This is how a tag that never shows up in a
+     listing gets identified: from one play that carries it. */
+  if (url.searchParams.get('plays') === 'findplay') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    await playsReady(db);
+    const day = String(url.searchParams.get('day') || '').slice(0, 10);
+    const q = String(url.searchParams.get('q') || '').slice(0, 60);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return json({ error: 'day must be YYYY-MM-DD' }, 400);
+    const known = new Map();
+    try {
+      const t = await db.prepare('SELECT id, label, rarity FROM tags WHERE sport=?').bind(sport).all();
+      for (const r of (t.results || [])) known.set(Number(r.id), { label: r.label, rarity: r.rarity });
+    } catch (e) {}
+    let rows = [];
+    try {
+      const r = await db.prepare(
+        `SELECT id, day, clock, period, label, type, subType, cat, value, rarity,
+                player, player2, tags
+           FROM plays WHERE sport=?1 AND day=?2 AND tags IS NOT NULL
+            AND (?3 = '' OR COALESCE(player,'') LIKE ?4 OR COALESCE(player2,'') LIKE ?4)
+          ORDER BY id LIMIT 120`).bind(sport, day, q, `%${q}%`).all();
+      rows = r.results || [];
+    } catch (e) { return json({ error: 'could not read plays', detail: String((e && e.message) || e) }, 503); }
+    const unknownIds = new Set();
+    const out = rows.map(r => {
+      const tags = String(r.tags || '').split(',').filter(Boolean).map(x => {
+        const id = Number(x), k = known.get(id);
+        if (!k) unknownIds.add(id);
+        return { id, label: k ? k.label : null, rarity: k ? k.rarity : null };
+      });
+      return { id: r.id, period: r.period, clock: r.clock, label: r.label,
+               type: r.type, subType: r.subType, cat: r.cat, value: r.value,
+               scored: r.rarity, player: r.player, player2: r.player2, tags };
+    });
+    return json({ sport, season, day, q, plays: out, unknownTagIds: [...unknownIds] });
+  }
+
   if (url.searchParams.get('plays') === 'findgame') {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
