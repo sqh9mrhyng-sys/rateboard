@@ -1384,6 +1384,67 @@ export async function onRequestGet({ request, env }) {
     } catch (e) { return json({ error: 'could not read performances' }, 503); }
   }
 
+  /* What the cron is actually doing, for the admin bar on the board. Two
+     grouped reads rather than one per season, so a glance at it costs the
+     database about as much as loading one season of the table. */
+  if (url.searchParams.get('plays') === 'progress') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    await playsReady(db);
+    const logged = new Map(), got = new Map();
+    try {
+      const r = await db.prepare(
+        `SELECT sport, season, COUNT(DISTINCT gameId) AS games
+           FROM gamelog WHERE sport IN ('nfl','ncaaf','mlb')
+          GROUP BY sport, season`).all();
+      for (const x of (r.results || [])) logged.set(`${x.sport}|${x.season}`, Number(x.games) || 0);
+    } catch (e) {}
+    try {
+      const r = await db.prepare(
+        `SELECT sport, season, COUNT(DISTINCT gameId) AS games, COUNT(*) AS plays,
+                SUM(CASE WHEN rarity IS NULL THEN 0 ELSE 1 END) AS scored
+           FROM plays GROUP BY sport, season`).all();
+      for (const x of (r.results || [])) got.set(`${x.sport}|${x.season}`,
+        { games: Number(x.games) || 0, plays: Number(x.plays) || 0, scored: Number(x.scored) || 0 });
+    } catch (e) {}
+    let tick = 0;
+    try { tick = Number((JSON.parse((await env.RATEBOARD_KV.get('plays_tick_v1')) || '{}') || {}).n) || 0; } catch (e) {}
+    const queue = [];
+    for (const x of PLAYS_SPORTS) {
+      const k = `${x.sport}|${x.season}`;
+      let lapped = null, cursor = null;
+      try { lapped = await env.RATEBOARD_KV.get(sweptKey(x.sport, x.season)); } catch (e) {}
+      try { cursor = await env.RATEBOARD_KV.get(`${PLAYS_CURSOR}:games:${x.sport}:${x.season}`); } catch (e) {}
+      const g = got.get(k) || { games: 0, plays: 0, scored: 0 };
+      queue.push({ sport: x.sport, season: x.season, pri: x.pri || 99,
+                   rolling: !!x.rolling, lapped: !!lapped, cursor: cursor || null,
+                   gamesLogged: logged.get(k) || 0, gamesCollected: g.games,
+                   plays: g.plays, scored: g.scored });
+    }
+    // Which line the next game tick would take, by the same rule the cron uses.
+    const fresh = queue.filter(x => !x.lapped);
+    let working = null;
+    if (fresh.length) {
+      const top = Math.min(...fresh.map(x => x.pri));
+      working = fresh.filter(x => x.pri === top).map(x => `${x.sport} ${x.season}`);
+    }
+    const perf = [];
+    try {
+      await perfReady(db);
+      const r = await db.prepare(
+        `SELECT sport, season, COUNT(*) AS rows_, COUNT(DISTINCT playerId) AS players
+           FROM performances GROUP BY sport, season`).all();
+      for (const x of (r.results || [])) perf.push(x);
+    } catch (e) {}
+    const perfQueue = [];
+    for (const x of PERF_QUEUE) {
+      let fin = null;
+      try { fin = await env.RATEBOARD_KV.get(perfDoneKey(x.sport, x.season)); } catch (e) {}
+      perfQueue.push({ sport: x.sport, season: x.season, done: !!fin });
+    }
+    return json({ at: new Date().toISOString(), tick, working, queue, perf, perfQueue });
+  }
+
   if (url.searchParams.get('plays') === 'seasons') {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
