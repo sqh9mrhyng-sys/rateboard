@@ -1899,13 +1899,19 @@ export async function onRequestGet({ request, env }) {
       if (!byLevel.has(lvl)) byLevel.set(lvl, []);
       byLevel.get(lvl).push(Number(r.id));
     }
+    /* The ids go into the statement as numbers rather than as bound values:
+       D1 allows only a hundred bound parameters per statement, and binding
+       them silently matched nothing, so the same rows were read and rewritten
+       for ever. They come from this database as integers and are coerced
+       again here, so nothing but a number can reach the text. */
     const writes = [];
     for (const [lvl, ids] of byLevel) {
-      for (let i = 0; i < ids.length; i += 400) {
-        const part = ids.slice(i, i + 400);
+      for (let i = 0; i < ids.length; i += 800) {
+        const list = ids.slice(i, i + 800).map(x => Number(x))
+          .filter(Number.isFinite).join(',');
+        if (!list) continue;
         writes.push(db.prepare(
-          `UPDATE plays SET rarity=? WHERE sport=? AND id IN (${part.map(() => '?').join(',')})`)
-          .bind(lvl, sport, ...part));
+          `UPDATE plays SET rarity=? WHERE sport=? AND id IN (${list})`).bind(lvl, sport));
       }
     }
     for (let i = 0; i < writes.length; i += 10) {
@@ -2153,13 +2159,19 @@ export async function onRequestGet({ request, env }) {
       if (!byLevel.has(lvl)) byLevel.set(lvl, []);
       byLevel.get(lvl).push(Number(r.id));
     }
+    /* The ids go into the statement as numbers rather than as bound values:
+       D1 allows only a hundred bound parameters per statement, and binding
+       them silently matched nothing, so the same rows were read and rewritten
+       for ever. They come from this database as integers and are coerced
+       again here, so nothing but a number can reach the text. */
     const writes = [];
     for (const [lvl, ids] of byLevel) {
-      for (let i = 0; i < ids.length; i += 400) {
-        const part = ids.slice(i, i + 400);
+      for (let i = 0; i < ids.length; i += 800) {
+        const list = ids.slice(i, i + 800).map(x => Number(x))
+          .filter(Number.isFinite).join(',');
+        if (!list) continue;
         writes.push(db.prepare(
-          `UPDATE plays SET rarity=? WHERE sport=? AND id IN (${part.map(() => '?').join(',')})`)
-          .bind(lvl, sport, ...part));
+          `UPDATE plays SET rarity=? WHERE sport=? AND id IN (${list})`).bind(lvl, sport));
       }
     }
     for (let i = 0; i < writes.length; i += 10) {
