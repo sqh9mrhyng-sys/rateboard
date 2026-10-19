@@ -1010,11 +1010,17 @@ export async function onRequestGet({ request, env }) {
       const rows = Array.isArray(d && d.plays) ? d.plays : rowsOf(d);
       const batch = [];
       for (const r of rows) {
-        if (!r || !r.id) continue;
+        if (!r || !r.id || !Number.isFinite(Number(r.id))) continue;
         if (r.seasonType && r.seasonType !== 'regularseason' && r.seasonType !== 'postseason') continue;
         batch.push(playBind(stmt, r, sport, season));
       }
-      if (batch.length) { try { await db.batch(batch); stored += batch.length; } catch (e) {} }
+      /* Chunked, and the count is what actually landed. An unchunked batch
+         meant a single row D1 would not take threw the whole game away, and
+         the empty catch then reported it as stored. */
+      for (let i = 0; i < batch.length; i += 100) {
+        const part = batch.slice(i, i + 100);
+        try { await db.batch(part); stored += part.length; } catch (e) {}
+      }
       await sleep(40);
     }
     after = ids[ids.length - 1];
@@ -1224,14 +1230,14 @@ export async function onRequestGet({ request, env }) {
       const rows = Array.isArray(d && d.plays) ? d.plays : rowsOf(d);
       const batch = [];
       for (const r of rows) {
-        if (!r || !r.id) continue;
+        if (!r || !r.id || !Number.isFinite(Number(r.id))) continue;
         if (r.seasonType && r.seasonType !== 'regularseason' && r.seasonType !== 'postseason') continue;
         batch.push(playBind(stmt, r, sport, season));
       }
       let wrote = 0;
-      for (let i = 0; i < batch.length; i += 200) {
-        try { await db.batch(batch.slice(i, i + 200)); wrote += batch.slice(i, i + 200).length; }
-        catch (e) {}
+      for (let i = 0; i < batch.length; i += 100) {
+        const part = batch.slice(i, i + 100);
+        try { await db.batch(part); wrote += part.length; } catch (e) {}
       }
       out.push({ gameId: id, returned: rows.length, stored: wrote });
       await sleep(40);
@@ -1425,11 +1431,17 @@ export async function onRequestGet({ request, env }) {
       const rows = Array.isArray(d && d.plays) ? d.plays : rowsOf(d);
       const batch = [];
       for (const r of rows) {
-        if (!r || !r.id) continue;
+        if (!r || !r.id || !Number.isFinite(Number(r.id))) continue;
         if (r.seasonType && r.seasonType !== 'regularseason' && r.seasonType !== 'postseason') continue;
         batch.push(playBind(stmt, r, sport, season));
       }
-      if (batch.length) { try { await db.batch(batch); stored += batch.length; } catch (e) {} }
+      /* Chunked, and the count is what actually landed. An unchunked batch
+         meant a single row D1 would not take threw the whole game away, and
+         the empty catch then reported it as stored. */
+      for (let i = 0; i < batch.length; i += 100) {
+        const part = batch.slice(i, i + 100);
+        try { await db.batch(part); stored += part.length; } catch (e) {}
+      }
       await sleep(40);
     }
     return json({ sport, season, stillMissing: miss.length - asked, asked, stored });
