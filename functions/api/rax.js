@@ -653,6 +653,20 @@ const RULES_MLB = {
 };
 
 const RULES_BY_SPORT = { nfl: RULES_NFL, ncaaf: RULES_NCAAF, mlb: RULES_MLB };
+
+/* Tags identified from a play rather than from a listing. A tag this rare is
+   never on a card anyone lists, so the tag table never learns its name - but
+   one play that carries it proves the id. selfpasstd came from Josh Allen's
+   9-yd double-pass lateral TD catch, BUF v SF, 1 Dec 2024, 6:05 of the third:
+   2202 sat on that play and on nothing else in the game. 1217 and 1218 are
+   the plain markers Real puts on every touchdown and every field goal; they
+   carry no rarity of their own and are pinned only so they stop being
+   counted as unidentified. */
+const TAG_ID_PINS = {
+  nfl:   { 2202: 'selfpasstd', 1217: 'touchdown', 1218: 'fieldgoal' },
+  ncaaf: { 2202: 'selfpasstd', 1217: 'touchdown', 1218: 'fieldgoal' }
+};
+const pinsFor = sp => TAG_ID_PINS[String(sp || '').toLowerCase()] || {};
 // An unlisted sport gets no overrides at all rather than another code's.
 const rulesFor = sp => RULES_BY_SPORT[String(sp || '').toLowerCase()] || {};
 
@@ -1472,6 +1486,7 @@ export async function onRequestGet({ request, env }) {
     const batch = [];
     let unknown = 0;
     const RULES = rulesFor(sport);
+    const PINS = pinsFor(sport);
     const fam = {};
     for (const r of rows) {
       const f = playFamily(r.cat == null ? null : Number(r.cat), r.type, r.subType);
@@ -1479,10 +1494,12 @@ export async function onRequestGet({ request, env }) {
       for (const bit of String(r.tags).split(',')) {
         const id = Number(bit);
         if (!id) continue;
-        if (!tagRar.has(id)) { miss = true; continue; }
+        // A pinned id has a name even when the tag table has never seen it.
+        const key = tagKeyById.get(id) || PINS[id] || null;
         // The harvested number is the floor; a rule for this family wins.
-        const rule = RULES[tagKeyById.get(id)];
+        const rule = key ? RULES[key] : null;
         const ruled = rule ? (rule[f] != null ? rule[f] : rule['*']) : null;
+        if (ruled == null && !tagRar.has(id)) { miss = true; continue; }
         const lvl = ruled != null ? ruled : tagRar.get(id);
         best = Math.max(best, lvl);
       }
@@ -1495,7 +1512,7 @@ export async function onRequestGet({ request, env }) {
     }
     // Which of the named top-end tags we still have no id for: until one
     // turns up in a listing, a play carrying it cannot be recognised.
-    const haveKeys = new Set([...tagKeyById.values()]);
+    const haveKeys = new Set([...tagKeyById.values(), ...Object.values(PINS)]);
     const missingRuleTags = Object.keys(RULES).filter(k => !haveKeys.has(k));
     return json({ sport, season, scored: batch.length, tagsKnown: tagRar.size,
                   playsWithAnUnknownTag: unknown, families: fam, missingRuleTags });
@@ -1699,6 +1716,7 @@ export async function onRequestGet({ request, env }) {
     const batch = [];
     let unknown = 0;
     const RULES = rulesFor(sport);
+    const PINS = pinsFor(sport);
     const fam = {};
     for (const r of rows) {
       const f = playFamily(r.cat == null ? null : Number(r.cat), r.type, r.subType);
@@ -1706,10 +1724,12 @@ export async function onRequestGet({ request, env }) {
       for (const bit of String(r.tags).split(',')) {
         const id = Number(bit);
         if (!id) continue;
-        if (!tagRar.has(id)) { miss = true; continue; }
+        // A pinned id has a name even when the tag table has never seen it.
+        const key = tagKeyById.get(id) || PINS[id] || null;
         // The harvested number is the floor; a rule for this family wins.
-        const rule = RULES[tagKeyById.get(id)];
+        const rule = key ? RULES[key] : null;
         const ruled = rule ? (rule[f] != null ? rule[f] : rule['*']) : null;
+        if (ruled == null && !tagRar.has(id)) { miss = true; continue; }
         const lvl = ruled != null ? ruled : tagRar.get(id);
         best = Math.max(best, lvl);
       }
@@ -1722,7 +1742,7 @@ export async function onRequestGet({ request, env }) {
     }
     // Which of the named top-end tags we still have no id for: until one
     // turns up in a listing, a play carrying it cannot be recognised.
-    const haveKeys = new Set([...tagKeyById.values()]);
+    const haveKeys = new Set([...tagKeyById.values(), ...Object.values(PINS)]);
     const missingRuleTags = Object.keys(RULES).filter(k => !haveKeys.has(k));
     return json({ sport, season, scored: batch.length, tagsKnown: tagRar.size,
                   playsWithAnUnknownTag: unknown, families: fam, missingRuleTags });
