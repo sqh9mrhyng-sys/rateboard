@@ -546,9 +546,9 @@ const RULES_NFL = {
   gamewinner:     { td: 5, fg: 5, def: 5 },
   walkoff:        { td: 5, fg: 5, def: 5 },
   '1stdown':      { fg: 5 },
-  deadeye:        { '*': 5 },
+  deadeye:        { fg: 5 },
   fumble6:        { def: 5 },
-  kickreturn:     { '*': 5 },
+  kickreturn:     { def: 5 },
   puntreturn:     { def: 5 },
   // tags that climb a tier on a touchdown
   lateral:        { rush: 4, pass: 4, td: 6 },
@@ -578,18 +578,18 @@ const RULES_NCAAF = {
   octopus:        { td: 5, pass: 5, rush: 5 },
   imposter:       { td: 5, pass: 5 },
   haymaker:       { td: 5, pass: 5 },
-  beastmode:      { '*': 5 },
+  beastmode:      { td: 5, rush: 5 },
   marathon:       { td: 5, rush: 5 },
   selfpasstd:     { td: 5 },
   thiccsix:       { td: 5 },
   rip:            { td: 5 },
-  gamewinner:     { '*': 5 },
-  walkoff:        { '*': 5 },
+  gamewinner:     { td: 5, fg: 5, def: 5 },
+  walkoff:        { td: 5, fg: 5, def: 5 },
   '1stdown':      { fg: 5 },
   deadeye:        { fg: 5 },
   fumble6:        { def: 5 },
-  kickreturn:     { '*': 5 },
-  puntreturn:     { '*': 5 },
+  kickreturn:     { def: 5 },
+  puntreturn:     { def: 5 },
   '2minutedrill': { td: 5, fg: 4, rush: 4 },
   flash:          { td: 5, rush: 4 },
   // epic
@@ -605,9 +605,9 @@ const RULES_NCAAF = {
   burst:          { td: 4 },
   bomb:           { td: 4, pass: 4 },
   '2nddown':      { fg: 4 },
-  '2pt':          { '*': 4 },
-  // Epic everywhere but a touchdown, which takes it to mystic.
-  lateral:        { td: 6, '*': 4 },
+  '2pt':          { pass: 4, rush: 4 },
+  // Epic on the play itself, mystic when it is the touchdown.
+  lateral:        { pass: 4, rush: 4, td: 6 },
   // rare
   snipe:          { '*': 3 },
   lob:            { '*': 3 }
@@ -623,7 +623,7 @@ const RULES_MLB = {
   missile:          { single: 5, double: 5, triple: 6, homer: 6 },
   // legendary
   scorched:         { double: 5 },
-  insidethepark:    { '*': 5 },
+  insidethepark:    { homer: 5 },
   immaculateinning: { strikeout: 5 },
   '4kinning':       { strikeout: 5 },
   gametying:        { triple: 5 },
@@ -648,23 +648,34 @@ const RULES_MLB = {
   moonshot:         { homer: 4 },
   towering:         { homer: 4 },
   laser:            { homer: 4 },
-  grandslam:        { '*': 4 },
-  curves:           { '*': 4 }
+  grandslam:        { homer: 4 },
+  curves:           { strikeout: 4 }
 };
 
 const RULES_BY_SPORT = { nfl: RULES_NFL, ncaaf: RULES_NCAAF, mlb: RULES_MLB };
 
-/* Tags identified from a play rather than from a listing. A tag this rare is
-   never on a card anyone lists, so the tag table never learns its name - but
-   one play that carries it proves the id. selfpasstd came from Josh Allen's
-   9-yd double-pass lateral TD catch, BUF v SF, 1 Dec 2024, 6:05 of the third:
-   2202 sat on that play and on nothing else in the game. 1217 and 1218 are
-   the plain markers Real puts on every touchdown and every field goal; they
-   carry no rarity of their own and are pinned only so they stop being
-   counted as unidentified. */
+/* Every id Real's own tag dictionary gives for the tags the rules name, read
+   off /tagsearch rather than waited for in the marketplace. A tag that only
+   ever sits on a card nobody lists - selfpasstd, ultimateslam, 500club -
+   would otherwise never be learnt at all. 1217 and 1218 are the plain
+   markers Real puts on every touchdown and every field goal; they carry no
+   rarity of their own and are here only so they stop counting as unknown.
+   `tags=seed` keeps the whole table in step with this; the map stays as the
+   floor for the handful the rules depend on. */
 const TAG_ID_PINS = {
-  nfl:   { 2202: 'selfpasstd', 1217: 'touchdown', 1218: 'fieldgoal' },
-  ncaaf: { 2202: 'selfpasstd', 1217: 'touchdown', 1218: 'fieldgoal' }
+  nfl:   { 2202: 'selfpasstd', 1222: 'thiccsix', 1159: 'deadeye', 1226: 'octopus',
+           1271: 'kickreturn', 1272: 'puntreturn', 1270: 'pick6',
+           1217: 'touchdown', 1218: 'fieldgoal' },
+  ncaaf: { 2202: 'selfpasstd', 1222: 'thiccsix', 1159: 'deadeye', 1226: 'octopus',
+           2105: 'directsnap', 2106: 'reverse', 1210: '2minutedrill',
+           1271: 'kickreturn', 1272: 'puntreturn', 1270: 'pick6',
+           1120: 'beastmode', 1215: 'gamewinner', 1216: 'walkoff',
+           2200: 'lateral', 1074: '2pt',
+           1217: 'touchdown', 1218: 'fieldgoal' },
+  mlb:   { 6053: 'ultimateslam', 6291: 'immaculateinning', 6172: '500club',
+           6093: 'missile', 6165: 'insidethepark', 6163: 'popup',
+           5911: 'greenlight', 6051: 'grandslam', 6216: 'curves',
+           6701: '4kinning' }
 };
 const pinsFor = sp => TAG_ID_PINS[String(sp || '').toLowerCase()] || {};
 // An unlisted sport gets no overrides at all rather than another code's.
@@ -706,7 +717,8 @@ const CREDITED = `
   SELECT player2Id AS pid, player2 AS pname, season, gameId, rarity, value, cat,
          type, subType, id, day, tags
     FROM plays WHERE sport=?1 AND season=?2 AND ${CARD_SQL}
-     AND player2Id IS NOT NULL AND (${PASS_CREDIT} OR ${STRIKEOUT})`;
+     AND player2Id IS NOT NULL AND player2Id <> COALESCE(playerId, -1)
+     AND (${PASS_CREDIT} OR ${STRIKEOUT})`;
 
 /* ---- performances ---------------------------------------------------
    A performance is the player's whole game line: its own card, its own
@@ -963,6 +975,36 @@ export async function onRequestGet({ request, env }) {
   // The tag dictionary. Plays carry tag ids but nothing that says what a tag
   // is or what rarity it carries - cards do, in traits[], so a handful of
   // marketplace cards fills the table in.
+  /* Read Real's own tag dictionary and write every id and name into the tag
+     table. The marketplace harvest only ever meets a tag that someone has
+     listed, which is why the top-end ones stayed nameless for so long; this
+     asks for the whole list instead. Rarities already learnt are left alone -
+     this fills in names, not numbers. */
+  if (url.searchParams.get('plays') === 'tagseed' || url.searchParams.get('tags') === 'seed') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    await playsReady(db);
+    let tags = [];
+    try {
+      const d = await rsGet(`https://web.realapp.com/tagsearch/${sport}?type=tags`, auth);
+      tags = Array.isArray(d && d.tags) ? d.tags : rowsOf(d);
+    } catch (e) {
+      return json({ error: 'tagsearch failed', detail: String((e && e.message) || e) }, 502);
+    }
+    const stmt = db.prepare(
+      `INSERT INTO tags (id, sport, label, rarity, seenAt) VALUES (?,?,?,NULL,?)
+       ON CONFLICT(id, sport) DO UPDATE SET label=excluded.label, seenAt=excluded.seenAt`);
+    const batch = [];
+    for (const t of tags) {
+      if (!t || t.id == null) continue;
+      batch.push(stmt.bind(Number(t.id), sport, t.label || t.name || null, Date.now()));
+    }
+    for (let i = 0; i < batch.length; i += 200) {
+      try { await db.batch(batch.slice(i, i + 200)); } catch (e) {}
+    }
+    return json({ sport, named: batch.length });
+  }
+
   if (url.searchParams.get('plays') === 'tags') {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
