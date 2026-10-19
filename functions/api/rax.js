@@ -827,7 +827,7 @@ const PERF_QUEUE = [
 ];
 const perfDoneKey = (sp, se) => `perf_done_${sp}_${se}`;
 const sweptKey = (sp, se) => `plays_swept_${sp}_${se}`;
-const SCORE_BATCH = 8000;        // plays rescored per call
+const SCORE_BATCH = 40000;       // plays rescored per call
 // A game's feed comes back whole - every snap, around 175 rows for an NFL
 // game - so games are taken a few at a time. Players are a thin top-plays
 // list and can be walked in bigger strides.
@@ -1866,8 +1866,11 @@ export async function onRequestGet({ request, env }) {
          ORDER BY id LIMIT ${SCORE_BATCH}`).bind(sport, Number(season)).all();
       rows = r.results || [];
     } catch (e) { return json({ error: 'could not read plays' }, 503); }
-    const stmt = db.prepare('UPDATE plays SET rarity=? WHERE id=?');
-    const batch = [];
+    /* The ids are grouped by the rarity they came out at and written a few
+       hundred at a time, so eight thousand plays cost about twenty statements
+       rather than eight thousand. The sport has to be named: an id alone no
+       longer points at one row. */
+    const byLevel = new Map();
     let unknown = 0;
     const RULES = rulesFor(sport);
     const PINS = pinsFor(sport);
@@ -1892,16 +1895,27 @@ export async function onRequestGet({ request, env }) {
       const cap = fumbleCap(r.cat == null ? null : Number(r.cat), r.type, r.subType);
       if (cap != null && best > cap) best = cap;
       fam[f] = (fam[f] || 0) + 1;
-      batch.push(stmt.bind(best || 0, Number(r.id)));
+      const lvl = best || 0;
+      if (!byLevel.has(lvl)) byLevel.set(lvl, []);
+      byLevel.get(lvl).push(Number(r.id));
     }
-    for (let i = 0; i < batch.length; i += 200) {
-      try { await db.batch(batch.slice(i, i + 200)); } catch (e) {}
+    const writes = [];
+    for (const [lvl, ids] of byLevel) {
+      for (let i = 0; i < ids.length; i += 400) {
+        const part = ids.slice(i, i + 400);
+        writes.push(db.prepare(
+          `UPDATE plays SET rarity=? WHERE sport=? AND id IN (${part.map(() => '?').join(',')})`)
+          .bind(lvl, sport, ...part));
+      }
+    }
+    for (let i = 0; i < writes.length; i += 10) {
+      try { await db.batch(writes.slice(i, i + 10)); } catch (e) {}
     }
     // Which of the named top-end tags we still have no id for: until one
     // turns up in a listing, a play carrying it cannot be recognised.
     const haveKeys = new Set([...tagKeyById.values(), ...Object.values(PINS)]);
     const missingRuleTags = Object.keys(RULES).filter(k => !haveKeys.has(k));
-    return json({ sport, season, scored: batch.length, tagsKnown: tagRar.size,
+    return json({ sport, season, scored: rows.length, tagsKnown: tagRar.size,
                   playsWithAnUnknownTag: unknown, families: fam, missingRuleTags });
   }
 
@@ -2106,8 +2120,11 @@ export async function onRequestGet({ request, env }) {
          ORDER BY id LIMIT ${SCORE_BATCH}`).bind(sport, Number(season)).all();
       rows = r.results || [];
     } catch (e) { return json({ error: 'could not read plays' }, 503); }
-    const stmt = db.prepare('UPDATE plays SET rarity=? WHERE id=?');
-    const batch = [];
+    /* The ids are grouped by the rarity they came out at and written a few
+       hundred at a time, so eight thousand plays cost about twenty statements
+       rather than eight thousand. The sport has to be named: an id alone no
+       longer points at one row. */
+    const byLevel = new Map();
     let unknown = 0;
     const RULES = rulesFor(sport);
     const PINS = pinsFor(sport);
@@ -2132,16 +2149,27 @@ export async function onRequestGet({ request, env }) {
       const cap = fumbleCap(r.cat == null ? null : Number(r.cat), r.type, r.subType);
       if (cap != null && best > cap) best = cap;
       fam[f] = (fam[f] || 0) + 1;
-      batch.push(stmt.bind(best || 0, Number(r.id)));
+      const lvl = best || 0;
+      if (!byLevel.has(lvl)) byLevel.set(lvl, []);
+      byLevel.get(lvl).push(Number(r.id));
     }
-    for (let i = 0; i < batch.length; i += 200) {
-      try { await db.batch(batch.slice(i, i + 200)); } catch (e) {}
+    const writes = [];
+    for (const [lvl, ids] of byLevel) {
+      for (let i = 0; i < ids.length; i += 400) {
+        const part = ids.slice(i, i + 400);
+        writes.push(db.prepare(
+          `UPDATE plays SET rarity=? WHERE sport=? AND id IN (${part.map(() => '?').join(',')})`)
+          .bind(lvl, sport, ...part));
+      }
+    }
+    for (let i = 0; i < writes.length; i += 10) {
+      try { await db.batch(writes.slice(i, i + 10)); } catch (e) {}
     }
     // Which of the named top-end tags we still have no id for: until one
     // turns up in a listing, a play carrying it cannot be recognised.
     const haveKeys = new Set([...tagKeyById.values(), ...Object.values(PINS)]);
     const missingRuleTags = Object.keys(RULES).filter(k => !haveKeys.has(k));
-    return json({ sport, season, scored: batch.length, tagsKnown: tagRar.size,
+    return json({ sport, season, scored: rows.length, tagsKnown: tagRar.size,
                   playsWithAnUnknownTag: unknown, families: fam, missingRuleTags });
   }
 
@@ -2667,7 +2695,7 @@ export async function onRequestGet({ request, env }) {
       /* Collecting used to take every other tick and idle on the rest. The
          idle half is now spent collecting too, which is most of the speed-up;
          scoring and the tag sweep keep the ticks they had. */
-      const step = n % 30 === 0 ? 'tags' : n % 5 === 2 ? 'score' : 'games';
+      const step = n % 30 === 0 ? 'tags' : n % 3 === 2 ? 'score' : 'games';
       if (step) {
         /* Strict order. Every queue line carries a pri; the lowest pri with
            anything left takes the tick, so the backlog is worked in the order
