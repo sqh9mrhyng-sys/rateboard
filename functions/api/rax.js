@@ -686,10 +686,11 @@ const RULES_MLB = {
 };
 
 /* Basketball, from Dennis's table. Families are the five kinds of shot.
-   walkoff is legendary on any made shot here; in the Finals it is worth more
-   than that, which needs a way of telling a Finals game apart and is not in
-   yet. */
+   walkoff is legendary on any made shot; the Finals version carries a tag of
+   its own and is iconic. */
 const RULES_NBA = {
+  // iconic: a walk-off in the Finals, and nothing else in the game
+  finalswalkoff: { '*': 7 },
   // legendary on a made shot, and their epic contexts
   blazing:     { layup: 5, dunk: 5, mid: 5, three: 5, ft: 4 },
   crunchtime:  { layup: 5, dunk: 5, mid: 5, three: 5, ft: 5 },
@@ -748,6 +749,12 @@ const TAG_ID_PINS = {
            1120: 'beastmode', 1215: 'gamewinner', 1216: 'walkoff',
            2200: 'lateral', 1074: '2pt',
            1217: 'touchdown', 1218: 'fieldgoal' },
+  /* 2020 is Real's own marker for a walk-off in the Finals, and it is not in
+     the tag dictionary that /tagsearch returns - the only way to find it was
+     from the two plays that carry it. It sits on exactly one play in each
+     Finals game and on nothing in a regular-season or earlier-round game, so
+     the Finals never has to be worked out from the schedule. */
+  nba:   { 2020: 'finalswalkoff' },
   mlb:   { 6053: 'ultimateslam', 6291: 'immaculateinning', 6172: '500club',
            6093: 'missile', 6165: 'insidethepark', 6163: 'popup',
            5911: 'greenlight', 6051: 'grandslam', 6216: 'curves',
