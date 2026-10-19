@@ -47,7 +47,20 @@
     padding:14px 22px;border-bottom:1px solid var(--line);
     background:rgba(27,33,48,.94);position:sticky;top:0;z-index:40;backdrop-filter:blur(6px);
   }
-  .brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:-0.02em}
+  .brandwrap{display:flex;align-items:center;gap:14px;min-width:0}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:-0.02em;white-space:nowrap}
+  /* Same shape as the sport picker but quieter, so the sport stays the louder
+     of the two. */
+  .pagepick{position:relative;min-width:0}
+  .pagepick select{
+    appearance:none;background:transparent;border:1px solid var(--line);color:var(--mute);
+    padding:7px 32px 7px 13px;border-radius:999px;font-weight:600;font-size:13px;
+    max-width:100%;text-overflow:ellipsis;
+  }
+  .pagepick select:hover{color:var(--bone)}
+  .pagepick select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .pagepick .caret{position:absolute;right:12px;top:50%;transform:translateY(-50%);
+    pointer-events:none;color:var(--mute);font-size:11px}
   .pip{width:11px;height:11px;border-radius:3px;background:var(--accent);transition:background .25s}
   .sportpick{position:relative}
   .sportpick select{
@@ -357,6 +370,11 @@
     .topbar{grid-template-columns:auto 1fr;gap:10px;row-gap:9px;padding:10px 14px}
     .brand{font-size:15px;white-space:nowrap}
     .brand .pip{width:9px;height:9px}
+    /* The page picker takes the space between the name and the sport rather
+       than leaving it blank. */
+    .brandwrap{gap:9px;min-width:0;overflow:hidden}
+    .pagepick select{padding:7px 27px 7px 11px;font-size:12.5px}
+    .pagepick .caret{right:10px}
     .sportpick{justify-self:end}
     .sportpick select{padding:9px 34px 9px 14px;font-size:14px}
     .sportpick .caret{right:13px}
@@ -451,7 +469,18 @@
 <!-- ============ APP ============ -->
 <div id="app" class="hide">
   <header class="topbar">
-    <div class="brand"><span class="pip"></span> Rate Board</div>
+    <div class="brandwrap">
+      <div class="brand"><span class="pip"></span> Rate Board</div>
+      <!-- Which page you are on. On a phone this fills the gap that sat empty
+           between the name and the sport. -->
+      <div class="pagepick hide" id="pagepick">
+        <select id="pagesel" aria-label="Page">
+          <option value="board">Buy/sell page</option>
+          <option value="cbb">Game data</option>
+        </select>
+        <span class="caret">&#9662;</span>
+      </div>
+    </div>
     <div class="sportpick">
       <select id="sport" aria-label="Sport">
         <option value="CFB">College football</option>
@@ -621,6 +650,30 @@ function applyGameDataVisibility(){
     b.classList.toggle('hide', !canSeePackData());
     b.textContent = packOnly() ? 'Pack data' : 'Game data';
   }
+  // The page picker carries the same grant and the same wording.
+  const pick = $('#pagepick'), sel = $('#pagesel');
+  if(pick) pick.classList.toggle('hide', !canSeePackData());
+  if(sel){
+    const alt = sel.querySelector('option[value="cbb"]');
+    if(alt) alt.textContent = packOnly() ? 'Pack data' : 'Game data';
+    // Don't snap the label back while the panel is actually open.
+    if(!document.querySelector('.scrim')) sel.value = 'board';
+  }
+}
+
+/* Game data is an overlay rather than its own page, so the picker opens it and
+   falls back to the buy/sell page the moment it closes - otherwise the bar
+   would go on claiming you are somewhere you are not. */
+function pageGo(){
+  const sel = $('#pagesel');
+  if(!sel || sel.value !== 'cbb') return;
+  cbbPanel();
+  const sc = [...document.querySelectorAll('.scrim')].pop();
+  if(!sc){ sel.value = 'board'; return; }
+  const mo = new MutationObserver(() => {
+    if(!sc.isConnected){ mo.disconnect(); sel.value = 'board'; }
+  });
+  mo.observe(document.body, { childList:true });
 }
 
 
@@ -6392,6 +6445,7 @@ async function cbbPanel(){
 
 
 $('#open-cbb').addEventListener('click', cbbPanel);
+$('#pagesel').addEventListener('change', pageGo);
 
 $('#open-copy').addEventListener('click', copyListPanel);
 
