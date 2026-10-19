@@ -532,6 +532,8 @@ const MLB_FAMILY = { 101: 'single', 102: 'double', 103: 'triple',
    goal - none of them carry a category, so none of them is a play. A missed
    free throw does, which is right: 0/2 is still a card. */
 const NBA_FAMILY = { 1: 'dunk', 2: 'layup', 3: 'mid', 4: 'three', 5: 'ft' };
+// The women's game files its plays the same way, down to the category ids.
+const HOOPS = new Set(['nba', 'wnba']);
 /* A fumble recovery is a rare card at best. Only carrying it in lifts it, and
    that play is a touchdown in its own right. Without this, a tag that is
    legendary somewhere else - Beast mode on a run, Imposter on a throw - keeps
@@ -548,7 +550,7 @@ function fumbleCap(cat, type, subType) {
 
 function playFamily(cat, type, subType, sportOf) {
   const t = String(type || ''), st = String(subType || '');
-  if (sportOf === 'nba' && cat != null && NBA_FAMILY[cat]) return NBA_FAMILY[cat];
+  if (HOOPS.has(sportOf) && cat != null && NBA_FAMILY[cat]) return NBA_FAMILY[cat];
   if (cat != null && MLB_FAMILY[cat]) return MLB_FAMILY[cat];
   if (cat === 206) return 'def';
   if (cat === 205) return 'fg';
@@ -716,8 +718,36 @@ const RULES_NBA = {
   bank:        { three: 4 }
 };
 
+/* The women's game, from Dennis's table. The same shape as the men's, with no
+   dunk column - a dunk is rare enough there that he has no rule for one - and
+   no iconic: Real's Finals walk-off tag does not exist in this sport's
+   dictionary at all. */
+const RULES_WNBA = {
+  blazing:     { layup: 5, mid: 5, three: 5, ft: 4 },
+  crunchtime:  { layup: 5, mid: 5, three: 5, ft: 5 },
+  equalizing:  { layup: 5, mid: 5, three: 5, ft: 5 },
+  dagger:      { layup: 5, mid: 5, three: 5, ft: 4 },
+  gameicing:   { layup: 5, mid: 5, three: 5, ft: 5 },
+  gamewinner:  { layup: 5, mid: 5, three: 5, ft: 5 },
+  walkoff:     { layup: 5, mid: 5, three: 5 },
+  over:        { mid: 5, layup: 4, three: 4, ft: 4 },
+  fadeaway:    { three: 5 },
+  floater:     { three: 5 },
+  halfcourter: { three: 5 },
+  kingnugget:  { ft: 5 },
+  // epic
+  clutchtime:  { layup: 4, mid: 4, three: 4, ft: 4 },
+  overtime:    { mid: 4 },
+  firstpoints: { ft: 4 },
+  streaking:   { mid: 4, three: 4 },
+  offsteal:    { mid: 4 },
+  maestro:     { mid: 4 },
+  snipe:       { three: 4 },
+  bank:        { three: 4 }
+};
+
 const RULES_BY_SPORT = { nfl: RULES_NFL, ncaaf: RULES_NCAAF, mlb: RULES_MLB,
-                         nba: RULES_NBA };
+                         nba: RULES_NBA, wnba: RULES_WNBA };
 
 /* The marketplace only ever shows a tag on one card, so the rarity harvested
    from it is whatever that card happened to be - Moonshot reads 4 because the
@@ -727,7 +757,7 @@ const RULES_BY_SPORT = { nfl: RULES_NFL, ncaaf: RULES_NCAAF, mlb: RULES_MLB,
    All three are complete: every football play tag reading epic or better
    already has a rule, and the ones that did not turned out to be performance
    tags, which no longer reach a play at all. */
-const CLOSED_RULES = { mlb: true, nfl: true, ncaaf: true, nba: true };
+const CLOSED_RULES = { mlb: true, nfl: true, ncaaf: true, nba: true, wnba: true };
 const BASE_CEILING = 3;
 const baseCeiling = sp => CLOSED_RULES[String(sp || '').toLowerCase()] ? BASE_CEILING : 7;
 
@@ -855,7 +885,11 @@ const PLAYS_SPORTS = [
   { sport: 'nba',   season: 2026, rolling: true, pri: 8 },
   { sport: 'nba',   season: 2025, pri: 9 },
   { sport: 'nba',   season: 2024, pri: 10 },
-  { sport: 'nba',   season: 2023, pri: 11 }
+  { sport: 'nba',   season: 2023, pri: 11 },
+  // The women's game. Three seasons is all Real holds.
+  { sport: 'wnba',  season: 2026, rolling: true, pri: 12 },
+  { sport: 'wnba',  season: 2025, pri: 13 },
+  { sport: 'wnba',  season: 2024, pri: 14 }
 ];
 // Performance box scores are collected only once every play queue above has
 // lapped, so they never compete with the sweep for a tick.
@@ -876,7 +910,10 @@ const PERF_QUEUE = [
   { sport: 'nba',   season: 2026 },
   { sport: 'nba',   season: 2025 },
   { sport: 'nba',   season: 2024 },
-  { sport: 'nba',   season: 2023 }
+  { sport: 'nba',   season: 2023 },
+  { sport: 'wnba',  season: 2026 },
+  { sport: 'wnba',  season: 2025 },
+  { sport: 'wnba',  season: 2024 }
 ];
 const perfDoneKey = (sp, se) => `perf_done_${sp}_${se}`;
 const sweptKey = (sp, se) => `plays_swept_${sp}_${se}`;
@@ -892,7 +929,7 @@ const GAMES_PER_TICK = 10;        // games per call, each one a full game
 /* Measured at about a sixth of a second a game with five in the air, so a
    hundred and fifty of them is twenty-five seconds - comfortably inside the
    minute between ticks, and no faster a burst than before, just a longer one. */
-const GAMES_PER_TICK_BY_SPORT = { mlb: 150, ncaaf: 90, nfl: 60, nba: 120 };
+const GAMES_PER_TICK_BY_SPORT = { mlb: 150, ncaaf: 90, nfl: 60, nba: 120, wnba: 120 };
 /* How many of those feeds are in the air at once. Five keeps the call well
    inside its minute while asking Real for no more per second than a person
    clicking through games quickly would. */
@@ -1711,8 +1748,8 @@ export async function onRequestGet({ request, env }) {
            nothing, so counting them would leave every finished season
            stuck short of full for ever. */
         `SELECT sport, season, COUNT(DISTINCT gameId) AS games
-           FROM gamelog WHERE sport IN ('nfl','ncaaf','mlb','nba')
-            AND (${['nfl', 'ncaaf', 'mlb', 'nba'].map(sp =>
+           FROM gamelog WHERE sport IN ('nfl','ncaaf','mlb','nba','wnba')
+            AND (${['nfl', 'ncaaf', 'mlb', 'nba', 'wnba'].map(sp =>
                  `(sport='${sp}' AND seasonType IN (${seasonTypeSql(sp)}))`).join(' OR ')})
           GROUP BY sport, season`).all();
       for (const x of (r.results || [])) logged.set(`${x.sport}|${x.season}`, Number(x.games) || 0);
