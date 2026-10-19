@@ -630,43 +630,58 @@ const RULES_NCAAF = {
 /* Baseball. Only four hit types and the strikeout mint anything, and the
    same tag swings three tiers across them - a Missile is Legendary on a
    single and Mystic on a triple. */
+/* Baseball, transcribed from Dennis's table and complete: every context worth
+   more than rare is written here. Anything not listed is not elevated - see
+   CLOSED_RULES below, which is what stops a marketplace reading standing in
+   for a rule that does not exist. */
 const RULES_MLB = {
   // iconic / mystic
   ultimateslam:     { homer: 7 },
   '500club':        { homer: 6 },
   missile:          { single: 5, double: 5, triple: 6, homer: 6 },
-  // legendary
-  scorched:         { double: 5 },
-  insidethepark:    { homer: 5 },
+  // legendary, and the epic contexts of the same tags
+  battle:           { single: 4, double: 5, homer: 5 },
+  fullcount:        { triple: 5 },
+  gametying:        { triple: 5 },
+  gamewinner:       { double: 4, triple: 5 },
+  gas:              { double: 4, triple: 5, homer: 4 },
+  greenlight:       { single: 4, double: 5, homer: 5 },
+  grounder:         { triple: 5 },
   immaculateinning: { strikeout: 5 },
   '4kinning':       { strikeout: 5 },
-  gametying:        { triple: 5 },
-  twostrikes:       { triple: 5 },
-  fullcount:        { triple: 5 },
-  grounder:         { triple: 5 },
-  workingit:        { double: 5, homer: 5, single: 4, strikeout: 4 },
-  battle:           { double: 5, homer: 5, single: 4 },
-  popup:            { double: 5, single: 4 },
-  greenlight:       { double: 5, homer: 5, single: 4 },
-  walkoff:          { double: 5, homer: 5, single: 4 },
-  gas:              { triple: 5, double: 4, homer: 4 },
+  insidethepark:    { homer: 5 },
+  pinchhitter:      { single: 4, double: 4, triple: 4, homer: 5 },
+  popup:            { single: 4, double: 5 },
+  rocket:           { single: 4, double: 4, triple: 5, homer: 4 },
   rope:             { triple: 5, homer: 4 },
-  rocket:           { triple: 5, single: 4, double: 4, homer: 4 },
-  gamewinner:       { triple: 5, double: 4 },
-  pinchhitter:      { homer: 5, single: 4, double: 4, triple: 4 },
-  // epic
-  leadoff:          { triple: 4 },
+  scorched:         { double: 5 },
+  twostrikes:       { triple: 5 },
+  walkoff:          { single: 4, double: 5, homer: 5 },
+  workingit:        { single: 4, double: 5, homer: 5, strikeout: 4 },
+  // epic only
+  curves:           { strikeout: 4 },
   firstpitch:       { triple: 4 },
   goahead:          { triple: 4 },
+  grandslam:        { homer: 4 },
+  laser:            { homer: 4 },
+  leadoff:          { triple: 4 },
   lucky:            { triple: 4, homer: 4 },
   moonshot:         { homer: 4 },
-  towering:         { homer: 4 },
-  laser:            { homer: 4 },
-  grandslam:        { homer: 4 },
-  curves:           { strikeout: 4 }
+  towering:         { homer: 4 }
 };
 
 const RULES_BY_SPORT = { nfl: RULES_NFL, ncaaf: RULES_NCAAF, mlb: RULES_MLB };
+
+/* The marketplace only ever shows a tag on one card, so the rarity harvested
+   from it is whatever that card happened to be - Moonshot reads 4 because the
+   listing was a home run, and that 4 then followed Moonshot onto a single.
+   Where the rule table is complete, every context above rare is written down,
+   so a harvested reading above rare that no rule backs is not believed.
+   Baseball's table is complete. Football's is not yet, so it keeps the old
+   behaviour until its dictionary is filled in the same way. */
+const CLOSED_RULES = { mlb: true };
+const BASE_CEILING = 3;
+const baseCeiling = sp => CLOSED_RULES[String(sp || '').toLowerCase()] ? BASE_CEILING : 7;
 
 /* Every id Real's own tag dictionary gives for the tags the rules name, read
    off /tagsearch rather than waited for in the marketplace. A tag that only
@@ -1559,6 +1574,7 @@ export async function onRequestGet({ request, env }) {
     let unknown = 0;
     const RULES = rulesFor(sport);
     const PINS = pinsFor(sport);
+    const CEIL = baseCeiling(sport);
     const fam = {};
     for (const r of rows) {
       const f = playFamily(r.cat == null ? null : Number(r.cat), r.type, r.subType);
@@ -1572,7 +1588,7 @@ export async function onRequestGet({ request, env }) {
         const rule = key ? RULES[key] : null;
         const ruled = rule ? (rule[f] != null ? rule[f] : rule['*']) : null;
         if (ruled == null && !tagRar.has(id)) { miss = true; continue; }
-        const lvl = ruled != null ? ruled : tagRar.get(id);
+        const lvl = ruled != null ? ruled : Math.min(tagRar.get(id), CEIL);
         best = Math.max(best, lvl);
       }
       if (miss) unknown++;
@@ -1794,6 +1810,7 @@ export async function onRequestGet({ request, env }) {
     let unknown = 0;
     const RULES = rulesFor(sport);
     const PINS = pinsFor(sport);
+    const CEIL = baseCeiling(sport);
     const fam = {};
     for (const r of rows) {
       const f = playFamily(r.cat == null ? null : Number(r.cat), r.type, r.subType);
@@ -1807,7 +1824,7 @@ export async function onRequestGet({ request, env }) {
         const rule = key ? RULES[key] : null;
         const ruled = rule ? (rule[f] != null ? rule[f] : rule['*']) : null;
         if (ruled == null && !tagRar.has(id)) { miss = true; continue; }
-        const lvl = ruled != null ? ruled : tagRar.get(id);
+        const lvl = ruled != null ? ruled : Math.min(tagRar.get(id), CEIL);
         best = Math.max(best, lvl);
       }
       if (miss) unknown++;
