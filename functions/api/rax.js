@@ -1893,6 +1893,59 @@ export async function onRequestGet({ request, env }) {
   // The tag list. Rarity is not on a play - it comes from the tags on it, and
   // this is what the tag picker calls. Fixed shape: sport is validated, type
   // is a short word, and the play id is digits only.
+  /* Is there such a thing as a player link? Walk whole payloads and report
+     every key that sounds like one and every value that looks like a URL or a
+     slug, so the answer is what the API actually carries rather than a guess
+     at a URL shape. */
+  if (url.searchParams.get('linkhunt') != null) {
+    const pid = String(url.searchParams.get('playerId') || '').replace(/[^0-9]/g, '');
+    const gid = String(url.searchParams.get('gameId') || '').replace(/[^0-9]/g, '');
+    const LINKY = /(url|link|slug|share|deep|permalink|handle|username|web|uri|path|href)/i;
+    const hits = {}, urls = new Set(), playerKeys = {};
+    function walk(node, path, depth) {
+      if (node == null || depth > 7) return;
+      if (typeof node === 'string') {
+        if (/^https?:\/\//i.test(node)) urls.add(node.slice(0, 160));
+        return;
+      }
+      if (Array.isArray(node)) { node.slice(0, 4).forEach((x, i) => walk(x, `${path}[${i}]`, depth + 1)); return; }
+      if (typeof node !== 'object') return;
+      for (const k of Object.keys(node)) {
+        const v = node[k];
+        if (LINKY.test(k) && (typeof v === 'string' || typeof v === 'number')) {
+          hits[`${path}.${k}`] = String(v).slice(0, 160);
+        }
+        walk(v, `${path}.${k}`, depth + 1);
+      }
+    }
+    const out = { sport, asked: [] };
+    const tries = [];
+    if (pid) {
+      tries.push(['player', `https://web.realapp.com/players/${pid}/sport/${sport}`]);
+      tries.push(['seasonfeed', `https://web.realapp.com/players/${pid}/sport/${sport}`
+        + `/seasonfeed?limit=5&season=${season}&view=recent&viewFrame=default`]);
+      tries.push(['playercard', `https://web.realapp.com/players/${pid}/sport/${sport}/card`]);
+    }
+    if (gid) tries.push(['gamefeed',
+      `https://web.realapp.com/games/${gid}/sport/${sport}/feed?version=2&view=all&viewFrame=default`]);
+    for (const [name, u] of tries) {
+      try {
+        const d = await rsGet(u, auth);
+        out.asked.push({ name, ok: true, keys: Object.keys(d || {}).slice(0, 30) });
+        walk(d, name, 0);
+        // The shape of one player object, whole, is the thing worth seeing.
+        const pl = (d && (d.player || (Array.isArray(d.players) && d.players[0]))) || null;
+        if (pl && !playerKeys[name]) playerKeys[name] = Object.keys(pl);
+      } catch (e) {
+        out.asked.push({ name, ok: false, why: String((e && e.message) || e).slice(0, 120) });
+      }
+    }
+    out.linkishKeys = hits;
+    out.playerObjectKeys = playerKeys;
+    out.urlsSeen = [...urls].slice(0, 40);
+    return json(out);
+  }
+
   if (url.searchParams.get('probeTags') != null) {
     const type = String(url.searchParams.get('type') || 'tags').toLowerCase();
     if (!/^[a-z]{1,16}$/.test(type)) return json({ error: 'bad type' }, 400);
