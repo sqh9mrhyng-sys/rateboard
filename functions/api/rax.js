@@ -1397,6 +1397,142 @@ export async function onRequestGet({ request, env }) {
      cursor, so a game that lands in the log after the cursor has gone past
      its id is never picked up until the whole season is walked again - and a
      finished season never is. This finds them, and fill=1 collects them. */
+  /* ---- the play table's key -------------------------------------------
+     plays was keyed on the play id alone, but Real reuses id ranges across
+     sports: a college play can carry the same id as a pro one. The insert
+     then took the ON CONFLICT path and quietly rewrote the other sport's row
+     instead of adding this one, and reported it as stored. This rebuilds the
+     table keyed on (id, sport).
+
+     It is done in steps, and nothing is thrown away: the rows are copied into
+     a new table, the counts are checked season by season, and only then is
+     the old table renamed aside - renamed, not dropped, so it is still there
+     if anything looks wrong afterwards.
+       ?plays=migrate&step=init    build the new table and its indexes
+       ?plays=migrate&step=copy    copy a slice; repeat until done
+       ?plays=migrate&step=verify  compare both tables, season by season
+       ?plays=migrate&step=swap    rename old aside, new into place
+       ?plays=migrate&step=status  where it is up to
+     -------------------------------------------------------------------- */
+  if (url.searchParams.get('plays') === 'migrate') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    const step = String(url.searchParams.get('step') || 'status');
+    const COLS = `id, sport, season, seasonType, gameId, day, label, type, subType,
+                  cat, value, playerId, player, player2Id, player2, teamId, oppTeamId,
+                  period, clock, down, togo, yards, epa, tags, seenAt`;
+    const CURSOR = 'plays_migrate_v2';
+    const V2_DDL = `CREATE TABLE IF NOT EXISTS plays_v2 (
+      id INTEGER NOT NULL, sport TEXT NOT NULL, season INTEGER NOT NULL,
+      seasonType TEXT, gameId INTEGER, day TEXT,
+      label TEXT, type TEXT, subType TEXT, cat INTEGER, value REAL,
+      playerId INTEGER, player TEXT, player2Id INTEGER, player2 TEXT,
+      teamId INTEGER, oppTeamId INTEGER,
+      period INTEGER, clock TEXT, down INTEGER, togo INTEGER, yards INTEGER,
+      epa REAL, tags TEXT, rarity INTEGER, seenAt INTEGER NOT NULL,
+      PRIMARY KEY (id, sport))`;
+
+    if (step === 'init') {
+      try { await db.prepare(V2_DDL).run(); } catch (e) {
+        return json({ error: 'could not create the new table', detail: String((e && e.message) || e) }, 503);
+      }
+      for (const ix of [
+        'CREATE INDEX IF NOT EXISTS p2_sp ON plays_v2 (sport, season, playerId)',
+        'CREATE INDEX IF NOT EXISTS p2_game ON plays_v2 (sport, season, gameId)',
+        'CREATE INDEX IF NOT EXISTS p2_cat ON plays_v2 (sport, season, cat)',
+        'CREATE INDEX IF NOT EXISTS p2_p2 ON plays_v2 (sport, season, player2Id)',
+        'CREATE INDEX IF NOT EXISTS p2_score ON plays_v2 (sport, season, rarity)'
+      ]) { try { await db.prepare(ix).run(); } catch (e) {} }
+      try { await env.RATEBOARD_KV.put(CURSOR, '0'); } catch (e) {}
+      return json({ step, ready: true });
+    }
+
+    if (step === 'copy') {
+      let after = 0;
+      try { after = Number(await env.RATEBOARD_KV.get(CURSOR)) || 0; } catch (e) {}
+      const n = Math.max(1000, Math.min(60000,
+        parseInt(url.searchParams.get('n') || '40000', 10) || 40000));
+      // The slice is chosen by id and copied inside the database - no row
+      // travels through here, so a big slice costs little.
+      let top = null;
+      try {
+        const r = await db.prepare(
+          `SELECT MAX(id) AS hi FROM (SELECT id FROM plays WHERE id > ? ORDER BY id LIMIT ?)`)
+          .bind(after, n).first();
+        top = r && r.hi == null ? null : Number(r.hi);
+      } catch (e) {
+        return json({ error: 'could not read the next slice', detail: String((e && e.message) || e) }, 503);
+      }
+      if (top == null) return json({ step, done: true, after });
+      try {
+        await db.prepare(
+          `INSERT OR IGNORE INTO plays_v2 (${COLS}, rarity)
+             SELECT ${COLS}, rarity FROM plays WHERE id > ? AND id <= ?`)
+          .bind(after, top).run();
+      } catch (e) {
+        return json({ error: 'copy failed', after, top, detail: String((e && e.message) || e) }, 503);
+      }
+      try { await env.RATEBOARD_KV.put(CURSOR, String(top)); } catch (e) {}
+      let held = 0;
+      try {
+        const h = await db.prepare('SELECT COUNT(*) AS n FROM plays_v2').first();
+        held = Number((h && h.n) || 0);
+      } catch (e) {}
+      return json({ step, from: after, to: top, heldInNew: held, done: false });
+    }
+
+    if (step === 'verify' || step === 'status') {
+      const out = { step };
+      try {
+        const a = await db.prepare(
+          'SELECT sport, season, COUNT(*) AS n FROM plays GROUP BY sport, season').all();
+        out.old = a.results || [];
+      } catch (e) { out.old = 'unreadable'; }
+      try {
+        const b = await db.prepare(
+          'SELECT sport, season, COUNT(*) AS n FROM plays_v2 GROUP BY sport, season').all();
+        out.new = b.results || [];
+      } catch (e) { out.new = 'no new table yet'; }
+      try { out.cursor = await env.RATEBOARD_KV.get(CURSOR); } catch (e) {}
+      if (Array.isArray(out.old) && Array.isArray(out.new)) {
+        const m = new Map(out.new.map(x => [`${x.sport}|${x.season}`, Number(x.n)]));
+        out.shortfall = out.old.map(x => ({ sport: x.sport, season: x.season,
+          old: Number(x.n), new: m.get(`${x.sport}|${x.season}`) || 0,
+          missing: Number(x.n) - (m.get(`${x.sport}|${x.season}`) || 0) }))
+          .filter(x => x.missing !== 0);
+        out.safeToSwap = out.shortfall.length === 0
+          && out.new.reduce((t, x) => t + Number(x.n), 0) > 0;
+      }
+      return json(out);
+    }
+
+    if (step === 'swap') {
+      // Refuse unless every season is accounted for. The old table is kept.
+      let oldRows = [], newRows = [];
+      try {
+        oldRows = ((await db.prepare(
+          'SELECT sport, season, COUNT(*) AS n FROM plays GROUP BY sport, season').all()).results) || [];
+        newRows = ((await db.prepare(
+          'SELECT sport, season, COUNT(*) AS n FROM plays_v2 GROUP BY sport, season').all()).results) || [];
+      } catch (e) { return json({ error: 'could not compare the tables' }, 503); }
+      const m = new Map(newRows.map(x => [`${x.sport}|${x.season}`, Number(x.n)]));
+      const short = oldRows.filter(x => (m.get(`${x.sport}|${x.season}`) || 0) < Number(x.n));
+      if (short.length) {
+        return json({ error: 'not every row has been copied yet, so nothing was changed',
+                      shortfall: short }, 409);
+      }
+      try {
+        await db.prepare('ALTER TABLE plays RENAME TO plays_pre_v2').run();
+        await db.prepare('ALTER TABLE plays_v2 RENAME TO plays').run();
+      } catch (e) {
+        return json({ error: 'rename failed', detail: String((e && e.message) || e) }, 503);
+      }
+      return json({ step, swapped: true,
+                    note: 'the old table is kept as plays_pre_v2' });
+    }
+    return json({ error: 'step must be init, copy, verify, status or swap' }, 400);
+  }
+
   if (url.searchParams.get('plays') === 'gaps') {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
