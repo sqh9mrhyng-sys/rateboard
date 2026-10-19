@@ -259,6 +259,11 @@
 
   /* ---------- CBB data explorer ---------- */
   .modal.wide{max-width:1040px}
+  /* The same panel, standing on a page instead of floating over one: no cap
+     on its height or width, and the header does not stick (the top bar is
+     already sticky and the two would sit on top of each other). */
+  #page-cbb .modal{max-width:none;max-height:none;overflow:visible}
+  #page-cbb .modal .panel-hd{position:static}
   .dtbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
   .dtbar .field{width:auto;flex:0 1 auto;padding:8px 10px;font-size:13px;min-width:0}
   .dtbar .field.grow{flex:1 1 150px}
@@ -502,14 +507,13 @@
         <button class="linkbtn" id="open-bell">Alerts</button>
         <button class="linkbtn" id="open-feature">Request a feature</button>
         <button class="linkbtn hide" id="open-copy">Copy list</button>
-        <button class="linkbtn hide" id="open-cbb">Game data</button>
         <button class="linkbtn hide" id="open-min">Lists</button>
         <button class="linkbtn hide" id="open-admin">Admin</button>
       </nav>
     </div>
   </header>
 
-  <div class="wrap">
+  <div class="wrap" id="page-board">
     <div id="previewbar" class="warn hide" style="margin-bottom:18px">
       You are looking at the board the way a regular member sees it. Admin controls are hidden.
       <button class="linkbtn" id="preview-off" style="margin-left:8px">Back to admin</button>
@@ -610,6 +614,9 @@
 
     </div>
   </div>
+
+  <!-- Game data is a page of its own now, not something laid over the board. -->
+  <div class="wrap hide" id="page-cbb"></div>
 </div>
 
 <script>
@@ -642,38 +649,30 @@ const packDataList = () => (market.packdata || []).map(x => String(x).toLowerCas
 const canSeePackData = () => canSeeGameData()
   || (!!me && packDataList().includes(String(me).toLowerCase()));
 const packOnly = () => canSeePackData() && !canSeeGameData();
+/* Which page is showing. Kept in the address bar so a refresh, and the back
+   button, land where you were rather than dumping you on the board. Declared
+   up here because the visibility pass below reads it. */
+let curPage = 'board';
 function applyGameDataVisibility(){
-  const b = $('#open-cbb');
-  // The button opens for anyone with either grant; the panel itself decides
-  // how many tabs they get.
-  if(b){
-    b.classList.toggle('hide', !canSeePackData());
-    b.textContent = packOnly() ? 'Pack data' : 'Game data';
-  }
-  // The page picker carries the same grant and the same wording.
+  // The picker is the only way in now; the panel itself decides how many tabs
+  // someone with a pack-data-only grant gets.
   const pick = $('#pagepick'), sel = $('#pagesel');
   if(pick) pick.classList.toggle('hide', !canSeePackData());
   if(sel){
     const alt = sel.querySelector('option[value="cbb"]');
     if(alt) alt.textContent = packOnly() ? 'Pack data' : 'Game data';
-    // Don't snap the label back while the panel is actually open.
-    if(!document.querySelector('.scrim')) sel.value = 'board';
+    sel.value = curPage;
   }
+  // Someone who reloaded on the game data page, or followed a link to it,
+  // belongs there rather than back on the board.
+  if(location.hash === '#gamedata' && curPage !== 'cbb' && canSeePackData()) goPage('cbb');
+  // A grant pulled while they were looking at it puts them back on the board.
+  if(curPage === 'cbb' && !canSeePackData()) goPage('board');
 }
 
-/* Game data is an overlay rather than its own page, so the picker opens it and
-   falls back to the buy/sell page the moment it closes - otherwise the bar
-   would go on claiming you are somewhere you are not. */
 function pageGo(){
   const sel = $('#pagesel');
-  if(!sel || sel.value !== 'cbb') return;
-  cbbPanel();
-  const sc = [...document.querySelectorAll('.scrim')].pop();
-  if(!sc){ sel.value = 'board'; return; }
-  const mo = new MutationObserver(() => {
-    if(!sc.isConnected){ mo.disconnect(); sel.value = 'board'; }
-  });
-  mo.observe(document.body, { childList:true });
+  if(sel) goPage(sel.value);
 }
 
 
@@ -2083,6 +2082,38 @@ function toast(msg){
   document.body.appendChild(d);
   clearTimeout(toastT); toastT = setTimeout(()=>d.remove(), 3200);
 }
+
+/* The frame game data draws itself into. Same shape the overlay handed it -
+   a .modal with a header and a .panel-bd - so everything inside cbbPanel goes
+   on working untouched; it just lives on the page now. */
+function pageShell(title, bodyHTML){
+  const host = $('#page-cbb');
+  host.innerHTML = `<div class="modal"><div class="panel-hd"><h2>${esc(title)}</h2>`
+    + `<button class="btn-ghost" data-back>Back to buy/sell</button></div>`
+    + `<div class="panel-bd stack">${bodyHTML}</div></div>`;
+  return host;
+}
+
+function goPage(want){
+  const to = (want === 'cbb' && canSeePackData()) ? 'cbb' : 'board';
+  if(to === curPage) return;
+  curPage = to;
+  const bd = $('#page-board'), gd = $('#page-cbb');
+  if(bd) bd.classList.toggle('hide', to === 'cbb');
+  if(gd) gd.classList.toggle('hide', to !== 'cbb');
+  const sel = $('#pagesel');
+  if(sel) sel.value = to;
+  if(to === 'cbb') cbbPanel();
+  else if(gd) gd.innerHTML = '';          // next visit rebuilds, as it always did
+  const h = to === 'cbb' ? '#gamedata' : '';
+  if((location.hash || '') !== h){
+    try { history.replaceState(null, '', location.pathname + location.search + h); }
+    catch(e) { location.hash = h; }
+  }
+  window.scrollTo(0, 0);
+}
+window.addEventListener('hashchange', () =>
+  goPage(location.hash === '#gamedata' ? 'cbb' : 'board'));
 
 function modal(title, bodyHTML){
   const scrim = document.createElement('div');
@@ -4406,7 +4437,7 @@ async function cbbPanel(){
 
   const only = packOnly();
   if(only) st.mode = 'pack';
-  const box = modal(only ? 'Pack data' : 'Game data', `
+  const box = pageShell(only ? 'Pack data' : 'Game data', `
     <div id="cb-seasons"><span class="note">Loading seasons&hellip;</span></div>
     <p class="note" id="cb-scope"></p>
     <div class="seg" role="group" aria-label="View">
@@ -6444,8 +6475,11 @@ async function cbbPanel(){
 }
 
 
-$('#open-cbb').addEventListener('click', cbbPanel);
 $('#pagesel').addEventListener('change', pageGo);
+// One listener for the page, rather than a fresh one on every rebuild.
+$('#page-cbb').addEventListener('click', e => {
+  if(e.target && e.target.hasAttribute('data-back')) goPage('board');
+});
 
 $('#open-copy').addEventListener('click', copyListPanel);
 
