@@ -675,16 +675,23 @@ const CARD_SQL = `cat IS NOT NULL AND NOT (cat = 205 AND (
 const PASS_CREDIT = `(type='PassCompleted'
   OR (type='Touchdown' AND subType='PassCompleted')
   OR (type='TwoPointConversion' AND subType='PassCompleted'))`;
+/* A strikeout is filed from the batter's side - the batter is the primary
+   name and the pitcher the secondary - but the card belongs to the pitcher
+   and to no one else. So the batter's own rows stop short of a strikeout,
+   and the pitcher is credited off the secondary name instead. Category 105
+   is baseball's alone, so football is untouched by it. */
+const STRIKEOUT = `COALESCE(cat, 0) = 105`;
 // Every card play, once per player who earns a card from it.
 const CREDITED = `
   SELECT playerId AS pid, player AS pname, season, gameId, rarity, value, cat,
          type, subType, id, day, tags
     FROM plays WHERE sport=?1 AND season=?2 AND ${CARD_SQL}
+     AND NOT ${STRIKEOUT}
   UNION ALL
   SELECT player2Id AS pid, player2 AS pname, season, gameId, rarity, value, cat,
          type, subType, id, day, tags
     FROM plays WHERE sport=?1 AND season=?2 AND ${CARD_SQL}
-     AND player2Id IS NOT NULL AND ${PASS_CREDIT}`;
+     AND player2Id IS NOT NULL AND (${PASS_CREDIT} OR ${STRIKEOUT})`;
 
 /* ---- performances ---------------------------------------------------
    A performance is the player's whole game line: its own card, its own
