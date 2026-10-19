@@ -78,6 +78,34 @@
   .linkbtn{color:var(--mute);text-decoration:underline;text-underline-offset:3px;font-size:13.5px}
   .linkbtn:hover{color:var(--bone)}
 
+  /* The collector bar. Quiet by default - it is a status line, not a feature. */
+  .opsbar{border:1px solid var(--line);border-radius:10px;background:var(--panel);
+    margin-bottom:18px;font-size:13px}
+  .opsbar > summary{cursor:pointer;padding:9px 13px;list-style:none;display:flex;
+    align-items:center;gap:9px;color:var(--mute)}
+  .opsbar > summary::-webkit-details-marker{display:none}
+  .opsdot{width:8px;height:8px;border-radius:50%;background:var(--accent);flex:0 0 auto;
+    animation:opspulse 2.2s ease-in-out infinite}
+  @keyframes opspulse{0%,100%{opacity:.35}50%{opacity:1}}
+  .opsbar #ops-body{padding:4px 13px 13px}
+  .opsrow{display:grid;grid-template-columns:116px 1fr 118px;gap:10px;align-items:center;
+    padding:5px 0;border-top:1px solid var(--line)}
+  .opsrow:first-child{border-top:0}
+  .opsname{white-space:nowrap;font-weight:600;color:var(--bone)}
+  .opsname .tag{font-weight:400;color:var(--mute);font-size:11.5px;margin-left:5px}
+  .opsnum{text-align:right;color:var(--mute);font-variant-numeric:tabular-nums;font-size:12px}
+  .opsbars{display:flex;flex-direction:column;gap:3px}
+  .opsbar2{height:7px;border-radius:4px;background:var(--panel-2);overflow:hidden}
+  .opsbar2 > i{display:block;height:100%;background:var(--accent);border-radius:4px;
+    transition:width .4s ease}
+  .opsbar2.sc > i{background:var(--mute)}
+  .opshd{color:var(--mute);font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;
+    margin:12px 0 4px}
+  @media(max-width:560px){
+    .opsrow{grid-template-columns:92px 1fr;row-gap:2px}
+    .opsnum{grid-column:1/-1;text-align:left}
+  }
+
   .wrap{max-width:1180px;margin:0 auto;padding:22px}
   .cols{display:grid;grid-template-columns:1fr 380px;gap:22px;align-items:start}
   @media(max-width:900px){.cols{grid-template-columns:1fr}}
@@ -523,6 +551,13 @@
       <button class="linkbtn" id="preview-off" style="margin-left:8px">Back to admin</button>
     </div>
     <div id="offline" class="warn hide" style="margin-bottom:18px"></div>
+    <!-- What the collector is doing. Admin only; nobody else needs to watch
+         the machinery. -->
+    <details id="opsbar" class="opsbar hide">
+      <summary><span class="opsdot"></span><span id="ops-now">Collector</span>
+        <span class="note" id="ops-sub"></span></summary>
+      <div id="ops-body"><p class="note">Loading&hellip;</p></div>
+    </details>
     <div class="cols">
 
       <!-- board -->
@@ -653,6 +688,79 @@ const packDataList = () => (market.packdata || []).map(x => String(x).toLowerCas
 const canSeePackData = () => canSeeGameData()
   || (!!me && packDataList().includes(String(me).toLowerCase()));
 const packOnly = () => canSeePackData() && !canSeeGameData();
+/* ---- the collector bar -------------------------------------------------
+   Admin only. It reads one endpoint that reports, per season, how many of the
+   games in the log have been collected and how many of the plays collected
+   have been scored - the two things that actually take time. */
+const $b2 = sel => document.querySelector(sel);
+let opsTimer = null, opsBusy = false;
+function opsPct(a, b){ return b > 0 ? Math.min(100, Math.round(a / b * 100)) : 0; }
+function opsBar(a, b, cls){
+  return `<div class="opsbar2 ${cls || ''}"><i style="width:${opsPct(a, b)}%"></i></div>`;
+}
+function opsRows(list){
+  return list.map(q => {
+    const name = (CB_SPORT_LABEL[q.sport] || q.sport.toUpperCase()) + ' '
+      + seasonLabel(q.sport, q.season);
+    const mark = q.lapped ? (q.rolling ? 'watching' : 'done') : '';
+    return `<div class="opsrow"><div class="opsname">${esc(name)}`
+      + (mark ? `<span class="tag">${mark}</span>` : '')
+      + `</div><div class="opsbars">`
+      + opsBar(q.gamesCollected, q.gamesLogged)
+      + opsBar(q.scored, q.plays, 'sc')
+      + `</div><div class="opsnum">`
+      + `${Number(q.gamesCollected).toLocaleString()}/${Number(q.gamesLogged).toLocaleString()} games<br>`
+      + `${opsPct(q.scored, q.plays)}% scored</div></div>`;
+  }).join('');
+}
+async function opsPaint(){
+  if(opsBusy) return;
+  opsBusy = true;
+  try {
+    const d = await (await fetch('/api/rax?plays=progress')).json();
+    if(d.error) throw new Error(d.error);
+    const q = d.queue || [];
+    const now = (d.working && d.working.length)
+      ? d.working.map(x => {
+          const [sp, se] = x.split(' ');
+          return (CB_SPORT_LABEL[sp] || sp.toUpperCase()) + ' ' + seasonLabel(sp, +se);
+        }).join(' + ')
+      : 'performances';
+    $b2('#ops-now').textContent = 'Collecting ' + now;
+    const games = q.reduce((a, x) => a + x.gamesCollected, 0);
+    const logd  = q.reduce((a, x) => a + x.gamesLogged, 0);
+    const plays = q.reduce((a, x) => a + x.plays, 0);
+    const sc    = q.reduce((a, x) => a + x.scored, 0);
+    $b2('#ops-sub').textContent = `${games.toLocaleString()} of ${logd.toLocaleString()} games`
+      + ` · ${opsPct(sc, plays)}% scored · tick ${Number(d.tick).toLocaleString()}`;
+    const order = q.slice().sort((a, b) => (a.pri - b.pri) || (b.season - a.season));
+    const perf = (d.perf || []).reduce((a, x) => a + Number(x.rows_ || 0), 0);
+    const perfLeft = (d.perfQueue || []).filter(x => !x.done).length;
+    $b2('#ops-body').innerHTML = opsRows(order)
+      + `<div class="opshd">Performances</div>`
+      + `<p class="note" style="margin:0">${perf.toLocaleString()} rows held`
+      + ` · ${perfLeft} of ${(d.perfQueue || []).length} seasons still to collect`
+      + ` · starts once the sweep above is through</p>`;
+  } catch(e){
+    $b2('#ops-body').innerHTML = '<p class="note">Could not read the collector.</p>';
+  } finally { opsBusy = false; }
+}
+function opsSetup(){
+  const bar = $b2('#opsbar');
+  if(!bar) return;
+  const on = isAdmin();
+  bar.classList.toggle('hide', !on);
+  if(!on){ if(opsTimer){ clearInterval(opsTimer); opsTimer = null; } return; }
+  if(!bar.dataset.wired){
+    bar.dataset.wired = '1';
+    bar.addEventListener('toggle', () => {
+      if(bar.open){ opsPaint(); opsTimer = setInterval(opsPaint, 30000); }
+      else if(opsTimer){ clearInterval(opsTimer); opsTimer = null; }
+    });
+  }
+  if(bar.open && !opsTimer){ opsPaint(); opsTimer = setInterval(opsPaint, 30000); }
+}
+
 /* Which page is showing. Kept in the address bar so a refresh, and the back
    button, land where you were rather than dumping you on the board. Declared
    up here because the visibility pass below reads it. */
@@ -696,6 +804,7 @@ function applyAdminVisibility(){
   const banner = $('#previewbar');
   if(banner) banner.classList.toggle('hide', !previewMember);
   applyGameDataVisibility();
+  opsSetup();
 }
 const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL', UFC:'UFC', NHL:'NHL' };
 
