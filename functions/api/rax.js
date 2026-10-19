@@ -836,7 +836,11 @@ const GAMES_PER_TICK = 10;        // games per call, each one a full game
 /* A baseball game's feed is around eighty plays where a football game's is
    nearer a hundred and seventy-five, so more of them fit in a tick without
    the call running any longer than a football one already does. */
-const GAMES_PER_TICK_BY_SPORT = { mlb: 24, ncaaf: 12, nfl: 10 };
+const GAMES_PER_TICK_BY_SPORT = { mlb: 90, ncaaf: 48, nfl: 36 };
+/* How many of those feeds are in the air at once. Five keeps the call well
+   inside its minute while asking Real for no more per second than a person
+   clicking through games quickly would. */
+const FETCH_AT_ONCE = 5;
 const gamesPerTick = sp => GAMES_PER_TICK_BY_SPORT[String(sp || '').toLowerCase()]
   || GAMES_PER_TICK;
 
@@ -1022,19 +1026,30 @@ export async function onRequestGet({ request, env }) {
 
     const stmt = playStmt(db);
     let stored = 0, asked = 0;
-    for (const id of ids) {
-      const u = from === 'games'
-        ? `https://web.realapp.com/games/${id}/sport/${sport}/feed?version=2&view=all&viewFrame=default`
-        : `https://web.realapp.com/players/${id}/sport/${sport}/plays/top?limit=50&viewFrame=season`;
-      let d;
-      try { d = await rsGet(u, auth); } catch (e) { continue; }
-      asked++;
-      const rows = Array.isArray(d && d.plays) ? d.plays : rowsOf(d);
+    /* Fetched a few at a time rather than one after another. A game's feed is
+       most of the wait - about four tenths of a second of it - and nothing in
+       one game depends on another, so they are asked for together and the
+       rows written as each group comes back. */
+    const urlFor = id => from === 'games'
+      ? `https://web.realapp.com/games/${id}/sport/${sport}/feed?version=2&view=all&viewFrame=default`
+      : `https://web.realapp.com/players/${id}/sport/${sport}/plays/top?limit=50&viewFrame=season`;
+    const groups = [];
+    for (let i = 0; i < ids.length; i += FETCH_AT_ONCE) {
+      groups.push(ids.slice(i, i + FETCH_AT_ONCE));
+    }
+    for (const group of groups) {
+      const got = await Promise.all(group.map(id =>
+        rsGet(urlFor(id), auth).then(d => d, () => null)));
       const batch = [];
-      for (const r of rows) {
-        if (!r || !r.id || !Number.isFinite(Number(r.id))) continue;
-        if (!keepsPlays(sport, r.seasonType)) continue;
-        batch.push(playBind(stmt, r, sport, season));
+      for (const d of got) {
+        if (!d) continue;
+        asked++;
+        const rows = Array.isArray(d && d.plays) ? d.plays : rowsOf(d);
+        for (const r of rows) {
+          if (!r || !r.id || !Number.isFinite(Number(r.id))) continue;
+          if (!keepsPlays(sport, r.seasonType)) continue;
+          batch.push(playBind(stmt, r, sport, season));
+        }
       }
       /* Chunked, and the count is what actually landed. An unchunked batch
          meant a single row D1 would not take threw the whole game away, and
@@ -1043,7 +1058,7 @@ export async function onRequestGet({ request, env }) {
         const part = batch.slice(i, i + 100);
         try { await db.batch(part); stored += part.length; } catch (e) {}
       }
-      await sleep(40);
+      await sleep(25);
     }
     after = ids[ids.length - 1];
     try { await env.RATEBOARD_KV.put(key, String(after)); } catch (e) {}
@@ -2723,7 +2738,9 @@ export async function onRequestGet({ request, env }) {
       /* Collecting used to take every other tick and idle on the rest. The
          idle half is now spent collecting too, which is most of the speed-up;
          scoring and the tag sweep keep the ticks they had. */
-      const step = n % 30 === 0 ? 'tags' : n % 3 === 2 ? 'score' : 'games';
+      /* Rating a season now takes seconds rather than hours, so it is back to
+         an occasional tick and collecting gets nearly all of them. */
+      const step = n % 30 === 0 ? 'tags' : n % 10 === 2 ? 'score' : 'games';
       if (step) {
         /* Strict order. Every queue line carries a pri; the lowest pri with
            anything left takes the tick, so the backlog is worked in the order
