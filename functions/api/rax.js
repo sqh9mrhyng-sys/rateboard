@@ -1940,6 +1940,20 @@ export async function onRequestGet({ request, env }) {
         out.asked.push({ name, ok: false, why: String((e && e.message) || e).slice(0, 120) });
       }
     }
+    // The shape of perfData, which is where the only paths turned up.
+    if (url.searchParams.get('dump') === 'perf' && pid) {
+      try {
+        const d = await rsGet(`https://web.realapp.com/players/${pid}/sport/${sport}`
+          + `/seasonfeed?limit=8&season=${season}&view=recent&viewFrame=default`, auth);
+        out.perfData = JSON.parse(JSON.stringify(d && d.perfData || null)).slice ? null : (d && d.perfData);
+        out.perfDataRaw = JSON.stringify(d && d.perfData || null).slice(0, 4000);
+        const bs = (d && d.playerBoxScores) || [];
+        out.boxScoreKeys = bs[0] ? Object.keys(bs[0]) : [];
+        out.boxScoreSample = bs.slice(0, 3).map(r => ({
+          id: r.id, gameId: r.gameId, day: r.day, value: r.value,
+          path: r.path, url: r.url, slug: r.slug, shareUrl: r.shareUrl }));
+      } catch (e) { out.perfErr = String((e && e.message) || e).slice(0, 160); }
+    }
     out.linkishKeys = hits;
     out.playerObjectKeys = playerKeys;
     out.urlsSeen = [...urls].slice(0, 40);
