@@ -79,8 +79,9 @@
   .linkbtn:hover{color:var(--bone)}
 
   /* The collector bar. Quiet by default - it is a status line, not a feature. */
-  .opsbar{border:1px solid var(--line);border-radius:10px;background:var(--panel);
-    margin-bottom:18px;font-size:13px}
+  .opsbar{border:1px solid var(--line);border-left:3px solid var(--accent);
+    border-radius:10px;background:var(--panel);margin-bottom:18px;font-size:13px}
+  .opsbar > summary b{color:var(--bone);font-weight:600}
   .opsbar > summary{cursor:pointer;padding:9px 13px;list-style:none;display:flex;
     align-items:center;gap:9px;color:var(--mute)}
   .opsbar > summary::-webkit-details-marker{display:none}
@@ -553,8 +554,8 @@
     <div id="offline" class="warn hide" style="margin-bottom:18px"></div>
     <!-- What the collector is doing. Admin only; nobody else needs to watch
          the machinery. -->
-    <details id="opsbar" class="opsbar hide">
-      <summary><span class="opsdot"></span><span id="ops-now">Collector</span>
+    <details id="opsbar" class="opsbar hide" open>
+      <summary><span class="opsdot"></span><b id="ops-now">Collector</b>
         <span class="note" id="ops-sub"></span></summary>
       <div id="ops-body"><p class="note">Loading&hellip;</p></div>
     </details>
