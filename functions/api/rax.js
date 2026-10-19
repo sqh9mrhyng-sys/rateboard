@@ -507,7 +507,16 @@ const TAGS_DDL = `CREATE TABLE IF NOT EXISTS tags (
    7 iconic. Supplied by Dennis, who plays the game.
    ------------------------------------------------------------------ */
 const normTag = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-const TAG_ALIASES = { twominutedrill: '2minutedrill', '2ptconversion': '2pt' };
+/* Where Real's hashtag and the name the rules use are not the same word.
+   The two strikeout tags end in a K that their printed label does not, and
+   keying off the hashtag - which is what the scorer now does - missed them,
+   so no pitcher was getting the legendary for either. */
+const TAG_ALIASES = {
+  twominutedrill: '2minutedrill',
+  '2ptconversion': '2pt',
+  immaculateinningk: 'immaculateinning',
+  '4kinningk': '4kinning'
+};
 const tagKey = label => {
   const n = normTag(label);
   return TAG_ALIASES[n] || n;
