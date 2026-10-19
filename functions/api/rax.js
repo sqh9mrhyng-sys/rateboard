@@ -1608,11 +1608,18 @@ export async function onRequestGet({ request, env }) {
     } catch (e) {}
     try {
       const r = await db.prepare(
-        `SELECT sport, season, COUNT(DISTINCT gameId) AS games, COUNT(*) AS plays,
-                SUM(CASE WHEN rarity IS NULL THEN 0 ELSE 1 END) AS scored
+        /* Only a play carrying tags can be scored at all - a period marker or
+           a kickoff with nothing on it never gets a rarity. Counting those in
+           the denominator left the bar stuck short of full for ever, which
+           read as the scorer being behind when it had finished. */
+        `SELECT sport, season, COUNT(DISTINCT gameId) AS games,
+                SUM(CASE WHEN tags IS NULL THEN 0 ELSE 1 END) AS plays,
+                SUM(CASE WHEN tags IS NOT NULL AND rarity IS NOT NULL THEN 1 ELSE 0 END) AS scored,
+                COUNT(*) AS allPlays
            FROM plays GROUP BY sport, season`).all();
       for (const x of (r.results || [])) got.set(`${x.sport}|${x.season}`,
-        { games: Number(x.games) || 0, plays: Number(x.plays) || 0, scored: Number(x.scored) || 0 });
+        { games: Number(x.games) || 0, plays: Number(x.plays) || 0,
+          scored: Number(x.scored) || 0, allPlays: Number(x.allPlays) || 0 });
     } catch (e) {}
     let tick = 0;
     try { tick = Number((JSON.parse((await env.RATEBOARD_KV.get('plays_tick_v1')) || '{}') || {}).n) || 0; } catch (e) {}
@@ -1622,11 +1629,11 @@ export async function onRequestGet({ request, env }) {
       let lapped = null, cursor = null;
       try { lapped = await env.RATEBOARD_KV.get(sweptKey(x.sport, x.season)); } catch (e) {}
       try { cursor = await env.RATEBOARD_KV.get(`${PLAYS_CURSOR}:games:${x.sport}:${x.season}`); } catch (e) {}
-      const g = got.get(k) || { games: 0, plays: 0, scored: 0 };
+      const g = got.get(k) || { games: 0, plays: 0, scored: 0, allPlays: 0 };
       queue.push({ sport: x.sport, season: x.season, pri: x.pri || 99,
                    rolling: !!x.rolling, lapped: !!lapped, cursor: cursor || null,
                    gamesLogged: logged.get(k) || 0, gamesCollected: g.games,
-                   plays: g.plays, scored: g.scored });
+                   plays: g.plays, scored: g.scored, allPlays: g.allPlays });
     }
     // Which line the next game tick would take, by the same rule the cron uses.
     const fresh = queue.filter(x => !x.lapped);
