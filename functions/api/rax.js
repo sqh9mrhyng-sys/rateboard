@@ -865,7 +865,14 @@ const STRIKEOUT = `COALESCE(cat, 0) = 105`;
 /* Every hockey play has a second man who earns from it - the goalie on a shot,
    the assist on a goal - rather than the handful of play types that credit a
    second name in the other codes. */
-const HOCKEY_SECOND = `COALESCE(cat, 0) IN (301, 303)`;
+/* A shootout goal has no assist, and Real puts the beaten goalie in the slot
+   an assist would normally occupy - so crediting the second name there would
+   hand the goalie an assist for being scored on. Tag 3184 is the shootout.
+   Every other goal leaves the slot empty when nobody assisted. */
+const NHL_SHOOTOUT_TAG = 3184;
+const HOCKEY_SECOND = `(COALESCE(cat, 0) = 303
+  OR (COALESCE(cat, 0) = 301
+      AND instr(',' || COALESCE(tags, '') || ',', ',${NHL_SHOOTOUT_TAG},') = 0))`;
 // Every card play, once per player who earns a card from it.
 const CREDITED = `
   SELECT playerId AS pid, player AS pname, season, gameId, rarity, value, cat,
@@ -886,7 +893,8 @@ const CREDITED = `
          type, subType, id, day, tags
     FROM plays WHERE sport=?1 AND season=?2 AND ${CARD_SQL}
      AND player3Id IS NOT NULL AND player3Id <> COALESCE(playerId, -1)
-     AND player3Id <> COALESCE(player2Id, -1) AND cat = 301`;
+     AND player3Id <> COALESCE(player2Id, -1) AND cat = 301
+     AND instr(',' || COALESCE(tags, '') || ',', ',${NHL_SHOOTOUT_TAG},') = 0`;
 
 /* ---- performances ---------------------------------------------------
    A performance is the player's whole game line: its own card, its own
