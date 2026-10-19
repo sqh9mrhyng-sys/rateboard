@@ -2533,11 +2533,14 @@ export async function onRequestGet({ request, env }) {
         // Who a play is filed under. Baseball files a strikeout from the
         // batter's side, so this is how to see which name sits in which slot
         // before deciding who the card belongs to.
-        who: arr.filter(r => /Strikeout|Single|HomeRun|Walk|SacrificeFly/.test(String(r.type || '')))
-          .slice(0, 8).map(r => ({ type: r.type, subType: r.subType,
+        who: arr.filter(r => r.collectingCategoryId != null)
+          .slice(0, 10).map(r => ({ type: r.type, subType: r.subType,
             cat: r.collectingCategoryId, value: r.value, label: r.label,
+            tags: r.tags,
             primary: playName(r.primaryPlayer), primaryId: r.primaryPlayerId,
-            secondary: playName(r.secondaryPlayer), secondaryId: r.secondaryPlayerId })) });
+            secondary: playName(r.secondaryPlayer), secondaryId: r.secondaryPlayerId,
+            tertiary: playName(r.tertiaryPlayer), tertiaryId: r.tertiaryPlayerId,
+            quaternary: playName(r.quaternaryPlayer), quaternaryId: r.quaternaryPlayerId })) });
     } catch (e) {
       return json({ gameId: gid, sub: which, error: String((e && e.message) || e).slice(0, 160) }, 502);
     }
