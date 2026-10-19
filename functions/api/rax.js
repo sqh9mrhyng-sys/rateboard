@@ -874,8 +874,15 @@ function playStmt(db) {
                         cat, value, playerId, player, player2Id, player2, teamId, oppTeamId,
                         period, clock, down, togo, yards, epa, tags, seenAt)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-     ON CONFLICT(id) DO UPDATE SET value=excluded.value, cat=excluded.cat,
-       label=excluded.label, tags=excluded.tags, seenAt=excluded.seenAt`);
+     /* The key is (id, sport) now: a college play and a pro one can carry the
+        same id, and naming only the id here matches no constraint at all, so
+        every insert fails. The conflict target has to be the whole key. */
+     ON CONFLICT(id, sport) DO UPDATE SET value=excluded.value, cat=excluded.cat,
+       season=excluded.season, gameId=excluded.gameId, day=excluded.day,
+       label=excluded.label, type=excluded.type, subType=excluded.subType,
+       playerId=excluded.playerId, player=excluded.player,
+       player2Id=excluded.player2Id, player2=excluded.player2,
+       tags=excluded.tags, seenAt=excluded.seenAt`);
 }
 
 function playBind(stmt, r, sport, season) {
