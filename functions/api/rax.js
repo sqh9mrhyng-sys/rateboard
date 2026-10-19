@@ -836,7 +836,10 @@ const GAMES_PER_TICK = 10;        // games per call, each one a full game
 /* A baseball game's feed is around eighty plays where a football game's is
    nearer a hundred and seventy-five, so more of them fit in a tick without
    the call running any longer than a football one already does. */
-const GAMES_PER_TICK_BY_SPORT = { mlb: 90, ncaaf: 48, nfl: 36 };
+/* Measured at about a sixth of a second a game with five in the air, so a
+   hundred and fifty of them is twenty-five seconds - comfortably inside the
+   minute between ticks, and no faster a burst than before, just a longer one. */
+const GAMES_PER_TICK_BY_SPORT = { mlb: 150, ncaaf: 90, nfl: 60 };
 /* How many of those feeds are in the air at once. Five keeps the call well
    inside its minute while asking Real for no more per second than a person
    clicking through games quickly would. */
