@@ -2140,8 +2140,32 @@ export async function onRequestGet({ request, env }) {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
     const sp = String(url.searchParams.get('sport') || 'nba').toLowerCase();
+    const P2 = k => String(url.searchParams.get(k) || '').trim();
     /* Which whole-number rating pays what, counted. The curve is read off the
        log rather than assumed, so a hypothetical one can be built beside it. */
+    /* What multiplier each player's season actually came out at. NFL pays a
+       multiple of the game rating rather than the rating itself, and the
+       multiple is not the same for everyone - this is what shows the tiers. */
+    if (url.searchParams.get('mode') === 'mult') {
+      const se = /^\d{4}$/.test(P2('season')) ? Number(P2('season')) : 2025;
+      const stype = String(url.searchParams.get('seasonType') || 'regularseason');
+      try {
+        const r = await db.prepare(
+          `SELECT playerId, MAX(player) AS player, MAX(position) AS pos, MAX(team) AS team,
+                  COUNT(*) AS n, SUM(rax) AS rax, ROUND(SUM(rating), 2) AS rating,
+                  ROUND(CAST(SUM(rax) AS REAL) / SUM(rating), 3) AS mult
+             FROM gamelog
+            WHERE sport = ?1 AND season = ?2 AND seasonType = ?3
+              AND rating IS NOT NULL AND rax IS NOT NULL
+            GROUP BY playerId
+           HAVING SUM(rating) > 8 AND SUM(rax) > 0
+            ORDER BY mult DESC`).bind(sp, se, stype).all();
+        return json({ sport: sp, season: se, seasonType: stype, rows: r.results || [] });
+      } catch (e) {
+        return json({ error: String((e && e.message) || e) }, 503);
+      }
+    }
+
     if (url.searchParams.get('mode') === 'bucket') {
       const stype = String(url.searchParams.get('seasonType') || 'regularseason');
       const seasonArg = url.searchParams.get('season');
