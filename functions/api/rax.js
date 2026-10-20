@@ -1878,10 +1878,18 @@ export async function onRequestGet({ request, env }) {
     const P = k => String(url.searchParams.get(k) || '').trim();
     const wantSport = EARN_SPORTS.includes(P('sport')) ? P('sport') : '';
     const wantSeason = /^\d{4}$/.test(P('season')) ? Number(P('season')) : 0;
+    /* Several seasons at once, the same shape the rest of the game-data
+       views take them in: sport:season, comma separated. An empty list
+       means every season there is. */
+    const wantPairs = P('seasons').split(',').map(x => x.trim()).filter(Boolean)
+      .map(x => x.replace(':', '|'))
+      .filter(x => EARN_SPORTS.includes(x.split('|')[0]) && /^\d{4}$/.test(x.split('|')[1]));
+    const inPick = (sp, se) => (!wantPairs.length || wantPairs.includes(`${sp}|${se}`))
+      && (!wantSport || sp === wantSport) && (!wantSeason || Number(se) === wantSeason);
     const minGames = Math.max(0, parseInt(P('minGames') || '0', 10) || 0);
     const term = P('q').toLowerCase();
     const SORTS = ['diff', 'hypo', 'rax', 'raxPerGame', 'hypoPerGame', 'games',
-                   'bestRax', 'owners', 'rating', 'ratingPerGame', 'player', 'pct'];
+                   'bestRax', 'owners', 'rating', 'ratingPerGame', 'player', 'pct', 'day'];
     const sort = SORTS.includes(P('sort')) ? P('sort') : 'diff';
     const dir = P('dir') === 'asc' ? 1 : -1;
     const limit = P('format') === 'csv' ? 20000
@@ -1911,6 +1919,88 @@ export async function onRequestGet({ request, env }) {
         .filter(x => EARN_SPORTS.includes(x.sport));
     } catch (e) {
       return json({ error: 'could not read the game log', detail: String((e && e.message) || e) }, 503);
+    }
+
+    /* ----- game by game ----------------------------------------------------
+       The same comparison one row per game rather than one per season. This
+       one is not cached: the log holds hundreds of thousands of these and
+       the only views anyone asks for are the top of a sort or a single
+       player, both of which a LIMIT answers cheaply.
+
+       Each season is still read on its own and the pieces merged here.
+       Ordering the whole of NBA and NHL in one statement would mean sorting
+       four hundred thousand rows on a computed column, which is the shape
+       that has run past D1's CPU budget before; a season at a time is a
+       range of the index and sorts fifty thousand at the outside. Taking
+       the first (offset + limit) of each season and ranking those together
+       gives exactly the same page as sorting the lot would. */
+    if (P('view') === 'games') {
+      const G_SORTS = { diff: 'diff', hypo: 'hypo', rax: 'rax', rating: 'rating',
+                        day: 'day', player: 'player' };
+      const sortCol = G_SORTS[sort] || 'diff';
+      const dirSql = dir < 0 ? 'DESC' : 'ASC';
+      const need = Math.min(2000, offset + limit);
+      const pid = /^\d+$/.test(P('playerId')) ? Number(P('playerId')) : 0;
+      const out = [];
+      for (const pr of pairs) {
+        if (!inPick(pr.sport, pr.season)) continue;
+        const w = ["sport = ?", "season = ?",
+                   "seasonType IN ('regularseason','postseason','allstar')",
+                   'rating IS NOT NULL', 'rax IS NOT NULL'];
+        const binds = [pr.sport, pr.season];
+        if (pid) { w.push('playerId = ?'); binds.push(pid); }
+        else if (term) { w.push('LOWER(player) LIKE ?'); binds.push('%' + term + '%'); }
+        const hyp = hypoSql(pr.sport);
+        try {
+          const r = await db.prepare(
+            `SELECT playerId, player, team, opponent, day, seasonType, result,
+                    teamScore, oppScore, rating, rax,
+                    (${hyp}) AS hypo, (${hyp}) - rax AS diff
+               FROM gamelog WHERE ${w.join(' AND ')}
+              ORDER BY ${sortCol} ${dirSql} LIMIT ${need}`).bind(...binds).all();
+          for (const x of (r.results || [])) {
+            out.push({
+              playerId: Number(x.playerId), player: x.player || '', team: x.team || '',
+              sport: pr.sport, season: pr.season,
+              day: x.day || '', opponent: x.opponent || '',
+              seasonType: x.seasonType || '', result: x.result || '',
+              teamScore: x.teamScore == null ? null : Number(x.teamScore),
+              oppScore: x.oppScore == null ? null : Number(x.oppScore),
+              rating: Math.round(Number(x.rating) * 100) / 100,
+              rax: Number(x.rax) || 0,
+              hypo: Number(x.hypo) || 0,
+              diff: Number(x.diff) || 0
+            });
+          }
+        } catch (e) { /* a season that will not read is left out, not fatal */ }
+      }
+      const txtG = sortCol === 'player' || sortCol === 'day';
+      out.sort((a, b) => {
+        const av = a[sortCol], bv = b[sortCol];
+        if (txtG) return dir * String(av || '').localeCompare(String(bv || ''));
+        const an = Number(av), bn = Number(bv);
+        return an === bn ? (Number(b.diff) - Number(a.diff)) : dir * (an - bn);
+      });
+      const pageG = out.slice(offset, offset + limit).map((x, i) =>
+        Object.assign({ rank: offset + i + 1 }, x));
+      if (P('format') === 'csv') {
+        const colsG = ['rank', 'player', 'team', 'sport', 'season', 'day', 'opponent',
+                       'seasonType', 'result', 'rating', 'rax', 'hypo', 'diff'];
+        const escG = v => v == null ? '' : /[",\n]/.test(String(v))
+          ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
+        const body = [colsG.join(',')]
+          .concat(pageG.map(r => colsG.map(c => escG(r[c])).join(','))).join('\n');
+        return new Response(body, { headers: {
+          'content-type': 'text/csv; charset=utf-8',
+          'content-disposition': 'attachment; filename="rax-shift-games.csv"',
+          'access-control-allow-origin': '*' } });
+      }
+      /* out is capped per season, so the count is "at least this many" once
+         it fills up rather than a true total. The page says so. */
+      return json({ view: 'games', offset, limit, sort, dir: dir < 0 ? 'desc' : 'asc',
+                    total: out.length, capped: out.length >= need,
+                    curve: NEW_CURVE,
+                    seasons: pairs.map(x => `${x.sport}|${x.season}`), rows: pageG });
     }
 
     /* Built a few seasons per request rather than all of them at once. Eight
@@ -1980,9 +2070,7 @@ export async function onRequestGet({ request, env }) {
     }
     const building = Math.max(0, todo.length - built);
 
-    let view = rows;
-    if (wantSport) view = view.filter(x => x.sport === wantSport);
-    if (wantSeason) view = view.filter(x => x.season === wantSeason);
+    let view = rows.filter(x => inPick(x.sport, x.season));
     if (minGames) view = view.filter(x => x.games >= minGames);
     if (term) view = view.filter(x => String(x.player || '').toLowerCase().includes(term));
 
