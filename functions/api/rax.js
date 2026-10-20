@@ -1006,6 +1006,12 @@ const GAMES_PER_TICK_BY_SPORT = { mlb: 150, ncaaf: 90, nfl: 60, nba: 120, wnba: 
    inside its minute while asking Real for no more per second than a person
    clicking through games quickly would. */
 const FETCH_AT_ONCE = 5;
+/* Seasons already swept still need looking at now and then for games that
+   have since been played. One tick in thirty is enough to keep a weekend's
+   football from going unnoticed, and leaves the rest for the backlog. */
+const REFRESH_EVERY = 30;
+// Performance box scores: off while there is a sweep to finish.
+const PERF_ON = false;
 const gamesPerTick = sp => GAMES_PER_TICK_BY_SPORT[String(sp || '').toLowerCase()]
   || GAMES_PER_TICK;
 
@@ -3032,24 +3038,28 @@ export async function onRequestGet({ request, env }) {
         }
         const rolling = done.filter(x => x.rolling);
         let pool = [];
-        if (fresh.length && !(n % 12 === 0 && rolling.length)) {
+        if (fresh.length && !(n % REFRESH_EVERY === 0 && rolling.length)) {
           const top = Math.min(...fresh.map(x => Number(x.pri) || 99));
           pool = fresh.filter(x => (Number(x.pri) || 99) === top);
         } else if (rolling.length) {
           pool = rolling;
         }
-        /* Nothing fresh left anywhere: the sweep is through, so the game tick
-           is spent on performance box scores instead - first unfinished line
-           of PERF_QUEUE. Rolling refresh still gets its twelfth tick. */
-        let perfJob = null;
-        if (!fresh.length && !(n % 12 === 0 && rolling.length)) {
-          for (const x of PERF_QUEUE) {
-            let fin = null;
-            try { fin = await env.RATEBOARD_KV.get(perfDoneKey(x.sport, x.season)); } catch (e) {}
-            if (!fin) { perfJob = x; break; }
-          }
-          if (perfJob) pool = [];
-        }
+        /* Performances are off. They used to take the spare ticks once every
+           season had been swept, but the play sweep is the thing that matters
+           now and nothing should be competing with it. Turn PERF_ON back on
+           to have them pick up the slack again; what is already collected is
+           untouched either way. */
+        const perfJob = PERF_ON && !fresh.length && !(n % REFRESH_EVERY === 0 && rolling.length)
+          ? await (async () => {
+              for (const x of PERF_QUEUE) {
+                let fin = null;
+                try { fin = await env.RATEBOARD_KV.get(perfDoneKey(x.sport, x.season)); } catch (e) {}
+                if (!fin) return x;
+              }
+              return null;
+            })()
+          : null;
+        if (perfJob) pool = [];
         if (perfJob && step === 'games') {
           const u = new URL(url);
           u.search = `?perf=collect&sport=${perfJob.sport}&season=${perfJob.season}`;
