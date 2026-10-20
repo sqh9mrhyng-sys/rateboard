@@ -1005,7 +1005,7 @@ const GAMES_PER_TICK_BY_SPORT = { mlb: 150, ncaaf: 90, nfl: 60, nba: 120, wnba: 
 /* How many of those feeds are in the air at once. Five keeps the call well
    inside its minute while asking Real for no more per second than a person
    clicking through games quickly would. */
-const FETCH_AT_ONCE = 5;
+const FETCH_AT_ONCE = 8;
 /* Seasons already swept still need looking at now and then for games that
    have since been played. One tick in thirty is enough to keep a weekend's
    football from going unnoticed, and leaves the rest for the backlog. */
@@ -1219,12 +1219,25 @@ export async function onRequestGet({ request, env }) {
           left = Number((r && r.n) || 0);
         } catch (e) {}
       }
+      /* Some games cannot be filled however often they are asked for - an
+         exhibition whose plays Real files under a season type this sport does
+         not collect, say. Without a limit the season laps, finds the same gap,
+         walks itself again from the top and never finishes, and everything
+         queued behind it waits for ever. So: a few attempts, then the season
+         is called done and the straggler left for the gap tool. */
+      const tries = `gapfix_${sport}_${season}`;
+      let tried = 0;
       if (left) {
+        try { tried = Number(await env.RATEBOARD_KV.get(tries)) || 0; } catch (e) {}
+      }
+      if (left && tried < 3) {
+        try { await env.RATEBOARD_KV.put(tries, String(tried + 1)); } catch (e) {}
         const u = new URL(url);
         u.search = `?plays=gaps&sport=${sport}&season=${season}&fill=1&n=40`;
         try { await onRequestGet({ request: new Request(u.toString(), request), env }); } catch (e) {}
-        return json({ sport, season, from, lap: true, fillingGaps: left });
+        return json({ sport, season, from, lap: true, fillingGaps: left, attempt: tried + 1 });
       }
+      try { await env.RATEBOARD_KV.delete(tries); } catch (e) {}
       // A completed season needs one pass, not endless ones.
       // Mark it lapped whether or not it is a rolling season: a rolling one
       // still needs revisiting for new games, just far less often than a
@@ -1263,11 +1276,11 @@ export async function onRequestGet({ request, env }) {
       /* Chunked, and the count is what actually landed. An unchunked batch
          meant a single row D1 would not take threw the whole game away, and
          the empty catch then reported it as stored. */
-      for (let i = 0; i < batch.length; i += 100) {
-        const part = batch.slice(i, i + 100);
+      for (let i = 0; i < batch.length; i += 250) {
+        const part = batch.slice(i, i + 250);
         try { await db.batch(part); stored += part.length; } catch (e) {}
       }
-      await sleep(25);
+      await sleep(15);
     }
     after = ids[ids.length - 1];
     try { await env.RATEBOARD_KV.put(key, String(after)); } catch (e) {}
