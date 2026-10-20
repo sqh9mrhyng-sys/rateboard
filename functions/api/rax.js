@@ -1893,7 +1893,7 @@ export async function onRequestGet({ request, env }) {
        rather than a scan of the table, which is what kept the whole-table
        version inside D1's CPU budget. The merged list is a few thousand
        rows, so ranking and paging happen here. */
-    const CACHE = 'earnshift_v2';
+    const CACHE = 'earnshift_v3';
     const FRESH_FOR = 6 * 60 * 60 * 1000;
     const PER_CALL = 3;   // seasons built per request, see below
     let cache = null;
@@ -1929,7 +1929,12 @@ export async function onRequestGet({ request, env }) {
       for (const pr of todo.slice(0, PER_CALL)) {
         try {
           const r = await db.prepare(
-            `SELECT playerId, MAX(player) AS player, MAX(team) AS team,
+            `SELECT playerId, MAX(player) AS player,
+                    /* The team is read off the regular season alone. Taking
+                       the highest team string over the whole season handed
+                       stars their all-star side - Jokic filed under LEB
+                       rather than DEN - because those codes sort last. */
+                    MAX(CASE WHEN seasonType = 'regularseason' THEN team END) AS team,
                     COUNT(*) AS games,
                     SUM(rax) AS rax,
                     SUM(${hypoSql(pr.sport)}) AS hypo,
