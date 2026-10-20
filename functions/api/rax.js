@@ -1850,12 +1850,16 @@ export async function onRequestGet({ request, env }) {
     const sp = String(url.searchParams.get('sport') || 'nba').toLowerCase();
     try {
       const r = await db.prepare(
-        `SELECT rax, seasonType, COUNT(*) AS n,
-                ROUND(MIN(rating), 3) AS lo, ROUND(MAX(rating), 3) AS hi
+        `SELECT season, seasonType, COUNT(*) AS n,
+                SUM(rax) AS raxSum,
+                SUM(CAST(ROUND(rating) AS INTEGER)) AS roundSum,
+                SUM(CASE WHEN rax = CAST(ROUND(rating) AS INTEGER) THEN 1 ELSE 0 END) AS eqRound,
+                SUM(CASE WHEN rax = 2 * CAST(ROUND(rating) AS INTEGER) THEN 1 ELSE 0 END) AS eqDouble,
+                SUM(CASE WHEN rax = CAST(rating AS INTEGER) THEN 1 ELSE 0 END) AS eqFloor
            FROM gamelog
           WHERE sport = ? AND rating IS NOT NULL AND rax IS NOT NULL
-          GROUP BY rax, seasonType
-          ORDER BY seasonType, rax`).bind(sp).all();
+          GROUP BY season, seasonType
+          ORDER BY season, seasonType`).bind(sp).all();
       return json({ sport: sp, rows: r.results || [] });
     } catch (e) {
       return json({ error: String((e && e.message) || e) }, 503);
