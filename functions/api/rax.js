@@ -989,7 +989,7 @@ const PERF_QUEUE = [
 ];
 const perfDoneKey = (sp, se) => `perf_done_${sp}_${se}`;
 const sweptKey = (sp, se) => `plays_swept_${sp}_${se}`;
-const SCORE_BATCH = 40000;       // plays rescored per call
+const SCORE_BATCH = 80000;       // plays rescored per call
 // A game's feed comes back whole - every snap, around 175 rows for an NFL
 // game - so games are taken a few at a time. Players are a thin top-plays
 // list and can be walked in bigger strides.
@@ -3035,7 +3035,13 @@ export async function onRequestGet({ request, env }) {
          scoring and the tag sweep keep the ticks they had. */
       /* Rating a season now takes seconds rather than hours, so it is back to
          an occasional tick and collecting gets nearly all of them. */
-      const step = n % 30 === 0 ? 'tags' : n % 10 === 2 ? 'score' : 'games';
+      /* Scoring was one tick in ten and, worse, picked its season from the
+         whole queue on a stride that only ever landed on even positions, so
+         half the queue - NBA 2026 among them - could never be scored by this
+         step at all and only ever got the rating that collection does inline.
+         It now takes one tick in three and works the same season the games
+         step is on, so a season is rated as it fills instead of long after. */
+      const step = n % 30 === 0 ? 'tags' : n % 3 === 2 ? 'score' : 'games';
       if (step) {
         /* Strict order. Every queue line carries a pri; the lowest pri with
            anything left takes the tick, so the backlog is worked in the order
@@ -3078,9 +3084,21 @@ export async function onRequestGet({ request, env }) {
           try { await onRequestGet({ request: new Request(u.toString(), request), env }); } catch (e) {}
         } else if (pool.length || step !== 'games') {
           const base = pool.length ? pool : PLAYS_SPORTS;
-          const sp = step === 'games'
-            ? base[n % base.length]
-            : PLAYS_SPORTS[Math.floor(n / 5) % PLAYS_SPORTS.length];
+          /* Scoring now splits its ticks: every other one rates the season
+             the games step is filling, so a season is rated as it arrives,
+             and the ones in between walk the whole queue a single step at a
+             time. The old stride of two over a 24-line queue could only ever
+             land on even positions, which is why half the queue - NBA 2026
+             among them - was never rated by this step at all. */
+          const scoreTick = Math.floor((n - 2) / 3);
+          const sp = step === 'tags'
+            ? PLAYS_SPORTS[Math.floor(n / 30) % PLAYS_SPORTS.length]
+            : step === 'score'
+              ? (pool.length && scoreTick % 2 === 0
+                  ? pool[n % pool.length]
+                  : PLAYS_SPORTS[((scoreTick % PLAYS_SPORTS.length) + PLAYS_SPORTS.length)
+                                 % PLAYS_SPORTS.length])
+              : base[n % base.length];
           const u = new URL(url);
           // The tag sweep rotates through the rarity tiers: the top-end tags
           // sit only on top-end cards, which are seldom listed, so a plain
