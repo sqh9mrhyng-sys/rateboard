@@ -552,13 +552,6 @@
       <button class="linkbtn" id="preview-off" style="margin-left:8px">Back to admin</button>
     </div>
     <div id="offline" class="warn hide" style="margin-bottom:18px"></div>
-    <!-- What the collector is doing. Admin only; nobody else needs to watch
-         the machinery. -->
-    <details id="opsbar" class="opsbar hide" open>
-      <summary><span class="opsdot"></span><b id="ops-now">Collector</b>
-        <span class="note" id="ops-sub"></span></summary>
-      <div id="ops-body"><p class="note">Loading&hellip;</p></div>
-    </details>
     <div class="cols">
 
       <!-- board -->
@@ -809,7 +802,6 @@ function applyAdminVisibility(){
   const banner = $('#previewbar');
   if(banner) banner.classList.toggle('hide', !previewMember);
   applyGameDataVisibility();
-  opsSetup();
 }
 const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL', UFC:'UFC', NHL:'NHL' };
 
