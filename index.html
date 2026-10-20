@@ -152,6 +152,10 @@
      the labels full size on a phone. */
   .seg-2up{display:grid;grid-template-columns:1fr 1fr;border-radius:14px}
   .seg-2up button{border-radius:11px}
+  /* The fifth view sits on its own row under the square, full width, so the
+     2x2 keeps its shape and this one still reads as part of the same group. */
+  .seg-1up{display:grid;grid-template-columns:1fr;border-radius:14px;margin-top:6px}
+  .seg-1up button{border-radius:11px}
 
   /* Selected seasons and toggles were only marked with aria-pressed, which
      shows nothing on screen. This is what makes the active ones obvious. */
@@ -4554,6 +4558,9 @@ async function cbbPanel(){
       <button data-cm="pack" aria-pressed="${only ? 'true' : 'false'}">Pack data</button>
       <button data-cm="golf" aria-pressed="false">Golf</button>
     </div>
+    <div class="seg seg-1up" role="group" aria-label="Rax shift">
+      <button data-cm="shift" aria-pressed="false">Rax shift &mdash; NBA &amp; NHL</button>
+    </div>
     <div id="cb-seasons"><span class="note">Loading seasons&hellip;</span></div>
     <p class="note" id="cb-scope"></p>
     <div class="dtbar cb-filt">
@@ -4614,6 +4621,40 @@ async function cbbPanel(){
       <p class="note" id="pk-caveat"></p>
       <div class="dtwrap"><table class="dt">
         <thead id="pk-head"></thead><tbody id="pk-body"></tbody></table></div>
+    </div>
+    <div id="cb-shift" class="hide">
+      <p class="note" id="sh-intro"></p>
+      <div class="dtbar">
+        <select class="field" id="sh-sport" style="flex:0 1 150px">
+          <option value="">NBA + NHL</option>
+          <option value="nba">NBA only</option>
+          <option value="nhl">NHL only</option>
+        </select>
+        <select class="field" id="sh-season" style="flex:0 1 150px">
+          <option value="">Every season</option>
+        </select>
+        <input class="field" id="sh-q" autocomplete="off" spellcheck="false"
+               placeholder="Search a player" style="max-width:220px">
+        <input class="field" id="sh-mg" inputmode="numeric" value="20"
+               placeholder="Min games" style="flex:0 1 110px">
+        <button class="btn-ghost" id="sh-refresh">Refresh</button>
+        <span class="note" id="sh-note"></span>
+      </div>
+      <p class="note" id="sh-count"></p>
+      <div class="dtwrap"><table class="dt">
+        <thead id="sh-head"></thead><tbody id="sh-body"></tbody></table></div>
+      <div class="dtfoot">
+        <span class="note" id="sh-page"></span>
+        <span class="hitacts" style="gap:8px">
+          <button class="btn-ghost" id="sh-prev">Previous</button>
+          <button class="btn-ghost" id="sh-next">Next</button>
+          <button class="btn" id="sh-dl">Download this view</button>
+        </span>
+      </div>
+      <details style="margin-top:6px">
+        <summary class="note" style="cursor:pointer">How this is worked out</summary>
+        <div class="note" id="sh-key" style="margin-top:8px"></div>
+      </details>
     </div>
     <p class="note" id="cb-count">Loading&hellip;</p>
     <div class="dtwrap" id="cb-table"><table class="dt"><thead id="cb-head"></thead><tbody id="cb-body"></tbody></table></div>
@@ -6044,14 +6085,154 @@ async function cbbPanel(){
         </tbody></table></div>`;
   }
 
+  /* ----- Rax shift ---------------------------------------------------------
+     NBA and NHL are changing what a game rating pays. This runs the new
+     curve over seasons already in the game log and sets it beside what each
+     player actually earned, so the size of the change is a number rather
+     than a guess. Nothing here needs collecting - the ratings and the rax
+     have been in the log since the seasons were logged. */
+  const SH = { sport:'', season:'', q:'', minGames:'20', sort:'diff', dir:'desc',
+               offset:0, limit:100, ready:false, total:0, curve:null, seasons:[] };
+  // 2026 is the 25/26 season; the log keeps the year it ended in.
+  const shSeason = y => `${String(Number(y) - 1).slice(2)}/${String(Number(y)).slice(2)}`;
+  const shNum = (v, d) => v == null ? '&mdash;'
+    : Number(v).toLocaleString(undefined, { minimumFractionDigits: d || 0,
+                                            maximumFractionDigits: d || 0 });
+  const SH_COLS = [
+    ['rank',          '#',          'n'],
+    ['player',        'Player',     'l'],
+    ['sport',         'Sport',      'l'],
+    ['season',        'Season',     'l'],
+    ['games',         'Games',      'n'],
+    ['rax',           'Rax',        'n'],
+    ['hypo',          'Hypo rax',   'n'],
+    ['raxPerGame',    'Rax/g',      'n'],
+    ['diff',          'Difference', 'n'],
+    ['bestRax',       'Best',       'n'],
+    ['owners',        'Owners',     'n'],
+    ['rating',        'Rating',     'n'],
+    ['ratingPerGame', 'Rating/g',   'n']
+  ];
+
+  function shQs(extra){
+    const p = new URLSearchParams({ earn:'shift', sort: SH.sort, dir: SH.dir,
+                                    limit: SH.limit, offset: SH.offset });
+    if(SH.sport)    p.set('sport', SH.sport);
+    if(SH.season)   p.set('season', SH.season);
+    if(SH.q)        p.set('q', SH.q);
+    if(SH.minGames) p.set('minGames', SH.minGames);
+    for(const k in (extra||{})) p.set(k, extra[k]);
+    return '/api/rax?' + p.toString();
+  }
+
+  function shDrawHead(){
+    $b('#sh-head').innerHTML = '<tr>' + SH_COLS.map(c => {
+      const on = SH.sort === c[0];
+      const arrow = on ? (SH.dir === 'desc' ? ' ▼' : ' ▲') : '';
+      const sortable = c[0] !== 'rank' && c[0] !== 'sport' && c[0] !== 'season';
+      return `<th class="${c[2] === 'l' ? 'l' : 'num'}${on ? ' on' : ''}"`
+        + `${sortable ? ` data-shc="${c[0]}"` : ' style="cursor:default"'}>`
+        + esc(c[1]) + arrow + '</th>';
+    }).join('') + '</tr>';
+  }
+
+  async function shLoad(){
+    shDrawHead();
+    $b('#sh-count').textContent = 'Working it out…';
+    let d;
+    try { d = await (await fetch(shQs())).json(); }
+    catch(e){ $b('#sh-count').textContent = 'Could not load the comparison.'; return; }
+    if(d && d.error){ $b('#sh-count').textContent = d.error; return; }
+    SH.total = Number(d.total || 0);
+    SH.curve = d.curve || SH.curve;
+    if(Array.isArray(d.seasons) && d.seasons.length && !SH.seasons.length){
+      SH.seasons = d.seasons;
+      const sel = $b('#sh-season');
+      const years = [...new Set(SH.seasons.map(x => Number(x.split('|')[1])))].sort((a,b) => b - a);
+      sel.innerHTML = '<option value="">Every season</option>'
+        + years.map(y => `<option value="${y}">${esc(shSeason(y))}</option>`).join('');
+      sel.value = SH.season;
+    }
+    const rows = d.rows || [];
+    $b('#sh-body').innerHTML = rows.length ? rows.map(r => '<tr>' + SH_COLS.map(c => {
+      const k = c[0];
+      let v;
+      if(k === 'season')            v = esc(shSeason(r.season));
+      else if(k === 'sport')        v = esc(String(r.sport || '').toUpperCase());
+      else if(k === 'player')       v = esc(r.player || '') + (r.team ? ` <span class="note">${esc(r.team)}</span>` : '');
+      else if(k === 'diff'){
+        const n = Number(r.diff || 0);
+        const cls = n > 0 ? 'good' : n < 0 ? 'bad' : '';
+        v = `<span${cls ? ` style="color:var(--${cls})"` : ''}>${n > 0 ? '+' : ''}${shNum(n)}`
+          + (r.pct != null ? ` <span class="note">${shNum(r.pct, 1)}%</span>` : '') + '</span>';
+      }
+      else if(k === 'raxPerGame')   v = shNum(r.raxPerGame, 2) + ` <span class="note">&rarr; ${shNum(r.hypoPerGame, 2)}</span>`;
+      else if(k === 'ratingPerGame')v = shNum(r.ratingPerGame, 2);
+      else if(k === 'rating')       v = shNum(r.rating, 1);
+      else if(k === 'owners')       v = r.owners == null ? '&mdash;' : shNum(r.owners);
+      else                          v = shNum(r[k]);
+      return `<td class="${c[2] === 'l' ? 'l' : 'num'}">${v}</td>`;
+    }).join('') + '</tr>').join('')
+      : '<tr><td colspan="13" class="note">Nothing matches that.</td></tr>';
+
+    const from = SH.total ? SH.offset + 1 : 0;
+    const to = Math.min(SH.offset + SH.limit, SH.total);
+    $b('#sh-count').innerHTML = `${shNum(SH.total)} player-seasons`
+      + (Number(d.building) ? ` <span class="note">— still building ${d.building} season`
+          + `${Number(d.building) === 1 ? '' : 's'}, hit Refresh in a moment for the rest</span>` : '');
+    $b('#sh-page').textContent = SH.total ? `${from}–${to} of ${shNum(SH.total)}` : '';
+    $b('#sh-prev').disabled = SH.offset <= 0;
+    $b('#sh-next').disabled = to >= SH.total;
+    if(SH.curve) $b('#sh-key').innerHTML =
+      `<p>Each game's rating is rounded and paid out twice: once under the old rule, once under the new one. `
+      + `Playoff and all-star games double, as they do now. Pre-season and off-season games earn nothing and are left out.</p>`
+      + `<p><strong>Old</strong> &mdash; NBA paid the rating itself (a 5 paid 5). NHL paid the rating and a fifth on top (a 5 paid 6, a 10 paid 12). `
+      + `Both read off the log rather than assumed.</p>`
+      + `<p><strong>New</strong> &mdash; NBA ${SH.curve.nba.map((v,i)=>`${i}→${v}`).slice(1).join(', ')}. `
+      + `NHL ${SH.curve.nhl.map((v,i)=>`${i}→${v}`).slice(1).join(', ')}.</p>`
+      + `<p><strong>Rax</strong> is what the player actually earned. <strong>Hypo rax</strong> is the same games under the new curve. `
+      + `<strong>Rax/g</strong> shows old then new. <strong>Rating</strong> is the season total, <strong>Rating/g</strong> the average.</p>`;
+  }
+
+  function shInit(){
+    if(SH.ready) return shLoad();
+    SH.ready = true;
+    $b('#sh-intro').innerHTML = 'What NBA and NHL seasons already in the log would have paid under the new rating curve.';
+    const go = () => { SH.offset = 0; shLoad(); };
+    $b('#sh-sport').addEventListener('change', e => { SH.sport = e.target.value; go(); });
+    $b('#sh-season').addEventListener('change', e => { SH.season = e.target.value; go(); });
+    $b('#sh-mg').addEventListener('change', e => { SH.minGames = e.target.value.replace(/\D+/g, ''); go(); });
+    $b('#sh-refresh').addEventListener('click', () => shLoad());
+    $b('#sh-prev').addEventListener('click', () => { SH.offset = Math.max(0, SH.offset - SH.limit); shLoad(); });
+    $b('#sh-next').addEventListener('click', () => { SH.offset += SH.limit; shLoad(); });
+    $b('#sh-dl').addEventListener('click', () => { location.href = shQs({ format:'csv' }); });
+    let shTyping;
+    $b('#sh-q').addEventListener('input', e => {
+      clearTimeout(shTyping);
+      const v = e.target.value;
+      shTyping = setTimeout(() => { SH.q = v; go(); }, 300);
+    });
+    $b('#sh-head').addEventListener('click', e => {
+      const th = e.target.closest('[data-shc]');
+      if(!th) return;
+      const k = th.dataset.shc;
+      if(SH.sort === k) SH.dir = SH.dir === 'desc' ? 'asc' : 'desc';
+      else { SH.sort = k; SH.dir = k === 'player' ? 'asc' : 'desc'; }
+      go();
+    });
+    shLoad();
+  }
+
   // The views share one modal, so switching hides everything that
   // belongs to the other side rather than leaving dead controls on screen.
   function applyMode(){
     const gf = st.mode === 'golf';
     const pk = st.mode === 'pack';
-    const table = !gf && !pk;
+    const sh = st.mode === 'shift';
+    const table = !gf && !pk && !sh;
     $b('#cb-pack').classList.toggle('hide', !pk);
     $b('#cb-golf').classList.toggle('hide', !gf);
+    $b('#cb-shift').classList.toggle('hide', !sh);
     $b('#cb-table').classList.toggle('hide', !table);
     $b('#cb-count').classList.toggle('hide', !table);
     $b('#cb-key').classList.toggle('hide', !table);
@@ -6063,13 +6244,14 @@ async function cbbPanel(){
     /* Pack data and golf each carry their own picker - pack data a list of
        what has actually been collected, golf a tournament list - so the
        shared sport-and-season blocks are put away for both. */
-    $b('#cb-seasons').classList.toggle('hide', pk || gf);
-    $b('#cb-scope').classList.toggle('hide', pk || gf);
-    if(!pk && !gf) drawSeasons();
+    $b('#cb-seasons').classList.toggle('hide', pk || gf || sh);
+    $b('#cb-scope').classList.toggle('hide', pk || gf || sh);
+    if(!pk && !gf && !sh) drawSeasons();
     if(only) box.querySelectorAll('[data-cm]').forEach(x =>
       x.classList.toggle('hide', x.dataset.cm !== 'pack'));
     if(gf) gfInit();
     else if(pk) pkInit();
+    else if(sh) shInit();
     else applyFilterVisibility();
   }
 
@@ -6498,7 +6680,7 @@ async function cbbPanel(){
       box.querySelectorAll('[data-cm]').forEach(x =>
         x.setAttribute('aria-pressed', x.dataset.cm === st.mode ? 'true' : 'false'));
       applyMode();
-      return st.mode === 'pack' ? undefined : load();
+      return (st.mode === 'pack' || st.mode === 'shift') ? undefined : load();
     }
 
     const th = e.target.closest('[data-sc]');
