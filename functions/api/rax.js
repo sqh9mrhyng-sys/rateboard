@@ -2143,6 +2143,37 @@ export async function onRequestGet({ request, env }) {
     const P2 = k => String(url.searchParams.get(k) || '').trim();
     /* Which whole-number rating pays what, counted. The curve is read off the
        log rather than assumed, so a hypothetical one can be built beside it. */
+    /* The payout multiplier split either side of a date, per player, with
+       the position and the owner count beside it - for working out what the
+       extra boost some players get is actually keyed on. */
+    if (url.searchParams.get('mode') === 'boost') {
+      const se = /^\d{4}$/.test(P2('season')) ? Number(P2('season')) : 2025;
+      const cut = /^\d{4}-\d{2}-\d{2}$/.test(P2('cut')) ? P2('cut') : '2025-12-16';
+      try {
+        const r = await db.prepare(
+          `SELECT g.playerId AS playerId, MAX(g.player) AS player, MAX(g.position) AS pos,
+                  MAX(g.team) AS team,
+                  SUM(CASE WHEN g.day <  ?4 THEN 1 ELSE 0 END) AS nPre,
+                  SUM(CASE WHEN g.day >= ?4 THEN 1 ELSE 0 END) AS nPost,
+                  ROUND(SUM(CASE WHEN g.day <  ?4 THEN g.rax ELSE 0 END) * 1.0
+                      / NULLIF(SUM(CASE WHEN g.day <  ?4 THEN g.rating ELSE 0 END), 0), 2) AS mPre,
+                  ROUND(SUM(CASE WHEN g.day >= ?4 THEN g.rax ELSE 0 END) * 1.0
+                      / NULLIF(SUM(CASE WHEN g.day >= ?4 THEN g.rating ELSE 0 END), 0), 2) AS mPost,
+                  (SELECT ow.owners FROM owners ow
+                    WHERE ow.sport = ?1 AND ow.season = ?2 AND ow.playerId = g.playerId
+                    ORDER BY ow.day DESC LIMIT 1) AS owners
+             FROM gamelog g
+            WHERE g.sport = ?1 AND g.season = ?2 AND g.seasonType = ?3
+              AND g.rating > 0.3 AND g.rax > 0
+            GROUP BY g.playerId
+           HAVING nPre >= 3 AND nPost >= 2
+            ORDER BY mPost DESC`).bind(sp, se, 'regularseason', cut).all();
+        return json({ sport: sp, season: se, cut, rows: r.results || [] });
+      } catch (e) {
+        return json({ error: String((e && e.message) || e) }, 503);
+      }
+    }
+
     /* What multiplier each player's season actually came out at. NFL pays a
        multiple of the game rating rather than the rating itself, and the
        multiple is not the same for everyone - this is what shows the tiers. */
