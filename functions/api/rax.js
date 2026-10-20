@@ -1224,31 +1224,25 @@ export async function onRequestGet({ request, env }) {
           left = Number((r && r.n) || 0);
         } catch (e) {}
       }
-      /* Some games cannot be filled however often they are asked for - an
-         exhibition whose plays Real files under a season type this sport does
-         not collect, say. Without a limit the season laps, finds the same gap,
-         walks itself again from the top and never finishes, and everything
-         queued behind it waits for ever. So: a few attempts, then the season
-         is called done and the straggler left for the gap tool. */
-      const tries = `gapfix_${sport}_${season}`;
-      let tried = 0;
+      /* Take the games the cursor walked past, once, and then call the season
+         done either way. Some games can never be filled - an exhibition whose
+         plays Real files under a season type this sport does not collect -
+         and trying again means lapping, resetting the cursor and re-walking
+         the whole season to arrive back at the same gap. That is not slow
+         collecting, it is no collecting at all, with everything queued behind
+         it waiting. Whatever is still missing afterwards is reported by
+         ?plays=gaps and can be filled on demand. */
       if (left) {
-        try { tried = Number(await env.RATEBOARD_KV.get(tries)) || 0; } catch (e) {}
-      }
-      if (left && tried < 3) {
-        try { await env.RATEBOARD_KV.put(tries, String(tried + 1)); } catch (e) {}
         const u = new URL(url);
         u.search = `?plays=gaps&sport=${sport}&season=${season}&fill=1&n=40`;
         try { await onRequestGet({ request: new Request(u.toString(), request), env }); } catch (e) {}
-        return json({ sport, season, from, lap: true, fillingGaps: left, attempt: tried + 1 });
       }
-      try { await env.RATEBOARD_KV.delete(tries); } catch (e) {}
       // A completed season needs one pass, not endless ones.
       // Mark it lapped whether or not it is a rolling season: a rolling one
       // still needs revisiting for new games, just far less often than a
       // season being filled for the first time.
       try { await env.RATEBOARD_KV.put(sweptKey(sport, season), '1'); } catch (e) {}
-      return json({ sport, season, from, lap: true, done: 0, stored: 0 });
+      return json({ sport, season, from, lap: true, done: 0, stored: 0, gapsLeft: left });
     }
 
     const stmt = playStmt(db);
