@@ -1841,6 +1841,205 @@ export async function onRequestGet({ request, env }) {
     return json({ sport, season, stillMissing: miss.length - asked, asked, stored });
   }
 
+  /* ----- Hypothetical earnings -------------------------------------------
+     NBA and NHL are changing what a game rating pays. The game log already
+     holds every player's rating and the rax it actually earned, so the new
+     rules can be run over the same games and the two set side by side.
+
+     The old curves, read off the log rather than assumed (see ?earn=curve):
+       NBA  rax = round(rating)          - a 5 paid 5, a 10 paid 10
+       NHL  rax = round(rating * 1.2)    - a 5 paid 6, a 10 paid 12
+     Both double in the playoffs, and the all-star games pay double too.
+     Pre-season and off-season rows pay nothing at all and are left out.
+
+     The new curves are tables on the rounded rating. Above a 10 - which does
+     happen, a handful of times a season - the top step carries on at four a
+     point rather than falling off a cliff. */
+  const NEW_CURVE = {
+    nba: [0, 1, 2, 3, 4, 6, 9, 12, 16, 20, 24],
+    nhl: [0, 1, 2, 4, 5, 7, 9, 12, 16, 19, 23]
+  };
+  const EARN_SPORTS = ['nba', 'nhl'];
+  // Season types that pay. The last two are in the log but earn nothing.
+  const EARN_TYPES = ['regularseason', 'postseason', 'allstar'];
+  const curveSql = sp => {
+    const c = NEW_CURVE[sp];
+    const r = 'CAST(ROUND(rating) AS INTEGER)';
+    let out = `CASE WHEN ${r} <= 0 THEN 0 `;
+    for (let i = 1; i < c.length; i++) out += `WHEN ${r} = ${i} THEN ${c[i]} `;
+    return out + `ELSE ${c[c.length - 1]} + (${r} - 10) * 4 END`;
+  };
+  const hypoSql = sp =>
+    `(CASE WHEN seasonType IN ('postseason','allstar') THEN 2 ELSE 1 END) * (${curveSql(sp)})`;
+
+  if (url.searchParams.get('earn') === 'shift') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    const P = k => String(url.searchParams.get(k) || '').trim();
+    const wantSport = EARN_SPORTS.includes(P('sport')) ? P('sport') : '';
+    const wantSeason = /^\d{4}$/.test(P('season')) ? Number(P('season')) : 0;
+    const minGames = Math.max(0, parseInt(P('minGames') || '0', 10) || 0);
+    const term = P('q').toLowerCase();
+    const SORTS = ['diff', 'hypo', 'rax', 'raxPerGame', 'hypoPerGame', 'games',
+                   'bestRax', 'owners', 'rating', 'ratingPerGame', 'player', 'pct'];
+    const sort = SORTS.includes(P('sort')) ? P('sort') : 'diff';
+    const dir = P('dir') === 'asc' ? 1 : -1;
+    const limit = P('format') === 'csv' ? 20000
+      : Math.min(500, Math.max(1, parseInt(P('limit') || '100', 10) || 100));
+    const offset = P('format') === 'csv' ? 0 : Math.max(0, parseInt(P('offset') || '0', 10) || 0);
+
+    /* Every season is read on its own. The key on gamelog starts
+       (sport, season), so one season at a time is a range of the index
+       rather than a scan of the table, which is what kept the whole-table
+       version inside D1's CPU budget. The merged list is a few thousand
+       rows, so ranking and paging happen here. */
+    const CACHE = 'earnshift_v2';
+    const FRESH_FOR = 6 * 60 * 60 * 1000;
+    const PER_CALL = 3;   // seasons built per request, see below
+    let cache = null;
+    try { cache = JSON.parse((await env.RATEBOARD_KV.get(CACHE)) || 'null'); } catch (e) {}
+    if (!cache || !cache.seasons || url.searchParams.get('rebuild') === '1') {
+      cache = { at: 0, seasons: {} };
+    }
+
+    let pairs = [];
+    try {
+      const r = await db.prepare(
+        `SELECT DISTINCT sport, season FROM gamelog
+          WHERE sport IN ('nba','nhl') ORDER BY sport, season`).all();
+      pairs = (r.results || []).map(x => ({ sport: String(x.sport), season: Number(x.season) }))
+        .filter(x => EARN_SPORTS.includes(x.sport));
+    } catch (e) {
+      return json({ error: 'could not read the game log', detail: String((e && e.message) || e) }, 503);
+    }
+
+    /* Built a few seasons per request rather than all of them at once. Eight
+       seasons is the better part of four hundred thousand game rows, and
+       grouping that many in one request is exactly the shape that has run
+       past D1's CPU budget before. Each season is kept on its own and the
+       whole set is stale after six hours, so a request only ever rebuilds
+       what has actually aged out. */
+    const stale = pr => {
+      const c = cache.seasons[`${pr.sport}|${pr.season}`];
+      return !c || !Array.isArray(c.rows) || (Date.now() - Number(c.at || 0)) > FRESH_FOR;
+    };
+    const todo = pairs.filter(stale);
+    let built = 0;
+    {
+      for (const pr of todo.slice(0, PER_CALL)) {
+        try {
+          const r = await db.prepare(
+            `SELECT playerId, MAX(player) AS player, MAX(team) AS team,
+                    COUNT(*) AS games,
+                    SUM(rax) AS rax,
+                    SUM(${hypoSql(pr.sport)}) AS hypo,
+                    MAX(rax) AS bestRax,
+                    ROUND(SUM(rating), 1) AS rating,
+                    ROUND(AVG(rating), 2) AS ratingPerGame
+               FROM gamelog
+              WHERE sport = ?1 AND season = ?2
+                AND seasonType IN ('regularseason','postseason','allstar')
+                AND rating IS NOT NULL AND rax IS NOT NULL
+              GROUP BY playerId`).bind(pr.sport, pr.season).all();
+          const out = [];
+          for (const x of (r.results || [])) {
+            const games = Number(x.games) || 0;
+            const rax = Number(x.rax) || 0;
+            const hypo = Number(x.hypo) || 0;
+            out.push({
+              playerId: Number(x.playerId), player: x.player || '', team: x.team || '',
+              sport: pr.sport, season: pr.season, games, rax, hypo,
+              diff: hypo - rax,
+              pct: rax > 0 ? Math.round((hypo / rax) * 1000) / 10 : null,
+              raxPerGame: games ? Math.round((rax / games) * 100) / 100 : 0,
+              hypoPerGame: games ? Math.round((hypo / games) * 100) / 100 : 0,
+              bestRax: Number(x.bestRax) || 0,
+              rating: Number(x.rating) || 0,
+              ratingPerGame: Number(x.ratingPerGame) || 0
+            });
+          }
+          cache.seasons[`${pr.sport}|${pr.season}`] = { at: Date.now(), rows: out };
+          built++;
+        } catch (e) { /* a season that will not read is left out, not fatal */ }
+      }
+      if (built) {
+        cache.at = Date.now();
+        try { await env.RATEBOARD_KV.put(CACHE, JSON.stringify(cache)); } catch (e) {}
+      }
+    }
+
+    const rows = [];
+    for (const pr of pairs) {
+      const c = cache.seasons[`${pr.sport}|${pr.season}`];
+      if (c && Array.isArray(c.rows)) for (const r of c.rows) rows.push(r);
+    }
+    const building = Math.max(0, todo.length - built);
+
+    let view = rows;
+    if (wantSport) view = view.filter(x => x.sport === wantSport);
+    if (wantSeason) view = view.filter(x => x.season === wantSeason);
+    if (minGames) view = view.filter(x => x.games >= minGames);
+    if (term) view = view.filter(x => String(x.player || '').toLowerCase().includes(term));
+
+    const txt = sort === 'player';
+    view = view.slice().sort((a, b) => {
+      const av = a[sort], bv = b[sort];
+      if (txt) return dir * String(av || '').localeCompare(String(bv || ''));
+      const an = av == null ? -Infinity : Number(av);
+      const bn = bv == null ? -Infinity : Number(bv);
+      return an === bn ? (Number(b.diff) - Number(a.diff)) : dir * (an - bn);
+    });
+    const total = view.length;
+    const page = view.slice(offset, offset + limit).map((x, i) =>
+      Object.assign({ rank: offset + i + 1 }, x));
+
+    /* Owners are a daily snapshot in their own table. Reading them for the
+       page's players only keeps this to a handful of seeks instead of one
+       per row of the whole log. */
+    if (page.length) {
+      const byKey = new Map();
+      for (const x of page) byKey.set(`${x.sport}|${x.season}|${x.playerId}`, x);
+      for (const sp of EARN_SPORTS) {
+        for (const se of [...new Set(page.filter(x => x.sport === sp).map(x => x.season))]) {
+          const ids = page.filter(x => x.sport === sp && x.season === se)
+            .map(x => Number(x.playerId)).filter(Number.isFinite);
+          if (!ids.length) continue;
+          // Ids are inlined and coerced: D1 takes at most 100 bound values.
+          for (let i = 0; i < ids.length; i += 400) {
+            const list = ids.slice(i, i + 400).join(',');
+            try {
+              const r = await db.prepare(
+                `SELECT playerId, owners FROM owners
+                  WHERE sport = ?1 AND season = ?2 AND playerId IN (${list})
+                    AND day = (SELECT MAX(d.day) FROM owners d
+                                WHERE d.sport = ?1 AND d.season = ?2)`).bind(sp, se).all();
+              for (const o of (r.results || [])) {
+                const hitRow = byKey.get(`${sp}|${se}|${Number(o.playerId)}`);
+                if (hitRow) hitRow.owners = Number(o.owners);
+              }
+            } catch (e) {}
+          }
+        }
+      }
+    }
+
+    if (P('format') === 'csv') {
+      const cols = ['rank', 'player', 'sport', 'season', 'games', 'rax', 'hypo', 'diff', 'pct',
+                    'raxPerGame', 'hypoPerGame', 'bestRax', 'owners', 'rating', 'ratingPerGame'];
+      const esc = v => v == null ? '' : /[",\n]/.test(String(v))
+        ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
+      const body = [cols.join(',')]
+        .concat(page.map(r => cols.map(c => esc(r[c])).join(','))).join('\n');
+      return new Response(body, { headers: {
+        'content-type': 'text/csv; charset=utf-8',
+        'content-disposition': 'attachment; filename="rax-shift.csv"',
+        'access-control-allow-origin': '*' } });
+    }
+    return json({ total, offset, limit, sort, dir: dir < 0 ? 'desc' : 'asc',
+                  curve: NEW_CURVE, building,
+                  seasons: pairs.map(p => `${p.sport}|${p.season}`), rows: page });
+  }
+
   /* What a game rating actually pays, read off the game log rather than
      assumed. One row per (rating, seasonType) with the rax values seen, so a
      hypothetical curve can be built on the real one. */
