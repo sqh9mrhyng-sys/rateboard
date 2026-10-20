@@ -1001,7 +1001,12 @@ const GAMES_PER_TICK = 10;        // games per call, each one a full game
 /* Measured at about a sixth of a second a game with five in the air, so a
    hundred and fifty of them is twenty-five seconds - comfortably inside the
    minute between ticks, and no faster a burst than before, just a longer one. */
-const GAMES_PER_TICK_BY_SPORT = { mlb: 150, ncaaf: 90, nfl: 60, nba: 120, wnba: 120, nhl: 120 };
+/* Measured: a basketball game is 267 rows and the database takes about three
+   tenths of a second a game to swallow them - the writing is the wall, not
+   the asking, so fetching more at once buys nothing. 150 fills about
+   forty-five seconds of the minute between ticks, which is as much as can be
+   taken without a call still running when the next one starts. */
+const GAMES_PER_TICK_BY_SPORT = { mlb: 150, ncaaf: 90, nfl: 60, nba: 150, wnba: 150, nhl: 150 };
 /* How many of those feeds are in the air at once. Five keeps the call well
    inside its minute while asking Real for no more per second than a person
    clicking through games quickly would. */
