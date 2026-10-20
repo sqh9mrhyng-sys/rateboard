@@ -4624,19 +4624,18 @@ async function cbbPanel(){
     </div>
     <div id="cb-shift" class="hide">
       <p class="note" id="sh-intro"></p>
+      <div class="seg seg-2up" role="group" aria-label="Rax shift view" style="margin-bottom:10px">
+        <button data-shv="players" aria-pressed="true">By player</button>
+        <button data-shv="games" aria-pressed="false">Every game</button>
+      </div>
+      <div id="sh-seasons"><span class="note">Loading seasons&hellip;</span></div>
+      <p class="note" id="sh-scope"></p>
       <div class="dtbar">
-        <select class="field" id="sh-sport" style="flex:0 1 150px">
-          <option value="">NBA + NHL</option>
-          <option value="nba">NBA only</option>
-          <option value="nhl">NHL only</option>
-        </select>
-        <select class="field" id="sh-season" style="flex:0 1 150px">
-          <option value="">Every season</option>
-        </select>
         <input class="field" id="sh-q" autocomplete="off" spellcheck="false"
                placeholder="Search a player" style="max-width:220px">
         <input class="field" id="sh-mg" inputmode="numeric" value="20"
                placeholder="Min games" style="flex:0 1 110px">
+        <button class="btn-ghost hide" id="sh-all">&larr; All players</button>
         <button class="btn-ghost" id="sh-refresh">Refresh</button>
         <span class="note" id="sh-note"></span>
       </div>
@@ -6091,8 +6090,9 @@ async function cbbPanel(){
      player actually earned, so the size of the change is a number rather
      than a guess. Nothing here needs collecting - the ratings and the rax
      have been in the log since the seasons were logged. */
-  const SH = { sport:'', season:'', q:'', minGames:'20', sort:'diff', dir:'desc',
-               offset:0, limit:100, ready:false, total:0, curve:null, seasons:[] };
+  const SH = { view:'players', pairs:[], q:'', minGames:'20', sort:'diff', dir:'desc',
+               offset:0, limit:100, ready:false, total:0, curve:null, seasons:[],
+               playerId:0, who:'' };
   // 2026 is the 25/26 season; the log keeps the year it ended in.
   const shSeason = y => `${String(Number(y) - 1).slice(2)}/${String(Number(y)).slice(2)}`;
   const shNum = (v, d) => v == null ? '&mdash;'
@@ -6113,31 +6113,129 @@ async function cbbPanel(){
     ['rating',        'Rating',     'n'],
     ['ratingPerGame', 'Rating/g',   'n']
   ];
+  const SH_GAME_COLS = [
+    ['rank',     '#',          'n'],
+    ['player',   'Player',     'l'],
+    ['sport',    'Sport',      'l'],
+    ['season',   'Season',     'l'],
+    ['day',      'Date',       'l'],
+    ['opponent', 'Opponent',   'l'],
+    ['result',   'Result',     'l'],
+    ['rating',   'Rating',     'n'],
+    ['rax',      'Rax',        'n'],
+    ['hypo',     'Hypo rax',   'n'],
+    ['diff',     'Difference', 'n']
+  ];
+  const shCols = () => SH.view === 'games' ? SH_GAME_COLS : SH_COLS;
+  const SH_NOSORT = ['rank', 'sport', 'season', 'opponent', 'result'];
 
   function shQs(extra){
-    const p = new URLSearchParams({ earn:'shift', sort: SH.sort, dir: SH.dir,
+    const p = new URLSearchParams({ earn:'shift', view: SH.view, sort: SH.sort, dir: SH.dir,
                                     limit: SH.limit, offset: SH.offset });
-    if(SH.sport)    p.set('sport', SH.sport);
-    if(SH.season)   p.set('season', SH.season);
-    if(SH.q)        p.set('q', SH.q);
-    if(SH.minGames) p.set('minGames', SH.minGames);
+    if(SH.pairs.length && SH.pairs.length !== SH.seasons.length){
+      p.set('seasons', SH.pairs.map(x => x.replace('|', ':')).join(','));
+    }
+    if(SH.view === 'games' && SH.playerId) p.set('playerId', SH.playerId);
+    else if(SH.q) p.set('q', SH.q);
+    if(SH.view === 'players' && SH.minGames) p.set('minGames', SH.minGames);
     for(const k in (extra||{})) p.set(k, extra[k]);
     return '/api/rax?' + p.toString();
   }
 
+  /* The same season blocks the other game-data views use, cut to the eight
+     NBA and NHL seasons this comparison can speak to. All of them are on to
+     begin with; turning some off narrows every column at once. */
+  function shDrawSeasons(){
+    if(!SH.seasons.length){
+      $b('#sh-seasons').innerHTML = '<span class="note">Nothing in the log yet.</span>';
+      return;
+    }
+    const bySport = new Map();
+    for(const k of SH.seasons){
+      const [sp, se] = k.split('|');
+      if(!bySport.has(sp)) bySport.set(sp, []);
+      bySport.get(sp).push(Number(se));
+    }
+    const open = new Set([...$b('#sh-seasons').querySelectorAll('details[open]')].map(d => d.dataset.sp));
+    $b('#sh-seasons').innerHTML = [...bySport.entries()].map(([sp, years]) => {
+      const on = years.filter(y => SH.pairs.includes(`${sp}|${y}`));
+      const isOpen = open.size ? open.has(sp) : true;
+      return `<details class="sgrp" data-sp="${esc(sp)}"${isOpen ? ' open' : ''}>`
+        + `<summary>${esc(CB_SPORT_LABEL[sp] || sp)}`
+        + `<span class="note">${years.length} season${years.length === 1 ? '' : 's'}</span>`
+        + (on.length ? `<span class="tick">${on.length} selected</span>` : '')
+        + '</summary><div class="seasons">'
+        + years.sort((a, b) => b - a).map(y => {
+            const key = `${sp}|${y}`;
+            return `<button class="btn-ghost" data-shpair="${esc(key)}" `
+              + `aria-pressed="${SH.pairs.includes(key) ? 'true' : 'false'}">`
+              + `${esc(shSeason(y))}</button>`;
+          }).join('')
+        + `<button class="btn-ghost" data-shall="${esc(sp)}">`
+        + `${on.length === years.length ? 'None' : 'All'}</button>`
+        + '</div></details>';
+    }).join('');
+    const names = SH.pairs.slice().sort().map(k => {
+      const [sp, se] = k.split('|');
+      return `${CB_SPORT_LABEL[sp] || sp} ${shSeason(se)}`;
+    });
+    $b('#sh-scope').textContent = !SH.pairs.length
+      ? 'Pick at least one season.'
+      : SH.pairs.length === SH.seasons.length
+        ? 'Showing every NBA and NHL season in the log.'
+        : `Showing ${names.join(', ')}`;
+  }
+
   function shDrawHead(){
-    $b('#sh-head').innerHTML = '<tr>' + SH_COLS.map(c => {
+    $b('#sh-head').innerHTML = '<tr>' + shCols().map(c => {
       const on = SH.sort === c[0];
       const arrow = on ? (SH.dir === 'desc' ? ' ▼' : ' ▲') : '';
-      const sortable = c[0] !== 'rank' && c[0] !== 'sport' && c[0] !== 'season';
+      const sortable = !SH_NOSORT.includes(c[0]);
       return `<th class="${c[2] === 'l' ? 'l' : 'num'}${on ? ' on' : ''}"`
         + `${sortable ? ` data-shc="${c[0]}"` : ' style="cursor:default"'}>`
         + esc(c[1]) + arrow + '</th>';
     }).join('') + '</tr>';
   }
 
+  function shCell(r, k){
+    if(k === 'season')   return esc(shSeason(r.season));
+    if(k === 'sport')    return esc(String(r.sport || '').toUpperCase());
+    if(k === 'player')   return esc(r.player || '')
+      + (r.team ? ` <span class="note">${esc(r.team)}</span>` : '');
+    if(k === 'day')      return esc(String(r.day || '').slice(5).replace('-', '/'))
+      + (r.seasonType && r.seasonType !== 'regularseason'
+          ? ` <span class="note">${esc(r.seasonType === 'postseason' ? 'playoffs' : 'all-star')}</span>` : '');
+    if(k === 'opponent') return esc(r.opponent || '');
+    if(k === 'result'){
+      if(!r.result) return '&mdash;';
+      const sc = (r.teamScore != null && r.oppScore != null) ? ` ${r.teamScore}–${r.oppScore}` : '';
+      return `<span style="color:var(--${r.result === 'W' ? 'good' : 'bad'})">${esc(r.result)}</span>`
+        + `<span class="note">${esc(sc)}</span>`;
+    }
+    if(k === 'diff'){
+      const n = Number(r.diff || 0);
+      const cls = n > 0 ? 'good' : n < 0 ? 'bad' : '';
+      return `<span${cls ? ` style="color:var(--${cls})"` : ''}>${n > 0 ? '+' : ''}${shNum(n)}`
+        + (r.pct != null ? ` <span class="note">${shNum(r.pct, 1)}%</span>` : '') + '</span>';
+    }
+    if(k === 'raxPerGame')    return shNum(r.raxPerGame, 2)
+      + ` <span class="note">&rarr; ${shNum(r.hypoPerGame, 2)}</span>`;
+    if(k === 'ratingPerGame') return shNum(r.ratingPerGame, 2);
+    if(k === 'rating')        return shNum(r.rating, SH.view === 'games' ? 2 : 1);
+    if(k === 'owners')        return r.owners == null ? '&mdash;' : shNum(r.owners);
+    return shNum(r[k]);
+  }
+
   async function shLoad(){
     shDrawHead();
+    $b('#sh-mg').classList.toggle('hide', SH.view !== 'players');
+    $b('#sh-all').classList.toggle('hide', !(SH.view === 'games' && SH.playerId));
+    $b('#sh-q').disabled = SH.view === 'games' && !!SH.playerId;
+    if(!SH.pairs.length && SH.seasons.length){
+      $b('#sh-body').innerHTML = '';
+      $b('#sh-count').textContent = 'Pick at least one season.';
+      return;
+    }
     $b('#sh-count').textContent = 'Working it out…';
     let d;
     try { d = await (await fetch(shQs())).json(); }
@@ -6146,38 +6244,25 @@ async function cbbPanel(){
     SH.total = Number(d.total || 0);
     SH.curve = d.curve || SH.curve;
     if(Array.isArray(d.seasons) && d.seasons.length && !SH.seasons.length){
-      SH.seasons = d.seasons;
-      const sel = $b('#sh-season');
-      const years = [...new Set(SH.seasons.map(x => Number(x.split('|')[1])))].sort((a,b) => b - a);
-      sel.innerHTML = '<option value="">Every season</option>'
-        + years.map(y => `<option value="${y}">${esc(shSeason(y))}</option>`).join('');
-      sel.value = SH.season;
+      SH.seasons = d.seasons.slice();
+      if(!SH.pairs.length) SH.pairs = SH.seasons.slice();
+      shDrawSeasons();
     }
     const rows = d.rows || [];
-    $b('#sh-body').innerHTML = rows.length ? rows.map(r => '<tr>' + SH_COLS.map(c => {
-      const k = c[0];
-      let v;
-      if(k === 'season')            v = esc(shSeason(r.season));
-      else if(k === 'sport')        v = esc(String(r.sport || '').toUpperCase());
-      else if(k === 'player')       v = esc(r.player || '') + (r.team ? ` <span class="note">${esc(r.team)}</span>` : '');
-      else if(k === 'diff'){
-        const n = Number(r.diff || 0);
-        const cls = n > 0 ? 'good' : n < 0 ? 'bad' : '';
-        v = `<span${cls ? ` style="color:var(--${cls})"` : ''}>${n > 0 ? '+' : ''}${shNum(n)}`
-          + (r.pct != null ? ` <span class="note">${shNum(r.pct, 1)}%</span>` : '') + '</span>';
-      }
-      else if(k === 'raxPerGame')   v = shNum(r.raxPerGame, 2) + ` <span class="note">&rarr; ${shNum(r.hypoPerGame, 2)}</span>`;
-      else if(k === 'ratingPerGame')v = shNum(r.ratingPerGame, 2);
-      else if(k === 'rating')       v = shNum(r.rating, 1);
-      else if(k === 'owners')       v = r.owners == null ? '&mdash;' : shNum(r.owners);
-      else                          v = shNum(r[k]);
-      return `<td class="${c[2] === 'l' ? 'l' : 'num'}">${v}</td>`;
-    }).join('') + '</tr>').join('')
-      : '<tr><td colspan="13" class="note">Nothing matches that.</td></tr>';
+    const cols = shCols();
+    $b('#sh-body').innerHTML = rows.length ? rows.map(r =>
+      `<tr${SH.view === 'players' ? ` class="clickable" data-shpid="${r.playerId}"`
+        + ` data-shpair="${esc(r.sport + '|' + r.season)}" data-shwho="${esc(r.player || '')}"` : ''}>`
+      + cols.map(c => `<td class="${c[2] === 'l' ? 'l' : 'num'}">${shCell(r, c[0])}</td>`).join('')
+      + '</tr>').join('')
+      : `<tr><td colspan="${cols.length}" class="note">Nothing matches that.</td></tr>`;
 
     const from = SH.total ? SH.offset + 1 : 0;
     const to = Math.min(SH.offset + SH.limit, SH.total);
-    $b('#sh-count').innerHTML = `${shNum(SH.total)} player-seasons`
+    const what = SH.view === 'games' ? 'games' : 'player-seasons';
+    $b('#sh-count').innerHTML = `${d.capped ? 'top ' : ''}${shNum(SH.total)} ${what}`
+      + (SH.view === 'games' && SH.who ? ` &mdash; ${esc(SH.who)}` : '')
+      + (SH.view === 'players' ? ' <span class="note">click a row for that season game by game</span>' : '')
       + (Number(d.building) ? ` <span class="note">— still building ${d.building} season`
           + `${Number(d.building) === 1 ? '' : 's'}, hit Refresh in a moment for the rest</span>` : '');
     $b('#sh-page').textContent = SH.total ? `${from}–${to} of ${shNum(SH.total)}` : '';
@@ -6196,31 +6281,87 @@ async function cbbPanel(){
       + `<strong>Rax/g</strong> shows old then new. <strong>Rating</strong> is the season total, <strong>Rating/g</strong> the average.</p>`;
   }
 
+  function shGo(){ SH.offset = 0; shLoad(); }
+
+  function shSetView(v){
+    if(SH.view === v) return;
+    SH.view = v;
+    SH.offset = 0;
+    SH.sort = v === 'games' ? 'diff' : 'diff';
+    SH.dir = 'desc';
+    /* Coming back from one player's games, the seasons go back to the full
+       set - they were narrowed to that player's season by the click, not by
+       anything the reader chose. */
+    if(v === 'players'){
+      if(SH.playerId && SH.seasons.length){ SH.pairs = SH.seasons.slice(); shDrawSeasons(); }
+      SH.playerId = 0; SH.who = '';
+    }
+    box.querySelectorAll('[data-shv]').forEach(x =>
+      x.setAttribute('aria-pressed', x.dataset.shv === v ? 'true' : 'false'));
+    shLoad();
+  }
+
   function shInit(){
     if(SH.ready) return shLoad();
     SH.ready = true;
     $b('#sh-intro').innerHTML = 'What NBA and NHL seasons already in the log would have paid under the new rating curve.';
-    const go = () => { SH.offset = 0; shLoad(); };
-    $b('#sh-sport').addEventListener('change', e => { SH.sport = e.target.value; go(); });
-    $b('#sh-season').addEventListener('change', e => { SH.season = e.target.value; go(); });
-    $b('#sh-mg').addEventListener('change', e => { SH.minGames = e.target.value.replace(/\D+/g, ''); go(); });
     $b('#sh-refresh').addEventListener('click', () => shLoad());
     $b('#sh-prev').addEventListener('click', () => { SH.offset = Math.max(0, SH.offset - SH.limit); shLoad(); });
     $b('#sh-next').addEventListener('click', () => { SH.offset += SH.limit; shLoad(); });
     $b('#sh-dl').addEventListener('click', () => { location.href = shQs({ format:'csv' }); });
+    $b('#sh-mg').addEventListener('change', e => {
+      SH.minGames = e.target.value.replace(/\D+/g, ''); shGo();
+    });
+    $b('#sh-all').addEventListener('click', () => {
+      SH.playerId = 0; SH.who = ''; SH.q = ''; $b('#sh-q').value = '';
+      SH.pairs = SH.seasons.slice(); shDrawSeasons(); shGo();
+    });
     let shTyping;
     $b('#sh-q').addEventListener('input', e => {
       clearTimeout(shTyping);
       const v = e.target.value;
-      shTyping = setTimeout(() => { SH.q = v; go(); }, 300);
+      shTyping = setTimeout(() => { SH.q = v; SH.playerId = 0; SH.who = ''; shGo(); }, 300);
     });
-    $b('#sh-head').addEventListener('click', e => {
-      const th = e.target.closest('[data-shc]');
-      if(!th) return;
-      const k = th.dataset.shc;
-      if(SH.sort === k) SH.dir = SH.dir === 'desc' ? 'asc' : 'desc';
-      else { SH.sort = k; SH.dir = k === 'player' ? 'asc' : 'desc'; }
-      go();
+    $b('#cb-shift').addEventListener('click', e => {
+      const v = e.target.closest('[data-shv]');
+      if(v) return shSetView(v.dataset.shv);
+
+      const all = e.target.closest('[data-shall]');
+      if(all){
+        const sp = all.dataset.shall;
+        const mine = SH.seasons.filter(k => k.split('|')[0] === sp);
+        const hasAll = mine.every(k => SH.pairs.includes(k));
+        SH.pairs = hasAll ? SH.pairs.filter(k => !mine.includes(k))
+                          : [...new Set(SH.pairs.concat(mine))];
+        shDrawSeasons(); return shGo();
+      }
+
+      const chip = e.target.closest('#sh-seasons [data-shpair]');
+      if(chip){
+        const k = chip.dataset.shpair;
+        SH.pairs = SH.pairs.includes(k) ? SH.pairs.filter(x => x !== k) : SH.pairs.concat(k);
+        shDrawSeasons(); return shGo();
+      }
+
+      /* A row in the season view opens that player's games for that season
+         alone - the thing you want the moment a difference looks surprising. */
+      const row = e.target.closest('#sh-body tr[data-shpid]');
+      if(row){
+        SH.playerId = Number(row.dataset.shpid);
+        SH.who = row.dataset.shwho || '';
+        SH.pairs = [row.dataset.shpair];
+        SH.q = ''; $b('#sh-q').value = '';
+        shDrawSeasons();
+        return shSetView('games');
+      }
+
+      const th = e.target.closest('#sh-head [data-shc]');
+      if(th){
+        const k = th.dataset.shc;
+        if(SH.sort === k) SH.dir = SH.dir === 'desc' ? 'asc' : 'desc';
+        else { SH.sort = k; SH.dir = (k === 'player' || k === 'day') ? 'asc' : 'desc'; }
+        return shGo();
+      }
     });
     shLoad();
   }
