@@ -1848,6 +1848,25 @@ export async function onRequestGet({ request, env }) {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
     const sp = String(url.searchParams.get('sport') || 'nba').toLowerCase();
+    /* Which whole-number rating pays what, counted. The curve is read off the
+       log rather than assumed, so a hypothetical one can be built beside it. */
+    if (url.searchParams.get('mode') === 'bucket') {
+      const stype = String(url.searchParams.get('seasonType') || 'regularseason');
+      const seasonArg = url.searchParams.get('season');
+      const binds = [sp, stype];
+      let extra = '';
+      if (seasonArg && /^\d+$/.test(seasonArg)) { extra = ' AND season = ?'; binds.push(Number(seasonArg)); }
+      try {
+        const r = await db.prepare(
+          `SELECT CAST(ROUND(rating) AS INTEGER) AS r, rax, COUNT(*) AS n
+             FROM gamelog
+            WHERE sport = ? AND seasonType = ? AND rating IS NOT NULL AND rax IS NOT NULL${extra}
+            GROUP BY r, rax HAVING n > 20 ORDER BY r, n DESC`).bind(...binds).all();
+        return json({ sport: sp, seasonType: stype, season: seasonArg || 'all', rows: r.results || [] });
+      } catch (e) {
+        return json({ error: String((e && e.message) || e) }, 503);
+      }
+    }
     try {
       const r = await db.prepare(
         `SELECT season, seasonType, COUNT(*) AS n,
