@@ -1841,6 +1841,26 @@ export async function onRequestGet({ request, env }) {
     return json({ sport, season, stillMissing: miss.length - asked, asked, stored });
   }
 
+  /* What a game rating actually pays, read off the game log rather than
+     assumed. One row per (rating, seasonType) with the rax values seen, so a
+     hypothetical curve can be built on the real one. */
+  if (url.searchParams.get('earn') === 'curve') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    const sp = String(url.searchParams.get('sport') || 'nba').toLowerCase();
+    try {
+      const r = await db.prepare(
+        `SELECT rating, seasonType, rax, COUNT(*) AS n
+           FROM gamelog
+          WHERE sport = ? AND rating IS NOT NULL AND rax IS NOT NULL
+          GROUP BY rating, seasonType, rax
+          ORDER BY rating, seasonType, rax`).bind(sp).all();
+      return json({ sport: sp, rows: r.results || [] });
+    } catch (e) {
+      return json({ error: String((e && e.message) || e) }, 503);
+    }
+  }
+
   if (url.searchParams.get('plays') === 'progress') {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
