@@ -2143,6 +2143,32 @@ export async function onRequestGet({ request, env }) {
     const P2 = k => String(url.searchParams.get(k) || '').trim();
     /* Which whole-number rating pays what, counted. The curve is read off the
        log rather than assumed, so a hypothetical one can be built beside it. */
+    /* One old game's feed, straight from Real, to see whether a season with
+       no earnings leaderboard can still be enumerated from its games. Same
+       URL the play collector already uses; nothing new is reachable. */
+    if (url.searchParams.get('mode') === 'game') {
+      const gid = String(url.searchParams.get('gameId') || '').replace(/\D+/g, '');
+      if (!gid) return json({ error: 'gameId needed' }, 400);
+      try {
+        const d = await rsGet(
+          `https://web.realapp.com/games/${gid}/sport/${sp}/feed?version=2&view=all&viewFrame=default`,
+          auth);
+        const rows = Array.isArray(d && d.plays) ? d.plays : rowsOf(d);
+        const ids = new Set();
+        for (const r of (rows || [])) {
+          for (const k of ['playerId', 'player2Id', 'player3Id', 'player4Id']) {
+            if (r && r[k] != null) ids.add(Number(r[k]));
+          }
+        }
+        return json({ gameId: gid, topKeys: Object.keys(d || {}),
+                      rows: (rows || []).length, distinctPlayers: ids.size,
+                      someIds: [...ids].slice(0, 12),
+                      firstRow: (rows || [])[0] || null });
+      } catch (e) {
+        return json({ error: String((e && e.message) || e) }, 502);
+      }
+    }
+
     /* The payout multiplier split either side of a date, per player, with
        the position and the owner count beside it - for working out what the
        extra boost some players get is actually keyed on. */
