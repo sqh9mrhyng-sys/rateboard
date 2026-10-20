@@ -6259,15 +6259,24 @@ async function cbbPanel(){
 
     const from = SH.total ? SH.offset + 1 : 0;
     const to = Math.min(SH.offset + SH.limit, SH.total);
+    /* Every game is read a season at a time and only the first slice of each
+       is kept, so when that slice fills up the count is a floor, not a total.
+       Saying "800 games" there would be a plain lie about a log holding
+       hundreds of thousands, so it says what it is instead. */
     const what = SH.view === 'games' ? 'games' : 'player-seasons';
-    $b('#sh-count').innerHTML = `${d.capped ? 'top ' : ''}${shNum(SH.total)} ${what}`
+    $b('#sh-count').innerHTML = (d.capped
+        ? `The biggest ${rows.length} by ${esc(SH.sort === 'diff' ? 'difference' : SH.sort)}`
+          + ` <span class="note">\u2014 page on for more</span>`
+        : `${shNum(SH.total)} ${what}`)
       + (SH.view === 'games' && SH.who ? ` &mdash; ${esc(SH.who)}` : '')
       + (SH.view === 'players' ? ' <span class="note">click a row for that season game by game</span>' : '')
-      + (Number(d.building) ? ` <span class="note">— still building ${d.building} season`
+      + (Number(d.building) ? ` <span class="note">\u2014 still building ${d.building} season`
           + `${Number(d.building) === 1 ? '' : 's'}, hit Refresh in a moment for the rest</span>` : '');
-    $b('#sh-page').textContent = SH.total ? `${from}–${to} of ${shNum(SH.total)}` : '';
+    $b('#sh-page').textContent = !SH.total ? ''
+      : d.capped ? `${from}\u2013${from + rows.length - 1}`
+      : `${from}\u2013${to} of ${shNum(SH.total)}`;
     $b('#sh-prev').disabled = SH.offset <= 0;
-    $b('#sh-next').disabled = to >= SH.total;
+    $b('#sh-next').disabled = d.capped ? rows.length < SH.limit : to >= SH.total;
     if(SH.curve) $b('#sh-key').innerHTML =
       `<p>Each game's rating is rounded and paid out twice: once under the old rule, once under the new one. `
       + `Playoff and all-star games double, as they do now. Pre-season and off-season games earn nothing and are left out.</p>`
