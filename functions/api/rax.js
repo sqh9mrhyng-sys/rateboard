@@ -1826,50 +1826,59 @@ export async function onRequestGet({ request, env }) {
   if (url.searchParams.get('plays') === 'progress') {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
+    /* Counting every play in the table in one go stopped fitting inside D1's
+       CPU budget once basketball arrived - a million and a half rows, grouped
+       and counted distinct. So it is counted one sport at a time, which keeps
+       each query to a range of an index, and the answer is kept for a few
+       minutes: the bar refreshes every thirty seconds and nothing it shows
+       moves faster than that. */
+    const CACHE = 'progress_cache_v1', FRESH_MS = 180000;
+    const want = String(url.searchParams.get('fresh') || '') === '1';
+    if (!want) {
+      try {
+        const c = JSON.parse((await env.RATEBOARD_KV.get(CACHE)) || 'null');
+        if (c && c.at && Date.now() - c.at < FRESH_MS) {
+          return json(Object.assign({}, c.body, { cached: true,
+            ageSeconds: Math.round((Date.now() - c.at) / 1000) }));
+        }
+      } catch (e) {}
+    }
     await playsReady(db);
+    const SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'wnba', 'nhl'];
     const logged = new Map(), got = new Map();
-    try {
-      const r = await db.prepare(
-        /* Preseason and spring training sit in the game log but mint
-           nothing, so counting them would leave every finished season
-           stuck short of full for ever. */
-        `SELECT sport, season, COUNT(DISTINCT gameId) AS games
-           FROM gamelog WHERE sport IN ('nfl','ncaaf','mlb','nba','wnba','nhl')
-            AND (${['nfl', 'ncaaf', 'mlb', 'nba', 'wnba', 'nhl'].map(sp =>
-                 `(sport='${sp}' AND seasonType IN (${seasonTypeSql(sp)}))`).join(' OR ')})
-          GROUP BY sport, season`).all();
-      for (const x of (r.results || [])) logged.set(`${x.sport}|${x.season}`, Number(x.games) || 0);
-    } catch (e) {}
-    try {
-      const r = await db.prepare(
-        /* Only a play carrying tags can be scored at all - a period marker or
-           a kickoff with nothing on it never gets a rarity. Counting those in
-           the denominator left the bar stuck short of full for ever, which
-           read as the scorer being behind when it had finished. */
-        `SELECT sport, season, COUNT(DISTINCT gameId) AS games,
-                SUM(CASE WHEN tags IS NULL THEN 0 ELSE 1 END) AS plays,
-                SUM(CASE WHEN tags IS NOT NULL AND rarity IS NOT NULL THEN 1 ELSE 0 END) AS scored,
-                COUNT(*) AS allPlays
-           FROM plays GROUP BY sport, season`).all();
-      for (const x of (r.results || [])) got.set(`${x.sport}|${x.season}`,
-        { games: Number(x.games) || 0, plays: Number(x.plays) || 0,
-          scored: Number(x.scored) || 0, allPlays: Number(x.allPlays) || 0 });
-    } catch (e) {}
+    for (const sp of SPORTS) {
+      try {
+        const r = await db.prepare(
+          `SELECT season, COUNT(DISTINCT gameId) AS games FROM gamelog
+            WHERE sport=? AND seasonType IN (${seasonTypeSql(sp)})
+            GROUP BY season`).bind(sp).all();
+        for (const x of (r.results || [])) logged.set(`${sp}|${x.season}`, Number(x.games) || 0);
+      } catch (e) {}
+      try {
+        const r = await db.prepare(
+          `SELECT season, COUNT(DISTINCT gameId) AS games,
+                  SUM(CASE WHEN tags IS NULL THEN 0 ELSE 1 END) AS plays,
+                  SUM(CASE WHEN tags IS NOT NULL AND rarity IS NOT NULL THEN 1 ELSE 0 END) AS scored,
+                  COUNT(*) AS allPlays
+             FROM plays WHERE sport=? GROUP BY season`).bind(sp).all();
+        for (const x of (r.results || [])) got.set(`${sp}|${x.season}`,
+          { games: Number(x.games) || 0, plays: Number(x.plays) || 0,
+            scored: Number(x.scored) || 0, allPlays: Number(x.allPlays) || 0 });
+      } catch (e) {}
+    }
     let tick = 0;
     try { tick = Number((JSON.parse((await env.RATEBOARD_KV.get('plays_tick_v1')) || '{}') || {}).n) || 0; } catch (e) {}
     const queue = [];
     for (const x of PLAYS_SPORTS) {
       const k = `${x.sport}|${x.season}`;
-      let lapped = null, cursor = null;
+      let lapped = null;
       try { lapped = await env.RATEBOARD_KV.get(sweptKey(x.sport, x.season)); } catch (e) {}
-      try { cursor = await env.RATEBOARD_KV.get(`${PLAYS_CURSOR}:games:${x.sport}:${x.season}`); } catch (e) {}
       const g = got.get(k) || { games: 0, plays: 0, scored: 0, allPlays: 0 };
       queue.push({ sport: x.sport, season: x.season, pri: x.pri || 99,
-                   rolling: !!x.rolling, lapped: !!lapped, cursor: cursor || null,
+                   rolling: !!x.rolling, lapped: !!lapped,
                    gamesLogged: logged.get(k) || 0, gamesCollected: g.games,
                    plays: g.plays, scored: g.scored, allPlays: g.allPlays });
     }
-    // Which line the next game tick would take, by the same rule the cron uses.
     const fresh = queue.filter(x => !x.lapped);
     let working = null;
     if (fresh.length) {
@@ -1890,8 +1899,12 @@ export async function onRequestGet({ request, env }) {
       try { fin = await env.RATEBOARD_KV.get(perfDoneKey(x.sport, x.season)); } catch (e) {}
       perfQueue.push({ sport: x.sport, season: x.season, done: !!fin });
     }
-    return json({ at: new Date().toISOString(), tick, working, queue, perf, perfQueue });
+    const body = { at: new Date().toISOString(), tick, working, queue, perf, perfQueue };
+    try { await env.RATEBOARD_KV.put(CACHE, JSON.stringify({ at: Date.now(), body })); } catch (e) {}
+    return json(body);
   }
+
+
 
   if (url.searchParams.get('plays') === 'seasons') {
     const db = env.RATEBOARD_DB;
