@@ -6132,21 +6132,30 @@ async function cbbPanel(){
   const shCols = () => SH.view === 'games' ? SH_GAME_COLS : SH_COLS;
   const SH_NOSORT = ['rank', 'sport', 'season', 'opponent', 'result', 'copy'];
 
-  /* One line per row, ready to paste somewhere else. Plain numbers, no
-     thousands separators and no percentage - what gets pasted into a chat
-     should be the figures and nothing to tidy up afterwards. */
+  /* One line per row, ready to paste somewhere else. Columns are divided by
+     a bar and nothing is padded out: spaces used for alignment collapse the
+     moment the text lands anywhere that is not a fixed-width font, which is
+     most places a line like this gets pasted. Plain numbers, no thousands
+     separators and no percentage - the figures and nothing to tidy up. */
   const shSigned = n => (Number(n) > 0 ? '+' : '') + Number(n);
   const sh2 = n => Number(n).toFixed(2);
+  // Short forms for the handful of names that are a mouthful in a chat line.
+  const SH_SHORT = {
+    'Shai Gilgeous-Alexander': 'SGA',
+    'Giannis Antetokounmpo': 'Giannis',
+    'Victor Wembanyama': 'Wemby'
+  };
+  const shName = n => SH_SHORT[String(n || '').trim()] || n;
   function shLine(r){
     const season = shSeason(r.season);
     if(SH.view === 'games'){
       const when = String(r.day || '').slice(5).replace('-', '/');
       const vs = r.opponent ? ` vs ${r.opponent}` : '';
-      return [r.player, season, when + vs, sh2(r.rating), r.rax, r.hypo, shSigned(r.diff)]
-        .join(' - ');
+      return [shName(r.player), season, when + vs, sh2(r.rating), r.rax, r.hypo, shSigned(r.diff)]
+        .join(' | ');
     }
-    return [r.player, season, r.games, r.rax, r.hypo,
-            `${sh2(r.raxPerGame)} -> ${sh2(r.hypoPerGame)}`, shSigned(r.diff)].join(' - ');
+    return [shName(r.player), season, r.games, r.rax, r.hypo,
+            `${sh2(r.raxPerGame)} -> ${sh2(r.hypoPerGame)}`, shSigned(r.diff)].join(' | ');
   }
 
   function shQs(extra){
