@@ -6466,7 +6466,7 @@ async function cbbPanel(){
     ['games',         'Games',      'n'],
     ['rating',        'Rating',     'n'],
     ['estRax',        'Est rax',    'n'],
-    ['boostRax',      'Boosted',    'n'],
+    ['modRax',        'Modern rax', 'n'],
     ['copy',          '',           'l']
   ];
   const HS_GAME_COLS = [
@@ -6479,19 +6479,20 @@ async function cbbPanel(){
     ['result',   'Result',   'l'],
     ['rating',   'Rating',   'n'],
     ['estRax',   'Est rax',  'n'],
+    ['modRax',   'Modern rax','n'],
     ['copy',     '',         'l']
   ];
   const hsCols = () => HS.view === 'games' ? HS_GAME_COLS : HS_COLS;
-  const HS_NOSORT = ['rank', 'team', 'season', 'opponent', 'result', 'copy', 'boostRax'];
+  const HS_NOSORT = ['rank', 'team', 'season', 'opponent', 'result', 'copy'];
 
   function hsLine(r){
     const y = hsYear(r.season);
     if(HS.view === 'games'){
       const when = String(r.day || '').slice(5).replace('-', '/');
       return [shName(r.player), r.team || '', y, when + (r.opponent ? ` vs ${r.opponent}` : ''),
-              sh2(r.rating), r.estRax].join(' | ');
+              sh2(r.rating), r.estRax, r.modRax].join(' | ');
     }
-    return [shName(r.player), r.team || '', y, r.games, sh2(r.rating), r.estRax, r.boostRax].join(' | ');
+    return [shName(r.player), r.team || '', y, r.games, sh2(r.rating), r.estRax, r.modRax].join(' | ');
   }
 
   function hsQs(extra){
@@ -6552,7 +6553,7 @@ async function cbbPanel(){
         + `<span class="note">${esc(sc)}</span>`;
     }
     if(k === 'rating')   return shNum(r.rating, HS.view === 'games' ? 2 : 1);
-    if(k === 'boostRax') return shNum(r.boostRax)
+    if(k === 'modRax') return shNum(r.modRax)
       + (r.boost && r.boost !== 1 ? ` <span class="note">${sh2(r.boost)}x</span>` : '');
     return shNum(r[k]);
   }
@@ -6602,14 +6603,16 @@ async function cbbPanel(){
     $b('#hs-key').innerHTML =
       `<p>These seasons carry a real per-game rating from Real and no rax at all — cards did not exist yet — `
       + `so the earnings here are worked out rather than read.</p>`
-      + `<p><strong>Est rax</strong> is the rule that was actually in force, read off the 2023 and 2024 seasons `
-      + `where both the rating and the rax are on record: five times the rating for QB, RB, WR, TE and kickers, `
-      + `seven for DB, LB, DL and punters, doubled in the playoffs. Pre-season pays nothing and is left out of `
-      + `the games and rating totals too.</p>`
-      + `<p><strong>Boosted</strong> adds the standings multiplier Real brought in around 18 December 2025 — `
-      + `the further down the season's rating standings a player sits, the more each game pays, from 1.01x at the `
-      + `top to about 1.67x at the bottom, with quarterbacks and kickers left out of it. No season on this page `
-      + `ever had that rule, so treat the column as a what-if rather than a reconstruction.</p>`;
+      + `<p><strong>Est rax</strong> is the rule those seasons actually ran on: five times the rating for `
+      + `everyone, defenders included, doubled in the playoffs. Pre-season pays nothing and is left out of the `
+      + `games and rating totals as well. It checks out against Real's own published earnings for 2021 and 2022, `
+      + `the two oldest seasons it still totals \u2014 Cooper Kupp's 2021 comes out at 573 and Real says 573, `
+      + `Mahomes's 2022 at 523 against Real's 523.</p>`
+      + `<p><strong>Modern rax</strong> is what the same games would pay under the rules now: seven times the `
+      + `rating for DB, LB, DL and punters, which only came in for the 2025 season, plus the standings multiplier `
+      + `added that December \u2014 the further down the season's standings a player sits the more each game pays, `
+      + `1.01x at the top to about 1.67x at the bottom, with quarterbacks and kickers left out of it. `
+      + `No season on this page ever had either rule, so it is a what-if rather than a reconstruction.</p>`;
   }
 
   function hsGo(){ HS.offset = 0; hsLoad(); }
