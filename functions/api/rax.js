@@ -1917,6 +1917,16 @@ export async function onRequestGet({ request, env }) {
     const KEY = histKey(sp, se);
     let st = null;
     try { st = JSON.parse((await env.RATEBOARD_KV.get(KEY)) || 'null'); } catch (e) {}
+    /* Walk a finished season again, keeping the players already found and
+       sending both passes back to the start. For when the crawl itself was
+       at fault rather than the season. */
+    if (url.searchParams.get('recrawl') === '1' && st) {
+      st.pc = 0; st.gc = 0;
+      try { await env.RATEBOARD_KV.delete(histDoneKey(sp, se)); } catch (e) {}
+      try { await env.RATEBOARD_KV.put(KEY, JSON.stringify(st)); } catch (e) {}
+      return json({ sport: sp, season: se, recrawl: true,
+                    players: st.players.length, games: st.games.length });
+    }
     if (!st || !Array.isArray(st.players)) st = { players: [], pc: 0, games: [], gc: 0 };
     const save = async () => {
       try { await env.RATEBOARD_KV.put(KEY, JSON.stringify(st)); } catch (e) {}
@@ -2006,16 +2016,31 @@ export async function onRequestGet({ request, env }) {
           if (!d) continue;
           asked++;
           const seen = [];
-          for (const b of (d.matchPlayerBoxScores || [])) {
-            if (b && b.playerId != null) seen.push(Number(b.playerId));
-          }
-          for (const pl of (d.players || [])) {
-            const id = pl && (pl.id != null ? pl.id : pl.playerId);
-            if (id != null) seen.push(Number(id));
-          }
+          const dig = v => {
+            if (!v) return;
+            if (Array.isArray(v)) { for (const x of v) dig(x); return; }
+            if (typeof v !== 'object') return;
+            for (const k of ['playerId', 'id']) {
+              if (v[k] != null && Number.isFinite(Number(v[k]))) seen.push(Number(v[k]));
+            }
+            for (const k of ['boxScores', 'players', 'rows', 'items', 'home', 'away']) {
+              if (v[k]) dig(v[k]);
+            }
+          };
+          dig(d.matchPlayerBoxScores);
+          dig(d.players);
+          /* Plays name their people with primaryPlayerId and the ordinals
+             after it, not playerId and player2Id - that is the play
+             collector's own shape, and reading for it here quietly found
+             nobody, which is how 2021 came to be called finished with four
+             hundred of its players missing. */
           for (const r of (Array.isArray(d.plays) ? d.plays : [])) {
-            for (const k of ['playerId', 'player2Id', 'player3Id', 'player4Id']) {
-              if (r && r[k] != null) seen.push(Number(r[k]));
+            if (!r) continue;
+            for (const k of ['primaryPlayerId', 'secondaryPlayerId', 'tertiaryPlayerId',
+                             'quaternaryPlayerId', 'quinaryPlayerId',
+                             'homePlayerId', 'awayPlayerId',
+                             'playerId', 'player2Id', 'player3Id', 'player4Id']) {
+              if (r[k] != null) seen.push(Number(r[k]));
             }
           }
           for (const id of seen) {
@@ -2551,9 +2576,19 @@ export async function onRequestGet({ request, env }) {
             if (r && r[k] != null) ids.add(Number(r[k]));
           }
         }
+        const mb = d && d.matchPlayerBoxScores;
         return json({ gameId: gid, topKeys: Object.keys(d || {}),
                       rows: (rows || []).length, distinctPlayers: ids.size,
                       someIds: [...ids].slice(0, 12),
+                      boxType: Array.isArray(mb) ? 'array' : typeof mb,
+                      boxLen: Array.isArray(mb) ? mb.length : (mb ? Object.keys(mb).length : 0),
+                      boxKeys: Array.isArray(mb)
+                        ? (mb[0] ? Object.keys(mb[0]) : [])
+                        : (mb ? Object.keys(mb) : []),
+                      playersType: Array.isArray(d && d.players) ? 'array' : typeof (d && d.players),
+                      playersLen: Array.isArray(d && d.players) ? d.players.length : 0,
+                      playersKeys: (d && Array.isArray(d.players) && d.players[0])
+                        ? Object.keys(d.players[0]) : [],
                       firstRow: (rows || [])[0] || null });
       } catch (e) {
         return json({ error: String((e && e.message) || e) }, 502);
