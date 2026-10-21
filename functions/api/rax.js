@@ -2047,6 +2047,193 @@ export async function onRequestGet({ request, env }) {
                   players: st.players.length, games: st.games.length, rows });
   }
 
+  /* ----- the historical board ---------------------------------------------
+     These seasons have a real per-game rating and no rax at all, so the
+     earnings are worked out rather than read.
+
+     The base is the one that was actually in force: five times the rating
+     for the offence and the kickers, seven for the defence and the punters,
+     doubled in the playoffs, nothing at all for pre-season. Read off the
+     2023 and 2024 seasons, where both the rating and the rax are on record.
+
+     The boosted column is the other thing Real does now - a multiplier that
+     rises the further down the season's standings a player sits, and skips
+     quarterbacks and kickers entirely. It did not exist until December 2025,
+     so for these seasons it is a what-if rather than a reconstruction, and
+     it is kept in its own column for that reason. */
+  const HIST_DEF_POS = ['DB','LB','DL','DT','DE','CB','S','EDGE','NT','P','OLB','ILB','MLB','FS','SS'];
+  const histBaseSql = () =>
+    `(CASE WHEN position IN (${HIST_DEF_POS.map(x => `'${x}'`).join(',')}) THEN 7 ELSE 5 END)`;
+  const HIST_PAYS = `seasonType IN ('regularseason','postseason')`;
+  const histRaxSql = () =>
+    `CAST(ROUND(rating * ${histBaseSql()} * (CASE WHEN seasonType = 'postseason' THEN 2 ELSE 1 END)) AS INTEGER)`;
+  // Multiplier by where a player sits in the season's standings, from the
+  // 2025-26 curve. Quarterbacks and kickers are left at 1.
+  const HIST_BOOST = [[0.10, 1.01], [0.25, 1.25], [0.40, 1.41], [0.55, 1.50],
+                      [0.70, 1.57], [0.85, 1.64], [1.01, 1.67]];
+  const histBoostFor = pct => {
+    for (const [edge, mult] of HIST_BOOST) if (pct <= edge) return mult;
+    return 1;
+  };
+  const HIST_NO_BOOST = new Set(['QB', 'K']);
+
+  if (url.searchParams.get('hist') === 'board') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    const P = k => String(url.searchParams.get(k) || '').trim();
+    const sp = HIST_SPORT;
+    const want = P('seasons').split(',').map(x => x.trim()).filter(Boolean)
+      .map(x => Number(String(x).split(/[:|]/).pop()))
+      .filter(y => y >= HIST_FIRST && y <= HIST_LAST);
+    const term = P('q').toLowerCase();
+    const pid = /^\d+$/.test(P('playerId')) ? Number(P('playerId')) : 0;
+    const SORTS = ['estRax', 'boostRax', 'rating', 'games', 'ratingPerGame',
+                   'raxPerGame', 'player', 'season', 'day'];
+    const sort = SORTS.includes(P('sort')) ? P('sort') : 'estRax';
+    const dir = P('dir') === 'asc' ? 1 : -1;
+    const limit = P('format') === 'csv' ? 20000
+      : Math.min(500, Math.max(1, parseInt(P('limit') || '100', 10) || 100));
+    const offset = P('format') === 'csv' ? 0 : Math.max(0, parseInt(P('offset') || '0', 10) || 0);
+    /* Only the seasons that actually hold rows. The crawl is still running,
+       so the picker grows as they land rather than showing a row of empties. */
+    let have = [];
+    try {
+      const r = await db.prepare(
+        `SELECT season, COUNT(*) AS n FROM gamelog
+          WHERE sport = ?1 AND season >= ?2 AND season <= ?3
+          GROUP BY season HAVING n > 0 ORDER BY season DESC`)
+        .bind(sp, HIST_FIRST, HIST_LAST).all();
+      have = (r.results || []).map(x => Number(x.season));
+    } catch (e) {}
+    const seasons = have.filter(y => !want.length || want.includes(y));
+
+    // ---- game by game
+    if (P('view') === 'games') {
+      const need = Math.min(2000, offset + limit);
+      const out = [];
+      for (const y of seasons) {
+        const w = ['sport = ?', 'season = ?', HIST_PAYS, 'rating IS NOT NULL'];
+        const binds = [sp, y];
+        if (pid) { w.push('playerId = ?'); binds.push(pid); }
+        else if (term) { w.push('LOWER(player) LIKE ?'); binds.push('%' + term + '%'); }
+        const col = sort === 'estRax' || sort === 'boostRax' ? 'estRax'
+          : sort === 'rating' ? 'rating' : sort === 'day' ? 'day'
+          : sort === 'player' ? 'player' : 'estRax';
+        try {
+          const r = await db.prepare(
+            `SELECT playerId, player, team, position, day, seasonType, opponent, result,
+                    teamScore, oppScore, rating, (${histRaxSql()}) AS estRax
+               FROM gamelog WHERE ${w.join(' AND ')}
+              ORDER BY ${col} ${dir < 0 ? 'DESC' : 'ASC'} LIMIT ${need}`).bind(...binds).all();
+          for (const x of (r.results || [])) {
+            out.push({ playerId: Number(x.playerId), player: x.player || '', team: x.team || '',
+                       position: x.position || '', season: y, day: x.day || '',
+                       seasonType: x.seasonType || '', opponent: x.opponent || '',
+                       result: x.result || '',
+                       teamScore: x.teamScore == null ? null : Number(x.teamScore),
+                       oppScore: x.oppScore == null ? null : Number(x.oppScore),
+                       rating: Math.round(Number(x.rating) * 100) / 100,
+                       estRax: Number(x.estRax) || 0 });
+          }
+        } catch (e) {}
+      }
+      const txt = sort === 'player' || sort === 'day';
+      out.sort((a, b) => {
+        const k = sort === 'boostRax' ? 'estRax' : (sort === 'games' ? 'estRax' : sort);
+        const av = a[k], bv = b[k];
+        if (txt) return dir * String(av || '').localeCompare(String(bv || ''));
+        return dir * ((Number(av) || 0) - (Number(bv) || 0));
+      });
+      const pageG = out.slice(offset, offset + limit).map((x, i) =>
+        Object.assign({ rank: offset + i + 1 }, x));
+      return json({ view: 'games', total: out.length, capped: out.length >= need,
+                    offset, limit, sort, dir: dir < 0 ? 'desc' : 'asc',
+                    seasons: have, rows: pageG });
+    }
+
+    /* ---- by player. Built a season at a time and kept, because the boost
+       column needs every player in the season ranked before any one row can
+       be worked out. */
+    const CACHE = 'histboard_v1';
+    let cache = null;
+    try { cache = JSON.parse((await env.RATEBOARD_KV.get(CACHE)) || 'null'); } catch (e) {}
+    if (!cache || !cache.seasons || P('rebuild') === '1') cache = { seasons: {} };
+    const FRESH_FOR = 30 * 60 * 1000;
+    let built = 0, building = 0;
+    for (const y of seasons) {
+      const held = cache.seasons[String(y)];
+      const fresh = held && Array.isArray(held.rows)
+        && (Date.now() - Number(held.at || 0)) < FRESH_FOR;
+      if (fresh) continue;
+      if (built >= 3) { building++; continue; }
+      try {
+        const r = await db.prepare(
+          `SELECT playerId, MAX(player) AS player, MAX(team) AS team, MAX(position) AS position,
+                  COUNT(*) AS games, ROUND(SUM(rating), 2) AS rating,
+                  SUM(${histRaxSql()}) AS estRax
+             FROM gamelog
+            WHERE sport = ?1 AND season = ?2 AND ${HIST_PAYS} AND rating IS NOT NULL
+            GROUP BY playerId`).bind(sp, y).all();
+        const rows = (r.results || []).map(x => ({
+          playerId: Number(x.playerId), player: x.player || '', team: x.team || '',
+          position: x.position || '', season: y,
+          games: Number(x.games) || 0,
+          rating: Number(x.rating) || 0,
+          estRax: Number(x.estRax) || 0
+        }));
+        // Standings for the boost: by season rating total, best first.
+        rows.sort((a, b) => b.rating - a.rating);
+        const n = rows.length || 1;
+        rows.forEach((row, i) => {
+          const mult = HIST_NO_BOOST.has(row.position) ? 1 : histBoostFor((i + 1) / n);
+          row.standing = i + 1;
+          row.boost = mult;
+          row.boostRax = Math.round(row.estRax * mult);
+          row.raxPerGame = row.games ? Math.round((row.estRax / row.games) * 100) / 100 : 0;
+          row.ratingPerGame = row.games ? Math.round((row.rating / row.games) * 100) / 100 : 0;
+        });
+        cache.seasons[String(y)] = { at: Date.now(), rows };
+        // An empty season costs nothing to work out, so it does not use up
+        // one of this call's slots.
+        if (rows.length) built++;
+      } catch (e) { /* a season that will not read is left out, not fatal */ }
+    }
+    if (built) { try { await env.RATEBOARD_KV.put(CACHE, JSON.stringify(cache)); } catch (e) {} }
+
+    let view = [];
+    for (const y of seasons) {
+      const held = cache.seasons[String(y)];
+      if (held && Array.isArray(held.rows)) for (const x of held.rows) view.push(x);
+    }
+    if (term) view = view.filter(x => String(x.player || '').toLowerCase().includes(term));
+    const minGames = Math.max(0, parseInt(P('minGames') || '0', 10) || 0);
+    if (minGames) view = view.filter(x => x.games >= minGames);
+    const txt = sort === 'player';
+    view = view.slice().sort((a, b) => {
+      const av = a[sort], bv = b[sort];
+      if (txt) return dir * String(av || '').localeCompare(String(bv || ''));
+      const an = Number(av) || 0, bn = Number(bv) || 0;
+      return an === bn ? (Number(b.estRax) - Number(a.estRax)) : dir * (an - bn);
+    });
+    const total = view.length;
+    const page = view.slice(offset, offset + limit).map((x, i) =>
+      Object.assign({ rank: offset + i + 1 }, x));
+    if (P('format') === 'csv') {
+      const cols = ['rank', 'player', 'team', 'position', 'season', 'games', 'rating',
+                    'ratingPerGame', 'estRax', 'raxPerGame', 'standing', 'boost', 'boostRax'];
+      const escC = v => v == null ? '' : /[",\n]/.test(String(v))
+        ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
+      const body = [cols.join(',')]
+        .concat(page.map(r => cols.map(c => escC(r[c])).join(','))).join('\n');
+      return new Response(body, { headers: {
+        'content-type': 'text/csv; charset=utf-8',
+        'content-disposition': 'attachment; filename="nfl-historical.csv"',
+        'access-control-allow-origin': '*' } });
+    }
+    return json({ total, offset, limit, sort, dir: dir < 0 ? 'desc' : 'asc',
+                  building, seasons: have, rows: page });
+  }
+
   /* How far the historical crawl has got, season by season. */
   if (url.searchParams.get('hist') === 'progress') {
     const db = env.RATEBOARD_DB;
@@ -4593,7 +4780,11 @@ export async function onRequestGet({ request, env }) {
       const pairs = [];
       for (const bit of (P('seasons') ? P('seasons').split(',') : []).slice(0, 30)) {
         const [sp, se] = String(bit).split(':');
-        if (SPORTS.has(String(sp).toLowerCase()) && /^\d{4}$/.test(se)) {
+        if (SPORTS.has(String(sp).toLowerCase()) && /^\d{4}$/.test(se)
+            // A historical season asked for by hand is refused here too, not
+            // only hidden from the picker: these views total up rax, and
+            // those seasons have none.
+            && !(String(sp).toLowerCase() === HIST_SPORT && Number(se) <= HIST_LAST)) {
           pairs.push([String(sp).toLowerCase(), Number(se)]);
         }
       }
@@ -4756,9 +4947,17 @@ export async function onRequestGet({ request, env }) {
     // rather than assuming one season exists.
     if (glArg === 'seasons') {
       try {
+        /* The historical seasons are deliberately left off this list. They
+           carry a rating but no rax and no owners, so every earnings column
+           in the ordinary game-data views would read as a blank for them and
+           any multi-season total would quietly go wrong. They have their own
+           tab, which knows what it is looking at. */
         const r = await db.prepare(
           `SELECT sport, season, COUNT(*) AS rows, COUNT(DISTINCT playerId) AS players
-             FROM gamelog GROUP BY sport, season ORDER BY sport, season DESC`).all();
+             FROM gamelog
+            WHERE NOT (sport = ?1 AND season <= ?2)
+            GROUP BY sport, season ORDER BY sport, season DESC`)
+          .bind(HIST_SPORT, HIST_LAST).all();
         return json({ seasons: (r && r.results) || [] });
       } catch (e) { return json({ error: String((e && e.message) || e) }, 500); }
     }
