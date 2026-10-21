@@ -2051,22 +2051,34 @@ export async function onRequestGet({ request, env }) {
      These seasons have a real per-game rating and no rax at all, so the
      earnings are worked out rather than read.
 
-     The base is the one that was actually in force: five times the rating
-     for the offence and the kickers, seven for the defence and the punters,
-     doubled in the playoffs, nothing at all for pre-season. Read off the
-     2023 and 2024 seasons, where both the rating and the rax are on record.
+     Two columns, because the rules have moved twice and neither version is
+     the whole story on its own.
 
-     The boosted column is the other thing Real does now - a multiplier that
-     rises the further down the season's standings a player sits, and skips
-     quarterbacks and kickers entirely. It did not exist until December 2025,
-     so for these seasons it is a what-if rather than a reconstruction, and
-     it is kept in its own column for that reason. */
+     Est rax is the rule those seasons actually ran on: five times the
+     rating for everyone, doubled in the playoffs, nothing for pre-season.
+     Checked against Real's own published earnings for 2021 and 2022, the
+     two oldest seasons it still totals - Cooper Kupp's 2021 comes out at
+     573 and Real says 573; Mahomes's 2022 at 523 against Real's 523.
+
+     Modern rax is what the same games would pay under the rules now: seven
+     times the rating for the defence and the punters, which came in for the
+     2025 season, plus the standings multiplier added that December. Neither
+     existed in any season on this page, so it is a what-if and is kept in
+     its own column.
+
+     Note what this means: the seven-times defensive rate is NOT period
+     accurate for anything here. Every season from 2021 to 2024 pays a flat
+     five, defenders included - measured, not assumed. */
   const HIST_DEF_POS = ['DB','LB','DL','DT','DE','CB','S','EDGE','NT','P','OLB','ILB','MLB','FS','SS'];
-  const histBaseSql = () =>
-    `(CASE WHEN position IN (${HIST_DEF_POS.map(x => `'${x}'`).join(',')}) THEN 7 ELSE 5 END)`;
   const HIST_PAYS = `seasonType IN ('regularseason','postseason')`;
+  const histDouble = `(CASE WHEN seasonType = 'postseason' THEN 2 ELSE 1 END)`;
+  // What the season itself paid: a flat five, playoffs doubled.
   const histRaxSql = () =>
-    `CAST(ROUND(rating * ${histBaseSql()} * (CASE WHEN seasonType = 'postseason' THEN 2 ELSE 1 END)) AS INTEGER)`;
+    `CAST(ROUND(rating * 5 * ${histDouble}) AS INTEGER)`;
+  // What it would pay now, before the standings multiplier is applied.
+  const histModernSql = () =>
+    `CAST(ROUND(rating * (CASE WHEN position IN (${HIST_DEF_POS.map(x => `'${x}'`).join(',')})`
+    + ` THEN 7 ELSE 5 END) * ${histDouble}) AS INTEGER)`;
   // Multiplier by where a player sits in the season's standings, from the
   // 2025-26 curve. Quarterbacks and kickers are left at 1.
   const HIST_BOOST = [[0.10, 1.01], [0.25, 1.25], [0.40, 1.41], [0.55, 1.50],
@@ -2087,7 +2099,7 @@ export async function onRequestGet({ request, env }) {
       .filter(y => y >= HIST_FIRST && y <= HIST_LAST);
     const term = P('q').toLowerCase();
     const pid = /^\d+$/.test(P('playerId')) ? Number(P('playerId')) : 0;
-    const SORTS = ['estRax', 'boostRax', 'rating', 'games', 'ratingPerGame',
+    const SORTS = ['estRax', 'modRax', 'rating', 'games', 'ratingPerGame',
                    'raxPerGame', 'player', 'season', 'day'];
     const sort = SORTS.includes(P('sort')) ? P('sort') : 'estRax';
     const dir = P('dir') === 'asc' ? 1 : -1;
@@ -2116,13 +2128,14 @@ export async function onRequestGet({ request, env }) {
         const binds = [sp, y];
         if (pid) { w.push('playerId = ?'); binds.push(pid); }
         else if (term) { w.push('LOWER(player) LIKE ?'); binds.push('%' + term + '%'); }
-        const col = sort === 'estRax' || sort === 'boostRax' ? 'estRax'
+        const col = sort === 'modRax' ? 'modRax'
           : sort === 'rating' ? 'rating' : sort === 'day' ? 'day'
           : sort === 'player' ? 'player' : 'estRax';
         try {
           const r = await db.prepare(
             `SELECT playerId, player, team, position, day, seasonType, opponent, result,
-                    teamScore, oppScore, rating, (${histRaxSql()}) AS estRax
+                    teamScore, oppScore, rating, (${histRaxSql()}) AS estRax,
+                    (${histModernSql()}) AS modRax
                FROM gamelog WHERE ${w.join(' AND ')}
               ORDER BY ${col} ${dir < 0 ? 'DESC' : 'ASC'} LIMIT ${need}`).bind(...binds).all();
           for (const x of (r.results || [])) {
@@ -2133,13 +2146,14 @@ export async function onRequestGet({ request, env }) {
                        teamScore: x.teamScore == null ? null : Number(x.teamScore),
                        oppScore: x.oppScore == null ? null : Number(x.oppScore),
                        rating: Math.round(Number(x.rating) * 100) / 100,
-                       estRax: Number(x.estRax) || 0 });
+                       estRax: Number(x.estRax) || 0,
+                       modRax: Number(x.modRax) || 0 });
           }
         } catch (e) {}
       }
       const txt = sort === 'player' || sort === 'day';
       out.sort((a, b) => {
-        const k = sort === 'boostRax' ? 'estRax' : (sort === 'games' ? 'estRax' : sort);
+        const k = sort === 'games' ? 'estRax' : sort;
         const av = a[k], bv = b[k];
         if (txt) return dir * String(av || '').localeCompare(String(bv || ''));
         return dir * ((Number(av) || 0) - (Number(bv) || 0));
@@ -2170,7 +2184,8 @@ export async function onRequestGet({ request, env }) {
         const r = await db.prepare(
           `SELECT playerId, MAX(player) AS player, MAX(team) AS team, MAX(position) AS position,
                   COUNT(*) AS games, ROUND(SUM(rating), 2) AS rating,
-                  SUM(${histRaxSql()}) AS estRax
+                  SUM(${histRaxSql()}) AS estRax,
+                  SUM(${histModernSql()}) AS modRax
              FROM gamelog
             WHERE sport = ?1 AND season = ?2 AND ${HIST_PAYS} AND rating IS NOT NULL
             GROUP BY playerId`).bind(sp, y).all();
@@ -2179,7 +2194,8 @@ export async function onRequestGet({ request, env }) {
           position: x.position || '', season: y,
           games: Number(x.games) || 0,
           rating: Number(x.rating) || 0,
-          estRax: Number(x.estRax) || 0
+          estRax: Number(x.estRax) || 0,
+          modBase: Number(x.modRax) || 0
         }));
         // Standings for the boost: by season rating total, best first.
         rows.sort((a, b) => b.rating - a.rating);
@@ -2188,7 +2204,7 @@ export async function onRequestGet({ request, env }) {
           const mult = HIST_NO_BOOST.has(row.position) ? 1 : histBoostFor((i + 1) / n);
           row.standing = i + 1;
           row.boost = mult;
-          row.boostRax = Math.round(row.estRax * mult);
+          row.modRax = Math.round(row.modBase * mult);
           row.raxPerGame = row.games ? Math.round((row.estRax / row.games) * 100) / 100 : 0;
           row.ratingPerGame = row.games ? Math.round((row.rating / row.games) * 100) / 100 : 0;
         });
@@ -2220,7 +2236,7 @@ export async function onRequestGet({ request, env }) {
       Object.assign({ rank: offset + i + 1 }, x));
     if (P('format') === 'csv') {
       const cols = ['rank', 'player', 'team', 'position', 'season', 'games', 'rating',
-                    'ratingPerGame', 'estRax', 'raxPerGame', 'standing', 'boost', 'boostRax'];
+                    'ratingPerGame', 'estRax', 'raxPerGame', 'standing', 'boost', 'modRax'];
       const escC = v => v == null ? '' : /[",\n]/.test(String(v))
         ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
       const body = [cols.join(',')]
