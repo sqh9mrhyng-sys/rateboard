@@ -2051,43 +2051,23 @@ export async function onRequestGet({ request, env }) {
      These seasons have a real per-game rating and no rax at all, so the
      earnings are worked out rather than read.
 
-     Two columns, because the rules have moved twice and neither version is
-     the whole story on its own.
+     Est rax is today's rate card run over old games: five times the rating
+     for the offence and the kickers, seven for the defence and the punters,
+     doubled in the playoffs, nothing at all for pre-season.
 
-     Est rax is the rule those seasons actually ran on: five times the
-     rating for everyone, doubled in the playoffs, nothing for pre-season.
-     Checked against Real's own published earnings for 2021 and 2022, the
-     two oldest seasons it still totals - Cooper Kupp's 2021 comes out at
-     573 and Real says 573; Mahomes's 2022 at 523 against Real's 523.
-
-     Modern rax is what the same games would pay under the rules now: seven
-     times the rating for the defence and the punters, which came in for the
-     2025 season, plus the standings multiplier added that December. Neither
-     existed in any season on this page, so it is a what-if and is kept in
-     its own column.
-
-     Note what this means: the seven-times defensive rate is NOT period
-     accurate for anything here. Every season from 2021 to 2024 pays a flat
-     five, defenders included - measured, not assumed. */
+     Worth knowing what that is and is not. It is NOT what those seasons
+     paid - every season from 2021 to 2024 paid a flat five to everyone,
+     defenders included, which is measured rather than assumed, and a flat
+     five reproduces Real's published 2021 earnings for 903 of 905 players.
+     The seven-times defensive rate only arrived for 2025. So this column
+     is what these games would be worth under the rules as they stand, not
+     a reconstruction of what was actually banked. */
   const HIST_DEF_POS = ['DB','LB','DL','DT','DE','CB','S','EDGE','NT','P','OLB','ILB','MLB','FS','SS'];
   const HIST_PAYS = `seasonType IN ('regularseason','postseason')`;
   const histDouble = `(CASE WHEN seasonType = 'postseason' THEN 2 ELSE 1 END)`;
-  // What the season itself paid: a flat five, playoffs doubled.
   const histRaxSql = () =>
-    `CAST(ROUND(rating * 5 * ${histDouble}) AS INTEGER)`;
-  // What it would pay now, before the standings multiplier is applied.
-  const histModernSql = () =>
     `CAST(ROUND(rating * (CASE WHEN position IN (${HIST_DEF_POS.map(x => `'${x}'`).join(',')})`
     + ` THEN 7 ELSE 5 END) * ${histDouble}) AS INTEGER)`;
-  // Multiplier by where a player sits in the season's standings, from the
-  // 2025-26 curve. Quarterbacks and kickers are left at 1.
-  const HIST_BOOST = [[0.10, 1.01], [0.25, 1.25], [0.40, 1.41], [0.55, 1.50],
-                      [0.70, 1.57], [0.85, 1.64], [1.01, 1.67]];
-  const histBoostFor = pct => {
-    for (const [edge, mult] of HIST_BOOST) if (pct <= edge) return mult;
-    return 1;
-  };
-  const HIST_NO_BOOST = new Set(['QB', 'K']);
 
   if (url.searchParams.get('hist') === 'board') {
     const db = env.RATEBOARD_DB;
@@ -2099,7 +2079,7 @@ export async function onRequestGet({ request, env }) {
       .filter(y => y >= HIST_FIRST && y <= HIST_LAST);
     const term = P('q').toLowerCase();
     const pid = /^\d+$/.test(P('playerId')) ? Number(P('playerId')) : 0;
-    const SORTS = ['estRax', 'modRax', 'rating', 'games', 'ratingPerGame',
+    const SORTS = ['estRax', 'rating', 'games', 'ratingPerGame',
                    'raxPerGame', 'player', 'season', 'day'];
     const sort = SORTS.includes(P('sort')) ? P('sort') : 'estRax';
     const dir = P('dir') === 'asc' ? 1 : -1;
@@ -2128,14 +2108,12 @@ export async function onRequestGet({ request, env }) {
         const binds = [sp, y];
         if (pid) { w.push('playerId = ?'); binds.push(pid); }
         else if (term) { w.push('LOWER(player) LIKE ?'); binds.push('%' + term + '%'); }
-        const col = sort === 'modRax' ? 'modRax'
-          : sort === 'rating' ? 'rating' : sort === 'day' ? 'day'
+        const col = sort === 'rating' ? 'rating' : sort === 'day' ? 'day'
           : sort === 'player' ? 'player' : 'estRax';
         try {
           const r = await db.prepare(
             `SELECT playerId, player, team, position, day, seasonType, opponent, result,
-                    teamScore, oppScore, rating, (${histRaxSql()}) AS estRax,
-                    (${histModernSql()}) AS modRax
+                    teamScore, oppScore, rating, (${histRaxSql()}) AS estRax
                FROM gamelog WHERE ${w.join(' AND ')}
               ORDER BY ${col} ${dir < 0 ? 'DESC' : 'ASC'} LIMIT ${need}`).bind(...binds).all();
           for (const x of (r.results || [])) {
@@ -2146,8 +2124,7 @@ export async function onRequestGet({ request, env }) {
                        teamScore: x.teamScore == null ? null : Number(x.teamScore),
                        oppScore: x.oppScore == null ? null : Number(x.oppScore),
                        rating: Math.round(Number(x.rating) * 100) / 100,
-                       estRax: Number(x.estRax) || 0,
-                       modRax: Number(x.modRax) || 0 });
+                       estRax: Number(x.estRax) || 0 });
           }
         } catch (e) {}
       }
@@ -2184,8 +2161,7 @@ export async function onRequestGet({ request, env }) {
         const r = await db.prepare(
           `SELECT playerId, MAX(player) AS player, MAX(team) AS team, MAX(position) AS position,
                   COUNT(*) AS games, ROUND(SUM(rating), 2) AS rating,
-                  SUM(${histRaxSql()}) AS estRax,
-                  SUM(${histModernSql()}) AS modRax
+                  SUM(${histRaxSql()}) AS estRax
              FROM gamelog
             WHERE sport = ?1 AND season = ?2 AND ${HIST_PAYS} AND rating IS NOT NULL
             GROUP BY playerId`).bind(sp, y).all();
@@ -2194,17 +2170,9 @@ export async function onRequestGet({ request, env }) {
           position: x.position || '', season: y,
           games: Number(x.games) || 0,
           rating: Number(x.rating) || 0,
-          estRax: Number(x.estRax) || 0,
-          modBase: Number(x.modRax) || 0
+          estRax: Number(x.estRax) || 0
         }));
-        // Standings for the boost: by season rating total, best first.
-        rows.sort((a, b) => b.rating - a.rating);
-        const n = rows.length || 1;
-        rows.forEach((row, i) => {
-          const mult = HIST_NO_BOOST.has(row.position) ? 1 : histBoostFor((i + 1) / n);
-          row.standing = i + 1;
-          row.boost = mult;
-          row.modRax = Math.round(row.modBase * mult);
+        rows.forEach(row => {
           row.raxPerGame = row.games ? Math.round((row.estRax / row.games) * 100) / 100 : 0;
           row.ratingPerGame = row.games ? Math.round((row.rating / row.games) * 100) / 100 : 0;
         });
@@ -2236,7 +2204,7 @@ export async function onRequestGet({ request, env }) {
       Object.assign({ rank: offset + i + 1 }, x));
     if (P('format') === 'csv') {
       const cols = ['rank', 'player', 'team', 'position', 'season', 'games', 'rating',
-                    'ratingPerGame', 'estRax', 'raxPerGame', 'standing', 'boost', 'modRax'];
+                    'ratingPerGame', 'estRax', 'raxPerGame'];
       const escC = v => v == null ? '' : /[",\n]/.test(String(v))
         ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
       const body = [cols.join(',')]
@@ -2543,6 +2511,29 @@ export async function onRequestGet({ request, env }) {
     const P2 = k => String(url.searchParams.get(k) || '').trim();
     /* Which whole-number rating pays what, counted. The curve is read off the
        log rather than assumed, so a hypothetical one can be built beside it. */
+    /* The raw stat labels a sport's box score carries. The game log was
+       shaped around basketball, so anything a sport files under a different
+       name was never stored - this is what says which names to add. */
+    if (url.searchParams.get('mode') === 'stats') {
+      const pidS = String(url.searchParams.get('playerId') || '').replace(/\D+/g, '');
+      const seS = /^\d{4}$/.test(P2('season')) ? P2('season') : '2025';
+      if (!pidS) return json({ error: 'playerId needed' }, 400);
+      try {
+        const d = await rsGet(
+          `https://web.realapp.com/players/${pidS}/sport/${sp}/seasonfeed?limit=5&season=${seS}&view=recent&viewFrame=default`,
+          auth);
+        const bs = (d && d.playerBoxScores) || [];
+        const b = bs[0] || null;
+        return json({ sport: sp, season: seS, playerId: pidS, games: bs.length,
+                      rowKeys: b ? Object.keys(b) : [],
+                      statValues: b ? (b.statValues || []) : [],
+                      fantasyStats: b ? b.fantasyStats : null,
+                      position: b ? b.position : null });
+      } catch (e) {
+        return json({ error: String((e && e.message) || e) }, 502);
+      }
+    }
+
     /* One old game's feed, straight from Real, to see whether a season with
        no earnings leaderboard can still be enumerated from its games. Same
        URL the play collector already uses; nothing new is reachable. */
