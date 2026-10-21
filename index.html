@@ -152,11 +152,7 @@
      the labels full size on a phone. */
   .seg-2up{display:grid;grid-template-columns:1fr 1fr;border-radius:14px}
   .seg-2up button{border-radius:11px}
-  /* The fifth view sits on its own row under the square, full width, so the
-     2x2 keeps its shape and this one still reads as part of the same group. */
   .shcopy{padding:3px 9px;font-size:11px;border-radius:7px;white-space:nowrap}
-  .seg-1up{display:grid;grid-template-columns:1fr;border-radius:14px;margin-top:6px}
-  .seg-1up button{border-radius:11px}
 
   /* Selected seasons and toggles were only marked with aria-pressed, which
      shows nothing on screen. This is what makes the active ones obvious. */
@@ -4558,9 +4554,8 @@ async function cbbPanel(){
       <button data-cm="games" aria-pressed="false">Every game</button>
       <button data-cm="pack" aria-pressed="${only ? 'true' : 'false'}">Pack data</button>
       <button data-cm="golf" aria-pressed="false">Golf</button>
-    </div>
-    <div class="seg seg-1up" role="group" aria-label="Rax shift">
-      <button data-cm="shift" aria-pressed="false">Rax shift &mdash; NBA &amp; NHL</button>
+      <button data-cm="shift" aria-pressed="false">Rax shift</button>
+      <button data-cm="hist" aria-pressed="false">Historical</button>
     </div>
     <div id="cb-seasons"><span class="note">Loading seasons&hellip;</span></div>
     <p class="note" id="cb-scope"></p>
@@ -4654,6 +4649,39 @@ async function cbbPanel(){
       <details style="margin-top:6px">
         <summary class="note" style="cursor:pointer">How this is worked out</summary>
         <div class="note" id="sh-key" style="margin-top:8px"></div>
+      </details>
+    </div>
+    <div id="cb-hist" class="hide">
+      <p class="note" id="hs-intro"></p>
+      <div class="seg seg-2up" role="group" aria-label="Historical view" style="margin-bottom:10px">
+        <button data-hsv="players" aria-pressed="true">By player</button>
+        <button data-hsv="games" aria-pressed="false">Every game</button>
+      </div>
+      <div id="hs-seasons"><span class="note">Loading seasons&hellip;</span></div>
+      <p class="note" id="hs-scope"></p>
+      <div class="dtbar">
+        <input class="field" id="hs-q" autocomplete="off" spellcheck="false"
+               placeholder="Search a player" style="max-width:220px">
+        <input class="field" id="hs-mg" inputmode="numeric" value="4"
+               placeholder="Min games" style="flex:0 1 110px">
+        <button class="btn-ghost hide" id="hs-all">&larr; All players</button>
+        <button class="btn-ghost" id="hs-refresh">Refresh</button>
+        <span class="note" id="hs-note"></span>
+      </div>
+      <p class="note" id="hs-count"></p>
+      <div class="dtwrap"><table class="dt">
+        <thead id="hs-head"></thead><tbody id="hs-body"></tbody></table></div>
+      <div class="dtfoot">
+        <span class="note" id="hs-page"></span>
+        <span class="hitacts" style="gap:8px">
+          <button class="btn-ghost" id="hs-prev">Previous</button>
+          <button class="btn-ghost" id="hs-next">Next</button>
+          <button class="btn" id="hs-dl">Download this view</button>
+        </span>
+      </div>
+      <details style="margin-top:6px">
+        <summary class="note" style="cursor:pointer">Where these numbers come from</summary>
+        <div class="note" id="hs-key" style="margin-top:8px"></div>
       </details>
     </div>
     <p class="note" id="cb-count">Loading&hellip;</p>
@@ -6416,16 +6444,263 @@ async function cbbPanel(){
     shLoad();
   }
 
+  /* ----- Historical ---------------------------------------------------------
+     NFL seasons from 2000 to 2022. Real serves a real per-game rating for
+     every one of them and no rax at all, so the earnings here are worked
+     out: five times the rating for the offence and kickers, seven for the
+     defence and punters, doubled in the playoffs. The boosted column adds
+     the standings multiplier Real brought in during December 2025, which
+     these seasons never actually had - a what-if, kept in its own column.
+
+     These seasons are deliberately absent from By player and Every game.
+     Having no rax and no owners, they would read as blanks there and quietly
+     break any multi-season total. */
+  const HS = { view:'players', years:[], pick:[], q:'', minGames:'4', sort:'estRax', dir:'desc',
+               offset:0, limit:100, ready:false, total:0, playerId:0, who:'' };
+  const hsYear = y => `${y}/${String(Number(y) + 1).slice(2)}`;
+  const HS_COLS = [
+    ['rank',          '#',          'n'],
+    ['player',        'Name',       'l'],
+    ['team',          'Team',       'l'],
+    ['season',        'Year',       'l'],
+    ['games',         'Games',      'n'],
+    ['rating',        'Rating',     'n'],
+    ['estRax',        'Est rax',    'n'],
+    ['boostRax',      'Boosted',    'n'],
+    ['copy',          '',           'l']
+  ];
+  const HS_GAME_COLS = [
+    ['rank',     '#',        'n'],
+    ['player',   'Name',     'l'],
+    ['team',     'Team',     'l'],
+    ['season',   'Year',     'l'],
+    ['day',      'Date',     'l'],
+    ['opponent', 'Opponent', 'l'],
+    ['result',   'Result',   'l'],
+    ['rating',   'Rating',   'n'],
+    ['estRax',   'Est rax',  'n'],
+    ['copy',     '',         'l']
+  ];
+  const hsCols = () => HS.view === 'games' ? HS_GAME_COLS : HS_COLS;
+  const HS_NOSORT = ['rank', 'team', 'season', 'opponent', 'result', 'copy', 'boostRax'];
+
+  function hsLine(r){
+    const y = hsYear(r.season);
+    if(HS.view === 'games'){
+      const when = String(r.day || '').slice(5).replace('-', '/');
+      return [shName(r.player), r.team || '', y, when + (r.opponent ? ` vs ${r.opponent}` : ''),
+              sh2(r.rating), r.estRax].join(' | ');
+    }
+    return [shName(r.player), r.team || '', y, r.games, sh2(r.rating), r.estRax, r.boostRax].join(' | ');
+  }
+
+  function hsQs(extra){
+    const p = new URLSearchParams({ hist:'board', view: HS.view, sort: HS.sort, dir: HS.dir,
+                                    limit: HS.limit, offset: HS.offset });
+    if(HS.pick.length && HS.pick.length !== HS.years.length) p.set('seasons', HS.pick.join(','));
+    if(HS.view === 'games' && HS.playerId) p.set('playerId', HS.playerId);
+    else if(HS.q) p.set('q', HS.q);
+    if(HS.view === 'players' && HS.minGames) p.set('minGames', HS.minGames);
+    for(const k in (extra||{})) p.set(k, extra[k]);
+    return '/api/rax?' + p.toString();
+  }
+
+  function hsDrawSeasons(){
+    if(!HS.years.length){ $b('#hs-seasons').innerHTML = '<span class="note">Nothing collected yet.</span>'; return; }
+    const open = !!$b('#hs-seasons').querySelector('details[open]');
+    const on = HS.years.filter(y => HS.pick.includes(y));
+    $b('#hs-seasons').innerHTML =
+      `<details class="sgrp" data-sp="nfl"${open || !HS.ready ? ' open' : ''}>`
+      + `<summary>NFL<span class="note">${HS.years.length} seasons</span>`
+      + (on.length ? `<span class="tick">${on.length} selected</span>` : '')
+      + '</summary><div class="seasons">'
+      + HS.years.map(y => `<button class="btn-ghost" data-hsy="${y}" `
+          + `aria-pressed="${HS.pick.includes(y) ? 'true' : 'false'}">${esc(hsYear(y))}</button>`).join('')
+      + `<button class="btn-ghost" data-hsall="1">${on.length === HS.years.length ? 'None' : 'All'}</button>`
+      + '</div></details>';
+    $b('#hs-scope').textContent = !HS.pick.length
+      ? 'Pick at least one season.'
+      : HS.pick.length === HS.years.length
+        ? `Showing every NFL season from ${hsYear(HS.years[HS.years.length - 1])} to ${hsYear(HS.years[0])}.`
+        : 'Showing ' + HS.pick.slice().sort((a, b) => b - a).map(hsYear).join(', ');
+  }
+
+  function hsDrawHead(){
+    $b('#hs-head').innerHTML = '<tr>' + hsCols().map(c => {
+      const on = HS.sort === c[0];
+      const arrow = on ? (HS.dir === 'desc' ? ' ▼' : ' ▲') : '';
+      const sortable = !HS_NOSORT.includes(c[0]);
+      return `<th class="${c[2] === 'l' ? 'l' : 'num'}${on ? ' on' : ''}"`
+        + `${sortable ? ` data-hsc="${c[0]}"` : ' style="cursor:default"'}>`
+        + esc(c[1]) + arrow + '</th>';
+    }).join('') + '</tr>';
+  }
+
+  function hsCell(r, k){
+    if(k === 'copy')     return `<button class="btn-ghost shcopy" data-shcopy="${esc(hsLine(r))}">Copy line</button>`;
+    if(k === 'season')   return esc(hsYear(r.season));
+    if(k === 'player')   return esc(r.player || '')
+      + (r.position ? ` <span class="note">${esc(r.position)}</span>` : '');
+    if(k === 'team')     return esc(r.team || '');
+    if(k === 'day')      return esc(String(r.day || '').slice(5).replace('-', '/'))
+      + (r.seasonType === 'postseason' ? ' <span class="note">playoffs</span>' : '');
+    if(k === 'opponent') return esc(r.opponent || '');
+    if(k === 'result'){
+      if(!r.result) return '&mdash;';
+      const sc = (r.teamScore != null && r.oppScore != null) ? ` ${r.teamScore}–${r.oppScore}` : '';
+      return `<span style="color:var(--${r.result === 'W' ? 'good' : 'bad'})">${esc(r.result)}</span>`
+        + `<span class="note">${esc(sc)}</span>`;
+    }
+    if(k === 'rating')   return shNum(r.rating, HS.view === 'games' ? 2 : 1);
+    if(k === 'boostRax') return shNum(r.boostRax)
+      + (r.boost && r.boost !== 1 ? ` <span class="note">${sh2(r.boost)}x</span>` : '');
+    return shNum(r[k]);
+  }
+
+  async function hsLoad(){
+    hsDrawHead();
+    $b('#hs-mg').classList.toggle('hide', HS.view !== 'players');
+    $b('#hs-all').classList.toggle('hide', !(HS.view === 'games' && HS.playerId));
+    $b('#hs-q').disabled = HS.view === 'games' && !!HS.playerId;
+    if(HS.years.length && !HS.pick.length){
+      $b('#hs-body').innerHTML = ''; $b('#hs-count').textContent = 'Pick at least one season.'; return;
+    }
+    $b('#hs-count').textContent = 'Working it out…';
+    let d;
+    try { d = await (await fetch(hsQs())).json(); }
+    catch(e){ $b('#hs-count').textContent = 'Could not load the historical board.'; return; }
+    if(d && d.error){ $b('#hs-count').textContent = d.error; return; }
+    HS.total = Number(d.total || 0);
+    if(Array.isArray(d.seasons) && d.seasons.length && !HS.years.length){
+      HS.years = d.seasons.slice().sort((a, b) => b - a);
+      if(!HS.pick.length) HS.pick = HS.years.slice();
+      hsDrawSeasons();
+    }
+    const rows = d.rows || [];
+    const cols = hsCols();
+    $b('#hs-body').innerHTML = rows.length ? rows.map(r =>
+      `<tr${HS.view === 'players' ? ` class="clickable" data-hspid="${r.playerId}"`
+        + ` data-hsyr="${r.season}" data-hswho="${esc(r.player || '')}"` : ''}>`
+      + cols.map(c => `<td class="${c[2] === 'l' ? 'l' : 'num'}">${hsCell(r, c[0])}</td>`).join('')
+      + '</tr>').join('')
+      : `<tr><td colspan="${cols.length}" class="note">Nothing here yet — this season may still be collecting.</td></tr>`;
+
+    const from = HS.total ? HS.offset + 1 : 0;
+    const to = Math.min(HS.offset + HS.limit, HS.total);
+    $b('#hs-count').innerHTML = (d.capped
+        ? `The biggest ${rows.length} by est rax <span class="note">— page on for more</span>`
+        : `${shNum(HS.total)} ${HS.view === 'games' ? 'games' : 'player-seasons'}`)
+      + (HS.view === 'games' && HS.who ? ` &mdash; ${esc(HS.who)}` : '')
+      + (HS.view === 'players' ? ' <span class="note">click a row for that season game by game</span>' : '')
+      + (Number(d.building) ? ` <span class="note">— ${d.building} season`
+          + `${Number(d.building) === 1 ? '' : 's'} still working out, hit Refresh in a moment</span>` : '');
+    $b('#hs-page').textContent = !HS.total ? ''
+      : d.capped ? `${from}–${from + rows.length - 1}`
+      : `${from}–${to} of ${shNum(HS.total)}`;
+    $b('#hs-prev').disabled = HS.offset <= 0;
+    $b('#hs-next').disabled = d.capped ? rows.length < HS.limit : to >= HS.total;
+    $b('#hs-key').innerHTML =
+      `<p>These seasons carry a real per-game rating from Real and no rax at all — cards did not exist yet — `
+      + `so the earnings here are worked out rather than read.</p>`
+      + `<p><strong>Est rax</strong> is the rule that was actually in force, read off the 2023 and 2024 seasons `
+      + `where both the rating and the rax are on record: five times the rating for QB, RB, WR, TE and kickers, `
+      + `seven for DB, LB, DL and punters, doubled in the playoffs. Pre-season pays nothing and is left out of `
+      + `the games and rating totals too.</p>`
+      + `<p><strong>Boosted</strong> adds the standings multiplier Real brought in around 18 December 2025 — `
+      + `the further down the season's rating standings a player sits, the more each game pays, from 1.01x at the `
+      + `top to about 1.67x at the bottom, with quarterbacks and kickers left out of it. No season on this page `
+      + `ever had that rule, so treat the column as a what-if rather than a reconstruction.</p>`;
+  }
+
+  function hsGo(){ HS.offset = 0; hsLoad(); }
+
+  function hsSetView(v){
+    if(HS.view === v) return;
+    HS.view = v; HS.offset = 0; HS.sort = 'estRax'; HS.dir = 'desc';
+    if(v === 'players'){
+      if(HS.playerId && HS.years.length){ HS.pick = HS.years.slice(); hsDrawSeasons(); }
+      HS.playerId = 0; HS.who = '';
+    }
+    box.querySelectorAll('[data-hsv]').forEach(x =>
+      x.setAttribute('aria-pressed', x.dataset.hsv === v ? 'true' : 'false'));
+    hsLoad();
+  }
+
+  function hsInit(){
+    if(HS.ready) return hsLoad();
+    HS.ready = true;
+    $b('#hs-intro').innerHTML = 'NFL back to the 2000 season. Real keeps a per-game rating for all of it; '
+      + 'the rax is worked out, because none was ever paid.';
+    $b('#hs-refresh').addEventListener('click', () => hsLoad());
+    $b('#hs-prev').addEventListener('click', () => { HS.offset = Math.max(0, HS.offset - HS.limit); hsLoad(); });
+    $b('#hs-next').addEventListener('click', () => { HS.offset += HS.limit; hsLoad(); });
+    $b('#hs-dl').addEventListener('click', () => { location.href = hsQs({ format:'csv' }); });
+    $b('#hs-mg').addEventListener('change', e => { HS.minGames = e.target.value.replace(/\D+/g, ''); hsGo(); });
+    $b('#hs-all').addEventListener('click', () => {
+      HS.playerId = 0; HS.who = ''; HS.q = ''; $b('#hs-q').value = '';
+      HS.pick = HS.years.slice(); hsDrawSeasons(); hsGo();
+    });
+    let hsTyping;
+    $b('#hs-q').addEventListener('input', e => {
+      clearTimeout(hsTyping);
+      const v = e.target.value;
+      hsTyping = setTimeout(() => { HS.q = v; HS.playerId = 0; HS.who = ''; hsGo(); }, 300);
+    });
+    $b('#cb-hist').addEventListener('click', e => {
+      const cp = e.target.closest('[data-shcopy]');
+      if(cp){
+        const was = cp.textContent;
+        copyText(cp.dataset.shcopy).then(ok => {
+          cp.textContent = ok ? 'Copied' : 'Could not copy';
+          setTimeout(() => { cp.textContent = was; }, 1200);
+        });
+        return;
+      }
+      const v = e.target.closest('[data-hsv]');
+      if(v) return hsSetView(v.dataset.hsv);
+      const all = e.target.closest('[data-hsall]');
+      if(all){
+        HS.pick = HS.pick.length === HS.years.length ? [] : HS.years.slice();
+        hsDrawSeasons(); return hsGo();
+      }
+      const chip = e.target.closest('#hs-seasons [data-hsy]');
+      if(chip){
+        const y = Number(chip.dataset.hsy);
+        HS.pick = HS.pick.includes(y) ? HS.pick.filter(x => x !== y) : HS.pick.concat(y);
+        hsDrawSeasons(); return hsGo();
+      }
+      const row = e.target.closest('#hs-body tr[data-hspid]');
+      if(row){
+        HS.playerId = Number(row.dataset.hspid);
+        HS.who = row.dataset.hswho || '';
+        HS.pick = [Number(row.dataset.hsyr)];
+        HS.q = ''; $b('#hs-q').value = '';
+        hsDrawSeasons();
+        return hsSetView('games');
+      }
+      const th = e.target.closest('#hs-head [data-hsc]');
+      if(th){
+        const k = th.dataset.hsc;
+        if(HS.sort === k) HS.dir = HS.dir === 'desc' ? 'asc' : 'desc';
+        else { HS.sort = k; HS.dir = (k === 'player' || k === 'day') ? 'asc' : 'desc'; }
+        return hsGo();
+      }
+    });
+    hsLoad();
+  }
+
   // The views share one modal, so switching hides everything that
   // belongs to the other side rather than leaving dead controls on screen.
   function applyMode(){
     const gf = st.mode === 'golf';
     const pk = st.mode === 'pack';
     const sh = st.mode === 'shift';
-    const table = !gf && !pk && !sh;
+    const hs = st.mode === 'hist';
+    const table = !gf && !pk && !sh && !hs;
     $b('#cb-pack').classList.toggle('hide', !pk);
     $b('#cb-golf').classList.toggle('hide', !gf);
     $b('#cb-shift').classList.toggle('hide', !sh);
+    $b('#cb-hist').classList.toggle('hide', !hs);
     $b('#cb-table').classList.toggle('hide', !table);
     $b('#cb-count').classList.toggle('hide', !table);
     $b('#cb-key').classList.toggle('hide', !table);
@@ -6437,14 +6712,15 @@ async function cbbPanel(){
     /* Pack data and golf each carry their own picker - pack data a list of
        what has actually been collected, golf a tournament list - so the
        shared sport-and-season blocks are put away for both. */
-    $b('#cb-seasons').classList.toggle('hide', pk || gf || sh);
-    $b('#cb-scope').classList.toggle('hide', pk || gf || sh);
-    if(!pk && !gf && !sh) drawSeasons();
+    $b('#cb-seasons').classList.toggle('hide', pk || gf || sh || hs);
+    $b('#cb-scope').classList.toggle('hide', pk || gf || sh || hs);
+    if(table) drawSeasons();
     if(only) box.querySelectorAll('[data-cm]').forEach(x =>
       x.classList.toggle('hide', x.dataset.cm !== 'pack'));
     if(gf) gfInit();
     else if(pk) pkInit();
     else if(sh) shInit();
+    else if(hs) hsInit();
     else applyFilterVisibility();
   }
 
@@ -6873,7 +7149,7 @@ async function cbbPanel(){
       box.querySelectorAll('[data-cm]').forEach(x =>
         x.setAttribute('aria-pressed', x.dataset.cm === st.mode ? 'true' : 'false'));
       applyMode();
-      return (st.mode === 'pack' || st.mode === 'shift') ? undefined : load();
+      return ['pack', 'shift', 'hist'].includes(st.mode) ? undefined : load();
     }
 
     const th = e.target.closest('[data-sc]');
