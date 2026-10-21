@@ -1007,6 +1007,35 @@ const GAMES_PER_TICK = 10;        // games per call, each one a full game
    forty-five seconds of the minute between ticks, which is as much as can be
    taken without a call still running when the next one starts. */
 const GAMES_PER_TICK_BY_SPORT = { mlb: 150, ncaaf: 90, nfl: 60, nba: 150, wnba: 150, nhl: 150 };
+
+/* ----- historical seasons ---------------------------------------------------
+   Real serves game logs with a real per-game rating all the way back to the
+   2000 season - Brady's one appearance that November is there - but it only
+   publishes a player list from 2021 on, so an older season cannot simply be
+   walked. It is crawled instead.
+
+   Each season is seeded with the players already known from the season after
+   it, which is most of a roster since few retire in one year. Their season
+   feeds give the games they played, and each game's feed names everyone who
+   was in it, which picks up the players who had already retired by the season
+   we seeded from. Those in turn get their own season feeds, and the thing
+   closes on itself in a few passes. Both feeds are ones the collector already
+   calls; nothing new is reached for.
+
+   Nothing older than 2000 is asked for: 1999 comes back empty, which is the
+   real edge of the data rather than a failure. */
+const HIST_SPORT = 'nfl';
+const HIST_FIRST = 2000;
+const HIST_LAST = 2022;
+const HIST_PLAYERS_PER_TICK = 150;
+const HIST_GAMES_PER_TICK = 60;
+const HIST_QUEUE = (() => {
+  const out = [];
+  for (let y = HIST_LAST; y >= HIST_FIRST; y--) out.push({ sport: HIST_SPORT, season: y });
+  return out;
+})();
+const histKey = (sp, se) => `hist_${sp}_${se}`;
+const histDoneKey = (sp, se) => `hist_done_${sp}_${se}`;
 /* How many of those feeds are in the air at once. Five keeps the call well
    inside its minute while asking Real for no more per second than a person
    clicking through games quickly would. */
@@ -1871,6 +1900,174 @@ export async function onRequestGet({ request, env }) {
   };
   const hypoSql = sp =>
     `(CASE WHEN seasonType IN ('postseason','allstar') THEN 2 ELSE 1 END) * (${curveSql(sp)})`;
+
+  /* One pass of the historical crawl. Players first - their season feeds are
+     where the ratings actually come from - and only when every known player
+     has been asked does it spend a tick on game feeds, which exist solely to
+     turn up players the seed missed. */
+  if (url.searchParams.get('hist') === 'collect') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    const sp = String(url.searchParams.get('sport') || HIST_SPORT).toLowerCase();
+    const se = Number(url.searchParams.get('season'));
+    if (sp !== HIST_SPORT || !(se >= HIST_FIRST && se <= HIST_LAST)) {
+      return json({ error: 'not a historical season this collects' }, 400);
+    }
+    await migrateGamelog(db);
+    const KEY = histKey(sp, se);
+    let st = null;
+    try { st = JSON.parse((await env.RATEBOARD_KV.get(KEY)) || 'null'); } catch (e) {}
+    if (!st || !Array.isArray(st.players)) st = { players: [], pc: 0, games: [], gc: 0 };
+    const save = async () => {
+      try { await env.RATEBOARD_KV.put(KEY, JSON.stringify(st)); } catch (e) {}
+    };
+
+    /* The seed: everyone the log already knows from the two seasons after
+       this one. Two rather than one so a player who missed a whole year with
+       an injury is not dropped from the chain. */
+    if (!st.players.length) {
+      try {
+        const r = await db.prepare(
+          `SELECT DISTINCT playerId FROM gamelog
+            WHERE sport = ?1 AND season IN (?2, ?3, ?4)`)
+          .bind(sp, se, se + 1, se + 2).all();
+        st.players = (r.results || []).map(x => Number(x.playerId)).filter(Number.isFinite);
+      } catch (e) {
+        return json({ error: 'could not read the seed', detail: String((e && e.message) || e) }, 503);
+      }
+      if (!st.players.length) {
+        return json({ sport: sp, season: se, seeded: 0,
+                      note: 'nothing to seed from - collect the season after this one first' });
+      }
+      await save();
+      return json({ sport: sp, season: se, seeded: st.players.length });
+    }
+
+    const feedUrl = id =>
+      `https://web.realapp.com/players/${id}/sport/${sp}/seasonfeed?limit=200&season=${se}&view=recent&viewFrame=default`;
+    const gameUrl = id =>
+      `https://web.realapp.com/games/${id}/sport/${sp}/feed?version=2&view=all&viewFrame=default`;
+
+    const knownGames = new Set(st.games.map(Number));
+    const knownPlayers = new Set(st.players.map(Number));
+
+    // ---- players: the pass that actually writes rows
+    if (st.pc < st.players.length) {
+      const slice = st.players.slice(st.pc, st.pc + HIST_PLAYERS_PER_TICK);
+      const place = '(' + GAMELOG_FEED_COLS.map(() => '?').join(',') + ')';
+      const keyCols = ['sport', 'season', 'playerId', 'gameId'];
+      const sets = GAMELOG_FEED_COLS.filter(c => !keyCols.includes(c))
+                                    .map(c => `${c}=excluded.${c}`).join(', ');
+      const sql = `INSERT INTO gamelog (${GAMELOG_FEED_COLS.join(',')}) VALUES ${place} `
+                + `ON CONFLICT(${keyCols.join(',')}) DO UPDATE SET ${sets}`;
+      let asked = 0, wrote = 0, played = 0;
+      for (let i = 0; i < slice.length; i += FETCH_AT_ONCE) {
+        const group = slice.slice(i, i + FETCH_AT_ONCE);
+        const got = await Promise.all(group.map(id =>
+          rsGet(feedUrl(id), auth).then(d => d, () => null)));
+        const rows = [];
+        for (const d of got) {
+          if (!d) continue;
+          asked++;
+          const bs = (d && d.playerBoxScores) || [];
+          if (bs.length) played++;
+          for (const b of bs) {
+            if (!b || b.gameId == null) continue;
+            if (!knownGames.has(Number(b.gameId))) {
+              knownGames.add(Number(b.gameId));
+              st.games.push(Number(b.gameId));
+            }
+            rows.push(gamelogRow(sp, se, b));
+          }
+        }
+        for (let k = 0; k < rows.length; k += 40) {
+          const batch = rows.slice(k, k + 40).map(r =>
+            db.prepare(sql).bind(...GAMELOG_FEED_COLS.map(c => r[c] === undefined ? null : r[c])));
+          try { await db.batch(batch); wrote += batch.length; } catch (e) {}
+        }
+        await sleep(15);
+      }
+      st.pc += slice.length;
+      await save();
+      return json({ sport: sp, season: se, step: 'players', asked, played, wrote,
+                    playersDone: st.pc, players: st.players.length,
+                    games: st.games.length });
+    }
+
+    // ---- games: only to turn up players the seed never had
+    if (st.gc < st.games.length) {
+      const slice = st.games.slice(st.gc, st.gc + HIST_GAMES_PER_TICK);
+      let found = 0, asked = 0;
+      for (let i = 0; i < slice.length; i += FETCH_AT_ONCE) {
+        const group = slice.slice(i, i + FETCH_AT_ONCE);
+        const got = await Promise.all(group.map(id =>
+          rsGet(gameUrl(id), auth).then(d => d, () => null)));
+        for (const d of got) {
+          if (!d) continue;
+          asked++;
+          const seen = [];
+          for (const b of (d.matchPlayerBoxScores || [])) {
+            if (b && b.playerId != null) seen.push(Number(b.playerId));
+          }
+          for (const pl of (d.players || [])) {
+            const id = pl && (pl.id != null ? pl.id : pl.playerId);
+            if (id != null) seen.push(Number(id));
+          }
+          for (const r of (Array.isArray(d.plays) ? d.plays : [])) {
+            for (const k of ['playerId', 'player2Id', 'player3Id', 'player4Id']) {
+              if (r && r[k] != null) seen.push(Number(r[k]));
+            }
+          }
+          for (const id of seen) {
+            if (Number.isFinite(id) && !knownPlayers.has(id)) {
+              knownPlayers.add(id);
+              st.players.push(id);
+              found++;
+            }
+          }
+        }
+        await sleep(15);
+      }
+      st.gc += slice.length;
+      await save();
+      return json({ sport: sp, season: se, step: 'games', asked, newPlayers: found,
+                    gamesDone: st.gc, games: st.games.length,
+                    players: st.players.length, playersDone: st.pc });
+    }
+
+    // Both passes caught up and the game feeds turned up nobody new.
+    try { await env.RATEBOARD_KV.put(histDoneKey(sp, se), '1'); } catch (e) {}
+    let rows = 0;
+    try {
+      const r = await db.prepare('SELECT COUNT(*) AS n FROM gamelog WHERE sport=?1 AND season=?2')
+        .bind(sp, se).first();
+      rows = Number((r && r.n) || 0);
+    } catch (e) {}
+    return json({ sport: sp, season: se, finished: true,
+                  players: st.players.length, games: st.games.length, rows });
+  }
+
+  /* How far the historical crawl has got, season by season. */
+  if (url.searchParams.get('hist') === 'progress') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    const out = [];
+    for (const q of HIST_QUEUE) {
+      let st = null, fin = null;
+      try { st = JSON.parse((await env.RATEBOARD_KV.get(histKey(q.sport, q.season))) || 'null'); } catch (e) {}
+      try { fin = await env.RATEBOARD_KV.get(histDoneKey(q.sport, q.season)); } catch (e) {}
+      let rows = 0;
+      try {
+        const r = await db.prepare('SELECT COUNT(*) AS n FROM gamelog WHERE sport=?1 AND season=?2')
+          .bind(q.sport, q.season).first();
+        rows = Number((r && r.n) || 0);
+      } catch (e) {}
+      out.push({ sport: q.sport, season: q.season, finished: !!fin, rows,
+                 players: st ? st.players.length : 0, playersDone: st ? st.pc : 0,
+                 games: st ? st.games.length : 0, gamesDone: st ? st.gc : 0 });
+    }
+    return json({ at: new Date().toISOString(), seasons: out });
+  }
 
   if (url.searchParams.get('earn') === 'shift') {
     const db = env.RATEBOARD_DB;
@@ -3494,10 +3691,30 @@ export async function onRequestGet({ request, env }) {
               return null;
             })()
           : null;
-        if (perfJob) pool = [];
+        /* With every play season swept, the collecting ticks would otherwise
+           all go to re-reading the rolling seasons, which only need a look
+           now and then. They go to the historical crawl instead, newest
+           season first, and the rolling ones keep their every-thirtieth
+           tick. */
+        const histJob = !perfJob && !fresh.length
+          && !(n % REFRESH_EVERY === 0 && rolling.length)
+          ? await (async () => {
+              for (const x of HIST_QUEUE) {
+                let fin = null;
+                try { fin = await env.RATEBOARD_KV.get(histDoneKey(x.sport, x.season)); } catch (e) {}
+                if (!fin) return x;
+              }
+              return null;
+            })()
+          : null;
+        if (perfJob || histJob) pool = [];
         if (perfJob && step === 'games') {
           const u = new URL(url);
           u.search = `?perf=collect&sport=${perfJob.sport}&season=${perfJob.season}`;
+          try { await onRequestGet({ request: new Request(u.toString(), request), env }); } catch (e) {}
+        } else if (histJob && step === 'games') {
+          const u = new URL(url);
+          u.search = `?hist=collect&sport=${histJob.sport}&season=${histJob.season}`;
           try { await onRequestGet({ request: new Request(u.toString(), request), env }); } catch (e) {}
         } else if (pool.length || step !== 'games') {
           const base = pool.length ? pool : PLAYS_SPORTS;
