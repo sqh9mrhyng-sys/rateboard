@@ -113,6 +113,11 @@ const GAMELOG_DDL = `CREATE TABLE IF NOT EXISTS gamelog (
   ast INTEGER, stl INTEGER, blk INTEGER, tov INTEGER, pf INTEGER, plusMinus INTEGER,
   fg TEXT, fgPct REAL, fg3 TEXT, fg3Pct REAL, ft TEXT, ftPct REAL, tsPct REAL,
   fantasyPts REAL, comments INTEGER,
+  /* Each sport's own box line, as Real labels it. The columns above are
+     basketball's, which is what the log was first built for, so a hockey
+     row's time on ice or a receiver's targets had nowhere to go and were
+     thrown away. This holds whatever the sport actually reports. */
+  stats TEXT,
   PRIMARY KEY (sport, season, playerId, gameId)
 )`;
 
@@ -138,7 +143,7 @@ const OWNERS_DDL = `CREATE TABLE IF NOT EXISTS owners (
 const GAMELOG_COLS = ['sport','season','playerId','gameId','player','team','conference','jersey','position',
   'day','seasonType','opponent','homeAway','teamScore','oppScore','result','rax','rating',
   'played','min','pts','reb','oreb','dreb','ast','stl','blk','tov','pf','plusMinus',
-  'fg','fgPct','fg3','fg3Pct','ft','ftPct','tsPct','fantasyPts','comments'];
+  'fg','fgPct','fg3','fg3Pct','ft','ftPct','tsPct','fantasyPts','comments','stats'];
 
 // rax is filled by its own pass from the earnings screen, so the box-score
 // insert leaves that column alone rather than blanking it.
@@ -151,6 +156,7 @@ async function migrateGamelog(db) {
   try { await db.prepare('ALTER TABLE gamelog RENAME COLUMN rax TO rating').run(); } catch (e) {}
   try { await db.prepare('ALTER TABLE gamelog ADD COLUMN rax INTEGER').run(); } catch (e) {}
   try { await db.prepare('ALTER TABLE gamelog ADD COLUMN conference TEXT').run(); } catch (e) {}
+  try { await db.prepare('ALTER TABLE gamelog ADD COLUMN stats TEXT').run(); } catch (e) {}
   // Without these the per-player owner lookup rescans the snapshot table for
   // every row, which turns a season view into a half-minute wait.
   try { await db.prepare(
@@ -168,6 +174,29 @@ async function migrateGamelog(db) {
 }
 
 // Turns one box score from the season feed into a flat row.
+/* The box line as the sport itself reports it, kept small. Anything that
+   amounts to nothing - a zero, a blank, an empty clock - is left out and
+   read back as nothing, which roughly halves what a hockey row costs to
+   store across a million and a half of them. */
+const STAT_EMPTY = new Set(['', '0', '0.0', '00:00', '0:00', '0/0', '-', '--']);
+function statBlob(b) {
+  const out = {};
+  for (const x of (b.statValues || [])) {
+    if (!x || !x.label) continue;
+    const key = String(x.label).trim();
+    let v = x.value;
+    if (v == null) continue;
+    if (x.secondaryValue != null && String(x.secondaryValue) !== '') {
+      v = `${v}/${x.secondaryValue}`;
+    }
+    const str = String(v).trim();
+    if (STAT_EMPTY.has(str)) continue;
+    const n = Number(str);
+    out[key] = Number.isFinite(n) && String(n) === str ? n : str;
+  }
+  return Object.keys(out).length ? JSON.stringify(out) : null;
+}
+
 function gamelogRow(sport, season, b) {
   const sv = {};
   for (const x of (b.statValues || [])) if (x && x.label) sv[x.label] = x;
@@ -203,7 +232,8 @@ function gamelogRow(sport, season, b) {
     ft: val('fts') == null ? null : String(val('fts')), ftPct: pct('fts'),
     tsPct: numv('ts%'),
     fantasyPts: b.fantasyStats && b.fantasyStats.default != null ? Number(b.fantasyStats.default) : null,
-    comments: b.commentCount == null ? null : Number(b.commentCount)
+    comments: b.commentCount == null ? null : Number(b.commentCount),
+    stats: statBlob(b)
   };
 }
 
@@ -1034,6 +1064,33 @@ const HIST_QUEUE = (() => {
   for (let y = HIST_LAST; y >= HIST_FIRST; y--) out.push({ sport: HIST_SPORT, season: y });
   return out;
 })();
+/* ----- re-reading the box scores -------------------------------------------
+   The game log was built around basketball's column names, so every sport
+   that files its numbers under different labels - hockey's time on ice,
+   football's carries and targets - had them dropped on the way in. The
+   stats column holds the sport's own line now, and this walks back through
+   what has already been collected to fill it.
+
+   No discovery needed: the players are already in the log. It is simply
+   every player-season, asked for again and written back over itself.
+   Hockey first, then the pro sports, then the rest. This takes the
+   collecting ticks ahead of the historical crawl, which waits. */
+const RESTAT_QUEUE = [
+  { sport: 'nhl',    seasons: [2026, 2025, 2024, 2023] },
+  { sport: 'nfl',    seasons: [2026, 2025, 2024, 2023] },
+  { sport: 'nba',    seasons: [2026, 2025, 2024, 2023] },
+  { sport: 'mlb',    seasons: [2026, 2025, 2024, 2023, 2022] },
+  { sport: 'wnba',   seasons: [2026, 2025, 2024] },
+  { sport: 'soccer', seasons: [2026, 2025] },
+  { sport: 'ncaaf',  seasons: [2026, 2025, 2024, 2023] },
+  { sport: 'ncaam',  seasons: [2026, 2025, 2024] },
+  { sport: 'golf',   seasons: [2026, 2025, 2024, 2023, 2022, 2021, 2020,
+                               2019, 2018, 2017, 2016, 2015, 2014] }
+].flatMap(x => x.seasons.map(se => ({ sport: x.sport, season: se })));
+const RESTAT_PER_TICK = 150;
+const restatKey = (sp, se) => `restat_${sp}_${se}`;
+const restatDoneKey = (sp, se) => `restat_done_${sp}_${se}`;
+
 const histKey = (sp, se) => `hist_${sp}_${se}`;
 const histDoneKey = (sp, se) => `hist_done_${sp}_${se}`;
 /* How many of those feeds are in the air at once. Five keeps the call well
@@ -1900,6 +1957,119 @@ export async function onRequestGet({ request, env }) {
   };
   const hypoSql = sp =>
     `(CASE WHEN seasonType IN ('postseason','allstar') THEN 2 ELSE 1 END) * (${curveSql(sp)})`;
+
+  /* One pass of the box-score re-read. The players come straight from the
+     log, so there is nothing to discover - every player-season is simply
+     asked for again and written back with its own stat line attached. */
+  if (url.searchParams.get('restat') === 'collect') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    const sp = String(url.searchParams.get('sport') || '').toLowerCase();
+    const se = Number(url.searchParams.get('season'));
+    if (!RESTAT_QUEUE.some(x => x.sport === sp && x.season === se)) {
+      return json({ error: 'not a season this re-reads' }, 400);
+    }
+    await migrateGamelog(db);
+    const KEY = restatKey(sp, se);
+    let st = null;
+    try { st = JSON.parse((await env.RATEBOARD_KV.get(KEY)) || 'null'); } catch (e) {}
+    if (!st || !Array.isArray(st.players)) st = { players: [], pc: 0 };
+    if (url.searchParams.get('again') === '1') {
+      st.pc = 0;
+      try { await env.RATEBOARD_KV.delete(restatDoneKey(sp, se)); } catch (e) {}
+    }
+
+    if (!st.players.length) {
+      try {
+        const r = await db.prepare(
+          `SELECT DISTINCT playerId FROM gamelog WHERE sport = ?1 AND season = ?2`)
+          .bind(sp, se).all();
+        st.players = (r.results || []).map(x => Number(x.playerId)).filter(Number.isFinite);
+      } catch (e) {
+        return json({ error: 'could not read the player list', detail: String((e && e.message) || e) }, 503);
+      }
+      if (!st.players.length) {
+        try { await env.RATEBOARD_KV.put(restatDoneKey(sp, se), '1'); } catch (e) {}
+        return json({ sport: sp, season: se, finished: true, players: 0,
+                      note: 'nothing collected for this season' });
+      }
+      try { await env.RATEBOARD_KV.put(KEY, JSON.stringify(st)); } catch (e) {}
+      return json({ sport: sp, season: se, listed: st.players.length });
+    }
+
+    if (st.pc >= st.players.length) {
+      try { await env.RATEBOARD_KV.put(restatDoneKey(sp, se), '1'); } catch (e) {}
+      let withStats = 0;
+      try {
+        const r = await db.prepare(
+          `SELECT COUNT(*) AS n FROM gamelog
+            WHERE sport = ?1 AND season = ?2 AND stats IS NOT NULL`).bind(sp, se).first();
+        withStats = Number((r && r.n) || 0);
+      } catch (e) {}
+      return json({ sport: sp, season: se, finished: true,
+                    players: st.players.length, rowsWithStats: withStats });
+    }
+
+    const feedUrl = id =>
+      `https://web.realapp.com/players/${id}/sport/${sp}/seasonfeed?limit=200&season=${se}&view=recent&viewFrame=default`;
+    const slice = st.players.slice(st.pc, st.pc + RESTAT_PER_TICK);
+    const place = '(' + GAMELOG_FEED_COLS.map(() => '?').join(',') + ')';
+    const keyCols = ['sport', 'season', 'playerId', 'gameId'];
+    const sets = GAMELOG_FEED_COLS.filter(c => !keyCols.includes(c))
+                                  .map(c => `${c}=excluded.${c}`).join(', ');
+    const sql = `INSERT INTO gamelog (${GAMELOG_FEED_COLS.join(',')}) VALUES ${place} `
+              + `ON CONFLICT(${keyCols.join(',')}) DO UPDATE SET ${sets}`;
+    let asked = 0, wrote = 0, withLine = 0;
+    for (let i = 0; i < slice.length; i += FETCH_AT_ONCE) {
+      const group = slice.slice(i, i + FETCH_AT_ONCE);
+      const got = await Promise.all(group.map(id =>
+        rsGet(feedUrl(id), auth).then(d => d, () => null)));
+      const rows = [];
+      for (const d of got) {
+        if (!d) continue;
+        asked++;
+        for (const b of ((d && d.playerBoxScores) || [])) {
+          if (!b || b.gameId == null) continue;
+          const row = gamelogRow(sp, se, b);
+          if (row.stats) withLine++;
+          rows.push(row);
+        }
+      }
+      for (let k = 0; k < rows.length; k += 40) {
+        const batch = rows.slice(k, k + 40).map(r =>
+          db.prepare(sql).bind(...GAMELOG_FEED_COLS.map(c => r[c] === undefined ? null : r[c])));
+        try { await db.batch(batch); wrote += batch.length; } catch (e) {}
+      }
+      await sleep(15);
+    }
+    st.pc += slice.length;
+    try { await env.RATEBOARD_KV.put(KEY, JSON.stringify(st)); } catch (e) {}
+    return json({ sport: sp, season: se, asked, wrote, withLine,
+                  done: st.pc, players: st.players.length });
+  }
+
+  /* How far the box-score re-read has got. */
+  if (url.searchParams.get('restat') === 'progress') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    const out = [];
+    for (const q of RESTAT_QUEUE) {
+      let st = null, fin = null;
+      try { st = JSON.parse((await env.RATEBOARD_KV.get(restatKey(q.sport, q.season))) || 'null'); } catch (e) {}
+      try { fin = await env.RATEBOARD_KV.get(restatDoneKey(q.sport, q.season)); } catch (e) {}
+      out.push({ sport: q.sport, season: q.season, finished: !!fin,
+                 players: st ? st.players.length : 0, done: st ? st.pc : 0 });
+    }
+    let rows = 0, withStats = 0;
+    try {
+      const r = await db.prepare(
+        `SELECT COUNT(*) AS n, SUM(CASE WHEN stats IS NOT NULL THEN 1 ELSE 0 END) AS s
+           FROM gamelog WHERE sport = 'nhl'`).first();
+      rows = Number((r && r.n) || 0); withStats = Number((r && r.s) || 0);
+    } catch (e) {}
+    return json({ at: new Date().toISOString(), nhlRows: rows, nhlWithStats: withStats,
+                  seasons: out });
+  }
 
   /* One pass of the historical crawl. Players first - their season feeds are
      where the ratings actually come from - and only when every known player
@@ -3925,8 +4095,22 @@ export async function onRequestGet({ request, env }) {
            now and then. They go to the historical crawl instead, newest
            season first, and the rolling ones keep their every-thirtieth
            tick. */
-        const histJob = !perfJob && !fresh.length
-          && !(n % REFRESH_EVERY === 0 && rolling.length)
+        const spare = !perfJob && !fresh.length
+          && !(n % REFRESH_EVERY === 0 && rolling.length);
+        /* The box-score re-read comes first: it is filling in a column that
+           every sport's game view depends on, and it is hours rather than
+           days. The historical crawl waits for it. */
+        const restatJob = spare
+          ? await (async () => {
+              for (const x of RESTAT_QUEUE) {
+                let fin = null;
+                try { fin = await env.RATEBOARD_KV.get(restatDoneKey(x.sport, x.season)); } catch (e) {}
+                if (!fin) return x;
+              }
+              return null;
+            })()
+          : null;
+        const histJob = spare && !restatJob
           ? await (async () => {
               for (const x of HIST_QUEUE) {
                 let fin = null;
@@ -3936,10 +4120,14 @@ export async function onRequestGet({ request, env }) {
               return null;
             })()
           : null;
-        if (perfJob || histJob) pool = [];
+        if (perfJob || restatJob || histJob) pool = [];
         if (perfJob && step === 'games') {
           const u = new URL(url);
           u.search = `?perf=collect&sport=${perfJob.sport}&season=${perfJob.season}`;
+          try { await onRequestGet({ request: new Request(u.toString(), request), env }); } catch (e) {}
+        } else if (restatJob && step === 'games') {
+          const u = new URL(url);
+          u.search = `?restat=collect&sport=${restatJob.sport}&season=${restatJob.season}`;
           try { await onRequestGet({ request: new Request(u.toString(), request), env }); } catch (e) {}
         } else if (histJob && step === 'games') {
           const u = new URL(url);
@@ -4887,9 +5075,9 @@ export async function onRequestGet({ request, env }) {
       const PLAYER_COLS = ['playerId','sport','player','team','conference','season','games','rax','raxPerGame',
                            'bestRax','owners','ownersChange','rating','ratingPerGame','min','pts','reb',
                            'ast','stl','blk','tov','fantasyPts'];
-      const GAME_COLS = ['day','sport','player','team','conference','opponent','homeAway','result','teamScore','oppScore',
+      const GAME_COLS = ['day','season','sport','player','position','team','conference','opponent','homeAway','result','teamScore','oppScore',
                          'seasonType','rax','rating','min','pts','reb','ast','stl','blk','tov','pf',
-                         'plusMinus','fg','fg3','ft','tsPct','fantasyPts','comments','playerId'];
+                         'plusMinus','fg','fg3','ft','tsPct','fantasyPts','comments','stats','playerId'];
 
       // One row per player per season - a player in three seasons is three
       // rows, each with that season's own figures. Owners come from the newest
