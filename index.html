@@ -153,6 +153,11 @@
   .seg-2up{display:grid;grid-template-columns:1fr 1fr;border-radius:14px}
   .seg-2up button{border-radius:11px}
   .shcopy{padding:3px 9px;font-size:11px;border-radius:7px;white-space:nowrap}
+  /* A name that is also a link - underlined faintly so it reads as a name
+     first and a link second. */
+  a.plink{color:inherit;text-decoration:underline;text-decoration-style:dotted;
+          text-underline-offset:3px;text-decoration-color:var(--mute)}
+  a.plink:hover{color:var(--accent);text-decoration-color:var(--accent)}
 
   /* Selected seasons and toggles were only marked with aria-pressed, which
      shows nothing on screen. This is what makes the active ones obvious. */
@@ -2121,6 +2126,116 @@ async function patch(op, payload){
    Helpers
    ========================================================= */
 const $ = s => document.querySelector(s);
+/* ---------------------------------------------------------------------------
+   Real profile links
+
+   Real's share URLs are Hashids: salt "routing", minimum length 11, and a
+   four-number payload - the record type, the sport, a zero, and the entity's
+   own id. A player is type 2, a play is type 6, which is how the two NBA
+   iconic play links read when decoded. The season is a path segment after
+   the hash rather than part of it, so one hash serves every season.
+
+   Only the sports whose code is actually known are linked. A guess that
+   happens to be a valid id for some other sport would quietly send people to
+   the wrong player, so an unknown sport gets plain text instead.
+   --------------------------------------------------------------------------- */
+function hashidsEncode(salt, minLength, numbers){
+  const ALPHA0 = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890';
+  const SEPS0  = 'cfhistuCFHISTU';
+  const RATIO = 3.5, GUARD_DIV = 12;
+  const shuffle = (alpha, s) => {
+    if(!s.length) return alpha;
+    const t = alpha.slice();
+    for(let i = t.length - 1, v = 0, p = 0; i > 0; i--, v++){
+      v %= s.length;
+      const int = s[v].codePointAt(0);
+      p += int;
+      const j = (int + v + p) % i;
+      [t[i], t[j]] = [t[j], t[i]];
+    }
+    return t;
+  };
+  const toAlpha = (n, alpha) => {
+    const id = []; let v = n;
+    do { id.unshift(alpha[v % alpha.length]); v = Math.floor(v / alpha.length); } while(v > 0);
+    return id;
+  };
+  const saltC = Array.from(salt);
+  let alpha = [...new Set(Array.from(ALPHA0))];
+  let seps = Array.from(SEPS0).filter(c => alpha.includes(c));
+  alpha = alpha.filter(c => !seps.includes(c));
+  seps = shuffle(seps, saltC);
+  if(!seps.length || alpha.length / seps.length > RATIO){
+    let sl = Math.ceil(alpha.length / RATIO);
+    if(sl === 1) sl = 2;
+    if(sl > seps.length){
+      const diff = sl - seps.length;
+      seps = seps.concat(alpha.slice(0, diff));
+      alpha = alpha.slice(diff);
+    } else { seps = seps.slice(0, sl); }
+  }
+  alpha = shuffle(alpha, saltC);
+  const gc = Math.ceil(alpha.length / GUARD_DIV);
+  let guards;
+  if(alpha.length < 3){ guards = seps.slice(0, gc); seps = seps.slice(gc); }
+  else { guards = alpha.slice(0, gc); alpha = alpha.slice(gc); }
+  let hashInt = 0;
+  for(let i = 0; i < numbers.length; i++) hashInt += numbers[i] % (i + 100);
+  const lottery = alpha[hashInt % alpha.length];
+  let ret = [lottery];
+  for(let i = 0; i < numbers.length; i++){
+    let num = numbers[i];
+    const buf = [lottery].concat(saltC, alpha);
+    alpha = shuffle(alpha, buf.slice(0, alpha.length));
+    const last = toAlpha(num, alpha);
+    ret = ret.concat(last);
+    if(i + 1 < numbers.length){
+      num %= (last[0].codePointAt(0) + i);
+      ret.push(seps[num % seps.length]);
+    }
+  }
+  if(ret.length < minLength){
+    let gi = (hashInt + ret[0].codePointAt(0)) % guards.length;
+    ret.unshift(guards[gi]);
+    if(ret.length < minLength){
+      gi = (hashInt + ret[2].codePointAt(0)) % guards.length;
+      ret.push(guards[gi]);
+    }
+  }
+  const half = Math.floor(alpha.length / 2);
+  while(ret.length < minLength){
+    alpha = shuffle(alpha, alpha);
+    ret = alpha.slice(half).concat(ret, alpha.slice(0, half));
+    const ex = ret.length - minLength;
+    if(ex > 0) ret = ret.slice(ex / 2, ex / 2 + minLength);
+  }
+  return ret.join('');
+}
+/* [record type, sport code], each read out of a real link rather than
+   guessed. Fighters are type 3 where players are type 2 - the one place the
+   leading number is not the same. A sport with no entry here is left as
+   plain text: a wrong code can land on a real player of another sport, and a
+   link to the wrong person is worse than no link. */
+const REAL_SPORT = {
+  nba:    [2, 1],
+  nfl:    [2, 2],
+  ncaam:  [2, 3],
+  mlb:    [2, 4],
+  nhl:    [2, 7],
+  ufc:    [3, 10],
+  ncaaf:  [2, 11],
+  wnba:   [2, 12],
+  soccer: [2, 14],
+  golf:   [2, 15]
+};
+function realPlayerUrl(sport, playerId, season){
+  const kind = REAL_SPORT[String(sport || '').toLowerCase()];
+  const id = Number(playerId);
+  if(!kind || !Number.isFinite(id) || id <= 0) return null;
+  return 'https://www.realapp.com/' + hashidsEncode('routing', 11, [kind[0], kind[1], 0, id])
+         + (season ? '/' + season : '');
+}
+
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
 // García -> garcia, Sánchez -> sanchez, "Luis Garcia Jr." -> "luis garcia"
@@ -4221,15 +4336,39 @@ const CB_BASKETBALL = [
 const CB_SPORT_STATS = { ncaam: CB_BASKETBALL, nba: CB_BASKETBALL, wnba: CB_BASKETBALL };
 const cbStats = sp => CB_SPORT_STATS[sp] || [];
 
+/* Every game: who, when, what it earned, then the sport's own box line.
+   The line is not fixed any more - each sport files its numbers under its
+   own labels, which the log now keeps as they come, so the columns after
+   W/L are built from whatever the rows on screen actually carry. */
 const CB_GAME_COLS = [
-  ['day','Date','l'], ['player','Player','l'], ['sport','Sport','l'], ['team','Team','l'],
-  ['opponent','Opp','l'], ['homeAway','H/A','l'], ['result','W/L','l'],
-  ['rax','Rax'], ['rating','Rating'],
-  ['min','MIN'], ['pts','PTS'], ['reb','REB'], ['ast','AST'],
-  ['stl','STL'], ['blk','BLK'], ['tov','TO'], ['plusMinus','+/-'],
-  ['fg','FG','l'], ['fg3','3FG','l'], ['ft','FT','l'],
-  ['tsPct','TS%'], ['fantasyPts','FP'], ['comments','Cmts']
+  ['day','Date','l'], ['player','Player','l'], ['sport','Sport','l'],
+  ['team','Team','l'], ['rax','Rax'], ['rating','Rating'],
+  ['opponent','Opp','l'], ['homeAway','H/A','l'], ['result','W/L','l']
 ];
+
+/* Where a sport's own labels should sit, and what to call them on screen.
+   Anything a row carries that is not listed still shows, after these, under
+   the label Real gives it - so a sport nobody has mapped yet is readable
+   rather than blank. */
+const CB_STAT_ORDER = {
+  nhl: [['toi','TOI'], ['pts','P'], ['goal','G'], ['ast','A'], ['+/-','+/-'], ['pim','PIM'],
+        ['sog','SOG'], ['hits','HITS'], ['blks','BLK'], ['gva','GVA'], ['tka','TKA'],
+        ['fo','FO'], ['pp toi','PP/TOI'], ['sh toi','SH/TOI']],
+  nfl: [['cmp','CMP'], ['pyds','PYDS'], ['ptd','PTD'], ['int','INT'],
+        ['car','CAR'], ['ruyds','RUYDS'], ['rutd','RUTD'],
+        ['rec','REC'], ['reyds','REYDS'], ['retd','RETD'], ['tgt','TGT'], ['yac','YAC'],
+        ['lng','LNG'], ['yds','YDS'], ['td','TD'], ['fl','FL'],
+        ['tkl','TKL'], ['sack','SACK'], ['ff','FF']],
+  nba: [['min','MIN'], ['pts','PTS'], ['reb','REB'], ['ast','AST'],
+        ['stl','STL'], ['blk','BLK'], ['to','TO'], ['+/-','+/-'],
+        ['fg','FG'], ['3fg','3FG'], ['fts','FT']],
+  mlb: [['ab','AB'], ['r','R'], ['h','H'], ['rbi','RBI'], ['hr','HR'], ['bb','BB'],
+        ['k','K'], ['sb','SB'], ['avg','AVG'],
+        ['ip','IP'], ['er','ER'], ['era','ERA']]
+};
+CB_STAT_ORDER.ncaam = CB_STAT_ORDER.nba;
+CB_STAT_ORDER.wnba = CB_STAT_ORDER.nba;
+CB_STAT_ORDER.ncaaf = CB_STAT_ORDER.nfl;
 
 // What each heading means. The core half never changes; the rest is added
 // for whichever sports are on screen.
@@ -4720,8 +4859,42 @@ async function cbbPanel(){
     for(const sp of sportsOn()) for(const c of cbStats(sp)) seen.set(c[0], c);
     return [...seen.values()];
   }
+  /* The stat columns for whatever is on screen. A sport's own labels come
+     first in the order its line reads best, then anything else the rows
+     carry, so a sport nobody has mapped is still legible. Worked out from
+     the page rather than declared, because the labels differ by sport and,
+     in football, by position. */
+  let gameStatCols = [];
+  const gameStatText = new Set();
+  function statsOf(r){
+    if(r.__s) return r.__s;
+    let o = {};
+    try { o = r.stats ? JSON.parse(r.stats) : {}; } catch(e){ o = {}; }
+    r.__s = o;
+    return o;
+  }
+  function buildGameStatCols(rows){
+    gameStatText.clear();
+    const seen = new Map();
+    for(const r of rows){
+      const o = statsOf(r);
+      for(const k in o){
+        if(!seen.has(k)) seen.set(k, k.toUpperCase());
+        if(typeof o[k] === 'string') gameStatText.add(k);
+      }
+    }
+    const sps = [...new Set(rows.map(r => r.sport))];
+    const out = [], used = new Set();
+    for(const sp of sps) for(const [k, label] of (CB_STAT_ORDER[sp] || [])){
+      if(seen.has(k) && !used.has(k)){ used.add(k); out.push(['stat:' + k, label]); }
+    }
+    for(const [k, label] of seen) if(!used.has(k)) out.push(['stat:' + k, label]);
+    out.push(['fantasyPts', 'FP']);
+    gameStatCols = out;
+  }
+
   function cols(){
-    if(st.mode === 'games') return CB_GAME_COLS;
+    if(st.mode === 'games') return CB_GAME_COLS.concat(gameStatCols);
     const on = consensusStats().concat(st.extra.filter(k => !consensusStats().includes(k)));
     const byKey = new Map(allStats().map(c => [c[0], c]));
     let core = CB_CORE_COLS.slice();
@@ -4845,9 +5018,15 @@ async function cbbPanel(){
   }
 
   function drawHead(){
-    $b('#cb-head').innerHTML = '<tr><th class="l" style="width:1%">#</th>' + cols().map(([k,label,align]) =>
-      `<th class="${align === 'l' ? 'l' : ''}${st.sort === k ? ' on' : ''}" data-sc="${k}">`
-      + `${esc(label)}${st.sort === k ? (st.dir === 'desc' ? ' ↓' : ' ↑') : ''}</th>`).join('') + '</tr>';
+    $b('#cb-head').innerHTML = '<tr><th class="l" style="width:1%">#</th>' + cols().map(([k,label,align]) => {
+      // The stat columns come out of the rows themselves, so the database
+      // cannot sort on them and they are left unclickable rather than
+      // pretending to.
+      const sortable = !String(k).startsWith('stat:');
+      return `<th class="${align === 'l' ? 'l' : ''}${st.sort === k ? ' on' : ''}"`
+        + `${sortable ? ` data-sc="${k}"` : ' style="cursor:default"'}>`
+        + `${esc(label)}${st.sort === k ? (st.dir === 'desc' ? ' ↓' : ' ↑') : ''}</th>`;
+    }).join('') + '</tr>';
   }
 
   // One row's cells. The column list is worked out once per table and handed
@@ -4858,7 +5037,31 @@ async function cbbPanel(){
       + `<td class="l dim">${(st.offset + i + 1).toLocaleString()}</td>`
       + cs.map(([k,,align]) => {
           let v = r[k];
-          if(k === 'day' && v) v = String(v).slice(5);
+          if(String(k).startsWith('stat:')){
+            const key = k.slice(5);
+            const o = statsOf(r);
+            v = o[key];
+            // Anything that amounted to nothing was dropped on the way in,
+            // so a missing count reads as a zero and a missing clock as a
+            // dash rather than as "0".
+            if(v == null) v = gameStatText.has(key) ? '' : 0;
+          }
+          /* The year is there by default and drops out when the table is
+             sorted by date, where every row around it shares one anyway. */
+          if(k === 'day' && v){
+            const [Y, M, D] = String(v).split('-');
+            v = st.sort === 'day' ? `${M}/${D}` : `${M}/${D}/${String(Y).slice(2)}`;
+          }
+          /* The name is the link to that player on Real, still reading as
+             the name. Wrapped so the cell writer treats it as markup. */
+          if(k === 'player' && v){
+            const url = realPlayerUrl(r.sport, r.playerId, r.season);
+            const pos = (st.mode === 'games' && r.position)
+              ? ` <span class="note">${esc(r.position)}</span>` : '';
+            v = (url
+                  ? `<a class="plink" href="${esc(url)}" target="_blank" rel="noopener">${esc(v)}</a>`
+                  : `<span>${esc(v)}</span>`) + pos;
+          }
           if(k === 'sport' && v) v = CB_SPORT_LABEL[v] || String(v).toUpperCase();
           if(k === 'rating' && v != null && v !== '') v = Number(v).toFixed(2);
           if(k === 'conference' && v === '-') v = '';
@@ -4915,8 +5118,11 @@ async function cbbPanel(){
     if(seq !== loadSeq) return;
     if(d.error){ $b('#cb-count').textContent = d.error; $b('#cb-body').innerHTML = ''; return; }
 
-    drawHead(); drawKey();
     const rows = d.rows || [];
+    // The stat columns are read off these rows, so they have to be worked
+    // out before the head is drawn.
+    if(st.mode === 'games') buildGameStatCols(rows); else gameStatCols = [];
+    drawHead(); drawKey();
     const cs = cols();
     const body = $b('#cb-body');
     body.innerHTML = '';
@@ -7157,6 +7363,8 @@ async function cbbPanel(){
       return load();
     }
 
+    // The name is a link now; clicking it should leave rather than drill in.
+    if(e.target.closest('a')) return;
     const tr = e.target.closest('tr.clickable');
     if(tr && tr.dataset.pn){
       st.mode = 'games'; st.q = tr.dataset.pn; st.sort = 'day'; st.dir = 'desc'; st.offset = 0;
