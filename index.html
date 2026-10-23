@@ -809,7 +809,7 @@ function applyAdminVisibility(){
   if(banner) banner.classList.toggle('hide', !previewMember);
   applyGameDataVisibility();
 }
-const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL', UFC:'UFC', NHL:'NHL' };
+const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL', UFC:'UFC', NHL:'NHL', NBA:'NBA' };
 
 // The post buyers must comment under before they can post a buy offer —
 // this is the link shown to them and where "this post" points.
@@ -2549,7 +2549,7 @@ $('#b-rate').addEventListener('change', () => {
    running season are pulled once and kept, so typing a name costs nothing;
    anyone outside that list is looked up on demand.
    ========================================================= */
-const BOARD_TO_DATA = { CFB:'ncaaf', FC:'soccer', NFL:'nfl', NHL:'nhl' };
+const BOARD_TO_DATA = { CFB:'ncaaf', FC:'soccer', NFL:'nfl', NHL:'nhl', NBA:'nba' };
 const DATA_SEASON = { ncaaf:2026, soccer:2026, nfl:2026, nhl:2026 };
 
 // Everything collected here is thrown away after an hour, so a board left open
@@ -2704,7 +2704,7 @@ $('#b-guide-toggle').addEventListener('click', () => {
 /* =========================================================
    Sport + mode
    ========================================================= */
-const PLAYER_EXAMPLES = { CFB:'Julian Sayin', FC:'Lamine Yamal', NFL:'Josh Allen', UFC:'Jon Jones', NHL:'Connor McDavid' };
+const PLAYER_EXAMPLES = { CFB:'Julian Sayin', FC:'Lamine Yamal', NFL:'Josh Allen', UFC:'Jon Jones', NHL:'Connor McDavid', NBA:'Nikola Jokic' };
 function updatePlayerPlaceholder(){
   $('#b-player').placeholder = 'e.g. ' + (PLAYER_EXAMPLES[sport] || '');
 }
@@ -4391,6 +4391,30 @@ const CB_KEY_SPORT = {
 };
 CB_KEY_SPORT.nba = CB_KEY_SPORT.ncaam;
 CB_KEY_SPORT.wnba = CB_KEY_SPORT.ncaam;
+/* Hockey, football and baseball file their box scores under their own
+   labels, which the log now keeps. These are what those headings mean. */
+CB_KEY_SPORT.nhl = [
+  ['TOI','Time on ice'], ['P','Points — goals plus assists'], ['G','Goals'], ['A','Assists'],
+  ['+/-','Plus-minus'], ['PIM','Penalty minutes'], ['SOG','Shots on goal'], ['HITS','Hits'],
+  ['BLK','Shots blocked'], ['GVA','Giveaways'], ['TKA','Takeaways'],
+  ['FO','Faceoffs won / taken'], ['PP/TOI','Time on ice on the power play'],
+  ['SH/TOI','Time on ice short-handed'], ['FP','Fantasy points']
+];
+CB_KEY_SPORT.nfl = [
+  ['CMP','Completions / attempts'], ['PYDS','Passing yards'], ['PTD','Passing touchdowns'],
+  ['INT','Interceptions'], ['CAR','Carries'], ['RUYDS','Rushing yards'],
+  ['RUTD','Rushing touchdowns'], ['REC','Receptions'], ['REYDS','Receiving yards'],
+  ['RETD','Receiving touchdowns'], ['TGT','Targets'], ['YAC','Yards after catch'],
+  ['LNG','Longest play'], ['YDS','Yards'], ['TD','Touchdowns'], ['FL','Fumbles lost'],
+  ['TKL','Tackles'], ['SACK','Sacks'], ['FF','Forced fumbles'], ['FP','Fantasy points']
+];
+CB_KEY_SPORT.ncaaf = CB_KEY_SPORT.nfl;
+CB_KEY_SPORT.mlb = [
+  ['AB','At bats'], ['R','Runs'], ['H','Hits'], ['RBI','Runs batted in'], ['HR','Home runs'],
+  ['BB','Walks'], ['K','Strikeouts'], ['SB','Stolen bases'], ['AVG','Batting average'],
+  ['IP','Innings pitched'], ['ER','Earned runs'], ['ERA','Earned run average'],
+  ['FP','Fantasy points']
+];
 
 const CB_KEY_GAMES = [
   ['Date','Day the game was played'], ['Opp','Opponent'], ['H/A','Home or away'],
@@ -4792,6 +4816,10 @@ async function cbbPanel(){
     </div>
     <div id="cb-hist" class="hide">
       <p class="note" id="hs-intro"></p>
+      <div class="seg seg-2up" role="group" aria-label="Historical sport" style="margin-bottom:6px">
+        <button data-hss="nfl" aria-pressed="true">NFL</button>
+        <button data-hss="nba" aria-pressed="false">NBA</button>
+      </div>
       <div class="seg seg-2up" role="group" aria-label="Historical view" style="margin-bottom:10px">
         <button data-hsv="players" aria-pressed="true">By player</button>
         <button data-hsv="games" aria-pressed="false">Every game</button>
@@ -6328,8 +6356,17 @@ async function cbbPanel(){
   const SH = { view:'players', pairs:[], q:'', minGames:'20', sort:'diff', dir:'desc',
                offset:0, limit:100, ready:false, total:0, curve:null, seasons:[],
                playerId:0, who:'' };
-  // 2026 is the 25/26 season; the log keeps the year it ended in.
-  const shSeason = y => `${String(Number(y) - 1).slice(2)}/${String(Number(y)).slice(2)}`;
+  /* Basketball labels a season by the year it ENDS, hockey by the year it
+     STARTS - so nba 2026 is 25/26 while nhl 2026 is 26/27. Reading both the
+     same way had the hockey seasons off by one everywhere they showed. */
+  const SEASON_STARTS = new Set(['nhl', 'nfl', 'ncaaf', 'soccer']);
+  const seasonLabelFor = (sp, y) => {
+    const n = Number(y);
+    return SEASON_STARTS.has(String(sp || '').toLowerCase())
+      ? `${String(n).slice(2)}/${String(n + 1).slice(2)}`
+      : `${String(n - 1).slice(2)}/${String(n).slice(2)}`;
+  };
+  const shSeason = (y, sp) => seasonLabelFor(sp || 'nba', y);
   const shNum = (v, d) => v == null ? '&mdash;'
     : Number(v).toLocaleString(undefined, { minimumFractionDigits: d || 0,
                                             maximumFractionDigits: d || 0 });
@@ -6381,7 +6418,7 @@ async function cbbPanel(){
   };
   const shName = n => SH_SHORT[String(n || '').trim()] || n;
   function shLine(r){
-    const season = shSeason(r.season);
+    const season = shSeason(r.season, r.sport);
     if(SH.view === 'games'){
       const when = String(r.day || '').slice(5).replace('-', '/');
       const vs = r.opponent ? ` vs ${r.opponent}` : '';
@@ -6432,7 +6469,7 @@ async function cbbPanel(){
             const key = `${sp}|${y}`;
             return `<button class="btn-ghost" data-shpair="${esc(key)}" `
               + `aria-pressed="${SH.pairs.includes(key) ? 'true' : 'false'}">`
-              + `${esc(shSeason(y))}</button>`;
+              + `${esc(shSeason(y, sp))}</button>`;
           }).join('')
         + `<button class="btn-ghost" data-shall="${esc(sp)}">`
         + `${on.length === years.length ? 'None' : 'All'}</button>`
@@ -6440,7 +6477,7 @@ async function cbbPanel(){
     }).join('');
     const names = SH.pairs.slice().sort().map(k => {
       const [sp, se] = k.split('|');
-      return `${CB_SPORT_LABEL[sp] || sp} ${shSeason(se)}`;
+      return `${CB_SPORT_LABEL[sp] || sp} ${shSeason(se, sp)}`;
     });
     $b('#sh-scope').textContent = !SH.pairs.length
       ? 'Pick at least one season.'
@@ -6462,7 +6499,7 @@ async function cbbPanel(){
 
   function shCell(r, k){
     if(k === 'copy')     return `<button class="btn-ghost shcopy" data-shcopy="${esc(shLine(r))}">Copy line</button>`;
-    if(k === 'season')   return esc(shSeason(r.season));
+    if(k === 'season')   return esc(shSeason(r.season, r.sport));
     if(k === 'sport')    return esc(String(r.sport || '').toUpperCase());
     if(k === 'player')   return esc(r.player || '')
       + (r.team ? ` <span class="note">${esc(r.team)}</span>` : '');
@@ -6661,9 +6698,10 @@ async function cbbPanel(){
      These seasons are deliberately absent from By player and Every game.
      Having no rax and no owners, they would read as blanks there and quietly
      break any multi-season total. */
-  const HS = { view:'players', years:[], pick:[], q:'', minGames:'4', sort:'estRax', dir:'desc',
-               offset:0, limit:100, ready:false, total:0, playerId:0, who:'' };
-  const hsYear = y => `${y}/${String(Number(y) + 1).slice(2)}`;
+  const HS = { sport:'nfl', view:'players', years:[], pick:[], q:'', minGames:'4',
+               sort:'estRax', dir:'desc', offset:0, limit:100, ready:false, total:0,
+               playerId:0, who:'', byYears:{} };
+  const hsYear = y => seasonLabelFor(HS.sport, y);
   const HS_COLS = [
     ['rank',          '#',          'n'],
     ['player',        'Name',       'l'],
@@ -6700,7 +6738,8 @@ async function cbbPanel(){
   }
 
   function hsQs(extra){
-    const p = new URLSearchParams({ hist:'board', view: HS.view, sort: HS.sort, dir: HS.dir,
+    const p = new URLSearchParams({ hist:'board', sport: HS.sport, view: HS.view,
+                                    sort: HS.sort, dir: HS.dir,
                                     limit: HS.limit, offset: HS.offset });
     if(HS.pick.length && HS.pick.length !== HS.years.length) p.set('seasons', HS.pick.join(','));
     if(HS.view === 'games' && HS.playerId) p.set('playerId', HS.playerId);
@@ -6715,8 +6754,9 @@ async function cbbPanel(){
     const open = !!$b('#hs-seasons').querySelector('details[open]');
     const on = HS.years.filter(y => HS.pick.includes(y));
     $b('#hs-seasons').innerHTML =
-      `<details class="sgrp" data-sp="nfl"${open || !HS.ready ? ' open' : ''}>`
-      + `<summary>NFL<span class="note">${HS.years.length} seasons</span>`
+      `<details class="sgrp" data-sp="${esc(HS.sport)}"${open || !HS.ready ? ' open' : ''}>`
+      + `<summary>${esc(CB_SPORT_LABEL[HS.sport] || HS.sport)}`
+      + `<span class="note">${HS.years.length} seasons</span>`
       + (on.length ? `<span class="tick">${on.length} selected</span>` : '')
       + '</summary><div class="seasons">'
       + HS.years.map(y => `<button class="btn-ghost" data-hsy="${y}" `
@@ -6726,7 +6766,8 @@ async function cbbPanel(){
     $b('#hs-scope').textContent = !HS.pick.length
       ? 'Pick at least one season.'
       : HS.pick.length === HS.years.length
-        ? `Showing every NFL season from ${hsYear(HS.years[HS.years.length - 1])} to ${hsYear(HS.years[0])}.`
+        ? `Showing every ${CB_SPORT_LABEL[HS.sport] || HS.sport} season from `
+          + `${hsYear(HS.years[HS.years.length - 1])} to ${hsYear(HS.years[0])}.`
         : 'Showing ' + HS.pick.slice().sort((a, b) => b - a).map(hsYear).join(', ');
   }
 
@@ -6802,8 +6843,13 @@ async function cbbPanel(){
       : `${from}–${to} of ${shNum(HS.total)}`;
     $b('#hs-prev').disabled = HS.offset <= 0;
     $b('#hs-next').disabled = d.capped ? rows.length < HS.limit : to >= HS.total;
-    $b('#hs-key').innerHTML =
-      `<p>These seasons carry a real per-game rating from Real and no rax at all — cards did not exist yet — `
+    $b('#hs-key').innerHTML = HS.sport === 'nba'
+      ? `<p>These seasons carry a real per-game rating from Real and no rax at all, so the earnings here are `
+        + `worked out rather than read.</p>`
+        + `<p><strong>Est rax</strong> is one rax a rating point, doubled in the playoffs and only then rounded `
+        + `— and rounded at .6 rather than .5, so a 3.3 in a playoff game is 6.6 and pays 7, while a 6.5 pays 6. `
+        + `Pre-season and off-season pay nothing and are left out of the games and rating totals as well.</p>`
+      : `<p>These seasons carry a real per-game rating from Real and no rax at all — cards did not exist yet — `
       + `so the earnings here are worked out rather than read.</p>`
       + `<p><strong>Est rax</strong> is today's rate card run over old games: five times the rating for QB, RB, `
       + `WR, TE and kickers, seven for DB, LB, DL and punters, doubled in the playoffs. Pre-season pays nothing `
@@ -6812,6 +6858,26 @@ async function cbbPanel(){
       + `to 2024 paid a flat five to everyone, defenders included, and the seven-times defensive rate only arrived `
       + `for 2025. So this is what these games would be worth under the rules as they stand, not a reconstruction `
       + `of what was actually banked.</p>`;
+  }
+
+  function hsIntro(){
+    $b('#hs-intro').innerHTML = HS.sport === 'nba'
+      ? 'NBA back to the 2003-04 season, as far as Real serves a rating. The rax is worked out, '
+        + 'because none was ever paid.'
+      : 'NFL back to the 2000 season. Real keeps a per-game rating for all of it; '
+        + 'the rax is worked out, because none was ever paid.';
+  }
+
+  function hsSetSport(sp){
+    if(HS.sport === sp) return;
+    HS.sport = sp;
+    HS.years = HS.byYears[sp] ? HS.byYears[sp].slice() : [];
+    HS.pick = HS.years.slice();
+    HS.offset = 0; HS.playerId = 0; HS.who = ''; HS.q = '';
+    const q = $b('#hs-q'); if(q) q.value = '';
+    box.querySelectorAll('[data-hss]').forEach(x =>
+      x.setAttribute('aria-pressed', x.dataset.hss === sp ? 'true' : 'false'));
+    hsIntro(); hsDrawSeasons(); hsLoad();
   }
 
   function hsGo(){ HS.offset = 0; hsLoad(); }
@@ -6831,8 +6897,7 @@ async function cbbPanel(){
   function hsInit(){
     if(HS.ready) return hsLoad();
     HS.ready = true;
-    $b('#hs-intro').innerHTML = 'NFL back to the 2000 season. Real keeps a per-game rating for all of it; '
-      + 'the rax is worked out, because none was ever paid.';
+    hsIntro();
     $b('#hs-refresh').addEventListener('click', () => hsLoad());
     $b('#hs-prev').addEventListener('click', () => { HS.offset = Math.max(0, HS.offset - HS.limit); hsLoad(); });
     $b('#hs-next').addEventListener('click', () => { HS.offset += HS.limit; hsLoad(); });
@@ -6858,6 +6923,8 @@ async function cbbPanel(){
         });
         return;
       }
+      const sw = e.target.closest('[data-hss]');
+      if(sw) return hsSetSport(sw.dataset.hss);
       const v = e.target.closest('[data-hsv]');
       if(v) return hsSetView(v.dataset.hsv);
       const all = e.target.closest('[data-hsall]');
