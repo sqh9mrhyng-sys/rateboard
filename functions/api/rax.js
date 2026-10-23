@@ -958,7 +958,7 @@ const PLAYS_CURSOR = 'plays_cursor_v1';
 const PLAYS_SPORTS = [
   // Lowest pri collects first. The whole backlog is worked in this order and
   // nothing below a tier gets a game tick while anything in it is unfinished.
-  { sport: 'mlb',   season: 2026, rolling: true, pri: 1 },
+  { sport: 'mlb',   season: 2026, pri: 1 },     // season over, no longer rolling
   { sport: 'mlb',   season: 2025, pri: 2 },
   { sport: 'mlb',   season: 2024, pri: 3 },
   { sport: 'mlb',   season: 2023, pri: 4 },
@@ -974,20 +974,30 @@ const PLAYS_SPORTS = [
   { sport: 'ncaaf', season: 2025, pri: 7 },
   { sport: 'ncaaf', season: 2024, pri: 7 },
   { sport: 'ncaaf', season: 2023, pri: 7 },
-  // Basketball, newest first.
-  { sport: 'nba',   season: 2026, rolling: true, pri: 8 },
+  /* Basketball, newest first. The NBA labels a season by the year it ENDS,
+     so 2027 is the one being played now and 2026 is last year's, finished.
+     Hockey and football label by the year a season STARTS, which is why
+     nhl 2026 below is current while nba 2026 is not. */
+  { sport: 'nba',   season: 2027, rolling: true, pri: 8 },
+  { sport: 'nba',   season: 2026, pri: 9 },
   { sport: 'nba',   season: 2025, pri: 9 },
   { sport: 'nba',   season: 2024, pri: 10 },
   { sport: 'nba',   season: 2023, pri: 11 },
   // The women's game. Three seasons is all Real holds.
-  { sport: 'wnba',  season: 2026, rolling: true, pri: 12 },
+  { sport: 'wnba',  season: 2026, pri: 12 },   // season over, no longer rolling
   { sport: 'wnba',  season: 2025, pri: 13 },
   { sport: 'wnba',  season: 2024, pri: 14 },
+  /* College basketball - pack data needs it, the other two views already
+     have the game log. Same ending-year labelling as the NBA. */
+  { sport: 'ncaam', season: 2027, rolling: true, pri: 15 },
+  { sport: 'ncaam', season: 2026, pri: 16 },
+  { sport: 'ncaam', season: 2025, pri: 17 },
+  { sport: 'ncaam', season: 2024, pri: 18 },
   // Hockey last.
-  { sport: 'nhl',   season: 2026, rolling: true, pri: 15 },
-  { sport: 'nhl',   season: 2025, pri: 16 },
-  { sport: 'nhl',   season: 2024, pri: 17 },
-  { sport: 'nhl',   season: 2023, pri: 18 }
+  { sport: 'nhl',   season: 2026, rolling: true, pri: 19 },
+  { sport: 'nhl',   season: 2025, pri: 20 },
+  { sport: 'nhl',   season: 2024, pri: 21 },
+  { sport: 'nhl',   season: 2023, pri: 22 }
 ];
 // Performance box scores are collected only once every play queue above has
 // lapped, so they never compete with the sweep for a tick.
@@ -1054,14 +1064,28 @@ const GAMES_PER_TICK_BY_SPORT = { mlb: 150, ncaaf: 90, nfl: 60, nba: 150, wnba: 
 
    Nothing older than 2000 is asked for: 1999 comes back empty, which is the
    real edge of the data rather than a failure. */
-const HIST_SPORT = 'nfl';
-const HIST_FIRST = 2000;
-const HIST_LAST = 2022;
+/* Football labels a season by the year it starts, basketball by the year it
+   ends, so these ranges do not line up the way they look. NFL 2000 is the
+   2000-01 season; NBA 2004 is 2003-04, LeBron's first, which is as far back
+   as Real serves a rating. */
+const HIST_RANGE = {
+  nfl: [2000, 2022],
+  nba: [2004, 2022]
+};
+const HIST_SPORTS = Object.keys(HIST_RANGE);
+const HIST_SPORT = 'nfl';                       // the first one, for the seed
 const HIST_PLAYERS_PER_TICK = 150;
 const HIST_GAMES_PER_TICK = 60;
+const histHolds = (sp, se) => {
+  const r = HIST_RANGE[String(sp || '').toLowerCase()];
+  return !!r && Number(se) >= r[0] && Number(se) <= r[1];
+};
 const HIST_QUEUE = (() => {
   const out = [];
-  for (let y = HIST_LAST; y >= HIST_FIRST; y--) out.push({ sport: HIST_SPORT, season: y });
+  for (const sp of HIST_SPORTS) {
+    const [lo, hi] = HIST_RANGE[sp];
+    for (let y = hi; y >= lo; y--) out.push({ sport: sp, season: y });
+  }
   return out;
 })();
 /* ----- re-reading the box scores -------------------------------------------
@@ -1208,7 +1232,12 @@ const keepsPlays = (sp, st) => !st || seasonTypesFor(sp).includes(String(st));
 const seasonTypeSql = sp => seasonTypesFor(sp).map(x => `'${x}'`).join(',');
 
 const RESCAN_DAY = { ncaaf: 0, soccer: 1, nfl: 2, ncaam: 3, nba: 4, nhl: 5, mlb: 6, wnba: 6, golf: 6 };
-const RESCAN_SEASON = { ncaaf: 2026, soccer: 2026, nfl: 2026, ncaam: 2026, nba: 2026,
+/* The season each sport is actually playing now, which is what the weekly
+   rescan should be re-walking. Basketball labels a season by the year it
+   ends, so the NBA and college basketball are on 2027 while hockey and
+   football - which label by the starting year - are on 2026. Getting this
+   wrong means re-walking a season that finished months ago. */
+const RESCAN_SEASON = { ncaaf: 2026, soccer: 2026, nfl: 2026, ncaam: 2027, nba: 2027,
                         nhl: 2026, mlb: 2026, wnba: 2026, golf: 2026 };
 const RESCAN_KEY = 'queue_rescan_v1';
 
@@ -2080,7 +2109,7 @@ export async function onRequestGet({ request, env }) {
     if (!db) return json({ error: 'no database binding' }, 503);
     const sp = String(url.searchParams.get('sport') || HIST_SPORT).toLowerCase();
     const se = Number(url.searchParams.get('season'));
-    if (sp !== HIST_SPORT || !(se >= HIST_FIRST && se <= HIST_LAST)) {
+    if (!histHolds(sp, se)) {
       return json({ error: 'not a historical season this collects' }, 400);
     }
     await migrateGamelog(db);
@@ -2260,18 +2289,24 @@ export async function onRequestGet({ request, env }) {
   const HIST_DEF_POS = ['DB','LB','DL','DT','DE','CB','S','EDGE','NT','P','OLB','ILB','MLB','FS','SS'];
   const HIST_PAYS = `seasonType IN ('regularseason','postseason')`;
   const histDouble = `(CASE WHEN seasonType = 'postseason' THEN 2 ELSE 1 END)`;
-  const histRaxSql = () =>
-    `CAST(ROUND(rating * (CASE WHEN position IN (${HIST_DEF_POS.map(x => `'${x}'`).join(',')})`
-    + ` THEN 7 ELSE 5 END) * ${histDouble}) AS INTEGER)`;
+  /* Football pays a multiple of the rating by position. Basketball pays the
+     rating itself, doubled in the playoffs and only then rounded - and
+     rounded at .6 rather than .5, so a 3.3 in a playoff game is 6.6 and pays
+     7 while a 6.5 pays 6. Adding 0.4 and truncating is exactly that rule;
+     the MAX keeps a negative rating from paying out. */
+  const histRaxSql = sp => sp === 'nba'
+    ? `MAX(0, CAST(rating * ${histDouble} + 0.4 AS INTEGER))`
+    : `CAST(ROUND(rating * (CASE WHEN position IN (${HIST_DEF_POS.map(x => `'${x}'`).join(',')})`
+      + ` THEN 7 ELSE 5 END) * ${histDouble}) AS INTEGER)`;
 
   if (url.searchParams.get('hist') === 'board') {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
     const P = k => String(url.searchParams.get(k) || '').trim();
-    const sp = HIST_SPORT;
+    const sp = HIST_SPORTS.includes(P('sport')) ? P('sport') : HIST_SPORT;
     const want = P('seasons').split(',').map(x => x.trim()).filter(Boolean)
       .map(x => Number(String(x).split(/[:|]/).pop()))
-      .filter(y => y >= HIST_FIRST && y <= HIST_LAST);
+      .filter(y => histHolds(sp, y));
     const term = P('q').toLowerCase();
     const pid = /^\d+$/.test(P('playerId')) ? Number(P('playerId')) : 0;
     const SORTS = ['estRax', 'rating', 'games', 'ratingPerGame',
@@ -2289,7 +2324,7 @@ export async function onRequestGet({ request, env }) {
         `SELECT season, COUNT(*) AS n FROM gamelog
           WHERE sport = ?1 AND season >= ?2 AND season <= ?3
           GROUP BY season HAVING n > 0 ORDER BY season DESC`)
-        .bind(sp, HIST_FIRST, HIST_LAST).all();
+        .bind(sp, HIST_RANGE[sp][0], HIST_RANGE[sp][1]).all();
       have = (r.results || []).map(x => Number(x.season));
     } catch (e) {}
     const seasons = have.filter(y => !want.length || want.includes(y));
@@ -2308,7 +2343,7 @@ export async function onRequestGet({ request, env }) {
         try {
           const r = await db.prepare(
             `SELECT playerId, player, team, position, day, seasonType, opponent, result,
-                    teamScore, oppScore, rating, (${histRaxSql()}) AS estRax
+                    teamScore, oppScore, rating, (${histRaxSql(sp)}) AS estRax
                FROM gamelog WHERE ${w.join(' AND ')}
               ORDER BY ${col} ${dir < 0 ? 'DESC' : 'ASC'} LIMIT ${need}`).bind(...binds).all();
           for (const x of (r.results || [])) {
@@ -2332,15 +2367,15 @@ export async function onRequestGet({ request, env }) {
       });
       const pageG = out.slice(offset, offset + limit).map((x, i) =>
         Object.assign({ rank: offset + i + 1 }, x));
-      return json({ view: 'games', total: out.length, capped: out.length >= need,
+      return json({ sport: sp, view: 'games', total: out.length, capped: out.length >= need,
                     offset, limit, sort, dir: dir < 0 ? 'desc' : 'asc',
-                    seasons: have, rows: pageG });
+                    sports: HIST_SPORTS, seasons: have, rows: pageG });
     }
 
     /* ---- by player. Built a season at a time and kept, because the boost
        column needs every player in the season ranked before any one row can
        be worked out. */
-    const CACHE = 'histboard_v1';
+    const CACHE = `histboard_${sp}_v2`;
     let cache = null;
     try { cache = JSON.parse((await env.RATEBOARD_KV.get(CACHE)) || 'null'); } catch (e) {}
     if (!cache || !cache.seasons || P('rebuild') === '1') cache = { seasons: {} };
@@ -2356,7 +2391,7 @@ export async function onRequestGet({ request, env }) {
         const r = await db.prepare(
           `SELECT playerId, MAX(player) AS player, MAX(team) AS team, MAX(position) AS position,
                   COUNT(*) AS games, ROUND(SUM(rating), 2) AS rating,
-                  SUM(${histRaxSql()}) AS estRax
+                  SUM(${histRaxSql(sp)}) AS estRax
              FROM gamelog
             WHERE sport = ?1 AND season = ?2 AND ${HIST_PAYS} AND rating IS NOT NULL
             GROUP BY playerId`).bind(sp, y).all();
@@ -2409,8 +2444,8 @@ export async function onRequestGet({ request, env }) {
         'content-disposition': 'attachment; filename="nfl-historical.csv"',
         'access-control-allow-origin': '*' } });
     }
-    return json({ total, offset, limit, sort, dir: dir < 0 ? 'desc' : 'asc',
-                  building, seasons: have, rows: page });
+    return json({ sport: sp, total, offset, limit, sort, dir: dir < 0 ? 'desc' : 'asc',
+                  building, sports: HIST_SPORTS, seasons: have, rows: page });
   }
 
   /* How far the historical crawl has got, season by season. */
@@ -2478,8 +2513,10 @@ export async function onRequestGet({ request, env }) {
       const r = await db.prepare(
         `SELECT DISTINCT sport, season FROM gamelog
           WHERE sport IN ('nba','nhl') ORDER BY sport, season`).all();
+      /* The historical seasons stay out of this. They carry a rating and no
+         rax at all, so a shift comparison would be against zero. */
       pairs = (r.results || []).map(x => ({ sport: String(x.sport), season: Number(x.season) }))
-        .filter(x => EARN_SPORTS.includes(x.sport));
+        .filter(x => EARN_SPORTS.includes(x.sport) && !histHolds(x.sport, x.season));
     } catch (e) {
       return json({ error: 'could not read the game log', detail: String((e && e.message) || e) }, 503);
     }
@@ -5014,7 +5051,7 @@ export async function onRequestGet({ request, env }) {
             // A historical season asked for by hand is refused here too, not
             // only hidden from the picker: these views total up rax, and
             // those seasons have none.
-            && !(String(sp).toLowerCase() === HIST_SPORT && Number(se) <= HIST_LAST)) {
+            && !histHolds(String(sp).toLowerCase(), Number(se))) {
           pairs.push([String(sp).toLowerCase(), Number(se)]);
         }
       }
@@ -5082,12 +5119,46 @@ export async function onRequestGet({ request, env }) {
       // One row per player per season - a player in three seasons is three
       // rows, each with that season's own figures. Owners come from the newest
       // daily snapshot for that same sport and season.
-      const ownerPick = (cutoff) => `
+      /* The owner figure used to be a correlated subquery whose own WHERE
+         held another correlated aggregate - the latest snapshot day, worked
+         out again for every player in the result. With one season selected
+         that is merely wasteful; with every season selected it is tens of
+         thousands of nested scans in a single statement, which is what has
+         been overloading this view.
+
+         The snapshot days are read once, up front, in a single grouped
+         query, and pasted in as literals. What is left is one seek per
+         player on the (sport, season, playerId, day) index. */
+      let latestDay = {}, weekAgoDay = {};
+      {
+        const dScope = '(' + pairs.map(() => '(sport = ? AND season = ?)').join(' OR ') + ')';
+        const dBinds = [];
+        for (const [sp, se] of pairs) dBinds.push(sp, se);
+        try {
+          const a = await db.prepare(
+            `SELECT sport, season, MAX(day) AS d FROM owners
+              WHERE ${dScope} GROUP BY sport, season`).bind(...dBinds).all();
+          for (const r of (a.results || [])) latestDay[`${r.sport}|${r.season}`] = String(r.d || '');
+          const b = await db.prepare(
+            `SELECT sport, season, MAX(day) AS d FROM owners
+              WHERE ${dScope} AND day <= date('now', '-7 day')
+              GROUP BY sport, season`).bind(...dBinds).all();
+          for (const r of (b.results || [])) weekAgoDay[`${r.sport}|${r.season}`] = String(r.d || '');
+        } catch (e) { latestDay = {}; weekAgoDay = {}; }
+      }
+      // Days are ours, read out of our own table, not anything a caller sent.
+      const dayCase = (map) => {
+        const arms = pairs
+          .filter(([sp, se]) => /^\d{4}-\d{2}-\d{2}$/.test(map[`${sp}|${se}`] || ''))
+          .map(([sp, se]) => `WHEN gamelog.sport = '${sp}' AND gamelog.season = ${Number(se)}`
+                           + ` THEN '${map[`${sp}|${se}`]}'`);
+        return arms.length ? `CASE ${arms.join(' ')} END` : `NULL`;
+      };
+      const ownerPick = (which) => `
         (SELECT ow.owners FROM owners ow
           WHERE ow.sport = gamelog.sport AND ow.season = gamelog.season
             AND ow.playerId = gamelog.playerId
-            AND ow.day = (SELECT MAX(d.day) FROM owners d
-                           WHERE d.sport = ow.sport AND d.season = ow.season${cutoff}))`;
+            AND ow.day = ${dayCase(which === 'week' ? weekAgoDay : latestDay)})`;
 
       // Ranges on the aggregates are applied outside the grouping, where the
       // totals actually exist.
@@ -5107,9 +5178,9 @@ export async function onRequestGet({ request, env }) {
       const playerInner = `
         SELECT playerId, sport, season, MAX(player) AS player, MAX(team) AS team,
                MAX(conference) AS conference, COUNT(*) AS games,
-               ${ownerPick('')} AS owners,
-               ${ownerPick(" AND d.day <= date('now', '-7 day')")} AS ownersWeekAgo,
-               ${ownerPick('')} - ${ownerPick(" AND d.day <= date('now', '-7 day')")} AS ownersChange,
+               ${ownerPick('now')} AS owners,
+               ${ownerPick('week')} AS ownersWeekAgo,
+               ${ownerPick('now')} - ${ownerPick('week')} AS ownersChange,
                SUM(rax) AS rax, ROUND(AVG(rax), 2) AS raxPerGame, MAX(rax) AS bestRax,
                ROUND(SUM(rating), 2) AS rating, ROUND(AVG(rating), 2) AS ratingPerGame,
                ROUND(AVG(min), 1) AS min, ROUND(AVG(pts), 1) AS pts, ROUND(AVG(reb), 1) AS reb,
@@ -5149,6 +5220,47 @@ export async function onRequestGet({ request, env }) {
           });
         }
 
+        /* Several seasons at once are read one season at a time and the
+           pieces ranked here. Grouping a million and a half rows in one
+           statement - and then doing it a second time just to count them -
+           is what fell over when every season was picked. One season is a
+           range of the key, and taking the first (offset + limit) of each
+           and ranking those together gives the same page as ranking the lot
+           would. */
+        if (mode === 'players' && pairs.length > 1) {
+          const need = Math.min(2000, offset + limit);
+          const rest = where.slice(1);          // every filter except the scope
+          const restBinds = binds.slice(scopeBinds.length);
+          const merged = [];
+          let capped = false;
+          for (const [sp, se] of pairs) {
+            const w1 = ['(sport = ? AND season = ?)'].concat(rest).join(' AND ');
+            const inner1 = playerInner.replace(`WHERE ${W}`, `WHERE ${w1}`);
+            const sql1 = `SELECT * FROM (${inner1})${OUTER} ORDER BY ${sort} ${dir} LIMIT ${need}`;
+            try {
+              const r1 = await db.prepare(sql1)
+                .bind(sp, se, ...restBinds, minGames, ...outerBinds).all();
+              const got = (r1 && r1.results) || [];
+              if (got.length >= need) capped = true;
+              for (const row of got) merged.push(row);
+            } catch (e) { /* a season that will not read is left out, not fatal */ }
+          }
+          const txt = ['player', 'team', 'sport', 'conference'].includes(sort);
+          const sgn = dir === 'ASC' ? 1 : -1;
+          merged.sort((a, b) => {
+            const av = a[sort], bv = b[sort];
+            if (txt) return sgn * String(av == null ? '' : av).localeCompare(String(bv == null ? '' : bv));
+            const an = av == null ? -Infinity : Number(av);
+            const bn = bv == null ? -Infinity : Number(bv);
+            return an === bn ? 0 : sgn * (an - bn);
+          });
+          return json({ mode, sort, dir: dir.toLowerCase(), limit, offset,
+                        pairs: pairs.map(([x, y]) => `${x}:${y}`),
+                        total: merged.length, capped,
+                        columns: PLAYER_COLS,
+                        rows: merged.slice(offset, offset + limit) });
+        }
+
         const sql = mode === 'players'
           ? playerSql(sort, `LIMIT ? OFFSET ?`)
           : gameSql(sort, `LIMIT ? OFFSET ?`);
@@ -5182,12 +5294,13 @@ export async function onRequestGet({ request, env }) {
            in the ordinary game-data views would read as a blank for them and
            any multi-season total would quietly go wrong. They have their own
            tab, which knows what it is looking at. */
+        const hide = HIST_SPORTS
+          .map(sp => `(sport = '${sp}' AND season <= ${HIST_RANGE[sp][1]})`).join(' OR ');
         const r = await db.prepare(
           `SELECT sport, season, COUNT(*) AS rows, COUNT(DISTINCT playerId) AS players
              FROM gamelog
-            WHERE NOT (sport = ?1 AND season <= ?2)
-            GROUP BY sport, season ORDER BY sport, season DESC`)
-          .bind(HIST_SPORT, HIST_LAST).all();
+            WHERE NOT (${hide})
+            GROUP BY sport, season ORDER BY sport, season DESC`).all();
         return json({ seasons: (r && r.results) || [] });
       } catch (e) { return json({ error: String((e && e.message) || e) }, 500); }
     }
