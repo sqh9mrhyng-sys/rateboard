@@ -5554,7 +5554,14 @@ export async function onRequestGet({ request, env }) {
             try {
               const d = await rsGet(earningsUrl(id), auth);
               const list = (d && d.earnings) || [];
-              const stmts = [];
+              /* A game missing from the earnings screen earned nothing, so the
+                 player's rax is zeroed first and the screen's figures written
+                 over it, in one batch. Without this, a re-walk after Real
+                 changes its values leaves any game that dropped to nothing
+                 holding the old number. */
+              const stmts = [db.prepare(
+                'UPDATE gamelog SET rax = 0 WHERE sport = ? AND season = ? AND playerId = ?')
+                .bind(sport, Number(season), Number(id))];
               for (const e of list) {
                 if (!e || !e.day || e.earnings == null) continue;
                 if (Array.isArray(e.playerBoxScoreIds) && e.playerBoxScoreIds.length > 1) { skipped++; continue; }
@@ -5564,7 +5571,7 @@ export async function onRequestGet({ request, env }) {
                 const batch = stmts.slice(i, i + 40);
                 if (batch.length) await db.batch(batch);
               }
-              updates += stmts.length;
+              updates += stmts.length - 1;
               done[id] = 1;
             } catch (e) {
               if (!firstError) {
