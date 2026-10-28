@@ -4398,6 +4398,14 @@ export async function onRequestGet({ request, env }) {
     // worked on - in which case that one just finished, and a rest starts.
     const heavy = async (sp, se, phase) => {
       const key = `${sp}:${se}`;
+      /* Sports being rescanned flat out, with no rest going into, between or
+         out of their seasons. Empty this set again once the rescan is done. */
+      const NO_REST = new Set(['nhl']);
+      const prevSp = String(pace.lastJob || '').split(':')[0];
+      if (pace.lastJob && pace.lastJob !== key && (NO_REST.has(sp) || NO_REST.has(prevSp))) {
+        try { await env.RATEBOARD_KV.put(PACE_KEY, JSON.stringify({ lastJob: key, holdUntil: 0 })); } catch (e) {}
+        return json({ sport: sp, season: se, phase });
+      }
       if (pace.lastJob && pace.lastJob !== key) {
         const prevSport = String(pace.lastJob).split(':')[0];
         const movedOn = prevSport !== sp;
