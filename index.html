@@ -532,6 +532,7 @@
         <option value="NFL">NFL</option>
         <option value="UFC">UFC</option>
         <option value="NHL">NHL</option>
+        <option value="NBA">NBA</option>
       </select>
       <span class="caret">▾</span>
     </div>
@@ -2550,7 +2551,9 @@ $('#b-rate').addEventListener('change', () => {
    anyone outside that list is looked up on demand.
    ========================================================= */
 const BOARD_TO_DATA = { CFB:'ncaaf', FC:'soccer', NFL:'nfl', NHL:'nhl', NBA:'nba' };
-const DATA_SEASON = { ncaaf:2026, soccer:2026, nfl:2026, nhl:2026 };
+/* Basketball names a season for the year it ends, so the one being played
+   now is 2027 where football's and hockey's is 2026. */
+const DATA_SEASON = { ncaaf:2026, soccer:2026, nfl:2026, nhl:2026, nba:2027 };
 
 // Everything collected here is thrown away after an hour, so a board left open
 // all day still picks up the overnight scans instead of showing yesterday's
@@ -4693,7 +4696,7 @@ function seasonLabel(sport, season){
 }
 // The season each sport is running right now. Preset bests leave it out: it is
 // half finished, so it would drag a preset's per-game picture around every week.
-const CB_CURRENT = { ncaaf:2026, ncaam:2026, nfl:2026, nba:2026, nhl:2026,
+const CB_CURRENT = { ncaaf:2026, ncaam:2027, nfl:2026, nba:2027, nhl:2026,
                      soccer:2026, mlb:2026, wnba:2026, golf:2026 };
 const sportSeason = (sport, season) =>
   `${CB_SPORT_LABEL[sport] || sport} ${seasonLabel(sport, season)}`;
@@ -8183,7 +8186,7 @@ async function adminPanel(){
    Results feed straight into showMatches() so the UX is identical
    to the screenshot path.
    ========================================================= */
-const RS_LOOKUP_SPORTS = ['FC', 'CFB', 'NFL', 'NHL', 'UFC'];
+const RS_LOOKUP_SPORTS = ['FC', 'CFB', 'NFL', 'NHL', 'UFC', 'NBA'];
 function rsLookupVisible(){ return RS_LOOKUP_SPORTS.includes(sport); }
 
 function updateRsLookupVisibility(){

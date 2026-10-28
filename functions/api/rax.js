@@ -1990,6 +1990,67 @@ export async function onRequestGet({ request, env }) {
   /* One pass of the box-score re-read. The players come straight from the
      log, so there is nothing to discover - every player-season is simply
      asked for again and written back with its own stat line attached. */
+  /* Per-game averages of a sport's own box line, for a named set of players.
+     The stat blob is text, so the averaging happens here rather than in SQL -
+     a few hundred rows, which is nothing. This is what turns "what does he
+     average" into one call instead of one call per player. */
+  if (url.searchParams.get('statavg') === '1') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    const sp = String(url.searchParams.get('sport') || 'nfl').toLowerCase();
+    const se = Number(url.searchParams.get('season')) || 2026;
+    const ids = String(url.searchParams.get('players') || '')
+      .split(',').map(x => Number(String(x).trim())).filter(Number.isFinite).slice(0, 300);
+    if (!ids.length) return json({ error: 'players needed, comma separated ids' }, 400);
+    const types = url.searchParams.get('all') === '1'
+      ? seasonTypeSql(sp) : `'regularseason'`;
+    const out = {};
+    try {
+      // Ids are numbers we coerced ourselves; D1 caps bound values at 100.
+      for (let i = 0; i < ids.length; i += 200) {
+        const list = ids.slice(i, i + 200).join(',');
+        const r = await db.prepare(
+          `SELECT playerId, player, team, position, stats, rax, rating
+             FROM gamelog
+            WHERE sport = ?1 AND season = ?2 AND seasonType IN (${types})
+              AND playerId IN (${list})`).bind(sp, se).all();
+        for (const row of (r.results || [])) {
+          const id = Number(row.playerId);
+          const o = out[id] || (out[id] = { playerId: id, player: row.player, team: row.team,
+                                            position: row.position, games: 0, rax: 0,
+                                            rating: 0, sum: {} });
+          o.games++;
+          o.rax += Number(row.rax) || 0;
+          o.rating += Number(row.rating) || 0;
+          if (row.team) o.team = row.team;
+          if (row.position) o.position = row.position;
+          let st = null;
+          try { st = row.stats ? JSON.parse(row.stats) : null; } catch (e) {}
+          if (!st) continue;
+          for (const k in st) {
+            const v = st[k];
+            // A clock or a made/attempted pair is not something to average.
+            const n = typeof v === 'number' ? v
+              : (/^\d+(\.\d+)?$/.test(String(v)) ? Number(v) : null);
+            if (n == null) continue;
+            o.sum[k] = (o.sum[k] || 0) + n;
+          }
+        }
+      }
+    } catch (e) {
+      return json({ error: String((e && e.message) || e) }, 503);
+    }
+    const rows = Object.values(out).map(o => {
+      const avg = {};
+      for (const k in o.sum) avg[k] = Math.round((o.sum[k] / o.games) * 1000) / 1000;
+      return { playerId: o.playerId, player: o.player, team: o.team, position: o.position,
+               games: o.games, raxPerGame: Math.round((o.rax / o.games) * 100) / 100,
+               ratingPerGame: Math.round((o.rating / o.games) * 100) / 100,
+               total: o.sum, perGame: avg };
+    }).sort((a, b) => b.raxPerGame - a.raxPerGame);
+    return json({ sport: sp, season: se, asked: ids.length, found: rows.length, rows });
+  }
+
   if (url.searchParams.get('restat') === 'collect') {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);

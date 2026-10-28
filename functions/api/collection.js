@@ -29,6 +29,9 @@ const SPORT_CONFIG = {
   NFL: { rs: 'nfl',    season: '2026', entity: 'player' },
   NHL: { rs: 'nhl',    season: '2026', entity: 'player' },
   UFC: { rs: 'ufc',    season: '2023', entity: 'team'   },
+  // Basketball names a season for the year it ends, so the one being played
+  // now is 2027 while football's and hockey's is 2026.
+  NBA: { rs: 'nba',    season: '2027', entity: 'player' },
 };
 const PAGE_SIZE   = 20;
 const CHUNK_PAGES = 15; // 15 pages × 20 players = 300 players per invocation
