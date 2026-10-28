@@ -563,7 +563,12 @@ const MLB_FAMILY = { 101: 'single', 102: 'double', 103: 'triple',
    free throw does, which is right: 0/2 is still a card. */
 const NBA_FAMILY = { 1: 'dunk', 2: 'layup', 3: 'mid', 4: 'three', 5: 'ft' };
 // The women's game files its plays the same way, down to the category ids.
-const HOOPS = new Set(['nba', 'wnba']);
+/* College basketball files its plays the same way too. Without it here a
+   college play had no shot family, so no rule could reach it, and the only
+   legendaries left were the few tags the marketplace happened to show at 5 -
+   all of them new in 2025-26. Game-winner, Game-icing and Walk-off carry no
+   marketplace reading at all, so the two earlier seasons scored none. */
+const HOOPS = new Set(['nba', 'wnba', 'ncaam']);
 /* Hockey. One row, two or three earners, and a different thing to each of
    them: a shot on goal is a shot for the man who took it and a save for the
    man who stopped it; a goal is a goal for the scorer and an assist for the
@@ -818,7 +823,11 @@ const RULES_NHL = {
 };
 
 const RULES_BY_SPORT = { nfl: RULES_NFL, ncaaf: RULES_NCAAF, mlb: RULES_MLB,
-                         nba: RULES_NBA, wnba: RULES_WNBA, nhl: RULES_NHL };
+                         nba: RULES_NBA, wnba: RULES_WNBA, nhl: RULES_NHL,
+                         // The men's pro table, until a college one exists. It
+                         // is left out of CLOSED_RULES, so a harvested reading
+                         // with no rule behind it still counts as it did before.
+                         ncaam: RULES_NBA };
 
 /* The marketplace only ever shows a tag on one card, so the rarity harvested
    from it is whatever that card happened to be - Moonshot reads 4 because the
