@@ -304,8 +304,16 @@ function draw(){
 // type 30, with the listing's id. Read out of a real auction link.
 const auctionUrl = id => { const n = Number(id); return n > 0 ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [30, 0, 0, n]) : null; };
 let detRows = [], detSort = 'ppr', detDir = 1;
-const DET_COLS = [['rarity','Rarity',-1],['buyNow','Buy now',1],['curBid','Bid',1],['bids','Bids',-1],
-                  ['value','Boost',-1],['ppr','Rax / rating',1],['endsAt','Time left',1]];
+// [key, heading, first sort direction (0 = not sortable)], in display order.
+const DET_COLS = [['rarity','Rarity',-1],['auction','Auction',0],['buyNow','Buy now',1],['ppr','Rax / rating',1],
+                  ['endsAt','Time left',1],['value','Boost',-1],['curBid','Bid',1],['bids','Bids',-1]];
+const DET_CELL = {
+  rarity: l => `<span class="tag" style="--c:${rc(l.rarity)}">${RAR[l.rarity] || l.rarity}</span>`,
+  auction: l => auctionUrl(l.id) ? `<a href="${auctionUrl(l.id)}" target="_blank" rel="noopener">Open ↗</a>` : '–',
+  buyNow: l => fmt(l.buyNow), ppr: l => ppr3(l.ppr), endsAt: l => endsIn(l.endsAt),
+  value: l => l.value == null ? '–' : Math.round(l.value * 10) / 10,
+  curBid: l => fmt(l.curBid), bids: l => fmt(l.bids)
+};
 
 async function loadDetail(pid){
   const [sp, se] = pick.split(':');
@@ -328,14 +336,11 @@ function drawDetail(){
     return (x < y ? -1 : x > y ? 1 : 0) * detDir;
   });
   el.innerHTML = '<table><thead><tr>'
-    + DET_COLS.map(([k, label]) => `<th data-d="${k}" class="${k === detSort ? 'on' : ''}">${label}${k === detSort ? (detDir > 0 ? ' ↑' : ' ↓') : ''}</th>`).join('')
-    + '<th>Auction</th></tr></thead><tbody>'
-    + rows.map(l => `<tr${l.ppr != null && l.ppr > 1000 ? ' style="opacity:.5"' : ''}>
-        <td><span class="tag" style="--c:${rc(l.rarity)}">${RAR[l.rarity] || l.rarity}</span></td>
-        <td>${fmt(l.buyNow)}</td><td>${fmt(l.curBid)}</td><td>${fmt(l.bids)}</td>
-        <td>${l.value == null ? '–' : Math.round(l.value * 10) / 10}</td>
-        <td>${ppr3(l.ppr)}</td><td>${endsIn(l.endsAt)}</td>
-        <td>${auctionUrl(l.id) ? `<a href="${auctionUrl(l.id)}" target="_blank" rel="noopener">Open ↗</a>` : '–'}</td></tr>`).join('')
+    + DET_COLS.map(([k, label, dir]) => dir ? `<th data-d="${k}" class="${k === detSort ? 'on' : ''}">${label}${k === detSort ? (detDir > 0 ? ' ↑' : ' ↓') : ''}</th>`
+                                            : `<th style="cursor:default">${label}</th>`).join('')
+    + '</tr></thead><tbody>'
+    + rows.map(l => `<tr${l.ppr != null && l.ppr > 1000 ? ' style="opacity:.5"' : ''}>`
+        + DET_COLS.map(([k]) => `<td>${DET_CELL[k](l)}</td>`).join('') + '</tr>').join('')
     + '</tbody></table>';
 }
 
