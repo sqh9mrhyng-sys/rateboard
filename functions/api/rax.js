@@ -527,24 +527,49 @@ const MARKET_ONLY = [];
 const MARKET_REFRESH_HOURS = 9;
 const MSEAS_DDL = `CREATE TABLE IF NOT EXISTS market_seasons (job TEXT PRIMARY KEY,
   startedAt INTEGER, doneAt INTEGER, listings INTEGER, minutes REAL, front INTEGER)`;
+/* Only seasons Real actually has, in Real's own numbering: NBA and CBB go by
+   the year a season ends (2027 is 2026-27), NFL, CFB, NHL and FC by the year
+   it starts (2026 is 2026-27), the rest by calendar year. Next season goes on
+   this list once Real opens it. */
+const MARKET_LIST = {
+  nba: [2027, 2026, 2025, 2024, 2023],
+  ncaam: [2027, 2026, 2025, 2024],
+  nfl: [2026, 2025, 2024, 2023],
+  ncaaf: [2026, 2025, 2024, 2023],
+  nhl: [2026, 2025, 2024, 2023],
+  mlb: [2026, 2025, 2024, 2023, 2022],
+  wnba: [2026, 2025, 2024],
+  soccer: [2026, 2025],
+  golf: [2026, 2025, 2024, 2023, 2022],
+  ufc: [2026, 2025]
+};
+// A season that came back empty is looked at again once a day rather than
+// every refresh, so it costs a few seconds a day at most.
+const MARKET_EMPTY_HOURS = 24;
 function marketSeasons() {
   if (MARKET_ONLY.length) return MARKET_ONLY.slice();
-  const out = [];
-  for (const se of MARKET_SEASONS) for (const sp of MARKET_SPORTS) out.push(`${sp}:${se}`);
+  const out = [], depth = Math.max(...Object.values(MARKET_LIST).map(a => a.length));
+  for (let i = 0; i < depth; i++)                  // every sport's current season first
+    for (const [sp, list] of Object.entries(MARKET_LIST)) if (list[i]) out.push(`${sp}:${list[i]}`);
   return out;
 }
 // The season to pull next: the oldest thing put at the front of the queue,
 // else the season whose snapshot is oldest, else nothing until one is due.
 async function marketNext(db) {
-  const rows = (await db.prepare('SELECT job, doneAt, front FROM market_seasons').all()).results || [];
+  const rows = (await db.prepare('SELECT job, doneAt, front, listings FROM market_seasons').all()).results || [];
   const valid = new Set(marketSeasons());
   const front = rows.filter(r => r.front && valid.has(r.job)).sort((a, b) => a.front - b.front)[0];
   if (front) return front.job;
-  const done = new Map(rows.map(r => [r.job, Number(r.doneAt) || 0]));
-  let best = null, bestAt = Infinity;
-  for (const j of marketSeasons()) { const at = done.get(j) || 0; if (at < bestAt) { best = j; bestAt = at; } }
-  if (best && bestAt && Date.now() - bestAt < MARKET_REFRESH_HOURS * 3600000) return null;
-  return best;
+  // When each season is next due: its last pull plus the refresh time, or a
+  // day for one that was empty. Never pulled means due now.
+  const m = new Map(rows.map(r => [r.job, r]));
+  let best = null, bestDue = Infinity;
+  for (const j of marketSeasons()) {
+    const r = m.get(j), at = r && Number(r.doneAt) || 0;
+    const due = at ? at + (r.listings ? MARKET_REFRESH_HOURS : MARKET_EMPTY_HOURS) * 3600000 : 0;
+    if (due < bestDue) { best = j; bestDue = due; }
+  }
+  return best && bestDue <= Date.now() ? best : null;
 }
 
 const numOr = v => { const n = Number(v); return v != null && v !== '' && Number.isFinite(n) ? n : null; };
