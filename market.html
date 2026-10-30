@@ -3,72 +3,234 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Marketplace test</title>
+<title>Marketplace</title>
 <style>
-  :root{--bg:#141925;--panel:#1d2433;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D}
+  :root{--bg:#141925;--panel:#1d2433;--panel2:#232b3d;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;
+        --r1:#9aa3b5;--r2:#5fbf7a;--r3:#4f9ee8;--r4:#a77bf0;--r5:#E8A33D;--r6:#e0559c;--r7:#ff5a4f}
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,sans-serif;padding:16px}
-  .wrap{max-width:1000px;margin:0 auto}
-  h1{font-size:20px;margin:0 0 4px}
-  p.note{color:var(--mute);margin:0 0 14px;font-size:13px}
-  .bar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
-  select,input,button{font:inherit;padding:9px 11px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
-  button{background:var(--accent);color:#1a1205;border:0;font-weight:700;cursor:pointer}
-  button[disabled]{opacity:.5}
-  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow:auto;font-size:12.5px;max-height:70vh;white-space:pre-wrap;word-break:break-word}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+  .wrap{max-width:1100px;margin:0 auto;padding:16px}
+  header{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin-bottom:14px}
+  h1{font-size:20px;margin:0;font-weight:800;letter-spacing:-.01em}
   a{color:var(--accent)}
+  .note{color:var(--mute);font-size:13px}
+  select,input,button{font:inherit;padding:9px 11px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+  button{cursor:pointer}
+  .seg{display:flex;flex-wrap:wrap;gap:6px}
+  .seg button[aria-pressed="true"]{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 16%,var(--panel))}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:12px 0}
+  .tile{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .tile .k{color:var(--mute);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  .tile .v{font-size:22px;font-weight:800;margin-top:2px}
+  .rar{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px;margin-bottom:14px}
+  .rchip{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--c);border-radius:10px;padding:9px 10px;cursor:pointer;text-align:left}
+  .rchip[aria-pressed="true"]{background:var(--panel2);border-color:var(--c)}
+  .rchip b{display:block;font-size:13px}
+  .rchip span{color:var(--mute);font-size:12px}
+  .bar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;align-items:center}
+  .bar input{flex:1 1 200px}
+  table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  th,td{padding:10px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+  th:first-child,td:first-child{text-align:left}
+  th{color:var(--mute);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;cursor:pointer;user-select:none}
+  th.on{color:var(--accent)}
+  tr.p{cursor:pointer}
+  tr.p:hover td{background:var(--panel2)}
+  .dots{display:inline-flex;gap:3px;justify-content:flex-end}
+  .dot{min-width:20px;padding:1px 5px;border-radius:6px;font-size:11.5px;font-weight:700;color:#10131b;background:var(--c)}
+  .detail td{background:var(--bg);padding:0}
+  .detail .inner{padding:10px 12px 14px}
+  .detail table{border-radius:8px;background:var(--panel)}
+  .detail th,.detail td{padding:7px 9px;font-size:13.5px}
+  .tag{display:inline-block;padding:1px 7px;border-radius:6px;font-size:12px;font-weight:700;color:#10131b;background:var(--c)}
+  .more{margin:12px auto;display:block}
+  details{margin-top:22px}
+  summary{cursor:pointer;color:var(--mute)}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow:auto;font-size:12px;max-height:60vh;white-space:pre-wrap;word-break:break-word}
+  @media (max-width:640px){
+    .wrap{padding:12px}
+    .hide-sm{display:none}
+    th,td{padding:9px 7px}
+    .tile .v{font-size:19px}
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Marketplace test</h1>
-  <p class="note">Pulls one page of Real's card marketplace through the board, raw, so every field a listing carries is visible. Admin only: sign in to the board as yourself in this browser first. <a href="/">Back to the board</a></p>
-  <div class="bar">
-    <select id="sport" aria-label="Sport">
-      <option value="nfl">NFL</option><option value="ncaaf">CFB</option><option value="mlb">MLB</option>
-      <option value="nba">NBA</option><option value="ncaam">CBB</option><option value="nhl">NHL</option>
-      <option value="soccer">FC</option><option value="wnba">WNBA</option><option value="ufc">UFC</option>
-      <option value="golf">Golf</option><option value="none">(no sport)</option>
-    </select>
-    <input id="season" value="2026" size="6" aria-label="Season">
-    <select id="rarity" aria-label="Rarity">
-      <option value="all">All rarities</option><option>common</option><option>uncommon</option><option>rare</option>
-      <option>epic</option><option>legendary</option><option>mystic</option><option>iconic</option>
-    </select>
-    <button id="go">Pull one page</button>
-    <button id="next" disabled>Next page</button>
-    <button id="copy" disabled>Copy result</button>
+  <header>
+    <h1>Marketplace</h1>
+    <select id="ss" aria-label="Sport and season"><option>Loading…</option></select>
+    <span class="note" id="pulled"></span>
+    <a href="/" style="margin-left:auto">Back to the board</a>
+  </header>
+
+  <div class="tiles">
+    <div class="tile"><div class="k">Listings up</div><div class="v" id="t-n">–</div></div>
+    <div class="tile"><div class="k">Players</div><div class="v" id="t-p">–</div></div>
+    <div class="tile"><div class="k">Cheapest buy-now</div><div class="v" id="t-min">–</div></div>
+    <div class="tile"><div class="k">Bids placed</div><div class="v" id="t-b">–</div></div>
   </div>
-  <pre id="out">Nothing pulled yet.</pre>
+
+  <div class="rar" id="rar"></div>
+
+  <div class="bar">
+    <input id="q" placeholder="Search a player" autocomplete="off">
+    <select id="sort" aria-label="Sort">
+      <option value="n">Most listed</option>
+      <option value="minBuy">Cheapest buy-now</option>
+      <option value="maxValue">Highest boost</option>
+      <option value="bids">Most bids</option>
+      <option value="player">Name</option>
+    </select>
+  </div>
+
+  <table>
+    <thead><tr>
+      <th data-s="player">Player</th>
+      <th data-s="n">Listed</th>
+      <th class="hide-sm">By rarity</th>
+      <th data-s="minBuy">Cheapest</th>
+      <th data-s="maxValue" class="hide-sm">Top boost</th>
+      <th data-s="bids" class="hide-sm">Bids</th>
+    </tr></thead>
+    <tbody id="rows"><tr><td colspan="6" class="note">Loading…</td></tr></tbody>
+  </table>
+  <button class="more" id="more" hidden>Show more</button>
+
+  <details>
+    <summary>Raw check of one page from Real (admin)</summary>
+    <p class="note">Asks Real for one page live, on the marketplace account, and shows it untouched. Needs you signed in to the board as admin in this browser.</p>
+    <div class="bar"><button id="probe">Pull one page</button></div>
+    <pre id="raw">Nothing pulled yet.</pre>
+  </details>
 </div>
 <script>
 const $ = s => document.querySelector(s);
-let before = '';
-function token(){ try{ return localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){ return ''; } }
-async function pull(next){
-  if(!next) before = '';
-  const p = new URLSearchParams({ market:'probe', sport:$('#sport').value, season:$('#season').value,
-                                  rarity:$('#rarity').value, n:'3' });
-  if($('#sport').value === 'none') p.set('season', 'none');
-  if(before) p.set('before', before);
-  $('#out').textContent = 'Pulling…';
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = n => n == null ? '–' : Math.round(n).toLocaleString();
+const RAR = {1:'Common',2:'Uncommon',3:'Rare',4:'Epic',5:'Legendary',6:'Mystic',7:'Iconic'};
+const rc = r => `var(--r${Math.min(7, Math.max(1, Number(r) || 1))})`;
+const SPORT = {nba:'NBA',nfl:'NFL',ncaaf:'CFB',ncaam:'CBB',mlb:'MLB',nhl:'NHL',soccer:'FC',wnba:'WNBA',ufc:'UFC',golf:'Golf'};
+const START = {nfl:1,nhl:1,ncaaf:1,soccer:1};   // seasons named for the year they start
+const seasonLbl = (sp, se) => { se = Number(se);
+  return START[sp] ? `${se}-${String(se + 1).slice(2)}` : (sp === 'nba' || sp === 'ncaam') ? `${se - 1}-${String(se).slice(2)}` : String(se); };
+const ago = iso => { if(!iso) return ''; const m = Math.round((Date.now() - Date.parse(iso)) / 60000);
+  return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`; };
+const endsIn = iso => { const m = Math.round((Date.parse(iso) - Date.now()) / 60000);
+  if(m < 60) return `${Math.max(0, m)}m`; const h = Math.floor(m / 60); return h < 48 ? `${h}h ${m % 60}m` : `${Math.round(h / 24)}d`; };
+
+let data = null, pick = '', rarF = '', sortK = 'n', shown = 60, open = null;
+
+async function load(){
+  const [sp, se] = pick ? pick.split(':') : ['nba', '2027'];
+  $('#rows').innerHTML = '<tr><td colspan="6" class="note">Loading…</td></tr>';
   try{
-    const r = await fetch('/api/rax?' + p, { headers: { 'x-rb-token': token() } });
-    if(r.status === 403){ $('#out').textContent = 'Not signed in as admin in this browser. Sign in to the board first, then come back.'; return; }
-    const d = await r.json();
-    before = d.lastEndsAt || '';
-    $('#next').disabled = !before;
-    $('#copy').disabled = false;
-    $('#out').textContent = JSON.stringify(d, null, 2);
-  }catch(e){ $('#out').textContent = 'Failed: ' + e.message; }
+    data = await (await fetch(`/api/rax?market=view&sport=${sp}&season=${se}`)).json();
+  }catch(e){ $('#rows').innerHTML = '<tr><td colspan="6" class="note">Could not load the market.</td></tr>'; return; }
+  if(data.error){ $('#rows').innerHTML = `<tr><td colspan="6" class="note">${esc(data.error)}</td></tr>`; return; }
+  const opts = (data.seasons || []).map(x => `${x.sport}:${x.season}`);
+  if(!pick) pick = `${data.sport}:${data.season}`;
+  if(!opts.includes(pick)) opts.unshift(pick);
+  $('#ss').innerHTML = opts.map(k => { const [a, b] = k.split(':');
+    const n = (data.seasons || []).find(x => `${x.sport}:${x.season}` === k);
+    return `<option value="${k}"${k === pick ? ' selected' : ''}>${SPORT[a] || a} ${seasonLbl(a, b)}${n ? ` · ${n.n.toLocaleString()}` : ''}</option>`; }).join('');
+  $('#pulled').textContent = data.pulledAt ? `Pulled ${ago(data.pulledAt)}` : '';
+  $('#t-n').textContent = fmt(data.listings);
+  $('#t-p').textContent = fmt(data.players);
+  const mins = Object.values(data.rarity || {}).map(x => x.minBuy).filter(x => x != null);
+  $('#t-min').textContent = mins.length ? fmt(Math.min(...mins)) : '–';
+  $('#t-b').textContent = fmt((data.rows || []).reduce((a, r) => a + (r.bids || 0), 0));
+  drawRarity(); draw();
 }
-$('#go').addEventListener('click', () => pull(false));
-$('#next').addEventListener('click', () => pull(true));
-$('#copy').addEventListener('click', async () => {
-  try{ await navigator.clipboard.writeText($('#out').textContent); $('#copy').textContent = 'Copied'; }
-  catch(e){ $('#copy').textContent = 'Select the text to copy'; }
-  setTimeout(() => { $('#copy').textContent = 'Copy result'; }, 1500);
+
+function drawRarity(){
+  const keys = Object.keys(data.rarity || {}).sort((a, b) => a - b);
+  $('#rar').innerHTML = `<button class="rchip" style="--c:var(--line)" data-r="" aria-pressed="${!rarF}"><b>All rarities</b><span>${fmt(data.listings)} listed</span></button>`
+    + keys.map(k => `<button class="rchip" style="--c:${rc(k)}" data-r="${k}" aria-pressed="${rarF === k}">
+        <b>${RAR[k] || 'Rarity ' + k}</b><span>${fmt(data.rarity[k].n)} · from ${fmt(data.rarity[k].minBuy)}</span></button>`).join('');
+}
+
+function view(){
+  const q = $('#q').value.trim().toLowerCase();
+  let rows = (data.rows || []).map(r => {
+    if(!rarF) return r;
+    const x = r.rar[rarF]; if(!x) return null;
+    return Object.assign({}, r, { n: x.n, minBuy: x.minBuy });
+  }).filter(Boolean);
+  if(q) rows = rows.filter(r => String(r.player || '').toLowerCase().includes(q));
+  const dir = sortK === 'minBuy' || sortK === 'player' ? 1 : -1;
+  rows.sort((a, b) => {
+    const x = sortK === 'player' ? String(a.player || '') : (a[sortK] ?? (dir > 0 ? Infinity : -Infinity));
+    const y = sortK === 'player' ? String(b.player || '') : (b[sortK] ?? (dir > 0 ? Infinity : -Infinity));
+    return (x < y ? -1 : x > y ? 1 : 0) * dir;
+  });
+  return rows;
+}
+
+function draw(){
+  const rows = view();
+  document.querySelectorAll('th[data-s]').forEach(th => th.classList.toggle('on', th.dataset.s === sortK));
+  if(!rows.length){ $('#rows').innerHTML = '<tr><td colspan="6" class="note">No listings match.</td></tr>'; $('#more').hidden = true; return; }
+  $('#rows').innerHTML = rows.slice(0, shown).map(r => {
+    const dots = Object.keys(r.rar).sort((a, b) => b - a)
+      .map(k => `<span class="dot" style="--c:${rc(k)}" title="${RAR[k] || k}">${r.rar[k].n}</span>`).join('');
+    const isOpen = open === r.playerId;
+    return `<tr class="p" data-p="${r.playerId}"><td>${esc(r.player || 'Player ' + r.playerId)}</td>
+      <td>${fmt(r.n)}</td><td class="hide-sm"><span class="dots">${dots}</span></td>
+      <td>${fmt(r.minBuy)}</td><td class="hide-sm">${r.maxValue == null ? '–' : (Math.round(r.maxValue * 10) / 10)}</td>
+      <td class="hide-sm">${fmt(r.bids)}</td></tr>`
+      + (isOpen ? `<tr class="detail"><td colspan="6"><div class="inner" id="det">Loading listings…</div></td></tr>` : '');
+  }).join('');
+  $('#more').hidden = rows.length <= shown;
+  if(open != null) loadDetail(open);
+}
+
+async function loadDetail(pid){
+  const [sp, se] = pick.split(':');
+  let d;
+  try{ d = await (await fetch(`/api/rax?market=listings&sport=${sp}&season=${se}&playerId=${pid}`)).json(); }
+  catch(e){ const el = $('#det'); if(el) el.textContent = 'Could not load listings.'; return; }
+  const el = $('#det'); if(!el) return;
+  const ls = (d.listings || []).filter(l => !rarF || String(l.rarity) === rarF);
+  el.innerHTML = ls.length ? `<table><thead><tr><th>Rarity</th><th>Buy now</th><th>Bid</th><th class="hide-sm">Min bid</th>
+      <th>Bids</th><th>Boost</th><th class="hide-sm">Mint</th><th>Ends in</th></tr></thead><tbody>`
+    + ls.map(l => `<tr><td><span class="tag" style="--c:${rc(l.rarity)}">${RAR[l.rarity] || l.rarity}</span></td>
+        <td>${fmt(l.buyNow)}</td><td>${fmt(l.curBid)}</td><td class="hide-sm">${fmt(l.minBid)}</td>
+        <td>${fmt(l.bids)}</td><td>${l.value == null ? '–' : Math.round(l.value * 10) / 10}</td>
+        <td class="hide-sm">#${esc(l.mint)}</td><td>${endsIn(l.endsAt)}</td></tr>`).join('')
+    + '</tbody></table>' : '<span class="note">No listings up for this player right now.</span>';
+}
+
+$('#ss').addEventListener('change', e => { pick = e.target.value; rarF = ''; open = null; shown = 60; load(); });
+$('#q').addEventListener('input', () => { shown = 60; draw(); });
+$('#sort').addEventListener('change', e => { sortK = e.target.value; draw(); });
+document.querySelector('thead').addEventListener('click', e => {
+  const th = e.target.closest('th[data-s]'); if(!th) return;
+  sortK = th.dataset.s; $('#sort').value = sortK; draw();
 });
+$('#rar').addEventListener('click', e => {
+  const b = e.target.closest('[data-r]'); if(!b) return;
+  rarF = b.dataset.r; shown = 60; drawRarity(); draw();
+});
+$('#rows').addEventListener('click', e => {
+  const tr = e.target.closest('tr.p'); if(!tr) return;
+  const pid = Number(tr.dataset.p);
+  open = open === pid ? null : pid; draw();
+});
+$('#more').addEventListener('click', () => { shown += 100; draw(); });
+
+$('#probe').addEventListener('click', async () => {
+  const [sp, se] = (pick || 'nba:2027').split(':');
+  let t = ''; try{ t = localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){}
+  $('#raw').textContent = 'Pulling…';
+  try{
+    const r = await fetch(`/api/rax?market=probe&sport=${sp}&season=${se}&n=2`, { headers: { 'x-rb-token': t } });
+    if(r.status === 403){ $('#raw').textContent = 'Sign in to the board as admin in this browser first.'; return; }
+    $('#raw').textContent = JSON.stringify(await r.json(), null, 2);
+  }catch(e){ $('#raw').textContent = 'Failed: ' + e.message; }
+});
+
+load();
 </script>
 </body>
 </html>
