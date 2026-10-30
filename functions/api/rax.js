@@ -513,7 +513,13 @@ const MARKET_LANES = 1;
 const MARKET_WINDOW_HOURS = 12;
 const MARKET_WINDOWS = 7;           // 12h x 7 = past the 3 days a listing can run
 const MARKET_PAGES_PER_LANE = 40;
-const MARKET_PAUSE_MS = 0;          // one request at a time, straight after the last
+/* The gap between pages. No gap at all drew "high volume" from Real, so it
+   starts at 150ms (what ran for hours without one) and doubles, up to 2s,
+   each time Real says it is busy; every season finished without that eases
+   it back down a little. */
+const MARKET_PAUSE_MS = 150;
+const MARKET_PAUSE_MAX = 2000;
+let marketPause = MARKET_PAUSE_MS;
 const MARKET_COOLDOWN_MS = 10 * 60000;
 const MARKET_TICK_MS = 55000;       // longest a slice runs in one collector call
 
@@ -648,7 +654,7 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
     // than three days after the pull began was listed after it began, so the
     // walk stops there rather than chasing new listings.
     if (lastWin && last && Date.parse(last) > t0 + 73 * 3600000) { lane.done = true; lane.why = 'past three days'; break; }
-    if (MARKET_PAUSE_MS) await sleep(MARKET_PAUSE_MS);
+    if (marketPause) await sleep(marketPause);
   }
   await Promise.all(writes);
   lane.rows = (lane.rows || 0) + stored;
@@ -712,6 +718,7 @@ async function marketSliceHeld(env, auth, deadline) {
      the call lasts. */
   let total = 0, busy = false;
   st.idle = false;
+  marketPause = Math.min(MARKET_PAUSE_MAX, Math.max(MARKET_PAUSE_MS, Number(st.pause) || MARKET_PAUSE_MS));
   if (!st.seedShort1) {          // the two seasons the short-page stop cut short go again first
     for (const j of ['nfl:2026', 'ncaaf:2026']) {
       try { await db.prepare(`INSERT INTO market_seasons (job, front) VALUES (?, ?)
@@ -758,6 +765,7 @@ async function marketSliceHeld(env, auth, deadline) {
       st.log.unshift(`${st.cur} ${n} listings ${minutes}m${Object.values(st.lanes).some(l => /^gave up/.test(l.why || '')) ? ' (part failed)' : ''}`);
       st.log = st.log.slice(0, 40);
       st.cur = null; st.lanes = {};
+      marketPause = Math.max(MARKET_PAUSE_MS, Math.round(marketPause * 0.8));
       continue;
     }
     const lane = st.lanes[w] || (st.lanes[w] = { start: new Date(st.curStart).toISOString() });
@@ -774,7 +782,9 @@ async function marketSliceHeld(env, auth, deadline) {
   if (busy) {
     st.coolUntil = Date.now() + MARKET_COOLDOWN_MS;
     st.cooldowns = (st.cooldowns || 0) + 1;
+    marketPause = Math.min(MARKET_PAUSE_MAX, marketPause * 2);
   }
+  st.pause = marketPause;
   st.at = new Date().toISOString();
   try { await env.RATEBOARD_KV.put(MARKET_KEY, JSON.stringify(st)); } catch (e) {}
   return total;
@@ -5025,7 +5035,7 @@ async function handleGet({ request, env }) {
       requests: Object.values(lanes).reduce((a, l) => a + (l.pages || 0), 0),
       idle: !!st.idle, last: st.last || null, round: st.round || 0, roundLeft: st.roundQ || [], roundOld: st.roundOld || [],
       coolingUntil: st.coolUntil && st.coolUntil > Date.now() ? new Date(st.coolUntil).toISOString() : null,
-      cooldowns: st.cooldowns || 0,
+      cooldowns: st.cooldowns || 0, pause: st.pause || MARKET_PAUSE_MS,
       errors: Object.entries(lanes).filter(([, l]) => l.err).map(([k, l]) => `part ${Number(k) + 1}: ${l.err}`),
       log: st.log || [] };
     try {

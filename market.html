@@ -582,14 +582,17 @@ async function loadQueue(){
   try{ status = await (await fetch('/api/rax?market=status')).json(); }catch(e){ $('#qnow').textContent = 'Could not load the queue.'; return; }
   const s = status;
   const bits = [];
-  if(s.coolingUntil) bits.push(`Paused — Real said it was busy, back ${ago(s.coolingUntil).replace(' ago', '')} `.trim());
+  if(s.coolingUntil){
+    const left = Math.max(1, Math.round((Date.parse(s.coolingUntil) - Date.now()) / 60000));
+    bits.push(`<span style="color:var(--r6)">Paused for ${left} more min — Real said it was busy. It carries on by itself, a little slower (${(s.pause / 1000).toFixed(2)}s between pages).</span><br>`);
+  }
   if(s.pulling) bits.push(`Pulling <b>${esc(jobLbl(s.pulling))}</b> now: ${s.windowsDone} of ${s.windows} parts, ${fmt(s.pulledSoFar)} listings so far.`);
   else if(s.idle) bits.push('Nothing due right now — every season is fresher than the refresh time.');
   if((s.front || []).length) bits.push('Up next: ' + s.front.map(jobLbl).map(esc).join(', ') + '.');
   else if((s.roundLeft || []).length) bits.push(`Round ${s.round}, still to go: ` + s.roundLeft.map(jobLbl).map(esc).join(', ') + '.');
   if(s.last && s.last.listings) bits.push(`Last finished: ${esc(jobLbl(s.last.job))}, ${fmt(s.last.listings)} listings in ${s.last.minutes} min`
     + (s.last.short != null ? ` (${fmt(s.last.short)} short pages from Real)` : '') + '.');
-  if((s.errors || []).length) bits.push(`<br><span style="color:var(--r4)">This season hit an error — ${esc(s.errors[0])}</span>`);
+  if((s.errors || []).length && !s.coolingUntil) bits.push(`<br><span style="color:var(--r4)">This season hit an error — ${esc(s.errors[0])}</span>`);
   if(s.at && Date.now() - Date.parse(s.at) > 10 * 60000) bits.push(`<br><span style="color:var(--r4)">The pull has not moved since ${ago(s.at)}.</span>`);
   if((s.log || []).length) bits.push(`<details style="margin-top:8px"><summary>Recent pulls</summary><pre style="max-height:240px">${s.log.map(l => esc(l.replace(/^(\w+:\d+)/, m => jobLbl(m)))).join('\n')}</pre></details>`);
   $('#qnow').innerHTML = bits.join(' ') || 'Starting…';
