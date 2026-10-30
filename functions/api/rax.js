@@ -535,7 +535,7 @@ const numOr = v => { const n = Number(v); return v != null && v !== '' && Number
 
 async function marketLane(env, auth, job, lane, ins, deadline) {
   const [sp, se, wTxt] = job.split(':');
-  const w = Number(wTxt || 0), last = w === MARKET_WINDOWS - 1;
+  const w = Number(wTxt || 0), lastWin = w === MARKET_WINDOWS - 1;
   const t0 = Date.parse(lane.start);
   const winStart = new Date(t0 + w * MARKET_WINDOW_HOURS * 3600000).toISOString();
   const winEnd = new Date(t0 + (w + 1) * MARKET_WINDOW_HOURS * 3600000).toISOString();
@@ -562,9 +562,9 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
     // that, each page is only the odd listing posted since, and the walk
     // would trail the live market for ever.
     const shortPage = rows.length < 10;
-    const pastWindow = !last && mine.length < rows.length;
+    const pastWindow = !lastWin && mine.length < rows.length;
     const now = Date.now();
-    const mine = rows.filter(r => !r.endsAt || last || r.endsAt < winEnd);
+    const mine = rows.filter(r => !r.endsAt || lastWin || r.endsAt < winEnd);
     const stmts = mine.map(r => {
       const c = r.card || {};
       const pp = c.primaryPlayer || {};
@@ -623,7 +623,8 @@ async function marketSlice(env, auth, budgetMs) {
   }
   const results = await Promise.all(open.map(j => {
     const lane = st.lanes[j] || (st.lanes[j] = { start: st.startedAt });
-    return marketLane(env, auth, j, lane, ins, deadline).catch(() => 0);
+    return marketLane(env, auth, j, lane, ins, deadline)
+      .catch(e => { lane.err = 'crash: ' + String((e && e.message) || e).slice(0, 160); return 0; });
   }));
   if (open.some(j => st.lanes[j] && st.lanes[j].busy)) {
     st.coolUntil = Date.now() + MARKET_COOLDOWN_MS;
