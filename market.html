@@ -97,7 +97,7 @@
   <details>
     <summary>Raw check of one page from Real (admin)</summary>
     <p class="note">Asks Real for one page live, on the marketplace account, and shows it untouched. Needs you signed in to the board as admin in this browser.</p>
-    <div class="bar"><button id="probe">Pull one page</button> <button id="reset">Start a fresh pull</button></div>
+    <div class="bar"><button id="probe">Pull one page</button> <button id="reset">Start a fresh pull</button> <button id="sizes">Test page sizes &amp; sorting</button></div>
     <pre id="raw">Nothing pulled yet.</pre>
   </details>
 </div>
@@ -254,6 +254,37 @@ $('#probe').addEventListener('click', async () => {
     if(r.status === 403){ $('#raw').textContent = 'Sign in to the board as admin in this browser first.'; return; }
     $('#raw').textContent = JSON.stringify(await r.json(), null, 2);
   }catch(e){ $('#raw').textContent = 'Failed: ' + e.message; }
+});
+
+/* Real sends 10 listings a page and ignores limit=100. These try the other
+   names APIs use for page size, plus a few sort orders (newest first would
+   make refreshes much shorter), one probe at a time with a pause between. */
+const SIZE_TESTS = [['baseline', ''], ['limit=100', 'x_limit=100'], ['limit=50', 'x_limit=50'],
+  ['pageSize=100', 'x_pageSize=100'], ['page_size=100', 'x_page_size=100'], ['perPage=100', 'x_perPage=100'],
+  ['per_page=100', 'x_per_page=100'], ['count=100', 'x_count=100'], ['size=100', 'x_size=100'],
+  ['take=100', 'x_take=100'], ['first=100', 'x_first=100'], ['max=100', 'x_max=100']];
+const SORT_TESTS = [['sort=newest', 'x_sort=newest'], ['sort=createdAt', 'x_sort=createdAt'],
+  ['orderBy=createdAt', 'x_orderBy=createdAt'], ['sort=-createdAt', 'x_sort=-createdAt'],
+  ['order=desc', 'x_order=desc'], ['sortBy=recent', 'x_sortBy=recent']];
+$('#sizes').addEventListener('click', async () => {
+  const [sp, se] = (pick || 'nba:2027').split(':');
+  let t = ''; try{ t = localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){}
+  const out = [];
+  const show = () => { $('#raw').textContent = out.join('\n') || 'Testing…'; };
+  show();
+  for (const [name, q] of [...SIZE_TESTS, ...SORT_TESTS]) {
+    try{
+      const r = await fetch(`/api/rax?market=probe&sport=${sp}&season=${se}&n=3&${q}`, { headers: { 'x-rb-token': t } });
+      if(r.status === 403){ $('#raw').textContent = 'Sign in to the board as admin in this browser first.'; return; }
+      const j = await r.json();
+      const made = (j.sample || []).map(x => (x.createdAt || '').slice(5, 16)).join(', ');
+      out.push(`${name.padEnd(18)} status ${j.status}  rows ${j.rows}  first ends ${(j.firstEndsAt || '-').slice(5, 16)}  created ${made || '-'}`);
+    }catch(e){ out.push(`${name.padEnd(18)} failed: ${e.message}`); }
+    show();
+    await new Promise(res => setTimeout(res, 1200));
+  }
+  out.push('', 'Done. Rows above 10 means that page size works. A created list running newest-first means that sort works.');
+  show();
 });
 
 $('#reset').addEventListener('click', async () => {

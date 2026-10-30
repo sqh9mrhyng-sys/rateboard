@@ -515,7 +515,7 @@ const MARKET_WINDOWS = 7;           // 12h x 7 = past the 3 days a listing can r
 const MARKET_PAGES_PER_LANE = 40;
 const MARKET_PAUSE_MS = 150;
 const MARKET_COOLDOWN_MS = 10 * 60000;
-const MARKET_TICK_MS = 45000;       // longest a slice runs in one collector call
+const MARKET_TICK_MS = 55000;       // longest a slice runs in one collector call
 
 // What to pull. NBA 2026-27 only for now, as the test of the separate
 // account and of the windowed walk.
@@ -646,16 +646,24 @@ async function marketSliceHeld(env, auth, deadline) {
        buyNow=excluded.buyNow, curBid=excluded.curBid, bids=excluded.bids,
        endsAt=excluded.endsAt, seenAt=excluded.seenAt, player=COALESCE(excluded.player, market_v2.player)`);
   st.width = Math.max(1, Math.min(MARKET_LANES, Number(st.width || MARKET_LANES)));
-  const open = marketJobs().filter(j => !(st.lanes[j] && st.lanes[j].done)).slice(0, st.width);
-  if (!open.length) {
-    st.done = true; st.finishedAt = new Date().toISOString();
-    if (st.startedAt) st.minutes = Math.round((Date.now() - Date.parse(st.startedAt)) / 6000) / 10;
-  }
-  const results = await Promise.all(open.map(j => {
+  /* One window after another for as long as the call lasts. Before, a call
+     did one window and stopped, so a window that ran out early left the rest
+     of the call idle - most of the time on a sport's small later windows. */
+  const results = [], open = [];
+  while (Date.now() < deadline.at) {
+    const j = marketJobs().find(x => !(st.lanes[x] && st.lanes[x].done));
+    if (!j) {
+      st.done = true; st.finishedAt = new Date().toISOString();
+      if (st.startedAt) st.minutes = Math.round((Date.now() - Date.parse(st.startedAt)) / 6000) / 10;
+      break;
+    }
+    open.push(j);
     const lane = st.lanes[j] || (st.lanes[j] = { start: st.startedAt });
-    return marketLane(env, auth, j, lane, ins, deadline)
-      .catch(e => { lane.err = 'crash: ' + String((e && e.message) || e).slice(0, 160); return 0; });
-  }));
+    results.push(await marketLane(env, auth, j, lane, ins, deadline)
+      .catch(e => { lane.err = 'crash: ' + String((e && e.message) || e).slice(0, 160); return 0; }));
+    if (lane.busy || (lane.err && !lane.done)) break;   // Real is busy or something failed: stop here
+    if (!lane.done) break;                              // hit this call's page cap
+  }
   if (open.some(j => st.lanes[j] && st.lanes[j].busy)) {
     st.coolUntil = Date.now() + MARKET_COOLDOWN_MS;
     st.cooldowns = (st.cooldowns || 0) + 1;
