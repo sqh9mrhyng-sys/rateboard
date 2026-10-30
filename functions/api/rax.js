@@ -6096,6 +6096,9 @@ const WRITE_FLAGS = ['reset', 'rebuild', 'clear', 'fresh', 'again', 'recrawl', '
 const COLLECTOR = [['queue', 'next'], ['games', '1'], ['gamelog', '1'], ['gamelog', 'rax'],
                    ['gamelog', 'zerofill'], ['conf', '1'], ['owners', '1'], ['ownertop', '1']];
 
+const RESP_DDL = `CREATE TABLE IF NOT EXISTS resp_cache (
+  k TEXT PRIMARY KEY, body TEXT NOT NULL, ts INTEGER NOT NULL, ctype TEXT)`;
+
 function readTtl(url) {
   if (WRITE_FLAGS.some(f => url.searchParams.get(f))) return 0;
   for (const [k, vals] of Object.entries(READS)) {
@@ -6133,18 +6136,65 @@ export async function onRequestGet(ctx) {
         }
       } catch (e) {}
     }
+    // Second tier, shared by every location: the last answer kept in D1.
+    // Without it each Cloudflare location rebuilds a pack data board on its
+    // own first visit, and a crowd arriving at once means dozens of the same
+    // 3-10 second query at the same moment. With it, a question is built at
+    // most once per TTL worldwide; while one request rebuilds a stale copy,
+    // everyone else is handed the previous one instead of waiting.
+    const shared = !csv && ttl >= 900 && env.RATEBOARD_DB;
+    const k = keyUrl.search;
+    let row = null;
+    if (shared) {
+      try {
+        await env.RATEBOARD_DB.prepare(RESP_DDL).run();
+        row = await env.RATEBOARD_DB.prepare('SELECT body, ts, ctype FROM resp_cache WHERE k=?').bind(k).first();
+      } catch (e) { row = null; }
+      if (row) {
+        const age = (Date.now() - Number(row.ts)) / 1000;
+        let serveOld = age < ttl;
+        if (!serveOld) {
+          // Claim the rebuild. Whoever moves the timestamp first does it.
+          try {
+            const c = await env.RATEBOARD_DB.prepare('UPDATE resp_cache SET ts=? WHERE k=? AND ts=?')
+              .bind(Date.now(), k, Number(row.ts)).run();
+            serveOld = !(c.meta && c.meta.changes);
+          } catch (e) { serveOld = true; }
+        }
+        if (serveOld) {
+          const left = Math.max(60, Math.round(ttl - Math.max(0, age)));
+          const resp = new Response(row.body, { headers: {
+            'content-type': row.ctype || 'application/json', 'x-cache': age < ttl ? 'SHARED' : 'STALE' } });
+          try {
+            await caches.default.put(keyReq, new Response(row.body, { headers: {
+              'content-type': row.ctype || 'application/json', 'cache-control': `max-age=${age < ttl ? left : 60}` } }));
+          } catch (e) {}
+          return resp;
+        }
+      }
+    }
     if (!(await allow(origin, 'rax-miss:' + clientIp(request), 60, 60))) {
       return new Response(JSON.stringify({ error: 'Too many requests at once - try again in a minute.' }),
         { status: 429, headers: { 'content-type': 'application/json', 'retry-after': '60' } });
     }
     const res = await handleGet(ctx);
-    if (!csv && res.status === 200 && (res.headers.get('content-type') || '').includes('json')) {
+    const ctype = res.headers.get('content-type') || '';
+    if (!csv && res.status === 200 && ctype.includes('json')) {
+      const body = await res.text();
       try {
-        const body = await res.clone().arrayBuffer();
         await caches.default.put(keyReq, new Response(body, {
-          headers: { 'content-type': res.headers.get('content-type'), 'cache-control': `max-age=${ttl}` }
+          headers: { 'content-type': ctype, 'cache-control': `max-age=${ttl}` }
         }));
       } catch (e) {}
+      if (shared && body.length < 1800000) {
+        try {
+          await env.RATEBOARD_DB.prepare(
+            `INSERT INTO resp_cache (k, body, ts, ctype) VALUES (?, ?, ?, ?)
+             ON CONFLICT(k) DO UPDATE SET body=excluded.body, ts=excluded.ts, ctype=excluded.ctype`)
+            .bind(k, body, Date.now(), ctype).run();
+        } catch (e) {}
+      }
+      return new Response(body, { status: 200, headers: { 'content-type': ctype, 'x-cache': 'MISS' } });
     }
     return res;
   }
