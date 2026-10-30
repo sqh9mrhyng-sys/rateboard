@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Marketplace test</title>
+<style>
+  :root{--bg:#141925;--panel:#1d2433;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,sans-serif;padding:16px}
+  .wrap{max-width:1000px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 4px}
+  p.note{color:var(--mute);margin:0 0 14px;font-size:13px}
+  .bar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+  select,input,button{font:inherit;padding:9px 11px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+  button{background:var(--accent);color:#1a1205;border:0;font-weight:700;cursor:pointer}
+  button[disabled]{opacity:.5}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow:auto;font-size:12.5px;max-height:70vh;white-space:pre-wrap;word-break:break-word}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Marketplace test</h1>
+  <p class="note">Pulls one page of Real's card marketplace through the board, raw, so every field a listing carries is visible. Admin only: sign in to the board as yourself in this browser first. <a href="/">Back to the board</a></p>
+  <div class="bar">
+    <select id="sport" aria-label="Sport">
+      <option value="nfl">NFL</option><option value="ncaaf">CFB</option><option value="mlb">MLB</option>
+      <option value="nba">NBA</option><option value="ncaam">CBB</option><option value="nhl">NHL</option>
+      <option value="soccer">FC</option><option value="wnba">WNBA</option><option value="ufc">UFC</option>
+      <option value="golf">Golf</option><option value="none">(no sport)</option>
+    </select>
+    <input id="season" value="2026" size="6" aria-label="Season">
+    <select id="rarity" aria-label="Rarity">
+      <option value="all">All rarities</option><option>common</option><option>uncommon</option><option>rare</option>
+      <option>epic</option><option>legendary</option><option>mystic</option><option>iconic</option>
+    </select>
+    <button id="go">Pull one page</button>
+    <button id="next" disabled>Next page</button>
+    <button id="copy" disabled>Copy result</button>
+  </div>
+  <pre id="out">Nothing pulled yet.</pre>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+let before = '';
+function token(){ try{ return localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){ return ''; } }
+async function pull(next){
+  if(!next) before = '';
+  const p = new URLSearchParams({ market:'probe', sport:$('#sport').value, season:$('#season').value,
+                                  rarity:$('#rarity').value, n:'3' });
+  if($('#sport').value === 'none') p.set('season', 'none');
+  if(before) p.set('before', before);
+  $('#out').textContent = 'Pulling…';
+  try{
+    const r = await fetch('/api/rax?' + p, { headers: { 'x-rb-token': token() } });
+    if(r.status === 403){ $('#out').textContent = 'Not signed in as admin in this browser. Sign in to the board first, then come back.'; return; }
+    const d = await r.json();
+    before = d.lastEndsAt || '';
+    $('#next').disabled = !before;
+    $('#copy').disabled = false;
+    $('#out').textContent = JSON.stringify(d, null, 2);
+  }catch(e){ $('#out').textContent = 'Failed: ' + e.message; }
+}
+$('#go').addEventListener('click', () => pull(false));
+$('#next').addEventListener('click', () => pull(true));
+$('#copy').addEventListener('click', async () => {
+  try{ await navigator.clipboard.writeText($('#out').textContent); $('#copy').textContent = 'Copied'; }
+  catch(e){ $('#copy').textContent = 'Select the text to copy'; }
+  setTimeout(() => { $('#copy').textContent = 'Copy result'; }, 1500);
+});
+</script>
+</body>
+</html>

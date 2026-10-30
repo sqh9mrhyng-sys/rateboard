@@ -4644,6 +4644,51 @@ async function handleGet({ request, env }) {
   // only way to pick those up is to forget what was walked. The rows already
   // in the database are kept - the game-log insert updates in place - so this
   // tops a season up rather than rebuilding it.
+  /* ---- marketplace probe -------------------------------------------------
+     One page of Real's card marketplace, handed back raw so we can see every
+     field a listing carries before deciding what to keep. Admin only, like
+     everything else that reaches Real on the board's key. */
+  if (url.searchParams.get('market') === 'probe') {
+    const p = new URLSearchParams();
+    p.set('beforeEndsAt', url.searchParams.get('before') || new Date().toISOString());
+    p.set('cohort', url.searchParams.get('cohort') || 'all');
+    p.set('listingType', url.searchParams.get('listingType') || 'card');
+    p.set('offset', url.searchParams.get('offset') || '0');
+    p.set('prestige', url.searchParams.get('prestige') || 'all');
+    p.set('rarity', url.searchParams.get('rarity') || 'all');
+    if (url.searchParams.get('season') !== 'none') p.set('season', season);
+    if (url.searchParams.get('sport') !== 'none') p.set('sport', sport);
+    for (const [k, v] of url.searchParams.entries()) {
+      if (k.startsWith('x_')) p.set(k.slice(2), v);      // any extra Real parameter, for testing
+    }
+    const target = `https://web.realapp.com/cardmarketplacelistings?${p.toString()}`;
+    const t0 = Date.now();
+    let res, text;
+    try {
+      res = await fetch(target, { headers: rsHeaders(auth) });
+      text = await res.text();
+    } catch (e) {
+      return json({ error: 'could not reach Real', detail: String((e && e.message) || e) }, 502);
+    }
+    let data = null;
+    try { data = JSON.parse(text); } catch (e) {}
+    const rows = data ? rowsOf(data) : [];
+    const top = data && typeof data === 'object' && !Array.isArray(data)
+      ? Object.fromEntries(Object.entries(data).map(([k, v]) =>
+          [k, Array.isArray(v) ? `array(${v.length})` : (v && typeof v === 'object') ? 'object' : v]))
+      : null;
+    const keysOf = o => o && typeof o === 'object' ? Object.keys(o) : [];
+    return json({
+      status: res.status, ms: Date.now() - t0, bytes: text.length,
+      topLevel: top, rows: rows.length,
+      rowKeys: keysOf(rows[0]),
+      cardKeys: keysOf(rows[0] && rows[0].card),
+      firstEndsAt: rows[0] && rows[0].endsAt, lastEndsAt: rows.length ? rows[rows.length - 1].endsAt : null,
+      sample: rows.slice(0, Math.min(3, Math.max(1, parseInt(url.searchParams.get('n') || '2', 10) || 2))),
+      raw: rows.length ? undefined : text.slice(0, 2000)
+    });
+  }
+
   if (url.searchParams.get('requeue') === '1') {
     if (!SPORTS.has(sport) || !/^\d{4}$/.test(season)) {
       return json({ error: 'requeue needs a known sport and a four digit season' }, 400);
