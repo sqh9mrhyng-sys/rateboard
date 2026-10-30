@@ -755,7 +755,8 @@ const packDataList = () => (market.packdata || []).map(x => String(x).toLowerCas
 const packGrantNow = () => {
   const g = market.packgrant;
   if(!g || !me || Date.now() >= Number(g.until)) return false;
-  const u = market.users && market.users[String(me).toLowerCase()];
+  const dk = (typeof loadDevice === 'function' && (loadDevice() || {}).key) || String(me).toLowerCase();
+  const u = market.users && market.users[String(dk).toLowerCase()];
   const made = u && Number(u.created);
   return !!made && made <= Number(g.before);
 };
