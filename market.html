@@ -6,7 +6,7 @@
 <title>Marketplace</title>
 <style>
   :root{--bg:#141925;--panel:#1d2433;--panel2:#232b3d;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;
-        --r1:#4f9ee8;--r2:#5fbf7a;--r3:#f0913a;--r4:#e5484d;--r5:#a77bf0;--r6:#e0559c;--r7:#f5d547}
+        --r1:#4f9ee8;--r2:#5fbf7a;--r3:#f0913a;--r4:#e5484d;--r5:#a77bf0;--r6:#f2c14e;--r7:#e0559c}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
   .wrap{max-width:1100px;margin:0 auto;padding:16px}
@@ -46,6 +46,21 @@
   .more{margin:12px auto;display:block}
   .more[hidden]{display:none}
   details{margin-top:22px}
+  .star{background:none;border:0;padding:0 6px 0 0;font-size:17px;line-height:1;color:var(--mute);cursor:pointer;vertical-align:-1px}
+  .star.on{color:var(--r6)}
+  .sub{display:block;color:var(--mute);font-size:11.5px;margin-left:23px}
+  .goal{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:2px 0 10px}
+  .goal label{font-weight:700;font-size:13.5px}
+  .goal input{width:110px;padding:7px 9px}
+  .plan{background:var(--panel2);border:1px solid var(--accent);border-radius:10px;padding:10px 12px;margin-bottom:12px}
+  .plan table{margin-top:8px}
+  .lock{max-width:460px;margin:12vh auto;text-align:center;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:26px 20px}
+  .lock h1{margin-bottom:8px}
+  .acc{margin-top:22px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .acc h2{font-size:15px;margin:0 0 8px}
+  .acc .u{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line)}
+  .acc .u:last-child{border-bottom:0}
+  .acc .u button{padding:6px 10px;font-size:13px}
   td a.pl{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)}
   td a.pl:hover{color:var(--accent);border-color:var(--accent)}
   .queue{margin-top:22px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
@@ -59,11 +74,20 @@
     .hide-sm{display:none}
     th,td{padding:9px 7px}
     .tile .v{font-size:19px}
+    #main > table th{white-space:normal;font-size:11px;vertical-align:bottom}
+    #main > table td{font-size:14px}
+    #main > table th,#main > table td{padding:9px 5px}
+    #main > table td:first-child{white-space:normal}
   }
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="lock" id="lock" hidden>
+  <h1>Market data is private</h1>
+  <p class="note" id="lockmsg">Checking your account…</p>
+  <p><a href="/">Go to the board</a></p>
+</div>
+<div class="wrap" id="main" hidden>
   <header>
     <h1>Marketplace</h1>
     <select id="ss" aria-label="Sport and season"><option>Loading…</option></select>
@@ -87,6 +111,7 @@
     <select id="sort" aria-label="Sort">
       <option value="n">Most listed</option>
       <option value="ppr">Lowest rax per rating</option>
+      <option value="rating">Most rating listed</option>
       <option value="player">Name</option>
     </select>
   </div>
@@ -95,9 +120,10 @@
     <thead><tr>
       <th data-s="player">Player</th>
       <th data-s="n">Listings</th>
+      <th data-s="rating">Total rating</th>
       <th data-s="ppr">Avg rax / rating</th>
     </tr></thead>
-    <tbody id="rows"><tr><td colspan="3" class="note">Loading…</td></tr></tbody>
+    <tbody id="rows"><tr><td colspan="4" class="note">Loading…</td></tr></tbody>
   </table>
   <button class="more" id="more" hidden>Show more</button>
 
@@ -113,7 +139,15 @@
     <div style="overflow-x:auto"><table><thead><tr><th>Season</th><th>Listings</th><th>Last pulled</th><th class="hide-sm">Took</th></tr></thead><tbody id="qrows"></tbody></table></div>
   </section>
 
-  <details>
+  <section class="acc" id="acc" hidden>
+    <h2>Who has market data</h2>
+    <div class="bar" style="margin:0 0 6px"><input id="usearch" placeholder="Search a member by name" autocomplete="off"></div>
+    <div id="ufound"></div>
+    <p class="note" style="margin:12px 0 4px">Has access now</p>
+    <div id="ugranted"><span class="note">Loading…</span></div>
+  </section>
+
+  <details id="admintools" hidden>
     <summary>Raw check of one page from Real (admin)</summary>
     <p class="note">Asks Real for one page live, on the marketplace account, and shows it untouched. Needs you signed in to the board as admin in this browser.</p>
     <div class="bar"><button id="probe">Pull one page</button> <button id="reset">Start a fresh pull</button> <button id="sizes">Test page sizes &amp; sorting</button></div>
@@ -121,6 +155,18 @@
   </details>
 </div>
 <script>
+// Every call to the API carries the board's sign-in, which is what decides
+// whether market data is shown.
+(() => {
+  const real = window.fetch.bind(window);
+  window.fetch = (u, o = {}) => {
+    let t = ''; try{ t = localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){}
+    if(t && typeof u === 'string' && u.startsWith('/api/')){
+      o = Object.assign({}, o, { headers: Object.assign({}, o.headers || {}, { 'x-rb-token': t }) });
+    }
+    return real(u, o);
+  };
+})();
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt = n => n == null ? '–' : Math.round(n).toLocaleString();
@@ -234,25 +280,39 @@ const ago = iso => { if(!iso) return ''; const m = Math.round((Date.now() - Date
 const endsIn = iso => { const m = Math.round((Date.parse(iso) - Date.now()) / 60000);
   if(m < 60) return `${Math.max(0, m)}m`; const h = Math.floor(m / 60); return h < 48 ? `${h}h ${m % 60}m` : `${Math.round(h / 24)}d`; };
 
-let data = null, status = null, pick = '', rarF = '', sortK = 'n', shown = 60, open = null;
+let data = null, status = null, pick = 'favs', rarF = '', sortK = 'n', shown = 60, open = null;
+let favSet = new Set(), me = null;
+const keyOf = r => `${r.sport}:${r.season}:${r.playerId}`;
+const COLS = 4;
+const msgRow = t => `<tr><td colspan="${COLS}" class="note">${t}</td></tr>`;
+
+async function loadFavs(){
+  try{ const d = await (await fetch('/api/rax?market=favs')).json(); favSet = new Set(d.favs || []); return d; }
+  catch(e){ return null; }
+}
 
 async function load(){
-  const [sp, se] = pick ? pick.split(':') : ['nba', '2027'];
-  $('#rows').innerHTML = '<tr><td colspan="3" class="note">Loading…</td></tr>';
+  $('#rows').innerHTML = msgRow('Loading…');
   try{
-    data = await (await fetch(`/api/rax?market=view&sport=${sp}&season=${se}`)).json();
-  }catch(e){ $('#rows').innerHTML = '<tr><td colspan="3" class="note">Could not load the market.</td></tr>'; return; }
-  if(data.error){ $('#rows').innerHTML = `<tr><td colspan="3" class="note">${esc(data.error)}</td></tr>`; return; }
-  const opts = (data.seasons || []).map(x => `${x.sport}:${x.season}`);
-  ((status && status.seasons) || []).forEach(x => { if(x.listings && !opts.includes(x.job)) opts.push(x.job); });
-  if(!pick) pick = `${data.sport}:${data.season}`;
-  if(!opts.includes(pick)) opts.unshift(pick);
-  $('#ss').innerHTML = opts.map(k => { const [a, b] = k.split(':');
-    const n = (data.seasons || []).find(x => `${x.sport}:${x.season}` === k);
-    return `<option value="${k}"${k === pick ? ' selected' : ''}>${SPORT[a] || a} ${seasonLbl(a, b)}${n ? ` · ${n.n.toLocaleString()}` : ''}</option>`; }).join('');
-  const now = status && status.pulling === pick;
-  $('#pulled').textContent = (data.pulledAt ? `Snapshot from ${ago(data.pulledAt)}` : 'Not pulled yet')
-    + (now ? ' · being pulled again now' : '');
+    if(pick === 'favs') data = await loadFavs();
+    else { const [sp, se] = pick.split(':'); data = await (await fetch(`/api/rax?market=view&sport=${sp}&season=${se}`)).json(); }
+  }catch(e){ data = null; }
+  if(!data){ $('#rows').innerHTML = msgRow('Could not load the market.'); return; }
+  if(data.error){ $('#rows').innerHTML = msgRow(esc(data.error)); return; }
+  const opts = [];
+  ((status && status.seasons) || []).forEach(x => { if(x.listings) opts.push(x.job); });
+  (data.seasons || []).forEach(x => { const k = `${x.sport}:${x.season}`; if(!opts.includes(k)) opts.push(k); });
+  if(pick !== 'favs' && !opts.includes(pick)) opts.unshift(pick);
+  $('#ss').innerHTML = `<option value="favs"${pick === 'favs' ? ' selected' : ''}>★ Favorites · ${favSet.size}</option>`
+    + opts.map(k => { const [a, b] = k.split(':');
+      const n = ((status && status.seasons) || []).find(x => x.job === k);
+      return `<option value="${k}"${k === pick ? ' selected' : ''}>${SPORT[a] || a} ${seasonLbl(a, b)}${n && n.listings ? ` · ${n.listings.toLocaleString()}` : ''}</option>`; }).join('');
+  if(pick === 'favs') $('#pulled').textContent = 'Your starred players, every sport';
+  else {
+    const now = status && status.pulling === pick;
+    $('#pulled').textContent = (data.pulledAt ? `Snapshot from ${ago(data.pulledAt)}` : 'Not pulled yet')
+      + (now ? ' · being pulled again now' : '');
+  }
   $('#t-n').textContent = fmt(data.listings);
   $('#t-p').textContent = fmt(data.players);
   const mins = Object.values(data.rarity || {}).map(x => x.minBuy).filter(x => x != null);
@@ -272,8 +332,8 @@ function view(){
   const q = $('#q').value.trim().toLowerCase();
   let rows = (data.rows || []).map(r => {
     if(!rarF) return r;
-    const x = r.rar[rarF]; if(!x) return null;
-    return Object.assign({}, r, { n: x.n, minBuy: x.minBuy, ppr: x.ppr });
+    const x = r.rar[rarF]; if(!x) return pick === 'favs' ? Object.assign({}, r, { n: 0, rating: 0, ppr: null }) : null;
+    return Object.assign({}, r, { n: x.n, minBuy: x.minBuy, ppr: x.ppr, rating: x.rating });
   }).filter(Boolean);
   if(q) rows = rows.filter(r => String(r.player || '').toLowerCase().includes(q));
   const dir = sortK === 'ppr' || sortK === 'player' ? 1 : -1;
@@ -288,22 +348,48 @@ function view(){
 function draw(){
   const rows = view();
   document.querySelectorAll('th[data-s]').forEach(th => th.classList.toggle('on', th.dataset.s === sortK));
-  if(!rows.length){ $('#rows').innerHTML = '<tr><td colspan="3" class="note">No listings match.</td></tr>'; $('#more').hidden = true; return; }
+  if(!rows.length){
+    $('#rows').innerHTML = msgRow(pick === 'favs' && !favSet.size
+      ? 'No favourites yet. Pick a season above and tap the ☆ next to a player to add them here.' : 'No listings match.');
+    $('#more').hidden = true; return;
+  }
   $('#rows').innerHTML = rows.slice(0, shown).map(r => {
-    const isOpen = open === r.playerId;
-    const [sp, se] = pick.split(':'), u = realPlayerUrl(sp, r.playerId, se), nm = esc(r.player || 'Player ' + r.playerId);
-    return `<tr class="p" data-p="${r.playerId}"><td>${u ? `<a class="pl" href="${u}" target="_blank" rel="noopener">${nm}</a>` : nm}</td>
-      <td>${fmt(r.n)}</td><td>${ppr3(r.ppr)}</td></tr>`
-      + (isOpen ? `<tr class="detail"><td colspan="3"><div class="inner" id="det">Loading listings…</div></td></tr>` : '');
+    const k = keyOf(r), isOpen = open === k, fav = favSet.has(k);
+    const u = realPlayerUrl(r.sport, r.playerId, r.season), nm = esc(r.player || 'Player ' + r.playerId);
+    const sub = pick === 'favs' ? `<span class="sub">${SPORT[r.sport] || r.sport} ${seasonLbl(r.sport, r.season)}</span>` : '';
+    return `<tr class="p" data-k="${k}"><td><button class="star${fav ? ' on' : ''}" data-fav="${k}" aria-label="${fav ? 'Remove from' : 'Add to'} favourites" title="${fav ? 'Remove from' : 'Add to'} favourites">${fav ? '★' : '☆'}</button>${u ? `<a class="pl" href="${u}" target="_blank" rel="noopener">${nm}</a>` : nm}${sub}</td>
+      <td>${fmt(r.n)}</td><td>${r.rating ? (Math.round(r.rating * 10) / 10).toLocaleString() : '–'}</td><td>${ppr3(r.ppr)}</td></tr>`
+      + (isOpen ? `<tr class="detail"><td colspan="${COLS}"><div class="inner" id="det">Loading listings…</div></td></tr>` : '');
   }).join('');
   $('#more').hidden = rows.length <= shown;
   if(open != null) loadDetail(open);
 }
 
+async function toggleFav(k, btn){
+  const on = !favSet.has(k);
+  const [sp, se, pid] = k.split(':');
+  const r = (data.rows || []).find(x => keyOf(x) === k);
+  on ? favSet.add(k) : favSet.delete(k);
+  if(btn){ btn.classList.toggle('on', on); btn.textContent = on ? '★' : '☆'; }
+  try{
+    const res = await fetch(`/api/rax?market=fav&sport=${sp}&season=${se}&playerId=${pid}&on=${on ? 1 : 0}&player=${encodeURIComponent((r && r.player) || '')}`);
+    const j = await res.json();
+    if(j.error) throw new Error(j.error);
+  }catch(e){
+    on ? favSet.delete(k) : favSet.add(k);
+    if(btn){ btn.classList.toggle('on', !on); btn.textContent = !on ? '★' : '☆'; }
+    alertNote('Could not save that star: ' + e.message);
+    return;
+  }
+  const o = $('#ss option[value="favs"]'); if(o) o.textContent = `★ Favorites · ${favSet.size}`;
+  if(pick === 'favs' && !on){ if(open === k) open = null; load(); }
+}
+function alertNote(t){ const el = $('#pulled'); if(el) el.textContent = t; }
+
 // An auction's own Real link: the same routing hash as a player's, record
 // type 30, with the listing's id. Read out of a real auction link.
 const auctionUrl = id => { const n = Number(id); return n > 0 ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [30, 0, 0, n]) : null; };
-let detRows = [], detSort = 'ppr', detDir = 1;
+let detRows = [], detSort = 'ppr', detDir = 1, detKey = null, goal = '';
 // [key, heading, first sort direction (0 = not sortable)], in display order.
 const DET_COLS = [['rarity','Rarity',-1],['auction','Auction',0],['buyNow','Buy now',1],['ppr','Rax / rating',1],
                   ['endsAt','Time left',1],['value','Boost',-1],['curBid','Bid',1],['bids','Bids',-1]];
@@ -315,14 +401,57 @@ const DET_CELL = {
   curBid: l => fmt(l.curBid), bids: l => fmt(l.bids)
 };
 
-async function loadDetail(pid){
-  const [sp, se] = pick.split(':');
+async function loadDetail(k){
+  const [sp, se, pid] = k.split(':');
+  if(detKey !== k) goal = '';
+  detKey = k;
   let d;
   try{ d = await (await fetch(`/api/rax?market=listings&sport=${sp}&season=${se}&playerId=${pid}`)).json(); }
   catch(e){ const el = $('#det'); if(el) el.textContent = 'Could not load listings.'; return; }
   detRows = (d.listings || []).filter(l => !rarF || String(l.rarity) === rarF)
     .map(l => Object.assign({}, l, { ppr: pprOf(l) }));
   drawDetail();
+}
+
+/* The cheapest set of buy-nows that adds up to at least `want` rating. An
+   exact search (0/1 knapsack on rating in tenths, capped at the target), so
+   it finds the best mix rather than just taking the cheapest per point. */
+function cheapestTo(listings, want){
+  const items = listings.filter(l => l.buyNow != null && Number(l.value) > 0);
+  const total = items.reduce((a, l) => a + Number(l.value), 0);
+  if(!(want > 0)) return null;
+  if(total + 1e-9 < want) return { short: true, total };
+  let scale = 10;
+  while(scale > 1 && Math.round(want * scale) * items.length > 6e6) scale = scale / 10;
+  const T = Math.max(1, Math.round(want * scale)), n = items.length;
+  const dp = new Float64Array(T + 1).fill(Infinity); dp[0] = 0;
+  const from = new Int32Array(n * (T + 1));
+  for(let i = 0; i < n; i++){
+    const w = Math.max(1, Math.round(Number(items[i].value) * scale)), c = Number(items[i].buyNow), base = i * (T + 1);
+    for(let r = T; r >= 0; r--){
+      if(dp[r] === Infinity) continue;
+      const nr = Math.min(T, r + w), v = dp[r] + c;
+      if(v < dp[nr]){ dp[nr] = v; from[base + nr] = r + 1; }
+    }
+  }
+  if(dp[T] === Infinity) return { short: true, total };
+  const pick = []; let s = T;
+  for(let i = n - 1; i >= 0 && s > 0; i--){ const f = from[i * (T + 1) + s]; if(f){ pick.push(items[i]); s = f - 1; } }
+  return { pick, cost: pick.reduce((a, l) => a + Number(l.buyNow), 0), rating: pick.reduce((a, l) => a + Number(l.value), 0) };
+}
+
+function planHtml(){
+  const want = Number(goal);
+  if(!goal) return '';
+  const r = cheapestTo(detRows, want);
+  if(!r) return '<p class="note">Enter a rating above zero.</p>';
+  if(r.short) return `<p class="note">Only ${(Math.round(r.total * 10) / 10).toLocaleString()} rating is listed with a buy-now${rarF ? ' in this rarity' : ''}, short of ${want}.</p>`;
+  const rows = r.pick.slice().sort((a, b) => a.ppr - b.ppr);
+  return `<div class="plan"><b>${fmt(r.cost)} rax</b> for ${(Math.round(r.rating * 10) / 10)} rating · ${rows.length} card${rows.length === 1 ? '' : 's'}
+      <span class="note">(${ppr3(r.cost / r.rating)} a point)</span>
+    <table><thead><tr><th style="cursor:default">Rarity</th><th style="cursor:default">Auction</th><th style="cursor:default">Buy now</th><th style="cursor:default">Boost</th><th style="cursor:default">Rax / rating</th><th style="cursor:default">Time left</th></tr></thead><tbody>`
+    + rows.map(l => `<tr><td>${DET_CELL.rarity(l)}</td><td>${DET_CELL.auction(l)}</td><td>${DET_CELL.buyNow(l)}</td><td>${DET_CELL.value(l)}</td><td>${DET_CELL.ppr(l)}</td><td>${DET_CELL.endsAt(l)}</td></tr>`).join('')
+    + '</tbody></table></div>';
 }
 
 function drawDetail(){
@@ -335,7 +464,10 @@ function drawDetail(){
     if(y == null) return -1;
     return (x < y ? -1 : x > y ? 1 : 0) * detDir;
   });
-  el.innerHTML = '<table><thead><tr>'
+  el.innerHTML = `<div class="goal"><label for="goal">Rating you want</label>
+      <input id="goal" type="number" inputmode="decimal" min="0" step="0.1" placeholder="e.g. 25" value="${esc(goal)}">
+      <span class="note">Cheapest buy-nows that add up to it</span></div><div id="plan">${planHtml()}</div>`
+    + '<table><thead><tr>'
     + DET_COLS.map(([k, label, dir]) => dir ? `<th data-d="${k}" class="${k === detSort ? 'on' : ''}">${label}${k === detSort ? (detDir > 0 ? ' ↑' : ' ↓') : ''}</th>`
                                             : `<th style="cursor:default">${label}</th>`).join('')
     + '</tr></thead><tbody>'
@@ -343,6 +475,13 @@ function drawDetail(){
         + DET_COLS.map(([k]) => `<td>${DET_CELL[k](l)}</td>`).join('') + '</tr>').join('')
     + '</tbody></table>';
 }
+
+// Typing a rating redraws just the plan, so the box keeps focus.
+$('#rows').addEventListener('input', e => {
+  if(e.target.id !== 'goal') return;
+  goal = e.target.value.trim();
+  const p = $('#plan'); if(p) p.innerHTML = planHtml();
+});
 
 // Header clicks inside an opened player sort that player's listings and do
 // not close the row.
@@ -368,10 +507,12 @@ $('#rar').addEventListener('click', e => {
   rarF = b.dataset.r; shown = 60; drawRarity(); draw();
 });
 $('#rows').addEventListener('click', e => {
-  if(e.target.closest('a')) return;              // a player's name opens Real
+  const st = e.target.closest('[data-fav]');
+  if(st){ e.stopPropagation(); toggleFav(st.dataset.fav, st); return; }
+  if(e.target.closest('a') || e.target.closest('.detail')) return;   // names open Real; the opened panel stays open
   const tr = e.target.closest('tr.p'); if(!tr) return;
-  const pid = Number(tr.dataset.p);
-  open = open === pid ? null : pid; draw();
+  const k = tr.dataset.k;
+  open = open === k ? null : k; draw();
 });
 $('#more').addEventListener('click', () => { shown += 100; draw(); });
 
@@ -459,8 +600,51 @@ $('#qfront').addEventListener('click', async () => {
   }catch(e){ $('#qmsg').textContent = 'Failed: ' + e.message; }
 });
 
-loadQueue().then(load);
-setInterval(loadQueue, 60000);
+async function start(){
+  try{ me = await (await fetch('/api/rax?market=me')).json(); }catch(e){ me = null; }
+  if(!me || !me.access){
+    $('#lock').hidden = false;
+    $('#lockmsg').textContent = !me ? 'Could not check your account. Try again in a minute.'
+      : me.signedIn ? 'Your account does not have market data. Ask Dennis if you should.'
+      : 'Sign in on the board first, in this browser. If you are signed in already, sign out and back in once.';
+    return;
+  }
+  $('#main').hidden = false;
+  if(me.admin){ $('#acc').hidden = false; $('#admintools').hidden = false; loadAccess(''); }
+  else { $('#qpick').hidden = true; $('#qfront').hidden = true; }
+  await Promise.all([loadQueue(), loadFavs()]);
+  await load();
+  setInterval(loadQueue, 60000);
+}
+
+// Admin: find a member and give them market data, or take it away.
+let accTimer = null;
+async function loadAccess(q, act, key){
+  let d;
+  try{
+    const u = act ? `/api/rax?market=${act}&key=${encodeURIComponent(key)}&q=${encodeURIComponent(q)}`
+                  : `/api/rax?market=access&q=${encodeURIComponent(q)}`;
+    d = await (await fetch(u)).json();
+  }catch(e){ $('#ugranted').innerHTML = '<span class="note">Could not load.</span>'; return; }
+  if(d.error){ $('#ugranted').innerHTML = `<span class="note">${esc(d.error)}</span>`; return; }
+  const row = (u, has) => `<div class="u"><span>${esc(u.name || u.key)}${u.name && u.name.toLowerCase() !== u.key ? ` <span class="note">${esc(u.key)}</span>` : ''}</span>`
+    + (String(u.key).toLowerCase() === 'dennis' ? '<span class="note">admin</span>'
+      : has ? `<button data-act="revoke" data-key="${esc(u.key)}">Remove</button>` : `<button data-act="grant" data-key="${esc(u.key)}">Give market data</button>`) + '</div>';
+  $('#ufound').innerHTML = q ? ((d.found || []).map(u => row(u, u.access)).join('') || '<span class="note">No member by that name.</span>') : '';
+  $('#ugranted').innerHTML = (d.granted || []).map(u => row(u, true)).join('') || '<span class="note">Nobody yet besides you.</span>';
+}
+$('#usearch').addEventListener('input', e => {
+  clearTimeout(accTimer);
+  const q = e.target.value.trim();
+  accTimer = setTimeout(() => loadAccess(q), 250);
+});
+$('#acc').addEventListener('click', e => {
+  const b = e.target.closest('[data-act]'); if(!b) return;
+  b.disabled = true;
+  loadAccess($('#usearch').value.trim(), b.dataset.act, b.dataset.key);
+});
+
+start();
 </script>
 </body>
 </html>

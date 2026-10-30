@@ -1,4 +1,4 @@
-import { isAdminRequest, allow, clientIp, forbidden } from '../../lib/auth.js';
+import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS } from '../../lib/auth.js';
 
 // GET /api/rax?sport=ncaam&season=2026
 //
@@ -726,6 +726,52 @@ async function marketSliceHeld(env, auth, deadline) {
   st.at = new Date().toISOString();
   try { await env.RATEBOARD_KV.put(MARKET_KEY, JSON.stringify(st)); } catch (e) {}
   return total;
+}
+
+/* One row per player for a sport-season (or just the given players): counts,
+   prices and rating listed, overall and by rarity. Used by the season view
+   and by favourites. */
+async function marketAgg(db, sport, season, nowIso, pids) {
+  const only = pids ? ` AND playerId IN (${pids.map(Number).filter(Number.isFinite).join(',') || 0})` : '';
+  const rows = (await db.prepare(
+    `SELECT playerId, MAX(player) AS player, rarity, COUNT(*) AS n, MIN(buyNow) AS minBuy,
+            AVG(buyNow) AS avgBuy, AVG(value) AS avgValue, MAX(value) AS maxValue,
+            -- price per point of rating, leaving out anything over 1,000 a point
+            SUM(CASE WHEN value > 0 AND buyNow / value <= 1000 THEN buyNow / value END) AS pprSum,
+            COUNT(CASE WHEN value > 0 AND buyNow / value <= 1000 THEN 1 END) AS pprN,
+            SUM(bids) AS bids, MIN(endsAt) AS nextEnds, SUM(value) AS valueSum
+       FROM market_v2 WHERE sport=? AND season=? AND endsAt > ?${only}
+      GROUP BY playerId, rarity`).bind(sport, season, nowIso).all()).results || [];
+  const by = new Map();
+  for (const r of rows) {
+    const p = by.get(r.playerId) || { sport, season, playerId: r.playerId, player: r.player, n: 0, bids: 0, rating: 0,
+                                      minBuy: null, maxValue: null, rar: {}, pprSum: 0, pprN: 0 };
+    p.pprSum += r.pprSum || 0; p.pprN += r.pprN || 0;
+    if (!p.player && r.player) p.player = r.player;
+    p.n += r.n; p.bids += r.bids || 0; p.rating += r.valueSum || 0;
+    if (r.minBuy != null && (p.minBuy == null || r.minBuy < p.minBuy)) p.minBuy = r.minBuy;
+    if (r.maxValue != null && (p.maxValue == null || r.maxValue > p.maxValue)) p.maxValue = r.maxValue;
+    p.rar[r.rarity] = { n: r.n, minBuy: r.minBuy, avgBuy: Math.round(r.avgBuy || 0),
+                        ppr: r.pprN ? Math.round(r.pprSum / r.pprN * 1000) / 1000 : null,
+                        avgValue: Math.round((r.avgValue || 0) * 10) / 10,
+                        rating: Math.round((r.valueSum || 0) * 10) / 10 };
+    by.set(r.playerId, p);
+  }
+  // Names the cards did not carry, from the game log of any season.
+  const short = n => !n || /^[A-Z][a-z]?\.\s/.test(n);       // "N. Alexander-Walker"
+  const missing = [...by.values()].filter(p => short(p.player)).map(p => Number(p.playerId)).filter(Number.isFinite);
+  for (let i = 0; i < missing.length; i += 90) {
+    const slice = missing.slice(i, i + 90);
+    try {
+      const n = await db.prepare(
+        `SELECT playerId, MAX(player) AS player FROM gamelog WHERE sport=?
+            AND season IN (${MARKET_SEASONS.join(',')}) AND playerId IN (${slice.join(',')})
+          GROUP BY playerId`).bind(sport).all();
+      for (const r of (n.results || [])) { const p = by.get(r.playerId); if (p && short(p.player) && r.player) p.player = r.player; }
+    } catch (e) {}
+  }
+  for (const p of by.values()) p.rating = Math.round(p.rating * 10) / 10;
+  return { rows, by };
 }
 
 // Forgetting what has been walked is all a requeue is: the rows stay, and the
@@ -4930,6 +4976,28 @@ async function handleGet({ request, env }) {
     return json(out);
   }
 
+  // Who has market data, and a user search to give it to more. Admin only.
+  if (['access', 'grant', 'revoke'].includes(url.searchParams.get('market'))) {
+    const db = env.RATEBOARD_DB, mk = url.searchParams.get('market');
+    await db.prepare(MACCESS_DDL).run();
+    const key = String(url.searchParams.get('key') || '');
+    if (mk === 'grant' || mk === 'revoke') {
+      const u = await db.prepare('SELECT key FROM users WHERE key=?').bind(key).first();
+      if (!u) return json({ error: 'no such account' }, 404);
+      if (mk === 'grant') await db.prepare('INSERT INTO market_access (key, grantedAt, grantedBy) VALUES (?, ?, ?) ON CONFLICT DO NOTHING')
+        .bind(key, Date.now(), 'admin').run();
+      else await db.prepare('DELETE FROM market_access WHERE key=?').bind(key).run();
+    }
+    const granted = (await db.prepare(
+      `SELECT a.key, u.name, a.grantedAt FROM market_access a LEFT JOIN users u ON u.key = a.key ORDER BY a.grantedAt DESC`).all()).results || [];
+    const q = String(url.searchParams.get('q') || '').trim().toLowerCase();
+    const found = q ? ((await db.prepare(
+      `SELECT key, name FROM users WHERE COALESCE(banned, 0) = 0 AND (key LIKE ? OR LOWER(name) LIKE ?) ORDER BY LENGTH(key) LIMIT 20`)
+      .bind(`%${q}%`, `%${q}%`).all()).results || []) : [];
+    const has = new Set(granted.map(g => g.key));
+    return json({ granted, found: found.map(f => ({ ...f, access: has.has(f.key) || ADMINS.includes(String(f.key).toLowerCase()) })) });
+  }
+
   // Puts a sport-season at the front of the queue: it is pulled as soon as
   // the season being pulled now is done. Admin only, like every write.
   if (url.searchParams.get('market') === 'front') {
@@ -4965,42 +5033,7 @@ async function handleGet({ request, env }) {
       const seasons = (await db.prepare(
         `SELECT sport, season, COUNT(*) AS n, MAX(seenAt) AS seen FROM market_v2
           WHERE endsAt > ? GROUP BY sport, season ORDER BY n DESC`).bind(nowIso).all()).results || [];
-      const rows = (await db.prepare(
-        `SELECT playerId, MAX(player) AS player, rarity, COUNT(*) AS n, MIN(buyNow) AS minBuy,
-                AVG(buyNow) AS avgBuy, AVG(value) AS avgValue, MAX(value) AS maxValue,
-                -- price per point of rating, leaving out anything over 1,000 a point
-                SUM(CASE WHEN value > 0 AND buyNow / value <= 1000 THEN buyNow / value END) AS pprSum,
-                COUNT(CASE WHEN value > 0 AND buyNow / value <= 1000 THEN 1 END) AS pprN,
-                SUM(bids) AS bids, MIN(endsAt) AS nextEnds
-           FROM market_v2 WHERE sport=? AND season=? AND endsAt > ?
-          GROUP BY playerId, rarity`).bind(sport, Number(season), nowIso).all()).results || [];
-      const by = new Map();
-      for (const r of rows) {
-        const p = by.get(r.playerId) || { playerId: r.playerId, player: r.player, n: 0, bids: 0,
-                                          minBuy: null, maxValue: null, rar: {}, pprSum: 0, pprN: 0 };
-        p.pprSum += r.pprSum || 0; p.pprN += r.pprN || 0;
-        if (!p.player && r.player) p.player = r.player;
-        p.n += r.n; p.bids += r.bids || 0;
-        if (r.minBuy != null && (p.minBuy == null || r.minBuy < p.minBuy)) p.minBuy = r.minBuy;
-        if (r.maxValue != null && (p.maxValue == null || r.maxValue > p.maxValue)) p.maxValue = r.maxValue;
-        p.rar[r.rarity] = { n: r.n, minBuy: r.minBuy, avgBuy: Math.round(r.avgBuy || 0),
-                            ppr: r.pprN ? Math.round(r.pprSum / r.pprN * 1000) / 1000 : null,
-                            avgValue: Math.round((r.avgValue || 0) * 10) / 10 };
-        by.set(r.playerId, p);
-      }
-      // Names the cards did not carry, from the game log of any season.
-      const short = n => !n || /^[A-Z][a-z]?\.\s/.test(n);       // "N. Alexander-Walker"
-      const missing = [...by.values()].filter(p => short(p.player)).map(p => Number(p.playerId)).filter(Number.isFinite);
-      for (let i = 0; i < missing.length; i += 90) {
-        const slice = missing.slice(i, i + 90);
-        try {
-          const n = await db.prepare(
-            `SELECT playerId, MAX(player) AS player FROM gamelog WHERE sport=?
-                AND season IN (${MARKET_SEASONS.join(',')}) AND playerId IN (${slice.join(',')})
-              GROUP BY playerId`).bind(sport).all();
-          for (const r of (n.results || [])) { const p = by.get(r.playerId); if (p && short(p.player) && r.player) p.player = r.player; }
-        } catch (e) {}
-      }
+      const { rows, by } = await marketAgg(db, sport, Number(season), nowIso, null);
       const tot = rows.reduce((a, r) => a + r.n, 0);
       const rarity = {};
       for (const r of rows) {
@@ -6566,11 +6599,83 @@ function isCollector(url) {
   return COLLECTOR.some(([k, v]) => url.searchParams.get(k) === v);
 }
 
+/* ---- who may see market data -------------------------------------------
+   Market data is private: the admin, plus accounts the admin has granted it
+   to on /market. Everything market a member can do - read a season, read
+   one player's listings, star players - checks this first, before the edge
+   cache, so a cached copy is only ever handed to someone allowed it. */
+const MACCESS_DDL = `CREATE TABLE IF NOT EXISTS market_access (key TEXT PRIMARY KEY, grantedAt INTEGER, grantedBy TEXT)`;
+const MFAVS_DDL = `CREATE TABLE IF NOT EXISTS market_favs (key TEXT NOT NULL, sport TEXT NOT NULL,
+  season INTEGER NOT NULL, playerId INTEGER NOT NULL, player TEXT, at INTEGER,
+  PRIMARY KEY (key, sport, season, playerId))`;
+const MARKET_MEMBER = ['view', 'listings', 'status', 'me', 'fav', 'favs'];
+async function marketWho(env, request) {
+  const who = await sessionKey(env, request);
+  if (!who) return { who: null, admin: false, ok: false };
+  const admin = ADMINS.includes(who.toLowerCase());
+  let ok = admin;
+  if (!ok) {
+    try {
+      await env.RATEBOARD_DB.prepare(MACCESS_DDL).run();
+      ok = !!(await env.RATEBOARD_DB.prepare('SELECT 1 AS x FROM market_access WHERE key=?').bind(who).first());
+    } catch (e) {}
+  }
+  return { who, admin, ok };
+}
+async function marketMember(env, url, who) {
+  const db = env.RATEBOARD_DB, mk = url.searchParams.get('market');
+  await db.prepare(MFAVS_DDL).run();
+  if (mk === 'fav') {
+    const sp = String(url.searchParams.get('sport') || ''), se = Number(url.searchParams.get('season'));
+    const pid = Number(url.searchParams.get('playerId'));
+    if (!MARKET_LIST[sp] || !Number.isFinite(se) || !Number.isFinite(pid)) return json({ error: 'bad player' }, 400);
+    if (url.searchParams.get('on') === '0') {
+      await db.prepare('DELETE FROM market_favs WHERE key=? AND sport=? AND season=? AND playerId=?').bind(who, sp, se, pid).run();
+    } else {
+      const n = await db.prepare('SELECT COUNT(*) AS n FROM market_favs WHERE key=?').bind(who).first();
+      if (n && n.n >= 500) return json({ error: 'favourites are full (500)' }, 400);
+      await db.prepare(`INSERT INTO market_favs (key, sport, season, playerId, player, at) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT DO NOTHING`).bind(who, sp, se, pid, String(url.searchParams.get('player') || '').slice(0, 80) || null, Date.now()).run();
+    }
+    return json({ ok: true });
+  }
+  // favs: the starred players with their market rows, across every sport.
+  const favs = (await db.prepare('SELECT sport, season, playerId, player FROM market_favs WHERE key=? ORDER BY at')
+    .bind(who).all()).results || [];
+  const groups = new Map();
+  for (const f of favs) { const k = `${f.sport}:${f.season}`; (groups.get(k) || groups.set(k, []).get(k)).push(f.playerId); }
+  const nowIso = new Date().toISOString(), out = [], rarity = {};
+  for (const [k, pids] of groups) {
+    const [sp, se] = k.split(':');
+    const { rows, by } = await marketAgg(db, sp, Number(se), nowIso, pids);
+    for (const r of rows) {
+      const x = rarity[r.rarity] || (rarity[r.rarity] = { n: 0, minBuy: null });
+      x.n += r.n; if (r.minBuy != null && (x.minBuy == null || r.minBuy < x.minBuy)) x.minBuy = r.minBuy;
+    }
+    for (const pid of pids) {
+      const p = by.get(pid) || { sport: sp, season: Number(se), playerId: pid, n: 0, bids: 0, rating: 0, rar: {}, pprSum: 0, pprN: 0,
+        player: (favs.find(f => f.sport === sp && Number(f.season) === Number(se) && f.playerId === pid) || {}).player || null };
+      p.ppr = p.pprN ? Math.round(p.pprSum / p.pprN * 1000) / 1000 : null;
+      delete p.pprSum; delete p.pprN; out.push(p);
+    }
+  }
+  return json({ favs: favs.map(f => `${f.sport}:${f.season}:${f.playerId}`), rows: out, rarity,
+                listings: out.reduce((a, r) => a + r.n, 0), players: out.length });
+}
+
 export async function onRequestGet(ctx) {
   const { request, env } = ctx;
   const url = new URL(request.url);
   const origin = url.origin;
   const ttl = readTtl(url);
+
+  const mk = url.searchParams.get('market');
+  if (MARKET_MEMBER.includes(mk)) {
+    const a = await marketWho(env, request);
+    if (mk === 'me') return json({ signedIn: !!a.who, access: a.ok, admin: a.admin });
+    if (!a.ok) return json({ error: a.who ? 'Your account does not have market data.' : 'Sign in on the board first.' }, 403);
+    if (mk === 'fav' || mk === 'favs') return marketMember(env, url, a.who);
+  }
 
   if (ttl > 0) {
     const csv = url.searchParams.get('format') === 'csv';
