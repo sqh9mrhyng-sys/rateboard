@@ -562,7 +562,6 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
     // that, each page is only the odd listing posted since, and the walk
     // would trail the live market for ever.
     const shortPage = rows.length < 10;
-    const pastWindow = !lastWin && mine.length < rows.length;
     const now = Date.now();
     const mine = rows.filter(r => !r.endsAt || lastWin || r.endsAt < winEnd);
     const stmts = mine.map(r => {
@@ -589,7 +588,7 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
     // rather than asking for the same page again.
     if (!last || last === before) lane.off = (lane.off || 0) + rows.length;
     else { lane.before = last; lane.off = 0; }
-    if (shortPage || pastWindow) { lane.done = true; break; }
+    if (shortPage || (!lastWin && mine.length < rows.length)) { lane.done = true; break; }
     await sleep(MARKET_PAUSE_MS);
   }
   lane.rows = (lane.rows || 0) + stored;
