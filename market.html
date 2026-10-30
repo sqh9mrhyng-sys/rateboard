@@ -135,7 +135,7 @@
       <button id="qfront">Add to front of queue</button>
       <span class="note" id="qmsg"></span>
     </div>
-    <p class="note" style="margin:8px 0 0">Each season is a snapshot from when it was last pulled, so prices and bids may have moved since. Seasons refresh every <span id="qhrs">9</span> hours on their own; one put at the front is pulled as soon as the current season is done.</p>
+    <p class="note" style="margin:8px 0 0">Each season is a snapshot from when it was last pulled, so prices and bids may have moved since. After the first sweep of everything, each round pulls every sport's current season, then the two older seasons that have waited longest. A season put at the front is pulled as soon as the one being pulled now is done.</p>
     <div style="overflow-x:auto"><table><thead><tr><th>Season</th><th>Listings</th><th>Last pulled</th><th class="hide-sm">Took</th></tr></thead><tbody id="qrows"></tbody></table></div>
   </section>
 
@@ -573,12 +573,12 @@ const jobLbl = j => { const [a, b] = j.split(':'); return `${SPORT[a] || a} ${se
 async function loadQueue(){
   try{ status = await (await fetch('/api/rax?market=status')).json(); }catch(e){ $('#qnow').textContent = 'Could not load the queue.'; return; }
   const s = status;
-  $('#qhrs').textContent = s.refreshHours || 9;
   const bits = [];
   if(s.coolingUntil) bits.push(`Paused — Real said it was busy, back ${ago(s.coolingUntil).replace(' ago', '')} `.trim());
   if(s.pulling) bits.push(`Pulling <b>${esc(jobLbl(s.pulling))}</b> now: ${s.windowsDone} of ${s.windows} parts, ${fmt(s.pulledSoFar)} listings so far.`);
   else if(s.idle) bits.push('Nothing due right now — every season is fresher than the refresh time.');
   if((s.front || []).length) bits.push('Up next: ' + s.front.map(jobLbl).map(esc).join(', ') + '.');
+  else if((s.roundLeft || []).length) bits.push(`Round ${s.round}, still to go: ` + s.roundLeft.map(jobLbl).map(esc).join(', ') + '.');
   if(s.last && s.last.listings) bits.push(`Last finished: ${esc(jobLbl(s.last.job))}, ${fmt(s.last.listings)} listings in ${s.last.minutes} min`
     + (s.last.short != null ? ` (${fmt(s.last.short)} short pages from Real)` : '') + '.');
   $('#qnow').innerHTML = bits.join(' ') || 'Starting…';

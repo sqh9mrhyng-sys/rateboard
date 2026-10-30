@@ -513,18 +513,14 @@ const MARKET_LANES = 1;
 const MARKET_WINDOW_HOURS = 12;
 const MARKET_WINDOWS = 7;           // 12h x 7 = past the 3 days a listing can run
 const MARKET_PAGES_PER_LANE = 40;
-const MARKET_PAUSE_MS = 150;
+const MARKET_PAUSE_MS = 0;          // one request at a time, straight after the last
 const MARKET_COOLDOWN_MS = 10 * 60000;
 const MARKET_TICK_MS = 55000;       // longest a slice runs in one collector call
 
-/* Every sport-season in turn, newest seasons first. Each one is pulled whole
-   and then replaces that season's last snapshot, so what /market shows for a
-   season is exactly what was up when it was last pulled. A season comes round
-   again once its snapshot is MARKET_REFRESH_HOURS old, sooner if it has been
-   put at the front of the queue. Seasons with nothing listed cost seven
-   empty pages and are done. */
+/* Each sport-season is pulled whole and then replaces that season's last
+   snapshot, so what /market shows for a season is exactly what was up when
+   it was last pulled. The order seasons come round in is marketNext's. */
 const MARKET_ONLY = [];
-const MARKET_REFRESH_HOURS = 9;
 const MSEAS_DDL = `CREATE TABLE IF NOT EXISTS market_seasons (job TEXT PRIMARY KEY,
   startedAt INTEGER, doneAt INTEGER, listings INTEGER, minutes REAL, front INTEGER)`;
 /* Only seasons Real actually has, in Real's own numbering: NBA and CBB go by
@@ -553,23 +549,34 @@ function marketSeasons() {
     for (const [sp, list] of Object.entries(MARKET_LIST)) if (list[i]) out.push(`${sp}:${list[i]}`);
   return out;
 }
-// The season to pull next: the oldest thing put at the front of the queue,
-// else the season whose snapshot is oldest, else nothing until one is due.
-async function marketNext(db) {
+/* What gets pulled, in rounds. Every season once first. After that, each
+   round is every sport's current season, in this order, then the two older
+   seasons whose snapshots are oldest - so the old seasons come round in turn,
+   two a round. An older season that came back empty is only looked at again
+   once a day. Anything put at the front of the queue jumps all of it. */
+const MARKET_CURRENT = ['nba:2027', 'nfl:2026', 'soccer:2026', 'ncaaf:2026', 'ufc:2023',
+                        'ncaam:2027', 'mlb:2026', 'wnba:2026', 'golf:2026', 'nhl:2026'];
+const MARKET_OLD_PER_ROUND = 2;
+async function marketNext(db, st) {
   const rows = (await db.prepare('SELECT job, doneAt, front, listings FROM market_seasons').all()).results || [];
   const valid = new Set(marketSeasons());
   const front = rows.filter(r => r.front && valid.has(r.job)).sort((a, b) => a.front - b.front)[0];
   if (front) return front.job;
-  // When each season is next due: its last pull plus the refresh time, or a
-  // day for one that was empty. Never pulled means due now.
   const m = new Map(rows.map(r => [r.job, r]));
-  let best = null, bestDue = Infinity;
-  for (const j of marketSeasons()) {
-    const r = m.get(j), at = r && Number(r.doneAt) || 0;
-    const due = at ? at + (r.listings ? MARKET_REFRESH_HOURS : MARKET_EMPTY_HOURS) * 3600000 : 0;
-    if (due < bestDue) { best = j; bestDue = due; }
+  const first = marketSeasons().find(j => !(m.get(j) && m.get(j).doneAt));     // the first sweep
+  if (first) return first;
+  st.roundQ = (st.roundQ || []).filter(j => valid.has(j));
+  if (!st.roundQ.length) {
+    const cur = MARKET_CURRENT.filter(j => valid.has(j));
+    const old = marketSeasons().filter(j => !cur.includes(j)).map(j => m.get(j));
+    const withCards = old.filter(r => r.listings).sort((a, b) => a.doneAt - b.doneAt)
+      .slice(0, MARKET_OLD_PER_ROUND).map(r => r.job);
+    const emptyDue = old.filter(r => !r.listings && Date.now() - r.doneAt > MARKET_EMPTY_HOURS * 3600000).map(r => r.job);
+    st.roundQ = [...cur, ...withCards, ...emptyDue];
+    st.round = (st.round || 0) + 1;
+    st.roundOld = withCards;
   }
-  return best && bestDue <= Date.now() ? best : null;
+  return st.roundQ.shift();
 }
 
 const numOr = v => { const n = Number(v); return v != null && v !== '' && Number.isFinite(n) ? n : null; };
@@ -638,7 +645,7 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
     // than three days after the pull began was listed after it began, so the
     // walk stops there rather than chasing new listings.
     if (lastWin && last && Date.parse(last) > t0 + 73 * 3600000) { lane.done = true; lane.why = 'past three days'; break; }
-    await sleep(MARKET_PAUSE_MS);
+    if (MARKET_PAUSE_MS) await sleep(MARKET_PAUSE_MS);
   }
   await Promise.all(writes);
   lane.rows = (lane.rows || 0) + stored;
@@ -702,7 +709,7 @@ async function marketSliceHeld(env, auth, deadline) {
   }
   while (Date.now() < deadline.at) {
     if (!st.cur) {
-      const next = await marketNext(db);
+      const next = await marketNext(db, st);
       if (!next) { st.idle = true; break; }
       st.cur = next; st.curStart = Date.now(); st.lanes = {};
       await db.prepare(`INSERT INTO market_seasons (job, startedAt, front) VALUES (?, ?, NULL)
@@ -4973,7 +4980,7 @@ async function handleGet({ request, env }) {
       windowsDone: Object.values(lanes).filter(l => l.done).length, windows: MARKET_WINDOWS,
       pulledSoFar: Object.values(lanes).reduce((a, l) => a + (l.rows || 0), 0),
       requests: Object.values(lanes).reduce((a, l) => a + (l.pages || 0), 0),
-      idle: !!st.idle, last: st.last || null, refreshHours: MARKET_REFRESH_HOURS,
+      idle: !!st.idle, last: st.last || null, round: st.round || 0, roundLeft: st.roundQ || [], roundOld: st.roundOld || [],
       coolingUntil: st.coolUntil && st.coolUntil > Date.now() ? new Date(st.coolUntil).toISOString() : null,
       cooldowns: st.cooldowns || 0,
       errors: Object.entries(lanes).filter(([, l]) => l.err).map(([k, l]) => `${k}: ${l.err}`) };
