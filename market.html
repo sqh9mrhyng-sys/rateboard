@@ -6,7 +6,7 @@
 <title>Marketplace</title>
 <style>
   :root{--bg:#141925;--panel:#1d2433;--panel2:#232b3d;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;
-        --r1:#9aa3b5;--r2:#5fbf7a;--r3:#4f9ee8;--r4:#a77bf0;--r5:#E8A33D;--r6:#e0559c;--r7:#ff5a4f}
+        --r1:#4f9ee8;--r2:#5fbf7a;--r3:#f0913a;--r4:#e5484d;--r5:#a77bf0;--r6:#e0559c;--r7:#f5d547}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
   .wrap{max-width:1100px;margin:0 auto;padding:16px}
@@ -72,14 +72,14 @@
   </div>
 
   <div class="rar" id="rar"></div>
+  <p class="note" style="margin:-6px 0 12px">Rax per rating is the price divided by the card's rating: 200 on a 4.3 is 46.512 a point.
+    A player's average leaves out any listing over 1,000 a point; those still show, faded, when you open the player.</p>
 
   <div class="bar">
     <input id="q" placeholder="Search a player" autocomplete="off">
     <select id="sort" aria-label="Sort">
       <option value="n">Most listed</option>
-      <option value="minBuy">Cheapest buy-now</option>
-      <option value="maxValue">Highest boost</option>
-      <option value="bids">Most bids</option>
+      <option value="ppr">Lowest rax per rating</option>
       <option value="player">Name</option>
     </select>
   </div>
@@ -87,13 +87,10 @@
   <table>
     <thead><tr>
       <th data-s="player">Player</th>
-      <th data-s="n">Listed</th>
-      <th class="hide-sm">By rarity</th>
-      <th data-s="minBuy">Cheapest</th>
-      <th data-s="maxValue" class="hide-sm">Top boost</th>
-      <th data-s="bids" class="hide-sm">Bids</th>
+      <th data-s="n">Listings</th>
+      <th data-s="ppr">Avg rax / rating</th>
     </tr></thead>
-    <tbody id="rows"><tr><td colspan="6" class="note">Loading…</td></tr></tbody>
+    <tbody id="rows"><tr><td colspan="3" class="note">Loading…</td></tr></tbody>
   </table>
   <button class="more" id="more" hidden>Show more</button>
 
@@ -108,6 +105,8 @@
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt = n => n == null ? '–' : Math.round(n).toLocaleString();
+const ppr3 = n => n == null ? '–' : Number(n).toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+const pprOf = l => (Number(l.value) > 0 && l.buyNow != null) ? Number(l.buyNow) / Number(l.value) : null;
 const RAR = {1:'Common',2:'Uncommon',3:'Rare',4:'Epic',5:'Legendary',6:'Mystic',7:'Iconic'};
 const rc = r => `var(--r${Math.min(7, Math.max(1, Number(r) || 1))})`;
 const SPORT = {nba:'NBA',nfl:'NFL',ncaaf:'CFB',ncaam:'CBB',mlb:'MLB',nhl:'NHL',soccer:'FC',wnba:'WNBA',ufc:'UFC',golf:'Golf'};
@@ -123,11 +122,11 @@ let data = null, pick = '', rarF = '', sortK = 'n', shown = 60, open = null;
 
 async function load(){
   const [sp, se] = pick ? pick.split(':') : ['nba', '2027'];
-  $('#rows').innerHTML = '<tr><td colspan="6" class="note">Loading…</td></tr>';
+  $('#rows').innerHTML = '<tr><td colspan="3" class="note">Loading…</td></tr>';
   try{
     data = await (await fetch(`/api/rax?market=view&sport=${sp}&season=${se}`)).json();
-  }catch(e){ $('#rows').innerHTML = '<tr><td colspan="6" class="note">Could not load the market.</td></tr>'; return; }
-  if(data.error){ $('#rows').innerHTML = `<tr><td colspan="6" class="note">${esc(data.error)}</td></tr>`; return; }
+  }catch(e){ $('#rows').innerHTML = '<tr><td colspan="3" class="note">Could not load the market.</td></tr>'; return; }
+  if(data.error){ $('#rows').innerHTML = `<tr><td colspan="3" class="note">${esc(data.error)}</td></tr>`; return; }
   const opts = (data.seasons || []).map(x => `${x.sport}:${x.season}`);
   if(!pick) pick = `${data.sport}:${data.season}`;
   if(!opts.includes(pick)) opts.unshift(pick);
@@ -155,10 +154,10 @@ function view(){
   let rows = (data.rows || []).map(r => {
     if(!rarF) return r;
     const x = r.rar[rarF]; if(!x) return null;
-    return Object.assign({}, r, { n: x.n, minBuy: x.minBuy });
+    return Object.assign({}, r, { n: x.n, minBuy: x.minBuy, ppr: x.ppr });
   }).filter(Boolean);
   if(q) rows = rows.filter(r => String(r.player || '').toLowerCase().includes(q));
-  const dir = sortK === 'minBuy' || sortK === 'player' ? 1 : -1;
+  const dir = sortK === 'ppr' || sortK === 'player' ? 1 : -1;
   rows.sort((a, b) => {
     const x = sortK === 'player' ? String(a.player || '') : (a[sortK] ?? (dir > 0 ? Infinity : -Infinity));
     const y = sortK === 'player' ? String(b.player || '') : (b[sortK] ?? (dir > 0 ? Infinity : -Infinity));
@@ -170,42 +169,69 @@ function view(){
 function draw(){
   const rows = view();
   document.querySelectorAll('th[data-s]').forEach(th => th.classList.toggle('on', th.dataset.s === sortK));
-  if(!rows.length){ $('#rows').innerHTML = '<tr><td colspan="6" class="note">No listings match.</td></tr>'; $('#more').hidden = true; return; }
+  if(!rows.length){ $('#rows').innerHTML = '<tr><td colspan="3" class="note">No listings match.</td></tr>'; $('#more').hidden = true; return; }
   $('#rows').innerHTML = rows.slice(0, shown).map(r => {
-    const dots = Object.keys(r.rar).sort((a, b) => b - a)
-      .map(k => `<span class="dot" style="--c:${rc(k)}" title="${RAR[k] || k}">${r.rar[k].n}</span>`).join('');
     const isOpen = open === r.playerId;
     return `<tr class="p" data-p="${r.playerId}"><td>${esc(r.player || 'Player ' + r.playerId)}</td>
-      <td>${fmt(r.n)}</td><td class="hide-sm"><span class="dots">${dots}</span></td>
-      <td>${fmt(r.minBuy)}</td><td class="hide-sm">${r.maxValue == null ? '–' : (Math.round(r.maxValue * 10) / 10)}</td>
-      <td class="hide-sm">${fmt(r.bids)}</td></tr>`
-      + (isOpen ? `<tr class="detail"><td colspan="6"><div class="inner" id="det">Loading listings…</div></td></tr>` : '');
+      <td>${fmt(r.n)}</td><td>${ppr3(r.ppr)}</td></tr>`
+      + (isOpen ? `<tr class="detail"><td colspan="3"><div class="inner" id="det">Loading listings…</div></td></tr>` : '');
   }).join('');
   $('#more').hidden = rows.length <= shown;
   if(open != null) loadDetail(open);
 }
+
+let detRows = [], detSort = 'ppr', detDir = 1;
+const DET_COLS = [['rarity','Rarity',-1],['buyNow','Buy now',1],['curBid','Bid',1],['bids','Bids',-1],
+                  ['value','Boost',-1],['ppr','Rax / rating',1],['endsAt','Time left',1]];
 
 async function loadDetail(pid){
   const [sp, se] = pick.split(':');
   let d;
   try{ d = await (await fetch(`/api/rax?market=listings&sport=${sp}&season=${se}&playerId=${pid}`)).json(); }
   catch(e){ const el = $('#det'); if(el) el.textContent = 'Could not load listings.'; return; }
-  const el = $('#det'); if(!el) return;
-  const ls = (d.listings || []).filter(l => !rarF || String(l.rarity) === rarF);
-  el.innerHTML = ls.length ? `<table><thead><tr><th>Rarity</th><th>Buy now</th><th>Bid</th><th class="hide-sm">Min bid</th>
-      <th>Bids</th><th>Boost</th><th class="hide-sm">Mint</th><th>Ends in</th></tr></thead><tbody>`
-    + ls.map(l => `<tr><td><span class="tag" style="--c:${rc(l.rarity)}">${RAR[l.rarity] || l.rarity}</span></td>
-        <td>${fmt(l.buyNow)}</td><td>${fmt(l.curBid)}</td><td class="hide-sm">${fmt(l.minBid)}</td>
-        <td>${fmt(l.bids)}</td><td>${l.value == null ? '–' : Math.round(l.value * 10) / 10}</td>
-        <td class="hide-sm">#${esc(l.mint)}</td><td>${endsIn(l.endsAt)}</td></tr>`).join('')
-    + '</tbody></table>' : '<span class="note">No listings up for this player right now.</span>';
+  detRows = (d.listings || []).filter(l => !rarF || String(l.rarity) === rarF)
+    .map(l => Object.assign({}, l, { ppr: pprOf(l) }));
+  drawDetail();
 }
+
+function drawDetail(){
+  const el = $('#det'); if(!el) return;
+  if(!detRows.length){ el.innerHTML = '<span class="note">No listings up for this player right now.</span>'; return; }
+  const rows = detRows.slice().sort((a, b) => {
+    const x = a[detSort], y = b[detSort];
+    if(x == null && y == null) return 0;
+    if(x == null) return 1;
+    if(y == null) return -1;
+    return (x < y ? -1 : x > y ? 1 : 0) * detDir;
+  });
+  el.innerHTML = '<table><thead><tr>'
+    + DET_COLS.map(([k, label]) => `<th data-d="${k}" class="${k === detSort ? 'on' : ''}">${label}${k === detSort ? (detDir > 0 ? ' ↑' : ' ↓') : ''}</th>`).join('')
+    + '</tr></thead><tbody>'
+    + rows.map(l => `<tr${l.ppr != null && l.ppr > 1000 ? ' style="opacity:.5"' : ''}>
+        <td><span class="tag" style="--c:${rc(l.rarity)}">${RAR[l.rarity] || l.rarity}</span></td>
+        <td>${fmt(l.buyNow)}</td><td>${fmt(l.curBid)}</td><td>${fmt(l.bids)}</td>
+        <td>${l.value == null ? '–' : Math.round(l.value * 10) / 10}</td>
+        <td>${ppr3(l.ppr)}</td><td>${endsIn(l.endsAt)}</td></tr>`).join('')
+    + '</tbody></table>';
+}
+
+// Header clicks inside an opened player sort that player's listings and do
+// not close the row.
+$('#rows').addEventListener('click', e => {
+  const th = e.target.closest('th[data-d]');
+  if(!th) return;
+  e.stopPropagation();
+  const k = th.dataset.d;
+  if(k === detSort) detDir = -detDir;
+  else { detSort = k; detDir = (DET_COLS.find(c => c[0] === k) || [0, 0, 1])[2]; }
+  drawDetail();
+}, true);
 
 $('#ss').addEventListener('change', e => { pick = e.target.value; rarF = ''; open = null; shown = 60; load(); });
 $('#q').addEventListener('input', () => { shown = 60; draw(); });
 $('#sort').addEventListener('change', e => { sortK = e.target.value; draw(); });
 document.querySelector('thead').addEventListener('click', e => {
-  const th = e.target.closest('th[data-s]'); if(!th) return;
+  const th = e.target.closest('th[data-s]'); if(!th || th.closest('.detail')) return;
   sortK = th.dataset.s; $('#sort').value = sortK; draw();
 });
 $('#rar').addEventListener('click', e => {

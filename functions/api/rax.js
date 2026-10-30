@@ -4864,18 +4864,23 @@ async function handleGet({ request, env }) {
       const rows = (await db.prepare(
         `SELECT playerId, MAX(player) AS player, rarity, COUNT(*) AS n, MIN(buyNow) AS minBuy,
                 AVG(buyNow) AS avgBuy, AVG(value) AS avgValue, MAX(value) AS maxValue,
+                -- price per point of rating, leaving out anything over 1,000 a point
+                SUM(CASE WHEN value > 0 AND buyNow / value <= 1000 THEN buyNow / value END) AS pprSum,
+                COUNT(CASE WHEN value > 0 AND buyNow / value <= 1000 THEN 1 END) AS pprN,
                 SUM(bids) AS bids, MIN(endsAt) AS nextEnds
            FROM market_v2 WHERE sport=? AND season=? AND endsAt > ?
           GROUP BY playerId, rarity`).bind(sport, Number(season), nowIso).all()).results || [];
       const by = new Map();
       for (const r of rows) {
         const p = by.get(r.playerId) || { playerId: r.playerId, player: r.player, n: 0, bids: 0,
-                                          minBuy: null, maxValue: null, rar: {} };
+                                          minBuy: null, maxValue: null, rar: {}, pprSum: 0, pprN: 0 };
+        p.pprSum += r.pprSum || 0; p.pprN += r.pprN || 0;
         if (!p.player && r.player) p.player = r.player;
         p.n += r.n; p.bids += r.bids || 0;
         if (r.minBuy != null && (p.minBuy == null || r.minBuy < p.minBuy)) p.minBuy = r.minBuy;
         if (r.maxValue != null && (p.maxValue == null || r.maxValue > p.maxValue)) p.maxValue = r.maxValue;
         p.rar[r.rarity] = { n: r.n, minBuy: r.minBuy, avgBuy: Math.round(r.avgBuy || 0),
+                            ppr: r.pprN ? Math.round(r.pprSum / r.pprN * 1000) / 1000 : null,
                             avgValue: Math.round((r.avgValue || 0) * 10) / 10 };
         by.set(r.playerId, p);
       }
@@ -4900,7 +4905,10 @@ async function handleGet({ request, env }) {
       const meta = seasons.find(x => x.sport === sport && Number(x.season) === Number(season));
       return json({ sport, season, listings: tot, players: by.size, rarity,
                     pulledAt: meta && meta.seen ? new Date(meta.seen).toISOString() : null,
-                    seasons, rows: [...by.values()].sort((a, b) => b.n - a.n) });
+                    seasons, rows: [...by.values()].map(p => {
+                      p.ppr = p.pprN ? Math.round(p.pprSum / p.pprN * 1000) / 1000 : null;
+                      delete p.pprSum; delete p.pprN; return p;
+                    }).sort((a, b) => b.n - a.n) });
     } catch (e) { return json({ error: String((e && e.message) || e).slice(0, 200) }, 500); }
   }
 
