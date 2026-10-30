@@ -415,8 +415,9 @@ async function loadDetail(k){
   let d;
   try{ d = await (await fetch(`/api/rax?market=listings&sport=${sp}&season=${se}&playerId=${pid}`)).json(); }
   catch(e){ const el = $('#det'); if(el) el.textContent = 'Could not load listings.'; return; }
+  // A negative rating counts as its size: -8.2 is 8.2.
   detRows = (d.listings || []).filter(l => !rarF || String(l.rarity) === rarF)
-    .map(l => Object.assign({}, l, { ppr: pprOf(l) }));
+    .map(l => { const x = Object.assign({}, l, { value: l.value == null ? null : Math.abs(Number(l.value)) }); x.ppr = pprOf(x); return x; });
   drawDetail();
 }
 
@@ -588,6 +589,9 @@ async function loadQueue(){
   else if((s.roundLeft || []).length) bits.push(`Round ${s.round}, still to go: ` + s.roundLeft.map(jobLbl).map(esc).join(', ') + '.');
   if(s.last && s.last.listings) bits.push(`Last finished: ${esc(jobLbl(s.last.job))}, ${fmt(s.last.listings)} listings in ${s.last.minutes} min`
     + (s.last.short != null ? ` (${fmt(s.last.short)} short pages from Real)` : '') + '.');
+  if((s.errors || []).length) bits.push(`<br><span style="color:var(--r4)">Real is answering this season with an error — ${esc(s.errors[0])}</span>`);
+  if(s.at && Date.now() - Date.parse(s.at) > 10 * 60000) bits.push(`<br><span style="color:var(--r4)">The pull has not moved since ${ago(s.at)}.</span>`);
+  if((s.log || []).length) bits.push(`<details style="margin-top:8px"><summary>Recent pulls</summary><pre style="max-height:240px">${s.log.map(l => esc(l.replace(/^(\w+:\d+)/, m => jobLbl(m)))).join('\n')}</pre></details>`);
   $('#qnow').innerHTML = bits.join(' ') || 'Starting…';
   const sel = $('#qpick'), keep = sel.value || pick;
   sel.innerHTML = (s.seasons || []).map(x => `<option value="${x.job}">${esc(jobLbl(x.job))}${x.listings ? ' · ' + fmt(x.listings) : ''}</option>`).join('');

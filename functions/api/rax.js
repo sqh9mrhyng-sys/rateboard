@@ -718,10 +718,14 @@ async function marketSliceHeld(env, auth, deadline) {
     let w = 0;
     while (w < MARKET_WINDOWS && st.lanes[w] && st.lanes[w].done) w++;
     if (w === MARKET_WINDOWS) {
-      // Season finished: anything of it not seen on this pull is gone.
+      // Season finished: anything of it not seen on this pull is gone - unless
+      // part of the walk failed, when the old rows stay rather than vanish.
       const [sp, se] = st.cur.split(':');
-      try { await db.prepare('DELETE FROM market_v2 WHERE sport=? AND season=? AND seenAt < ?')
-        .bind(sp, Number(se), st.curStart).run(); } catch (e) {}
+      if (!st.partial) {
+        try { await db.prepare('DELETE FROM market_v2 WHERE sport=? AND season=? AND seenAt < ?')
+          .bind(sp, Number(se), st.curStart).run(); } catch (e) {}
+      }
+      st.partial = false;
       const n = Object.values(st.lanes).reduce((a, l) => a + (l.rows || 0), 0);
       const pages = Object.values(st.lanes).reduce((a, l) => a + (l.pages || 0), 0);
       const minutes = Math.round((Date.now() - st.curStart) / 6000) / 10;
@@ -730,6 +734,9 @@ async function marketSliceHeld(env, auth, deadline) {
       st.last = { job: st.cur, listings: n, pages, minutes, at: new Date().toISOString(),
         short: Object.values(st.lanes).reduce((a, l) => a + (l.short || 0), 0),
         windows: Object.values(st.lanes).map(l => ({ rows: l.rows || 0, pages: l.pages || 0, short: l.short || 0, why: l.why || null })) };
+      if (!st.log) st.log = [];
+      st.log.unshift(`${st.cur} ${n} listings ${minutes}m${Object.values(st.lanes).some(l => /^gave up/.test(l.why || '')) ? ' (part failed)' : ''}`);
+      st.log = st.log.slice(0, 40);
       st.cur = null; st.lanes = {};
       continue;
     }
@@ -737,7 +744,11 @@ async function marketSliceHeld(env, auth, deadline) {
     total += await marketLane(env, auth, `${st.cur}:${w}`, lane, ins, deadline)
       .catch(e => { lane.err = 'crash: ' + String((e && e.message) || e).slice(0, 160); return 0; });
     if (lane.busy) { busy = true; delete lane.busy; break; }
-    if (lane.err && !lane.done) break;      // something failed: try again next call
+    if (lane.err && !lane.done) {           // something failed: try again next call,
+      lane.fails = (lane.fails || 0) + 1;   // but not for ever - after five, move on
+      if (lane.fails >= 5) { lane.done = true; lane.why = 'gave up: ' + lane.err; st.partial = true; }
+      break;
+    }
     if (!lane.done) break;                  // hit this call's page cap
   }
   if (busy) {
@@ -756,11 +767,12 @@ async function marketAgg(db, sport, season, nowIso, pids) {
   const only = pids ? ` AND playerId IN (${pids.map(Number).filter(Number.isFinite).join(',') || 0})` : '';
   const rows = (await db.prepare(
     `SELECT playerId, MAX(player) AS player, rarity, COUNT(*) AS n, MIN(buyNow) AS minBuy,
-            AVG(buyNow) AS avgBuy, AVG(value) AS avgValue, MAX(value) AS maxValue,
-            -- price per point of rating, leaving out anything over 1,000 a point
-            SUM(CASE WHEN value > 0 AND buyNow / value <= 1000 THEN buyNow / value END) AS pprSum,
-            COUNT(CASE WHEN value > 0 AND buyNow / value <= 1000 THEN 1 END) AS pprN,
-            SUM(bids) AS bids, MIN(endsAt) AS nextEnds, SUM(value) AS valueSum
+            AVG(buyNow) AS avgBuy, AVG(ABS(value)) AS avgValue, MAX(ABS(value)) AS maxValue,
+            -- price per point of rating, leaving out anything over 1,000 a point;
+            -- a negative rating counts as its size, so -8.2 is 8.2
+            SUM(CASE WHEN value <> 0 AND buyNow / ABS(value) <= 1000 THEN buyNow / ABS(value) END) AS pprSum,
+            COUNT(CASE WHEN value <> 0 AND buyNow / ABS(value) <= 1000 THEN 1 END) AS pprN,
+            SUM(bids) AS bids, MIN(endsAt) AS nextEnds, SUM(ABS(value)) AS valueSum
        FROM market_v2 WHERE sport=? AND season=? AND endsAt > ?${only}
       GROUP BY playerId, rarity`).bind(sport, season, nowIso).all()).results || [];
   const by = new Map();
@@ -4994,7 +5006,8 @@ async function handleGet({ request, env }) {
       idle: !!st.idle, last: st.last || null, round: st.round || 0, roundLeft: st.roundQ || [], roundOld: st.roundOld || [],
       coolingUntil: st.coolUntil && st.coolUntil > Date.now() ? new Date(st.coolUntil).toISOString() : null,
       cooldowns: st.cooldowns || 0,
-      errors: Object.entries(lanes).filter(([, l]) => l.err).map(([k, l]) => `${k}: ${l.err}`) };
+      errors: Object.entries(lanes).filter(([, l]) => l.err).map(([k, l]) => `part ${Number(k) + 1}: ${l.err}`),
+      log: st.log || [] };
     try {
       const db = env.RATEBOARD_DB;
       await db.prepare(MSEAS_DDL).run();
