@@ -791,6 +791,17 @@ async function marketAgg(db, sport, season, nowIso, pids) {
       for (const r of (n.results || [])) { const p = by.get(r.playerId); if (p && short(p.player) && r.player) p.player = r.player; }
     } catch (e) {}
   }
+  // Rax each player earned that season, straight from the game log. Real
+  // numbers its seasons the same way here as in the market.
+  const ids = [...by.keys()].map(Number).filter(Number.isFinite);
+  for (let i = 0; i < ids.length; i += 90) {
+    try {
+      const g = await db.prepare(
+        `SELECT playerId, SUM(rax) AS rax FROM gamelog WHERE sport=? AND season=? AND playerId IN (${ids.slice(i, i + 90).join(',')})
+          AND rax IS NOT NULL GROUP BY playerId`).bind(sport, season).all();
+      for (const r of (g.results || [])) { const p = by.get(r.playerId); if (p) p.raxEarned = r.rax; }
+    } catch (e) {}
+  }
   for (const p of by.values()) p.rating = Math.round(p.rating * 10) / 10;
   return { rows, by };
 }

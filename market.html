@@ -108,10 +108,12 @@
 
   <div class="bar">
     <input id="q" placeholder="Search a player" autocomplete="off">
+    <input id="minrax" type="number" inputmode="numeric" min="0" step="1" placeholder="Min rax earned" aria-label="Minimum rax earned" style="flex:0 1 150px">
     <select id="sort" aria-label="Sort">
       <option value="n">Most listed</option>
       <option value="ppr">Lowest rax per rating</option>
       <option value="rating">Most rating listed</option>
+      <option value="raxEarned">Most rax earned</option>
       <option value="player">Name</option>
     </select>
   </div>
@@ -121,9 +123,10 @@
       <th data-s="player">Player</th>
       <th data-s="n">Listings</th>
       <th data-s="rating">Total rating</th>
+      <th data-s="raxEarned">Rax earned</th>
       <th data-s="ppr">Avg rax / rating</th>
     </tr></thead>
-    <tbody id="rows"><tr><td colspan="4" class="note">Loading…</td></tr></tbody>
+    <tbody id="rows"><tr><td colspan="5" class="note">Loading…</td></tr></tbody>
   </table>
   <button class="more" id="more" hidden>Show more</button>
 
@@ -283,7 +286,7 @@ const endsIn = iso => { const m = Math.round((Date.parse(iso) - Date.now()) / 60
 let data = null, status = null, pick = 'favs', rarF = '', sortK = 'n', shown = 60, open = null;
 let favSet = new Set(), me = null;
 const keyOf = r => `${r.sport}:${r.season}:${r.playerId}`;
-const COLS = 4;
+const COLS = 5;
 const msgRow = t => `<tr><td colspan="${COLS}" class="note">${t}</td></tr>`;
 
 async function loadFavs(){
@@ -337,6 +340,8 @@ function view(){
     return Object.assign({}, r, { n: x.n, minBuy: x.minBuy, ppr: x.ppr, rating: x.rating });
   }).filter(Boolean);
   if(q) rows = rows.filter(r => String(r.player || '').toLowerCase().includes(q));
+  const minRax = Number($('#minrax').value);
+  if(minRax > 0) rows = rows.filter(r => (r.raxEarned || 0) >= minRax);
   const dir = sortK === 'ppr' || sortK === 'player' ? 1 : -1;
   rows.sort((a, b) => {
     const x = sortK === 'player' ? String(a.player || '') : (a[sortK] ?? (dir > 0 ? Infinity : -Infinity));
@@ -359,7 +364,8 @@ function draw(){
     const u = realPlayerUrl(r.sport, r.playerId, r.season), nm = esc(r.player || 'Player ' + r.playerId);
     const sub = pick === 'favs' ? `<span class="sub">${SPORT[r.sport] || r.sport} ${seasonLbl(r.sport, r.season)}</span>` : '';
     return `<tr class="p" data-k="${k}"><td><button class="star${fav ? ' on' : ''}" data-fav="${k}" aria-label="${fav ? 'Remove from' : 'Add to'} favourites" title="${fav ? 'Remove from' : 'Add to'} favourites">${fav ? '★' : '☆'}</button>${u ? `<a class="pl" href="${u}" target="_blank" rel="noopener">${nm}</a>` : nm}${sub}</td>
-      <td>${fmt(r.n)}</td><td>${r.rating ? (Math.round(r.rating * 10) / 10).toLocaleString() : '–'}</td><td>${ppr3(r.ppr)}</td></tr>`
+      <td>${fmt(r.n)}</td><td>${r.rating ? (Math.round(r.rating * 10) / 10).toLocaleString() : '–'}</td>
+      <td>${r.raxEarned != null ? fmt(r.raxEarned) : '–'}</td><td>${ppr3(r.ppr)}</td></tr>`
       + (isOpen ? `<tr class="detail"><td colspan="${COLS}"><div class="inner" id="det">Loading listings…</div></td></tr>` : '');
   }).join('');
   $('#more').hidden = rows.length <= shown;
@@ -498,6 +504,7 @@ $('#rows').addEventListener('click', e => {
 
 $('#ss').addEventListener('change', e => { pick = e.target.value; rarF = ''; open = null; shown = 60; load(); });
 $('#q').addEventListener('input', () => { shown = 60; draw(); });
+$('#minrax').addEventListener('input', () => { shown = 60; draw(); });
 $('#sort').addEventListener('change', e => { sortK = e.target.value; draw(); });
 document.querySelector('thead').addEventListener('click', e => {
   const th = e.target.closest('th[data-s]'); if(!th || th.closest('.detail')) return;
