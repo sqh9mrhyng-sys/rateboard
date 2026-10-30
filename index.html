@@ -680,11 +680,8 @@
               <p class="note" id="rs-fresh" style="margin:6px 0 0"></p>
             </div>
             <p class="note hide" id="rs-none"></p>
-            <input type="file" id="s-file" accept="image/*" multiple class="hide">
             <button id="s-exclude" class="btn-ghost">Exclude players/teams</button>
             <button id="s-hide-board" class="btn-ghost">Hide the buy offers board</button>
-            <div id="s-files" class="note"></div>
-            <button id="s-go" class="btn hide">Read screenshots</button>
           </div>
         </div>
       </aside>
@@ -2153,7 +2150,7 @@ function clearDevice(){
 
 const blank = () => ({ users:{}, offers:[], reports:[], minimums:[], keeplist:[], gamedata:[], packdata:[] });
 let market = blank();
-let me = null, sport = 'CFB', mode = 'buy', pending = [];
+let me = null, sport = 'CFB', mode = 'buy';
 
 async function pull(){
   const r = await S.get(KEY);
@@ -3486,7 +3483,7 @@ async function removeOffer(id, asAdmin){
 }
 
 /* =========================================================
-   Seller — screenshot scan
+   Seller — exclude list (the screenshot reader is gone; card pull is below)
    ========================================================= */
 
 /* ---- exclude list: players/teams a seller never wants surfaced ---- */
@@ -3537,78 +3534,6 @@ function excludeManager(){
     renderList();
   });
 }
-
-$('#s-file').addEventListener('change', e => {
-  pending = [...e.target.files].slice(0,14);
-  $('#s-files').textContent = pending.length ? pending.map(f=>f.name).join(', ') : '';
-  $('#s-go').classList.toggle('hide', !pending.length);
-});
-
-const toB64 = f => new Promise((res, rej) => {
-  const r = new FileReader();
-  r.onload = () => res(r.result.split(',')[1]);
-  r.onerror = () => rej(new Error('Could not read ' + f.name));
-  r.readAsDataURL(f);
-});
-
-$('#s-go').addEventListener('click', async () => {
-  const btn = $('#s-go');
-  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Reading screenshots';
-  try{
-    const content = [];
-    for(const f of pending){
-      content.push({ type:'image', source:{ type:'base64', media_type:f.type||'image/png', data: await toB64(f) } });
-    }
-    content.push({ type:'text', text:
-`These are screenshots of a "Top players" list from a ${SPORTS[sport]} sports card app, sorted by Boost value.
-
-Each row has: a small headshot on the left, the player's name, sometimes a checkmark after the name, a large decimal number on the right (the boost value), and beneath it two small numbers with card icons — the left one and the right one.
-
-Read every player row. Rules:
-- Write every name using only plain English letters. Drop accents and special
-  characters, keeping the closest English letter: García -> Garcia, Sánchez -> Sanchez,
-  Mbappé -> Mbappe, Ødegaard -> Odegaard. Keep suffixes like Jr. and III as printed.
-- The checkmark is not part of the name. Ignore it.
-- Ignore all interface text: the clock and battery in the status bar, "Top players", "Close", "Boost value".
-- The first and last rows may be cut off mid-scroll. Include a row only if you can read the whole name.
-- boost is the large decimal on that row. Use null if it is cut off.
-- owned is the RIGHT-hand one of the two small numbers with card icons beneath the boost value — that's how many of that card the person owns. Use null if it is cut off or unclear. Do not confuse it with the left-hand number.
-
-Respond with only this JSON. No markdown fences, no other text:
-{"players":[{"name":"Shohei Ohtani","boost":100.8,"owned":3}]}
-
-If you cannot read any rows, return {"players":[]}.` });
-
-    const res = await fetch('/api/scan', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ content })
-    });
-    const data = await res.json();
-    if(!res.ok){
-      // Surface what actually went wrong. Telling someone to retake a
-      // perfectly good screenshot when the reader is switched off upstream
-      // just gets them retaking screenshots forever.
-      const msg = (data && data.error && (data.error.message || data.error)) || '';
-      if(/credit balance|quota|billing/i.test(String(msg)))
-        throw new Error('__notice__Screenshot reading is temporarily unavailable. Nothing wrong with your screenshots — the board owner has been told.');
-      if(res.status === 500 && /not configured/i.test(String(msg)))
-        throw new Error('__notice__Screenshot reading is not switched on yet. The board owner has been told.');
-      if(res.status === 429)
-        throw new Error('__notice__Too many scans at once — give it a minute and try again.');
-      throw new Error(String(msg) || ('scan failed (' + res.status + ')'));
-    }
-    const txt = (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
-    const parsed = JSON.parse(txt.replace(/```json|```/g,'').trim());
-    showMatches(parsed.players || []);
-  }catch(err){
-    console.error(err);
-    const m = String(err && err.message || '');
-    toast(m.startsWith('__notice__') ? m.slice(10)
-      : 'Could not read those screenshots. Try a clearer, uncropped image.');
-  }finally{
-    btn.disabled = false; btn.textContent = 'Read screenshots';
-  }
-});
 
 /* =========================================================
    Offer time
