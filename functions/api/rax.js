@@ -492,7 +492,7 @@ const MARKET_DDL = `CREATE TABLE IF NOT EXISTS market_v2 (
   entityId INTEGER, label TEXT, rarity INTEGER, prestige INTEGER, value REAL, mint INTEGER,
   listingType TEXT, status TEXT, minBid REAL, buyNow REAL, curBid REAL, bids INTEGER,
   seller TEXT, cardId TEXT, createdAt TEXT, endsAt TEXT, seenAt INTEGER)`;
-const MARKET_KEY = 'market_pull_v5';
+const MARKET_KEY = 'market_pull_v6';
 const MARKET_SEASONS = [2027, 2026, 2025, 2024, 2023, 2022, 2021, 2020];
 const MARKET_SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'ncaam', 'nhl', 'soccer', 'wnba', 'ufc', 'golf'];
 /* One at a time. Eight side by side drew "We are experiencing high volume"
@@ -504,11 +504,12 @@ const MARKET_SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'ncaam', 'nhl', 'soccer', '
    rest of the board runs on. Without that secret the pull does nothing - it
    never falls back to the main key. */
 const MARKET_ON = true;
-/* Faster, still on the separate account: a sport-season is cut into windows
-   by end time, each its own cursor, walked side by side. Real said nothing on
-   one lane for 350 requests; if it says "high volume" to this, every lane
-   stops for ten minutes and the next run uses half as many. */
-const MARKET_LANES = 6;
+/* Real answers "high volume" to two requests at once, even on the separate
+   account, so there is one lane. Speed comes from shorter gaps between pages
+   and more pages a tick instead. A sport-season is still cut into windows by
+   end time, which keeps each cursor's walk short and resumable. If Real says
+   it is busy anyway, everything stops for ten minutes. */
+const MARKET_LANES = 1;
 const MARKET_WINDOW_HOURS = 12;
 const MARKET_WINDOWS = 7;           // 12h x 7 = past the 3 days a listing can run
 const MARKET_PAGES_PER_LANE = 40;
