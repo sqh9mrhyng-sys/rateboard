@@ -499,6 +499,7 @@ const MARKET_SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'ncaam', 'nhl', 'soccer', '
    from Real, and this runs on the board owner's account, so it backs right
    off: one lane, a pause between pages, and ten quiet minutes whenever Real
    says it is busy. */
+const MARKET_ON = false;
 const MARKET_LANES = 1;
 const MARKET_PAGES_PER_LANE = 20;
 const MARKET_PAUSE_MS = 700;
@@ -4284,7 +4285,11 @@ async function handleGet({ request, env }) {
     if (url.searchParams.get('queue') === 'next' && db) {
       // A few marketplace pages first, inside a fixed time budget, so the
       // rest of the tick carries on as it always has.
-      try { await marketSlice(env, auth, 25000); } catch (e) {}
+      /* The bulk marketplace pull is off. Real throttled it after about fifteen
+         pages even one at a time, on the same key every other collector uses,
+         and listings only last a day, so a full copy could never keep up.
+         Flip MARKET_ON to run it again. */
+      if (MARKET_ON) { try { await marketSlice(env, auth, 25000); } catch (e) {} }
       const PK = 'plays_tick_v1';
       let st = {};
       try { st = JSON.parse((await env.RATEBOARD_KV.get(PK)) || '{}') || {}; } catch (e) {}
