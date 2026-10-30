@@ -492,20 +492,28 @@ const MARKET_DDL = `CREATE TABLE IF NOT EXISTS market_v2 (
   entityId INTEGER, label TEXT, rarity INTEGER, prestige INTEGER, value REAL, mint INTEGER,
   listingType TEXT, status TEXT, minBid REAL, buyNow REAL, curBid REAL, bids INTEGER,
   seller TEXT, cardId TEXT, createdAt TEXT, endsAt TEXT, seenAt INTEGER)`;
-const MARKET_KEY = 'market_pull_v3';
+const MARKET_KEY = 'market_pull_v4';
 const MARKET_SEASONS = [2027, 2026, 2025, 2024, 2023, 2022, 2021, 2020];
 const MARKET_SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'ncaam', 'nhl', 'soccer', 'wnba', 'ufc', 'golf'];
 /* One at a time. Eight side by side drew "We are experiencing high volume"
    from Real, and this runs on the board owner's account, so it backs right
    off: one lane, a pause between pages, and ten quiet minutes whenever Real
    says it is busy. */
-const MARKET_ON = false;
+/* On, now on its own key. RS_MARKET_TOKEN is a separate Real account kept
+   just for this, so throttling or a ban lands there and never on the key the
+   rest of the board runs on. Without that secret the pull does nothing - it
+   never falls back to the main key. */
+const MARKET_ON = true;
 const MARKET_LANES = 1;
 const MARKET_PAGES_PER_LANE = 20;
 const MARKET_PAUSE_MS = 700;
 const MARKET_COOLDOWN_MS = 10 * 60000;
 
+// What to pull. NBA 2026-27 only for now, as the first test of the
+// separate account.
+const MARKET_ONLY = ['nba:2027'];
 function marketJobs() {
+  if (MARKET_ONLY.length) return MARKET_ONLY.slice();
   const out = [];
   for (const sp of MARKET_SPORTS) for (const se of MARKET_SEASONS) out.push(`${sp}:${se}`);
   return out;
@@ -4289,7 +4297,7 @@ async function handleGet({ request, env }) {
          pages even one at a time, on the same key every other collector uses,
          and listings only last a day, so a full copy could never keep up.
          Flip MARKET_ON to run it again. */
-      if (MARKET_ON) { try { await marketSlice(env, auth, 25000); } catch (e) {} }
+      if (MARKET_ON && env.RS_MARKET_TOKEN) { try { await marketSlice(env, env.RS_MARKET_TOKEN, 25000); } catch (e) {} }
       const PK = 'plays_tick_v1';
       let st = {};
       try { st = JSON.parse((await env.RATEBOARD_KV.get(PK)) || '{}') || {}; } catch (e) {}
@@ -4776,6 +4784,7 @@ async function handleGet({ request, env }) {
     try { st = JSON.parse((await env.RATEBOARD_KV.get(MARKET_KEY)) || '{}') || {}; } catch (e) {}
     const lanes = st.lanes || {};
     const out = { startedAt: st.startedAt || null, at: st.at || null, done: !!st.done,
+      marketKeySet: !!env.RS_MARKET_TOKEN, jobs: marketJobs(),
       coolingUntil: st.coolUntil && st.coolUntil > Date.now() ? new Date(st.coolUntil).toISOString() : null,
       cooldowns: st.cooldowns || 0,
       lanesDone: Object.values(lanes).filter(l => l.done).length, lanesTotal: marketJobs().length,
@@ -4818,7 +4827,8 @@ async function handleGet({ request, env }) {
     const t0 = Date.now();
     let res, text;
     try {
-      res = await fetch(target, { headers: rsHeaders(auth) });
+      if (!env.RS_MARKET_TOKEN) return json({ error: 'RS_MARKET_TOKEN is not set' }, 503);
+      res = await fetch(target, { headers: rsHeaders(env.RS_MARKET_TOKEN) });
       text = await res.text();
     } catch (e) {
       return json({ error: 'could not reach Real', detail: String((e && e.message) || e) }, 502);
