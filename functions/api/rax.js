@@ -542,6 +542,10 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
     if (lane.total == null && data && data.listingCount != null) lane.total = Number(data.listingCount);
     if (!rows.length) { lane.done = true; break; }
     lane.pageSize = rows.length;
+    // A short page is the end of what was up when the walk reached it. Past
+    // that, each page is only the odd listing posted since, and the walk
+    // would trail the live market for ever.
+    const shortPage = rows.length < 10;
     const now = Date.now();
     const stmts = rows.map(r => {
       const c = r.card || {};
@@ -564,6 +568,7 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
     // rather than asking for the same page again.
     if (!last || last === before) lane.off = (lane.off || 0) + rows.length;
     else { lane.before = last; lane.off = 0; }
+    if (shortPage) { lane.done = true; break; }
     await sleep(MARKET_PAUSE_MS);
   }
   lane.rows = (lane.rows || 0) + stored;
