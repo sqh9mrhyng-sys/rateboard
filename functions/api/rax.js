@@ -4969,9 +4969,14 @@ async function handleGet({ request, env }) {
       const rows = (await db.prepare('SELECT * FROM market_seasons').all()).results || [];
       const m = new Map(rows.map(r => [r.job, r]));
       out.front = rows.filter(r => r.front).sort((x, y) => x.front - y.front).map(r => r.job);
+      // What is up right now per season, so a season part-way through its
+      // first pull still shows in the picker.
+      const live = new Map(((await db.prepare(
+        `SELECT sport, season, COUNT(*) AS n FROM market_v2 WHERE endsAt > ? GROUP BY sport, season`)
+        .bind(new Date().toISOString()).all()).results || []).map(r => [`${r.sport}:${r.season}`, r.n]));
       out.seasons = marketSeasons().map(j => { const r = m.get(j) || {};
         return { job: j, pulledAt: r.doneAt ? new Date(r.doneAt).toISOString() : null,
-                 listings: r.listings ?? null, minutes: r.minutes ?? null }; });
+                 listings: r.listings ?? null, live: live.get(j) || 0, minutes: r.minutes ?? null }; });
     } catch (e) { out.dbError = String((e && e.message) || e).slice(0, 200); }
     return json(out);
   }

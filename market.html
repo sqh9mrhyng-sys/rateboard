@@ -300,13 +300,14 @@ async function load(){
   if(!data){ $('#rows').innerHTML = msgRow('Could not load the market.'); return; }
   if(data.error){ $('#rows').innerHTML = msgRow(esc(data.error)); return; }
   const opts = [];
-  ((status && status.seasons) || []).forEach(x => { if(x.listings) opts.push(x.job); });
+  ((status && status.seasons) || []).forEach(x => { if(x.listings || x.live) opts.push(x.job); });
   (data.seasons || []).forEach(x => { const k = `${x.sport}:${x.season}`; if(!opts.includes(k)) opts.push(k); });
   if(pick !== 'favs' && !opts.includes(pick)) opts.unshift(pick);
   $('#ss').innerHTML = `<option value="favs"${pick === 'favs' ? ' selected' : ''}>★ Favorites · ${favSet.size}</option>`
     + opts.map(k => { const [a, b] = k.split(':');
       const n = ((status && status.seasons) || []).find(x => x.job === k);
-      return `<option value="${k}"${k === pick ? ' selected' : ''}>${SPORT[a] || a} ${seasonLbl(a, b)}${n && n.listings ? ` · ${n.listings.toLocaleString()}` : ''}</option>`; }).join('');
+      const c = n && (n.live || n.listings);
+      return `<option value="${k}"${k === pick ? ' selected' : ''}>${SPORT[a] || a} ${seasonLbl(a, b)}${c ? ` · ${c.toLocaleString()}` : ''}</option>`; }).join('');
   if(pick === 'favs') $('#pulled').textContent = 'Your starred players, every sport';
   else {
     const now = status && status.pulling === pick;
@@ -582,7 +583,7 @@ async function loadQueue(){
   const sel = $('#qpick'), keep = sel.value || pick;
   sel.innerHTML = (s.seasons || []).map(x => `<option value="${x.job}">${esc(jobLbl(x.job))}${x.listings ? ' · ' + fmt(x.listings) : ''}</option>`).join('');
   if(keep) sel.value = keep;
-  const rows = (s.seasons || []).filter(x => x.listings || x.job === s.pulling)
+  const rows = (s.seasons || []).filter(x => x.listings || x.live || x.job === s.pulling)
     .sort((a, b) => (b.listings || 0) - (a.listings || 0));
   $('#qrows').innerHTML = rows.map(x => `<tr><td>${esc(jobLbl(x.job))}${x.job === s.pulling ? ' <span class="note">· pulling</span>' : ''}</td>
     <td>${fmt(x.listings)}</td><td>${x.pulledAt ? ago(x.pulledAt) : '–'}</td><td class="hide-sm">${x.minutes != null ? x.minutes + ' min' : '–'}</td></tr>`).join('')
