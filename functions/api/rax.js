@@ -599,12 +599,13 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
     const rows = rowsOf(data);
     pages++;
     if (lane.total == null && data && data.listingCount != null) lane.total = Number(data.listingCount);
-    if (!rows.length) { lane.done = true; break; }
+    if (!rows.length) { lane.done = true; lane.why = 'empty page'; break; }
     lane.pageSize = rows.length;
-    // A short page is the end of what was up when the walk reached it. Past
-    // that, each page is only the odd listing posted since, and the walk
-    // would trail the live market for ever.
-    const shortPage = rows.length < 10;
+    /* A page with fewer than ten on it used to end the window. Real sends
+       short pages in the middle of a big market too, and stopping there is
+       what left NFL and CFB a quarter to a half short. Now only an empty
+       page or crossing into the next window ends one. */
+    if (rows.length < 10) lane.short = (lane.short || 0) + 1;
     const now = Date.now();
     const mine = rows.filter(r => !r.endsAt || lastWin || r.endsAt < winEnd);
     const stmts = mine.map(r => {
@@ -632,7 +633,11 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
     // rather than asking for the same page again.
     if (!last || last === before) lane.off = (lane.off || 0) + rows.length;
     else { lane.before = last; lane.off = 0; }
-    if (shortPage || (!lastWin && mine.length < rows.length)) { lane.done = true; break; }
+    if (!lastWin && mine.length < rows.length) { lane.done = true; lane.why = 'reached next window'; break; }
+    // The last window runs to the end of the market. Anything ending more
+    // than three days after the pull began was listed after it began, so the
+    // walk stops there rather than chasing new listings.
+    if (lastWin && last && Date.parse(last) > t0 + 73 * 3600000) { lane.done = true; lane.why = 'past three days'; break; }
     await sleep(MARKET_PAUSE_MS);
   }
   await Promise.all(writes);
@@ -688,6 +693,13 @@ async function marketSliceHeld(env, auth, deadline) {
      the call lasts. */
   let total = 0, busy = false;
   st.idle = false;
+  if (!st.seedShort1) {          // the two seasons the short-page stop cut short go again first
+    for (const j of ['nfl:2026', 'ncaaf:2026']) {
+      try { await db.prepare(`INSERT INTO market_seasons (job, front) VALUES (?, ?)
+        ON CONFLICT(job) DO UPDATE SET front=excluded.front`).bind(j, Date.now() + (j === 'nfl:2026' ? 0 : 1)).run(); } catch (e) {}
+    }
+    st.seedShort1 = true;
+  }
   while (Date.now() < deadline.at) {
     if (!st.cur) {
       const next = await marketNext(db);
@@ -708,7 +720,9 @@ async function marketSliceHeld(env, auth, deadline) {
       const minutes = Math.round((Date.now() - st.curStart) / 6000) / 10;
       await db.prepare('UPDATE market_seasons SET doneAt=?, listings=?, minutes=? WHERE job=?')
         .bind(Date.now(), n, minutes, st.cur).run();
-      st.last = { job: st.cur, listings: n, pages, minutes, at: new Date().toISOString() };
+      st.last = { job: st.cur, listings: n, pages, minutes, at: new Date().toISOString(),
+        short: Object.values(st.lanes).reduce((a, l) => a + (l.short || 0), 0),
+        windows: Object.values(st.lanes).map(l => ({ rows: l.rows || 0, pages: l.pages || 0, short: l.short || 0, why: l.why || null })) };
       st.cur = null; st.lanes = {};
       continue;
     }
