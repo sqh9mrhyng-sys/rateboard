@@ -579,6 +579,8 @@ async function loadQueue(){
   if(s.pulling) bits.push(`Pulling <b>${esc(jobLbl(s.pulling))}</b> now: ${s.windowsDone} of ${s.windows} parts, ${fmt(s.pulledSoFar)} listings so far.`);
   else if(s.idle) bits.push('Nothing due right now — every season is fresher than the refresh time.');
   if((s.front || []).length) bits.push('Up next: ' + s.front.map(jobLbl).map(esc).join(', ') + '.');
+  if(s.last && s.last.listings) bits.push(`Last finished: ${esc(jobLbl(s.last.job))}, ${fmt(s.last.listings)} listings in ${s.last.minutes} min`
+    + (s.last.short != null ? ` (${fmt(s.last.short)} short pages from Real)` : '') + '.');
   $('#qnow').innerHTML = bits.join(' ') || 'Starting…';
   const sel = $('#qpick'), keep = sel.value || pick;
   sel.innerHTML = (s.seasons || []).map(x => `<option value="${x.job}">${esc(jobLbl(x.job))}${x.listings ? ' · ' + fmt(x.listings) : ''}</option>`).join('');
