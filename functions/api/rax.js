@@ -492,7 +492,7 @@ const MARKET_DDL = `CREATE TABLE IF NOT EXISTS market_v2 (
   entityId INTEGER, label TEXT, rarity INTEGER, prestige INTEGER, value REAL, mint INTEGER,
   listingType TEXT, status TEXT, minBid REAL, buyNow REAL, curBid REAL, bids INTEGER,
   seller TEXT, cardId TEXT, createdAt TEXT, endsAt TEXT, seenAt INTEGER)`;
-const MARKET_KEY = 'market_pull_v6';
+const MARKET_KEY = 'market_pull_v7';
 const MARKET_SEASONS = [2027, 2026, 2025, 2024, 2023, 2022, 2021, 2020];
 const MARKET_SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'ncaam', 'nhl', 'soccer', 'wnba', 'ufc', 'golf'];
 /* One at a time. Eight side by side drew "We are experiencing high volume"
@@ -517,19 +517,34 @@ const MARKET_PAUSE_MS = 150;
 const MARKET_COOLDOWN_MS = 10 * 60000;
 const MARKET_TICK_MS = 55000;       // longest a slice runs in one collector call
 
-// What to pull. NBA 2026-27 only for now, as the test of the separate
-// account and of the windowed walk.
-const MARKET_ONLY = ['nba:2027'];
+/* Every sport-season in turn, newest seasons first. Each one is pulled whole
+   and then replaces that season's last snapshot, so what /market shows for a
+   season is exactly what was up when it was last pulled. A season comes round
+   again once its snapshot is MARKET_REFRESH_HOURS old, sooner if it has been
+   put at the front of the queue. Seasons with nothing listed cost seven
+   empty pages and are done. */
+const MARKET_ONLY = [];
+const MARKET_REFRESH_HOURS = 9;
+const MSEAS_DDL = `CREATE TABLE IF NOT EXISTS market_seasons (job TEXT PRIMARY KEY,
+  startedAt INTEGER, doneAt INTEGER, listings INTEGER, minutes REAL, front INTEGER)`;
 function marketSeasons() {
   if (MARKET_ONLY.length) return MARKET_ONLY.slice();
   const out = [];
-  for (const sp of MARKET_SPORTS) for (const se of MARKET_SEASONS) out.push(`${sp}:${se}`);
+  for (const se of MARKET_SEASONS) for (const sp of MARKET_SPORTS) out.push(`${sp}:${se}`);
   return out;
 }
-function marketJobs() {
-  const out = [];
-  for (const j of marketSeasons()) for (let w = 0; w < MARKET_WINDOWS; w++) out.push(`${j}:${w}`);
-  return out;
+// The season to pull next: the oldest thing put at the front of the queue,
+// else the season whose snapshot is oldest, else nothing until one is due.
+async function marketNext(db) {
+  const rows = (await db.prepare('SELECT job, doneAt, front FROM market_seasons').all()).results || [];
+  const valid = new Set(marketSeasons());
+  const front = rows.filter(r => r.front && valid.has(r.job)).sort((a, b) => a.front - b.front)[0];
+  if (front) return front.job;
+  const done = new Map(rows.map(r => [r.job, Number(r.doneAt) || 0]));
+  let best = null, bestAt = Infinity;
+  for (const j of marketSeasons()) { const at = done.get(j) || 0; if (at < bestAt) { best = j; bestAt = at; } }
+  if (best && bestAt && Date.now() - bestAt < MARKET_REFRESH_HOURS * 3600000) return null;
+  return best;
 }
 
 const numOr = v => { const n = Number(v); return v != null && v !== '' && Number.isFinite(n) ? n : null; };
@@ -570,8 +585,8 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
     const stmts = mine.map(r => {
       const c = r.card || {};
       const pp = c.primaryPlayer || {};
-      const who = String(pp.displayName || [pp.firstName, pp.lastName].filter(Boolean).join(' ')
-        || pp.name || '').slice(0, 80) || null;
+      const full = pp.firstName && pp.lastName ? `${pp.firstName} ${pp.lastName}` : '';
+      const who = String(full || pp.fullName || pp.displayName || pp.name || '').slice(0, 80) || null;
       return ins.bind(String(r.id), sp, Number(se), numOr(r.playerId ?? c.playerId),
         r.entityType || c.entityType || null, numOr(r.entityId ?? c.entityId),
         String(c.entityLabel || c.viewLabel || '').slice(0, 80) || null,
@@ -631,12 +646,11 @@ async function marketSlice(env, auth, budgetMs, stop) {
 async function marketSliceHeld(env, auth, deadline) {
   let st = {};
   try { st = JSON.parse((await env.RATEBOARD_KV.get(MARKET_KEY)) || '{}') || {}; } catch (e) {}
-  if (st.done) return null;
   if (st.coolUntil && Date.now() < st.coolUntil) return null;
   st.lanes = st.lanes || {};
-  if (!st.startedAt) st.startedAt = new Date().toISOString();
   const db = env.RATEBOARD_DB;
   await db.prepare(MARKET_DDL).run();
+  await db.prepare(MSEAS_DDL).run();
   try { await db.prepare('ALTER TABLE market_v2 ADD COLUMN player TEXT').run(); } catch (e) {}
   const ins = db.prepare(
     `INSERT INTO market_v2 (id, sport, season, playerId, entityType, entityId, label, rarity, prestige,
@@ -645,34 +659,48 @@ async function marketSliceHeld(env, auth, deadline) {
      ON CONFLICT(id) DO UPDATE SET status=excluded.status, minBid=excluded.minBid,
        buyNow=excluded.buyNow, curBid=excluded.curBid, bids=excluded.bids,
        endsAt=excluded.endsAt, seenAt=excluded.seenAt, player=COALESCE(excluded.player, market_v2.player)`);
-  st.width = Math.max(1, Math.min(MARKET_LANES, Number(st.width || MARKET_LANES)));
-  /* One window after another for as long as the call lasts. Before, a call
-     did one window and stopped, so a window that ran out early left the rest
-     of the call idle - most of the time on a sport's small later windows. */
-  const results = [], open = [];
+  /* One window after another, and one season after another, for as long as
+     the call lasts. */
+  let total = 0, busy = false;
+  st.idle = false;
   while (Date.now() < deadline.at) {
-    const j = marketJobs().find(x => !(st.lanes[x] && st.lanes[x].done));
-    if (!j) {
-      st.done = true; st.finishedAt = new Date().toISOString();
-      if (st.startedAt) st.minutes = Math.round((Date.now() - Date.parse(st.startedAt)) / 6000) / 10;
-      break;
+    if (!st.cur) {
+      const next = await marketNext(db);
+      if (!next) { st.idle = true; break; }
+      st.cur = next; st.curStart = Date.now(); st.lanes = {};
+      await db.prepare(`INSERT INTO market_seasons (job, startedAt, front) VALUES (?, ?, NULL)
+        ON CONFLICT(job) DO UPDATE SET startedAt=excluded.startedAt, front=NULL`).bind(next, st.curStart).run();
     }
-    open.push(j);
-    const lane = st.lanes[j] || (st.lanes[j] = { start: st.startedAt });
-    results.push(await marketLane(env, auth, j, lane, ins, deadline)
-      .catch(e => { lane.err = 'crash: ' + String((e && e.message) || e).slice(0, 160); return 0; }));
-    if (lane.busy || (lane.err && !lane.done)) break;   // Real is busy or something failed: stop here
-    if (!lane.done) break;                              // hit this call's page cap
+    let w = 0;
+    while (w < MARKET_WINDOWS && st.lanes[w] && st.lanes[w].done) w++;
+    if (w === MARKET_WINDOWS) {
+      // Season finished: anything of it not seen on this pull is gone.
+      const [sp, se] = st.cur.split(':');
+      try { await db.prepare('DELETE FROM market_v2 WHERE sport=? AND season=? AND seenAt < ?')
+        .bind(sp, Number(se), st.curStart).run(); } catch (e) {}
+      const n = Object.values(st.lanes).reduce((a, l) => a + (l.rows || 0), 0);
+      const pages = Object.values(st.lanes).reduce((a, l) => a + (l.pages || 0), 0);
+      const minutes = Math.round((Date.now() - st.curStart) / 6000) / 10;
+      await db.prepare('UPDATE market_seasons SET doneAt=?, listings=?, minutes=? WHERE job=?')
+        .bind(Date.now(), n, minutes, st.cur).run();
+      st.last = { job: st.cur, listings: n, pages, minutes, at: new Date().toISOString() };
+      st.cur = null; st.lanes = {};
+      continue;
+    }
+    const lane = st.lanes[w] || (st.lanes[w] = { start: new Date(st.curStart).toISOString() });
+    total += await marketLane(env, auth, `${st.cur}:${w}`, lane, ins, deadline)
+      .catch(e => { lane.err = 'crash: ' + String((e && e.message) || e).slice(0, 160); return 0; });
+    if (lane.busy) { busy = true; delete lane.busy; break; }
+    if (lane.err && !lane.done) break;      // something failed: try again next call
+    if (!lane.done) break;                  // hit this call's page cap
   }
-  if (open.some(j => st.lanes[j] && st.lanes[j].busy)) {
+  if (busy) {
     st.coolUntil = Date.now() + MARKET_COOLDOWN_MS;
     st.cooldowns = (st.cooldowns || 0) + 1;
-    st.width = Math.max(1, Math.floor(st.width / 2));
-    open.forEach(j => { if (st.lanes[j]) delete st.lanes[j].busy; });
   }
   st.at = new Date().toISOString();
   try { await env.RATEBOARD_KV.put(MARKET_KEY, JSON.stringify(st)); } catch (e) {}
-  return results.reduce((a, b) => a + b, 0);
+  return total;
 }
 
 // Forgetting what has been walked is all a requeue is: the rows stay, and the
@@ -4855,27 +4883,38 @@ async function handleGet({ request, env }) {
     let st = {};
     try { st = JSON.parse((await env.RATEBOARD_KV.get(MARKET_KEY)) || '{}') || {}; } catch (e) {}
     const lanes = st.lanes || {};
-    const out = { startedAt: st.startedAt || null, at: st.at || null, done: !!st.done,
-      marketKeySet: !!env.RS_MARKET_TOKEN, jobs: marketSeasons(), width: st.width || null,
-      finishedAt: st.finishedAt || null, minutes: st.minutes || null,
+    const out = { marketKeySet: !!env.RS_MARKET_TOKEN, at: st.at || null,
+      pulling: st.cur || null, pullingSince: st.curStart ? new Date(st.curStart).toISOString() : null,
+      windowsDone: Object.values(lanes).filter(l => l.done).length, windows: MARKET_WINDOWS,
+      pulledSoFar: Object.values(lanes).reduce((a, l) => a + (l.rows || 0), 0),
+      requests: Object.values(lanes).reduce((a, l) => a + (l.pages || 0), 0),
+      idle: !!st.idle, last: st.last || null, refreshHours: MARKET_REFRESH_HOURS,
       coolingUntil: st.coolUntil && st.coolUntil > Date.now() ? new Date(st.coolUntil).toISOString() : null,
       cooldowns: st.cooldowns || 0,
-      lanesDone: Object.values(lanes).filter(l => l.done).length, lanesTotal: marketJobs().length,
-      requests: Object.values(lanes).reduce((a, l) => a + (l.pages || 0), 0),
-      lanes: Object.fromEntries(Object.entries(lanes).filter(([, l]) => l.rows || l.err || !l.done)
-        .map(([k, l]) => [k, { rows: l.rows || 0, pages: l.pages || 0, total: l.total ?? null,
-          pageSize: l.pageSize || null, done: !!l.done, at: l.before || null, err: l.err || null }])) };
+      errors: Object.entries(lanes).filter(([, l]) => l.err).map(([k, l]) => `${k}: ${l.err}`) };
     try {
       const db = env.RATEBOARD_DB;
-      await db.prepare(MARKET_DDL).run();
-      out.stored = await db.prepare(
-        `SELECT COUNT(*) AS listings, COUNT(buyNow) AS withBuyNow, COUNT(DISTINCT playerId) AS players,
-                MIN(endsAt) AS firstEnds, MAX(endsAt) AS lastEnds FROM market_v2`).first();
-      out.bySport = (await db.prepare(
-        `SELECT sport, COUNT(*) AS n FROM market_v2 GROUP BY sport ORDER BY n DESC`).all()).results || [];
-      out.example = await db.prepare('SELECT * FROM market_v2 ORDER BY seenAt DESC LIMIT 1').first();
+      await db.prepare(MSEAS_DDL).run();
+      const rows = (await db.prepare('SELECT * FROM market_seasons').all()).results || [];
+      const m = new Map(rows.map(r => [r.job, r]));
+      out.front = rows.filter(r => r.front).sort((x, y) => x.front - y.front).map(r => r.job);
+      out.seasons = marketSeasons().map(j => { const r = m.get(j) || {};
+        return { job: j, pulledAt: r.doneAt ? new Date(r.doneAt).toISOString() : null,
+                 listings: r.listings ?? null, minutes: r.minutes ?? null }; });
     } catch (e) { out.dbError = String((e && e.message) || e).slice(0, 200); }
     return json(out);
+  }
+
+  // Puts a sport-season at the front of the queue: it is pulled as soon as
+  // the season being pulled now is done. Admin only, like every write.
+  if (url.searchParams.get('market') === 'front') {
+    const job = `${sport}:${Number(season)}`;
+    if (!marketSeasons().includes(job)) return json({ error: 'not a season the pull covers' }, 400);
+    const db = env.RATEBOARD_DB;
+    await db.prepare(MSEAS_DDL).run();
+    await db.prepare(`INSERT INTO market_seasons (job, front) VALUES (?, ?)
+      ON CONFLICT(job) DO UPDATE SET front=COALESCE(market_seasons.front, excluded.front)`).bind(job, Date.now()).run();
+    return json({ queued: job });
   }
 
   /* ---- the market view ---------------------------------------------------
@@ -4925,14 +4964,16 @@ async function handleGet({ request, env }) {
         by.set(r.playerId, p);
       }
       // Names the cards did not carry, from the game log of any season.
-      const missing = [...by.values()].filter(p => !p.player).map(p => Number(p.playerId)).filter(Number.isFinite);
+      const short = n => !n || /^[A-Z][a-z]?\.\s/.test(n);       // "N. Alexander-Walker"
+      const missing = [...by.values()].filter(p => short(p.player)).map(p => Number(p.playerId)).filter(Number.isFinite);
       for (let i = 0; i < missing.length; i += 90) {
         const slice = missing.slice(i, i + 90);
         try {
           const n = await db.prepare(
-            `SELECT playerId, MAX(player) AS player FROM gamelog WHERE sport=? AND playerId IN (${slice.join(',')})
+            `SELECT playerId, MAX(player) AS player FROM gamelog WHERE sport=?
+                AND season IN (${MARKET_SEASONS.join(',')}) AND playerId IN (${slice.join(',')})
               GROUP BY playerId`).bind(sport).all();
-          for (const r of (n.results || [])) { const p = by.get(r.playerId); if (p && !p.player) p.player = r.player; }
+          for (const r of (n.results || [])) { const p = by.get(r.playerId); if (p && short(p.player) && r.player) p.player = r.player; }
         } catch (e) {}
       }
       const tot = rows.reduce((a, r) => a + r.n, 0);
@@ -4942,7 +4983,11 @@ async function handleGet({ request, env }) {
         x.n += r.n;
         if (r.minBuy != null && (x.minBuy == null || r.minBuy < x.minBuy)) x.minBuy = r.minBuy;
       }
-      const meta = seasons.find(x => x.sport === sport && Number(x.season) === Number(season));
+      let snap = null;
+      try { await db.prepare(MSEAS_DDL).run();
+        snap = await db.prepare('SELECT doneAt FROM market_seasons WHERE job=?').bind(`${sport}:${Number(season)}`).first(); } catch (e) {}
+      const meta = snap && snap.doneAt ? { seen: snap.doneAt }
+        : seasons.find(x => x.sport === sport && Number(x.season) === Number(season));
       return json({ sport, season, listings: tot, players: by.size, rarity,
                     pulledAt: meta && meta.seen ? new Date(meta.seen).toISOString() : null,
                     seasons, rows: [...by.values()].map(p => {

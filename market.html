@@ -44,7 +44,14 @@
   .detail th,.detail td{padding:7px 9px;font-size:13.5px}
   .tag{display:inline-block;padding:1px 7px;border-radius:6px;font-size:12px;font-weight:700;color:#10131b;background:var(--c)}
   .more{margin:12px auto;display:block}
+  .more[hidden]{display:none}
   details{margin-top:22px}
+  td a.pl{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)}
+  td a.pl:hover{color:var(--accent);border-color:var(--accent)}
+  .queue{margin-top:22px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .queue h2{font-size:15px;margin:0 0 8px}
+  .queue table{border:0;background:none;margin-top:10px}
+  .queue td,.queue th{padding:6px 8px;font-size:13px}
   summary{cursor:pointer;color:var(--mute)}
   pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow:auto;font-size:12px;max-height:60vh;white-space:pre-wrap;word-break:break-word}
   @media (max-width:640px){
@@ -94,6 +101,18 @@
   </table>
   <button class="more" id="more" hidden>Show more</button>
 
+  <section class="queue">
+    <h2>Pull queue</h2>
+    <div class="note" id="qnow">Loading…</div>
+    <div class="bar" style="margin:10px 0 0">
+      <select id="qpick" aria-label="Season to pull next"></select>
+      <button id="qfront">Add to front of queue</button>
+      <span class="note" id="qmsg"></span>
+    </div>
+    <p class="note" style="margin:8px 0 0">Each season is a snapshot from when it was last pulled, so prices and bids may have moved since. Seasons refresh every <span id="qhrs">9</span> hours on their own; one put at the front is pulled as soon as the current season is done.</p>
+    <div style="overflow-x:auto"><table><thead><tr><th>Season</th><th>Listings</th><th>Last pulled</th><th class="hide-sm">Took</th></tr></thead><tbody id="qrows"></tbody></table></div>
+  </section>
+
   <details>
     <summary>Raw check of one page from Real (admin)</summary>
     <p class="note">Asks Real for one page live, on the marketplace account, and shows it untouched. Needs you signed in to the board as admin in this browser.</p>
@@ -110,6 +129,103 @@ const pprOf = l => (Number(l.value) > 0 && l.buyNow != null) ? Number(l.buyNow) 
 const RAR = {1:'Common',2:'Uncommon',3:'Rare',4:'Epic',5:'Legendary',6:'Mystic',7:'Iconic'};
 const rc = r => `var(--r${Math.min(7, Math.max(1, Number(r) || 1))})`;
 const SPORT = {nba:'NBA',nfl:'NFL',ncaaf:'CFB',ncaam:'CBB',mlb:'MLB',nhl:'NHL',soccer:'FC',wnba:'WNBA',ufc:'UFC',golf:'Golf'};
+function hashidsEncode(salt, minLength, numbers){
+  const ALPHA0 = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890';
+  const SEPS0  = 'cfhistuCFHISTU';
+  const RATIO = 3.5, GUARD_DIV = 12;
+  const shuffle = (alpha, s) => {
+    if(!s.length) return alpha;
+    const t = alpha.slice();
+    for(let i = t.length - 1, v = 0, p = 0; i > 0; i--, v++){
+      v %= s.length;
+      const int = s[v].codePointAt(0);
+      p += int;
+      const j = (int + v + p) % i;
+      [t[i], t[j]] = [t[j], t[i]];
+    }
+    return t;
+  };
+  const toAlpha = (n, alpha) => {
+    const id = []; let v = n;
+    do { id.unshift(alpha[v % alpha.length]); v = Math.floor(v / alpha.length); } while(v > 0);
+    return id;
+  };
+  const saltC = Array.from(salt);
+  let alpha = [...new Set(Array.from(ALPHA0))];
+  let seps = Array.from(SEPS0).filter(c => alpha.includes(c));
+  alpha = alpha.filter(c => !seps.includes(c));
+  seps = shuffle(seps, saltC);
+  if(!seps.length || alpha.length / seps.length > RATIO){
+    let sl = Math.ceil(alpha.length / RATIO);
+    if(sl === 1) sl = 2;
+    if(sl > seps.length){
+      const diff = sl - seps.length;
+      seps = seps.concat(alpha.slice(0, diff));
+      alpha = alpha.slice(diff);
+    } else { seps = seps.slice(0, sl); }
+  }
+  alpha = shuffle(alpha, saltC);
+  const gc = Math.ceil(alpha.length / GUARD_DIV);
+  let guards;
+  if(alpha.length < 3){ guards = seps.slice(0, gc); seps = seps.slice(gc); }
+  else { guards = alpha.slice(0, gc); alpha = alpha.slice(gc); }
+  let hashInt = 0;
+  for(let i = 0; i < numbers.length; i++) hashInt += numbers[i] % (i + 100);
+  const lottery = alpha[hashInt % alpha.length];
+  let ret = [lottery];
+  for(let i = 0; i < numbers.length; i++){
+    let num = numbers[i];
+    const buf = [lottery].concat(saltC, alpha);
+    alpha = shuffle(alpha, buf.slice(0, alpha.length));
+    const last = toAlpha(num, alpha);
+    ret = ret.concat(last);
+    if(i + 1 < numbers.length){
+      num %= (last[0].codePointAt(0) + i);
+      ret.push(seps[num % seps.length]);
+    }
+  }
+  if(ret.length < minLength){
+    let gi = (hashInt + ret[0].codePointAt(0)) % guards.length;
+    ret.unshift(guards[gi]);
+    if(ret.length < minLength){
+      gi = (hashInt + ret[2].codePointAt(0)) % guards.length;
+      ret.push(guards[gi]);
+    }
+  }
+  const half = Math.floor(alpha.length / 2);
+  while(ret.length < minLength){
+    alpha = shuffle(alpha, alpha);
+    ret = alpha.slice(half).concat(ret, alpha.slice(0, half));
+    const ex = ret.length - minLength;
+    if(ex > 0) ret = ret.slice(ex / 2, ex / 2 + minLength);
+  }
+  return ret.join('');
+}
+/* [record type, sport code], each read out of a real link rather than
+   guessed. Fighters are type 3 where players are type 2 - the one place the
+   leading number is not the same. A sport with no entry here is left as
+   plain text: a wrong code can land on a real player of another sport, and a
+   link to the wrong person is worse than no link. */
+const REAL_SPORT = {
+  nba:    [2, 1],
+  nfl:    [2, 2],
+  ncaam:  [2, 3],
+  mlb:    [2, 4],
+  nhl:    [2, 7],
+  ufc:    [3, 10],
+  ncaaf:  [2, 11],
+  wnba:   [2, 12],
+  soccer: [2, 14],
+  golf:   [2, 15]
+};
+function realPlayerUrl(sport, playerId, season){
+  const kind = REAL_SPORT[String(sport || '').toLowerCase()];
+  const id = Number(playerId);
+  if(!kind || !Number.isFinite(id) || id <= 0) return null;
+  return 'https://www.realapp.com/' + hashidsEncode('routing', 11, [kind[0], kind[1], 0, id])
+         + (season ? '/' + season : '');
+}
+
 const START = {nfl:1,nhl:1,ncaaf:1,soccer:1};   // seasons named for the year they start
 const seasonLbl = (sp, se) => { se = Number(se);
   return START[sp] ? `${se}-${String(se + 1).slice(2)}` : (sp === 'nba' || sp === 'ncaam') ? `${se - 1}-${String(se).slice(2)}` : String(se); };
@@ -118,7 +234,7 @@ const ago = iso => { if(!iso) return ''; const m = Math.round((Date.now() - Date
 const endsIn = iso => { const m = Math.round((Date.parse(iso) - Date.now()) / 60000);
   if(m < 60) return `${Math.max(0, m)}m`; const h = Math.floor(m / 60); return h < 48 ? `${h}h ${m % 60}m` : `${Math.round(h / 24)}d`; };
 
-let data = null, pick = '', rarF = '', sortK = 'n', shown = 60, open = null;
+let data = null, status = null, pick = '', rarF = '', sortK = 'n', shown = 60, open = null;
 
 async function load(){
   const [sp, se] = pick ? pick.split(':') : ['nba', '2027'];
@@ -128,12 +244,15 @@ async function load(){
   }catch(e){ $('#rows').innerHTML = '<tr><td colspan="3" class="note">Could not load the market.</td></tr>'; return; }
   if(data.error){ $('#rows').innerHTML = `<tr><td colspan="3" class="note">${esc(data.error)}</td></tr>`; return; }
   const opts = (data.seasons || []).map(x => `${x.sport}:${x.season}`);
+  ((status && status.seasons) || []).forEach(x => { if(x.listings && !opts.includes(x.job)) opts.push(x.job); });
   if(!pick) pick = `${data.sport}:${data.season}`;
   if(!opts.includes(pick)) opts.unshift(pick);
   $('#ss').innerHTML = opts.map(k => { const [a, b] = k.split(':');
     const n = (data.seasons || []).find(x => `${x.sport}:${x.season}` === k);
     return `<option value="${k}"${k === pick ? ' selected' : ''}>${SPORT[a] || a} ${seasonLbl(a, b)}${n ? ` · ${n.n.toLocaleString()}` : ''}</option>`; }).join('');
-  $('#pulled').textContent = data.pulledAt ? `Pulled ${ago(data.pulledAt)}` : '';
+  const now = status && status.pulling === pick;
+  $('#pulled').textContent = (data.pulledAt ? `Snapshot from ${ago(data.pulledAt)}` : 'Not pulled yet')
+    + (now ? ' · being pulled again now' : '');
   $('#t-n').textContent = fmt(data.listings);
   $('#t-p').textContent = fmt(data.players);
   const mins = Object.values(data.rarity || {}).map(x => x.minBuy).filter(x => x != null);
@@ -172,7 +291,8 @@ function draw(){
   if(!rows.length){ $('#rows').innerHTML = '<tr><td colspan="3" class="note">No listings match.</td></tr>'; $('#more').hidden = true; return; }
   $('#rows').innerHTML = rows.slice(0, shown).map(r => {
     const isOpen = open === r.playerId;
-    return `<tr class="p" data-p="${r.playerId}"><td>${esc(r.player || 'Player ' + r.playerId)}</td>
+    const [sp, se] = pick.split(':'), u = realPlayerUrl(sp, r.playerId, se), nm = esc(r.player || 'Player ' + r.playerId);
+    return `<tr class="p" data-p="${r.playerId}"><td>${u ? `<a class="pl" href="${u}" target="_blank" rel="noopener">${nm}</a>` : nm}</td>
       <td>${fmt(r.n)}</td><td>${ppr3(r.ppr)}</td></tr>`
       + (isOpen ? `<tr class="detail"><td colspan="3"><div class="inner" id="det">Loading listings…</div></td></tr>` : '');
   }).join('');
@@ -239,6 +359,7 @@ $('#rar').addEventListener('click', e => {
   rarF = b.dataset.r; shown = 60; drawRarity(); draw();
 });
 $('#rows').addEventListener('click', e => {
+  if(e.target.closest('a')) return;              // a player's name opens Real
   const tr = e.target.closest('tr.p'); if(!tr) return;
   const pid = Number(tr.dataset.p);
   open = open === pid ? null : pid; draw();
@@ -293,11 +414,44 @@ $('#reset').addEventListener('click', async () => {
   try{
     const r = await fetch('/api/rax?market=reset', { headers: { 'x-rb-token': t } });
     if(r.status === 403){ $('#raw').textContent = 'Sign in to the board as admin in this browser first.'; return; }
-    $('#raw').textContent = 'Fresh pull started. It begins on the next minute; the listings already pulled stay up until they are refreshed.';
+    $('#raw').textContent = 'The season being pulled starts over on the next minute.';
   }catch(e){ $('#raw').textContent = 'Failed: ' + e.message; }
 });
 
-load();
+const jobLbl = j => { const [a, b] = j.split(':'); return `${SPORT[a] || a} ${seasonLbl(a, b)}`; };
+async function loadQueue(){
+  try{ status = await (await fetch('/api/rax?market=status')).json(); }catch(e){ $('#qnow').textContent = 'Could not load the queue.'; return; }
+  const s = status;
+  $('#qhrs').textContent = s.refreshHours || 9;
+  const bits = [];
+  if(s.coolingUntil) bits.push(`Paused — Real said it was busy, back ${ago(s.coolingUntil).replace(' ago', '')} `.trim());
+  if(s.pulling) bits.push(`Pulling <b>${esc(jobLbl(s.pulling))}</b> now: ${s.windowsDone} of ${s.windows} parts, ${fmt(s.pulledSoFar)} listings so far.`);
+  else if(s.idle) bits.push('Nothing due right now — every season is fresher than the refresh time.');
+  if((s.front || []).length) bits.push('Up next: ' + s.front.map(jobLbl).map(esc).join(', ') + '.');
+  $('#qnow').innerHTML = bits.join(' ') || 'Starting…';
+  const sel = $('#qpick'), keep = sel.value || pick;
+  sel.innerHTML = (s.seasons || []).map(x => `<option value="${x.job}">${esc(jobLbl(x.job))}${x.listings ? ' · ' + fmt(x.listings) : ''}</option>`).join('');
+  if(keep) sel.value = keep;
+  const rows = (s.seasons || []).filter(x => x.listings || x.job === s.pulling)
+    .sort((a, b) => (b.listings || 0) - (a.listings || 0));
+  $('#qrows').innerHTML = rows.map(x => `<tr><td>${esc(jobLbl(x.job))}${x.job === s.pulling ? ' <span class="note">· pulling</span>' : ''}</td>
+    <td>${fmt(x.listings)}</td><td>${x.pulledAt ? ago(x.pulledAt) : '–'}</td><td class="hide-sm">${x.minutes != null ? x.minutes + ' min' : '–'}</td></tr>`).join('')
+    || '<tr><td colspan="4" class="note">No season has finished a pull yet.</td></tr>';
+}
+$('#qfront').addEventListener('click', async () => {
+  const [sp, se] = $('#qpick').value.split(':');
+  let t = ''; try{ t = localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){}
+  $('#qmsg').textContent = 'Adding…';
+  try{
+    const r = await fetch(`/api/rax?market=front&sport=${sp}&season=${se}`, { headers: { 'x-rb-token': t } });
+    if(r.status === 403){ $('#qmsg').textContent = 'Sign in to the board as admin in this browser first.'; return; }
+    const j = await r.json();
+    $('#qmsg').textContent = j.queued ? `${jobLbl(j.queued)} is next once the current season is done.` : (j.error || 'Could not add it.');
+  }catch(e){ $('#qmsg').textContent = 'Failed: ' + e.message; }
+});
+
+loadQueue().then(load);
+setInterval(loadQueue, 60000);
 </script>
 </body>
 </html>
