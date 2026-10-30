@@ -513,8 +513,9 @@ const MARKET_LANES = 1;
 const MARKET_WINDOW_HOURS = 12;
 const MARKET_WINDOWS = 7;           // 12h x 7 = past the 3 days a listing can run
 const MARKET_PAGES_PER_LANE = 40;
-const MARKET_PAUSE_MS = 250;
+const MARKET_PAUSE_MS = 150;
 const MARKET_COOLDOWN_MS = 10 * 60000;
+const MARKET_TICK_MS = 45000;       // longest a slice runs in one collector call
 
 // What to pull. NBA 2026-27 only for now, as the test of the separate
 // account and of the windowed walk.
@@ -540,7 +541,9 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
   const winStart = new Date(t0 + w * MARKET_WINDOW_HOURS * 3600000).toISOString();
   const winEnd = new Date(t0 + (w + 1) * MARKET_WINDOW_HOURS * 3600000).toISOString();
   let pages = 0, stored = 0;
-  while (pages < MARKET_PAGES_PER_LANE && Date.now() < deadline && !lane.done) {
+  const writes = [];
+  const live = () => Date.now() < (typeof deadline === 'object' ? deadline.at : deadline);
+  while (pages < MARKET_PAGES_PER_LANE * 3 && live() && !lane.done) {
     const before = lane.before || winStart;
     const u = `https://web.realapp.com/cardmarketplacelistings`
       + `?beforeEndsAt=${encodeURIComponent(before)}&cohort=all&listingType=card`
@@ -578,9 +581,10 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
         r.userId != null ? String(r.userId) : null, r.cardId != null ? String(r.cardId) : null,
         r.createdAt || null, r.endsAt || null, now, who);
     });
+    // Stored while the next page is being fetched rather than before it.
     for (let k = 0; k < stmts.length; k += 50) {
-      try { await env.RATEBOARD_DB.batch(stmts.slice(k, k + 50)); }
-      catch (e) { lane.err = 'store: ' + String(e.message || e).slice(0, 160); }
+      writes.push(env.RATEBOARD_DB.batch(stmts.slice(k, k + 50))
+        .catch(e => { lane.err = 'store: ' + String(e.message || e).slice(0, 160); }));
     }
     stored += stmts.length;
     const last = rows[rows.length - 1].endsAt;
@@ -591,13 +595,40 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
     if (shortPage || (!lastWin && mine.length < rows.length)) { lane.done = true; break; }
     await sleep(MARKET_PAUSE_MS);
   }
+  await Promise.all(writes);
   lane.rows = (lane.rows || 0) + stored;
   lane.pages = (lane.pages || 0) + pages;
   return stored;
 }
 
-async function marketSlice(env, auth, budgetMs) {
-  const deadline = Date.now() + budgetMs;
+/* Only one slice talks to Real at a time, whichever tick it rides on. The
+   lease is a single D1 row, and taking it is one atomic statement, so two
+   overlapping calls can never both hold it. */
+const LOCK_DDL = 'CREATE TABLE IF NOT EXISTS market_lock (name TEXT PRIMARY KEY, until INTEGER, owner TEXT)';
+async function marketLease(env, ms) {
+  const db = env.RATEBOARD_DB, me = crypto.randomUUID(), now = Date.now();
+  try {
+    await db.prepare(LOCK_DDL).run();
+    const r = await db.prepare(
+      `INSERT INTO market_lock (name, until, owner) VALUES ('m', ?, ?)
+       ON CONFLICT(name) DO UPDATE SET until=excluded.until, owner=excluded.owner WHERE market_lock.until < ?`)
+      .bind(now + ms, me, now).run();
+    return r && r.meta && r.meta.changes ? me : null;
+  } catch (e) { return null; }
+}
+async function marketRelease(env, me) {
+  try { await env.RATEBOARD_DB.prepare("UPDATE market_lock SET until=0 WHERE name='m' AND owner=?").bind(me).run(); } catch (e) {}
+}
+
+// `stop` is an object whose `at` the caller can pull in while the slice runs.
+async function marketSlice(env, auth, budgetMs, stop) {
+  const deadline = stop || { at: Date.now() + budgetMs };
+  const me = await marketLease(env, Math.max(0, deadline.at - Date.now()) + 20000);
+  if (!me) return null;
+  try { return await marketSliceHeld(env, auth, deadline); }
+  finally { await marketRelease(env, me); }
+}
+async function marketSliceHeld(env, auth, deadline) {
   let st = {};
   try { st = JSON.parse((await env.RATEBOARD_KV.get(MARKET_KEY)) || '{}') || {}; } catch (e) {}
   if (st.done) return null;
@@ -4329,7 +4360,8 @@ async function handleGet({ request, env }) {
          pages even one at a time, on the same key every other collector uses,
          and listings only last a day, so a full copy could never keep up.
          Flip MARKET_ON to run it again. */
-      if (MARKET_ON && env.RS_MARKET_TOKEN) { try { await marketSlice(env, env.RS_MARKET_TOKEN, 25000); } catch (e) {} }
+      // The marketplace pull now runs alongside each collector call instead,
+      // in onRequestGet, on its own account.
       const PK = 'plays_tick_v1';
       let st = {};
       try { st = JSON.parse((await env.RATEBOARD_KV.get(PK)) || '{}') || {}; } catch (e) {}
@@ -6549,7 +6581,24 @@ export async function onRequestGet(ctx) {
       return new Response(JSON.stringify({ phase: null, resting: true, minutesLeft: 1, after: 'rate limit' }),
         { status: 429, headers: { 'content-type': 'application/json' } });
     }
-    return handleGet(ctx);
+    if (!(MARKET_ON && env.RS_MARKET_TOKEN)) return handleGet(ctx);
+    /* The marketplace pull rides alongside the collector call rather than
+       ahead of it: it is a different Real account, one request at a time,
+       and it stops when the collector's own work is done, so the tick is no
+       longer than it was without it. A queue=next with nothing to hand out
+       (no second call coming) lets it run on for the rest of the window. */
+    const stop = { at: Date.now() + MARKET_TICK_MS };
+    const pull = marketSlice(env, env.RS_MARKET_TOKEN, 0, stop).catch(() => null);
+    let res;
+    try { res = await handleGet(ctx); }
+    catch (e) { stop.at = 0; await pull; throw e; }
+    let more = false;
+    if (url.searchParams.get('queue') === 'next') {
+      try { const j = await res.clone().json(); more = !!(j && j.phase && !j.resting); } catch (e) {}
+      if (more) stop.at = 0;          // the phase call that follows carries it on
+    } else stop.at = 0;
+    await pull;
+    return res;
   }
 
   if (!(await isAdminRequest(env, request))) return forbidden();
