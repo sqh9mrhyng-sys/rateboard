@@ -495,8 +495,14 @@ const MARKET_DDL = `CREATE TABLE IF NOT EXISTS market_v2 (
 const MARKET_KEY = 'market_pull_v3';
 const MARKET_SEASONS = [2027, 2026, 2025, 2024, 2023, 2022, 2021, 2020];
 const MARKET_SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'ncaam', 'nhl', 'soccer', 'wnba', 'ufc', 'golf'];
-const MARKET_LANES = 8;            // sport-seasons walked at once
-const MARKET_PAGES_PER_LANE = 15;  // pages each, per tick
+/* One at a time. Eight side by side drew "We are experiencing high volume"
+   from Real, and this runs on the board owner's account, so it backs right
+   off: one lane, a pause between pages, and ten quiet minutes whenever Real
+   says it is busy. */
+const MARKET_LANES = 1;
+const MARKET_PAGES_PER_LANE = 20;
+const MARKET_PAUSE_MS = 700;
+const MARKET_COOLDOWN_MS = 10 * 60000;
 
 function marketJobs() {
   const out = [];
@@ -516,7 +522,12 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
       + `&offset=${lane.off || 0}&limit=100&prestige=all&rarity=all&season=${se}&sport=${sp}`;
     let data;
     try { data = await rsGet(u, auth); }
-    catch (e) { lane.err = String((e && e.message) || e).slice(0, 160); break; }
+    catch (e) {
+      lane.err = String((e && e.message) || e).slice(0, 160);
+      if (/high volume|429/i.test(lane.err)) lane.busy = true;
+      break;
+    }
+    lane.err = null;
     const rows = rowsOf(data);
     pages++;
     if (lane.total == null && data && data.listingCount != null) lane.total = Number(data.listingCount);
@@ -544,7 +555,7 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
     // rather than asking for the same page again.
     if (!last || last === before) lane.off = (lane.off || 0) + rows.length;
     else { lane.before = last; lane.off = 0; }
-    await sleep(100);
+    await sleep(MARKET_PAUSE_MS);
   }
   lane.rows = (lane.rows || 0) + stored;
   lane.pages = (lane.pages || 0) + pages;
@@ -556,6 +567,7 @@ async function marketSlice(env, auth, budgetMs) {
   let st = {};
   try { st = JSON.parse((await env.RATEBOARD_KV.get(MARKET_KEY)) || '{}') || {}; } catch (e) {}
   if (st.done) return null;
+  if (st.coolUntil && Date.now() < st.coolUntil) return null;
   st.lanes = st.lanes || {};
   if (!st.startedAt) st.startedAt = new Date().toISOString();
   const db = env.RATEBOARD_DB;
@@ -573,6 +585,11 @@ async function marketSlice(env, auth, budgetMs) {
     const lane = st.lanes[j] || (st.lanes[j] = { start: st.startedAt });
     return marketLane(env, auth, j, lane, ins, deadline).catch(() => 0);
   }));
+  if (open.some(j => st.lanes[j] && st.lanes[j].busy)) {
+    st.coolUntil = Date.now() + MARKET_COOLDOWN_MS;
+    st.cooldowns = (st.cooldowns || 0) + 1;
+    open.forEach(j => { if (st.lanes[j]) delete st.lanes[j].busy; });
+  }
   st.at = new Date().toISOString();
   try { await env.RATEBOARD_KV.put(MARKET_KEY, JSON.stringify(st)); } catch (e) {}
   return results.reduce((a, b) => a + b, 0);
@@ -4754,6 +4771,8 @@ async function handleGet({ request, env }) {
     try { st = JSON.parse((await env.RATEBOARD_KV.get(MARKET_KEY)) || '{}') || {}; } catch (e) {}
     const lanes = st.lanes || {};
     const out = { startedAt: st.startedAt || null, at: st.at || null, done: !!st.done,
+      coolingUntil: st.coolUntil && st.coolUntil > Date.now() ? new Date(st.coolUntil).toISOString() : null,
+      cooldowns: st.cooldowns || 0,
       lanesDone: Object.values(lanes).filter(l => l.done).length, lanesTotal: marketJobs().length,
       requests: Object.values(lanes).reduce((a, l) => a + (l.pages || 0), 0),
       lanes: Object.fromEntries(Object.entries(lanes).filter(([, l]) => l.rows || l.err || !l.done)
