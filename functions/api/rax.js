@@ -481,24 +481,22 @@ async function ownerTopSlice(env, sport, season, auth, statusOnly) {
 
 
 /* ---- the marketplace pull ------------------------------------------------
-   Every listing up on Real's card marketplace, one sport-season at a time,
-   walked newest-ending first by Real's own cursor (beforeEndsAt). It runs a
-   few pages at the start of each collector tick, so it never needs anyone
-   signed in and never asks Real for more than a person paging the market
-   would. What a listing carries was not known when this was written, so each
-   one is kept as a compact copy of its plain fields - the card's too - plus
-   a few pulled out for querying.
+   Every listing up on Real's card marketplace. Real pages it ten at a time,
+   ordered by when each listing ends, with beforeEndsAt as the cursor - it
+   moves forward from now, despite the name. Each sport-season is its own
+   cursor, and several run side by side in the first part of each collector
+   tick, about as many calls a tick as the play collector already makes.
    ------------------------------------------------------------------------- */
-const MARKET_DDL = `CREATE TABLE IF NOT EXISTS market_listings (
-  id TEXT PRIMARY KEY, sport TEXT, season INTEGER, endsAt TEXT, price REAL,
-  playerId INTEGER, player TEXT, rarity INTEGER, seenAt INTEGER, body TEXT)`;
-const MARKET_KEY = 'market_pull_v2';
+const MARKET_DDL = `CREATE TABLE IF NOT EXISTS market_v2 (
+  id TEXT PRIMARY KEY, sport TEXT, season INTEGER, playerId INTEGER, entityType TEXT,
+  entityId INTEGER, label TEXT, rarity INTEGER, prestige INTEGER, value REAL, mint INTEGER,
+  listingType TEXT, status TEXT, minBid REAL, buyNow REAL, curBid REAL, bids INTEGER,
+  seller TEXT, cardId TEXT, createdAt TEXT, endsAt TEXT, seenAt INTEGER)`;
+const MARKET_KEY = 'market_pull_v3';
 const MARKET_SEASONS = [2027, 2026, 2025, 2024, 2023, 2022, 2021, 2020];
 const MARKET_SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'ncaam', 'nhl', 'soccer', 'wnba', 'ufc', 'golf'];
-const MARKET_PAGES_PER_TICK = 12;
-// Starting the cursor in the future returns nothing, so the walk starts now,
-// as the tag harvest does, and goes back a week at most.
-const MARKET_BACK_MS = 7 * 86400000;
+const MARKET_LANES = 8;            // sport-seasons walked at once
+const MARKET_PAGES_PER_LANE = 15;  // pages each, per tick
 
 function marketJobs() {
   const out = [];
@@ -506,111 +504,78 @@ function marketJobs() {
   return out;
 }
 
-// Plain values only, one level into nested objects, arrays reduced to the ids
-// they hold. Enough to see and query what a listing is, without keeping
-// every image link and display string.
-function compactListing(r) {
-  const flat = (o, depth) => {
-    const out = {};
-    for (const [k, v] of Object.entries(o || {})) {
-      if (v == null) continue;
-      if (typeof v !== 'object') {
-        if (typeof v === 'string' && /^https?:/.test(v)) continue;
-        out[k] = typeof v === 'string' ? v.slice(0, 80) : v;
-      } else if (Array.isArray(v)) {
-        const ids = v.map(x => (x && typeof x === 'object') ? (x.id ?? x.label ?? null) : x)
-          .filter(x => x != null).slice(0, 20);
-        if (ids.length) out[k] = ids;
-      } else if (depth < 2) {
-        const inner = flat(v, depth + 1);
-        if (Object.keys(inner).length) out[k] = inner;
-      }
+const numOr = v => { const n = Number(v); return v != null && v !== '' && Number.isFinite(n) ? n : null; };
+
+async function marketLane(env, auth, job, lane, ins, deadline) {
+  const [sp, se] = job.split(':');
+  let pages = 0, stored = 0;
+  while (pages < MARKET_PAGES_PER_LANE && Date.now() < deadline && !lane.done) {
+    const before = lane.before || lane.start;
+    const u = `https://web.realapp.com/cardmarketplacelistings`
+      + `?beforeEndsAt=${encodeURIComponent(before)}&cohort=all&listingType=card`
+      + `&offset=${lane.off || 0}&limit=100&prestige=all&rarity=all&season=${se}&sport=${sp}`;
+    let data;
+    try { data = await rsGet(u, auth); }
+    catch (e) { lane.err = String((e && e.message) || e).slice(0, 160); break; }
+    const rows = rowsOf(data);
+    pages++;
+    if (lane.total == null && data && data.listingCount != null) lane.total = Number(data.listingCount);
+    if (!rows.length) { lane.done = true; break; }
+    lane.pageSize = rows.length;
+    const now = Date.now();
+    const stmts = rows.map(r => {
+      const c = r.card || {};
+      return ins.bind(String(r.id), sp, Number(se), numOr(r.playerId ?? c.playerId),
+        r.entityType || c.entityType || null, numOr(r.entityId ?? c.entityId),
+        String(c.entityLabel || c.viewLabel || '').slice(0, 80) || null,
+        numOr(r.rarity ?? c.rarity), numOr(r.prestige ?? c.prestige), numOr(r.value ?? c.value),
+        numOr(r.mintNumber ?? c.mintNumber), r.listingType || null, r.status || null,
+        numOr(r.minBidPrice), numOr(r.buyNowPrice), numOr(r.currentBidAmount), numOr(r.numBids),
+        r.userId != null ? String(r.userId) : null, r.cardId != null ? String(r.cardId) : null,
+        r.createdAt || null, r.endsAt || null, now);
+    });
+    for (let k = 0; k < stmts.length; k += 50) {
+      try { await env.RATEBOARD_DB.batch(stmts.slice(k, k + 50)); }
+      catch (e) { lane.err = 'store: ' + String(e.message || e).slice(0, 160); }
     }
-    return out;
-  };
-  return flat(r, 0);
+    stored += stmts.length;
+    const last = rows[rows.length - 1].endsAt;
+    // Same end time all the way down the page: step past it with the offset
+    // rather than asking for the same page again.
+    if (!last || last === before) lane.off = (lane.off || 0) + rows.length;
+    else { lane.before = last; lane.off = 0; }
+    await sleep(100);
+  }
+  lane.rows = (lane.rows || 0) + stored;
+  lane.pages = (lane.pages || 0) + pages;
+  return stored;
 }
 
-const firstNum = (...vals) => {
-  for (const v of vals) { const n = Number(v); if (v != null && v !== '' && Number.isFinite(n)) return n; }
-  return null;
-};
-
 async function marketSlice(env, auth, budgetMs) {
-  const db = env.RATEBOARD_DB;
-  const t0 = Date.now();
+  const deadline = Date.now() + budgetMs;
   let st = {};
   try { st = JSON.parse((await env.RATEBOARD_KV.get(MARKET_KEY)) || '{}') || {}; } catch (e) {}
   if (st.done) return null;
-  const jobs = marketJobs();
-  st.i = Number(st.i || 0);
-  st.pages = Number(st.pages || 0);
-  st.rows = Number(st.rows || 0);
-  st.perJob = st.perJob || {};
+  st.lanes = st.lanes || {};
+  if (!st.startedAt) st.startedAt = new Date().toISOString();
+  const db = env.RATEBOARD_DB;
   await db.prepare(MARKET_DDL).run();
   const ins = db.prepare(
-    `INSERT INTO market_listings (id, sport, season, endsAt, price, playerId, player, rarity, seenAt, body)
-     VALUES (?,?,?,?,?,?,?,?,?,?)
-     ON CONFLICT(id) DO UPDATE SET endsAt=excluded.endsAt, price=excluded.price,
-       seenAt=excluded.seenAt, body=excluded.body`);
-  let pagesNow = 0, last = '';
-  while (st.i < jobs.length && pagesNow < MARKET_PAGES_PER_TICK && Date.now() - t0 < budgetMs) {
-    const [sp, se] = jobs[st.i].split(':');
-    const before = st.before || new Date().toISOString();
-    const u = `https://web.realapp.com/cardmarketplacelistings`
-      + `?beforeEndsAt=${encodeURIComponent(before)}&cohort=all&listingType=card`
-      + `&offset=0&prestige=all&rarity=all&season=${se}&sport=${sp}`;
-    let rows = [], data = null;
-    try { data = await rsGet(u, auth); rows = rowsOf(data); }
-    catch (e) { st.lastError = `${sp} ${se}: ${String((e && e.message) || e).slice(0, 200)}`; break; }
-    pagesNow++; st.pages++;
-    if (!rows.length && !st.emptySample) {
-      st.emptySample = { job: `${sp} ${se}`, topLevel: data && typeof data === 'object' ? Object.keys(data) : typeof data,
-                         text: JSON.stringify(data).slice(0, 400) };
-    }
-    if (!st.shape && rows.length) {
-      st.shape = { topLevel: Object.keys(data || {}), row: Object.keys(rows[0] || {}),
-                   card: Object.keys((rows[0] && rows[0].card) || {}), pageSize: rows.length };
-    }
-    const now = Date.now();
-    const fresh = rows.filter(r => r && (!r.endsAt || Date.parse(r.endsAt) > now - MARKET_BACK_MS));
-    const stmts = [];
-    for (const r of fresh) {
-      const c = r.card || {};
-      const ent = c.entity || c.player || r.entity || {};
-      if (!st.endsRange) st.endsRange = {};
-      if (r.endsAt) {
-        if (!st.endsRange.min || r.endsAt < st.endsRange.min) st.endsRange.min = r.endsAt;
-        if (!st.endsRange.max || r.endsAt > st.endsRange.max) st.endsRange.max = r.endsAt;
-      }
-      const id = String(r.id ?? r.listingId ?? `${c.id || ''}:${r.endsAt}`);
-      stmts.push(ins.bind(id, sp, Number(se), r.endsAt || null,
-        firstNum(r.price, r.amount, r.listPrice, r.cost, r.priceCents, r.currentPrice, r.buyNowPrice),
-        firstNum(c.entityId, c.playerId, ent.id, r.entityId),
-        String(ent.displayName || ent.name || c.label || r.label || '').slice(0, 80) || null,
-        firstNum(c.rarity, r.rarity),
-        now, JSON.stringify(compactListing(r)).slice(0, 1500)));
-    }
-    for (let k = 0; k < stmts.length; k += 50) {
-      try { await db.batch(stmts.slice(k, k + 50)); } catch (e) { st.lastError = 'store: ' + String(e.message || e).slice(0, 200); }
-    }
-    st.rows += stmts.length;
-    st.perJob[jobs[st.i]] = (st.perJob[jobs[st.i]] || 0) + stmts.length;
-    const lastEnds = rows.length ? rows[rows.length - 1].endsAt : null;
-    // Done with this sport-season when a page comes back empty, has nothing
-    // still live on it, or the cursor would not move.
-    if (!rows.length || fresh.length < rows.length || !lastEnds || lastEnds === before) {
-      st.i++; st.before = '';
-    } else {
-      st.before = lastEnds;
-    }
-    last = `${sp} ${se}`;
-    await sleep(150);
-  }
-  if (st.i >= jobs.length) { st.done = true; st.finishedAt = new Date().toISOString(); }
+    `INSERT INTO market_v2 (id, sport, season, playerId, entityType, entityId, label, rarity, prestige,
+       value, mint, listingType, status, minBid, buyNow, curBid, bids, seller, cardId, createdAt, endsAt, seenAt)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET status=excluded.status, minBid=excluded.minBid,
+       buyNow=excluded.buyNow, curBid=excluded.curBid, bids=excluded.bids,
+       endsAt=excluded.endsAt, seenAt=excluded.seenAt`);
+  const open = marketJobs().filter(j => !(st.lanes[j] && st.lanes[j].done)).slice(0, MARKET_LANES);
+  if (!open.length) { st.done = true; st.finishedAt = new Date().toISOString(); }
+  const results = await Promise.all(open.map(j => {
+    const lane = st.lanes[j] || (st.lanes[j] = { start: st.startedAt });
+    return marketLane(env, auth, j, lane, ins, deadline).catch(() => 0);
+  }));
   st.at = new Date().toISOString();
   try { await env.RATEBOARD_KV.put(MARKET_KEY, JSON.stringify(st)); } catch (e) {}
-  return pagesNow ? `market: ${pagesNow} pages (${last})` : null;
+  return results.reduce((a, b) => a + b, 0);
 }
 
 // Forgetting what has been walked is all a requeue is: the rows stay, and the
@@ -4302,7 +4267,7 @@ async function handleGet({ request, env }) {
     if (url.searchParams.get('queue') === 'next' && db) {
       // A few marketplace pages first, inside a fixed time budget, so the
       // rest of the tick carries on as it always has.
-      try { await marketSlice(env, auth, 15000); } catch (e) {}
+      try { await marketSlice(env, auth, 25000); } catch (e) {}
       const PK = 'plays_tick_v1';
       let st = {};
       try { st = JSON.parse((await env.RATEBOARD_KV.get(PK)) || '{}') || {}; } catch (e) {}
@@ -4787,23 +4752,22 @@ async function handleGet({ request, env }) {
   if (url.searchParams.get('market') === 'status') {
     let st = {};
     try { st = JSON.parse((await env.RATEBOARD_KV.get(MARKET_KEY)) || '{}') || {}; } catch (e) {}
-    const out = { pulled: st.rows || 0, pages: st.pages || 0, job: marketJobs()[st.i || 0] || null,
-                  jobsDone: Number(st.i || 0), jobsTotal: marketJobs().length, done: !!st.done,
-                  at: st.at || null, lastError: st.lastError || null, shape: st.shape || null,
-                  emptySample: st.emptySample || null, endsRange: st.endsRange || null,
-                  perJob: st.perJob || {} };
+    const lanes = st.lanes || {};
+    const out = { startedAt: st.startedAt || null, at: st.at || null, done: !!st.done,
+      lanesDone: Object.values(lanes).filter(l => l.done).length, lanesTotal: marketJobs().length,
+      requests: Object.values(lanes).reduce((a, l) => a + (l.pages || 0), 0),
+      lanes: Object.fromEntries(Object.entries(lanes).filter(([, l]) => l.rows || l.err || !l.done)
+        .map(([k, l]) => [k, { rows: l.rows || 0, pages: l.pages || 0, total: l.total ?? null,
+          pageSize: l.pageSize || null, done: !!l.done, at: l.before || null, err: l.err || null }])) };
     try {
       const db = env.RATEBOARD_DB;
       await db.prepare(MARKET_DDL).run();
-      const c = await db.prepare(
-        `SELECT COUNT(*) AS n, COUNT(price) AS priced, COUNT(DISTINCT playerId) AS players
-           FROM market_listings`).first();
-      out.live = c;
-      const bySport = await db.prepare(
-        `SELECT sport, COUNT(*) AS n FROM market_listings GROUP BY sport`).all();
-      out.liveBySport = bySport.results || [];
-      const one = await db.prepare('SELECT body FROM market_listings ORDER BY seenAt DESC LIMIT 1').first();
-      out.example = one ? JSON.parse(one.body) : null;
+      out.stored = await db.prepare(
+        `SELECT COUNT(*) AS listings, COUNT(buyNow) AS withBuyNow, COUNT(DISTINCT playerId) AS players,
+                MIN(endsAt) AS firstEnds, MAX(endsAt) AS lastEnds FROM market_v2`).first();
+      out.bySport = (await db.prepare(
+        `SELECT sport, COUNT(*) AS n FROM market_v2 GROUP BY sport ORDER BY n DESC`).all()).results || [];
+      out.example = await db.prepare('SELECT * FROM market_v2 ORDER BY seenAt DESC LIMIT 1').first();
     } catch (e) { out.dbError = String((e && e.message) || e).slice(0, 200); }
     return json(out);
   }
