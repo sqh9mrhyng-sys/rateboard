@@ -5101,12 +5101,16 @@ async function handleGet({ request, env }) {
       for (const [sp, se] of pairs) binds.push(sp, se);
 
       const n = Math.min(200, Math.max(5, parseInt(url.searchParams.get('limit') || '90', 10) || 90));
+      // pos=pitchers keeps a baseball pool to the men on the mound. The values
+      // are ours, never the caller's, so they can sit in the SQL as text.
+      const posSql = url.searchParams.get('pos') === 'pitchers'
+        ? " AND position IN ('P','SP','RP')" : '';
 
       try {
         const top = await db.prepare(
           `SELECT playerId, sport, season, MAX(player) AS player, MAX(team) AS team,
                   SUM(rax) AS rax, COUNT(*) AS games
-             FROM gamelog WHERE ${scope} AND rax IS NOT NULL
+             FROM gamelog WHERE ${scope} AND rax IS NOT NULL${posSql}
             GROUP BY playerId, sport, season
             ORDER BY SUM(rax) DESC LIMIT ?`).bind(...binds, n).all();
         const rows = (top && top.results) || [];
@@ -5122,7 +5126,7 @@ async function handleGet({ request, env }) {
             if (!slice.length) continue;
             const g = await db.prepare(
               `SELECT playerId, day, rax FROM gamelog
-                WHERE sport = ? AND season = ? AND rax > 0 AND day IS NOT NULL
+                WHERE sport = ? AND season = ? AND rax > 0 AND day IS NOT NULL${posSql}
                   AND playerId IN (${slice.map(() => '?').join(',')})`).bind(sp, se, ...slice).all();
             for (const r of (g && g.results) || []) {
               out.push({ sport: sp, season: se, playerId: r.playerId, day: r.day, rax: r.rax });
