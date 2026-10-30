@@ -78,7 +78,7 @@ function fightDates(html) {
 async function fetchAthlete(slug) {
   const res = await fetch(`https://www.ufc.com/athlete/${encodeURIComponent(slug)}`, {
     headers: {
-      'user-agent': 'Mozilla/5.0 (compatible; RateBoard/1.0; +https://rateboard-cgi.pages.dev)',
+      'user-agent': 'Mozilla/5.0 (compatible; RateBoard/1.0; +https://raxacademy.app)',
       'accept': 'text/html'
     },
     cf: { cacheTtl: 3600, cacheEverything: true }
