@@ -493,7 +493,7 @@ const MARKET_DDL = `CREATE TABLE IF NOT EXISTS market_v2 (
   listingType TEXT, status TEXT, minBid REAL, buyNow REAL, curBid REAL, bids INTEGER,
   seller TEXT, cardId TEXT, createdAt TEXT, endsAt TEXT, seenAt INTEGER)`;
 const MARKET_KEY = 'market_pull_v7';
-const MARKET_SEASONS = [2027, 2026, 2025, 2024, 2023, 2022, 2021, 2020];
+const MARKET_SEASONS = [2027, 2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2016, 2015, 2014];
 const MARKET_SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'ncaam', 'nhl', 'soccer', 'wnba', 'ufc', 'golf'];
 /* One at a time. Eight side by side drew "We are experiencing high volume"
    from Real, and this runs on the board owner's account, so it backs right
@@ -540,8 +540,8 @@ const MARKET_LIST = {
   mlb: [2026, 2025, 2024, 2023, 2022],
   wnba: [2026, 2025, 2024],
   soccer: [2026, 2025],
-  golf: [2026, 2025, 2024, 2023, 2022],
-  ufc: [2026, 2025]
+  golf: [2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2016, 2015, 2014],
+  ufc: [2023]                       // one season for good - Real has kept UFC on 2023
 };
 // A season that came back empty is looked at again once a day rather than
 // every refresh, so it costs a few seconds a day at most.
