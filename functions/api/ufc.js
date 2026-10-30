@@ -1,3 +1,4 @@
+import { isAdminRequest, forbidden } from '../../lib/auth.js';
 // Cloudflare Pages Function backing /api/ufc.
 //
 // Live fighter details from UFC.com — status (Active / Not Fighting / Retired),
@@ -180,6 +181,8 @@ export async function onRequestGet({ request, env, waitUntil }) {
 // Seeds or corrects details. Only known fields are accepted, and an empty
 // incoming value never overwrites a stored one.
 export async function onRequestPost({ request, env }) {
+  // Fighter corrections come from the admin screen only.
+  if (!(await isAdminRequest(env, request))) return forbidden();
   let body;
   try { body = await request.json(); } catch (e) { return json({ error: 'bad json' }, 400); }
   const store = await readStore(env);

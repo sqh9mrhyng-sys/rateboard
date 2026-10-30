@@ -1,3 +1,5 @@
+import { isAdminRequest, allow, clientIp, forbidden } from '../../lib/auth.js';
+
 // GET /api/rax?sport=ncaam&season=2026
 //
 // Season earnings ("rax") straight from RS's own leaderboard endpoint —
@@ -1274,7 +1276,7 @@ async function weeklyRescan(env) {
   return null;
 }
 
-export async function onRequestGet({ request, env }) {
+async function handleGet({ request, env }) {
   const auth = env.RS_AUTH_TOKEN;
   if (!auth) return json({ error: 'RS_AUTH_TOKEN is not set on this deployment' }, 500);
 
@@ -6061,4 +6063,101 @@ async function pass(){
   }
 
   return json({ sport, season, section, count: out.length, done, nextStart: done ? null : next, players: out });
+}
+
+
+/* ---- the front door ------------------------------------------------------
+   Three kinds of request, sorted before anything touches the database:
+
+   Reads the page makes for members - game logs, pack data, golf, the rax
+   shift and historical tabs. Answered from the edge cache when a copy is
+   fresh, so a few thousand people opening Pack data at once cost one database
+   query per location instead of one each. Misses are rate limited per address.
+
+   The collector's calls. The cron Worker holds no credentials by design, so
+   these stay open, but they are capped at a pace a little above the one-a-
+   minute it actually runs at - nobody can use them to hammer Real's API.
+
+   Everything else - rescoring, requeueing, wiping, crawling, probes - needs an
+   admin session. These used to be open to anyone who knew the address. */
+const READS = {
+  gamelog: { query: 300, top: 900, seasons: 900 },
+  plays:   { board: 900, player: 900, seasons: 900, tagboard: 3600, progress: 120 },
+  golf:    { seasons: 1800, tournaments: 1800, allevents: 1800, board: 1800 },
+  earn:    { shift: 900 },
+  hist:    { board: 1800, progress: 300 },
+  restat:  { progress: 300 },
+  statavg: { '1': 900 }
+};
+// Flags that turn a read into a rebuild or a wipe.
+const WRITE_FLAGS = ['reset', 'rebuild', 'clear', 'fresh', 'again', 'recrawl', 'fill', 'all'];
+// What the cron Worker calls: queue=next, then one of these for the phase it
+// was handed.
+const COLLECTOR = [['queue', 'next'], ['games', '1'], ['gamelog', '1'], ['gamelog', 'rax'],
+                   ['gamelog', 'zerofill'], ['conf', '1'], ['owners', '1'], ['ownertop', '1']];
+
+function readTtl(url) {
+  if (WRITE_FLAGS.some(f => url.searchParams.get(f))) return 0;
+  for (const [k, vals] of Object.entries(READS)) {
+    const v = url.searchParams.get(k);
+    if (v != null && vals[v]) return vals[v];
+  }
+  return 0;
+}
+
+function isCollector(url) {
+  return COLLECTOR.some(([k, v]) => url.searchParams.get(k) === v);
+}
+
+export async function onRequestGet(ctx) {
+  const { request, env } = ctx;
+  const url = new URL(request.url);
+  const origin = url.origin;
+  const ttl = readTtl(url);
+
+  if (ttl > 0) {
+    const csv = url.searchParams.get('format') === 'csv';
+    // One cache entry per distinct question, whatever order its parameters
+    // came in.
+    const keyUrl = new URL(origin + '/__cache/rax/v1');
+    [...url.searchParams.entries()].sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)
+      .forEach(([k, v]) => keyUrl.searchParams.append(k, v));
+    const keyReq = new Request(keyUrl.toString(), { method: 'GET' });
+    if (!csv) {
+      try {
+        const hit = await caches.default.match(keyReq);
+        if (hit) {
+          const h = new Headers(hit.headers);
+          h.set('x-cache', 'HIT');
+          return new Response(hit.body, { status: hit.status, headers: h });
+        }
+      } catch (e) {}
+    }
+    if (!(await allow(origin, 'rax-miss:' + clientIp(request), 60, 60))) {
+      return new Response(JSON.stringify({ error: 'Too many requests at once - try again in a minute.' }),
+        { status: 429, headers: { 'content-type': 'application/json', 'retry-after': '60' } });
+    }
+    const res = await handleGet(ctx);
+    if (!csv && res.status === 200 && (res.headers.get('content-type') || '').includes('json')) {
+      try {
+        const body = await res.clone().arrayBuffer();
+        await caches.default.put(keyReq, new Response(body, {
+          headers: { 'content-type': res.headers.get('content-type'), 'cache-control': `max-age=${ttl}` }
+        }));
+      } catch (e) {}
+    }
+    return res;
+  }
+
+  if (isCollector(url)) {
+    // The Worker makes two calls a minute; leave room for a retry or two.
+    if (!(await allow(origin, 'collector', 6, 60))) {
+      return new Response(JSON.stringify({ phase: null, resting: true, minutesLeft: 1, after: 'rate limit' }),
+        { status: 429, headers: { 'content-type': 'application/json' } });
+    }
+    return handleGet(ctx);
+  }
+
+  if (!(await isAdminRequest(env, request))) return forbidden();
+  return handleGet(ctx);
 }

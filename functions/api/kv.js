@@ -25,14 +25,31 @@
    people loading the board in the same moment now cost one query instead of
    hundreds, and any write clears the cache so nobody sees their own listing
    missing right after posting it. ------------------------------------- */
+import { ADMINS, newSession, endSession, isAdminRequest, sameHash, allow, clientIp,
+         forbidden } from '../../lib/auth.js';
+
+/* ---- the Friday pack data window -------------------------------------
+   Every account that existed when this was set up (created on or before
+   GRANT_BEFORE) can open the Pack data tab, and only that tab, until
+   GRANT_UNTIL - 2pm Eastern on Friday 30 October 2026. Nothing has to run to
+   end it: past GRANT_UNTIL the board simply stops sending the window, and the
+   page checks the clock as well. Accounts made later never qualify. */
+const PACK_GRANT = {
+  before: Date.parse('2026-10-30T05:55:00Z'),   // 9:55pm Alaska, Thu 29 Oct
+  until:  Date.parse('2026-10-30T18:00:00Z')    // 2:00pm Eastern, Fri 30 Oct
+};
+
 const BOARD_CACHE_TTL = 10;      // the copy everyone is normally served
 const BOARD_STALE_TTL = 21600;   // 6h fallback, used ONLY when the database says no
+// Raised from v2 when password fingerprints stopped being part of the board,
+// so no cached copy that still carries them is ever served again.
+const BOARD_VER = 'v3';
 
 function boardCacheReq(origin) {
-  return new Request(`${origin}/__cache/board/v2`, { method: 'GET' });
+  return new Request(`${origin}/__cache/board/${BOARD_VER}`, { method: 'GET' });
 }
 function boardStaleReq(origin) {
-  return new Request(`${origin}/__cache/board-last-good/v2`, { method: 'GET' });
+  return new Request(`${origin}/__cache/board-last-good/${BOARD_VER}`, { method: 'GET' });
 }
 
 async function cacheRead(req) {
@@ -163,7 +180,7 @@ async function readSide(env) {
 }
 
 /* ---- assemble the board in the shape the page already expects ---- */
-async function readBoard(env) {
+async function readBoard(env, includeHashes) {
   const side = await readSide(env);
   const [offersRes, usersRes] = await Promise.all([
     env.RATEBOARD_DB.prepare(
@@ -173,8 +190,13 @@ async function readBoard(env) {
   ]);
   const users = {};
   for (const u of (usersRes.results || [])) {
-    users[u.key] = { name: u.name, hash: u.hash, created: u.created, banned: !!u.banned };
+    users[u.key] = includeHashes
+      ? { name: u.name, hash: u.hash, created: u.created, banned: !!u.banned }
+      // What everyone downloads. A password fingerprint is never in it: only
+      // whether one is set, which is what the page needs to spot a reset.
+      : { name: u.name, hasPass: !!u.hash, created: u.created, banned: !!u.banned };
   }
+  const now = Date.now();
   return {
     users,
     offers: (offersRes.results || []).map(o => ({
@@ -182,7 +204,8 @@ async function readBoard(env) {
       rate: o.rate, link: o.link || '', ts: o.ts
     })),
     reports: side.reports, minimums: side.minimums, keeplist: side.keeplist, house: side.house,
-    gamedata: side.gamedata, packdata: side.packdata
+    gamedata: side.gamedata, packdata: side.packdata,
+    packgrant: now < PACK_GRANT.until ? { before: PACK_GRANT.before, until: PACK_GRANT.until } : null
   };
 }
 
@@ -402,7 +425,7 @@ async function saveSnapshot(env, force) {
       if (seen) return { ok: true, skipped: 'already taken this half hour' };
     }
 
-    const board = await readBoard(env);
+    const board = await readBoard(env, true);
     const users = Object.keys(board.users).length;
     // Never let an empty or broken read overwrite a real backup.
     if (!users) return { ok: false, why: 'board read came back empty' };
@@ -427,6 +450,13 @@ async function saveSnapshot(env, force) {
 
 export async function onRequestGet({ request, env }) {
   const url = new URL(request.url);
+
+  // Everything except reading the board itself is for the admin screen:
+  // reports, counters, feature requests and the backups (which still hold
+  // password fingerprints, so they must never be public).
+  const adminRead = ['datareports', 'counts', 'features', 'snap']
+    .some(k => url.searchParams.get(k) != null) || url.searchParams.get('raw') === '1';
+  if (adminRead && !(await isAdminRequest(env, request))) return forbidden();
 
   // Open data-correction reports, newest first, for the admin screen.
   if (url.searchParams.get('datareports') != null) {
@@ -532,7 +562,74 @@ export async function onRequestPost({ request, env, waitUntil }) {
   try { body = await request.json(); }
   catch (e) { return json({ error: 'bad json' }, 400); }
 
+  const ip = clientIp(request);
+
+  // Password sign-in, checked here rather than in the page. Creates the
+  // account if the name is new, sets the password if an admin reset it, and
+  // either way hands back a session token.
+  if (body && body.op === 'auth') {
+    if (!(await allow(origin, 'auth-ip:' + ip, 60, 300))) {
+      return json({ error: 'Too many sign-in attempts. Wait a few minutes and try again.' }, 429);
+    }
+    const key = str(body.key, 60), name = str(body.name, 60), hash = str(body.hash, 200);
+    if (!key || key.length < 2 || !hash) return json({ error: 'bad sign-in' }, 400);
+    if (!(await allow(origin, 'auth-key:' + key, 10, 300))) {
+      return json({ error: 'Too many attempts for that username. Wait a few minutes.' }, 429);
+    }
+    try {
+      const db = env.RATEBOARD_DB;
+      const u = await db.prepare('SELECT key, name, hash, banned FROM users WHERE key=?').bind(key).first();
+      let created = false, reset = false;
+      if (!u) {
+        if (!(await allow(origin, 'signup-ip:' + ip, 20, 3600))) {
+          return json({ error: 'Too many new accounts from here. Try again later.' }, 429);
+        }
+        await db.prepare(
+          `INSERT INTO users (key, name, hash, created, banned) VALUES (?, ?, ?, ?, 0)
+           ON CONFLICT(key) DO NOTHING`).bind(key, name || key, hash, Date.now()).run();
+        const now = await db.prepare('SELECT hash FROM users WHERE key=?').bind(key).first();
+        if (!now || !sameHash(now.hash, hash)) return json({ error: 'Wrong password for that username.' }, 401);
+        created = true;
+      } else if (u.banned) {
+        return json({ error: 'This account has been removed from the board.' }, 403);
+      } else if (!u.hash) {
+        const res = await db.prepare(
+          "UPDATE users SET hash=? WHERE key=? AND (hash='' OR hash IS NULL)").bind(hash, key).run();
+        if (!res.meta || !res.meta.changes) return json({ error: 'Could not set that password. Try again.' }, 409);
+        reset = true;
+      } else if (!sameHash(u.hash, hash)) {
+        return json({ error: 'Wrong password for that username.' }, 401);
+      }
+      const token = await newSession(env, key);
+      if (created) await bustBoard(origin);
+      return json({ ok: true, token, key, name: (u && u.name) || name || key,
+                    admin: ADMINS.includes(key), created, reset });
+    } catch (e) {
+      return json({ error: 'could not sign in: ' + (e && e.message || e) }, 503);
+    }
+  }
+
+  if (body && body.op === 'signout') {
+    await endSession(env, request);
+    return json({ ok: true });
+  }
+
   if (body && body.op) {
+    // Admin powers, checked against a real admin session. An offer edit or
+    // removal without an owner is the admin's "any listing" version.
+    const ADMIN_OPS = new Set(['setBanned', 'resetPass', 'resolveDataReport',
+                               'resolveFeature', 'import']);
+    const anyOwner = (body.op === 'updateOffer' || body.op === 'removeOffer') && !str(body.user, 60);
+    if ((ADMIN_OPS.has(body.op) || anyOwner) && !(await isAdminRequest(env, request))) {
+      return forbidden();
+    }
+    // A firehose of member writes from one place is somebody's script.
+    if (!(await allow(origin, 'op-ip:' + ip, 120, 60))) {
+      return json({ error: 'Slow down a little and try again.' }, 429);
+    }
+    if (body.op === 'signup' && !(await allow(origin, 'signup-ip:' + ip, 20, 3600))) {
+      return json({ error: 'Too many new accounts from here. Try again later.' }, 429);
+    }
     let err;
     try { err = await applyOp(env, body); }
     catch (e) { return json({ error: 'could not save: ' + (e && e.message || e) }, 503); }
@@ -547,6 +644,7 @@ export async function onRequestPost({ request, env, waitUntil }) {
   // Whole-board write from the admin screens. Listings and accounts live in
   // the database now, so only the admin lists are taken from this payload —
   // a stale copy of the board can no longer flatten anyone's listing.
+  if (!(await isAdminRequest(env, request))) return forbidden();
   const { key, value } = body || {};
   if (!key || !ALLOWED_KEYS.has(key)) return json({ error: 'unknown key' }, 400);
   if (typeof value !== 'string' || value.length > MAX_VALUE_BYTES) {

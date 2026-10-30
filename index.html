@@ -703,6 +703,30 @@
    per-browser, so it just stays in localStorage.
    ========================================================= */
 const KEY = 'ratebrd_market_v1';
+/* ---- the session token -------------------------------------------------
+   A password sign-in now goes through the server, which hands back a random
+   token. Anything only an admin may do is checked against it there, so the
+   page saying "I'm the admin" is no longer enough. It rides along on every
+   call this page makes to its own API. */
+const TOKEN = 'ratebrd_token_v1';
+function getToken(){ try{ return localStorage.getItem(TOKEN) || ''; }catch(e){ return ''; } }
+function setToken(t){ try{ t ? localStorage.setItem(TOKEN, t) : localStorage.removeItem(TOKEN); }catch(e){} }
+(function(){
+  const raw = window.fetch.bind(window);
+  window.fetch = function(input, init){
+    try{
+      const url = typeof input === 'string' ? input : (input && input.url) || '';
+      const t = getToken();
+      if(t && (url.startsWith('/api/') || url.startsWith(location.origin + '/api/'))){
+        init = Object.assign({}, init || {});
+        const h = new Headers(init.headers || (typeof input !== 'string' && input.headers) || {});
+        h.set('x-rb-token', t);
+        init.headers = h;
+      }
+    }catch(e){}
+    return raw(input, init);
+  };
+})();
 const SESSION = 'ratebrd_session';    // legacy: bare username key
 const DEVICE  = 'ratebrd_device_v1';  // { key, name, ts } — remembers this browser
 const MIN_PASS = 4;
@@ -713,7 +737,9 @@ const ADMINS = ['dennis'];            // <-- put your username(s) here
 // isAdmin() answer no for the whole page, so every one of those branches
 // hides itself without a second code path to keep in step.
 let previewMember = false;
-const reallyAdmin = () => !!me && ADMINS.includes(String(me).toLowerCase());
+// The admin screens only show with a real admin session behind them; the
+// server refuses the actions without one anyway.
+const reallyAdmin = () => !!me && ADMINS.includes(String(me).toLowerCase()) && !!getToken();
 const isAdmin = () => reallyAdmin() && !previewMember;
 
 // Admins always; anyone else only if they have been granted it on the admin
@@ -723,8 +749,29 @@ const canSeeGameData = () => isAdmin() || (!!me && gameDataList().includes(Strin
 // Pack data can be granted on its own: these people open the same panel but
 // see only that one tab.
 const packDataList = () => (market.packdata || []).map(x => String(x).toLowerCase());
-const canSeePackData = () => canSeeGameData()
+// The time-boxed window: every account that existed when it opened, until it
+// closes. The board stops sending it once it has closed, and the clock here
+// is checked too so an open tab loses it on time.
+const packGrantNow = () => {
+  const g = market.packgrant;
+  if(!g || !me || Date.now() >= Number(g.until)) return false;
+  const u = market.users && market.users[String(me).toLowerCase()];
+  const made = u && Number(u.created);
+  return !!made && made <= Number(g.before);
+};
+const canSeePackData = () => canSeeGameData() || packGrantNow()
   || (!!me && packDataList().includes(String(me).toLowerCase()));
+// When the window closes on someone who is looking at it, take them back to
+// the board and hide the way in, without waiting for a reload.
+setInterval(() => {
+  try{
+    const g = market && market.packgrant;
+    if(!g || Date.now() < Number(g.until) || canSeePackData()) return;
+    market.packgrant = null;
+    if(typeof curPage !== 'undefined' && curPage === 'cbb') goPage('board');
+    if(typeof applyGameDataVisibility === 'function') applyGameDataVisibility();
+  }catch(e){}
+}, 30000);
 const packOnly = () => canSeePackData() && !canSeeGameData();
 /* ---- the collector bar -------------------------------------------------
    Admin only. It reads one endpoint that reports, per season, how many of the
@@ -2413,27 +2460,20 @@ async function doSignIn(){
 
   const key = u.toLowerCase();
   const h = await hash(p);
+  // The server checks the password now; the board no longer carries anyone's
+  // password fingerprint for the page to compare against.
+  let d = null;
+  try{
+    const r = await fetch('/api/kv', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ op:'auth', key, name:u, hash:h }) });
+    d = await r.json().catch(() => null);
+    if(!r.ok || !d || !d.ok) return gateMsg((d && d.error) || 'Could not sign in. Try again.');
+  }catch(e){ return gateMsg('Could not reach the board. Try again in a moment.'); }
+
+  setToken(d.token);
+  if(d.reset) toast('New password saved.');
   await pull();
-  const existing = market.users[key];
-
-  if(existing){
-    if(existing.banned) return gateMsg('This account has been removed from the board.');
-    if(!existing.hash){
-      // Password was reset by the admin — whatever they just typed becomes it.
-      const set = await patch('setPass', { key, hash:h });
-      if(!set) return gateMsg('Could not set that password. Try again.');
-      await pull();
-      toast('New password saved.');
-    } else if(existing.hash !== h){
-      return gateMsg('Wrong password for that username.');
-    }
-  } else {
-    const ok = await patch('signup', { key, name:u, hash:h });
-    if(!ok) return gateMsg('Could not create the account. Try again.');
-    await pull();
-  }
-
-  me = market.users[key]?.name || u;
+  me = market.users[key]?.name || d.name || u;
   saveDevice(key, me);
   enter();
 }
@@ -2455,7 +2495,10 @@ async function resume(){
   const u = market.users[d.key];
   if(!u || u.banned){ clearDevice(); me = null; return false; }
   // Password was reset — this browser has to go back through the login.
-  if(!u.hash){ clearDevice(); me = null; return false; }
+  if(u.hasPass === false){ clearDevice(); setToken(''); me = null; return false; }
+  // The admin account needs a real session for its powers. Signed in from
+  // before sessions existed means one more password sign-in.
+  if(ADMINS.includes(String(d.key).toLowerCase()) && !getToken()){ clearDevice(); me = null; return false; }
 
   me = u.name;
   saveDevice(d.key, me);             // refresh the stamp on every visit
@@ -2482,6 +2525,9 @@ function enter(){
 }
 
 $('#signout').addEventListener('click', async () => {
+  try{ if(getToken()) await fetch('/api/kv', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ op:'signout' }) }); }catch(e){}
+  setToken('');
   clearDevice();
   me = null;
   $('#app').classList.add('hide'); $('#gate').classList.remove('hide');
@@ -7799,7 +7845,7 @@ async function adminPanel(){
           <span class="who">${u.banned ? 'deleted' : market.offers.filter(o=>o.user===k).length + ' offers'}</span></span>
         ${k === me.toLowerCase() ? `<span class="who">this is you</span>`
           : u.banned ? `<button class="btn-ghost" data-unban="${esc(k)}">Restore</button>`
-                     : `<button class="btn-ghost" data-reset="${esc(k)}">${u.hash ? 'Reset password' : 'awaiting new password'}</button>
+                     : `<button class="btn-ghost" data-reset="${esc(k)}">${u.hasPass ? 'Reset password' : 'awaiting new password'}</button>
                         <button class="btn-ghost" data-gd="${esc(k)}">${
                           gameDataList().includes(k) ? 'Revoke game data' : 'Grant access to game data'}</button>
                         <button class="btn-ghost" data-pd="${esc(k)}">${
@@ -7986,7 +8032,7 @@ async function adminPanel(){
           <span class="who">${u.banned ? 'deleted — ' : ''}${theirs.length} listing${theirs.length===1?'':'s'}</span>
         </div>
         <div class="hitacts"><button class="btn-ghost" data-reset="${esc(k)}">${
-          u.hash ? 'Reset password' : 'awaiting new password'}</button>
+          u.hasPass ? 'Reset password' : 'awaiting new password'}</button>
           <button class="btn-ghost" data-gd="${esc(k)}">${
             gameDataList().includes(k) ? 'Revoke game data' : 'Grant access to game data'}</button>
           <button class="btn-ghost" data-pd="${esc(k)}">${
@@ -8166,7 +8212,7 @@ async function adminPanel(){
     if(rs){
       const k = rs.dataset.reset;
       const u = market.users[k];
-      if(u && !u.hash){ toast(`${u.name || k} is already waiting to set a new password.`); return; }
+      if(u && !u.hasPass){ toast(`${u.name || k} is already waiting to set a new password.`); return; }
       if(!confirm(`Reset the password for ${u?.name || k}?\n\nTheir listings stay up. The next password they type when logging in becomes their new one.`)) return;
       rs.disabled = true;
       const done = await patch('resetPass', { key: k });

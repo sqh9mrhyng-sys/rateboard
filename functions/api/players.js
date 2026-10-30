@@ -13,6 +13,8 @@
 // There is also no free public "EA Sports FC roster" API, so FC is
 // approximated with ESPN's soccer data across a broad set of major leagues.
 
+import { isAdminRequest, forbidden } from '../../lib/auth.js';
+
 const MAX_RESULTS = 15;
 const MAX_VALUE_BYTES = 4_000_000; // generous; real usage is a few hundred KB
 const MAX_PLAYERS = 60_000;        // sanity cap on an import
@@ -119,6 +121,8 @@ export async function onRequestOptions() {
 // there before. This endpoint has no auth beyond being a hard-to-guess-into
 // write of a specific shape — same trust model as the rest of this board.
 export async function onRequestPost({ request, env }) {
+  // Replaces a whole sport's player list, so admin only.
+  if (!(await isAdminRequest(env, request))) return forbidden();
   let body;
   try { body = await request.json(); }
   catch (e) { return json({ error: 'bad json' }, 400); }

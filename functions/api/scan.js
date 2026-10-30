@@ -6,6 +6,8 @@
 // never has to live in public client code. Configure the key as a secret
 // environment variable named ANTHROPIC_API_KEY on this Pages project
 // (Settings > Environment variables), for both Production and Preview.
+import { allow, clientIp } from '../../lib/auth.js';
+
 const MODEL = 'claude-sonnet-4-6';
 // Big enough for a long roster: ~25 tokens per player row, so this comfortably
 // covers a few hundred players read off one batch of screenshots.
@@ -36,6 +38,16 @@ function isValidBlock(block) {
 export async function onRequestPost({ request, env }) {
   if (!env.ANTHROPIC_API_KEY) {
     return json({ error: 'scanning is not configured on this server yet' }, 500);
+  }
+
+  // Every scan is paid for on the board's Anthropic account, so one address
+  // gets a handful an hour and the whole board a few hundred a day.
+  const origin = new URL(request.url).origin;
+  if (!(await allow(origin, 'scan-ip:' + clientIp(request), 12, 3600))) {
+    return json({ error: 'You have scanned a lot this hour - try again later.' }, 429);
+  }
+  if (!(await allow(origin, 'scan-all', 400, 86400))) {
+    return json({ error: 'Scanning is busy today - try again tomorrow.' }, 429);
   }
 
   let body;
