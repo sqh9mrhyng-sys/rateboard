@@ -485,6 +485,43 @@
     .ownrow{grid-template-columns:1fr}
   }
 </style>
+<script>
+/* Carries a member's saved sign-in, loadouts and settings over from the old
+   rateboard-cgi.pages.dev address. Browsers keep saved data per address, so
+   the move to raxacademy.app started everyone empty. A browser with nothing
+   saved here is sent once to the old address's /__move page, which sends it
+   back with the old data in the URL fragment. Anything already saved here
+   wins over what comes across. Runs before the board's own script. */
+(function(){
+  if (location.hostname !== 'raxacademy.app') return;
+  var DONE = 'ratebrd_moved';
+  var m = location.hash.match(/[#&]rbmove=([^&]*)/);
+  if (m) {
+    try {
+      var data = JSON.parse(decodeURIComponent(m[1])) || {};
+      for (var k in data) {
+        if (Object.prototype.hasOwnProperty.call(data, k) && typeof data[k] === 'string'
+            && localStorage.getItem(k) == null) localStorage.setItem(k, data[k]);
+      }
+      localStorage.setItem(DONE, '1');
+    } catch (e) {}
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+    return;
+  }
+  try {
+    if (localStorage.getItem(DONE)) return;
+    if (localStorage.getItem('ratebrd_device_v1') || localStorage.getItem('ratebrd_session')) {
+      localStorage.setItem(DONE, '1');
+      return;
+    }
+    // Once per tab at most, so a failed trip can never loop.
+    if (sessionStorage.getItem('ratebrd_moving')) return;
+    sessionStorage.setItem('ratebrd_moving', '1');
+  } catch (e) { return; }
+  location.replace('https://rateboard-cgi.pages.dev/__move?to='
+    + encodeURIComponent(location.pathname + location.search));
+})();
+</script>
 </head>
 <body data-sport="CFB">
 
