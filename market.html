@@ -97,7 +97,7 @@
   <details>
     <summary>Raw check of one page from Real (admin)</summary>
     <p class="note">Asks Real for one page live, on the marketplace account, and shows it untouched. Needs you signed in to the board as admin in this browser.</p>
-    <div class="bar"><button id="probe">Pull one page</button></div>
+    <div class="bar"><button id="probe">Pull one page</button> <button id="reset">Start a fresh pull</button></div>
     <pre id="raw">Nothing pulled yet.</pre>
   </details>
 </div>
@@ -253,6 +253,16 @@ $('#probe').addEventListener('click', async () => {
     const r = await fetch(`/api/rax?market=probe&sport=${sp}&season=${se}&n=2`, { headers: { 'x-rb-token': t } });
     if(r.status === 403){ $('#raw').textContent = 'Sign in to the board as admin in this browser first.'; return; }
     $('#raw').textContent = JSON.stringify(await r.json(), null, 2);
+  }catch(e){ $('#raw').textContent = 'Failed: ' + e.message; }
+});
+
+$('#reset').addEventListener('click', async () => {
+  let t = ''; try{ t = localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){}
+  $('#raw').textContent = 'Resetting…';
+  try{
+    const r = await fetch('/api/rax?market=reset', { headers: { 'x-rb-token': t } });
+    if(r.status === 403){ $('#raw').textContent = 'Sign in to the board as admin in this browser first.'; return; }
+    $('#raw').textContent = 'Fresh pull started. It begins on the next minute; the listings already pulled stay up until they are refreshed.';
   }catch(e){ $('#raw').textContent = 'Failed: ' + e.message; }
 });
 
