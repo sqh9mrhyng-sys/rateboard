@@ -1242,14 +1242,26 @@ const keepsPlays = (sp, st) => !st || seasonTypesFor(sp).includes(String(st));
 // For putting the same list into SQL. The values are ours, not anyone's input.
 const seasonTypeSql = sp => seasonTypesFor(sp).map(x => `'${x}'`).join(',');
 
-const RESCAN_DAY = { ncaaf: 0, soccer: 1, nfl: 2, ncaam: 3, nba: 4, nhl: 5, mlb: 6, wnba: 6, golf: 6 };
+const RESCAN_DAY = { ncaaf: 0, soccer: 1, nfl: 2, ncaam: 3, nba: 4, nhl: 5, wnba: 6, golf: 6 };
 /* The season each sport is actually playing now, which is what the weekly
    rescan should be re-walking. Basketball labels a season by the year it
    ends, so the NBA and college basketball are on 2027 while hockey and
    football - which label by the starting year - are on 2026. Getting this
    wrong means re-walking a season that finished months ago. */
+/* MLB is out of here: the 2026 season is over, and it gets one last re-walk
+   below instead of a weekly one. */
 const RESCAN_SEASON = { ncaaf: 2026, soccer: 2026, nfl: 2026, ncaam: 2027, nba: 2027,
-                        nhl: 2026, mlb: 2026, wnba: 2026, golf: 2026 };
+                        nhl: 2026, wnba: 2026, golf: 2026 };
+/* One-off re-walks at a set time, each run once. MLB 2026's final sweep is
+   10am Eastern on Friday 30 October: the game logs and rax are re-walked,
+   and the play sweep is reopened so the last games' plays reach pack data. */
+const ONE_OFF_RESCANS = [
+  { id: 'mlb2026-final', sport: 'mlb', season: 2026, at: Date.parse('2026-10-30T14:00:00Z'), walk: true },
+  // Two hours later, once the re-walk has put any new games in the log: the
+  // play sweep is reopened and fills plays for the games it has not seen.
+  { id: 'mlb2026-final-plays', sport: 'mlb', season: 2026, at: Date.parse('2026-10-30T16:00:00Z'), plays: true }
+];
+const ONE_OFF_KEY = 'queue_oneoff_v1';
 const RESCAN_KEY = 'queue_rescan_v1';
 
 // Alaska runs eight hours behind UTC, so 7am there is 15:00 UTC.
@@ -1259,6 +1271,18 @@ function alaskaNow() {
 }
 
 async function weeklyRescan(env) {
+  let ran = {};
+  try { ran = JSON.parse((await env.RATEBOARD_KV.get(ONE_OFF_KEY)) || '{}') || {}; } catch (e) {}
+  for (const job of ONE_OFF_RESCANS) {
+    if (Date.now() < job.at || ran[job.id]) continue;
+    if (job.walk) await forgetWalk(env, job.sport, job.season);
+    if (job.plays) {
+      try { await env.RATEBOARD_KV.delete(sweptKey(job.sport, job.season)); } catch (e) {}
+    }
+    ran[job.id] = new Date().toISOString();
+    try { await env.RATEBOARD_KV.put(ONE_OFF_KEY, JSON.stringify(ran)); } catch (e) {}
+    return `${job.sport} ${job.season} (${job.id})`;
+  }
   const now = alaskaNow();
   if (now.hour < 7) return null;            // morning, not the small hours
   let seen = {};
@@ -1361,7 +1385,7 @@ async function handleGet({ request, env }) {
       if (left) {
         const u = new URL(url);
         u.search = `?plays=gaps&sport=${sport}&season=${season}&fill=1&n=40`;
-        try { await onRequestGet({ request: new Request(u.toString(), request), env }); } catch (e) {}
+        try { await handleGet({ request: new Request(u.toString(), request), env }); } catch (e) {}
       }
       // A completed season needs one pass, not endless ones.
       // Mark it lapped whether or not it is a rolling season: a rolling one
@@ -4233,15 +4257,15 @@ async function handleGet({ request, env }) {
         if (perfJob && step === 'games') {
           const u = new URL(url);
           u.search = `?perf=collect&sport=${perfJob.sport}&season=${perfJob.season}`;
-          try { await onRequestGet({ request: new Request(u.toString(), request), env }); } catch (e) {}
+          try { await handleGet({ request: new Request(u.toString(), request), env }); } catch (e) {}
         } else if (restatJob && step === 'games') {
           const u = new URL(url);
           u.search = `?restat=collect&sport=${restatJob.sport}&season=${restatJob.season}`;
-          try { await onRequestGet({ request: new Request(u.toString(), request), env }); } catch (e) {}
+          try { await handleGet({ request: new Request(u.toString(), request), env }); } catch (e) {}
         } else if (histJob && step === 'games') {
           const u = new URL(url);
           u.search = `?hist=collect&sport=${histJob.sport}&season=${histJob.season}`;
-          try { await onRequestGet({ request: new Request(u.toString(), request), env }); } catch (e) {}
+          try { await handleGet({ request: new Request(u.toString(), request), env }); } catch (e) {}
         } else if (pool.length || step !== 'games') {
           const base = pool.length ? pool : PLAYS_SPORTS;
           /* Scoring now splits its ticks: every other one rates the season
@@ -4269,7 +4293,7 @@ async function handleGet({ request, env }) {
             ? `?plays=collect&from=games&sport=${sp.sport}&season=${sp.season}`
             : `?plays=${step}&sport=${sp.sport}&season=${sp.season}`
               + (step === 'tags' ? `&rarity=${tier}` : '');
-          try { await onRequestGet({ request: new Request(u.toString(), request), env }); } catch (e) {}
+          try { await handleGet({ request: new Request(u.toString(), request), env }); } catch (e) {}
         }
       }
     }
@@ -4915,7 +4939,7 @@ async function handleGet({ request, env }) {
         const u = new URL(url.toString());
         u.searchParams.delete('owners');
         u.searchParams.set('golfmeta', '1');
-        return await onRequestGet({ request: new Request(u.toString(), request), env });
+        return await handleGet({ request: new Request(u.toString(), request), env });
       }
       return await ownerTopSlice(env, sport, Number(season), auth, false);
     }
