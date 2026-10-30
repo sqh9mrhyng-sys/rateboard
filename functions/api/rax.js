@@ -492,13 +492,13 @@ async function ownerTopSlice(env, sport, season, auth, statusOnly) {
 const MARKET_DDL = `CREATE TABLE IF NOT EXISTS market_listings (
   id TEXT PRIMARY KEY, sport TEXT, season INTEGER, endsAt TEXT, price REAL,
   playerId INTEGER, player TEXT, rarity INTEGER, seenAt INTEGER, body TEXT)`;
-const MARKET_KEY = 'market_pull_v1';
+const MARKET_KEY = 'market_pull_v2';
 const MARKET_SEASONS = [2027, 2026, 2025, 2024, 2023, 2022, 2021, 2020];
 const MARKET_SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'ncaam', 'nhl', 'soccer', 'wnba', 'ufc', 'golf'];
 const MARKET_PAGES_PER_TICK = 12;
-// Listings end in the future, so the walk starts well beyond today and stops
-// once it reaches listings that have already ended.
-const MARKET_START = '2030-01-01T00:00:00.000Z';
+// Starting the cursor in the future returns nothing, so the walk starts now,
+// as the tag harvest does, and goes back a week at most.
+const MARKET_BACK_MS = 7 * 86400000;
 
 function marketJobs() {
   const out = [];
@@ -556,7 +556,7 @@ async function marketSlice(env, auth, budgetMs) {
   let pagesNow = 0, last = '';
   while (st.i < jobs.length && pagesNow < MARKET_PAGES_PER_TICK && Date.now() - t0 < budgetMs) {
     const [sp, se] = jobs[st.i].split(':');
-    const before = st.before || MARKET_START;
+    const before = st.before || new Date().toISOString();
     const u = `https://web.realapp.com/cardmarketplacelistings`
       + `?beforeEndsAt=${encodeURIComponent(before)}&cohort=all&listingType=card`
       + `&offset=0&prestige=all&rarity=all&season=${se}&sport=${sp}`;
@@ -564,18 +564,27 @@ async function marketSlice(env, auth, budgetMs) {
     try { data = await rsGet(u, auth); rows = rowsOf(data); }
     catch (e) { st.lastError = `${sp} ${se}: ${String((e && e.message) || e).slice(0, 200)}`; break; }
     pagesNow++; st.pages++;
+    if (!rows.length && !st.emptySample) {
+      st.emptySample = { job: `${sp} ${se}`, topLevel: data && typeof data === 'object' ? Object.keys(data) : typeof data,
+                         text: JSON.stringify(data).slice(0, 400) };
+    }
     if (!st.shape && rows.length) {
       st.shape = { topLevel: Object.keys(data || {}), row: Object.keys(rows[0] || {}),
                    card: Object.keys((rows[0] && rows[0].card) || {}), pageSize: rows.length };
     }
     const now = Date.now();
-    const fresh = rows.filter(r => r && r.endsAt && Date.parse(r.endsAt) > now - 3600000);
+    const fresh = rows.filter(r => r && (!r.endsAt || Date.parse(r.endsAt) > now - MARKET_BACK_MS));
     const stmts = [];
     for (const r of fresh) {
       const c = r.card || {};
       const ent = c.entity || c.player || r.entity || {};
+      if (!st.endsRange) st.endsRange = {};
+      if (r.endsAt) {
+        if (!st.endsRange.min || r.endsAt < st.endsRange.min) st.endsRange.min = r.endsAt;
+        if (!st.endsRange.max || r.endsAt > st.endsRange.max) st.endsRange.max = r.endsAt;
+      }
       const id = String(r.id ?? r.listingId ?? `${c.id || ''}:${r.endsAt}`);
-      stmts.push(ins.bind(id, sp, Number(se), r.endsAt,
+      stmts.push(ins.bind(id, sp, Number(se), r.endsAt || null,
         firstNum(r.price, r.amount, r.listPrice, r.cost, r.priceCents, r.currentPrice, r.buyNowPrice),
         firstNum(c.entityId, c.playerId, ent.id, r.entityId),
         String(ent.displayName || ent.name || c.label || r.label || '').slice(0, 80) || null,
@@ -4781,17 +4790,17 @@ async function handleGet({ request, env }) {
     const out = { pulled: st.rows || 0, pages: st.pages || 0, job: marketJobs()[st.i || 0] || null,
                   jobsDone: Number(st.i || 0), jobsTotal: marketJobs().length, done: !!st.done,
                   at: st.at || null, lastError: st.lastError || null, shape: st.shape || null,
+                  emptySample: st.emptySample || null, endsRange: st.endsRange || null,
                   perJob: st.perJob || {} };
     try {
       const db = env.RATEBOARD_DB;
       await db.prepare(MARKET_DDL).run();
       const c = await db.prepare(
         `SELECT COUNT(*) AS n, COUNT(price) AS priced, COUNT(DISTINCT playerId) AS players
-           FROM market_listings WHERE endsAt > ?`).bind(new Date().toISOString()).first();
+           FROM market_listings`).first();
       out.live = c;
       const bySport = await db.prepare(
-        `SELECT sport, COUNT(*) AS n FROM market_listings WHERE endsAt > ? GROUP BY sport`)
-        .bind(new Date().toISOString()).all();
+        `SELECT sport, COUNT(*) AS n FROM market_listings GROUP BY sport`).all();
       out.liveBySport = bySport.results || [];
       const one = await db.prepare('SELECT body FROM market_listings ORDER BY seenAt DESC LIMIT 1').first();
       out.example = one ? JSON.parse(one.body) : null;
