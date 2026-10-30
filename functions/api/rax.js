@@ -629,7 +629,10 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
         r.userId != null ? String(r.userId) : null, r.cardId != null ? String(r.cardId) : null,
         r.createdAt || null, r.endsAt || null, now, who);
     });
-    // Stored while the next page is being fetched rather than before it.
+    /* Stored while the next page is fetched, but never more than one write
+       waiting at a time. Letting them pile up is what overloaded the
+       database and took sign-in down with it. */
+    await Promise.all(writes.splice(0));
     for (let k = 0; k < stmts.length; k += 50) {
       writes.push(env.RATEBOARD_DB.batch(stmts.slice(k, k + 50))
         .catch(e => { lane.err = 'store: ' + String(e.message || e).slice(0, 160); }));
@@ -689,6 +692,15 @@ async function marketSliceHeld(env, auth, deadline) {
   await db.prepare(MARKET_DDL).run();
   await db.prepare(MSEAS_DDL).run();
   try { await db.prepare('ALTER TABLE market_v2 ADD COLUMN player TEXT').run(); } catch (e) {}
+  if (!st.indexed1) {
+    // Every market read and the end-of-season clear-out pick a season first;
+    // without these each one read the whole table.
+    try {
+      await db.prepare('CREATE INDEX IF NOT EXISTS market_season_ends ON market_v2 (sport, season, endsAt)').run();
+      await db.prepare('CREATE INDEX IF NOT EXISTS market_season_player ON market_v2 (sport, season, playerId)').run();
+      st.indexed1 = true;
+    } catch (e) {}
+  }
   const ins = db.prepare(
     `INSERT INTO market_v2 (id, sport, season, playerId, entityType, entityId, label, rarity, prestige,
        value, mint, listingType, status, minBid, buyNow, curBid, bids, seller, cardId, createdAt, endsAt, seenAt, player)
@@ -722,8 +734,16 @@ async function marketSliceHeld(env, auth, deadline) {
       // part of the walk failed, when the old rows stay rather than vanish.
       const [sp, se] = st.cur.split(':');
       if (!st.partial) {
-        try { await db.prepare('DELETE FROM market_v2 WHERE sport=? AND season=? AND seenAt < ?')
-          .bind(sp, Number(se), st.curStart).run(); } catch (e) {}
+        // In chunks, so one big season never holds the database for long.
+        for (let k = 0; k < 100; k++) {
+          let c = 0;
+          try {
+            const r = await db.prepare(`DELETE FROM market_v2 WHERE rowid IN (SELECT rowid FROM market_v2
+              WHERE sport=? AND season=? AND seenAt < ? LIMIT 2000)`).bind(sp, Number(se), st.curStart).run();
+            c = (r.meta && r.meta.changes) || 0;
+          } catch (e) { break; }
+          if (c < 2000) break;
+        }
       }
       st.partial = false;
       const n = Object.values(st.lanes).reduce((a, l) => a + (l.rows || 0), 0);
@@ -5016,9 +5036,9 @@ async function handleGet({ request, env }) {
       out.front = rows.filter(r => r.front).sort((x, y) => x.front - y.front).map(r => r.job);
       // What is up right now per season, so a season part-way through its
       // first pull still shows in the picker.
-      const live = new Map(((await db.prepare(
-        `SELECT sport, season, COUNT(*) AS n FROM market_v2 WHERE endsAt > ? GROUP BY sport, season`)
-        .bind(new Date().toISOString()).all()).results || []).map(r => [`${r.sport}:${r.season}`, r.n]));
+      // Counts come from the pull's own records, not a count over the whole
+      // table, which every open /market page asked for once a minute.
+      const live = new Map([[st.cur, out.pulledSoFar]]);
       out.seasons = marketSeasons().map(j => { const r = m.get(j) || {};
         return { job: j, pulledAt: r.doneAt ? new Date(r.doneAt).toISOString() : null,
                  listings: r.listings ?? null, live: live.get(j) || 0, minutes: r.minutes ?? null }; });
@@ -5080,9 +5100,7 @@ async function handleGet({ request, env }) {
             ORDER BY rarity DESC, buyNow ASC LIMIT 400`).bind(sport, Number(season), pid, nowIso).all();
         return json({ sport, season, playerId: pid, listings: r.results || [] });
       }
-      const seasons = (await db.prepare(
-        `SELECT sport, season, COUNT(*) AS n, MAX(seenAt) AS seen FROM market_v2
-          WHERE endsAt > ? GROUP BY sport, season ORDER BY n DESC`).bind(nowIso).all()).results || [];
+      const seasons = [];
       const { rows, by } = await marketAgg(db, sport, Number(season), nowIso, null);
       const tot = rows.reduce((a, r) => a + r.n, 0);
       const rarity = {};
