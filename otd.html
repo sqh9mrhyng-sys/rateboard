@@ -292,6 +292,10 @@ function scanAll(claims){
 function passOptions(i, ctx){
   const p = P[i];
   if(!p.games.length || LIVE.has(`${p.sport}:${p.season}`)) return [];
+  // Without what the pass has already earned its cap can't be checked, so
+  // it gets no advice rather than wrong advice (a scan from before earned
+  // was read; rescanning fixes it).
+  if(p.earned == null || !Number.isFinite(Number(p.earned))) return [];
   const { claims, price, win, counts, dayRes, per } = ctx;
   const windowSum = dd => { let a = 0; for(const [d, v] of dd) a += v * (counts.get(d) || 0); return a; };
   const days = [...new Set(p.games.map(g => g[0]))];
@@ -312,6 +316,7 @@ function passOptions(i, ctx){
       for(const r of sc.won) if(r.i === i) own1 += r.rax;
     }
     const left1 = Math.max(0, capOf(p, k) - earned);
+    if(left1 <= 0) continue;                                 // still at or over the cap after it: earns nothing
     const others = (whole - base) - (own1 - own0);           // what it pushes out of other claims
     const gain = Math.min(own1, left1) - Math.min(own0, left0) + others;
     const life = left1 === Infinity ? Infinity : left1 - left0;
@@ -403,9 +408,10 @@ function compute(){
     return (u ? `<a href="${u}" target="_blank" rel="noopener">${t}</a>` : t)
       + ` <span class="note">${p.kind === 'team' && p.sport !== 'ufc' ? 'Team · ' : ''}${esc(SPORT[p.sport] || p.sport)} · ${esc(seasonLbl(p.sport, p.season))}</span>`; };
   window.__nm = nm;
-  const cur = p => `${tag(p.lv)} <span class="note">${fmt(p.rating)}</span>`;
+  const capTxt = (p, k) => { const c = capOf(p, k); return c === Infinity ? 'no cap' : `${fmt(p.earned)} of ${fmt(c)} earned`; };
+  const cur = p => `${tag(p.lv)} <span class="note">${fmt(p.rating)} · ${capTxt(p, p.lv)}</span>`;
   $('#ups').innerHTML = ups.slice(0, 150).map(u => `<tr class="up" data-i="${u.i}" style="cursor:pointer${upOpen === u.i ? ';background:var(--panel2)' : ''}">
-    <td>${nm(u.p)}</td><td>${cur(u.p)}</td><td>${tag(u.k)}</td><td>${fmt(u.need)}</td>
+    <td>${nm(u.p)}</td><td>${cur(u.p)}</td><td>${tag(u.k)} <span class="note">${capTxt(u.p, u.k)}</span></td><td>${fmt(u.need)}</td>
     <td>+${fmt(u.gain)}</td><td>${u.life === Infinity ? '∞' : '+' + fmt(u.life)}</td>
     <td>${u.packs == null ? '–' : fmt(u.packs)}${u.noPack ? ' <span class="note" title="No pack data - priced at 10 rating a pack">*</span>' : ''}</td>
     <td>${u.cost == null ? '<span class="note">no market data</span>' : fmt(u.cost)}${NO_PACKS.has(u.p.sport) && u.cost != null ? ' <span class="note">market</span>' : ''}</td>
@@ -577,7 +583,8 @@ async function loadAll(){
     for(const [id, v] of Object.entries(m)) MKT[`${sp}:${se}:${id}`] = v;
     if(vals.length) MKT[`${sp}:${se}:*`] = vals[Math.floor(vals.length / 2)];   // the season's median for players with no listings
   }
-  $('#status').textContent = `${P.length} passes that can claim · games from the board's game data · pack data for ${Object.keys(PACK).length} players. General passes claim at 1x on a live season and nothing on an old one; old seasons stop at each level's all-time cap.`;
+  const noEarn = P.filter(p => !LIVE.has(`${p.sport}:${p.season}`) && (p.earned == null || !Number.isFinite(Number(p.earned)))).length;
+  $('#status').textContent = (noEarn ? `${noEarn} passes have no earned figure (scanned before it was read) and get no advice - tap Scan my passes. ` : '') + `${P.length} passes that can claim · games from the board's game data · pack data for ${Object.keys(PACK).length} players. General passes claim at 1x on a live season and nothing on an old one; old seasons stop at each level's all-time cap.`;
   compute();
 }
 </script>
