@@ -28,15 +28,15 @@
 import { ADMINS, newSession, endSession, isAdminRequest, sameHash, allow, clientIp,
          forbidden } from '../../lib/auth.js';
 
-/* ---- the Friday pack data window -------------------------------------
-   Every account that existed when this was set up (created on or before
-   GRANT_BEFORE) can open the Pack data tab, and only that tab, until
-   GRANT_UNTIL - 2pm Eastern on Friday 30 October 2026. Nothing has to run to
-   end it: past GRANT_UNTIL the board simply stops sending the window, and the
-   page checks the clock as well. Accounts made later never qualify. */
+/* ---- the weekend pack data window ------------------------------------
+   Every account, including any made while the window is open, can open the
+   Pack data tab, and only that tab, until 4:00am Eastern on Sunday 1 November
+   2026 (EST - the clocks go back at 2am that morning, so 09:00 UTC). Nothing
+   has to run to end it: past `until` the board stops sending the window, and
+   the page checks the clock as well. */
 const PACK_GRANT = {
-  before: Date.parse('2026-10-30T05:55:00Z'),   // 9:55pm Alaska, Thu 29 Oct
-  until:  Date.parse('2026-10-30T18:00:00Z')    // 2:00pm Eastern, Fri 30 Oct
+  before: Date.parse('2026-11-01T09:00:00Z'),   // anyone with an account before it closes
+  until:  Date.parse('2026-11-01T09:00:00Z')    // 4:00am Eastern, Sun 1 Nov
 };
 
 const BOARD_CACHE_TTL = 10;      // the copy everyone is normally served

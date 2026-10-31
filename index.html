@@ -601,7 +601,7 @@
 
   <div class="wrap" id="page-board">
     <div id="packcall" class="packcall hide">
-      <span id="packcall-msg">Pack data is open to you until 2pm ET Friday.</span>
+      <span id="packcall-msg">Pack data is open to everyone until 4am ET Sunday.</span>
       <button class="btn" id="packcall-go">Open pack data</button>
     </div>
     <div id="previewbar" class="warn hide" style="margin-bottom:18px">
@@ -768,7 +768,8 @@ const packGrantNow = () => {
   const dk = (typeof loadDevice === 'function' && (loadDevice() || {}).key) || String(me).toLowerCase();
   const u = market.users && market.users[String(dk).toLowerCase()];
   const made = u && Number(u.created);
-  return !!made && made <= Number(g.before);
+  // Accounts with no sign-up time on record (the oldest ones) count too.
+  return !!u && (!made || made <= Number(g.before));
 };
 const canSeePackData = () => canSeeGameData() || packGrantNow()
   || (!!me && packDataList().includes(String(me).toLowerCase()));
