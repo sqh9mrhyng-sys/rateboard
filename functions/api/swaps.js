@@ -161,11 +161,15 @@ function passOf(p, sport, season) {
     || p.label || e.displayName || e.name || '').slice(0, 80);
   // Real's own read of the pass: level, multiplier and progress to the next one.
   const b = p.boostInfo || {};
-  const rating = b.progress != null && Number.isFinite(Number(b.progress)) ? Number(b.progress) : null;
+  // boostValue is the pass's total rating; progress/required is the climb to
+  // the next level.
+  const bv = parseFloat(p.boostValue);
+  const rating = Number.isFinite(bv) ? bv : (b.progress != null && Number.isFinite(Number(b.progress)) ? Number(b.progress) : null);
   const mult = parseFloat(String(b.multiplier || '').replace(/x$/i, '')) || null;
   const passId = Number(p.id);
   return Number.isFinite(id) ? { key: `${sport}:${season}:${id}`, sport, season, id, name,
     count: 1, rating, required: b.required != null ? Number(b.required) : null,
+    needNext: b.required != null && b.progress != null ? Math.max(0, Number(b.required) - Number(b.progress)) : null,
     progress: b.progressDisplay || null, toward: b.progressQualifier || null,
     levelLabel: b.rarityLabel ? String(b.rarityLabel) + (b.level && Number(b.baseRarity) >= 5 ? '' : '') : null,
     level: b.level != null ? Number(b.level) : null, rarity: b.baseRarity != null ? Number(b.baseRarity) : null,

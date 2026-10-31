@@ -62,11 +62,12 @@
 
   <section>
     <h2>Best upgrades</h2>
-    <p class="note">For each pass, the level that adds the most rax a year for what it costs. Extra rax is what your whole calendar gains, after the claim limit; cost is packs from pack data (that player's average rating ×3 a pack, never under 10) at the pack price above.</p>
+    <p class="note">For each pass, the level that adds the most for what it costs. <b>Extra a year</b> is what your whole calendar gains after the 2-per-sport (+1 spare) claim limit, and after each pass's all-time cap on old seasons. <b>Extra all-time</b> is how much more cap room the upgrade opens (∞ at Iconic or on a live season). Packs come from pack data (average rating ×3 a pack, never under 10) at the price above; FC and UFC have no packs, so they're priced from the marketplace's rax per rating. Tap a row for its calendar.</p>
     <div class="scroll"><table><thead><tr>
-      <th data-u="name">Player</th><th data-u="now">Now</th><th data-u="to">Upgrade to</th>
-      <th data-u="gain">Extra rax / yr</th><th data-u="packs">Packs</th><th data-u="cost">Cost</th><th data-u="ratio">Rax / yr per 1,000 spent</th>
+      <th data-u="name">Player pass</th><th data-u="now">Current</th><th data-u="to">Target</th><th data-u="need">Rating needed</th>
+      <th data-u="gain">Extra a year</th><th data-u="life">Extra all-time</th><th data-u="packs">Est. packs</th><th data-u="cost">Price</th><th data-u="ratio">Per 1,000 spent</th>
     </tr></thead><tbody id="ups"></tbody></table></div>
+    <div id="updetail" style="margin-top:12px"></div>
   </section>
 
   <section>
@@ -186,9 +187,26 @@ const LEVELS = [
   ['Iconic 16', 220, 22700, 7], ['Iconic 17', 226, 26000, 7], ['Iconic 18', 233, 29000, 7], ['Iconic 19', 240, 34500, 7], ['Iconic 20', 250, 40000, 7]
 ];
 const RC = {1:'#4f9ee8',2:'#5fbf7a',3:'#f0913a',4:'#e5484d',5:'#a77bf0',6:'#f2c14e',7:'#e0559c'};
+/* All-time claim caps, by level name. Old seasons stop paying at the cap;
+   Iconic never caps. A live season is treated as uncapped. */
+const CAP = { 'General': 0, 'Common': 1000, 'Uncommon': 1500, 'Rare': 2000, 'Epic': 5000,
+  'Legendary 1': 12500, 'Legendary 2': 14000, 'Legendary 3': 16000, 'Legendary 4': 17500, 'Legendary 5': 20000,
+  'Mystic 1': 37500, 'Mystic 2': 39500, 'Mystic 3': 41500, 'Mystic 4': 43500, 'Mystic 5': 45500,
+  'Mystic 6': 47500, 'Mystic 7': 49000, 'Mystic 8': 50500, 'Mystic 9': 51500, 'Mystic 10': 52500 };
+const CAP_UFC = { 0: 0, 1: 1500, 2: 3000, 3: 6000, 4: 12000, 5: 24000, 6: 48000 };
+const LIVE = new Set(['nba:2027', 'ncaam:2027', 'nfl:2026', 'ncaaf:2026', 'nhl:2026', 'soccer:2026', 'golf:2026']);
+const NO_PACKS = new Set(['soccer', 'ufc']);
+function capOf(p, k){   // k = LEVELS index, -1 = General
+  if(LIVE.has(`${p.sport}:${p.season}`)) return Infinity;
+  const name = k < 0 ? 'General' : LEVELS[k][0], tier = k < 0 ? 0 : LEVELS[k][3];
+  if(tier === 7) return Infinity;
+  if(p.sport === 'ufc') return CAP_UFC[tier] ?? 0;
+  return CAP[name] ?? 0;
+}
 const levelIdx = r => { let k = -1; LEVELS.forEach((l, i) => { if(Number(r) >= l[2]) k = i; }); return k; };
 const tag = i => i < 0 ? '<span class="tag" style="background:#8a93a6">General · 1x</span>' : `<span class="tag" style="background:${RC[LEVELS[i][3]]}">${LEVELS[i][0]} · ${LEVELS[i][1]}x</span>`;
 
+let MKT = {}, upOpen = null, lastUps = [];
 let P = [], G = {}, PACK = {}, byDay = new Map(), upSort = 'ratio', upDir = -1, selDay = null;
 
 // One day's claims: two per sport, then (with 3 claims) the best one left over across sports.
@@ -205,7 +223,10 @@ function build(){
   byDay = new Map();
   P.forEach((p, i) => {
     // Real's own multiplier for the pass when the scan has it; General is 1x.
-    p.lv = levelIdx(p.rating); p.mult = Number(p.mult) || (p.lv >= 0 ? LEVELS[p.lv][1] : 1);
+    p.lv = levelIdx(p.rating);
+    p.capLeft = capOf(p, p.lv) - (Number(p.earned) || 0);
+    // A pass already at its all-time cap claims nothing more.
+    p.mult = p.capLeft <= 0 ? 0 : (Number(p.mult) || (p.lv >= 0 ? LEVELS[p.lv][1] : 1));
     p.games = G[p.key] || [];
     for(const [d, rax] of p.games){ if(!byDay.has(d)) byDay.set(d, []); byDay.get(d).push({ i, sport: p.sport, base: rax }); }
   });
@@ -234,35 +255,91 @@ function compute(){
   P.forEach((p, i) => {
     if(!p.games.length) return;
     const days = [...new Set(p.games.map(g => g[0]))];
+    const own0 = per.get(i).won;
     const base = days.reduce((a, d) => a + dayRes.get(d).earned, 0);
     const avg = PACK[`${p.sport}:${p.season}:${p.id}`];
     const perPack = Math.max(10, (Number(avg) || 0) * 3);
+    const ppr = MKT[`${p.sport}:${p.season}:${p.id}`] ?? MKT[`${p.sport}:${p.season}:*`];
+    const rating = Number(p.rating) || 0, earned = Number(p.earned) || 0;
+    const left0 = Math.max(0, capOf(p, p.lv) - earned);
     let best = null;
     for(let k = Math.max(0, p.lv + 1); k < Math.min(LEVELS.length, p.lv + 9); k++){
       const m = LEVELS[k][1];
-      const gain = days.reduce((a, d) => a + scoreDay(dayList(d, [i, m]), claims).earned, 0) - base;
-      const packs = Math.ceil(Math.max(0, LEVELS[k][2] - (Number(p.rating) || 0)) / perPack);
-      const cost = packs * price;
+      let own1 = 0, whole = 0;
+      for(const d of days){
+        const lst = dayList(d, [i, m]), sc = scoreDay(lst, claims);
+        whole += sc.earned;
+        for(const r of sc.won) if(r.i === i) own1 += r.rax;
+      }
+      const left1 = Math.max(0, capOf(p, k) - earned);
+      const others = (whole - base) - (own1 - own0);           // what it pushes out of other claims
+      const gain = Math.min(own1, left1) - Math.min(own0, left0) + others;
+      const life = left1 === Infinity ? Infinity : left1 - left0;
+      const need = Math.max(0, LEVELS[k][2] - rating);
+      const packs = NO_PACKS.has(p.sport) ? null : Math.ceil(need / perPack);
+      const cost = NO_PACKS.has(p.sport) ? (ppr != null ? Math.round(need * ppr) : null) : packs * price;
       const ratio = cost ? gain / cost * 1000 : 0;
-      if(gain > 0 && (!best || ratio > best.ratio)) best = { k, gain, packs, cost, ratio };
+      if(gain > 0 && (!best || ratio > best.ratio)) best = { k, gain, life, need, packs, cost, ratio, m };
     }
-    if(best) ups.push({ p, ...best, noPack: avg == null });
+    if(best) ups.push({ p, i, ...best, noPack: !NO_PACKS.has(p.sport) && avg == null, noMkt: NO_PACKS.has(p.sport) && ppr == null });
   });
-  const key = { name: u => u.p.name, now: u => u.p.rating, to: u => u.k, gain: u => u.gain, packs: u => u.packs, cost: u => u.cost, ratio: u => u.ratio }[upSort];
+  lastUps = ups;
+  const key = { name: u => u.p.name, now: u => u.p.rating, to: u => u.k, need: u => u.need, gain: u => u.gain, life: u => u.life,
+                packs: u => u.packs ?? -1, cost: u => u.cost ?? Infinity, ratio: u => u.ratio }[upSort];
   ups.sort((a, b) => { const x = key(a), y = key(b); return (x < y ? -1 : x > y ? 1 : 0) * upDir; });
   document.querySelectorAll('th[data-u]').forEach(th => th.classList.toggle('on', th.dataset.u === upSort));
   const link = p => p.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(p.passId)]) : null;
-  const nm = p => { const u = link(p), t = `${esc(p.name || 'Player ' + p.id)} <span class="note">${esc(SPORT[p.sport] || p.sport)} ${esc(seasonLbl(p.sport, p.season))}</span>`;
-    return u ? `<a href="${u}" target="_blank" rel="noopener">${t}</a>` : t; };
-  $('#ups').innerHTML = ups.slice(0, 150).map(u => `<tr><td>${nm(u.p)}</td><td>${tag(u.p.lv)} <span class="note">${esc(u.p.progress || fmt(u.p.rating))}</span></td>
-    <td>${tag(u.k)}</td><td>+${fmt(u.gain)}</td><td>${fmt(u.packs)}${u.noPack ? ' <span class="note" title="No pack data for this player - priced at 10 rating a pack">*</span>' : ''}</td>
-    <td>${fmt(u.cost)}</td><td>${fmt(u.ratio)}</td></tr>`).join('') || '<tr><td colspan="7" class="note">No upgrade adds anything.</td></tr>';
+  const nm = p => { const u = link(p), t = esc(p.name || 'Player ' + p.id);
+    return (u ? `<a href="${u}" target="_blank" rel="noopener">${t}</a>` : t)
+      + ` <span class="note">${esc(SPORT[p.sport] || p.sport)} · ${esc(seasonLbl(p.sport, p.season))}</span>`; };
+  window.__nm = nm;
+  const cur = p => `${tag(p.lv)} <span class="note">${fmt(p.rating)}</span>`;
+  $('#ups').innerHTML = ups.slice(0, 150).map(u => `<tr class="up" data-i="${u.i}" style="cursor:pointer${upOpen === u.i ? ';background:var(--panel2)' : ''}">
+    <td>${nm(u.p)}</td><td>${cur(u.p)}</td><td>${tag(u.k)}</td><td>${fmt(u.need)}</td>
+    <td>+${fmt(u.gain)}</td><td>${u.life === Infinity ? '∞' : '+' + fmt(u.life)}</td>
+    <td>${u.packs == null ? '–' : fmt(u.packs)}${u.noPack ? ' <span class="note" title="No pack data - priced at 10 rating a pack">*</span>' : ''}</td>
+    <td>${u.cost == null ? '<span class="note">no market data</span>' : fmt(u.cost)}${NO_PACKS.has(u.p.sport) && u.cost != null ? ' <span class="note">market</span>' : ''}</td>
+    <td>${fmt(u.ratio)}</td></tr>`).join('') || '<tr><td colspan="9" class="note">No upgrade adds anything.</td></tr>';
+  if(upOpen != null) drawUp(upOpen);
 
   const rows = P.map((p, i) => ({ p, ...per.get(i) })).filter(r => r.p.games.length && r.p.mult).sort((a, b) => b.won - a.won);
   $('#byp').innerHTML = rows.slice(0, 300).map(r => `<tr><td>${nm(r.p)}</td><td>${tag(r.p.lv)}</td><td>${fmt(r.p.games.length)}</td><td>${fmt(r.won)}</td><td>${fmt(r.lost)}</td></tr>`).join('')
     || '<tr><td colspan="5" class="note">None of your passes has a claiming level and games yet.</td></tr>';
   drawCal(dayRes);
 }
+
+// One upgrade's own calendar: what it adds each day, month and year.
+function drawUp(i){
+  const u = lastUps.find(x => x.i === i); const el = $('#updetail');
+  if(!u){ el.innerHTML = ''; return; }
+  const claims = Number($('#claims').value), p = P[i];
+  const per = new Map();
+  for(const d of [...new Set(p.games.map(g => g[0]))]){
+    const now = scoreDay(dayList(d), claims).earned, up = scoreDay(dayList(d, [i, u.m]), claims).earned;
+    if(up - now) per.set(d, up - now);
+  }
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const mon = months.map((_, m) => [...per].filter(([d]) => Number(d.slice(0, 2)) === m + 1).reduce((a, [, v]) => a + v, 0));
+  const year = mon.reduce((a, b) => a + b, 0), max = Math.max(1, ...per.values());
+  el.innerHTML = `<div class="tile"><b>${esc(p.name)}</b> ${tag(p.lv)} → ${tag(u.k)} · +${fmt(year)} a year before caps`
+    + (u.life !== Infinity ? ` · cap room +${fmt(u.life)}` : ' · no cap') + `
+    <div class="bar" style="margin:8px 0">${months.map((n, m) => `<span class="note">${n} <b style="color:var(--ink)">${mon[m] ? '+' + fmt(mon[m]) : '–'}</b></span>`).join('')}</div>
+    <div class="months">` + months.map((mn, m) => {
+      if(!mon[m]) return '';
+      const dim = new Date(2024, m + 1, 0).getDate(), lead = new Date(2026, m, 1).getDay();
+      let cells = '<div></div>'.repeat(lead);
+      for(let d = 1; d <= dim; d++){
+        const k = String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0'), v = per.get(k) || 0;
+        cells += `<div class="day${v ? '' : ' none'}" style="${v ? `background:color-mix(in srgb,var(--ok) ${Math.round((0.15 + 0.7 * v / max) * 100)}%,var(--panel2))` : ''}">${d}${v ? `<b>+${v >= 1000 ? (v / 1000).toFixed(1) + 'k' : v}</b>` : ''}</div>`;
+      }
+      return `<div class="month"><h3>${mn}</h3><div class="grid">${cells}</div></div>`;
+    }).join('') + '</div></div>';
+}
+$('#ups').addEventListener('click', e => {
+  const tr = e.target.closest('tr.up'); if(!tr || e.target.closest('a')) return;
+  const i = Number(tr.dataset.i); upOpen = upOpen === i ? null : i; compute();
+  if(upOpen != null) $('#updetail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+});
 
 function drawCal(dayRes){
   const max = Math.max(1, ...[...dayRes.values()].map(s => s.earned));
@@ -315,7 +392,15 @@ $('#price').addEventListener('change', compute);
     const d = await api(`/api/rax?plays=board&seasons=${encodeURIComponent(pair)}&min=0`);
     for(const r of (d.rows || [])) if(r.avgRating != null) PACK[`${r.sport || pair.split(':')[0]}:${r.season || pair.split(':')[1]}:${r.playerId}`] = Number(r.avgRating);
   }
-  $('#status').textContent = `${P.length} passes that can claim · games from the board's game data · pack data for ${Object.keys(PACK).length} players. General passes claim at 1x.`;
+  for(const pair of pairs.filter(x => NO_PACKS.has(x.split(':')[0]))){
+    const [sp, se] = pair.split(':');
+    const d = await api(`/api/rax?market=view&sport=${sp}&season=${se}`);
+    const vals = [];
+    for(const r of (d.rows || [])) if(r.ppr != null){ MKT[`${sp}:${se}:${r.playerId}`] = Number(r.ppr); vals.push(Number(r.ppr)); }
+    vals.sort((a, b) => a - b);
+    if(vals.length) MKT[`${sp}:${se}:*`] = vals[Math.floor(vals.length / 2)];   // the season's median for players with no listings
+  }
+  $('#status').textContent = `${P.length} passes that can claim · games from the board's game data · pack data for ${Object.keys(PACK).length} players. General passes claim at 1x on a live season and nothing on an old one; old seasons stop at each level's all-time cap.`;
   compute();
 })();
 </script>
