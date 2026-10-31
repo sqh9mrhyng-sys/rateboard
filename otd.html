@@ -49,6 +49,8 @@
     <div class="bar">
       <label class="note">Claims a day <select id="claims"><option value="3">3 (2 per sport + 1 spare)</option><option value="2">2 per sport</option></select></label>
       <label class="note">Pack price <select id="price"><option value="200">Pack yourself · 200</option><option value="241">Swapping · 241</option><option value="271">160 back · 271</option><option value="415">Full price · 415</option></select></label>
+      <label class="note">Profit over <select id="win"><option value="1">Next month</option><option value="3">Next 3 months</option><option value="6">Next 6 months</option><option value="12" selected>Next year</option><option value="24">Next 2 years</option><option value="0">All-time</option></select></label>
+      <label class="note">Min profit <input id="minp" type="number" inputmode="numeric" placeholder="0" style="width:100px"></label>
       <input id="rsuser" placeholder="Real username" autocomplete="off" style="flex:0 1 160px">
       <button id="scan" style="background:var(--accent);color:#141925;border-color:var(--accent);font-weight:700">Scan my passes</button>
     </div>
@@ -63,10 +65,10 @@
 
   <section>
     <h2>Best upgrades</h2>
-    <p class="note">For each pass, the level that adds the most for what it costs. <b>Extra a year</b> is what your whole calendar gains after the 2-per-sport (+1 spare) claim limit, and after each pass's all-time cap on old seasons. <b>Extra all-time</b> is how much more cap room the upgrade opens (∞ at Iconic or on a live season). Packs come from pack data (average rating ×3 a pack, never under 10) at the price above; FC and UFC have no packs, so they're priced from the marketplace's rax per rating. Tap a row for its calendar.</p>
+    <p class="note">For each pass, the level that adds the most for what it costs. <b>Extra a year</b> is what your whole calendar gains after the 2-per-sport (+1 spare) claim limit, and after each pass's all-time cap on old seasons. <b>Extra all-time</b> is how much more cap room the upgrade opens (∞ at Iconic or on a live season). Packs come from pack data (average rating ×3 a pack, never under 10) at the price above; FC and UFC have no packs, so they're priced from the marketplace's rax per rating. <b>Profit</b> is what the upgrade earns over the window you pick, from today, minus its price; each pass shows its most profitable target. Tap a row for its calendar.</p>
     <div class="scroll"><table><thead><tr>
       <th data-u="name">Player pass</th><th data-u="now">Current</th><th data-u="to">Target</th><th data-u="need">Rating needed</th>
-      <th data-u="gain">Extra a year</th><th data-u="life">Extra all-time</th><th data-u="packs">Est. packs</th><th data-u="cost">Price</th><th data-u="ratio">Per 1,000 spent</th>
+      <th data-u="gain">Extra a year</th><th data-u="life">Extra all-time</th><th data-u="packs">Est. packs</th><th data-u="cost">Price</th><th data-u="profit">Profit</th><th data-u="ratio">Per 1,000 spent</th>
     </tr></thead><tbody id="ups"></tbody></table></div>
     <div id="updetail" style="margin-top:12px"></div>
   </section>
@@ -208,7 +210,7 @@ const levelIdx = r => { let k = -1; LEVELS.forEach((l, i) => { if(Number(r) >= l
 const tag = i => i < 0 ? '<span class="tag" style="background:#8a93a6">General · 1x</span>' : `<span class="tag" style="background:${RC[LEVELS[i][3]]}">${LEVELS[i][0]} · ${LEVELS[i][1]}x</span>`;
 
 let MKT = {}, upOpen = null, lastUps = [];
-let P = [], G = {}, PACK = {}, byDay = new Map(), upSort = 'ratio', upDir = -1, selDay = null;
+let P = [], G = {}, PACK = {}, byDay = new Map(), upSort = 'profit', upDir = -1, selDay = null;
 
 // One day's claims: two per sport, then (with 3 claims) the best one left over across sports.
 function scoreDay(list, claims){
@@ -251,7 +253,13 @@ function compute(){
   $('#t-total').textContent = fmt(total); $('#t-lost').textContent = fmt(lost);
   $('#t-pass').textContent = fmt(P.filter(p => p.mult && p.games.length).length); $('#t-days').textContent = fmt(days);
 
-  // Upgrades: for each pass, every higher level up to eight steps; keep the best value.
+  // Upgrades: for each pass, every higher level up to eight steps; keep the most profitable.
+  const win = Number($('#win').value);
+  // How much of a pass's per-day gains fall in the next `win` months.
+  const today = new Date(), end = new Date(today); end.setMonth(end.getMonth() + (win || 12));
+  const inWin = new Set();
+  for(const t = new Date(today); t < end; t.setDate(t.getDate() + 1)) inWin.add(String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'));
+  const windowSum = dd => { let a = 0; for(const [d, v] of dd) if(inWin.has(d)) a += v; return a; };
   const ups = [];
   P.forEach((p, i) => {
     if(!p.games.length) return;
@@ -266,10 +274,10 @@ function compute(){
     let best = null;
     for(let k = Math.max(0, p.lv + 1); k < Math.min(LEVELS.length, p.lv + 9); k++){
       const m = LEVELS[k][1];
-      let own1 = 0, whole = 0;
+      let own1 = 0, whole = 0; const dd = new Map();
       for(const d of days){
         const lst = dayList(d, [i, m]), sc = scoreDay(lst, claims);
-        whole += sc.earned;
+        whole += sc.earned; dd.set(d, sc.earned - dayRes.get(d).earned);
         for(const r of sc.won) if(r.i === i) own1 += r.rax;
       }
       const left1 = Math.max(0, capOf(p, k) - earned);
@@ -280,13 +288,27 @@ function compute(){
       const packs = NO_PACKS.has(p.sport) ? null : Math.ceil(need / perPack);
       const cost = NO_PACKS.has(p.sport) ? (ppr != null ? Math.round(need * ppr) : null) : packs * price;
       const ratio = cost ? gain / cost * 1000 : 0;
-      if(gain > 0 && (!best || ratio > best.ratio)) best = { k, gain, life, need, packs, cost, ratio, m };
+      /* Profit over the chosen window: the year's gain spread by when those
+         games fall in the window from today, never more than the cap room
+         the upgrade opens. All-time is the cap room itself. */
+      const rawYear = [...dd.values()].reduce((a, b) => a + b, 0);
+      let wx;
+      if(win === 0) wx = life;
+      else if(win > 12) wx = Math.min(gain * win / 12, life);
+      else wx = Math.min(rawYear > 0 ? gain * windowSum(dd) / rawYear : 0, life);
+      const profit = cost == null ? null : wx - cost;
+      const score = profit == null ? -Infinity : profit;
+      if(gain > 0 && (!best || score > best.score || (score === best.score && ratio > best.ratio)))
+        best = { k, gain, life, need, packs, cost, ratio, m, wx, profit, score };
     }
+    const minp = Number($('#minp').value);
+    if(best && $('#minp').value !== '' && !(best.profit >= minp)) best = null;
     if(best) ups.push({ p, i, ...best, noPack: !NO_PACKS.has(p.sport) && avg == null, noMkt: NO_PACKS.has(p.sport) && ppr == null });
   });
   lastUps = ups;
   const key = { name: u => u.p.name, now: u => u.p.rating, to: u => u.k, need: u => u.need, gain: u => u.gain, life: u => u.life,
-                packs: u => u.packs ?? -1, cost: u => u.cost ?? Infinity, ratio: u => u.ratio }[upSort];
+                packs: u => u.packs ?? -1, cost: u => u.cost ?? Infinity, ratio: u => u.ratio,
+                profit: u => u.profit ?? -Infinity }[upSort];
   ups.sort((a, b) => { const x = key(a), y = key(b); return (x < y ? -1 : x > y ? 1 : 0) * upDir; });
   document.querySelectorAll('th[data-u]').forEach(th => th.classList.toggle('on', th.dataset.u === upSort));
   const link = p => p.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(p.passId)]) : null;
@@ -300,7 +322,8 @@ function compute(){
     <td>+${fmt(u.gain)}</td><td>${u.life === Infinity ? '∞' : '+' + fmt(u.life)}</td>
     <td>${u.packs == null ? '–' : fmt(u.packs)}${u.noPack ? ' <span class="note" title="No pack data - priced at 10 rating a pack">*</span>' : ''}</td>
     <td>${u.cost == null ? '<span class="note">no market data</span>' : fmt(u.cost)}${NO_PACKS.has(u.p.sport) && u.cost != null ? ' <span class="note">market</span>' : ''}</td>
-    <td>${fmt(u.ratio)}</td></tr>`).join('') || '<tr><td colspan="9" class="note">No upgrade adds anything.</td></tr>';
+    <td style="color:${u.profit == null ? 'var(--mute)' : u.profit >= 0 ? 'var(--ok)' : 'var(--bad)'}">${u.profit == null ? '–' : u.profit === Infinity ? '∞' : (u.profit >= 0 ? '+' : '') + fmt(u.profit)}</td>
+    <td>${fmt(u.ratio)}</td></tr>`).join('') || '<tr><td colspan="10" class="note">No upgrade clears that profit.</td></tr>';
   if(upOpen != null) drawUp(upOpen);
 
   const rows = P.map((p, i) => ({ p, ...per.get(i) })).filter(r => r.p.games.length && r.p.mult).sort((a, b) => b.won - a.won);
@@ -374,6 +397,8 @@ document.querySelectorAll('th[data-u]').forEach(th => th.addEventListener('click
 }));
 $('#claims').addEventListener('change', compute);
 $('#price').addEventListener('change', compute);
+$('#win').addEventListener('change', compute);
+$('#minp').addEventListener('input', compute);
 
 $('#scan').addEventListener('click', async () => {
   const u = $('#rsuser').value.trim();
