@@ -1421,7 +1421,7 @@ const PLAYS_SPORTS = [
      so 2027 is the one being played now and 2026 is last year's, finished.
      Hockey and football label by the year a season STARTS, which is why
      nhl 2026 below is current while nba 2026 is not. */
-  { sport: 'nba',   season: 2027, rolling: true, pri: 8 },
+  { sport: 'nba',   season: 2027, rolling: true, pri: 1 },   // started Oct 2026: first in line
   { sport: 'nba',   season: 2026, pri: 9 },
   { sport: 'nba',   season: 2025, pri: 9 },
   { sport: 'nba',   season: 2024, pri: 10 },
@@ -1673,6 +1673,9 @@ const seasonTypesFor = sp =>
 const keepsPlays = (sp, st) => !st || seasonTypesFor(sp).includes(String(st));
 // For putting the same list into SQL. The values are ours, not anyone's input.
 const seasonTypeSql = sp => seasonTypesFor(sp).map(x => `'${x}'`).join(',');
+
+// NBA 2026-27 has started: its game log is built ahead of everything else.
+const EXTRA_JOBS = [['nba', 2027]];
 
 const RESCAN_DAY = { ncaaf: 0, soccer: 1, nfl: 2, ncaam: 3, nba: 4, nhl: 5, wnba: 6, golf: 6 };
 /* The season each sport is actually playing now, which is what the weekly
@@ -4788,6 +4791,11 @@ async function handleGet({ request, env }) {
       if (SPORTS.has(String(sp).toLowerCase()) && /^\d{4}$/.test(se)) {
         jobs.push([String(sp).toLowerCase(), Number(se)]);
       }
+    }
+    /* Seasons the cron Worker's own list doesn't have yet, collected first.
+       The Worker isn't redeployed for a new season; it's added here. */
+    for (const [sp, se] of EXTRA_JOBS.slice().reverse()) {
+      if (!jobs.some(([a, b]) => a === sp && b === se)) jobs.unshift([sp, se]);
     }
     if (!jobs.length) return json({ phase: null, why: 'no jobs given' });
 
