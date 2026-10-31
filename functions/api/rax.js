@@ -1679,6 +1679,9 @@ const keepsPlays = (sp, st) => !st || seasonTypesFor(sp).includes(String(st));
 // For putting the same list into SQL. The values are ours, not anyone's input.
 const seasonTypeSql = sp => seasonTypesFor(sp).map(x => `'${x}'`).join(',');
 
+// Collecting paused until this time (database overloaded, 2026-10-31).
+const COLLECT_PAUSE_UNTIL = Date.parse('2026-10-31T11:55:00Z');
+
 // NBA 2026-27 has started: its game log is built ahead of everything else.
 const EXTRA_JOBS = [['nba', 2027]];
 
@@ -4602,6 +4605,11 @@ async function handleGet({ request, env }) {
   // firing, which at forty-odd seasons is hundreds of requests a minute for
   // nothing. Here the checks are internal reads, and a season with nothing left
   // today is remembered in a single marker so it is skipped until tomorrow.
+  // A short pause on all collecting, to take load off the database while
+  // it's overloaded. The cron keeps firing; it is simply told to rest.
+  if (url.searchParams.get('queue') === 'next' && Date.now() < COLLECT_PAUSE_UNTIL) {
+    return json({ phase: null, resting: true, minutesLeft: Math.ceil((COLLECT_PAUSE_UNTIL - Date.now()) / 60000), after: 'database pause' });
+  }
   if (['next', 'resume', 'stuck', 'rescan'].includes(url.searchParams.get('queue'))) {
     const db = env.RATEBOARD_DB;
     // Plays ride the same tick as the game log, on their own clock so the two
