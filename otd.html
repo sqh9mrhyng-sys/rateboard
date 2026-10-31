@@ -212,15 +212,26 @@ const CAP_UFC = { 0: 0, 1: 1500, 2: 3000, 3: 6000, 4: 12000, 5: 24000, 6: 48000 
 // The seasons being played now: uncapped, and left out of upgrade advice.
 const LIVE = new Set(['nba:2027', 'ncaam:2027', 'nfl:2026', 'ncaaf:2026', 'nhl:2026']);
 const NO_PACKS = new Set(['soccer', 'ufc']);
-function capOf(p, k){   // k = LEVELS index, -1 = General
+/* Team cards have their own, shorter ladder: [name, multiplier, total play
+   rating, tier], and their own all-time caps. UFC fighters are filed as
+   teams but follow the UFC rules above. */
+const TEAM_LEVELS = [['Common', 1.2, 30, 1], ['Uncommon', 1.4, 90, 2], ['Rare', 1.6, 240, 3], ['Epic', 2, 540, 4],
+  ['Legendary', 2.5, 1140, 5], ['Mystic', 4, 4140, 6], ['Iconic', 6, 10140, 7]];
+const TEAM_CAP = { 0: 0, 1: 1500, 2: 2500, 3: 4000, 4: 6000, 5: 12000, 6: 24000, 7: 128000 };
+const isTeam = p => p && p.kind === 'team' && p.sport !== 'ufc';
+const ladderOf = p => isTeam(p) ? TEAM_LEVELS : LEVELS;
+function capOf(p, k){   // k = ladder index, -1 = General
   if(LIVE.has(`${p.sport}:${p.season}`)) return Infinity;
-  const name = k < 0 ? 'General' : LEVELS[k][0], tier = k < 0 ? 0 : LEVELS[k][3];
+  const L = ladderOf(p);
+  const name = k < 0 ? 'General' : L[k][0], tier = k < 0 ? 0 : L[k][3];
+  if(isTeam(p)) return TEAM_CAP[tier] ?? 0;
   if(tier === 7) return Infinity;
   if(p.sport === 'ufc') return CAP_UFC[tier] ?? 0;
   return CAP[name] ?? 0;
 }
-const levelIdx = r => { let k = -1; LEVELS.forEach((l, i) => { if(Number(r) >= l[2]) k = i; }); return k; };
-const tag = i => i < 0 ? '<span class="tag" style="background:#8a93a6">General · 1x</span>' : `<span class="tag" style="background:${RC[LEVELS[i][3]]}">${LEVELS[i][0]} · ${LEVELS[i][1]}x</span>`;
+const levelIdx = (r, p) => { let k = -1; ladderOf(p).forEach((l, i) => { if(Number(r) >= l[2]) k = i; }); return k; };
+const tag = (i, p) => { const L = ladderOf(p);
+  return i < 0 ? '<span class="tag" style="background:#8a93a6">General · 1x</span>' : `<span class="tag" style="background:${RC[L[i][3]]}">${L[i][0]} · ${L[i][1]}x</span>`; };
 
 let MKT = {}, upOpen = null, lastUps = [];
 let P = [], G = {}, PACK = {}, byDay = new Map(), upSort = 'profit', upDir = -1, selDay = null;
@@ -239,10 +250,10 @@ function build(){
   byDay = new Map();
   P.forEach((p, i) => {
     // Real's own multiplier for the pass when the scan has it; General is 1x.
-    p.lv = levelIdx(p.rating);
+    p.lv = levelIdx(p.rating, p);
     p.capLeft = capOf(p, p.lv) - (Number(p.earned) || 0);
     // A pass already at its all-time cap claims nothing more.
-    p.mult = p.capLeft <= 0 ? 0 : (Number(p.mult) || (p.lv >= 0 ? LEVELS[p.lv][1] : 1));
+    p.mult = p.capLeft <= 0 ? 0 : (Number(p.mult) || (p.lv >= 0 ? ladderOf(p)[p.lv][1] : 1));
     p.games = G[p.key] || [];
     for(const [d, rax] of p.games){ if(!byDay.has(d)) byDay.set(d, []); byDay.get(d).push({ i, sport: p.sport, base: rax }); }
   });
@@ -307,8 +318,9 @@ function passOptions(i, ctx){
   const rating = Number(p.rating) || 0, earned = Number(p.earned) || 0;
   const left0 = Math.max(0, capOf(p, p.lv) - earned);
   const out = [];
-  for(let k = Math.max(0, p.lv + 1); k < Math.min(LEVELS.length, p.lv + 9); k++){
-    const m = LEVELS[k][1];
+  const L = ladderOf(p);
+  for(let k = Math.max(0, p.lv + 1); k < Math.min(L.length, p.lv + 9); k++){
+    const m = L[k][1];
     let own1 = 0, whole = 0; const dd = new Map();
     for(const d of days){
       const lst = dayList(d, [i, m]), sc = scoreDay(lst, claims);
@@ -320,7 +332,7 @@ function passOptions(i, ctx){
     const others = (whole - base) - (own1 - own0);           // what it pushes out of other claims
     const gain = Math.min(own1, left1) - Math.min(own0, left0) + others;
     const life = left1 === Infinity ? Infinity : left1 - left0;
-    const need = Math.max(0, LEVELS[k][2] - rating);
+    const need = Math.max(0, L[k][2] - rating);
     const packs = NO_PACKS.has(p.sport) ? null : Math.ceil(need / perPack);
     const cost = NO_PACKS.has(p.sport) ? (ppr != null ? Math.round(need * ppr) : null) : packs * price;
     const ratio = cost ? gain / cost * 1000 : 0;
@@ -360,9 +372,9 @@ function plan(){
     const p = P[best.i];
     picks.push({ ...best, fromLv: p.lv, fromRating: p.rating });
     left -= best.cost;
-    p.lv = best.k; p.rating = Math.max(Number(p.rating) || 0, LEVELS[best.k][2]);
+    p.lv = best.k; p.rating = Math.max(Number(p.rating) || 0, ladderOf(p)[best.k][2]);
     p.capLeft = capOf(p, best.k) - (Number(p.earned) || 0);
-    p.mult = p.capLeft <= 0 ? 0 : LEVELS[best.k][1];
+    p.mult = p.capLeft <= 0 ? 0 : ladderOf(p)[best.k][1];
   }
   const after = scanAll(claims).total;
   P.forEach((p, i) => Object.assign(p, saved[i]));     // back to how things really are
@@ -376,7 +388,7 @@ function plan(){
       <div class="tile"><div class="k">Rax a year</div><div class="v">${fmt(start)} → ${fmt(after)}</div></div>
       <div class="tile"><div class="k">Left over</div><div class="v">${fmt(left)}</div></div></div>
     <div class="scroll"><table><thead><tr><th>#</th><th>Player pass</th><th>From</th><th>To</th><th>Rating needed</th><th>Extra a year</th><th>Est. packs</th><th>Price</th><th>Profit</th></tr></thead><tbody>`
-    + picks.map((x, n) => `<tr><td>${n + 1}</td><td>${window.__nm ? window.__nm(x.p) : esc(x.p.name)}</td><td>${tag(x.fromLv)}</td><td>${tag(x.k)}</td>
+    + picks.map((x, n) => `<tr><td>${n + 1}</td><td>${window.__nm ? window.__nm(x.p) : esc(x.p.name)}</td><td>${tag(x.fromLv, x.p)}</td><td>${tag(x.k, x.p)}</td>
       <td>${fmt(x.need)}</td><td>+${fmt(x.gain)}</td><td>${x.packs == null ? '–' : fmt(x.packs)}</td><td>${fmt(x.cost)}</td><td style="color:var(--ok)">+${fmt(x.profit)}</td></tr>`).join('')
     + `</tbody></table></div><p class="note">Bought in this order. Each pick is worked out after the ones above it, so a pass that would take another's claims is already counted.</p>`;
 }
@@ -409,9 +421,9 @@ function compute(){
       + ` <span class="note">${p.kind === 'team' && p.sport !== 'ufc' ? 'Team · ' : ''}${esc(SPORT[p.sport] || p.sport)} · ${esc(seasonLbl(p.sport, p.season))}</span>`; };
   window.__nm = nm;
   const capTxt = (p, k) => { const c = capOf(p, k); return c === Infinity ? 'no cap' : `${fmt(p.earned)} of ${fmt(c)} earned`; };
-  const cur = p => `${tag(p.lv)} <span class="note">${fmt(p.rating)} · ${capTxt(p, p.lv)}</span>`;
+  const cur = p => `${tag(p.lv, p)} <span class="note">${fmt(p.rating)} · ${capTxt(p, p.lv)}</span>`;
   $('#ups').innerHTML = ups.slice(0, 150).map(u => `<tr class="up" data-i="${u.i}" style="cursor:pointer${upOpen === u.i ? ';background:var(--panel2)' : ''}">
-    <td>${nm(u.p)}</td><td>${cur(u.p)}</td><td>${tag(u.k)} <span class="note">${capTxt(u.p, u.k)}</span></td><td>${fmt(u.need)}</td>
+    <td>${nm(u.p)}</td><td>${cur(u.p)}</td><td>${tag(u.k, u.p)} <span class="note">${capTxt(u.p, u.k)}</span></td><td>${fmt(u.need)}</td>
     <td>+${fmt(u.gain)}</td><td>${u.life === Infinity ? '∞' : '+' + fmt(u.life)}</td>
     <td>${u.packs == null ? '–' : fmt(u.packs)}${u.noPack ? ' <span class="note" title="No pack data - priced at 10 rating a pack">*</span>' : ''}</td>
     <td>${u.cost == null ? '<span class="note">no market data</span>' : fmt(u.cost)}${NO_PACKS.has(u.p.sport) && u.cost != null ? ' <span class="note">market</span>' : ''}</td>
@@ -420,7 +432,7 @@ function compute(){
   if(upOpen != null) drawUp(upOpen);
 
   const rows = P.map((p, i) => ({ p, ...per.get(i) })).filter(r => r.p.games.length && r.p.mult).sort((a, b) => b.won - a.won);
-  $('#byp').innerHTML = rows.slice(0, 300).map(r => `<tr><td>${nm(r.p)}</td><td>${tag(r.p.lv)}</td><td>${fmt(r.p.games.length)}</td><td>${fmt(r.won)}</td><td>${fmt(r.lost)}</td></tr>`).join('')
+  $('#byp').innerHTML = rows.slice(0, 300).map(r => `<tr><td>${nm(r.p)}</td><td>${tag(r.p.lv, r.p)}</td><td>${fmt(r.p.games.length)}</td><td>${fmt(r.won)}</td><td>${fmt(r.lost)}</td></tr>`).join('')
     || '<tr><td colspan="5" class="note">None of your passes has a claiming level and games yet.</td></tr>';
   drawCal(dayRes);
 }
@@ -438,7 +450,7 @@ function drawUp(i){
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const mon = months.map((_, m) => [...per].filter(([d]) => Number(d.slice(0, 2)) === m + 1).reduce((a, [, v]) => a + v, 0));
   const year = mon.reduce((a, b) => a + b, 0), max = Math.max(1, ...per.values());
-  el.innerHTML = `<div class="tile"><b>${esc(p.name)}</b> ${tag(p.lv)} → ${tag(u.k)} · +${fmt(year)} a year before caps`
+  el.innerHTML = `<div class="tile"><b>${esc(p.name)}</b> ${tag(p.lv, p)} → ${tag(u.k, p)} · +${fmt(year)} a year before caps`
     + (u.life !== Infinity ? ` · cap room +${fmt(u.life)}` : ' · no cap') + `
     <div class="bar" style="margin:8px 0">${months.map((n, m) => `<span class="note">${n} <b style="color:var(--ink)">${mon[m] ? '+' + fmt(mon[m]) : '–'}</b></span>`).join('')}</div>
     <div class="months">` + months.map((mn, m) => {
