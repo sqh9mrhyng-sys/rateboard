@@ -1743,7 +1743,7 @@ async function weeklyRescan(env) {
   return null;
 }
 
-async function handleGet({ request, env }) {
+async function handleGet({ request, env, waitUntil }) {
   const auth = env.RS_AUTH_TOKEN;
   if (!auth) return json({ error: 'RS_AUTH_TOKEN is not set on this deployment' }, 500);
 
@@ -3833,52 +3833,12 @@ async function handleGet({ request, env }) {
     const rows = [], errors = [];
     for (const pr of pairs) {
       try {
-        const r = await db.prepare(
-          `WITH credited AS (${CREDITED})
-           SELECT pid AS playerId, MAX(pname) AS player, MAX(season) AS season,
-                  COUNT(*) AS plays,
-                  SUM(CASE WHEN rarity = 7 THEN 1 ELSE 0 END) AS iconic,
-                  SUM(CASE WHEN rarity = 6 THEN 1 ELSE 0 END) AS mystic,
-                  SUM(CASE WHEN rarity = 5 THEN 1 ELSE 0 END) AS legendary,
-                  SUM(CASE WHEN rarity = 4 THEN 1 ELSE 0 END) AS epic,
-                  ROUND(AVG(value), 2) AS avgRating, ROUND(MAX(value), 1) AS bestRating
-             FROM credited
-            WHERE pname IS NOT NULL AND (?3 = '' OR pname LIKE ?4)
-            GROUP BY pid HAVING COUNT(*) >= ?5
-            ORDER BY plays DESC LIMIT 4000`)
-          .bind(pr.sport, pr.season, q, `%${q}%`, minPlays).all();
-        const got = r.results || [];
-
-        // Season earnings and the latest owner count, both from the game log
-        // side of the house rather than the play feed.
-        const extra = new Map();
-        try {
-          const e = await db.prepare(
-            /* The owner count used to be a correlated subquery, which meant
-               one index seek per player - seven thousand of them for a CFB
-               season, and the reason loading several seasons at once blew
-               through D1's CPU limit. One windowed pass does the same job. */
-            `WITH latest AS (
-               SELECT playerId, owners FROM (
-                 SELECT playerId, owners,
-                        ROW_NUMBER() OVER (PARTITION BY playerId ORDER BY day DESC) AS rn
-                   FROM owners WHERE sport=?1 AND season=?2)
-                WHERE rn = 1)
-             SELECT g.playerId AS playerId, SUM(g.rax) AS earnings,
-                    MAX(g.team) AS team, l.owners AS owners
-               FROM gamelog g LEFT JOIN latest l ON l.playerId = g.playerId
-              WHERE g.sport=?1 AND g.season=?2
-                AND g.seasonType IN (${seasonTypeSql(pr.sport)})
-              GROUP BY g.playerId`).bind(pr.sport, pr.season).all();
-          for (const x of (e.results || [])) extra.set(Number(x.playerId), x);
-        } catch (err) {}
-        for (const x of got) {
-          const ex = extra.get(Number(x.playerId));
-          x.sport = pr.sport;
-          x.season = pr.season;
-          x.earnings = ex ? Number(ex.earnings) || 0 : null;
-          x.owners = ex && ex.owners != null ? Number(ex.owners) : null;
-          x.team = ex ? ex.team : null;
+        // From the saved copy, filtered here: no heavy read per visit.
+        const all = await packSeasonRows(db, pr.sport, pr.season, waitUntil);
+        const ql = q.toLowerCase();
+        for (const x of all) {
+          if (Number(x.plays) < minPlays) continue;
+          if (ql && !String(x.player || '').toLowerCase().includes(ql)) continue;
           rows.push(x);
         }
       } catch (e) {
@@ -6824,6 +6784,108 @@ async function marketMember(env, url, who) {
   }
   return json({ favs: favs.map(f => `${f.sport}:${f.season}:${f.playerId}`), rows: out, rarity,
                 listings: out.reduce((a, r) => a + r.n, 0), players: out.length });
+}
+
+
+/* ---- pack data snapshots -------------------------------------------------
+   Building one season's pack data board is a heavy read (5 to 50 seconds of
+   database time). With pack data open to everyone, every visit was building
+   it again, which is what kept overloading the database. Now each season is
+   built once, saved here, and everyone is handed the saved copy, filtered on
+   the spot. A copy older than six hours is rebuilt in the background by one
+   request while everyone else keeps getting the old one. */
+const PACKSNAP_DDL = `CREATE TABLE IF NOT EXISTS pack_snap (sport TEXT, season INTEGER, body TEXT,
+  at INTEGER, building INTEGER, PRIMARY KEY (sport, season))`;
+const PACKSNAP_FRESH_MS = 6 * 3600000;
+async function buildPackSeason(db, sport, season) {
+  const pr = { sport, season: Number(season) };
+  const q = '', minPlays = 1, rows = [];
+    const r = await db.prepare(
+      `WITH credited AS (${CREDITED})
+       SELECT pid AS playerId, MAX(pname) AS player, MAX(season) AS season,
+              COUNT(*) AS plays,
+              SUM(CASE WHEN rarity = 7 THEN 1 ELSE 0 END) AS iconic,
+              SUM(CASE WHEN rarity = 6 THEN 1 ELSE 0 END) AS mystic,
+              SUM(CASE WHEN rarity = 5 THEN 1 ELSE 0 END) AS legendary,
+              SUM(CASE WHEN rarity = 4 THEN 1 ELSE 0 END) AS epic,
+              ROUND(AVG(value), 2) AS avgRating, ROUND(MAX(value), 1) AS bestRating
+         FROM credited
+        WHERE pname IS NOT NULL AND (?3 = '' OR pname LIKE ?4)
+        GROUP BY pid HAVING COUNT(*) >= ?5
+        ORDER BY plays DESC LIMIT 4000`)
+      .bind(pr.sport, pr.season, q, `%${q}%`, minPlays).all();
+    const got = r.results || [];
+
+    // Season earnings and the latest owner count, both from the game log
+    // side of the house rather than the play feed.
+    const extra = new Map();
+    try {
+      const e = await db.prepare(
+        /* The owner count used to be a correlated subquery, which meant
+           one index seek per player - seven thousand of them for a CFB
+           season, and the reason loading several seasons at once blew
+           through D1's CPU limit. One windowed pass does the same job. */
+        `WITH latest AS (
+           SELECT playerId, owners FROM (
+             SELECT playerId, owners,
+                    ROW_NUMBER() OVER (PARTITION BY playerId ORDER BY day DESC) AS rn
+               FROM owners WHERE sport=?1 AND season=?2)
+            WHERE rn = 1)
+         SELECT g.playerId AS playerId, SUM(g.rax) AS earnings,
+                MAX(g.team) AS team, l.owners AS owners
+           FROM gamelog g LEFT JOIN latest l ON l.playerId = g.playerId
+          WHERE g.sport=?1 AND g.season=?2
+            AND g.seasonType IN (${seasonTypeSql(pr.sport)})
+          GROUP BY g.playerId`).bind(pr.sport, pr.season).all();
+      for (const x of (e.results || [])) extra.set(Number(x.playerId), x);
+    } catch (err) {}
+    for (const x of got) {
+      const ex = extra.get(Number(x.playerId));
+      x.sport = pr.sport;
+      x.season = pr.season;
+      x.earnings = ex ? Number(ex.earnings) || 0 : null;
+      x.owners = ex && ex.owners != null ? Number(ex.owners) : null;
+      x.team = ex ? ex.team : null;
+      rows.push(x);
+    }
+
+  return rows;
+}
+async function packSeasonRows(db, sport, season, waitUntil) {
+  await db.prepare(PACKSNAP_DDL).run();
+  const row = await db.prepare('SELECT body, at, building FROM pack_snap WHERE sport=? AND season=?').bind(sport, Number(season)).first();
+  const now = Date.now();
+  // Claim the (re)build: whoever moves `building` first does it; a claim
+  // older than five minutes counts as abandoned.
+  const claim = async () => {
+    const c = await db.prepare(`INSERT INTO pack_snap (sport, season, body, at, building) VALUES (?, ?, NULL, 0, ?)
+      ON CONFLICT(sport, season) DO UPDATE SET building=excluded.building
+      WHERE pack_snap.building IS NULL OR pack_snap.building < ?`).bind(sport, Number(season), now, now - 300000).run();
+    return !!(c.meta && c.meta.changes);
+  };
+  const build = async () => {
+    try {
+      const rows = await buildPackSeason(db, sport, season);
+      await db.prepare('UPDATE pack_snap SET body=?, at=?, building=NULL WHERE sport=? AND season=?')
+        .bind(JSON.stringify(rows), Date.now(), sport, Number(season)).run();
+      return rows;
+    } catch (e) {
+      try { await db.prepare('UPDATE pack_snap SET building=NULL WHERE sport=? AND season=?').bind(sport, Number(season)).run(); } catch (e2) {}
+      throw e;
+    }
+  };
+  if (row && row.body) {
+    if (now - Number(row.at) > PACKSNAP_FRESH_MS && await claim()) {
+      const job = build().catch(() => null);
+      try { waitUntil ? waitUntil(job) : await job; } catch (e) { await job; }
+    }
+    return JSON.parse(row.body);
+  }
+  // No copy yet: one request builds it, the rest are asked to come back.
+  if (await claim()) return await build();
+  const err = new Error('Pack data for this season is being prepared - try again in a minute.');
+  err.building = true;
+  throw err;
 }
 
 export async function onRequestGet(ctx) {
