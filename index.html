@@ -4756,7 +4756,7 @@ function seasonLabel(sport, season){
 // The season each sport is running right now. Preset bests leave it out: it is
 // half finished, so it would drag a preset's per-game picture around every week.
 const CB_CURRENT = { ncaaf:2026, ncaam:2027, nfl:2026, nba:2027, nhl:2026,
-                     soccer:2026, mlb:2026, wnba:2026, golf:2026 };
+                     soccer:2026, mlb:2026, wnba:2026, golf:2026, ufc:2023 };
 const sportSeason = (sport, season) =>
   `${CB_SPORT_LABEL[sport] || sport} ${seasonLabel(sport, season)}`;
 
@@ -4980,6 +4980,7 @@ async function cbbPanel(){
     }
     for(const [k, label] of seen) if(!used.has(k)) out.push(['stat:' + k, label]);
     out.push(['fantasyPts', 'FP']);
+    out.push(['comments', 'Cmts']);   // comments on that game in the app, every sport
     gameStatCols = out;
   }
 

@@ -503,7 +503,7 @@ const MARKET_SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'ncaam', 'nhl', 'soccer', '
    just for this, so throttling or a ban lands there and never on the key the
    rest of the board runs on. Without that secret the pull does nothing - it
    never falls back to the main key. */
-const MARKET_ON = false;          // off 2026-10-31 02:40: database over its CPU limit again
+const MARKET_ON = true;           // back on 2026-10-31 once the database recovered
 /* Real answers "high volume" to two requests at once, even on the separate
    account, so there is one lane. Speed comes from shorter gaps between pages
    and more pages a tick instead. A sport-season is still cut into windows by
@@ -1683,34 +1683,46 @@ const seasonTypeSql = sp => seasonTypesFor(sp).map(x => `'${x}'`).join(',');
 const COLLECT_PAUSE_UNTIL = Date.parse('2026-10-31T14:00:00Z');
 
 // NBA 2026-27 has started: its game log is built ahead of everything else.
-const EXTRA_JOBS = [['nba', 2027]];
+const EXTRA_JOBS = [['nba', 2027], ['ufc', 2023], ['ncaam', 2027]];
 
-const RESCAN_DAY = { ncaaf: 0, soccer: 1, nfl: 2, ncaam: 3, nba: 4, nhl: 5, wnba: 6, golf: 6 };
-/* The season each sport is actually playing now, which is what the weekly
-   rescan should be re-walking. Basketball labels a season by the year it
-   ends, so the NBA and college basketball are on 2027 while hockey and
-   football - which label by the starting year - are on 2026. Getting this
-   wrong means re-walking a season that finished months ago. */
-/* MLB is out of here: the 2026 season is over, and it gets one last re-walk
-   below instead of a weekly one. */
-const RESCAN_SEASON = { ncaaf: 2026, soccer: 2026, nfl: 2026, ncaam: 2027, nba: 2027,
-                        nhl: 2026, wnba: 2026, golf: 2026 };
-/* One-off re-walks at a set time, each run once. MLB 2026's final sweep is
-   10am Eastern on Friday 30 October: the game logs and rax are re-walked,
-   and the play sweep is reopened so the last games' plays reach pack data. */
+/* Game-data sweeps, on a set schedule at 9am Eastern. On a sweep day the
+   season's walk is forgotten, so the queue re-walks it and picks up every game
+   Real has added since. days: 0 = Sunday ... 6 = Saturday. */
+const SWEEP_HOUR_ET = 9;
+const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
+const SWEEPS = [
+  { sport: 'nba',    season: 2027, days: ALL_DAYS },
+  { sport: 'nhl',    season: 2026, days: ALL_DAYS },
+  { sport: 'soccer', season: 2026, days: ALL_DAYS },
+  { sport: 'ncaaf',  season: 2026, days: [0] },          // Sunday
+  { sport: 'nfl',    season: 2026, days: [5, 1, 2] },    // Friday, Monday, Tuesday
+  { sport: 'golf',   season: 2026, days: [1] },          // Monday
+  { sport: 'ufc',    season: 2023, days: [0] },          // Sunday - Real keeps UFC on 2023
+  // College basketball every day once the 2026-27 season tips off.
+  { sport: 'ncaam',  season: 2027, days: ALL_DAYS, from: '2026-11-02' }
+];
+// Kept for the schedule readout.
+const RESCAN_SEASON = Object.fromEntries(SWEEPS.map(x => [x.sport, x.season]));
 const ONE_OFF_RESCANS = [
   { id: 'mlb2026-final', sport: 'mlb', season: 2026, at: Date.parse('2026-10-30T14:00:00Z'), walk: true },
   // Two hours later, once the re-walk has put any new games in the log: the
   // play sweep is reopened and fills plays for the games it has not seen.
-  { id: 'mlb2026-final-plays', sport: 'mlb', season: 2026, at: Date.parse('2026-10-30T16:00:00Z'), plays: true }
+  { id: 'mlb2026-final-plays', sport: 'mlb', season: 2026, at: Date.parse('2026-10-30T16:00:00Z'), plays: true },
+  // WNBA 2026's last sweep: 9am Eastern on Sunday 1 November (EST by then).
+  { id: 'wnba2026-final', sport: 'wnba', season: 2026, at: Date.parse('2026-11-01T14:00:00Z'), walk: true },
+  { id: 'wnba2026-final-plays', sport: 'wnba', season: 2026, at: Date.parse('2026-11-01T16:00:00Z'), plays: true }
 ];
 const ONE_OFF_KEY = 'queue_oneoff_v1';
 const RESCAN_KEY = 'queue_rescan_v1';
 
-// Alaska runs eight hours behind UTC, so 7am there is 15:00 UTC.
-function alaskaNow() {
-  const t = new Date(Date.now() - 8 * 3600 * 1000);
-  return { day: t.getUTCDay(), hour: t.getUTCHours(), stamp: t.toISOString().slice(0, 10) };
+// The time in New York, which keeps the sweeps at 9am Eastern across the
+// clock change.
+function easternNow() {
+  const f = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', weekday: 'short' });
+  const o = Object.fromEntries(f.formatToParts(new Date()).map(x => [x.type, x.value]));
+  const days = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return { day: days[o.weekday], hour: Number(o.hour) % 24, stamp: `${o.year}-${o.month}-${o.day}` };
 }
 
 async function weeklyRescan(env) {
@@ -1726,19 +1738,19 @@ async function weeklyRescan(env) {
     try { await env.RATEBOARD_KV.put(ONE_OFF_KEY, JSON.stringify(ran)); } catch (e) {}
     return `${job.sport} ${job.season} (${job.id})`;
   }
-  const now = alaskaNow();
-  if (now.hour < 7) return null;            // morning, not the small hours
+  const now = easternNow();
+  if (now.hour < SWEEP_HOUR_ET) return null;
   let seen = {};
   try { seen = JSON.parse((await env.RATEBOARD_KV.get(RESCAN_KEY)) || '{}') || {}; } catch (e) {}
-  for (const [sp, day] of Object.entries(RESCAN_DAY)) {
-    if (day !== now.day) continue;
-    if (seen[sp] === now.stamp) continue;   // already done this week
-    const se = RESCAN_SEASON[sp];
-    if (!se) continue;
-    await forgetWalk(env, sp, se);
-    seen[sp] = now.stamp;
+  for (const x of SWEEPS) {
+    if (!x.days.includes(now.day)) continue;
+    if (x.from && now.stamp < x.from) continue;
+    const k = `${x.sport}:${x.season}`;
+    if (seen[k] === now.stamp) continue;    // already swept today
+    await forgetWalk(env, x.sport, x.season);
+    seen[k] = now.stamp;
     try { await env.RATEBOARD_KV.put(RESCAN_KEY, JSON.stringify(seen)); } catch (e) {}
-    return `${sp} ${se}`;
+    return `${x.sport} ${x.season}`;
   }
   return null;
 }
@@ -4746,11 +4758,14 @@ async function handleGet({ request, env, waitUntil }) {
       let seen = {};
       try { seen = JSON.parse((await env.RATEBOARD_KV.get(RESCAN_KEY)) || '{}') || {}; } catch (e) {}
       const names = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-      const at = alaskaNow();
+      const at = easternNow();
       return json({
-        alaskaNow: `${names[at.day]} ${String(at.hour).padStart(2, '0')}:00`,
-        schedule: Object.fromEntries(Object.entries(RESCAN_DAY)
-          .map(([sp, d]) => [sp, { day: names[d], season: RESCAN_SEASON[sp], lastRun: seen[sp] || null }]))
+        easternNow: `${names[at.day]} ${String(at.hour).padStart(2, '0')}:00`,
+        sweepHourEastern: SWEEP_HOUR_ET,
+        schedule: SWEEPS.map(x => ({ sport: x.sport, season: x.season,
+          days: x.days.length === 7 ? 'every day' : x.days.map(d => names[d]).join(', '),
+          from: x.from || null, lastRun: seen[`${x.sport}:${x.season}`] || null })),
+        oneOff: ONE_OFF_RESCANS.map(j => ({ id: j.id, at: new Date(j.at).toISOString() }))
       });
     }
 
