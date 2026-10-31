@@ -243,7 +243,7 @@ const tag = (i, p) => { const L = ladderOf(p);
 
 let MKT = {}, upOpen = null, lastUps = [];
 const normName = n => String(n || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z]/g, '');
-let P = [], G = {}, PACK = {}, byDay = new Map(), upSort = 'rank', upDir = -1, selDay = null;
+let P = [], G = {}, PACK = {}, PLAYS = {}, byDay = new Map(), upSort = 'rank', upDir = -1, selDay = null;
 
 // One day's claims: two per sport, then (with 3 claims) the best one left over across sports.
 function scoreDay(list, claims){
@@ -321,6 +321,10 @@ function passOptions(i, ctx){
   const days = [...new Set(p.games.map(g => g[0]))];
   const own0 = per.get(i).won;
   const base = days.reduce((a, d) => a + dayRes.get(d).earned, 0);
+  // Under 10 plays there are no packs for the player and the pass is close
+  // to impossible to grind, so it gets no advice. Teams and FC don't come
+  // from player packs, so this doesn't apply to them.
+  if(!isTeam(p) && !NO_PACKS.has(p.sport) && (PLAYS[`${p.sport}:${p.season}:${p.id}`] || 0) < 10) return [];
   const avg = PACK[`${p.sport}:${p.season}:${p.id}`];
   const perPack = Math.max(10, (Number(avg) || 0) * 3);
   const ppr = p.sport === 'soccer' ? (MKT[normName(p.name)] ?? MKT['*fc']) : null;
@@ -560,7 +564,7 @@ $('#scan').addEventListener('click', async () => {
   const j = await api(`/api/swaps?op=scan&rsUser=${encodeURIComponent(u)}`);
   $('#scan').disabled = false;
   if(j.error){ $('#status').textContent = j.error; return; }
-  PACK = {}; MKT = {}; upOpen = null;
+  PACK = {}; PLAYS = {}; MKT = {}; upOpen = null;
   await loadAll();
 });
 
@@ -585,7 +589,7 @@ async function loadAll(){
      page opens straight away after the first visit; fetched three seasons
      at a time when they aren't. Only the seasons your passes are in. */
   const pairs = [...new Set(P.map(p => `${p.sport}:${p.season}`))];
-  const CK = 'otd_pack_cache_v1', TTL = 12 * 3600000;
+  const CK = 'otd_pack_cache_v2', TTL = 12 * 3600000;
   let cache = {};
   try{ cache = JSON.parse(localStorage.getItem(CK) || '{}') || {}; }catch(e){ cache = {}; }
   const fresh = k => cache[k] && Date.now() - cache[k].at < TTL;
@@ -599,7 +603,7 @@ async function loadAll(){
       if(!d.error) cache['m:' + pr] = { at: Date.now(), rows };
     } else {
       const d = await api(`/api/rax?plays=board&seasons=${encodeURIComponent(job)}&min=0`);
-      const rows = {}; for(const r of (d.rows || [])) if(r.avgRating != null) rows[r.playerId] = Number(r.avgRating);
+      const rows = {}; for(const r of (d.rows || [])) if(r.avgRating != null) rows[r.playerId] = [Number(r.avgRating), Number(r.plays ?? r.allPlays) || 0];
       if(!d.error) cache['p:' + job] = { at: Date.now(), rows };
     }
     $('#status').textContent = `Loading pack data ${++done} of ${need.length}…`;
@@ -611,7 +615,7 @@ async function loadAll(){
   try{ localStorage.setItem(CK, JSON.stringify(cache)); }catch(e){}
   for(const pr of pairs){
     const [sp, se] = pr.split(':');
-    for(const [id, v] of Object.entries((cache['p:' + pr] || {}).rows || {})) PACK[`${sp}:${se}:${id}`] = v;
+    for(const [id, v] of Object.entries((cache['p:' + pr] || {}).rows || {})){ PACK[`${sp}:${se}:${id}`] = v[0]; PLAYS[`${sp}:${se}:${id}`] = v[1]; }
   }
   /* FC has no packs. Its price comes from what people actually pay on the
      Rate Board: the best standing offer per rating for that player, or the
