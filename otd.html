@@ -220,11 +220,12 @@ const TEAM_LEVELS = [['Common', 1.2, 30, 1], ['Uncommon', 1.4, 90, 2], ['Rare', 
 const TEAM_CAP = { 0: 0, 1: 1500, 2: 2500, 3: 4000, 4: 6000, 5: 12000, 6: 24000, 7: 128000 };
 const isTeam = p => p && p.kind === 'team' && p.sport !== 'ufc';
 /* UFC climbs the same ladder as players (same ratings, same levels); only
-   the multipliers differ. Iconic goes up 0.3 a level, with Iconic 18 at 26x
-   as given; Iconic 19-20 are assumed to keep the 0.3 step. */
+   the multipliers differ. Iconic goes up 0.3 a level, with Iconic 18 at 26x.
+   Iconic 19 and 20 aren't known, so the UFC ladder stops at Iconic 18 and
+   nothing is ever suggested past it. */
 const UFC_MULT = [1.2, 1.4, 1.6, 2, 5, 5.4, 5.8, 6.2, 6.6, 10, 10.2, 10.4, 10.6, 10.8, 11, 11.2, 11.4, 11.6, 11.8,
-  20, 20.3, 20.6, 20.9, 21.2, 21.5, 21.8, 22.1, 22.4, 22.7, 23, 23.3, 23.6, 23.9, 24.2, 24.5, 24.8, 26, 26.3, 26.6];
-const UFC_LEVELS = LEVELS.map((l, i) => [l[0], UFC_MULT[i] ?? l[1], l[2], l[3]]);
+  20, 20.3, 20.6, 20.9, 21.2, 21.5, 21.8, 22.1, 22.4, 22.7, 23, 23.3, 23.6, 23.9, 24.2, 24.5, 24.8, 26];
+const UFC_LEVELS = LEVELS.slice(0, UFC_MULT.length).map((l, i) => [l[0], UFC_MULT[i], l[2], l[3]]);
 const ladderOf = p => isTeam(p) ? TEAM_LEVELS : p && p.sport === 'ufc' ? UFC_LEVELS : LEVELS;
 function capOf(p, k){   // k = ladder index, -1 = General
   if(LIVE.has(`${p.sport}:${p.season}`)) return Infinity;
