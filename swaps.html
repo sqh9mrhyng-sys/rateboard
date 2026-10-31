@@ -195,6 +195,8 @@ function realPlayerUrl(sport, playerId, season){
   return 'https://www.realapp.com/' + hashidsEncode('routing', 11, [kind[0], kind[1], 0, id])
          + (season ? '/' + season : '');
 }
+// FC and UFC have no packs, so there's nothing to swap: they're left off this page.
+const NO_SWAP = new Set(['soccer', 'ufc']);
 const RAR = {1:'Common',2:'Uncommon',3:'Rare',4:'Epic',5:'Legendary',6:'Mystic',7:'Iconic'};
 /* A pass's level comes from its rating, not from anything Real labels it:
    [rating needed, tier, level, multiplier]. From Dennis's ladder. */
@@ -263,10 +265,10 @@ function passRow(p, keep, showSeason){
 }
 function drawPasses(){
   const keep = new Set(prof.keep);
-  $('#pctl').hidden = !prof.passes.length;
+  $('#pctl').hidden = !prof.passes.some(p => !NO_SWAP.has(p.sport));
   if(!prof.passes.length){ $('#passes').innerHTML = prof.scannedAt ? '<p class="note">No player passes found.</p>' : ''; return; }
   const view = $('#pview').value, rar = $('#prar').value, sort = $('#psort').value, q = $('#pq').value.trim().toLowerCase();
-  let list = prof.passes.filter(p => (rar === '' || String(tierOf(p)) === rar) && (!q || String(p.name || '').toLowerCase().includes(q)));
+  let list = prof.passes.filter(p => !NO_SWAP.has(p.sport) && (rar === '' || String(tierOf(p)) === rar) && (!q || String(p.name || '').toLowerCase().includes(q)));
   const cmp = sort === 'name' ? (a, b) => String(a.name).localeCompare(String(b.name))
     : sort === 'low' ? (a, b) => (a.rating || 0) - (b.rating || 0) : (a, b) => (b.rating || 0) - (a.rating || 0);
   list.sort(cmp);
@@ -304,6 +306,7 @@ let wTimer = null, wSeq = 0;
 const wCache = new Map();
 const fmtN = n => n == null ? '–' : Number(n).toLocaleString();
 function drawResults(rows){
+  rows = rows.filter(r => !NO_SWAP.has(r.sport));
   $('#wres').innerHTML = rows.map(r => `<div data-k="${r.sport}:${r.season}:${r.playerId}" data-n="${esc(r.player)}">${esc(r.player)}
       <span class="note">· ${esc(keyLbl(r.sport + ':' + r.season))}${r.team ? ' · ' + esc(r.team) : ''} · <b>${fmtN(r.rax)}</b> rax · ${fmtN(r.owners)} owners</span></div>`).join('')
     || '<div class="note">No player found.</div>';

@@ -264,7 +264,10 @@ async function runMatching(db) {
     busy.add(m.a); busy.add(m.b);
     promised.add(`${m.b}|${m.aGets}`); promised.add(`${m.a}|${m.bGets}`);     // passes already offered
   }
-  const gives = u => new Set(u.passes.map(p => p.key).filter(k => !u.keep.has(k) && !promised.has(`${u.key}|${k}`)));
+  // FC and UFC have no packs to swap, so neither is ever offered or matched.
+  const swappable = k => !/^(soccer|ufc):/.test(k);
+  for (const u of users) u.wants = u.wants.filter(swappable);
+  const gives = u => new Set(u.passes.map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !promised.has(`${u.key}|${k}`)));
   const made = [];
   for (let i = 0; i < users.length; i++) {
     const A = users[i]; if (busy.has(A.key) || !A.wants.length) continue;
