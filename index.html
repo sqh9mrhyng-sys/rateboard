@@ -878,7 +878,7 @@ function applyGameDataVisibility(){
     // still shows in Safari's picker.
     const want = [['board', 'Board'], ...(canSeePackData() ? [['cbb', 'Game data']] : []),
                   ...(marketAccess ? [['market', 'Market data']] : []),
-                  ...(swapsOn ? [['swaps', 'Swaps']] : [])];
+                  ...(swapsOn ? [['swaps', 'Swaps'], ['otd', 'OTD optimization']] : [])];
     const have = [...sel.options].map(o => o.value).join(',');
     if(have !== want.map(w => w[0]).join(',')){
       sel.innerHTML = want.map(([v, t]) => `<option value="${v}">${t}</option>`).join('');
@@ -904,6 +904,7 @@ function pageGo(){
   const sel = $('#pagesel');
   if(sel && sel.value === 'market'){ location.href = '/market'; return; }
   if(sel && sel.value === 'swaps'){ location.href = '/swaps'; return; }
+  if(sel && sel.value === 'otd'){ location.href = '/otd'; return; }
   if(sel) goPage(sel.value);
 }
 

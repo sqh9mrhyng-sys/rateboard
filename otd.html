@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OTD Optimization</title>
+<style>
+  :root{--bg:#141925;--panel:#1d2433;--panel2:#232b3d;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;--ok:#5fbf7a;--bad:#e5484d}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:16px}
+  header{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+  h1{font-size:20px;margin:0;font-weight:800}
+  h2{font-size:16px;margin:0 0 8px}
+  a{color:var(--accent)}
+  .note{color:var(--mute);font-size:13px}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+  select,button,input{font:inherit;padding:8px 10px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
+  button{cursor:pointer}
+  .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:10px 0}
+  .tile{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+  .tile .k{color:var(--mute);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  .tile .v{font-size:21px;font-weight:800}
+  .scroll{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{padding:7px 7px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+  th:first-child,td:first-child{text-align:left}
+  th{color:var(--mute);font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;cursor:pointer}
+  th.on{color:var(--accent)}
+  .tag{display:inline-block;padding:1px 7px;border-radius:6px;font-size:11.5px;font-weight:700;color:#10131b}
+  .months{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+  .month h3{font-size:13px;margin:0 0 6px;color:var(--mute);text-transform:uppercase;letter-spacing:.05em}
+  .grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
+  .day{border-radius:6px;padding:3px 2px;text-align:center;font-size:10.5px;background:var(--panel2);cursor:pointer;min-height:36px}
+  .day b{display:block;font-size:11px}
+  .day.none{opacity:.35;cursor:default}
+  .day.sel{outline:2px solid var(--accent)}
+  .lock{max-width:460px;margin:12vh auto;text-align:center}
+  td a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)}
+</style>
+</head>
+<body>
+<div class="lock" id="lock" hidden><h1>OTD Optimization</h1><p class="note" id="lockmsg">Checking…</p><p><a href="/">Back to the board</a></p></div>
+<div class="wrap" id="main" hidden>
+  <header><h1>OTD Optimization</h1><span class="note">admin preview</span><a href="/" style="margin-left:auto">Back to the board</a></header>
+
+  <section>
+    <div class="bar">
+      <label class="note">Claims a day <select id="claims"><option value="3">3 (2 per sport + 1 spare)</option><option value="2">2 per sport</option></select></label>
+      <label class="note">Pack price <select id="price"><option value="200">Pack yourself · 200</option><option value="241">Swapping · 241</option><option value="271">160 back · 271</option><option value="415">Full price · 415</option></select></label>
+      <a href="/swaps" class="note">Rescan passes on the Swaps page</a>
+    </div>
+    <div class="tiles">
+      <div class="tile"><div class="k">Rax a year now</div><div class="v" id="t-total">–</div></div>
+      <div class="tile"><div class="k">Lost to the claim limit</div><div class="v" id="t-lost">–</div></div>
+      <div class="tile"><div class="k">Passes that claim</div><div class="v" id="t-pass">–</div></div>
+      <div class="tile"><div class="k">Days with a claim</div><div class="v" id="t-days">–</div></div>
+    </div>
+    <p class="note" id="status">Loading your passes…</p>
+  </section>
+
+  <section>
+    <h2>Best upgrades</h2>
+    <p class="note">For each pass, the level that adds the most rax a year for what it costs. Extra rax is what your whole calendar gains, after the claim limit; cost is packs from pack data (that player's average rating ×3 a pack, never under 10) at the pack price above.</p>
+    <div class="scroll"><table><thead><tr>
+      <th data-u="name">Player</th><th data-u="now">Now</th><th data-u="to">Upgrade to</th>
+      <th data-u="gain">Extra rax / yr</th><th data-u="packs">Packs</th><th data-u="cost">Cost</th><th data-u="ratio">Rax / yr per 1,000 spent</th>
+    </tr></thead><tbody id="ups"></tbody></table></div>
+  </section>
+
+  <section>
+    <h2>By player</h2>
+    <p class="note">What each pass earns you a year on its own level, counting only the claims it actually wins on your calendar.</p>
+    <div class="scroll"><table><thead><tr><th>Player</th><th>Level</th><th>Games</th><th>Claimed rax / yr</th><th>Lost to the limit</th></tr></thead><tbody id="byp"></tbody></table></div>
+  </section>
+
+  <section>
+    <h2>Calendar</h2>
+    <p class="note">Each day's claimed rax across every season (the year doesn't matter, only the date). Tap a day for its claims.</p>
+    <div id="daydetail" class="note" style="margin-bottom:10px"></div>
+    <div class="months" id="cal"></div>
+  </section>
+</div>
+<script>
+(() => {
+  const real = window.fetch.bind(window);
+  window.fetch = (u, o = {}) => {
+    let t = ''; try{ t = localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){}
+    if(t && typeof u === 'string' && u.startsWith('/api/')) o = Object.assign({}, o, { headers: Object.assign({}, o.headers || {}, { 'x-rb-token': t }) });
+    return real(u, o);
+  };
+})();
+const $ = s => document.querySelector(s);
+function hashidsEncode(salt, minLength, numbers){
+  const ALPHA0 = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890';
+  const SEPS0  = 'cfhistuCFHISTU';
+  const RATIO = 3.5, GUARD_DIV = 12;
+  const shuffle = (alpha, s) => {
+    if(!s.length) return alpha;
+    const t = alpha.slice();
+    for(let i = t.length - 1, v = 0, p = 0; i > 0; i--, v++){
+      v %= s.length;
+      const int = s[v].codePointAt(0);
+      p += int;
+      const j = (int + v + p) % i;
+      [t[i], t[j]] = [t[j], t[i]];
+    }
+    return t;
+  };
+  const toAlpha = (n, alpha) => {
+    const id = []; let v = n;
+    do { id.unshift(alpha[v % alpha.length]); v = Math.floor(v / alpha.length); } while(v > 0);
+    return id;
+  };
+  const saltC = Array.from(salt);
+  let alpha = [...new Set(Array.from(ALPHA0))];
+  let seps = Array.from(SEPS0).filter(c => alpha.includes(c));
+  alpha = alpha.filter(c => !seps.includes(c));
+  seps = shuffle(seps, saltC);
+  if(!seps.length || alpha.length / seps.length > RATIO){
+    let sl = Math.ceil(alpha.length / RATIO);
+    if(sl === 1) sl = 2;
+    if(sl > seps.length){
+      const diff = sl - seps.length;
+      seps = seps.concat(alpha.slice(0, diff));
+      alpha = alpha.slice(diff);
+    } else { seps = seps.slice(0, sl); }
+  }
+  alpha = shuffle(alpha, saltC);
+  const gc = Math.ceil(alpha.length / GUARD_DIV);
+  let guards;
+  if(alpha.length < 3){ guards = seps.slice(0, gc); seps = seps.slice(gc); }
+  else { guards = alpha.slice(0, gc); alpha = alpha.slice(gc); }
+  let hashInt = 0;
+  for(let i = 0; i < numbers.length; i++) hashInt += numbers[i] % (i + 100);
+  const lottery = alpha[hashInt % alpha.length];
+  let ret = [lottery];
+  for(let i = 0; i < numbers.length; i++){
+    let num = numbers[i];
+    const buf = [lottery].concat(saltC, alpha);
+    alpha = shuffle(alpha, buf.slice(0, alpha.length));
+    const last = toAlpha(num, alpha);
+    ret = ret.concat(last);
+    if(i + 1 < numbers.length){
+      num %= (last[0].codePointAt(0) + i);
+      ret.push(seps[num % seps.length]);
+    }
+  }
+  if(ret.length < minLength){
+    let gi = (hashInt + ret[0].codePointAt(0)) % guards.length;
+    ret.unshift(guards[gi]);
+    if(ret.length < minLength){
+      gi = (hashInt + ret[2].codePointAt(0)) % guards.length;
+      ret.push(guards[gi]);
+    }
+  }
+  const half = Math.floor(alpha.length / 2);
+  while(ret.length < minLength){
+    alpha = shuffle(alpha, alpha);
+    ret = alpha.slice(half).concat(ret, alpha.slice(0, half));
+    const ex = ret.length - minLength;
+    if(ex > 0) ret = ret.slice(ex / 2, ex / 2 + minLength);
+  }
+  return ret.join('');
+}
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = n => n == null ? '–' : Math.round(n).toLocaleString();
+const api = async u => { const r = await fetch(u); const j = await r.json().catch(() => ({})); if(!r.ok && !j.error) j.error = 'Error ' + r.status; return j; };
+const SPORT = {nba:'NBA',nfl:'NFL',ncaaf:'CFB',ncaam:'CBB',mlb:'MLB',nhl:'NHL',soccer:'FC',wnba:'WNBA',ufc:'UFC',golf:'Golf'};
+const START = {nfl:1,nhl:1,ncaaf:1,soccer:1};
+const seasonLbl = (sp, se) => { se = Number(se);
+  return START[sp] ? `${se}-${String(se + 1).slice(2)}` : (sp === 'nba' || sp === 'ncaam') ? `${se - 1}-${String(se).slice(2)}` : String(se); };
+
+/* [name, claim multiplier, rating needed, tier]. Multipliers are the board's;
+   ratings are Dennis's ladder. */
+const LEVELS = [
+  ['Common', 2, 10, 1], ['Uncommon', 3, 30, 2], ['Rare', 4, 80, 3], ['Epic', 10, 180, 4],
+  ['Legendary 1', 25, 380, 5], ['Legendary 2', 28, 520, 5], ['Legendary 3', 32, 720, 5], ['Legendary 4', 35, 1000, 5], ['Legendary 5', 40, 1180, 5],
+  ['Mystic 1', 75, 1380, 6], ['Mystic 2', 79, 1560, 6], ['Mystic 3', 83, 1760, 6], ['Mystic 4', 87, 1980, 6], ['Mystic 5', 91, 2220, 6],
+  ['Mystic 6', 95, 2480, 6], ['Mystic 7', 98, 2760, 6], ['Mystic 8', 101, 3000, 6], ['Mystic 9', 103, 3180, 6], ['Mystic 10', 105, 3250, 6],
+  ['Iconic 1', 150, 3380, 7], ['Iconic 2', 153, 3820, 7], ['Iconic 3', 156, 4320, 7], ['Iconic 4', 159, 4920, 7], ['Iconic 5', 163, 5620, 7],
+  ['Iconic 6', 167, 6420, 7], ['Iconic 7', 171, 7320, 7], ['Iconic 8', 175, 8320, 7], ['Iconic 9', 180, 9420, 7], ['Iconic 10', 185, 10620, 7],
+  ['Iconic 11', 190, 12000, 7], ['Iconic 12', 196, 13600, 7], ['Iconic 13', 202, 15400, 7], ['Iconic 14', 208, 17500, 7], ['Iconic 15', 214, 19900, 7],
+  ['Iconic 16', 220, 22700, 7], ['Iconic 17', 226, 26000, 7], ['Iconic 18', 233, 29000, 7], ['Iconic 19', 240, 34500, 7], ['Iconic 20', 250, 40000, 7]
+];
+const RC = {1:'#4f9ee8',2:'#5fbf7a',3:'#f0913a',4:'#e5484d',5:'#a77bf0',6:'#f2c14e',7:'#e0559c'};
+const levelIdx = r => { let k = -1; LEVELS.forEach((l, i) => { if(Number(r) >= l[2]) k = i; }); return k; };
+const tag = i => i < 0 ? '<span class="tag" style="background:#8a93a6">General</span>' : `<span class="tag" style="background:${RC[LEVELS[i][3]]}">${LEVELS[i][0]} · ${LEVELS[i][1]}x</span>`;
+
+let P = [], G = {}, PACK = {}, byDay = new Map(), upSort = 'ratio', upDir = -1, selDay = null;
+
+// One day's claims: two per sport, then (with 3 claims) the best one left over across sports.
+function scoreDay(list, claims){
+  const by = new Map(); let total = 0;
+  for(const r of list){ total += r.rax; if(!by.has(r.sport)) by.set(r.sport, []); by.get(r.sport).push(r); }
+  let earned = 0; const spare = [], won = [];
+  for(const arr of by.values()){ arr.sort((a, b) => b.rax - a.rax); arr.forEach((r, n) => { if(n < 2){ earned += r.rax; won.push(r); } else spare.push(r); }); }
+  if(claims >= 3 && spare.length){ spare.sort((a, b) => b.rax - a.rax); earned += spare[0].rax; won.push(spare[0]); }
+  return { earned, total, won };
+}
+
+function build(){
+  byDay = new Map();
+  P.forEach((p, i) => {
+    p.lv = levelIdx(p.rating); p.mult = p.lv >= 0 ? LEVELS[p.lv][1] : 0;
+    p.games = G[p.key] || [];
+    for(const [d, rax] of p.games){ if(!byDay.has(d)) byDay.set(d, []); byDay.get(d).push({ i, sport: p.sport, base: rax }); }
+  });
+}
+function dayList(d, override){   // override: [passIndex, mult]
+  return (byDay.get(d) || []).map(r => ({ i: r.i, sport: r.sport,
+    rax: r.base * (override && override[0] === r.i ? override[1] : P[r.i].mult) }));
+}
+
+function compute(){
+  const claims = Number($('#claims').value), price = Number($('#price').value);
+  let total = 0, lost = 0, days = 0;
+  const per = new Map(P.map((p, i) => [i, { won: 0, lost: 0 }]));
+  const dayRes = new Map();
+  for(const d of byDay.keys()){
+    const lst = dayList(d), s = scoreDay(lst, claims);
+    dayRes.set(d, s); total += s.earned; lost += s.total - s.earned; if(s.earned) days++;
+    const won = new Set(s.won);   // the very row objects that won a claim
+    for(const r of lst){ const pp = per.get(r.i); if(won.has(r)) pp.won += r.rax; else pp.lost += r.rax; }
+  }
+  $('#t-total').textContent = fmt(total); $('#t-lost').textContent = fmt(lost);
+  $('#t-pass').textContent = fmt(P.filter(p => p.mult && p.games.length).length); $('#t-days').textContent = fmt(days);
+
+  // Upgrades: for each pass, every higher level up to eight steps; keep the best value.
+  const ups = [];
+  P.forEach((p, i) => {
+    if(!p.games.length) return;
+    const days = [...new Set(p.games.map(g => g[0]))];
+    const base = days.reduce((a, d) => a + dayRes.get(d).earned, 0);
+    const avg = PACK[`${p.sport}:${p.season}:${p.id}`];
+    const perPack = Math.max(10, (Number(avg) || 0) * 3);
+    let best = null;
+    for(let k = Math.max(0, p.lv + 1); k < Math.min(LEVELS.length, p.lv + 9); k++){
+      const m = LEVELS[k][1];
+      const gain = days.reduce((a, d) => a + scoreDay(dayList(d, [i, m]), claims).earned, 0) - base;
+      const packs = Math.ceil(Math.max(0, LEVELS[k][2] - (Number(p.rating) || 0)) / perPack);
+      const cost = packs * price;
+      const ratio = cost ? gain / cost * 1000 : 0;
+      if(gain > 0 && (!best || ratio > best.ratio)) best = { k, gain, packs, cost, ratio };
+    }
+    if(best) ups.push({ p, ...best, noPack: avg == null });
+  });
+  const key = { name: u => u.p.name, now: u => u.p.rating, to: u => u.k, gain: u => u.gain, packs: u => u.packs, cost: u => u.cost, ratio: u => u.ratio }[upSort];
+  ups.sort((a, b) => { const x = key(a), y = key(b); return (x < y ? -1 : x > y ? 1 : 0) * upDir; });
+  document.querySelectorAll('th[data-u]').forEach(th => th.classList.toggle('on', th.dataset.u === upSort));
+  const link = p => p.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(p.passId)]) : null;
+  const nm = p => { const u = link(p), t = `${esc(p.name || 'Player ' + p.id)} <span class="note">${esc(SPORT[p.sport] || p.sport)} ${esc(seasonLbl(p.sport, p.season))}</span>`;
+    return u ? `<a href="${u}" target="_blank" rel="noopener">${t}</a>` : t; };
+  $('#ups').innerHTML = ups.slice(0, 150).map(u => `<tr><td>${nm(u.p)}</td><td>${tag(u.p.lv)} <span class="note">${fmt(u.p.rating)}</span></td>
+    <td>${tag(u.k)}</td><td>+${fmt(u.gain)}</td><td>${fmt(u.packs)}${u.noPack ? ' <span class="note" title="No pack data for this player - priced at 10 rating a pack">*</span>' : ''}</td>
+    <td>${fmt(u.cost)}</td><td>${fmt(u.ratio)}</td></tr>`).join('') || '<tr><td colspan="7" class="note">No upgrade adds anything.</td></tr>';
+
+  const rows = P.map((p, i) => ({ p, ...per.get(i) })).filter(r => r.p.games.length && r.p.mult).sort((a, b) => b.won - a.won);
+  $('#byp').innerHTML = rows.slice(0, 300).map(r => `<tr><td>${nm(r.p)}</td><td>${tag(r.p.lv)}</td><td>${fmt(r.p.games.length)}</td><td>${fmt(r.won)}</td><td>${fmt(r.lost)}</td></tr>`).join('')
+    || '<tr><td colspan="5" class="note">None of your passes has a claiming level and games yet.</td></tr>';
+  drawCal(dayRes);
+}
+
+function drawCal(dayRes){
+  const max = Math.max(1, ...[...dayRes.values()].map(s => s.earned));
+  const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  $('#cal').innerHTML = months.map((mn, m) => {
+    const dim = new Date(2024, m + 1, 0).getDate(), lead = new Date(2026, m, 1).getDay();
+    let cells = '<div></div>'.repeat(lead);
+    for(let d = 1; d <= dim; d++){
+      const k = String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+      const s = dayRes.get(k), v = s ? s.earned : 0;
+      const a = v ? 0.15 + 0.7 * v / max : 0;
+      cells += `<div class="day${v ? '' : ' none'}${selDay === k ? ' sel' : ''}" data-d="${k}" style="${v ? `background:color-mix(in srgb,var(--accent) ${Math.round(a * 100)}%,var(--panel2))` : ''}">${d}${v ? `<b>${v >= 1000 ? (v / 1000).toFixed(1) + 'k' : v}</b>` : ''}</div>`;
+    }
+    return `<div class="month"><h3>${mn}</h3><div class="grid">${cells}</div></div>`;
+  }).join('');
+}
+$('#cal').addEventListener('click', e => {
+  const c = e.target.closest('[data-d]'); if(!c || c.classList.contains('none')) return;
+  selDay = c.dataset.d;
+  const lst = dayList(selDay), s = scoreDay(lst, Number($('#claims').value));
+  const won = new Set(s.won);
+  lst.sort((a, b) => b.rax - a.rax);
+  $('#daydetail').innerHTML = `<b>${selDay}</b> · ${fmt(s.earned)} claimed of ${fmt(s.total)}<br>` + lst.map(r => {
+    const ok = won.has(r);
+    return `${ok ? '✓' : '✗'} ${esc(P[r.i].name)} (${esc(SPORT[r.sport])} ${esc(seasonLbl(r.sport, P[r.i].season))}) ${fmt(r.rax)}`; }).join('<br>');
+  document.querySelectorAll('.day.sel').forEach(x => x.classList.remove('sel')); c.classList.add('sel');
+});
+document.querySelectorAll('th[data-u]').forEach(th => th.addEventListener('click', () => {
+  if(upSort === th.dataset.u) upDir = -upDir; else { upSort = th.dataset.u; upDir = th.dataset.u === 'name' ? 1 : -1; }
+  compute();
+}));
+$('#claims').addEventListener('change', compute);
+$('#price').addEventListener('change', compute);
+
+(async () => {
+  const me = await api('/api/swaps?op=me');
+  if(me.error){ $('#lock').hidden = false; $('#lockmsg').textContent = me.error; return; }
+  $('#main').hidden = false;
+  if(!me.profile || !(me.profile.passes || []).length){ $('#status').innerHTML = 'No passes yet - <a href="/swaps">scan them on the Swaps page</a> first.'; return; }
+  $('#status').textContent = 'Loading every game for your passes…';
+  const g = await api('/api/swaps?op=games');
+  if(g.error){ $('#status').textContent = g.error; return; }
+  P = g.passes || []; G = g.games || {};
+  build(); compute();
+  // Pack data, one season at a time, then the costs are redrawn.
+  const pairs = [...new Set(P.map(p => `${p.sport}:${p.season}`))];
+  let n = 0;
+  for(const pair of pairs){
+    $('#status').textContent = `Loading pack data ${++n} of ${pairs.length}…`;
+    const d = await api(`/api/rax?plays=board&seasons=${encodeURIComponent(pair)}&min=0`);
+    for(const r of (d.rows || [])) if(r.avgRating != null) PACK[`${r.sport || pair.split(':')[0]}:${r.season || pair.split(':')[1]}:${r.playerId}`] = Number(r.avgRating);
+  }
+  $('#status').textContent = `${P.length} passes that can claim · games from the board's game data · pack data for ${Object.keys(PACK).length} players. General passes (under 10) don't claim and are left out.`;
+  compute();
+})();
+</script>
+</body>
+</html>

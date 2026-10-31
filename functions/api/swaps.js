@@ -303,6 +303,27 @@ export async function onRequest({ request, env, waitUntil }) {
     }
     return json({ rows });
   }
+  /* OTD optimiser: every game of every pass the member holds, as
+     [MM-DD, rax] pairs, one query per sport-season. General passes (under
+     10 rating) are left out - they don't claim. */
+  if (op === 'games') {
+    const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
+    const passes = parse(u && u.passes, []).filter(p => Number(p.rating) >= 10);
+    const groups = {};
+    for (const p of passes) (groups[`${p.sport}|${p.season}`] = groups[`${p.sport}|${p.season}`] || []).push(p.id);
+    const out = {};
+    for (const [g, ids] of Object.entries(groups)) {
+      const [sp, se] = g.split('|');
+      for (let i = 0; i < ids.length; i += 90) {
+        const r = await db.prepare(`SELECT playerId, substr(day, 6, 5) AS d, rax FROM gamelog
+          WHERE sport=? AND season=? AND playerId IN (${ids.slice(i, i + 90).filter(Number.isFinite).join(',') || 0}) AND rax > 0`)
+          .bind(sp, Number(se)).all();
+        for (const x of (r.results || [])) (out[`${sp}:${se}:${x.playerId}`] = out[`${sp}:${se}:${x.playerId}`] || []).push([x.d, x.rax]);
+      }
+    }
+    return json({ passes, games: out });
+  }
+
   if (op === 'buildindex') {
     // A few seasons per call with a breather between, so building the
     // table never crowds the database.
