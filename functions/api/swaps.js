@@ -152,9 +152,19 @@ async function fillNames(db, passes) {
     for (let i = 0; i < list.length; i += 90) {
       const ids = list.slice(i, i + 90).map(p => p.id).filter(Number.isFinite);
       try {
-        const r = await db.prepare(`SELECT playerId, MAX(player) AS player FROM gamelog WHERE sport=? AND season=? AND playerId IN (${ids.join(',')}) GROUP BY playerId`)
-          .bind(sp, Number(se)).all();
-        const m = new Map((r.results || []).map(x => [x.playerId, x.player]));
+        // That season first, then any season of the sport (a player keeps
+        // his id), then the marketplace copy - which has this season's
+        // rookies the game log doesn't yet.
+        const m = new Map();
+        const tries = [
+          [`SELECT playerId, MAX(player) AS player FROM gamelog WHERE sport=? AND season=? AND playerId IN (${ids.join(',')}) GROUP BY playerId`, [sp, Number(se)]],
+          [`SELECT playerId, MAX(player) AS player FROM gamelog WHERE sport=? AND season IN (2027,2026,2025,2024,2023,2022) AND playerId IN (${ids.join(',')}) GROUP BY playerId`, [sp]],
+          [`SELECT playerId, MAX(player) AS player FROM market_v2 WHERE sport=? AND season=? AND playerId IN (${ids.join(',')}) GROUP BY playerId`, [sp, Number(se)]]
+        ];
+        for (const [q, args] of tries) {
+          if (ids.every(x => m.has(x))) break;
+          try { for (const x of ((await db.prepare(q).bind(...args).all()).results || [])) if (x.player && !m.has(x.playerId)) m.set(x.playerId, x.player); } catch (e) {}
+        }
         for (const p of list) if (m.get(p.id)) p.name = m.get(p.id);
       } catch (e) {}
     }
@@ -255,6 +265,15 @@ export async function onRequest({ request, env }) {
 
   if (op === 'me') {
     const u = await db.prepare('SELECT * FROM swap_users WHERE key=?').bind(me).first();
+    // Passes scanned before a name source existed get their names now.
+    if (u && u.passes) {
+      const ps = parse(u.passes, []);
+      if (ps.some(p => !p.name || /^player$/i.test(p.name))) {
+        await fillNames(db, ps);
+        u.passes = JSON.stringify(ps);
+        try { await db.prepare('UPDATE swap_users SET passes=? WHERE key=?').bind(u.passes, me).run(); } catch (e) {}
+      }
+    }
     return json({ key: me, tokenFound: !!auth, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
       keep: parse(u.keep, []), slots: parse(u.slots, []), passes: parse(u.passes, []), scannedAt: u.scannedAt, active: !!u.active } : null });
   }

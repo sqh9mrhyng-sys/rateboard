@@ -53,6 +53,12 @@
     <p class="note">Enter your Real username and scan. Every player pass you hold is read from Real. Tick any you <b>won't</b> swap away; everything else is fair game.</p>
     <div class="bar"><input id="rsuser" placeholder="Real username" autocomplete="off"><button class="primary" id="scan">Scan my passes</button></div>
     <div class="note" id="scanmsg"></div>
+    <div class="bar" id="pctl" hidden>
+      <select id="pview" aria-label="View"><option value="all">All passes</option><option value="season">By season</option></select>
+      <select id="prar" aria-label="Rarity"><option value="">Every rarity</option><option value="0">General</option><option value="1">Common</option><option value="2">Uncommon</option><option value="3">Rare</option><option value="4">Epic</option><option value="5">Legendary</option><option value="6">Mystic</option><option value="7">Iconic</option></select>
+      <select id="psort" aria-label="Sort"><option value="rating">Highest rating</option><option value="low">Lowest rating</option><option value="name">Name</option></select>
+      <input id="pq" placeholder="Find a player" autocomplete="off">
+    </div>
     <div id="passes"></div>
   </section>
 
@@ -231,23 +237,40 @@ $('#hours').addEventListener('change', e => {
 });
 
 // --- passes
+const tierOf = p => { const l = levelOf(p.rating); return l ? l[1] : 0; };
+function passRow(p, keep, showSeason){
+  // The pass itself when its id is known (Real link type 18), else the player.
+  const u = p.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(p.passId)]) : realPlayerUrl(p.sport, p.id, p.season);
+  const nm = esc(p.name && !/^player$/i.test(p.name) ? p.name : 'Player ' + p.id);
+  const lv = levelOf(p.rating);
+  const tag = lv ? `<span class="tag" style="background:${RC[lv[1]]}">${RAR[lv[1]]}${lv[2] ? ' ' + lv[2] : ''}${lv[3] ? ' · ' + lv[3] : ''}</span>` : '<span class="tag" style="background:#8a93a6">General</span>';
+  return `<div class="pass"><input type="checkbox" data-keep="${p.key}" ${keep.has(p.key) ? 'checked' : ''} aria-label="Keep ${nm}">
+    ${tag}${u ? `<a href="${u}" target="_blank" rel="noopener">${nm}</a>` : nm}${p.count > 1 ? ` ×${p.count}` : ''}
+    ${showSeason ? `<span class="note">${esc(keyLbl(p.key))}</span>` : ''}
+    ${p.rating != null ? `<span class="note">${Math.round(p.rating * 10) / 10}</span>` : ''}<span class="k">${keep.has(p.key) ? 'keeping' : 'swappable'}</span></div>`;
+}
 function drawPasses(){
   const keep = new Set(prof.keep);
+  $('#pctl').hidden = !prof.passes.length;
+  if(!prof.passes.length){ $('#passes').innerHTML = prof.scannedAt ? '<p class="note">No player passes found.</p>' : ''; return; }
+  const view = $('#pview').value, rar = $('#prar').value, sort = $('#psort').value, q = $('#pq').value.trim().toLowerCase();
+  let list = prof.passes.filter(p => (rar === '' || String(tierOf(p)) === rar) && (!q || String(p.name || '').toLowerCase().includes(q)));
+  const cmp = sort === 'name' ? (a, b) => String(a.name).localeCompare(String(b.name))
+    : sort === 'low' ? (a, b) => (a.rating || 0) - (b.rating || 0) : (a, b) => (b.rating || 0) - (a.rating || 0);
+  list.sort(cmp);
+  if(!list.length){ $('#passes').innerHTML = '<p class="note">No passes match.</p>'; return; }
+  if(view === 'all'){
+    $('#passes').innerHTML = `<p class="note">${list.length} passes</p>` + list.slice(0, 400).map(p => passRow(p, keep, true)).join('')
+      + (list.length > 400 ? '<p class="note">Showing the first 400 - narrow it with rarity or search.</p>' : '');
+    return;
+  }
   const by = {};
-  for(const p of prof.passes) (by[`${p.sport}:${p.season}`] = by[`${p.sport}:${p.season}`] || []).push(p);
-  const groups = Object.entries(by);
-  if(!groups.length){ $('#passes').innerHTML = prof.scannedAt ? '<p class="note">No player passes found.</p>' : ''; return; }
-  $('#passes').innerHTML = groups.map(([g, list]) => `<details class="group" open><summary>${esc(keyLbl(g + ':0'))} · ${list.length} passes</summary>`
-    + list.sort((a, b) => (b.rating || 0) - (a.rating || 0) || String(a.name).localeCompare(String(b.name))).map(p => {
-      // The pass itself when its id is known (Real link type 18), else the player.
-      const u = p.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(p.passId)]) : realPlayerUrl(p.sport, p.id, p.season), nm = esc(p.name && !/^player$/i.test(p.name) ? p.name : 'Player ' + p.id);
-      const lv = levelOf(p.rating);
-      const tag = lv ? `<span class="tag" style="background:${RC[lv[1]]}">${RAR[lv[1]]}${lv[2] ? ' ' + lv[2] : ''}${lv[3] ? ' · ' + lv[3] : ''}</span>` : '<span class="tag" style="background:#8a93a6">General</span>';
-      return `<div class="pass"><input type="checkbox" data-keep="${p.key}" ${keep.has(p.key) ? 'checked' : ''} aria-label="Keep ${nm}">
-      ${tag}${u ? `<a href="${u}" target="_blank" rel="noopener">${nm}</a>` : nm}${p.count > 1 ? ` ×${p.count}` : ''}
-      ${p.rating != null ? `<span class="note">${Math.round(p.rating * 10) / 10}</span>` : ''}<span class="k">${keep.has(p.key) ? 'keeping' : 'swappable'}</span></div>`; }).join('')
-    + '</details>').join('');
+  for(const p of list) (by[`${p.sport}:${p.season}`] = by[`${p.sport}:${p.season}`] || []).push(p);
+  $('#passes').innerHTML = Object.entries(by).map(([g, l]) => `<details class="group" open><summary>${esc(keyLbl(g + ':0'))} · ${l.length} passes</summary>`
+    + l.map(p => passRow(p, keep, false)).join('') + '</details>').join('');
 }
+['#pview', '#prar', '#psort'].forEach(id => $(id).addEventListener('change', drawPasses));
+$('#pq').addEventListener('input', drawPasses);
 $('#passes').addEventListener('change', e => {
   const k = e.target.dataset.keep; if(!k) return;
   prof.keep = e.target.checked ? [...new Set([...prof.keep, k])] : prof.keep.filter(x => x !== k);
