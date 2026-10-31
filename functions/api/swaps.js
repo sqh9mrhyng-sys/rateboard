@@ -279,5 +279,23 @@ export async function onRequest({ request, env }) {
     } catch (e) { return json({ error: String(e.message || e) }, 502); }
   }
 
+  /* A test message from the swap account into one chat it is in, using
+     Real's own send request: POST messages/channels/<id>/messages with
+     { text, parentMessageId: null }. Admin only, and capped, so it can't
+     become a way to spam. */
+  if (op === 'dmtest') {
+    if (!auth) return json({ error: 'No swap token found.' }, 503);
+    const ch = String(url.searchParams.get('channel') || '');
+    const text = String(url.searchParams.get('text') || 'Swap bot test').slice(0, 300);
+    if (!/^\d{1,12}$/.test(ch)) return json({ error: 'channel must be a number' }, 400);
+    if (!(await allow(url.origin, 'swapdm-test', 5, 600))) return json({ error: 'Five test messages per ten minutes.' }, 429);
+    try {
+      const res = await fetch(`https://web.realapp.com/messages/channels/${ch}/messages`, {
+        method: 'POST', headers: { ...rsHeaders(auth), 'content-type': 'application/json' },
+        body: JSON.stringify({ text, parentMessageId: null }) });
+      return json({ status: res.status, body: (await res.text()).slice(0, 2000) });
+    } catch (e) { return json({ error: String(e.message || e) }, 502); }
+  }
+
   return json({ error: 'unknown op' }, 400);
 }

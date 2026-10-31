@@ -75,7 +75,8 @@
     <div class="bar"><button id="run">Run matching now</button><button id="reload">Refresh</button><span class="note" id="runmsg"></span></div>
     <div id="matches" class="note">Loading…</div>
     <details style="margin-top:12px"><summary class="note">Raw check of a Real endpoint (swap account)</summary>
-      <div class="bar"><input id="ppath" value="messages/channels/8203906/messages"><button id="probe">Fetch</button><button id="envb">Token names</button></div>
+      <div class="bar"><input id="ppath" value="messages/channels"><button id="probe">Fetch</button><button id="envb">Token names</button></div>
+      <div class="bar"><input id="dmch" placeholder="Chat number" inputmode="numeric" style="flex:0 1 140px"><input id="dmtext" value="Swap bot test"><button id="dmsend">Send test message</button></div>
       <pre id="praw">Nothing fetched yet.</pre>
     </details>
   </section>
@@ -196,6 +197,7 @@ async function loadMatches(){
 $('#run').addEventListener('click', async () => { const j = await api('/api/swaps?op=run'); $('#runmsg').textContent = j.error || `${(j.made || []).length} new matches.`; loadMatches(); });
 $('#reload').addEventListener('click', loadMatches);
 $('#probe').addEventListener('click', async () => { const j = await api('/api/swaps?op=probe&path=' + encodeURIComponent($('#ppath').value.trim())); $('#praw').textContent = JSON.stringify(j, null, 2); });
+$('#dmsend').addEventListener('click', async () => { $('#praw').textContent = JSON.stringify(await api(`/api/swaps?op=dmtest&channel=${encodeURIComponent($('#dmch').value.trim())}&text=${encodeURIComponent($('#dmtext').value)}`), null, 2); });
 $('#envb').addEventListener('click', async () => { $('#praw').textContent = JSON.stringify(await api('/api/swaps?op=env'), null, 2); });
 
 (async () => {
