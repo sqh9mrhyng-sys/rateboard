@@ -567,7 +567,8 @@ async function loadAll(){
   $('#status').textContent = 'Loading every game for your passes…';
   const g = await api('/api/swaps?op=games');
   if(g.error){ $('#status').textContent = g.error; return; }
-  P = g.passes || []; G = g.games || {};
+  // UFC is left off this page: its prices and data aren't reliable enough yet.
+  P = (g.passes || []).filter(p => p.sport !== 'ufc'); G = g.games || {};
   build(); compute();
   /* Pack data and market prices, kept in this browser for 12 hours so the
      page opens straight away after the first visit; fetched three seasons

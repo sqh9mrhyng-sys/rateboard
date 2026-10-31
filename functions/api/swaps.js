@@ -330,7 +330,7 @@ export async function onRequest({ request, env, waitUntil }) {
        comes from), kept for a day. */
     await db.prepare(`CREATE TABLE IF NOT EXISTS swap_teamrax (sport TEXT, season INTEGER, teamId INTEGER,
       days TEXT, at INTEGER, PRIMARY KEY (sport, season, teamId))`).run();
-    const teams = passes.filter(p => p.kind === 'team');
+    const teams = passes.filter(p => p.kind === 'team' && p.sport !== 'ufc');   // UFC isn't on the OTD page
     let fetched = 0;
     for (const t of teams) {
       const row = await db.prepare('SELECT days, at FROM swap_teamrax WHERE sport=? AND season=? AND teamId=?').bind(t.sport, t.season, t.id).first();
