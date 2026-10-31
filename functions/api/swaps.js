@@ -156,16 +156,20 @@ function deepFind(o, keys, depth = 0) {
 }
 function passOf(p, sport, season) {
   const e = p.entity || p.player || p.primaryPlayer || (p.card && p.card.primaryPlayer) || {};
-  const id = Number(p.entityId ?? p.playerId ?? e.id ?? deepFind(p, ['entityId', 'playerId']) ?? p.id);
-  const first = deepFind(p, ['firstName']), last = deepFind(p, ['lastName']);
-  const name = String(p.entityLabel || p.label || e.displayName || e.fullName || e.name
-    || (first && last ? `${first} ${last}` : '') || deepFind(p, ['displayName', 'fullName', 'entityLabel', 'playerName', 'name', 'label']) || '').slice(0, 80);
-  const count = Number(p.count ?? p.quantity ?? p.numPasses ?? p.passCount ?? 1) || 1;
-  const rarity = Number(deepFind(p, ['rarity', 'rarityLevel', 'tier'])) || null;
-  const rating = Number(deepFind(p, ['value', 'rating', 'boost', 'boostValue', 'primaryValue'])) || null;
-  // The pass's own id, for its Real link (type 18 in Real's link hash).
-  const passId = Number(p.userPassId ?? p.passId ?? (p.id !== undefined && Number(p.id) !== id ? p.id : NaN));
-  return Number.isFinite(id) ? { key: `${sport}:${season}:${id}`, sport, season, id, name, count, rarity, rating,
+  const id = Number(p.entityId ?? p.playerId ?? e.id ?? deepFind(p, ['entityId', 'playerId']));
+  const name = String((e.firstName && e.lastName ? `${e.firstName} ${e.lastName}` : '')
+    || p.label || e.displayName || e.name || '').slice(0, 80);
+  // Real's own read of the pass: level, multiplier and progress to the next one.
+  const b = p.boostInfo || {};
+  const rating = b.progress != null && Number.isFinite(Number(b.progress)) ? Number(b.progress) : null;
+  const mult = parseFloat(String(b.multiplier || '').replace(/x$/i, '')) || null;
+  const passId = Number(p.id);
+  return Number.isFinite(id) ? { key: `${sport}:${season}:${id}`, sport, season, id, name,
+    count: 1, rating, required: b.required != null ? Number(b.required) : null,
+    progress: b.progressDisplay || null, toward: b.progressQualifier || null,
+    levelLabel: b.rarityLabel ? String(b.rarityLabel) + (b.level && Number(b.baseRarity) >= 5 ? '' : '') : null,
+    level: b.level != null ? Number(b.level) : null, rarity: b.baseRarity != null ? Number(b.baseRarity) : null,
+    color: b.rarityColor || null, mult, earned: p.earned != null ? Number(p.earned) : null,
     passId: Number.isFinite(passId) ? passId : null } : null;
 }
 
@@ -304,11 +308,10 @@ export async function onRequest({ request, env, waitUntil }) {
     return json({ rows });
   }
   /* OTD optimiser: every game of every pass the member holds, as
-     [MM-DD, rax] pairs, one query per sport-season. General passes (under
-     10 rating) are left out - they don't claim. */
+     [MM-DD, rax] pairs, one query per sport-season. */
   if (op === 'games') {
     const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
-    const passes = parse(u && u.passes, []).filter(p => Number(p.rating) >= 10);
+    const passes = parse(u && u.passes, []);
     const groups = {};
     for (const p of passes) (groups[`${p.sport}|${p.season}`] = groups[`${p.sport}|${p.season}`] || []).push(p.id);
     const out = {};

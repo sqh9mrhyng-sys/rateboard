@@ -241,17 +241,25 @@ $('#hours').addEventListener('change', e => {
 });
 
 // --- passes
-const tierOf = p => { const l = levelOf(p.rating); return l ? l[1] : 0; };
+// Real's own level for a pass when the scan has it (boostInfo), else the ladder.
+const tierOf = p => p.rarity != null ? Number(p.rarity) : (l => l ? l[1] : 0)(levelOf(p.rating));
+function passTag(p){
+  const lv = levelOf(p.rating);
+  const label = lv ? `${RAR[lv[1]]}${lv[2] ? ' ' + lv[2] : ''}` : 'General';
+  const mult = p.mult ? p.mult + 'x' : (lv && lv[3]) || '';
+  const color = p.color || (lv ? RC[lv[1]] : '#8a93a6');
+  return `<span class="tag" style="background:${esc(color)}">${esc(label)}${mult ? ' · ' + esc(mult) : ''}</span>`;
+}
 function passRow(p, keep, showSeason){
-  // The pass itself when its id is known (Real link type 18), else the player.
+  // The pass itself (Real link type 18), else the player.
   const u = p.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(p.passId)]) : realPlayerUrl(p.sport, p.id, p.season);
   const nm = esc(p.name && !/^player$/i.test(p.name) ? p.name : 'Player ' + p.id);
-  const lv = levelOf(p.rating);
-  const tag = lv ? `<span class="tag" style="background:${RC[lv[1]]}">${RAR[lv[1]]}${lv[2] ? ' ' + lv[2] : ''}${lv[3] ? ' · ' + lv[3] : ''}</span>` : '<span class="tag" style="background:#8a93a6">General</span>';
+  const prog = p.progress ? `<span class="note">${esc(p.progress)}${p.toward ? ' ' + esc(p.toward) : ''}</span>` : '';
+  const earned = p.earned != null ? `<span class="note">· ${Number(p.earned).toLocaleString()} earned</span>` : '';
   return `<div class="pass"><input type="checkbox" data-keep="${p.key}" ${keep.has(p.key) ? 'checked' : ''} aria-label="Keep ${nm}">
-    ${tag}${u ? `<a href="${u}" target="_blank" rel="noopener">${nm}</a>` : nm}${p.count > 1 ? ` ×${p.count}` : ''}
+    ${passTag(p)}${u ? `<a href="${u}" target="_blank" rel="noopener">${nm}</a>` : nm}
     ${showSeason ? `<span class="note">${esc(keyLbl(p.key))}</span>` : ''}
-    ${p.rating != null ? `<span class="note">${Math.round(p.rating * 10) / 10}</span>` : ''}<span class="k">${keep.has(p.key) ? 'keeping' : 'swappable'}</span></div>`;
+    ${prog}${earned}<span class="k">${keep.has(p.key) ? 'keeping' : 'swappable'}</span></div>`;
 }
 function drawPasses(){
   const keep = new Set(prof.keep);
