@@ -49,10 +49,15 @@
     <div class="bar">
       <label class="note">Claims a day <select id="claims"><option value="3">3 (2 per sport + 1 spare)</option><option value="2">2 per sport</option></select></label>
       <label class="note">Pack price <select id="price"><option value="200">Pack yourself · 200</option><option value="241">Swapping · 241</option><option value="271">160 back · 271</option><option value="415">Full price · 415</option></select></label>
-      <label class="note">Profit over <select id="win"><option value="1">Next month</option><option value="3">Next 3 months</option><option value="6">Next 6 months</option><option value="12" selected>Next year</option><option value="24">Next 2 years</option><option value="0">All-time</option></select></label>
+      <label class="note">Profit over <select id="win"><option value="1">Next month</option><option value="3">Next 3 months</option><option value="6">Next 6 months</option><option value="12" selected>Next year</option><option value="24">Next 2 years</option><option value="0">All-time</option><option value="custom">Pick dates…</option></select></label>
       <label class="note">Min profit <input id="minp" type="number" inputmode="numeric" placeholder="0" style="width:100px"></label>
       <input id="rsuser" placeholder="Real username" autocomplete="off" style="flex:0 1 160px">
       <button id="scan" style="background:var(--accent);color:#141925;border-color:var(--accent);font-weight:700">Scan my passes</button>
+    </div>
+    <div id="rangebox" hidden style="margin-top:10px;max-width:340px">
+      <div class="bar" style="justify-content:space-between"><button id="rprev" aria-label="Previous month">‹</button><b id="rmon"></b><button id="rnext" aria-label="Next month">›</button></div>
+      <div class="grid" id="rgrid" style="margin-top:6px"></div>
+      <p class="note" id="rmsg" style="margin:6px 0 0">Tap a start date, then an end date.</p>
     </div>
     <div class="tiles">
       <div class="tile"><div class="k">Rax a year now</div><div class="v" id="t-total">–</div></div>
@@ -249,12 +254,24 @@ function dayList(d, override){   // override: [passIndex, mult]
 
 
 // The settings and today's window, shared by the list and the planner.
+/* The profit window as a count of each day of the year inside it: a range
+   longer than a year counts a date twice. Preset windows run from today; a
+   picked range runs between the two dates tapped (both included). */
+let rStart = null, rEnd = null, rView = new Date();
 function makeCtx(dayRes, per){
-  const claims = Number($('#claims').value), price = Number($('#price').value), win = Number($('#win').value);
-  const today = new Date(), end = new Date(today); end.setMonth(end.getMonth() + (win || 12));
-  const inWin = new Set();
-  for(const t = new Date(today); t < end; t.setDate(t.getDate() + 1)) inWin.add(String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'));
-  return { claims, price, win, inWin, dayRes, per };
+  const claims = Number($('#claims').value), price = Number($('#price').value);
+  const sel = $('#win').value, custom = sel === 'custom';
+  let win = custom ? -1 : Number(sel);
+  let from = new Date(), to = new Date(from);
+  if(custom && rStart && rEnd){ from = new Date(rStart); to = new Date(rEnd); to.setDate(to.getDate() + 1); }
+  else if(custom) win = 0;                       // nothing picked yet: fall back to all-time
+  else to.setMonth(to.getMonth() + (win || 12));
+  const counts = new Map(); let span = 0;
+  for(const t = new Date(from.getFullYear(), from.getMonth(), from.getDate()); t < to && span < 3700; t.setDate(t.getDate() + 1), span++){
+    const k = String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0');
+    counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  return { claims, price, win, counts, dayRes, per };
 }
 // Every claim on the calendar as things stand: each day's result, and what each pass wins.
 function scanAll(claims){
@@ -275,8 +292,8 @@ function scanAll(claims){
 function passOptions(i, ctx){
   const p = P[i];
   if(!p.games.length || LIVE.has(`${p.sport}:${p.season}`)) return [];
-  const { claims, price, win, inWin, dayRes, per } = ctx;
-  const windowSum = dd => { let a = 0; for(const [d, v] of dd) if(inWin.has(d)) a += v; return a; };
+  const { claims, price, win, counts, dayRes, per } = ctx;
+  const windowSum = dd => { let a = 0; for(const [d, v] of dd) a += v * (counts.get(d) || 0); return a; };
   const days = [...new Set(p.games.map(g => g[0]))];
   const own0 = per.get(i).won;
   const base = days.reduce((a, d) => a + dayRes.get(d).earned, 0);
@@ -307,7 +324,6 @@ function passOptions(i, ctx){
     const rawYear = [...dd.values()].reduce((a, b) => a + b, 0);
     let wx;
     if(win === 0) wx = life;
-    else if(win > 12) wx = Math.min(gain * win / 12, life);
     else wx = Math.min(rawYear > 0 ? gain * windowSum(dd) / rawYear : 0, life);
     const profit = cost == null ? null : wx - cost;
     if(gain > 0) out.push({ p, i, k, gain, life, need, packs, cost, ratio, m, wx, profit, score: profit == null ? -Infinity : profit,
@@ -347,7 +363,8 @@ function plan(){
   P.forEach((p, i) => Object.assign(p, saved[i]));     // back to how things really are
   if(!picks.length){ el.innerHTML = '<p class="note">Nothing within that budget makes a profit in this window.</p>'; return; }
   const spent = budget - left, profit = picks.reduce((a, x) => a + x.profit, 0);
-  const winLbl = $('#win').selectedOptions[0].textContent.toLowerCase();
+  const winLbl = $('#win').value === 'custom' && rStart && rEnd ? `${rStart.toLocaleDateString()} – ${rEnd.toLocaleDateString()}`
+    : $('#win').selectedOptions[0].textContent.toLowerCase();
   el.innerHTML = `<div class="tiles">
       <div class="tile"><div class="k">Spend</div><div class="v">${fmt(spent)}</div></div>
       <div class="tile"><div class="k">Profit, ${esc(winLbl)}</div><div class="v" style="color:var(--ok)">+${fmt(profit)}</div></div>
@@ -467,7 +484,34 @@ document.querySelectorAll('th[data-u]').forEach(th => th.addEventListener('click
 }));
 $('#claims').addEventListener('change', compute);
 $('#price').addEventListener('change', compute);
-$('#win').addEventListener('change', compute);
+$('#win').addEventListener('change', () => { $('#rangebox').hidden = $('#win').value !== 'custom'; drawRange(); compute(); });
+function drawRange(){
+  const y = rView.getFullYear(), m = rView.getMonth();
+  $('#rmon').textContent = rView.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  const dim = new Date(y, m + 1, 0).getDate(), lead = new Date(y, m, 1).getDay();
+  const t0 = d => d ? new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() : null;
+  const a = t0(rStart), b = t0(rEnd);
+  let h = '<div></div>'.repeat(lead);
+  for(let d = 1; d <= dim; d++){
+    const t = new Date(y, m, d).getTime();
+    const on = (a != null && t === a) || (b != null && t === b), mid = a != null && b != null && t > a && t < b;
+    h += `<div class="day" data-t="${t}" style="min-height:30px;${on ? 'background:var(--accent);color:#141925;font-weight:700' : mid ? 'background:color-mix(in srgb,var(--accent) 30%,var(--panel2))' : ''}">${d}</div>`;
+  }
+  $('#rgrid').innerHTML = h;
+  $('#rmsg').textContent = !rStart ? 'Tap a start date, then an end date.' : !rEnd ? 'Now tap the end date.'
+    : `${rStart.toLocaleDateString()} to ${rEnd.toLocaleDateString()} · ${Math.round((b - a) / 86400000) + 1} days. Tap again to start over.`;
+}
+$('#rgrid').addEventListener('click', e => {
+  const c = e.target.closest('[data-t]'); if(!c) return;
+  const d = new Date(Number(c.dataset.t));
+  if(!rStart || rEnd){ rStart = d; rEnd = null; }
+  else if(d < rStart){ rEnd = rStart; rStart = d; }
+  else rEnd = d;
+  drawRange();
+  if(rStart && rEnd){ compute(); if($('#budget').value) plan(); }
+});
+$('#rprev').addEventListener('click', () => { rView = new Date(rView.getFullYear(), rView.getMonth() - 1, 1); drawRange(); });
+$('#rnext').addEventListener('click', () => { rView = new Date(rView.getFullYear(), rView.getMonth() + 1, 1); drawRange(); });
 $('#planb').addEventListener('click', () => { $('#plan').innerHTML = '<p class="note">Planning…</p>'; setTimeout(plan, 20); });
 $('#minp').addEventListener('input', compute);
 
