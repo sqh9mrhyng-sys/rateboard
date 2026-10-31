@@ -49,7 +49,8 @@
     <div class="bar">
       <label class="note">Claims a day <select id="claims"><option value="3">3 (2 per sport + 1 spare)</option><option value="2">2 per sport</option></select></label>
       <label class="note">Pack price <select id="price"><option value="200">Pack yourself · 200</option><option value="241">Swapping · 241</option><option value="271">160 back · 271</option><option value="415">Full price · 415</option></select></label>
-      <a href="/swaps" class="note">Rescan passes on the Swaps page</a>
+      <input id="rsuser" placeholder="Real username" autocomplete="off" style="flex:0 1 160px">
+      <button id="scan" style="background:var(--accent);color:#141925;border-color:var(--accent);font-weight:700">Scan my passes</button>
     </div>
     <div class="tiles">
       <div class="tile"><div class="k">Rax a year now</div><div class="v" id="t-total">–</div></div>
@@ -374,11 +375,28 @@ document.querySelectorAll('th[data-u]').forEach(th => th.addEventListener('click
 $('#claims').addEventListener('change', compute);
 $('#price').addEventListener('change', compute);
 
+$('#scan').addEventListener('click', async () => {
+  const u = $('#rsuser').value.trim();
+  if(!u){ $('#status').textContent = 'Enter your Real username first.'; return; }
+  $('#scan').disabled = true;
+  $('#status').textContent = 'Scanning every sport and season… about 20 seconds.';
+  const j = await api(`/api/swaps?op=scan&rsUser=${encodeURIComponent(u)}`);
+  $('#scan').disabled = false;
+  if(j.error){ $('#status').textContent = j.error; return; }
+  PACK = {}; MKT = {}; upOpen = null;
+  await loadAll();
+});
+
 (async () => {
   const me = await api('/api/swaps?op=me');
   if(me.error){ $('#lock').hidden = false; $('#lockmsg').textContent = me.error; return; }
   $('#main').hidden = false;
-  if(!me.profile || !(me.profile.passes || []).length){ $('#status').innerHTML = 'No passes yet - <a href="/swaps">scan them on the Swaps page</a> first.'; return; }
+  $('#rsuser').value = (me.profile && me.profile.rsUser) || '';
+  if(!me.profile || !(me.profile.passes || []).length){ $('#status').textContent = 'No passes yet - enter your Real username and tap Scan my passes.'; return; }
+  await loadAll();
+})();
+
+async function loadAll(){
   $('#status').textContent = 'Loading every game for your passes…';
   const g = await api('/api/swaps?op=games');
   if(g.error){ $('#status').textContent = g.error; return; }
@@ -402,7 +420,7 @@ $('#price').addEventListener('change', compute);
   }
   $('#status').textContent = `${P.length} passes that can claim · games from the board's game data · pack data for ${Object.keys(PACK).length} players. General passes claim at 1x on a live season and nothing on an old one; old seasons stop at each level's all-time cap.`;
   compute();
-})();
+}
 </script>
 </body>
 </html>
