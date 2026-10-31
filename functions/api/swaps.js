@@ -88,8 +88,8 @@ function rsHeaders(auth) {
 
 function swapToken(env) {
   if (env.RS_SWAP_TOKEN) return env.RS_SWAP_TOKEN;
-  const k = Object.keys(env).find(k => /^RS_.*TOKEN$/.test(k) && !['RS_AUTH_TOKEN', 'RS_MARKET_TOKEN'].includes(k)
-    && typeof env[k] === 'string');
+  const k = Object.keys(env).find(k => /token/i.test(k) && !['RS_AUTH_TOKEN', 'RS_MARKET_TOKEN'].includes(k)
+    && typeof env[k] === 'string' && env[k].length > 20);
   return k ? env[k] : null;
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -214,7 +214,8 @@ export async function onRequest({ request, env }) {
 
   // Which token names exist (names only, never values).
   if (op === 'env') {
-    return json({ tokenNames: Object.keys(env).filter(k => /TOKEN/.test(k)), swapTokenFound: !!auth });
+    // Every setting's name (never a value), so a token saved under any name can be spotted.
+    return json({ settingNames: Object.keys(env).filter(k => typeof env[k] === 'string'), swapTokenFound: !!auth });
   }
 
   if (op === 'me') {
