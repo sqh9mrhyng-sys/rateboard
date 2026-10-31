@@ -136,7 +136,10 @@ function passOf(p, sport, season) {
   const count = Number(p.count ?? p.quantity ?? p.numPasses ?? p.passCount ?? 1) || 1;
   const rarity = Number(deepFind(p, ['rarity', 'rarityLevel', 'tier'])) || null;
   const rating = Number(deepFind(p, ['value', 'rating', 'boost', 'boostValue', 'primaryValue'])) || null;
-  return Number.isFinite(id) ? { key: `${sport}:${season}:${id}`, sport, season, id, name, count, rarity, rating } : null;
+  // The pass's own id, for its Real link (type 18 in Real's link hash).
+  const passId = Number(p.userPassId ?? p.passId ?? (p.id !== undefined && Number(p.id) !== id ? p.id : NaN));
+  return Number.isFinite(id) ? { key: `${sport}:${season}:${id}`, sport, season, id, name, count, rarity, rating,
+    passId: Number.isFinite(passId) ? passId : null } : null;
 }
 
 // Names Real didn't put on the pass, from the board's own game log.
