@@ -596,55 +596,22 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
   let pages = 0, stored = 0;
   const writes = [];
   const live = () => Date.now() < (typeof deadline === 'object' ? deadline.at : deadline);
-  while (pages < MARKET_PAGES_PER_LANE * 3 && live() && !lane.done) {
-    const before = lane.before || winStart;
-    const u = `https://web.realapp.com/cardmarketplacelistings`
+  const urlFor = (before, off, rarity) => `https://web.realapp.com/cardmarketplacelistings`
       + `?beforeEndsAt=${encodeURIComponent(before)}&cohort=all&listingType=card`
-      + `&offset=${lane.off || 0}&limit=100&prestige=all&rarity=all&season=${se}&sport=${sp}`;
-    let data;
-    try { data = await rsGet(u, auth); }
+      + `&offset=${off || 0}&limit=100&prestige=all&rarity=${rarity || 'all'}&season=${se}&sport=${sp}`;
+  const fetchPage = async u => {
+    try { const d = await rsGet(u, auth); pages++; lane.err = null; return d; }
     catch (e) {
       lane.err = String((e && e.message) || e).slice(0, 160);
       if (/high volume|429/i.test(lane.err)) lane.busy = true;
-      break;
+      return null;
     }
-    lane.err = null;
-    const rows = rowsOf(data);
-    pages++;
-    if (lane.total == null && data && data.listingCount != null) lane.total = Number(data.listingCount);
-    if (!rows.length) { lane.done = true; lane.why = 'empty page'; break; }
-    lane.pageSize = rows.length;
-    /* A page with fewer than ten on it used to end the window. Real sends
-       short pages in the middle of a big market too, and stopping there is
-       what left NFL and CFB a quarter to a half short. Now only an empty
-       page or crossing into the next window ends one. */
-    if (rows.length < 10) lane.short = (lane.short || 0) + 1;
-    /* Real's cursor includes listings ending at exactly the cursor time, so
-       a page can repeat what the last one ended on - and where more than a
-       page's worth end at the same moment it can hand back the very same
-       page again and again. Only listings not on the last page count, and a
-       page with nothing new on it steps the cursor a millisecond on. That
-       loop is what ran Golf 2026 to four times its real size. */
-    const seen = new Set(lane.lastIds || []);
-    const fresh = rows.filter(r => !seen.has(String(r.id)));
-    lane.lastIds = rows.map(r => String(r.id));
-    if (!fresh.length) {
-      const lastAt = rows[rows.length - 1].endsAt || before;
-      if (!lane.triedOff) {
-        // First try paging through the tie with the offset.
-        lane.before = lastAt; lane.off = (lane.before === before ? (lane.off || 0) : 0) + rows.length; lane.triedOff = true;
-      } else {
-        // The offset got nowhere either: step past that moment.
-        const at = Date.parse(lastAt);
-        lane.before = new Date((Number.isFinite(at) ? at : Date.parse(before)) + 1).toISOString();
-        lane.off = 0; lane.triedOff = false; lane.skips = (lane.skips || 0) + 1;
-      }
-      if (marketPause) await sleep(marketPause);
-      continue;
-    }
-    lane.triedOff = false;
+  };
+  // Saves listings, never more than one write waiting at a time - letting
+  // them pile up is what overloaded the database and took sign-in with it.
+  const save = async list => {
     const now = Date.now();
-    const mine = fresh.filter(r => !r.endsAt || lastWin || r.endsAt < winEnd);
+    const mine = list.filter(r => !r.endsAt || lastWin || r.endsAt < winEnd);
     const stmts = mine.map(r => {
       const c = r.card || {};
       const pp = c.primaryPlayer || {};
@@ -659,24 +626,75 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
         r.userId != null ? String(r.userId) : null, r.cardId != null ? String(r.cardId) : null,
         r.createdAt || null, r.endsAt || null, now, who);
     });
-    /* Stored while the next page is fetched, but never more than one write
-       waiting at a time. Letting them pile up is what overloaded the
-       database and took sign-in down with it. */
     await Promise.all(writes.splice(0));
     for (let k = 0; k < stmts.length; k += 50) {
       writes.push(env.RATEBOARD_DB.batch(stmts.slice(k, k + 50))
         .catch(e => { lane.err = 'store: ' + String(e.message || e).slice(0, 160); }));
     }
     stored += stmts.length;
+  };
+  /* More than a page of listings ending at the very same moment. Real's
+     cursor can't page through those, and it ignores the offset there, so the
+     same ten come back for ever (the loop that ran Golf 2026 to four times
+     its size) - and stepping past the moment loses the rest (what then left
+     Golf at a tenth). So the moment is asked for again one rarity at a
+     time, which splits the pile into pages Real can hand over. If Real
+     won't filter by rarity (the rows come back mixed) that is remembered
+     and the moment is stepped past as before. */
+  const splitTie = async at => {
+    if (lane.noSplit) return;
+    for (let r = 1; r <= 7 && live() && !lane.busy; r++) {
+      const d = await fetchPage(urlFor(at, 0, r));
+      if (!d) return;
+      const rows = rowsOf(d);
+      if (rows.some(x => numOr(x.rarity ?? (x.card || {}).rarity) !== r)) { lane.noSplit = true; return; }
+      const tied = rows.filter(x => x.endsAt === at);
+      await save(tied);
+      if (tied.length >= 10) lane.lostTies = (lane.lostTies || 0) + 1;   // still more than a page in one rarity
+      if (marketPause) await sleep(marketPause);
+    }
+    lane.splits = (lane.splits || 0) + 1;
+  };
+  while (pages < MARKET_PAGES_PER_LANE * 3 && live() && !lane.done) {
+    const before = lane.before || winStart;
+    const data = await fetchPage(urlFor(before, lane.off));
+    if (!data) break;
+    const rows = rowsOf(data);
+    if (lane.total == null && data && data.listingCount != null) lane.total = Number(data.listingCount);
+    if (!rows.length) { lane.done = true; lane.why = 'empty page'; break; }
+    lane.pageSize = rows.length;
+    // A short page doesn't end the window: Real sends them mid-market too.
+    if (rows.length < 10) lane.short = (lane.short || 0) + 1;
+    const seen = new Set(lane.lastIds || []);
+    const fresh = rows.filter(r => !seen.has(String(r.id)));
+    lane.lastIds = rows.map(r => String(r.id));
+    if (!fresh.length) {
+      // Nothing new: a whole page ending at one moment. Split it by rarity,
+      // then carry on from just past it.
+      const lastAt = rows[rows.length - 1].endsAt || before;
+      if (!lane.triedOff) {      // first see whether the offset pages through it
+        lane.off = (lastAt === before ? (lane.off || 0) : 0) + rows.length;
+        lane.before = lastAt; lane.triedOff = true;
+        if (marketPause) await sleep(marketPause);
+        continue;
+      }
+      lane.triedOff = false;
+      await splitTie(lastAt);
+      if (lane.busy || (lane.err && !/^store/.test(lane.err))) break;
+      const at = Date.parse(lastAt);
+      lane.before = new Date((Number.isFinite(at) ? at : Date.parse(before)) + 1).toISOString();
+      lane.off = 0; lane.skips = (lane.skips || 0) + 1;
+      if (marketPause) await sleep(marketPause);
+      continue;
+    }
+    lane.triedOff = false;
+    await save(fresh);
     const last = rows[rows.length - 1].endsAt;
-    // Same end time all the way down the page: step past it with the offset
-    // rather than asking for the same page again.
     if (!last || last === before) lane.off = (lane.off || 0) + rows.length;
     else { lane.before = last; lane.off = 0; }
     if (!lastWin && rows.some(r => r.endsAt && r.endsAt >= winEnd)) { lane.done = true; lane.why = 'reached next window'; break; }
-    // The last window runs to the end of the market. Anything ending more
-    // than three days after the pull began was listed after it began, so the
-    // walk stops there rather than chasing new listings.
+    // The last window runs to the end of the market; anything ending more
+    // than three days after the pull began was listed after it began.
     if (lastWin && last && Date.parse(last) > t0 + 73 * 3600000) { lane.done = true; lane.why = 'past three days'; break; }
     if (marketPause) await sleep(marketPause);
   }
@@ -837,9 +855,12 @@ async function marketSliceHeld(env, auth, deadline) {
    prices and rating listed, overall and by rarity. Used by the season view
    and by favourites. */
 async function marketAgg(db, sport, season, nowIso, pids) {
-  const only = pids ? ` AND playerId IN (${pids.map(Number).filter(Number.isFinite).join(',') || 0})` : '';
+  /* A card's player is its playerId, or for UFC - whose cards are filed
+     under the fighter as the card's entity, with no playerId - its entityId.
+     Without that every UFC listing grouped into one nameless row. */
+  const only = pids ? ` AND COALESCE(playerId, entityId) IN (${pids.map(Number).filter(Number.isFinite).join(',') || 0})` : '';
   const rows = (await db.prepare(
-    `SELECT playerId, MAX(player) AS player, rarity, COUNT(*) AS n, MIN(buyNow) AS minBuy,
+    `SELECT COALESCE(playerId, entityId) AS playerId, MAX(COALESCE(player, label)) AS player, rarity, COUNT(*) AS n, MIN(buyNow) AS minBuy,
             AVG(buyNow) AS avgBuy, AVG(ABS(value)) AS avgValue, MAX(ABS(value)) AS maxValue,
             -- price per point of rating, leaving out anything over 1,000 a point;
             -- a negative rating counts as its size, so -8.2 is 8.2
@@ -847,7 +868,7 @@ async function marketAgg(db, sport, season, nowIso, pids) {
             COUNT(CASE WHEN value <> 0 AND buyNow / ABS(value) <= 1000 THEN 1 END) AS pprN,
             SUM(bids) AS bids, MIN(endsAt) AS nextEnds, SUM(ABS(value)) AS valueSum
        FROM market_v2 WHERE sport=? AND season=? AND endsAt > ?${only}
-      GROUP BY playerId, rarity`).bind(sport, season, nowIso).all()).results || [];
+      GROUP BY COALESCE(playerId, entityId), rarity`).bind(sport, season, nowIso).all()).results || [];
   const by = new Map();
   for (const r of rows) {
     const p = by.get(r.playerId) || { sport, season, playerId: r.playerId, player: r.player, n: 0, bids: 0, rating: 0,
@@ -5149,7 +5170,7 @@ async function handleGet({ request, env }) {
         if (!Number.isFinite(pid)) return json({ error: 'playerId required' }, 400);
         const r = await db.prepare(
           `SELECT id, rarity, prestige, value, mint, buyNow, minBid, curBid, bids, endsAt, createdAt, label
-             FROM market_v2 WHERE sport=? AND season=? AND playerId=? AND endsAt > ?
+             FROM market_v2 WHERE sport=? AND season=? AND COALESCE(playerId, entityId)=? AND endsAt > ?
             ORDER BY rarity DESC, buyNow ASC LIMIT 400`).bind(sport, Number(season), pid, nowIso).all();
         return json({ sport, season, playerId: pid, listings: r.results || [] });
       }
