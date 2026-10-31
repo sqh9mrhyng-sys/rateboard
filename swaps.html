@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Swaps</title>
+<style>
+  :root{--bg:#141925;--panel:#1d2433;--panel2:#232b3d;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;--ok:#5fbf7a;--bad:#e5484d}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+  .wrap{max-width:900px;margin:0 auto;padding:16px}
+  header{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+  h1{font-size:20px;margin:0;font-weight:800}
+  h2{font-size:16px;margin:0 0 6px}
+  a{color:var(--accent)}
+  .note{color:var(--mute);font-size:13px}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+  input,button,select{font:inherit;padding:9px 11px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
+  button{cursor:pointer}
+  button.primary{background:var(--accent);color:#141925;border-color:var(--accent);font-weight:700}
+  .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+  .bar input{flex:1 1 200px}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .chip{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);font-size:13px}
+  .chip button{padding:0 4px;border:0;background:none;color:var(--mute)}
+  .hours{display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:6px;margin-top:8px}
+  .hours label{display:flex;align-items:center;justify-content:center;gap:5px;padding:7px 4px;border:1px solid var(--line);border-radius:8px;font-size:13px;cursor:pointer;background:var(--panel2)}
+  .hours label.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 18%,var(--panel2))}
+  .hours input{display:none}
+  .group{margin-top:10px}
+  .group summary{cursor:pointer;color:var(--mute)}
+  .pass{display:flex;align-items:center;gap:8px;padding:5px 2px;border-bottom:1px solid var(--line);font-size:14px}
+  .pass:last-child{border-bottom:0}
+  .pass .k{margin-left:auto;font-size:12px;color:var(--mute)}
+  .res{max-height:240px;overflow:auto;margin-top:6px}
+  .res div{padding:6px 4px;border-bottom:1px solid var(--line);cursor:pointer}
+  .res div:hover{background:var(--panel2)}
+  pre{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;overflow:auto;font-size:12px;max-height:50vh;white-space:pre-wrap;word-break:break-word}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  td,th{padding:7px 6px;border-bottom:1px solid var(--line);text-align:left}
+  .lock{max-width:460px;margin:12vh auto;text-align:center}
+</style>
+</head>
+<body>
+<div class="lock" id="lock" hidden><h1>Swaps</h1><p class="note" id="lockmsg">Checking…</p><p><a href="/">Back to the board</a></p></div>
+<div class="wrap" id="main" hidden>
+  <header><h1>Swaps</h1><span class="note">Pack swaps · admin preview</span><a href="/" style="margin-left:auto">Back to the board</a></header>
+
+  <section>
+    <h2>1. Your player passes</h2>
+    <p class="note">Enter your Real username and scan. Every player pass you hold is read from Real. Tick any you <b>won't</b> swap away; everything else is fair game.</p>
+    <div class="bar"><input id="rsuser" placeholder="Real username" autocomplete="off"><button class="primary" id="scan">Scan my passes</button></div>
+    <div class="note" id="scanmsg"></div>
+    <div id="passes"></div>
+  </section>
+
+  <section>
+    <h2>2. Who you want</h2>
+    <p class="note">Search a player and pick the season you want their pass for. You can add a few.</p>
+    <div class="bar"><input id="wq" placeholder="Search a player" autocomplete="off"></div>
+    <div class="res" id="wres"></div>
+    <div class="chips" id="wants"></div>
+  </section>
+
+  <section>
+    <h2>3. When you can be messaged</h2>
+    <p class="note">Pick up to 5 hours a day, shown in your time (<span id="tz"></span>). You only get matched with someone who picked at least one of the same hours, and you're both messaged on Real at that hour.</p>
+    <div class="hours" id="hours"></div>
+  </section>
+
+  <div class="bar"><button class="primary" id="save">Save my swap</button><span class="note" id="savemsg"></span></div>
+
+  <section id="admin">
+    <h2>Matches (admin)</h2>
+    <div class="bar"><button id="run">Run matching now</button><button id="reload">Refresh</button><span class="note" id="runmsg"></span></div>
+    <div id="matches" class="note">Loading…</div>
+    <details style="margin-top:12px"><summary class="note">Raw check of a Real endpoint (swap account)</summary>
+      <div class="bar"><input id="ppath" value="messages/channels/8203906/messages"><button id="probe">Fetch</button><button id="envb">Token names</button></div>
+      <pre id="praw">Nothing fetched yet.</pre>
+    </details>
+  </section>
+</div>
+<script>
+(() => {
+  const real = window.fetch.bind(window);
+  window.fetch = (u, o = {}) => {
+    let t = ''; try{ t = localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){}
+    if(t && typeof u === 'string' && u.startsWith('/api/')) o = Object.assign({}, o, { headers: Object.assign({}, o.headers || {}, { 'x-rb-token': t }) });
+    return real(u, o);
+  };
+})();
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const SPORT = {nba:'NBA',nfl:'NFL',ncaaf:'CFB',ncaam:'CBB',mlb:'MLB',nhl:'NHL',soccer:'FC',wnba:'WNBA',ufc:'UFC',golf:'Golf'};
+const START = {nfl:1,nhl:1,ncaaf:1,soccer:1};
+const seasonLbl = (sp, se) => { se = Number(se);
+  return START[sp] ? `${se}-${String(se + 1).slice(2)}` : (sp === 'nba' || sp === 'ncaam') ? `${se - 1}-${String(se).slice(2)}` : String(se); };
+const SEASONS = { nba:[2027,2026,2025,2024,2023], ncaam:[2027,2026,2025,2024], nfl:[2026,2025,2024,2023], ncaaf:[2026,2025,2024,2023],
+  nhl:[2026,2025,2024,2023], mlb:[2026,2025,2024,2023,2022], wnba:[2026,2025,2024], soccer:[2026,2025], golf:[2026,2025,2024,2023,2022], ufc:[2023] };
+const api = async (u, o) => { const r = await fetch(u, o); const j = await r.json().catch(() => ({})); if(!r.ok && !j.error) j.error = 'Error ' + r.status; return j; };
+
+let prof = { rsUser: '', passes: [], keep: [], wants: [], slots: [] };
+let wantNames = {};
+const keyLbl = k => { const [sp, se] = k.split(':'); return `${SPORT[sp] || sp} ${seasonLbl(sp, se)}`; };
+
+// --- hours: shown local, stored as UTC hours
+const tzOff = -new Date().getTimezoneOffset() / 60;
+const toUtc = h => ((h - tzOff) % 24 + 24) % 24, toLocal = h => ((h + tzOff) % 24 + 24) % 24;
+const hLbl = h => `${(h % 12) || 12}${h < 12 ? 'am' : 'pm'}`;
+function drawHours(){
+  const local = new Set(prof.slots.map(toLocal));
+  $('#hours').innerHTML = Array.from({length: 24}, (_, h) =>
+    `<label class="${local.has(h) ? 'on' : ''}"><input type="checkbox" value="${h}" ${local.has(h) ? 'checked' : ''}>${hLbl(h)}</label>`).join('');
+}
+$('#hours').addEventListener('change', e => {
+  const h = Number(e.target.value), u = Math.round(toUtc(h));
+  if(e.target.checked){
+    if(prof.slots.length >= 5){ e.target.checked = false; $('#savemsg').textContent = 'Up to 5 hours.'; return; }
+    prof.slots.push(u);
+  } else prof.slots = prof.slots.filter(x => x !== u);
+  drawHours();
+});
+
+// --- passes
+function drawPasses(){
+  const keep = new Set(prof.keep);
+  const by = {};
+  for(const p of prof.passes) (by[`${p.sport}:${p.season}`] = by[`${p.sport}:${p.season}`] || []).push(p);
+  const groups = Object.entries(by);
+  if(!groups.length){ $('#passes').innerHTML = prof.scannedAt ? '<p class="note">No player passes found.</p>' : ''; return; }
+  $('#passes').innerHTML = groups.map(([g, list]) => `<details class="group" open><summary>${esc(keyLbl(g + ':0'))} · ${list.length} passes</summary>`
+    + list.sort((a, b) => a.name.localeCompare(b.name)).map(p => `<label class="pass"><input type="checkbox" data-keep="${p.key}" ${keep.has(p.key) ? 'checked' : ''}>
+      ${esc(p.name || 'Player ' + p.id)}${p.count > 1 ? ` ×${p.count}` : ''}<span class="k">${keep.has(p.key) ? 'keeping' : 'swappable'}</span></label>`).join('')
+    + '</details>').join('');
+}
+$('#passes').addEventListener('change', e => {
+  const k = e.target.dataset.keep; if(!k) return;
+  prof.keep = e.target.checked ? [...new Set([...prof.keep, k])] : prof.keep.filter(x => x !== k);
+  const s = e.target.parentElement.querySelector('.k'); if(s) s.textContent = e.target.checked ? 'keeping' : 'swappable';
+});
+$('#scan').addEventListener('click', async () => {
+  const u = $('#rsuser').value.trim(); if(!u){ $('#scanmsg').textContent = 'Enter your Real username.'; return; }
+  $('#scanmsg').textContent = 'Scanning every sport and season… this takes about 20 seconds.';
+  const j = await api(`/api/swaps?op=scan&rsUser=${encodeURIComponent(u)}`);
+  if(j.error){ $('#scanmsg').textContent = j.error; return; }
+  prof.rsUser = u; prof.passes = j.passes || []; prof.scannedAt = Date.now();
+  $('#scanmsg').innerHTML = `${prof.passes.length} passes found.` + ((j.errors || []).length ? ` <span style="color:var(--bad)">${j.errors.length} seasons failed: ${esc(j.errors[0])}</span>` : '')
+    + (j.sample ? `<details><summary>What Real sent (first pass)</summary><pre>${esc(JSON.stringify(j.sample, null, 2))}</pre></details>` : '');
+  drawPasses();
+});
+
+// --- wants
+let wTimer = null;
+$('#wq').addEventListener('input', e => {
+  clearTimeout(wTimer); const q = e.target.value.trim();
+  if(q.length < 3){ $('#wres').innerHTML = ''; return; }
+  wTimer = setTimeout(async () => {
+    const pairs = Object.entries(SEASONS).flatMap(([sp, ss]) => ss.map(se => `${sp}:${se}`));
+    const out = [];
+    for(let i = 0; i < pairs.length; i += 30){
+      const j = await api(`/api/rax?gamelog=query&mode=players&limit=40&q=${encodeURIComponent(q)}&seasons=${pairs.slice(i, i + 30).join(',')}`);
+      out.push(...(j.rows || []));
+    }
+    $('#wres').innerHTML = out.slice(0, 60).map(r => `<div data-k="${r.sport}:${r.season}:${r.playerId}" data-n="${esc(r.player)}">${esc(r.player)} <span class="note">· ${esc(r.team || '')} · ${esc(keyLbl(r.sport + ':' + r.season))}</span></div>`).join('')
+      || '<div class="note">No player found.</div>';
+  }, 300);
+});
+$('#wres').addEventListener('click', e => {
+  const d = e.target.closest('[data-k]'); if(!d) return;
+  if(!prof.wants.includes(d.dataset.k)) prof.wants.push(d.dataset.k);
+  wantNames[d.dataset.k] = d.dataset.n; drawWants();
+});
+function drawWants(){
+  $('#wants').innerHTML = prof.wants.map(k => `<span class="chip">${esc(wantNames[k] || 'Player ' + k.split(':')[2])} · ${esc(keyLbl(k))}<button data-x="${k}" aria-label="Remove">✕</button></span>`).join('')
+    || '<span class="note">Nobody picked yet.</span>';
+}
+$('#wants').addEventListener('click', e => { const x = e.target.dataset.x; if(x){ prof.wants = prof.wants.filter(k => k !== x); drawWants(); } });
+
+$('#save').addEventListener('click', async () => {
+  if(!prof.slots.length){ $('#savemsg').textContent = 'Pick at least one hour.'; return; }
+  const j = await api('/api/swaps?op=save', { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ rsUser: $('#rsuser').value.trim(), wants: prof.wants, keep: prof.keep, slots: prof.slots, names: wantNames }) });
+  $('#savemsg').textContent = j.error ? j.error : 'Saved.';
+  try{ localStorage.setItem('ratebrd_swapnames', JSON.stringify(wantNames)); }catch(e){}
+});
+
+// --- admin
+async function loadMatches(){
+  const j = await api('/api/swaps?op=matches');
+  if(j.error){ $('#matches').textContent = j.error; return; }
+  const m = j.matches || [];
+  $('#matches').innerHTML = m.length ? '<table><tr><th>Who</th><th>Gets</th><th>Hour</th><th>Status</th></tr>' + m.map(x =>
+    `<tr><td>${esc(x.aUser || x.a)} ↔ ${esc(x.bUser || x.b)}</td><td>${esc(x.aGetsName || x.aGets)} / ${esc(x.bGetsName || x.bGets)}</td>
+     <td>${hLbl(toLocal(x.slot))}</td><td>${esc(x.status)}</td></tr>`).join('') + '</table>' : 'No matches yet.';
+}
+$('#run').addEventListener('click', async () => { const j = await api('/api/swaps?op=run'); $('#runmsg').textContent = j.error || `${(j.made || []).length} new matches.`; loadMatches(); });
+$('#reload').addEventListener('click', loadMatches);
+$('#probe').addEventListener('click', async () => { const j = await api('/api/swaps?op=probe&path=' + encodeURIComponent($('#ppath').value.trim())); $('#praw').textContent = JSON.stringify(j, null, 2); });
+$('#envb').addEventListener('click', async () => { $('#praw').textContent = JSON.stringify(await api('/api/swaps?op=env'), null, 2); });
+
+(async () => {
+  $('#tz').textContent = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const j = await api('/api/swaps?op=me');
+  if(j.error){ $('#lock').hidden = false; $('#lockmsg').textContent = j.error; return; }
+  $('#main').hidden = false;
+  try{ wantNames = JSON.parse(localStorage.getItem('ratebrd_swapnames') || '{}') || {}; }catch(e){}
+  if(j.profile) prof = Object.assign(prof, j.profile);
+  if(!j.tokenFound) $('#scanmsg').innerHTML = '<span style="color:var(--bad)">No swap token found in Cloudflare yet.</span>';
+  $('#rsuser').value = prof.rsUser || '';
+  drawPasses(); drawWants(); drawHours(); loadMatches();
+})();
+</script>
+</body>
+</html>
