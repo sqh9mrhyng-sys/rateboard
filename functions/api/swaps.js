@@ -111,6 +111,33 @@ const DDL = [
 ];
 async function ready(db) { for (const d of DDL) await db.prepare(d).run(); }
 
+/* A small search table of every player-season - name, team, season rax -
+   so the "who you want" search reads a few thousand rows instead of the
+   whole game log on every keystroke. One sport-season is (re)built at a
+   time, each at most once a day, alongside searches. */
+const IDX_DDL = [
+  `CREATE TABLE IF NOT EXISTS swap_index (sport TEXT, season INTEGER, playerId INTEGER, player TEXT, lname TEXT,
+     team TEXT, rax INTEGER, games INTEGER, PRIMARY KEY (sport, season, playerId))`,
+  `CREATE TABLE IF NOT EXISTS swap_index_meta (job TEXT PRIMARY KEY, builtAt INTEGER)`
+];
+async function indexOne(db) {
+  for (const d of IDX_DDL) await db.prepare(d).run();
+  const meta = new Map(((await db.prepare('SELECT job, builtAt FROM swap_index_meta').all()).results || []).map(r => [r.job, r.builtAt]));
+  let pick = null, oldest = Infinity;
+  for (const [sp, ss] of Object.entries(SWAP_SEASONS)) for (const se of ss) {
+    const at = meta.get(`${sp}:${se}`) || 0;
+    if (at < oldest) { oldest = at; pick = [sp, se]; }
+  }
+  if (!pick || Date.now() - oldest < 86400000) return null;
+  const [sp, se] = pick;
+  await db.prepare('DELETE FROM swap_index WHERE sport=? AND season=?').bind(sp, se).run();
+  await db.prepare(`INSERT OR REPLACE INTO swap_index (sport, season, playerId, player, lname, team, rax, games)
+    SELECT sport, season, playerId, MAX(player), LOWER(MAX(player)), MAX(team), COALESCE(SUM(rax), 0), COUNT(*)
+      FROM gamelog WHERE sport=? AND season=? GROUP BY playerId`).bind(sp, se).run();
+  await db.prepare('INSERT OR REPLACE INTO swap_index_meta (job, builtAt) VALUES (?, ?)').bind(`${sp}:${se}`, Date.now()).run();
+  return `${sp}:${se}`;
+}
+
 const rowsOf = d => {
   if (Array.isArray(d)) return d;
   for (const k of ['passes', 'items', 'entities', 'results', 'data', 'userPasses', 'players']) if (Array.isArray(d && d[k])) return d[k];
@@ -248,7 +275,7 @@ async function runMatching(db) {
   return made;
 }
 
-export async function onRequest({ request, env }) {
+export async function onRequest({ request, env, waitUntil }) {
   const url = new URL(request.url);
   const db = env.RATEBOARD_DB;
   if (!(await isAdminRequest(env, request))) return forbidden('Swaps are admin only while they are being built.');
@@ -256,6 +283,33 @@ export async function onRequest({ request, env }) {
   await ready(db);
   const op = url.searchParams.get('op') || '';
   const auth = swapToken(env);
+
+  if (op === 'search') {
+    const q = String(url.searchParams.get('q') || '').trim().toLowerCase().replace(/[%_]/g, '');
+    try { waitUntil(indexOne(db).catch(() => {})); } catch (e) {}
+    if (q.length < 2) return json({ rows: [] });
+    let rows = [];
+    try {
+      rows = (await db.prepare(`SELECT sport, season, playerId, player, team, rax, games FROM swap_index
+        WHERE lname LIKE ? OR lname LIKE ? ORDER BY rax DESC LIMIT 40`).bind(q + '%', '% ' + q + '%').all()).results || [];
+    } catch (e) { rows = []; }
+    // Owners from each player-season's latest daily count.
+    if (rows.length) {
+      try {
+        const res = await db.batch(rows.map(r => db.prepare(
+          'SELECT owners FROM owners WHERE sport=? AND season=? AND playerId=? ORDER BY day DESC LIMIT 1').bind(r.sport, r.season, r.playerId)));
+        res.forEach((x, i) => { const o = x.results && x.results[0]; rows[i].owners = o ? o.owners : null; });
+      } catch (e) {}
+    }
+    return json({ rows });
+  }
+  if (op === 'buildindex') {
+    // A few seasons per call with a breather between, so building the
+    // table never crowds the database.
+    const done = [];
+    for (let k = 0; k < 3; k++) { const j = await indexOne(db); if (!j) break; done.push(j); await sleep(500); }
+    return json({ built: done });
+  }
 
   // Which token names exist (names only, never values).
   if (op === 'env') {

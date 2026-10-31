@@ -292,20 +292,24 @@ $('#scan').addEventListener('click', async () => {
 });
 
 // --- wants
-let wTimer = null;
+let wTimer = null, wSeq = 0;
+const wCache = new Map();
+const fmtN = n => n == null ? '–' : Number(n).toLocaleString();
+function drawResults(rows){
+  $('#wres').innerHTML = rows.map(r => `<div data-k="${r.sport}:${r.season}:${r.playerId}" data-n="${esc(r.player)}">${esc(r.player)}
+      <span class="note">· ${esc(keyLbl(r.sport + ':' + r.season))}${r.team ? ' · ' + esc(r.team) : ''} · <b>${fmtN(r.rax)}</b> rax · ${fmtN(r.owners)} owners</span></div>`).join('')
+    || '<div class="note">No player found.</div>';
+}
 $('#wq').addEventListener('input', e => {
-  clearTimeout(wTimer); const q = e.target.value.trim();
-  if(q.length < 3){ $('#wres').innerHTML = ''; return; }
+  clearTimeout(wTimer); const q = e.target.value.trim().toLowerCase();
+  if(q.length < 2){ $('#wres').innerHTML = ''; return; }
+  if(wCache.has(q)){ drawResults(wCache.get(q)); return; }
   wTimer = setTimeout(async () => {
-    const pairs = Object.entries(SEASONS).flatMap(([sp, ss]) => ss.map(se => `${sp}:${se}`));
-    const out = [];
-    for(let i = 0; i < pairs.length; i += 30){
-      const j = await api(`/api/rax?gamelog=query&mode=players&limit=40&q=${encodeURIComponent(q)}&seasons=${pairs.slice(i, i + 30).join(',')}`);
-      out.push(...(j.rows || []));
-    }
-    $('#wres').innerHTML = out.slice(0, 60).map(r => `<div data-k="${r.sport}:${r.season}:${r.playerId}" data-n="${esc(r.player)}">${esc(r.player)} <span class="note">· ${esc(r.team || '')} · ${esc(keyLbl(r.sport + ':' + r.season))}</span></div>`).join('')
-      || '<div class="note">No player found.</div>';
-  }, 300);
+    const seq = ++wSeq;
+    const j = await api(`/api/swaps?op=search&q=${encodeURIComponent(q)}`);
+    wCache.set(q, j.rows || []);
+    if(seq === wSeq) drawResults(j.rows || []);
+  }, 120);
 });
 $('#wres').addEventListener('click', e => {
   const d = e.target.closest('[data-k]'); if(!d) return;
@@ -351,6 +355,9 @@ $('#envb').addEventListener('click', async () => { $('#praw').textContent = JSON
   if(!j.tokenFound) $('#scanmsg').innerHTML = '<span style="color:var(--bad)">No swap token found in Cloudflare yet.</span>';
   $('#rsuser').value = prof.rsUser || '';
   drawPasses(); drawWants(); drawHours(); loadMatches();
+  // Fills the player search table in the background, three seasons a call,
+  // until every season is in (about 16 calls, once a day at most).
+  (async () => { for(let i = 0; i < 20; i++){ const r = await api('/api/swaps?op=buildindex'); if(!r.built || !r.built.length) break; await new Promise(z => setTimeout(z, 3000)); } })();
 })();
 </script>
 </body>
