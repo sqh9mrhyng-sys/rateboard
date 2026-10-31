@@ -619,8 +619,32 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
        what left NFL and CFB a quarter to a half short. Now only an empty
        page or crossing into the next window ends one. */
     if (rows.length < 10) lane.short = (lane.short || 0) + 1;
+    /* Real's cursor includes listings ending at exactly the cursor time, so
+       a page can repeat what the last one ended on - and where more than a
+       page's worth end at the same moment it can hand back the very same
+       page again and again. Only listings not on the last page count, and a
+       page with nothing new on it steps the cursor a millisecond on. That
+       loop is what ran Golf 2026 to four times its real size. */
+    const seen = new Set(lane.lastIds || []);
+    const fresh = rows.filter(r => !seen.has(String(r.id)));
+    lane.lastIds = rows.map(r => String(r.id));
+    if (!fresh.length) {
+      const lastAt = rows[rows.length - 1].endsAt || before;
+      if (!lane.triedOff) {
+        // First try paging through the tie with the offset.
+        lane.before = lastAt; lane.off = (lane.before === before ? (lane.off || 0) : 0) + rows.length; lane.triedOff = true;
+      } else {
+        // The offset got nowhere either: step past that moment.
+        const at = Date.parse(lastAt);
+        lane.before = new Date((Number.isFinite(at) ? at : Date.parse(before)) + 1).toISOString();
+        lane.off = 0; lane.triedOff = false; lane.skips = (lane.skips || 0) + 1;
+      }
+      if (marketPause) await sleep(marketPause);
+      continue;
+    }
+    lane.triedOff = false;
     const now = Date.now();
-    const mine = rows.filter(r => !r.endsAt || lastWin || r.endsAt < winEnd);
+    const mine = fresh.filter(r => !r.endsAt || lastWin || r.endsAt < winEnd);
     const stmts = mine.map(r => {
       const c = r.card || {};
       const pp = c.primaryPlayer || {};
@@ -649,7 +673,7 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
     // rather than asking for the same page again.
     if (!last || last === before) lane.off = (lane.off || 0) + rows.length;
     else { lane.before = last; lane.off = 0; }
-    if (!lastWin && mine.length < rows.length) { lane.done = true; lane.why = 'reached next window'; break; }
+    if (!lastWin && rows.some(r => r.endsAt && r.endsAt >= winEnd)) { lane.done = true; lane.why = 'reached next window'; break; }
     // The last window runs to the end of the market. Anything ending more
     // than three days after the pull began was listed after it began, so the
     // walk stops there rather than chasing new listings.
@@ -753,7 +777,12 @@ async function marketSliceHeld(env, auth, deadline) {
         }
       }
       st.partial = false;
-      const n = Object.values(st.lanes).reduce((a, l) => a + (l.rows || 0), 0);
+      let n = Object.values(st.lanes).reduce((a, l) => a + (l.rows || 0), 0);
+      try {   // the real count, from the table, now the season's old rows are gone
+        const c = await db.prepare('SELECT COUNT(*) AS n FROM market_v2 WHERE sport=? AND season=? AND endsAt > ?')
+          .bind(sp, Number(se), new Date().toISOString()).first();
+        if (c && c.n != null) n = c.n;
+      } catch (e) {}
       const pages = Object.values(st.lanes).reduce((a, l) => a + (l.pages || 0), 0);
       const minutes = Math.round((Date.now() - st.curStart) / 6000) / 10;
       await db.prepare('UPDATE market_seasons SET doneAt=?, listings=?, minutes=? WHERE job=?')
