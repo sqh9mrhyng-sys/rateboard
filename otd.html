@@ -64,6 +64,13 @@
   </section>
 
   <section>
+    <h2>Spend planner</h2>
+    <p class="note">How much rax you want to spend; it uses the window and pack price above and picks upgrades one at a time, each accounting for the ones before it. Live seasons (2026-27 NBA, NFL, NHL, CBB, CFB) are left out.</p>
+    <div class="bar"><input id="budget" type="number" inputmode="numeric" placeholder="Rax to spend, e.g. 20000" style="flex:0 1 220px"><button id="planb" style="background:var(--accent);color:#141925;border-color:var(--accent);font-weight:700">Make my plan</button></div>
+    <div id="plan" style="margin-top:10px"></div>
+  </section>
+
+  <section>
     <h2>Best upgrades</h2>
     <p class="note">For each pass, the level that adds the most for what it costs. <b>Extra a year</b> is what your whole calendar gains after the 2-per-sport (+1 spare) claim limit, and after each pass's all-time cap on old seasons. <b>Extra all-time</b> is how much more cap room the upgrade opens (∞ at Iconic or on a live season). Packs come from pack data (average rating ×3 a pack, never under 10) at the price above; FC and UFC have no packs, so they're priced from the marketplace's rax per rating. <b>Profit</b> is what the upgrade earns over the window you pick, from today, minus its price; each pass shows its most profitable target. Tap a row for its calendar.</p>
     <div class="scroll"><table><thead><tr>
@@ -197,7 +204,8 @@ const CAP = { 'General': 0, 'Common': 1000, 'Uncommon': 1500, 'Rare': 2000, 'Epi
   'Mystic 1': 37500, 'Mystic 2': 39500, 'Mystic 3': 41500, 'Mystic 4': 43500, 'Mystic 5': 45500,
   'Mystic 6': 47500, 'Mystic 7': 49000, 'Mystic 8': 50500, 'Mystic 9': 51500, 'Mystic 10': 52500 };
 const CAP_UFC = { 0: 0, 1: 1500, 2: 3000, 3: 6000, 4: 12000, 5: 24000, 6: 48000 };
-const LIVE = new Set(['nba:2027', 'ncaam:2027', 'nfl:2026', 'ncaaf:2026', 'nhl:2026', 'soccer:2026', 'golf:2026']);
+// The seasons being played now: uncapped, and left out of upgrade advice.
+const LIVE = new Set(['nba:2027', 'ncaam:2027', 'nfl:2026', 'ncaaf:2026', 'nhl:2026']);
 const NO_PACKS = new Set(['soccer', 'ufc']);
 function capOf(p, k){   // k = LEVELS index, -1 = General
   if(LIVE.has(`${p.sport}:${p.season}`)) return Infinity;
@@ -239,71 +247,133 @@ function dayList(d, override){   // override: [passIndex, mult]
     rax: r.base * (override && override[0] === r.i ? override[1] : P[r.i].mult) }));
 }
 
-function compute(){
-  const claims = Number($('#claims').value), price = Number($('#price').value);
-  let total = 0, lost = 0, days = 0;
-  const per = new Map(P.map((p, i) => [i, { won: 0, lost: 0 }]));
-  const dayRes = new Map();
-  for(const d of byDay.keys()){
-    const lst = dayList(d), s = scoreDay(lst, claims);
-    dayRes.set(d, s); total += s.earned; lost += s.total - s.earned; if(s.earned) days++;
-    const won = new Set(s.won);   // the very row objects that won a claim
-    for(const r of lst){ const pp = per.get(r.i); if(won.has(r)) pp.won += r.rax; else pp.lost += r.rax; }
-  }
-  $('#t-total').textContent = fmt(total); $('#t-lost').textContent = fmt(lost);
-  $('#t-pass').textContent = fmt(P.filter(p => p.mult && p.games.length).length); $('#t-days').textContent = fmt(days);
 
-  // Upgrades: for each pass, every higher level up to eight steps; keep the most profitable.
-  const win = Number($('#win').value);
-  // How much of a pass's per-day gains fall in the next `win` months.
+// The settings and today's window, shared by the list and the planner.
+function makeCtx(dayRes, per){
+  const claims = Number($('#claims').value), price = Number($('#price').value), win = Number($('#win').value);
   const today = new Date(), end = new Date(today); end.setMonth(end.getMonth() + (win || 12));
   const inWin = new Set();
   for(const t = new Date(today); t < end; t.setDate(t.getDate() + 1)) inWin.add(String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'));
+  return { claims, price, win, inWin, dayRes, per };
+}
+// Every claim on the calendar as things stand: each day's result, and what each pass wins.
+function scanAll(claims){
+  let total = 0, lost = 0, days = 0;
+  const per = new Map(P.map((p, i) => [i, { won: 0, lost: 0 }])), dayRes = new Map();
+  for(const d of byDay.keys()){
+    const lst = dayList(d), s = scoreDay(lst, claims);
+    dayRes.set(d, s); total += s.earned; lost += s.total - s.earned; if(s.earned) days++;
+    const won = new Set(s.won);
+    for(const r of lst){ const pp = per.get(r.i); if(won.has(r)) pp.won += r.rax; else pp.lost += r.rax; }
+  }
+  return { total, lost, days, per, dayRes };
+}
+/* Every upgrade worth considering for one pass: the next eight levels, each
+   with what it adds a year (after the claim limit, what it pushes off other
+   passes, and the all-time cap), what it adds in the chosen window, and what
+   it costs. Live seasons get no advice. */
+function passOptions(i, ctx){
+  const p = P[i];
+  if(!p.games.length || LIVE.has(`${p.sport}:${p.season}`)) return [];
+  const { claims, price, win, inWin, dayRes, per } = ctx;
   const windowSum = dd => { let a = 0; for(const [d, v] of dd) if(inWin.has(d)) a += v; return a; };
+  const days = [...new Set(p.games.map(g => g[0]))];
+  const own0 = per.get(i).won;
+  const base = days.reduce((a, d) => a + dayRes.get(d).earned, 0);
+  const avg = PACK[`${p.sport}:${p.season}:${p.id}`];
+  const perPack = Math.max(10, (Number(avg) || 0) * 3);
+  const ppr = MKT[`${p.sport}:${p.season}:${p.id}`] ?? MKT[`${p.sport}:${p.season}:*`];
+  const rating = Number(p.rating) || 0, earned = Number(p.earned) || 0;
+  const left0 = Math.max(0, capOf(p, p.lv) - earned);
+  const out = [];
+  for(let k = Math.max(0, p.lv + 1); k < Math.min(LEVELS.length, p.lv + 9); k++){
+    const m = LEVELS[k][1];
+    let own1 = 0, whole = 0; const dd = new Map();
+    for(const d of days){
+      const lst = dayList(d, [i, m]), sc = scoreDay(lst, claims);
+      whole += sc.earned; dd.set(d, sc.earned - dayRes.get(d).earned);
+      for(const r of sc.won) if(r.i === i) own1 += r.rax;
+    }
+    const left1 = Math.max(0, capOf(p, k) - earned);
+    const others = (whole - base) - (own1 - own0);           // what it pushes out of other claims
+    const gain = Math.min(own1, left1) - Math.min(own0, left0) + others;
+    const life = left1 === Infinity ? Infinity : left1 - left0;
+    const need = Math.max(0, LEVELS[k][2] - rating);
+    const packs = NO_PACKS.has(p.sport) ? null : Math.ceil(need / perPack);
+    const cost = NO_PACKS.has(p.sport) ? (ppr != null ? Math.round(need * ppr) : null) : packs * price;
+    const ratio = cost ? gain / cost * 1000 : 0;
+    // Profit over the window: the year's gain spread by when those games fall
+    // in it, never more than the cap room the upgrade opens.
+    const rawYear = [...dd.values()].reduce((a, b) => a + b, 0);
+    let wx;
+    if(win === 0) wx = life;
+    else if(win > 12) wx = Math.min(gain * win / 12, life);
+    else wx = Math.min(rawYear > 0 ? gain * windowSum(dd) / rawYear : 0, life);
+    const profit = cost == null ? null : wx - cost;
+    if(gain > 0) out.push({ p, i, k, gain, life, need, packs, cost, ratio, m, wx, profit, score: profit == null ? -Infinity : profit,
+      noPack: !NO_PACKS.has(p.sport) && avg == null, noMkt: NO_PACKS.has(p.sport) && ppr == null });
+  }
+  return out;
+}
+
+/* The planner: with a set budget, buy the upgrade that returns the most per
+   rax spent, apply it to the calendar, and look again - so every later pick
+   already sees the passes bought before it. Stops when the money runs out or
+   nothing left makes a profit in the window. */
+function plan(){
+  const budget = Number($('#budget').value) || 0, el = $('#plan');
+  if(!(budget > 0)){ el.innerHTML = '<p class="note">Enter an amount of rax to spend.</p>'; return; }
+  const saved = P.map(p => ({ lv: p.lv, mult: p.mult, rating: p.rating, capLeft: p.capLeft }));
+  const claims = Number($('#claims').value);
+  let left = budget; const picks = [];
+  const start = scanAll(claims).total;
+  for(let step = 0; step < 40; step++){
+    const sc = scanAll(claims), ctx = makeCtx(sc.dayRes, sc.per);
+    let best = null;
+    P.forEach((p, i) => { for(const o of passOptions(i, ctx)){
+      if(o.cost == null || o.cost <= 0 || o.cost > left || !(o.profit > 0)) continue;
+      const v = o.profit / o.cost;
+      if(!best || v > best.v) best = { ...o, v };
+    } });
+    if(!best) break;
+    const p = P[best.i];
+    picks.push({ ...best, fromLv: p.lv, fromRating: p.rating });
+    left -= best.cost;
+    p.lv = best.k; p.rating = Math.max(Number(p.rating) || 0, LEVELS[best.k][2]);
+    p.capLeft = capOf(p, best.k) - (Number(p.earned) || 0);
+    p.mult = p.capLeft <= 0 ? 0 : LEVELS[best.k][1];
+  }
+  const after = scanAll(claims).total;
+  P.forEach((p, i) => Object.assign(p, saved[i]));     // back to how things really are
+  if(!picks.length){ el.innerHTML = '<p class="note">Nothing within that budget makes a profit in this window.</p>'; return; }
+  const spent = budget - left, profit = picks.reduce((a, x) => a + x.profit, 0);
+  const winLbl = $('#win').selectedOptions[0].textContent.toLowerCase();
+  el.innerHTML = `<div class="tiles">
+      <div class="tile"><div class="k">Spend</div><div class="v">${fmt(spent)}</div></div>
+      <div class="tile"><div class="k">Profit, ${esc(winLbl)}</div><div class="v" style="color:var(--ok)">+${fmt(profit)}</div></div>
+      <div class="tile"><div class="k">Rax a year</div><div class="v">${fmt(start)} → ${fmt(after)}</div></div>
+      <div class="tile"><div class="k">Left over</div><div class="v">${fmt(left)}</div></div></div>
+    <div class="scroll"><table><thead><tr><th>#</th><th>Player pass</th><th>From</th><th>To</th><th>Rating needed</th><th>Extra a year</th><th>Est. packs</th><th>Price</th><th>Profit</th></tr></thead><tbody>`
+    + picks.map((x, n) => `<tr><td>${n + 1}</td><td>${window.__nm ? window.__nm(x.p) : esc(x.p.name)}</td><td>${tag(x.fromLv)}</td><td>${tag(x.k)}</td>
+      <td>${fmt(x.need)}</td><td>+${fmt(x.gain)}</td><td>${x.packs == null ? '–' : fmt(x.packs)}</td><td>${fmt(x.cost)}</td><td style="color:var(--ok)">+${fmt(x.profit)}</td></tr>`).join('')
+    + `</tbody></table></div><p class="note">Bought in this order. Each pick is worked out after the ones above it, so a pass that would take another's claims is already counted.</p>`;
+}
+
+function compute(){
+  const claims = Number($('#claims').value), price = Number($('#price').value);
+  const { total, lost, days, per, dayRes } = scanAll(claims);
+  $('#t-total').textContent = fmt(total); $('#t-lost').textContent = fmt(lost);
+  $('#t-pass').textContent = fmt(P.filter(p => p.mult && p.games.length).length); $('#t-days').textContent = fmt(days);
+
+  const ctx = makeCtx(dayRes, per);
   const ups = [];
   P.forEach((p, i) => {
-    if(!p.games.length) return;
-    const days = [...new Set(p.games.map(g => g[0]))];
-    const own0 = per.get(i).won;
-    const base = days.reduce((a, d) => a + dayRes.get(d).earned, 0);
-    const avg = PACK[`${p.sport}:${p.season}:${p.id}`];
-    const perPack = Math.max(10, (Number(avg) || 0) * 3);
-    const ppr = MKT[`${p.sport}:${p.season}:${p.id}`] ?? MKT[`${p.sport}:${p.season}:*`];
-    const rating = Number(p.rating) || 0, earned = Number(p.earned) || 0;
-    const left0 = Math.max(0, capOf(p, p.lv) - earned);
+    const opts = passOptions(i, ctx);
     let best = null;
-    for(let k = Math.max(0, p.lv + 1); k < Math.min(LEVELS.length, p.lv + 9); k++){
-      const m = LEVELS[k][1];
-      let own1 = 0, whole = 0; const dd = new Map();
-      for(const d of days){
-        const lst = dayList(d, [i, m]), sc = scoreDay(lst, claims);
-        whole += sc.earned; dd.set(d, sc.earned - dayRes.get(d).earned);
-        for(const r of sc.won) if(r.i === i) own1 += r.rax;
-      }
-      const left1 = Math.max(0, capOf(p, k) - earned);
-      const others = (whole - base) - (own1 - own0);           // what it pushes out of other claims
-      const gain = Math.min(own1, left1) - Math.min(own0, left0) + others;
-      const life = left1 === Infinity ? Infinity : left1 - left0;
-      const need = Math.max(0, LEVELS[k][2] - rating);
-      const packs = NO_PACKS.has(p.sport) ? null : Math.ceil(need / perPack);
-      const cost = NO_PACKS.has(p.sport) ? (ppr != null ? Math.round(need * ppr) : null) : packs * price;
-      const ratio = cost ? gain / cost * 1000 : 0;
-      /* Profit over the chosen window: the year's gain spread by when those
-         games fall in the window from today, never more than the cap room
-         the upgrade opens. All-time is the cap room itself. */
-      const rawYear = [...dd.values()].reduce((a, b) => a + b, 0);
-      let wx;
-      if(win === 0) wx = life;
-      else if(win > 12) wx = Math.min(gain * win / 12, life);
-      else wx = Math.min(rawYear > 0 ? gain * windowSum(dd) / rawYear : 0, life);
-      const profit = cost == null ? null : wx - cost;
-      const score = profit == null ? -Infinity : profit;
-      if(gain > 0 && (!best || score > best.score || (score === best.score && ratio > best.ratio)))
-        best = { k, gain, life, need, packs, cost, ratio, m, wx, profit, score };
-    }
+    for(const o of opts) if(!best || o.score > best.score || (o.score === best.score && o.ratio > best.ratio)) best = o;
     const minp = Number($('#minp').value);
     if(best && $('#minp').value !== '' && !(best.profit >= minp)) best = null;
-    if(best) ups.push({ p, i, ...best, noPack: !NO_PACKS.has(p.sport) && avg == null, noMkt: NO_PACKS.has(p.sport) && ppr == null });
+    if(best) ups.push(best);
   });
   lastUps = ups;
   const key = { name: u => u.p.name, now: u => u.p.rating, to: u => u.k, need: u => u.need, gain: u => u.gain, life: u => u.life,
@@ -398,6 +468,7 @@ document.querySelectorAll('th[data-u]').forEach(th => th.addEventListener('click
 $('#claims').addEventListener('change', compute);
 $('#price').addEventListener('change', compute);
 $('#win').addEventListener('change', compute);
+$('#planb').addEventListener('click', () => { $('#plan').innerHTML = '<p class="note">Planning…</p>'; setTimeout(plan, 20); });
 $('#minp').addEventListener('input', compute);
 
 $('#scan').addEventListener('click', async () => {
