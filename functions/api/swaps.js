@@ -116,15 +116,47 @@ const rowsOf = d => {
   for (const k of ['passes', 'items', 'entities', 'results', 'data', 'userPasses', 'players']) if (Array.isArray(d && d[k])) return d[k];
   return [];
 };
-// One pass, reduced to what matching needs. Real's exact shape isn't known
-// yet, so a few likely field names are tried.
+// One pass, reduced to what matching needs. Real's exact shape is still being
+// learned, so the player's id, name, rarity and rating are searched for
+// anywhere in the pass, nested objects included.
+function deepFind(o, keys, depth = 0) {
+  if (!o || typeof o !== 'object' || depth > 4) return undefined;
+  for (const k of keys) if (o[k] != null && o[k] !== '' && typeof o[k] !== 'object') return o[k];
+  for (const v of Object.values(o)) {
+    if (v && typeof v === 'object') { const r = deepFind(v, keys, depth + 1); if (r !== undefined) return r; }
+  }
+  return undefined;
+}
 function passOf(p, sport, season) {
   const e = p.entity || p.player || p.primaryPlayer || (p.card && p.card.primaryPlayer) || {};
-  const id = Number(p.entityId ?? p.playerId ?? e.id ?? p.id);
-  const name = String(p.entityLabel || p.label || e.displayName || e.name
-    || [e.firstName, e.lastName].filter(Boolean).join(' ') || p.name || '').slice(0, 80);
+  const id = Number(p.entityId ?? p.playerId ?? e.id ?? deepFind(p, ['entityId', 'playerId']) ?? p.id);
+  const first = deepFind(p, ['firstName']), last = deepFind(p, ['lastName']);
+  const name = String(p.entityLabel || p.label || e.displayName || e.fullName || e.name
+    || (first && last ? `${first} ${last}` : '') || deepFind(p, ['displayName', 'fullName', 'entityLabel', 'playerName', 'name', 'label']) || '').slice(0, 80);
   const count = Number(p.count ?? p.quantity ?? p.numPasses ?? p.passCount ?? 1) || 1;
-  return Number.isFinite(id) ? { key: `${sport}:${season}:${id}`, sport, season, id, name, count } : null;
+  const rarity = Number(deepFind(p, ['rarity', 'rarityLevel', 'tier'])) || null;
+  const rating = Number(deepFind(p, ['value', 'rating', 'boost', 'boostValue', 'primaryValue'])) || null;
+  return Number.isFinite(id) ? { key: `${sport}:${season}:${id}`, sport, season, id, name, count, rarity, rating } : null;
+}
+
+// Names Real didn't put on the pass, from the board's own game log.
+async function fillNames(db, passes) {
+  const need = passes.filter(p => !p.name || /^player$/i.test(p.name));
+  const groups = {};
+  for (const p of need) (groups[`${p.sport}|${p.season}`] = groups[`${p.sport}|${p.season}`] || []).push(p);
+  for (const [g, list] of Object.entries(groups)) {
+    const [sp, se] = g.split('|');
+    for (let i = 0; i < list.length; i += 90) {
+      const ids = list.slice(i, i + 90).map(p => p.id).filter(Number.isFinite);
+      try {
+        const r = await db.prepare(`SELECT playerId, MAX(player) AS player FROM gamelog WHERE sport=? AND season=? AND playerId IN (${ids.join(',')}) GROUP BY playerId`)
+          .bind(sp, Number(se)).all();
+        const m = new Map((r.results || []).map(x => [x.playerId, x.player]));
+        for (const p of list) if (m.get(p.id)) p.name = m.get(p.id);
+      } catch (e) {}
+    }
+  }
+  return passes;
 }
 
 async function rsGetJson(url, auth) {
@@ -248,6 +280,7 @@ export async function onRequest({ request, env }) {
     try { if (!hashId) hashId = await resolveHashId(rsUser, auth); } catch (e) { return json({ error: String(e.message || e) }, 502); }
     if (!hashId) return json({ error: `No Real user called ${rsUser}.` }, 404);
     const r = await scanPasses(hashId, auth);
+    await fillNames(db, r.passes);
     await db.prepare(`INSERT INTO swap_users (key, rsUser, hashId, passes, scannedAt, updatedAt, wants, keep, slots) VALUES (?, ?, ?, ?, ?, ?, '[]', '[]', '[]')
       ON CONFLICT(key) DO UPDATE SET rsUser=excluded.rsUser, hashId=excluded.hashId, passes=excluded.passes,
         scannedAt=excluded.scannedAt, updatedAt=excluded.updatedAt`)

@@ -32,6 +32,8 @@
   .pass{display:flex;align-items:center;gap:8px;padding:5px 2px;border-bottom:1px solid var(--line);font-size:14px}
   .pass:last-child{border-bottom:0}
   .pass .k{margin-left:auto;font-size:12px;color:var(--mute)}
+  .pass a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)}
+  .tag{display:inline-block;padding:1px 7px;border-radius:6px;font-size:11.5px;font-weight:700;color:#10131b}
   .res{max-height:240px;overflow:auto;margin-top:6px}
   .res div{padding:6px 4px;border-bottom:1px solid var(--line);cursor:pointer}
   .res div:hover{background:var(--panel2)}
@@ -91,6 +93,105 @@
   };
 })();
 const $ = s => document.querySelector(s);
+function hashidsEncode(salt, minLength, numbers){
+  const ALPHA0 = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890';
+  const SEPS0  = 'cfhistuCFHISTU';
+  const RATIO = 3.5, GUARD_DIV = 12;
+  const shuffle = (alpha, s) => {
+    if(!s.length) return alpha;
+    const t = alpha.slice();
+    for(let i = t.length - 1, v = 0, p = 0; i > 0; i--, v++){
+      v %= s.length;
+      const int = s[v].codePointAt(0);
+      p += int;
+      const j = (int + v + p) % i;
+      [t[i], t[j]] = [t[j], t[i]];
+    }
+    return t;
+  };
+  const toAlpha = (n, alpha) => {
+    const id = []; let v = n;
+    do { id.unshift(alpha[v % alpha.length]); v = Math.floor(v / alpha.length); } while(v > 0);
+    return id;
+  };
+  const saltC = Array.from(salt);
+  let alpha = [...new Set(Array.from(ALPHA0))];
+  let seps = Array.from(SEPS0).filter(c => alpha.includes(c));
+  alpha = alpha.filter(c => !seps.includes(c));
+  seps = shuffle(seps, saltC);
+  if(!seps.length || alpha.length / seps.length > RATIO){
+    let sl = Math.ceil(alpha.length / RATIO);
+    if(sl === 1) sl = 2;
+    if(sl > seps.length){
+      const diff = sl - seps.length;
+      seps = seps.concat(alpha.slice(0, diff));
+      alpha = alpha.slice(diff);
+    } else { seps = seps.slice(0, sl); }
+  }
+  alpha = shuffle(alpha, saltC);
+  const gc = Math.ceil(alpha.length / GUARD_DIV);
+  let guards;
+  if(alpha.length < 3){ guards = seps.slice(0, gc); seps = seps.slice(gc); }
+  else { guards = alpha.slice(0, gc); alpha = alpha.slice(gc); }
+  let hashInt = 0;
+  for(let i = 0; i < numbers.length; i++) hashInt += numbers[i] % (i + 100);
+  const lottery = alpha[hashInt % alpha.length];
+  let ret = [lottery];
+  for(let i = 0; i < numbers.length; i++){
+    let num = numbers[i];
+    const buf = [lottery].concat(saltC, alpha);
+    alpha = shuffle(alpha, buf.slice(0, alpha.length));
+    const last = toAlpha(num, alpha);
+    ret = ret.concat(last);
+    if(i + 1 < numbers.length){
+      num %= (last[0].codePointAt(0) + i);
+      ret.push(seps[num % seps.length]);
+    }
+  }
+  if(ret.length < minLength){
+    let gi = (hashInt + ret[0].codePointAt(0)) % guards.length;
+    ret.unshift(guards[gi]);
+    if(ret.length < minLength){
+      gi = (hashInt + ret[2].codePointAt(0)) % guards.length;
+      ret.push(guards[gi]);
+    }
+  }
+  const half = Math.floor(alpha.length / 2);
+  while(ret.length < minLength){
+    alpha = shuffle(alpha, alpha);
+    ret = alpha.slice(half).concat(ret, alpha.slice(0, half));
+    const ex = ret.length - minLength;
+    if(ex > 0) ret = ret.slice(ex / 2, ex / 2 + minLength);
+  }
+  return ret.join('');
+}
+/* [record type, sport code], each read out of a real link rather than
+   guessed. Fighters are type 3 where players are type 2 - the one place the
+   leading number is not the same. A sport with no entry here is left as
+   plain text: a wrong code can land on a real player of another sport, and a
+   link to the wrong person is worse than no link. */
+const REAL_SPORT = {
+  nba:    [2, 1],
+  nfl:    [2, 2],
+  ncaam:  [2, 3],
+  mlb:    [2, 4],
+  nhl:    [2, 7],
+  ufc:    [3, 10],
+  ncaaf:  [2, 11],
+  wnba:   [2, 12],
+  soccer: [2, 14],
+  golf:   [2, 15]
+};
+function realPlayerUrl(sport, playerId, season){
+  const kind = REAL_SPORT[String(sport || '').toLowerCase()];
+  const id = Number(playerId);
+  if(!kind || !Number.isFinite(id) || id <= 0) return null;
+  return 'https://www.realapp.com/' + hashidsEncode('routing', 11, [kind[0], kind[1], 0, id])
+         + (season ? '/' + season : '');
+}
+const RAR = {1:'Common',2:'Uncommon',3:'Rare',4:'Epic',5:'Legendary',6:'Mystic',7:'Iconic'};
+const RC = {1:'#4f9ee8',2:'#5fbf7a',3:'#f0913a',4:'#e5484d',5:'#a77bf0',6:'#f2c14e',7:'#e0559c'};
+
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const SPORT = {nba:'NBA',nfl:'NFL',ncaaf:'CFB',ncaam:'CBB',mlb:'MLB',nhl:'NHL',soccer:'FC',wnba:'WNBA',ufc:'UFC',golf:'Golf'};
 const START = {nfl:1,nhl:1,ncaaf:1,soccer:1};
@@ -130,14 +231,18 @@ function drawPasses(){
   const groups = Object.entries(by);
   if(!groups.length){ $('#passes').innerHTML = prof.scannedAt ? '<p class="note">No player passes found.</p>' : ''; return; }
   $('#passes').innerHTML = groups.map(([g, list]) => `<details class="group" open><summary>${esc(keyLbl(g + ':0'))} · ${list.length} passes</summary>`
-    + list.sort((a, b) => a.name.localeCompare(b.name)).map(p => `<label class="pass"><input type="checkbox" data-keep="${p.key}" ${keep.has(p.key) ? 'checked' : ''}>
-      ${esc(p.name || 'Player ' + p.id)}${p.count > 1 ? ` ×${p.count}` : ''}<span class="k">${keep.has(p.key) ? 'keeping' : 'swappable'}</span></label>`).join('')
+    + list.sort((a, b) => (b.rarity || 0) - (a.rarity || 0) || (b.rating || 0) - (a.rating || 0) || String(a.name).localeCompare(String(b.name))).map(p => {
+      const u = realPlayerUrl(p.sport, p.id, p.season), nm = esc(p.name && !/^player$/i.test(p.name) ? p.name : 'Player ' + p.id);
+      const tag = p.rarity ? `<span class="tag" style="background:${RC[p.rarity] || '#888'}">${RAR[p.rarity] || p.rarity}</span>` : '';
+      return `<div class="pass"><input type="checkbox" data-keep="${p.key}" ${keep.has(p.key) ? 'checked' : ''} aria-label="Keep ${nm}">
+      ${tag}${u ? `<a href="${u}" target="_blank" rel="noopener">${nm}</a>` : nm}${p.count > 1 ? ` ×${p.count}` : ''}
+      ${p.rating != null ? `<span class="note">${Math.round(p.rating * 10) / 10}</span>` : ''}<span class="k">${keep.has(p.key) ? 'keeping' : 'swappable'}</span></div>`; }).join('')
     + '</details>').join('');
 }
 $('#passes').addEventListener('change', e => {
   const k = e.target.dataset.keep; if(!k) return;
   prof.keep = e.target.checked ? [...new Set([...prof.keep, k])] : prof.keep.filter(x => x !== k);
-  const s = e.target.parentElement.querySelector('.k'); if(s) s.textContent = e.target.checked ? 'keeping' : 'swappable';
+  const s = e.target.closest('.pass').querySelector('.k'); if(s) s.textContent = e.target.checked ? 'keeping' : 'swappable';
 });
 $('#scan').addEventListener('click', async () => {
   const u = $('#rsuser').value.trim(); if(!u){ $('#scanmsg').textContent = 'Enter your Real username.'; return; }
