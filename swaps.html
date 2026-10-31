@@ -258,7 +258,7 @@ function passRow(p, keep, showSeason){
   const earned = p.earned != null ? `<span class="note">· ${Number(p.earned).toLocaleString()} earned</span>` : '';
   return `<div class="pass"><input type="checkbox" data-keep="${p.key}" ${keep.has(p.key) ? 'checked' : ''} aria-label="Keep ${nm}">
     ${passTag(p)}${u ? `<a href="${u}" target="_blank" rel="noopener">${nm}</a>` : nm}
-    ${showSeason ? `<span class="note">${esc(keyLbl(p.key))}</span>` : ''}
+    ${p.kind === 'team' ? '<span class="note">team</span>' : ''}${showSeason ? `<span class="note">${esc(keyLbl(p.key))}</span>` : ''}
     ${prog}${earned}<span class="k">${keep.has(p.key) ? 'keeping' : 'swappable'}</span></div>`;
 }
 function drawPasses(){

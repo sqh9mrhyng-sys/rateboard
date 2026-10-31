@@ -314,7 +314,7 @@ function compute(){
   const link = p => p.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(p.passId)]) : null;
   const nm = p => { const u = link(p), t = esc(p.name || 'Player ' + p.id);
     return (u ? `<a href="${u}" target="_blank" rel="noopener">${t}</a>` : t)
-      + ` <span class="note">${esc(SPORT[p.sport] || p.sport)} · ${esc(seasonLbl(p.sport, p.season))}</span>`; };
+      + ` <span class="note">${p.kind === 'team' && p.sport !== 'ufc' ? 'Team · ' : ''}${esc(SPORT[p.sport] || p.sport)} · ${esc(seasonLbl(p.sport, p.season))}</span>`; };
   window.__nm = nm;
   const cur = p => `${tag(p.lv)} <span class="note">${fmt(p.rating)}</span>`;
   $('#ups').innerHTML = ups.slice(0, 150).map(u => `<tr class="up" data-i="${u.i}" style="cursor:pointer${upOpen === u.i ? ';background:var(--panel2)' : ''}">

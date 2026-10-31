@@ -154,11 +154,11 @@ function deepFind(o, keys, depth = 0) {
   }
   return undefined;
 }
-function passOf(p, sport, season) {
+function passOf(p, sport, season, kind = 'player') {
   const e = p.entity || p.player || p.primaryPlayer || (p.card && p.card.primaryPlayer) || {};
   const id = Number(p.entityId ?? p.playerId ?? e.id ?? deepFind(p, ['entityId', 'playerId']));
   const name = String((e.firstName && e.lastName ? `${e.firstName} ${e.lastName}` : '')
-    || p.label || e.displayName || e.name || '').slice(0, 80);
+    || p.label || e.displayName || e.name || e.fullName || e.abbreviation || '').slice(0, 80);
   // Real's own read of the pass: level, multiplier and progress to the next one.
   const b = p.boostInfo || {};
   // boostValue is the pass's total rating; progress/required is the climb to
@@ -167,7 +167,10 @@ function passOf(p, sport, season) {
   const rating = Number.isFinite(bv) ? bv : (b.progress != null && Number.isFinite(Number(b.progress)) ? Number(b.progress) : null);
   const mult = parseFloat(String(b.multiplier || '').replace(/x$/i, '')) || null;
   const passId = Number(p.id);
-  return Number.isFinite(id) ? { key: `${sport}:${season}:${id}`, sport, season, id, name,
+  // Team passes get a "t" in their key so a team and a player with the same
+  // number never collide.
+  const team = kind === 'team';
+  return Number.isFinite(id) ? { key: `${sport}:${season}:${team ? 't' : ''}${id}`, sport, season, id, name, kind,
     count: 1, rating, required: b.required != null ? Number(b.required) : null,
     needNext: b.required != null && b.progress != null ? Math.max(0, Number(b.required) - Number(b.progress)) : null,
     progress: b.progressDisplay || null, toward: b.progressQualifier || null,
@@ -179,7 +182,7 @@ function passOf(p, sport, season) {
 
 // Names Real didn't put on the pass, from the board's own game log.
 async function fillNames(db, passes) {
-  const need = passes.filter(p => !p.name || /^player$/i.test(p.name));
+  const need = passes.filter(p => p.kind !== 'team' && (!p.name || /^player$/i.test(p.name)));
   const groups = {};
   for (const p of need) (groups[`${p.sport}|${p.season}`] = groups[`${p.sport}|${p.season}`] || []).push(p);
   for (const [g, list] of Object.entries(groups)) {
@@ -230,14 +233,17 @@ async function scanPasses(hashId, auth) {
   let sample = null;
   for (const [sport, seasons] of Object.entries(SWAP_SEASONS)) {
     for (const season of seasons) {
-      try {
-        const d = await rsGetJson(`https://web.realapp.com/userpasses/${encodeURIComponent(hashId)}/passes`
-          + `?entityType=player&season=${season}&sport=${sport}`, auth);
-        const rows = rowsOf(d);
-        if (rows.length && !sample) sample = { sport, season, keys: Object.keys(d || {}), first: rows[0] };
-        for (const r of rows) { const p = passOf(r, sport, season); if (p) out.push(p); }
-      } catch (e) { errors.push(`${sport} ${season}: ${String(e.message || e).slice(0, 100)}`); }
-      await sleep(250);
+      // Player passes, then team passes (UFC fighters are filed as teams).
+      for (const kind of ['player', 'team']) {
+        try {
+          const d = await rsGetJson(`https://web.realapp.com/userpasses/${encodeURIComponent(hashId)}/passes`
+            + `?entityType=${kind}&season=${season}&sport=${sport}`, auth);
+          const rows = rowsOf(d);
+          if (rows.length && !sample) sample = { sport, season, keys: Object.keys(d || {}), first: rows[0] };
+          for (const r of rows) { const p = passOf(r, sport, season, kind); if (p) out.push(p); }
+        } catch (e) { errors.push(`${sport} ${season} ${kind}: ${String(e.message || e).slice(0, 100)}`); }
+        await sleep(200);
+      }
     }
   }
   return { passes: out, errors, sample };
@@ -317,8 +323,31 @@ export async function onRequest({ request, env, waitUntil }) {
     const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
     const passes = parse(u && u.passes, []);
     const groups = {};
-    for (const p of passes) (groups[`${p.sport}|${p.season}`] = groups[`${p.sport}|${p.season}`] || []).push(p.id);
+    for (const p of passes) if (p.kind !== 'team') (groups[`${p.sport}|${p.season}`] = groups[`${p.sport}|${p.season}`] || []).push(p.id);
     const out = {};
+    /* Team passes: there's no team game log, so each team's per-day rax comes
+       from Real's earnings screen for that team (the same one the player rax
+       comes from), kept for a day. */
+    await db.prepare(`CREATE TABLE IF NOT EXISTS swap_teamrax (sport TEXT, season INTEGER, teamId INTEGER,
+      days TEXT, at INTEGER, PRIMARY KEY (sport, season, teamId))`).run();
+    const teams = passes.filter(p => p.kind === 'team');
+    let fetched = 0;
+    for (const t of teams) {
+      const row = await db.prepare('SELECT days, at FROM swap_teamrax WHERE sport=? AND season=? AND teamId=?').bind(t.sport, t.season, t.id).first();
+      let days = row && Date.now() - row.at < 86400000 ? parse(row.days, null) : null;
+      if (!days && auth && fetched < 60) {
+        try {
+          const d = await rsGetJson(`https://web.realapp.com/userpassearnings/${t.sport}/season/${t.season}/entity/team/${t.id}`, auth);
+          days = ((d && d.earnings) || []).filter(e => e && e.day && Number(e.earnings) > 0)
+            .map(e => [String(e.day).slice(5, 10), Number(e.earnings)]);
+          await db.prepare('INSERT OR REPLACE INTO swap_teamrax (sport, season, teamId, days, at) VALUES (?, ?, ?, ?, ?)')
+            .bind(t.sport, t.season, t.id, JSON.stringify(days), Date.now()).run();
+          fetched++;
+          await sleep(200);
+        } catch (e) { days = row ? parse(row.days, []) : []; }
+      }
+      if (days && days.length) out[t.key] = days;
+    }
     for (const [g, ids] of Object.entries(groups)) {
       const [sp, se] = g.split('|');
       for (let i = 0; i < ids.length; i += 90) {
@@ -363,8 +392,8 @@ export async function onRequest({ request, env, waitUntil }) {
   if (op === 'save' && request.method === 'POST') {
     let b = {};
     try { b = await request.json(); } catch (e) {}
-    const wants = (Array.isArray(b.wants) ? b.wants : []).map(String).filter(k => /^[a-z]+:\d{4}:\d+$/.test(k)).slice(0, 20);
-    const keep = (Array.isArray(b.keep) ? b.keep : []).map(String).filter(k => /^[a-z]+:\d{4}:\d+$/.test(k)).slice(0, 2000);
+    const wants = (Array.isArray(b.wants) ? b.wants : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, 20);
+    const keep = (Array.isArray(b.keep) ? b.keep : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, 2000);
     const slots = [...new Set((Array.isArray(b.slots) ? b.slots : []).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24))].slice(0, 5);
     const rsUser = String(b.rsUser || '').trim().slice(0, 40);
     await db.prepare(`INSERT INTO swap_users (key, rsUser, wants, keep, slots, updatedAt, active) VALUES (?, ?, ?, ?, ?, ?, 1)
