@@ -503,7 +503,7 @@ const MARKET_SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'ncaam', 'nhl', 'soccer', '
    just for this, so throttling or a ban lands there and never on the key the
    rest of the board runs on. Without that secret the pull does nothing - it
    never falls back to the main key. */
-const MARKET_ON = false;          // off 2026-10-30: the database was overloaded again
+const MARKET_ON = true;
 /* Real answers "high volume" to two requests at once, even on the separate
    account, so there is one lane. Speed comes from shorter gaps between pages
    and more pages a tick instead. A sport-season is still cut into windows by
@@ -713,6 +713,22 @@ async function marketSlice(env, auth, budgetMs, stop) {
   try { return await marketSliceHeld(env, auth, deadline); }
   finally { await marketRelease(env, me); }
 }
+// A finished season's old rows, deleted a little at a time: at most three
+// chunks of 500 a call, with a pause between, oldest season first.
+async function marketClear(db, st) {
+  for (let k = 0; k < 3 && (st.clear || []).length; k++) {
+    const job = st.clear[0];
+    let c = 0;
+    try {
+      const r = await db.prepare(`DELETE FROM market_v2 WHERE rowid IN (SELECT rowid FROM market_v2
+        WHERE sport=? AND season=? AND seenAt < ? LIMIT 500)`).bind(job.sp, job.se, job.before).run();
+      c = (r.meta && r.meta.changes) || 0;
+    } catch (e) { return; }
+    if (c < 500) st.clear.shift();
+    await sleep(300);
+  }
+}
+
 async function marketSliceHeld(env, auth, deadline) {
   let st = {};
   try { st = JSON.parse((await env.RATEBOARD_KV.get(MARKET_KEY)) || '{}') || {}; } catch (e) {}
@@ -722,9 +738,15 @@ async function marketSliceHeld(env, auth, deadline) {
   await db.prepare(MARKET_DDL).run();
   await db.prepare(MSEAS_DDL).run();
   try { await db.prepare('ALTER TABLE market_v2 ADD COLUMN player TEXT').run(); } catch (e) {}
-  if (!st.indexed1) {
-    // Every market read and the end-of-season clear-out pick a season first;
-    // without these each one read the whole table.
+  /* Every market read and the end-of-season clear-out pick a season first;
+     without these each one read the whole table. Building them on a big
+     table holds the database for a while, so it is tried at most every six
+     hours, and the try is recorded before it starts: a call that dies part
+     way through no longer means trying again on the very next one, which is
+     what kept the database overloaded. */
+  if (!st.indexed1 && Date.now() - (st.indexTry || 0) > 6 * 3600000) {
+    st.indexTry = Date.now();
+    try { await env.RATEBOARD_KV.put(MARKET_KEY, JSON.stringify(st)); } catch (e) {}
     try {
       await db.prepare('CREATE INDEX IF NOT EXISTS market_season_ends ON market_v2 (sport, season, endsAt)').run();
       await db.prepare('CREATE INDEX IF NOT EXISTS market_season_player ON market_v2 (sport, season, playerId)').run();
@@ -738,6 +760,7 @@ async function marketSliceHeld(env, auth, deadline) {
      ON CONFLICT(id) DO UPDATE SET status=excluded.status, minBid=excluded.minBid,
        buyNow=excluded.buyNow, curBid=excluded.curBid, bids=excluded.bids,
        endsAt=excluded.endsAt, seenAt=excluded.seenAt, player=COALESCE(excluded.player, market_v2.player)`);
+  await marketClear(db, st);
   /* One window after another, and one season after another, for as long as
      the call lasts. */
   let total = 0, busy = false;
@@ -764,23 +787,14 @@ async function marketSliceHeld(env, auth, deadline) {
       // Season finished: anything of it not seen on this pull is gone - unless
       // part of the walk failed, when the old rows stay rather than vanish.
       const [sp, se] = st.cur.split(':');
-      if (!st.partial) {
-        // In chunks, so one big season never holds the database for long.
-        for (let k = 0; k < 100; k++) {
-          let c = 0;
-          try {
-            const r = await db.prepare(`DELETE FROM market_v2 WHERE rowid IN (SELECT rowid FROM market_v2
-              WHERE sport=? AND season=? AND seenAt < ? LIMIT 2000)`).bind(sp, Number(se), st.curStart).run();
-            c = (r.meta && r.meta.changes) || 0;
-          } catch (e) { break; }
-          if (c < 2000) break;
-        }
-      }
+      // The clear-out itself is spread over the calls that follow, a few
+      // small chunks at a time (marketClear), so it never holds the database.
+      if (!st.partial) (st.clear = st.clear || []).push({ sp, se: Number(se), before: st.curStart });
       st.partial = false;
       let n = Object.values(st.lanes).reduce((a, l) => a + (l.rows || 0), 0);
       try {   // the real count, from the table, now the season's old rows are gone
-        const c = await db.prepare('SELECT COUNT(*) AS n FROM market_v2 WHERE sport=? AND season=? AND endsAt > ?')
-          .bind(sp, Number(se), new Date().toISOString()).first();
+        const c = await db.prepare('SELECT COUNT(*) AS n FROM market_v2 WHERE sport=? AND season=? AND endsAt > ? AND seenAt >= ?')
+          .bind(sp, Number(se), new Date().toISOString(), st.curStart).first();
         if (c && c.n != null) n = c.n;
       } catch (e) {}
       const pages = Object.values(st.lanes).reduce((a, l) => a + (l.pages || 0), 0);
