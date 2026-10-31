@@ -604,7 +604,9 @@ async function loadAll(){
     }
     $('#status').textContent = `Loading pack data ${++done} of ${need.length}…`;
   };
-  for(let i = 0; i < need.length; i += 3) await Promise.all(need.slice(i, i + 3).map(one));
+  // One at a time: pack data is a heavy read, and several at once is enough
+  // to push the board's database over its limit.
+  for(const job of need) await one(job);
   for(const k of Object.keys(cache)) if(!fresh(k)) delete cache[k];
   try{ localStorage.setItem(CK, JSON.stringify(cache)); }catch(e){}
   for(const pr of pairs){

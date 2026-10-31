@@ -627,9 +627,14 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
         r.createdAt || null, r.endsAt || null, now, who);
     });
     await Promise.all(writes.splice(0));
+    // A failed save is tried once more after a pause (the database resets
+    // itself when something else overloads it); it never counts against the
+    // season the way a failure from Real does.
     for (let k = 0; k < stmts.length; k += 50) {
-      writes.push(env.RATEBOARD_DB.batch(stmts.slice(k, k + 50))
-        .catch(e => { lane.err = 'store: ' + String(e.message || e).slice(0, 160); }));
+      const part = stmts.slice(k, k + 50);
+      writes.push(env.RATEBOARD_DB.batch(part)
+        .catch(async () => { await sleep(1500); return env.RATEBOARD_DB.batch(part); })
+        .catch(e => { lane.storeErr = String(e.message || e).slice(0, 160); lane.storeFails = (lane.storeFails || 0) + 1; }));
     }
     stored += stmts.length;
   };
