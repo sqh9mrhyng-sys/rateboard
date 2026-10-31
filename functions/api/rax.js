@@ -3439,17 +3439,38 @@ async function handleGet({ request, env, waitUntil }) {
        each query to a range of an index, and the answer is kept for a few
        minutes: the bar refreshes every thirty seconds and nothing it shows
        moves faster than that. */
-    const CACHE = 'progress_cache_v1', FRESH_MS = 180000;
-    const want = String(url.searchParams.get('fresh') || '') === '1';
-    if (!want) {
-      try {
-        const c = JSON.parse((await env.RATEBOARD_KV.get(CACHE)) || 'null');
-        if (c && c.at && Date.now() - c.at < FRESH_MS) {
-          return json(Object.assign({}, c.body, { cached: true,
-            ageSeconds: Math.round((Date.now() - c.at) / 1000) }));
+    /* Rebuilding this scans the whole plays and performances tables, and with
+       a three-minute cache every open board rebuilt it at once - a repeating
+       pile-up that kept the database overloaded. Now the answer is kept for an
+       hour, a stale copy is served while one request rebuilds it in the
+       background, and nobody can force a rebuild from outside. */
+    const CACHE = 'progress_cache_v1', FRESH_MS = 3600000, LOCK = 'progress_lock_v1';
+    let c = null;
+    try { c = JSON.parse((await env.RATEBOARD_KV.get(CACHE)) || 'null'); } catch (e) {}
+    const age = c && c.at ? Date.now() - c.at : Infinity;
+    if (c && c.body) {
+      if (age >= FRESH_MS && waitUntil) {
+        let locked = null;
+        try { locked = await env.RATEBOARD_KV.get(LOCK); } catch (e) {}
+        if (!locked) {
+          try { await env.RATEBOARD_KV.put(LOCK, '1', { expirationTtl: 600 }); } catch (e) {}
+          waitUntil(buildProgress(env).catch(() => {}));
         }
-      } catch (e) {}
+      }
+      return json(Object.assign({}, c.body, { cached: true, ageSeconds: Math.round(age / 1000) }));
     }
+    {
+      let locked = null;
+      try { locked = await env.RATEBOARD_KV.get(LOCK); } catch (e) {}
+      if (locked) return json({ at: null, queue: [], perf: [], perfQueue: [], working: null, preparing: true });
+      try { await env.RATEBOARD_KV.put(LOCK, '1', { expirationTtl: 600 }); } catch (e) {}
+      return json(await buildProgress(env));
+    }
+  }
+
+  async function buildProgress(env) {
+    const db = env.RATEBOARD_DB;
+    const CACHE = 'progress_cache_v1';
     await playsReady(db);
     const SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'wnba', 'nhl'];
     const logged = new Map(), got = new Map();
@@ -3508,7 +3529,7 @@ async function handleGet({ request, env, waitUntil }) {
     }
     const body = { at: new Date().toISOString(), tick, working, queue, perf, perfQueue };
     try { await env.RATEBOARD_KV.put(CACHE, JSON.stringify({ at: Date.now(), body })); } catch (e) {}
-    return json(body);
+    return body;
   }
 
 
