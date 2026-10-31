@@ -54,11 +54,6 @@
       <input id="rsuser" placeholder="Real username" autocomplete="off" style="flex:0 1 160px">
       <button id="scan" style="background:var(--accent);color:#141925;border-color:var(--accent);font-weight:700">Scan my passes</button>
     </div>
-    <div id="rangebox" hidden style="margin-top:10px;max-width:340px">
-      <div class="bar" style="justify-content:space-between"><button id="rprev" aria-label="Previous month">‹</button><b id="rmon"></b><button id="rnext" aria-label="Next month">›</button></div>
-      <div class="grid" id="rgrid" style="margin-top:6px"></div>
-      <p class="note" id="rmsg" style="margin:6px 0 0">Tap a start date, then an end date.</p>
-    </div>
     <div class="tiles">
       <div class="tile"><div class="k">Rax a year now</div><div class="v" id="t-total">–</div></div>
       <div class="tile"><div class="k">Lost to the claim limit</div><div class="v" id="t-lost">–</div></div>
@@ -72,6 +67,11 @@
     <h2>Spend planner</h2>
     <p class="note">How much rax you want to spend; it uses the window and pack price above and picks upgrades one at a time, each accounting for the ones before it. Live seasons (2026-27 NBA, NFL, NHL, CBB, CFB) are left out.</p>
     <div class="bar"><input id="budget" type="number" inputmode="numeric" placeholder="Rax to spend, e.g. 20000" style="flex:0 1 220px"><button id="planb" style="background:var(--accent);color:#141925;border-color:var(--accent);font-weight:700">Make my plan</button></div>
+    <div id="rangebox" style="margin-top:10px;max-width:340px">
+      <div class="bar" style="justify-content:space-between"><button id="rprev" aria-label="Previous month">‹</button><b id="rmon"></b><button id="rnext" aria-label="Next month">›</button></div>
+      <div class="grid" id="rgrid" style="margin-top:6px"></div>
+      <p class="note" id="rmsg" style="margin:6px 0 0">Optional: tap a start date and an end date to plan profit over just those dates.</p>
+    </div>
     <div id="plan" style="margin-top:10px"></div>
   </section>
 
@@ -484,7 +484,7 @@ document.querySelectorAll('th[data-u]').forEach(th => th.addEventListener('click
 }));
 $('#claims').addEventListener('change', compute);
 $('#price').addEventListener('change', compute);
-$('#win').addEventListener('change', () => { $('#rangebox').hidden = $('#win').value !== 'custom'; drawRange(); compute(); });
+$('#win').addEventListener('change', () => { drawRange(); compute(); });
 function drawRange(){
   const y = rView.getFullYear(), m = rView.getMonth();
   $('#rmon').textContent = rView.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
@@ -498,7 +498,7 @@ function drawRange(){
     h += `<div class="day" data-t="${t}" style="min-height:30px;${on ? 'background:var(--accent);color:#141925;font-weight:700' : mid ? 'background:color-mix(in srgb,var(--accent) 30%,var(--panel2))' : ''}">${d}</div>`;
   }
   $('#rgrid').innerHTML = h;
-  $('#rmsg').textContent = !rStart ? 'Tap a start date, then an end date.' : !rEnd ? 'Now tap the end date.'
+  $('#rmsg').textContent = !rStart ? 'Optional: tap a start date and an end date to plan profit over just those dates.' : !rEnd ? 'Now tap the end date.'
     : `${rStart.toLocaleDateString()} to ${rEnd.toLocaleDateString()} · ${Math.round((b - a) / 86400000) + 1} days. Tap again to start over.`;
 }
 $('#rgrid').addEventListener('click', e => {
@@ -508,7 +508,8 @@ $('#rgrid').addEventListener('click', e => {
   else if(d < rStart){ rEnd = rStart; rStart = d; }
   else rEnd = d;
   drawRange();
-  if(rStart && rEnd){ compute(); if($('#budget').value) plan(); }
+  // A picked range becomes the profit window for the list and the planner.
+  if(rStart && rEnd){ $('#win').value = 'custom'; compute(); if($('#budget').value) plan(); }
 });
 $('#rprev').addEventListener('click', () => { rView = new Date(rView.getFullYear(), rView.getMonth() - 1, 1); drawRange(); });
 $('#rnext').addEventListener('click', () => { rView = new Date(rView.getFullYear(), rView.getMonth() + 1, 1); drawRange(); });
@@ -533,6 +534,7 @@ $('#scan').addEventListener('click', async () => {
   $('#main').hidden = false;
   $('#rsuser').value = (me.profile && me.profile.rsUser) || '';
   if(!me.profile || !(me.profile.passes || []).length){ $('#status').textContent = 'No passes yet - enter your Real username and tap Scan my passes.'; return; }
+  drawRange();
   await loadAll();
 })();
 
@@ -542,20 +544,37 @@ async function loadAll(){
   if(g.error){ $('#status').textContent = g.error; return; }
   P = g.passes || []; G = g.games || {};
   build(); compute();
-  // Pack data, one season at a time, then the costs are redrawn.
+  /* Pack data and market prices, kept in this browser for 12 hours so the
+     page opens straight away after the first visit; fetched three seasons
+     at a time when they aren't. Only the seasons your passes are in. */
   const pairs = [...new Set(P.map(p => `${p.sport}:${p.season}`))];
-  let n = 0;
-  for(const pair of pairs){
-    $('#status').textContent = `Loading pack data ${++n} of ${pairs.length}…`;
-    const d = await api(`/api/rax?plays=board&seasons=${encodeURIComponent(pair)}&min=0`);
-    for(const r of (d.rows || [])) if(r.avgRating != null) PACK[`${r.sport || pair.split(':')[0]}:${r.season || pair.split(':')[1]}:${r.playerId}`] = Number(r.avgRating);
-  }
-  for(const pair of pairs.filter(x => NO_PACKS.has(x.split(':')[0]))){
-    const [sp, se] = pair.split(':');
-    const d = await api(`/api/rax?market=view&sport=${sp}&season=${se}`);
-    const vals = [];
-    for(const r of (d.rows || [])) if(r.ppr != null){ MKT[`${sp}:${se}:${r.playerId}`] = Number(r.ppr); vals.push(Number(r.ppr)); }
-    vals.sort((a, b) => a - b);
+  const CK = 'otd_pack_cache_v1', TTL = 12 * 3600000;
+  let cache = {};
+  try{ cache = JSON.parse(localStorage.getItem(CK) || '{}') || {}; }catch(e){ cache = {}; }
+  const fresh = k => cache[k] && Date.now() - cache[k].at < TTL;
+  const need = pairs.filter(pr => !fresh('p:' + pr)).concat(pairs.filter(pr => NO_PACKS.has(pr.split(':')[0]) && !fresh('m:' + pr)).map(pr => 'm:' + pr));
+  let done = 0;
+  const one = async job => {
+    if(job.startsWith('m:')){
+      const pr = job.slice(2), [sp, se] = pr.split(':');
+      const d = await api(`/api/rax?market=view&sport=${sp}&season=${se}`);
+      const rows = {}; for(const r of (d.rows || [])) if(r.ppr != null) rows[r.playerId] = Number(r.ppr);
+      if(!d.error) cache['m:' + pr] = { at: Date.now(), rows };
+    } else {
+      const d = await api(`/api/rax?plays=board&seasons=${encodeURIComponent(job)}&min=0`);
+      const rows = {}; for(const r of (d.rows || [])) if(r.avgRating != null) rows[r.playerId] = Number(r.avgRating);
+      if(!d.error) cache['p:' + job] = { at: Date.now(), rows };
+    }
+    $('#status').textContent = `Loading pack data ${++done} of ${need.length}…`;
+  };
+  for(let i = 0; i < need.length; i += 3) await Promise.all(need.slice(i, i + 3).map(one));
+  for(const k of Object.keys(cache)) if(!fresh(k)) delete cache[k];
+  try{ localStorage.setItem(CK, JSON.stringify(cache)); }catch(e){}
+  for(const pr of pairs){
+    const [sp, se] = pr.split(':');
+    for(const [id, v] of Object.entries((cache['p:' + pr] || {}).rows || {})) PACK[`${sp}:${se}:${id}`] = v;
+    const m = (cache['m:' + pr] || {}).rows || {}, vals = Object.values(m).sort((a, b) => a - b);
+    for(const [id, v] of Object.entries(m)) MKT[`${sp}:${se}:${id}`] = v;
     if(vals.length) MKT[`${sp}:${se}:*`] = vals[Math.floor(vals.length / 2)];   // the season's median for players with no listings
   }
   $('#status').textContent = `${P.length} passes that can claim · games from the board's game data · pack data for ${Object.keys(PACK).length} players. General passes claim at 1x on a live season and nothing on an old one; old seasons stop at each level's all-time cap.`;
