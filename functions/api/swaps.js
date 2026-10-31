@@ -122,6 +122,11 @@ const IDX_DDL = [
 ];
 async function indexOne(db) {
   for (const d of IDX_DDL) await db.prepare(d).run();
+  // At most one season every five minutes, whoever asks: each one is a full
+  // read of that season's game log, and back to back they crowd the database.
+  const last = await db.prepare("SELECT builtAt FROM swap_index_meta WHERE job='__last'").first();
+  if (last && Date.now() - last.builtAt < 5 * 60000) return null;
+  await db.prepare("INSERT OR REPLACE INTO swap_index_meta (job, builtAt) VALUES ('__last', ?)").bind(Date.now()).run();
   const meta = new Map(((await db.prepare('SELECT job, builtAt FROM swap_index_meta').all()).results || []).map(r => [r.job, r.builtAt]));
   let pick = null, oldest = Infinity;
   for (const [sp, ss] of Object.entries(SWAP_SEASONS)) for (const se of ss) {
@@ -367,7 +372,7 @@ export async function onRequest({ request, env, waitUntil }) {
     // A few seasons per call with a breather between, so building the
     // table never crowds the database.
     const done = [];
-    for (let k = 0; k < 3; k++) { const j = await indexOne(db); if (!j) break; done.push(j); await sleep(500); }
+    const j = await indexOne(db); if (j) done.push(j);
     return json({ built: done });
   }
 

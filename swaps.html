@@ -366,9 +366,7 @@ $('#envb').addEventListener('click', async () => { $('#praw').textContent = JSON
   if(!j.tokenFound) $('#scanmsg').innerHTML = '<span style="color:var(--bad)">No swap token found in Cloudflare yet.</span>';
   $('#rsuser').value = prof.rsUser || '';
   drawPasses(); drawWants(); drawHours(); loadMatches();
-  // Fills the player search table in the background, three seasons a call,
-  // until every season is in (about 16 calls, once a day at most).
-  (async () => { for(let i = 0; i < 20; i++){ const r = await api('/api/swaps?op=buildindex'); if(!r.built || !r.built.length) break; await new Promise(z => setTimeout(z, 3000)); } })();
+  api('/api/swaps?op=buildindex');   // adds one season to the search table, at most every 5 minutes
 })();
 </script>
 </body>
