@@ -1680,7 +1680,7 @@ const keepsPlays = (sp, st) => !st || seasonTypesFor(sp).includes(String(st));
 const seasonTypeSql = sp => seasonTypesFor(sp).map(x => `'${x}'`).join(',');
 
 // Collecting paused until this time (database overloaded, 2026-10-31).
-const COLLECT_PAUSE_UNTIL = Date.parse('2026-10-31T11:55:00Z');
+const COLLECT_PAUSE_UNTIL = Date.parse('2026-10-31T14:00:00Z');
 
 // NBA 2026-27 has started: its game log is built ahead of everything else.
 const EXTRA_JOBS = [['nba', 2027]];
@@ -6825,12 +6825,12 @@ async function buildPackSeason(db, sport, season) {
            one index seek per player - seven thousand of them for a CFB
            season, and the reason loading several seasons at once blew
            through D1's CPU limit. One windowed pass does the same job. */
+        /* Owners from the latest daily snapshot only: one indexed lookup of
+           the newest day, rather than ranking every day of every player. */
         `WITH latest AS (
-           SELECT playerId, owners FROM (
-             SELECT playerId, owners,
-                    ROW_NUMBER() OVER (PARTITION BY playerId ORDER BY day DESC) AS rn
-               FROM owners WHERE sport=?1 AND season=?2)
-            WHERE rn = 1)
+           SELECT playerId, owners FROM owners
+            WHERE sport=?1 AND season=?2
+              AND day = (SELECT MAX(day) FROM owners WHERE sport=?1 AND season=?2))
          SELECT g.playerId AS playerId, SUM(g.rax) AS earnings,
                 MAX(g.team) AS team, l.owners AS owners
            FROM gamelog g LEFT JOIN latest l ON l.playerId = g.playerId
@@ -6870,7 +6870,11 @@ async function packSeasonRows(db, sport, season, waitUntil) {
         .bind(JSON.stringify(rows), Date.now(), sport, Number(season)).run();
       return rows;
     } catch (e) {
-      try { await db.prepare('UPDATE pack_snap SET building=NULL WHERE sport=? AND season=?').bind(sport, Number(season)).run(); } catch (e2) {}
+      /* A build that fails (usually the database's CPU limit, which resets
+         the whole database) is not retried for six hours. Retrying on the
+         next visit is what kept the database overloaded. */
+      try { await db.prepare('UPDATE pack_snap SET building=? WHERE sport=? AND season=?')
+        .bind(Date.now() + 6 * 3600000, sport, Number(season)).run(); } catch (e2) {}
       throw e;
     }
   };
@@ -6883,7 +6887,9 @@ async function packSeasonRows(db, sport, season, waitUntil) {
   }
   // No copy yet: one request builds it, the rest are asked to come back.
   if (await claim()) return await build();
-  const err = new Error('Pack data for this season is being prepared - try again in a minute.');
+  const err = new Error(row && Number(row.building) > now
+    ? 'Pack data for this season is too heavy to build right now - it will be tried again later.'
+    : 'Pack data for this season is being prepared - try again in a minute.');
   err.building = true;
   throw err;
 }
