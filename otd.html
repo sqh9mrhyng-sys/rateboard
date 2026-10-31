@@ -50,6 +50,7 @@
       <label class="note">Claims a day <select id="claims"><option value="3">3 (2 per sport + 1 spare)</option><option value="2">2 per sport</option></select></label>
       <label class="note">Pack price <select id="price"><option value="200">Pack yourself · 200</option><option value="241">Swapping · 241</option><option value="271">160 back · 271</option><option value="415">Full price · 415</option></select></label>
       <label class="note">Profit over <select id="win"><option value="1">Next month</option><option value="3">Next 3 months</option><option value="6">Next 6 months</option><option value="12" selected>Next year</option><option value="24">Next 2 years</option><option value="0">All-time</option><option value="custom">Pick dates…</option></select></label>
+      <label class="note">Rank by <select id="rank"><option value="bal">Balanced (profit and return)</option><option value="profit">Most profit</option><option value="ratio">Best return per 1,000</option></select></label>
       <label class="note">Min profit <input id="minp" type="number" inputmode="numeric" placeholder="0" style="width:100px"></label>
       <input id="rsuser" placeholder="Real username" autocomplete="off" style="flex:0 1 160px">
       <button id="scan" style="background:var(--accent);color:#141925;border-color:var(--accent);font-weight:700">Scan my passes</button>
@@ -77,10 +78,10 @@
 
   <section>
     <h2>Best upgrades</h2>
-    <p class="note">For each pass, the level that adds the most for what it costs. <b>Extra a year</b> is what your whole calendar gains after the 2-per-sport (+1 spare) claim limit, and after each pass's all-time cap on old seasons. <b>Extra all-time</b> is how much more cap room the upgrade opens (∞ at Iconic or on a live season). Packs come from pack data (average rating ×3 a pack, never under 10) at the price above; FC and UFC have no packs, so they're priced from the marketplace's rax per rating. <b>Profit</b> is what the upgrade earns over the window you pick, from today, minus its price; each pass shows its most profitable target. Tap a row for its calendar.</p>
+    <p class="note">For each pass, the level that adds the most for what it costs. <b>Extra a year</b> is what your whole calendar gains after the 2-per-sport (+1 spare) claim limit, and after each pass's all-time cap on old seasons. <b>Extra all-time</b> is how much more cap room the upgrade opens (∞ at Iconic or on a live season). Packs come from pack data (average rating ×3 a pack, never under 10) at the price above; FC has no packs, so it's priced from the Rate Board: the best standing offer per rating for that player, or the median FC offer. <b>Profit</b> is what the upgrade earns over the window you pick, from today, minus its price; each pass shows its most profitable target. Tap a row for its calendar.</p>
     <div class="scroll"><table><thead><tr>
       <th data-u="name">Player pass</th><th data-u="now">Current</th><th data-u="to">Target</th><th data-u="need">Rating needed</th>
-      <th data-u="gain">Extra a year</th><th data-u="life">Extra all-time</th><th data-u="packs">Est. packs</th><th data-u="cost">Price</th><th data-u="profit">Profit</th><th data-u="ratio">Per 1,000 spent</th>
+      <th data-u="gain">Extra a year</th><th data-u="life">Extra all-time</th><th data-u="packs">Est. packs</th><th data-u="cost">Price</th><th data-u="profit">Profit</th><th data-u="ratio">Profit per 1,000</th>
     </tr></thead><tbody id="ups"></tbody></table></div>
     <div id="updetail" style="margin-top:12px"></div>
   </section>
@@ -241,7 +242,8 @@ const tag = (i, p) => { const L = ladderOf(p);
   return i < 0 ? '<span class="tag" style="background:#8a93a6">General · 1x</span>' : `<span class="tag" style="background:${RC[L[i][3]]}">${L[i][0]} · ${L[i][1]}x</span>`; };
 
 let MKT = {}, upOpen = null, lastUps = [];
-let P = [], G = {}, PACK = {}, byDay = new Map(), upSort = 'profit', upDir = -1, selDay = null;
+const normName = n => String(n || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z]/g, '');
+let P = [], G = {}, PACK = {}, byDay = new Map(), upSort = 'rank', upDir = -1, selDay = null;
 
 // One day's claims: two per sport, then (with 3 claims) the best one left over across sports.
 function scoreDay(list, claims){
@@ -321,7 +323,7 @@ function passOptions(i, ctx){
   const base = days.reduce((a, d) => a + dayRes.get(d).earned, 0);
   const avg = PACK[`${p.sport}:${p.season}:${p.id}`];
   const perPack = Math.max(10, (Number(avg) || 0) * 3);
-  const ppr = MKT[`${p.sport}:${p.season}:${p.id}`] ?? MKT[`${p.sport}:${p.season}:*`];
+  const ppr = p.sport === 'soccer' ? (MKT[normName(p.name)] ?? MKT['*fc']) : null;
   const rating = Number(p.rating) || 0, earned = Number(p.earned) || 0;
   const left0 = Math.max(0, capOf(p, p.lv) - earned);
   const out = [];
@@ -350,7 +352,7 @@ function passOptions(i, ctx){
     if(win === 0) wx = life;
     else wx = Math.min(rawYear > 0 ? gain * windowSum(dd) / rawYear : 0, life);
     const profit = cost == null ? null : wx - cost;
-    if(gain > 0) out.push({ p, i, k, gain, life, need, packs, cost, ratio, m, wx, profit, score: profit == null ? -Infinity : profit,
+    if(gain > 0) out.push({ p, i, k, gain, life, need, packs, cost, ratio: cost && profit != null ? profit / cost * 1000 : 0, m, wx, profit, score: profit == null ? -Infinity : profit,
       noPack: !NO_PACKS.has(p.sport) && avg == null, noMkt: NO_PACKS.has(p.sport) && ppr == null });
   }
   return out;
@@ -410,8 +412,16 @@ function compute(){
   const ups = [];
   P.forEach((p, i) => {
     const opts = passOptions(i, ctx);
+    /* Which target a pass shows. Balanced weighs total profit by how hard the
+       money works (profit × √(profit per rax spent)), so a cheap small win
+       and an expensive big one can both rank on their merits. */
+    const mode = $('#rank').value;
+    const val = o => o.profit == null ? -Infinity
+      : mode === 'profit' ? o.profit
+      : mode === 'ratio' ? (o.cost ? o.profit / o.cost : -Infinity)
+      : o.profit <= 0 ? o.profit : o.profit * Math.sqrt(o.profit / Math.max(1, o.cost));
     let best = null;
-    for(const o of opts) if(!best || o.score > best.score || (o.score === best.score && o.ratio > best.ratio)) best = o;
+    for(const o of opts){ o.rank = val(o); if(!best || o.rank > best.rank) best = o; }
     const minp = Number($('#minp').value);
     if(best && $('#minp').value !== '' && !(best.profit >= minp)) best = null;
     if(best) ups.push(best);
@@ -419,7 +429,7 @@ function compute(){
   lastUps = ups;
   const key = { name: u => u.p.name, now: u => u.p.rating, to: u => u.k, need: u => u.need, gain: u => u.gain, life: u => u.life,
                 packs: u => u.packs ?? -1, cost: u => u.cost ?? Infinity, ratio: u => u.ratio,
-                profit: u => u.profit ?? -Infinity }[upSort];
+                profit: u => u.profit ?? -Infinity, rank: u => u.rank }[upSort];
   ups.sort((a, b) => { const x = key(a), y = key(b); return (x < y ? -1 : x > y ? 1 : 0) * upDir; });
   document.querySelectorAll('th[data-u]').forEach(th => th.classList.toggle('on', th.dataset.u === upSort));
   const link = p => p.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(p.passId)]) : null;
@@ -433,7 +443,7 @@ function compute(){
     <td>${nm(u.p)}</td><td>${cur(u.p)}</td><td>${tag(u.k, u.p)} <span class="note">${capTxt(u.p, u.k)}</span></td><td>${fmt(u.need)}</td>
     <td>+${fmt(u.gain)}</td><td>${u.life === Infinity ? '∞' : '+' + fmt(u.life)}</td>
     <td>${u.packs == null ? '–' : fmt(u.packs)}${u.noPack ? ' <span class="note" title="No pack data - priced at 10 rating a pack">*</span>' : ''}</td>
-    <td>${u.cost == null ? '<span class="note">no market data</span>' : fmt(u.cost)}${NO_PACKS.has(u.p.sport) && u.cost != null ? ' <span class="note">market</span>' : ''}</td>
+    <td>${u.cost == null ? '<span class="note">no price</span>' : fmt(u.cost)}${NO_PACKS.has(u.p.sport) && u.cost != null ? ' <span class="note">Rate Board</span>' : ''}</td>
     <td style="color:${u.profit == null ? 'var(--mute)' : u.profit >= 0 ? 'var(--ok)' : 'var(--bad)'}">${u.profit == null ? '–' : u.profit === Infinity ? '∞' : (u.profit >= 0 ? '+' : '') + fmt(u.profit)}</td>
     <td>${fmt(u.ratio)}</td></tr>`).join('') || '<tr><td colspan="10" class="note">No upgrade clears that profit.</td></tr>';
   if(upOpen != null) drawUp(upOpen);
@@ -510,6 +520,7 @@ document.querySelectorAll('th[data-u]').forEach(th => th.addEventListener('click
 $('#claims').addEventListener('change', compute);
 $('#price').addEventListener('change', compute);
 $('#win').addEventListener('change', () => { drawRange(); compute(); });
+$('#rank').addEventListener('change', () => { upSort = 'rank'; upDir = -1; compute(); });
 function drawRange(){
   const y = rView.getFullYear(), m = rView.getMonth();
   $('#rmon').textContent = rView.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
@@ -578,7 +589,7 @@ async function loadAll(){
   let cache = {};
   try{ cache = JSON.parse(localStorage.getItem(CK) || '{}') || {}; }catch(e){ cache = {}; }
   const fresh = k => cache[k] && Date.now() - cache[k].at < TTL;
-  const need = pairs.filter(pr => !fresh('p:' + pr)).concat(pairs.filter(pr => NO_PACKS.has(pr.split(':')[0]) && !fresh('m:' + pr)).map(pr => 'm:' + pr));
+  const need = pairs.filter(pr => !NO_PACKS.has(pr.split(':')[0]) && !fresh('p:' + pr));
   let done = 0;
   const one = async job => {
     if(job.startsWith('m:')){
@@ -599,10 +610,18 @@ async function loadAll(){
   for(const pr of pairs){
     const [sp, se] = pr.split(':');
     for(const [id, v] of Object.entries((cache['p:' + pr] || {}).rows || {})) PACK[`${sp}:${se}:${id}`] = v;
-    const m = (cache['m:' + pr] || {}).rows || {}, vals = Object.values(m).sort((a, b) => a - b);
-    for(const [id, v] of Object.entries(m)) MKT[`${sp}:${se}:${id}`] = v;
-    if(vals.length) MKT[`${sp}:${se}:*`] = vals[Math.floor(vals.length / 2)];   // the season's median for players with no listings
   }
+  /* FC has no packs. Its price comes from what people actually pay on the
+     Rate Board: the best standing offer per rating for that player, or the
+     median FC offer for anyone with none. */
+  try{
+    const r = await (await fetch('/api/kv?key=ratebrd_market_v1')).json();
+    const v = typeof r.value === 'string' ? JSON.parse(r.value) : (r.value || r);
+    const fc = (v.offers || []).filter(o => String(o.sport).toUpperCase() === 'FC' && Number(o.rate) > 0);
+    for(const o of fc){ const k = normName(o.player); MKT[k] = Math.max(MKT[k] || 0, Number(o.rate)); }
+    const all = fc.map(o => Number(o.rate)).sort((a, b) => a - b);
+    if(all.length) MKT['*fc'] = all[Math.floor(all.length / 2)];
+  }catch(e){}
   const noEarn = P.filter(p => !LIVE.has(`${p.sport}:${p.season}`) && (p.earned == null || !Number.isFinite(Number(p.earned)))).length;
   $('#status').textContent = (noEarn ? `${noEarn} passes have no earned figure (scanned before it was read) and get no advice - tap Scan my passes. ` : '') + `${P.length} passes that can claim · games from the board's game data · pack data for ${Object.keys(PACK).length} players. General passes claim at 1x on a live season and nothing on an old one; old seasons stop at each level's all-time cap.`;
   compute();
