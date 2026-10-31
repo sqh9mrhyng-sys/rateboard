@@ -242,7 +242,7 @@ function drawPasses(){
       // The pass itself when its id is known (Real link type 18), else the player.
       const u = p.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(p.passId)]) : realPlayerUrl(p.sport, p.id, p.season), nm = esc(p.name && !/^player$/i.test(p.name) ? p.name : 'Player ' + p.id);
       const lv = levelOf(p.rating);
-      const tag = lv ? `<span class="tag" style="background:${RC[lv[1]]}">${RAR[lv[1]]}${lv[2] ? ' ' + lv[2] : ''}${lv[3] ? ' · ' + lv[3] : ''}</span>` : '<span class="tag" style="background:#555;color:#ddd">Under 10</span>';
+      const tag = lv ? `<span class="tag" style="background:${RC[lv[1]]}">${RAR[lv[1]]}${lv[2] ? ' ' + lv[2] : ''}${lv[3] ? ' · ' + lv[3] : ''}</span>` : '<span class="tag" style="background:#8a93a6">General</span>';
       return `<div class="pass"><input type="checkbox" data-keep="${p.key}" ${keep.has(p.key) ? 'checked' : ''} aria-label="Keep ${nm}">
       ${tag}${u ? `<a href="${u}" target="_blank" rel="noopener">${nm}</a>` : nm}${p.count > 1 ? ` ×${p.count}` : ''}
       ${p.rating != null ? `<span class="note">${Math.round(p.rating * 10) / 10}</span>` : ''}<span class="k">${keep.has(p.key) ? 'keeping' : 'swappable'}</span></div>`; }).join('')
