@@ -1580,7 +1580,15 @@ const PERF_ON = false;
 const gamesPerTick = sp => GAMES_PER_TICK_BY_SPORT[String(sp || '').toLowerCase()]
   || GAMES_PER_TICK;
 
+// The tables, columns and indexes only need making once per worker, not on
+// every request (that was nine schema statements per pack data click).
+let playsReadyDone = false;
 async function playsReady(db) {
+  if (playsReadyDone) return;
+  await playsReadyOnce(db);
+  playsReadyDone = true;
+}
+async function playsReadyOnce(db) {
   await db.prepare(PLAYS_DDL).run();
   await db.prepare(TAGS_DDL).run();
   try { await db.prepare('ALTER TABLE plays ADD COLUMN rarity INTEGER').run(); } catch (e) {}
@@ -3642,61 +3650,77 @@ async function handleGet({ request, env, waitUntil }) {
   }
 
   if (url.searchParams.get('plays') === 'player') {
+    /* One player's pack data detail. This used to build the whole season's
+       credited plays four times over (for the totals, the rarities, the kinds
+       and the top plays) and then keep one player - about 17 seconds of
+       database time each for an NBA season, which is what kept overloading
+       the database while people clicked through players. Now only this
+       player's plays are read, once, through the player indexes, and the
+       rest is worked out here. */
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
     await playsReady(db);
     const pid = parseInt(url.searchParams.get('playerId') || '0', 10);
     if (!pid) return json({ error: 'playerId required' }, 400);
     const out = { sport, season, playerId: pid };
+    let n = 0;
+    const CREDITED_P = CREDITED.replace(/FROM plays WHERE sport=\?1 AND season=\?2 AND/g,
+      () => `FROM plays WHERE sport=?1 AND season=?2 AND ${['playerId', 'player2Id', 'player3Id'][n++]} = ?3 AND`);
     try {
-      const head = await db.prepare(
-        `WITH credited AS (${CREDITED})
-         SELECT MAX(pname) AS player, COUNT(*) AS plays, COUNT(*) AS allPlays,
-                COUNT(DISTINCT gameId) AS games,
-                ROUND(AVG(value), 2) AS avgRating, ROUND(MAX(value), 1) AS bestRating
-           FROM credited WHERE pid = ?3`)
-        .bind(sport, Number(season), pid).first();
-      Object.assign(out, head || {});
-      const cov = await db.prepare(
-        `SELECT MAX(team) AS team, COUNT(DISTINCT gameId) AS played,
-                COUNT(DISTINCT CASE WHEN gameId IN
-                  (SELECT DISTINCT gameId FROM plays WHERE sport=?1 AND season=?2)
-                  THEN gameId END) AS swept
-           FROM gamelog WHERE sport=?1 AND season=?2 AND playerId=?3
-             AND seasonType IN (${seasonTypeSql(sport)})`)
-        .bind(sport, Number(season), pid).first();
-      if (cov) {
-        out.team = cov.team || null;
-        out.gamesPlayed = Number(cov.played) || null;
-        out.gamesCollected = Number(cov.swept) || null;
-      }
-      const rar = await db.prepare(
-        `WITH credited AS (${CREDITED})
-         SELECT COALESCE(rarity,0) AS r, COUNT(*) AS n FROM credited
-          WHERE pid = ?3 GROUP BY r ORDER BY r`)
-        .bind(sport, Number(season), pid).all();
+      const rows = (await db.prepare(
+        `SELECT pid, pname, gameId, rarity, value, cat, type, subType, id, day, tags FROM (${CREDITED_P}) WHERE pid = ?3`)
+        .bind(sport, Number(season), pid).all()).results || [];
+      const r2 = x => Math.round(x * 100) / 100, r1 = x => Math.round(x * 10) / 10;
+      const vals = rows.map(r => Number(r.value) || 0);
+      out.player = rows.reduce((a, r) => (r.pname && (!a || r.pname > a)) ? r.pname : a, null);
+      out.plays = rows.length; out.allPlays = rows.length;
+      out.games = new Set(rows.map(r => r.gameId)).size;
+      out.avgRating = rows.length ? r2(vals.reduce((a, v) => a + v, 0) / rows.length) : null;
+      out.bestRating = rows.length ? r1(Math.max(...vals)) : null;
       out.byRarity = {};
-      for (const x of (rar.results || [])) out.byRarity[x.r] = Number(x.n);
-      const fam = await db.prepare(
-        `WITH credited AS (${CREDITED})
-         SELECT cat, type, subType, COUNT(*) AS n,
-                ROUND(AVG(value),2) AS avgRating, ROUND(MAX(value),1) AS bestRating
-           FROM credited WHERE pid = ?3
-          GROUP BY cat, type, subType ORDER BY n DESC`)
-        .bind(sport, Number(season), pid).all();
-      out.kinds = (fam.results || []).map(x => Object.assign({}, x,
-        { family: playFamily(x.cat == null ? null : Number(x.cat), x.type, x.subType) }));
-      // The game feed rarely carries a date, but the game log always knows
-      // when the game was, so the day comes from there.
-      const top = await db.prepare(
-        `WITH credited AS (${CREDITED})
-         SELECT c.id, COALESCE(c.day, (SELECT g.day FROM gamelog g
-             WHERE g.sport=?1 AND g.gameId=c.gameId LIMIT 1)) AS day,
-                c.gameId, p.label, c.value, COALESCE(c.rarity,0) AS rarity, c.cat, c.tags
-           FROM credited c JOIN plays p ON p.id = c.id
-          WHERE c.pid = ?3 ORDER BY c.value DESC LIMIT 250`)
-        .bind(sport, Number(season), pid).all();
-      out.top = top.results || [];
+      for (const r of rows) { const k = Number(r.rarity) || 0; out.byRarity[k] = (out.byRarity[k] || 0) + 1; }
+      const fam = new Map();
+      for (const r of rows) {
+        const k = `${r.cat}|${r.type}|${r.subType}`;
+        const f = fam.get(k) || { cat: r.cat, type: r.type, subType: r.subType, n: 0, sum: 0, max: -Infinity };
+        f.n++; f.sum += Number(r.value) || 0; f.max = Math.max(f.max, Number(r.value) || 0);
+        fam.set(k, f);
+      }
+      out.kinds = [...fam.values()].sort((a, b) => b.n - a.n).map(f => ({ cat: f.cat, type: f.type, subType: f.subType, n: f.n,
+        avgRating: r2(f.sum / f.n), bestRating: r1(f.max),
+        family: playFamily(f.cat == null ? null : Number(f.cat), f.type, f.subType) }));
+      const top = rows.slice().sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0)).slice(0, 250);
+      // Labels for the top plays, and a date from the game log where the
+      // feed carried none.
+      const ids = top.map(r => Number(r.id)).filter(Number.isFinite);
+      const label = new Map(), dayOf = new Map();
+      for (let i = 0; i < ids.length; i += 90) {
+        const q = await db.prepare(`SELECT id, label FROM plays WHERE id IN (${ids.slice(i, i + 90).join(',')})`).all();
+        for (const x of (q.results || [])) label.set(Number(x.id), x.label);
+      }
+      const noDay = [...new Set(top.filter(r => !r.day).map(r => Number(r.gameId)).filter(Number.isFinite))];
+      for (let i = 0; i < noDay.length; i += 90) {
+        const q = await db.prepare(`SELECT gameId, MIN(day) AS day FROM gamelog WHERE sport=? AND gameId IN (${noDay.slice(i, i + 90).join(',')}) GROUP BY gameId`)
+          .bind(sport).all();
+        for (const x of (q.results || [])) dayOf.set(Number(x.gameId), x.day);
+      }
+      out.top = top.map(r => ({ id: r.id, day: r.day || dayOf.get(Number(r.gameId)) || null, gameId: r.gameId,
+        label: label.get(Number(r.id)) || null, value: r.value, rarity: Number(r.rarity) || 0, cat: r.cat, tags: r.tags }));
+      // Coverage: the player's games from the game log, and how many of
+      // them have plays collected - checked game by game, not by reading
+      // the whole season's plays.
+      const g = (await db.prepare(
+        `SELECT MAX(team) AS team, gameId FROM gamelog WHERE sport=?1 AND season=?2 AND playerId=?3
+           AND seasonType IN (${seasonTypeSql(sport)}) GROUP BY gameId`).bind(sport, Number(season), pid).all()).results || [];
+      out.team = g.reduce((a, x) => a || x.team, null);
+      out.gamesPlayed = g.length || null;
+      const gids = g.map(x => Number(x.gameId)).filter(Number.isFinite);
+      let swept = 0;
+      for (let i = 0; i < gids.length; i += 90) {
+        const q = await db.prepare(`SELECT COUNT(DISTINCT gameId) AS n FROM plays WHERE gameId IN (${gids.slice(i, i + 90).join(',')})`).first();
+        swept += Number(q && q.n) || 0;
+      }
+      out.gamesCollected = swept || null;
     } catch (e) {
       return json({ error: 'could not read the player', detail: String((e && e.message) || e) }, 503);
     }
