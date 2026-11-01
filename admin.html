@@ -71,6 +71,12 @@
       <div class="bar"><button id="st-refresh">Refresh</button><span class="note" id="st-at"></span></div>
       <div class="grid" id="st-grid"></div>
       <section style="margin-top:12px">
+        <h2>Slow database calls</h2>
+        <p class="note">Every database call that took over 3 seconds or failed, newest first, with the request behind it.</p>
+        <div class="bar"><button id="ds-load">Load</button></div>
+        <div class="scroll" id="ds-out"></div>
+      </section>
+      <section style="margin-top:12px">
         <h2>Speed check</h2>
         <p class="note">Times the calls each page makes when it opens, so you can see exactly which one is slow.</p>
         <div class="bar"><button id="sp-run">Run speed check</button></div>
@@ -224,6 +230,17 @@ function loadStatus(){
   });
 }
 $('#st-refresh').addEventListener('click', loadStatus);
+async function loadSlow(){
+  $('#ds-out').innerHTML = '<span class="note">Loading…</span>';
+  const j = await api('/api/rax?dbslow=1', {}, 60000);
+  if(j.error){ $('#ds-out').textContent = j.error; return; }
+  const c = j.calls || [];
+  $('#ds-out').innerHTML = c.length ? '<table><tr><th>When</th><th>Time</th><th>Request</th><th>Query</th></tr>' + c.map(x =>
+    `<tr><td class="note">${esc(ago(x.at))}</td><td style="color:${x.err ? 'var(--bad)' : x.ms > 10000 ? 'var(--bad)' : 'var(--warn)'}">${(x.ms / 1000).toFixed(1)}s</td>
+     <td style="word-break:break-all">${esc(x.where)}</td><td class="note" style="word-break:break-word">${esc(x.sql)}${x.err ? `<div style="color:var(--bad)">${esc(x.err)}</div>` : ''}</td></tr>`).join('') + '</table>'
+    : '<span class="note">None recorded yet.</span>';
+}
+$('#ds-load').addEventListener('click', loadSlow);
 
 const SPEED = [
   ['Board', '/api/kv?key=ratebrd_market_v1'],

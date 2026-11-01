@@ -27,6 +27,7 @@
    missing right after posting it. ------------------------------------- */
 import { ADMINS, newSession, endSession, isAdminRequest, sameHash, allow, clientIp,
          forbidden } from '../../lib/auth.js';
+import { watchEnv } from '../../lib/dbwatch.js';
 
 /* ---- the weekend pack data window ------------------------------------
    Every account, including any made while the window is open, can open the
@@ -448,7 +449,8 @@ async function saveSnapshot(env, force) {
   }
 }
 
-export async function onRequestGet({ request, env }) {
+export async function onRequestGet({ request, env, waitUntil }) {
+  env = watchEnv(env, request, waitUntil);
   const url = new URL(request.url);
 
   // Everything except reading the board itself is for the admin screen:
@@ -556,6 +558,7 @@ export async function onRequestGet({ request, env }) {
 }
 
 export async function onRequestPost({ request, env, waitUntil }) {
+  env = watchEnv(env, request, waitUntil);
   const later = waitUntil ? (p) => waitUntil(p) : async (p) => { await p; };
   const origin = new URL(request.url).origin;
   let body;

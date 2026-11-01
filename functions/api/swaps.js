@@ -12,6 +12,7 @@
    market's), never the board's main key.
    ------------------------------------------------------------------------- */
 import { isAdminRequest, sessionKey, forbidden, allow, clientIp } from '../../lib/auth.js';
+import { watchEnv } from '../../lib/dbwatch.js';
 
 function hashidsEncode(number) {
   const saltChars = Array.from('realwebapp');
@@ -531,7 +532,7 @@ const MEMBER_OPS = new Set(['me', 'save', 'scan', 'search', 'connect']);
 
 // Any error comes back as a readable message rather than a bare 500.
 export async function onRequest(ctx) {
-  try { return await handle(ctx); }
+  try { return await handle(Object.assign({}, ctx, { env: watchEnv(ctx.env, ctx.request, ctx.waitUntil) })); }
   catch (e) { return json({ error: 'Swaps hit an error: ' + String((e && e.message) || e).slice(0, 300) }, 500); }
 }
 
