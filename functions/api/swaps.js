@@ -506,29 +506,36 @@ export async function swapTick(env) {
 const SWAP_MEMBERS = ['scantrawn', 'prod', 'nebula57', 'thinkpoker', 'harris', 'reschny', 'six',
   'uawheel', 'topfloorboss', 'aayan.t', 'nicohoerner', 'gabby', 'rhjin', 'lax', 'thathuey5', 'puka', 'mar'];
 const SACCESS_DDL = `CREATE TABLE IF NOT EXISTS swap_access (key TEXT PRIMARY KEY, grantedAt INTEGER)`;
+const OTD_DDL = `CREATE TABLE IF NOT EXISTS otd_access (key TEXT PRIMARY KEY, grantedAt INTEGER)`;
+/* Who can use Swaps and who can use OTD optimization - two separate grants.
+   ok means either; swaps and otd say which. */
 export async function swapAccess(env, request) {
   const who = await sessionKey(env, request);
-  if (!who) return { who: null, admin: false, ok: false };
+  if (!who) return { who: null, admin: false, ok: false, swaps: false, otd: false };
   const admin = await isAdminRequest(env, request);
-  if (admin) return { who, admin, ok: true };
+  if (admin) return { who, admin, ok: true, swaps: true, otd: true };
+  const db = env.RATEBOARD_DB;
   const norm = x => String(x || '').trim().toLowerCase().replace(/^@/, '');
-  let ok = SWAP_MEMBERS.includes(norm(who));
-  if (!ok) {
-    try {
-      const u = await env.RATEBOARD_DB.prepare('SELECT name FROM users WHERE key=?').bind(who).first();
-      ok = !!u && SWAP_MEMBERS.includes(norm(u.name));
-    } catch (e) {}
-  }
-  if (!ok) {
-    try {
-      await env.RATEBOARD_DB.prepare(SACCESS_DDL).run();
-      ok = !!(await env.RATEBOARD_DB.prepare('SELECT 1 AS x FROM swap_access WHERE key=?').bind(who).first());
-    } catch (e) {}
-  }
-  return { who, admin: false, ok };
+  let swaps = SWAP_MEMBERS.includes(norm(who)), otd = false;
+  try {
+    if (!swaps) {
+      const u = await db.prepare('SELECT name FROM users WHERE key=?').bind(who).first();
+      swaps = !!u && SWAP_MEMBERS.includes(norm(u.name));
+    }
+    await db.prepare(SACCESS_DDL).run();
+    await db.prepare(OTD_DDL).run();
+    const [a, b] = await db.batch([
+      db.prepare('SELECT 1 AS x FROM swap_access WHERE key=?').bind(who),
+      db.prepare('SELECT 1 AS x FROM otd_access WHERE key=?').bind(who)]);
+    swaps = swaps || !!(a.results && a.results.length);
+    otd = !!(b.results && b.results.length);
+  } catch (e) {}
+  return { who, admin: false, ok: swaps || otd, swaps, otd };
 }
-// What a member (not an admin) may do: their own swap and nothing else.
+// What a member (not an admin) may do: their own swap and nothing else, and
+// for OTD their own passes and games.
 const MEMBER_OPS = new Set(['me', 'save', 'scan', 'search', 'connect']);
+const OTD_OPS = new Set(['me', 'scan', 'games']);
 
 // Any error comes back as a readable message rather than a bare 500.
 export async function onRequest(ctx) {
@@ -541,8 +548,8 @@ async function handle({ request, env, waitUntil }) {
   const db = env.RATEBOARD_DB;
   const op = url.searchParams.get('op') || '';
   const acc = await swapAccess(env, request);
-  if (!acc.ok) return forbidden(acc.who ? 'Your account does not have Swaps yet.' : 'Sign in on the board first.');
-  if (!acc.admin && !MEMBER_OPS.has(op)) return forbidden('Admin only.');
+  if (!acc.ok) return forbidden(acc.who ? 'Your account does not have this page yet.' : 'Sign in on the board first.');
+  if (!acc.admin && !((acc.swaps && MEMBER_OPS.has(op)) || (acc.otd && OTD_OPS.has(op)))) return forbidden('Your account does not have this.');
   const me = acc.who;
   await ready(db);
   const auth = swapToken(env);
@@ -639,7 +646,7 @@ async function handle({ request, env, waitUntil }) {
       try { await db.prepare(DM_DDL).run();
         connected = !!(await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=? AND channelId IS NOT NULL').bind(u.hashId).first()); } catch (e) {}
     }
-    return json({ key: me, admin: acc.admin, tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
+    return json({ key: me, admin: acc.admin, swaps: acc.swaps, otd: acc.otd, tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
       keep: parse(u.keep, []), slots: parse(u.slots, []), passes: parse(u.passes, []), scannedAt: u.scannedAt, active: !!u.active } : null });
   }
 
@@ -737,12 +744,15 @@ async function handle({ request, env, waitUntil }) {
     await db.prepare(SACCESS_DDL).run();
     const key = String(url.searchParams.get('key') || '');
     const act = url.searchParams.get('act');
+    await db.prepare(OTD_DDL).run();
+    const tbl = url.searchParams.get('what') === 'otd' ? 'otd_access' : 'swap_access';
     if (act === 'grant' || act === 'revoke') {
       const u = await db.prepare('SELECT key FROM users WHERE key=?').bind(key).first();
       if (!u) return json({ error: 'no such account' }, 404);
-      if (act === 'grant') await db.prepare('INSERT INTO swap_access (key, grantedAt) VALUES (?, ?) ON CONFLICT DO NOTHING').bind(key, Date.now()).run();
-      else await db.prepare('DELETE FROM swap_access WHERE key=?').bind(key).run();
+      if (act === 'grant') await db.prepare(`INSERT INTO ${tbl} (key, grantedAt) VALUES (?, ?) ON CONFLICT DO NOTHING`).bind(key, Date.now()).run();
+      else await db.prepare(`DELETE FROM ${tbl} WHERE key=?`).bind(key).run();
     }
+    const otdGranted = ((await db.prepare('SELECT key FROM otd_access').all()).results || []).map(r => r.key);
     const ph = SWAP_MEMBERS.map(() => '?').join(',');
     const hits = (await db.prepare(`SELECT key, name FROM users WHERE LOWER(key) IN (${ph}) OR LOWER(name) IN (${ph})`)
       .bind(...SWAP_MEMBERS, ...SWAP_MEMBERS).all()).results || [];
@@ -756,7 +766,7 @@ async function handle({ request, env, waitUntil }) {
       `SELECT key, name FROM users WHERE COALESCE(banned, 0) = 0 AND (LOWER(key) LIKE ? OR LOWER(name) LIKE ?) ORDER BY LENGTH(key) LIMIT 20`)
       .bind(`%${q}%`, `%${q}%`).all()).results || []) : [];
     const has = new Set(granted.map(g => g.key));
-    return json({ named, granted, found: found.map(f => ({ ...f, access: has.has(f.key) })) });
+    return json({ named, granted, otd: otdGranted, found: found.map(f => ({ ...f, access: has.has(f.key) })) });
   }
 
   if (op === 'chats') {

@@ -175,9 +175,21 @@ async function readSide(env) {
   let m = null;
   if (raw) { try { m = JSON.parse(raw); } catch (e) { m = null; } }
   if (!m || typeof m !== 'object') m = {};
-  return { reports: m.reports || [], minimums: m.minimums || [], keeplist: m.keeplist || [],
-           house: m.house || [], gamedata: m.gamedata || [],
-           packdata: m.packdata || [] };
+  return Object.assign({ reports: m.reports || [], minimums: m.minimums || [], keeplist: m.keeplist || [],
+           house: m.house || [] }, grantLists(m));
+}
+
+/* ---- who can open which part of game data --------------------------------
+   Each part is granted on its own now: gamedata (by player and every game),
+   packdata, golfdata, and shiftdata (rax shift and historical together).
+   Before this, a game data grant opened every tab, so until the admin first
+   changes a grant those people keep all of them. */
+const GRANT_LISTS = ['gamedata', 'packdata', 'golfdata', 'shiftdata'];
+function grantLists(m) {
+  const lc = a => [...new Set((a || []).map(x => String(x).toLowerCase()))];
+  if (m.grantsV2) return { gamedata: lc(m.gamedata), packdata: lc(m.packdata), golfdata: lc(m.golfdata), shiftdata: lc(m.shiftdata), grantsV2: true };
+  const g = lc(m.gamedata);
+  return { gamedata: g, packdata: lc((m.packdata || []).concat(g)), golfdata: g.slice(), shiftdata: g.slice(), grantsV2: false };
 }
 
 /* ---- assemble the board in the shape the page already expects ---- */
@@ -205,7 +217,7 @@ async function readBoard(env, includeHashes) {
       rate: o.rate, link: o.link || '', ts: o.ts
     })),
     reports: side.reports, minimums: side.minimums, keeplist: side.keeplist, house: side.house,
-    gamedata: side.gamedata, packdata: side.packdata,
+    gamedata: side.gamedata, packdata: side.packdata, golfdata: side.golfdata, shiftdata: side.shiftdata,
     packgrant: now < PACK_GRANT.until ? { before: PACK_GRANT.before, until: PACK_GRANT.until } : null
   };
 }
@@ -269,6 +281,32 @@ async function applyOp(env, body) {
     const owner = str(body.user, 60);
     if (owner) await db.prepare('DELETE FROM offers WHERE id=? AND user=?').bind(id, owner).run();
     else await db.prepare('DELETE FROM offers WHERE id=?').bind(id).run();
+    return null;
+  }
+
+  // Admin: close a report one member made about another.
+  if (op === 'closeUserReport') {
+    const id = str(body.id, 40);
+    if (!id) return 'bad id';
+    const raw = await env.RATEBOARD_KV.get(KV_KEY);
+    let m = {}; try { m = JSON.parse(raw || '{}') || {}; } catch (e) { m = {}; }
+    const r = (m.reports || []).find(x => x.id === id);
+    if (!r) return 'report not found';
+    r.status = 'closed';
+    await env.RATEBOARD_KV.put(KV_KEY, JSON.stringify(m));
+    return null;
+  }
+
+  // Admin: give or take one part of game data from one account.
+  if (op === 'setGrant') {
+    const list = String(body.list || ''), key = (str(body.key, 60) || '').toLowerCase();
+    if (!GRANT_LISTS.includes(list) || !key) return 'bad grant';
+    const raw = await env.RATEBOARD_KV.get(KV_KEY);
+    let m = {}; try { m = JSON.parse(raw || '{}') || {}; } catch (e) { m = {}; }
+    Object.assign(m, grantLists(m), { grantsV2: true });
+    m[list] = m[list].filter(k => k !== key);
+    if (body.on) m[list].push(key);
+    await env.RATEBOARD_KV.put(KV_KEY, JSON.stringify(m));
     return null;
   }
 
@@ -621,7 +659,7 @@ export async function onRequestPost({ request, env, waitUntil }) {
     // Admin powers, checked against a real admin session. An offer edit or
     // removal without an owner is the admin's "any listing" version.
     const ADMIN_OPS = new Set(['setBanned', 'resetPass', 'resolveDataReport',
-                               'resolveFeature', 'import']);
+                               'resolveFeature', 'import', 'setGrant', 'closeUserReport']);
     const anyOwner = (body.op === 'updateOffer' || body.op === 'removeOffer') && !str(body.user, 60);
     if ((ADMIN_OPS.has(body.op) || anyOwner) && !(await isAdminRequest(env, request))) {
       return forbidden();
@@ -657,13 +695,19 @@ export async function onRequestPost({ request, env, waitUntil }) {
   try { incoming = JSON.parse(value); }
   catch (e) { return json({ error: 'bad value' }, 400); }
 
+  // The grant lists the board page doesn't know about are kept as they are.
+  let prev = {}; try { prev = JSON.parse((await env.RATEBOARD_KV.get(KV_KEY)) || '{}') || {}; } catch (e) { prev = {}; }
+  const pg = grantLists(prev);
   await env.RATEBOARD_KV.put(KV_KEY, JSON.stringify({
     reports: incoming.reports || [],
     minimums: incoming.minimums || [],
     keeplist: incoming.keeplist || [],
     house: incoming.house || [],
     gamedata: incoming.gamedata || [],
-    packdata: incoming.packdata || []
+    packdata: incoming.packdata || [],
+    golfdata: incoming.golfdata || pg.golfdata,
+    shiftdata: incoming.shiftdata || pg.shiftdata,
+    grantsV2: pg.grantsV2
   }));
   await bustBoard(origin);
   later(saveSnapshot(env));

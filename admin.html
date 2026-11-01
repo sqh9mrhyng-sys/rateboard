@@ -44,6 +44,13 @@
   .pill.off{border-color:var(--bad);color:var(--bad)}
   pre{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;overflow:auto;font-size:12px;max-height:40vh;white-space:pre-wrap;word-break:break-word}
   .ms{font-variant-numeric:tabular-nums}
+  .ucard{border-bottom:1px solid var(--line);padding:10px 2px}
+  .ucard .top{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+  .ucard .top .acts{margin-left:auto;display:flex;gap:6px}
+  .ucard .acc{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .ucard .acc button{padding:4px 10px;border-radius:999px;font-size:12.5px;border:1px solid var(--line);background:none;color:var(--mute)}
+  .ucard .acc button.on{border-color:var(--ok);color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent)}
+  .ucard .acc button.fixed{opacity:.75;cursor:default}
   .hide{display:none!important}
   #toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--line);padding:9px 14px;border-radius:10px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw}
   #toast.show{opacity:1}
@@ -64,12 +71,19 @@
       <button data-tab="offers" aria-pressed="false">Offers</button>
       <button data-tab="users" aria-pressed="false">Users &amp; access</button>
       <button data-tab="swaps" aria-pressed="false">Swaps &amp; DMs</button>
+      <button data-tab="reports" aria-pressed="false">Reports</button>
     </div>
 
     <!-- STATUS -->
     <div id="t-status">
       <div class="bar"><button id="st-refresh">Refresh</button><span class="note" id="st-at"></span></div>
       <div class="grid" id="st-grid"></div>
+      <section style="margin-top:12px">
+        <h2>UFC market check</h2>
+        <p class="note">Asks Real (on the bot account) how many UFC listings it has under each season, and compares with what's stored.</p>
+        <div class="bar"><button id="ufc-run">Run UFC check</button><button id="ufc-copy" class="hide">Copy result</button></div>
+        <pre id="ufc-out" class="hide"></pre>
+      </section>
       <section style="margin-top:12px">
         <h2>Slow database calls</h2>
         <p class="note">Every database call that took over 3 seconds or failed, newest first, with the request behind it.</p>
@@ -104,13 +118,20 @@
       <section>
         <div class="bar">
           <input type="search" id="us-q" placeholder="Search accounts" autocomplete="off">
-          <select id="us-f"><option value="">Everyone</option><option value="market">Has market data</option><option value="swaps">Has Swaps</option><option value="banned">Removed</option><option value="nopass">Password reset</option></select>
+          <select id="us-f"><option value="">Everyone</option><option value="any">Has any access</option><option value="gamedata">Game data</option><option value="packdata">Pack data</option><option value="golfdata">Golf</option><option value="shiftdata">Rax shift / historical</option><option value="market">Market data</option><option value="swaps">Swaps</option><option value="otd">OTD</option><option value="banned">Removed</option><option value="nopass">Password reset</option></select>
         </div>
         <p class="note" id="us-count">Loading…</p>
-        <div class="scroll"><table><thead><tr><th>Account</th><th>Joined</th><th>Offers</th><th>Market</th><th>Swaps</th><th></th></tr></thead><tbody id="us-rows"></tbody></table></div>
+        <p class="note">Tap a pill to give or take that access. Lit pills are on. "Game data" covers by player and every game.</p>
+        <div id="us-rows"></div>
         <div class="bar"><button id="us-more" class="hide">Show more</button></div>
-        <p class="note">Swaps also opens for the named list in the code (shown on the Swaps tab). "Give" here adds anyone else.</p>
       </section>
+    </div>
+
+    <!-- REPORTS -->
+    <div id="t-reports" class="hide">
+      <section><h2>Member reports <span class="note" id="rp-n"></span></h2><div id="rp-users" class="note">Loading…</div></section>
+      <section><h2>Feature requests <span class="note" id="rp-fn"></span></h2><div id="rp-feats" class="note">Loading…</div></section>
+      <section><h2>Data reports <span class="note" id="rp-dn"></span></h2><div id="rp-data" class="note">Loading…</div></section>
     </div>
 
     <!-- SWAPS -->
@@ -171,9 +192,9 @@ const msTag = ms => `<span class="ms note">${ms >= 1000 ? (ms / 1000).toFixed(1)
 const loaded = {};
 function show(tab){
   document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-pressed', b.dataset.tab === tab ? 'true' : 'false'));
-  for(const t of ['status','offers','users','swaps']) $('#t-' + t).classList.toggle('hide', t !== tab);
+  for(const t of ['status','offers','users','swaps','reports']) $('#t-' + t).classList.toggle('hide', t !== tab);
   try{ localStorage.setItem('rb_admin_tab', tab); }catch(e){}
-  if(!loaded[tab]){ loaded[tab] = true; ({ status: loadStatus, offers: loadBoard, users: loadUsers, swaps: loadSwaps })[tab](); }
+  if(!loaded[tab]){ loaded[tab] = true; ({ status: loadStatus, offers: loadBoard, users: loadUsers, swaps: loadSwaps, reports: loadReports })[tab](); }
 }
 document.querySelector('.tabs').addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if(b) show(b.dataset.tab); });
 
@@ -241,6 +262,15 @@ async function loadSlow(){
     : '<span class="note">None recorded yet.</span>';
 }
 $('#ds-load').addEventListener('click', loadSlow);
+$('#ufc-run').addEventListener('click', async () => {
+  const b = $('#ufc-run'); b.disabled = true; $('#ufc-out').classList.remove('hide'); $('#ufc-out').textContent = 'Asking Real…';
+  const j = await api('/api/rax?market=ufcdiag', {}, 60000);
+  $('#ufc-out').textContent = JSON.stringify(j, null, 1);
+  $('#ufc-copy').classList.remove('hide'); b.disabled = false;
+});
+$('#ufc-copy').addEventListener('click', async () => {
+  try{ await navigator.clipboard.writeText($('#ufc-out').textContent); toast('Copied.'); }catch(e){ toast('Select the text and copy it.'); }
+});
 
 const SPEED = [
   ['Board', '/api/kv?key=ratebrd_market_v1'],
@@ -275,7 +305,8 @@ function getBoard(force){
     boardP = null;
     if(j.error) throw new Error(j.error);
     const v = typeof j.value === 'string' ? JSON.parse(j.value) : (j.value || {});
-    board = { offers: v.offers || [], users: v.users || {} };
+    board = { offers: v.offers || [], users: v.users || {}, reports: v.reports || [],
+      lists: { gamedata: v.gamedata || [], packdata: v.packdata || [], golfdata: v.golfdata || [], shiftdata: v.shiftdata || [] } };
     return board;
   });
   return boardP;
@@ -337,13 +368,23 @@ $('#of-rows').addEventListener('click', async e => {
 });
 
 /* ---------- users ---------- */
-let usShown = 100, marketSet = new Set(), swapSet = new Set(), namedSwap = new Set();
+let usShown = 60, marketSet = new Set(), swapSet = new Set(), namedSwap = new Set(), otdSet = new Set();
+const ACCESS = [['gamedata', 'Game data'], ['packdata', 'Pack data'], ['golfdata', 'Golf'], ['shiftdata', 'Rax shift / historical'],
+  ['market', 'Market data'], ['swaps', 'Swaps'], ['otd', 'OTD']];
+const has = (k, what) => {
+  if(['gamedata', 'packdata', 'golfdata', 'shiftdata'].includes(what)) return (board.lists[what] || []).map(x => String(x).toLowerCase()).includes(k.toLowerCase());
+  if(what === 'market') return marketSet.has(k);
+  if(what === 'swaps') return swapSet.has(k) || namedSwap.has(k);
+  if(what === 'otd') return otdSet.has(k);
+  return false;
+};
 async function loadUsers(){
   $('#us-count').textContent = 'Loading…';
-  const [b, m, s] = await Promise.all([getBoard().catch(e => ({ error: e.message })), api('/api/rax?market=access'), api('/api/swaps?op=access')]);
+  const [b, m, s] = await Promise.all([getBoard(true).catch(e => ({ error: e.message })), api('/api/rax?market=access'), api('/api/swaps?op=access')]);
   if(b.error){ $('#us-count').textContent = 'Could not load accounts: ' + b.error; return; }
   marketSet = new Set(((m && m.granted) || []).map(g => g.key));
   swapSet = new Set(((s && s.granted) || []).map(g => g.key));
+  otdSet = new Set((s && s.otd) || []);
   namedSwap = new Set(((s && s.named) || []).filter(x => x.account).map(x => x.account));
   drawUsers();
 }
@@ -353,51 +394,100 @@ function drawUsers(){
   const counts = {}; for(const o of board.offers) counts[o.user] = (counts[o.user] || 0) + 1;
   let list = Object.entries(board.users).map(([k, u]) => ({ key: k, ...u, offers: counts[k] || 0 }))
     .filter(u => (!q || u.key.toLowerCase().includes(q) || String(u.name || '').toLowerCase().includes(q))
-      && (!f || (f === 'market' && marketSet.has(u.key)) || (f === 'swaps' && (swapSet.has(u.key) || namedSwap.has(u.key)))
-          || (f === 'banned' && u.banned) || (f === 'nopass' && !u.hasPass)));
+      && (!f || (f === 'banned' && u.banned) || (f === 'nopass' && !u.hasPass)
+          || (f === 'any' && ACCESS.some(([w]) => has(u.key, w))) || has(u.key, f)));
   list.sort((a, b) => (b.created || 0) - (a.created || 0));
   $('#us-count').textContent = `${list.length.toLocaleString()} accounts`;
-  $('#us-rows').innerHTML = list.slice(0, usShown).map(u => {
-    const mk = marketSet.has(u.key), sw = swapSet.has(u.key), nm = namedSwap.has(u.key);
-    return `<tr data-k="${esc(u.key)}">
-      <td>${esc(u.name || u.key)}${u.name && u.name !== u.key ? ` <span class="note">${esc(u.key)}</span>` : ''}
-        ${u.banned ? ' <span class="pill off">removed</span>' : ''}${!u.hasPass ? ' <span class="pill">pw reset</span>' : ''}</td>
-      <td class="note">${u.created ? new Date(u.created).toLocaleDateString() : '—'}</td>
-      <td>${u.offers}</td>
-      <td><button class="sm" data-act="${mk ? 'mrevoke' : 'mgrant'}">${mk ? '✓ Remove' : 'Give'}</button></td>
-      <td>${nm ? '<span class="pill on">named</span>' : `<button class="sm" data-act="${sw ? 'srevoke' : 'sgrant'}">${sw ? '✓ Remove' : 'Give'}</button>`}</td>
-      <td style="white-space:nowrap"><button class="sm" data-act="reset">Reset pw</button> <button class="sm danger" data-act="${u.banned ? 'unban' : 'ban'}">${u.banned ? 'Restore' : 'Remove'}</button></td></tr>`;
-  }).join('');
+  $('#us-rows').innerHTML = list.slice(0, usShown).map(u => `<div class="ucard" data-k="${esc(u.key)}">
+      <div class="top"><b>${esc(u.name || u.key)}</b>${u.name && u.name !== u.key ? ` <span class="note">${esc(u.key)}</span>` : ''}
+        ${u.banned ? '<span class="pill off">removed</span>' : ''}${!u.hasPass ? '<span class="pill">pw reset</span>' : ''}
+        <span class="note">joined ${u.created ? new Date(u.created).toLocaleDateString() : '—'} · ${u.offers} offers</span>
+        <span class="acts"><button class="sm" data-act="reset">Reset pw</button><button class="sm danger" data-act="${u.banned ? 'unban' : 'ban'}">${u.banned ? 'Restore' : 'Remove'}</button></span></div>
+      <div class="acc">${ACCESS.map(([w, label]) => {
+        const named = w === 'swaps' && namedSwap.has(u.key);
+        return `<button data-acc="${w}" class="${has(u.key, w) ? 'on' : ''}${named ? ' fixed' : ''}" ${named ? 'title="On the named Swaps list"' : ''}>${has(u.key, w) ? '✓ ' : ''}${label}</button>`;
+      }).join('')}</div></div>`).join('');
   $('#us-more').classList.toggle('hide', list.length <= usShown);
 }
 let usT = null;
-$('#us-q').addEventListener('input', () => { clearTimeout(usT); usShown = 100; usT = setTimeout(drawUsers, 150); });
-$('#us-f').addEventListener('change', () => { usShown = 100; drawUsers(); });
-$('#us-more').addEventListener('click', () => { usShown += 200; drawUsers(); });
+$('#us-q').addEventListener('input', () => { clearTimeout(usT); usShown = 60; usT = setTimeout(drawUsers, 150); });
+$('#us-f').addEventListener('change', () => { usShown = 60; drawUsers(); });
+$('#us-more').addEventListener('click', () => { usShown += 120; drawUsers(); });
 $('#us-rows').addEventListener('click', async e => {
-  const b = e.target.closest('[data-act]'); if(!b) return;
-  const k = b.closest('tr').dataset.k, act = b.dataset.act;
-  if(['ban', 'reset'].includes(act) && b.dataset.armed !== '1'){
-    b.dataset.armed = '1'; const was = b.textContent; b.textContent = 'Sure?';
-    setTimeout(() => { b.dataset.armed = ''; b.textContent = was; }, 3000); return;
-  }
+  const b = e.target.closest('[data-act],[data-acc]'); if(!b || b.classList.contains('fixed')) return;
+  const k = b.closest('.ucard').dataset.k;
   b.disabled = true;
   let j;
-  if(act === 'mgrant' || act === 'mrevoke'){
-    j = await api(`/api/rax?market=${act === 'mgrant' ? 'grant' : 'revoke'}&key=${encodeURIComponent(k)}`);
-    if(!j.error) marketSet = new Set((j.granted || []).map(g => g.key));
-  } else if(act === 'sgrant' || act === 'srevoke'){
-    j = await api(`/api/swaps?op=access&act=${act === 'sgrant' ? 'grant' : 'revoke'}&key=${encodeURIComponent(k)}`);
-    if(!j.error) swapSet = new Set((j.granted || []).map(g => g.key));
-  } else if(act === 'ban' || act === 'unban'){
-    j = await post({ op: 'setBanned', key: k, banned: act === 'ban' });
-    if(!j.error){ board.users[k].banned = act === 'ban'; if(act === 'ban') board.offers = board.offers.filter(o => o.user !== k); }
-  } else if(act === 'reset'){
-    j = await post({ op: 'resetPass', key: k });
-    if(!j.error) board.users[k].hasPass = false;
+  if(b.dataset.acc){
+    const w = b.dataset.acc, on = !has(k, w);
+    if(['gamedata', 'packdata', 'golfdata', 'shiftdata'].includes(w)){
+      j = await post({ op: 'setGrant', list: w, key: k, on });
+      if(!j.error){ const L = (board.lists[w] || []).filter(x => String(x).toLowerCase() !== k.toLowerCase()); if(on) L.push(k.toLowerCase()); board.lists[w] = L; }
+    } else if(w === 'market'){
+      j = await api(`/api/rax?market=${on ? 'grant' : 'revoke'}&key=${encodeURIComponent(k)}`);
+      if(!j.error) marketSet = new Set((j.granted || []).map(g => g.key));
+    } else {
+      j = await api(`/api/swaps?op=access&what=${w}&act=${on ? 'grant' : 'revoke'}&key=${encodeURIComponent(k)}`);
+      if(!j.error){ swapSet = new Set((j.granted || []).map(g => g.key)); otdSet = new Set(j.otd || []); }
+    }
+  } else {
+    const act = b.dataset.act;
+    if(['ban', 'reset'].includes(act) && b.dataset.armed !== '1'){
+      b.disabled = false; b.dataset.armed = '1'; const was = b.textContent; b.textContent = 'Sure?';
+      setTimeout(() => { b.dataset.armed = ''; b.textContent = was; }, 3000); return;
+    }
+    if(act === 'ban' || act === 'unban'){
+      j = await post({ op: 'setBanned', key: k, banned: act === 'ban' });
+      if(!j.error){ board.users[k].banned = act === 'ban'; if(act === 'ban') board.offers = board.offers.filter(o => o.user !== k); }
+    } else if(act === 'reset'){
+      j = await post({ op: 'resetPass', key: k });
+      if(!j.error) board.users[k].hasPass = false;
+    }
   }
   if(j && j.error){ toast(j.error); b.disabled = false; return; }
   toast('Done.'); drawUsers();
+});
+
+/* ---------- reports ---------- */
+async function loadReports(){
+  const [b, f, d] = await Promise.all([getBoard(true).catch(e => ({ error: e.message })), api('/api/kv?features=1'), api('/api/kv?datareports=1')]);
+  const when = ts => ts ? new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+  if(b.error) $('#rp-users').textContent = b.error;
+  else {
+    const open = (board.reports || []).filter(r => r.status === 'open').sort((x, y) => y.ts - x.ts);
+    $('#rp-n').textContent = `(${open.length} open)`;
+    $('#rp-users').innerHTML = open.length ? open.map(r => `<div class="ucard"><div class="top"><b>${esc(nameOf(String(r.target || '').toLowerCase()) || r.target)}</b>
+      <span class="note">reported by ${esc(r.by || 'unknown')} · ${esc(when(r.ts))}</span>
+      <span class="acts"><button class="sm" data-close="${esc(r.id)}">Close</button></span></div>
+      <div style="margin-top:4px">"${esc(r.reason || '')}"</div></div>`).join('') : '<span class="note">No open reports.</span>';
+  }
+  if(f.error) $('#rp-feats').textContent = f.error;
+  else {
+    const list = f.requests || [];
+    $('#rp-fn').textContent = `(${list.length} open)`;
+    $('#rp-feats').innerHTML = list.length ? list.map(x => `<div class="ucard"><div class="top"><b>${esc(x.title)}</b>
+      <span class="note">${esc(x.kind || '')} · from ${esc(x.by_user)} · ${esc(when(x.ts))}</span>
+      <span class="acts"><button class="sm" data-feat="${esc(x.id)}" data-st="done">Done</button><button class="sm danger" data-feat="${esc(x.id)}" data-st="declined">Decline</button></span></div>
+      ${x.detail ? `<div style="margin-top:4px">${esc(x.detail)}</div>` : ''}</div>`).join('') : '<span class="note">No open requests.</span>';
+  }
+  if(d.error) $('#rp-data').textContent = d.error;
+  else {
+    const list = d.reports || [];
+    $('#rp-dn').textContent = `(${list.length} open)`;
+    $('#rp-data').innerHTML = list.length ? list.map(x => `<div class="ucard"><div class="top"><b>${esc(x.player)}</b>
+      <span class="note">${esc(SPORT[String(x.sport || '').toLowerCase()] || x.sport || '')} · ${esc(x.field)}${x.value ? ` → ${esc(x.value)}` : ''} · from ${esc(x.by_user)} · ${esc(when(x.ts))}</span>
+      <span class="acts"><button class="sm" data-dr="${esc(x.id)}" data-st="fixed">Fixed</button><button class="sm danger" data-dr="${esc(x.id)}" data-st="dismissed">Dismiss</button></span></div>
+      ${x.note ? `<div style="margin-top:4px">${esc(x.note)}</div>` : ''}</div>`).join('') : '<span class="note">No open data reports.</span>';
+  }
+}
+$('#t-reports').addEventListener('click', async e => {
+  const b = e.target.closest('[data-close],[data-feat],[data-dr]'); if(!b) return;
+  b.disabled = true;
+  const j = b.dataset.close ? await post({ op: 'closeUserReport', id: b.dataset.close })
+    : b.dataset.feat ? await post({ op: 'resolveFeature', id: b.dataset.feat, status: b.dataset.st })
+    : await post({ op: 'resolveDataReport', id: b.dataset.dr, status: b.dataset.st });
+  if(j.error){ toast(j.error); b.disabled = false; return; }
+  b.closest('.ucard').remove(); toast('Done.');
 });
 
 /* ---------- swaps ---------- */
@@ -455,7 +545,7 @@ $('#sw-dm').addEventListener('click', async () => {
   if(!j.admin){ $('#lock').classList.remove('hide'); $('#lockmsg').textContent = j.error || 'This page is for admins.'; return; }
   $('#main').classList.remove('hide');
   let tab = 'status'; try{ tab = localStorage.getItem('rb_admin_tab') || 'status'; }catch(e){}
-  show(['status','offers','users','swaps'].includes(tab) ? tab : 'status');
+  show(['status','offers','users','swaps','reports'].includes(tab) ? tab : 'status');
 })();
 </script>
 </body>

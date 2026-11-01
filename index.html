@@ -71,6 +71,24 @@
   .pagepick .caret{position:absolute;right:12px;top:50%;transform:translateY(-50%);
     pointer-events:none;color:var(--accent);font-size:11px}
   .pip{width:11px;height:11px;border-radius:3px;background:var(--accent);transition:background .25s}
+  /* The page menu: a button with the page you're on, opening a list of every
+     page you can reach with a line on what each is for. The real select stays
+     underneath for the code that reads it. */
+  .pagepick .sr-sel{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+  #pagebtn{display:inline-flex;align-items:center;gap:8px;background:color-mix(in srgb, var(--accent) 14%, transparent);
+    border:1px solid var(--accent);color:var(--bone);padding:7px 13px;border-radius:999px;font:inherit;font-weight:700;font-size:13px;cursor:pointer;max-width:100%}
+  #pagebtn:hover{background:color-mix(in srgb, var(--accent) 24%, transparent)}
+  #pagebtn .caret{position:static;transform:none;color:var(--accent);font-size:11px}
+  #pagebtn-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pagemenu{position:absolute;left:0;top:calc(100% + 8px);z-index:60;min-width:250px;max-width:min(320px, calc(100vw - 32px));
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:6px;box-shadow:0 14px 40px rgba(0,0,0,.45)}
+  .pagemenu .grp{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted, #8b93a7);padding:8px 10px 4px}
+  .pagemenu button{display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;text-align:left;background:none;border:0;
+    color:var(--bone);padding:9px 10px;border-radius:10px;font:inherit;cursor:pointer}
+  .pagemenu button:hover,.pagemenu button:focus-visible{background:color-mix(in srgb, var(--accent) 14%, transparent);outline:none}
+  .pagemenu button[aria-current="true"]{background:color-mix(in srgb, var(--accent) 20%, transparent)}
+  .pagemenu b{font-size:14px}
+  .pagemenu small{font-size:12px;opacity:.7}
   .sportpick{position:relative}
   .sportpick select{
     appearance:none;background:var(--panel);border:1px solid var(--line);color:var(--bone);
@@ -564,11 +582,12 @@
       <!-- Which page you are on. On a phone this fills the gap that sat empty
            between the name and the sport. -->
       <div class="pagepick hide" id="pagepick">
-        <select id="pagesel" aria-label="Page">
+        <select id="pagesel" aria-label="Page" class="sr-sel" tabindex="-1">
           <option value="board">Board</option>
           <option value="cbb">Game data</option>
         </select>
-        <span class="caret">&#9662;</span>
+        <button type="button" id="pagebtn" aria-haspopup="menu" aria-expanded="false"><span id="pagebtn-t">Board</span><span class="caret">&#9662;</span></button>
+        <div id="pagemenu" class="pagemenu hide" role="menu"></div>
       </div>
     </div>
     <div class="sportpick">
@@ -771,8 +790,21 @@ const packGrantNow = () => {
   // Accounts with no sign-up time on record (the oldest ones) count too.
   return !!u && (!made || made <= Number(g.before));
 };
-const canSeePackData = () => canSeeGameData() || packGrantNow()
-  || (!!me && packDataList().includes(String(me).toLowerCase()));
+/* Each part of game data is granted on its own: by player and every game
+   (gamedata), pack data, golf, and rax shift with historical (shiftdata).
+   The panel opens for anyone with at least one, showing only their tabs. */
+const grantHas = list => !!me && (market[list] || []).map(x => String(x).toLowerCase()).includes(String(me).toLowerCase());
+const DATA_TABS = ['players', 'games', 'pack', 'golf', 'shift', 'hist'];
+function canTab(t){
+  if(isAdmin()) return true;
+  if(t === 'players' || t === 'games') return grantHas('gamedata');
+  if(t === 'pack') return grantHas('packdata') || packGrantNow();
+  if(t === 'golf') return grantHas('golfdata');
+  if(t === 'shift' || t === 'hist') return grantHas('shiftdata');
+  return false;
+}
+const dataTabs = () => DATA_TABS.filter(canTab);
+const canSeePackData = () => dataTabs().length > 0;
 // When the window closes on someone who is looking at it, take them back to
 // the board and hide the way in, without waiting for a reload.
 setInterval(() => {
@@ -784,7 +816,7 @@ setInterval(() => {
     if(typeof applyGameDataVisibility === 'function') applyGameDataVisibility();
   }catch(e){}
 }, 30000);
-const packOnly = () => canSeePackData() && !canSeeGameData();
+const packOnly = () => { const t = dataTabs(); return t.length === 1 && t[0] === 'pack'; };
 /* ---- the collector bar -------------------------------------------------
    Admin only. It reads one endpoint that reports, per season, how many of the
    games in the log have been collected and how many of the plays collected
@@ -885,6 +917,7 @@ function applyGameDataVisibility(){
       sel.innerHTML = want.map(([v, t]) => `<option value="${v}">${t}</option>`).join('');
     }
   }
+  setTimeout(drawPageMenu, 0);
   // The banner is for the time-boxed window only; people with a standing
   // grant already know where it is.
   const call = $('#packcall');
@@ -901,6 +934,38 @@ function applyGameDataVisibility(){
   if(curPage === 'cbb' && !canSeePackData()) goPage('board');
 }
 
+const PAGE_INFO = {
+  board: ['Board', 'Buy offers and the price board', ''],
+  cbb: ['Game data', 'Players, games, pack data and more', 'Data'],
+  market: ['Market data', 'Live listings and prices', 'Data'],
+  swaps: ['Swaps', 'Match pack swaps with members', 'Tools'],
+  otd: ['OTD optimization', 'Upgrade and claim planner', 'Tools'],
+  admin: ['Admin', 'Status, offers, users and access', 'Admin']
+};
+function drawPageMenu(){
+  const sel = $('#pagesel'), menu = $('#pagemenu'), t = $('#pagebtn-t');
+  if(!sel || !menu) return;
+  const cur = sel.value || curPage;
+  const opt = [...sel.options];
+  const label = v => { const o = opt.find(x => x.value === v); return (o && o.textContent) || (PAGE_INFO[v] || [v])[0]; };
+  if(t) t.textContent = label(cur);
+  let grp = null, html = '';
+  for(const o of opt){
+    const info = PAGE_INFO[o.value] || [o.textContent, '', ''];
+    if(info[2] !== grp){ grp = info[2]; if(grp) html += `<div class="grp">${grp}</div>`; }
+    html += `<button type="button" role="menuitem" data-page="${o.value}" aria-current="${o.value === cur}"><b>${o.textContent}</b>${info[1] ? `<small>${info[1]}</small>` : ''}</button>`;
+  }
+  menu.innerHTML = html;
+}
+function closePageMenu(){ const m = $('#pagemenu'), b = $('#pagebtn'); if(m) m.classList.add('hide'); if(b) b.setAttribute('aria-expanded', 'false'); }
+document.addEventListener('click', e => {
+  const b = e.target.closest && e.target.closest('#pagebtn');
+  if(b){ const m = $('#pagemenu'); drawPageMenu(); const open = m.classList.toggle('hide') === false; b.setAttribute('aria-expanded', String(open)); return; }
+  const it = e.target.closest && e.target.closest('#pagemenu [data-page]');
+  if(it){ const sel = $('#pagesel'); sel.value = it.dataset.page; closePageMenu(); pageGo(); drawPageMenu(); return; }
+  if(!(e.target.closest && e.target.closest('#pagemenu'))) closePageMenu();
+});
+document.addEventListener('keydown', e => { if(e.key === 'Escape') closePageMenu(); });
 function pageGo(){
   const sel = $('#pagesel');
   if(sel && sel.value === 'market'){ location.href = '/market'; return; }
@@ -913,17 +978,18 @@ function pageGo(){
 /* Market data lives on /market and is only for accounts Dennis has given it
    to. The server decides, from the sign-in token; this only asks once per
    sign-in so the picker knows whether to offer it. */
-let marketAccess = false, marketAsked = '', swapsAccess = false;
+let marketAccess = false, marketAsked = '', swapsAccess = false, otdAccess = false;
 function checkMarketAccess(){
   let t = ''; try{ t = localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){}
-  if(!t){ marketAccess = false; swapsAccess = false; marketAsked = ''; return; }
+  if(!t){ marketAccess = false; swapsAccess = false; otdAccess = false; marketAsked = ''; return; }
   if(marketAsked === t) return;
   marketAsked = t;
   fetch('/api/rax?market=me').then(r => r.json()).then(j => {
-    const was = marketAccess + '|' + swapsAccess;
+    const was = [marketAccess, swapsAccess, otdAccess].join('|');
     marketAccess = !!(j && j.access);
     swapsAccess = !!(j && j.swaps);
-    if(was !== marketAccess + '|' + swapsAccess) applyGameDataVisibility();
+    otdAccess = !!(j && j.otd);
+    if(was !== [marketAccess, swapsAccess, otdAccess].join('|')) applyGameDataVisibility();
   }).catch(() => { marketAsked = ''; });
 }
 
@@ -4138,11 +4204,10 @@ function alertItems(){
 
 function unreadCount(){
   const since = seenAt();
-  const fresh = WHATS_NEW.filter(e => whatsNewTs(e) > since).length;
-  if(!me) return fresh;
+  if(!me) return 0;
   const a = alertItems();
   return a.rivals.filter(x => x.ts > since).length
-       + a.reports.filter(x => x.ts > since).length + fresh;
+       + a.reports.filter(x => x.ts > since).length;
 }
 
 function updateBell(){
@@ -4199,67 +4264,15 @@ async function alertsPanel(){
       <span class="who">"${esc(r.reason)}" — ${when(r.ts)}</span>
     </div>`).join('') : '<p class="nohit">No reports against you.</p>';
 
-  const since2 = seenAt();
-  const news = WHATS_NEW.map(e => ({ ...e, ts: whatsNewTs(e) }))
-    .sort((x, y) => y.ts - x.ts);
-  const newsHtml = news.map(e => `
-    <div class="hit" style="display:block">
-      <span class="player">${esc(e.title)}</span>
-      ${e.ts > since2 ? '<span class="who" style="color:var(--accent)">new</span>' : ''}
-      <span class="who"> ${new Date(e.ts).toLocaleDateString([], { month:'short', day:'numeric' })}</span>
-      <br><span class="who">${esc(e.note)}</span>
-    </div>`).join('');
-
   const box = modal('Alerts', `
-    <h3 style="margin:0;font-size:14px;font-weight:600">What's new (${news.length})</h3>
-    <p class="note">Everything added to the board lately.</p>
-    <div>${newsHtml}</div>
-    <h3 style="margin:22px 0 0;font-size:14px;font-weight:600">Same players as you (${a.rivals.length})</h3>
+    <h3 style="margin:0;font-size:14px;font-weight:600">Same players as you (${a.rivals.length})</h3>
     <div>${rivals}</div>
     <h3 style="margin:18px 0 0;font-size:14px;font-weight:600">Reports (${a.reports.length})</h3>
     <p class="note">What was said, without who said it.</p>
     <div>${reps}</div>
-    ${isAdmin() ? `
-      <h3 style="margin:22px 0 0;font-size:14px;font-weight:600">Daily digest</h3>
-      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-top:6px">
-        <div><label for="dg-day">Day</label><input id="dg-day" class="field" type="date"></div>
-        <button class="btn-ghost" id="dg-go" style="min-height:44px">Show</button>
-      </div>
-      <div id="dg-out"><p class="nohit">Loading…</p></div>` : ''}`);
+`);
 
   markSeen(); updateBell();
-
-  if(!isAdmin()) return;
-  const dayInput = box.querySelector('#dg-day');
-  const yest = etDayKey(Date.now() - 86400000);
-  dayInput.value = yest;
-
-  const drawDigest = async (key) => {
-    const out = box.querySelector('#dg-out');
-    out.innerHTML = '<p class="nohit">Loading…</p>';
-    const d = await digestFor(key);
-    out.innerHTML = `
-      <div class="statrow" style="margin-top:10px">
-        <div class="stat"><b class="num">${d.counts.opens ?? 0}</b><span>people opened it</span></div>
-        <div class="stat"><b class="num">${d.users.length}</b><span>new users</span></div>
-        <div class="stat"><b class="num">${d.offers.length}</b><span>new listings</span></div>
-        <div class="stat"><b class="num">${d.counts.copies ?? 0}</b><span>messages copied</span></div>
-        <div class="stat"><b class="num">${d.reports.length}</b><span>reports</span></div>
-        <div class="stat"><b class="num">${d.feats.length}</b><span>feature requests</span></div>
-      </div>
-      ${d.reports.length ? `<h4 class="subhd">Reports that day</h4>${d.reports.map(r => `
-        <div class="hit" style="display:block"><span class="player">${esc(r.target)}</span>
-          <span class="who"> ${esc(r.status || '')}</span><br>
-          <span class="who">"${esc(r.reason || '')}" — from ${esc(r.by || 'unknown')}</span></div>`).join('')}` : ''}
-      ${d.feats.length ? `<h4 class="subhd">Feature requests that day</h4>${d.feats.map(f => `
-        <div class="hit" style="display:block"><span class="player">${esc(f.title)}</span>
-          <span class="who"> from ${esc(f.by_user)}</span>
-          ${f.detail ? `<br><span class="who">"${esc(f.detail)}"</span>` : ''}</div>`).join('')}` : ''}
-      <p class="note" style="margin-top:10px">New listings counts the ones still up — anything posted and taken
-      down that day is not in it. Feature requests counts the ones still open.</p>`;
-  };
-  box.querySelector('#dg-go').addEventListener('click', () => drawDigest(dayInput.value || yest));
-  drawDigest(yest);
 }
 
 $('#open-bell').addEventListener('click', alertsPanel);
@@ -4775,14 +4788,15 @@ async function cbbPanel(){
   let available = [];
 
   const only = packOnly();
-  if(only) st.mode = 'pack';
+  const tabsOk = dataTabs();
+  if(!tabsOk.includes(st.mode)) st.mode = tabsOk[0] || 'pack';
   const box = pageShell(only ? 'Pack data' : 'Game data', `
     <div class="seg seg-2up" role="group" aria-label="View">
-      <button data-cm="players" aria-pressed="true">By player</button>
+      <button data-cm="players" aria-pressed="${st.mode === 'players' ? 'true' : 'false'}">By player</button>
       <button data-cm="games" aria-pressed="false">Every game</button>
-      <button data-cm="pack" aria-pressed="${only ? 'true' : 'false'}">Pack data</button>
-      <button data-cm="golf" aria-pressed="false">Golf</button>
-      <button data-cm="shift" aria-pressed="false">Rax shift</button>
+      <button data-cm="pack" aria-pressed="${st.mode === 'pack' ? 'true' : 'false'}">Pack data</button>
+      <button data-cm="golf" aria-pressed="${st.mode === 'golf' ? 'true' : 'false'}">Golf</button>
+      <button data-cm="shift" aria-pressed="${st.mode === 'shift' ? 'true' : 'false'}">Rax shift</button>
       <button data-cm="hist" aria-pressed="false">Historical</button>
     </div>
     <div id="cb-seasons"><span class="note">Loading seasons&hellip;</span></div>
@@ -7050,8 +7064,7 @@ async function cbbPanel(){
     $b('#cb-seasons').classList.toggle('hide', pk || gf || sh || hs);
     $b('#cb-scope').classList.toggle('hide', pk || gf || sh || hs);
     if(table) drawSeasons();
-    if(only) box.querySelectorAll('[data-cm]').forEach(x =>
-      x.classList.toggle('hide', x.dataset.cm !== 'pack'));
+    box.querySelectorAll('[data-cm]').forEach(x => x.classList.toggle('hide', !tabsOk.includes(x.dataset.cm)));
     if(gf) gfInit();
     else if(pk) pkInit();
     else if(sh) shInit();
@@ -7066,7 +7079,8 @@ async function cbbPanel(){
       if(available.length) st.pairs = [`${available[0].sport}|${available[0].season}`];
       drawSeasons(); drawCols(); applyFilterVisibility();
       await loadTeams();
-      if(only){ applyMode(); return; }
+      if(!['players', 'games'].includes(st.mode)){ applyMode(); return; }
+      applyMode();
       load();
     } catch(e){ $b('#cb-seasons').innerHTML = '<span class="note">Could not load seasons.</span>'; }
   })();

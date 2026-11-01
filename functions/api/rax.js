@@ -5232,6 +5232,112 @@ async function handleGet({ request, env, waitUntil }) {
     return json({ reset: true });
   }
 
+  /* Admin: pull one player's live listings now, on the bot account (the
+     Swaps account, which is otherwise used for a few calls a day). Real's
+     marketplace filter for one player isn't documented, so the likely
+     parameter names are tried in turn and the first one whose rows all
+     belong to that player is kept. Capped at ten pulls per ten minutes. */
+  if (url.searchParams.get('market') === 'pullplayer') {
+    const db = env.RATEBOARD_DB;
+    const bot = env.RS_SWAP_TOKEN || (() => { const k = Object.keys(env).find(k => /token/i.test(k)
+      && !['RS_AUTH_TOKEN', 'RS_MARKET_TOKEN'].includes(k) && typeof env[k] === 'string' && env[k].length > 20); return k ? env[k] : null; })();
+    if (!bot) return json({ error: 'No bot token found.' }, 503);
+    const pid = Number(url.searchParams.get('playerId'));
+    if (!Number.isFinite(pid) || !MARKET_LIST[sport] || !MARKET_LIST[sport].includes(Number(season)))
+      return json({ error: 'pick a player from a market season' }, 400);
+    if (!(await allow(url.origin, 'market-pullplayer', 10, 600))) return json({ error: 'Ten player pulls per ten minutes.' }, 429);
+    const base = before => `https://web.realapp.com/cardmarketplacelistings?beforeEndsAt=${encodeURIComponent(before)}`
+      + `&cohort=all&listingType=card&offset=0&limit=100&prestige=all&rarity=all&season=${Number(season)}&sport=${sport}`;
+    const owner = x => numOr(x.playerId ?? (x.card || {}).playerId) ?? numOr(x.entityId ?? (x.card || {}).entityId);
+    const startAt = new Date(Date.now() - 60000).toISOString();
+    let param = null; try { param = await env.RATEBOARD_KV.get('market_player_param_v1'); } catch (e) {}
+    const tries = [param, 'playerId', 'entityId', 'playerIds', 'entityIds'].filter((v, i, a) => v && a.indexOf(v) === i);
+    let first = null, tried = [];
+    for (const p of tries) {
+      let d;
+      try { d = await rsGet(base(startAt) + `&${p}=${pid}`, bot); } catch (e) { tried.push(`${p}: ${String(e.message).slice(0, 60)}`); continue; }
+      const rows = rowsOf(d);
+      if (!rows.length) { tried.push(`${p}: no rows`); continue; }
+      if (rows.every(x => owner(x) === pid)) { param = p; first = rows; break; }
+      tried.push(`${p}: ignored by Real`);
+    }
+    if (!first) return json({ error: 'Real gave no listings for that player with any filter tried.', tried });
+    try { await env.RATEBOARD_KV.put('market_player_param_v1', param); } catch (e) {}
+    const all = new Map(first.map(r => [String(r.id), r]));
+    let cursor = first[first.length - 1].endsAt, pages = 1;
+    while (pages < 40 && cursor) {
+      await sleep(250);
+      let d; try { d = await rsGet(base(cursor) + `&${param}=${pid}`, bot); } catch (e) { break; }
+      pages++;
+      const rows = rowsOf(d).filter(x => owner(x) === pid);
+      const fresh = rows.filter(r => !all.has(String(r.id)));
+      if (!rows.length) break;
+      for (const r of rows) all.set(String(r.id), r);
+      const last = rows[rows.length - 1].endsAt;
+      cursor = fresh.length ? last : new Date(Date.parse(last) + 1).toISOString();
+      if (!fresh.length && rows.length < 10) break;
+    }
+    // Swap this player's copy for the fresh one: listings that sold or were
+    // pulled since the last season pull drop out.
+    await db.prepare(MARKET_DDL).run();
+    const ins = db.prepare(
+      `INSERT INTO market_v2 (id, sport, season, playerId, entityType, entityId, label, rarity, prestige,
+         value, mint, listingType, status, minBid, buyNow, curBid, bids, seller, cardId, createdAt, endsAt, seenAt, player)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(id) DO UPDATE SET status=excluded.status, minBid=excluded.minBid,
+         buyNow=excluded.buyNow, curBid=excluded.curBid, bids=excluded.bids,
+         endsAt=excluded.endsAt, seenAt=excluded.seenAt, player=COALESCE(excluded.player, market_v2.player)`);
+    const now = Date.now(), nowIso = new Date().toISOString();
+    const stmts = [db.prepare(`DELETE FROM market_v2 WHERE sport=? AND season=? AND COALESCE(playerId, entityId)=? AND endsAt > ?`)
+      .bind(sport, Number(season), pid, nowIso)];
+    let name = null;
+    for (const r of all.values()) {
+      const c = r.card || {}, pp = c.primaryPlayer || {};
+      const who = String((pp.firstName && pp.lastName ? `${pp.firstName} ${pp.lastName}` : '') || pp.fullName || pp.displayName || pp.name || '').slice(0, 80) || null;
+      name = name || who || c.entityLabel || null;
+      stmts.push(ins.bind(String(r.id), sport, Number(season), numOr(r.playerId ?? c.playerId),
+        r.entityType || c.entityType || null, numOr(r.entityId ?? c.entityId),
+        String(c.entityLabel || c.viewLabel || '').slice(0, 80) || null,
+        numOr(r.rarity ?? c.rarity), numOr(r.prestige ?? c.prestige), numOr(r.value ?? c.value),
+        numOr(r.mintNumber ?? c.mintNumber), r.listingType || null, r.status || null,
+        numOr(r.minBidPrice), numOr(r.buyNowPrice), numOr(r.currentBidAmount), numOr(r.numBids),
+        r.userId != null ? String(r.userId) : null, r.cardId != null ? String(r.cardId) : null,
+        r.createdAt || null, r.endsAt || null, now, who));
+    }
+    for (let k = 0; k < stmts.length; k += 50) await db.batch(stmts.slice(k, k + 50));
+    try { await env.RATEBOARD_KV.delete('msnap_v1_' + `${sport}:${Number(season)}`); } catch (e) {}
+    return json({ ok: true, player: name, listings: all.size, pages, filter: param, tried });
+  }
+
+  /* Admin: why UFC comes up short. Asks Real, on the bot account, how many
+     UFC listings it holds under each season (and none), with a sample row,
+     and compares that with what the pull has stored. */
+  if (url.searchParams.get('market') === 'ufcdiag') {
+    const bot = env.RS_SWAP_TOKEN || (() => { const k = Object.keys(env).find(k => /token/i.test(k)
+      && !['RS_AUTH_TOKEN', 'RS_MARKET_TOKEN'].includes(k) && typeof env[k] === 'string' && env[k].length > 20); return k ? env[k] : null; })();
+    if (!bot) return json({ error: 'No bot token found.' }, 503);
+    const out = { real: {}, stored: [] };
+    const at = new Date().toISOString();
+    for (const se of ['none', 2023, 2024, 2025, 2026]) {
+      const u = `https://web.realapp.com/cardmarketplacelistings?beforeEndsAt=${encodeURIComponent(at)}&cohort=all&listingType=card`
+        + `&offset=0&limit=100&prestige=all&rarity=all&sport=ufc` + (se === 'none' ? '' : `&season=${se}`);
+      try {
+        const d = await rsGet(u, bot);
+        const rows = rowsOf(d);
+        out.real[se] = { listingCount: d && d.listingCount != null ? d.listingCount : null, pageRows: rows.length,
+          seasonsOnPage: [...new Set(rows.map(r => (r.card || {}).season ?? r.season))],
+          keys: rows[0] ? Object.keys(rows[0]) : [], cardKeys: rows[0] && rows[0].card ? Object.keys(rows[0].card) : [],
+          sample: rows[0] ? JSON.stringify(rows[0]).slice(0, 1500) : null };
+      } catch (e) { out.real[se] = { error: String(e.message).slice(0, 160) }; }
+      await sleep(400);
+    }
+    try {
+      out.stored = (await env.RATEBOARD_DB.prepare(`SELECT season, entityType, COUNT(*) AS n, COUNT(DISTINCT COALESCE(playerId, entityId)) AS fighters,
+          SUM(CASE WHEN endsAt > ? THEN 1 ELSE 0 END) AS live FROM market_v2 WHERE sport='ufc' GROUP BY season, entityType`).bind(at).all()).results || [];
+    } catch (e) { out.storedErr = String(e.message).slice(0, 160); }
+    return json(out);
+  }
+
   if (url.searchParams.get('market') === 'probe') {
     const p = new URLSearchParams();
     p.set('beforeEndsAt', url.searchParams.get('before') || new Date().toISOString());
@@ -7021,9 +7127,9 @@ export async function onRequestGet(ctx) {
   if (MARKET_MEMBER.includes(mk)) {
     const a = await marketWho(env, request);
     if (mk === 'me') {
-      let swaps = false;
-      try { swaps = a.who ? (await swapAccess(env, request)).ok : false; } catch (e) {}
-      return json({ signedIn: !!a.who, access: a.ok, admin: a.admin, swaps });
+      let swaps = false, otd = false;
+      try { if (a.who) { const sa = await swapAccess(env, request); swaps = sa.swaps; otd = sa.otd; } } catch (e) {}
+      return json({ signedIn: !!a.who, access: a.ok, admin: a.admin, swaps, otd });
     }
     if (!a.ok) return json({ error: a.who ? 'Your account does not have market data.' : 'Sign in on the board first.' }, 403);
     if (mk === 'fav' || mk === 'favs') return marketMember(env, url, a.who, ctx.waitUntil);

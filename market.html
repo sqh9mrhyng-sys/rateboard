@@ -462,9 +462,12 @@ function planHtml(){
     + '</tbody></table></div>';
 }
 
+// Admin: pull this one player's listings fresh, on the bot account.
+const pullBar = () => me && me.admin ? `<div class="goal"><button type="button" data-pull="1">Pull this player now</button>
+  <span class="note" id="pullmsg">Fresh listings from Real for just this player</span></div>` : '';
 function drawDetail(){
   const el = $('#det'); if(!el) return;
-  if(!detRows.length){ el.innerHTML = '<span class="note">No listings up for this player right now.</span>'; return; }
+  if(!detRows.length){ el.innerHTML = pullBar() + '<span class="note">No listings up for this player right now.</span>'; return; }
   const rows = detRows.slice().sort((a, b) => {
     const x = a[detSort], y = b[detSort];
     if(x == null && y == null) return 0;
@@ -472,7 +475,7 @@ function drawDetail(){
     if(y == null) return -1;
     return (x < y ? -1 : x > y ? 1 : 0) * detDir;
   });
-  el.innerHTML = `<div class="goal"><label for="goal">Rating you want</label>
+  el.innerHTML = pullBar() + `<div class="goal"><label for="goal">Rating you want</label>
       <input id="goal" type="number" inputmode="decimal" min="0" step="0.1" placeholder="e.g. 25" value="${esc(goal)}">
       <span class="note">Cheapest buy-nows that add up to it</span></div><div id="plan">${planHtml()}</div>`
     + '<table><thead><tr>'
@@ -489,6 +492,18 @@ $('#rows').addEventListener('input', e => {
   if(e.target.id !== 'goal') return;
   goal = e.target.value.trim();
   const p = $('#plan'); if(p) p.innerHTML = planHtml();
+});
+
+$('#rows').addEventListener('click', async e => {
+  const b = e.target.closest('[data-pull]'); if(!b || !detKey) return;
+  e.stopPropagation();
+  const [sp, se, pid] = detKey.split(':');
+  b.disabled = true; const m = $('#pullmsg'); if(m) m.textContent = 'Pulling…';
+  let j = null;
+  try{ j = await (await fetch(`/api/rax?market=pullplayer&sport=${sp}&season=${se}&playerId=${pid}`)).json(); }catch(e){ j = { error: 'Could not reach the board.' }; }
+  if(j && j.error){ b.disabled = false; const m2 = $('#pullmsg'); if(m2) m2.textContent = j.error + (j.tried ? ' (' + j.tried.join('; ') + ')' : ''); return; }
+  await loadDetail(detKey);
+  const m3 = $('#pullmsg'); if(m3) m3.textContent = `Pulled ${j.listings} listing${j.listings === 1 ? '' : 's'} just now.`;
 });
 
 // Header clicks inside an opened player sort that player's listings and do
