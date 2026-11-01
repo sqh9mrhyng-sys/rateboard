@@ -82,6 +82,10 @@
     <h2>Matches (admin)</h2>
     <div class="bar"><button id="run">Run matching now</button><button id="reload">Refresh</button><span class="note" id="runmsg"></span></div>
     <div id="matches" class="note">Loading…</div>
+    <h2 style="margin-top:16px">Test a DM</h2>
+    <p class="note">Sends from raxacademy.app to any Real username, opening a chat if there isn't one yet.</p>
+    <div class="bar"><input id="dmuser" placeholder="Real username" autocomplete="off" style="flex:0 1 180px"><input id="dmutext" value="Swap bot test"><button id="dmopen">Send DM</button></div>
+    <pre id="dmout" class="note"></pre>
     <details style="margin-top:12px"><summary class="note">Raw check of a Real endpoint (swap account)</summary>
       <div class="bar"><input id="ppath" value="messages/channels"><button id="probe">Fetch</button><button id="envb">Token names</button></div>
       <div class="bar"><input id="dmch" placeholder="Chat number" inputmode="numeric" style="flex:0 1 140px"><input id="dmtext" value="Swap bot test"><button id="dmsend">Send test message</button></div>
@@ -346,10 +350,24 @@ async function loadMatches(){
   const j = await api('/api/swaps?op=matches');
   if(j.error){ $('#matches').textContent = j.error; return; }
   const m = j.matches || [];
-  $('#matches').innerHTML = m.length ? '<table><tr><th>Who</th><th>Gets</th><th>Hour</th><th>Status</th></tr>' + m.map(x =>
+  $('#matches').innerHTML = m.length ? '<table><tr><th>Who</th><th>Gets</th><th>Hour</th><th>Status</th><th></th></tr>' + m.map(x =>
     `<tr><td>${esc(x.aUser || x.a)} ↔ ${esc(x.bUser || x.b)}</td><td>${esc(x.aGetsName || x.aGets)} / ${esc(x.bGetsName || x.bGets)}</td>
-     <td>${hLbl(toLocal(x.slot))}</td><td>${esc(x.status)}</td></tr>`).join('') + '</table>' : 'No matches yet.';
+     <td>${hLbl(toLocal(x.slot))}</td><td>${esc(x.status)}${x.note ? `<div class="note">${esc(x.note)}</div>` : ''}</td>
+     <td>${x.status === 'pending' || x.status === 'error' ? `<button data-send="${x.id}">Send now</button>` : ''}</td></tr>`).join('') + '</table>' : 'No matches yet.';
 }
+$('#matches').addEventListener('click', async e => {
+  const b = e.target.closest('[data-send]'); if(!b) return;
+  b.disabled = true; b.textContent = 'Sending…';
+  const j = await api('/api/swaps?op=sendnow&id=' + b.dataset.send, { method: 'POST' });
+  $('#runmsg').textContent = j.error || j.note || 'Sent.';
+  loadMatches();
+});
+$('#dmopen').addEventListener('click', async () => {
+  const u = $('#dmuser').value.trim(); if(!u) return;
+  $('#dmout').textContent = 'Sending…';
+  const j = await api(`/api/swaps?op=dmopen&user=${encodeURIComponent(u)}&text=${encodeURIComponent($('#dmutext').value)}`);
+  $('#dmout').textContent = j.error ? j.error : `Sent to @${j.user} (chat ${j.channelId}).`;
+});
 $('#run').addEventListener('click', async () => { const j = await api('/api/swaps?op=run'); $('#runmsg').textContent = j.error || `${(j.made || []).length} new matches.`; loadMatches(); });
 $('#reload').addEventListener('click', loadMatches);
 $('#probe').addEventListener('click', async () => { const j = await api('/api/swaps?op=probe&path=' + encodeURIComponent($('#ppath').value.trim())); $('#praw').textContent = JSON.stringify(j, null, 2); });

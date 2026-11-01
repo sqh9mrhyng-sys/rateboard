@@ -263,7 +263,7 @@ async function runMatching(db) {
   const users = ((await db.prepare('SELECT * FROM swap_users WHERE active=1 AND passes IS NOT NULL').all()).results || [])
     .map(u => ({ ...u, wants: parse(u.wants, []), keep: new Set(parse(u.keep, [])), slots: parse(u.slots, []),
                  passes: parse(u.passes, []) }));
-  const open = ((await db.prepare(`SELECT a, b, aGets, bGets FROM swap_matches WHERE status IN ('pending','sent')`).all()).results || []);
+  const open = ((await db.prepare(`SELECT a, b, aGets, bGets FROM swap_matches WHERE status IN ('pending','sending') OR (status='sent' AND sentAt > ?)`).bind(Date.now() - 86400000).all()).results || []);
   const busy = new Set(), promised = new Set();
   for (const m of open) {
     busy.add(m.a); busy.add(m.b);
@@ -295,6 +295,119 @@ async function runMatching(db) {
       .bind(m.a, m.b, m.aGets, m.bGets, m.slot, now).run();
   }
   return made;
+}
+
+/* ---------- Bot DMs ----------
+   Sent from the swap account (raxacademy.app). Real opens a chat with
+   POST messages/channels { users: [{ id, userName }] } and answers
+   { channelId }; a message is POST messages/channels/<id>/messages with
+   { text, parentMessageId: null }. A member's Real id is the same short code
+   Swaps already keeps as hashId. Each member's chat is remembered, so the bot
+   never opens a second one with the same person. */
+const DM_ON = true;
+const DM_DAILY_MAX = 60;          // messages a day, all members together
+const DM_DDL = `CREATE TABLE IF NOT EXISTS swap_dm (hashId TEXT PRIMARY KEY, userName TEXT, channelId INTEGER, openedAt INTEGER)`;
+
+async function dmChannel(db, auth, hashId, userName) {
+  await db.prepare(DM_DDL).run();
+  const had = await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=?').bind(hashId).first();
+  if (had && had.channelId) return had.channelId;
+  const res = await fetch('https://web.realapp.com/messages/channels', {
+    method: 'POST', headers: { ...rsHeaders(auth), 'content-type': 'application/json' },
+    body: JSON.stringify({ users: [{ id: hashId, userName: userName || undefined }] }) });
+  const text = await res.text();
+  let d = null; try { d = JSON.parse(text); } catch (e) {}
+  const ch = d && (d.channelId || (d.channel && d.channel.id));
+  if (!res.ok || !ch) throw new Error(`open chat ${res.status}: ${text.slice(0, 160)}`);
+  await db.prepare('INSERT OR REPLACE INTO swap_dm (hashId, userName, channelId, openedAt) VALUES (?, ?, ?, ?)')
+    .bind(hashId, userName || null, Number(ch), Date.now()).run();
+  return Number(ch);
+}
+
+async function dmSend(auth, channelId, text) {
+  const res = await fetch(`https://web.realapp.com/messages/channels/${channelId}/messages`, {
+    method: 'POST', headers: { ...rsHeaders(auth), 'content-type': 'application/json' },
+    body: JSON.stringify({ text, parentMessageId: null }) });
+  if (!res.ok) throw new Error(`send ${res.status}: ${(await res.text()).slice(0, 160)}`);
+}
+
+// Counts against the daily cap; false once it's reached.
+async function dmBudget(env, n) {
+  const k = 'swapdm_count_' + new Date().toISOString().slice(0, 10);
+  let c = 0; try { c = Number(await env.RATEBOARD_KV.get(k)) || 0; } catch (e) {}
+  if (c + n > DM_DAILY_MAX) return false;
+  try { await env.RATEBOARD_KV.put(k, String(c + n), { expirationTtl: 3 * 86400 }); } catch (e) {}
+  return true;
+}
+
+const SPORT_NAME = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf' };
+function passLabel(owner, key) {
+  const p = (owner.passes || []).find(x => x.key === key);
+  const [sp, se] = String(key).split(':');
+  const name = p && p.name ? p.name : 'a pass';
+  const tag = p && p.levelLabel ? ` (${p.levelLabel})` : '';
+  return `${name}${tag} · ${SPORT_NAME[sp] || sp} ${se}`;
+}
+function slotEt(h) {
+  const d = new Date(Date.UTC(2026, 0, 1, Number(h) || 0));
+  try { return new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric' }).format(d) + ' ET'; }
+  catch (e) { return `${h}:00 UTC`; }
+}
+function matchText(me, other, gets, gives, slot) {
+  return `🔁 Rate Board swap match\n\n`
+    + `You give: ${passLabel(me, gives)}\n`
+    + `You get: ${passLabel(other, gets)}\n`
+    + `Your partner: @${other.rsUser}\n`
+    + `Your shared time: ${slotEt(slot)}\n\n`
+    + `Message @${other.rsUser} to set it up. Manage your swaps at raxacademy.app/swaps`;
+}
+
+// Sends one match to both members. Returns a note for the record.
+async function sendMatch(env, db, auth, m) {
+  const load = async k => {
+    const u = await db.prepare('SELECT key, rsUser, hashId, passes FROM swap_users WHERE key=?').bind(k).first();
+    return u ? { ...u, passes: parse(u.passes, []) } : null;
+  };
+  const A = await load(m.a), B = await load(m.b);
+  if (!A || !B || !A.hashId || !B.hashId) throw new Error('member missing or never scanned');
+  if (!(await dmBudget(env, 2))) throw new Error('daily DM cap reached');
+  const chA = await dmChannel(db, auth, A.hashId, A.rsUser);
+  await dmSend(auth, chA, matchText(A, B, m.aGets, m.bGets, m.slot));
+  await sleep(1200);
+  const chB = await dmChannel(db, auth, B.hashId, B.rsUser);
+  await dmSend(auth, chB, matchText(B, A, m.bGets, m.aGets, m.slot));
+  return `sent to @${A.rsUser} (${chA}) and @${B.rsUser} (${chB})`;
+}
+
+/* Called once a minute from the collector tick. Matching runs once an hour;
+   pending matches go out in the hour of their shared slot, a few a minute. */
+export async function swapTick(env) {
+  if (!DM_ON) return null;
+  const db = env.RATEBOARD_DB, auth = swapToken(env);
+  if (!db || !auth) return null;
+  await ready(db);
+  const hourKey = 'swap_match_hour_v1', hour = new Date().toISOString().slice(0, 13);
+  let last = null; try { last = await env.RATEBOARD_KV.get(hourKey); } catch (e) {}
+  if (last !== hour) {
+    try { await env.RATEBOARD_KV.put(hourKey, hour); } catch (e) {}
+    try { await runMatching(db); } catch (e) {}
+  }
+  const h = new Date().getUTCHours();
+  const due = (await db.prepare(`SELECT * FROM swap_matches WHERE status='pending' AND slot=? ORDER BY id LIMIT 3`).bind(h).all()).results || [];
+  const out = [];
+  for (const m of due) {
+    // Claim it first, so two ticks running at once can't both send it.
+    const c = await db.prepare(`UPDATE swap_matches SET status='sending' WHERE id=? AND status='pending'`).bind(m.id).run();
+    if (!(c && c.meta && c.meta.changes)) continue;
+    let status = 'sent', note = '';
+    try { note = await sendMatch(env, db, auth, m); }
+    catch (e) { status = /cap reached/.test(String(e.message)) ? 'pending' : 'error'; note = String(e.message || e).slice(0, 300); }
+    await db.prepare('UPDATE swap_matches SET status=?, sentAt=?, note=? WHERE id=?')
+      .bind(status, status === 'sent' ? Date.now() : null, note, m.id).run();
+    out.push({ id: m.id, status, note });
+    if (status === 'pending') break;
+  }
+  return out;
 }
 
 export async function onRequest({ request, env, waitUntil }) {
@@ -469,6 +582,39 @@ export async function onRequest({ request, env, waitUntil }) {
         body: JSON.stringify({ text, parentMessageId: null }) });
       return json({ status: res.status, body: (await res.text()).slice(0, 2000) });
     } catch (e) { return json({ error: String(e.message || e) }, 502); }
+  }
+
+  /* Full test of the DM flow on one Real username: opens (or reuses) the
+     bot's chat with them and sends a message. Capped like the test send. */
+  if (op === 'dmopen') {
+    if (!auth) return json({ error: 'No swap token found.' }, 503);
+    const user = String(url.searchParams.get('user') || '').trim().replace(/^@/, '');
+    const text = String(url.searchParams.get('text') || 'Swap bot test').slice(0, 300);
+    if (!/^[\w.\-]{2,40}$/.test(user)) return json({ error: 'enter a Real username' }, 400);
+    if (!(await allow(url.origin, 'swapdm-test', 5, 600))) return json({ error: 'Five test messages per ten minutes.' }, 429);
+    try {
+      const hashId = await resolveHashId(user, auth);
+      if (!hashId) return json({ error: `No Real user called ${user}.` }, 404);
+      const ch = await dmChannel(db, auth, hashId, user);
+      await dmSend(auth, ch, text);
+      return json({ ok: true, user, hashId, channelId: ch });
+    } catch (e) { return json({ error: String(e.message || e) }, 502); }
+  }
+
+  // Sends one match right now, whatever its slot - for testing.
+  if (op === 'sendnow' && request.method === 'POST') {
+    if (!auth) return json({ error: 'No swap token found.' }, 503);
+    const id = Number(url.searchParams.get('id'));
+    const m = await db.prepare('SELECT * FROM swap_matches WHERE id=?').bind(id).first();
+    if (!m) return json({ error: 'no such match' }, 404);
+    try {
+      const note = await sendMatch(env, db, auth, m);
+      await db.prepare(`UPDATE swap_matches SET status='sent', sentAt=?, note=? WHERE id=?`).bind(Date.now(), note, id).run();
+      return json({ ok: true, note });
+    } catch (e) {
+      await db.prepare(`UPDATE swap_matches SET note=? WHERE id=?`).bind(String(e.message || e).slice(0, 300), id).run();
+      return json({ error: String(e.message || e) }, 502);
+    }
   }
 
   return json({ error: 'unknown op' }, 400);
