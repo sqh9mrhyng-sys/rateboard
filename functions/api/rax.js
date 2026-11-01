@@ -5280,25 +5280,42 @@ async function handleGet({ request, env, waitUntil }) {
     const owner = x => sport === 'ufc' ? numOr(x.teamId ?? (x.card || {}).teamId)
       : (numOr(x.playerId ?? (x.card || {}).playerId) ?? numOr(x.entityId ?? (x.card || {}).entityId));
     const startAt = new Date(Date.now() - 60000).toISOString();
-    const PK = 'market_player_param_v1_' + (sport === 'ufc' ? 'ufc' : 'p');
+    const PK = 'market_player_param_v2_' + (sport === 'ufc' ? 'ufc' : 'p');
     let param = null; try { param = await env.RATEBOARD_KV.get(PK); } catch (e) {}
-    const tries = [param, ...(sport === 'ufc' ? ['teamId', 'teamIds'] : []), 'playerId', 'entityId', 'playerIds', 'entityIds'].filter((v, i, a) => v && a.indexOf(v) === i);
+    // The player's name, for the filters that search by name.
+    let pname = String(url.searchParams.get('player') || '').trim();
+    if (!pname) {
+      try { await marketTeamReady(db);
+        const r = await db.prepare(`SELECT MAX(COALESCE(player, label)) AS n FROM market_v2 WHERE sport=? AND season=? AND ${MKEY}=?`)
+          .bind(sport, Number(season), pid).first();
+        pname = String((r && r.n) || '').trim(); } catch (e) {}
+    }
+    const ID = sport === 'ufc' ? ['teamId={id}', 'entityType=team&entityId={id}', 'teamIds={id}'] : [];
+    const tries = [param, ...ID, 'entityType=player&entityId={id}', 'playerId={id}', 'playerIds={id}',
+      ...(pname ? ['query={name}', 'search={name}', 'q={name}', 'searchQuery={name}', 'playerName={name}'] : [])]
+      .filter((v, i, a) => v && a.indexOf(v) === i);
+    const fill = t => t.replace('{id}', pid).replace('{name}', encodeURIComponent(pname));
     let first = null, tried = [];
     for (const p of tries) {
       let d;
-      try { d = await rsGet(base(startAt) + `&${p}=${pid}`, bot); } catch (e) { tried.push(`${p}: ${String(e.message).slice(0, 60)}`); continue; }
+      try { d = await rsGet(base(startAt) + '&' + fill(p), bot); } catch (e) { tried.push(`${p.split('=')[0]}: ${String(e.message).slice(0, 60)}`); continue; }
       const rows = rowsOf(d);
-      if (!rows.length) { tried.push(`${p}: no rows`); continue; }
-      if (rows.every(x => owner(x) === pid)) { param = p; first = rows; break; }
-      tried.push(`${p}: ignored by Real`);
+      const mine = rows.filter(x => owner(x) === pid);
+      if (!rows.length) { tried.push(`${p.split('=')[0]}: no rows`); continue; }
+      // An id filter has to give only this player; a name search may bring a
+      // namesake or two, so most of the page being this player is enough.
+      const ok = /\{name\}/.test(p) ? mine.length && mine.length >= rows.length / 2 : mine.length === rows.length;
+      if (ok) { param = p; first = mine; break; }
+      tried.push(`${p.split('&')[0].split('=')[0]}: ignored by Real`);
+      await sleep(250);
     }
-    if (!first) return json({ error: 'Real gave no listings for that player with any filter tried.', tried });
+    if (!first) return json({ error: 'Real gave no listings for that player with any filter tried.', tried, name: pname || null });
     try { await env.RATEBOARD_KV.put(PK, param); } catch (e) {}
     const all = new Map(first.map(r => [String(r.id), r]));
     let cursor = first[first.length - 1].endsAt, pages = 1;
     while (pages < 40 && cursor) {
       await sleep(250);
-      let d; try { d = await rsGet(base(cursor) + `&${param}=${pid}`, bot); } catch (e) { break; }
+      let d; try { d = await rsGet(base(cursor) + '&' + fill(param), bot); } catch (e) { break; }
       pages++;
       const rows = rowsOf(d).filter(x => owner(x) === pid);
       const fresh = rows.filter(r => !all.has(String(r.id)));

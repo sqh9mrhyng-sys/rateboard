@@ -500,7 +500,8 @@ $('#rows').addEventListener('click', async e => {
   const [sp, se, pid] = detKey.split(':');
   b.disabled = true; const m = $('#pullmsg'); if(m) m.textContent = 'Pulling…';
   let j = null;
-  try{ j = await (await fetch(`/api/rax?market=pullplayer&sport=${sp}&season=${se}&playerId=${pid}`)).json(); }catch(e){ j = { error: 'Could not reach the board.' }; }
+  const row = ((data && data.rows) || []).find(r => `${r.sport}:${r.season}:${r.playerId}` === detKey);
+  try{ j = await (await fetch(`/api/rax?market=pullplayer&sport=${sp}&season=${se}&playerId=${pid}&player=${encodeURIComponent((row && row.player) || '')}`)).json(); }catch(e){ j = { error: 'Could not reach the board.' }; }
   if(j && j.error){ b.disabled = false; const m2 = $('#pullmsg'); if(m2) m2.textContent = j.error + (j.tried ? ' (' + j.tried.join('; ') + ')' : ''); return; }
   await loadDetail(detKey);
   const m3 = $('#pullmsg'); if(m3) m3.textContent = `Pulled ${j.listings} listing${j.listings === 1 ? '' : 's'} just now.`;
