@@ -504,7 +504,7 @@ $('#rows').addEventListener('click', async e => {
   try{ j = await (await fetch(`/api/rax?market=pullplayer&sport=${sp}&season=${se}&playerId=${pid}&player=${encodeURIComponent((row && row.player) || '')}`)).json(); }catch(e){ j = { error: 'Could not reach the board.' }; }
   if(j && j.error){ b.disabled = false; const m2 = $('#pullmsg'); if(m2) m2.textContent = j.error + (j.tried ? ' (' + j.tried.join('; ') + ')' : ''); return; }
   await loadDetail(detKey);
-  const m3 = $('#pullmsg'); if(m3) m3.textContent = `Pulled ${j.listings} listing${j.listings === 1 ? '' : 's'} just now.`;
+  const m3 = $('#pullmsg'); if(m3) m3.textContent = `${j.listings} listing${j.listings === 1 ? '' : 's'} up right now, pulled just now${j.ended ? ` (${j.ended} ended or sold left out)` : ''}.`;
 });
 
 // Header clicks inside an opened player sort that player's listings and do

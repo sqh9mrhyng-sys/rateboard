@@ -5339,6 +5339,10 @@ async function handleGet({ request, env, waitUntil }) {
          endsAt=excluded.endsAt, seenAt=excluded.seenAt, player=COALESCE(excluded.player, market_v2.player),
          teamId=COALESCE(excluded.teamId, market_v2.teamId)`);
     const now = Date.now(), nowIso = new Date().toISOString();
+    // Only listings still up: Real's filtered list also carries ones that
+    // have ended or sold, which the page (rightly) doesn't show.
+    const seen = all.size;
+    for (const [k, r] of all) if (!(r.endsAt && r.endsAt > nowIso) || (r.status && r.status !== 'open')) all.delete(k);
     const stmts = [db.prepare(`DELETE FROM market_v2 WHERE sport=? AND season=? AND ${MKEY}=? AND endsAt > ?`)
       .bind(sport, Number(season), pid, nowIso)];
     let name = null;
@@ -5358,8 +5362,8 @@ async function handleGet({ request, env, waitUntil }) {
         r.createdAt || null, r.endsAt || null, now, who, numOr(r.teamId ?? c.teamId)));
     }
     for (let k = 0; k < stmts.length; k += 50) await db.batch(stmts.slice(k, k + 50));
-    try { await env.RATEBOARD_KV.delete('msnap_v1_' + `${sport}:${Number(season)}`); } catch (e) {}
-    return json({ ok: true, player: name, listings: all.size, pages, filter: param, tried });
+    try { await env.RATEBOARD_KV.delete((sport === 'ufc' ? 'msnap_v2_' : 'msnap_v1_') + `${sport}:${Number(season)}`); } catch (e) {}
+    return json({ ok: true, player: name, listings: all.size, ended: seen - all.size, pages, filter: param, tried });
   }
 
   /* Admin: why UFC comes up short. Asks Real, on the bot account, how many
@@ -7032,7 +7036,7 @@ async function buildMarketView(env, sport, season) {
                     }).sort((a, b) => b.n - a.n) };
 }
 async function marketView(env, waitUntil, sport, season) {
-  const db = env.RATEBOARD_DB, job = `${sport}:${Number(season)}`, KEY = 'msnap_v1_' + job, LOCK = 'msnap_lock_' + job;
+  const db = env.RATEBOARD_DB, job = `${sport}:${Number(season)}`, KEY = (sport === 'ufc' ? 'msnap_v2_' : 'msnap_v1_') + job, LOCK = 'msnap_lock_' + job;
   let c = null;
   try { c = JSON.parse((await env.RATEBOARD_KV.get(KEY)) || 'null'); } catch (e) {}
   let doneAt = 0;
