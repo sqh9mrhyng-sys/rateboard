@@ -5391,6 +5391,11 @@ async function handleGet({ request, env, waitUntil }) {
     try {
       out.stored = (await env.RATEBOARD_DB.prepare(`SELECT season, entityType, COUNT(*) AS n, COUNT(DISTINCT teamId) AS fighters,
           SUM(CASE WHEN endsAt > ? THEN 1 ELSE 0 END) AS live FROM market_v2 WHERE sport='ufc' GROUP BY season, entityType`).bind(at).all()).results || [];
+      out.withFighter = (await env.RATEBOARD_DB.prepare(`SELECT COUNT(*) AS n FROM market_v2 WHERE sport='ufc' AND teamId IS NOT NULL AND endsAt > ?`).bind(at).first() || {}).n;
+      out.topFighters = (await env.RATEBOARD_DB.prepare(`SELECT teamId, MAX(player) AS player, COUNT(*) AS n FROM market_v2
+          WHERE sport='ufc' AND endsAt > ? GROUP BY teamId ORDER BY n DESC LIMIT 8`).bind(at).all()).results || [];
+      let ms = null; try { ms = JSON.parse((await env.RATEBOARD_KV.get(MARKET_KEY)) || 'null'); } catch (e) {}
+      out.pull = ms ? { ufcTeam1: !!ms.ufcTeam1, cur: ms.cur || null } : null;
     } catch (e) { out.storedErr = String(e.message).slice(0, 160); }
     return json(out);
   }
