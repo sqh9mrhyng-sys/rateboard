@@ -517,7 +517,7 @@ const MARKET_SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'ncaam', 'nhl', 'soccer', '
    just for this, so throttling or a ban lands there and never on the key the
    rest of the board runs on. Without that secret the pull does nothing - it
    never falls back to the main key. */
-const MARKET_ON = true;           // back on 2026-11-01: the overload was the pack data player detail, not this
+const MARKET_ON = false;          // OFF 2026-11-01: D1 rows-written charges ($612 in two weeks)
 /* Real answers "high volume" to two requests at once, even on the separate
    account, so there is one lane. Speed comes from shorter gaps between pages
    and more pages a tick instead. A sport-season is still cut into windows by
@@ -1718,7 +1718,7 @@ const keepsPlays = (sp, st) => !st || seasonTypesFor(sp).includes(String(st));
 const seasonTypeSql = sp => seasonTypesFor(sp).map(x => `'${x}'`).join(',');
 
 // Collecting paused until this time (database overloaded, 2026-10-31).
-const COLLECT_PAUSE_UNTIL = Date.parse('2026-11-01T08:30:00Z');   // testing the database load
+const COLLECT_PAUSE_UNTIL = Date.parse('2030-01-01T00:00:00Z');   // OFF 2026-11-01: D1 usage charges - collecting stopped until rebuilt to write less
 
 // NBA 2026-27 has started: its game log is built ahead of everything else.
 const EXTRA_JOBS = [['nba', 2027], ['ufc', 2023], ['ncaam', 2027]];
