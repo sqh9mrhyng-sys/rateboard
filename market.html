@@ -408,12 +408,14 @@ const DET_CELL = {
   curBid: l => fmt(l.curBid), bids: l => fmt(l.bids)
 };
 
-async function loadDetail(k){
+async function loadDetail(k, fresh){
   const [sp, se, pid] = k.split(':');
   if(detKey !== k) goal = '';
   detKey = k;
   let d;
-  try{ d = await (await fetch(`/api/rax?market=listings&sport=${sp}&season=${se}&playerId=${pid}`)).json(); }
+  // Listings are cached for two minutes; straight after a pull the cached
+  // copy is skipped so the new ones show at once.
+  try{ d = await (await fetch(`/api/rax?market=listings&sport=${sp}&season=${se}&playerId=${pid}${fresh ? '&t=' + Date.now() : ''}`)).json(); }
   catch(e){ const el = $('#det'); if(el) el.textContent = 'Could not load listings.'; return; }
   // A negative rating counts as its size: -8.2 is 8.2.
   detRows = (d.listings || []).filter(l => !rarF || String(l.rarity) === rarF)
@@ -503,7 +505,7 @@ $('#rows').addEventListener('click', async e => {
   const row = ((data && data.rows) || []).find(r => `${r.sport}:${r.season}:${r.playerId}` === detKey);
   try{ j = await (await fetch(`/api/rax?market=pullplayer&sport=${sp}&season=${se}&playerId=${pid}&player=${encodeURIComponent((row && row.player) || '')}`)).json(); }catch(e){ j = { error: 'Could not reach the board.' }; }
   if(j && j.error){ b.disabled = false; const m2 = $('#pullmsg'); if(m2) m2.textContent = j.error + (j.tried ? ' (' + j.tried.join('; ') + ')' : ''); return; }
-  await loadDetail(detKey);
+  await loadDetail(detKey, true);
   const m3 = $('#pullmsg'); if(m3) m3.textContent = `${j.listings} listing${j.listings === 1 ? '' : 's'} up right now, pulled just now${j.ended ? ` (${j.ended} ended or sold left out)` : ''}.`;
 });
 
