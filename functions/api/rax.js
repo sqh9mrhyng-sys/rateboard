@@ -505,7 +505,7 @@ const MARKET_SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'ncaam', 'nhl', 'soccer', '
    just for this, so throttling or a ban lands there and never on the key the
    rest of the board runs on. Without that secret the pull does nothing - it
    never falls back to the main key. */
-const MARKET_ON = false;          // off again 2026-11-01: testing whether it is what overloads the database
+const MARKET_ON = true;           // back on 2026-11-01: the overload was the pack data player detail, not this
 /* Real answers "high volume" to two requests at once, even on the separate
    account, so there is one lane. Speed comes from shorter gaps between pages
    and more pages a tick instead. A sport-season is still cut into windows by
