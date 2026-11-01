@@ -494,7 +494,7 @@ export async function onRequestGet({ request, env, waitUntil }) {
   // Everything except reading the board itself is for the admin screen:
   // reports, counters, feature requests and the backups (which still hold
   // password fingerprints, so they must never be public).
-  const adminRead = ['datareports', 'counts', 'features', 'snap']
+  const adminRead = ['datareports', 'counts', 'features', 'snap', 'export']
     .some(k => url.searchParams.get(k) != null) || url.searchParams.get('raw') === '1';
   if (adminRead && !(await isAdminRequest(env, request))) return forbidden();
 
@@ -540,6 +540,26 @@ export async function onRequestGet({ request, env, waitUntil }) {
     } catch (e) {
       return json({ error: 'could not read feature requests', detail: String((e && e.message) || e) }, 503);
     }
+  }
+
+  /* Admin: everything that can't be collected again, in one file - accounts,
+     offers, reports, requests, the admin lists, and every access grant and
+     Swaps record. Game logs, plays and market listings are left out: they're
+     large and can be pulled from Real again (and D1 keeps 30 days of its own
+     restore points). Holds password fingerprints, so keep the file private. */
+  if (url.searchParams.get('export') != null) {
+    const db = env.RATEBOARD_DB;
+    const out = { exportedAt: new Date().toISOString(), board: null, tables: {}, missing: [] };
+    try { out.board = JSON.parse((await env.RATEBOARD_KV.get(KV_KEY)) || 'null'); } catch (e) { out.missing.push('board kv'); }
+    const T = ['users', 'offers', 'data_reports', 'features', 'daily_counts', 'market_access', 'market_favs',
+               'swap_users', 'swap_access', 'otd_access', 'swap_dm', 'swap_matches'];
+    for (const t of T) {
+      try { out.tables[t] = (await db.prepare(`SELECT * FROM ${t}`).all()).results || []; }
+      catch (e) { out.missing.push(t); }
+    }
+    return new Response(JSON.stringify(out), { headers: {
+      'content-type': 'application/json',
+      'content-disposition': `attachment; filename="rateboard-backup-${out.exportedAt.slice(0, 10)}.json"` } });
   }
 
   const snap = url.searchParams.get('snap');

@@ -79,6 +79,11 @@
       <div class="bar"><button id="st-refresh">Refresh</button><span class="note" id="st-at"></span></div>
       <div class="grid" id="st-grid"></div>
       <section style="margin-top:12px">
+        <h2>Backup</h2>
+        <p class="note">Downloads everything that can't be pulled from Real again: accounts, offers, reports, feature requests, minimums and keep lists, and every access grant and Swaps record. It includes password fingerprints, so keep the file somewhere private.</p>
+        <div class="bar"><button id="bk-go">Download backup</button><span class="note" id="bk-msg"></span></div>
+      </section>
+      <section style="margin-top:12px">
         <h2>Background jobs: daily budget</h2>
         <p class="note">The market pull and collectors stop for the day once they reach this budget, which keeps them inside what the $5 plan includes. Counts reset at midnight UTC (4pm Alaska).</p>
         <div class="bar"><button id="jb-load">Load</button></div>
@@ -289,6 +294,19 @@ $('#jb-load').addEventListener('click', async () => {
     <b>Job calls today</b><span>${t.n || 0}</span>
     <b>A month at this pace</b><span>${f(mw)} written, ${f(mr)} read · ${est > 0 ? '<b style="color:var(--bad)">about $' + est.toFixed(2) + ' over the plan</b>' : '<b style="color:var(--ok)">inside the plan ($0 extra)</b>'}</span></div>`
     + ((j.days || []).length ? '<table style="margin-top:8px"><tr><th>Day (UTC)</th><th>Written</th><th>Read</th><th>Calls</th></tr>' + j.days.map(d => `<tr><td>${esc(d.day)}</td><td>${f(d.w)}</td><td>${f(d.r)}</td><td>${d.n || 0}</td></tr>`).join('') + '</table>' : '');
+});
+$('#bk-go').addEventListener('click', async () => {
+  const b = $('#bk-go'); b.disabled = true; $('#bk-msg').textContent = 'Preparing…';
+  try {
+    const r = await fetch('/api/kv?export=1');
+    if(!r.ok) throw new Error('Error ' + r.status);
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = `rateboard-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    $('#bk-msg').textContent = `Saved (${(blob.size / 1024 / 1024).toFixed(1)} MB).`;
+  } catch(e){ $('#bk-msg').textContent = 'Could not download: ' + e.message; }
+  b.disabled = false;
 });
 let duText = '';
 $('#du-load').addEventListener('click', async () => {
