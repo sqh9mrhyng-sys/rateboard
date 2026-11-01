@@ -83,6 +83,9 @@
     <h2>Matches (admin)</h2>
     <div class="bar"><button id="run">Run matching now</button><button id="reload">Refresh</button><span class="note" id="runmsg"></span></div>
     <div id="matches" class="note">Loading…</div>
+    <h2 style="margin-top:16px">Who has Swaps</h2>
+    <div class="bar"><input id="accq" placeholder="Search board accounts" autocomplete="off" style="flex:0 1 220px"></div>
+    <div id="accout" class="note">Loading…</div>
     <h2 style="margin-top:16px">Test a DM</h2>
     <p class="note">Sends from raxacademy.app to any Real username. Uses the existing chat if there is one; opening a new chat uses one of the 5 a day. <button id="chatsync">Re-read bot chats</button> <span id="chatinfo"></span></p>
     <div class="bar"><input id="dmuser" placeholder="Real username" autocomplete="off" style="flex:0 1 180px"><input id="dmutext" value="Swap bot test"><button id="dmopen">Send DM</button></div>
@@ -213,7 +216,11 @@ const LADDER = [[10,1,'',''],[30,2,'',''],[80,3,'',''],[180,4,'',''],
   [8320,7,8,'175x'],[9420,7,9,'180x'],[10620,7,10,'185x'],[12000,7,11,'190x'],[13600,7,12,'196x'],[15400,7,13,'202x'],
   [17500,7,14,'208x'],[19900,7,15,'214x'],[22700,7,16,'220x'],[26000,7,17,'226x'],[29000,7,18,'233x'],[34500,7,19,'240x'],
   [40000,7,20,'250x']];
-const levelOf = r => { r = Number(r); let hit = null; for(const l of LADDER) if(r >= l[0]) hit = l; return hit; };
+// Team passes climb their own, shorter ladder: one step per rarity.
+const TEAM_LADDER = [[30,1,'','1.2x'],[90,2,'','1.4x'],[240,3,'','1.6x'],[540,4,'','2x'],
+  [1140,5,'','2.5x'],[4140,6,'','4x'],[10140,7,'','6x']];
+const levelOf = (r, p) => { r = Number(r); let hit = null;
+  for(const l of (p && p.kind === 'team' ? TEAM_LADDER : LADDER)) if(r >= l[0]) hit = l; return hit; };
 const RC = {1:'#4f9ee8',2:'#5fbf7a',3:'#f0913a',4:'#e5484d',5:'#a77bf0',6:'#f2c14e',7:'#e0559c'};
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -249,9 +256,9 @@ $('#hours').addEventListener('change', e => {
 
 // --- passes
 // Real's own level for a pass when the scan has it (boostInfo), else the ladder.
-const tierOf = p => p.rarity != null ? Number(p.rarity) : (l => l ? l[1] : 0)(levelOf(p.rating));
+const tierOf = p => p.rarity != null ? Number(p.rarity) : (l => l ? l[1] : 0)(levelOf(p.rating, p));
 function passTag(p){
-  const lv = levelOf(p.rating);
+  const lv = levelOf(p.rating, p);
   const label = lv ? `${RAR[lv[1]]}${lv[2] ? ' ' + lv[2] : ''}` : 'General';
   const mult = p.mult ? p.mult + 'x' : (lv && lv[3]) || '';
   const color = p.color || (lv ? RC[lv[1]] : '#8a93a6');
@@ -376,6 +383,25 @@ $('#connect').addEventListener('click', async () => {
   if(j.connected) paintConn(true);
   else $('#connmsg').innerHTML = 'No chat from you yet. Message <b>@raxacademy.app</b> on Real, then tap again.';
 });
+async function loadAccess(extra){
+  const q = $('#accq').value.trim();
+  const j = await api('/api/swaps?op=access&q=' + encodeURIComponent(q) + (extra || ''));
+  if(j.error){ $('#accout').textContent = j.error; return; }
+  const missing = (j.named || []).filter(x => !x.account).map(x => x.name);
+  const ok = (j.named || []).filter(x => x.account).map(x => x.name);
+  $('#accout').innerHTML =
+    `<div>On the list with a board account (${ok.length}): ${esc(ok.join(', ') || 'none')}</div>`
+    + `<div style="color:var(--bad)">On the list, no board account under that name (${missing.length}): ${esc(missing.join(', ') || 'none')}</div>`
+    + `<div>Granted by hand: ${(j.granted || []).map(g => `${esc(g.name || g.key)} <button data-acc="revoke" data-k="${esc(g.key)}">remove</button>`).join(' ') || 'none'}</div>`
+    + ((j.found || []).length ? '<div style="margin-top:6px">' + j.found.map(f => `<div>${esc(f.name || f.key)} <span class="note">${esc(f.key)}</span> `
+      + (f.access ? '✓ has Swaps' : `<button data-acc="grant" data-k="${esc(f.key)}">Give Swaps</button>`) + '</div>').join('') + '</div>' : '');
+}
+let accT = null;
+$('#accq').addEventListener('input', () => { clearTimeout(accT); accT = setTimeout(() => loadAccess(), 250); });
+$('#accout').addEventListener('click', e => {
+  const b = e.target.closest('[data-acc]'); if(!b) return;
+  loadAccess(`&act=${b.dataset.acc}&key=${encodeURIComponent(b.dataset.k)}`);
+});
 $('#chatsync').addEventListener('click', async () => {
   const j = await api('/api/swaps?op=chats&sync=1');
   $('#chatinfo').textContent = (j.error ? j.error + ' · ' : '') + `${j.chatsKnown} chats known · ${j.requests ? `${j.requests.requests} requests, accepted ${j.requests.accepted.length ? j.requests.accepted.join(', ') : 'none'} · ` : ''}${j.newChatsLeftToday} new chats left today`;
@@ -403,7 +429,7 @@ $('#envb').addEventListener('click', async () => { $('#praw').textContent = JSON
   $('#rsuser').value = prof.rsUser || '';
   paintConn(!!j.connected);
   $('#admin').hidden = !j.admin;
-  drawPasses(); drawWants(); drawHours(); if(j.admin) loadMatches();
+  drawPasses(); drawWants(); drawHours(); if(j.admin){ loadMatches(); loadAccess(); }
   api('/api/swaps?op=buildindex');   // adds one season to the search table, at most every 5 minutes
 })();
 </script>

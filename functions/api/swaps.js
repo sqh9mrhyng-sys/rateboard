@@ -504,6 +504,7 @@ export async function swapTick(env) {
    the board account's key or display name. */
 const SWAP_MEMBERS = ['scantrawn', 'prod', 'nebula57', 'thinkpoker', 'harris', 'reschny', 'six',
   'uawheel', 'topfloorboss', 'aayan.t', 'nicohoerner', 'gabby', 'rhjin', 'lax', 'thathuey5', 'puka', 'mar'];
+const SACCESS_DDL = `CREATE TABLE IF NOT EXISTS swap_access (key TEXT PRIMARY KEY, grantedAt INTEGER)`;
 export async function swapAccess(env, request) {
   const who = await sessionKey(env, request);
   if (!who) return { who: null, admin: false, ok: false };
@@ -515,6 +516,12 @@ export async function swapAccess(env, request) {
     try {
       const u = await env.RATEBOARD_DB.prepare('SELECT name FROM users WHERE key=?').bind(who).first();
       ok = !!u && SWAP_MEMBERS.includes(norm(u.name));
+    } catch (e) {}
+  }
+  if (!ok) {
+    try {
+      await env.RATEBOARD_DB.prepare(SACCESS_DDL).run();
+      ok = !!(await env.RATEBOARD_DB.prepare('SELECT 1 AS x FROM swap_access WHERE key=?').bind(who).first());
     } catch (e) {}
   }
   return { who, admin: false, ok };
@@ -715,6 +722,32 @@ export async function onRequest({ request, env, waitUntil }) {
     try { await syncChats(db, auth); } catch (e) { return json({ error: String(e.message || e) }, 502); }
     const c = await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=? AND channelId IS NOT NULL').bind(u.hashId).first();
     return json({ connected: !!c });
+  }
+
+  /* Who has Swaps: the named list (and whether each name matches a board
+     account), anyone granted by hand, and a user search to grant more. */
+  if (op === 'access') {
+    await db.prepare(SACCESS_DDL).run();
+    const key = String(url.searchParams.get('key') || '');
+    const act = url.searchParams.get('act');
+    if (act === 'grant' || act === 'revoke') {
+      const u = await db.prepare('SELECT key FROM users WHERE key=?').bind(key).first();
+      if (!u) return json({ error: 'no such account' }, 404);
+      if (act === 'grant') await db.prepare('INSERT INTO swap_access (key, grantedAt) VALUES (?, ?) ON CONFLICT DO NOTHING').bind(key, Date.now()).run();
+      else await db.prepare('DELETE FROM swap_access WHERE key=?').bind(key).run();
+    }
+    const named = [];
+    for (const n of SWAP_MEMBERS) {
+      const u = await db.prepare('SELECT key, name FROM users WHERE LOWER(key)=? OR LOWER(name)=? LIMIT 1').bind(n, n).first();
+      named.push({ name: n, account: u ? u.key : null });
+    }
+    const granted = (await db.prepare('SELECT a.key, u.name FROM swap_access a LEFT JOIN users u ON u.key=a.key ORDER BY a.grantedAt DESC').all()).results || [];
+    const q = String(url.searchParams.get('q') || '').trim().toLowerCase().replace(/[%_]/g, '');
+    const found = q.length >= 2 ? ((await db.prepare(
+      `SELECT key, name FROM users WHERE COALESCE(banned, 0) = 0 AND (LOWER(key) LIKE ? OR LOWER(name) LIKE ?) ORDER BY LENGTH(key) LIMIT 20`)
+      .bind(`%${q}%`, `%${q}%`).all()).results || []) : [];
+    const has = new Set(granted.map(g => g.key));
+    return json({ named, granted, found: found.map(f => ({ ...f, access: has.has(f.key) })) });
   }
 
   if (op === 'chats') {
