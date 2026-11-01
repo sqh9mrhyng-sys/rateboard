@@ -529,7 +529,13 @@ export async function swapAccess(env, request) {
 // What a member (not an admin) may do: their own swap and nothing else.
 const MEMBER_OPS = new Set(['me', 'save', 'scan', 'search', 'connect']);
 
-export async function onRequest({ request, env, waitUntil }) {
+// Any error comes back as a readable message rather than a bare 500.
+export async function onRequest(ctx) {
+  try { return await handle(ctx); }
+  catch (e) { return json({ error: 'Swaps hit an error: ' + String((e && e.message) || e).slice(0, 300) }, 500); }
+}
+
+async function handle({ request, env, waitUntil }) {
   const url = new URL(request.url);
   const db = env.RATEBOARD_DB;
   const op = url.searchParams.get('op') || '';
