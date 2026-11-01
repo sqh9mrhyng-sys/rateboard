@@ -500,13 +500,37 @@ export async function swapTick(env) {
   return out;
 }
 
+/* Who can use Swaps besides admins: these Real usernames, matched against
+   the board account's key or display name. */
+const SWAP_MEMBERS = ['scantrawn', 'prod', 'nebula57', 'thinkpoker', 'harris', 'reschny', 'six',
+  'uawheel', 'topfloorboss', 'aayan.t', 'nicohoerner', 'gabby', 'rhjin', 'lax', 'thathuey5', 'puka', 'mar'];
+export async function swapAccess(env, request) {
+  const who = await sessionKey(env, request);
+  if (!who) return { who: null, admin: false, ok: false };
+  const admin = await isAdminRequest(env, request);
+  if (admin) return { who, admin, ok: true };
+  const norm = x => String(x || '').trim().toLowerCase().replace(/^@/, '');
+  let ok = SWAP_MEMBERS.includes(norm(who));
+  if (!ok) {
+    try {
+      const u = await env.RATEBOARD_DB.prepare('SELECT name FROM users WHERE key=?').bind(who).first();
+      ok = !!u && SWAP_MEMBERS.includes(norm(u.name));
+    } catch (e) {}
+  }
+  return { who, admin: false, ok };
+}
+// What a member (not an admin) may do: their own swap and nothing else.
+const MEMBER_OPS = new Set(['me', 'save', 'scan', 'search', 'connect']);
+
 export async function onRequest({ request, env, waitUntil }) {
   const url = new URL(request.url);
   const db = env.RATEBOARD_DB;
-  if (!(await isAdminRequest(env, request))) return forbidden('Swaps are admin only while they are being built.');
-  const me = await sessionKey(env, request);
-  await ready(db);
   const op = url.searchParams.get('op') || '';
+  const acc = await swapAccess(env, request);
+  if (!acc.ok) return forbidden(acc.who ? 'Your account does not have Swaps yet.' : 'Sign in on the board first.');
+  if (!acc.admin && !MEMBER_OPS.has(op)) return forbidden('Admin only.');
+  const me = acc.who;
+  await ready(db);
   const auth = swapToken(env);
 
   if (op === 'search') {
@@ -601,7 +625,7 @@ export async function onRequest({ request, env, waitUntil }) {
       try { await db.prepare(DM_DDL).run();
         connected = !!(await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=? AND channelId IS NOT NULL').bind(u.hashId).first()); } catch (e) {}
     }
-    return json({ key: me, tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
+    return json({ key: me, admin: acc.admin, tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
       keep: parse(u.keep, []), slots: parse(u.slots, []), passes: parse(u.passes, []), scannedAt: u.scannedAt, active: !!u.active } : null });
   }
 

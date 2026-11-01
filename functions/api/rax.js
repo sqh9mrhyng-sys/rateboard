@@ -1,5 +1,5 @@
 import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS } from '../../lib/auth.js';
-import { swapTick } from './swaps.js';
+import { swapTick, swapAccess } from './swaps.js';
 
 // GET /api/rax?sport=ncaam&season=2026
 //
@@ -6944,7 +6944,11 @@ export async function onRequestGet(ctx) {
   const mk = url.searchParams.get('market');
   if (MARKET_MEMBER.includes(mk)) {
     const a = await marketWho(env, request);
-    if (mk === 'me') return json({ signedIn: !!a.who, access: a.ok, admin: a.admin });
+    if (mk === 'me') {
+      let swaps = false;
+      try { swaps = a.who ? (await swapAccess(env, request)).ok : false; } catch (e) {}
+      return json({ signedIn: !!a.who, access: a.ok, admin: a.admin, swaps });
+    }
     if (!a.ok) return json({ error: a.who ? 'Your account does not have market data.' : 'Sign in on the board first.' }, 403);
     if (mk === 'fav' || mk === 'favs') return marketMember(env, url, a.who);
   }

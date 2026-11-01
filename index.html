@@ -871,14 +871,15 @@ function applyGameDataVisibility(){
   // someone with a pack-data-only grant gets.
   const pick = $('#pagepick'), sel = $('#pagesel');
   checkMarketAccess();
-  const swapsOn = typeof reallyAdmin === 'function' && reallyAdmin();   // Swaps: admin only for now
+  const otdOn = typeof reallyAdmin === 'function' && reallyAdmin();     // OTD: admin only
+  const swapsOn = otdOn || swapsAccess;
   if(pick) pick.classList.toggle('hide', !canSeePackData() && !marketAccess && !swapsOn);
   if(sel){
     // Options are added and taken away rather than hidden: a hidden option
     // still shows in Safari's picker.
     const want = [['board', 'Board'], ...(canSeePackData() ? [['cbb', 'Game data']] : []),
                   ...(marketAccess ? [['market', 'Market data']] : []),
-                  ...(swapsOn ? [['swaps', 'Swaps'], ['otd', 'OTD optimization']] : [])];
+                  ...(swapsOn ? [['swaps', 'Swaps']] : []), ...(otdOn ? [['otd', 'OTD optimization']] : [])];
     const have = [...sel.options].map(o => o.value).join(',');
     if(have !== want.map(w => w[0]).join(',')){
       sel.innerHTML = want.map(([v, t]) => `<option value="${v}">${t}</option>`).join('');
@@ -911,16 +912,17 @@ function pageGo(){
 /* Market data lives on /market and is only for accounts Dennis has given it
    to. The server decides, from the sign-in token; this only asks once per
    sign-in so the picker knows whether to offer it. */
-let marketAccess = false, marketAsked = '';
+let marketAccess = false, marketAsked = '', swapsAccess = false;
 function checkMarketAccess(){
   let t = ''; try{ t = localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){}
-  if(!t){ marketAccess = false; marketAsked = ''; return; }
+  if(!t){ marketAccess = false; swapsAccess = false; marketAsked = ''; return; }
   if(marketAsked === t) return;
   marketAsked = t;
   fetch('/api/rax?market=me').then(r => r.json()).then(j => {
-    const was = marketAccess;
+    const was = marketAccess + '|' + swapsAccess;
     marketAccess = !!(j && j.access);
-    if(was !== marketAccess) applyGameDataVisibility();
+    swapsAccess = !!(j && j.swaps);
+    if(was !== marketAccess + '|' + swapsAccess) applyGameDataVisibility();
   }).catch(() => { marketAsked = ''; });
 }
 
