@@ -79,6 +79,12 @@
       <div class="bar"><button id="st-refresh">Refresh</button><span class="note" id="st-at"></span></div>
       <div class="grid" id="st-grid"></div>
       <section style="margin-top:12px">
+        <h2>Database usage today</h2>
+        <p class="note">What Cloudflare bills for: rows read and rows written, by request, since midnight UTC. Rough cost: $1 per million rows written and $1 per billion read, past the monthly allowance (50M written, 25B read).</p>
+        <div class="bar"><button id="du-load">Load</button><button id="du-copy" class="hide">Copy</button></div>
+        <div class="scroll" id="du-out"></div>
+      </section>
+      <section style="margin-top:12px">
         <h2>UFC market check</h2>
         <p class="note">Asks Real (on the bot account) how many UFC listings it has under each season, and compares with what's stored.</p>
         <div class="bar"><button id="ufc-run">Run UFC check</button><button id="ufc-copy" class="hide">Copy result</button></div>
@@ -262,6 +268,20 @@ async function loadSlow(){
     : '<span class="note">None recorded yet.</span>';
 }
 $('#ds-load').addEventListener('click', loadSlow);
+let duText = '';
+$('#du-load').addEventListener('click', async () => {
+  $('#du-out').innerHTML = '<span class="note">Loading…</span>';
+  const j = await api('/api/rax?dbuse=', {}, 60000);
+  if(j.error){ $('#du-out').textContent = j.error; return; }
+  const rows = Object.entries(j.use || {}).map(([k, u]) => ({ k, ...u })).sort((a, b) => (b.w + b.r / 1000) - (a.w + a.r / 1000));
+  const tr = rows.reduce((a, x) => a + x.r, 0), tw = rows.reduce((a, x) => a + x.w, 0);
+  const f = n => n >= 1e9 ? (n / 1e9).toFixed(2) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n);
+  duText = `Total read ${f(tr)}, written ${f(tw)}\n` + rows.map(x => `${x.k}\t${x.n}\tread ${f(x.r)}\twrite ${f(x.w)}`).join('\n');
+  $('#du-out').innerHTML = `<p><b>Read ${f(tr)}</b> · <b>Written ${f(tw)}</b> today</p>` + (rows.length ? '<table><tr><th>Request | statement</th><th>Calls</th><th>Read</th><th>Written</th></tr>'
+    + rows.slice(0, 60).map(x => `<tr><td style="word-break:break-word;font-size:12px">${esc(x.k)}</td><td>${f(x.n)}</td><td>${f(x.r)}</td><td>${f(x.w)}</td></tr>`).join('') + '</table>' : '<span class="note">Nothing recorded yet today.</span>');
+  $('#du-copy').classList.remove('hide');
+});
+$('#du-copy').addEventListener('click', async () => { try{ await navigator.clipboard.writeText(duText); toast('Copied.'); }catch(e){ toast('Could not copy.'); } });
 $('#ufc-run').addEventListener('click', async () => {
   const b = $('#ufc-run'); b.disabled = true; $('#ufc-out').classList.remove('hide'); $('#ufc-out').textContent = 'Asking Real…';
   const j = await api('/api/rax?market=ufcdiag', {}, 60000);

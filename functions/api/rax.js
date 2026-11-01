@@ -1,6 +1,6 @@
 import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS } from '../../lib/auth.js';
 import { swapTick, swapAccess } from './swaps.js';
-import { watchEnv, readSlow } from '../../lib/dbwatch.js';
+import { watchEnv, readSlow, readUse } from '../../lib/dbwatch.js';
 
 // GET /api/rax?sport=ncaam&season=2026
 //
@@ -1796,6 +1796,8 @@ async function weeklyRescan(env) {
 async function handleGet({ request, env, waitUntil }) {
   // Admin: the slow and failing database calls the recorder caught.
   if (new URL(request.url).searchParams.get('dbslow') === '1') return json({ calls: await readSlow(env) });
+  // Admin: rows read and written today, by request type and statement.
+  if (new URL(request.url).searchParams.get('dbuse') != null) return json({ day: new URL(request.url).searchParams.get('dbuse') || new Date().toISOString().slice(0, 10), use: await readUse(env, new URL(request.url).searchParams.get('dbuse') || undefined) });
   const auth = env.RS_AUTH_TOKEN;
   if (!auth) return json({ error: 'RS_AUTH_TOKEN is not set on this deployment' }, 500);
 
