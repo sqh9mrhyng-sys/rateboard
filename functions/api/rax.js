@@ -1681,7 +1681,7 @@ const keepsPlays = (sp, st) => !st || seasonTypesFor(sp).includes(String(st));
 const seasonTypeSql = sp => seasonTypesFor(sp).map(x => `'${x}'`).join(',');
 
 // Collecting paused until this time (database overloaded, 2026-10-31).
-const COLLECT_PAUSE_UNTIL = Date.parse('2026-10-31T14:00:00Z');
+const COLLECT_PAUSE_UNTIL = Date.parse('2026-11-01T08:30:00Z');   // testing the database load
 
 // NBA 2026-27 has started: its game log is built ahead of everything else.
 const EXTRA_JOBS = [['nba', 2027], ['ufc', 2023], ['ncaam', 2027]];
