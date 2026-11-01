@@ -76,6 +76,7 @@
     <div class="hours" id="hours"></div>
   </section>
 
+  <div class="bar" id="connbox"><span class="note" id="connmsg">Swap matches are sent as a DM from <b>@raxacademy.app</b> on Real. Send it any message once so it can reach you, then tap the button.</span><button id="connect">I messaged @raxacademy.app</button></div>
   <div class="bar"><button class="primary" id="save">Save my swap</button><span class="note" id="savemsg"></span></div>
 
   <section id="admin">
@@ -83,7 +84,7 @@
     <div class="bar"><button id="run">Run matching now</button><button id="reload">Refresh</button><span class="note" id="runmsg"></span></div>
     <div id="matches" class="note">Loading…</div>
     <h2 style="margin-top:16px">Test a DM</h2>
-    <p class="note">Sends from raxacademy.app to any Real username, opening a chat if there isn't one yet.</p>
+    <p class="note">Sends from raxacademy.app to any Real username. Uses the existing chat if there is one; opening a new chat uses one of the 5 a day. <button id="chatsync">Re-read bot chats</button> <span id="chatinfo"></span></p>
     <div class="bar"><input id="dmuser" placeholder="Real username" autocomplete="off" style="flex:0 1 180px"><input id="dmutext" value="Swap bot test"><button id="dmopen">Send DM</button></div>
     <pre id="dmout" class="note"></pre>
     <details style="margin-top:12px"><summary class="note">Raw check of a Real endpoint (swap account)</summary>
@@ -362,6 +363,23 @@ $('#matches').addEventListener('click', async e => {
   $('#runmsg').textContent = j.error || j.note || 'Sent.';
   loadMatches();
 });
+function paintConn(ok){
+  $('#connmsg').innerHTML = ok ? '✅ Connected - match DMs will reach you from <b>@raxacademy.app</b>.'
+    : 'Swap matches are sent as a DM from <b>@raxacademy.app</b> on Real. Send it any message once so it can reach you, then tap the button.';
+  $('#connect').style.display = ok ? 'none' : '';
+}
+$('#connect').addEventListener('click', async () => {
+  $('#connect').disabled = true;
+  const j = await api('/api/swaps?op=connect');
+  $('#connect').disabled = false;
+  if(j.error){ $('#connmsg').textContent = j.error; return; }
+  if(j.connected) paintConn(true);
+  else $('#connmsg').innerHTML = 'No chat from you yet. Message <b>@raxacademy.app</b> on Real, then tap again.';
+});
+$('#chatsync').addEventListener('click', async () => {
+  const j = await api('/api/swaps?op=chats&sync=1');
+  $('#chatinfo').textContent = j.error ? j.error : `${j.chatsKnown} chats known · ${j.newChatsLeftToday} new chats left today`;
+});
 $('#dmopen').addEventListener('click', async () => {
   const u = $('#dmuser').value.trim(); if(!u) return;
   $('#dmout').textContent = 'Sending…';
@@ -383,6 +401,7 @@ $('#envb').addEventListener('click', async () => { $('#praw').textContent = JSON
   if(j.profile) prof = Object.assign(prof, j.profile);
   if(!j.tokenFound) $('#scanmsg').innerHTML = '<span style="color:var(--bad)">No swap token found in Cloudflare yet.</span>';
   $('#rsuser').value = prof.rsUser || '';
+  paintConn(!!j.connected);
   drawPasses(); drawWants(); drawHours(); loadMatches();
   api('/api/swaps?op=buildindex');   // adds one season to the search table, at most every 5 minutes
 })();
