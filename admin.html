@@ -79,6 +79,12 @@
       <div class="bar"><button id="st-refresh">Refresh</button><span class="note" id="st-at"></span></div>
       <div class="grid" id="st-grid"></div>
       <section style="margin-top:12px">
+        <h2>Background jobs: daily budget</h2>
+        <p class="note">The market pull and collectors stop for the day once they reach this budget, which keeps them inside what the $5 plan includes. Counts reset at midnight UTC (4pm Alaska).</p>
+        <div class="bar"><button id="jb-load">Load</button></div>
+        <div class="scroll" id="jb-out"></div>
+      </section>
+      <section style="margin-top:12px">
         <h2>Database usage today</h2>
         <p class="note">What Cloudflare bills for: rows read and rows written, by request, since midnight UTC. Rough cost: $1 per million rows written and $1 per billion read, past the monthly allowance (50M written, 25B read).</p>
         <div class="bar"><button id="du-load">Load</button><button id="du-copy" class="hide">Copy</button></div>
@@ -268,6 +274,22 @@ async function loadSlow(){
     : '<span class="note">None recorded yet.</span>';
 }
 $('#ds-load').addEventListener('click', loadSlow);
+$('#jb-load').addEventListener('click', async () => {
+  $('#jb-out').innerHTML = '<span class="note">Loading…</span>';
+  const j = await api('/api/rax?jobuse=1', {}, 30000);
+  if(j.error){ $('#jb-out').textContent = j.error; return; }
+  const f = n => n >= 1e9 ? (n / 1e9).toFixed(2) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n || 0);
+  const t = j.today || {}, cap = j.cap || {};
+  const pw = Math.min(100, Math.round((t.w || 0) / cap.w * 100)), pr = Math.min(100, Math.round((t.r || 0) / cap.r * 100));
+  // What a month at today's pace would cost past the plan (jobs only).
+  const mw = (t.w || 0) * 30, mr = (t.r || 0) * 30;
+  const est = Math.max(0, (mw - 50e6) / 1e6 * 1) + Math.max(0, (mr - 25e9) / 1e9 * 1);
+  $('#jb-out').innerHTML = `<div class="kv"><b>Written today</b><span>${f(t.w)} of ${f(cap.w)} (${pw}%)</span>
+    <b>Read today</b><span>${f(t.r)} of ${f(cap.r)} (${pr}%)</span>
+    <b>Job calls today</b><span>${t.n || 0}</span>
+    <b>A month at this pace</b><span>${f(mw)} written, ${f(mr)} read · ${est > 0 ? '<b style="color:var(--bad)">about $' + est.toFixed(2) + ' over the plan</b>' : '<b style="color:var(--ok)">inside the plan ($0 extra)</b>'}</span></div>`
+    + ((j.days || []).length ? '<table style="margin-top:8px"><tr><th>Day (UTC)</th><th>Written</th><th>Read</th><th>Calls</th></tr>' + j.days.map(d => `<tr><td>${esc(d.day)}</td><td>${f(d.w)}</td><td>${f(d.r)}</td><td>${d.n || 0}</td></tr>`).join('') + '</table>' : '');
+});
 let duText = '';
 $('#du-load').addEventListener('click', async () => {
   $('#du-out').innerHTML = '<span class="note">Loading…</span>';

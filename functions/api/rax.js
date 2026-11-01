@@ -1,6 +1,6 @@
 import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS } from '../../lib/auth.js';
 import { swapTick, swapAccess } from './swaps.js';
-import { watchEnv, readSlow, readUse } from '../../lib/dbwatch.js';
+import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, JOB_CAP } from '../../lib/dbwatch.js';
 
 // GET /api/rax?sport=ncaam&season=2026
 //
@@ -152,6 +152,11 @@ const GAMELOG_COLS = ['sport','season','playerId','gameId','player','team','conf
 // rax is filled by its own pass from the earnings screen, so the box-score
 // insert leaves that column alone rather than blanking it.
 const GAMELOG_FEED_COLS = GAMELOG_COLS.filter(c => c !== 'rax');
+/* An upsert only writes when something actually changed. Re-walking a season
+   used to rewrite every game row (and its indexes) even when nothing was new,
+   and D1 bills every row written. */
+const glChanged = keyCols => GAMELOG_FEED_COLS.filter(c => !keyCols.includes(c))
+  .map(c => `gamelog.${c} IS NOT excluded.${c}`).join(' OR ');
 
 // Earlier versions stored the game rating in a column called rax. Both
 // statements are no-ops once they have run.
@@ -517,7 +522,7 @@ const MARKET_SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'ncaam', 'nhl', 'soccer', '
    just for this, so throttling or a ban lands there and never on the key the
    rest of the board runs on. Without that secret the pull does nothing - it
    never falls back to the main key. */
-const MARKET_ON = false;          // OFF 2026-11-01: D1 rows-written charges ($612 in two weeks)
+const MARKET_ON = true;           // back on 2026-11-01 under the daily job budget, writing only changed listings
 /* Real answers "high volume" to two requests at once, even on the separate
    account, so there is one lane. Speed comes from shorter gaps between pages
    and more pages a tick instead. A sport-season is still cut into windows by
@@ -626,7 +631,34 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
   const save = async list => {
     const now = Date.now();
     const mine = list.filter(r => !r.endsAt || lastWin || r.endsAt < winEnd);
-    const stmts = mine.map(r => {
+    /* Only what is new or has changed is written. Every listing seen is noted
+       (seenIds), and at the end of the season's pass the ones not seen are
+       the sold or pulled ones - so an unchanged listing costs a read, not a
+       write. Rewriting every listing on every lap is what ran up the bill. */
+    const job0 = `${sp}:${Number(se)}`;
+    const seen = marketSeen.get(job0) || marketSeen.set(job0, new Set()).get(job0);
+    for (const r of mine) seen.add(String(r.id));
+    const have = new Map();
+    const ids = mine.map(r => String(r.id));
+    for (let k = 0; k < ids.length; k += 90) {
+      const part = ids.slice(k, k + 90);
+      try {
+        const q = await env.RATEBOARD_DB.prepare(`SELECT id, status, minBid, buyNow, curBid, bids, endsAt, teamId, player FROM market_v2
+          WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).all();
+        for (const x of (q.results || [])) have.set(String(x.id), x);
+      } catch (e) {}
+    }
+    const same = (a, b) => (a == null ? null : Number(a)) === (b == null ? null : Number(b));
+    const changed = mine.filter(r => {
+      const h = have.get(String(r.id));
+      if (!h) return true;
+      const c = r.card || {};
+      return h.status !== (r.status || null) || !same(h.minBid, numOr(r.minBidPrice)) || !same(h.buyNow, numOr(r.buyNowPrice))
+        || !same(h.curBid, numOr(r.currentBidAmount)) || !same(h.bids, numOr(r.numBids)) || h.endsAt !== (r.endsAt || null)
+        || (h.teamId == null && numOr(r.teamId ?? c.teamId) != null) || (h.player == null && (c.primaryPlayer || c.team));
+    });
+    lane.unchanged = (lane.unchanged || 0) + (mine.length - changed.length);
+    const stmts = changed.map(r => {
       const c = r.card || {};
       const pp = c.primaryPlayer || {};
       const full = pp.firstName && pp.lastName ? `${pp.firstName} ${pp.lastName}` : '';
@@ -652,7 +684,8 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
         .catch(async () => { await sleep(1500); return env.RATEBOARD_DB.batch(part); })
         .catch(e => { lane.storeErr = String(e.message || e).slice(0, 160); lane.storeFails = (lane.storeFails || 0) + 1; }));
     }
-    stored += stmts.length;
+    stored += mine.length;
+    lane.written = (lane.written || 0) + stmts.length;
   };
   /* More than a page of listings ending at the very same moment. Real's
      cursor can't page through those, and it ignores the offset there, so the
@@ -754,7 +787,41 @@ async function marketSlice(env, auth, budgetMs, stop) {
 }
 // A finished season's old rows, deleted a little at a time: at most three
 // chunks of 500 a call, with a pause between, oldest season first.
-async function marketClear(db, st) {
+// Listing ids seen on the current pass of each season, kept in KV so a
+// pass that spans many calls still knows everything it has seen.
+const marketSeen = new Map();
+async function marketSeenFlush(env, job, start) {
+  const add = marketSeen.get(job);
+  const key = 'mseen_v1_' + job;
+  let cur = null;
+  try { cur = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); } catch (e) {}
+  if (!cur || cur.start !== start) cur = { start, ids: [] };
+  if (add && add.size) {
+    const set = new Set(cur.ids); for (const i of add) set.add(i);
+    cur.ids = [...set]; marketSeen.delete(job);
+    try { await env.RATEBOARD_KV.put(key, JSON.stringify(cur)); } catch (e) {}
+  }
+  return cur;
+}
+async function marketClear(db, st, env) {
+  // Only the seen-list clear-outs are safe now: the old kind deleted
+  // whatever hadn't been rewritten, and unchanged listings no longer are.
+  st.clear = (st.clear || []).filter(j => j.gone);
+  for (let k = 0; k < 3 && st.clear.length; k++) {
+    const job = st.clear[0], key = `mgone_v1_${job.sp}:${job.se}`;
+    let list = [];
+    try { list = JSON.parse((await env.RATEBOARD_KV.get(key)) || '[]') || []; } catch (e) {}
+    const part = list.slice(0, 90);
+    if (part.length) {
+      try { await db.prepare(`DELETE FROM market_v2 WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).run(); } catch (e) { return; }
+    }
+    const rest = list.slice(90);
+    if (rest.length) { try { await env.RATEBOARD_KV.put(key, JSON.stringify(rest)); } catch (e) {} }
+    else { try { await env.RATEBOARD_KV.delete(key); } catch (e) {} st.clear.shift(); }
+    await sleep(200);
+  }
+}
+async function marketClearOld(db, st) {
   for (let k = 0; k < 3 && (st.clear || []).length; k++) {
     const job = st.clear[0];
     let c = 0;
@@ -813,7 +880,7 @@ async function marketSliceHeld(env, auth, deadline) {
        buyNow=excluded.buyNow, curBid=excluded.curBid, bids=excluded.bids,
        endsAt=excluded.endsAt, seenAt=excluded.seenAt, player=COALESCE(excluded.player, market_v2.player),
        teamId=COALESCE(excluded.teamId, market_v2.teamId)`);
-  await marketClear(db, st);
+  await marketClear(db, st, env);
   /* One window after another, and one season after another, for as long as
      the call lasts. */
   let total = 0, busy = false;
@@ -842,14 +909,23 @@ async function marketSliceHeld(env, auth, deadline) {
       const [sp, se] = st.cur.split(':');
       // The clear-out itself is spread over the calls that follow, a few
       // small chunks at a time (marketClear), so it never holds the database.
-      if (!st.partial) (st.clear = st.clear || []).push({ sp, se: Number(se), before: st.curStart });
+      const seenNow = await marketSeenFlush(env, st.cur, st.curStart);
+      const seenSet = new Set(seenNow.ids);
+      if (!st.partial && seenSet.size) {
+        // Whatever the table holds for the season that this pass never saw
+        // has sold, been pulled or ended.
+        try {
+          const all = (await db.prepare('SELECT id FROM market_v2 WHERE sport=? AND season=?').bind(sp, Number(se)).all()).results || [];
+          const gone = all.map(x => String(x.id)).filter(i => !seenSet.has(i));
+          if (gone.length) {
+            await env.RATEBOARD_KV.put(`mgone_v1_${sp}:${Number(se)}`, JSON.stringify(gone));
+            (st.clear = st.clear || []).push({ sp, se: Number(se), gone: true });
+          }
+        } catch (e) {}
+      }
       st.partial = false;
-      let n = Object.values(st.lanes).reduce((a, l) => a + (l.rows || 0), 0);
-      try {   // the real count, from the table, now the season's old rows are gone
-        const c = await db.prepare('SELECT COUNT(*) AS n FROM market_v2 WHERE sport=? AND season=? AND endsAt > ? AND seenAt >= ?')
-          .bind(sp, Number(se), new Date().toISOString(), st.curStart).first();
-        if (c && c.n != null) n = c.n;
-      } catch (e) {}
+      let n = seenSet.size || Object.values(st.lanes).reduce((a, l) => a + (l.rows || 0), 0);
+      try { await env.RATEBOARD_KV.delete('mseen_v1_' + st.cur); } catch (e) {}
       const pages = Object.values(st.lanes).reduce((a, l) => a + (l.pages || 0), 0);
       const minutes = Math.round((Date.now() - st.curStart) / 6000) / 10;
       await db.prepare('UPDATE market_seasons SET doneAt=?, listings=?, minutes=? WHERE job=?')
@@ -880,6 +956,8 @@ async function marketSliceHeld(env, auth, deadline) {
     st.cooldowns = (st.cooldowns || 0) + 1;
     marketPause = Math.min(MARKET_PAUSE_MAX, marketPause * 2);
   }
+  if (st.cur) { try { await marketSeenFlush(env, st.cur, st.curStart); } catch (e) {} }
+  marketSeen.clear();
   st.pause = marketPause;
   st.at = new Date().toISOString();
   try { await env.RATEBOARD_KV.put(MARKET_KEY, JSON.stringify(st)); } catch (e) {}
@@ -1669,7 +1747,12 @@ function playStmt(db) {
        playerId=excluded.playerId, player=excluded.player,
        player2Id=excluded.player2Id, player2=excluded.player2,
        player3Id=excluded.player3Id, player3=excluded.player3,
-       tags=excluded.tags, seenAt=excluded.seenAt`);
+       tags=excluded.tags, seenAt=excluded.seenAt
+     WHERE plays.value IS NOT excluded.value OR plays.cat IS NOT excluded.cat OR plays.season IS NOT excluded.season
+       OR plays.gameId IS NOT excluded.gameId OR plays.day IS NOT excluded.day OR plays.label IS NOT excluded.label
+       OR plays.type IS NOT excluded.type OR plays.subType IS NOT excluded.subType OR plays.playerId IS NOT excluded.playerId
+       OR plays.player IS NOT excluded.player OR plays.player2Id IS NOT excluded.player2Id OR plays.player2 IS NOT excluded.player2
+       OR plays.player3Id IS NOT excluded.player3Id OR plays.player3 IS NOT excluded.player3 OR plays.tags IS NOT excluded.tags`);
 }
 
 function playBind(stmt, r, sport, season) {
@@ -1796,6 +1879,8 @@ async function weeklyRescan(env) {
 async function handleGet({ request, env, waitUntil }) {
   // Admin: the slow and failing database calls the recorder caught.
   if (new URL(request.url).searchParams.get('dbslow') === '1') return json({ calls: await readSlow(env) });
+  // Admin: the background jobs' database use against their daily budget.
+  if (new URL(request.url).searchParams.get('jobuse') != null) return json({ cap: JOB_CAP, today: await jobUse(env), days: await jobHistory(env, 14) });
   // Admin: rows read and written today, by request type and statement.
   if (new URL(request.url).searchParams.get('dbuse') != null) return json({ day: new URL(request.url).searchParams.get('dbuse') || new Date().toISOString().slice(0, 10), use: await readUse(env, new URL(request.url).searchParams.get('dbuse') || undefined) });
   const auth = env.RS_AUTH_TOKEN;
@@ -2232,7 +2317,9 @@ async function handleGet({ request, env, waitUntil }) {
          played, started, seenAt)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
        ON CONFLICT(id) DO UPDATE SET value=excluded.value, tags=excluded.tags,
-         stats=excluded.stats, day=excluded.day, seenAt=excluded.seenAt`);
+         stats=excluded.stats, day=excluded.day, seenAt=excluded.seenAt
+       WHERE performances.value IS NOT excluded.value OR performances.tags IS NOT excluded.tags
+         OR performances.stats IS NOT excluded.stats OR performances.day IS NOT excluded.day`);
     let stored = 0, asked = 0, withTags = 0;
     for (const id of ids) {
       let d;
@@ -2640,7 +2727,7 @@ async function handleGet({ request, env, waitUntil }) {
     const sets = GAMELOG_FEED_COLS.filter(c => !keyCols.includes(c))
                                   .map(c => `${c}=excluded.${c}`).join(', ');
     const sql = `INSERT INTO gamelog (${GAMELOG_FEED_COLS.join(',')}) VALUES ${place} `
-              + `ON CONFLICT(${keyCols.join(',')}) DO UPDATE SET ${sets}`;
+              + `ON CONFLICT(${keyCols.join(',')}) DO UPDATE SET ${sets} WHERE ${glChanged(keyCols)}`;
     let asked = 0, wrote = 0, withLine = 0;
     for (let i = 0; i < slice.length; i += FETCH_AT_ONCE) {
       const group = slice.slice(i, i + FETCH_AT_ONCE);
@@ -2761,7 +2848,7 @@ async function handleGet({ request, env, waitUntil }) {
       const sets = GAMELOG_FEED_COLS.filter(c => !keyCols.includes(c))
                                     .map(c => `${c}=excluded.${c}`).join(', ');
       const sql = `INSERT INTO gamelog (${GAMELOG_FEED_COLS.join(',')}) VALUES ${place} `
-                + `ON CONFLICT(${keyCols.join(',')}) DO UPDATE SET ${sets}`;
+                + `ON CONFLICT(${keyCols.join(',')}) DO UPDATE SET ${sets} WHERE ${glChanged(keyCols)}`;
       let asked = 0, wrote = 0, played = 0;
       for (let i = 0; i < slice.length; i += FETCH_AT_ONCE) {
         const group = slice.slice(i, i + FETCH_AT_ONCE);
@@ -5121,8 +5208,8 @@ async function handleGet({ request, env, waitUntil }) {
           // A blank is recorded too, so a team with no conference is not
           // retried forever.
           await db.prepare(
-            `UPDATE gamelog SET conference = ? WHERE sport = ? AND season = ? AND team = ?`)
-            .bind(conf || '-', sport, Number(season), r.team).run();
+            `UPDATE gamelog SET conference = ? WHERE sport = ? AND season = ? AND team = ? AND conference IS NOT ?`)
+            .bind(conf || '-', sport, Number(season), r.team, conf || '-').run();
           if (!conf) blank++;
           done++;
           await sleep(80);
@@ -5567,8 +5654,8 @@ async function handleGet({ request, env, waitUntil }) {
         }
         for (const [gid, pid, pos] of places) {
           stmts.push(db.prepare(
-            'UPDATE gamelog SET position = ? WHERE sport = ? AND season = ? AND playerId = ? AND gameId = ?')
-            .bind(pos, sport, Number(season), pid, gid));
+            'UPDATE gamelog SET position = ? WHERE sport = ? AND season = ? AND playerId = ? AND gameId = ? AND position IS NOT ?')
+            .bind(pos, sport, Number(season), pid, gid, pos));
         }
         for (let j = 0; j < stmts.length; j += 40) {
           const slice = stmts.slice(j, j + 40);
@@ -6395,7 +6482,7 @@ async function handleGet({ request, env, waitUntil }) {
           }
           await send(`pulling rax per game for ${todo.length} of ${store.ids.length} players...\n`);
 
-          const sql = `UPDATE gamelog SET rax = ? WHERE sport = ? AND season = ? AND playerId = ? AND day = ?`;
+          const sql = `UPDATE gamelog SET rax = ? WHERE sport = ? AND season = ? AND playerId = ? AND day = ? AND rax IS NOT ?`;
           let n = 0, updates = 0, skipped = 0, firstError = '';
           for (const id of todo) {
             try {
@@ -6406,13 +6493,19 @@ async function handleGet({ request, env, waitUntil }) {
                  over it, in one batch. Without this, a re-walk after Real
                  changes its values leaves any game that dropped to nothing
                  holding the old number. */
+              /* Only rows whose rax actually changes are written: games no
+                 longer on the screen go to 0 if they aren't already, and the
+                 rest only where the figure differs. Zeroing everything and
+                 writing it all back cost two writes per game per walk. */
+              const listed = list.filter(e => e && e.day && e.earnings != null).map(e => String(e.day).replace(/'/g, ''));
               const stmts = [db.prepare(
-                'UPDATE gamelog SET rax = 0 WHERE sport = ? AND season = ? AND playerId = ?')
+                `UPDATE gamelog SET rax = 0 WHERE sport = ? AND season = ? AND playerId = ? AND (rax IS NULL OR rax <> 0)`
+                + (listed.length ? ` AND day NOT IN (${listed.map(d => `'${d}'`).join(',')})` : ''))
                 .bind(sport, Number(season), Number(id))];
               for (const e of list) {
                 if (!e || !e.day || e.earnings == null) continue;
                 if (Array.isArray(e.playerBoxScoreIds) && e.playerBoxScoreIds.length > 1) { skipped++; continue; }
-                stmts.push(db.prepare(sql).bind(Number(e.earnings), sport, Number(season), Number(id), e.day));
+                stmts.push(db.prepare(sql).bind(Number(e.earnings), sport, Number(season), Number(id), e.day, Number(e.earnings)));
               }
               for (let i = 0; i < stmts.length; i += 40) {
                 const batch = stmts.slice(i, i + 40);
@@ -6495,7 +6588,7 @@ async function handleGet({ request, env, waitUntil }) {
               const sets = GAMELOG_FEED_COLS.filter(c => !keyCols.includes(c))
                                             .map(c => `${c}=excluded.${c}`).join(', ');
               const sql = `INSERT INTO gamelog (${GAMELOG_FEED_COLS.join(',')}) VALUES ${place} `
-                        + `ON CONFLICT(${keyCols.join(',')}) DO UPDATE SET ${sets}`;
+                        + `ON CONFLICT(${keyCols.join(',')}) DO UPDATE SET ${sets} WHERE ${glChanged(keyCols)}`;
               for (let i = 0; i < rows.length; i += 40) {
                 const batch = rows.slice(i, i + 40).map(r =>
                   db.prepare(sql).bind(...GAMELOG_FEED_COLS.map(c => r[c] === undefined ? null : r[c])));
@@ -7287,7 +7380,13 @@ export async function onRequestGet(ctx) {
       return new Response(JSON.stringify({ phase: null, resting: true, minutesLeft: 1, after: 'rate limit' }),
         { status: 429, headers: { 'content-type': 'application/json' } });
     }
-    if (!(MARKET_ON && env.RS_MARKET_TOKEN)) return handleGet(ctx);
+    // The daily database budget: past it, every job rests until midnight UTC.
+    const over = await jobOverBudget(env);
+    if (over) return json({ phase: null, resting: true, after: 'daily database budget', used: over, cap: JOB_CAP });
+    const tally = env.RATEBOARD_DB && env.RATEBOARD_DB.__tally;
+    const label = url.searchParams.get('queue') === 'next' ? 'tick' : ([...url.searchParams.entries()].find(([k]) => !['sport', 'season', 'jobs', 't'].includes(k)) || ['other'])[0];
+    const record = () => { try { ctx.waitUntil(addJobUse(env, tally, label).catch(() => {})); } catch (e) {} };
+    if (!(MARKET_ON && env.RS_MARKET_TOKEN)) { const r0 = await handleGet(ctx); record(); return r0; }
     /* The marketplace pull rides alongside the collector call rather than
        ahead of it: it is a different Real account, one request at a time,
        and it stops when the collector's own work is done, so the tick is no
@@ -7304,6 +7403,7 @@ export async function onRequestGet(ctx) {
       if (more) stop.at = 0;          // the phase call that follows carries it on
     } else stop.at = 0;
     await pull;
+    record();
     return res;
   }
 
