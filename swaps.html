@@ -378,7 +378,7 @@ $('#connect').addEventListener('click', async () => {
 });
 $('#chatsync').addEventListener('click', async () => {
   const j = await api('/api/swaps?op=chats&sync=1');
-  $('#chatinfo').textContent = j.error ? j.error : `${j.chatsKnown} chats known · ${j.newChatsLeftToday} new chats left today`;
+  $('#chatinfo').textContent = (j.error ? j.error + ' · ' : '') + `${j.chatsKnown} chats known · ${j.requests ? `${j.requests.requests} requests, accepted ${j.requests.accepted.length ? j.requests.accepted.join(', ') : 'none'} · ` : ''}${j.newChatsLeftToday} new chats left today`;
 });
 $('#dmopen').addEventListener('click', async () => {
   const u = $('#dmuser').value.trim(); if(!u) return;

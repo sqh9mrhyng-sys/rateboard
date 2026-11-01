@@ -385,6 +385,49 @@ async function syncChats(db, auth) {
 }
 const BOT_ID = 'jvbj4p6v';   // raxacademy.app
 
+/* A first message from someone new lands in the bot's DM requests
+   (GET messages/requests). Requests from members who have scanned on Swaps
+   are accepted - PUT messages/channels/<id>/acceptrequest with {} - which
+   makes them an ordinary chat. Anyone else's request is left alone. */
+function requestChats(d) {
+  const out = [];
+  const walk = o => {
+    if (!o || typeof o !== 'object') return;
+    if (Array.isArray(o)) { o.forEach(walk); return; }
+    const ch = Number(o.channelId != null ? o.channelId : o.id);
+    const ids = [];
+    for (const u of (o.users || o.members || [])) { const id = u && (u.userId || u.id); if (id) ids.push([String(id), u.userName || null]); }
+    if (o.creatorUserId) ids.push([String(o.creatorUserId), null]);
+    if (o.user && o.user.id) ids.push([String(o.user.id), o.user.userName || null]);
+    if (Number.isFinite(ch) && ch > 0 && ids.length) {
+      for (const [id, name] of ids) if (id !== BOT_ID) out.push({ channelId: ch, hashId: id, userName: name });
+    }
+    for (const v of Object.values(o)) if (v && typeof v === 'object') walk(v);
+  };
+  walk(d);
+  return out;
+}
+async function acceptRequests(db, auth) {
+  await db.prepare(DM_DDL).run();
+  const d = await rsGetJson('https://web.realapp.com/messages/requests', auth);
+  const reqs = requestChats(d);
+  if (!reqs.length) return { requests: 0, accepted: [] };
+  const members = new Set(((await db.prepare('SELECT hashId FROM swap_users WHERE hashId IS NOT NULL').all()).results || []).map(r => r.hashId));
+  const accepted = [], seen = new Set();
+  for (const r of reqs) {
+    if (!members.has(r.hashId) || seen.has(r.channelId)) continue;
+    seen.add(r.channelId);
+    const res = await fetch(`https://web.realapp.com/messages/channels/${r.channelId}/acceptrequest`, {
+      method: 'PUT', headers: { ...rsHeaders(auth), 'content-type': 'application/json' }, body: '{}' });
+    if (!res.ok) continue;
+    await db.prepare(`INSERT INTO swap_dm (hashId, userName, channelId, openedAt) VALUES (?, ?, ?, ?)
+      ON CONFLICT(hashId) DO UPDATE SET channelId=excluded.channelId`).bind(r.hashId, r.userName, r.channelId, Date.now()).run();
+    accepted.push(r.userName || r.hashId);
+    await sleep(800);
+  }
+  return { requests: new Set(reqs.map(r => r.channelId)).size, accepted };
+}
+
 const SPORT_NAME = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf' };
 function passLabel(owner, key) {
   const p = (owner.passes || []).find(x => x.key === key);
@@ -435,6 +478,7 @@ export async function swapTick(env) {
   let last = null; try { last = await env.RATEBOARD_KV.get(hourKey); } catch (e) {}
   if (last !== hour) {
     try { await env.RATEBOARD_KV.put(hourKey, hour); } catch (e) {}
+    try { await acceptRequests(db, auth); } catch (e) {}
     try { await syncChats(db, auth); } catch (e) {}
     try { await runMatching(db); } catch (e) {}
   }
@@ -643,6 +687,7 @@ export async function onRequest({ request, env, waitUntil }) {
     if (!(await allow(url.origin, 'swapdm-connect', 6, 600))) return json({ error: 'Too many checks - try again in a few minutes.' }, 429);
     const u = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(me).first();
     if (!u || !u.hashId) return json({ error: 'Scan your passes first so the bot knows your Real account.' }, 400);
+    try { await acceptRequests(db, auth); } catch (e) {}
     try { await syncChats(db, auth); } catch (e) { return json({ error: String(e.message || e) }, 502); }
     const c = await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=? AND channelId IS NOT NULL').bind(u.hashId).first();
     return json({ connected: !!c });
@@ -651,10 +696,14 @@ export async function onRequest({ request, env, waitUntil }) {
   if (op === 'chats') {
     if (!auth) return json({ error: 'No swap token found.' }, 503);
     let synced = null, err = null;
-    if (url.searchParams.get('sync') === '1') { try { synced = await syncChats(db, auth); } catch (e) { err = String(e.message || e); } }
+    let reqs = null;
+    if (url.searchParams.get('sync') === '1') {
+      try { reqs = await acceptRequests(db, auth); } catch (e) { err = 'requests: ' + String(e.message || e); }
+      try { synced = await syncChats(db, auth); } catch (e) { err = String(e.message || e); }
+    }
     await db.prepare(DM_DDL).run();
     const n = await db.prepare('SELECT COUNT(*) AS n FROM swap_dm').first();
-    return json({ synced, error: err, chatsKnown: n ? n.n : 0, newChatsLeftToday: await newChatsLeft(env) });
+    return json({ synced, requests: reqs, error: err, chatsKnown: n ? n.n : 0, newChatsLeftToday: await newChatsLeft(env) });
   }
 
   if (op === 'dmopen') {
