@@ -5280,7 +5280,7 @@ async function handleGet({ request, env, waitUntil }) {
     const owner = x => sport === 'ufc' ? numOr(x.teamId ?? (x.card || {}).teamId)
       : (numOr(x.playerId ?? (x.card || {}).playerId) ?? numOr(x.entityId ?? (x.card || {}).entityId));
     const startAt = new Date(Date.now() - 60000).toISOString();
-    const PK = 'market_player_param_v2_' + (sport === 'ufc' ? 'ufc' : 'p');
+    const PK = 'market_player_param_v3_' + (sport === 'ufc' ? 'ufc' : 'p');
     let param = null; try { param = await env.RATEBOARD_KV.get(PK); } catch (e) {}
     // The player's name, for the filters that search by name.
     let pname = String(url.searchParams.get('player') || '').trim();
@@ -5290,7 +5290,8 @@ async function handleGet({ request, env, waitUntil }) {
           .bind(sport, Number(season), pid).first();
         pname = String((r && r.n) || '').trim(); } catch (e) {}
     }
-    const ID = sport === 'ufc' ? ['teamId={id}', 'entityType=team&entityId={id}', 'teamIds={id}'] : [];
+    // Real's own marketplace filter: filterEntityType + filterEntityId.
+    const ID = sport === 'ufc' ? ['filterEntityType=team&filterEntityId={id}', 'teamId={id}'] : ['filterEntityType=player&filterEntityId={id}'];
     const tries = [param, ...ID, 'entityType=player&entityId={id}', 'playerId={id}', 'playerIds={id}',
       ...(pname ? ['query={name}', 'search={name}', 'q={name}', 'searchQuery={name}', 'playerName={name}'] : [])]
       .filter((v, i, a) => v && a.indexOf(v) === i);
