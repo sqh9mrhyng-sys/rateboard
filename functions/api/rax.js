@@ -495,6 +495,18 @@ const MARKET_DDL = `CREATE TABLE IF NOT EXISTS market_v2 (
   listingType TEXT, status TEXT, minBid REAL, buyNow REAL, curBid REAL, bids INTEGER,
   seller TEXT, cardId TEXT, createdAt TEXT, endsAt TEXT, seenAt INTEGER)`;
 const MARKET_KEY = 'market_pull_v7';
+/* Whose card a listing is. UFC cards are filed as plays: entityId is the
+   fight moment and playerId is empty, and the fighter is the card's teamId
+   (Jon Jones is team 549, which is also what his Real link carries). So UFC
+   groups by teamId; every other sport by its player. */
+const MKEY = `(CASE WHEN sport='ufc' THEN teamId ELSE COALESCE(playerId, entityId) END)`;
+// The teamId column, added once per worker.
+let marketTeamCol = false;
+async function marketTeamReady(db) {
+  if (marketTeamCol) return;
+  try { await db.prepare('ALTER TABLE market_v2 ADD COLUMN teamId INTEGER').run(); } catch (e) {}
+  marketTeamCol = true;
+}
 const MARKET_SEASONS = [2027, 2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2016, 2015, 2014];
 const MARKET_SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'ncaam', 'nhl', 'soccer', 'wnba', 'ufc', 'golf'];
 /* One at a time. Eight side by side drew "We are experiencing high volume"
@@ -618,7 +630,9 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
       const c = r.card || {};
       const pp = c.primaryPlayer || {};
       const full = pp.firstName && pp.lastName ? `${pp.firstName} ${pp.lastName}` : '';
-      const who = String(full || pp.fullName || pp.displayName || pp.name || '').slice(0, 80) || null;
+      const tm = c.team || {};
+      const who = String(full || pp.fullName || pp.displayName || pp.name
+        || (sp === 'ufc' ? (tm.displayName || tm.name) : '') || '').slice(0, 80) || null;
       return ins.bind(String(r.id), sp, Number(se), numOr(r.playerId ?? c.playerId),
         r.entityType || c.entityType || null, numOr(r.entityId ?? c.entityId),
         String(c.entityLabel || c.viewLabel || '').slice(0, 80) || null,
@@ -626,7 +640,7 @@ async function marketLane(env, auth, job, lane, ins, deadline) {
         numOr(r.mintNumber ?? c.mintNumber), r.listingType || null, r.status || null,
         numOr(r.minBidPrice), numOr(r.buyNowPrice), numOr(r.currentBidAmount), numOr(r.numBids),
         r.userId != null ? String(r.userId) : null, r.cardId != null ? String(r.cardId) : null,
-        r.createdAt || null, r.endsAt || null, now, who);
+        r.createdAt || null, r.endsAt || null, now, who, numOr(r.teamId ?? c.teamId));
     });
     await Promise.all(writes.splice(0));
     // A failed save is tried once more after a pause (the database resets
@@ -778,13 +792,27 @@ async function marketSliceHeld(env, auth, deadline) {
       st.indexed1 = true;
     } catch (e) {}
   }
+  await marketTeamReady(db);
+  /* UFC was stored without its fighter (teamId), so every listing sat under
+     its own fight moment. Those rows are dropped once and UFC goes to the
+     front of the queue to be pulled again with the fighter on each. */
+  if (!st.ufcTeam1) {
+    try {
+      await db.prepare("DELETE FROM market_v2 WHERE sport='ufc' AND teamId IS NULL").run();
+      await db.prepare(`INSERT INTO market_seasons (job, front) VALUES ('ufc:2023', ?)
+        ON CONFLICT(job) DO UPDATE SET front=excluded.front`).bind(1).run();
+      st.ufcTeam1 = true;
+      try { await env.RATEBOARD_KV.put(MARKET_KEY, JSON.stringify(st)); } catch (e) {}
+    } catch (e) {}
+  }
   const ins = db.prepare(
     `INSERT INTO market_v2 (id, sport, season, playerId, entityType, entityId, label, rarity, prestige,
-       value, mint, listingType, status, minBid, buyNow, curBid, bids, seller, cardId, createdAt, endsAt, seenAt, player)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       value, mint, listingType, status, minBid, buyNow, curBid, bids, seller, cardId, createdAt, endsAt, seenAt, player, teamId)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(id) DO UPDATE SET status=excluded.status, minBid=excluded.minBid,
        buyNow=excluded.buyNow, curBid=excluded.curBid, bids=excluded.bids,
-       endsAt=excluded.endsAt, seenAt=excluded.seenAt, player=COALESCE(excluded.player, market_v2.player)`);
+       endsAt=excluded.endsAt, seenAt=excluded.seenAt, player=COALESCE(excluded.player, market_v2.player),
+       teamId=COALESCE(excluded.teamId, market_v2.teamId)`);
   await marketClear(db, st);
   /* One window after another, and one season after another, for as long as
      the call lasts. */
@@ -865,9 +893,9 @@ async function marketAgg(db, sport, season, nowIso, pids) {
   /* A card's player is its playerId, or for UFC - whose cards are filed
      under the fighter as the card's entity, with no playerId - its entityId.
      Without that every UFC listing grouped into one nameless row. */
-  const only = pids ? ` AND COALESCE(playerId, entityId) IN (${pids.map(Number).filter(Number.isFinite).join(',') || 0})` : '';
+  const only = pids ? ` AND ${MKEY} IN (${pids.map(Number).filter(Number.isFinite).join(',') || 0})` : '';
   const rows = (await db.prepare(
-    `SELECT COALESCE(playerId, entityId) AS playerId, MAX(COALESCE(player, label)) AS player, rarity, COUNT(*) AS n, MIN(buyNow) AS minBuy,
+    `SELECT ${MKEY} AS playerId, MAX(COALESCE(player, label)) AS player, rarity, COUNT(*) AS n, MIN(buyNow) AS minBuy,
             AVG(buyNow) AS avgBuy, AVG(ABS(value)) AS avgValue, MAX(ABS(value)) AS maxValue,
             -- price per point of rating, leaving out anything over 1,000 a point;
             -- a negative rating counts as its size, so -8.2 is 8.2
@@ -875,7 +903,7 @@ async function marketAgg(db, sport, season, nowIso, pids) {
             COUNT(CASE WHEN value <> 0 AND buyNow / ABS(value) <= 1000 THEN 1 END) AS pprN,
             SUM(bids) AS bids, MIN(endsAt) AS nextEnds, SUM(ABS(value)) AS valueSum
        FROM market_v2 WHERE sport=? AND season=? AND endsAt > ?${only}
-      GROUP BY COALESCE(playerId, entityId), rarity`).bind(sport, season, nowIso).all()).results || [];
+      GROUP BY ${MKEY}, rarity`).bind(sport, season, nowIso).all()).results || [];
   const by = new Map();
   for (const r of rows) {
     const p = by.get(r.playerId) || { sport, season, playerId: r.playerId, player: r.player, n: 0, bids: 0, rating: 0,
@@ -5211,6 +5239,7 @@ async function handleGet({ request, env, waitUntil }) {
   if (url.searchParams.get('market') === 'listings') {
     const db = env.RATEBOARD_DB;
     try {
+      await marketTeamReady(db);
       await db.prepare(MARKET_DDL).run();
       try { await db.prepare('ALTER TABLE market_v2 ADD COLUMN player TEXT').run(); } catch (e) {}
       const nowIso = new Date().toISOString();
@@ -5219,7 +5248,7 @@ async function handleGet({ request, env, waitUntil }) {
         if (!Number.isFinite(pid)) return json({ error: 'playerId required' }, 400);
         const r = await db.prepare(
           `SELECT id, rarity, prestige, value, mint, buyNow, minBid, curBid, bids, endsAt, createdAt, label
-             FROM market_v2 WHERE sport=? AND season=? AND COALESCE(playerId, entityId)=? AND endsAt > ?
+             FROM market_v2 WHERE sport=? AND season=? AND ${MKEY}=? AND endsAt > ?
             ORDER BY rarity DESC, buyNow ASC LIMIT 400`).bind(sport, Number(season), pid, nowIso).all();
         return json({ sport, season, playerId: pid, listings: r.results || [] });
       }
@@ -5248,10 +5277,12 @@ async function handleGet({ request, env, waitUntil }) {
     if (!(await allow(url.origin, 'market-pullplayer', 10, 600))) return json({ error: 'Ten player pulls per ten minutes.' }, 429);
     const base = before => `https://web.realapp.com/cardmarketplacelistings?beforeEndsAt=${encodeURIComponent(before)}`
       + `&cohort=all&listingType=card&offset=0&limit=100&prestige=all&rarity=all&season=${Number(season)}&sport=${sport}`;
-    const owner = x => numOr(x.playerId ?? (x.card || {}).playerId) ?? numOr(x.entityId ?? (x.card || {}).entityId);
+    const owner = x => sport === 'ufc' ? numOr(x.teamId ?? (x.card || {}).teamId)
+      : (numOr(x.playerId ?? (x.card || {}).playerId) ?? numOr(x.entityId ?? (x.card || {}).entityId));
     const startAt = new Date(Date.now() - 60000).toISOString();
-    let param = null; try { param = await env.RATEBOARD_KV.get('market_player_param_v1'); } catch (e) {}
-    const tries = [param, 'playerId', 'entityId', 'playerIds', 'entityIds'].filter((v, i, a) => v && a.indexOf(v) === i);
+    const PK = 'market_player_param_v1_' + (sport === 'ufc' ? 'ufc' : 'p');
+    let param = null; try { param = await env.RATEBOARD_KV.get(PK); } catch (e) {}
+    const tries = [param, ...(sport === 'ufc' ? ['teamId', 'teamIds'] : []), 'playerId', 'entityId', 'playerIds', 'entityIds'].filter((v, i, a) => v && a.indexOf(v) === i);
     let first = null, tried = [];
     for (const p of tries) {
       let d;
@@ -5262,7 +5293,7 @@ async function handleGet({ request, env, waitUntil }) {
       tried.push(`${p}: ignored by Real`);
     }
     if (!first) return json({ error: 'Real gave no listings for that player with any filter tried.', tried });
-    try { await env.RATEBOARD_KV.put('market_player_param_v1', param); } catch (e) {}
+    try { await env.RATEBOARD_KV.put(PK, param); } catch (e) {}
     const all = new Map(first.map(r => [String(r.id), r]));
     let cursor = first[first.length - 1].endsAt, pages = 1;
     while (pages < 40 && cursor) {
@@ -5280,20 +5311,24 @@ async function handleGet({ request, env, waitUntil }) {
     // Swap this player's copy for the fresh one: listings that sold or were
     // pulled since the last season pull drop out.
     await db.prepare(MARKET_DDL).run();
+    await marketTeamReady(db);
     const ins = db.prepare(
       `INSERT INTO market_v2 (id, sport, season, playerId, entityType, entityId, label, rarity, prestige,
-         value, mint, listingType, status, minBid, buyNow, curBid, bids, seller, cardId, createdAt, endsAt, seenAt, player)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         value, mint, listingType, status, minBid, buyNow, curBid, bids, seller, cardId, createdAt, endsAt, seenAt, player, teamId)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
        ON CONFLICT(id) DO UPDATE SET status=excluded.status, minBid=excluded.minBid,
          buyNow=excluded.buyNow, curBid=excluded.curBid, bids=excluded.bids,
-         endsAt=excluded.endsAt, seenAt=excluded.seenAt, player=COALESCE(excluded.player, market_v2.player)`);
+         endsAt=excluded.endsAt, seenAt=excluded.seenAt, player=COALESCE(excluded.player, market_v2.player),
+         teamId=COALESCE(excluded.teamId, market_v2.teamId)`);
     const now = Date.now(), nowIso = new Date().toISOString();
-    const stmts = [db.prepare(`DELETE FROM market_v2 WHERE sport=? AND season=? AND COALESCE(playerId, entityId)=? AND endsAt > ?`)
+    const stmts = [db.prepare(`DELETE FROM market_v2 WHERE sport=? AND season=? AND ${MKEY}=? AND endsAt > ?`)
       .bind(sport, Number(season), pid, nowIso)];
     let name = null;
     for (const r of all.values()) {
       const c = r.card || {}, pp = c.primaryPlayer || {};
-      const who = String((pp.firstName && pp.lastName ? `${pp.firstName} ${pp.lastName}` : '') || pp.fullName || pp.displayName || pp.name || '').slice(0, 80) || null;
+      const tm = c.team || {};
+      const who = String((pp.firstName && pp.lastName ? `${pp.firstName} ${pp.lastName}` : '') || pp.fullName || pp.displayName || pp.name
+        || (sport === 'ufc' ? (tm.displayName || tm.name) : '') || '').slice(0, 80) || null;
       name = name || who || c.entityLabel || null;
       stmts.push(ins.bind(String(r.id), sport, Number(season), numOr(r.playerId ?? c.playerId),
         r.entityType || c.entityType || null, numOr(r.entityId ?? c.entityId),
@@ -5302,7 +5337,7 @@ async function handleGet({ request, env, waitUntil }) {
         numOr(r.mintNumber ?? c.mintNumber), r.listingType || null, r.status || null,
         numOr(r.minBidPrice), numOr(r.buyNowPrice), numOr(r.currentBidAmount), numOr(r.numBids),
         r.userId != null ? String(r.userId) : null, r.cardId != null ? String(r.cardId) : null,
-        r.createdAt || null, r.endsAt || null, now, who));
+        r.createdAt || null, r.endsAt || null, now, who, numOr(r.teamId ?? c.teamId)));
     }
     for (let k = 0; k < stmts.length; k += 50) await db.batch(stmts.slice(k, k + 50));
     try { await env.RATEBOARD_KV.delete('msnap_v1_' + `${sport}:${Number(season)}`); } catch (e) {}
@@ -5332,7 +5367,7 @@ async function handleGet({ request, env, waitUntil }) {
       await sleep(400);
     }
     try {
-      out.stored = (await env.RATEBOARD_DB.prepare(`SELECT season, entityType, COUNT(*) AS n, COUNT(DISTINCT COALESCE(playerId, entityId)) AS fighters,
+      out.stored = (await env.RATEBOARD_DB.prepare(`SELECT season, entityType, COUNT(*) AS n, COUNT(DISTINCT teamId) AS fighters,
           SUM(CASE WHEN endsAt > ? THEN 1 ELSE 0 END) AS live FROM market_v2 WHERE sport='ufc' GROUP BY season, entityType`).bind(at).all()).results || [];
     } catch (e) { out.storedErr = String(e.message).slice(0, 160); }
     return json(out);
@@ -6955,6 +6990,7 @@ const MSNAP_FRESH_MS = 20 * 60000;
 async function buildMarketView(env, sport, season) {
   const db = env.RATEBOARD_DB;
   await db.prepare(MARKET_DDL).run();
+  await marketTeamReady(db);
   const nowIso = new Date().toISOString();
       const seasons = [];
       const { rows, by } = await marketAgg(db, sport, Number(season), nowIso, null);

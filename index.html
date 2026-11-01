@@ -80,15 +80,21 @@
   #pagebtn:hover{background:color-mix(in srgb, var(--accent) 24%, transparent)}
   #pagebtn .caret{position:static;transform:none;color:var(--accent);font-size:11px}
   #pagebtn-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .pagemenu{position:absolute;left:0;top:calc(100% + 8px);z-index:60;min-width:250px;max-width:min(320px, calc(100vw - 32px));
-    background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:6px;box-shadow:0 14px 40px rgba(0,0,0,.45)}
-  .pagemenu .grp{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted, #8b93a7);padding:8px 10px 4px}
-  .pagemenu button{display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;text-align:left;background:none;border:0;
-    color:var(--bone);padding:9px 10px;border-radius:10px;font:inherit;cursor:pointer}
-  .pagemenu button:hover,.pagemenu button:focus-visible{background:color-mix(in srgb, var(--accent) 14%, transparent);outline:none}
-  .pagemenu button[aria-current="true"]{background:color-mix(in srgb, var(--accent) 20%, transparent)}
-  .pagemenu b{font-size:14px}
-  .pagemenu small{font-size:12px;opacity:.7}
+  /* Fixed to the screen, not the header: the header clips anything that
+     hangs out of it on a phone, which is why the menu never showed there. */
+  .pagemenu{position:fixed;z-index:200;min-width:200px;max-width:calc(100vw - 24px);
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:6px;
+    box-shadow:0 18px 48px rgba(0,0,0,.5);transform-origin:top left;animation:pmIn .14s ease-out}
+  @keyframes pmIn{from{opacity:0;transform:translateY(-4px) scale(.98)}to{opacity:1;transform:none}}
+  .pagemenu button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:0;
+    color:var(--bone);padding:11px 12px;border-radius:10px;font:inherit;font-size:14.5px;font-weight:600;cursor:pointer}
+  .pagemenu button:hover,.pagemenu button:focus-visible{background:color-mix(in srgb, var(--accent) 13%, transparent);outline:none}
+  .pagemenu button .dot{width:7px;height:7px;border-radius:50%;background:transparent;flex:0 0 auto}
+  .pagemenu button[aria-current="true"]{color:var(--accent)}
+  .pagemenu button[aria-current="true"] .dot{background:var(--accent)}
+  .pagemenu .sep{height:1px;background:var(--line);margin:5px 8px}
+  #pagebtn[aria-expanded="true"] .caret{transform:rotate(180deg)}
+  #pagebtn .caret{transition:transform .15s}
   .sportpick{position:relative}
   .sportpick select{
     appearance:none;background:var(--panel);border:1px solid var(--line);color:var(--bone);
@@ -551,6 +557,7 @@
 </script>
 </head>
 <body data-sport="CFB">
+<div id="pagemenu" class="pagemenu hide" role="menu"></div>
 
 <!-- ============ LOGIN GATE ============ -->
 <div id="gate" class="gate">
@@ -587,7 +594,7 @@
           <option value="cbb">Game data</option>
         </select>
         <button type="button" id="pagebtn" aria-haspopup="menu" aria-expanded="false"><span id="pagebtn-t">Board</span><span class="caret">&#9662;</span></button>
-        <div id="pagemenu" class="pagemenu hide" role="menu"></div>
+
       </div>
     </div>
     <div class="sportpick">
@@ -934,38 +941,33 @@ function applyGameDataVisibility(){
   if(curPage === 'cbb' && !canSeePackData()) goPage('board');
 }
 
-const PAGE_INFO = {
-  board: ['Board', 'Buy offers and the price board', ''],
-  cbb: ['Game data', 'Players, games, pack data and more', 'Data'],
-  market: ['Market data', 'Live listings and prices', 'Data'],
-  swaps: ['Swaps', 'Match pack swaps with members', 'Tools'],
-  otd: ['OTD optimization', 'Upgrade and claim planner', 'Tools'],
-  admin: ['Admin', 'Status, offers, users and access', 'Admin']
-};
 function drawPageMenu(){
   const sel = $('#pagesel'), menu = $('#pagemenu'), t = $('#pagebtn-t');
   if(!sel || !menu) return;
   const cur = sel.value || curPage;
   const opt = [...sel.options];
-  const label = v => { const o = opt.find(x => x.value === v); return (o && o.textContent) || (PAGE_INFO[v] || [v])[0]; };
-  if(t) t.textContent = label(cur);
-  let grp = null, html = '';
-  for(const o of opt){
-    const info = PAGE_INFO[o.value] || [o.textContent, '', ''];
-    if(info[2] !== grp){ grp = info[2]; if(grp) html += `<div class="grp">${grp}</div>`; }
-    html += `<button type="button" role="menuitem" data-page="${o.value}" aria-current="${o.value === cur}"><b>${o.textContent}</b>${info[1] ? `<small>${info[1]}</small>` : ''}</button>`;
-  }
-  menu.innerHTML = html;
+  const o = opt.find(x => x.value === cur);
+  if(t) t.textContent = (o && o.textContent) || 'Board';
+  menu.innerHTML = opt.map(x => (x.value === 'admin' ? '<div class="sep"></div>' : '')
+    + `<button type="button" role="menuitem" data-page="${x.value}" aria-current="${x.value === cur}"><span class="dot"></span>${x.textContent}</button>`).join('');
+}
+function placePageMenu(){
+  const b = $('#pagebtn'), m = $('#pagemenu'); if(!b || !m) return;
+  const r = b.getBoundingClientRect();
+  m.style.top = Math.round(r.bottom + 8) + 'px';
+  m.style.left = Math.round(Math.max(12, Math.min(r.left, window.innerWidth - m.offsetWidth - 12))) + 'px';
 }
 function closePageMenu(){ const m = $('#pagemenu'), b = $('#pagebtn'); if(m) m.classList.add('hide'); if(b) b.setAttribute('aria-expanded', 'false'); }
 document.addEventListener('click', e => {
   const b = e.target.closest && e.target.closest('#pagebtn');
-  if(b){ const m = $('#pagemenu'); drawPageMenu(); const open = m.classList.toggle('hide') === false; b.setAttribute('aria-expanded', String(open)); return; }
+  if(b){ const m = $('#pagemenu'); drawPageMenu(); const open = m.classList.toggle('hide') === false; b.setAttribute('aria-expanded', String(open)); if(open) placePageMenu(); return; }
   const it = e.target.closest && e.target.closest('#pagemenu [data-page]');
   if(it){ const sel = $('#pagesel'); sel.value = it.dataset.page; closePageMenu(); pageGo(); drawPageMenu(); return; }
   if(!(e.target.closest && e.target.closest('#pagemenu'))) closePageMenu();
 });
 document.addEventListener('keydown', e => { if(e.key === 'Escape') closePageMenu(); });
+window.addEventListener('resize', closePageMenu);
+window.addEventListener('scroll', closePageMenu, { passive: true });
 function pageGo(){
   const sel = $('#pagesel');
   if(sel && sel.value === 'market'){ location.href = '/market'; return; }
