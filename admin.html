@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rate Board Admin</title>
+<style>
+  :root{--bg:#141925;--panel:#1d2433;--panel2:#232b3d;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;--ok:#5fbf7a;--bad:#e5484d;--warn:#f0b43a}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:16px}
+  header{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:12px}
+  h1{font-size:20px;margin:0;font-weight:800;margin-right:auto}
+  h2{font-size:16px;margin:0 0 8px}
+  a{color:var(--accent)}
+  .links a{font-size:13px;margin-left:10px}
+  .note{color:var(--mute);font-size:13px}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;position:sticky;top:0;background:var(--bg);padding:6px 0;z-index:2}
+  .tabs button{flex:1 1 auto}
+  .tabs button[aria-pressed="true"]{background:var(--accent);color:#141925;border-color:var(--accent);font-weight:700}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+  input,button,select{font:inherit;padding:8px 10px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
+  button{cursor:pointer}
+  button:disabled{opacity:.55;cursor:default}
+  button.sm{padding:4px 8px;font-size:13px}
+  button.danger{border-color:var(--bad);color:var(--bad)}
+  .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0}
+  .bar input[type=search],.bar input.grow{flex:1 1 200px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .card h3{margin:0 0 6px;font-size:14px;display:flex;align-items:center;gap:8px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--mute);display:inline-block}
+  .dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.bad{background:var(--bad)}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:13px}
+  .kv b{color:var(--mute);font-weight:500}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{text-align:left;padding:6px 5px;border-bottom:1px solid var(--line);vertical-align:middle}
+  th{color:var(--mute);font-weight:600;font-size:12px}
+  td input.rate{width:76px}
+  td input.link{width:100%;min-width:120px}
+  .scroll{overflow-x:auto}
+  .pill{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11.5px;border:1px solid var(--line);color:var(--mute)}
+  .pill.on{border-color:var(--ok);color:var(--ok)}
+  .pill.off{border-color:var(--bad);color:var(--bad)}
+  pre{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;overflow:auto;font-size:12px;max-height:40vh;white-space:pre-wrap;word-break:break-word}
+  .ms{font-variant-numeric:tabular-nums}
+  .hide{display:none!important}
+  #toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--line);padding:9px 14px;border-radius:10px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw}
+  #toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Admin</h1>
+    <span class="links"><a href="/">Board</a><a href="/#gamedata">Game data</a><a href="/market">Market</a><a href="/swaps">Swaps</a><a href="/otd">OTD</a></span>
+  </header>
+
+  <section id="lock" class="hide"><p id="lockmsg">Checking your sign-in…</p><p class="note">Sign in on the <a href="/">board</a> with an admin account, then come back.</p></section>
+
+  <div id="main" class="hide">
+    <div class="tabs" role="tablist">
+      <button data-tab="status" aria-pressed="true">Status</button>
+      <button data-tab="offers" aria-pressed="false">Offers</button>
+      <button data-tab="users" aria-pressed="false">Users &amp; access</button>
+      <button data-tab="swaps" aria-pressed="false">Swaps &amp; DMs</button>
+    </div>
+
+    <!-- STATUS -->
+    <div id="t-status">
+      <div class="bar"><button id="st-refresh">Refresh</button><span class="note" id="st-at"></span></div>
+      <div class="grid" id="st-grid"></div>
+      <section style="margin-top:12px">
+        <h2>Speed check</h2>
+        <p class="note">Times the calls each page makes when it opens, so you can see exactly which one is slow.</p>
+        <div class="bar"><button id="sp-run">Run speed check</button></div>
+        <div id="sp-out"></div>
+      </section>
+    </div>
+
+    <!-- OFFERS -->
+    <div id="t-offers" class="hide">
+      <section>
+        <div class="bar">
+          <input type="search" id="of-q" placeholder="Player or member" autocomplete="off">
+          <select id="of-sport"><option value="">All sports</option></select>
+          <select id="of-sort"><option value="ts">Newest</option><option value="rate">Highest rate</option><option value="player">Player</option></select>
+          <button id="of-reload">Reload</button>
+        </div>
+        <p class="note" id="of-count">Loading…</p>
+        <div class="scroll"><table><thead><tr><th>Player</th><th>Sport</th><th>Member</th><th>Rate</th><th>Comment link</th><th></th></tr></thead><tbody id="of-rows"></tbody></table></div>
+        <div class="bar"><button id="of-more" class="hide">Show more</button></div>
+      </section>
+    </div>
+
+    <!-- USERS -->
+    <div id="t-users" class="hide">
+      <section>
+        <div class="bar">
+          <input type="search" id="us-q" placeholder="Search accounts" autocomplete="off">
+          <select id="us-f"><option value="">Everyone</option><option value="market">Has market data</option><option value="swaps">Has Swaps</option><option value="banned">Removed</option><option value="nopass">Password reset</option></select>
+        </div>
+        <p class="note" id="us-count">Loading…</p>
+        <div class="scroll"><table><thead><tr><th>Account</th><th>Joined</th><th>Offers</th><th>Market</th><th>Swaps</th><th></th></tr></thead><tbody id="us-rows"></tbody></table></div>
+        <div class="bar"><button id="us-more" class="hide">Show more</button></div>
+        <p class="note">Swaps also opens for the named list in the code (shown on the Swaps tab). "Give" here adds anyone else.</p>
+      </section>
+    </div>
+
+    <!-- SWAPS -->
+    <div id="t-swaps" class="hide">
+      <section>
+        <h2>Matches</h2>
+        <div class="bar"><button id="sw-run">Run matching now</button><button id="sw-reload">Refresh</button><span class="note" id="sw-msg"></span></div>
+        <div class="scroll" id="sw-matches">Loading…</div>
+      </section>
+      <section>
+        <h2>Bot (@raxacademy.app)</h2>
+        <div class="bar"><button id="sw-sync">Re-read chats &amp; requests</button><span class="note" id="sw-chats"></span></div>
+        <div class="bar"><input id="sw-user" placeholder="Real username" autocomplete="off" style="flex:0 1 180px"><input id="sw-text" class="grow" value="Swap bot test"><button id="sw-dm">Send DM</button></div>
+        <p class="note" id="sw-dmout"></p>
+      </section>
+      <section>
+        <h2>Named members</h2>
+        <div id="sw-named" class="note">Loading…</div>
+      </section>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+<script>
+(() => {
+  const real = window.fetch.bind(window);
+  window.fetch = (u, o = {}) => {
+    let t = ''; try{ t = localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){}
+    if(t && typeof u === 'string' && u.startsWith('/api/')) o = Object.assign({}, o, { headers: Object.assign({}, o.headers || {}, { 'x-rb-token': t }) });
+    return real(u, o);
+  };
+})();
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const SPORT = {ncaam:'CBB',ncaaf:'CFB',nfl:'NFL',nba:'NBA',nhl:'NHL',mlb:'MLB',wnba:'WNBA',soccer:'FC',golf:'Golf',ufc:'UFC'};
+function toast(t){ const el = $('#toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('show'), 2600); }
+// Every call is timed and given a deadline, so one slow endpoint never
+// leaves a panel spinning forever.
+async function api(u, o = {}, ms = 25000){
+  const c = new AbortController(), t0 = performance.now();
+  const timer = setTimeout(() => c.abort(), ms);
+  try {
+    const r = await fetch(u, Object.assign({}, o, { signal: c.signal }));
+    const j = await r.json().catch(() => ({}));
+    if(!r.ok && !j.error) j.error = 'Error ' + r.status;
+    j.__ms = Math.round(performance.now() - t0);
+    return j;
+  } catch(e){
+    return { error: e.name === 'AbortError' ? `No answer after ${ms / 1000}s` : String(e.message || e), __ms: Math.round(performance.now() - t0) };
+  } finally { clearTimeout(timer); }
+}
+const post = (body) => api('/api/kv', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+const ago = t => { if(!t) return '—'; const s = (Date.now() - new Date(t).getTime()) / 1000;
+  return s < 90 ? `${Math.round(s)}s ago` : s < 5400 ? `${Math.round(s / 60)}m ago` : s < 172800 ? `${Math.round(s / 3600)}h ago` : `${Math.round(s / 86400)}d ago`; };
+const msTag = ms => `<span class="ms note">${ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms + 'ms'}</span>`;
+
+/* ---------- tabs ---------- */
+const loaded = {};
+function show(tab){
+  document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-pressed', b.dataset.tab === tab ? 'true' : 'false'));
+  for(const t of ['status','offers','users','swaps']) $('#t-' + t).classList.toggle('hide', t !== tab);
+  try{ localStorage.setItem('rb_admin_tab', tab); }catch(e){}
+  if(!loaded[tab]){ loaded[tab] = true; ({ status: loadStatus, offers: loadBoard, users: loadUsers, swaps: loadSwaps })[tab](); }
+}
+document.querySelector('.tabs').addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if(b) show(b.dataset.tab); });
+
+/* ---------- status ---------- */
+function card(id, title){ return `<div class="card" id="${id}"><h3><span class="dot"></span>${esc(title)} <span class="ms note" style="margin-left:auto"></span></h3><div class="body note">Loading…</div></div>`; }
+function fill(id, level, html, ms){
+  const el = $('#' + id); if(!el) return;
+  el.querySelector('.dot').className = 'dot ' + level;
+  el.querySelector('.ms').innerHTML = ms != null ? msTag(ms) : '';
+  el.querySelector('.body').innerHTML = html;
+}
+const kv = obj => '<div class="kv">' + Object.entries(obj).filter(([, v]) => v != null && v !== '').map(([k, v]) => `<b>${esc(k)}</b><span>${v}</span>`).join('') + '</div>';
+function loadStatus(){
+  $('#st-at').textContent = 'Checked ' + new Date().toLocaleTimeString();
+  $('#st-grid').innerHTML = card('c-db', 'Database') + card('c-market', 'Market pull') + card('c-collect', 'Game data collector')
+    + card('c-sweeps', 'Game data sweeps') + card('c-bot', 'Swap bot');
+  // All at once; each card fills in as its own answer lands.
+  api('/api/rax?market=me&t=' + Date.now()).then(j => {
+    const lvl = j.error ? 'bad' : j.__ms > 4000 ? 'bad' : j.__ms > 1500 ? 'warn' : 'ok';
+    fill('c-db', lvl, j.error ? esc(j.error) : kv({ 'Response': j.__ms < 1500 ? 'healthy' : j.__ms < 4000 ? 'slow' : 'struggling', 'Small query': msTag(j.__ms) }), j.__ms);
+  });
+  api('/api/rax?market=status').then(j => {
+    if(j.error){ fill('c-market', 'bad', esc(j.error), j.__ms); return; }
+    const seasons = j.seasons || [];
+    const newest = seasons.filter(s => s.pulledAt).sort((a, b) => b.pulledAt.localeCompare(a.pulledAt))[0];
+    const errs = (j.log || []).filter(l => /err|fail|gave up/i.test(JSON.stringify(l))).length;
+    fill('c-market', errs ? 'warn' : 'ok', kv({
+      'Pulling now': esc(j.cur || j.current || '—'),
+      'So far': j.pulledSoFar != null ? Number(j.pulledSoFar).toLocaleString() + ' listings' : null,
+      'Round': j.round != null ? esc(j.round) : null,
+      'Last finished': newest ? `${esc(newest.job)} · ${ago(newest.pulledAt)}` : '—',
+      'Seasons pulled': `${seasons.filter(s => s.pulledAt).length} of ${seasons.length}`,
+      'Recent errors': errs || 'none'
+    }) + `<details><summary class="note">Raw</summary><pre>${esc(JSON.stringify(Object.fromEntries(Object.entries(j).filter(([k]) => k !== 'seasons')), null, 1)).slice(0, 4000)}</pre></details>`, j.__ms);
+  });
+  api('/api/rax?plays=progress').then(j => {
+    if(j.error){ fill('c-collect', 'bad', esc(j.error), j.__ms); return; }
+    const q = j.queue || [];
+    fill('c-collect', 'ok', kv({
+      'Working on': esc((j.working || []).join(', ') || 'rolling seasons only'),
+      'Seasons swept': `${q.filter(x => x.lapped).length} of ${q.length}`,
+      'Numbers from': j.at ? ago(j.at) : (j.preparing ? 'being prepared' : '—')
+    }), j.__ms);
+  });
+  api('/api/rax?queue=rescan').then(j => {
+    if(j.error){ fill('c-sweeps', 'bad', esc(j.error), j.__ms); return; }
+    fill('c-sweeps', 'ok', `<div class="note">Eastern now: ${esc(j.easternNow || '')} · sweeps at ${esc(j.sweepHourEastern)}am ET</div>`
+      + '<table><tr><th>Sport</th><th>Days</th><th>Last</th></tr>' + (j.schedule || []).map(x =>
+        `<tr><td>${esc(SPORT[x.sport] || x.sport)} ${esc(x.season)}</td><td>${esc(x.days)}${x.from ? ` <span class="note">from ${esc(x.from)}</span>` : ''}</td><td>${esc(x.lastRun || '—')}</td></tr>`).join('') + '</table>', j.__ms);
+  });
+  api('/api/swaps?op=chats').then(j => {
+    if(j.error){ fill('c-bot', 'bad', esc(j.error), j.__ms); return; }
+    fill('c-bot', 'ok', kv({ 'Chats known': j.chatsKnown, 'New chats left today': `${j.newChatsLeftToday} of 5` }), j.__ms);
+  });
+}
+$('#st-refresh').addEventListener('click', loadStatus);
+
+const SPEED = [
+  ['Board', '/api/kv?key=ratebrd_market_v1'],
+  ['Market · favorites', '/api/rax?market=favs'],
+  ['Market · NFL 26-27', '/api/rax?market=view&sport=nfl&season=2026'],
+  ['Market · queue', '/api/rax?market=status'],
+  ['Swaps · your swap', '/api/swaps?op=me'],
+  ['Swaps · matches', '/api/swaps?op=matches'],
+  ['OTD · your games', '/api/swaps?op=games'],
+  ['Pack data · NBA 25-26', '/api/rax?plays=board&seasons=nba:2026&min=0'],
+  ['Game data · seasons', '/api/rax?sport=ncaam&season=2026&gamelog=seasons']
+];
+$('#sp-run').addEventListener('click', async () => {
+  const b = $('#sp-run'); b.disabled = true;
+  $('#sp-out').innerHTML = '<table id="sp-t"><tr><th>Call</th><th>Time</th><th></th></tr>' + SPEED.map((s, i) => `<tr><td>${esc(s[0])}</td><td id="sp${i}" class="note">…</td><td id="spe${i}" class="note"></td></tr>`).join('') + '</table>';
+  // One after another, so they don't slow each other down and the numbers mean something.
+  for(let i = 0; i < SPEED.length; i++){
+    const j = await api(SPEED[i][1], {}, 60000);
+    const lvl = j.error ? 'var(--bad)' : j.__ms > 5000 ? 'var(--bad)' : j.__ms > 2000 ? 'var(--warn)' : 'var(--ok)';
+    $('#sp' + i).innerHTML = `<span style="color:${lvl}">${(j.__ms / 1000).toFixed(2)}s</span>`;
+    $('#spe' + i).textContent = j.error ? j.error : (j.snapshotAt ? 'saved copy' : j.cached ? 'cached' : '');
+  }
+  b.disabled = false;
+});
+
+/* ---------- board (offers + users share it) ---------- */
+let board = null, boardP = null;
+function getBoard(force){
+  if(board && !force) return Promise.resolve(board);
+  if(boardP && !force) return boardP;
+  boardP = api('/api/kv?key=ratebrd_market_v1').then(j => {
+    boardP = null;
+    if(j.error) throw new Error(j.error);
+    const v = typeof j.value === 'string' ? JSON.parse(j.value) : (j.value || {});
+    board = { offers: v.offers || [], users: v.users || {} };
+    return board;
+  });
+  return boardP;
+}
+const nameOf = k => (board && board.users[k] && board.users[k].name) || k;
+
+/* ---------- offers ---------- */
+let ofShown = 100;
+async function loadBoard(force){
+  $('#of-count').textContent = 'Loading…';
+  try { await getBoard(force); } catch(e){ $('#of-count').textContent = 'Could not load the board: ' + e.message; return; }
+  const sports = [...new Set(board.offers.map(o => o.sport))].sort();
+  const sel = $('#of-sport'), cur = sel.value;
+  sel.innerHTML = '<option value="">All sports</option>' + sports.map(s => `<option value="${esc(s)}">${esc(SPORT[String(s).toLowerCase()] || s)}</option>`).join('');
+  sel.value = cur;
+  drawOffers();
+}
+function drawOffers(){
+  if(!board) return;
+  const q = $('#of-q').value.trim().toLowerCase(), sp = $('#of-sport').value, sort = $('#of-sort').value;
+  let list = board.offers.filter(o => (!sp || o.sport === sp)
+    && (!q || String(o.player).toLowerCase().includes(q) || String(o.user).toLowerCase().includes(q) || String(nameOf(o.user)).toLowerCase().includes(q)));
+  list.sort(sort === 'rate' ? (a, b) => b.rate - a.rate : sort === 'player' ? (a, b) => String(a.player).localeCompare(b.player) : (a, b) => (b.ts || 0) - (a.ts || 0));
+  $('#of-count').textContent = `${list.length.toLocaleString()} offers${list.length !== board.offers.length ? ` (of ${board.offers.length.toLocaleString()})` : ''}`;
+  $('#of-rows').innerHTML = list.slice(0, ofShown).map(o => `<tr data-id="${esc(o.id)}">
+    <td>${esc(o.player)}</td><td>${esc(SPORT[String(o.sport).toLowerCase()] || o.sport)}</td>
+    <td>${esc(nameOf(o.user))}<div class="note">${esc(ago(o.ts))}</div></td>
+    <td><input class="rate" type="number" step="any" min="0" value="${esc(o.rate)}"></td>
+    <td><input class="link" value="${esc(o.link || '')}" placeholder="—"></td>
+    <td style="white-space:nowrap"><button class="sm" data-act="save">Save</button> <button class="sm danger" data-act="del">Remove</button></td></tr>`).join('');
+  $('#of-more').classList.toggle('hide', list.length <= ofShown);
+}
+let ofT = null;
+$('#of-q').addEventListener('input', () => { clearTimeout(ofT); ofShown = 100; ofT = setTimeout(drawOffers, 150); });
+$('#of-sport').addEventListener('change', () => { ofShown = 100; drawOffers(); });
+$('#of-sort').addEventListener('change', drawOffers);
+$('#of-more').addEventListener('click', () => { ofShown += 200; drawOffers(); });
+$('#of-reload').addEventListener('click', () => loadBoard(true));
+$('#of-rows').addEventListener('click', async e => {
+  const b = e.target.closest('[data-act]'); if(!b) return;
+  const tr = b.closest('tr'), id = tr.dataset.id, o = board.offers.find(x => x.id === id);
+  if(b.dataset.act === 'del'){
+    // Two taps rather than a pop-up: first arms it, second removes.
+    if(b.dataset.armed !== '1'){ b.dataset.armed = '1'; b.textContent = 'Sure?'; setTimeout(() => { b.dataset.armed = ''; b.textContent = 'Remove'; }, 3000); return; }
+    b.disabled = true;
+    const j = await post({ op: 'removeOffer', id });
+    if(j.error){ toast(j.error); b.disabled = false; return; }
+    board.offers = board.offers.filter(x => x.id !== id); drawOffers(); toast('Removed.');
+  } else {
+    const rate = Number(tr.querySelector('.rate').value), link = tr.querySelector('.link').value.trim();
+    if(!(rate > 0)){ toast('Rate must be above 0.'); return; }
+    b.disabled = true;
+    const j = await post({ op: 'updateOffer', id, rate, link });
+    b.disabled = false;
+    if(j.error){ toast(j.error); return; }
+    if(o){ o.rate = rate; o.link = link; o.ts = Date.now(); }
+    toast('Saved.');
+  }
+});
+
+/* ---------- users ---------- */
+let usShown = 100, marketSet = new Set(), swapSet = new Set(), namedSwap = new Set();
+async function loadUsers(){
+  $('#us-count').textContent = 'Loading…';
+  const [b, m, s] = await Promise.all([getBoard().catch(e => ({ error: e.message })), api('/api/rax?market=access'), api('/api/swaps?op=access')]);
+  if(b.error){ $('#us-count').textContent = 'Could not load accounts: ' + b.error; return; }
+  marketSet = new Set(((m && m.granted) || []).map(g => g.key));
+  swapSet = new Set(((s && s.granted) || []).map(g => g.key));
+  namedSwap = new Set(((s && s.named) || []).filter(x => x.account).map(x => x.account));
+  drawUsers();
+}
+function drawUsers(){
+  if(!board) return;
+  const q = $('#us-q').value.trim().toLowerCase(), f = $('#us-f').value;
+  const counts = {}; for(const o of board.offers) counts[o.user] = (counts[o.user] || 0) + 1;
+  let list = Object.entries(board.users).map(([k, u]) => ({ key: k, ...u, offers: counts[k] || 0 }))
+    .filter(u => (!q || u.key.toLowerCase().includes(q) || String(u.name || '').toLowerCase().includes(q))
+      && (!f || (f === 'market' && marketSet.has(u.key)) || (f === 'swaps' && (swapSet.has(u.key) || namedSwap.has(u.key)))
+          || (f === 'banned' && u.banned) || (f === 'nopass' && !u.hasPass)));
+  list.sort((a, b) => (b.created || 0) - (a.created || 0));
+  $('#us-count').textContent = `${list.length.toLocaleString()} accounts`;
+  $('#us-rows').innerHTML = list.slice(0, usShown).map(u => {
+    const mk = marketSet.has(u.key), sw = swapSet.has(u.key), nm = namedSwap.has(u.key);
+    return `<tr data-k="${esc(u.key)}">
+      <td>${esc(u.name || u.key)}${u.name && u.name !== u.key ? ` <span class="note">${esc(u.key)}</span>` : ''}
+        ${u.banned ? ' <span class="pill off">removed</span>' : ''}${!u.hasPass ? ' <span class="pill">pw reset</span>' : ''}</td>
+      <td class="note">${u.created ? new Date(u.created).toLocaleDateString() : '—'}</td>
+      <td>${u.offers}</td>
+      <td><button class="sm" data-act="${mk ? 'mrevoke' : 'mgrant'}">${mk ? '✓ Remove' : 'Give'}</button></td>
+      <td>${nm ? '<span class="pill on">named</span>' : `<button class="sm" data-act="${sw ? 'srevoke' : 'sgrant'}">${sw ? '✓ Remove' : 'Give'}</button>`}</td>
+      <td style="white-space:nowrap"><button class="sm" data-act="reset">Reset pw</button> <button class="sm danger" data-act="${u.banned ? 'unban' : 'ban'}">${u.banned ? 'Restore' : 'Remove'}</button></td></tr>`;
+  }).join('');
+  $('#us-more').classList.toggle('hide', list.length <= usShown);
+}
+let usT = null;
+$('#us-q').addEventListener('input', () => { clearTimeout(usT); usShown = 100; usT = setTimeout(drawUsers, 150); });
+$('#us-f').addEventListener('change', () => { usShown = 100; drawUsers(); });
+$('#us-more').addEventListener('click', () => { usShown += 200; drawUsers(); });
+$('#us-rows').addEventListener('click', async e => {
+  const b = e.target.closest('[data-act]'); if(!b) return;
+  const k = b.closest('tr').dataset.k, act = b.dataset.act;
+  if(['ban', 'reset'].includes(act) && b.dataset.armed !== '1'){
+    b.dataset.armed = '1'; const was = b.textContent; b.textContent = 'Sure?';
+    setTimeout(() => { b.dataset.armed = ''; b.textContent = was; }, 3000); return;
+  }
+  b.disabled = true;
+  let j;
+  if(act === 'mgrant' || act === 'mrevoke'){
+    j = await api(`/api/rax?market=${act === 'mgrant' ? 'grant' : 'revoke'}&key=${encodeURIComponent(k)}`);
+    if(!j.error) marketSet = new Set((j.granted || []).map(g => g.key));
+  } else if(act === 'sgrant' || act === 'srevoke'){
+    j = await api(`/api/swaps?op=access&act=${act === 'sgrant' ? 'grant' : 'revoke'}&key=${encodeURIComponent(k)}`);
+    if(!j.error) swapSet = new Set((j.granted || []).map(g => g.key));
+  } else if(act === 'ban' || act === 'unban'){
+    j = await post({ op: 'setBanned', key: k, banned: act === 'ban' });
+    if(!j.error){ board.users[k].banned = act === 'ban'; if(act === 'ban') board.offers = board.offers.filter(o => o.user !== k); }
+  } else if(act === 'reset'){
+    j = await post({ op: 'resetPass', key: k });
+    if(!j.error) board.users[k].hasPass = false;
+  }
+  if(j && j.error){ toast(j.error); b.disabled = false; return; }
+  toast('Done.'); drawUsers();
+});
+
+/* ---------- swaps ---------- */
+function loadSwaps(){ loadMatches(); loadNamed(); }
+async function loadMatches(){
+  const j = await api('/api/swaps?op=matches');
+  if(j.error){ $('#sw-matches').textContent = j.error; return; }
+  const m = j.matches || [];
+  const hr = h => { const d = new Date(); d.setUTCHours(Number(h) || 0, 0, 0, 0); return d.toLocaleTimeString([], { hour: 'numeric' }); };
+  $('#sw-matches').innerHTML = m.length ? '<table><tr><th>Who</th><th>Gets</th><th>Hour</th><th>Status</th><th></th></tr>' + m.map(x =>
+    `<tr><td>${esc(x.aUser || x.a)} ↔ ${esc(x.bUser || x.b)}</td><td>${esc(x.aGetsName || x.aGets)} / ${esc(x.bGetsName || x.bGets)}</td>
+     <td>${esc(hr(x.slot))}</td><td>${esc(x.status)}${x.note ? `<div class="note">${esc(x.note)}</div>` : ''}</td>
+     <td>${x.status === 'pending' || x.status === 'error' ? `<button class="sm" data-send="${x.id}">Send now</button>` : ''}</td></tr>`).join('') + '</table>'
+    : '<span class="note">No matches yet. Only members who have connected with the bot are matched.</span>';
+}
+async function loadNamed(){
+  const j = await api('/api/swaps?op=access');
+  if(j.error){ $('#sw-named').textContent = j.error; return; }
+  const ok = (j.named || []).filter(x => x.account), miss = (j.named || []).filter(x => !x.account);
+  $('#sw-named').innerHTML = `<div>With a board account (${ok.length}): ${esc(ok.map(x => x.name).join(', ') || 'none')}</div>`
+    + `<div style="color:var(--bad);margin-top:4px">No board account under that name (${miss.length}): ${esc(miss.map(x => x.name).join(', ') || 'none')}</div>`
+    + '<div class="note" style="margin-top:4px">For those, find their account on the Users tab and tap Give under Swaps.</div>';
+}
+$('#sw-matches').addEventListener('click', async e => {
+  const b = e.target.closest('[data-send]'); if(!b) return;
+  b.disabled = true; b.textContent = 'Sending…';
+  const j = await api('/api/swaps?op=sendnow&id=' + b.dataset.send, { method: 'POST' });
+  $('#sw-msg').textContent = j.error || j.note || 'Sent.'; loadMatches();
+});
+$('#sw-run').addEventListener('click', async () => { const j = await api('/api/swaps?op=run'); $('#sw-msg').textContent = j.error || `${(j.made || []).length} new matches.`; loadMatches(); });
+$('#sw-reload').addEventListener('click', loadMatches);
+$('#sw-sync').addEventListener('click', async () => {
+  $('#sw-chats').textContent = 'Reading…';
+  const j = await api('/api/swaps?op=chats&sync=1');
+  $('#sw-chats').textContent = (j.error ? j.error + ' · ' : '') + `${j.chatsKnown ?? '?'} chats known`
+    + (j.requests ? ` · ${j.requests.requests} requests, accepted ${j.requests.accepted.length ? j.requests.accepted.join(', ') : 'none'}` : '')
+    + ` · ${j.newChatsLeftToday ?? '?'} new chats left today`;
+});
+$('#sw-dm').addEventListener('click', async () => {
+  const u = $('#sw-user').value.trim(); if(!u) return;
+  $('#sw-dmout').textContent = 'Sending…';
+  const j = await api(`/api/swaps?op=dmopen&user=${encodeURIComponent(u)}&text=${encodeURIComponent($('#sw-text').value)}`);
+  $('#sw-dmout').textContent = j.error ? j.error : `Sent to @${j.user} (chat ${j.channelId}).`;
+});
+
+/* ---------- start ---------- */
+(async () => {
+  let t = ''; try{ t = localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){}
+  if(!t){ $('#lock').classList.remove('hide'); $('#lockmsg').textContent = "You're not signed in."; return; }
+  const j = await api('/api/rax?market=me');
+  if(!j.admin){ $('#lock').classList.remove('hide'); $('#lockmsg').textContent = j.error || 'This page is for admins.'; return; }
+  $('#main').classList.remove('hide');
+  let tab = 'status'; try{ tab = localStorage.getItem('rb_admin_tab') || 'status'; }catch(e){}
+  show(['status','offers','users','swaps'].includes(tab) ? tab : 'status');
+})();
+</script>
+</body>
+</html>

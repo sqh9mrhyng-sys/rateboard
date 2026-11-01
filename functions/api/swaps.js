@@ -736,11 +736,13 @@ export async function onRequest({ request, env, waitUntil }) {
       if (act === 'grant') await db.prepare('INSERT INTO swap_access (key, grantedAt) VALUES (?, ?) ON CONFLICT DO NOTHING').bind(key, Date.now()).run();
       else await db.prepare('DELETE FROM swap_access WHERE key=?').bind(key).run();
     }
-    const named = [];
-    for (const n of SWAP_MEMBERS) {
-      const u = await db.prepare('SELECT key, name FROM users WHERE LOWER(key)=? OR LOWER(name)=? LIMIT 1').bind(n, n).first();
-      named.push({ name: n, account: u ? u.key : null });
-    }
+    const ph = SWAP_MEMBERS.map(() => '?').join(',');
+    const hits = (await db.prepare(`SELECT key, name FROM users WHERE LOWER(key) IN (${ph}) OR LOWER(name) IN (${ph})`)
+      .bind(...SWAP_MEMBERS, ...SWAP_MEMBERS).all()).results || [];
+    const named = SWAP_MEMBERS.map(n => {
+      const u = hits.find(h => String(h.key).toLowerCase() === n || String(h.name || '').toLowerCase() === n);
+      return { name: n, account: u ? u.key : null };
+    });
     const granted = (await db.prepare('SELECT a.key, u.name FROM swap_access a LEFT JOIN users u ON u.key=a.key ORDER BY a.grantedAt DESC').all()).results || [];
     const q = String(url.searchParams.get('q') || '').trim().toLowerCase().replace(/[%_]/g, '');
     const found = q.length >= 2 ? ((await db.prepare(

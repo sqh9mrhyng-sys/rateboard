@@ -5177,7 +5177,11 @@ async function handleGet({ request, env, waitUntil }) {
      counts by rarity and the cheapest buy-now at each, and one player's
      listings when they are opened. Only what is still up is counted. Names
      come from the card, or failing that from the game log. */
-  if (url.searchParams.get('market') === 'view' || url.searchParams.get('market') === 'listings') {
+  if (url.searchParams.get('market') === 'view') {
+    try { return json(await marketView(env, waitUntil, sport, Number(season))); }
+    catch (e) { return json({ error: String((e && e.message) || e).slice(0, 200) }, 500); }
+  }
+  if (url.searchParams.get('market') === 'listings') {
     const db = env.RATEBOARD_DB;
     try {
       await db.prepare(MARKET_DDL).run();
@@ -5192,26 +5196,7 @@ async function handleGet({ request, env, waitUntil }) {
             ORDER BY rarity DESC, buyNow ASC LIMIT 400`).bind(sport, Number(season), pid, nowIso).all();
         return json({ sport, season, playerId: pid, listings: r.results || [] });
       }
-      const seasons = [];
-      const { rows, by } = await marketAgg(db, sport, Number(season), nowIso, null);
-      const tot = rows.reduce((a, r) => a + r.n, 0);
-      const rarity = {};
-      for (const r of rows) {
-        const x = rarity[r.rarity] || (rarity[r.rarity] = { n: 0, minBuy: null });
-        x.n += r.n;
-        if (r.minBuy != null && (x.minBuy == null || r.minBuy < x.minBuy)) x.minBuy = r.minBuy;
-      }
-      let snap = null;
-      try { await db.prepare(MSEAS_DDL).run();
-        snap = await db.prepare('SELECT doneAt FROM market_seasons WHERE job=?').bind(`${sport}:${Number(season)}`).first(); } catch (e) {}
-      const meta = snap && snap.doneAt ? { seen: snap.doneAt }
-        : seasons.find(x => x.sport === sport && Number(x.season) === Number(season));
-      return json({ sport, season, listings: tot, players: by.size, rarity,
-                    pulledAt: meta && meta.seen ? new Date(meta.seen).toISOString() : null,
-                    seasons, rows: [...by.values()].map(p => {
-                      p.ppr = p.pprN ? Math.round(p.pprSum / p.pprN * 1000) / 1000 : null;
-                      delete p.pprSum; delete p.pprN; return p;
-                    }).sort((a, b) => b.n - a.n) });
+      return json({ error: 'unknown' }, 400);
     } catch (e) { return json({ error: String((e && e.message) || e).slice(0, 200) }, 500); }
   }
 
@@ -6782,7 +6767,7 @@ async function marketWho(env, request) {
   }
   return { who, admin, ok };
 }
-async function marketMember(env, url, who) {
+async function marketMember(env, url, who, waitUntil) {
   const db = env.RATEBOARD_DB, mk = url.searchParams.get('market');
   await db.prepare(MFAVS_DDL).run();
   if (mk === 'fav') {
@@ -6804,25 +6789,88 @@ async function marketMember(env, url, who) {
     .bind(who).all()).results || [];
   const groups = new Map();
   for (const f of favs) { const k = `${f.sport}:${f.season}`; (groups.get(k) || groups.set(k, []).get(k)).push(f.playerId); }
-  const nowIso = new Date().toISOString(), out = [], rarity = {};
+  // Read from each season's saved view rather than regrouping the listings.
+  const out = [], rarity = {};
   for (const [k, pids] of groups) {
     const [sp, se] = k.split(':');
-    const { rows, by } = await marketAgg(db, sp, Number(se), nowIso, pids);
-    for (const r of rows) {
-      const x = rarity[r.rarity] || (rarity[r.rarity] = { n: 0, minBuy: null });
-      x.n += r.n; if (r.minBuy != null && (x.minBuy == null || r.minBuy < x.minBuy)) x.minBuy = r.minBuy;
-    }
+    let v = null;
+    try { v = await marketView(env, waitUntil, sp, Number(se)); } catch (e) { v = null; }
+    const by = new Map(((v && v.rows) || []).map(r => [Number(r.playerId), r]));
     for (const pid of pids) {
-      const p = by.get(pid) || { sport: sp, season: Number(se), playerId: pid, n: 0, bids: 0, rating: 0, rar: {}, pprSum: 0, pprN: 0,
+      const p = by.get(Number(pid)) || { sport: sp, season: Number(se), playerId: pid, n: 0, bids: 0, rating: 0, rar: {}, ppr: null,
         player: (favs.find(f => f.sport === sp && Number(f.season) === Number(se) && f.playerId === pid) || {}).player || null };
-      p.ppr = p.pprN ? Math.round(p.pprSum / p.pprN * 1000) / 1000 : null;
-      delete p.pprSum; delete p.pprN; out.push(p);
+      for (const [rk, x] of Object.entries(p.rar || {})) {
+        const t = rarity[rk] || (rarity[rk] = { n: 0, minBuy: null });
+        t.n += x.n || 0; if (x.minBuy != null && (t.minBuy == null || x.minBuy < t.minBuy)) t.minBuy = x.minBuy;
+      }
+      out.push(p);
     }
   }
   return json({ favs: favs.map(f => `${f.sport}:${f.season}:${f.playerId}`), rows: out, rarity,
                 listings: out.reduce((a, r) => a + r.n, 0), players: out.length });
 }
 
+
+/* ---- market view snapshots ------------------------------------------------
+   Grouping a season's listings and adding each player's rax is dozens of
+   queries for the big seasons, and every /market visit (favourites included)
+   was running them while the pull was writing to the same table. Each season's
+   view is now built once and kept in KV; a copy is served straight away and
+   rebuilt in the background, by one request, once it is 20 minutes old or the
+   season has been pulled again since. */
+const MSNAP_FRESH_MS = 20 * 60000;
+async function buildMarketView(env, sport, season) {
+  const db = env.RATEBOARD_DB;
+  await db.prepare(MARKET_DDL).run();
+  const nowIso = new Date().toISOString();
+      const seasons = [];
+      const { rows, by } = await marketAgg(db, sport, Number(season), nowIso, null);
+      const tot = rows.reduce((a, r) => a + r.n, 0);
+      const rarity = {};
+      for (const r of rows) {
+        const x = rarity[r.rarity] || (rarity[r.rarity] = { n: 0, minBuy: null });
+        x.n += r.n;
+        if (r.minBuy != null && (x.minBuy == null || r.minBuy < x.minBuy)) x.minBuy = r.minBuy;
+      }
+      let snap = null;
+      try { await db.prepare(MSEAS_DDL).run();
+        snap = await db.prepare('SELECT doneAt FROM market_seasons WHERE job=?').bind(`${sport}:${Number(season)}`).first(); } catch (e) {}
+      const meta = snap && snap.doneAt ? { seen: snap.doneAt }
+        : seasons.find(x => x.sport === sport && Number(x.season) === Number(season));
+      return { sport, season, listings: tot, players: by.size, rarity,
+                    pulledAt: meta && meta.seen ? new Date(meta.seen).toISOString() : null,
+                    seasons, rows: [...by.values()].map(p => {
+                      p.ppr = p.pprN ? Math.round(p.pprSum / p.pprN * 1000) / 1000 : null;
+                      delete p.pprSum; delete p.pprN; return p;
+                    }).sort((a, b) => b.n - a.n) };
+}
+async function marketView(env, waitUntil, sport, season) {
+  const db = env.RATEBOARD_DB, job = `${sport}:${Number(season)}`, KEY = 'msnap_v1_' + job, LOCK = 'msnap_lock_' + job;
+  let c = null;
+  try { c = JSON.parse((await env.RATEBOARD_KV.get(KEY)) || 'null'); } catch (e) {}
+  let doneAt = 0;
+  try { await db.prepare(MSEAS_DDL).run();
+    const r = await db.prepare('SELECT doneAt FROM market_seasons WHERE job=?').bind(job).first();
+    doneAt = Number(r && r.doneAt) || 0; } catch (e) {}
+  const save = async () => {
+    const body = await buildMarketView(env, sport, Number(season));
+    try { await env.RATEBOARD_KV.put(KEY, JSON.stringify({ at: Date.now(), body })); } catch (e) {}
+    try { await env.RATEBOARD_KV.delete(LOCK); } catch (e) {}
+    return body;
+  };
+  if (c && c.body) {
+    const stale = Date.now() - c.at > MSNAP_FRESH_MS || (doneAt && doneAt > c.at);
+    if (stale && waitUntil) {
+      let locked = null; try { locked = await env.RATEBOARD_KV.get(LOCK); } catch (e) {}
+      if (!locked) {
+        try { await env.RATEBOARD_KV.put(LOCK, '1', { expirationTtl: 300 }); } catch (e) {}
+        waitUntil(save().catch(() => {}));
+      }
+    }
+    return Object.assign({}, c.body, { snapshotAt: new Date(c.at).toISOString() });
+  }
+  return await save();
+}
 
 /* ---- pack data snapshots -------------------------------------------------
    Building one season's pack data board is a heavy read (5 to 50 seconds of
@@ -6950,7 +6998,7 @@ export async function onRequestGet(ctx) {
       return json({ signedIn: !!a.who, access: a.ok, admin: a.admin, swaps });
     }
     if (!a.ok) return json({ error: a.who ? 'Your account does not have market data.' : 'Sign in on the board first.' }, 403);
-    if (mk === 'fav' || mk === 'favs') return marketMember(env, url, a.who);
+    if (mk === 'fav' || mk === 'favs') return marketMember(env, url, a.who, ctx.waitUntil);
   }
 
   if (ttl > 0) {
