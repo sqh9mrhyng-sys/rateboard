@@ -430,7 +430,11 @@ $('#sw-dm').addEventListener('click', async () => {
 (async () => {
   let t = ''; try{ t = localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){}
   if(!t){ $('#lock').classList.remove('hide'); $('#lockmsg').textContent = "You're not signed in."; return; }
-  const j = await api('/api/rax?market=me');
+  let j = await api('/api/rax?market=me');
+  for(let i = 0; i < 2 && !j.admin && !j.signedIn; i++){
+    await new Promise(r => setTimeout(r, 1200 * (i + 1)));
+    j = await api('/api/rax?market=me');
+  }
   if(!j.admin){ $('#lock').classList.remove('hide'); $('#lockmsg').textContent = j.error || 'This page is for admins.'; return; }
   $('#main').classList.remove('hide');
   let tab = 'status'; try{ tab = localStorage.getItem('rb_admin_tab') || 'status'; }catch(e){}

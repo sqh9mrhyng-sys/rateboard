@@ -618,7 +618,13 @@ $('#qfront').addEventListener('click', async () => {
 });
 
 async function start(){
-  try{ me = await (await fetch('/api/rax?market=me')).json(); }catch(e){ me = null; }
+  // A busy database can make a signed-in check come back empty for a moment.
+  // With a sign-in saved in this browser, ask again before giving up.
+  for(let i = 0; i < 3; i++){
+    try{ me = await (await fetch('/api/rax?market=me')).json(); }catch(e){ me = null; }
+    if(me && (me.signedIn || !(()=>{try{return !!localStorage.getItem('ratebrd_token_v1')}catch(e){return false}})())) break;
+    await new Promise(r => setTimeout(r, 1200 * (i + 1)));
+  }
   if(!me || !me.access){
     $('#lock').hidden = false;
     $('#lockmsg').textContent = !me ? 'Could not check your account. Try again in a minute.'

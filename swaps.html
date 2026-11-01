@@ -420,7 +420,12 @@ $('#envb').addEventListener('click', async () => { $('#praw').textContent = JSON
 
 (async () => {
   $('#tz').textContent = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const j = await api('/api/swaps?op=me');
+  let j = await api('/api/swaps?op=me');
+  // Signed in here but the check came back empty: the database was busy. Ask again.
+  for(let i = 0; i < 2 && j.error && /sign in/i.test(j.error) && (()=>{try{return !!localStorage.getItem('ratebrd_token_v1')}catch(e){return false}})(); i++){
+    await new Promise(r => setTimeout(r, 1200 * (i + 1)));
+    j = await api('/api/swaps?op=me');
+  }
   if(j.error){ $('#lock').hidden = false; $('#lockmsg').textContent = j.error; return; }
   $('#main').hidden = false;
   try{ wantNames = JSON.parse(localStorage.getItem('ratebrd_swapnames') || '{}') || {}; }catch(e){}

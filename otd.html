@@ -569,7 +569,12 @@ $('#scan').addEventListener('click', async () => {
 });
 
 (async () => {
-  const me = await api('/api/swaps?op=me');
+  let me = await api('/api/swaps?op=me');
+  // Signed in here but the check came back empty: the database was busy. Ask again.
+  for(let i = 0; i < 2 && me.error && /sign in/i.test(me.error) && (()=>{try{return !!localStorage.getItem('ratebrd_token_v1')}catch(e){return false}})(); i++){
+    await new Promise(r => setTimeout(r, 1200 * (i + 1)));
+    me = await api('/api/swaps?op=me');
+  }
   if(me.error){ $('#lock').hidden = false; $('#lockmsg').textContent = me.error; return; }
   $('#main').hidden = false;
   $('#rsuser').value = (me.profile && me.profile.rsUser) || '';
