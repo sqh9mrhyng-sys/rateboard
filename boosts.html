@@ -345,7 +345,7 @@ $('#scan').addEventListener('click', async () => {
     await new Promise(r => setTimeout(r, 1200 * (i + 1)));
     me = await api('/api/swaps?op=me&page=boosts');
   }
-  if(me.error){ $('#lock').hidden = false; $('#lockmsg').textContent = /sign in/i.test(me.error) ? 'Sign in on the board first, in this browser.' : 'Boosts & Buys is only open to Dennis while it is in beta.'; return; }
+  if(me.error){ $('#lock').hidden = false; $('#lockmsg').textContent = /sign in/i.test(me.error) ? 'Sign in on the board first, in this browser.' : me.error; return; }
   $('#main').hidden = false;
   $('#rsuser').value = (me.profile && me.profile.rsUser) || '';
   const p = me.profile;

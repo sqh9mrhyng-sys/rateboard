@@ -537,7 +537,7 @@ export async function swapAccess(env, request) {
 const MEMBER_OPS = new Set(['me', 'save', 'scan', 'search', 'connect']);
 const OTD_OPS = new Set(['me', 'scan', 'games', 'boostplan']);
 const BOOST_OPS = new Set(['me', 'scan', 'boostplan', 'boostinv', 'buys']);
-const BOOSTS_OPEN = false;
+const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
 
 /* ---- OTD: saved game lists ------------------------------------------------
    Every player's [MM-DD, rax] list for a whole sport-season, built once from
@@ -719,11 +719,11 @@ async function boostInventory(env, tok, hashId, sp, fresh) {
 /* All three sports' boosters in one read, at most once every 4 hours per
    member; inside that the saved copy is used. */
 const BOOSTINV_EVERY = 4 * 3600000;
-async function boostInventoryAll(env, tok, hashId, fresh) {
+async function boostInventoryAll(env, tok, hashId, fresh, admin) {
   const key = `boostinv_v5_${hashId}`;
   let c = null;
   try { c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); } catch (e) {}
-  if (c && (!fresh || Date.now() - c.at < BOOSTINV_EVERY)) return { ...c, next: c.at + BOOSTINV_EVERY, cached: !!fresh };
+  if (c && (!fresh || (!admin && Date.now() - c.at < BOOSTINV_EVERY))) return { ...c, next: admin ? Date.now() : c.at + BOOSTINV_EVERY, cached: !!fresh };
   const sports = {};
   for (const sp of Object.keys(BOOST_SEASON)) {
     let d;
@@ -978,7 +978,7 @@ async function handle({ request, env, waitUntil }) {
     /* Members can scan once per interval (3 hours, or 15 minutes when Dennis
        switches it on); the last scan time is the one saved with their passes,
        so it holds wherever they scan from. Admins aren't limited. */
-    if (!acc.admin || url.searchParams.get('page') === 'boosts') {
+    if (!acc.admin) {
       const every = url.searchParams.get('page') === 'boosts' ? 180 : await scanEvery(env);
       const left = (Number(u && u.scannedAt) || 0) + every * 60000 - Date.now();
       // Too soon for a fresh scan: hand back the last one instead.
@@ -997,6 +997,8 @@ async function handle({ request, env, waitUntil }) {
     // and the member's other passes are kept as they were.
     const boostsOnly = url.searchParams.get('page') === 'boosts';
     const only = boostsOnly ? Object.fromEntries(Object.entries(BOOST_SEASON).map(([k, v]) => [k, [v[0]]])) : null;
+    // Site-wide: at most 40 pass reads a minute, so a crowd can't trip Real's limits.
+    if (!acc.admin && !(await allow(url.origin, 'passread-all', 40, 60))) return json({ error: 'Lots of people are reading passes right now - try again in a minute.' }, 429);
     const r = await scanPasses(hashId, auth, only);
     if (boostsOnly) {
       const prevP = parse(u && u.passes, []);
@@ -1046,7 +1048,9 @@ async function handle({ request, env, waitUntil }) {
     const sp = BOOST_SEASON[url.searchParams.get('sport')] ? url.searchParams.get('sport') : 'nfl';
     const u = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(me).first();
     if (!u || !u.hashId) return json({ error: 'Re-read your passes first so the board knows your Real account.' }, 400);
-    const all = await boostInventoryAll(env, env.RS_AUTH_TOKEN || auth, u.hashId, url.searchParams.get('fresh') === '1');
+    const want = url.searchParams.get('fresh') === '1';
+    if (want && !acc.admin && !(await allow(url.origin, 'boostinv-all', 40, 60))) return json({ error: 'Lots of people are loading boosters right now - try again in a minute.' }, 429);
+    const all = await boostInventoryAll(env, env.RS_AUTH_TOKEN || auth, u.hashId, want, acc.admin);
     if (all.error) return json({ error: all.error }, 502);
     return json({ sport: sp, at: all.at, next: all.next, cached: !!all.cached, boosters: (all.sports || {})[sp] || [], sports: all.sports });
   }
@@ -1118,8 +1122,11 @@ async function handle({ request, env, waitUntil }) {
       const name = p.name || (sp === 'ncaam' && CBB_TOP175[p.id] && CBB_TOP175[p.id][3]) || (lastG && lastG.player) || (o && o.player) || 'Player ' + p.id;
       const ros = sp === 'ncaam' ? roster[boostName(name)] : null;
       // A game this season wins; then ESPN's current roster; then last season's team.
-      const teamAb = lastG && lastG.team ? boostAlias(sp, lastG.team) : ros ? ros.ab : o && o.team ? boostAlias(sp, o.team) : null;
-      const team = (lastG && lastG.team) || (ros && ros.ab) || (o && o.team) || null;
+      // The CBB list carries each player's current team too (transfers, freshmen).
+      const listTeam = sp === 'ncaam' && CBB_TOP175[p.id] ? CBB_TOP175[p.id][1] : null;
+      const teamAb = lastG && lastG.team ? boostAlias(sp, lastG.team) : listTeam ? boostAlias(sp, listTeam)
+        : ros ? ros.ab : o && o.team ? boostAlias(sp, o.team) : null;
+      const team = (lastG && lastG.team) || listTeam || (ros && ros.ab) || (o && o.team) || null;
       const g = teamAb ? sched.teams[teamAb] : null;
       if (!g) { idle.push(name); continue; }
       const pos = (lastG && lastG.position) || (o && o.position) || (ros && ros.pos) || '';
