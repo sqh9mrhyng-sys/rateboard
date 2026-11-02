@@ -58,7 +58,7 @@
       </div>
       <div class="bar" style="margin-top:10px">
         <input id="rsuser" placeholder="Real username" autocomplete="off" style="flex:0 1 170px">
-        <label class="note"><input type="checkbox" id="fresh"> Re-read my cards from Real</label>
+        <button id="scan">Re-read my passes</button>
         <span class="note" id="scanmsg"></span>
       </div>
       <p class="note" id="modenote" style="margin:10px 0 0"></p>
@@ -220,17 +220,14 @@ async function run(){
   try{ localStorage.setItem('boosts_pick_v1', JSON.stringify({ sport: sp, mode })); }catch(e){}
   $('#run').disabled = true; $('#out').hidden = false; $('#rows').innerHTML = ''; $('#sum').innerHTML = ''; $('#foot').textContent = '';
   $('#outhead').textContent = 'Working it out…';
-  const ru = $('#rsuser').value.trim();
-  if(!ru){ $('#outhead').textContent = 'Enter your Real username.'; $('#run').disabled = false; return; }
-  const j = await api(`/api/swaps?op=boostplan&page=boosts&sport=${sp}&date=${day}&mode=${mode}&rsUser=${encodeURIComponent(ru)}${$('#fresh').checked ? '&fresh=1' : ''}`);
-  $('#fresh').checked = false;
+  const j = await api(`/api/swaps?op=boostplan&page=boosts&sport=${sp}&date=${day}&mode=${mode}`);
   $('#run').disabled = false;
   if(j.error){ $('#outhead').textContent = j.error; return; }
   const rows = j.rows || [];
   const c = { legendary: 0, epic: 0, rare: 0 };
   rows.forEach(r => { if(r.boost) c[r.boost]++; });
-  $('#outhead').textContent = `${$('#sport').selectedOptions[0].textContent} · ${$('#day').selectedOptions[0].textContent} · ${rows.length} of the ${j.players} players you hold cards of play (${j.games} games on the slate)`
-    + (j.cardsAt ? ` · cards read ${new Date(j.cardsAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : '');
+  $('#outhead').textContent = `${$('#sport').selectedOptions[0].textContent} · ${$('#day').selectedOptions[0].textContent} · ${rows.length} of your ${j.players} passes play (${j.games} games on the slate)`
+    + (j.cardsAt ? ` · passes read ${new Date(j.cardsAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : '');
   $('#sum').innerHTML = ['legendary','epic','rare'].map(k => `<span><span class="b ${k}">${LBL[k]}</span> × ${c[k]}</span>`).join('');
   if(!rows.length){ $('#rows').innerHTML = `<tr><td colspan="4" class="note" style="text-align:left">None of your players for this sport play that day.</td></tr>`; return; }
   $('#rows').innerHTML = rows.map(r => {
@@ -241,11 +238,22 @@ async function run(){
       <td style="text-align:left">${r.home ? 'vs' : '@'} ${esc(r.opp)}<span class="sub">${tm(r.at)}</span></td>
       <td><b>${r.proj == null ? 'no data' : r.proj}</b></td></tr>`;
   }).join('');
-  $('#foot').textContent = `Projected rax: recent games weighted most, then this season, then last. Card rarity isn't counted. Players out, doubtful, suspended`
+  $('#foot').textContent = `Projected rax: recent games weighted most, then this season, then last. Pass rarity and level aren't counted. Injuries and depth charts are refreshed at 10am and 5pm ET. Players out, doubtful, suspended`
     + (j.depth ? ', backups on the depth chart' : '') + ` or not playing lately get no booster; questionable players are marked down.`
     + (j.notPlaying ? ` ${j.notPlaying} of your players don't play that day.` : '');
 }
 $('#run').addEventListener('click', run);
+
+$('#scan').addEventListener('click', async () => {
+  const u = $('#rsuser').value.trim();
+  if(!u){ $('#scanmsg').textContent = 'Enter your Real username first.'; return; }
+  $('#scan').disabled = true; $('#scanmsg').textContent = 'Reading your passes… about 20 seconds.';
+  const j = await api(`/api/swaps?op=scan&page=boosts&rsUser=${encodeURIComponent(u)}`);
+  $('#scan').disabled = false;
+  if(j.error){ $('#scanmsg').textContent = j.error; return; }
+  $('#scanmsg').textContent = j.cached ? j.note : `${(j.passes || []).length} passes read just now.`;
+  if(!$('#out').hidden) run();
+});
 
 (async () => {
   let me = await api('/api/swaps?op=me&page=boosts');
@@ -256,7 +264,10 @@ $('#run').addEventListener('click', run);
   if(me.error){ $('#lock').hidden = false; $('#lockmsg').textContent = /sign in/i.test(me.error) ? 'Sign in on the board first, in this browser.' : 'Boosts & Buys is only open to Dennis while it is in beta.'; return; }
   $('#main').hidden = false;
   $('#rsuser').value = (me.profile && me.profile.rsUser) || '';
-  $('#scanmsg').textContent = 'Your cards are read from Real (kept 30 minutes).';
+  const p = me.profile;
+  $('#scanmsg').textContent = p && (p.passes || []).length
+    ? `${p.passes.length} passes on file` + (p.scannedAt ? ` (read ${new Date(p.scannedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` : '') + '. Passes can be re-read once every 3 hours.'
+    : 'Enter your Real username and tap Re-read my passes.';
 })();
 </script>
 </body>

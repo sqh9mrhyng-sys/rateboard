@@ -571,9 +571,13 @@ const BOOST_ALIAS = { WISC: 'WIS', NCST: 'NCSU', BUT: 'BTLR', BSU: 'BOIS', AFA: 
   CAMP: 'CAM', CLEV: 'CLE', ALB: 'UALB', IUPU: 'IUIN', ULL: 'UL', PRE: 'PRES', UALR: 'LR', SCUP: 'UPST', TAMC: 'AMCC',
   HBU: 'HCU', NIAG: 'NIA', DXST: 'UTU', IND: 'IU', JVST: 'JXST', WAS: 'WSH' };
 const boostAlias = (sp, t) => BOOST_ALIAS[t] || t;
-async function boostSchedule(env, sp, day) {
+/* Schedules, injury reports and depth charts are fetched by the daily
+   refresh (boostRefresh, on the collector tick) and saved; a member's request
+   only reads the saved copies. Only if a copy is missing altogether is it
+   fetched once, and saved for everyone. */
+async function boostSchedule(env, sp, day, force) {
   const key = `boostsched_v2_${sp}_${day}`;
-  try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c && Date.now() - c.at < 3 * 3600000) return c; } catch (e) {}
+  if (!force) { try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c) return c; } catch (e) {} }
   let d;
   try {
     const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${ESPN_PATH[sp]}/scoreboard?dates=${day.replace(/-/g, '')}&limit=500${ESPN_GROUP[sp]}`);
@@ -592,36 +596,64 @@ async function boostSchedule(env, sp, day) {
     }
   }
   const out = { at: Date.now(), games, teams };
-  try { await env.RATEBOARD_KV.put(key, JSON.stringify(out), { expirationTtl: 86400 }); } catch (e) {}
+  try { await env.RATEBOARD_KV.put(key, JSON.stringify(out), { expirationTtl: 5 * 86400 }); } catch (e) {}
   return out;
 }
 
-// Everyone the member holds cards of for a sport-season, from Real's
-// collection page (the same one the board's card pull reads). Kept 30 minutes.
-async function boostCards(env, auth, hashId, sp, se, fresh) {
-  const key = `boostcards_v1_${hashId}_${sp}_${se}`;
-  if (!fresh) { try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c && Date.now() - c.at < 30 * 60000) return c; } catch (e) {} }
-  const players = [];
-  try {
-    for (let before = 0, pg = 0; pg < 60; pg++, before += 20) {
-      const d = await rsGetJson(`https://web.realapp.com/collection/${sp}/season/${se}/entity/player/user/${encodeURIComponent(hashId)}/topentities?before=${before}&sort=boostvalue`, auth);
-      const es = (d && d.entities) || [];
-      for (const e of es) players.push({ id: Number(e.id), name: String(e.label || ''), cards: (e.secondaryValues && e.secondaryValues[1]) || null });
-      if (es.length < 20) break;
-      await sleep(150);
-    }
-  } catch (e) { return { error: 'Could not load your cards from Real: ' + String(e.message || e).slice(0, 120) }; }
-  const out = { at: Date.now(), players };
-  try { await env.RATEBOARD_KV.put(key, JSON.stringify(out), { expirationTtl: 3600 }); } catch (e) {}
-  return out;
+/* The daily refresh: at 10am and 5pm Eastern, today's and the next three
+   days' schedules, the three injury reports and every NFL depth chart for the
+   teams on those slates are fetched again and saved - a handful of requests
+   per collector tick until the list is done. Nothing here touches D1. */
+const BOOST_REFRESH_HOURS = [10, 17];
+const BOOST_REFRESH_KEY = 'boostrefresh_v1';
+export async function boostRefresh(env) {
+  const f = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false });
+  const o = Object.fromEntries(f.formatToParts(new Date()).map(x => [x.type, x.value]));
+  const hour = Number(o.hour) % 24, today = `${o.year}-${o.month}-${o.day}`;
+  const slot = BOOST_REFRESH_HOURS.filter(h => hour >= h).pop();
+  if (slot == null) return null;
+  const run = `${today}@${slot}`;
+  let st = null;
+  try { st = JSON.parse((await env.RATEBOARD_KV.get(BOOST_REFRESH_KEY)) || 'null'); } catch (e) {}
+  if (st && st.run === run && st.done) return null;
+  if (!st || st.run !== run) {
+    const days = [0, 1, 2, 3].map(i => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' })
+      .format(new Date(Date.now() + i * 86400000)));
+    const steps = [];
+    for (const sp of Object.keys(BOOST_SEASON)) { steps.push(['inj', sp]); for (const d of days) steps.push(['sched', sp, d]); }
+    steps.push(['depthlist']);
+    st = { run, steps, i: 0, done: false };
+  }
+  let n = 0;
+  while (st.i < st.steps.length && n < 6) {
+    const [k, a, b] = st.steps[st.i];
+    try {
+      if (k === 'inj') await boostInjuries(env, a, true);
+      else if (k === 'sched') await boostSchedule(env, a, b, true);
+      else if (k === 'depthlist') {
+        // Every NFL team on the saved slates, one depth chart per step.
+        const ids = new Set();
+        for (const s of st.steps) if (s[0] === 'sched' && s[1] === 'nfl') {
+          try { const c = JSON.parse((await env.RATEBOARD_KV.get(`boostsched_v2_nfl_${s[2]}`)) || 'null'); if (c) Object.values(c.teams).forEach(t => t.id && ids.add(t.id)); } catch (e) {}
+        }
+        for (const id of ids) st.steps.push(['depth', id]);
+      }
+      else if (k === 'depth') await boostDepth(env, null, true, [a]);
+    } catch (e) {}
+    st.i++; n++;
+  }
+  st.done = st.i >= st.steps.length;
+  try { await env.RATEBOARD_KV.put(BOOST_REFRESH_KEY, JSON.stringify(st), { expirationTtl: 3 * 86400 }); } catch (e) {}
+  return st.done ? 'boosts refreshed' : `boosts refresh ${st.i}/${st.steps.length}`;
 }
+
 const boostName = n => String(n || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
   .replace(/\b(jr|sr|ii|iii|iv)\b\.?/g, '').replace(/[^a-z]/g, '');
 // ESPN's injury report for the sport, by player name. Kept 2 hours. Entries
 // older than 30 days are dropped (the college lists carry years-old ones).
-async function boostInjuries(env, sp) {
+async function boostInjuries(env, sp, force) {
   const key = `boostinj_v1_${sp}`;
-  try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c && Date.now() - c.at < 2 * 3600000) return c.map; } catch (e) {}
+  if (!force) { try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c) return c.map; } catch (e) {} }
   const map = {};
   try {
     const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${ESPN_PATH[sp]}/injuries`);
@@ -632,17 +664,17 @@ async function boostInjuries(env, sp) {
       map[boostName(x.athlete.displayName)] = { status: x.status, note: String(x.shortComment || '').slice(0, 140) };
     }
   } catch (e) {}
-  try { await env.RATEBOARD_KV.put(key, JSON.stringify({ at: Date.now(), map }), { expirationTtl: 86400 }); } catch (e) {}
+  try { await env.RATEBOARD_KV.put(key, JSON.stringify({ at: Date.now(), map }), { expirationTtl: 3 * 86400 }); } catch (e) {}
   return map;
 }
 /* NFL depth charts for the teams on the slate, by player name: slot 1 is the
    starter (top two at RB, three WRs). Kept 6 hours per team. */
-async function boostDepth(env, sched) {
+async function boostDepth(env, sched, force, only) {
   const out = {};
-  for (const id of Object.values(sched.teams).map(t => t.id).filter(Boolean)) {
+  for (const id of (only || Object.values(sched.teams).map(t => t.id).filter(Boolean))) {
     const key = `boostdepth_v1_${id}`;
     let m = null;
-    try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c && Date.now() - c.at < 6 * 3600000) m = c.m; } catch (e) {}
+    if (!force) { try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c) m = c.m; } catch (e) {} }
     if (!m) {
       m = {};
       try {
@@ -657,7 +689,7 @@ async function boostDepth(env, sched) {
           });
         }
       } catch (e) {}
-      try { await env.RATEBOARD_KV.put(key, JSON.stringify({ at: Date.now(), m }), { expirationTtl: 86400 }); } catch (e) {}
+      try { await env.RATEBOARD_KV.put(key, JSON.stringify({ at: Date.now(), m }), { expirationTtl: 3 * 86400 }); } catch (e) {}
     }
     Object.assign(out, m);
   }
@@ -804,8 +836,8 @@ async function handle({ request, env, waitUntil }) {
     /* Members can scan once per interval (3 hours, or 15 minutes when Dennis
        switches it on); the last scan time is the one saved with their passes,
        so it holds wherever they scan from. Admins aren't limited. */
-    if (!acc.admin) {
-      const every = await scanEvery(env);
+    if (!acc.admin || url.searchParams.get('page') === 'boosts') {
+      const every = url.searchParams.get('page') === 'boosts' ? 180 : await scanEvery(env);
       const left = (Number(u && u.scannedAt) || 0) + every * 60000 - Date.now();
       // Too soon for a fresh scan: hand back the last one instead.
       if (left > 0 && u && u.passes) {
@@ -847,22 +879,13 @@ async function handle({ request, env, waitUntil }) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return json({ error: 'Pick a date.' }, 400);
     const mode = BOOST_MODES[url.searchParams.get('mode')] ? url.searchParams.get('mode') : 'balanced';
     const [se, prev] = BOOST_SEASON[sp];
-    const main = env.RS_AUTH_TOKEN || auth;
-    if (!main) return json({ error: 'No Real token found.' }, 503);
-    // Whose cards: the Real username given, else the one saved from a scan.
-    const u = await db.prepare('SELECT rsUser, hashId FROM swap_users WHERE key=?').bind(me).first();
-    const rsUser = String(url.searchParams.get('rsUser') || (u && u.rsUser) || '').trim();
-    if (!rsUser) return json({ error: 'Enter your Real username.' }, 400);
-    let hashId = u && u.rsUser && u.rsUser.toLowerCase() === rsUser.toLowerCase() ? u.hashId : null;
-    try { if (!hashId) hashId = await resolveHashId(rsUser, main); } catch (e) { return json({ error: String(e.message || e) }, 502); }
-    if (!hashId) return json({ error: `No Real user called ${rsUser}.` }, 404);
-    if (!u || !u.hashId || u.rsUser !== rsUser) {
-      try { await db.prepare(`INSERT INTO swap_users (key, rsUser, hashId, updatedAt, wants, keep, slots) VALUES (?, ?, ?, ?, '[]', '[]', '[]')
-        ON CONFLICT(key) DO UPDATE SET rsUser=excluded.rsUser, hashId=excluded.hashId`).bind(me, rsUser, hashId, Date.now()).run(); } catch (e) {}
-    }
-    const fresh = url.searchParams.get('fresh') === '1';
-    const cards = await boostCards(env, main, hashId, sp, se, fresh);
-    if (cards.error) return json({ error: cards.error }, 502);
+    // What they own: the passes from their last scan (the same read Swaps
+    // uses). Rarity and pass level are not counted.
+    const u = await db.prepare('SELECT passes, scannedAt, rsUser FROM swap_users WHERE key=?').bind(me).first();
+    if (!u || !u.passes) return json({ error: 'Scan your passes first.' }, 400);
+    const cards = { at: u.scannedAt || null, players: parse(u.passes, [])
+      .filter(p => p.sport === sp && Number(p.season) === se && p.kind !== 'team')
+      .map(p => ({ id: Number(p.id), name: p.name || '' })) };
     const sched = await boostSchedule(env, sp, day);
     if (sched.error) return json({ error: sched.error }, 502);
     const inj = await boostInjuries(env, sp);
@@ -924,7 +947,7 @@ async function handle({ request, env, waitUntil }) {
         if (m3.length >= 2 && mAvg < 12) { skip = true; flags.push(`${Math.round(mAvg)} min a game lately`); }
         else if (!m3.length && mAvg != null && mAvg < 15) { k *= 0.7; flags.push(`${Math.round(mAvg)} min a game last season`); }
       }
-      rows.push({ id: p.id, name, team, pos, opp: g.opp, home: g.home, at: g.at, cards: p.cards,
+      rows.push({ id: p.id, name, team, pos, opp: g.opp, home: g.home, at: g.at,
         proj: proj == null ? null : Math.round(proj * k * 10) / 10, basis, flags, skip });
     }
     rows.sort((a, b) => (a.skip - b.skip) || ((b.proj ?? -1) - (a.proj ?? -1)));
@@ -935,7 +958,7 @@ async function handle({ request, env, waitUntil }) {
       r.boost = n < tiers[0] ? 'legendary' : n < tiers[0] + tiers[1] ? 'epic' : n < tiers[0] + tiers[1] + tiers[2] ? 'rare' : null;
       n++;
     }
-    return json({ sport: sp, season: se, date: day, mode, rsUser, cardsAt: cards.at, games: sched.games, depth: !!depth,
+    return json({ sport: sp, season: se, date: day, mode, rsUser: u.rsUser, cardsAt: cards.at, games: sched.games, depth: !!depth,
       rows, notPlaying: idle.length, players: cards.players.length });
   }
 

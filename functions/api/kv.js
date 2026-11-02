@@ -40,7 +40,7 @@ const PACK_GRANT = {
   until:  Date.parse('2026-11-01T09:00:00Z')    // 4:00am Eastern, Sun 1 Nov
 };
 
-const BOARD_CACHE_TTL = 10;      // the copy everyone is normally served
+const BOARD_CACHE_TTL = 30;      // the copy everyone is normally served (30s: a 500-person surge costs one rebuild per location every 30s)
 const BOARD_STALE_TTL = 21600;   // 6h fallback, used ONLY when the database says no
 // Raised from v2 when password fingerprints stopped being part of the board,
 // so no cached copy that still carries them is ever served again.

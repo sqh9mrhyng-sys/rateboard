@@ -1,5 +1,5 @@
 import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS } from '../../lib/auth.js';
-import { swapTick, swapAccess } from './swaps.js';
+import { swapTick, boostRefresh, swapAccess } from './swaps.js';
 import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, capNow } from '../../lib/dbwatch.js';
 
 // GET /api/rax?sport=ncaam&season=2026
@@ -7505,6 +7505,7 @@ export async function onRequestGet(ctx) {
   // Swap DMs ride the once-a-minute collector tick, on their own account.
   if (url.searchParams.get('queue') === 'next' && ctx.waitUntil) {
     ctx.waitUntil(swapTick(env).catch(() => {}));
+    ctx.waitUntil(boostRefresh(env).catch(() => {}));
   }
   const mk = url.searchParams.get('market');
   if (MARKET_MEMBER.includes(mk)) {
