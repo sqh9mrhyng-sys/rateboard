@@ -536,7 +536,7 @@ export async function swapAccess(env, request) {
 // for OTD their own passes and games.
 const MEMBER_OPS = new Set(['me', 'save', 'scan', 'search', 'connect']);
 const OTD_OPS = new Set(['me', 'scan', 'games', 'boostplan']);
-const BOOST_OPS = new Set(['me', 'scan', 'boostplan']);
+const BOOST_OPS = new Set(['me', 'scan', 'boostplan', 'boostinv']);
 const BOOSTS_OPEN = false;
 
 /* ---- OTD: saved game lists ------------------------------------------------
@@ -876,6 +876,38 @@ async function handle({ request, env, waitUntil }) {
      which booster to put on it. Schedule from ESPN's public scoreboard (kept
      3 hours), averages from the board's game log, the pass multiplier from
      the member's last scan. */
+  /* A member's boosters, from Real's collection stats page (the bottom of
+     web.realapp.com/collection/<sport>/season/<season>/user/<id>/stats).
+     Kept 30 minutes. While its shape is being learned the raw answer comes
+     back too, trimmed. */
+  if (op === 'boostinv') {
+    const sp = BOOST_SEASON[url.searchParams.get('sport')] ? url.searchParams.get('sport') : 'nfl';
+    const se = BOOST_SEASON[sp][0];
+    const u = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(me).first();
+    if (!u || !u.hashId) return json({ error: 'Re-read your passes first so the board knows your Real account.' }, 400);
+    const key = `boostinv_v1_${u.hashId}_${sp}`;
+    let d = null;
+    try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c && Date.now() - c.at < 30 * 60000 && url.searchParams.get('fresh') !== '1') d = c.d; } catch (e) {}
+    if (!d) {
+      const tok = env.RS_AUTH_TOKEN || auth;
+      try { d = await rsGetJson(`https://web.realapp.com/collection/${sp}/season/${se}/user/${encodeURIComponent(u.hashId)}/stats`, tok); }
+      catch (e) { return json({ error: String(e.message || e).slice(0, 200) }, 502); }
+      try { await env.RATEBOARD_KV.put(key, JSON.stringify({ at: Date.now(), d }), { expirationTtl: 3600 }); } catch (e) {}
+    }
+    // Anything that looks like boosters: arrays or objects under a key with "boost" in it.
+    const found = [];
+    const walk = (o, path, depth) => {
+      if (!o || typeof o !== 'object' || depth > 6 || found.length > 20) return;
+      for (const [k, v] of Object.entries(o)) {
+        const p2 = path ? path + '.' + k : k;
+        if (/boost/i.test(k) && v && typeof v === 'object') found.push({ path: p2, value: v });
+        else walk(v, p2, depth + 1);
+      }
+    };
+    walk(d, '', 0);
+    return json({ sport: sp, season: se, boosters: found, keys: d && typeof d === 'object' ? Object.keys(d) : [], raw: JSON.stringify(d).slice(0, 15000) });
+  }
+
   if (op === 'boostplan') {
     const sp = String(url.searchParams.get('sport') || '');
     if (!BOOST_SEASON[sp]) return json({ error: 'Pick CBB, CFB or NFL.' }, 400);

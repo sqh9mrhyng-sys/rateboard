@@ -63,6 +63,10 @@
       </div>
       <p class="note" id="modenote" style="margin:10px 0 0"></p>
     </section>
+    <section id="inv">
+      <div class="bar"><b style="font-size:15px">Your boosters</b><button id="invgo">Load from Real</button><span class="note" id="invmsg">From the bottom of your Real stats page (kept 30 minutes).</span></div>
+      <pre id="invout" class="note" style="white-space:pre-wrap;word-break:break-word;max-height:360px;overflow:auto;margin:10px 0 0" hidden></pre>
+    </section>
     <section id="out" hidden>
       <div class="note" id="outhead"></div>
       <div class="sum" id="sum"></div>
@@ -244,6 +248,16 @@ async function run(){
     + (j.notPlaying ? ` ${j.notPlaying} of your players don't play that day.` : '');
 }
 $('#run').addEventListener('click', run);
+
+$('#invgo').addEventListener('click', async () => {
+  $('#invgo').disabled = true; $('#invmsg').textContent = 'Loading…';
+  const j = await api(`/api/swaps?op=boostinv&page=boosts&sport=${$('#sport').value}`);
+  $('#invgo').disabled = false;
+  if(j.error){ $('#invmsg').textContent = j.error; return; }
+  $('#invmsg').textContent = j.boosters.length ? `Found ${j.boosters.length} booster section${j.boosters.length === 1 ? '' : 's'} - copy this and send it to Claude so the page can read it properly.` : 'No booster section found by name - copy this and send it to Claude.';
+  $('#invout').hidden = false;
+  $('#invout').textContent = (j.boosters.length ? JSON.stringify(j.boosters, null, 1) + '\n\n---- raw ----\n' : 'Top-level keys: ' + j.keys.join(', ') + '\n\n') + j.raw;
+});
 
 $('#scan').addEventListener('click', async () => {
   const u = $('#rsuser').value.trim();
