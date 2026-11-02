@@ -950,10 +950,16 @@ async function handle({ request, env, waitUntil }) {
     // Passes scanned before a name source existed get their names now.
     if (u && u.passes) {
       const ps = parse(u.passes, []);
-      if (ps.some(p => !p.name || /^player$/i.test(p.name))) {
+      // Only passes never looked up before (a freshman with no games yet can't
+      // be named, and used to be looked up - and the row rewritten - on every open).
+      const need = ps.filter(p => (!p.name || /^player$/i.test(p.name)) && !p.nameTried);
+      if (need.length) {
+        const before = JSON.stringify(ps.map(p => p.name));
         await fillNames(db, ps);
+        for (const p of need) p.nameTried = 1;
         u.passes = JSON.stringify(ps);
         try { await db.prepare('UPDATE swap_users SET passes=? WHERE key=?').bind(u.passes, me).run(); } catch (e) {}
+        void before;
       }
     }
     let connected = false;
