@@ -566,7 +566,7 @@ const BOOST_SEASON = { ncaam: [2027, 2026], ncaaf: [2026, 2025], nfl: [2026, 202
    last season's rax per game among regulars: Legendary is roughly the top
    2-3% of games, Epic the top 10%, Rare the top 25%. Boost saver raises the
    bar 15%, earning heavy lowers it 15%. */
-const BOOST_BARS = { ncaam: [10.5, 9, 7.5], ncaaf: [22, 17, 12], nfl: [16, 12, 8.5] };
+const BOOST_BARS = { ncaam: [11.5, 10, 7.5], ncaaf: [25, 20, 12], nfl: [19, 15, 8.5] };   // Legendary ~top 1% game, Epic ~top 3-5%
 const BOOST_MODES = { balanced: 1 };
 const ESPN_PATH = { ncaam: 'basketball/mens-college-basketball', ncaaf: 'football/college-football', nfl: 'football/nfl' };
 const ESPN_GROUP = { ncaam: '&groups=50', ncaaf: '&groups=80', nfl: '' };
@@ -1214,7 +1214,8 @@ async function handle({ request, env, waitUntil }) {
        25% of Epics and 40% of Rares held (at least one of each held). */
     const SHARE = { 5: 0.15, 4: 0.25, 3: 0.4 };
     const held = r => inv ? inv.filter(b => b.rarity === r).reduce((t, b) => t + b.count, 0) : 0;
-    const dayCap = { 5: Math.ceil(held(5) * SHARE[5]), 4: Math.ceil(held(4) * SHARE[4]), 3: Math.ceil(held(3) * SHARE[3]) };
+    // No daily cap: high boosts are held back by strong thresholds instead.
+    const dayCap = { 5: Infinity, 4: Infinity, 3: Infinity };
     const usedR = { 5: 0, 4: 0, 3: 0 };
     const own = r => left ? Math.min(left.filter(b => b.rarity === r).reduce((t, b) => t + b.count, 0), dayCap[r] - usedR[r]) : Infinity;
     const RN = { legendary: 5, epic: 4, rare: 3 }, NR = { 5: 'legendary', 4: 'epic', 3: 'rare' };
@@ -1262,7 +1263,7 @@ async function handle({ request, env, waitUntil }) {
     for (const k of Object.keys(totals)) totals[k] = Math.round(totals[k]);
     if (inv) used = inv.map((b, i) => ({ ...b, used: b.count - left[i].count }));
 
-    return json({ sport: sp, season: se, date: day, mode, bars, cutAt, totals, dayCap: inv ? dayCap : null, inv: used, statMode: !!used, rsUser: u.rsUser, cardsAt: cards.at, games: sched.games, depth: !!depth,
+    return json({ sport: sp, season: se, date: day, mode, bars, cutAt, totals, inv: used, statMode: !!used, rsUser: u.rsUser, cardsAt: cards.at, games: sched.games, depth: !!depth,
       rows, notPlaying: idle.length, players: cards.players.length });
   }
 
