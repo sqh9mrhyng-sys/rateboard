@@ -567,7 +567,7 @@ const BOOST_SEASON = { ncaam: [2027, 2026], ncaaf: [2026, 2025], nfl: [2026, 202
    2-3% of games, Epic the top 10%, Rare the top 25%. Boost saver raises the
    bar 15%, earning heavy lowers it 15%. */
 const BOOST_BARS = { ncaam: [11.5, 10, 7.5], ncaaf: [25, 20, 12], nfl: [19, 15, 8.5] };   // Legendary ~top 1% game, Epic ~top 3-5%
-const BOOST_MODES = { balanced: 1 };
+const BOOST_MODES = { balanced: 1, heavy: 1, saver: 1 };
 const ESPN_PATH = { ncaam: 'basketball/mens-college-basketball', ncaaf: 'football/college-football', nfl: 'football/nfl' };
 const ESPN_GROUP = { ncaam: '&groups=50', ncaaf: '&groups=80', nfl: '' };
 // Where Real's team code differs from ESPN's.
@@ -1207,55 +1207,86 @@ async function handle({ request, env, waitUntil }) {
     const bars = BOOST_BARS[sp].map(x => Math.round(x * BOOST_MODES[mode] * 10) / 10);
     const RK = { 5: 'legendary', 4: 'epic', 3: 'rare' };
     let used = null;
-    /* Rarity comes from projected rax against the bars (the type of booster
-       doesn't change it), capped by how many of each rarity the member holds:
-       when Legendaries run out the next player gets an Epic, and so on. Then
-       each boosted player gets the attribute, among the boosters of that
-       rarity still in hand, that adds the most to his expected stat line,
-       with the next best shown as a second option. */
+    /* Rarity from projected rax, by setting (CBB numbers; football scaled):
+         balanced  Legendary 14.5+ (at most 15% of Legendaries held), Epic 10+, Rare 5+
+         heavy     Legendary 11.5+ (at most 40%), Epic 9+, Rare 5+
+         saver     Legendary 18+, Epic 14.5+, everyone else 5+ a Rare
+       capped by what the member holds; pinned CBB players go first. */
     const left = inv ? inv.map(b => ({ ...b })) : null;
-    /* Never the whole stash in one day: at most about 15% of Legendaries,
-       25% of Epics and 40% of Rares held (at least one of each held). */
-    const SHARE = { 5: 0.15, 4: 0.25, 3: 0.4 };
+    const scale = { ncaam: 1, ncaaf: 2.17, nfl: 1.65 }[sp] || 1;
+    const MODE_RULES = { balanced: { leg: 14.5, epic: 10, cap: 0.15 }, heavy: { leg: 11.5, epic: 9, cap: 0.4 }, saver: { leg: 18, epic: 14.5, cap: 1 } };
+    const R = MODE_RULES[mode] || MODE_RULES.balanced;
+    const legBar = R.leg * scale, epicBar = R.epic * scale, rareFloor = 5, cutAt = null;
+    bars.splice(0, 3, Math.round(legBar * 10) / 10, Math.round(epicBar * 10) / 10, rareFloor);
     const held = r => inv ? inv.filter(b => b.rarity === r).reduce((t, b) => t + b.count, 0) : 0;
-    // No daily cap: high boosts are held back by strong thresholds instead.
-    const dayCap = { 5: Infinity, 4: Infinity, 3: Infinity };
+    const dayCap = { 5: held(5) ? Math.max(1, Math.floor(held(5) * R.cap)) : 0, 4: Infinity, 3: Infinity };
     const usedR = { 5: 0, 4: 0, 3: 0 };
-    const own = r => left ? Math.min(left.filter(b => b.rarity === r).reduce((t, b) => t + b.count, 0), dayCap[r] - usedR[r]) : Infinity;
-    const RN = { legendary: 5, epic: 4, rare: 3 }, NR = { 5: 'legendary', 4: 'epic', 3: 'rare' };
+    const own = r => left ? Math.min(held(r), dayCap[r]) - usedR[r] : Infinity;
+    const NR = { 5: 'legendary', 4: 'epic', 3: 'rare' };
     const gainOf = (r, b) => {
       // A two-attribute booster counts whichever side the player produces on.
       let best = null;
       for (const a of (b.attrs || [])) { const e = r.exp[a.stat]; if (e == null) continue; const g = e * a.boost; if (!best || g > best.g) best = { g, a, e }; }
       return best;
     };
-    /* Boost saver: no Legendaries, at most two Epics (only for a
-       Legendary-grade game), and Rares spread wide - down to the
-       earning-heavy bar - with a recommended cutoff at the balanced Rare bar. */
-    // Balanced: everyone projected at 5 rax or more gets at least a Rare.
-    const rareFloor = 5, cutAt = null;
-    let epics = 0;
+    // 1. Rarity for each player.
     for (const r of rows) {
       let want = null;
       if (!r.skip && r.proj != null) {
-        want = r.proj >= bars[0] ? 5 : r.proj >= bars[1] ? 4 : r.proj >= rareFloor ? 3 : null;
+        want = r.proj >= legBar ? 5 : r.proj >= epicBar ? 4 : r.proj >= rareFloor ? 3 : null;
         const pin = pinOf(r); if (pin && (!want || want < pin[1])) want = pin[1];
       }
       while (want && left && own(want) <= 0) want = want > 3 ? want - 1 : null;
       r.boost = want ? NR[want] : null;
+      r._r = want;
       if (want && left) usedR[want]++;
-      r.belowCut = cutAt != null && r.boost && r.proj < cutAt;
-      if (!want || !left) continue;
-      const opts = left.filter(b => b.rarity === want && b.count > 0).map(b => ({ b, x: gainOf(r, b) }))
-        .sort((p, q) => ((q.x && q.x.g) || -1) - ((p.x && p.x.g) || -1) || q.b.count - p.b.count);
-      const lab = o => o.x ? `${o.x.a.stat} +${o.x.a.boost}` : `${o.b.stat}`;
-      const pack = o => ({ label: lab(o), avg: o.x ? Math.round(o.x.e * 100) / 100 : null, gain: o.x ? Math.round(o.x.g * 100) / 100 : null, mult: o.b.mult || 1 });
-      if (opts[0]) { r.best = pack(opts[0]); opts[0].b.count--; }
-      if (opts[1]) r.alt = pack(opts[1]);
+      r.belowCut = false;
+    }
+    /* 2. Attributes, per rarity, for the most rax across everyone rather
+       than player by player: the best player-booster pairs are taken first,
+       then any two players swap boosters whenever that adds up to more. So a
+       steals or blocks booster goes to the player who'll actually use it,
+       even if he'd have made a little more with points, because the points
+       booster earns more on someone else. */
+    if (left) for (const rr of [5, 4, 3]) {
+      const ps = rows.filter(r => r._r === rr);
+      const groups = left.filter(b => b.rarity === rr && b.count > 0);
+      if (!ps.length || !groups.length) continue;
+      const g = (r, b) => { const x = gainOf(r, b); return x ? x.g : 0; };
+      const pairs = [];
+      for (const r of ps) for (const b of groups) pairs.push({ r, b, v: g(r, b) });
+      pairs.sort((x, y) => y.v - x.v || y.b.count - x.b.count);
+      const pick = new Map();
+      for (const q of pairs) { if (pick.has(q.r) || q.b.count <= 0) continue; pick.set(q.r, q.b); q.b.count--; }
+      // Swaps between two players, and trading a player's booster for an unused one.
+      for (let pass = 0, better = true; better && pass < 6; pass++) {
+        better = false;
+        const arr = [...pick.keys()];
+        for (let i = 0; i < arr.length; i++) for (let j = i + 1; j < arr.length; j++) {
+          const a = arr[i], c = arr[j], ba = pick.get(a), bc = pick.get(c);
+          if (ba === bc) continue;
+          if (g(a, bc) + g(c, ba) > g(a, ba) + g(c, bc) + 1e-9) { pick.set(a, bc); pick.set(c, ba); better = true; }
+        }
+        for (const a of arr) { const ba = pick.get(a);
+          for (const b of groups) if (b !== ba && b.count > 0 && g(a, b) > g(a, ba) + 1e-9) { b.count--; ba.count++; pick.set(a, b); better = true; break; } }
+      }
+      const lab = (b, x) => x ? `${x.a.stat} +${x.a.boost}` : `${b.stat}`;
+      const pack = (b, r) => { const x = gainOf(r, b); return { label: lab(b, x), avg: x ? Math.round(x.e * 100) / 100 : null, gain: x ? Math.round(x.g * 100) / 100 : null, mult: b.mult || 1 }; };
+      for (const r of ps) {
+        const b = pick.get(r);
+        if (b) r.best = pack(b, r);
+        // Second option: the next best booster of this rarity for him.
+        const alt = groups.filter(x => x !== b).map(x => ({ x, v: g(r, x) })).sort((p, q) => q.v - p.v)[0];
+        if (alt) r.alt = pack(alt.x, r);
+      }
+    }
+    for (const r of rows) {
+      if (!r._r) continue;
       // The booster's rarity multiplies the base projection (x10/15/25); the
       // attribute's extra is added on top and is never multiplied.
-      r.mult = r.best ? r.best.mult : ({ 5: 25, 4: 15, 3: 10 })[want] || 1;
+      r.mult = r.best ? r.best.mult : ({ 5: 25, 4: 15, 3: 10 })[r._r] || 1;
       r.withBoost = r.proj != null ? Math.round((r.proj * r.mult + ((r.best && r.best.gain) || 0)) * 10) / 10 : null;
+      delete r._r;
     }
     const totals = { base: 0, boosted: 0, recBoosted: 0 };
     for (const r of rows) {
@@ -1267,7 +1298,7 @@ async function handle({ request, env, waitUntil }) {
     for (const k of Object.keys(totals)) totals[k] = Math.round(totals[k]);
     if (inv) used = inv.map((b, i) => ({ ...b, used: b.count - left[i].count }));
 
-    return json({ sport: sp, season: se, date: day, mode, bars, cutAt, totals, inv: used, statMode: !!used, rsUser: u.rsUser, cardsAt: cards.at, games: sched.games, depth: !!depth,
+    return json({ sport: sp, season: se, date: day, mode, bars, cutAt, totals, legCap: inv ? dayCap[5] : null, inv: used, statMode: !!used, rsUser: u.rsUser, cardsAt: cards.at, games: sched.games, depth: !!depth,
       rows, notPlaying: idle.length, players: cards.players.length });
   }
 

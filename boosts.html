@@ -88,7 +88,7 @@
       <div class="bar">
         <label class="note">Day <select id="day"></select></label>
         <label class="note">Sport <select id="sport"><option value="ncaam">CBB 2026-27</option><option value="ncaaf">CFB 2026</option><option value="nfl">NFL 2026</option></select></label>
-        <label class="note">Setting <select id="mode"><option value="balanced" selected>Balanced</option></select></label>
+        <label class="note">Setting <select id="mode"><option value="balanced" selected>Balanced</option><option value="heavy">Heavy Legendary</option><option value="saver">Boost saver</option></select></label>
         <button class="go" id="run">Show my boosts</button>
       </div>
       <div class="bar" style="margin-top:10px">
@@ -237,9 +237,9 @@ const MODE_NOTE_STAT = {
   heavy: 'Earning heavy: anyone at or above a typical starter in the stat gets one. Burns boosters fast - not recommended.'
 };
 const MODE_NOTE = {
-  balanced: 'Balanced: Legendary only for a top-1% projected game, Epic for a top-3-5% game, and Rare for anyone projected at 5 rax or more.',
-  saver: 'Boost saver: no Legendaries, at most two Epics (only for a top-3% game), and Rares spread wide - a dashed line marks the recommended cutoff.',
-  heavy: 'Earning heavy: the bars lowered 15%, so more players get boosted. Burns boosters fast - not recommended.'
+  balanced: 'Balanced: Legendary for 14.5+ projected rax (never more than 15% of your Legendaries in a day), Epic for 10+, Rare for anyone at 5+.',
+  heavy: 'Heavy Legendary: Legendary for 11.5+ projected rax (up to 40% of your Legendaries in a day), Epic for 9+, Rare for anyone at 5+.',
+  saver: 'Boost saver: Legendary only for 18+ projected rax, Epic for 14.5+, and a Rare for everyone else at 5+.',
 };
 const LBL = { legendary: 'Legendary', epic: 'Epic', rare: 'Rare' };
 /* Today and the next three days, in Eastern time (when games are listed).
