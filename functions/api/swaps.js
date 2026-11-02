@@ -885,12 +885,13 @@ async function handle({ request, env, waitUntil }) {
     const se = BOOST_SEASON[sp][0];
     const u = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(me).first();
     if (!u || !u.hashId) return json({ error: 'Re-read your passes first so the board knows your Real account.' }, 400);
-    const key = `boostinv_v1_${u.hashId}_${sp}`;
+    const key = `boostinv_v2_${u.hashId}_${sp}`;
     let d = null;
     try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c && Date.now() - c.at < 30 * 60000 && url.searchParams.get('fresh') !== '1') d = c.d; } catch (e) {}
     if (!d) {
       const tok = env.RS_AUTH_TOKEN || auth;
-      try { d = await rsGetJson(`https://web.realapp.com/collection/${sp}/season/${se}/user/${encodeURIComponent(u.hashId)}/stats`, tok); }
+      // The booster cards themselves (the stats page only names the section).
+      try { d = await rsGetJson(`https://web.realapp.com/userpassboostercards/undefined/entity/player?displayType=collectionstats&sport=${sp}&userId=${encodeURIComponent(u.hashId)}&version=stat`, tok); }
       catch (e) { return json({ error: String(e.message || e).slice(0, 200) }, 502); }
       try { await env.RATEBOARD_KV.put(key, JSON.stringify({ at: Date.now(), d }), { expirationTtl: 3600 }); } catch (e) {}
     }
@@ -900,7 +901,7 @@ async function handle({ request, env, waitUntil }) {
       if (!o || typeof o !== 'object' || depth > 6 || found.length > 20) return;
       for (const [k, v] of Object.entries(o)) {
         const p2 = path ? path + '.' + k : k;
-        if (/boost/i.test(k) && v && typeof v === 'object') found.push({ path: p2, value: v });
+        if ((/boost/i.test(k) || (Array.isArray(v) && v.length && v[0] && typeof v[0] === 'object')) && v && typeof v === 'object') found.push({ path: p2, value: Array.isArray(v) ? v.slice(0, 12) : v });
         else walk(v, p2, depth + 1);
       }
     };
