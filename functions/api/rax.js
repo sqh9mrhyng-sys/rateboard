@@ -1,6 +1,6 @@
 import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS } from '../../lib/auth.js';
 import { swapTick, swapAccess } from './swaps.js';
-import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, JOB_CAP } from '../../lib/dbwatch.js';
+import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, capNow } from '../../lib/dbwatch.js';
 
 // GET /api/rax?sport=ncaam&season=2026
 //
@@ -522,7 +522,7 @@ const MARKET_SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'ncaam', 'nhl', 'soccer', '
    just for this, so throttling or a ban lands there and never on the key the
    rest of the board runs on. Without that secret the pull does nothing - it
    never falls back to the main key. */
-const MARKET_ON = false;          // off until Cloudflare answers about the bill (Dennis, 2026-11-01)
+const MARKET_ON = true;           // back on 2026-11-02 after Cloudflare replied; held to the daily job budget (lib/dbwatch.js)
 /* Real answers "high volume" to two requests at once, even on the separate
    account, so there is one lane. Speed comes from shorter gaps between pages
    and more pages a tick instead. A sport-season is still cut into windows by
@@ -1803,7 +1803,7 @@ const keepsPlays = (sp, st) => !st || seasonTypesFor(sp).includes(String(st));
 const seasonTypeSql = sp => seasonTypesFor(sp).map(x => `'${x}'`).join(',');
 
 // Collecting paused until this time (database overloaded, 2026-10-31).
-const COLLECT_PAUSE_UNTIL = Date.parse('2030-01-01T00:00:00Z');   // OFF 2026-11-01: D1 usage charges - collecting stopped until rebuilt to write less
+const COLLECT_PAUSE_UNTIL = 0;   // back on 2026-11-02: change-only writes, held to the daily job budget (lib/dbwatch.js). Set a future Date.parse(...) to pause again.
 
 // NBA 2026-27 has started: its game log is built ahead of everything else.
 const EXTRA_JOBS = [['nba', 2027], ['ufc', 2023], ['ncaam', 2027]];
@@ -1909,7 +1909,7 @@ async function handleGet({ request, env, waitUntil }) {
   // Admin: the slow and failing database calls the recorder caught.
   if (new URL(request.url).searchParams.get('dbslow') === '1') return json({ calls: await readSlow(env) });
   // Admin: the background jobs' database use against their daily budget.
-  if (new URL(request.url).searchParams.get('jobuse') != null) return json({ cap: JOB_CAP, today: await jobUse(env), days: await jobHistory(env, 14) });
+  if (new URL(request.url).searchParams.get('jobuse') != null) return json({ cap: capNow(), today: await jobUse(env), days: await jobHistory(env, 14) });
   // Admin: rows read and written today, by request type and statement.
   if (new URL(request.url).searchParams.get('dbuse') != null) return json({ day: new URL(request.url).searchParams.get('dbuse') || new Date().toISOString().slice(0, 10), use: await readUse(env, new URL(request.url).searchParams.get('dbuse') || undefined) });
   const auth = env.RS_AUTH_TOKEN;
@@ -7533,7 +7533,7 @@ export async function onRequestGet(ctx) {
     }
     // The daily database budget: past it, every job rests until midnight UTC.
     const over = await jobOverBudget(env);
-    if (over) return json({ phase: null, resting: true, after: 'daily database budget', used: over, cap: JOB_CAP });
+    if (over) return json({ phase: null, resting: true, after: 'daily database budget', used: over, cap: capNow() });
     const tally = env.RATEBOARD_DB && env.RATEBOARD_DB.__tally;
     const label = url.searchParams.get('queue') === 'next' ? 'tick' : ([...url.searchParams.entries()].find(([k]) => !['sport', 'season', 'jobs', 't'].includes(k)) || ['other'])[0];
     const record = () => { try { ctx.waitUntil(addJobUse(env, tally, label).catch(() => {})); } catch (e) {} };
