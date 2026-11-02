@@ -234,13 +234,13 @@ async function resolveHashId(username, auth) {
 
 // Reads every player pass a member has, one sport-season at a time, one
 // request at a time.
-async function scanPasses(hashId, auth) {
+async function scanPasses(hashId, auth, only) {
   const out = [], errors = [];
   let sample = null;
-  for (const [sport, seasons] of Object.entries(SWAP_SEASONS)) {
+  for (const [sport, seasons] of Object.entries(only || SWAP_SEASONS)) {
     for (const season of seasons) {
       // Player passes, then team passes (UFC fighters are filed as teams).
-      for (const kind of ['player', 'team']) {
+      for (const kind of (only ? ['player'] : ['player', 'team'])) {
         try {
           const d = await rsGetJson(`https://web.realapp.com/userpasses/${encodeURIComponent(hashId)}/passes`
             + `?entityType=${kind}&season=${season}&sport=${sport}`, auth);
@@ -931,7 +931,16 @@ async function handle({ request, env, waitUntil }) {
     let hashId = u && u.rsUser === rsUser ? u.hashId : null;
     try { if (!hashId) hashId = await resolveHashId(rsUser, auth); } catch (e) { return json({ error: String(e.message || e) }, 502); }
     if (!hashId) return json({ error: `No Real user called ${rsUser}.` }, 404);
-    const r = await scanPasses(hashId, auth);
+    // From Boosts only its three current seasons are read (6 calls, not ~80),
+    // and the member's other passes are kept as they were.
+    const boostsOnly = url.searchParams.get('page') === 'boosts';
+    const only = boostsOnly ? Object.fromEntries(Object.entries(BOOST_SEASON).map(([k, v]) => [k, [v[0]]])) : null;
+    const r = await scanPasses(hashId, auth, only);
+    if (boostsOnly) {
+      const prevP = parse(u && u.passes, []);
+      const fresh = new Set(Object.entries(only).map(([k, v]) => `${k}:${v[0]}`));
+      r.passes = prevP.filter(p => !(fresh.has(`${p.sport}:${p.season}`) && p.kind !== 'team')).concat(r.passes);
+    }
     await fillNames(db, r.passes);
     await db.prepare(`INSERT INTO swap_users (key, rsUser, hashId, passes, scannedAt, updatedAt, wants, keep, slots) VALUES (?, ?, ?, ?, ?, ?, '[]', '[]', '[]')
       ON CONFLICT(key) DO UPDATE SET rsUser=excluded.rsUser, hashId=excluded.hashId, passes=excluded.passes,

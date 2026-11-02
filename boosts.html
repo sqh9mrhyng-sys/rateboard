@@ -207,22 +207,32 @@ const MODE_NOTE = {
   heavy: 'Earning heavy: the bars lowered 15%, so more players get boosted. Burns boosters fast - not recommended.'
 };
 const LBL = { legendary: 'Legendary', epic: 'Epic', rare: 'Rare' };
-// Today and the next three days, in Eastern time (when games are listed).
-function days(){
+/* Today and the next three days, in Eastern time (when games are listed).
+   NFL only plays Thursday, Sunday and Monday, so it gets the next of those
+   that fall in the same window (refreshed schedules cover four days). */
+function days(sp){
   const out = [];
   for(let i = 0; i < 4; i++){
     const d = new Date(Date.now() + i * 86400000);
     const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+    const wd = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' }).format(d);
+    if(sp === 'nfl' && !['Thu', 'Sun', 'Mon'].includes(wd)) continue;
     const lbl = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' }).format(d);
     out.push([ymd, (i === 0 ? 'Today · ' : i === 1 ? 'Tomorrow · ' : '') + lbl]);
   }
   return out;
 }
-$('#day').innerHTML = days().map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('');
+function drawDays(){
+  const sp = $('#sport').value, prev = $('#day').value, list = days(sp);
+  $('#day').innerHTML = list.length ? list.map(([v, l]) => `<option value="${v}"${v === prev ? ' selected' : ''}>${esc(l)}</option>`).join('')
+    : '<option value="">No NFL games in the next 4 days</option>';
+}
+$('#sport').addEventListener('change', drawDays);
 const drawMode = () => { $('#modenote').textContent = MODE_NOTE[$('#mode').value]; };
 $('#mode').addEventListener('change', () => { drawMode(); if(!$('#out').hidden) run(); });
 drawMode();
 try{ const s = JSON.parse(localStorage.getItem('boosts_pick_v1') || '{}'); if(s.sport) $('#sport').value = s.sport; if(s.mode){ $('#mode').value = s.mode; drawMode(); } }catch(e){}
+drawDays();
 
 document.querySelectorAll('#tab button').forEach(b => b.addEventListener('click', () => {
   document.querySelectorAll('#tab button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
@@ -232,6 +242,7 @@ document.querySelectorAll('#tab button').forEach(b => b.addEventListener('click'
 const tm = iso => iso ? new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }) + ' ET' : '';
 async function run(){
   const sp = $('#sport').value, day = $('#day').value, mode = $('#mode').value;
+  if(!day){ $('#out').hidden = false; $('#outhead').textContent = 'No NFL games in the next 4 days - NFL plays Thursday, Sunday and Monday.'; return; }
   try{ localStorage.setItem('boosts_pick_v1', JSON.stringify({ sport: sp, mode })); }catch(e){}
   $('#run').disabled = true; $('#out').hidden = false; $('#rows').innerHTML = ''; $('#sum').innerHTML = ''; $('#foot').textContent = '';
   $('#outhead').textContent = 'Working it out…';
@@ -298,7 +309,7 @@ $('#invgo').addEventListener('click', async () => {
 $('#scan').addEventListener('click', async () => {
   const u = $('#rsuser').value.trim();
   if(!u){ $('#scanmsg').textContent = 'Enter your Real username first.'; return; }
-  $('#scan').disabled = true; $('#scanmsg').textContent = 'Reading your passes… about 20 seconds.';
+  $('#scan').disabled = true; $('#scanmsg').textContent = 'Reading your CBB, CFB and NFL passes…';
   const j = await api(`/api/swaps?op=scan&page=boosts&rsUser=${encodeURIComponent(u)}`);
   $('#scan').disabled = false;
   if(j.error){ $('#scanmsg').textContent = j.error; return; }
