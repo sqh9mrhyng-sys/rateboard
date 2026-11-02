@@ -3906,11 +3906,12 @@ async function handleGet({ request, env, waitUntil }) {
       out.team = g.reduce((a, x) => a || x.team, null);
       out.gamesPlayed = g.length || null;
       const gids = g.map(x => Number(x.gameId)).filter(Number.isFinite);
-      let swept = 0;
-      for (let i = 0; i < gids.length; i += 90) {
-        const q = await db.prepare(`SELECT COUNT(DISTINCT gameId) AS n FROM plays WHERE gameId IN (${gids.slice(i, i + 90).join(',')})`).first();
-        swept += Number(q && q.n) || 0;
-      }
+      /* Games with plays, from the player's own plays already loaded above.
+         The old per-game count over the plays table couldn't use an index and
+         read all 6 million rows every time a player was opened - 16 billion
+         rows on 2 November. */
+      const have = new Set(rows.map(r => Number(r.gameId)).filter(Number.isFinite));
+      const swept = gids.filter(x => have.has(x)).length;
       out.gamesCollected = swept || null;
     } catch (e) {
       return json({ error: 'could not read the player', detail: String((e && e.message) || e) }, 503);
