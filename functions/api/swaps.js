@@ -718,7 +718,9 @@ async function boostInventory(env, tok, hashId, sp, fresh) {
 }
 /* All three sports' boosters in one read, at most once every 4 hours per
    member; inside that the saved copy is used. */
-const BOOSTINV_EVERY = 4 * 3600000;
+const BOOSTINV_EVERY = 2 * 3600000;
+// Members whose pass and booster reads on Boosts are never held back.
+const BOOST_FAST = new Set(['quas23']);
 async function boostInventoryAll(env, tok, hashId, fresh, admin) {
   const key = `boostinv_v5_${hashId}`;
   let c = null;
@@ -982,8 +984,8 @@ async function handle({ request, env, waitUntil }) {
     /* Members can scan once per interval (3 hours, or 15 minutes when Dennis
        switches it on); the last scan time is the one saved with their passes,
        so it holds wherever they scan from. Admins aren't limited. */
-    if (!acc.admin) {
-      const every = url.searchParams.get('page') === 'boosts' ? 180 : await scanEvery(env);
+    if (!acc.admin && !(url.searchParams.get('page') === 'boosts' && BOOST_FAST.has(String(me || '').toLowerCase()))) {
+      const every = url.searchParams.get('page') === 'boosts' ? 120 : await scanEvery(env);
       const left = (Number(u && u.scannedAt) || 0) + every * 60000 - Date.now();
       // Too soon for a fresh scan: hand back the last one instead.
       if (left > 0 && u && u.passes) {
@@ -1002,7 +1004,7 @@ async function handle({ request, env, waitUntil }) {
     const boostsOnly = url.searchParams.get('page') === 'boosts';
     const only = boostsOnly ? Object.fromEntries(Object.entries(BOOST_SEASON).map(([k, v]) => [k, [v[0]]])) : null;
     // Site-wide: at most 40 pass reads a minute, so a crowd can't trip Real's limits.
-    if (!acc.admin && !(await allow(url.origin, 'passread-all', 40, 60))) return json({ error: 'Lots of people are reading passes right now - try again in a minute.' }, 429);
+    if (!acc.admin && !BOOST_FAST.has(String(me || '').toLowerCase()) && !(await allow(url.origin, 'passread-all', 40, 60))) return json({ error: 'Lots of people are reading passes right now - try again in a minute.' }, 429);
     const r = await scanPasses(hashId, auth, only);
     if (boostsOnly) {
       const prevP = parse(u && u.passes, []);
@@ -1053,8 +1055,9 @@ async function handle({ request, env, waitUntil }) {
     const u = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(me).first();
     if (!u || !u.hashId) return json({ error: 'Re-read your passes first so the board knows your Real account.' }, 400);
     const want = url.searchParams.get('fresh') === '1';
-    if (want && !acc.admin && !(await allow(url.origin, 'boostinv-all', 40, 60))) return json({ error: 'Lots of people are loading boosters right now - try again in a minute.' }, 429);
-    const all = await boostInventoryAll(env, env.RS_AUTH_TOKEN || auth, u.hashId, want, acc.admin);
+    const fast = acc.admin || BOOST_FAST.has(String(me || '').toLowerCase());
+    if (want && !fast && !(await allow(url.origin, 'boostinv-all', 40, 60))) return json({ error: 'Lots of people are loading boosters right now - try again in a minute.' }, 429);
+    const all = await boostInventoryAll(env, env.RS_AUTH_TOKEN || auth, u.hashId, want, fast);
     if (all.error) return json({ error: all.error }, 502);
     return json({ sport: sp, at: all.at, next: all.next, cached: !!all.cached, boosters: (all.sports || {})[sp] || [], sports: all.sports });
   }

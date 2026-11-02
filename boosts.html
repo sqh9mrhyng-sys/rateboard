@@ -99,7 +99,7 @@
       <p class="note" id="modenote" style="margin:10px 0 0"></p>
     </section>
     <section id="inv">
-      <div class="bar"><b style="font-size:15px">Your boosters</b><button id="invgo">Load from Real</button><span class="note" id="invmsg">Reads your boosters for all three sports - once every 4 hours.</span></div>
+      <div class="bar"><b style="font-size:15px">Your boosters</b><button id="invgo">Load from Real</button><span class="note" id="invmsg">Reads your boosters for all three sports - once every 2 hours.</span></div>
       <div id="invout" style="margin:10px 0 0" hidden></div>
     </section>
     <section id="out" hidden>
@@ -116,7 +116,7 @@
       <div class="bar"><b style="font-size:15px">Buys · CBB 2026-27</b><span class="note" id="buymsg">Top 70 from the CBB list, checked against your passes.</span></div>
       <div class="sum" id="buysum"></div>
       <div class="scroll"><table class="cards buys"><thead><tr><th>#</th><th>Player</th><th style="text-align:left">Team</th><th>You</th></tr></thead><tbody id="buyrows"><tr><td colspan="4" class="note">Loading…</td></tr></tbody></table></div>
-      <p class="note">Anyone you don't hold a pass for is a recommended buy. Re-read your passes on the Boosts tab after buying (once every 3 hours). NFL and CFB come later.</p>
+      <p class="note">Anyone you don't hold a pass for is a recommended buy. Re-read your passes on the Boosts tab after buying (once every 2 hours). NFL and CFB come later.</p>
     </section>
   </div>
 </div>
@@ -381,7 +381,7 @@ $('#scan').addEventListener('click', async () => {
   $('#rsuser').value = (me.profile && me.profile.rsUser) || '';
   const p = me.profile;
   $('#scanmsg').textContent = p && (p.passes || []).length
-    ? `${p.passes.length} passes on file` + (p.scannedAt ? ` (read ${new Date(p.scannedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` : '') + '. Passes can be re-read once every 3 hours.'
+    ? `${p.passes.length} passes on file` + (p.scannedAt ? ` (read ${new Date(p.scannedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` : '') + '. Passes can be re-read once every 2 hours.'
     : 'Enter your Real username and tap Re-read my passes.';
 })();
 </script>
