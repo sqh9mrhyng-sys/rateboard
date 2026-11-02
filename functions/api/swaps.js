@@ -1240,7 +1240,8 @@ async function handle({ request, env, waitUntil }) {
       let want = null;
       if (!r.skip && r.proj != null) {
         want = r.proj >= legBar ? 5 : r.proj >= epicBar ? 4 : r.proj >= rareFloor ? 3 : null;
-        const pin = pinOf(r); if (pin && (!want || want < pin[1])) want = pin[1];
+        // Pinned players keep their spot in line, and outside Boost saver their minimum rarity too.
+        const pin = pinOf(r); if (pin && mode !== 'saver' && (!want || want < pin[1])) want = pin[1];
       }
       while (want && left && own(want) <= 0) want = want > 3 ? want - 1 : null;
       r.boost = want ? NR[want] : null;
