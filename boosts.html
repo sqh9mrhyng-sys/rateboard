@@ -38,6 +38,36 @@
   td a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)}
   .sub{display:block;color:var(--mute);font-size:11.5px}
   .lock{max-width:460px;margin:12vh auto;text-align:center}
+  /* Phones: each player becomes a card instead of a wide table row. */
+  @media (max-width: 680px){
+    .wrap{padding:12px}
+    section{padding:12px}
+    .bar{gap:6px}
+    .bar label{flex:1 1 100%;display:flex;flex-direction:column;gap:4px}
+    .bar label select{width:100%}
+    .bar input,.bar button{flex:1 1 auto}
+    .go{width:100%}
+    .seg{width:100%} .seg button{flex:1}
+    .scroll{overflow:visible}
+    table.cards thead{display:none}
+    table.cards,table.cards tbody{display:block;width:100%}
+    table.cards tr{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px;margin:0 0 10px}
+    table.cards td{display:block;border:0;padding:0;text-align:left!important;white-space:normal}
+    table.cards td::before{content:attr(data-l);display:block;color:var(--mute);font-size:10.5px;text-transform:uppercase;letter-spacing:.04em}
+    table.cards td.pc{grid-column:1 / -1;font-size:15px}
+    table.cards td.pc::before{display:none}
+    table.cards td[data-l="Rarity"]{grid-column:1 / -1}
+    table.cards td[data-l="Rarity"]::before{display:none}
+    table.cards td[data-l="Boost"]{grid-column:1 / -1}
+    table.cards tr.cut{display:block;background:none;border:0;border-top:2px dashed var(--accent);border-radius:0;padding:6px 0}
+    table.cards.buys tr{grid-template-columns:auto 1fr auto;align-items:center}
+    table.cards.buys td[data-l="#"]::before,table.cards.buys td[data-l="You"]::before,table.cards.buys td[data-l="Team"]::before{display:none}
+    table.cards.buys td.pc{grid-column:auto}
+    table.cards td[colspan]{grid-column:1 / -1}
+    .flag{max-width:none}
+    .tot div{flex:1 1 45%}
+    .tot b{font-size:18px}
+  }
   tr.cut td{border-top:2px dashed var(--accent);padding:4px 6px;color:var(--accent);font-size:12px;text-align:left}
   tr.below td{opacity:.75}
   .tot{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0}
@@ -76,7 +106,7 @@
       <div class="note" id="outhead"></div>
       <div class="tot" id="tot"></div>
       <div class="sum" id="sum"></div>
-      <div class="scroll"><table><thead><tr><th>Rarity</th><th>Player</th><th style="text-align:left">Boost</th><th style="text-align:left">Game</th><th>Avg rax</th><th>Proj rax</th><th>Proj w/ boost</th></tr></thead><tbody id="rows"></tbody></table></div>
+      <div class="scroll"><table class="cards"><thead><tr><th>Rarity</th><th>Player</th><th style="text-align:left">Boost</th><th style="text-align:left">Game</th><th>Avg rax</th><th>Proj rax</th><th>Proj w/ boost</th></tr></thead><tbody id="rows"></tbody></table></div>
       <p class="note" id="foot"></p>
     </section>
   </div>
@@ -85,7 +115,7 @@
     <section>
       <div class="bar"><b style="font-size:15px">Buys · CBB 2026-27</b><span class="note" id="buymsg">Top 70 from the CBB list, checked against your passes.</span></div>
       <div class="sum" id="buysum"></div>
-      <div class="scroll"><table><thead><tr><th>#</th><th>Player</th><th style="text-align:left">Team</th><th>You</th></tr></thead><tbody id="buyrows"><tr><td colspan="4" class="note">Loading…</td></tr></tbody></table></div>
+      <div class="scroll"><table class="cards buys"><thead><tr><th>#</th><th>Player</th><th style="text-align:left">Team</th><th>You</th></tr></thead><tbody id="buyrows"><tr><td colspan="4" class="note">Loading…</td></tr></tbody></table></div>
       <p class="note">Anyone you don't hold a pass for is a recommended buy. Re-read your passes on the Boosts tab after buying (once every 3 hours). NFL and CFB come later.</p>
     </section>
   </div>
@@ -256,10 +286,10 @@ async function loadBuys(){
   $('#buysum').innerHTML = `<span><b>${j.missing}</b> to buy</span><span><b>${(j.list || []).length - j.missing}</b> owned</span>`
     + `<span><label class="note"><input type="checkbox" id="buyonly"${buysOnly ? ' checked' : ''}> Only show buys</label></span>`;
   $('#buyonly').addEventListener('change', e => { buysOnly = e.target.checked; loadBuys(); });
-  $('#buyrows').innerHTML = rows.map(x => `<tr${x.owned ? ' style="opacity:.55"' : ''}><td>${x.rank}</td>
-    <td><a href="${esc(x.link)}" target="_blank" rel="noopener">${esc(x.name || 'Open player')}</a>${x.name ? '' : '<span class="sub">freshman - name shows in Real</span>'}</td>
-    <td style="text-align:left">${esc(x.team)}</td>
-    <td>${x.owned ? '<span class="b none">Owned</span>' : '<span class="b rare">Buy</span>'}</td></tr>`).join('') || '<tr><td colspan="4" class="note">You own all of them.</td></tr>';
+  $('#buyrows').innerHTML = rows.map(x => `<tr${x.owned ? ' style="opacity:.55"' : ''}><td data-l="#">${x.rank}</td>
+    <td data-l="Player" class="pc"><a href="${esc(x.link)}" target="_blank" rel="noopener">${esc(x.name || 'Open player')}</a>${x.name ? '' : '<span class="sub">freshman - name shows in Real</span>'}</td>
+    <td data-l="Team" style="text-align:left">${esc(x.team)}</td>
+    <td data-l="You">${x.owned ? '<span class="b none">Owned</span>' : '<span class="b rare">Buy</span>'}</td></tr>`).join('') || '<tr><td colspan="4" class="note">You own all of them.</td></tr>';
 }
 const tm = iso => iso ? new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }) + ' ET' : '';
 async function run(){
@@ -294,15 +324,15 @@ async function run(){
     const u = realPlayerUrl(sp, r.id, j.season);
     const nm = u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.name)}</a>` : esc(r.name);
     const one = o => esc(o.label) + (o.avg != null ? ` <span class="note">${o.avg}/${o.gain}</span>` : '');
-    return cutRow + `<tr class="${r.skip ? 'skip' : ''}${r.belowCut ? ' below' : ''}"><td>${r.boost ? `<span class="b ${r.boost}">${LBL[r.boost]}</span>` : '<span class="b none">None</span>'}</td>
-      <td>${nm}${r.noData ? ' <span class="note">*not enough data*</span>' : ''}<span class="sub">${esc([r.pos, r.team].filter(Boolean).join(' · '))}${r.basis ? ' · ' + esc(r.basis) : ''}</span>${(r.flags || []).map(f => `<span class="flag">⚠ ${esc(f)}</span>`).join('')}</td>
-      <td style="text-align:left;white-space:normal">${r.boost && r.best ? `<b>${one(r.best)}</b>${r.alt ? `<span class="sub">or ${one(r.alt)}</span>` : ''}` : '<span class="note">–</span>'}</td>
-      <td style="text-align:left">${r.home ? 'vs' : '@'} ${esc(r.opp)}<span class="sub">${tm(r.at)}</span></td>
-      <td>${r.avg != null ? r.avg + `<span class="sub">${r.games} game${r.games === 1 ? '' : 's'}${r.avgLast != null ? ' · last yr ' + r.avgLast : ''}</span>` : r.avgLast != null ? `–<span class="sub">last yr ${r.avgLast}</span>` : '–'}</td>
-      <td>${r.proj == null ? 'no data' : r.proj}</td>
-      <td><b>${r.boost && r.withBoost != null ? Math.round(r.withBoost).toLocaleString() : (r.proj ?? '–')}</b>${r.boost && r.withBoost != null ? `<span class="sub">${r.proj} × ${r.mult} + ${(r.best && r.best.gain) || 0}</span>` : ''}</td></tr>`;
+    return cutRow + `<tr class="${r.skip ? 'skip' : ''}${r.belowCut ? ' below' : ''}"><td data-l="Rarity">${r.boost ? `<span class="b ${r.boost}">${LBL[r.boost]}</span>` : '<span class="b none">None</span>'}</td>
+      <td data-l="Player" class="pc">${nm}${r.noData ? ' <span class="note">*not enough data*</span>' : ''}<span class="sub">${esc([r.pos, r.team].filter(Boolean).join(' · '))}${r.basis ? ' · ' + esc(r.basis) : ''}</span>${(r.flags || []).map(f => `<span class="flag">⚠ ${esc(f)}</span>`).join('')}</td>
+      <td data-l="Boost" style="text-align:left;white-space:normal">${r.boost && r.best ? `<b>${one(r.best)}</b>${r.alt ? `<span class="sub">or ${one(r.alt)}</span>` : ''}` : '<span class="note">–</span>'}</td>
+      <td data-l="Game" style="text-align:left">${r.home ? 'vs' : '@'} ${esc(r.opp)}<span class="sub">${tm(r.at)}</span></td>
+      <td data-l="Avg rax">${r.avg != null ? r.avg + `<span class="sub">${r.games} game${r.games === 1 ? '' : 's'}${r.avgLast != null ? ' · last yr ' + r.avgLast : ''}</span>` : r.avgLast != null ? `–<span class="sub">last yr ${r.avgLast}</span>` : '–'}</td>
+      <td data-l="Proj rax">${r.proj == null ? 'no data' : r.proj}</td>
+      <td data-l="Proj w/ boost"><b>${r.boost && r.withBoost != null ? Math.round(r.withBoost).toLocaleString() : (r.proj ?? '–')}</b>${r.boost && r.withBoost != null ? `<span class="sub">${r.proj} × ${r.mult} + ${(r.best && r.best.gain) || 0}</span>` : ''}</td></tr>`;
   }).join('');
-  $('#foot').textContent = (j.statMode ? 'Rarity comes from projected rax (capped by what you hold); Boost is the attribute from your boosters of that rarity that adds the most for that player, shown as his average of that stat / the rax it adds, with a second option. ' : '') + `Projected rax: recent games weighted most, then this season, then last season's regular season only, adjusted for how much the opponent gives up. Newcomers with no college games get an estimate from how many people own them on Real. CBB teams come from ESPN's current rosters, so transfers show with their new team. Pass rarity and level aren't counted. Injuries and depth charts are refreshed at 10am and 5pm ET. Players out, doubtful, suspended`
+  $('#foot').textContent = (j.statMode ? 'Rarity comes from projected rax (capped by what you hold); Boost is the attribute from your boosters of that rarity that adds the most for that player, shown as his average of that stat / the rax it adds, with a second option. ' : '') + `Projected rax: recent games weighted most, then this season, then last season's regular season only, adjusted for how much the opponent gives up. Freshmen on the CBB top 175 get a projection from their rank; others show *not enough data*. CBB teams come from the top 175 and ESPN's current rosters, so transfers show with their new team. Pass rarity and level aren't counted. Injuries and depth charts are refreshed at 10am and 5pm ET. Players out, doubtful, suspended`
     + (j.depth ? ', backups on the depth chart' : '') + ` or not playing lately get no booster; questionable players are marked down.`
     + (j.notPlaying ? ` ${j.notPlaying} of your players don't play that day.` : '');
 }
