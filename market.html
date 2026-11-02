@@ -476,7 +476,7 @@ function planText(){
   const row = ((data && data.rows) || []).find(r => keyOf(r) === detKey) || {};
   const at = recentAt[detKey] || (row.at) || (data && data.pulledAt ? Date.parse(data.pulledAt) : null);
   const head = `${String(row.player || 'Player ' + pid).toUpperCase()} - ${SPORT[sp] || sp} ${seasonLbl(sp, se)} - last pulled ${at ? etTime(at) : 'unknown'}`;
-  return [head, ...lastPlan.map(l => `${auctionUrl(l.id) || l.id} - ${l.value == null ? '–' : Math.round(l.value * 10) / 10} - ${fmt(l.buyNow)} - ${ppr3(l.ppr)}`)].join('\n');
+  return [head, ...lastPlan.map(l => `${auctionUrl(l.id) || l.id} - ${l.value == null ? '–' : Math.round(l.value * 10) / 10} - ${fmt(l.buyNow)} - ${ppr3(l.ppr)}`)].join('\n\n');
 }
 async function copyText(t){
   try{ await navigator.clipboard.writeText(t); return true; }catch(e){}
