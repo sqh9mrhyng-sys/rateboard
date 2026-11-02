@@ -1072,7 +1072,7 @@ async function handle({ request, env, waitUntil }) {
     if (!u || !u.passes) return json({ error: 'Scan your passes first.' }, 400);
     const cards = { at: u.scannedAt || null, players: parse(u.passes, [])
       .filter(p => p.sport === sp && Number(p.season) === se && p.kind !== 'team')
-      .map(p => ({ id: Number(p.id), name: p.name || '' })) };
+      .map(p => ({ id: Number(p.id), name: p.name || '', passId: p.passId || null })) };
     const sched = await boostSchedule(env, sp, day);
     if (sched.error) return json({ error: sched.error }, 502);
     const inj = await boostInjuries(env, sp);
@@ -1193,7 +1193,7 @@ async function handle({ request, env, waitUntil }) {
         }
         if (e != null) exp[st] = Math.round(e * k * mf * 100) / 100;
       }
-      rows.push({ id: p.id, name, team, pos, opp: g.opp, home: g.home, at: g.at, exp,
+      rows.push({ id: p.id, passId: p.passId, name, team, pos, opp: g.opp, home: g.home, at: g.at, exp,
         avg: ca == null ? null : Math.round(ca * 10) / 10, games: cg, avgLast: oa == null ? null : Math.round(oa * 10) / 10,
         proj: proj == null ? null : Math.round(proj * k * mf * 10) / 10, basis, flags, skip, fresh, noData });
     }
