@@ -79,6 +79,12 @@
       <div class="bar"><button id="st-refresh">Refresh</button><span class="note" id="st-at"></span></div>
       <div class="grid" id="st-grid"></div>
       <section style="margin-top:12px">
+        <h2>Members</h2>
+        <div class="grid" id="us-grid" style="grid-template-columns:repeat(auto-fill,minmax(160px,1fr))"><span class="note">Loading…</span></div>
+        <div class="scroll" id="us-days" style="margin-top:10px"></div>
+        <p class="note" id="us-note" style="margin-top:6px"></p>
+      </section>
+      <section style="margin-top:12px">
         <h2>Backup</h2>
         <p class="note">Downloads everything that can't be pulled from Real again: accounts, offers, reports, feature requests, minimums and keep lists, and every access grant and Swaps record. It includes password fingerprints, so keep the file somewhere private.</p>
         <div class="bar"><button id="bk-go">Download backup</button><span class="note" id="bk-msg"></span></div>
@@ -228,8 +234,29 @@ function fill(id, level, html, ms){
   el.querySelector('.body').innerHTML = html;
 }
 const kv = obj => '<div class="kv">' + Object.entries(obj).filter(([, v]) => v != null && v !== '').map(([k, v]) => `<b>${esc(k)}</b><span>${v}</span>`).join('') + '</div>';
+function loadMembers(){
+  api('/api/rax?userstats=1&t=' + Date.now()).then(j => {
+    if(j.error){ $('#us-grid').innerHTML = `<span class="note">${esc(j.error)}</span>`; return; }
+    const n = v => v == null ? '–' : Number(v).toLocaleString();
+    const tile = (k, v, sub) => `<div class="card ok"><div class="note" style="text-transform:uppercase;letter-spacing:.04em;font-size:11.5px">${k}</div><div style="font-size:24px;font-weight:800">${v}</div>${sub ? `<div class="note">${sub}</div>` : ''}</div>`;
+    $('#us-grid').innerHTML = tile('Active right now', n(j.activeNow), 'last 15 minutes · ' + n(j.activeHour) + ' in the last hour')
+      + tile('Active today', n(j.activeToday), 'since midnight ET')
+      + tile('Active this week', n(j.activeWeek), 'last 7 days')
+      + tile('Active this month', n(j.activeMonth), 'last 30 days')
+      + tile('Total members', n(j.total), n(j.banned) + ' removed')
+      + tile('New members', n(j.newToday) + ' today', n(j.newWeek) + ' this week · ' + n(j.newMonth) + ' this month')
+      + tile('Signed in', n(j.signinWeek) + ' this week', n(j.signinMonth) + ' this month (new sign-ins)');
+    const d = j.days || [];
+    const max = Math.max(1, ...d.map(x => x.active));
+    $('#us-days').innerHTML = d.length ? '<table><thead><tr><th>Day</th><th>Active</th><th>New</th><th style="width:50%"></th></tr></thead><tbody>'
+      + d.slice().reverse().map(x => `<tr><td>${esc(x.day)}</td><td>${n(x.active)}</td><td>${n(x.new)}</td><td style="text-align:left"><div style="height:8px;border-radius:4px;background:var(--accent);width:${Math.round(x.active / max * 100)}%"></div></td></tr>`).join('')
+      + '</tbody></table>' : '';
+    $('#us-note').textContent = 'Active counts started being kept ' + (j.trackingSince || 'today') + ' - a member counts when they open the board, Market, Swaps, OTD or Boosts. Earlier days only show sign-ins.';
+  });
+}
 function loadStatus(){
   $('#st-at').textContent = 'Checked ' + new Date().toLocaleTimeString();
+  loadMembers();
   $('#st-grid').innerHTML = card('c-db', 'Database') + card('c-market', 'Market pull') + card('c-collect', 'Game data collector')
     + card('c-sweeps', 'Game data sweeps') + card('c-bot', 'Swap bot');
   // All at once; each card fills in as its own answer lands.

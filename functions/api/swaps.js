@@ -11,7 +11,7 @@
    (RS_SWAP_TOKEN, or any other RS_*TOKEN that isn't the board's or the
    market's), never the board's main key.
    ------------------------------------------------------------------------- */
-import { isAdminRequest, sessionKey, forbidden, allow, clientIp } from '../../lib/auth.js';
+import { isAdminRequest, sessionKey, forbidden, allow, clientIp, touchSeen } from '../../lib/auth.js';
 import { watchEnv } from '../../lib/dbwatch.js';
 
 function hashidsEncode(number) {
@@ -945,6 +945,7 @@ async function handle({ request, env, waitUntil }) {
   }
 
   if (op === 'me') {
+    touchSeen(env, me, waitUntil);
     const u = await db.prepare('SELECT * FROM swap_users WHERE key=?').bind(me).first();
     // Passes scanned before a name source existed get their names now.
     if (u && u.passes) {

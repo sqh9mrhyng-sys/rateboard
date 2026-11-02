@@ -1,4 +1,4 @@
-import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS } from '../../lib/auth.js';
+import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS, touchSeen, userStats } from '../../lib/auth.js';
 import { swapTick, boostRefresh, swapAccess } from './swaps.js';
 import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, capNow } from '../../lib/dbwatch.js';
 
@@ -1945,6 +1945,8 @@ async function savedList(env, waitUntil, key, maxAgeMs, build) {
 async function handleGet({ request, env, waitUntil }) {
   // Admin: the slow and failing database calls the recorder caught.
   if (new URL(request.url).searchParams.get('dbslow') === '1') return json({ calls: await readSlow(env) });
+  // Admin: member counts - active now/today/week/month, new, total.
+  if (new URL(request.url).searchParams.get('userstats') != null) return json(await userStats(env));
   // Admin: the background jobs' database use against their daily budget.
   if (new URL(request.url).searchParams.get('jobuse') != null) return json({ cap: capNow(), today: await jobUse(env), days: await jobHistory(env, 14) });
   // Admin: rows read and written today, by request type and statement.
@@ -7512,6 +7514,8 @@ export async function onRequestGet(ctx) {
   if (MARKET_MEMBER.includes(mk)) {
     const a = await marketWho(env, request);
     if (mk === 'me') {
+      // Every board and market load asks this once: it's the activity count.
+      if (a.who) touchSeen(env, a.who, ctx.waitUntil);
       let swaps = false, otd = false;
       try { if (a.who) { const sa = await swapAccess(env, request); swaps = sa.swaps; otd = sa.otd; } } catch (e) {}
       return json({ signedIn: !!a.who, access: a.ok, admin: a.admin, swaps, otd });
