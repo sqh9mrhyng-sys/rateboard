@@ -651,6 +651,38 @@ export async function boostRefresh(env) {
   return st.done ? 'boosts refreshed' : `boosts refresh ${st.i}/${st.steps.length}`;
 }
 
+/* A member's boosters from Real (userpassboostercards, collectionstats):
+   each is a rarity (Rare 10x, Epic 15x, Legendary 25x) on one stat, with a
+   boost value per stat and how many they hold. Kept 30 minutes. */
+async function boostInventory(env, tok, hashId, sp, fresh) {
+  const key = `boostinv_v3_${hashId}_${sp}`;
+  if (!fresh) { try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c && Date.now() - c.at < 30 * 60000) return c; } catch (e) {} }
+  let d;
+  try { d = await rsGetJson(`https://web.realapp.com/userpassboostercards/undefined/entity/player?displayType=collectionstats&sport=${sp}&userId=${encodeURIComponent(hashId)}&version=stat`, tok); }
+  catch (e) { return { error: 'Could not read your boosters from Real: ' + String(e.message || e).slice(0, 120) }; }
+  const list = [];
+  for (const g of (((d && d.boosterCardInfo) || {}).rarityGroups || [])) {
+    const mult = parseFloat(String(g.multiplierDisplay || '').replace(/x$/i, '')) || null;
+    for (const k of (g.statBoostKeyInfo || [])) {
+      const i = (k.info || [])[0] || {};
+      list.push({ rarity: Number(g.rarity), label: String(g.label || ''), mult, key: String(k.statBoostKey), stat: String(i.label || ''),
+        boost: parseFloat(i.boostValue) || 0, count: Number(k.count) || 0 });
+    }
+  }
+  const out = { at: Date.now(), list };
+  try { await env.RATEBOARD_KV.put(key, JSON.stringify(out), { expirationTtl: 3600 }); } catch (e) {}
+  return out;
+}
+/* Per-stat bars for basketball (a starter's per-game average, last season):
+   [top 10%, top 25%, median] - boost saver needs the first, balanced the
+   second, earning heavy the third. */
+const STAT_BARS = { PTS: [15.8, 12.7, 9.5], REB: [6.3, 4.9, 3.6], AST: [3.8, 2.4, 1.6], STL: [1.4, 1.1, 0.8], BLK: [1.0, 0.6, 0.3], '3PM': [2.5, 1.8, 1.0] };
+const MODE_BAR = { saver: 0, balanced: 1, heavy: 2 };
+const STAT_COL = { PTS: 'pts', REB: 'reb', AST: 'ast', STL: 'stl', BLK: 'blk' };
+const statOf = (row, stat) => {
+  if (stat === '3PM') { const m = String(row.fg3 || '').match(/^(\d+)/); return m ? Number(m[1]) : (row.fg3 == null ? null : 0); }
+  const c = STAT_COL[stat]; return c && row[c] != null ? Number(row[c]) : null;
+};
 const boostName = n => String(n || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
   .replace(/\b(jr|sr|ii|iii|iv)\b\.?/g, '').replace(/[^a-z]/g, '');
 // ESPN's injury report for the sport, by player name. Kept 2 hours. Entries
@@ -882,31 +914,11 @@ async function handle({ request, env, waitUntil }) {
      back too, trimmed. */
   if (op === 'boostinv') {
     const sp = BOOST_SEASON[url.searchParams.get('sport')] ? url.searchParams.get('sport') : 'nfl';
-    const se = BOOST_SEASON[sp][0];
     const u = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(me).first();
     if (!u || !u.hashId) return json({ error: 'Re-read your passes first so the board knows your Real account.' }, 400);
-    const key = `boostinv_v2_${u.hashId}_${sp}`;
-    let d = null;
-    try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c && Date.now() - c.at < 30 * 60000 && url.searchParams.get('fresh') !== '1') d = c.d; } catch (e) {}
-    if (!d) {
-      const tok = env.RS_AUTH_TOKEN || auth;
-      // The booster cards themselves (the stats page only names the section).
-      try { d = await rsGetJson(`https://web.realapp.com/userpassboostercards/undefined/entity/player?displayType=collectionstats&sport=${sp}&userId=${encodeURIComponent(u.hashId)}&version=stat`, tok); }
-      catch (e) { return json({ error: String(e.message || e).slice(0, 200) }, 502); }
-      try { await env.RATEBOARD_KV.put(key, JSON.stringify({ at: Date.now(), d }), { expirationTtl: 3600 }); } catch (e) {}
-    }
-    // Anything that looks like boosters: arrays or objects under a key with "boost" in it.
-    const found = [];
-    const walk = (o, path, depth) => {
-      if (!o || typeof o !== 'object' || depth > 6 || found.length > 20) return;
-      for (const [k, v] of Object.entries(o)) {
-        const p2 = path ? path + '.' + k : k;
-        if ((/boost/i.test(k) || (Array.isArray(v) && v.length && v[0] && typeof v[0] === 'object')) && v && typeof v === 'object') found.push({ path: p2, value: Array.isArray(v) ? v.slice(0, 12) : v });
-        else walk(v, p2, depth + 1);
-      }
-    };
-    walk(d, '', 0);
-    return json({ sport: sp, season: se, boosters: found, keys: d && typeof d === 'object' ? Object.keys(d) : [], raw: JSON.stringify(d).slice(0, 15000) });
+    const inv = await boostInventory(env, env.RS_AUTH_TOKEN || auth, u.hashId, sp, url.searchParams.get('fresh') === '1');
+    if (inv.error) return json({ error: inv.error }, 502);
+    return json({ sport: sp, at: inv.at, boosters: inv.list });
   }
 
   if (op === 'boostplan') {
@@ -932,18 +944,28 @@ async function handle({ request, env, waitUntil }) {
     for (let i = 0; i < ids.length; i += 90) {
       const part = ids.slice(i, i + 90), ph = part.map(() => '?').join(',');
       try {
-        const r = await db.prepare(`SELECT playerId, day, rax, min, team, position, player FROM gamelog
+        const r = await db.prepare(`SELECT playerId, day, rax, min, team, position, player, pts, reb, ast, stl, blk, fg3 FROM gamelog
           WHERE sport=? AND season=? AND rax IS NOT NULL AND playerId IN (${ph}) ORDER BY day`).bind(sp, se, ...part).all();
         for (const x of (r.results || [])) (games.get(Number(x.playerId)) || games.set(Number(x.playerId), []).get(Number(x.playerId))).push(x);
       } catch (e) {}
       try {
-        const r = await db.prepare(`SELECT playerId, team, position, MAX(day) AS last, COUNT(*) AS g, AVG(rax) AS avg, AVG(min) AS min, MAX(player) AS player
-          FROM gamelog WHERE sport=? AND season=? AND rax IS NOT NULL AND playerId IN (${ph}) GROUP BY playerId`).bind(sp, prev, ...part).all();
-        for (const x of (r.results || [])) old.set(Number(x.playerId), x);
+        const r = await db.prepare(`SELECT playerId, team, position, day, rax, min, player, pts, reb, ast, stl, blk, fg3 FROM gamelog
+          WHERE sport=? AND season=? AND rax IS NOT NULL AND playerId IN (${ph}) ORDER BY day`).bind(sp, prev, ...part).all();
+        for (const x of (r.results || [])) { const k = Number(x.playerId); const o = old.get(k) || { rows: [] }; o.rows.push(x); old.set(k, o); }
       } catch (e) {}
     }
     // NFL starters from ESPN's depth charts, for the teams playing that day.
+    for (const [k, o] of old) {
+      const rs = o.rows, l = rs[rs.length - 1];
+      Object.assign(o, { team: l.team, position: l.position, last: l.day, g: rs.length, player: l.player,
+        avg: rs.reduce((t, x) => t + Number(x.rax || 0), 0) / rs.length,
+        min: rs.some(x => x.min != null) ? rs.reduce((t, x) => t + Number(x.min || 0), 0) / rs.length : null });
+    }
     const depth = sp === 'nfl' ? await boostDepth(env, sched) : null;
+    // The member's boosters, if Real will give them.
+    let inv = null;
+    try { const uu = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(me).first();
+      if (uu && uu.hashId) { const r = await boostInventory(env, env.RS_AUTH_TOKEN || auth, uu.hashId, sp, false); if (!r.error) inv = r.list; } } catch (e) {}
     const avg = a => a.length ? a.reduce((t, x) => t + Number(x.rax || 0), 0) / a.length : null;
     const dayMs = Date.parse(day + 'T12:00:00Z');
     const rows = [], idle = [];
@@ -984,17 +1006,57 @@ async function handle({ request, env, waitUntil }) {
         if (m3.length >= 2 && mAvg < 12) { skip = true; flags.push(`${Math.round(mAvg)} min a game lately`); }
         else if (!m3.length && mAvg != null && mAvg < 15) { k *= 0.7; flags.push(`${Math.round(mAvg)} min a game last season`); }
       }
-      rows.push({ id: p.id, name, team, pos, opp: g.opp, home: g.home, at: g.at,
+      // Expected count of each boostable stat: recent games most, then this season, then last.
+      const exp = {};
+      if (sp === 'ncaam') for (const st of Object.keys(STAT_BARS)) {
+        const m = a => { const v = a.map(x => statOf(x, st)).filter(x => x != null); return v.length ? v.reduce((t, x) => t + x, 0) / v.length : null; };
+        const c4 = m(gs.slice(-4)), cA = m(gs), oA = o ? m(o.rows) : null;
+        let e = null;
+        if (cg >= 4) e = oA != null ? 0.5 * c4 + 0.3 * cA + 0.2 * oA : 0.6 * c4 + 0.4 * cA;
+        else if (cA != null && oA != null) e = 0.5 * cA + 0.5 * oA;
+        else e = cA ?? oA;
+        if (e != null) exp[st] = Math.round(e * k * 100) / 100;
+      }
+      rows.push({ id: p.id, name, team, pos, opp: g.opp, home: g.home, at: g.at, exp,
         avg: ca == null ? null : Math.round(ca * 10) / 10, games: cg, avgLast: oa == null ? null : Math.round(oa * 10) / 10,
         proj: proj == null ? null : Math.round(proj * k * 10) / 10, basis, flags, skip });
     }
     rows.sort((a, b) => (a.skip - b.skip) || ((b.proj ?? -1) - (a.proj ?? -1)));
     const bars = BOOST_BARS[sp].map(x => Math.round(x * BOOST_MODES[mode] * 10) / 10);
-    for (const r of rows) {
-      r.boost = r.skip || r.proj == null ? null
-        : r.proj >= bars[0] ? 'legendary' : r.proj >= bars[1] ? 'epic' : r.proj >= bars[2] ? 'rare' : null;
+    const RK = { 5: 'legendary', 4: 'epic', 3: 'rare' };
+    let used = null;
+    if (inv && inv.length && sp === 'ncaam') {
+      /* Stat boosters: each one goes to the player expected to pile up the
+         most of its stat (count x boost value x multiplier), one booster per
+         player, only where the player clears that stat's bar for the
+         setting, and never more than the member holds. */
+      const left = inv.map(b => ({ ...b }));
+      const pairs = [];
+      for (const r of rows) {
+        r.boost = null;
+        if (r.skip) continue;
+        for (const b of left) {
+          const e = r.exp[b.stat], bar = STAT_BARS[b.stat];
+          if (e == null || !bar || e < bar[MODE_BAR[mode]]) continue;
+          pairs.push({ r, b, gain: e * b.boost * (b.mult || 1), e });
+        }
+      }
+      pairs.sort((x, y) => y.gain - x.gain);
+      for (const q of pairs) {
+        if (q.r.boost || q.b.count <= 0) continue;
+        q.r.boost = RK[q.b.rarity] || null; q.r.boostStat = q.b.stat; q.r.boostExp = q.e;
+        q.r.boostGain = Math.round(q.e * q.b.boost * 10) / 10;
+        q.b.count--;
+      }
+      used = inv.map((b, i) => ({ ...b, used: b.count - left[i].count }));
+      rows.sort((a, b) => (a.skip - b.skip) || ((b.boostGain || 0) * 100 - (a.boostGain || 0) * 100) || ((b.proj ?? -1) - (a.proj ?? -1)));
+    } else {
+      for (const r of rows) {
+        r.boost = r.skip || r.proj == null ? null
+          : r.proj >= bars[0] ? 'legendary' : r.proj >= bars[1] ? 'epic' : r.proj >= bars[2] ? 'rare' : null;
+      }
     }
-    return json({ sport: sp, season: se, date: day, mode, bars, rsUser: u.rsUser, cardsAt: cards.at, games: sched.games, depth: !!depth,
+    return json({ sport: sp, season: se, date: day, mode, bars, inv: used || inv, statMode: !!used, rsUser: u.rsUser, cardsAt: cards.at, games: sched.games, depth: !!depth,
       rows, notPlaying: idle.length, players: cards.players.length });
   }
 

@@ -64,8 +64,8 @@
       <p class="note" id="modenote" style="margin:10px 0 0"></p>
     </section>
     <section id="inv">
-      <div class="bar"><b style="font-size:15px">Your boosters</b><button id="invgo">Load from Real</button><span class="note" id="invmsg">From the bottom of your Real stats page (kept 30 minutes).</span></div>
-      <pre id="invout" class="note" style="white-space:pre-wrap;word-break:break-word;max-height:360px;overflow:auto;margin:10px 0 0" hidden></pre>
+      <div class="bar"><b style="font-size:15px">Your boosters</b><button id="invgo">Load from Real</button><span class="note" id="invmsg">Your booster counts from Real (kept 30 minutes).</span></div>
+      <div id="invout" style="margin:10px 0 0" hidden></div>
     </section>
     <section id="out" hidden>
       <div class="note" id="outhead"></div>
@@ -190,6 +190,11 @@ function realPlayerUrl(sport, playerId, season){
 }
 
 
+const MODE_NOTE_STAT = {
+  balanced: 'Balanced: each of your stat boosters goes to the player projected to pile up the most of that stat, only when he is a top-25% producer of it.',
+  saver: 'Boost saver: same, but only top-10% producers of the stat get one, so boosters last.',
+  heavy: 'Earning heavy: anyone at or above a typical starter in the stat gets one. Burns boosters fast - not recommended.'
+};
 const MODE_NOTE = {
   balanced: 'Balanced: a booster only where the projection earns it - Legendary for roughly a top-3% game, Epic for top 10%, Rare for top 25%.',
   saver: 'Boost saver: the same bars raised 15%, so only the surest games get a booster and they last longer.',
@@ -232,31 +237,47 @@ async function run(){
   rows.forEach(r => { if(r.boost) c[r.boost]++; });
   $('#outhead').textContent = `${$('#sport').selectedOptions[0].textContent} · ${$('#day').selectedOptions[0].textContent} · ${rows.length} of your ${j.players} passes play (${j.games} games on the slate)`
     + (j.cardsAt ? ` · passes read ${new Date(j.cardsAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : '');
-  $('#sum').innerHTML = ['legendary','epic','rare'].map((k, i) => `<span><span class="b ${k}">${LBL[k]}</span> × ${c[k]} <span class="note">(${j.bars ? j.bars[i] + '+ proj' : ''})</span></span>`).join('');
+  if(j.statMode){
+    const own = r => (j.inv || []).filter(b => b.rarity === r).reduce((t, b) => t + b.count, 0);
+    $('#sum').innerHTML = [[5,'legendary'],[4,'epic'],[3,'rare']].map(([r, k]) => `<span><span class="b ${k}">${LBL[k]}</span> use ${c[k]} of ${own(r)}</span>`).join('');
+    $('#invout').hidden = false; $('#invout').innerHTML = invHtml(j.inv); $('#invmsg').textContent = 'What you hold, and what today\'s plan uses.';
+  } else {
+    $('#sum').innerHTML = ['legendary','epic','rare'].map((k, i) => `<span><span class="b ${k}">${LBL[k]}</span> × ${c[k]} <span class="note">(${j.bars ? j.bars[i] + '+ proj' : ''})</span></span>`).join('');
+  }
   if(!rows.length){ $('#rows').innerHTML = `<tr><td colspan="5" class="note" style="text-align:left">None of your players for this sport play that day.</td></tr>`; return; }
   $('#rows').innerHTML = rows.map(r => {
     const u = realPlayerUrl(sp, r.id, j.season);
     const nm = u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.name)}</a>` : esc(r.name);
-    return `<tr${r.skip ? ' class="skip"' : ''}><td>${r.boost ? `<span class="b ${r.boost}">${LBL[r.boost]}</span>` : '<span class="b none">None</span>'}</td>
+    return `<tr${r.skip ? ' class="skip"' : ''}><td>${r.boost ? `<span class="b ${r.boost}">${LBL[r.boost]}${r.boostStat ? ' · ' + esc(r.boostStat) : ''}</span>${r.boostStat ? `<span class="sub">~${r.boostExp} ${esc(r.boostStat)} · +${r.boostGain} rating</span>` : ''}` : '<span class="b none">None</span>'}</td>
       <td>${nm}<span class="sub">${esc([r.pos, r.team].filter(Boolean).join(' · '))}${r.basis ? ' · ' + esc(r.basis) : ''}</span>${(r.flags || []).map(f => `<span class="flag">⚠ ${esc(f)}</span>`).join('')}</td>
       <td style="text-align:left">${r.home ? 'vs' : '@'} ${esc(r.opp)}<span class="sub">${tm(r.at)}</span></td>
       <td>${r.avg != null ? r.avg + `<span class="sub">${r.games} game${r.games === 1 ? '' : 's'}${r.avgLast != null ? ' · last yr ' + r.avgLast : ''}</span>` : r.avgLast != null ? `–<span class="sub">last yr ${r.avgLast}</span>` : '–'}</td>
       <td><b>${r.proj == null ? 'no data' : r.proj}</b></td></tr>`;
   }).join('');
-  $('#foot').textContent = `Projected rax: recent games weighted most, then this season, then last. Pass rarity and level aren't counted. Injuries and depth charts are refreshed at 10am and 5pm ET. Players out, doubtful, suspended`
+  if(j.statMode) $('#modenote').textContent = MODE_NOTE_STAT[mode];
+  $('#foot').textContent = (j.statMode ? 'Boosters are stat boosters: each shows the stat, the projected count and the rating it adds. ' : '') + `Projected rax: recent games weighted most, then this season, then last. Pass rarity and level aren't counted. Injuries and depth charts are refreshed at 10am and 5pm ET. Players out, doubtful, suspended`
     + (j.depth ? ', backups on the depth chart' : '') + ` or not playing lately get no booster; questionable players are marked down.`
     + (j.notPlaying ? ` ${j.notPlaying} of your players don't play that day.` : '');
 }
 $('#run').addEventListener('click', run);
 
+const RN = { 5: 'legendary', 4: 'epic', 3: 'rare' };
+function invHtml(list){
+  if(!list || !list.length) return '<span class="note">No boosters for this sport.</span>';
+  return [5, 4, 3].map(r => {
+    const g = list.filter(b => b.rarity === r); if(!g.length) return '';
+    const tot = g.reduce((t, b) => t + b.count, 0), usedN = g.reduce((t, b) => t + (b.used || 0), 0);
+    return `<div style="margin:6px 0"><span class="b ${RN[r]}">${esc(g[0].label)} ${esc(g[0].mult ? g[0].mult + 'x' : '')}</span> <b>${tot}</b>${g.some(b => b.used != null) ? ` <span class="note">(${usedN} used today)</span>` : ''}<br>`
+      + g.map(b => `<span class="note">${esc(b.stat)} +${b.boost}: ${b.count}${b.used ? ` · use ${b.used}` : ''}</span>`).join(' &nbsp;·&nbsp; ') + '</div>';
+  }).join('');
+}
 $('#invgo').addEventListener('click', async () => {
   $('#invgo').disabled = true; $('#invmsg').textContent = 'Loading…';
-  const j = await api(`/api/swaps?op=boostinv&page=boosts&sport=${$('#sport').value}`);
+  const j = await api(`/api/swaps?op=boostinv&page=boosts&sport=${$('#sport').value}&fresh=1`);
   $('#invgo').disabled = false;
   if(j.error){ $('#invmsg').textContent = j.error; return; }
-  $('#invmsg').textContent = j.boosters.length ? `Found ${j.boosters.length} booster section${j.boosters.length === 1 ? '' : 's'} - copy this and send it to Claude so the page can read it properly.` : 'No booster section found by name - copy this and send it to Claude.';
-  $('#invout').hidden = false;
-  $('#invout').textContent = (j.boosters.length ? JSON.stringify(j.boosters, null, 1) + '\n\n---- raw ----\n' : 'Top-level keys: ' + j.keys.join(', ') + '\n\n') + j.raw;
+  $('#invmsg').textContent = `Read from Real just now.`;
+  $('#invout').hidden = false; $('#invout').innerHTML = invHtml(j.boosters);
 });
 
 $('#scan').addEventListener('click', async () => {
