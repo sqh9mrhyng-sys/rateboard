@@ -572,7 +572,7 @@ const BOOST_ALIAS = { WISC: 'WIS', NCST: 'NCSU', BUT: 'BTLR', BSU: 'BOIS', AFA: 
   HBU: 'HCU', NIAG: 'NIA', DXST: 'UTU', IND: 'IU', JVST: 'JXST', WAS: 'WSH' };
 const boostAlias = (sp, t) => BOOST_ALIAS[t] || t;
 async function boostSchedule(env, sp, day) {
-  const key = `boostsched_v1_${sp}_${day}`;
+  const key = `boostsched_v2_${sp}_${day}`;
   try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c && Date.now() - c.at < 3 * 3600000) return c; } catch (e) {}
   let d;
   try {
@@ -588,11 +588,79 @@ async function boostSchedule(env, sp, day) {
     games++;
     for (const [i, x] of cs.entries()) {
       const t = x.team || {}, o = (cs[1 - i] || {}).team || {};
-      if (t.abbreviation) teams[t.abbreviation] = { opp: o.shortDisplayName || o.abbreviation || '', home: x.homeAway === 'home', at: ev.date || null };
+      if (t.abbreviation) teams[t.abbreviation] = { id: t.id || null, opp: o.shortDisplayName || o.abbreviation || '', home: x.homeAway === 'home', at: ev.date || null };
     }
   }
   const out = { at: Date.now(), games, teams };
   try { await env.RATEBOARD_KV.put(key, JSON.stringify(out), { expirationTtl: 86400 }); } catch (e) {}
+  return out;
+}
+
+// Everyone the member holds cards of for a sport-season, from Real's
+// collection page (the same one the board's card pull reads). Kept 30 minutes.
+async function boostCards(env, auth, hashId, sp, se, fresh) {
+  const key = `boostcards_v1_${hashId}_${sp}_${se}`;
+  if (!fresh) { try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c && Date.now() - c.at < 30 * 60000) return c; } catch (e) {} }
+  const players = [];
+  try {
+    for (let before = 0, pg = 0; pg < 60; pg++, before += 20) {
+      const d = await rsGetJson(`https://web.realapp.com/collection/${sp}/season/${se}/entity/player/user/${encodeURIComponent(hashId)}/topentities?before=${before}&sort=boostvalue`, auth);
+      const es = (d && d.entities) || [];
+      for (const e of es) players.push({ id: Number(e.id), name: String(e.label || ''), cards: (e.secondaryValues && e.secondaryValues[1]) || null });
+      if (es.length < 20) break;
+      await sleep(150);
+    }
+  } catch (e) { return { error: 'Could not load your cards from Real: ' + String(e.message || e).slice(0, 120) }; }
+  const out = { at: Date.now(), players };
+  try { await env.RATEBOARD_KV.put(key, JSON.stringify(out), { expirationTtl: 3600 }); } catch (e) {}
+  return out;
+}
+const boostName = n => String(n || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
+  .replace(/\b(jr|sr|ii|iii|iv)\b\.?/g, '').replace(/[^a-z]/g, '');
+// ESPN's injury report for the sport, by player name. Kept 2 hours. Entries
+// older than 30 days are dropped (the college lists carry years-old ones).
+async function boostInjuries(env, sp) {
+  const key = `boostinj_v1_${sp}`;
+  try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c && Date.now() - c.at < 2 * 3600000) return c.map; } catch (e) {}
+  const map = {};
+  try {
+    const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${ESPN_PATH[sp]}/injuries`);
+    const d = r.ok ? await r.json() : {};
+    for (const t of (d.injuries || [])) for (const x of (t.injuries || [])) {
+      if (!x.athlete || !x.status || /^active$/i.test(x.status)) continue;
+      if (x.date && Date.now() - Date.parse(x.date) > 30 * 86400000) continue;
+      map[boostName(x.athlete.displayName)] = { status: x.status, note: String(x.shortComment || '').slice(0, 140) };
+    }
+  } catch (e) {}
+  try { await env.RATEBOARD_KV.put(key, JSON.stringify({ at: Date.now(), map }), { expirationTtl: 86400 }); } catch (e) {}
+  return map;
+}
+/* NFL depth charts for the teams on the slate, by player name: slot 1 is the
+   starter (top two at RB, three WRs). Kept 6 hours per team. */
+async function boostDepth(env, sched) {
+  const out = {};
+  for (const id of Object.values(sched.teams).map(t => t.id).filter(Boolean)) {
+    const key = `boostdepth_v1_${id}`;
+    let m = null;
+    try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c && Date.now() - c.at < 6 * 3600000) m = c.m; } catch (e) {}
+    if (!m) {
+      m = {};
+      try {
+        const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/${id}/depthcharts`);
+        const d = r.ok ? await r.json() : {};
+        for (const g of (d.depthchart || [])) for (const [pos, v] of Object.entries(g.positions || {})) {
+          (v.athletes || []).forEach((a, i) => {
+            const nm = boostName(a.displayName), slot = i + 1;
+            const starter = slot === 1 || (pos === 'rb' && slot <= 2);
+            const cur = m[nm];
+            if (!cur || (starter && !cur.starter) || (!cur.starter && slot < cur.slot)) m[nm] = { pos, slot, starter };
+          });
+        }
+      } catch (e) {}
+      try { await env.RATEBOARD_KV.put(key, JSON.stringify({ at: Date.now(), m }), { expirationTtl: 86400 }); } catch (e) {}
+    }
+    Object.assign(out, m);
+  }
   return out;
 }
 
@@ -779,54 +847,96 @@ async function handle({ request, env, waitUntil }) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return json({ error: 'Pick a date.' }, 400);
     const mode = BOOST_MODES[url.searchParams.get('mode')] ? url.searchParams.get('mode') : 'balanced';
     const [se, prev] = BOOST_SEASON[sp];
-    const u = await db.prepare('SELECT passes, scannedAt, rsUser FROM swap_users WHERE key=?').bind(me).first();
-    const passes = parse(u && u.passes, []).filter(p => p.sport === sp && Number(p.season) === se && p.kind !== 'team');
-    if (!u || !u.passes) return json({ error: 'Scan your passes first.' }, 400);
+    const main = env.RS_AUTH_TOKEN || auth;
+    if (!main) return json({ error: 'No Real token found.' }, 503);
+    // Whose cards: the Real username given, else the one saved from a scan.
+    const u = await db.prepare('SELECT rsUser, hashId FROM swap_users WHERE key=?').bind(me).first();
+    const rsUser = String(url.searchParams.get('rsUser') || (u && u.rsUser) || '').trim();
+    if (!rsUser) return json({ error: 'Enter your Real username.' }, 400);
+    let hashId = u && u.rsUser && u.rsUser.toLowerCase() === rsUser.toLowerCase() ? u.hashId : null;
+    try { if (!hashId) hashId = await resolveHashId(rsUser, main); } catch (e) { return json({ error: String(e.message || e) }, 502); }
+    if (!hashId) return json({ error: `No Real user called ${rsUser}.` }, 404);
+    if (!u || !u.hashId || u.rsUser !== rsUser) {
+      try { await db.prepare(`INSERT INTO swap_users (key, rsUser, hashId, updatedAt, wants, keep, slots) VALUES (?, ?, ?, ?, '[]', '[]', '[]')
+        ON CONFLICT(key) DO UPDATE SET rsUser=excluded.rsUser, hashId=excluded.hashId`).bind(me, rsUser, hashId, Date.now()).run(); } catch (e) {}
+    }
+    const fresh = url.searchParams.get('fresh') === '1';
+    const cards = await boostCards(env, main, hashId, sp, se, fresh);
+    if (cards.error) return json({ error: cards.error }, 502);
     const sched = await boostSchedule(env, sp, day);
     if (sched.error) return json({ error: sched.error }, 502);
-    // Each player's latest team and averages, this season and last.
-    const ids = [...new Set(passes.map(p => Number(p.id)).filter(Number.isFinite))];
-    const stat = async season => {
-      const m = new Map();
-      for (let i = 0; i < ids.length; i += 90) {
-        const part = ids.slice(i, i + 90);
-        try {
-          const r = await db.prepare(`SELECT playerId, team, MAX(day) AS last, COUNT(*) AS g, AVG(rax) AS avg, MAX(player) AS player
-            FROM gamelog WHERE sport=? AND season=? AND rax IS NOT NULL AND playerId IN (${part.map(() => '?').join(',')})
-            GROUP BY playerId`).bind(sp, season, ...part).all();
-          for (const x of (r.results || [])) m.set(Number(x.playerId), x);
-        } catch (e) {}
-      }
-      return m;
-    };
-    const cur = await stat(se), old = await stat(prev);
-    const rows = [], idle = [];
-    for (const p of passes) {
-      const c = cur.get(Number(p.id)), o = old.get(Number(p.id));
-      const team = (c && c.team) || (o && o.team) || null;
-      const g = team ? sched.teams[boostAlias(sp, team)] : null;
-      const name = p.name || (c && c.player) || (o && o.player) || 'Player ' + p.id;
-      if (!g) { idle.push({ name, team }); continue; }
-      const ca = c ? Number(c.avg) : null, oa = o ? Number(o.avg) : null, cg = c ? Number(c.g) : 0;
-      let proj = null, basis = '';
-      if (ca != null && cg >= 3) { proj = oa != null ? 0.7 * ca + 0.3 * oa : ca; basis = `${cg} games this season`; }
-      else if (ca != null && oa != null) { proj = 0.4 * ca + 0.6 * oa; basis = `${cg} game${cg === 1 ? '' : 's'} this season + last season`; }
-      else if (ca != null) { proj = ca; basis = `${cg} game${cg === 1 ? '' : 's'} this season`; }
-      else if (oa != null) { proj = oa; basis = 'last season'; }
-      const mult = Number(p.mult) || 1;
-      rows.push({ id: p.id, name, team, opp: g.opp, home: g.home, at: g.at, proj: proj == null ? null : Math.round(proj * 10) / 10,
-        mult, value: proj == null ? null : Math.round(proj * mult * 10) / 10, level: p.levelLabel || null, basis });
+    const inj = await boostInjuries(env, sp);
+    // Game-by-game for this season and averages for last, from the game log.
+    const ids = [...new Set(cards.players.map(p => Number(p.id)).filter(Number.isFinite))];
+    const games = new Map(), old = new Map();
+    for (let i = 0; i < ids.length; i += 90) {
+      const part = ids.slice(i, i + 90), ph = part.map(() => '?').join(',');
+      try {
+        const r = await db.prepare(`SELECT playerId, day, rax, min, team, position, player FROM gamelog
+          WHERE sport=? AND season=? AND rax IS NOT NULL AND playerId IN (${ph}) ORDER BY day`).bind(sp, se, ...part).all();
+        for (const x of (r.results || [])) (games.get(Number(x.playerId)) || games.set(Number(x.playerId), []).get(Number(x.playerId))).push(x);
+      } catch (e) {}
+      try {
+        const r = await db.prepare(`SELECT playerId, team, position, MAX(day) AS last, COUNT(*) AS g, AVG(rax) AS avg, AVG(min) AS min, MAX(player) AS player
+          FROM gamelog WHERE sport=? AND season=? AND rax IS NOT NULL AND playerId IN (${ph}) GROUP BY playerId`).bind(sp, prev, ...part).all();
+        for (const x of (r.results || [])) old.set(Number(x.playerId), x);
+      } catch (e) {}
     }
-    rows.sort((a, b) => (b.value ?? -1) - (a.value ?? -1));
+    // NFL starters from ESPN's depth charts, for the teams playing that day.
+    const depth = sp === 'nfl' ? await boostDepth(env, sched) : null;
+    const avg = a => a.length ? a.reduce((t, x) => t + Number(x.rax || 0), 0) / a.length : null;
+    const dayMs = Date.parse(day + 'T12:00:00Z');
+    const rows = [], idle = [];
+    for (const p of cards.players) {
+      const gs = games.get(Number(p.id)) || [], o = old.get(Number(p.id));
+      const lastG = gs[gs.length - 1];
+      const team = (lastG && lastG.team) || (o && o.team) || null;
+      const g = team ? sched.teams[boostAlias(sp, team)] : null;
+      const name = p.name || (lastG && lastG.player) || (o && o.player) || 'Player ' + p.id;
+      if (!g) { idle.push(name); continue; }
+      const pos = (lastG && lastG.position) || (o && o.position) || '';
+      const ca = avg(gs), r4 = avg(gs.slice(-4)), oa = o ? Number(o.avg) : null, cg = gs.length;
+      let proj = null, basis = '';
+      if (cg >= 4) { proj = oa != null ? 0.5 * r4 + 0.3 * ca + 0.2 * oa : 0.6 * r4 + 0.4 * ca; basis = `last 4 games weighted, ${cg} this season`; }
+      else if (cg && oa != null) { proj = 0.5 * ca + 0.5 * oa; basis = `${cg} game${cg === 1 ? '' : 's'} this season + last season`; }
+      else if (cg) { proj = ca; basis = `${cg} game${cg === 1 ? '' : 's'} this season`; }
+      else if (oa != null) { proj = oa; basis = 'last season'; }
+      const flags = [];
+      let skip = false, k = 1;
+      // Injury report.
+      const ij = inj[boostName(name)];
+      if (ij) {
+        if (/^(out|injured reserve|doubtful|suspension)/i.test(ij.status)) { skip = true; flags.push(`${ij.status}${ij.note ? ': ' + ij.note : ''}`); }
+        else if (/questionable/i.test(ij.status)) { k *= 0.75; flags.push(`Questionable${ij.note ? ': ' + ij.note : ''}`); }
+      }
+      // Starter or not.
+      if (depth) {
+        const d = depth[boostName(name)];
+        if (d && !d.starter) { skip = true; flags.push(`Backup (${d.pos.toUpperCase()}${d.slot})`); }
+      }
+      // Hasn't been playing: no game in the last 15 days of a season under way (football).
+      if (sp !== 'ncaam' && cg && lastG && dayMs - Date.parse(lastG.day + 'T12:00:00Z') > 15 * 86400000) { skip = true; flags.push(`No game since ${lastG.day}`); }
+      if (sp !== 'ncaam' && !cg && o) { k *= 0.6; flags.push('No games this season yet'); }
+      // Basketball minutes: recent ones if there are any, else last season's.
+      if (sp === 'ncaam') {
+        const m3 = gs.slice(-3).map(x => Number(x.min)).filter(Number.isFinite);
+        const mAvg = m3.length ? m3.reduce((a, b) => a + b, 0) / m3.length : (o && o.min != null ? Number(o.min) : null);
+        if (m3.length >= 2 && mAvg < 12) { skip = true; flags.push(`${Math.round(mAvg)} min a game lately`); }
+        else if (!m3.length && mAvg != null && mAvg < 15) { k *= 0.7; flags.push(`${Math.round(mAvg)} min a game last season`); }
+      }
+      rows.push({ id: p.id, name, team, pos, opp: g.opp, home: g.home, at: g.at, cards: p.cards,
+        proj: proj == null ? null : Math.round(proj * k * 10) / 10, basis, flags, skip });
+    }
+    rows.sort((a, b) => (a.skip - b.skip) || ((b.proj ?? -1) - (a.proj ?? -1)));
     const tiers = BOOST_MODES[mode];
     let n = 0;
     for (const r of rows) {
-      if (r.value == null) { r.boost = null; continue; }
-      r.boost = n < tiers[0] ? 'purple' : n < tiers[0] + tiers[1] ? 'red' : n < tiers[0] + tiers[1] + tiers[2] ? 'orange' : null;
+      if (r.skip || r.proj == null) { r.boost = null; continue; }
+      r.boost = n < tiers[0] ? 'legendary' : n < tiers[0] + tiers[1] ? 'epic' : n < tiers[0] + tiers[1] + tiers[2] ? 'rare' : null;
       n++;
     }
-    return json({ sport: sp, season: se, date: day, mode, scannedAt: u.scannedAt || null, games: sched.games,
-      rows, notPlaying: idle.length, passes: passes.length });
+    return json({ sport: sp, season: se, date: day, mode, rsUser, cardsAt: cards.at, games: sched.games, depth: !!depth,
+      rows, notPlaying: idle.length, players: cards.players.length });
   }
 
   if (op === 'matches') {
