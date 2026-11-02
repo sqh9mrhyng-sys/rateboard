@@ -82,7 +82,12 @@
   </div>
 
   <div id="t-buys" hidden>
-    <section><h2 style="font-size:16px;margin:0 0 6px">Buys</h2><p class="note">Coming next.</p></section>
+    <section>
+      <div class="bar"><b style="font-size:15px">Buys · CBB 2026-27</b><span class="note" id="buymsg">Top 70 from the CBB list, checked against your passes.</span></div>
+      <div class="sum" id="buysum"></div>
+      <div class="scroll"><table><thead><tr><th>#</th><th>Player</th><th style="text-align:left">Team</th><th>You</th></tr></thead><tbody id="buyrows"><tr><td colspan="4" class="note">Loading…</td></tr></tbody></table></div>
+      <p class="note">Anyone you don't hold a pass for is a recommended buy. Re-read your passes on the Boosts tab after buying (once every 3 hours). NFL and CFB come later.</p>
+    </section>
   </div>
 </div>
 <script>
@@ -237,8 +242,25 @@ drawDays();
 document.querySelectorAll('#tab button').forEach(b => b.addEventListener('click', () => {
   document.querySelectorAll('#tab button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
   $('#t-boosts').hidden = b.dataset.t !== 'boosts'; $('#t-buys').hidden = b.dataset.t !== 'buys';
+  if(b.dataset.t === 'buys') loadBuys();
 }));
 
+let buysOnly = false;
+async function loadBuys(){
+  $('#buyrows').innerHTML = '<tr><td colspan="4" class="note">Loading…</td></tr>';
+  const j = await api('/api/swaps?op=buys&page=boosts');
+  if(j.error){ $('#buyrows').innerHTML = `<tr><td colspan="4" class="note">${esc(j.error)}</td></tr>`; return; }
+  if(!j.scanned) $('#buymsg').textContent = 'Read your passes on the Boosts tab first - until then everyone shows as a buy.';
+  else $('#buymsg').textContent = 'Top 70 from the CBB list, checked against your passes' + (j.scannedAt ? ` (read ${new Date(j.scannedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` : '') + '.';
+  const rows = (j.list || []).filter(x => !buysOnly || !x.owned);
+  $('#buysum').innerHTML = `<span><b>${j.missing}</b> to buy</span><span><b>${(j.list || []).length - j.missing}</b> owned</span>`
+    + `<span><label class="note"><input type="checkbox" id="buyonly"${buysOnly ? ' checked' : ''}> Only show buys</label></span>`;
+  $('#buyonly').addEventListener('change', e => { buysOnly = e.target.checked; loadBuys(); });
+  $('#buyrows').innerHTML = rows.map(x => `<tr${x.owned ? ' style="opacity:.55"' : ''}><td>${x.rank}</td>
+    <td><a href="${esc(x.link)}" target="_blank" rel="noopener">${esc(x.name || 'Open player')}</a>${x.name ? '' : '<span class="sub">freshman - name shows in Real</span>'}</td>
+    <td style="text-align:left">${esc(x.team)}</td>
+    <td>${x.owned ? '<span class="b none">Owned</span>' : '<span class="b rare">Buy</span>'}</td></tr>`).join('') || '<tr><td colspan="4" class="note">You own all of them.</td></tr>';
+}
 const tm = iso => iso ? new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }) + ' ET' : '';
 async function run(){
   const sp = $('#sport').value, day = $('#day').value, mode = $('#mode').value;
