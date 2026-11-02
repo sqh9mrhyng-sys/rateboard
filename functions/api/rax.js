@@ -1695,6 +1695,9 @@ const FETCH_AT_ONCE = 8;
 const REFRESH_EVERY = 30;
 // Performance box scores: off while there is a sweep to finish.
 const PERF_ON = false;
+/* The box-score re-read and the historical crawl rewrite old seasons. Old
+   seasons stay as they are now (Dennis, 2026-11-02), so both are off. */
+const BACKFILL_ON = false;
 const gamesPerTick = sp => GAMES_PER_TICK_BY_SPORT[String(sp || '').toLowerCase()]
   || GAMES_PER_TICK;
 
@@ -1846,6 +1849,8 @@ const ONE_OFF_RESCANS = [
   { id: 'wnba2026-final-plays', sport: 'wnba', season: 2026, at: Date.parse('2026-11-01T16:00:00Z'), plays: true }
 ];
 const ONE_OFF_KEY = 'queue_oneoff_v1';
+const PLAYS_DUE_KEY = 'plays_due_v1';
+const PLAYS_AFTER_SWEEP_MS = 2 * 3600000;
 const RESCAN_KEY = 'queue_rescan_v1';
 
 // The time in New York, which keeps the sweeps at 9am Eastern across the
@@ -1859,6 +1864,21 @@ function easternNow() {
 }
 
 async function weeklyRescan(env) {
+  // Pack data for a swept season: its plays reopen once the sweep has had
+  // time to put the new games in the log.
+  {
+    let due = {};
+    try { due = JSON.parse((await env.RATEBOARD_KV.get(PLAYS_DUE_KEY)) || '{}') || {}; } catch (e) {}
+    const ready = Object.keys(due).filter(k => Date.now() >= due[k]);
+    if (ready.length) {
+      for (const k of ready) {
+        const [sp, se] = k.split(':');
+        try { await env.RATEBOARD_KV.delete(sweptKey(sp, Number(se))); } catch (e) {}
+        delete due[k];
+      }
+      try { await env.RATEBOARD_KV.put(PLAYS_DUE_KEY, JSON.stringify(due)); } catch (e) {}
+    }
+  }
   let ran = {};
   try { ran = JSON.parse((await env.RATEBOARD_KV.get(ONE_OFF_KEY)) || '{}') || {}; } catch (e) {}
   for (const job of ONE_OFF_RESCANS) {
@@ -1881,6 +1901,12 @@ async function weeklyRescan(env) {
     const k = `${x.sport}:${x.season}`;
     if (seen[k] === now.stamp) continue;    // already swept today
     await forgetWalk(env, x.sport, x.season);
+    if (PLAYS_SPORTS.some(p => p.sport === x.sport && p.season === x.season)) {
+      let due = {};
+      try { due = JSON.parse((await env.RATEBOARD_KV.get(PLAYS_DUE_KEY)) || '{}') || {}; } catch (e) {}
+      due[k] = Date.now() + PLAYS_AFTER_SWEEP_MS;
+      try { await env.RATEBOARD_KV.put(PLAYS_DUE_KEY, JSON.stringify(due)); } catch (e) {}
+    }
     seen[k] = now.stamp;
     try { await env.RATEBOARD_KV.put(RESCAN_KEY, JSON.stringify(seen)); } catch (e) {}
     return `${x.sport} ${x.season}`;
@@ -2013,6 +2039,8 @@ async function handleGet({ request, env, waitUntil }) {
       // still needs revisiting for new games, just far less often than a
       // season being filled for the first time.
       try { await env.RATEBOARD_KV.put(sweptKey(sport, season), '1'); } catch (e) {}
+      // New plays landed: the saved pack copy is rebuilt once, on its next view.
+      try { await db.prepare('UPDATE pack_snap SET at = 0 WHERE sport=? AND season=? AND body IS NOT NULL').bind(sport, Number(season)).run(); } catch (e) {}
       return json({ sport, season, from, lap: true, done: 0, stored: 0, gapsLeft: left });
     }
 
@@ -3624,7 +3652,7 @@ async function handleGet({ request, env, waitUntil }) {
        pile-up that kept the database overloaded. Now the answer is kept for an
        hour, a stale copy is served while one request rebuilds it in the
        background, and nobody can force a rebuild from outside. */
-    const CACHE = 'progress_cache_v1', FRESH_MS = 3600000, LOCK = 'progress_lock_v1';
+    const CACHE = 'progress_cache_v1', FRESH_MS = 24 * 3600000, LOCK = 'progress_lock_v1';
     let c = null;
     try { c = JSON.parse((await env.RATEBOARD_KV.get(CACHE)) || 'null'); } catch (e) {}
     const age = c && c.at ? Date.now() - c.at : Infinity;
@@ -4836,7 +4864,11 @@ async function handleGet({ request, env, waitUntil }) {
           try { lapped = await env.RATEBOARD_KV.get(sweptKey(x.sport, x.season)); } catch (e) {}
           (lapped ? done : fresh).push(x);
         }
-        const rolling = done.filter(x => x.rolling);
+        /* Pack data follows the game-data sweeps (Dennis, 2026-11-02): a
+           current season's plays are reopened two hours after its sweep (see
+           PLAYS_AFTER_SWEEP_MS) and otherwise left alone; finished seasons
+           are never touched again. So no periodic re-reads here. */
+        const rolling = [];
         let pool = [];
         if (fresh.length && !(n % REFRESH_EVERY === 0 && rolling.length)) {
           const top = Math.min(...fresh.map(x => Number(x.pri) || 99));
@@ -4864,7 +4896,7 @@ async function handleGet({ request, env, waitUntil }) {
            now and then. They go to the historical crawl instead, newest
            season first, and the rolling ones keep their every-thirtieth
            tick. */
-        const spare = !perfJob && !fresh.length
+        const spare = BACKFILL_ON && !perfJob && !fresh.length
           && !(n % REFRESH_EVERY === 0 && rolling.length);
         /* The box-score re-read comes first: it is filling in a column that
            every sport's game view depends on, and it is hours rather than
@@ -7416,7 +7448,8 @@ async function packSeasonRows(db, sport, season, waitUntil) {
     }
   };
   if (row && row.body) {
-    if (now - Number(row.at) > PACKSNAP_FRESH_MS && await claim()) {
+    // Rebuilt only when a plays lap marked it stale (at = 0); finished seasons stay as saved.
+    if (Number(row.at) === 0 && await claim()) {
       const job = build().catch(() => null);
       try { waitUntil ? waitUntil(job) : await job; } catch (e) { await job; }
     }
