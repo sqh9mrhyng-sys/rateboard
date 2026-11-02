@@ -1878,6 +1878,33 @@ async function weeklyRescan(env) {
   return null;
 }
 
+/* Season lists (which sport-seasons hold data) are grouped over whole tables,
+   and they were asked for on every board load - the single most expensive
+   read on the bill. They change only when collection adds a season, so each
+   is kept in KV and rebuilt at most every few hours by one request in the
+   background while everyone else gets the saved copy. */
+async function savedList(env, waitUntil, key, maxAgeMs, build) {
+  let c = null;
+  try { c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); } catch (e) {}
+  const fresh = c && c.at && Date.now() - c.at < maxAgeMs;
+  if (c && c.body && fresh) return c.body;
+  const lock = key + '_lock';
+  let locked = null;
+  try { locked = await env.RATEBOARD_KV.get(lock); } catch (e) {}
+  const rebuild = async () => {
+    try { await env.RATEBOARD_KV.put(lock, '1', { expirationTtl: 600 }); } catch (e) {}
+    const body = await build();
+    if (body) { try { await env.RATEBOARD_KV.put(key, JSON.stringify({ at: Date.now(), body })); } catch (e) {} }
+    return body;
+  };
+  if (c && c.body) {
+    if (!locked && waitUntil) { try { waitUntil(rebuild().catch(() => {})); } catch (e) {} }
+    return c.body;
+  }
+  if (locked) return null;
+  return rebuild();
+}
+
 async function handleGet({ request, env, waitUntil }) {
   // Admin: the slow and failing database calls the recorder caught.
   if (new URL(request.url).searchParams.get('dbslow') === '1') return json({ calls: await readSlow(env) });
@@ -3681,14 +3708,17 @@ async function handleGet({ request, env, waitUntil }) {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
     await playsReady(db);
-    try {
-      const r = await db.prepare(
-        `SELECT sport, season, COUNT(*) AS plays, COUNT(DISTINCT gameId) AS games,
-                COUNT(DISTINCT playerId) AS players
-           FROM plays GROUP BY sport, season
-          HAVING COUNT(*) > 0 ORDER BY sport, season DESC`).all();
-      return json({ seasons: r.results || [] });
-    } catch (e) { return json({ error: 'could not list seasons' }, 503); }
+    const body = await savedList(env, waitUntil, 'list_playsseasons_v1', 6 * 3600000, async () => {
+      try {
+        const r = await db.prepare(
+          `SELECT sport, season, COUNT(*) AS plays, COUNT(DISTINCT gameId) AS games,
+                  COUNT(DISTINCT playerId) AS players
+             FROM plays GROUP BY sport, season
+            HAVING COUNT(*) > 0 ORDER BY sport, season DESC`).all();
+        return { seasons: r.results || [] };
+      } catch (e) { return null; }
+    });
+    return body ? json(body) : json({ error: 'the season list is being prepared, try again in a minute' }, 503);
   }
 
   if (url.searchParams.get('plays') === 'orphans') {
@@ -5732,11 +5762,14 @@ async function handleGet({ request, env, waitUntil }) {
 
     try {
       if (which === 'seasons') {
-        const r = await db.prepare(
-          `SELECT season, COUNT(DISTINCT gameId) AS events FROM gamelog
-            WHERE sport = ? AND gameId IS NOT NULL GROUP BY season ORDER BY season DESC`)
-          .bind(sp).all();
-        return json({ sport: sp, seasons: (r && r.results) || [] });
+        const body = await savedList(env, waitUntil, 'list_golfseasons_v1_' + sp, 12 * 3600000, async () => {
+          const r = await db.prepare(
+            `SELECT season, COUNT(DISTINCT gameId) AS events FROM gamelog
+              WHERE sport = ? AND gameId IS NOT NULL GROUP BY season ORDER BY season DESC`)
+            .bind(sp).all();
+          return { sport: sp, seasons: (r && r.results) || [] };
+        });
+        return body ? json(body) : json({ error: 'the season list is being prepared, try again in a minute' }, 503);
       }
 
       if (which === 'tournaments') {
@@ -5754,12 +5787,15 @@ async function handleGet({ request, env, waitUntil }) {
       // all-time grouping happen on the page, because the names are a hand
       // written list there rather than anything stored here.
       if (which === 'allevents') {
-        const r = await db.prepare(
-          `SELECT g.season, g.gameId, MIN(g.day) AS day, ${EVENT_COLS}
-             FROM gamelog g
-            WHERE g.sport = ? AND g.gameId IS NOT NULL
-            GROUP BY g.season, g.gameId ORDER BY day ASC`).bind(sp).all();
-        return json({ sport: sp, rows: (r && r.results) || [] });
+        const body = await savedList(env, waitUntil, 'list_golfevents_v1_' + sp, 12 * 3600000, async () => {
+          const r = await db.prepare(
+            `SELECT g.season, g.gameId, MIN(g.day) AS day, ${EVENT_COLS}
+               FROM gamelog g
+              WHERE g.sport = ? AND g.gameId IS NOT NULL
+              GROUP BY g.season, g.gameId ORDER BY day ASC`).bind(sp).all();
+          return { sport: sp, rows: (r && r.results) || [] };
+        });
+        return body ? json(body) : json({ error: 'the event list is being prepared, try again in a minute' }, 503);
       }
 
       if (which === 'history') {
@@ -6346,12 +6382,15 @@ async function handleGet({ request, env, waitUntil }) {
            tab, which knows what it is looking at. */
         const hide = HIST_SPORTS
           .map(sp => `(sport = '${sp}' AND season <= ${HIST_RANGE[sp][1]})`).join(' OR ');
-        const r = await db.prepare(
-          `SELECT sport, season, COUNT(*) AS rows, COUNT(DISTINCT playerId) AS players
-             FROM gamelog
-            WHERE NOT (${hide})
-            GROUP BY sport, season ORDER BY sport, season DESC`).all();
-        return json({ seasons: (r && r.results) || [] });
+        const body = await savedList(env, waitUntil, 'list_glseasons_v1', 6 * 3600000, async () => {
+          const r = await db.prepare(
+            `SELECT sport, season, COUNT(*) AS rows, COUNT(DISTINCT playerId) AS players
+               FROM gamelog
+              WHERE NOT (${hide})
+              GROUP BY sport, season ORDER BY sport, season DESC`).all();
+          return { seasons: (r && r.results) || [] };
+        });
+        return body ? json(body) : json({ error: 'the season list is being prepared, try again in a minute' }, 503);
       } catch (e) { return json({ error: String((e && e.message) || e) }, 500); }
     }
 
