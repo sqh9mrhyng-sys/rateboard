@@ -3680,7 +3680,7 @@ async function handleGet({ request, env, waitUntil }) {
     const db = env.RATEBOARD_DB;
     const CACHE = 'progress_cache_v1';
     await playsReady(db);
-    const SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'wnba', 'nhl'];
+    const SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'wnba', 'nhl', 'ncaam'];
     const logged = new Map(), got = new Map();
     for (const sp of SPORTS) {
       try {
