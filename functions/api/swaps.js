@@ -596,7 +596,7 @@ async function boostSchedule(env, sp, day, force) {
     games++;
     for (const [i, x] of cs.entries()) {
       const t = x.team || {}, o = (cs[1 - i] || {}).team || {};
-      if (t.abbreviation) teams[t.abbreviation] = { id: t.id || null, opp: o.shortDisplayName || o.abbreviation || '', home: x.homeAway === 'home', at: ev.date || null };
+      if (t.abbreviation) teams[t.abbreviation] = { id: t.id || null, opp: o.shortDisplayName || o.abbreviation || '', oppAb: o.abbreviation || null, home: x.homeAway === 'home', at: ev.date || null };
     }
   }
   const out = { at: Date.now(), games, teams };
@@ -608,8 +608,29 @@ async function boostSchedule(env, sp, day, force) {
    days' schedules, the three injury reports and every NFL depth chart for the
    teams on those slates are fetched again and saved - a handful of requests
    per collector tick until the list is done. Nothing here touches D1. */
+/* How much each opponent gives up: the average rax of players who faced
+   them (last season's regular season and this season so far), against the
+   average for everyone, pulled toward 1 when the sample is small and kept
+   between 0.85 and 1.15. Built once a day by the refresh; keyed by ESPN code. */
+async function boostMatchups(env, sp) {
+  const db = env.RATEBOARD_DB; if (!db) return;
+  const [se, prev] = BOOST_SEASON[sp];
+  const minSql = sp === 'ncaam' ? ' AND min >= 10' : '';
+  let rows = [];
+  try { rows = (await db.prepare(`SELECT opponent AS o, AVG(rax) AS a, COUNT(*) AS n FROM gamelog
+      WHERE sport=? AND season IN (?, ?) AND seasonType='regularseason' AND rax > 0${minSql} AND opponent IS NOT NULL GROUP BY opponent`).bind(sp, se, prev).all()).results || []; } catch (e) { return; }
+  const tot = rows.reduce((t, r) => t + r.a * r.n, 0), n = rows.reduce((t, r) => t + r.n, 0);
+  if (!n) return;
+  const mean = tot / n, K = sp === 'ncaam' ? 300 : 150, f = {};
+  for (const r of rows) {
+    const raw = r.a / mean, w = r.n / (r.n + K);
+    f[boostAlias(sp, r.o)] = Math.round(Math.min(1.15, Math.max(0.85, 1 + (raw - 1) * w)) * 100) / 100;
+  }
+  try { await env.RATEBOARD_KV.put('boostmatch_v1_' + sp, JSON.stringify({ at: Date.now(), f }), { expirationTtl: 5 * 86400 }); } catch (e) {}
+}
+
 const BOOST_REFRESH_HOURS = [10, 17];
-const BOOST_REFRESH_KEY = 'boostrefresh_v1';
+const BOOST_REFRESH_KEY = 'boostrefresh_v2';
 export async function boostRefresh(env) {
   const f = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false });
   const o = Object.fromEntries(f.formatToParts(new Date()).map(x => [x.type, x.value]));
@@ -626,10 +647,12 @@ export async function boostRefresh(env) {
     const steps = [];
     for (const sp of Object.keys(BOOST_SEASON)) { steps.push(['inj', sp]); for (const d of days) steps.push(['sched', sp, d]); }
     steps.push(['depthlist']);
+    for (const sp of Object.keys(BOOST_SEASON)) steps.push(['match', sp]);
+    steps.push(['rosterlist']);
     st = { run, steps, i: 0, done: false };
   }
   let n = 0;
-  while (st.i < st.steps.length && n < 6) {
+  while (st.i < st.steps.length && n < (st.steps[st.i][0] === 'roster' ? 12 : 6)) {
     const [k, a, b] = st.steps[st.i];
     try {
       if (k === 'inj') await boostInjuries(env, a, true);
@@ -643,6 +666,40 @@ export async function boostRefresh(env) {
         for (const id of ids) st.steps.push(['depth', id]);
       }
       else if (k === 'depth') await boostDepth(env, null, true, [a]);
+      else if (k === 'match') await boostMatchups(env, a);
+      else if (k === 'rosterlist') {
+        // CBB rosters for every team on the saved slates, refreshed weekly.
+        const ids = new Set();
+        for (const s2 of st.steps) if (s2[0] === 'sched' && s2[1] === 'ncaam') {
+          try { const c = JSON.parse((await env.RATEBOARD_KV.get(`boostsched_v2_ncaam_${s2[2]}`)) || 'null'); if (c) Object.values(c.teams).forEach(t => t.id && ids.add(String(t.id))); } catch (e) {}
+        }
+        let have = {};
+        try { have = (JSON.parse((await env.RATEBOARD_KV.get('boostrostermap_v1_ncaam')) || 'null') || {}).teams || {}; } catch (e) {}
+        for (const id of ids) if (!have[id] || Date.now() - have[id] > 7 * 86400000) st.steps.push(['roster', id]);
+        st.steps.push(['rostermerge']);
+        st.rosterIds = [...ids];
+      }
+      else if (k === 'roster') {
+        try {
+          const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/teams/${a}/roster`);
+          const d = r.ok ? await r.json() : null;
+          if (d) {
+            const ab = (d.team || {}).abbreviation || null;
+            const list = (d.athletes || []).map(x => ({ n: boostName(x.displayName), pos: (x.position || {}).abbreviation || '', yr: (x.experience || {}).years ?? null }));
+            await env.RATEBOARD_KV.put('boostroster_v1_' + a, JSON.stringify({ at: Date.now(), ab, list }), { expirationTtl: 30 * 86400 });
+          }
+        } catch (e) {}
+      }
+      else if (k === 'rostermerge') {
+        let cur = {};
+        try { cur = JSON.parse((await env.RATEBOARD_KV.get('boostrostermap_v1_ncaam')) || 'null') || {}; } catch (e) {}
+        const m = cur.m || {}, teams = cur.teams || {};
+        for (const id of (st.rosterIds || [])) {
+          try { const c = JSON.parse((await env.RATEBOARD_KV.get('boostroster_v1_' + id)) || 'null');
+            if (c && c.ab) { teams[id] = c.at; for (const x of c.list) m[x.n] = { ab: c.ab, pos: x.pos, yr: x.yr }; } } catch (e) {}
+        }
+        await env.RATEBOARD_KV.put('boostrostermap_v1_ncaam', JSON.stringify({ at: Date.now(), m, teams }), { expirationTtl: 30 * 86400 });
+      }
     } catch (e) {}
     st.i++; n++;
   }
@@ -694,6 +751,7 @@ async function boostInventoryAll(env, tok, hashId, fresh) {
    second, earning heavy the third. */
 const STAT_BARS = { PTS: [15.8, 12.7, 9.5], REB: [6.3, 4.9, 3.6], AST: [3.8, 2.4, 1.6], STL: [1.4, 1.1, 0.8], BLK: [1.0, 0.6, 0.3], '3PM': [2.5, 1.8, 1.0] };
 const MODE_BAR = { saver: 0, balanced: 1, heavy: 2 };
+const FRESH_LINE = { PTS: 11, REB: 4.5, AST: 2, STL: 0.9, BLK: 0.5, '3PM': 1.3 };
 const STAT_COL = { PTS: 'pts', REB: 'reb', AST: 'ast', STL: 'stl', BLK: 'blk' };
 const statKey = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const DEF_POS = /^(DB|CB|S|FS|SS|LB|ILB|OLB|MLB|DL|DE|DT|NT|EDGE|DEF)$/i;
@@ -1003,7 +1061,7 @@ async function handle({ request, env, waitUntil }) {
       } catch (e) {}
       try {
         const r = await db.prepare(`SELECT playerId, team, position, day, rax, min, player, pts, reb, ast, stl, blk, fg3${sp === 'ncaam' ? '' : ', stats'} FROM gamelog
-          WHERE sport=? AND season=? AND rax IS NOT NULL AND playerId IN (${ph}) ORDER BY day`).bind(sp, prev, ...part).all();
+          WHERE sport=? AND season=? AND rax IS NOT NULL AND seasonType='regularseason' AND playerId IN (${ph}) ORDER BY day`).bind(sp, prev, ...part).all();
         for (const x of (r.results || [])) { const k = Number(x.playerId); const o = old.get(k) || { rows: [] }; o.rows.push(x); old.set(k, o); }
       } catch (e) {}
     }
@@ -1019,23 +1077,51 @@ async function handle({ request, env, waitUntil }) {
     let inv = null;
     try { const uu = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(me).first();
       if (uu && uu.hashId) { const r = await boostInventory(env, env.RS_AUTH_TOKEN || auth, uu.hashId, sp, false); if (!r.error) inv = r.list; } } catch (e) {}
+    // Current teams from ESPN's rosters (CBB: transfers and freshmen), and
+    // how much each opponent gave up last season and this one.
+    let roster = {}, match = {};
+    if (sp === 'ncaam') { try { roster = (JSON.parse((await env.RATEBOARD_KV.get('boostrostermap_v1_ncaam')) || 'null') || {}).m || {}; } catch (e) {} }
+    try { match = (JSON.parse((await env.RATEBOARD_KV.get('boostmatch_v1_' + sp)) || 'null') || {}).f || {}; } catch (e) {}
+    // Freshmen and anyone new: Real's owner counts stand in for hype.
+    const ownersBy = new Map();
+    const noGames = ids.filter(id => !games.has(id) && !old.has(id));
+    for (let i = 0; i < noGames.length; i += 90) {
+      const part = noGames.slice(i, i + 90);
+      try { const r = await db.prepare(`SELECT playerId, MAX(owners) AS o FROM owners WHERE sport=? AND season=? AND playerId IN (${part.map(() => '?').join(',')}) GROUP BY playerId`).bind(sp, se, ...part).all();
+        for (const x of (r.results || [])) ownersBy.set(Number(x.playerId), Number(x.o) || 0); } catch (e) {}
+    }
     const avg = a => a.length ? a.reduce((t, x) => t + Number(x.rax || 0), 0) / a.length : null;
     const dayMs = Date.parse(day + 'T12:00:00Z');
     const rows = [], idle = [];
     for (const p of cards.players) {
       const gs = games.get(Number(p.id)) || [], o = old.get(Number(p.id));
       const lastG = gs[gs.length - 1];
-      const team = (lastG && lastG.team) || (o && o.team) || null;
-      const g = team ? sched.teams[boostAlias(sp, team)] : null;
       const name = p.name || (lastG && lastG.player) || (o && o.player) || 'Player ' + p.id;
+      const ros = sp === 'ncaam' ? roster[boostName(name)] : null;
+      // A game this season wins; then ESPN's current roster; then last season's team.
+      const teamAb = lastG && lastG.team ? boostAlias(sp, lastG.team) : ros ? ros.ab : o && o.team ? boostAlias(sp, o.team) : null;
+      const team = (lastG && lastG.team) || (ros && ros.ab) || (o && o.team) || null;
+      const g = teamAb ? sched.teams[teamAb] : null;
       if (!g) { idle.push(name); continue; }
-      const pos = (lastG && lastG.position) || (o && o.position) || '';
+      const pos = (lastG && lastG.position) || (o && o.position) || (ros && ros.pos) || '';
+      const mf = g.oppAb && match[g.oppAb] ? match[g.oppAb] : 1;
       const ca = avg(gs), r4 = avg(gs.slice(-4)), oa = o ? Number(o.avg) : null, cg = gs.length;
       let proj = null, basis = '';
       if (cg >= 4) { proj = oa != null ? 0.5 * r4 + 0.3 * ca + 0.2 * oa : 0.6 * r4 + 0.4 * ca; basis = `last 4 games weighted, ${cg} this season`; }
       else if (cg && oa != null) { proj = 0.5 * ca + 0.5 * oa; basis = `${cg} game${cg === 1 ? '' : 's'} this season + last season`; }
       else if (cg) { proj = ca; basis = `${cg} game${cg === 1 ? '' : 's'} this season`; }
-      else if (oa != null) { proj = oa; basis = 'last season'; }
+      else if (oa != null) { proj = oa; basis = 'last season (regular season)'; }
+      // No college games at all: a freshman (or new arrival) estimate from how
+      // many people own him on Real.
+      let fresh = false;
+      if (proj == null) {
+        const ow = ownersBy.get(Number(p.id));
+        const tiers = sp === 'ncaam' ? [[8000, 11], [4000, 10], [2000, 9], [800, 8], [300, 7], [0, 6]]
+          : sp === 'ncaaf' ? [[8000, 20], [4000, 16], [2000, 13], [800, 10], [0, 7]] : [[8000, 14], [4000, 11], [2000, 9], [0, 6]];
+        proj = (tiers.find(t => (ow || 0) >= t[0]) || [0, 6])[1]; fresh = true;
+        basis = ow != null ? `newcomer estimate (${ow.toLocaleString()} owners)` : 'newcomer estimate';
+      }
+      if (proj != null && mf !== 1) basis += ` · matchup x${mf}`;
       const flags = [];
       let skip = false, k = 1;
       // Injury report.
@@ -1069,11 +1155,16 @@ async function handle({ request, env, waitUntil }) {
         if (cg >= 4) e = oA != null ? 0.5 * c4 + 0.3 * cA + 0.2 * oA : 0.6 * c4 + 0.4 * cA;
         else if (cA != null && oA != null) e = 0.5 * cA + 0.5 * oA;
         else e = cA ?? oA;
-        if (e != null) exp[st] = Math.round(e * k * 100) / 100;
+        if (e == null && fresh && sp === 'ncaam' && FRESH_LINE[st] != null) {
+          // A starter's line scaled to his estimate, guards toward assists and threes, bigs toward boards and blocks.
+          const big = /^(F|C|PF|C-F|F-C)$/i.test(pos), sc = proj / 8;
+          e = FRESH_LINE[st] * sc * (big ? ({ REB: 1.35, BLK: 1.8, AST: 0.6, '3PM': 0.5 }[st] || 1) : ({ AST: 1.3, '3PM': 1.3, REB: 0.8, BLK: 0.5 }[st] || 1));
+        }
+        if (e != null) exp[st] = Math.round(e * k * mf * 100) / 100;
       }
       rows.push({ id: p.id, name, team, pos, opp: g.opp, home: g.home, at: g.at, exp,
         avg: ca == null ? null : Math.round(ca * 10) / 10, games: cg, avgLast: oa == null ? null : Math.round(oa * 10) / 10,
-        proj: proj == null ? null : Math.round(proj * k * 10) / 10, basis, flags, skip });
+        proj: proj == null ? null : Math.round(proj * k * mf * 10) / 10, basis, flags, skip, fresh });
     }
     rows.sort((a, b) => (a.skip - b.skip) || ((b.proj ?? -1) - (a.proj ?? -1)));
     const bars = BOOST_BARS[sp].map(x => Math.round(x * BOOST_MODES[mode] * 10) / 10);
