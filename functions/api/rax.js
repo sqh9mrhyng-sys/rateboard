@@ -523,6 +523,11 @@ const MARKET_SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'ncaam', 'nhl', 'soccer', '
    rest of the board runs on. Without that secret the pull does nothing - it
    never falls back to the main key. */
 const MARKET_ON = true;           // back on 2026-11-02 after Cloudflare replied; held to the daily job budget (lib/dbwatch.js)
+/* Manual only (Dennis, 2026-11-02): nothing is pulled on its own. A season
+   runs only when it's queued (the queue button on /market, market=front) and
+   a single player only through "Pull this player now" (market=pullplayer).
+   Set false to go back to the automatic rounds. */
+const MARKET_MANUAL = true;
 /* Real answers "high volume" to two requests at once, even on the separate
    account, so there is one lane. Speed comes from shorter gaps between pages
    and more pages a tick instead. A sport-season is still cut into windows by
@@ -586,7 +591,9 @@ async function marketNext(db, st) {
   const rows = (await db.prepare('SELECT job, doneAt, front, listings FROM market_seasons').all()).results || [];
   const valid = new Set(marketSeasons());
   const front = rows.filter(r => r.front && valid.has(r.job)).sort((a, b) => a.front - b.front)[0];
-  if (front) return front.job;
+  if (front) { st.curManual = true; return front.job; }
+  if (MARKET_MANUAL) return null;
+  st.curManual = false;
   const m = new Map(rows.map(r => [r.job, r]));
   const first = marketSeasons().find(j => !(m.get(j) && m.get(j).doneAt));     // the first sweep
   if (first) return first;
@@ -895,6 +902,9 @@ async function marketSliceHeld(env, auth, deadline) {
     }
     st.seedShort1 = true;
   }
+  // A season left half-pulled from the automatic rounds isn't finished off
+  // in manual mode; only what was queued by hand runs.
+  if (MARKET_MANUAL && st.cur && !st.curManual) { st.cur = null; st.lanes = {}; st.roundQ = []; }
   while (Date.now() < deadline.at) {
     if (!st.cur) {
       const next = await marketNext(db, st);
