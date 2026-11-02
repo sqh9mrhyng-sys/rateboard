@@ -967,7 +967,7 @@ async function handle({ request, env, waitUntil }) {
       try { await db.prepare(DM_DDL).run();
         connected = !!(await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=? AND channelId IS NOT NULL').bind(u.hashId).first()); } catch (e) {}
     }
-    return json({ key: me, admin: acc.admin, swaps: acc.swaps, otd: acc.otd, tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
+    return json({ key: me, admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
       keep: parse(u.keep, []), slots: parse(u.slots, []), passes: parse(u.passes, []), scannedAt: u.scannedAt, active: !!u.active } : null });
   }
 
@@ -1074,7 +1074,9 @@ async function handle({ request, env, waitUntil }) {
     if (!BOOST_SEASON[sp]) return json({ error: 'Pick CBB, CFB or NFL.' }, 400);
     const day = String(url.searchParams.get('date') || '');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return json({ error: 'Pick a date.' }, 400);
-    const mode = BOOST_MODES[url.searchParams.get('mode')] ? url.searchParams.get('mode') : 'balanced';
+    let mode = BOOST_MODES[url.searchParams.get('mode')] ? url.searchParams.get('mode') : 'balanced';
+    // Heavy Legendary and Boost saver are only for Dennis and quas23 for now.
+    if (mode !== 'balanced' && !acc.admin && !BOOST_FAST.has(String(me || '').toLowerCase())) mode = 'balanced';
     const [se, prev] = BOOST_SEASON[sp];
     // What they own: the passes from their last scan (the same read Swaps
     // uses). Rarity and pass level are not counted.

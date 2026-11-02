@@ -88,7 +88,7 @@
       <div class="bar">
         <label class="note">Day <select id="day"></select></label>
         <label class="note">Sport <select id="sport"><option value="ncaam">CBB 2026-27</option><option value="ncaaf">CFB 2026</option><option value="nfl">NFL 2026</option></select></label>
-        <label class="note">Setting <select id="mode"><option value="balanced" selected>Balanced</option><option value="heavy">Heavy Legendary</option><option value="saver">Boost saver</option></select></label>
+        <label class="note">Setting <select id="mode"><option value="balanced" selected>Balanced</option></select></label>
         <button class="go" id="run">Show my boosts</button>
       </div>
       <div class="bar" style="margin-top:10px">
@@ -378,6 +378,12 @@ $('#scan').addEventListener('click', async () => {
   }
   if(me.error){ $('#lock').hidden = false; $('#lockmsg').textContent = /sign in/i.test(me.error) ? 'Sign in on the board first, in this browser.' : me.error; return; }
   $('#main').hidden = false;
+  // The extra settings are only offered to the accounts that have them.
+  if(me.boostModes){
+    $('#mode').innerHTML = '<option value="balanced">Balanced</option><option value="heavy">Heavy Legendary</option><option value="saver">Boost saver</option>';
+    try{ const sv = JSON.parse(localStorage.getItem('boosts_pick_v1') || '{}'); if(sv.mode) $('#mode').value = sv.mode; }catch(e){}
+  } else $('#mode').value = 'balanced';
+  drawMode();
   $('#rsuser').value = (me.profile && me.profile.rsUser) || '';
   const p = me.profile;
   $('#scanmsg').textContent = p && (p.passes || []).length
