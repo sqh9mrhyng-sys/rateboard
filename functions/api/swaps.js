@@ -562,8 +562,12 @@ export async function otdSeason(env, db, sp, se, force) {
 
 /* Boosts: current season and the one before, per sport (Real's numbering). */
 const BOOST_SEASON = { ncaam: [2027, 2026], ncaaf: [2026, 2025], nfl: [2026, 2025] };
-// [purple, red, orange] boosters by mode, best projected earners first.
-const BOOST_MODES = { heavy: [5, 10, 999], balanced: [3, 7, 999], saver: [1, 3, 6] };
+/* Booster thresholds on projected rax for the game, per sport, set from
+   last season's rax per game among regulars: Legendary is roughly the top
+   2-3% of games, Epic the top 10%, Rare the top 25%. Boost saver raises the
+   bar 15%, earning heavy lowers it 15%. */
+const BOOST_BARS = { ncaam: [10.5, 9, 7.5], ncaaf: [22, 17, 12], nfl: [16, 12, 8.5] };
+const BOOST_MODES = { heavy: 0.85, balanced: 1, saver: 1.15 };
 const ESPN_PATH = { ncaam: 'basketball/mens-college-basketball', ncaaf: 'football/college-football', nfl: 'football/nfl' };
 const ESPN_GROUP = { ncaam: '&groups=50', ncaaf: '&groups=80', nfl: '' };
 // Where Real's team code differs from ESPN's.
@@ -948,17 +952,16 @@ async function handle({ request, env, waitUntil }) {
         else if (!m3.length && mAvg != null && mAvg < 15) { k *= 0.7; flags.push(`${Math.round(mAvg)} min a game last season`); }
       }
       rows.push({ id: p.id, name, team, pos, opp: g.opp, home: g.home, at: g.at,
+        avg: ca == null ? null : Math.round(ca * 10) / 10, games: cg, avgLast: oa == null ? null : Math.round(oa * 10) / 10,
         proj: proj == null ? null : Math.round(proj * k * 10) / 10, basis, flags, skip });
     }
     rows.sort((a, b) => (a.skip - b.skip) || ((b.proj ?? -1) - (a.proj ?? -1)));
-    const tiers = BOOST_MODES[mode];
-    let n = 0;
+    const bars = BOOST_BARS[sp].map(x => Math.round(x * BOOST_MODES[mode] * 10) / 10);
     for (const r of rows) {
-      if (r.skip || r.proj == null) { r.boost = null; continue; }
-      r.boost = n < tiers[0] ? 'legendary' : n < tiers[0] + tiers[1] ? 'epic' : n < tiers[0] + tiers[1] + tiers[2] ? 'rare' : null;
-      n++;
+      r.boost = r.skip || r.proj == null ? null
+        : r.proj >= bars[0] ? 'legendary' : r.proj >= bars[1] ? 'epic' : r.proj >= bars[2] ? 'rare' : null;
     }
-    return json({ sport: sp, season: se, date: day, mode, rsUser: u.rsUser, cardsAt: cards.at, games: sched.games, depth: !!depth,
+    return json({ sport: sp, season: se, date: day, mode, bars, rsUser: u.rsUser, cardsAt: cards.at, games: sched.games, depth: !!depth,
       rows, notPlaying: idle.length, players: cards.players.length });
   }
 
