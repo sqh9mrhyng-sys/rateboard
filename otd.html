@@ -566,6 +566,7 @@ $('#scan').addEventListener('click', async () => {
   if(j.error){ $('#status').textContent = j.error; return; }
   PACK = {}; PLAYS = {}; MKT = {}; upOpen = null;
   await loadAll();
+  if(j.cached && j.note) $('#status').textContent = j.note + ' ' + $('#status').textContent;
 });
 
 (async () => {

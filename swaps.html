@@ -307,8 +307,8 @@ $('#scan').addEventListener('click', async () => {
   $('#scanmsg').textContent = 'Scanning every sport and season… this takes about 20 seconds.';
   const j = await api(`/api/swaps?op=scan&rsUser=${encodeURIComponent(u)}`);
   if(j.error){ $('#scanmsg').textContent = j.error; return; }
-  prof.rsUser = u; prof.passes = j.passes || []; prof.scannedAt = Date.now();
-  $('#scanmsg').innerHTML = `${prof.passes.length} passes found.` + ((j.errors || []).length ? ` <span style="color:var(--bad)">${j.errors.length} seasons failed: ${esc(j.errors[0])}</span>` : '')
+  prof.rsUser = u; prof.passes = j.passes || []; prof.scannedAt = j.scannedAt || Date.now();
+  $('#scanmsg').innerHTML = `${prof.passes.length} passes found.` + (j.cached ? ` <span class="note">${esc(j.note || '')}</span>` : '') + ((j.errors || []).length ? ` <span style="color:var(--bad)">${j.errors.length} seasons failed: ${esc(j.errors[0])}</span>` : '')
     + (j.sample ? `<details><summary>What Real sent (first pass)</summary><pre>${esc(JSON.stringify(j.sample, null, 2))}</pre></details>` : '');
   drawPasses();
 });
