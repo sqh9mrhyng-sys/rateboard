@@ -278,7 +278,7 @@ async function run(){
       <td style="text-align:left">${r.home ? 'vs' : '@'} ${esc(r.opp)}<span class="sub">${tm(r.at)}</span></td>
       <td>${r.avg != null ? r.avg + `<span class="sub">${r.games} game${r.games === 1 ? '' : 's'}${r.avgLast != null ? ' · last yr ' + r.avgLast : ''}</span>` : r.avgLast != null ? `–<span class="sub">last yr ${r.avgLast}</span>` : '–'}</td>
       <td>${r.proj == null ? 'no data' : r.proj}</td>
-      <td><b>${r.boost && r.withBoost != null ? Math.round(r.withBoost).toLocaleString() : (r.proj ?? '–')}</b>${r.boost && r.withBoost != null ? `<span class="sub">(${r.proj} + ${(r.best && r.best.gain) || 0}) × ${r.mult}</span>` : ''}</td></tr>`;
+      <td><b>${r.boost && r.withBoost != null ? Math.round(r.withBoost).toLocaleString() : (r.proj ?? '–')}</b>${r.boost && r.withBoost != null ? `<span class="sub">${r.proj} × ${r.mult} + ${(r.best && r.best.gain) || 0}</span>` : ''}</td></tr>`;
   }).join('');
   $('#foot').textContent = (j.statMode ? 'Rarity comes from projected rax (capped by what you hold); Boost is the attribute from your boosters of that rarity that adds the most for that player, shown as his average of that stat / the rax it adds, with a second option. ' : '') + `Projected rax: recent games weighted most, then this season, then last. Pass rarity and level aren't counted. Injuries and depth charts are refreshed at 10am and 5pm ET. Players out, doubtful, suspended`
     + (j.depth ? ', backups on the depth chart' : '') + ` or not playing lately get no booster; questionable players are marked down.`

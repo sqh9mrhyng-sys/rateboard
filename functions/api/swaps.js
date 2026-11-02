@@ -1118,9 +1118,10 @@ async function handle({ request, env, waitUntil }) {
       const pack = o => ({ label: lab(o), avg: o.x ? Math.round(o.x.e * 100) / 100 : null, gain: o.x ? Math.round(o.x.g * 100) / 100 : null, mult: o.b.mult || 1 });
       if (opts[0]) { r.best = pack(opts[0]); opts[0].b.count--; }
       if (opts[1]) r.alt = pack(opts[1]);
-      // The booster's rarity multiplies the game: (projected rax + the attribute's extra) x 10/15/25.
+      // The booster's rarity multiplies the base projection (x10/15/25); the
+      // attribute's extra is added on top and is never multiplied.
       r.mult = r.best ? r.best.mult : ({ 5: 25, 4: 15, 3: 10 })[want] || 1;
-      r.withBoost = r.proj != null ? Math.round((r.proj + ((r.best && r.best.gain) || 0)) * r.mult * 10) / 10 : null;
+      r.withBoost = r.proj != null ? Math.round((r.proj * r.mult + ((r.best && r.best.gain) || 0)) * 10) / 10 : null;
     }
     const totals = { base: 0, boosted: 0, recBoosted: 0 };
     for (const r of rows) {
