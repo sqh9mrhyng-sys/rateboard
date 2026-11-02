@@ -1210,7 +1210,13 @@ async function handle({ request, env, waitUntil }) {
        rarity still in hand, that adds the most to his expected stat line,
        with the next best shown as a second option. */
     const left = inv ? inv.map(b => ({ ...b })) : null;
-    const own = r => left ? left.filter(b => b.rarity === r).reduce((t, b) => t + b.count, 0) : Infinity;
+    /* Never the whole stash in one day: at most about 15% of Legendaries,
+       25% of Epics and 40% of Rares held (at least one of each held). */
+    const SHARE = { 5: 0.15, 4: 0.25, 3: 0.4 };
+    const held = r => inv ? inv.filter(b => b.rarity === r).reduce((t, b) => t + b.count, 0) : 0;
+    const dayCap = { 5: Math.ceil(held(5) * SHARE[5]), 4: Math.ceil(held(4) * SHARE[4]), 3: Math.ceil(held(3) * SHARE[3]) };
+    const usedR = { 5: 0, 4: 0, 3: 0 };
+    const own = r => left ? Math.min(left.filter(b => b.rarity === r).reduce((t, b) => t + b.count, 0), dayCap[r] - usedR[r]) : Infinity;
     const RN = { legendary: 5, epic: 4, rare: 3 }, NR = { 5: 'legendary', 4: 'epic', 3: 'rare' };
     const gainOf = (r, b) => {
       // A two-attribute booster counts whichever side the player produces on.
@@ -1232,6 +1238,7 @@ async function handle({ request, env, waitUntil }) {
       }
       while (want && left && own(want) <= 0) want = want > 3 ? want - 1 : null;
       r.boost = want ? NR[want] : null;
+      if (want && left) usedR[want]++;
       r.belowCut = cutAt != null && r.boost && r.proj < cutAt;
       if (!want || !left) continue;
       const opts = left.filter(b => b.rarity === want && b.count > 0).map(b => ({ b, x: gainOf(r, b) }))
@@ -1255,7 +1262,7 @@ async function handle({ request, env, waitUntil }) {
     for (const k of Object.keys(totals)) totals[k] = Math.round(totals[k]);
     if (inv) used = inv.map((b, i) => ({ ...b, used: b.count - left[i].count }));
 
-    return json({ sport: sp, season: se, date: day, mode, bars, cutAt, totals, inv: used, statMode: !!used, rsUser: u.rsUser, cardsAt: cards.at, games: sched.games, depth: !!depth,
+    return json({ sport: sp, season: se, date: day, mode, bars, cutAt, totals, dayCap: inv ? dayCap : null, inv: used, statMode: !!used, rsUser: u.rsUser, cardsAt: cards.at, games: sched.games, depth: !!depth,
       rows, notPlaying: idle.length, players: cards.players.length });
   }
 

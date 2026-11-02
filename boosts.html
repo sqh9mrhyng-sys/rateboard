@@ -237,7 +237,7 @@ const MODE_NOTE_STAT = {
   heavy: 'Earning heavy: anyone at or above a typical starter in the stat gets one. Burns boosters fast - not recommended.'
 };
 const MODE_NOTE = {
-  balanced: 'Balanced: Legendary for roughly a top-3% projected game, Epic for top 10%, and Rare for anyone projected at 5 rax or more.',
+  balanced: 'Balanced: Legendary for roughly a top-3% projected game, Epic for top 10%, Rare for anyone projected at 5 rax or more - and never more than about 15% of your Legendaries, 25% of your Epics or 40% of your Rares in one day.',
   saver: 'Boost saver: no Legendaries, at most two Epics (only for a top-3% game), and Rares spread wide - a dashed line marks the recommended cutoff.',
   heavy: 'Earning heavy: the bars lowered 15%, so more players get boosted. Burns boosters fast - not recommended.'
 };
@@ -312,7 +312,7 @@ async function run(){
     + (j.cardsAt ? ` · passes read ${new Date(j.cardsAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : '');
   if(j.statMode){
     const own = r => (j.inv || []).filter(b => b.rarity === r).reduce((t, b) => t + b.count, 0);
-    $('#sum').innerHTML = [[5,'legendary'],[4,'epic'],[3,'rare']].map(([r, k]) => `<span><span class="b ${k}">${LBL[k]}</span> use ${c[k]} of ${own(r)}</span>`).join('');
+    $('#sum').innerHTML = [[5,'legendary'],[4,'epic'],[3,'rare']].map(([r, k]) => `<span><span class="b ${k}">${LBL[k]}</span> use ${c[k]} of ${own(r)}${j.dayCap ? ` <span class="note">(max ${j.dayCap[r]} today)</span>` : ''}</span>`).join('');
     $('#invout').hidden = false; $('#invout').innerHTML = invHtml(j.inv); $('#invmsg').textContent = 'What you hold, and what today\'s plan uses.';
   } else {
     $('#sum').innerHTML = ['legendary','epic','rare'].map((k, i) => `<span><span class="b ${k}">${LBL[k]}</span> × ${c[k]} <span class="note">(${j.bars ? j.bars[i] + '+ proj' : ''})</span></span>`).join('');
