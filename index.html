@@ -912,8 +912,8 @@ function applyGameDataVisibility(){
   checkMarketAccess();
   const otdOn = typeof reallyAdmin === 'function' && reallyAdmin();     // OTD: admin only
   const swapsOn = otdOn || swapsAccess;
-  // Boosts & Buys (BETA) is for everyone signed in.
-  const boostsOn = (() => { try{ return !!localStorage.getItem('ratebrd_token_v1'); }catch(e){ return false; } })();
+  // Boosts & Buys (BETA): only Dennis for now.
+  const boostsOn = otdOn;   // admin only while in beta
   if(pick) pick.classList.toggle('hide', !canSeePackData() && !marketAccess && !swapsOn && !boostsOn);
   if(sel){
     // Options are added and taken away rather than hidden: a hidden option

@@ -537,6 +537,7 @@ export async function swapAccess(env, request) {
 const MEMBER_OPS = new Set(['me', 'save', 'scan', 'search', 'connect']);
 const OTD_OPS = new Set(['me', 'scan', 'games', 'boostplan']);
 const BOOST_OPS = new Set(['me', 'scan', 'boostplan']);
+const BOOSTS_OPEN = false;
 
 /* ---- OTD: saved game lists ------------------------------------------------
    Every player's [MM-DD, rax] list for a whole sport-season, built once from
@@ -613,7 +614,8 @@ async function handle({ request, env, waitUntil }) {
   const op = url.searchParams.get('op') || '';
   const acc = await swapAccess(env, request);
   // Boosts (BETA) is open to every signed-in member; its calls say page=boosts.
-  const boostCall = url.searchParams.get('page') === 'boosts' && BOOST_OPS.has(op) && !!acc.who;
+  // Limited to Dennis (admins) while in beta: set BOOSTS_OPEN to open it to everyone signed in.
+  const boostCall = BOOSTS_OPEN && url.searchParams.get('page') === 'boosts' && BOOST_OPS.has(op) && !!acc.who;
   if (!acc.ok && !boostCall) return forbidden(acc.who ? 'Your account does not have this page yet.' : 'Sign in on the board first.');
   if (!acc.admin && !boostCall && !((acc.swaps && MEMBER_OPS.has(op)) || (acc.otd && OTD_OPS.has(op)))) return forbidden('Your account does not have this.');
   const me = acc.who;

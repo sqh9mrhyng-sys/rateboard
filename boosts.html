@@ -74,6 +74,15 @@
   </div>
 </div>
 <script>
+// The board's sign-in rides along on every call to the API.
+(() => {
+  const real = window.fetch.bind(window);
+  window.fetch = (u, o = {}) => {
+    let t = ''; try{ t = localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){}
+    if(t && typeof u === 'string' && u.startsWith('/api/')) o = Object.assign({}, o, { headers: Object.assign({}, o.headers || {}, { 'x-rb-token': t }) });
+    return real(u, o);
+  };
+})();
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const api = async u => { try{ const r = await fetch(u); const j = await r.json().catch(() => ({})); if(!r.ok && !j.error) j.error = 'Error ' + r.status; return j; }catch(e){ return { error: 'Could not reach the board.' }; } };
@@ -249,7 +258,7 @@ $('#scan').addEventListener('click', async () => {
     await new Promise(r => setTimeout(r, 1200 * (i + 1)));
     me = await api('/api/swaps?op=me&page=boosts');
   }
-  if(me.error){ $('#lock').hidden = false; $('#lockmsg').textContent = /sign in/i.test(me.error) ? 'Sign in on the board first, in this browser.' : me.error; return; }
+  if(me.error){ $('#lock').hidden = false; $('#lockmsg').textContent = /sign in/i.test(me.error) ? 'Sign in on the board first, in this browser.' : 'Boosts & Buys is only open to Dennis while it is in beta.'; return; }
   $('#main').hidden = false;
   $('#rsuser').value = (me.profile && me.profile.rsUser) || '';
   if(!me.profile || !(me.profile.passes || []).length) $('#scanmsg').textContent = 'Scan your account first: enter your Real username and tap Scan my account.';
