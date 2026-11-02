@@ -159,6 +159,10 @@
         <div class="scroll" id="sw-matches">Loading…</div>
       </section>
       <section>
+        <h2>Pass scans</h2>
+        <div class="bar"><button id="sw-every">…</button><span class="note" id="sw-everymsg">How often members can scan their passes (Swaps and OTD). You're never limited.</span></div>
+      </section>
+      <section>
         <h2>Bot (@raxacademy.app)</h2>
         <div class="bar"><button id="sw-sync">Re-read chats &amp; requests</button><span class="note" id="sw-chats"></span></div>
         <div class="bar"><input id="sw-user" placeholder="Real username" autocomplete="off" style="flex:0 1 180px"><input id="sw-text" class="grow" value="Swap bot test"><button id="sw-dm">Send DM</button></div>
@@ -551,7 +555,17 @@ $('#t-reports').addEventListener('click', async e => {
 });
 
 /* ---------- swaps ---------- */
-function loadSwaps(){ loadMatches(); loadNamed(); }
+function loadSwaps(){ loadMatches(); loadNamed(); loadEvery(); }
+const everyLbl = m => m === 15 ? 'every 15 minutes' : 'every 3 hours';
+function drawEvery(m){ const b = $('#sw-every'); b.dataset.m = m;
+  b.textContent = m === 15 ? 'Members: every 15 min · switch to 3 hours' : 'Members: every 3 hours · switch to 15 min'; }
+async function loadEvery(){ const j = await api('/api/swaps?op=scanevery'); if(j && j.every) drawEvery(j.every); }
+$('#sw-every').addEventListener('click', async () => {
+  const to = Number($('#sw-every').dataset.m) === 15 ? 180 : 15;
+  const j = await api('/api/swaps?op=scanevery&set=' + to);
+  if(j && j.every){ drawEvery(j.every); $('#sw-everymsg').textContent = `Members can now scan ${everyLbl(j.every)}.`; }
+  else $('#sw-everymsg').textContent = (j && j.error) || 'Could not change it.';
+});
 async function loadMatches(){
   const j = await api('/api/swaps?op=matches');
   if(j.error){ $('#sw-matches').textContent = j.error; return; }

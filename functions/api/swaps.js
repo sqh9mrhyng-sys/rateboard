@@ -558,6 +558,12 @@ export async function otdSeason(env, db, sp, se, force) {
   return games;
 }
 
+const SCAN_EVERY_KEY = 'swap_scan_every_v1';
+async function scanEvery(env) {
+  let v = null; try { v = Number(await env.RATEBOARD_KV.get(SCAN_EVERY_KEY)); } catch (e) {}
+  return v === 15 ? 15 : 180;
+}
+
 // Any error comes back as a readable message rather than a bare 500.
 export async function onRequest(ctx) {
   try { return await handle(Object.assign({}, ctx, { env: watchEnv(ctx.env, ctx.request, ctx.waitUntil) })); }
@@ -685,8 +691,18 @@ async function handle({ request, env, waitUntil }) {
 
   if (op === 'scan') {
     if (!auth) return json({ error: 'No swap token found in the Cloudflare settings.' }, 503);
-    if (!(await allow(url.origin, 'swapscan:' + me, 3, 600))) return json({ error: 'Three scans per ten minutes - try again shortly.' }, 429);
-    const u = await db.prepare('SELECT rsUser, hashId FROM swap_users WHERE key=?').bind(me).first();
+    const u = await db.prepare('SELECT rsUser, hashId, scannedAt FROM swap_users WHERE key=?').bind(me).first();
+    /* Members can scan once per interval (3 hours, or 15 minutes when Dennis
+       switches it on); the last scan time is the one saved with their passes,
+       so it holds wherever they scan from. Admins aren't limited. */
+    if (!acc.admin) {
+      const every = await scanEvery(env);
+      const left = (Number(u && u.scannedAt) || 0) + every * 60000 - Date.now();
+      if (left > 0) {
+        const m = Math.ceil(left / 60000);
+        return json({ error: `You can scan once every ${every >= 60 ? every / 60 + ' hours' : every + ' minutes'}. Next scan in ${m >= 60 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : m + ' min'}.` }, 429);
+      }
+    } else if (!(await allow(url.origin, 'swapscan:' + me, 20, 600))) return json({ error: 'Twenty scans per ten minutes.' }, 429);
     const rsUser = String(url.searchParams.get('rsUser') || (u && u.rsUser) || '').trim();
     if (!rsUser) return json({ error: 'Enter your Real username first.' }, 400);
     let hashId = u && u.rsUser === rsUser ? u.hashId : null;
@@ -699,6 +715,13 @@ async function handle({ request, env, waitUntil }) {
         scannedAt=excluded.scannedAt, updatedAt=excluded.updatedAt`)
       .bind(me, rsUser, hashId, JSON.stringify(r.passes), Date.now(), Date.now()).run();
     return json({ hashId, passes: r.passes, errors: r.errors, sample: r.sample });
+  }
+
+  // Admin: how often members may scan - 180 (every 3 hours) or 15 minutes.
+  if (op === 'scanevery') {
+    const v = Number(url.searchParams.get('set'));
+    if (v === 15 || v === 180) { try { await env.RATEBOARD_KV.put(SCAN_EVERY_KEY, String(v)); } catch (e) {} }
+    return json({ every: await scanEvery(env) });
   }
 
   if (op === 'matches') {

@@ -528,6 +528,7 @@ const MARKET_ON = true;           // back on 2026-11-02 after Cloudflare replied
    a single player only through "Pull this player now" (market=pullplayer).
    Set false to go back to the automatic rounds. */
 const MARKET_MANUAL = true;
+const MRECENT_KEY = 'mrecent_v1';
 /* Real answers "high volume" to two requests at once, even on the separate
    account, so there is one lane. Speed comes from shorter gaps between pages
    and more pages a tick instead. A sport-season is still cut into windows by
@@ -5434,6 +5435,12 @@ async function handleGet({ request, env, waitUntil }) {
      marketplace filter for one player isn't documented, so the likely
      parameter names are tried in turn and the first one whose rows all
      belong to that player is kept. Capped at ten pulls per ten minutes. */
+  // Admin: the players pulled one at a time, newest first.
+  if (url.searchParams.get('market') === 'recents') {
+    let list = [];
+    try { list = JSON.parse((await env.RATEBOARD_KV.get(MRECENT_KEY)) || '[]') || []; } catch (e) {}
+    return json({ rows: list, listings: list.reduce((a, r) => a + (r.n || 0), 0), players: list.length });
+  }
   if (url.searchParams.get('market') === 'pullplayer') {
     const db = env.RATEBOARD_DB;
     const bot = env.RS_SWAP_TOKEN || (() => { const k = Object.keys(env).find(k => /token/i.test(k)
@@ -5545,6 +5552,30 @@ async function handleGet({ request, env, waitUntil }) {
     name = name || pname || null;
     for (let k = 0; k < stmts.length; k += 50) await db.batch(stmts.slice(k, k + 50));
     try { await env.RATEBOARD_KV.delete((sport === 'ufc' ? 'msnap_v2_' : 'msnap_v1_') + `${sport}:${Number(season)}`); } catch (e) {}
+    /* Recents: what this pull found, kept so it's still there after leaving
+       the page. Worked out from the listings just fetched (no regrouping),
+       plus the player's rax for the season from the game log. */
+    try {
+      let rating = 0, pprSum = 0, pprN = 0;
+      for (const r of all.values()) {
+        const v = Math.abs(Number(r.value ?? (r.card || {}).value) || 0), b = numOr(r.buyNowPrice);
+        rating += v;
+        if (v > 0 && b != null && b / v <= 1000) { pprSum += b / v; pprN++; }
+      }
+      let raxEarned = null;
+      if (sport !== 'ufc') {
+        try { const g = await db.prepare('SELECT SUM(rax) AS rax FROM gamelog WHERE sport=? AND season=? AND playerId=?')
+          .bind(sport, Number(season), pid).first(); raxEarned = g && g.rax != null ? Number(g.rax) : null; } catch (e) {}
+      }
+      let list = [];
+      try { list = JSON.parse((await env.RATEBOARD_KV.get(MRECENT_KEY)) || '[]') || []; } catch (e) {}
+      const k = `${sport}:${Number(season)}:${pid}`;
+      list = [{ k, sport, season: Number(season), playerId: pid, player: name, n: all.size,
+                rating: Math.round(rating * 10) / 10, raxEarned,
+                ppr: pprN ? Math.round(pprSum / pprN * 1000) / 1000 : null, at: Date.now() },
+              ...list.filter(x => x.k !== k)].slice(0, 100);
+      await env.RATEBOARD_KV.put(MRECENT_KEY, JSON.stringify(list));
+    } catch (e) {}
     return json({ ok: true, player: name, listings: all.size, ended: seen - all.size, unchanged: kept, removed: gone.length, pages, filter: param, tried });
   }
 

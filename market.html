@@ -115,6 +115,7 @@
       <option value="rating">Most rating listed</option>
       <option value="raxEarned">Most rax earned</option>
       <option value="player">Name</option>
+      <option value="at" id="sort-at" hidden>Last sweep</option>
     </select>
   </div>
 
@@ -125,6 +126,7 @@
       <th data-s="rating">Total rating</th>
       <th data-s="raxEarned">Rax earned</th>
       <th data-s="ppr">Avg rax / rating</th>
+      <th data-s="at" id="th-last" hidden>Last sweep</th>
     </tr></thead>
     <tbody id="rows"><tr><td colspan="5" class="note">Loading…</td></tr></tbody>
   </table>
@@ -286,8 +288,17 @@ const endsIn = iso => { const m = Math.round((Date.parse(iso) - Date.now()) / 60
 let data = null, status = null, pick = 'favs', rarF = '', sortK = 'n', shown = 60, open = null;
 let favSet = new Set(), me = null;
 const keyOf = r => `${r.sport}:${r.season}:${r.playerId}`;
-const COLS = 5;
-const msgRow = t => `<tr><td colspan="${COLS}" class="note">${t}</td></tr>`;
+const colsN = () => pick === 'recents' ? 6 : 5;
+const msgRow = t => `<tr><td colspan="${colsN()}" class="note">${t}</td></tr>`;
+// When each player was last pulled by hand (admin), so "last pulled" can be
+// shown and copied even when the season snapshot is older.
+let recentAt = {};
+const etTime = ms => new Date(ms).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' ET';
+async function loadRecents(){
+  try{ const d = await (await fetch('/api/rax?market=recents&t=' + Date.now())).json();
+    if(d && d.rows){ recentAt = Object.fromEntries(d.rows.map(r => [r.k, r.at])); return d; } }catch(e){}
+  return null;
+}
 
 async function loadFavs(){
   try{ const d = await (await fetch('/api/rax?market=favs')).json(); favSet = new Set(d.favs || []); return d; }
@@ -298,6 +309,7 @@ async function load(){
   $('#rows').innerHTML = msgRow('Loading…');
   try{
     if(pick === 'favs') data = await loadFavs();
+    else if(pick === 'recents') data = await loadRecents();
     else { const [sp, se] = pick.split(':'); data = await (await fetch(`/api/rax?market=view&sport=${sp}&season=${se}`)).json(); }
   }catch(e){ data = null; }
   if(!data){ $('#rows').innerHTML = msgRow('Could not load the market.'); return; }
@@ -305,13 +317,16 @@ async function load(){
   const opts = [];
   ((status && status.seasons) || []).forEach(x => { if(x.listings || x.live) opts.push(x.job); });
   (data.seasons || []).forEach(x => { const k = `${x.sport}:${x.season}`; if(!opts.includes(k)) opts.push(k); });
-  if(pick !== 'favs' && !opts.includes(pick)) opts.unshift(pick);
+  if(pick !== 'favs' && pick !== 'recents' && !opts.includes(pick)) opts.unshift(pick);
   $('#ss').innerHTML = `<option value="favs"${pick === 'favs' ? ' selected' : ''}>★ Favorites · ${favSet.size}</option>`
+    + (me && me.admin ? `<option value="recents"${pick === 'recents' ? ' selected' : ''}>⟳ Recents · ${Object.keys(recentAt).length}</option>` : '')
     + opts.map(k => { const [a, b] = k.split(':');
       const n = ((status && status.seasons) || []).find(x => x.job === k);
       const c = n && (n.live || n.listings);
       return `<option value="${k}"${k === pick ? ' selected' : ''}>${SPORT[a] || a} ${seasonLbl(a, b)}${c ? ` · ${c.toLocaleString()}` : ''}</option>`; }).join('');
+  $('#th-last').hidden = pick !== 'recents'; $('#sort-at').hidden = pick !== 'recents';
   if(pick === 'favs') $('#pulled').textContent = 'Your starred players, every sport';
+  else if(pick === 'recents') $('#pulled').textContent = 'Players you pulled one at a time, as of each pull';
   else {
     const now = status && status.pulling === pick;
     $('#pulled').textContent = (data.pulledAt ? `Snapshot from ${ago(data.pulledAt)}` : 'Not pulled yet')
@@ -336,12 +351,14 @@ function view(){
   const q = $('#q').value.trim().toLowerCase();
   let rows = (data.rows || []).map(r => {
     if(!rarF) return r;
+    if(pick === 'recents') return r;
     const x = r.rar[rarF]; if(!x) return pick === 'favs' ? Object.assign({}, r, { n: 0, rating: 0, ppr: null }) : null;
     return Object.assign({}, r, { n: x.n, minBuy: x.minBuy, ppr: x.ppr, rating: x.rating });
   }).filter(Boolean);
   if(q) rows = rows.filter(r => String(r.player || '').toLowerCase().includes(q));
   const minRax = Number($('#minrax').value);
   if(minRax > 0) rows = rows.filter(r => (r.raxEarned || 0) >= minRax);
+  if(pick !== 'recents' && sortK === 'at') sortK = 'n';
   const dir = sortK === 'ppr' || sortK === 'player' ? 1 : -1;
   rows.sort((a, b) => {
     const x = sortK === 'player' ? String(a.player || '') : (a[sortK] ?? (dir > 0 ? Infinity : -Infinity));
@@ -362,11 +379,11 @@ function draw(){
   $('#rows').innerHTML = rows.slice(0, shown).map(r => {
     const k = keyOf(r), isOpen = open === k, fav = favSet.has(k);
     const u = realPlayerUrl(r.sport, r.playerId, r.season), nm = esc(r.player || 'Player ' + r.playerId);
-    const sub = pick === 'favs' ? `<span class="sub">${SPORT[r.sport] || r.sport} ${seasonLbl(r.sport, r.season)}</span>` : '';
+    const sub = pick === 'favs' || pick === 'recents' ? `<span class="sub">${SPORT[r.sport] || r.sport} ${seasonLbl(r.sport, r.season)}</span>` : '';
     return `<tr class="p" data-k="${k}"><td><button class="star${fav ? ' on' : ''}" data-fav="${k}" aria-label="${fav ? 'Remove from' : 'Add to'} favourites" title="${fav ? 'Remove from' : 'Add to'} favourites">${fav ? '★' : '☆'}</button>${u ? `<a class="pl" href="${u}" target="_blank" rel="noopener">${nm}</a>` : nm}${sub}</td>
       <td>${fmt(r.n)}</td><td>${r.rating ? (Math.round(r.rating * 10) / 10).toLocaleString() : '–'}</td>
-      <td>${r.raxEarned != null ? fmt(r.raxEarned) : '–'}</td><td>${ppr3(r.ppr)}</td></tr>`
-      + (isOpen ? `<tr class="detail"><td colspan="${COLS}"><div class="inner" id="det">Loading listings…</div></td></tr>` : '');
+      <td>${r.raxEarned != null ? fmt(r.raxEarned) : '–'}</td><td>${ppr3(r.ppr)}</td>${pick === 'recents' ? `<td>${r.at ? etTime(r.at) : '–'}</td>` : ''}</tr>`
+      + (isOpen ? `<tr class="detail"><td colspan="${colsN()}"><div class="inner" id="det">Loading listings…</div></td></tr>` : '');
   }).join('');
   $('#more').hidden = rows.length <= shown;
   if(open != null) loadDetail(open);
@@ -450,6 +467,22 @@ function cheapestTo(listings, want){
   return { pick, cost: pick.reduce((a, l) => a + Number(l.buyNow), 0), rating: pick.reduce((a, l) => a + Number(l.value), 0) };
 }
 
+let lastPlan = [];
+// The plan as plain lines: the player, season and when it was last pulled,
+// then one line per card.
+function planText(){
+  if(!detKey || !lastPlan.length) return '';
+  const [sp, se, pid] = detKey.split(':');
+  const row = ((data && data.rows) || []).find(r => keyOf(r) === detKey) || {};
+  const at = recentAt[detKey] || (row.at) || (data && data.pulledAt ? Date.parse(data.pulledAt) : null);
+  const head = `${String(row.player || 'Player ' + pid).toUpperCase()} - ${SPORT[sp] || sp} ${seasonLbl(sp, se)} - last pulled ${at ? etTime(at) : 'unknown'}`;
+  return [head, ...lastPlan.map(l => `${auctionUrl(l.id) || l.id} - ${l.value == null ? '–' : Math.round(l.value * 10) / 10} - ${fmt(l.buyNow)} - ${ppr3(l.ppr)}`)].join('\n');
+}
+async function copyText(t){
+  try{ await navigator.clipboard.writeText(t); return true; }catch(e){}
+  try{ const a = document.createElement('textarea'); a.value = t; a.style.position = 'fixed'; a.style.opacity = '0';
+    document.body.appendChild(a); a.select(); const ok = document.execCommand('copy'); a.remove(); return ok; }catch(e){ return false; }
+}
 function planHtml(){
   const want = Number(goal);
   if(!goal) return '';
@@ -457,8 +490,10 @@ function planHtml(){
   if(!r) return '<p class="note">Enter a rating above zero.</p>';
   if(r.short) return `<p class="note">Only ${(Math.round(r.total * 10) / 10).toLocaleString()} rating is listed with a buy-now${rarF ? ' in this rarity' : ''}, short of ${want}.</p>`;
   const rows = r.pick.slice().sort((a, b) => a.ppr - b.ppr);
+  lastPlan = rows;
   return `<div class="plan"><b>${fmt(r.cost)} rax</b> for ${(Math.round(r.rating * 10) / 10)} rating · ${rows.length} card${rows.length === 1 ? '' : 's'}
       <span class="note">(${ppr3(r.cost / r.rating)} a point)</span>
+      <button type="button" data-copy="1" style="margin-left:8px">Copy list</button> <span class="note" id="copymsg"></span>
     <table><thead><tr><th style="cursor:default">Rarity</th><th style="cursor:default">Auction</th><th style="cursor:default">Buy now</th><th style="cursor:default">Boost</th><th style="cursor:default">Rax / rating</th><th style="cursor:default">Time left</th></tr></thead><tbody>`
     + rows.map(l => `<tr><td>${DET_CELL.rarity(l)}</td><td>${DET_CELL.auction(l)}</td><td>${DET_CELL.buyNow(l)}</td><td>${DET_CELL.value(l)}</td><td>${DET_CELL.ppr(l)}</td><td>${DET_CELL.endsAt(l)}</td></tr>`).join('')
     + '</tbody></table></div>';
@@ -497,6 +532,13 @@ $('#rows').addEventListener('input', e => {
 });
 
 $('#rows').addEventListener('click', async e => {
+  const c = e.target.closest('[data-copy]'); if(!c) return;
+  e.stopPropagation();
+  const ok = await copyText(planText());
+  const m = $('#copymsg'); if(m) m.textContent = ok ? `Copied ${lastPlan.length} line${lastPlan.length === 1 ? '' : 's'}` : 'Could not copy';
+});
+
+$('#rows').addEventListener('click', async e => {
   const b = e.target.closest('[data-pull]'); if(!b || !detKey) return;
   e.stopPropagation();
   const [sp, se, pid] = detKey.split(':');
@@ -505,7 +547,9 @@ $('#rows').addEventListener('click', async e => {
   const row = ((data && data.rows) || []).find(r => `${r.sport}:${r.season}:${r.playerId}` === detKey);
   try{ j = await (await fetch(`/api/rax?market=pullplayer&sport=${sp}&season=${se}&playerId=${pid}&player=${encodeURIComponent((row && row.player) || '')}`)).json(); }catch(e){ j = { error: 'Could not reach the board.' }; }
   if(j && j.error){ b.disabled = false; const m2 = $('#pullmsg'); if(m2) m2.textContent = j.error + (j.tried ? ' (' + j.tried.join('; ') + ')' : ''); return; }
-  await loadDetail(detKey, true);
+  recentAt[detKey] = Date.now();
+  if(pick === 'recents'){ await load(); }
+  else { await loadDetail(detKey, true); loadRecents().then(() => { const o = $('#ss option[value="recents"]'); if(o) o.textContent = `⟳ Recents · ${Object.keys(recentAt).length}`; }); }
   const m3 = $('#pullmsg'); if(m3) m3.textContent = `${j.listings} listing${j.listings === 1 ? '' : 's'} up right now, pulled just now${j.ended ? ` (${j.ended} ended or sold left out)` : ''}.`;
 });
 
@@ -653,7 +697,7 @@ async function start(){
   $('#main').hidden = false;
   if(me.admin){ $('#acc').hidden = false; $('#admintools').hidden = false; loadAccess(''); }
   else { $('#qpick').hidden = true; $('#qfront').hidden = true; }
-  await Promise.all([loadQueue(), loadFavs()]);
+  await Promise.all([loadQueue(), loadFavs(), me.admin ? loadRecents() : null]);
   await load();
   setInterval(loadQueue, 60000);
 }
