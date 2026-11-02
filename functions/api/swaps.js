@@ -535,7 +535,8 @@ export async function swapAccess(env, request) {
 // What a member (not an admin) may do: their own swap and nothing else, and
 // for OTD their own passes and games.
 const MEMBER_OPS = new Set(['me', 'save', 'scan', 'search', 'connect']);
-const OTD_OPS = new Set(['me', 'scan', 'games']);
+const OTD_OPS = new Set(['me', 'scan', 'games', 'boostplan']);
+const BOOST_OPS = new Set(['me', 'scan', 'boostplan']);
 
 /* ---- OTD: saved game lists ------------------------------------------------
    Every player's [MM-DD, rax] list for a whole sport-season, built once from
@@ -558,6 +559,42 @@ export async function otdSeason(env, db, sp, se, force) {
   return games;
 }
 
+/* Boosts: current season and the one before, per sport (Real's numbering). */
+const BOOST_SEASON = { ncaam: [2027, 2026], ncaaf: [2026, 2025], nfl: [2026, 2025] };
+// [purple, red, orange] boosters by mode, best projected earners first.
+const BOOST_MODES = { heavy: [5, 10, 999], balanced: [3, 7, 999], saver: [1, 3, 6] };
+const ESPN_PATH = { ncaam: 'basketball/mens-college-basketball', ncaaf: 'football/college-football', nfl: 'football/nfl' };
+const ESPN_GROUP = { ncaam: '&groups=50', ncaaf: '&groups=80', nfl: '' };
+// Where Real's team code differs from ESPN's.
+const BOOST_ALIAS = { WISC: 'WIS', NCST: 'NCSU', BUT: 'BTLR', BSU: 'BOIS', AFA: 'AF', BUFF: 'BUF', HP: 'HPU', CHIC: 'CHST',
+  CAMP: 'CAM', CLEV: 'CLE', ALB: 'UALB', IUPU: 'IUIN', ULL: 'UL', PRE: 'PRES', UALR: 'LR', SCUP: 'UPST', TAMC: 'AMCC',
+  HBU: 'HCU', NIAG: 'NIA', DXST: 'UTU', IND: 'IU', JVST: 'JXST', WAS: 'WSH' };
+const boostAlias = (sp, t) => BOOST_ALIAS[t] || t;
+async function boostSchedule(env, sp, day) {
+  const key = `boostsched_v1_${sp}_${day}`;
+  try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c && Date.now() - c.at < 3 * 3600000) return c; } catch (e) {}
+  let d;
+  try {
+    const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${ESPN_PATH[sp]}/scoreboard?dates=${day.replace(/-/g, '')}&limit=500${ESPN_GROUP[sp]}`);
+    if (!r.ok) return { error: 'Could not load the schedule (' + r.status + ').' };
+    d = await r.json();
+  } catch (e) { return { error: 'Could not load the schedule.' }; }
+  const teams = {};
+  let games = 0;
+  for (const ev of (d.events || [])) {
+    const c = (ev.competitions || [])[0]; if (!c) continue;
+    const cs = c.competitors || []; if (cs.length !== 2) continue;
+    games++;
+    for (const [i, x] of cs.entries()) {
+      const t = x.team || {}, o = (cs[1 - i] || {}).team || {};
+      if (t.abbreviation) teams[t.abbreviation] = { opp: o.shortDisplayName || o.abbreviation || '', home: x.homeAway === 'home', at: ev.date || null };
+    }
+  }
+  const out = { at: Date.now(), games, teams };
+  try { await env.RATEBOARD_KV.put(key, JSON.stringify(out), { expirationTtl: 86400 }); } catch (e) {}
+  return out;
+}
+
 const SCAN_EVERY_KEY = 'swap_scan_every_v1';
 async function scanEvery(env) {
   let v = null; try { v = Number(await env.RATEBOARD_KV.get(SCAN_EVERY_KEY)); } catch (e) {}
@@ -575,8 +612,10 @@ async function handle({ request, env, waitUntil }) {
   const db = env.RATEBOARD_DB;
   const op = url.searchParams.get('op') || '';
   const acc = await swapAccess(env, request);
-  if (!acc.ok) return forbidden(acc.who ? 'Your account does not have this page yet.' : 'Sign in on the board first.');
-  if (!acc.admin && !((acc.swaps && MEMBER_OPS.has(op)) || (acc.otd && OTD_OPS.has(op)))) return forbidden('Your account does not have this.');
+  // Boosts (BETA) is open to every signed-in member; its calls say page=boosts.
+  const boostCall = url.searchParams.get('page') === 'boosts' && BOOST_OPS.has(op) && !!acc.who;
+  if (!acc.ok && !boostCall) return forbidden(acc.who ? 'Your account does not have this page yet.' : 'Sign in on the board first.');
+  if (!acc.admin && !boostCall && !((acc.swaps && MEMBER_OPS.has(op)) || (acc.otd && OTD_OPS.has(op)))) return forbidden('Your account does not have this.');
   const me = acc.who;
   await ready(db);
   const auth = swapToken(env);
@@ -724,6 +763,68 @@ async function handle({ request, env, waitUntil }) {
     const v = Number(url.searchParams.get('set'));
     if (v === 15 || v === 180) { try { await env.RATEBOARD_KV.put(SCAN_EVERY_KEY, String(v)); } catch (e) {} }
     return json({ every: await scanEvery(env) });
+  }
+
+  /* ---- Boosts (BETA) ------------------------------------------------------
+     Which of a member's passes play on a day, what each should earn, and
+     which booster to put on it. Schedule from ESPN's public scoreboard (kept
+     3 hours), averages from the board's game log, the pass multiplier from
+     the member's last scan. */
+  if (op === 'boostplan') {
+    const sp = String(url.searchParams.get('sport') || '');
+    if (!BOOST_SEASON[sp]) return json({ error: 'Pick CBB, CFB or NFL.' }, 400);
+    const day = String(url.searchParams.get('date') || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return json({ error: 'Pick a date.' }, 400);
+    const mode = BOOST_MODES[url.searchParams.get('mode')] ? url.searchParams.get('mode') : 'balanced';
+    const [se, prev] = BOOST_SEASON[sp];
+    const u = await db.prepare('SELECT passes, scannedAt, rsUser FROM swap_users WHERE key=?').bind(me).first();
+    const passes = parse(u && u.passes, []).filter(p => p.sport === sp && Number(p.season) === se && p.kind !== 'team');
+    if (!u || !u.passes) return json({ error: 'Scan your passes first.' }, 400);
+    const sched = await boostSchedule(env, sp, day);
+    if (sched.error) return json({ error: sched.error }, 502);
+    // Each player's latest team and averages, this season and last.
+    const ids = [...new Set(passes.map(p => Number(p.id)).filter(Number.isFinite))];
+    const stat = async season => {
+      const m = new Map();
+      for (let i = 0; i < ids.length; i += 90) {
+        const part = ids.slice(i, i + 90);
+        try {
+          const r = await db.prepare(`SELECT playerId, team, MAX(day) AS last, COUNT(*) AS g, AVG(rax) AS avg, MAX(player) AS player
+            FROM gamelog WHERE sport=? AND season=? AND rax IS NOT NULL AND playerId IN (${part.map(() => '?').join(',')})
+            GROUP BY playerId`).bind(sp, season, ...part).all();
+          for (const x of (r.results || [])) m.set(Number(x.playerId), x);
+        } catch (e) {}
+      }
+      return m;
+    };
+    const cur = await stat(se), old = await stat(prev);
+    const rows = [], idle = [];
+    for (const p of passes) {
+      const c = cur.get(Number(p.id)), o = old.get(Number(p.id));
+      const team = (c && c.team) || (o && o.team) || null;
+      const g = team ? sched.teams[boostAlias(sp, team)] : null;
+      const name = p.name || (c && c.player) || (o && o.player) || 'Player ' + p.id;
+      if (!g) { idle.push({ name, team }); continue; }
+      const ca = c ? Number(c.avg) : null, oa = o ? Number(o.avg) : null, cg = c ? Number(c.g) : 0;
+      let proj = null, basis = '';
+      if (ca != null && cg >= 3) { proj = oa != null ? 0.7 * ca + 0.3 * oa : ca; basis = `${cg} games this season`; }
+      else if (ca != null && oa != null) { proj = 0.4 * ca + 0.6 * oa; basis = `${cg} game${cg === 1 ? '' : 's'} this season + last season`; }
+      else if (ca != null) { proj = ca; basis = `${cg} game${cg === 1 ? '' : 's'} this season`; }
+      else if (oa != null) { proj = oa; basis = 'last season'; }
+      const mult = Number(p.mult) || 1;
+      rows.push({ id: p.id, name, team, opp: g.opp, home: g.home, at: g.at, proj: proj == null ? null : Math.round(proj * 10) / 10,
+        mult, value: proj == null ? null : Math.round(proj * mult * 10) / 10, level: p.levelLabel || null, basis });
+    }
+    rows.sort((a, b) => (b.value ?? -1) - (a.value ?? -1));
+    const tiers = BOOST_MODES[mode];
+    let n = 0;
+    for (const r of rows) {
+      if (r.value == null) { r.boost = null; continue; }
+      r.boost = n < tiers[0] ? 'purple' : n < tiers[0] + tiers[1] ? 'red' : n < tiers[0] + tiers[1] + tiers[2] ? 'orange' : null;
+      n++;
+    }
+    return json({ sport: sp, season: se, date: day, mode, scannedAt: u.scannedAt || null, games: sched.games,
+      rows, notPlaying: idle.length, passes: passes.length });
   }
 
   if (op === 'matches') {

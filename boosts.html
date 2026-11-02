@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Boosts &amp; Buys</title>
+<style>
+  :root{--bg:#141925;--panel:#1d2433;--panel2:#232b3d;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;--ok:#5fbf7a;--bad:#e5484d;
+        --purple:#a77bf0;--red:#e5484d;--orange:#f0913a}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+  .wrap{max-width:900px;margin:0 auto;padding:16px}
+  header{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+  h1{font-size:20px;margin:0;font-weight:800}
+  .beta{background:var(--accent);color:#141925;font-weight:900;font-size:12px;letter-spacing:.12em;padding:3px 9px;border-radius:6px}
+  .betabar{background:rgba(232,163,61,.12);border:1px solid var(--accent);border-radius:10px;padding:8px 12px;margin-bottom:14px;font-size:13px}
+  a{color:var(--accent)}
+  .note{color:var(--mute);font-size:13px}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+  select,button,input{font:inherit;padding:8px 10px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
+  button{cursor:pointer}
+  .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .seg button{border:0;border-radius:0;background:var(--panel2);padding:8px 14px}
+  .seg button[aria-pressed="true"]{background:var(--accent);color:#141925;font-weight:800}
+  .go{background:var(--accent);color:#141925;border-color:var(--accent);font-weight:800}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+  th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}
+  th{color:var(--mute);font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}
+  .scroll{overflow-x:auto}
+  .b{display:inline-block;min-width:64px;text-align:center;padding:2px 8px;border-radius:6px;font-size:12px;font-weight:800;color:#10131b}
+  .b.purple{background:var(--purple)} .b.red{background:var(--red)} .b.orange{background:var(--orange)} .b.none{background:var(--line);color:var(--mute)}
+  .sum{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+  .sum span{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:5px 10px;font-size:13px}
+  td a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)}
+  .sub{display:block;color:var(--mute);font-size:11.5px}
+  .lock{max-width:460px;margin:12vh auto;text-align:center}
+</style>
+</head>
+<body>
+<div class="lock" id="lock" hidden><h1>Boosts &amp; Buys <span class="beta">BETA</span></h1><p class="note" id="lockmsg">Checking…</p><p><a href="/">Back to the board</a></p></div>
+<div class="wrap" id="main" hidden>
+  <header><h1>Boosts &amp; Buys</h1><span class="beta">BETA</span><a href="/" style="margin-left:auto">Back to the board</a></header>
+  <div class="betabar"><b>BETA</b> - this page is still in development. Projections are estimates from averages; double-check before you spend boosters.</div>
+
+  <div class="bar" style="margin-bottom:14px"><div class="seg" id="tab"><button data-t="boosts" aria-pressed="true">Boosts</button><button data-t="buys" aria-pressed="false">Buys</button></div></div>
+
+  <div id="t-boosts">
+    <section>
+      <div class="bar">
+        <label class="note">Day <select id="day"></select></label>
+        <label class="note">Sport <select id="sport"><option value="ncaam">CBB 2026-27</option><option value="ncaaf">CFB 2026</option><option value="nfl">NFL 2026</option></select></label>
+        <label class="note">Setting <select id="mode"><option value="balanced" selected>Balanced</option><option value="saver">Boost saver</option><option value="heavy">Earning heavy (not recommended)</option></select></label>
+        <button class="go" id="run">Show my boosts</button>
+      </div>
+      <div class="bar" style="margin-top:10px">
+        <input id="rsuser" placeholder="Real username" autocomplete="off" style="flex:0 1 170px">
+        <button id="scan">Scan my account</button>
+        <span class="note" id="scanmsg"></span>
+      </div>
+      <p class="note" id="modenote" style="margin:10px 0 0"></p>
+    </section>
+    <section id="out" hidden>
+      <div class="note" id="outhead"></div>
+      <div class="sum" id="sum"></div>
+      <div class="scroll"><table><thead><tr><th>Booster</th><th>Player</th><th>Game</th><th>Proj rax</th><th>Pass</th><th>With pass</th></tr></thead><tbody id="rows"></tbody></table></div>
+      <p class="note" id="foot"></p>
+    </section>
+  </div>
+
+  <div id="t-buys" hidden>
+    <section><h2 style="font-size:16px;margin:0 0 6px">Buys</h2><p class="note">Coming next.</p></section>
+  </div>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const api = async u => { try{ const r = await fetch(u); const j = await r.json().catch(() => ({})); if(!r.ok && !j.error) j.error = 'Error ' + r.status; return j; }catch(e){ return { error: 'Could not reach the board.' }; } };
+function hashidsEncode(salt, minLength, numbers){
+  const ALPHA0 = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890';
+  const SEPS0  = 'cfhistuCFHISTU';
+  const RATIO = 3.5, GUARD_DIV = 12;
+  const shuffle = (alpha, s) => {
+    if(!s.length) return alpha;
+    const t = alpha.slice();
+    for(let i = t.length - 1, v = 0, p = 0; i > 0; i--, v++){
+      v %= s.length;
+      const int = s[v].codePointAt(0);
+      p += int;
+      const j = (int + v + p) % i;
+      [t[i], t[j]] = [t[j], t[i]];
+    }
+    return t;
+  };
+  const toAlpha = (n, alpha) => {
+    const id = []; let v = n;
+    do { id.unshift(alpha[v % alpha.length]); v = Math.floor(v / alpha.length); } while(v > 0);
+    return id;
+  };
+  const saltC = Array.from(salt);
+  let alpha = [...new Set(Array.from(ALPHA0))];
+  let seps = Array.from(SEPS0).filter(c => alpha.includes(c));
+  alpha = alpha.filter(c => !seps.includes(c));
+  seps = shuffle(seps, saltC);
+  if(!seps.length || alpha.length / seps.length > RATIO){
+    let sl = Math.ceil(alpha.length / RATIO);
+    if(sl === 1) sl = 2;
+    if(sl > seps.length){
+      const diff = sl - seps.length;
+      seps = seps.concat(alpha.slice(0, diff));
+      alpha = alpha.slice(diff);
+    } else { seps = seps.slice(0, sl); }
+  }
+  alpha = shuffle(alpha, saltC);
+  const gc = Math.ceil(alpha.length / GUARD_DIV);
+  let guards;
+  if(alpha.length < 3){ guards = seps.slice(0, gc); seps = seps.slice(gc); }
+  else { guards = alpha.slice(0, gc); alpha = alpha.slice(gc); }
+  let hashInt = 0;
+  for(let i = 0; i < numbers.length; i++) hashInt += numbers[i] % (i + 100);
+  const lottery = alpha[hashInt % alpha.length];
+  let ret = [lottery];
+  for(let i = 0; i < numbers.length; i++){
+    let num = numbers[i];
+    const buf = [lottery].concat(saltC, alpha);
+    alpha = shuffle(alpha, buf.slice(0, alpha.length));
+    const last = toAlpha(num, alpha);
+    ret = ret.concat(last);
+    if(i + 1 < numbers.length){
+      num %= (last[0].codePointAt(0) + i);
+      ret.push(seps[num % seps.length]);
+    }
+  }
+  if(ret.length < minLength){
+    let gi = (hashInt + ret[0].codePointAt(0)) % guards.length;
+    ret.unshift(guards[gi]);
+    if(ret.length < minLength){
+      gi = (hashInt + ret[2].codePointAt(0)) % guards.length;
+      ret.push(guards[gi]);
+    }
+  }
+  const half = Math.floor(alpha.length / 2);
+  while(ret.length < minLength){
+    alpha = shuffle(alpha, alpha);
+    ret = alpha.slice(half).concat(ret, alpha.slice(0, half));
+    const ex = ret.length - minLength;
+    if(ex > 0) ret = ret.slice(ex / 2, ex / 2 + minLength);
+  }
+  return ret.join('');
+}
+/* [record type, sport code], each read out of a real link rather than
+   guessed. Fighters are type 3 where players are type 2 - the one place the
+   leading number is not the same. A sport with no entry here is left as
+   plain text: a wrong code can land on a real player of another sport, and a
+   link to the wrong person is worse than no link. */
+const REAL_SPORT = {
+  nba:    [2, 1],
+  nfl:    [2, 2],
+  ncaam:  [2, 3],
+  mlb:    [2, 4],
+  nhl:    [2, 7],
+  ufc:    [3, 10],
+  ncaaf:  [2, 11],
+  wnba:   [2, 12],
+  soccer: [2, 14],
+  golf:   [2, 15]
+};
+function realPlayerUrl(sport, playerId, season){
+  const kind = REAL_SPORT[String(sport || '').toLowerCase()];
+  const id = Number(playerId);
+  if(!kind || !Number.isFinite(id) || id <= 0) return null;
+  return 'https://www.realapp.com/' + hashidsEncode('routing', 11, [kind[0], kind[1], 0, id])
+         + (season ? '/' + season : '');
+}
+
+
+const MODE_NOTE = {
+  balanced: 'Balanced: purple on your top 3 projected earners, red on the next 7, orange on everyone else playing.',
+  saver: 'Boost saver: purple on your top 1, red on the next 3, orange on the next 6. Everyone else gets nothing, so boosters last.',
+  heavy: 'Earning heavy: purple on your top 5, red on the next 10, orange on everyone else. Burns boosters fast - not recommended.'
+};
+const LBL = { purple: 'Purple', red: 'Red', orange: 'Orange' };
+// Today and the next three days, in Eastern time (when games are listed).
+function days(){
+  const out = [];
+  for(let i = 0; i < 4; i++){
+    const d = new Date(Date.now() + i * 86400000);
+    const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+    const lbl = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' }).format(d);
+    out.push([ymd, (i === 0 ? 'Today · ' : i === 1 ? 'Tomorrow · ' : '') + lbl]);
+  }
+  return out;
+}
+$('#day').innerHTML = days().map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('');
+const drawMode = () => { $('#modenote').textContent = MODE_NOTE[$('#mode').value]; };
+$('#mode').addEventListener('change', () => { drawMode(); if(!$('#out').hidden) run(); });
+drawMode();
+try{ const s = JSON.parse(localStorage.getItem('boosts_pick_v1') || '{}'); if(s.sport) $('#sport').value = s.sport; if(s.mode){ $('#mode').value = s.mode; drawMode(); } }catch(e){}
+
+document.querySelectorAll('#tab button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('#tab button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  $('#t-boosts').hidden = b.dataset.t !== 'boosts'; $('#t-buys').hidden = b.dataset.t !== 'buys';
+}));
+
+const tm = iso => iso ? new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }) + ' ET' : '';
+async function run(){
+  const sp = $('#sport').value, day = $('#day').value, mode = $('#mode').value;
+  try{ localStorage.setItem('boosts_pick_v1', JSON.stringify({ sport: sp, mode })); }catch(e){}
+  $('#run').disabled = true; $('#out').hidden = false; $('#rows').innerHTML = ''; $('#sum').innerHTML = ''; $('#foot').textContent = '';
+  $('#outhead').textContent = 'Working it out…';
+  const j = await api(`/api/swaps?op=boostplan&page=boosts&sport=${sp}&date=${day}&mode=${mode}`);
+  $('#run').disabled = false;
+  if(j.error){ $('#outhead').textContent = j.error; return; }
+  const rows = j.rows || [];
+  const c = { purple: 0, red: 0, orange: 0 };
+  rows.forEach(r => { if(r.boost) c[r.boost]++; });
+  $('#outhead').textContent = `${$('#sport').selectedOptions[0].textContent} · ${$('#day').selectedOptions[0].textContent} · ${rows.length} of your ${j.passes} passes play (${j.games} games on the slate)`
+    + (j.scannedAt ? ` · passes from your scan ${new Date(j.scannedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : '');
+  $('#sum').innerHTML = ['purple','red','orange'].map(k => `<span><span class="b ${k}">${LBL[k]}</span> × ${c[k]}</span>`).join('');
+  if(!rows.length){ $('#rows').innerHTML = `<tr><td colspan="6" class="note" style="text-align:left">None of your ${j.passes ? '' : 'scanned '}passes for this sport play that day.</td></tr>`; return; }
+  $('#rows').innerHTML = rows.map(r => {
+    const u = realPlayerUrl(sp, r.id, j.season);
+    const nm = u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.name)}</a>` : esc(r.name);
+    return `<tr><td>${r.boost ? `<span class="b ${r.boost}">${LBL[r.boost]}</span>` : '<span class="b none">None</span>'}</td>
+      <td>${nm}<span class="sub">${esc(r.team || '')}${r.basis ? ' · ' + esc(r.basis) : ''}</span></td>
+      <td style="text-align:left">${r.home ? 'vs' : '@'} ${esc(r.opp)}<span class="sub">${tm(r.at)}</span></td>
+      <td>${r.proj == null ? '–' : r.proj}</td><td>${r.mult ? r.mult + 'x' : '–'}${r.level ? `<span class="sub">${esc(r.level)}</span>` : ''}</td>
+      <td><b>${r.value == null ? 'no data' : Math.round(r.value).toLocaleString()}</b></td></tr>`;
+  }).join('');
+  $('#foot').textContent = `Projected rax is the player's average per game (this season weighted ahead of last). "With pass" multiplies it by your pass level, which is what a booster adds to.`
+    + (j.notPlaying ? ` ${j.notPlaying} of your passes don't play that day.` : '');
+}
+$('#run').addEventListener('click', run);
+
+$('#scan').addEventListener('click', async () => {
+  const u = $('#rsuser').value.trim();
+  if(!u){ $('#scanmsg').textContent = 'Enter your Real username first.'; return; }
+  $('#scan').disabled = true; $('#scanmsg').textContent = 'Scanning your passes… about 20 seconds.';
+  const j = await api(`/api/swaps?op=scan&page=boosts&rsUser=${encodeURIComponent(u)}`);
+  $('#scan').disabled = false;
+  if(j.error){ $('#scanmsg').textContent = j.error; return; }
+  $('#scanmsg').textContent = j.cached ? j.note : `${(j.passes || []).length} passes found.`;
+});
+
+(async () => {
+  let me = await api('/api/swaps?op=me&page=boosts');
+  for(let i = 0; i < 2 && me.error && /sign in/i.test(me.error) && (()=>{try{return !!localStorage.getItem('ratebrd_token_v1')}catch(e){return false}})(); i++){
+    await new Promise(r => setTimeout(r, 1200 * (i + 1)));
+    me = await api('/api/swaps?op=me&page=boosts');
+  }
+  if(me.error){ $('#lock').hidden = false; $('#lockmsg').textContent = /sign in/i.test(me.error) ? 'Sign in on the board first, in this browser.' : me.error; return; }
+  $('#main').hidden = false;
+  $('#rsuser').value = (me.profile && me.profile.rsUser) || '';
+  if(!me.profile || !(me.profile.passes || []).length) $('#scanmsg').textContent = 'Scan your account first: enter your Real username and tap Scan my account.';
+  else $('#scanmsg').textContent = `${me.profile.passes.length} passes on file` + (me.profile.scannedAt ? ` (scanned ${new Date(me.profile.scannedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` : '') + '.';
+})();
+</script>
+</body>
+</html>
