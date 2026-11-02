@@ -3746,8 +3746,9 @@ async function handleGet({ request, env, waitUntil }) {
   if (url.searchParams.get('plays') === 'seasons') {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
-    await playsReady(db);
+    // The table set-up only runs when the list is actually rebuilt.
     const body = await savedList(env, waitUntil, 'list_playsseasons_v1', 6 * 3600000, async () => {
+      await playsReady(db);
       try {
         const r = await db.prepare(
           `SELECT sport, season, COUNT(*) AS plays, COUNT(DISTINCT gameId) AS games,
