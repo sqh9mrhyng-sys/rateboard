@@ -537,6 +537,27 @@ export async function swapAccess(env, request) {
 const MEMBER_OPS = new Set(['me', 'save', 'scan', 'search', 'connect']);
 const OTD_OPS = new Set(['me', 'scan', 'games']);
 
+/* ---- OTD: saved game lists ------------------------------------------------
+   Every player's [MM-DD, rax] list for a whole sport-season, built once from
+   the game log and kept in KV. A finished season never changes, so its copy
+   is kept for good; a season still being played is rebuilt once a day (after
+   the morning sweep has added the new games). */
+const OTD_LIVE = new Set(['nba:2027', 'ncaam:2027', 'nfl:2026', 'ncaaf:2026', 'nhl:2026', 'soccer:2026', 'golf:2026']);
+export async function otdSeason(env, db, sp, se, force) {
+  const job = `${sp}:${se}`, key = 'otdseason_v1_' + job;
+  let c = null;
+  if (!force) { try { c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); } catch (e) {} }
+  if (c && c.games && (!OTD_LIVE.has(job) || Date.now() - c.at < 24 * 3600000)) return c.games;
+  const games = {};
+  try {
+    const r = await db.prepare(`SELECT playerId, substr(day, 6, 5) AS d, rax FROM gamelog
+      WHERE sport=? AND season=? AND rax > 0`).bind(sp, se).all();
+    for (const x of (r.results || [])) (games[x.playerId] = games[x.playerId] || []).push([x.d, x.rax]);
+  } catch (e) { return (c && c.games) || {}; }
+  try { await env.RATEBOARD_KV.put(key, JSON.stringify({ at: Date.now(), games })); } catch (e) {}
+  return games;
+}
+
 // Any error comes back as a readable message rather than a bare 500.
 export async function onRequest(ctx) {
   try { return await handle(Object.assign({}, ctx, { env: watchEnv(ctx.env, ctx.request, ctx.waitUntil) })); }
@@ -604,14 +625,12 @@ async function handle({ request, env, waitUntil }) {
       }
       if (days && days.length) out[t.key] = days;
     }
+    // Each season's games come from a saved copy shared by everyone (see
+    // otdSeason), so a load reads KV instead of the game log.
     for (const [g, ids] of Object.entries(groups)) {
       const [sp, se] = g.split('|');
-      for (let i = 0; i < ids.length; i += 90) {
-        const r = await db.prepare(`SELECT playerId, substr(day, 6, 5) AS d, rax FROM gamelog
-          WHERE sport=? AND season=? AND playerId IN (${ids.slice(i, i + 90).filter(Number.isFinite).join(',') || 0}) AND rax > 0`)
-          .bind(sp, Number(se)).all();
-        for (const x of (r.results || [])) (out[`${sp}:${se}:${x.playerId}`] = out[`${sp}:${se}:${x.playerId}`] || []).push([x.d, x.rax]);
-      }
+      const games = await otdSeason(env, db, sp, Number(se));
+      for (const id of ids) { const v = games[id]; if (v && v.length) out[`${sp}:${se}:${id}`] = v; }
     }
     return json({ passes, games: out });
   }

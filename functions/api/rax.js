@@ -594,7 +594,9 @@ async function marketNext(db, st) {
   if (!st.roundQ.length) {
     const cur = MARKET_CURRENT.filter(j => valid.has(j));
     const old = marketSeasons().filter(j => !cur.includes(j)).map(j => m.get(j));
-    const withCards = old.filter(r => r.listings).sort((a, b) => a.doneAt - b.doneAt)
+    // Old seasons barely move, so each is pulled at most once a day; the
+    // current seasons - what Pro members watch - go round every lap.
+    const withCards = old.filter(r => r.listings && Date.now() - (r.doneAt || 0) > 24 * 3600000).sort((a, b) => a.doneAt - b.doneAt)
       .slice(0, MARKET_OLD_PER_ROUND).map(r => r.job);
     const emptyDue = old.filter(r => !r.listings && Date.now() - r.doneAt > MARKET_EMPTY_HOURS * 3600000).map(r => r.job);
     st.roundQ = [...cur, ...withCards, ...emptyDue];
@@ -5112,8 +5114,13 @@ async function handleGet({ request, env, waitUntil }) {
       // to be collected at all matters more than topping up one that is
       // finished, so the loop runs to the end first and these only happen if
       // nothing is left to collect.
+      /* Owner counts: daily for seasons still being played, weekly for
+         finished ones - their counts barely move, and a daily row for every
+         player of every old season was a steady stream of writes. */
       const own = await kv(`owners_${sp}_${se}`);
-      if (!own || own.day !== today || !own.done) {
+      const ownFresh = own && own.done && (own.day === today
+        || (!GL_LIVE.has(`${sp}:${se}`) && String(own.day || '') >= weekAgo));
+      if (!ownFresh) {
         if (!ownersJob && !setAside(sp, se, 'owners')) ownersJob = [sp, se, (own && own.seen) || 0];
         continue;
       }
@@ -5432,10 +5439,23 @@ async function handleGet({ request, env, waitUntil }) {
     // have ended or sold, which the page (rightly) doesn't show.
     const seen = all.size;
     for (const [k, r] of all) if (!(r.endsAt && r.endsAt > nowIso) || (r.status && r.status !== 'open')) all.delete(k);
-    const stmts = [db.prepare(`DELETE FROM market_v2 WHERE sport=? AND season=? AND ${MKEY}=? AND endsAt > ?`)
-      .bind(sport, Number(season), pid, nowIso)];
-    let name = null;
+    /* Only what changed is written: listings that are gone are deleted, new
+       or changed ones saved, and unchanged ones left alone. */
+    const prev = (await db.prepare(`SELECT id, status, minBid, buyNow, curBid, bids, endsAt FROM market_v2
+      WHERE sport=? AND season=? AND ${MKEY}=? AND endsAt > ?`).bind(sport, Number(season), pid, nowIso).all()).results || [];
+    const prevBy = new Map(prev.map(x => [String(x.id), x]));
+    const gone = prev.map(x => String(x.id)).filter(i => !all.has(i));
+    const stmts = [];
+    for (let k = 0; k < gone.length; k += 90) {
+      const part = gone.slice(k, k + 90);
+      stmts.push(db.prepare(`DELETE FROM market_v2 WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part));
+    }
+    const eq = (a, b) => (a == null ? null : Number(a)) === (b == null ? null : Number(b));
+    let name = null, kept = 0;
     for (const r of all.values()) {
+      const h = prevBy.get(String(r.id));
+      if (h && h.status === (r.status || null) && eq(h.minBid, numOr(r.minBidPrice)) && eq(h.buyNow, numOr(r.buyNowPrice))
+          && eq(h.curBid, numOr(r.currentBidAmount)) && eq(h.bids, numOr(r.numBids)) && h.endsAt === (r.endsAt || null)) { kept++; continue; }
       const c = r.card || {}, pp = c.primaryPlayer || {};
       const tm = c.team || {};
       const who = String((pp.firstName && pp.lastName ? `${pp.firstName} ${pp.lastName}` : '') || pp.fullName || pp.displayName || pp.name
@@ -5450,9 +5470,10 @@ async function handleGet({ request, env, waitUntil }) {
         r.userId != null ? String(r.userId) : null, r.cardId != null ? String(r.cardId) : null,
         r.createdAt || null, r.endsAt || null, now, who, numOr(r.teamId ?? c.teamId)));
     }
+    name = name || pname || null;
     for (let k = 0; k < stmts.length; k += 50) await db.batch(stmts.slice(k, k + 50));
     try { await env.RATEBOARD_KV.delete((sport === 'ufc' ? 'msnap_v2_' : 'msnap_v1_') + `${sport}:${Number(season)}`); } catch (e) {}
-    return json({ ok: true, player: name, listings: all.size, ended: seen - all.size, pages, filter: param, tried });
+    return json({ ok: true, player: name, listings: all.size, ended: seen - all.size, unchanged: kept, removed: gone.length, pages, filter: param, tried });
   }
 
   /* Admin: why UFC comes up short. Asks Real, on the bot account, how many
@@ -6111,6 +6132,40 @@ async function handleGet({ request, env, waitUntil }) {
                          'seasonType','rax','rating','min','pts','reb','ast','stl','blk','tov','pf',
                          'plusMinus','fg','fg3','ft','tsPct','fantasyPts','comments','stats','playerId'];
 
+      /* Saved views. The common "by player" question - any seasons, a name,
+         team or conference, minimum games, owner and rax ranges, any sort -
+         is answered from each season's saved player table (glSnap) instead of
+         grouping the game log again. Only filters that work game by game
+         (dates, opponent, home/away, result, regular/post) still read the
+         game log, and those are cached like before. */
+      const gameLevel = ['opponent', 'seasonType', 'homeAway', 'result', 'from', 'to', 'fromMD', 'toMD']
+        .some(k => P(k)) || P('playedOnly') === '1';
+      if (mode === 'players' && !asCsv && !gameLevel) {
+        try {
+          let all = [];
+          for (const [sp, se] of pairs) all = all.concat(await glSnap(env, db, sp, se, waitUntil));
+          const q = P('q').toLowerCase(), team = P('team'), conf = P('conference');
+          const num = k => /^\d+$/.test(P(k)) ? Number(P(k)) : null;
+          const minO = num('minOwners'), maxO = num('maxOwners'), minR = num('minRax'), maxR = num('maxRax');
+          let rows = all.filter(r => (!q || String(r.player || '').toLowerCase().includes(q))
+            && (!team || r.team === team) && (!conf || r.conference === conf)
+            && (Number(r.games) || 0) >= minGames
+            && (minO == null || (r.owners != null && r.owners >= minO)) && (maxO == null || (r.owners != null && r.owners <= maxO))
+            && (minR == null || (r.rax != null && r.rax >= minR)) && (maxR == null || (r.rax != null && r.rax <= maxR)));
+          const txt = ['player', 'team', 'sport', 'conference'].includes(sort);
+          const sgn = dir === 'ASC' ? 1 : -1;
+          rows.sort((a, b) => {
+            const av = a[sort], bv = b[sort];
+            if (txt) return sgn * String(av == null ? '' : av).localeCompare(String(bv == null ? '' : bv));
+            const an = av == null ? -Infinity : Number(av), bn = bv == null ? -Infinity : Number(bv);
+            return an === bn ? 0 : sgn * (an - bn);
+          });
+          return json({ mode, sort, dir: dir.toLowerCase(), limit, offset,
+                        pairs: pairs.map(([x, y]) => `${x}:${y}`), total: rows.length, saved: true,
+                        columns: PLAYER_COLS, rows: rows.slice(offset, offset + limit) });
+        } catch (e) { /* fall through to the live query */ }
+      }
+
       // One row per player per season - a player in three seasons is three
       // rows, each with that season's own figures. Owners come from the newest
       // daily snapshot for that same sport and season.
@@ -6574,9 +6629,15 @@ async function handleGet({ request, env, waitUntil }) {
 
           const place = '(' + GAMELOG_FEED_COLS.map(() => '?').join(',') + ')';
           let n = 0, rowsWritten = 0, firstError = '';
+          /* A season walked in full once only needs its newest games on the
+             scheduled re-walks: each player's last dozen instead of all 200.
+             The first walk of a season still reads everything. */
+          const WALKED_KEY = `gamelog_walked_${sport}_${season}`;
+          let walked = null; try { walked = await env.RATEBOARD_KV.get(WALKED_KEY); } catch (e) {}
+          const feedN = walked ? 12 : 200;
           for (const id of todo) {
             try {
-              const d = await rsGet(feedUrl(id, 200), auth);
+              const d = await rsGet(feedUrl(id, feedN), auth);
               const bs = (d && d.playerBoxScores) || [];
               const rows = bs.filter(b => b && b.gameId != null).map(b => gamelogRow(sport, season, b));
               // One statement per row: D1 caps how many values a single query
@@ -6613,6 +6674,7 @@ async function handleGet({ request, env, waitUntil }) {
 
           const have = store.ids.filter(id => done[id]).length;
           const left = store.ids.length - have;
+          if (!left) { try { await env.RATEBOARD_KV.put(WALKED_KEY, new Date().toISOString()); } catch (e) {} }
           await send(`\ncollected ${n} players this run, ${rowsWritten} game rows.\n`);
           await send(left > 0 ? `${have} of ${store.ids.length} players done - ${left} to go.\n`
                               : `all ${store.ids.length} players done.\n`);
@@ -7100,6 +7162,56 @@ async function marketMember(env, url, who, waitUntil) {
                 listings: out.reduce((a, r) => a + r.n, 0), players: out.length });
 }
 
+
+/* ---- game data: saved player tables ---------------------------------------
+   One row per player for a sport-season - games, rax, rating, averages and
+   owners - built from the game log once and kept in KV. A season still being
+   played is rebuilt every 12 hours (after the morning sweep), a finished one
+   once a week (only its owner counts still move). A stale copy is served while
+   one request rebuilds it in the background. */
+const GL_LIVE = new Set(['nba:2027', 'ncaam:2027', 'nfl:2026', 'ncaaf:2026', 'nhl:2026', 'soccer:2026', 'golf:2026', 'wnba:2026', 'ufc:2023']);
+async function glSnapBuild(env, db, sp, se) {
+  const day = async (extra) => {
+    try { const r = await db.prepare(`SELECT MAX(day) AS d FROM owners WHERE sport=? AND season=?${extra}`).bind(sp, se).first();
+      return r && /^\d{4}-\d{2}-\d{2}$/.test(String(r.d || '')) ? String(r.d) : null; } catch (e) { return null; }
+  };
+  const now = await day(''), wk = await day(" AND day <= date('now', '-7 day')");
+  const own = d => d ? `(SELECT ow.owners FROM owners ow WHERE ow.sport = gamelog.sport AND ow.season = gamelog.season
+      AND ow.playerId = gamelog.playerId AND ow.day = '${d}')` : 'NULL';
+  const r = await db.prepare(`
+    SELECT playerId, sport, season, MAX(player) AS player, MAX(team) AS team, MAX(conference) AS conference, COUNT(*) AS games,
+           ${own(now)} AS owners, ${own(wk)} AS ownersWeekAgo, ${own(now)} - ${own(wk)} AS ownersChange,
+           SUM(rax) AS rax, ROUND(AVG(rax), 2) AS raxPerGame, MAX(rax) AS bestRax,
+           ROUND(SUM(rating), 2) AS rating, ROUND(AVG(rating), 2) AS ratingPerGame,
+           ROUND(AVG(min), 1) AS min, ROUND(AVG(pts), 1) AS pts, ROUND(AVG(reb), 1) AS reb,
+           ROUND(AVG(ast), 1) AS ast, ROUND(AVG(stl), 1) AS stl, ROUND(AVG(blk), 1) AS blk,
+           ROUND(AVG(tov), 1) AS tov, ROUND(AVG(fantasyPts), 1) AS fantasyPts
+      FROM gamelog WHERE sport = ? AND season = ? GROUP BY playerId, sport, season`).bind(sp, se).all();
+  return (r && r.results) || [];
+}
+async function glSnap(env, db, sp, se, waitUntil) {
+  const job = `${sp}:${se}`, KEY = 'glsnap_v1_' + job, LOCK = 'glsnap_lock_' + job;
+  let c = null;
+  try { c = JSON.parse((await env.RATEBOARD_KV.get(KEY)) || 'null'); } catch (e) {}
+  const save = async () => {
+    const rows = await glSnapBuild(env, db, sp, se);
+    try { await env.RATEBOARD_KV.put(KEY, JSON.stringify({ at: Date.now(), rows })); } catch (e) {}
+    try { await env.RATEBOARD_KV.delete(LOCK); } catch (e) {}
+    return rows;
+  };
+  if (c && c.rows) {
+    const age = Date.now() - c.at, ttl = GL_LIVE.has(job) ? 12 * 3600000 : 7 * 86400000;
+    if (age > ttl && waitUntil) {
+      let locked = null; try { locked = await env.RATEBOARD_KV.get(LOCK); } catch (e) {}
+      if (!locked) {
+        try { await env.RATEBOARD_KV.put(LOCK, '1', { expirationTtl: 600 }); } catch (e) {}
+        waitUntil(save().catch(() => {}));
+      }
+    }
+    return c.rows;
+  }
+  return await save();
+}
 
 /* ---- market view snapshots ------------------------------------------------
    Grouping a season's listings and adding each player's rax is dozens of
