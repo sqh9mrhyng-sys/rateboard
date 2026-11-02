@@ -5205,6 +5205,53 @@ async function cbbPanel(){
   let loadSeq = 0, loadAbort = null, paintTimer = 0;
   const RENDER_CHUNK = 20;
 
+  /* Finished seasons' "by player" tables ship with the site as plain files
+     (data/gl), which Cloudflare serves free and without touching the
+     database. When every season picked is one of those and no game-by-game
+     filter is on, the table is filtered, sorted and paged right here. */
+  let glStatic = null;
+  const glFiles = new Map();
+  async function glStaticSet(){
+    if(glStatic) return glStatic;
+    try { const j = await (await fetch('/data/gl/index.json')).json(); glStatic = new Set((j.seasons || []).map(x => String(x).replace(':', '|'))); }
+    catch(e){ glStatic = new Set(); }
+    return glStatic;
+  }
+  function glFile(pair){
+    if(!glFiles.has(pair)){
+      const [sp, se] = pair.split('|');
+      glFiles.set(pair, fetch(`/data/gl/p-${sp}-${se}.json`).then(r => { if(!r.ok) throw new Error('missing'); return r.json(); })
+        .then(j => j.rows.map(a => Object.fromEntries(j.cols.map((c, i) => [c, a[i]]))))
+        .catch(e => { glFiles.delete(pair); throw e; }));
+    }
+    return glFiles.get(pair);
+  }
+  async function staticQuery(){
+    if(st.mode !== 'players') return null;
+    if(st.seasonType || st.homeAway || st.result || st.playedOnly || st.from || st.to) return null;
+    const set = await glStaticSet();
+    if(!st.pairs.length || !st.pairs.every(p => set.has(p))) return null;
+    let all = [];
+    for(const p of st.pairs) all = all.concat(await glFile(p));
+    const q = String(st.q || '').toLowerCase();
+    const n = v => /^\d+$/.test(String(v || '')) ? Number(v) : null;
+    const mg = n(st.minGames) || 0, minO = n(st.minOwners), maxO = n(st.maxOwners), minR = n(st.minRax), maxR = n(st.maxRax);
+    const rows = all.filter(r => (!q || String(r.player || '').toLowerCase().includes(q))
+      && (!st.team || r.team === st.team) && (!st.conference || r.conference === st.conference)
+      && (Number(r.games) || 0) >= mg
+      && (minO == null || (r.owners != null && r.owners >= minO)) && (maxO == null || (r.owners != null && r.owners <= maxO))
+      && (minR == null || (r.rax != null && r.rax >= minR)) && (maxR == null || (r.rax != null && r.rax <= maxR)));
+    const k = st.sort || 'rax', sgn = st.dir === 'asc' ? 1 : -1;
+    const txt = ['player', 'team', 'sport', 'conference'].includes(k);
+    rows.sort((a, b) => {
+      const av = a[k], bv = b[k];
+      if(txt) return sgn * String(av == null ? '' : av).localeCompare(String(bv == null ? '' : bv));
+      const an = av == null ? -Infinity : Number(av), bn = bv == null ? -Infinity : Number(bv);
+      return an === bn ? 0 : sgn * (an - bn);
+    });
+    return { rows: rows.slice(st.offset, st.offset + st.limit), total: rows.length, saved: true };
+  }
+
   async function load(){
     if(!st.pairs.length){
       $b('#cb-count').textContent = 'Pick at least one season.';
@@ -5218,8 +5265,10 @@ async function cbbPanel(){
     loadAbort = new AbortController();
     if(paintTimer){ cancelAnimationFrame(paintTimer); paintTimer = 0; }
     $b('#cb-count').textContent = 'Loading…';
-    let d;
-    try { d = await (await fetch(qs(), { signal: loadAbort.signal })).json(); }
+    let d = null;
+    try { d = await staticQuery(); } catch(e){ d = null; }
+    if(seq !== loadSeq) return;
+    if(!d) try { d = await (await fetch(qs(), { signal: loadAbort.signal })).json(); }
     catch(e){
       if(e && e.name === 'AbortError') return;      // a newer setting took over
       if(seq === loadSeq) $b('#cb-count').textContent = 'Could not reach the server.';
