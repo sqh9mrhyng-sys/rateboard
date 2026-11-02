@@ -588,10 +588,10 @@
       <div class="brand"><span class="pip"></span> Rate Board</div>
       <!-- Which page you are on. On a phone this fills the gap that sat empty
            between the name and the sport. -->
-      <div class="pagepick hide" id="pagepick">
+      <div class="pagepick" id="pagepick">
         <select id="pagesel" aria-label="Page" class="sr-sel" tabindex="-1">
           <option value="board">Board</option>
-          <option value="cbb">Game data</option>
+          <option value="boosts">Boosts/Buys (beta)</option>
         </select>
         <button type="button" id="pagebtn" aria-haspopup="menu" aria-expanded="false"><span id="pagebtn-t">Board</span><span class="caret">&#9662;</span></button>
 
@@ -913,7 +913,7 @@ function applyGameDataVisibility(){
   const otdOn = typeof reallyAdmin === 'function' && reallyAdmin();     // OTD: admin only
   const swapsOn = otdOn || swapsAccess;
   // Boosts & Buys (BETA): everyone signed in.
-  const boostsOn = (() => { try{ return !!localStorage.getItem('ratebrd_token_v1'); }catch(e){ return false; } })();   // everyone signed in
+  const boostsOn = true;   // everyone - the page itself asks them to sign in if they haven't
   if(pick) pick.classList.toggle('hide', !canSeePackData() && !marketAccess && !swapsOn && !boostsOn);
   if(sel){
     // Options are added and taken away rather than hidden: a hidden option
