@@ -567,7 +567,7 @@ const BOOST_SEASON = { ncaam: [2027, 2026], ncaaf: [2026, 2025], nfl: [2026, 202
    2-3% of games, Epic the top 10%, Rare the top 25%. Boost saver raises the
    bar 15%, earning heavy lowers it 15%. */
 const BOOST_BARS = { ncaam: [10.5, 9, 7.5], ncaaf: [22, 17, 12], nfl: [16, 12, 8.5] };
-const BOOST_MODES = { heavy: 0.85, balanced: 1, saver: 1.15 };
+const BOOST_MODES = { balanced: 1 };
 const ESPN_PATH = { ncaam: 'basketball/mens-college-basketball', ncaaf: 'football/college-football', nfl: 'football/nfl' };
 const ESPN_GROUP = { ncaam: '&groups=50', ncaaf: '&groups=80', nfl: '' };
 // Where Real's team code differs from ESPN's.
@@ -751,6 +751,10 @@ async function boostInventoryAll(env, tok, hashId, fresh) {
    second, earning heavy the third. */
 const STAT_BARS = { PTS: [15.8, 12.7, 9.5], REB: [6.3, 4.9, 3.6], AST: [3.8, 2.4, 1.6], STL: [1.4, 1.1, 0.8], BLK: [1.0, 0.6, 0.3], '3PM': [2.5, 1.8, 1.0] };
 const MODE_BAR = { saver: 0, balanced: 1, heavy: 2 };
+/* Dennis's CBB top 175 for 2026-27 (player id -> rank), used for newcomers
+   with no college games: on the list they get a projection from their rank;
+   off it they're listed below with "not enough data". */
+const CBB_TOP175 = {"4711255":1,"5187600":2,"5142731":3,"5080489":4,"5174657":5,"5106275":6,"5044426":7,"5103630":8,"5142609":9,"4858604":10,"5060709":11,"5095152":12,"5054083":13,"5142722":14,"5142715":16,"5311832":17,"5101833":18,"4869764":19,"4873209":20,"5164368":21,"5142729":22,"4848637":23,"4684634":24,"5174954":25,"5210407":26,"5174971":27,"5311846":28,"5196916":29,"4894445":30,"5239838":31,"5101809":32,"4873184":33,"5254159":34,"4712832":35,"5175007":36,"5177233":37,"5174955":38,"5238195":39,"5144105":40,"5311896":42,"5144495":43,"5143604":44,"4873093":45,"5144108":46,"5060732":47,"5241360":48,"5101623":49,"4873219":50,"5101849":51,"5347090":52,"4845361":53,"4684276":54,"5060700":55,"5149078":56,"4711256":57,"5165276":58,"5060705":59,"5150404":60,"5060685":61,"5312258":62,"5105534":63,"5174952":64,"4869770":65,"5311991":66,"4872740":67,"4683680":68,"4845373":69,"5238184":70,"5093142":71,"5214642":72,"5174609":73,"5105527":74,"4684270":75,"5175021":76,"4683769":77,"5144086":78,"5311928":79,"5144479":80,"5217192":81,"5082704":82,"4895783":83,"4873089":84,"5079838":85,"5239571":86,"5174665":87,"5037881":88,"5105552":89,"5238203":90,"5313054":91,"4848619":92,"5238207":93,"5060712":94,"5311844":95,"5311829":96,"5240980":97,"5240529":98,"4683944":99,"5311502":100,"5177122":101,"4869777":102,"5315585":103,"5258494":104,"5177275":105,"5107312":106,"5185443":107,"5311903":108,"5142356":109,"5248302":110,"5041949":111,"5174291":112,"5176310":113,"5101766":114,"5041958":115,"5105577":116,"4838704":117,"5175952":118,"5060696":119,"5292602":120,"4873086":121,"5196913":122,"5313012":123,"5311967":124,"5175058":125,"5313560":126,"5176232":127,"5176359":128,"5314225":129,"5041954":130,"5287474":131,"5176309":132,"4873111":133,"4895776":134,"5144166":135,"5226071":136,"5196931":137,"5217196":138,"5108093":139,"5152763":140,"5060730":141,"4711400":142,"5144097":143,"4685687":144,"5210802":145,"4873181":146,"5196877":147,"5177211":148,"4685654":149,"4873183":150,"5103631":151,"5242127":152,"5176481":153,"5095154":154,"5221321":155,"5238200":156,"5214635":157,"4895753":158,"5101798":159,"5176315":160,"5177227":161,"5142719":162,"5107804":163,"5106280":164,"5144554":165,"5144124":166,"5142709":167,"5307569":168,"5142723":169,"5177188":170,"5314722":171,"5105569":172,"5240539":173,"5174935":174,"5454840":175};
 const FRESH_LINE = { PTS: 11, REB: 4.5, AST: 2, STL: 0.9, BLK: 0.5, '3PM': 1.3 };
 const STAT_COL = { PTS: 'pts', REB: 'reb', AST: 'ast', STL: 'stl', BLK: 'blk' };
 const statKey = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -1113,13 +1117,14 @@ async function handle({ request, env, waitUntil }) {
       else if (oa != null) { proj = oa; basis = 'last season (regular season)'; }
       // No college games at all: a freshman (or new arrival) estimate from how
       // many people own him on Real.
-      let fresh = false;
+      let fresh = false, noData = false;
       if (proj == null) {
-        const ow = ownersBy.get(Number(p.id));
-        const tiers = sp === 'ncaam' ? [[8000, 11], [4000, 10], [2000, 9], [800, 8], [300, 7], [0, 6]]
-          : sp === 'ncaaf' ? [[8000, 20], [4000, 16], [2000, 13], [800, 10], [0, 7]] : [[8000, 14], [4000, 11], [2000, 9], [0, 6]];
-        proj = (tiers.find(t => (ow || 0) >= t[0]) || [0, 6])[1]; fresh = true;
-        basis = ow != null ? `newcomer estimate (${ow.toLocaleString()} owners)` : 'newcomer estimate';
+        const rk = sp === 'ncaam' ? CBB_TOP175[p.id] : null;
+        if (rk) {
+          // Rank 1 is about 12.5 rax a game, falling to about 6.5 at 175 (freshmen run a little under returners).
+          proj = Math.round(Math.max(6.5, 12.5 - 0.035 * (rk - 1)) * 10) / 10; fresh = true;
+          basis = `freshman · #${rk} on the top 175`;
+        } else { noData = true; basis = 'not enough data'; }
       }
       if (proj != null && mf !== 1) basis += ` · matchup x${mf}`;
       const flags = [];
@@ -1164,9 +1169,9 @@ async function handle({ request, env, waitUntil }) {
       }
       rows.push({ id: p.id, name, team, pos, opp: g.opp, home: g.home, at: g.at, exp,
         avg: ca == null ? null : Math.round(ca * 10) / 10, games: cg, avgLast: oa == null ? null : Math.round(oa * 10) / 10,
-        proj: proj == null ? null : Math.round(proj * k * mf * 10) / 10, basis, flags, skip, fresh });
+        proj: proj == null ? null : Math.round(proj * k * mf * 10) / 10, basis, flags, skip, fresh, noData });
     }
-    rows.sort((a, b) => (a.skip - b.skip) || ((b.proj ?? -1) - (a.proj ?? -1)));
+    rows.sort((a, b) => (a.skip - b.skip) || ((a.noData ? 1 : 0) - (b.noData ? 1 : 0)) || ((b.proj ?? -1) - (a.proj ?? -1)));
     const bars = BOOST_BARS[sp].map(x => Math.round(x * BOOST_MODES[mode] * 10) / 10);
     const RK = { 5: 'legendary', 4: 'epic', 3: 'rare' };
     let used = null;
@@ -1188,18 +1193,15 @@ async function handle({ request, env, waitUntil }) {
     /* Boost saver: no Legendaries, at most two Epics (only for a
        Legendary-grade game), and Rares spread wide - down to the
        earning-heavy bar - with a recommended cutoff at the balanced Rare bar. */
-    const base = BOOST_BARS[sp];
-    const rareFloor = mode === 'saver' ? Math.round(base[2] * BOOST_MODES.heavy * 10) / 10 : bars[2];
-    const cutAt = mode === 'saver' ? base[2] : null;
+    // Balanced: everyone projected at 5 rax or more gets at least a Rare.
+    const rareFloor = 5, cutAt = null;
     let epics = 0;
     for (const r of rows) {
       let want = null;
       if (!r.skip && r.proj != null) {
-        if (mode === 'saver') want = r.proj >= base[0] && epics < 2 ? 4 : r.proj >= rareFloor ? 3 : null;
-        else want = r.proj >= bars[0] ? 5 : r.proj >= bars[1] ? 4 : r.proj >= bars[2] ? 3 : null;
+        want = r.proj >= bars[0] ? 5 : r.proj >= bars[1] ? 4 : r.proj >= rareFloor ? 3 : null;
       }
       while (want && left && own(want) <= 0) want = want > 3 ? want - 1 : null;
-      if (want === 4 && mode === 'saver') epics++;
       r.boost = want ? NR[want] : null;
       r.belowCut = cutAt != null && r.boost && r.proj < cutAt;
       if (!want || !left) continue;

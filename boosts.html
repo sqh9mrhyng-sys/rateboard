@@ -58,7 +58,7 @@
       <div class="bar">
         <label class="note">Day <select id="day"></select></label>
         <label class="note">Sport <select id="sport"><option value="ncaam">CBB 2026-27</option><option value="ncaaf">CFB 2026</option><option value="nfl">NFL 2026</option></select></label>
-        <label class="note">Setting <select id="mode"><option value="balanced" selected>Balanced</option><option value="saver">Boost saver</option><option value="heavy">Earning heavy (not recommended)</option></select></label>
+        <label class="note">Setting <select id="mode"><option value="balanced" selected>Balanced</option></select></label>
         <button class="go" id="run">Show my boosts</button>
       </div>
       <div class="bar" style="margin-top:10px">
@@ -202,7 +202,7 @@ const MODE_NOTE_STAT = {
   heavy: 'Earning heavy: anyone at or above a typical starter in the stat gets one. Burns boosters fast - not recommended.'
 };
 const MODE_NOTE = {
-  balanced: 'Balanced: a booster only where the projection earns it - Legendary for roughly a top-3% game, Epic for top 10%, Rare for top 25%.',
+  balanced: 'Balanced: Legendary for roughly a top-3% projected game, Epic for top 10%, and Rare for anyone projected at 5 rax or more.',
   saver: 'Boost saver: no Legendaries, at most two Epics (only for a top-3% game), and Rares spread wide - a dashed line marks the recommended cutoff.',
   heavy: 'Earning heavy: the bars lowered 15%, so more players get boosted. Burns boosters fast - not recommended.'
 };
@@ -273,7 +273,7 @@ async function run(){
     const nm = u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.name)}</a>` : esc(r.name);
     const one = o => esc(o.label) + (o.avg != null ? ` <span class="note">${o.avg}/${o.gain}</span>` : '');
     return cutRow + `<tr class="${r.skip ? 'skip' : ''}${r.belowCut ? ' below' : ''}"><td>${r.boost ? `<span class="b ${r.boost}">${LBL[r.boost]}</span>` : '<span class="b none">None</span>'}</td>
-      <td>${nm}<span class="sub">${esc([r.pos, r.team].filter(Boolean).join(' · '))}${r.basis ? ' · ' + esc(r.basis) : ''}</span>${(r.flags || []).map(f => `<span class="flag">⚠ ${esc(f)}</span>`).join('')}</td>
+      <td>${nm}${r.noData ? ' <span class="note">*not enough data*</span>' : ''}<span class="sub">${esc([r.pos, r.team].filter(Boolean).join(' · '))}${r.basis ? ' · ' + esc(r.basis) : ''}</span>${(r.flags || []).map(f => `<span class="flag">⚠ ${esc(f)}</span>`).join('')}</td>
       <td style="text-align:left;white-space:normal">${r.boost && r.best ? `<b>${one(r.best)}</b>${r.alt ? `<span class="sub">or ${one(r.alt)}</span>` : ''}` : '<span class="note">–</span>'}</td>
       <td style="text-align:left">${r.home ? 'vs' : '@'} ${esc(r.opp)}<span class="sub">${tm(r.at)}</span></td>
       <td>${r.avg != null ? r.avg + `<span class="sub">${r.games} game${r.games === 1 ? '' : 's'}${r.avgLast != null ? ' · last yr ' + r.avgLast : ''}</span>` : r.avgLast != null ? `–<span class="sub">last yr ${r.avgLast}</span>` : '–'}</td>
