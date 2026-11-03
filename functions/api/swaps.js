@@ -681,7 +681,8 @@ function warnText(lines) {
   return 'You are swapping the following players today, please buy the following packs within 30 mins\n\n' + lines.join('\n');
 }
 function contactText(lines, buy) {
-  return "Here are comments to contact the following swaps, please send 12 hour offers and report anyone who's doing anything wrong.\n\n" + lines.join('\n')
+  return "Here are comments to contact the following swaps, please send 12 hour offers and report anyone who's doing anything wrong.\n"
+    + "Comments are to get ahold of other users if they didn't buy the pack in the warning period, ideally this should be communication-less.\n\n" + lines.join('\n')
     + (buy && buy.length ? '\n\nAlso buy these packs now:\n' + buy.join('\n') : '');
 }
 async function loadMember(db, k) {
