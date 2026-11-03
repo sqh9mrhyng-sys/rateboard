@@ -287,7 +287,7 @@ async function loadBuys(){
     + `<span><label class="note"><input type="checkbox" id="buyonly"${buysOnly ? ' checked' : ''}> Only show buys</label></span>`;
   $('#buyonly').addEventListener('change', e => { buysOnly = e.target.checked; loadBuys(); });
   $('#buyrows').innerHTML = rows.map(x => `<tr${x.owned ? ' style="opacity:.55"' : ''}><td data-l="#">${x.rank}</td>
-    <td data-l="Player" class="pc"><a href="${esc(x.link)}" target="_blank" rel="noopener">${esc(x.name || 'Open player')}</a>${x.name ? '' : '<span class="sub">freshman - name shows in Real</span>'}</td>
+    <td data-l="Player" class="pc"><div style="display:flex;align-items:center;gap:10px">${x.img ? `<a href="${esc(x.img)}" download="${esc((x.name || 'player').replace(/[^A-Za-z0-9]+/g, '-'))}.png" title="Download"><img src="${esc(x.img)}" alt="" loading="lazy" style="width:44px;height:44px;border-radius:50%;object-fit:cover;flex:none"></a>` : ''}<div><a href="${esc(x.link)}" target="_blank" rel="noopener">${esc(x.name || 'Open player')}</a>${x.name ? '' : '<span class="sub">freshman - name shows in Real</span>'}${x.img ? `<span class="sub"><a href="${esc(x.img)}" download="${esc((x.name || 'player').replace(/[^A-Za-z0-9]+/g, '-'))}.png">Download photo</a></span>` : ''}</div></div></td>
     <td data-l="Team" style="text-align:left">${esc(x.team)}</td>
     <td data-l="You">${x.owned ? '<span class="b none">Owned</span>' : '<span class="b rare">Buy</span>'}</td></tr>`).join('') || '<tr><td colspan="4" class="note">You own all of them.</td></tr>';
 }
