@@ -276,7 +276,8 @@ async function runMatching(db) {
   }
   // FC and UFC have no packs to swap, so neither is ever offered or matched.
   const swappable = k => !/^(soccer|ufc):/.test(k);
-  for (const u of users) u.wants = u.wants.filter(swappable).slice(0, 1);   // one player per swap
+  // One player per swap, and only a pass they own: they buy cards for it.
+  for (const u of users) { const own = new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key)); u.wants = u.wants.filter(k => swappable(k) && own.has(k)).slice(0, 1); }
   const gives = u => new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !promised.has(`${u.key}|${k}`)));
   const made = [];
   for (let i = 0; i < users.length; i++) {
@@ -610,7 +611,7 @@ async function sendPhase(env, db, auth, matches, phase, max) {
     for (const { m, side } of list) {
       const otherKey = side === 'A' ? m.b : m.a, gets = side === 'A' ? m.aGets : m.bGets;
       const o = await member(otherKey); if (!o) continue;
-      if (phase === 'warn') lines.push(`${playerUrl(gets) || playerName(o, gets)} ${String(gets).split(':')[1]} - ${passUrl(o, gets) || '(pass link not found)'}`);
+      if (phase === 'warn') lines.push(`${playerUrl(gets) || playerName(o, gets)} ${String(gets).split(':')[1]} - ${passUrl(me, gets) || '(pass link not found)'}`);   // their own pass, the one they buy the pack for
       else lines.push(`@${o.rsUser} - ${o.comment || '(no comment link)'} - ${playerUrl(gets) || playerName(o, gets)}`);
     }
     if (!lines.length) continue;
@@ -1186,6 +1187,9 @@ async function handle({ request, env, waitUntil }) {
     const keep = (Array.isArray(b.keep) ? b.keep : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, 2000);
     const slots = [...new Set((Array.isArray(b.slots) ? b.slots : []).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24))].slice(0, 5);
     const rsUser = String(me);   // the board username is the Real account
+    const mine = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
+    const owned = new Set(parse(mine && mine.passes, []).filter(p => p.kind !== 'team').map(p => p.key));
+    if (wants.length && !owned.has(wants[0])) return json({ error: 'You can only swap for a pass you own - scan your passes, then pick one of them.' }, 400);
     const comment = String(b.comment || '').trim();
     if (!/^https:\/\/(www\.)?realapp\.com\/\S{4,}$/i.test(comment)) return json({ error: 'Paste the link to your comment on the swap post (step 2).' }, 400);
     await matchCols(db);

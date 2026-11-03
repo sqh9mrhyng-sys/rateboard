@@ -102,8 +102,8 @@
 
   <section>
     <h2>4. Who you want</h2>
-    <p class="note">Search a player and pick the season you want their pass for. One player per swap - picking another replaces it.</p>
-    <div class="bar"><input id="wq" placeholder="Search a player" autocomplete="off"></div>
+    <p class="note">Pick the pass you want cards bought for - it has to be one you own (scan in step 3 first). One player per swap - picking another replaces it.</p>
+    <div class="bar"><input id="wq" placeholder="Search your passes" autocomplete="off"></div>
     <div class="res" id="wres"></div>
     <div id="wants"></div>
   </section>
@@ -381,15 +381,13 @@ function drawResults(rows){
     || '<div class="note">No player found.</div>';
 }
 $('#wq').addEventListener('input', e => {
-  clearTimeout(wTimer); const q = e.target.value.trim().toLowerCase();
+  const q = e.target.value.trim().toLowerCase();
   if(q.length < 2){ $('#wres').innerHTML = ''; return; }
-  if(wCache.has(q)){ drawResults(wCache.get(q)); return; }
-  wTimer = setTimeout(async () => {
-    const seq = ++wSeq;
-    const j = await api(`/api/swaps?op=search&q=${encodeURIComponent(q)}`);
-    wCache.set(q, j.rows || []);
-    if(seq === wSeq) drawResults(j.rows || []);
-  }, 120);
+  const own = prof.passes.filter(p => !NO_SWAP.has(p.sport) && !isTeam(p) && String(p.name || '').toLowerCase().includes(q))
+    .sort((x, y) => (y.rating || 0) - (x.rating || 0)).slice(0, 30);
+  if(!prof.passes.length){ $('#wres').innerHTML = '<div class="note">Scan your passes in step 3 first.</div>'; return; }
+  $('#wres').innerHTML = own.map(p => `<div data-k="${p.key}" data-n="${esc(p.name || 'Player ' + p.id)}">${esc(p.name || 'Player ' + p.id)}
+      <span class="note">· ${esc(keyLbl(p.key))}</span></div>`).join('') || '<div class="note">None of your passes match.</div>';
 });
 $('#wres').addEventListener('click', e => {
   const d = e.target.closest('[data-k]'); if(!d) return;
