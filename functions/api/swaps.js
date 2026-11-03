@@ -779,7 +779,35 @@ async function sendMatch(env, db, auth, m) {
 /* Called once a minute from the collector tick. Matching runs every hour at
    :30, so a swap hour starting at the next :00 still gets its 30-minute warn;
    DMs go out as they come due; one swapper is re-scanned a minute. */
+/* A full refresh (every Swaps season, golf back to 2014) for anyone queued
+   with fullPart set: 14 seasons a minute, so about 3 minutes a person. */
+const FULL_LIST = Object.entries(SWAPS_SCAN).flatMap(([sp, v]) => v.map(se => [sp, se]));
+const FULL_CHUNK = 14;
+async function fullRescan(env, db, auth) {
+  let u = null;
+  try { u = await db.prepare('SELECT key, hashId, passes, fullPart FROM swap_users WHERE fullPart IS NOT NULL AND hashId IS NOT NULL ORDER BY fullPart DESC, key LIMIT 1').first(); } catch (e) { return null; }
+  if (!u) return null;
+  const part = Number(u.fullPart) || 0, chunk = FULL_LIST.slice(part * FULL_CHUNK, part * FULL_CHUNK + FULL_CHUNK);
+  const done = (part + 1) * FULL_CHUNK >= FULL_LIST.length;
+  // Claim this part first, so a slow run can't be picked up twice.
+  await db.prepare('UPDATE swap_users SET fullPart=? WHERE key=?').bind(done ? null : part + 1, u.key).run();
+  if (!chunk.length) return null;
+  const only = {}; for (const [sp, se] of chunk) (only[sp] = only[sp] || []).push(se);
+  const r = await scanPasses(u.hashId, auth, only);
+  if ((r.errors || []).length) { await stat(db, 'rescan_fail'); return { key: u.key, part, skipped: r.errors.length }; }   // that part keeps its old passes
+  const fresh = new Set(chunk.map(([sp, se]) => `${sp}:${se}`));
+  const merged = parse(u.passes, []).filter(p => !fresh.has(`${p.sport}:${p.season}`)).concat(r.passes);
+  await fillNames(db, merged);
+  await db.prepare(`UPDATE swap_users SET passes=?${done ? ', scannedAt=?, autoAt=?' : ''} WHERE key=?`)
+    .bind(...(done ? [JSON.stringify(merged), Date.now(), Date.now(), u.key] : [JSON.stringify(merged), u.key])).run();
+  if (done) await stat(db, 'rescans');
+  return { key: u.key, part, passes: merged.length };
+}
+
 async function autoRescan(env, db, auth) {
+  // A queued full refresh goes first.
+  const full = await fullRescan(env, db, auth);
+  if (full) return full;
   const day = Date.now() - 86400000;
   const u = await db.prepare(`SELECT key, hashId, passes FROM swap_users WHERE active=1 AND hashId IS NOT NULL AND passes IS NOT NULL
       AND ((wants IS NOT NULL AND wants <> '[]') OR autoAt = 0) AND COALESCE(autoAt, scannedAt, 0) < ? ORDER BY COALESCE(autoAt, scannedAt, 0) LIMIT 1`).bind(day).first();
@@ -842,6 +870,16 @@ export async function swapTick(env) {
       await db.prepare("UPDATE swap_matches SET status='cleared' WHERE status IN ('pending','warned','sending','error')").run();
       try { await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); await env.RATEBOARD_KV.delete('swap_wantcounts_v1'); } catch (e) {}
       await stat(db, 'cleared');
+    }
+  } catch (e) {}
+  // One-time (2026-11-03): a full refresh for everyone who has ever scanned.
+  try {
+    if (!(await env.RATEBOARD_KV.get('scan_reset_v2'))) {
+      await env.RATEBOARD_KV.put('scan_reset_v2', String(Date.now()));
+      try { await db.prepare('ALTER TABLE swap_users ADD COLUMN fullPart INTEGER').run(); } catch (e) {}
+      try { await db.prepare('ALTER TABLE swap_users ADD COLUMN boostScanAt INTEGER').run(); } catch (e) {}
+      await db.prepare('UPDATE swap_users SET fullPart = 0, scannedAt = MIN(COALESCE(scannedAt, 0), ?), boostScanAt = NULL WHERE hashId IS NOT NULL').bind(Date.now() - 4 * 3600000).run();
+      await stat(db, 'scan_reset');
     }
   } catch (e) {}
   // One-time (2026-11-02): clear everyone's scan timers and queue a fresh scan.
@@ -1649,6 +1687,8 @@ async function handle({ request, env, waitUntil }) {
       ON CONFLICT(key) DO UPDATE SET rsUser=excluded.rsUser, hashId=excluded.hashId, passes=excluded.passes,
         scannedAt=excluded.scannedAt, updatedAt=excluded.updatedAt`)
       .bind(me, rsUser, hashId, JSON.stringify(r.passes), Date.now(), Date.now()).run();
+    // A full Swaps scan done by hand takes them out of the refresh queue.
+    if (fromSwaps && !(r.errors || []).length) { try { await db.prepare('UPDATE swap_users SET fullPart=NULL WHERE key=?').bind(me).run(); } catch (e) {} }
     return json({ hashId, passes: r.passes, errors: r.errors, sample: r.sample });
   }
 
