@@ -297,6 +297,7 @@ async function usedSince(db, u, want) {
   return Number(r && r.n) || 0;
 }
 
+const SWAPS_PER_DAY = 10;
 async function runMatching(db) {
   // Only members the bot already has a chat with: new chats are capped at
   // five a day, so a match with anyone else might never be delivered.
@@ -305,34 +306,45 @@ async function runMatching(db) {
       AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`).all()).results || [])
     .map(u => ({ ...u, wants: parse(u.wants, []), keep: new Set(parse(u.keep, [])), slots: parse(u.slots, []),
                  passes: parse(u.passes, []) }));
+  /* A member can be in several swaps a day: each one with a different
+     partner, receiving the pass they picked from each, and giving each
+     partner a different player (a pass of theirs goes out once a day).
+     Capped at SWAPS_PER_DAY, and by their goal rating when they set one. */
   const open = ((await db.prepare(`SELECT a, b, aGets, bGets FROM swap_matches WHERE status IN ('pending','sending','warned') OR (status='sent' AND sentAt > ?)`).bind(Date.now() - 86400000).all()).results || []);
-  const busy = new Set(), promised = new Set();
+  const paired = new Set(), given = new Set(), count = new Map();
+  const bump = k => count.set(k, (count.get(k) || 0) + 1);
   for (const m of open) {
-    busy.add(m.a); busy.add(m.b);
-    promised.add(`${m.b}|${m.aGets}`); promised.add(`${m.a}|${m.bGets}`);     // passes already offered
+    paired.add(`${m.a}|${m.b}`); paired.add(`${m.b}|${m.a}`);
+    given.add(`${m.b}|${m.aGets}`); given.add(`${m.a}|${m.bGets}`);     // B gave aGets, A gave bGets
+    bump(m.a); bump(m.b);
   }
   // FC and UFC have no packs to swap, so neither is ever offered or matched.
   const swappable = k => !/^(soccer|ufc):/.test(k);
   // One player per swap, and only a pass they own: they buy cards for it.
   for (const u of users) { const own = new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key)); u.wants = u.wants.filter(k => swappable(k) && own.has(k)).slice(0, 1); }
-  // Goal reached, or the swaps it should take are already handed out: sit this round out.
-  const cache = new Map();
-  for (const u of users) { try { const g = await goalRoom(db, cache, u, (x, w) => usedSince(db, x, w)); if (g.left <= 0) u.wants = []; } catch (e) {} }
-  const gives = u => new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !promised.has(`${u.key}|${k}`)));
+  // How many more they can take today: the daily cap, and their goal rating.
+  const cache = new Map(), room = new Map();
+  for (const u of users) {
+    let left = SWAPS_PER_DAY - (count.get(u.key) || 0);
+    try { const g = await goalRoom(db, cache, u, (x, w) => usedSince(db, x, w)); if (g.limited) left = Math.min(left, g.left); } catch (e) {}
+    room.set(u.key, Math.max(0, left));
+  }
+  const gives = u => new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !given.has(`${u.key}|${k}`)));
   const made = [];
   for (let i = 0; i < users.length; i++) {
-    const A = users[i]; if (busy.has(A.key) || !A.wants.length) continue;
-    const gA = gives(A);
-    for (let j = i + 1; j < users.length; j++) {
-      const B = users[j]; if (busy.has(B.key) || !B.wants.length) continue;
+    const A = users[i]; if (!A.wants.length) continue;
+    for (let j = 0; j < users.length && room.get(A.key) > 0; j++) {
+      if (i === j) continue;
+      const B = users[j]; if (!B.wants.length || room.get(B.key) <= 0 || paired.has(`${A.key}|${B.key}`)) continue;
       const slot = A.slots.find(h => B.slots.includes(h));
       if (slot == null) continue;
-      const gB = gives(B);
-      const aGets = A.wants.find(w => gB.has(w)), bGets = B.wants.find(w => gA.has(w));
-      if (!aGets || !bGets) continue;
+      const aGets = A.wants[0], bGets = B.wants[0];
+      if (aGets === bGets) continue;            // same player both ways is no swap
+      if (!gives(B).has(aGets) || !gives(A).has(bGets)) continue;
       made.push({ a: A.key, b: B.key, aGets, bGets, slot });
-      busy.add(A.key); busy.add(B.key);
-      break;
+      paired.add(`${A.key}|${B.key}`); paired.add(`${B.key}|${A.key}`);
+      given.add(`${B.key}|${aGets}`); given.add(`${A.key}|${bGets}`);
+      room.set(A.key, room.get(A.key) - 1); room.set(B.key, room.get(B.key) - 1);
     }
   }
   const now = Date.now();
@@ -1251,7 +1263,7 @@ async function handle({ request, env, waitUntil }) {
       else if (g.limited && g.left <= 0) why.push(`You already have the ${g.need} swap${g.need === 1 ? '' : 's'} it should take to reach your goal (about ${g.avg} rating a pack). New ones start after your next daily scan.`);
     }
     const open = await db.prepare(`SELECT COUNT(*) AS n FROM swap_matches WHERE (a=? OR b=?) AND (status IN ('pending','sending','warned') OR (status='sent' AND sentAt > ?))`).bind(me, me, Date.now() - 86400000).first();
-    if (Number(open && open.n)) why.push('You already have a swap in the last 24 hours - one a day.');
+    if (Number(open && open.n) >= SWAPS_PER_DAY) why.push(`You already have ${SWAPS_PER_DAY} swaps in the last 24 hours - that's the daily most.`);
     // Who could swap with them.
     let can = 0, hour = 0, both = 0;
     if (u && want && !why.length) {
