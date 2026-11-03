@@ -582,7 +582,7 @@ function matchText(me, other, gets, gives, slot) {
       swap post, and the player.
    Each side of a match is marked once its DM has gone, so nothing repeats. */
 function warnText(lines) {
-  return 'You are swapping the following players today, please buy the following packs within 30 mins\n\n' + lines.join('\n\n');
+  return 'You are swapping the following players today, please buy the following packs within 30 mins\n\n' + lines.join('\n');
 }
 function contactText(lines) {
   return "Here are comments to contact the following swaps, please send 12 hour offers and report anyone who's doing anything wrong.\n\n" + lines.join('\n');
@@ -610,7 +610,7 @@ async function sendPhase(env, db, auth, matches, phase, max) {
     for (const { m, side } of list) {
       const otherKey = side === 'A' ? m.b : m.a, gets = side === 'A' ? m.aGets : m.bGets;
       const o = await member(otherKey); if (!o) continue;
-      if (phase === 'warn') lines.push(`${playerName(o, gets)}\n${playerUrl(gets) || ''}\n${passUrl(o, gets) || '(pass link not found)'}`);
+      if (phase === 'warn') lines.push(`${playerUrl(gets) || playerName(o, gets)} ${String(gets).split(':')[1]} - ${passUrl(o, gets) || '(pass link not found)'}`);
       else lines.push(`@${o.rsUser} - ${o.comment || '(no comment link)'} - ${playerUrl(gets) || playerName(o, gets)}`);
     }
     if (!lines.length) continue;
