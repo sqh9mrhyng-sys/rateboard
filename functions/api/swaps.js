@@ -11,7 +11,7 @@
    (RS_SWAP_TOKEN, or any other RS_*TOKEN that isn't the board's or the
    market's), never the board's main key.
    ------------------------------------------------------------------------- */
-import { isAdminRequest, sessionKey, forbidden, allow, clientIp, touchSeen } from '../../lib/auth.js';
+import { isAdminRequest, sessionKey, forbidden, allow, clientIp, touchSeen, ADMINS } from '../../lib/auth.js';
 import { watchEnv } from '../../lib/dbwatch.js';
 
 function hashidsEncode(number) {
@@ -385,6 +385,81 @@ async function syncChats(db, auth) {
   return found.length;
 }
 const BOT_ID = 'jvbj4p6v';   // raxacademy.app
+
+/* ---- self-serve password reset --------------------------------------------
+   Board usernames are Real usernames. Someone who forgot their password gets
+   a short code, sends it in a DM to @raxacademy.app from their Real account,
+   and once the bot sees that code come from that account the password is
+   cleared - exactly what an admin reset does - so the next password they
+   sign in with becomes theirs. Admin accounts can't be reset this way. */
+const RESET_TTL = 15 * 60000;
+async function resetFlow(env, db, url, request, op, waitUntil) {
+  const name = String(url.searchParams.get('user') || '').trim().replace(/^@/, '');
+  const key = name.toLowerCase();
+  if (key.length < 2) return json({ error: 'Enter your username.' }, 400);
+  const ip = clientIp(request);
+  const kvKey = 'pwreset_v1_' + key;
+  if (op === 'resetstart') {
+    if (!(await allow(url.origin, 'pwreset-ip:' + ip, 10, 3600)) || !(await allow(url.origin, 'pwreset-user:' + key, 4, 3600)))
+      return json({ error: 'Too many reset attempts. Try again in an hour.' }, 429);
+    const u = await db.prepare('SELECT key, banned FROM users WHERE key=?').bind(key).first();
+    if (!u) return json({ error: 'No board account with that username. New usernames just sign up.' }, 404);
+    if (u.banned) return json({ error: 'This account has been removed from the board.' }, 403);
+    if (ADMINS.includes(key)) return json({ error: 'This account can only be reset by hand.' }, 403);
+    const A = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789', b = new Uint8Array(5); crypto.getRandomValues(b);
+    const code = 'RB-' + [...b].map(x => A[x % A.length]).join('');
+    await env.RATEBOARD_KV.put(kvKey, JSON.stringify({ code, at: Date.now(), name }), { expirationTtl: 1800 });
+    return json({ code, bot: 'raxacademy.app', minutes: RESET_TTL / 60000 });
+  }
+  // resetcheck: has the bot received the code from this account?
+  let c = null;
+  try { c = JSON.parse((await env.RATEBOARD_KV.get(kvKey)) || 'null'); } catch (e) {}
+  if (!c || Date.now() - c.at > RESET_TTL) return json({ error: 'That code has run out. Get a new one.' }, 410);
+  if (!(await allow(url.origin, 'pwreset-check:' + key, 6, 60))) return json({ waiting: true });
+  const auth = swapToken(env);
+  if (!auth) return json({ error: 'The reset bot is not set up.' }, 503);
+  const found = await findCodeInDms(auth, key, c.code);
+  if (found.error) return json({ waiting: true, note: found.error });
+  if (!found.ok) return json({ waiting: true });
+  const res = await db.prepare("UPDATE users SET hash='' WHERE key=? AND COALESCE(banned, 0) = 0").bind(key).run();
+  await env.RATEBOARD_KV.delete(kvKey);
+  // A log for /admin.
+  try {
+    const log = JSON.parse((await env.RATEBOARD_KV.get('pwreset_log_v1')) || '[]') || [];
+    log.unshift({ key, at: Date.now(), ip });
+    await env.RATEBOARD_KV.put('pwreset_log_v1', JSON.stringify(log.slice(0, 200)));
+  } catch (e) {}
+  if (found.request) { try { waitUntil(fetch(`https://web.realapp.com/messages/channels/${found.request}/acceptrequest`, { method: 'PUT', headers: { ...rsHeaders(auth), 'content-type': 'application/json' }, body: '{}' }).catch(() => {})); } catch (e) {} }
+  return json({ ok: !!(res.meta && res.meta.changes), reset: true });
+}
+/* Looks through the bot's message requests and chats for one from this Real
+   username that contains the code: first in whatever the lists carry, then
+   in the recent messages of that person's chat. */
+async function findCodeInDms(auth, userKey, code) {
+  const hasCode = o => { try { return JSON.stringify(o).toUpperCase().includes(code); } catch (e) { return false; } };
+  const fromUser = o => { try { return JSON.stringify(o).toLowerCase().includes('"username":"' + userKey + '"'); } catch (e) { return false; } };
+  const chans = [];
+  const collect = (d, isReq) => {
+    const walk = o => {
+      if (!o || typeof o !== 'object') return;
+      if (Array.isArray(o)) { o.forEach(walk); return; }
+      const ch = Number(o.channelId != null ? o.channelId : o.id);
+      if (Number.isFinite(ch) && ch > 0 && (o.users || o.members || o.user || o.lastMessage || o.creatorUserId) && fromUser(o)) chans.push({ ch, o, isReq });
+      else for (const v of Object.values(o)) if (v && typeof v === 'object') walk(v);
+    };
+    walk(d);
+  };
+  try { collect(await rsGetJson('https://web.realapp.com/messages/requests', auth), true); } catch (e) {}
+  try { collect(await rsGetJson('https://web.realapp.com/messages/channels', auth), false); } catch (e) { if (!chans.length) return { error: 'Could not reach Real just now.' }; }
+  for (const c of chans) if (hasCode(c.o)) return { ok: true, request: c.isReq ? c.ch : null };
+  for (const c of chans.slice(0, 3)) {
+    try {
+      const m = await rsGetJson(`https://web.realapp.com/messages/channels/${c.ch}/messages`, auth);
+      if (hasCode(m)) return { ok: true, request: c.isReq ? c.ch : null };
+    } catch (e) {}
+  }
+  return { ok: false, chats: chans.length };
+}
 
 /* A first message from someone new lands in the bot's DM requests
    (GET messages/requests). Requests from members who have scanned on Swaps
@@ -860,6 +935,8 @@ async function handle({ request, env, waitUntil }) {
   const url = new URL(request.url);
   const db = env.RATEBOARD_DB;
   const op = url.searchParams.get('op') || '';
+  // Password resets happen signed out, so they come before the access check.
+  if (op === 'resetstart' || op === 'resetcheck') return resetFlow(env, db, url, request, op, waitUntil);
   const acc = await swapAccess(env, request);
   // Boosts (BETA) is open to every signed-in member; its calls say page=boosts.
   // Limited to Dennis (admins) while in beta: set BOOSTS_OPEN to open it to everyone signed in.

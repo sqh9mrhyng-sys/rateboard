@@ -577,6 +577,16 @@
       <div id="g-msg" class="note hide"></div>
       <button id="g-go" class="btn">Continue</button>
       <p class="note">New username signs you up. Returning username signs you in.</p>
+      <p class="note"><a href="#" id="g-forgot">Forgot your password?</a></p>
+      <div id="g-reset" class="hide stack" style="border-top:1px solid var(--line);padding-top:10px">
+        <b>Reset your password</b>
+        <p class="note">Enter your username above, then tap Get a code. Send that code in a DM to <b>@raxacademy.app</b> on Real from your own account. Once it arrives your password is cleared, and the next password you sign in with becomes your new one.</p>
+        <button id="g-rcode" class="btn">Get a code</button>
+        <div id="g-rbox" class="hide" style="text-align:center">
+          <div style="font-size:28px;font-weight:900;letter-spacing:.08em" id="g-rc"></div>
+          <p class="note" id="g-rmsg">Send this code to @raxacademy.app on Real. This page checks for it automatically.</p>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -2569,6 +2579,35 @@ $('#g-pass').addEventListener('keydown', e => { if(e.key==='Enter') signIn(); })
 $('#g-user').addEventListener('keydown', e => { if(e.key==='Enter') $('#g-pass').focus(); });
 
 function gateMsg(t){ const m=$('#g-msg'); m.textContent=t; m.classList.toggle('hide', !t); m.style.color='var(--bad)'; }
+
+// Self-serve password reset: a code DM'd to the bot from the user's Real account.
+let resetTimer = null;
+$('#g-forgot').addEventListener('click', e => { e.preventDefault(); $('#g-reset').classList.toggle('hide'); });
+$('#g-rcode').addEventListener('click', async () => {
+  const u = $('#g-user').value.trim();
+  if(u.length < 2) return gateMsg('Enter your username first.');
+  gateMsg('');
+  $('#g-rcode').disabled = true;
+  let j = null;
+  try{ j = await (await fetch('/api/swaps?op=resetstart&user=' + encodeURIComponent(u))).json(); }catch(e){ j = { error: 'Could not reach the board.' }; }
+  $('#g-rcode').disabled = false;
+  if(!j || j.error) return gateMsg((j && j.error) || 'Could not start a reset.');
+  $('#g-rbox').classList.remove('hide'); $('#g-rc').textContent = j.code;
+  $('#g-rmsg').textContent = `Send ${j.code} in a DM to @${j.bot} on Real, from ${u}. Good for ${j.minutes} minutes - this page checks for it automatically.`;
+  clearInterval(resetTimer);
+  const started = Date.now();
+  resetTimer = setInterval(async () => {
+    if(Date.now() - started > 15 * 60000){ clearInterval(resetTimer); $('#g-rmsg').textContent = 'That code ran out. Get a new one.'; return; }
+    let c = null;
+    try{ c = await (await fetch('/api/swaps?op=resetcheck&user=' + encodeURIComponent(u))).json(); }catch(e){ return; }
+    if(c && c.reset){
+      clearInterval(resetTimer);
+      $('#g-rmsg').textContent = 'Got it - your password is cleared. Type a new password above and tap Continue.';
+      $('#g-rmsg').style.color = '#5fbf7a';
+      $('#g-pass').value = ''; $('#g-pass').focus();
+    } else if(c && c.error){ clearInterval(resetTimer); $('#g-rmsg').textContent = c.error; }
+  }, 10000);
+});
 
 async function signIn(){
   try{ await doSignIn(); }
