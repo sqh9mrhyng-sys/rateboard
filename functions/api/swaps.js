@@ -351,8 +351,8 @@ async function runMatching(db) {
   const made = [], now = Date.now(), cands = [];
   for (let i = 0; i < users.length; i++) for (let j = i + 1; j < users.length; j++) {
     const A = users[i], B = users[j];
-    const pl = k => { const [sp, , id] = String(k).split(':'); return sp + ':' + id; };   // the player, any season
-    if (!A.wants.length || !B.wants.length || pl(A.wants[0]) === pl(B.wants[0])) continue;   // same player both ways (any season) is no swap
+    // The exact same pass both ways is no swap; the same player in two different seasons is fine.
+    if (!A.wants.length || !B.wants.length || A.wants[0] === B.wants[0]) continue;
     for (const slot of A.slots) {
       const rb = B.slots.indexOf(slot); if (rb < 0) continue;
       const ra = A.slots.indexOf(slot);
@@ -741,10 +741,9 @@ async function runDms(env, db, auth, rows, max, force) {
   }
   const live = [];
   for (const m of rows) {
-    const pl = k => { const [sp, , id] = String(k).split(':'); return sp + ':' + id; };
-    if (pl(m.aGets) === pl(m.bGets)) {
-      await db.prepare(`UPDATE swap_matches SET status='cancelled', note='cancelled: same player both ways' WHERE id=?`).bind(m.id).run();
-      notes.push(`match ${m.id} cancelled (same player)`); continue;
+    if (m.aGets === m.bGets) {         // the exact same pass both ways
+      await db.prepare(`UPDATE swap_matches SET status='cancelled', note='cancelled: same pass both ways' WHERE id=?`).bind(m.id).run();
+      notes.push(`match ${m.id} cancelled (same pass)`); continue;
     }
     if ((keeps.get(m.a) || new Set()).has(m.bGets) || (keeps.get(m.b) || new Set()).has(m.aGets)) {
       await db.prepare(`UPDATE swap_matches SET status='cancelled', note='cancelled: a pass in it is kept now' WHERE id=?`).bind(m.id).run();
