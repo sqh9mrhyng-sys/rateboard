@@ -584,6 +584,7 @@
         <button id="g-rcode" class="btn">Get a code</button>
         <div id="g-rbox" class="hide" style="text-align:center">
           <div style="font-size:28px;font-weight:900;letter-spacing:.08em" id="g-rc"></div>
+          <button id="g-rcopy" class="btn" type="button" style="margin:6px 0">Copy code</button>
           <p class="note" id="g-rmsg">Send this code to @raxacademy.app on Real. This page checks for it automatically.</p>
         </div>
       </div>
@@ -2607,6 +2608,14 @@ $('#g-rcode').addEventListener('click', async () => {
       $('#g-pass').value = ''; $('#g-pass').focus();
     } else if(c && c.error){ clearInterval(resetTimer); $('#g-rmsg').textContent = c.error; }
   }, 10000);
+});
+
+$('#g-rcopy').addEventListener('click', async () => {
+  const t = $('#g-rc').textContent.trim(); if(!t) return;
+  let ok = false;
+  try{ await navigator.clipboard.writeText(t); ok = true; }catch(e){}
+  if(!ok){ try{ const a = document.createElement('textarea'); a.value = t; a.style.position = 'fixed'; a.style.opacity = '0'; document.body.appendChild(a); a.select(); ok = document.execCommand('copy'); a.remove(); }catch(e){} }
+  const b = $('#g-rcopy'); b.textContent = ok ? 'Copied' : 'Copy failed - type it in'; setTimeout(() => { b.textContent = 'Copy code'; }, 2000);
 });
 
 async function signIn(){
