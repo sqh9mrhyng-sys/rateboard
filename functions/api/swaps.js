@@ -429,7 +429,13 @@ async function resetFlow(env, db, url, request, op, waitUntil) {
     log.unshift({ key, at: Date.now(), ip });
     await env.RATEBOARD_KV.put('pwreset_log_v1', JSON.stringify(log.slice(0, 200)));
   } catch (e) {}
-  if (found.request) { try { waitUntil(fetch(`https://web.realapp.com/messages/channels/${found.request}/acceptrequest`, { method: 'PUT', headers: { ...rsHeaders(auth), 'content-type': 'application/json' }, body: '{}' }).catch(() => {})); } catch (e) {} }
+  // Accept the request if it was one, then reply in the same chat.
+  try {
+    waitUntil((async () => {
+      if (found.request) { try { await fetch(`https://web.realapp.com/messages/channels/${found.request}/acceptrequest`, { method: 'PUT', headers: { ...rsHeaders(auth), 'content-type': 'application/json' }, body: '{}' }); } catch (e) {} }
+      if (found.channel) { try { await dmSend(auth, found.channel, 'Code confirmed; password reset available on https://raxacademy.app'); } catch (e) {} }
+    })());
+  } catch (e) {}
   return json({ ok: !!(res.meta && res.meta.changes), reset: true });
 }
 /* Looks through the bot's message requests and chats for one from this Real
@@ -451,11 +457,11 @@ async function findCodeInDms(auth, userKey, code) {
   };
   try { collect(await rsGetJson('https://web.realapp.com/messages/requests', auth), true); } catch (e) {}
   try { collect(await rsGetJson('https://web.realapp.com/messages/channels', auth), false); } catch (e) { if (!chans.length) return { error: 'Could not reach Real just now.' }; }
-  for (const c of chans) if (hasCode(c.o)) return { ok: true, request: c.isReq ? c.ch : null };
+  for (const c of chans) if (hasCode(c.o)) return { ok: true, request: c.isReq ? c.ch : null, channel: c.ch };
   for (const c of chans.slice(0, 3)) {
     try {
       const m = await rsGetJson(`https://web.realapp.com/messages/channels/${c.ch}/messages`, auth);
-      if (hasCode(m)) return { ok: true, request: c.isReq ? c.ch : null };
+      if (hasCode(m)) return { ok: true, request: c.isReq ? c.ch : null, channel: c.ch };
     } catch (e) {}
   }
   return { ok: false, chats: chans.length };
