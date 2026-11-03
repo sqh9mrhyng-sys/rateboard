@@ -1435,6 +1435,19 @@ async function handle({ request, env, waitUntil }) {
     await stat(db, kind === 'user' ? 'report_user' : 'report_problem');
     return json({ ok: true });
   }
+  // Admin: who picked each hour (UTC), with their rank for it and their pick.
+  if (op === 'hourusers') {
+    const rows = ((await db.prepare(`SELECT key, rsUser, slots, wants, passes FROM swap_users WHERE active=1 AND slots IS NOT NULL AND slots <> '[]'`).all()).results) || [];
+    const hours = Array.from({ length: 24 }, () => []);
+    for (const r of rows) {
+      const want = parse(r.wants, [])[0] || null;
+      const p = want ? parse(r.passes, []).find(x => x.key === want) : null;
+      parse(r.slots, []).forEach((h, i) => { if (h >= 0 && h < 24) hours[h].push({ key: r.key, rsUser: r.rsUser || r.key, rank: i + 1, want, wantName: p && p.name || null }); });
+    }
+    for (const l of hours) l.sort((a, b) => a.rank - b.rank || String(a.rsUser).localeCompare(String(b.rsUser)));
+    return json({ hours, members: rows.length });
+  }
+
   // Admin: the reports, and closing one out.
   if (op === 'reports') {
     await db.prepare(SREPORT_DDL).run();

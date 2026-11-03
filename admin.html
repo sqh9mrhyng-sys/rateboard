@@ -175,6 +175,11 @@
         <p class="note" id="sw-dmout"></p>
       </section>
       <section>
+        <h2>Who picked each hour <span class="note" id="hu-n"></span></h2>
+        <div class="bar"><button id="hu-load">Refresh</button><label class="note"><input type="checkbox" id="hu-empty"> show empty hours</label></div>
+        <div id="hu-list" class="note">Loading…</div>
+      </section>
+      <section>
         <h2>Swap reports <span class="note" id="sr-n"></span></h2>
         <div id="sr-list" class="note">Loading…</div>
       </section>
@@ -598,6 +603,27 @@ $('#t-reports').addEventListener('click', async e => {
 });
 
 /* ---------- swaps ---------- */
+let huData = null;
+const huSeason = k => { const [sp, se] = String(k || '').split(':'); return (SPORT[sp] || sp || '') + ' ' + (se || ''); };
+function drawHourUsers(){
+  if(!huData) return;
+  const off = -new Date().getTimezoneOffset() / 60, loc = h => ((h + off) % 24 + 24) % 24;
+  const lbl = h => `${(h % 12) || 12}${h < 12 ? 'am' : 'pm'}`;
+  const showEmpty = $('#hu-empty').checked;
+  const order = Array.from({ length: 24 }, (_, h) => h).sort((a, b) => loc(a) - loc(b));
+  $('#hu-n').textContent = `${huData.members} saved swapper${huData.members === 1 ? '' : 's'} · your time`;
+  $('#hu-list').innerHTML = order.filter(h => showEmpty || huData.hours[h].length).map(h => {
+    const l = huData.hours[h];
+    return `<details${l.length ? '' : ''}><summary><b>${lbl(loc(h))}</b> · ${l.length} user${l.length === 1 ? '' : 's'}`
+      + (l.length ? ` <span class="note">(${l.filter(x => x.rank === 1).length} primary)</span>` : '') + '</summary>'
+      + (l.map(x => `<div style="padding:3px 0 3px 14px">@${esc(x.rsUser)} <span class="note">· ${['1st', '2nd', '3rd'][x.rank - 1] || x.rank + 'th'}`
+        + `${x.want ? ' · wants ' + esc(x.wantName || 'player') + ' ' + esc(huSeason(x.want)) : ' · no pick'}</span></div>`).join('') || '<div class="note" style="padding-left:14px">Nobody.</div>')
+      + '</details>';
+  }).join('') || 'Nobody has picked an hour yet.';
+}
+async function loadHourUsers(){ const j = await api('/api/swaps?op=hourusers'); if(j.error){ $('#hu-list').textContent = j.error; return; } huData = j; drawHourUsers(); }
+$('#hu-load').addEventListener('click', loadHourUsers);
+$('#hu-empty').addEventListener('change', drawHourUsers);
 async function loadSwapReports(close){
   const j = await api('/api/swaps?op=reports' + (close ? '&close=' + close : ''));
   if(j.error){ $('#sr-list').textContent = j.error; return; }
@@ -639,7 +665,7 @@ $('#pp-go').addEventListener('click', async () => {
     : (j.search ? 'No field with a name like pro, premium, subscription, plan, tier or badge.' : '');
   $('#pp-raw').textContent = JSON.stringify(j, null, 2);
 });
-function loadSwaps(){ loadMatches(); loadNamed(); loadEvery(); loadBot(); loadSwapReports(); }
+function loadSwaps(){ loadMatches(); loadNamed(); loadEvery(); loadBot(); loadSwapReports(); loadHourUsers(); }
 const everyLbl = m => m === 15 ? 'every 15 minutes' : 'every 3 hours';
 function drawEvery(m){ const b = $('#sw-every'); b.dataset.m = m;
   b.textContent = m === 15 ? 'Members: every 15 min · switch to 3 hours' : 'Members: every 3 hours · switch to 15 min'; }
