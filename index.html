@@ -923,7 +923,7 @@ function applyGameDataVisibility(){
   const pick = $('#pagepick'), sel = $('#pagesel');
   checkMarketAccess();
   const otdOn = typeof reallyAdmin === 'function' && reallyAdmin();     // OTD: admin only
-  const SWAPS_OPEN = false;   // flip with SWAPS_OPEN in functions/api/swaps.js
+  const SWAPS_OPEN = true;    // opened to everyone 2026-11-03 (BETA); the page runs the Real Pro check
   const swapsOn = SWAPS_OPEN || otdOn || swapsAccess;   // open: everyone, and the page runs the one-time Real Pro check
   // Boosts & Buys (BETA): everyone signed in.
   const boostsOn = true;   // everyone - the page itself asks them to sign in if they haven't
@@ -934,7 +934,7 @@ function applyGameDataVisibility(){
     const want = [['board', 'Board'], ...(canSeePackData() ? [['cbb', 'Game data']] : []),
                   ...(marketAccess ? [['market', 'Market data']] : []),
                   ...(boostsOn ? [['boosts', 'Boosts/Buys (beta)']] : []),
-                  ...(swapsOn ? [['swaps', 'Swaps']] : []), ...(otdOn ? [['otd', 'OTD optimization'], ['admin', 'Admin']] : [])];
+                  ...(swapsOn ? [['swaps', 'Swaps (beta)']] : []), ...(otdOn ? [['otd', 'OTD optimization'], ['admin', 'Admin']] : [])];
     const have = [...sel.options].map(o => o.value).join(',');
     if(have !== want.map(w => w[0]).join(',')){
       sel.innerHTML = want.map(([v, t]) => `<option value="${v}">${t}</option>`).join('');
