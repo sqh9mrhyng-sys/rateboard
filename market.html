@@ -319,7 +319,7 @@ async function load(){
   (data.seasons || []).forEach(x => { const k = `${x.sport}:${x.season}`; if(!opts.includes(k)) opts.push(k); });
   if(pick !== 'favs' && pick !== 'recents' && !opts.includes(pick)) opts.unshift(pick);
   $('#ss').innerHTML = `<option value="favs"${pick === 'favs' ? ' selected' : ''}>★ Favorites · ${favSet.size}</option>`
-    + (me && me.admin ? `<option value="recents"${pick === 'recents' ? ' selected' : ''}>⟳ Recents · ${Object.keys(recentAt).length}</option>` : '')
+    + (me && (me.admin || me.puller) ? `<option value="recents"${pick === 'recents' ? ' selected' : ''}>⟳ Recents · ${Object.keys(recentAt).length}</option>` : '')
     + opts.map(k => { const [a, b] = k.split(':');
       const n = ((status && status.seasons) || []).find(x => x.job === k);
       const c = n && (n.live || n.listings);
@@ -500,7 +500,7 @@ function planHtml(){
 }
 
 // Admin: pull this one player's listings fresh, on the bot account.
-const pullBar = () => me && me.admin ? `<div class="goal"><button type="button" data-pull="1">Pull this player now</button>
+const pullBar = () => me && (me.admin || me.puller) ? `<div class="goal"><button type="button" data-pull="1">Pull this player now</button>
   <span class="note" id="pullmsg">Fresh listings from Real for just this player</span></div>` : '';
 function drawDetail(){
   const el = $('#det'); if(!el) return;
@@ -696,8 +696,8 @@ async function start(){
   }
   $('#main').hidden = false;
   if(me.admin){ $('#acc').hidden = false; $('#admintools').hidden = false; loadAccess(''); }
-  else { $('#qpick').hidden = true; $('#qfront').hidden = true; }
-  await Promise.all([loadQueue(), loadFavs(), me.admin ? loadRecents() : null]);
+  else if(!me.puller){ $('#qpick').hidden = true; $('#qfront').hidden = true; }
+  await Promise.all([loadQueue(), loadFavs(), (me.admin || me.puller) ? loadRecents() : null]);
   await load();
   setInterval(loadQueue, 60000);
 }

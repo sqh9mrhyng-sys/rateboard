@@ -529,6 +529,8 @@ const MARKET_ON = true;           // back on 2026-11-02 after Cloudflare replied
    Set false to go back to the automatic rounds. */
 const MARKET_MANUAL = true;
 const MRECENT_KEY = 'mrecent_v1';
+// Members (besides admins) who can queue market seasons and pull single players.
+const MARKET_PULLERS = new Set(['quas23']);
 /* Real answers "high volume" to two requests at once, even on the separate
    account, so there is one lane. Speed comes from shorter gaps between pages
    and more pages a tick instead. A sport-season is still cut into windows by
@@ -7519,7 +7521,8 @@ export async function onRequestGet(ctx) {
       if (a.who) touchSeen(env, a.who, ctx.waitUntil);
       let swaps = false, otd = false;
       try { if (a.who) { const sa = await swapAccess(env, request); swaps = sa.swaps; otd = sa.otd; } } catch (e) {}
-      return json({ signedIn: !!a.who, access: a.ok, admin: a.admin, swaps, otd });
+      return json({ signedIn: !!a.who, access: a.ok, admin: a.admin, swaps, otd,
+        puller: a.admin || (!!a.who && MARKET_PULLERS.has(String(a.who).toLowerCase())) });
     }
     if (!a.ok) return json({ error: a.who ? 'Your account does not have market data.' : 'Sign in on the board first.' }, 403);
     if (mk === 'fav' || mk === 'favs') return marketMember(env, url, a.who, ctx.waitUntil);
@@ -7639,6 +7642,12 @@ export async function onRequestGet(ctx) {
     return res;
   }
 
+  /* Market pullers who aren't admins: queueing a season and pulling one
+     player (and the Recents list those pulls fill). Nothing else. */
+  if (['front', 'pullplayer', 'recents'].includes(mk) && !(await isAdminRequest(env, request))) {
+    const who = await sessionKey(env, request);
+    if (who && MARKET_PULLERS.has(String(who).toLowerCase())) return handleGet(ctx);
+  }
   if (!(await isAdminRequest(env, request))) return forbidden();
   return handleGet(ctx);
 }
