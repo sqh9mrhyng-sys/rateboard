@@ -20,7 +20,7 @@ const CACHE_BUCKET_MS   = 30 * 60 * 1000;     // 30-minute slots
 const CACHE_TTL_SECONDS = 1800;               // 30 minutes — fresher cards, still
                                               // one RS pull per slot per user
 const IP_WINDOW_SECONDS = 60;
-const IP_MAX_REQUESTS   = 20;
+const IP_MAX_REQUESTS   = 8;   // slowed 2026-11-02 (was 20)
 
 // rs = RS API sport string, season = RS season, entity = RS entity type
 const SPORT_CONFIG = {
@@ -219,6 +219,8 @@ async function fetchCollectionChunk(hashId, sport, season, entity, auth, startBe
 
     before += PAGE_SIZE;
     pagesRead++;
+    // A short pause between pages so card pulls don't hammer Real (2026-11-02).
+    await new Promise(r => setTimeout(r, 300));
 
     if (entities.length === PAGE_SIZE && pagesRead === CHUNK_PAGES) {
       hasMore = true;

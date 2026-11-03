@@ -539,12 +539,12 @@ const MARKET_PULLERS = new Set(['quas23']);
 const MARKET_LANES = 1;
 const MARKET_WINDOW_HOURS = 12;
 const MARKET_WINDOWS = 7;           // 12h x 7 = past the 3 days a listing can run
-const MARKET_PAGES_PER_LANE = 40;
+const MARKET_PAGES_PER_LANE = 15;   // slowed 2026-11-02 (was 40)
 /* The gap between pages. No gap at all drew "high volume" from Real, so it
    starts at 150ms (what ran for hours without one) and doubles, up to 2s,
    each time Real says it is busy; every season finished without that eases
    it back down a little. */
-const MARKET_PAUSE_MS = 150;
+const MARKET_PAUSE_MS = 600;   // slowed 2026-11-02 (was 150)
 const MARKET_PAUSE_MAX = 2000;
 let marketPause = MARKET_PAUSE_MS;
 const MARKET_COOLDOWN_MS = 10 * 60000;
@@ -1604,7 +1604,7 @@ const SCORE_BATCH = 80000;       // plays rescored per call
 // A game's feed comes back whole - every snap, around 175 rows for an NFL
 // game - so games are taken a few at a time. Players are a thin top-plays
 // list and can be walked in bigger strides.
-const PLAYS_PER_TICK = 24;        // players per call
+const PLAYS_PER_TICK = 10;        // players per call (slowed 2026-11-02, was 24)
 const GAMES_PER_TICK = 10;        // games per call, each one a full game
 /* A baseball game's feed is around eighty plays where a football game's is
    nearer a hundred and seventy-five, so more of them fit in a tick without
@@ -1617,7 +1617,7 @@ const GAMES_PER_TICK = 10;        // games per call, each one a full game
    the asking, so fetching more at once buys nothing. 150 fills about
    forty-five seconds of the minute between ticks, which is as much as can be
    taken without a call still running when the next one starts. */
-const GAMES_PER_TICK_BY_SPORT = { mlb: 150, ncaaf: 90, nfl: 60, nba: 150, wnba: 150, nhl: 150 };
+const GAMES_PER_TICK_BY_SPORT = { mlb: 60, ncaaf: 40, nfl: 30, nba: 60, wnba: 60, nhl: 60 };   // slowed 2026-11-02
 
 /* ----- historical seasons ---------------------------------------------------
    Real serves game logs with a real per-game rating all the way back to the
@@ -1691,7 +1691,7 @@ const histDoneKey = (sp, se) => `hist_done_${sp}_${se}`;
 /* How many of those feeds are in the air at once. Five keeps the call well
    inside its minute while asking Real for no more per second than a person
    clicking through games quickly would. */
-const FETCH_AT_ONCE = 8;
+const FETCH_AT_ONCE = 3;   // slowed 2026-11-02 (was 8)
 /* Seasons already swept still need looking at now and then for games that
    have since been played. One tick in thirty is enough to keep a weekend's
    football from going unnoticed, and leaves the rest for the backlog. */
@@ -5455,7 +5455,7 @@ async function handleGet({ request, env, waitUntil }) {
     const pid = Number(url.searchParams.get('playerId'));
     if (!Number.isFinite(pid) || !MARKET_LIST[sport] || !MARKET_LIST[sport].includes(Number(season)))
       return json({ error: 'pick a player from a market season' }, 400);
-    if (!(await allow(url.origin, 'market-pullplayer', 10, 600))) return json({ error: 'Ten player pulls per ten minutes.' }, 429);
+    if (!(await allow(url.origin, 'market-pullplayer', 5, 600))) return json({ error: 'Five player pulls per ten minutes.' }, 429);
     const base = before => `https://web.realapp.com/cardmarketplacelistings?beforeEndsAt=${encodeURIComponent(before)}`
       + `&cohort=all&listingType=card&offset=0&limit=100&prestige=all&rarity=all&season=${Number(season)}&sport=${sport}`;
     const owner = x => sport === 'ufc' ? numOr(x.teamId ?? (x.card || {}).teamId)
@@ -5489,14 +5489,14 @@ async function handleGet({ request, env, waitUntil }) {
       const ok = /\{name\}/.test(p) ? mine.length && mine.length >= rows.length / 2 : mine.length === rows.length;
       if (ok) { param = p; first = mine; break; }
       tried.push(`${p.split('&')[0].split('=')[0]}: ignored by Real`);
-      await sleep(250);
+      await sleep(600);
     }
     if (!first) return json({ error: 'Real gave no listings for that player with any filter tried.', tried, name: pname || null });
     try { await env.RATEBOARD_KV.put(PK, param); } catch (e) {}
     const all = new Map(first.map(r => [String(r.id), r]));
     let cursor = first[first.length - 1].endsAt, pages = 1;
     while (pages < 40 && cursor) {
-      await sleep(250);
+      await sleep(800);
       let d; try { d = await rsGet(base(cursor) + '&' + fill(param), bot); } catch (e) { break; }
       pages++;
       const rows = rowsOf(d).filter(x => owner(x) === pid);

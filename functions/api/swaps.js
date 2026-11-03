@@ -248,7 +248,7 @@ async function scanPasses(hashId, auth, only) {
           if (rows.length && !sample) sample = { sport, season, keys: Object.keys(d || {}), first: rows[0] };
           for (const r of rows) { const p = passOf(r, sport, season, kind); if (p) out.push(p); }
         } catch (e) { errors.push(`${sport} ${season} ${kind}: ${String(e.message || e).slice(0, 100)}`); }
-        await sleep(200);
+        await sleep(700);
       }
     }
   }
@@ -823,7 +823,7 @@ async function boostInventoryAll(env, tok, hashId, fresh, admin) {
       }
     }
     sports[sp] = list;
-    await sleep(200);
+    await sleep(700);
   }
   const out = { at: Date.now(), sports };
   try { await env.RATEBOARD_KV.put(key, JSON.stringify(out), { expirationTtl: 30 * 86400 }); } catch (e) {}
@@ -1096,7 +1096,7 @@ async function handle({ request, env, waitUntil }) {
     const boostsOnly = url.searchParams.get('page') === 'boosts';
     const only = boostsOnly ? Object.fromEntries(Object.entries(BOOST_SEASON).map(([k, v]) => [k, [v[0]]])) : null;
     // Site-wide: at most 40 pass reads a minute, so a crowd can't trip Real's limits.
-    if (!acc.admin && !BOOST_FAST.has(String(me || '').toLowerCase()) && !(await allow(url.origin, 'passread-all', 40, 60))) return json({ error: 'Lots of people are reading passes right now - try again in a minute.' }, 429);
+    if (!acc.admin && !BOOST_FAST.has(String(me || '').toLowerCase()) && !(await allow(url.origin, 'passread-all', 15, 60))) return json({ error: 'Lots of people are reading passes right now - try again in a minute.' }, 429);
     const r = await scanPasses(hashId, auth, only);
     if (boostsOnly) {
       const prevP = parse(u && u.passes, []);
@@ -1149,7 +1149,7 @@ async function handle({ request, env, waitUntil }) {
     if (!u || !u.hashId) return json({ error: 'Re-read your passes first so the board knows your Real account.' }, 400);
     const want = url.searchParams.get('fresh') === '1';
     const fast = acc.admin || BOOST_FAST.has(String(me || '').toLowerCase());
-    if (want && !fast && !(await allow(url.origin, 'boostinv-all', 40, 60))) return json({ error: 'Lots of people are loading boosters right now - try again in a minute.' }, 429);
+    if (want && !fast && !(await allow(url.origin, 'boostinv-all', 15, 60))) return json({ error: 'Lots of people are loading boosters right now - try again in a minute.' }, 429);
     const all = await boostInventoryAll(env, env.RS_AUTH_TOKEN || auth, u.hashId, want, fast);
     if (all.error) return json({ error: all.error }, 502);
     return json({ sport: sp, at: all.at, next: all.next, cached: !!all.cached, boosters: (all.sports || {})[sp] || [], sports: all.sports });
