@@ -113,7 +113,7 @@
 
   <section>
     <h2>5. When you can be messaged</h2>
-    <p class="note">Pick up to 5 hours a day, shown in your time (<span id="tz"></span>). You only get matched with someone who picked at least one of the same hours, and you're both messaged on Real at that hour.</p>
+    <p class="note">Pick up to 3 hours a day, shown in your time (<span id="tz"></span>). You only get matched with someone who picked at least one of the same hours, and you're both messaged on Real at that hour.</p>
     <div class="hours" id="hours"></div>
   </section>
 
@@ -290,7 +290,7 @@ function drawHours(){
 $('#hours').addEventListener('change', e => {
   const h = Number(e.target.value), u = Math.round(toUtc(h));
   if(e.target.checked){
-    if(prof.slots.length >= 5){ e.target.checked = false; $('#savemsg').textContent = 'Up to 5 hours.'; return; }
+    if(prof.slots.length >= 3){ e.target.checked = false; $('#savemsg').textContent = 'Up to 3 hours.'; return; }
     prof.slots.push(u);
   } else prof.slots = prof.slots.filter(x => x !== u);
   drawHours();
@@ -541,6 +541,7 @@ async function proGate(){
   if(!j.tokenFound) $('#scanmsg').innerHTML = '<span style="color:var(--bad)">No swap token found in Cloudflare yet.</span>';
   $('#rsuser').textContent = '@' + (j.real || j.key || '');
   $('#rstop').textContent = '@' + (j.real || j.key || '');
+  if(prof.slots.length > 3){ prof.slots = prof.slots.slice(0, 3); drawHours(); }
   $('#goal').value = (j.profile && j.profile.goal != null) ? j.profile.goal : '';
   $('#clink').value = (j.profile && j.profile.comment) || '';
   if(prof.passes.length && prof.keep.length) collapsed = true;   // back again with picks made: start folded

@@ -175,6 +175,12 @@
         <p class="note" id="sw-dmout"></p>
       </section>
       <section>
+        <h2>Bot stats <span class="note">@raxacademy.app</span></h2>
+        <div class="bar"><button id="bs-load">Refresh</button><span class="note" id="bs-top"></span></div>
+        <div class="scroll" id="bs-days" class="note">Loading…</div>
+        <details style="margin-top:8px"><summary class="note">Failures (last 30)</summary><div id="bs-fails" class="note"></div></details>
+      </section>
+      <section>
         <h2>Real Pro check</h2>
         <div class="bar"><input id="pp-user" placeholder="Real username" autocomplete="off" style="flex:0 1 180px"><button id="pp-go">Check profile</button><button id="pp-clear" title="Lets them run the Swaps Pro check again">Clear their Swaps Pro check</button><span class="note" id="pp-msg">Reads one profile on the bot account and shows what Real sends back.</span></div>
         <div id="pp-hits" class="note"></div>
@@ -588,6 +594,21 @@ $('#t-reports').addEventListener('click', async e => {
 });
 
 /* ---------- swaps ---------- */
+const BS_COLS = [['dm_warn','Warn DMs'],['dm_contact','Contact DMs'],['dm_follow','Follow-ups'],['dm_reset','Reset replies'],['dm_rename','Username replies'],
+  ['fail','Failed'],['verify_try','Verify taps'],['verify_ok','Verified'],['pro_check','Pro checks'],['pro_yes','Pro yes'],['rename_ok','Username links'],
+  ['reset_ok','Password resets'],['matches','Matches made'],['rescans','Daily rescans'],['rescan_fail','Rescans failed']];
+async function loadBot(){
+  const j = await api('/api/swaps?op=botstats');
+  if(j.error){ $('#bs-days').textContent = j.error; return; }
+  const dmSum = d => ['dm_warn','dm_contact','dm_follow','dm_reset','dm_rename'].reduce((a, k) => a + (d[k] || 0), 0);
+  const t = j.days[0] || {};
+  $('#bs-top').innerHTML = `Today: <b>${dmSum(t)}</b> DMs sent · <b>${t.fail || 0}</b> failed · <b>${j.chats}</b> verified chats · <b>${j.swappers}</b> active swappers · <b>${j.open}</b> open matches · <b>${j.errors}</b> errored · Pro ${j.proYes} yes / ${j.proNo} no · ${j.newChatsLeft} new chats left today`;
+  $('#bs-days').innerHTML = '<table><tr><th></th>' + j.days.map(d => `<th>${esc(d.day.slice(5))}</th>`).join('') + '</tr>'
+    + '<tr><td><b>DMs sent</b></td>' + j.days.map(d => `<td><b>${dmSum(d)}</b></td>`).join('') + '</tr>'
+    + BS_COLS.map(([k, l]) => `<tr><td>${l}</td>` + j.days.map(d => `<td>${d[k] || ''}</td>`).join('') + '</tr>').join('') + '</table>';
+  $('#bs-fails').innerHTML = (j.fails || []).map(f => `<div>${new Date(f.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} · <b>${esc(f.kind)}</b> · ${esc(f.msg)}</div>`).join('') || 'None.';
+}
+$('#bs-load').addEventListener('click', loadBot);
 $('#pp-clear').addEventListener('click', async () => {
   const u = $('#pp-user').value.trim(); if(!u){ $('#pp-msg').textContent = 'Type a username.'; return; }
   const j = await api('/api/swaps?op=proprobe&clear=1&user=' + encodeURIComponent(u));
@@ -604,7 +625,7 @@ $('#pp-go').addEventListener('click', async () => {
     : (j.search ? 'No field with a name like pro, premium, subscription, plan, tier or badge.' : '');
   $('#pp-raw').textContent = JSON.stringify(j, null, 2);
 });
-function loadSwaps(){ loadMatches(); loadNamed(); loadEvery(); }
+function loadSwaps(){ loadMatches(); loadNamed(); loadEvery(); loadBot(); }
 const everyLbl = m => m === 15 ? 'every 15 minutes' : 'every 3 hours';
 function drawEvery(m){ const b = $('#sw-every'); b.dataset.m = m;
   b.textContent = m === 15 ? 'Members: every 15 min · switch to 3 hours' : 'Members: every 3 hours · switch to 15 min'; }
