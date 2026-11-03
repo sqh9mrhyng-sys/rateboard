@@ -872,13 +872,20 @@ export async function swapTick(env) {
       await stat(db, 'cleared');
     }
   } catch (e) {}
-  // One-time (2026-11-03): a full refresh for everyone who has ever scanned.
+  // One-time (2026-11-03): no server refresh after all - just the cleared timers. Empty the queue.
+  try {
+    if (!(await env.RATEBOARD_KV.get('scan_unqueue_v1'))) {
+      await env.RATEBOARD_KV.put('scan_unqueue_v1', String(Date.now()));
+      try { await db.prepare('UPDATE swap_users SET fullPart = NULL WHERE fullPart IS NOT NULL').run(); } catch (e) {}
+    }
+  } catch (e) {}
+  // One-time (2026-11-03): clear everyone's scan timers (Swaps and Boosts).
   try {
     if (!(await env.RATEBOARD_KV.get('scan_reset_v2'))) {
       await env.RATEBOARD_KV.put('scan_reset_v2', String(Date.now()));
       try { await db.prepare('ALTER TABLE swap_users ADD COLUMN fullPart INTEGER').run(); } catch (e) {}
       try { await db.prepare('ALTER TABLE swap_users ADD COLUMN boostScanAt INTEGER').run(); } catch (e) {}
-      await db.prepare('UPDATE swap_users SET fullPart = 0, scannedAt = MIN(COALESCE(scannedAt, 0), ?), boostScanAt = NULL WHERE hashId IS NOT NULL').bind(Date.now() - 4 * 3600000).run();
+      await db.prepare('UPDATE swap_users SET scannedAt = MIN(COALESCE(scannedAt, 0), ?), boostScanAt = NULL WHERE hashId IS NOT NULL').bind(Date.now() - 4 * 3600000).run();
       await stat(db, 'scan_reset');
     }
   } catch (e) {}
