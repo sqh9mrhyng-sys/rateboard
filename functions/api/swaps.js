@@ -609,10 +609,12 @@ async function sendPhase(env, db, auth, matches, phase, max) {
     if (!me || !me.hashId) { notes.push(`${who}: never verified`); continue; }
     const lines = [];
     for (const { m, side } of list) {
-      const otherKey = side === 'A' ? m.b : m.a, gets = side === 'A' ? m.aGets : m.bGets;
+      // What they buy is the player their PARTNER asked for, on their own pass
+      // of that player (it's one of their swappable passes).
+      const otherKey = side === 'A' ? m.b : m.a, gets = side === 'A' ? m.bGets : m.aGets;
       const o = await member(otherKey); if (!o) continue;
-      if (phase === 'warn') lines.push(`${playerUrl(gets) || playerName(o, gets)} ${String(gets).split(':')[1]} - ${passUrl(me, gets) || '(pass link not found)'}`);   // their own pass, the one they buy the pack for
-      else lines.push(`@${o.rsUser} - ${o.comment || '(no comment link)'} - ${playerUrl(gets) || playerName(o, gets)}`);
+      if (phase === 'warn') lines.push(`${playerUrl(gets) || playerName(me, gets)} ${String(gets).split(':')[1]} - ${passUrl(me, gets) || '(pass link not found)'}`);   // their own pass, the one they buy the pack for
+      else lines.push(`@${o.rsUser} - ${o.comment || '(no comment link)'} - ${playerUrl(gets) || playerName(me, gets)}`);
     }
     if (!lines.length) continue;
     try {
