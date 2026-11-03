@@ -260,6 +260,43 @@ const parse = (s, d) => { try { return JSON.parse(s || ''); } catch (e) { return
 /* Greedy two-way matching. For every pair of active members who share an
    hour: does A have a giveable pass B wants, and B one A wants? Each member
    gets at most one match per run, and the passes in it are spoken for. */
+/* Goal rating: once a member is near the rating they want on the pass they
+   are swapping for, they only get as many swaps as it should take to get
+   there - each swap counted as one pack's average card rating for that
+   player (pack data), or the season's average when the player has none. */
+async function packAvg(db, cache, key) {
+  const [sp, se, id] = String(key).split(':');
+  const sk = sp + ':' + se;
+  if (!cache.has(sk)) {
+    let rows = [];
+    try { const r = await db.prepare('SELECT body FROM pack_snap WHERE sport=? AND season=?').bind(sp, Number(se)).first(); rows = parse(r && r.body, []) || []; } catch (e) {}
+    const by = new Map(), vals = [];
+    for (const x of rows) { const v = Number(x.avgRating); if (v > 0) { by.set(Number(x.playerId), v); vals.push(v); } }
+    cache.set(sk, { by, all: vals.length ? vals.reduce((a, v) => a + v, 0) / vals.length : null });
+  }
+  const c = cache.get(sk);
+  return c.by.get(Number(id)) || c.all || null;
+}
+async function goalRoom(db, cache, u, usedFor) {
+  const want = (u.wants || [])[0];
+  const g = Number(u.goal);
+  if (!want || !(g > 0)) return { limited: false, left: Infinity };
+  const p = (u.passes || []).find(x => x.key === want);
+  const rating = p ? Number(p.rating) || 0 : 0;
+  if (rating >= g) return { limited: true, left: 0, rating, goal: g, reached: true };
+  const avg = await packAvg(db, cache, want);
+  if (!avg) return { limited: false, left: Infinity, rating, goal: g };
+  const need = Math.ceil((g - rating) / avg);
+  const used = usedFor ? await usedFor(u, want) : 0;
+  return { limited: true, left: Math.max(0, need - used), need, used, rating, goal: g, avg: Math.round(avg * 100) / 100 };
+}
+async function usedSince(db, u, want) {
+  const since = Number(u.scannedAt) || 0;
+  const r = await db.prepare(`SELECT COUNT(*) AS n FROM swap_matches WHERE createdAt > ? AND status IN ('pending','sending','warned','sent')
+    AND ((a=? AND aGets=?) OR (b=? AND bGets=?))`).bind(since, u.key, want, u.key, want).first();
+  return Number(r && r.n) || 0;
+}
+
 async function runMatching(db) {
   // Only members the bot already has a chat with: new chats are capped at
   // five a day, so a match with anyone else might never be delivered.
@@ -278,6 +315,9 @@ async function runMatching(db) {
   const swappable = k => !/^(soccer|ufc):/.test(k);
   // One player per swap, and only a pass they own: they buy cards for it.
   for (const u of users) { const own = new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key)); u.wants = u.wants.filter(k => swappable(k) && own.has(k)).slice(0, 1); }
+  // Goal reached, or the swaps it should take are already handed out: sit this round out.
+  const cache = new Map();
+  for (const u of users) { try { const g = await goalRoom(db, cache, u, (x, w) => usedSince(db, x, w)); if (g.left <= 0) u.wants = []; } catch (e) {} }
   const gives = u => new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !promised.has(`${u.key}|${k}`)));
   const made = [];
   for (let i = 0; i < users.length; i++) {
@@ -363,7 +403,15 @@ async function newChatsLeft(env) {
 // has an id and a users list, wherever it sits.
 async function syncChats(db, auth) {
   await db.prepare(DM_DDL).run();
+  // The newest chats come first; if Real hands back a cursor, read a few more pages.
   const d = await rsGetJson('https://web.realapp.com/messages/channels', auth);
+  const pages = [d];
+  const cursorOf = o => o && typeof o === 'object' ? (o.nextCursor || o.cursor || o.next || o.nextPage || o.before || (o.meta && (o.meta.nextCursor || o.meta.cursor)) || null) : null;
+  for (let i = 0, cur = cursorOf(d); i < 3 && cur && typeof cur !== 'object'; i++) {
+    await sleep(700);
+    try { const n = await rsGetJson(`https://web.realapp.com/messages/channels?cursor=${encodeURIComponent(cur)}&before=${encodeURIComponent(cur)}`, auth);
+      pages.push(n); const nx = cursorOf(n); if (!nx || nx === cur) break; cur = nx; } catch (e) { break; }
+  }
   const found = [];
   const walk = o => {
     if (!o || typeof o !== 'object') return;
@@ -377,7 +425,7 @@ async function syncChats(db, auth) {
     }
     for (const v of Object.values(o)) if (v && typeof v === 'object') walk(v);
   };
-  walk(d);
+  pages.forEach(walk);
   for (const [hashId, userName, ch] of found) {
     await db.prepare(`INSERT INTO swap_dm (hashId, userName, channelId, openedAt) VALUES (?, ?, ?, ?)
       ON CONFLICT(hashId) DO UPDATE SET channelId=excluded.channelId, userName=COALESCE(excluded.userName, swap_dm.userName)`)
@@ -458,11 +506,12 @@ async function findCodeInDms(auth, userKey, code) {
   };
   try { collect(await rsGetJson('https://web.realapp.com/messages/requests', auth), true); } catch (e) {}
   try { collect(await rsGetJson('https://web.realapp.com/messages/channels', auth), false); } catch (e) { if (!chans.length) return { error: 'Could not reach Real just now.' }; }
-  for (const c of chans) if (hasCode(c.o)) return { ok: true, request: c.isReq ? c.ch : null, channel: c.ch };
+  const idOf = o => { try { const m = JSON.stringify(o).match(new RegExp('"(?:userId|id)":"([A-Za-z0-9]{6,12})"[^{}]*"userName":"' + userKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"', 'i')); return m ? m[1] : null; } catch (e) { return null; } };
+  for (const c of chans) if (hasCode(c.o)) return { ok: true, request: c.isReq ? c.ch : null, channel: c.ch, hashId: idOf(c.o) };
   for (const c of chans.slice(0, 1)) {
     try {
       const m = await rsGetJson(`https://web.realapp.com/messages/channels/${c.ch}/messages`, auth);
-      if (hasCode(m)) return { ok: true, request: c.isReq ? c.ch : null, channel: c.ch };
+      if (hasCode(m)) return { ok: true, request: c.isReq ? c.ch : null, channel: c.ch, hashId: idOf(c.o) };
     } catch (e) {}
   }
   return { ok: false, chats: chans.length };
@@ -626,7 +675,7 @@ async function sendPhase(env, db, auth, matches, phase, max) {
         m[col(side)] = Date.now();
       }
     } catch (e) { notes.push(`${phase} to @${me.rsUser} failed: ${String(e.message || e).slice(0, 160)}`); }
-    await sleep(1200);
+    await sleep(900);
   }
   // A match is finished once both members have both DMs.
   for (const m of matches) {
@@ -638,6 +687,8 @@ async function sendPhase(env, db, auth, matches, phase, max) {
 async function matchCols(db) {
   for (const c of ['warnA', 'warnB', 'doneA', 'doneB']) { try { await db.prepare(`ALTER TABLE swap_matches ADD COLUMN ${c} INTEGER`).run(); } catch (e) {} }
   try { await db.prepare('ALTER TABLE swap_users ADD COLUMN comment TEXT').run(); } catch (e) {}
+  try { await db.prepare('ALTER TABLE swap_users ADD COLUMN goal REAL').run(); } catch (e) {}
+  try { await db.prepare('ALTER TABLE swap_users ADD COLUMN autoAt INTEGER').run(); } catch (e) {}
 }
 // Admin "Send now": both DMs for one match, straight away.
 async function sendMatch(env, db, auth, m) {
@@ -651,6 +702,27 @@ async function sendMatch(env, db, auth, m) {
    No chat reading here: members verify their DM with the button on /swaps.
    At :30 the matches whose swap hour is next get the warn DM; in the swap
    hour itself any warn still owed goes first, then the contact DM. */
+async function autoRescan(env, db, auth) {
+  const day = Date.now() - 86400000;
+  const u = await db.prepare(`SELECT key, hashId, passes FROM swap_users WHERE active=1 AND hashId IS NOT NULL AND passes IS NOT NULL
+      AND wants IS NOT NULL AND wants <> '[]' AND COALESCE(autoAt, scannedAt, 0) < ? ORDER BY COALESCE(autoAt, scannedAt, 0) LIMIT 1`).bind(day).first();
+  if (!u) return null;
+  await db.prepare('UPDATE swap_users SET autoAt=? WHERE key=?').bind(Date.now(), u.key).run();   // claimed, even if it fails
+  const prev = parse(u.passes, []);
+  const only = {};
+  for (const p of prev) if (!/^(soccer|ufc)$/.test(p.sport)) { (only[p.sport] = only[p.sport] || []); if (!only[p.sport].includes(Number(p.season))) only[p.sport].push(Number(p.season)); }
+  // At most 10 sport-seasons, so one run stays short.
+  let n = 0; for (const k of Object.keys(only)) { only[k] = only[k].slice(0, Math.max(0, 10 - n)); n += only[k].length; if (!only[k].length) delete only[k]; }
+  if (!n) return null;
+  const r = await scanPasses(u.hashId, auth, only);
+  if ((r.errors || []).length) return { key: u.key, skipped: r.errors.length };   // try again tomorrow rather than drop passes
+  const fresh = new Set(Object.entries(only).flatMap(([k, v]) => v.map(se => `${k}:${se}`)));
+  const merged = prev.filter(p => !fresh.has(`${p.sport}:${p.season}`)).concat(r.passes);
+  await fillNames(db, merged);
+  await db.prepare('UPDATE swap_users SET passes=?, scannedAt=? WHERE key=?').bind(JSON.stringify(merged), Date.now(), u.key).run();
+  return { key: u.key, passes: merged.length };
+}
+
 export async function swapTick(env) {
   if (!DM_ON) return null;
   const db = env.RATEBOARD_DB, auth = swapToken(env);
@@ -663,14 +735,18 @@ export async function swapTick(env) {
     try { await matchCols(db); } catch (e) {}
     try { await runMatching(db); } catch (e) {}
   }
+  // Daily re-scan: one active swapper a minute, the seasons they hold passes in.
+  try { await autoRescan(env, db, auth); } catch (e) {}
   const d = new Date(), h = d.getUTCHours(), next = (h + 1) % 24;
   const hours = d.getUTCMinutes() >= 30 ? [h, next] : [h];
   const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned') AND slot IN (${hours.map(() => '?').join(',')}) ORDER BY id LIMIT 40`)
     .bind(...hours).all()).results) || [];
   if (!rows.length) return [];
-  let out = await sendPhase(env, db, auth, rows, 'warn', 4);
+  // About 9 DMs a minute in all.
+  let out = await sendPhase(env, db, auth, rows, 'warn', 9);
+  const left = 9 - out.filter(n => / sent to /.test(n)).length;
   const now = rows.filter(m => Number(m.slot) === h && m.warnA && m.warnB);
-  if (now.length) out = out.concat(await sendPhase(env, db, auth, now, 'contact', 4));
+  if (now.length && left > 0) out = out.concat(await sendPhase(env, db, auth, now, 'contact', left));
   return out;
 }
 
@@ -686,6 +762,17 @@ const SACCESS_DDL = `CREATE TABLE IF NOT EXISTS swap_access (key TEXT PRIMARY KE
 // this is true; then the Pro check opens it to every Real Pro member.
 const SWAPS_OPEN = true;   // open quietly 2026-11-02: reachable at /swaps, not in the menu yet (index.html)
 const SPRO_DDL = `CREATE TABLE IF NOT EXISTS swap_pro (key TEXT PRIMARY KEY, pro INTEGER, tier INTEGER, rsId TEXT, at INTEGER)`;
+const HIGH_VOL = "We're experiencing high volume, give it 1-2 mins then try again";
+const PRO_RETRY_MS = 3 * 86400000;           // a failed Pro check can be run again after 3 days
+// Comment links must sit under the swap post (its long id; the share link is 9DHKtlFNQA4).
+const SWAP_POST_ID = '0VH8Fy0KQ01CBqj5';
+const SWAP_COMMENT_RE = new RegExp('^https://(www\\.)?realapp\\.com/' + SWAP_POST_ID + '/[0-9A-Za-z]{4,}([/?#].*)?$');
+/* A member's Real username: their board username, unless they have linked a
+   different Real account by DMing the bot from it (/username). */
+async function realName(db, key) {
+  try { const r = await db.prepare('SELECT rsName FROM users WHERE key=?').bind(key).first(); return String((r && r.rsName) || key); }
+  catch (e) { return String(key); }
+}
 const OTD_DDL = `CREATE TABLE IF NOT EXISTS otd_access (key TEXT PRIMARY KEY, grantedAt INTEGER)`;
 /* Who can use Swaps and who can use OTD optimization - two separate grants.
    ok means either; swaps and otd say which. */
@@ -716,7 +803,7 @@ export async function swapAccess(env, request) {
 }
 // What a member (not an admin) may do: their own swap and nothing else, and
 // for OTD their own passes and games.
-const MEMBER_OPS = new Set(['me', 'save', 'scan', 'search', 'connect']);
+const MEMBER_OPS = new Set(['me', 'save', 'scan', 'search', 'connect', 'whynot']);
 const OTD_OPS = new Set(['me', 'scan', 'games', 'boostplan']);
 const BOOST_OPS = new Set(['me', 'scan', 'boostplan', 'boostinv', 'buys']);
 const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
@@ -1040,28 +1127,86 @@ export async function onRequest(ctx) {
   catch (e) { return json({ error: 'Swaps hit an error: ' + String((e && e.message) || e).slice(0, 300) }, 500); }
 }
 
+/* Linking a different Real username (/username): the member names the Real
+   account, DMs @raxacademy.app "confirm username change" from it, and taps
+   verify. Once the bot sees that message from that account, it becomes the
+   Real account Swaps uses for them. Their Pro check and scan start over. */
+const RN_PHRASE = 'CONFIRM USERNAME CHANGE';
+async function renameFlow(env, db, url, acc, op, waitUntil) {
+  if (!acc.who) return json({ error: 'Sign in on the board first.' }, 401);
+  try { await db.prepare('ALTER TABLE users ADD COLUMN rsName TEXT').run(); } catch (e) {}
+  const kvKey = 'rn_v1_' + acc.who;
+  if (op === 'rnstatus') {
+    let p = null; try { p = JSON.parse((await env.RATEBOARD_KV.get(kvKey)) || 'null'); } catch (e) {}
+    return json({ board: acc.who, real: await realName(db, acc.who), pending: p && p.name });
+  }
+  if (op === 'rnstart') {
+    const name = String(url.searchParams.get('user') || '').trim().replace(/^@/, '');
+    const k = name.toLowerCase();
+    if (!/^[a-z0-9._-]{2,40}$/i.test(name)) return json({ error: 'Enter a Real username.' }, 400);
+    if (!(await allow(url.origin, 'rnstart:' + acc.who, 6, 3600))) return json({ error: 'Too many tries - wait an hour.' }, 429);
+    if (k !== String(acc.who).toLowerCase()) {
+      const other = await db.prepare('SELECT key FROM users WHERE (LOWER(key)=? OR LOWER(rsName)=?) AND key<>?').bind(k, k, acc.who).first();
+      if (other) return json({ error: 'That Real username is already linked to another board account. Message Dennis if it is yours.' }, 409);
+    }
+    await env.RATEBOARD_KV.put(kvKey, JSON.stringify({ name, at: Date.now() }), { expirationTtl: 3600 });
+    return json({ pending: name, phrase: 'confirm username change', bot: 'raxacademy.app' });
+  }
+  // rncheck
+  let p = null; try { p = JSON.parse((await env.RATEBOARD_KV.get(kvKey)) || 'null'); } catch (e) {}
+  if (!p || !p.name) return json({ error: 'Enter the Real username first.' }, 400);
+  if (!(await allow(url.origin, 'rncheck:' + acc.who, 4, 60))) return json({ error: 'Give it a few seconds and try again.' }, 429);
+  if (!(await allow(url.origin, 'rncheck-all', 20, 60))) return json({ error: HIGH_VOL }, 429);
+  const auth = swapToken(env);
+  if (!auth) return json({ error: 'The bot is not set up.' }, 503);
+  const found = await findCodeInDms(auth, String(p.name).toLowerCase(), RN_PHRASE);
+  if (found.error) return json({ waiting: true, error: 'Could not reach Real just now - try again in a minute.' });
+  if (!found.ok) return json({ waiting: true, error: `No "confirm username change" message from @${p.name} yet. Send it to @raxacademy.app from that account, then tap verify again.` });
+  await db.prepare('UPDATE users SET rsName=? WHERE key=?').bind(p.name, acc.who).run();
+  try { await db.prepare(SPRO_DDL).run(); await db.prepare('DELETE FROM swap_pro WHERE key=?').bind(acc.who).run(); } catch (e) {}
+  try { await db.prepare('UPDATE swap_users SET rsUser=?, hashId=NULL, passes=NULL, scannedAt=NULL WHERE key=?').bind(p.name, acc.who).run(); } catch (e) {}
+  await env.RATEBOARD_KV.delete(kvKey);
+  try {
+    waitUntil((async () => {
+      if (found.request) { try { await fetch(`https://web.realapp.com/messages/channels/${found.request}/acceptrequest`, { method: 'PUT', headers: { ...rsHeaders(auth), 'content-type': 'application/json' }, body: '{}' }); } catch (e) {} }
+      if (found.channel) {
+        try { await dmSend(auth, found.channel, `Username confirmed; board account ${acc.who} now uses this Real account on https://raxacademy.app`); } catch (e) {}
+        // That chat is how Swaps reaches them now.
+        try { if (found.hashId) await db.prepare(`INSERT INTO swap_dm (hashId, userName, channelId, openedAt) VALUES (?, ?, ?, ?) ON CONFLICT(hashId) DO UPDATE SET channelId=excluded.channelId`).bind(found.hashId, p.name, found.channel, Date.now()).run(); } catch (e) {}
+      }
+    })());
+  } catch (e) {}
+  return json({ ok: true, real: p.name });
+}
+
 async function proCheck(env, db, url, acc) {
   if (!acc.who) return json({ error: 'Sign in on the board first.' }, 401);
   if (acc.swaps) return json({ access: true });
   if (!SWAPS_OPEN) return json({ error: 'Swaps is not open yet.' }, 403);
   await db.prepare(SPRO_DDL).run();
-  const had = await db.prepare('SELECT pro FROM swap_pro WHERE key=?').bind(acc.who).first();
-  if (had) return json({ access: !!had.pro, checked: true, pro: !!had.pro });
+  let had = await db.prepare('SELECT pro, at FROM swap_pro WHERE key=?').bind(acc.who).first();
+  if (had && !had.pro && Date.now() - (Number(had.at) || 0) > PRO_RETRY_MS) {
+    if (url.searchParams.get('peek') === '1') return json({ access: false, checked: false, retry: true });
+    await db.prepare('DELETE FROM swap_pro WHERE key=?').bind(acc.who).run(); had = null;
+  }
+  if (had) return json({ access: !!had.pro, checked: true, pro: !!had.pro,
+    retryIn: had.pro ? null : Math.max(1, Math.ceil(((Number(had.at) || 0) + PRO_RETRY_MS - Date.now()) / 86400000)) });
   if (url.searchParams.get('peek') === '1') return json({ access: false, checked: false });
   // One real check per member, ever; this only guards against double taps.
-  if (!(await allow(url.origin, 'procheck:' + acc.who, 3, 600)) || !(await allow(url.origin, 'procheck-all', 20, 60)))
-    return json({ error: 'Busy - try again in a minute.' }, 429);
+  if (!(await allow(url.origin, 'procheck:' + acc.who, 3, 600))) return json({ error: 'Wait a few minutes and try again.' }, 429);
+  if (!(await allow(url.origin, 'procheck-all', 20, 60))) return json({ error: HIGH_VOL }, 429);
   const auth = swapToken(env);
   if (!auth) return json({ error: 'The check is not set up yet.' }, 503);
   let d;
-  try { d = await rsGetJson(`https://web.realapp.com/searchusers?query=${encodeURIComponent(acc.who)}`, auth); }
+  const rn = await realName(db, acc.who);
+  try { d = await rsGetJson(`https://web.realapp.com/searchusers?query=${encodeURIComponent(rn)}`, auth); }
   catch (e) { return json({ error: 'Could not reach Real just now - try again in a minute.' }, 502); }
   if (!d || !Array.isArray(d.users)) return json({ error: 'Could not reach Real just now - try again in a minute.' }, 502);
-  const u = d.users.find(x => String(x.userName || '').toLowerCase() === String(acc.who).toLowerCase()) || null;
+  const u = d.users.find(x => String(x.userName || '').toLowerCase() === rn.toLowerCase()) || null;
   const pro = !!(u && u.isRealPro);
   await db.prepare('INSERT INTO swap_pro (key, pro, tier, rsId, at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(key) DO NOTHING')
     .bind(acc.who, pro ? 1 : 0, u && u.realProTier != null ? Number(u.realProTier) : null, u ? String(u.id) : null, Date.now()).run();
-  return json({ access: pro, checked: true, pro });
+  return json({ access: pro, checked: true, pro, retryIn: pro ? null : 3, notFound: !u });
 }
 
 async function handle({ request, env, waitUntil }) {
@@ -1072,6 +1217,7 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'resetstart' || op === 'resetcheck') return resetFlow(env, db, url, request, op, waitUntil);
   const acc = await swapAccess(env, request);
   if (op === 'procheck') return proCheck(env, db, url, acc);
+  if (op === 'rnstatus' || op === 'rnstart' || op === 'rncheck') return renameFlow(env, db, url, acc, op, waitUntil);
   // Boosts (BETA) is open to every signed-in member; its calls say page=boosts.
   // Limited to Dennis (admins) while in beta: set BOOSTS_OPEN to open it to everyone signed in.
   const boostCall = BOOSTS_OPEN && url.searchParams.get('page') === 'boosts' && BOOST_OPS.has(op) && !!acc.who;
@@ -1080,6 +1226,54 @@ async function handle({ request, env, waitUntil }) {
   const me = acc.who;
   await ready(db);
   const auth = swapToken(env);
+
+  /* Why haven't I matched? Run when they tap the button, never on its own. */
+  if (op === 'whynot') {
+    if (!(await allow(url.origin, 'whynot:' + me, 6, 600))) return json({ error: 'Wait a few minutes and try again.' }, 429);
+    if (!(await allow(url.origin, 'whynot-all', 30, 60))) return json({ error: HIGH_VOL }, 429);
+    await matchCols(db);
+    const r = await db.prepare('SELECT * FROM swap_users WHERE key=?').bind(me).first();
+    const u = r ? { ...r, wants: parse(r.wants, []), keep: new Set(parse(r.keep, [])), slots: parse(r.slots, []), passes: parse(r.passes, []) } : null;
+    const why = [];
+    let dm = false;
+    if (u && u.hashId) { try { await db.prepare(DM_DDL).run(); dm = !!(await db.prepare('SELECT 1 AS x FROM swap_dm WHERE hashId=? AND channelId IS NOT NULL').bind(u.hashId).first()); } catch (e) {} }
+    if (!dm) why.push('Step 1 is not verified - the bot cannot DM you, so you are never matched.');
+    if (!u || !u.comment) why.push('No comment link saved (step 2).');
+    if (!u || !u.passes.length) why.push('Your passes have not been scanned (step 3).');
+    const want = u && u.wants[0];
+    if (!want) why.push('You have not picked a pass to swap for (step 4).');
+    else if (!u.passes.some(p => p.key === want)) why.push('The pass you picked is not in your last scan - scan again or pick another.');
+    if (!u || !u.slots.length) why.push('No hours picked (step 5).');
+    if (u && !u.active) why.push('Your swap is not saved.');
+    if (u && want) {
+      const g = await goalRoom(db, new Map(), u, (x, w) => usedSince(db, x, w));
+      if (g.reached) why.push(`Your pass is at ${g.rating}, which already meets your goal of ${g.goal}.`);
+      else if (g.limited && g.left <= 0) why.push(`You already have the ${g.need} swap${g.need === 1 ? '' : 's'} it should take to reach your goal (about ${g.avg} rating a pack). New ones start after your next daily scan.`);
+    }
+    const open = await db.prepare(`SELECT COUNT(*) AS n FROM swap_matches WHERE (a=? OR b=?) AND (status IN ('pending','sending','warned') OR (status='sent' AND sentAt > ?))`).bind(me, me, Date.now() - 86400000).first();
+    if (Number(open && open.n)) why.push('You already have a swap in the last 24 hours - one a day.');
+    // Who could swap with them.
+    let can = 0, hour = 0, both = 0;
+    if (u && want && !why.length) {
+      const others = ((await db.prepare(`SELECT key, wants, keep, slots, passes FROM swap_users WHERE active=1 AND passes IS NOT NULL AND key<>?
+          AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`).bind(me).all()).results || []);
+      const mine = new Set(u.passes.filter(p => p.kind !== 'team' && !u.keep.has(p.key)).map(p => p.key));
+      for (const o of others) {
+        const op_ = parse(o.passes, []), ok = new Set(parse(o.keep, []));
+        if (!op_.some(p => p.key === want && p.kind !== 'team' && !ok.has(p.key))) continue;
+        can++;
+        if (!parse(o.slots, []).some(h => u.slots.includes(h))) continue;
+        hour++;
+        const ow = parse(o.wants, [])[0];
+        if (ow && mine.has(ow)) both++;
+      }
+      if (!can) why.push('Nobody signed up has your pass free to swap yet.');
+      else if (!hour) why.push(`${can} member${can === 1 ? ' has' : 's have'} your pass free, but none share your hours - try adding hours.`);
+      else if (!both) why.push(`${hour} member${hour === 1 ? '' : 's'} with your pass share your hours, but none of them want a pass you have free. Untick some keeps to give them more options.`);
+      else why.push(`${both} member${both === 1 ? ' is' : 's are'} a match. Matching runs at the top of every hour - you should be matched by then.`);
+    }
+    return json({ why, ready: !!(u && want && dm), can, hour, both });
+  }
 
   if (op === 'search') {
     const q = String(url.searchParams.get('q') || '').trim().toLowerCase().replace(/[%_]/g, '');
@@ -1179,7 +1373,7 @@ async function handle({ request, env, waitUntil }) {
         connected = !!(await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=? AND channelId IS NOT NULL').bind(u.hashId).first()); } catch (e) {}
     }
     return json({ key: me, admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
-      keep: parse(u.keep, []), slots: parse(u.slots, []), passes: parse(u.passes, []), scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '' } : null });
+      keep: parse(u.keep, []), slots: parse(u.slots, []), passes: parse(u.passes, []), scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null } : null, real: await realName(db, me) });
   }
 
   if (op === 'save' && request.method === 'POST') {
@@ -1188,17 +1382,19 @@ async function handle({ request, env, waitUntil }) {
     const wants = (Array.isArray(b.wants) ? b.wants : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, 1);   // one player per swap
     const keep = (Array.isArray(b.keep) ? b.keep : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, 2000);
     const slots = [...new Set((Array.isArray(b.slots) ? b.slots : []).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24))].slice(0, 5);
-    const rsUser = String(me);   // the board username is the Real account
+    const rsUser = await realName(db, me);   // their Real account: board username, or the one they linked
     const mine = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
     const owned = new Set(parse(mine && mine.passes, []).filter(p => p.kind !== 'team').map(p => p.key));
     if (wants.length && !owned.has(wants[0])) return json({ error: 'You can only swap for a pass you own - scan your passes, then pick one of them.' }, 400);
     const comment = String(b.comment || '').trim();
-    if (!/^https:\/\/(www\.)?realapp\.com\/\S{4,}$/i.test(comment)) return json({ error: 'Paste the link to your comment on the swap post (step 2).' }, 400);
+    if (!SWAP_COMMENT_RE.test(comment)) return json({ error: 'That link is not a comment under the swap post. Open the swap post, copy the link to your comment, and paste it in step 2.' }, 400);
+    const goal = b.goal === '' || b.goal == null ? null : Number(b.goal);
+    if (goal != null && !(goal > 0 && goal < 100000)) return json({ error: 'Goal rating has to be a number.' }, 400);
     await matchCols(db);
-    await db.prepare(`INSERT INTO swap_users (key, rsUser, wants, keep, slots, updatedAt, active, comment) VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+    await db.prepare(`INSERT INTO swap_users (key, rsUser, wants, keep, slots, updatedAt, active, comment, goal) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
       ON CONFLICT(key) DO UPDATE SET rsUser=excluded.rsUser, wants=excluded.wants, keep=excluded.keep,
-        slots=excluded.slots, updatedAt=excluded.updatedAt, active=1, comment=excluded.comment`)
-      .bind(me, rsUser, JSON.stringify(wants), JSON.stringify(keep), JSON.stringify(slots), Date.now(), comment.slice(0, 200)).run();
+        slots=excluded.slots, updatedAt=excluded.updatedAt, active=1, comment=excluded.comment, goal=excluded.goal`)
+      .bind(me, rsUser, JSON.stringify(wants), JSON.stringify(keep), JSON.stringify(slots), Date.now(), comment.slice(0, 300), goal).run();
     return json({ ok: true, wants, keep: keep.length, slots });
   }
 
@@ -1219,11 +1415,11 @@ async function handle({ request, env, waitUntil }) {
       }
     } else if (!(await allow(url.origin, 'swapscan:' + me, 20, 600))) return json({ error: 'Twenty scans per ten minutes.' }, 429);
     // On Swaps a member's Real account is their board username - no other.
-    const rsUser = url.searchParams.get('page') !== 'boosts' ? String(me)
+    const rsUser = url.searchParams.get('page') !== 'boosts' ? await realName(db, me)
       : String(url.searchParams.get('rsUser') || (u && u.rsUser) || '').trim();
     if (!rsUser) return json({ error: 'Enter your Real username first.' }, 400);
     let hashId = u && u.rsUser === rsUser ? u.hashId : null;
-    if (!hashId && rsUser === String(me)) { try { const pr = await db.prepare('SELECT rsId FROM swap_pro WHERE key=?').bind(me).first(); if (pr && pr.rsId) hashId = pr.rsId; } catch (e) {} }
+    if (!hashId && url.searchParams.get('page') !== 'boosts') { try { const pr = await db.prepare('SELECT rsId FROM swap_pro WHERE key=?').bind(me).first(); if (pr && pr.rsId) hashId = pr.rsId; } catch (e) {} }
     try { if (!hashId) hashId = await resolveHashId(rsUser, auth); } catch (e) { return json({ error: String(e.message || e) }, 502); }
     if (!hashId) return json({ error: `No Real user called ${rsUser}.` }, 404);
     // From Boosts only its three current seasons are read (6 calls, not ~80),
@@ -1231,7 +1427,7 @@ async function handle({ request, env, waitUntil }) {
     const boostsOnly = url.searchParams.get('page') === 'boosts';
     const only = boostsOnly ? Object.fromEntries(Object.entries(BOOST_SEASON).map(([k, v]) => [k, [v[0]]])) : null;
     // Site-wide: at most 40 pass reads a minute, so a crowd can't trip Real's limits.
-    if (!acc.admin && !BOOST_FAST.has(String(me || '').toLowerCase()) && !(await allow(url.origin, 'passread-all', 15, 60))) return json({ error: 'Lots of people are reading passes right now - try again in a minute.' }, 429);
+    if (!acc.admin && !BOOST_FAST.has(String(me || '').toLowerCase()) && !(await allow(url.origin, 'passread-all', 15, 60))) return json({ error: HIGH_VOL }, 429);
     const r = await scanPasses(hashId, auth, only);
     if (boostsOnly) {
       const prevP = parse(u && u.passes, []);
@@ -1284,7 +1480,7 @@ async function handle({ request, env, waitUntil }) {
     if (!u || !u.hashId) return json({ error: 'Re-read your passes first so the board knows your Real account.' }, 400);
     const want = url.searchParams.get('fresh') === '1';
     const fast = acc.admin || BOOST_FAST.has(String(me || '').toLowerCase());
-    if (want && !fast && !(await allow(url.origin, 'boostinv-all', 15, 60))) return json({ error: 'Lots of people are loading boosters right now - try again in a minute.' }, 429);
+    if (want && !fast && !(await allow(url.origin, 'boostinv-all', 15, 60))) return json({ error: HIGH_VOL }, 429);
     const all = await boostInventoryAll(env, env.RS_AUTH_TOKEN || auth, u.hashId, want, fast);
     if (all.error) return json({ error: all.error }, 502);
     return json({ sport: sp, at: all.at, next: all.next, cached: !!all.cached, boosters: (all.sports || {})[sp] || [], sports: all.sports });
@@ -1616,16 +1812,17 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'connect') {
     if (!auth) return json({ error: 'No swap token found.' }, 503);
     if (!(await allow(url.origin, 'swapdm-connect:' + me, 4, 600))) return json({ error: 'Too many checks - wait a few minutes and try again.' }, 429);
-    if (!(await allow(url.origin, 'swapdm-connect-all', 20, 60))) return json({ error: 'Lots of people are verifying right now - try again in a minute.' }, 429);
+    if (!(await allow(url.origin, 'swapdm-connect-all', 20, 60))) return json({ error: HIGH_VOL }, 429);
     // Their Real account: from a scan, else the Pro check, else one lookup of their board username.
     let u = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(me).first();
     if (!u || !u.hashId) {
       let hid = null;
       try { await db.prepare(SPRO_DDL).run(); const pr = await db.prepare('SELECT rsId FROM swap_pro WHERE key=?').bind(me).first(); hid = pr && pr.rsId; } catch (e) {}
-      if (!hid) { try { hid = await resolveHashId(String(me), auth); } catch (e) { return json({ error: 'Could not reach Real just now - try again in a minute.' }, 502); } }
-      if (!hid) return json({ error: `No Real account called ${me} - your board username has to match your Real username.` }, 404);
+      const rn = await realName(db, me);
+      if (!hid) { try { hid = await resolveHashId(rn, auth); } catch (e) { return json({ error: 'Could not reach Real just now - try again in a minute.' }, 502); } }
+      if (!hid) return json({ error: `No Real account called ${rn}. If your Real username is different, link it at raxacademy.app/username.` }, 404);
       await db.prepare(`INSERT INTO swap_users (key, rsUser, hashId) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET hashId=excluded.hashId, rsUser=excluded.rsUser`)
-        .bind(me, String(me), hid).run();
+        .bind(me, rn, hid).run();
       u = { hashId: hid };
     }
     try { await acceptRequests(db, auth); } catch (e) {}

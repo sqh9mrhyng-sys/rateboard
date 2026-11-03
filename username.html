@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Link your Real account</title>
+<style>
+  :root{--bg:#141925;--panel:#1d2433;--panel2:#232b3d;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;--ok:#5fbf7a;--bad:#e5484d}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+  .wrap{max-width:560px;margin:0 auto;padding:16px}
+  header{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+  h1{font-size:20px;margin:0;font-weight:800} h2{font-size:16px;margin:0 0 6px}
+  a{color:var(--accent)} .note{color:var(--mute);font-size:13px}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+  input,button{font:inherit;padding:10px 12px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
+  button{cursor:pointer} button.primary{background:var(--accent);color:#141925;border-color:var(--accent);font-weight:700}
+  a.btn{display:inline-block;padding:10px 13px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);text-decoration:none;font-weight:600}
+  .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+  .bar input{flex:1 1 200px;min-width:0}
+  [hidden]{display:none !important}
+  .ok{color:var(--ok)} .bad{color:var(--bad)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><h1>Link your Real account</h1><a href="/swaps" style="margin-left:auto">Back to Swaps</a></header>
+  <p class="note" id="who">Checking…</p>
+  <div id="main" hidden>
+    <section>
+      <h2>1. Your Real username</h2>
+      <p class="note">If your Real username is different from your board username, enter it here.</p>
+      <div class="bar"><input id="rn" placeholder="Real username" autocomplete="off" autocapitalize="off"><button class="primary" id="start">Next</button></div>
+      <p class="note" id="startmsg"></p>
+    </section>
+    <section id="s2" hidden>
+      <h2>2. DM the bot from that account</h2>
+      <p class="note">On Real, from <b id="rn2"></b>, send <b>confirm username change</b> in a DM to <b>@raxacademy.app</b>.</p>
+      <div class="bar"><a class="btn" href="https://www.realapp.com/" target="_blank" rel="noopener">Open Real</a><button id="copy">Copy message</button><button class="primary" id="check">Ask bot to verify</button></div>
+      <p class="note" id="checkmsg"></p>
+    </section>
+  </div>
+</div>
+<script>
+(() => {
+  const real = window.fetch.bind(window);
+  window.fetch = (u, o = {}) => {
+    let t = ''; try{ t = localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){}
+    if(t && typeof u === 'string' && u.startsWith('/api/')) o = Object.assign({}, o, { headers: Object.assign({}, o.headers || {}, { 'x-rb-token': t }) });
+    return real(u, o);
+  };
+})();
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const api = async u => { try{ const r = await fetch(u); const j = await r.json().catch(() => ({})); if(!r.ok && !j.error) j.error = 'Error ' + r.status; return j; }catch(e){ return { error: 'Could not reach the board.' }; } };
+function step2(name){ $('#s2').hidden = false; $('#rn2').textContent = '@' + name; }
+(async () => {
+  const j = await api('/api/swaps?op=rnstatus');
+  if(j.error){ $('#who').textContent = j.error; return; }
+  $('#who').innerHTML = `Board account <b>${esc(j.board)}</b> · Real account used for Swaps: <b>@${esc(j.real)}</b>`;
+  $('#main').hidden = false;
+  if(j.pending){ $('#rn').value = j.pending; step2(j.pending); }
+})();
+$('#start').addEventListener('click', async () => {
+  const u = $('#rn').value.trim().replace(/^@/, ''); if(!u){ $('#startmsg').textContent = 'Enter your Real username.'; return; }
+  $('#start').disabled = true;
+  const j = await api('/api/swaps?op=rnstart&user=' + encodeURIComponent(u));
+  $('#start').disabled = false;
+  if(j.error){ $('#startmsg').textContent = j.error; return; }
+  $('#startmsg').textContent = ''; step2(j.pending);
+});
+$('#copy').addEventListener('click', async () => {
+  let ok = false; try{ await navigator.clipboard.writeText('confirm username change'); ok = true; }catch(e){}
+  if(!ok){ try{ const a = document.createElement('textarea'); a.value = 'confirm username change'; document.body.appendChild(a); a.select(); ok = document.execCommand('copy'); a.remove(); }catch(e){} }
+  $('#copy').textContent = ok ? 'Copied' : 'Type it in'; setTimeout(() => { $('#copy').textContent = 'Copy message'; }, 2000);
+});
+$('#check').addEventListener('click', async () => {
+  $('#check').disabled = true; $('#checkmsg').className = 'note'; $('#checkmsg').textContent = 'Checking…';
+  const j = await api('/api/swaps?op=rncheck');
+  $('#check').disabled = false;
+  if(j.ok){ $('#checkmsg').className = 'note ok'; $('#checkmsg').innerHTML = `✅ Done - Swaps now uses <b>@${esc(j.real)}</b>. Go back to <a href="/swaps">Swaps</a> and run the Pro check.`; return; }
+  $('#checkmsg').className = 'note bad'; $('#checkmsg').textContent = j.error || 'Not found yet - try again in a few seconds.';
+});
+</script>
+</body>
+</html>

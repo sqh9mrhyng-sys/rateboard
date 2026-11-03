@@ -66,7 +66,7 @@
 </style>
 </head>
 <body>
-<div class="lock" id="lock" hidden><h1>Swaps</h1><p class="note" id="lockmsg">Checking…</p><p id="probox" hidden><button class="primary" id="procheck">Pro check</button></p><p><a href="/">Back to the board</a></p></div>
+<div class="lock" id="lock" hidden><h1>Swaps</h1><p class="note" id="lockmsg">Checking…</p><p id="probox" hidden><button class="primary" id="procheck">Pro check</button></p><p class="note" id="rnhint" hidden>Is your Real username different from your board username? <a href="/username">Link your Real account</a> first.</p><p><a href="/">Back to the board</a></p></div>
 <div class="wrap" id="main" hidden>
   <header><h1>Swaps</h1><a href="/" style="margin-left:auto">Back to the board</a></header>
 
@@ -88,7 +88,7 @@
   <section>
     <h2>3. Your player passes</h2>
     <p class="note">Checks your Real account for every pass you own. Select the empty box on the left if you do not want to swap that player to people. Everything else will be used to find compatible swaps.</p>
-    <div class="bar"><span class="note">Real account: <span class="who" id="rsuser"></span></span><button class="primary" id="scan" style="margin-left:auto">Scan my passes</button></div>
+    <div class="bar"><span class="note">Real account: <span class="who" id="rsuser"></span> · <a href="/username">not you?</a></span><button class="primary" id="scan" style="margin-left:auto">Scan my passes</button></div>
     <div class="note" id="scanmsg"></div>
     <div class="bar" id="pctl" hidden>
       <select id="pview" aria-label="View"><option value="all">All passes</option><option value="season">By season</option></select>
@@ -106,6 +106,8 @@
     <div class="bar"><input id="wq" placeholder="Search your passes" autocomplete="off"></div>
     <div class="res" id="wres"></div>
     <div id="wants"></div>
+    <div class="bar" style="margin-top:10px"><label class="note" for="goal" style="flex:1 1 100%">Goal rating (optional) - when your pass reaches this rating or gets close, swaps are limited to about what it takes to get there.</label>
+      <input id="goal" type="number" inputmode="decimal" min="0" step="0.1" placeholder="e.g. 45" style="flex:0 1 140px"><span class="note" id="goalmsg"></span></div>
   </section>
 
   <section>
@@ -115,6 +117,8 @@
   </section>
 
   <div class="bar"><button class="primary" id="save">Save my swap</button><span class="note" id="savemsg"></span></div>
+  <div class="bar"><button id="whynot">Why haven't I matched?</button></div>
+  <div class="note" id="whyout"></div>
 
   <section id="admin">
     <h2>Matches (admin)</h2>
@@ -405,9 +409,9 @@ $('#wants').addEventListener('click', e => { const x = e.target.dataset.x; if(x)
 $('#save').addEventListener('click', async () => {
   if(!connected){ $('#savemsg').textContent = 'Do step 1 first - the bot has to be able to DM you.'; return; }
   if(!prof.slots.length){ $('#savemsg').textContent = 'Pick at least one hour.'; return; }
-  if(!/^https:\/\/(www\.)?realapp\.com\/\S{4,}$/i.test($('#clink').value.trim())){ $('#savemsg').textContent = 'Paste the link to your comment on the swap post (step 2).'; return; }
+  if(!SWAP_COMMENT_RE.test($('#clink').value.trim())){ $('#savemsg').textContent = 'That link is not a comment under the swap post. Open the swap post, copy the link to your comment, and paste it in step 2.'; return; }
   const j = await api('/api/swaps?op=save', { method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 1), comment: $('#clink').value.trim(), keep: prof.keep, slots: prof.slots, names: wantNames }) });
+    body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 1), comment: $('#clink').value.trim(), goal: $('#goal').value.trim(), keep: prof.keep, slots: prof.slots, names: wantNames }) });
   $('#savemsg').textContent = j.error ? j.error : 'Saved.';
   try{ localStorage.setItem('ratebrd_swapnames', JSON.stringify(wantNames)); }catch(e){}
 });
@@ -430,6 +434,13 @@ $('#matches').addEventListener('click', async e => {
   loadMatches();
 });
 let connected = false;
+const SWAP_COMMENT_RE = /^https:\/\/(www\.)?realapp\.com\/0VH8Fy0KQ01CBqj5\/[0-9A-Za-z]{4,}([\/?#].*)?$/;
+$('#whynot').addEventListener('click', async () => {
+  $('#whynot').disabled = true; $('#whyout').textContent = 'Checking…';
+  const j = await api('/api/swaps?op=whynot');
+  $('#whynot').disabled = false;
+  $('#whyout').innerHTML = j.error ? esc(j.error) : '<ul style="margin:4px 0 0;padding-left:18px">' + (j.why || []).map(w => `<li>${esc(w)}</li>`).join('') + '</ul>';
+});
 function paintConn(ok){
   connected = !!ok;
   $('#connmsg').innerHTML = ok ? '✅ Verified - match DMs will reach you from <b>@raxacademy.app</b>.' : 'Not verified yet.';
@@ -483,7 +494,14 @@ $('#probe').addEventListener('click', async () => { const j = await api('/api/sw
 $('#dmsend').addEventListener('click', async () => { $('#praw').textContent = JSON.stringify(await api(`/api/swaps?op=dmtest&channel=${encodeURIComponent($('#dmch').value.trim())}&text=${encodeURIComponent($('#dmtext').value)}`), null, 2); });
 $('#envb').addEventListener('click', async () => { $('#praw').textContent = JSON.stringify(await api('/api/swaps?op=env'), null, 2); });
 
-// The Real Pro wall: one check per member, ever.
+// After a failed check: when it can be run again, and the username fix.
+function proAfter(p){
+  const n = p.retryIn, el = $('#rnhint');
+  el.hidden = false;
+  el.innerHTML = (n ? `You can check again in ${n} day${n === 1 ? '' : 's'}. ` : '')
+    + 'If your Real username is different from your board username, <a href="/username">link your Real account</a>.';
+}
+// The Real Pro wall: one check per member, then once every 3 days after a no.
 async function proGate(){
   let p = await api('/api/swaps?op=procheck&peek=1');
   for(let i = 0; i < 2 && p.error && /sign in/i.test(p.error) && (()=>{try{return !!localStorage.getItem('ratebrd_token_v1')}catch(e){return false}})(); i++){
@@ -493,14 +511,14 @@ async function proGate(){
   if(p.access) return true;
   $('#lock').hidden = false;
   if(p.error){ $('#lockmsg').textContent = p.error; return false; }
-  if(p.checked){ $('#lockmsg').textContent = 'Real pro required for this page'; return false; }
-  $('#lockmsg').textContent = ''; $('#probox').hidden = false;
+  if(p.checked){ $('#lockmsg').textContent = 'Real pro required for this page'; proAfter(p); return false; }
+  $('#lockmsg').textContent = ''; $('#probox').hidden = false; $('#rnhint').hidden = false;
   return new Promise(done => {
     $('#procheck').addEventListener('click', async () => {
       $('#procheck').disabled = true; $('#lockmsg').textContent = 'Checking…';
       const r = await api('/api/swaps?op=procheck');
       if(r.access){ $('#lock').hidden = true; done(true); return; }
-      if(r.checked){ $('#probox').hidden = true; $('#lockmsg').textContent = 'Real pro required for this page'; done(false); return; }
+      if(r.checked){ $('#probox').hidden = true; $('#lockmsg').textContent = 'Real pro required for this page'; proAfter(r); done(false); return; }
       $('#procheck').disabled = false; $('#lockmsg').textContent = r.error || 'Could not check - try again.';
     });
   });
@@ -520,7 +538,8 @@ async function proGate(){
   try{ wantNames = JSON.parse(localStorage.getItem('ratebrd_swapnames') || '{}') || {}; }catch(e){}
   if(j.profile) prof = Object.assign(prof, j.profile);
   if(!j.tokenFound) $('#scanmsg').innerHTML = '<span style="color:var(--bad)">No swap token found in Cloudflare yet.</span>';
-  $('#rsuser').textContent = '@' + (j.key || '');
+  $('#rsuser').textContent = '@' + (j.real || j.key || '');
+  $('#goal').value = (j.profile && j.profile.goal != null) ? j.profile.goal : '';
   $('#clink').value = (j.profile && j.profile.comment) || '';
   if(prof.passes.length && prof.keep.length) collapsed = true;   // back again with picks made: start folded
   paintConn(!!j.connected);
