@@ -410,7 +410,7 @@ $('#scan').addEventListener('click', async () => {
   const u = $('#rsuser').textContent.trim().replace(/^@/, '');
   $('#scan').disabled = true;
   $('#scanmsg').textContent = 'Scanning every sport and season… this takes about 30 seconds.';
-  const j = await api('/api/swaps?op=scan');
+  const j = await api('/api/swaps?op=scan&page=swaps');
   $('#scan').disabled = false;
   if(j.error){ $('#scanmsg').textContent = j.error; return; }
   prof.rsUser = u; collapsed = false; prof.passes = j.passes || []; prof.scannedAt = j.scannedAt || Date.now();

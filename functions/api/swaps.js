@@ -104,6 +104,10 @@ const SWAP_SEASONS = {
   golf: [2026, 2025, 2024, 2023, 2022], ufc: [2023]
 };
 
+// What the Swaps page scans: no FC or UFC (nothing to swap there), golf back to 2014.
+const SWAPS_SCAN = Object.fromEntries(Object.entries(SWAP_SEASONS).filter(([k]) => k !== 'soccer' && k !== 'ufc')
+  .map(([k, v]) => [k, k === 'golf' ? [2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2016, 2015, 2014] : v]));
+
 const DDL = [
   `CREATE TABLE IF NOT EXISTS swap_users (key TEXT PRIMARY KEY, rsUser TEXT, hashId TEXT,
      wants TEXT, keep TEXT, slots TEXT, passes TEXT, scannedAt INTEGER, updatedAt INTEGER, active INTEGER DEFAULT 1)`,
@@ -785,7 +789,7 @@ async function autoRescan(env, db, auth) {
   const only = {};
   // Every sport's current season (where new passes show up), then the seasons they hold passes in.
   const add = (sp, se) => { (only[sp] = only[sp] || []); if (!only[sp].includes(Number(se))) only[sp].push(Number(se)); };
-  for (const [sp, list] of Object.entries(SWAP_SEASONS)) if (!/^(soccer|ufc)$/.test(sp)) add(sp, list[0]);
+  for (const [sp, list] of Object.entries(SWAPS_SCAN)) add(sp, list[0]);
   for (const p of prev) if (!/^(soccer|ufc)$/.test(p.sport)) add(p.sport, p.season);
   // At most 14 sport-seasons, so one run stays short.
   let n = 0; for (const k of Object.keys(only)) { only[k] = only[k].slice(0, Math.max(0, 14 - n)); n += only[k].length; if (!only[k].length) delete only[k]; }
@@ -1623,10 +1627,14 @@ async function handle({ request, env, waitUntil }) {
     // From Boosts only its three current seasons are read (6 calls, not ~80),
     // and the member's other passes are kept as they were.
     const boostsOnly = url.searchParams.get('page') === 'boosts';
-    const only = boostsOnly ? Object.fromEntries(Object.entries(BOOST_SEASON).map(([k, v]) => [k, [v[0]]])) : null;
+    const fromSwaps = url.searchParams.get('page') === 'swaps';
+    const only = boostsOnly ? Object.fromEntries(Object.entries(BOOST_SEASON).map(([k, v]) => [k, [v[0]]])) : fromSwaps ? SWAPS_SCAN : null;
     // Site-wide: at most 40 pass reads a minute, so a crowd can't trip Real's limits.
     if (!acc.admin && !BOOST_FAST.has(String(me || '').toLowerCase()) && !(await allow(url.origin, 'passread-all', 15, 60))) return json({ error: HIGH_VOL }, 429);
     const r = await scanPasses(hashId, auth, only);
+    if (fromSwaps) {      // FC and UFC passes from an earlier full scan are kept as they were
+      r.passes = parse(u && u.passes, []).filter(p => p.sport === 'soccer' || p.sport === 'ufc').concat(r.passes);
+    }
     if (boostsOnly) {
       const prevP = parse(u && u.passes, []);
       const fresh = new Set(Object.entries(only).map(([k, v]) => `${k}:${v[0]}`));
