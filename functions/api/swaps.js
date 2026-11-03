@@ -1410,6 +1410,48 @@ async function handle({ request, env, waitUntil }) {
 
   // A raw look at a Real endpoint with the swap token: GET only, and only the
   // paths swaps need, for working out response shapes.
+  /* Admin: one member's Real profile, raw, to see whether Real says if they
+     have Real Pro. Looks the username up, then tries the likely profile
+     addresses, and lists every field whose name looks like a plan or badge. */
+  if (op === 'proprobe') {
+    if (!auth) return json({ error: 'No swap token found.' }, 503);
+    const name = String(url.searchParams.get('user') || '').trim().replace(/^@/, '');
+    if (!name) return json({ error: 'Enter a Real username.' }, 400);
+    if (!(await allow(url.origin, 'proprobe', 6, 600))) return json({ error: 'Six checks per ten minutes.' }, 429);
+    const LOOK = /pro|premium|subscri|plus|tier|plan|badge|verified|member|vip|paid|level|perk/i;
+    const hits = [];
+    const walk = (o, path, src) => {
+      if (!o || typeof o !== 'object') return;
+      for (const [k, v] of Object.entries(o)) {
+        const p2 = path ? path + '.' + k : k;
+        if (LOOK.test(k) && !/profileimage|projection|prestige|property/i.test(k)) hits.push({ src, field: p2, value: typeof v === 'object' ? JSON.stringify(v).slice(0, 200) : v });
+        if (v && typeof v === 'object' && hits.length < 80) walk(v, p2, src);
+      }
+    };
+    const out = { user: name, tried: [] };
+    let found = null;
+    try {
+      const d = await rsGetJson(`https://web.realapp.com/searchusers?query=${encodeURIComponent(name)}`, auth);
+      found = ((d && d.users) || []).find(x => String(x.userName || '').toLowerCase() === name.toLowerCase()) || null;
+      out.search = found; if (found) walk(found, '', 'searchusers');
+    } catch (e) { out.searchError = String(e.message || e).slice(0, 200); }
+    if (!found) return json({ ...out, error: 'No Real user with that exact username.' }, 404);
+    const id = found.id;
+    const paths = [`users/${id}`, `users/${id}/profile`, `userprofile/${id}`, `profile/${id}`, `users/${encodeURIComponent(found.userName)}`, `users/${id}/stats`];
+    for (const path of paths) {
+      try {
+        const res = await fetch('https://web.realapp.com/' + path, { headers: rsHeaders(auth) });
+        const text = await res.text();
+        let body = null; try { body = JSON.parse(text); } catch (e) {}
+        if (res.ok && body) walk(body, '', path);
+        out.tried.push({ path, status: res.status, body: res.ok ? (body || text.slice(0, 3000)) : text.slice(0, 200) });
+      } catch (e) { out.tried.push({ path, error: String(e.message || e).slice(0, 200) }); }
+      await new Promise(r => setTimeout(r, 700));
+    }
+    out.hits = hits;
+    return json(out);
+  }
+
   if (op === 'probe') {
     if (!auth) return json({ error: 'No swap token found.' }, 503);
     const path = String(url.searchParams.get('path') || '').replace(/^\/+/, '');

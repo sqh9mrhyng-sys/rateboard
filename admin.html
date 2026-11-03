@@ -175,6 +175,12 @@
         <p class="note" id="sw-dmout"></p>
       </section>
       <section>
+        <h2>Real Pro check</h2>
+        <div class="bar"><input id="pp-user" placeholder="Real username" autocomplete="off" style="flex:0 1 180px"><button id="pp-go">Check profile</button><span class="note" id="pp-msg">Reads one profile on the bot account and shows what Real sends back.</span></div>
+        <div id="pp-hits" class="note"></div>
+        <details><summary class="note">Everything Real sent</summary><pre id="pp-raw" style="max-height:420px;overflow:auto;white-space:pre-wrap;font-size:11px"></pre></details>
+      </section>
+      <section>
         <h2>Named members</h2>
         <div id="sw-named" class="note">Loading…</div>
       </section>
@@ -582,6 +588,17 @@ $('#t-reports').addEventListener('click', async e => {
 });
 
 /* ---------- swaps ---------- */
+$('#pp-go').addEventListener('click', async () => {
+  const u = $('#pp-user').value.trim(); if(!u){ $('#pp-msg').textContent = 'Type a username.'; return; }
+  $('#pp-go').disabled = true; $('#pp-msg').textContent = 'Checking… (about 5 seconds)'; $('#pp-hits').innerHTML = ''; $('#pp-raw').textContent = '';
+  const j = await api('/api/swaps?op=proprobe&user=' + encodeURIComponent(u), {}, 40000);
+  $('#pp-go').disabled = false;
+  $('#pp-msg').textContent = j.error || `Profile pages that answered: ${(j.tried || []).filter(t => t.status === 200).map(t => t.path).join(', ') || 'none besides search'}`;
+  const h = j.hits || [];
+  $('#pp-hits').innerHTML = h.length ? '<b>Fields that look like a plan or badge:</b><br>' + h.map(x => `${esc(x.src)} → <b>${esc(x.field)}</b> = ${esc(String(x.value))}`).join('<br>')
+    : (j.search ? 'No field with a name like pro, premium, subscription, plan, tier or badge.' : '');
+  $('#pp-raw').textContent = JSON.stringify(j, null, 2);
+});
 function loadSwaps(){ loadMatches(); loadNamed(); loadEvery(); }
 const everyLbl = m => m === 15 ? 'every 15 minutes' : 'every 3 hours';
 function drawEvery(m){ const b = $('#sw-every'); b.dataset.m = m;
