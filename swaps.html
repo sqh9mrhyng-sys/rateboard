@@ -400,8 +400,19 @@ $('#passes').addEventListener('change', e => {
   prof.keep = e.target.checked ? [...new Set([...prof.keep, k])] : prof.keep.filter(x => x !== k);
   const row = e.target.closest('.pass'); row.classList.toggle('keep', e.target.checked);
   const s = row.querySelector('.k'); if(s) s.textContent = e.target.checked ? 'keeping' : 'swappable';
-  drawSum();
+  drawSum(); saveKeep();
 });
+// Ticks save on their own a moment after the last one - no Save needed for them.
+let keepT = null;
+function saveKeep(){
+  clearTimeout(keepT);
+  $('#psumtxt').dataset.saving = '1';
+  keepT = setTimeout(async () => {
+    const j = await api('/api/swaps?op=keep', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ keep: prof.keep }) });
+    const el = $('#scanmsg');
+    el.textContent = j.error ? 'Could not save your keeps: ' + j.error : `Keeps saved (${j.keep}).` + (j.cancelled ? ` ${j.cancelled} swap${j.cancelled === 1 ? '' : 's'} using a pass you now keep ${j.cancelled === 1 ? 'was' : 'were'} called off.` : '');
+  }, 900);
+}
 $('#passes').addEventListener('click', e => { if(e.target.closest('a')) e.stopPropagation(); });
 $('#ptoggle').addEventListener('click', () => {
   collapsed = !collapsed; drawPasses();

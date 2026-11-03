@@ -728,6 +728,19 @@ const sideDue = m => Number(m.dueAt) || dueFor(m.slot, Number(m.createdAt) || Da
    is due, about 9 DMs a minute in all. */
 async function runDms(env, db, auth, rows, max, force) {
   const now = Date.now(), notes = [];
+  // Drop any swap where a giver now keeps the pass they'd give.
+  const keeps = new Map();
+  for (const k of new Set(rows.flatMap(m => [m.a, m.b]))) {
+    try { const r = await db.prepare('SELECT keep FROM swap_users WHERE key=?').bind(k).first(); keeps.set(k, new Set(parse(r && r.keep, []))); } catch (e) { keeps.set(k, new Set()); }
+  }
+  const live = [];
+  for (const m of rows) {
+    if ((keeps.get(m.a) || new Set()).has(m.bGets) || (keeps.get(m.b) || new Set()).has(m.aGets)) {
+      await db.prepare(`UPDATE swap_matches SET status='cancelled', note='cancelled: a pass in it is kept now' WHERE id=?`).bind(m.id).run();
+      notes.push(`match ${m.id} cancelled (kept pass)`); await stat(db, 'cancel_kept');
+    } else live.push(m);
+  }
+  rows = live;
   const cache = new Map(), member = async k => cache.has(k) ? cache.get(k) : (cache.set(k, await loadMember(db, k)), cache.get(k));
   const per = new Map();
   // One group per member per swap day (7am to 7am ET): that's the 5-DM day.
@@ -773,6 +786,18 @@ async function runDms(env, db, auth, rows, max, force) {
     if (st !== m.status) { await db.prepare('UPDATE swap_matches SET status=?, sentAt=? WHERE id=?').bind(st, st === 'sent' ? now : null, m.id).run(); m.status = st; }
   }
   return notes;
+}
+/* A swap that would have someone give a pass they've since ticked as keep is
+   called off before any more DMs go. Returns how many were cancelled. */
+async function cancelKept(db, who, keep) {
+  try { await matchCols(db); } catch (e) {}
+  const rows = ((await db.prepare(`SELECT id, a, b, aGets, bGets FROM swap_matches WHERE status IN ('pending','warned') AND (a=? OR b=?)`).bind(who, who).all()).results) || [];
+  let n = 0;
+  for (const m of rows) {
+    const gives = m.a === who ? m.bGets : m.aGets;      // A gives what B asked for, and the other way round
+    if (keep.has(gives)) { await db.prepare(`UPDATE swap_matches SET status='cancelled', note=? WHERE id=?`).bind(`cancelled: ${who} keeps that pass`, m.id).run(); n++; }
+  }
+  return n;
 }
 // Admin "Send now": every DM for one match straight away (warn, contact, follow-up).
 async function sendMatch(env, db, auth, m) {
@@ -976,7 +1001,7 @@ export async function swapAccess(env, request) {
 }
 // What a member (not an admin) may do: their own swap and nothing else, and
 // for OTD their own passes and games.
-const MEMBER_OPS = new Set(['me', 'save', 'scan', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report']);
+const MEMBER_OPS = new Set(['me', 'save', 'keep', 'scan', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report']);
 const OTD_OPS = new Set(['me', 'scan', 'games', 'boostplan']);
 const BOOST_OPS = new Set(['me', 'scan', 'boostplan', 'boostinv', 'buys']);
 const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
@@ -1641,6 +1666,16 @@ async function handle({ request, env, waitUntil }) {
       keep: parse(u.keep, []), slots: parse(u.slots, []), passes: parse(u.passes, []), scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null } : null, real: await realName(db, me) });
   }
 
+  // A tick in the passes list saves at once: the passes they won't give.
+  if (op === 'keep' && request.method === 'POST') {
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    const keep = (Array.isArray(b.keep) ? b.keep : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, 3000);
+    await db.prepare(`INSERT INTO swap_users (key, keep, updatedAt, active, wants, slots) VALUES (?, ?, ?, 0, '[]', '[]')
+      ON CONFLICT(key) DO UPDATE SET keep=excluded.keep, updatedAt=excluded.updatedAt`).bind(me, JSON.stringify(keep), Date.now()).run();
+    const n = await cancelKept(db, me, new Set(keep));
+    return json({ ok: true, keep: keep.length, cancelled: n });
+  }
+
   if (op === 'save' && request.method === 'POST') {
     let b = {};
     try { b = await request.json(); } catch (e) {}
@@ -1662,6 +1697,7 @@ async function handle({ request, env, waitUntil }) {
         slots=excluded.slots, updatedAt=excluded.updatedAt, active=1, comment=excluded.comment, goal=excluded.goal`)
       .bind(me, rsUser, JSON.stringify(wants), JSON.stringify(keep), JSON.stringify(slots), Date.now(), comment.slice(0, 300), goal).run();
     try { await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); await env.RATEBOARD_KV.delete('swap_wantcounts_v1'); } catch (e) {}
+    try { await cancelKept(db, me, new Set(keep)); } catch (e) {}
     return json({ ok: true, wants, keep: keep.length, slots });
   }
 
