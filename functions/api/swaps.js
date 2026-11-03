@@ -105,7 +105,7 @@ const SWAP_SEASONS = {
 };
 // Every call one full scan makes, in order, and how many go in each part.
 const SCAN_STEPS = Object.entries(SWAP_SEASONS).flatMap(([sp, v]) => v.flatMap(se => sp === 'ufc' ? [[sp, se, 'team']] : [[sp, se, 'player'], [sp, se, 'team']]));
-const SCAN_PER_PART = 12;
+const SCAN_PER_PART = 30;   // 10 calls on each of the three Real accounts per part
 
 // What the Swaps page scans: no FC or UFC (nothing to swap there), golf back to 2014.
 const SWAPS_SCAN = Object.fromEntries(Object.entries(SWAP_SEASONS).filter(([k]) => k !== 'soccer' && k !== 'ufc')
@@ -1785,14 +1785,28 @@ async function handle({ request, env, waitUntil }) {
       try { job = JSON.parse((await env.RATEBOARD_KV.get(jobKey)) || 'null'); } catch (e) {}
       if (!job) return json({ error: 'That scan expired - tap scan again.' }, 410);
     }
+    /* The part's calls are shared out across all three Real accounts (the
+       board's, the market's and the bot's), each in its own lane at its own
+       0.6s pace, so no one account is hit harder but the scan is ~3x faster. */
     const steps = SCAN_STEPS.slice(part * SCAN_PER_PART, (part + 1) * SCAN_PER_PART);
-    for (const [sport, season, kind] of steps) {
-      try {
-        const d = await rsGetJson(`https://web.realapp.com/userpasses/${encodeURIComponent(job.hashId)}/passes?entityType=${kind}&season=${season}&sport=${sport}`, auth);
-        for (const r of rowsOf(d)) { const p = passOf(r, sport, season, kind); if (p) job.passes.push(p); }
-      } catch (e) { job.errors.push(`${sport} ${season} ${kind}: ${String(e.message || e).slice(0, 100)}`); }
-      await sleep(600);
-    }
+    const toks = [...new Set([auth, env.RS_AUTH_TOKEN, env.RS_MARKET_TOKEN].filter(t => typeof t === 'string' && t.length > 20))];
+    const lanes = toks.map(() => []);
+    steps.forEach((st, i) => lanes[i % toks.length].push(st));
+    await Promise.all(lanes.map(async (list, li) => {
+      for (const [sport, season, kind] of list) {
+        let ok = false;
+        for (const tok of [toks[li], auth]) {          // if a lane's account fails, the bot's tries once
+          try {
+            const d = await rsGetJson(`https://web.realapp.com/userpasses/${encodeURIComponent(job.hashId)}/passes?entityType=${kind}&season=${season}&sport=${sport}`, tok);
+            for (const r of rowsOf(d)) { const p = passOf(r, sport, season, kind); if (p) job.passes.push(p); }
+            ok = true; break;
+          } catch (e) { if (tok === auth) job.errors.push(`${sport} ${season} ${kind}: ${String(e.message || e).slice(0, 100)}`); }
+          if (tok === auth) break;
+        }
+        void ok;
+        await sleep(600);
+      }
+    }));
     const parts = Math.ceil(SCAN_STEPS.length / SCAN_PER_PART), last = part + 1 >= parts;
     if (!last) {
       await env.RATEBOARD_KV.put(jobKey, JSON.stringify(job), { expirationTtl: 900 });
