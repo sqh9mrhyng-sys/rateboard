@@ -311,6 +311,11 @@ async function runMatching(db) {
      partner a different player (a pass of theirs goes out once a day).
      Capped at SWAPS_PER_DAY, and by their goal rating when they set one. */
   const open = ((await db.prepare(`SELECT a, b, aGets, bGets FROM swap_matches WHERE createdAt > ? AND status <> 'error'`).bind(Date.now() - 20 * 3600000).all()).results || []);
+  // Anyone whose follow-up has gone out has finished their swap day (5 DMs at most).
+  const closed = new Set();
+  for (const m of ((await db.prepare('SELECT a, b, followA, followB FROM swap_matches WHERE createdAt > ? AND (followA IS NOT NULL OR followB IS NOT NULL)').bind(Date.now() - 20 * 3600000).all()).results || [])) {
+    if (m.followA) closed.add(m.a); if (m.followB) closed.add(m.b);
+  }
   const paired = new Set(), given = new Set(), count = new Map();
   const bump = k => count.set(k, (count.get(k) || 0) + 1);
   for (const m of open) {
@@ -325,7 +330,7 @@ async function runMatching(db) {
   // How many more they can take today: the daily cap, and their goal rating.
   const cache = new Map(), room = new Map();
   for (const u of users) {
-    let left = SWAPS_PER_DAY - (count.get(u.key) || 0);
+    let left = closed.has(u.key) ? 0 : SWAPS_PER_DAY - (count.get(u.key) || 0);
     try { const g = await goalRoom(db, cache, u, (x, w) => usedSince(db, x, w)); if (g.limited) left = Math.min(left, g.left); } catch (e) {}
     room.set(u.key, Math.max(0, left));
   }
@@ -694,7 +699,7 @@ async function matchCols(db) {
 // When a match's swap hour comes: the next time that UTC hour starts, an
 // hour or more after it was made.
 function dueFor(slot, from) {
-  const d = new Date(from + 3600000); d.setUTCMinutes(0, 0, 0);
+  const d = new Date(from); d.setUTCMinutes(0, 0, 0); d.setUTCHours(d.getUTCHours() + 1);   // the next top of the hour
   while (d.getUTCHours() !== Number(slot)) d.setUTCHours(d.getUTCHours() + 1);
   return d.getTime();
 }
@@ -753,8 +758,9 @@ async function sendMatch(env, db, auth, m) {
   return (await runDms(env, db, auth, [m], 6, true)).join('; ');
 }
 
-/* Called once a minute from the collector tick. Matching runs once a day at
-   6am ET; DMs go out as they come due; one swapper is re-scanned a minute. */
+/* Called once a minute from the collector tick. Matching runs every hour at
+   :30, so a swap hour starting at the next :00 still gets its 30-minute warn;
+   DMs go out as they come due; one swapper is re-scanned a minute. */
 async function autoRescan(env, db, auth) {
   const day = Date.now() - 86400000;
   const u = await db.prepare(`SELECT key, hashId, passes FROM swap_users WHERE active=1 AND hashId IS NOT NULL AND passes IS NOT NULL
@@ -777,17 +783,15 @@ async function autoRescan(env, db, auth) {
   return { key: u.key, passes: merged.length };
 }
 
-const MATCH_HOUR_ET = 6;
 export async function swapTick(env) {
   if (!DM_ON) return null;
   const db = env.RATEBOARD_DB, auth = swapToken(env);
   if (!db || !auth) return null;
   await ready(db);
-  const etHour = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hourCycle: 'h23' }).format(new Date()));
-  const dayKey = 'swap_match_day_v1', today = etDay();
-  let last = null; try { last = await env.RATEBOARD_KV.get(dayKey); } catch (e) {}
-  if (last !== today && etHour >= MATCH_HOUR_ET) {
-    try { await env.RATEBOARD_KV.put(dayKey, today); } catch (e) {}
+  const hourKey = 'swap_match_hour_v2', hour = new Date().toISOString().slice(0, 13);
+  let last = null; try { last = await env.RATEBOARD_KV.get(hourKey); } catch (e) {}
+  if (last !== hour && new Date().getUTCMinutes() >= 30) {
+    try { await env.RATEBOARD_KV.put(hourKey, hour); } catch (e) {}
     try { await matchCols(db); } catch (e) {}
     try { const made = await runMatching(db); await stat(db, 'matches', made.length); await stat(db, 'match_runs'); } catch (e) { await botFail(db, 'matching', e.message); }
   }
@@ -1320,7 +1324,7 @@ async function handle({ request, env, waitUntil }) {
       if (!can) why.push('Nobody signed up has your pass free to swap yet.');
       else if (!hour) why.push(`${can} member${can === 1 ? ' has' : 's have'} your pass free, but none share your hours - try adding hours.`);
       else if (!both) why.push(`${hour} member${hour === 1 ? '' : 's'} with your pass share your hours, but none of them want a pass you have free. Untick some keeps to give them more options.`);
-      else why.push(`${both} member${both === 1 ? ' is' : 's are'} a match. Matching runs once a day at 6am ET - you should be matched in the next run.`);
+      else why.push(`${both} member${both === 1 ? ' is' : 's are'} a match. Matching runs every hour at :30 - you should be matched in the next run.`);
     }
     return json({ why, ready: !!(u && want && dm), can, hour, both });
   }
