@@ -191,7 +191,7 @@
       </section>
       <section>
         <h2>Real Pro check</h2>
-        <div class="bar"><input id="pp-user" placeholder="Real username" autocomplete="off" style="flex:0 1 180px"><button id="pp-go">Check profile</button><button id="pp-clear" title="Lets them run the Swaps Pro check again">Clear their Swaps Pro check</button><span class="note" id="pp-msg">Reads one profile on the bot account and shows what Real sends back.</span></div>
+        <div class="bar"><input id="pp-user" placeholder="Real username" autocomplete="off" style="flex:0 1 180px"><button id="pp-go">Check profile</button><button id="pp-clear" title="Lets them run the Swaps Pro check again">Clear their Swaps Pro check</button><button id="pp-passes">Their saved passes</button><button id="pp-scan">Let them scan now</button><span class="note" id="pp-msg">Reads one profile on the bot account and shows what Real sends back.</span></div>
         <div id="pp-hits" class="note"></div>
         <details><summary class="note">Everything Real sent</summary><pre id="pp-raw" style="max-height:420px;overflow:auto;white-space:pre-wrap;font-size:11px"></pre></details>
       </section>
@@ -603,6 +603,19 @@ $('#t-reports').addEventListener('click', async e => {
 });
 
 /* ---------- swaps ---------- */
+$('#pp-passes').addEventListener('click', async () => {
+  const u = $('#pp-user').value.trim(); if(!u){ $('#pp-msg').textContent = 'Type a username.'; return; }
+  const j = await api('/api/swaps?op=passcounts&user=' + encodeURIComponent(u));
+  if(j.error){ $('#pp-msg').textContent = j.error; return; }
+  const when = t => t ? new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'never';
+  $('#pp-msg').textContent = `${j.key}: ${j.total} passes · Swaps scan ${when(j.scannedAt)} · Boosts scan ${when(j.boostScanAt)}`;
+  $('#pp-hits').innerHTML = j.counts.map(([k, n]) => `${esc(k)}: <b>${n}</b>`).join(' · ') || 'No passes saved.';
+});
+$('#pp-scan').addEventListener('click', async () => {
+  const u = $('#pp-user').value.trim(); if(!u){ $('#pp-msg').textContent = 'Type a username.'; return; }
+  const j = await api('/api/swaps?op=passcounts&clear=1&user=' + encodeURIComponent(u));
+  $('#pp-msg').textContent = j.error || `${j.key} can scan again right now (Swaps and Boosts).`;
+});
 let huData = null;
 const huSeason = k => { const [sp, se] = String(k || '').split(':'); return (SPORT[sp] || sp || '') + ' ' + (se || ''); };
 function drawHourUsers(){

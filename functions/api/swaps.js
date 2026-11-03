@@ -1494,6 +1494,17 @@ async function handle({ request, env, waitUntil }) {
     await stat(db, kind === 'user' ? 'report_user' : 'report_problem');
     return json({ ok: true });
   }
+  // Admin: what one member's saved scan holds, by sport and season; ?clear=1 lets them scan again now.
+  if (op === 'passcounts') {
+    const name = String(url.searchParams.get('user') || '').trim().replace(/^@/, '').toLowerCase();
+    const r = await db.prepare('SELECT key, rsUser, passes, scannedAt, boostScanAt FROM swap_users WHERE LOWER(key)=? OR LOWER(rsUser)=?').bind(name, name).first();
+    if (!r) return json({ error: 'No Swaps scan saved for that member.' }, 404);
+    if (url.searchParams.get('clear') === '1') { await db.prepare('UPDATE swap_users SET scannedAt=NULL, boostScanAt=NULL WHERE key=?').bind(r.key).run(); return json({ cleared: true, key: r.key }); }
+    const c = {}; for (const p of parse(r.passes, [])) { const k = `${p.sport} ${p.season}${p.kind === 'team' ? ' team' : ''}`; c[k] = (c[k] || 0) + 1; }
+    return json({ key: r.key, rsUser: r.rsUser, scannedAt: r.scannedAt, boostScanAt: r.boostScanAt, total: parse(r.passes, []).length,
+      counts: Object.entries(c).sort((a, b) => a[0].localeCompare(b[0])) });
+  }
+
   // Admin: who picked each hour (UTC), with their rank for it and their pick.
   if (op === 'hourusers') {
     const rows = ((await db.prepare(`SELECT key, rsUser, slots, wants, passes FROM swap_users WHERE active=1 AND slots IS NOT NULL AND slots <> '[]'`).all()).results) || [];
@@ -1672,7 +1683,8 @@ async function handle({ request, env, waitUntil }) {
     // From Boosts only its three current seasons are read (6 calls, not ~80),
     // and the member's other passes are kept as they were.
     const boostsOnly = url.searchParams.get('page') === 'boosts';
-    const fromSwaps = url.searchParams.get('page') === 'swaps';
+    // An old copy of the Swaps page doesn't say page=swaps: members get the Swaps scan anyway (OTD is admin-only).
+    const fromSwaps = url.searchParams.get('page') === 'swaps' || (!acc.admin && !boostsOnly);
     const only = boostsOnly ? Object.fromEntries(Object.entries(BOOST_SEASON).map(([k, v]) => [k, [v[0]]])) : fromSwaps ? SWAPS_SCAN : null;
     // Site-wide: at most 40 pass reads a minute, so a crowd can't trip Real's limits.
     if (!acc.admin && !BOOST_FAST.has(String(me || '').toLowerCase()) && !(await allow(url.origin, 'passread-all', 15, 60))) return json({ error: HIGH_VOL }, 429);

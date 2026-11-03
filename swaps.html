@@ -127,6 +127,7 @@
     <div class="psum" id="psum" hidden style="margin-bottom:8px"><span id="psumtxt"></span><button id="ptoggle">Done - collapse</button></div>
     <div class="bar" id="pctl" hidden>
       <select id="pview" aria-label="View"><option value="all">All passes</option><option value="season">By season</option></select>
+      <select id="psport" aria-label="Sport"><option value="">Every sport</option><option value="nba">NBA</option><option value="ncaam">CBB</option><option value="nfl">NFL</option><option value="ncaaf">CFB</option><option value="nhl">NHL</option><option value="mlb">MLB</option><option value="wnba">WNBA</option><option value="golf">Golf</option></select>
       <select id="prar" aria-label="Rarity"><option value="">Every rarity</option><option value="0">General</option><option value="1">Common</option><option value="2">Uncommon</option><option value="3">Rare</option><option value="4">Epic</option><option value="5">Legendary</option><option value="6">Mystic</option><option value="7">Iconic</option></select>
       <select id="psort" aria-label="Sort"><option value="rating">Highest rating</option><option value="low">Lowest rating</option><option value="name">Name</option></select>
       <input id="pq" placeholder="Find a player" autocomplete="off">
@@ -304,7 +305,7 @@ const START = {nfl:1,nhl:1,ncaaf:1,soccer:1};
 const seasonLbl = (sp, se) => { se = Number(se);
   return START[sp] ? `${se}-${String(se + 1).slice(2)}` : (sp === 'nba' || sp === 'ncaam') ? `${se - 1}-${String(se).slice(2)}` : String(se); };
 const SEASONS = { nba:[2027,2026,2025,2024,2023], ncaam:[2027,2026,2025,2024], nfl:[2026,2025,2024,2023], ncaaf:[2026,2025,2024,2023],
-  nhl:[2026,2025,2024,2023], mlb:[2026,2025,2024,2023,2022], wnba:[2026,2025,2024], soccer:[2026,2025], golf:[2026,2025,2024,2023,2022], ufc:[2023] };
+  nhl:[2026,2025,2024,2023], mlb:[2026,2025,2024,2023,2022], wnba:[2026,2025,2024], soccer:[2026,2025], golf:[2026,2025,2024,2023,2022,2021,2020,2019,2018,2017,2016,2015,2014], ufc:[2023] };
 const api = async (u, o) => { const r = await fetch(u, o); const j = await r.json().catch(() => ({})); if(!r.ok && !j.error) j.error = 'Error ' + r.status; return j; };
 
 let prof = { rsUser: '', passes: [], keep: [], wants: [], slots: [] };
@@ -376,15 +377,15 @@ function drawPasses(){
   $('#pctl').hidden = collapsed || !prof.passes.some(p => !NO_SWAP.has(p.sport) && !isTeam(p) && !offSeason(p));
   if(collapsed){ $('#passes').innerHTML = ''; return; }
   if(!prof.passes.length){ $('#passes').innerHTML = prof.scannedAt ? '<p class="note">No player passes found.</p>' : ''; return; }
-  const view = $('#pview').value, rar = $('#prar').value, sort = $('#psort').value, q = $('#pq').value.trim().toLowerCase();
-  let list = prof.passes.filter(p => !NO_SWAP.has(p.sport) && !isTeam(p) && !offSeason(p) && (rar === '' || String(tierOf(p)) === rar) && (!q || String(p.name || '').toLowerCase().includes(q)));
+  const view = $('#pview').value, rar = $('#prar').value, psp = $('#psport').value, sort = $('#psort').value, q = $('#pq').value.trim().toLowerCase();
+  let list = prof.passes.filter(p => !NO_SWAP.has(p.sport) && !isTeam(p) && !offSeason(p) && (!psp || p.sport === psp) && (rar === '' || String(tierOf(p)) === rar) && (!q || String(p.name || '').toLowerCase().includes(q)));
   const cmp = sort === 'name' ? (a, b) => String(a.name).localeCompare(String(b.name))
     : sort === 'low' ? (a, b) => (a.rating || 0) - (b.rating || 0) : (a, b) => (b.rating || 0) - (a.rating || 0);
   list.sort(cmp);
   if(!list.length){ $('#passes').innerHTML = '<p class="note">No passes match.</p>'; return; }
   if(view === 'all'){
     $('#passes').innerHTML = `<p class="note">${list.length} passes</p>` + list.slice(0, 400).map(p => passRow(p, keep, true)).join('')
-      + (list.length > 400 ? '<p class="note">Showing the first 400 - narrow it with rarity or search.</p>' : '');
+      + (list.length > 400 ? `<p class="note">Showing the top 400 of ${list.length} - pick a sport, a rarity or "By season", or search a name, to see the rest.</p>` : '');
     return;
   }
   const by = {};
@@ -392,7 +393,7 @@ function drawPasses(){
   $('#passes').innerHTML = Object.entries(by).map(([g, l]) => `<details class="group" open><summary>${esc(keyLbl(g + ':0'))} · ${l.length} passes</summary>`
     + l.map(p => passRow(p, keep, false)).join('') + '</details>').join('');
 }
-['#pview', '#prar', '#psort'].forEach(id => $(id).addEventListener('change', drawPasses));
+['#pview', '#prar', '#psort', '#psport'].forEach(id => $(id).addEventListener('change', drawPasses));
 $('#pq').addEventListener('input', drawPasses);
 $('#passes').addEventListener('change', e => {
   const k = e.target.dataset.keep; if(!k) return;
