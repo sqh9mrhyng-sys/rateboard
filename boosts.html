@@ -382,11 +382,22 @@ $('#invgo').addEventListener('click', async () => {
   $('#invout').hidden = false; $('#invout').innerHTML = invHtml(j.boosters);
 });
 
+// One scan for the whole site, in parts: keeps asking until it's done.
+async function fullScan(extra, onPart){
+  let part = 0, j;
+  for(let i = 0; i < 20; i++){
+    j = await api(`/api/swaps?op=scan&part=${part}${extra || ''}`);
+    if(!j || j.error || j.done) return j || { error: 'Could not reach the board.' };
+    if(onPart) onPart(j);
+    part = j.next;
+  }
+  return { error: 'The scan took too long - try again.' };
+}
 $('#scan').addEventListener('click', async () => {
   const u = $('#rsuser').value.trim();
   if(!u){ $('#scanmsg').textContent = 'Enter your Real username first.'; return; }
-  $('#scan').disabled = true; $('#scanmsg').textContent = 'Reading your CBB, CFB and NFL passes…';
-  const j = await api(`/api/swaps?op=scan&page=boosts&rsUser=${encodeURIComponent(u)}`);
+  $('#scan').disabled = true; $('#scanmsg').textContent = 'Scanning every sport and season… 1/8';
+  const j = await fullScan('&page=boosts', p => { $('#scanmsg').textContent = `Scanning every sport and season… ${p.next + 1}/${p.parts} · ${p.found} passes so far`; });
   $('#scan').disabled = false;
   if(j.error){ $('#scanmsg').textContent = j.error; return; }
   $('#scanmsg').textContent = j.cached ? j.note : `${(j.passes || []).length} passes read just now.`;

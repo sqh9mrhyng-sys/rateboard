@@ -556,12 +556,23 @@ $('#rnext').addEventListener('click', () => { rView = new Date(rView.getFullYear
 $('#planb').addEventListener('click', () => { $('#plan').innerHTML = '<p class="note">Planning…</p>'; setTimeout(plan, 20); });
 $('#minp').addEventListener('input', compute);
 
+// One scan for the whole site, in parts: keeps asking until it's done.
+async function fullScan(extra, onPart){
+  let part = 0, j;
+  for(let i = 0; i < 20; i++){
+    j = await api(`/api/swaps?op=scan&part=${part}${extra || ''}`);
+    if(!j || j.error || j.done) return j || { error: 'Could not reach the board.' };
+    if(onPart) onPart(j);
+    part = j.next;
+  }
+  return { error: 'The scan took too long - try again.' };
+}
 $('#scan').addEventListener('click', async () => {
   const u = $('#rsuser').value.trim();
   if(!u){ $('#status').textContent = 'Enter your Real username first.'; return; }
   $('#scan').disabled = true;
-  $('#status').textContent = 'Scanning every sport and season… about 20 seconds.';
-  const j = await api(`/api/swaps?op=scan&rsUser=${encodeURIComponent(u)}`);
+  $('#status').textContent = 'Scanning every sport and season… 1/8';
+  const j = await fullScan(`&rsUser=${encodeURIComponent(u)}`, p => { $('#status').textContent = `Scanning every sport and season… ${p.next + 1}/${p.parts} · ${p.found} passes so far`; });
   $('#scan').disabled = false;
   if(j.error){ $('#status').textContent = j.error; return; }
   PACK = {}; PLAYS = {}; MKT = {}; upOpen = null;

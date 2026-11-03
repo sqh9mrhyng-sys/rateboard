@@ -407,11 +407,22 @@ $('#ptoggle').addEventListener('click', () => {
   collapsed = !collapsed; drawPasses();
   if(collapsed) $('#psum').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 });
+// One scan for the whole site, in parts: keeps asking until it's done.
+async function fullScan(extra, onPart){
+  let part = 0, j;
+  for(let i = 0; i < 20; i++){
+    j = await api(`/api/swaps?op=scan&part=${part}${extra || ''}`);
+    if(!j || j.error || j.done) return j || { error: 'Could not reach the board.' };
+    if(onPart) onPart(j);
+    part = j.next;
+  }
+  return { error: 'The scan took too long - try again.' };
+}
 $('#scan').addEventListener('click', async () => {
   const u = $('#rsuser').textContent.trim().replace(/^@/, '');
   $('#scan').disabled = true;
-  $('#scanmsg').textContent = 'Scanning every sport and season… this takes about 30 seconds.';
-  const j = await api('/api/swaps?op=scan&page=swaps');
+  $('#scanmsg').textContent = 'Scanning every sport and season… 1/8';
+  const j = await fullScan('&page=swaps', p => { $('#scanmsg').textContent = `Scanning every sport and season… ${p.next + 1}/${p.parts} · ${p.found} passes so far`; });
   $('#scan').disabled = false;
   if(j.error){ $('#scanmsg').textContent = j.error; return; }
   prof.rsUser = u; collapsed = false; prof.passes = j.passes || []; prof.scannedAt = j.scannedAt || Date.now();

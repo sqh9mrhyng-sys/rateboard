@@ -101,8 +101,11 @@ const SWAP_SEASONS = {
   nba: [2027, 2026, 2025, 2024, 2023], ncaam: [2027, 2026, 2025, 2024],
   nfl: [2026, 2025, 2024, 2023], ncaaf: [2026, 2025, 2024, 2023], nhl: [2026, 2025, 2024, 2023],
   mlb: [2026, 2025, 2024, 2023, 2022], wnba: [2026, 2025, 2024], soccer: [2026, 2025],
-  golf: [2026, 2025, 2024, 2023, 2022], ufc: [2023]
+  golf: [2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2016, 2015, 2014], ufc: [2023]
 };
+// Every call one full scan makes, in order, and how many go in each part.
+const SCAN_STEPS = Object.entries(SWAP_SEASONS).flatMap(([sp, v]) => v.flatMap(se => sp === 'ufc' ? [[sp, se, 'team']] : [[sp, se, 'player'], [sp, se, 'team']]));
+const SCAN_PER_PART = 12;
 
 // What the Swaps page scans: no FC or UFC (nothing to swap there), golf back to 2014.
 const SWAPS_SCAN = Object.fromEntries(Object.entries(SWAP_SEASONS).filter(([k]) => k !== 'soccer' && k !== 'ufc')
@@ -798,8 +801,8 @@ async function fullRescan(env, db, auth) {
   const fresh = new Set(chunk.map(([sp, se]) => `${sp}:${se}`));
   const merged = parse(u.passes, []).filter(p => !fresh.has(`${p.sport}:${p.season}`)).concat(r.passes);
   await fillNames(db, merged);
-  await db.prepare(`UPDATE swap_users SET passes=?${done ? ', scannedAt=?, autoAt=?' : ''} WHERE key=?`)
-    .bind(...(done ? [JSON.stringify(merged), Date.now(), Date.now(), u.key] : [JSON.stringify(merged), u.key])).run();
+  await db.prepare(`UPDATE swap_users SET passes=?${done ? ', autoAt=?' : ''} WHERE key=?`)
+    .bind(...(done ? [JSON.stringify(merged), Date.now(), u.key] : [JSON.stringify(merged), u.key])).run();
   if (done) await stat(db, 'rescans');
   return { key: u.key, part, passes: merged.length };
 }
@@ -810,7 +813,7 @@ async function autoRescan(env, db, auth) {
   if (full) return full;
   const day = Date.now() - 86400000;
   const u = await db.prepare(`SELECT key, hashId, passes FROM swap_users WHERE active=1 AND hashId IS NOT NULL AND passes IS NOT NULL
-      AND ((wants IS NOT NULL AND wants <> '[]') OR autoAt = 0) AND COALESCE(autoAt, scannedAt, 0) < ? ORDER BY COALESCE(autoAt, scannedAt, 0) LIMIT 1`).bind(day).first();
+      AND ((wants IS NOT NULL AND wants <> '[]') OR autoAt = 0) AND COALESCE(autoAt, scannedAt, 0) < ? AND COALESCE(scannedAt, 0) < ? ORDER BY COALESCE(autoAt, scannedAt, 0) LIMIT 1`).bind(day, day).first();
   if (!u) return null;
   await db.prepare('UPDATE swap_users SET autoAt=? WHERE key=?').bind(Date.now(), u.key).run();   // claimed, even if it fails
   const prev = parse(u.passes, []);
@@ -827,7 +830,7 @@ async function autoRescan(env, db, auth) {
   const fresh = new Set(Object.entries(only).flatMap(([k, v]) => v.map(se => `${k}:${se}`)));
   const merged = prev.filter(p => !fresh.has(`${p.sport}:${p.season}`)).concat(r.passes);
   await fillNames(db, merged);
-  await db.prepare('UPDATE swap_users SET passes=?, scannedAt=? WHERE key=?').bind(JSON.stringify(merged), Date.now(), u.key).run();
+  await db.prepare('UPDATE swap_users SET passes=?, autoAt=? WHERE key=?').bind(JSON.stringify(merged), Date.now(), u.key).run();   // never starts their scan timer
   await stat(db, 'rescans');
   return { key: u.key, passes: merged.length };
 }
@@ -870,6 +873,16 @@ export async function swapTick(env) {
       await db.prepare("UPDATE swap_matches SET status='cleared' WHERE status IN ('pending','warned','sending','error')").run();
       try { await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); await env.RATEBOARD_KV.delete('swap_wantcounts_v1'); } catch (e) {}
       await stat(db, 'cleared');
+    }
+  } catch (e) {}
+  // One-time (2026-11-03): one scan site-wide - clear every scan timer and any queued refresh.
+  try {
+    if (!(await env.RATEBOARD_KV.get('scan_reset_v3'))) {
+      await env.RATEBOARD_KV.put('scan_reset_v3', String(Date.now()));
+      try { await db.prepare('ALTER TABLE swap_users ADD COLUMN boostScanAt INTEGER').run(); } catch (e) {}
+      try { await db.prepare('ALTER TABLE swap_users ADD COLUMN fullPart INTEGER').run(); } catch (e) {}
+      await db.prepare('UPDATE swap_users SET scannedAt = NULL, boostScanAt = NULL, fullPart = NULL').run();
+      await stat(db, 'scan_reset');
     }
   } catch (e) {}
   // One-time (2026-11-03): no server refresh after all - just the cleared timers. Empty the queue.
@@ -1652,63 +1665,63 @@ async function handle({ request, env, waitUntil }) {
     return json({ ok: true, wants, keep: keep.length, slots });
   }
 
+  /* One scan for the whole site (Swaps, Boosts, OTD): every sport and
+     season, player and team passes, golf back to 2014. It runs in parts the
+     page asks for one after another (part=0,1,2...), so no single request is
+     long; the parts build up in KV and the last one replaces the member's
+     saved passes outright. One timer for everyone: once per 3 hours (or 15
+     minutes when Dennis switches that on), starting when a scan finishes.
+     Inside the timer, part 0 hands back the last scan. Admins aren't limited. */
   if (op === 'scan') {
     if (!auth) return json({ error: 'No swap token found in the Cloudflare settings.' }, 503);
-    try { await db.prepare('ALTER TABLE swap_users ADD COLUMN boostScanAt INTEGER').run(); } catch (e) {}
-    const u = await db.prepare('SELECT rsUser, hashId, scannedAt, boostScanAt, passes FROM swap_users WHERE key=?').bind(me).first();
-    /* Two separate timers: the Swaps scan (every season, once per 3 hours or
-       15 minutes when Dennis switches it on) and the Boosts scan (its three
-       current seasons, once per 2 hours). One never uses up the other.
-       Admins aren't limited. */
-    const fromBoosts = url.searchParams.get('page') === 'boosts';
-    if (!acc.admin && !(fromBoosts && BOOST_FAST.has(String(me || '').toLowerCase()))) {
-      const every = fromBoosts ? 120 : await scanEvery(env);
-      const lastAt = fromBoosts ? Number(u && u.boostScanAt) || 0 : Number(u && u.scannedAt) || 0;
-      const left = lastAt + every * 60000 - Date.now();
-      // Too soon for a fresh scan: hand back the last one instead.
-      if (left > 0 && u && u.passes) {
-        const m = Math.ceil(left / 60000);
-        return json({ hashId: u.hashId, passes: parse(u.passes, []), errors: [], cached: true, scannedAt: lastAt || null,
-          note: `From your last scan. A fresh scan is allowed once every ${every >= 60 ? every / 60 + ' hours' : every + ' minutes'} - next in ${m >= 60 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : m + ' min'}.` });
-      }
-    } else if (!(await allow(url.origin, 'swapscan:' + me, 20, 600))) return json({ error: 'Twenty scans per ten minutes.' }, 429);
-    // On Swaps a member's Real account is their board username - no other.
-    const rsUser = url.searchParams.get('page') !== 'boosts' ? await realName(db, me)
-      : String(url.searchParams.get('rsUser') || (u && u.rsUser) || '').trim();
-    if (!rsUser) return json({ error: 'Enter your Real username first.' }, 400);
-    let hashId = u && u.rsUser === rsUser ? u.hashId : null;
-    if (!hashId && url.searchParams.get('page') !== 'boosts') { try { const pr = await db.prepare('SELECT rsId FROM swap_pro WHERE key=?').bind(me).first(); if (pr && pr.rsId) hashId = pr.rsId; } catch (e) {} }
-    try { if (!hashId) hashId = await resolveHashId(rsUser, auth); } catch (e) { return json({ error: String(e.message || e) }, 502); }
-    if (!hashId) return json({ error: `No Real user called ${rsUser}.` }, 404);
-    // From Boosts only its three current seasons are read (6 calls, not ~80),
-    // and the member's other passes are kept as they were.
-    const boostsOnly = url.searchParams.get('page') === 'boosts';
-    // An old copy of the Swaps page doesn't say page=swaps: members get the Swaps scan anyway (OTD is admin-only).
-    const fromSwaps = url.searchParams.get('page') === 'swaps' || (!acc.admin && !boostsOnly);
-    const only = boostsOnly ? Object.fromEntries(Object.entries(BOOST_SEASON).map(([k, v]) => [k, [v[0]]])) : fromSwaps ? SWAPS_SCAN : null;
-    // Site-wide: at most 40 pass reads a minute, so a crowd can't trip Real's limits.
-    if (!acc.admin && !BOOST_FAST.has(String(me || '').toLowerCase()) && !(await allow(url.origin, 'passread-all', 15, 60))) return json({ error: HIGH_VOL }, 429);
-    const r = await scanPasses(hashId, auth, only);
-    if (fromSwaps) {      // FC and UFC passes from an earlier full scan are kept as they were
-      r.passes = parse(u && u.passes, []).filter(p => p.sport === 'soccer' || p.sport === 'ufc').concat(r.passes);
+    const part = Math.max(0, Number(url.searchParams.get('part')) || 0);
+    const jobKey = 'scanjob_v1_' + me;
+    const u = await db.prepare('SELECT rsUser, hashId, scannedAt, passes FROM swap_users WHERE key=?').bind(me).first();
+    const fast = acc.admin || BOOST_FAST.has(String(me || '').toLowerCase());
+    let job = null;
+    if (part === 0) {
+      if (!fast) {
+        const every = await scanEvery(env);
+        const lastAt = Number(u && u.scannedAt) || 0, left = lastAt + every * 60000 - Date.now();
+        if (left > 0 && u && u.passes) {
+          const m = Math.ceil(left / 60000);
+          return json({ done: true, hashId: u.hashId, passes: parse(u.passes, []), errors: [], cached: true, scannedAt: lastAt,
+            note: `From your last scan. A fresh scan is allowed once every ${every >= 60 ? every / 60 + ' hours' : every + ' minutes'} - next in ${m >= 60 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : m + ' min'}.` });
+        }
+        if (!(await allow(url.origin, 'passread-all', 15, 60))) return json({ error: HIGH_VOL }, 429);
+      } else if (!(await allow(url.origin, 'swapscan:' + me, 20, 600))) return json({ error: 'Twenty scans per ten minutes.' }, 429);
+      // Members scan their own Real account; an admin may name another (OTD).
+      const rsUser = acc.admin && url.searchParams.get('rsUser') ? String(url.searchParams.get('rsUser')).trim().replace(/^@/, '') : await realName(db, me);
+      let hashId = u && String(u.rsUser || '').toLowerCase() === rsUser.toLowerCase() ? u.hashId : null;
+      if (!hashId && rsUser.toLowerCase() === String(await realName(db, me)).toLowerCase()) { try { await db.prepare(SPRO_DDL).run(); const pr = await db.prepare('SELECT rsId FROM swap_pro WHERE key=?').bind(me).first(); if (pr && pr.rsId) hashId = pr.rsId; } catch (e) {} }
+      try { if (!hashId) hashId = await resolveHashId(rsUser, auth); } catch (e) { return json({ error: 'Could not reach Real just now - try again in a minute.' }, 502); }
+      if (!hashId) return json({ error: `No Real account called ${rsUser}. If your Real username is different, link it at raxacademy.app/username.` }, 404);
+      job = { rsUser, hashId, passes: [], errors: [], at: Date.now() };
+    } else {
+      try { job = JSON.parse((await env.RATEBOARD_KV.get(jobKey)) || 'null'); } catch (e) {}
+      if (!job) return json({ error: 'That scan expired - tap scan again.' }, 410);
     }
-    if (boostsOnly) {
-      const prevP = parse(u && u.passes, []);
-      const fresh = new Set(Object.entries(only).map(([k, v]) => `${k}:${v[0]}`));
-      r.passes = prevP.filter(p => !(fresh.has(`${p.sport}:${p.season}`) && p.kind !== 'team')).concat(r.passes);
+    const steps = SCAN_STEPS.slice(part * SCAN_PER_PART, (part + 1) * SCAN_PER_PART);
+    for (const [sport, season, kind] of steps) {
+      try {
+        const d = await rsGetJson(`https://web.realapp.com/userpasses/${encodeURIComponent(job.hashId)}/passes?entityType=${kind}&season=${season}&sport=${sport}`, auth);
+        for (const r of rowsOf(d)) { const p = passOf(r, sport, season, kind); if (p) job.passes.push(p); }
+      } catch (e) { job.errors.push(`${sport} ${season} ${kind}: ${String(e.message || e).slice(0, 100)}`); }
+      await sleep(600);
     }
-    await fillNames(db, r.passes);
-    if (boostsOnly) await db.prepare(`INSERT INTO swap_users (key, rsUser, hashId, passes, boostScanAt, updatedAt, wants, keep, slots) VALUES (?, ?, ?, ?, ?, ?, '[]', '[]', '[]')
-      ON CONFLICT(key) DO UPDATE SET rsUser=excluded.rsUser, hashId=excluded.hashId, passes=excluded.passes,
-        boostScanAt=excluded.boostScanAt, updatedAt=excluded.updatedAt`)
-      .bind(me, rsUser, hashId, JSON.stringify(r.passes), Date.now(), Date.now()).run();
-    else await db.prepare(`INSERT INTO swap_users (key, rsUser, hashId, passes, scannedAt, updatedAt, wants, keep, slots) VALUES (?, ?, ?, ?, ?, ?, '[]', '[]', '[]')
+    const parts = Math.ceil(SCAN_STEPS.length / SCAN_PER_PART), last = part + 1 >= parts;
+    if (!last) {
+      await env.RATEBOARD_KV.put(jobKey, JSON.stringify(job), { expirationTtl: 900 });
+      return json({ done: false, next: part + 1, parts, found: job.passes.length });
+    }
+    try { await env.RATEBOARD_KV.delete(jobKey); } catch (e) {}
+    await fillNames(db, job.passes);
+    await db.prepare(`INSERT INTO swap_users (key, rsUser, hashId, passes, scannedAt, updatedAt, wants, keep, slots) VALUES (?, ?, ?, ?, ?, ?, '[]', '[]', '[]')
       ON CONFLICT(key) DO UPDATE SET rsUser=excluded.rsUser, hashId=excluded.hashId, passes=excluded.passes,
         scannedAt=excluded.scannedAt, updatedAt=excluded.updatedAt`)
-      .bind(me, rsUser, hashId, JSON.stringify(r.passes), Date.now(), Date.now()).run();
-    // A full Swaps scan done by hand takes them out of the refresh queue.
-    if (fromSwaps && !(r.errors || []).length) { try { await db.prepare('UPDATE swap_users SET fullPart=NULL WHERE key=?').bind(me).run(); } catch (e) {} }
-    return json({ hashId, passes: r.passes, errors: r.errors, sample: r.sample });
+      .bind(me, job.rsUser, job.hashId, JSON.stringify(job.passes), Date.now(), Date.now()).run();
+    try { await db.prepare('UPDATE swap_users SET fullPart=NULL, boostScanAt=NULL WHERE key=?').bind(me).run(); } catch (e) {}
+    return json({ done: true, hashId: job.hashId, passes: job.passes, errors: job.errors, scannedAt: Date.now(), parts });
   }
 
   // Admin: how often members may scan - 180 (every 3 hours) or 15 minutes.
