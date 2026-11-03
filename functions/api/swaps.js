@@ -415,7 +415,7 @@ async function resetFlow(env, db, url, request, op, waitUntil) {
   let c = null;
   try { c = JSON.parse((await env.RATEBOARD_KV.get(kvKey)) || 'null'); } catch (e) {}
   if (!c || Date.now() - c.at > RESET_TTL) return json({ error: 'That code has run out. Get a new one.' }, 410);
-  if (!(await allow(url.origin, 'pwreset-check:' + key, 6, 60))) return json({ waiting: true });
+  if (!(await allow(url.origin, 'pwreset-check:' + key, 3, 60))) return json({ waiting: true });
   const auth = swapToken(env);
   if (!auth) return json({ error: 'The reset bot is not set up.' }, 503);
   const found = await findCodeInDms(auth, key, c.code);
@@ -458,7 +458,7 @@ async function findCodeInDms(auth, userKey, code) {
   try { collect(await rsGetJson('https://web.realapp.com/messages/requests', auth), true); } catch (e) {}
   try { collect(await rsGetJson('https://web.realapp.com/messages/channels', auth), false); } catch (e) { if (!chans.length) return { error: 'Could not reach Real just now.' }; }
   for (const c of chans) if (hasCode(c.o)) return { ok: true, request: c.isReq ? c.ch : null, channel: c.ch };
-  for (const c of chans.slice(0, 3)) {
+  for (const c of chans.slice(0, 1)) {
     try {
       const m = await rsGetJson(`https://web.realapp.com/messages/channels/${c.ch}/messages`, auth);
       if (hasCode(m)) return { ok: true, request: c.isReq ? c.ch : null, channel: c.ch };

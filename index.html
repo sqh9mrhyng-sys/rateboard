@@ -2607,7 +2607,7 @@ $('#g-rcode').addEventListener('click', async () => {
       $('#g-rmsg').style.color = '#5fbf7a';
       $('#g-pass').value = ''; $('#g-pass').focus();
     } else if(c && c.error){ clearInterval(resetTimer); $('#g-rmsg').textContent = c.error; }
-  }, 10000);
+  }, 20000);
 });
 
 $('#g-rcopy').addEventListener('click', async () => {
