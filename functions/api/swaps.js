@@ -312,7 +312,7 @@ async function runMatching(db) {
      The swap day runs 7am to 7am ET, by the hour the swap happens, so a
      player can go out at 6am and again at 7am. Capped at SWAPS_PER_DAY a swap
      day, and by their goal rating when they set one. */
-  const open = ((await db.prepare(`SELECT a, b, aGets, bGets, slot, createdAt, dueAt, followA, followB FROM swap_matches WHERE createdAt > ? AND status <> 'error'`)
+  const open = ((await db.prepare(`SELECT a, b, aGets, bGets, slot, createdAt, dueAt, followA, followB FROM swap_matches WHERE createdAt > ? AND status IN ('pending','sending','warned','sent')`)
     .bind(Date.now() - 2 * 86400000).all()).results || []);
   const paired = new Set(), given = new Set(), count = new Map(), closed = new Set(), goalUsed = new Map();
   const bump = (m, k) => m.set(k, (m.get(k) || 0) + 1);
@@ -811,6 +811,14 @@ export async function swapTick(env) {
     try { await matchCols(db); } catch (e) {}
     try { const made = await runMatching(db); await stat(db, 'matches', made.length); await stat(db, 'match_runs'); } catch (e) { await botFail(db, 'matching', e.message); }
   }
+  // One-time (2026-11-03, launch): every match made before now - test ones included - is cleared.
+  try {
+    if (!(await env.RATEBOARD_KV.get('swap_clear_v2'))) {
+      await env.RATEBOARD_KV.put('swap_clear_v2', String(Date.now()));
+      await db.prepare("UPDATE swap_matches SET status='cleared' WHERE status <> 'cleared' AND createdAt < ?").bind(Date.UTC(2026, 10, 3, 10, 20)).run();
+      await stat(db, 'cleared');
+    }
+  } catch (e) {}
   // One-time (2026-11-03): clear every swap submission before launch.
   try {
     if (!(await env.RATEBOARD_KV.get('swap_clear_v1'))) {
@@ -1900,7 +1908,7 @@ async function handle({ request, env, waitUntil }) {
   }
 
   if (op === 'matches') {
-    const rows = (await db.prepare(`SELECT * FROM swap_matches ORDER BY id DESC LIMIT 200`).all()).results || [];
+    const rows = (await db.prepare(`SELECT * FROM swap_matches WHERE status <> 'cleared' ORDER BY id DESC LIMIT 200`).all()).results || [];
     const users = (await db.prepare('SELECT key, rsUser, passes FROM swap_users').all()).results || [];
     const names = {};
     for (const u of users) for (const p of parse(u.passes, [])) names[p.key] = p.name;
