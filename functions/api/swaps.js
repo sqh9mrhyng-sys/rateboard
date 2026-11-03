@@ -351,7 +351,8 @@ async function runMatching(db) {
   const made = [], now = Date.now(), cands = [];
   for (let i = 0; i < users.length; i++) for (let j = i + 1; j < users.length; j++) {
     const A = users[i], B = users[j];
-    if (!A.wants.length || !B.wants.length || A.wants[0] === B.wants[0]) continue;   // same player both ways is no swap
+    const pl = k => { const [sp, , id] = String(k).split(':'); return sp + ':' + id; };   // the player, any season
+    if (!A.wants.length || !B.wants.length || pl(A.wants[0]) === pl(B.wants[0])) continue;   // same player both ways (any season) is no swap
     for (const slot of A.slots) {
       const rb = B.slots.indexOf(slot); if (rb < 0) continue;
       const ra = A.slots.indexOf(slot);
@@ -371,6 +372,11 @@ async function runMatching(db) {
   }
   for (const m of made) {
     try { await db.prepare('ALTER TABLE swap_matches ADD COLUMN dueAt INTEGER').run(); } catch (e) {}
+    // Never the same two people twice on one swap day, even if two runs overlap.
+    const d = swapDay(m.due), dayStart = m.due - 30 * 3600000;
+    const dupes = ((await db.prepare(`SELECT dueAt, slot, createdAt FROM swap_matches WHERE ((a=? AND b=?) OR (a=? AND b=?)) AND dueAt > ? AND status IN ('pending','sending','warned','sent')`)
+      .bind(m.a, m.b, m.b, m.a, dayStart).all()).results) || [];
+    if (dupes.some(x => swapDay(sideDue(x)) === d)) continue;
     await db.prepare(`INSERT INTO swap_matches (a, b, aGets, bGets, slot, createdAt, status, dueAt) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`)
       .bind(m.a, m.b, m.aGets, m.bGets, m.slot, now, m.due).run();
   }
@@ -735,6 +741,11 @@ async function runDms(env, db, auth, rows, max, force) {
   }
   const live = [];
   for (const m of rows) {
+    const pl = k => { const [sp, , id] = String(k).split(':'); return sp + ':' + id; };
+    if (pl(m.aGets) === pl(m.bGets)) {
+      await db.prepare(`UPDATE swap_matches SET status='cancelled', note='cancelled: same player both ways' WHERE id=?`).bind(m.id).run();
+      notes.push(`match ${m.id} cancelled (same player)`); continue;
+    }
     if ((keeps.get(m.a) || new Set()).has(m.bGets) || (keeps.get(m.b) || new Set()).has(m.aGets)) {
       await db.prepare(`UPDATE swap_matches SET status='cancelled', note='cancelled: a pass in it is kept now' WHERE id=?`).bind(m.id).run();
       notes.push(`match ${m.id} cancelled (kept pass)`); await stat(db, 'cancel_kept');
@@ -865,10 +876,16 @@ export async function swapTick(env) {
   const db = env.RATEBOARD_DB, auth = swapToken(env);
   if (!db || !auth) return null;
   await ready(db);
-  const hourKey = 'swap_match_hour_v2', hour = new Date().toISOString().slice(0, 13);
-  let last = null; try { last = await env.RATEBOARD_KV.get(hourKey); } catch (e) {}
-  if (last !== hour && new Date().getUTCMinutes() >= 30) {
-    try { await env.RATEBOARD_KV.put(hourKey, hour); } catch (e) {}
+  // Once an hour at :30. The claim is a database row (instant everywhere), not KV,
+  // so two ticks can never both run matching in the same hour.
+  const hour = new Date().toISOString().slice(0, 13);
+  let mine = false;
+  if (new Date().getUTCMinutes() >= 30) {
+    try { await db.prepare('CREATE TABLE IF NOT EXISTS swap_runs (hour TEXT PRIMARY KEY, at INTEGER)').run();
+      const c = await db.prepare('INSERT OR IGNORE INTO swap_runs (hour, at) VALUES (?, ?)').bind(hour, Date.now()).run();
+      mine = !!(c && c.meta && c.meta.changes); } catch (e) {}
+  }
+  if (mine) {
     try { await matchCols(db); } catch (e) {}
     try { const made = await runMatching(db); await stat(db, 'matches', made.length); await stat(db, 'match_runs'); } catch (e) { await botFail(db, 'matching', e.message); }
   }
