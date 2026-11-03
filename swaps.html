@@ -432,7 +432,7 @@ async function fullScan(extra, onPart){
 $('#scan').addEventListener('click', async () => {
   const u = $('#rsuser').textContent.trim().replace(/^@/, '');
   $('#scan').disabled = true;
-  $('#scanmsg').textContent = 'Scanning every sport and season… 1/5';
+  $('#scanmsg').textContent = 'Scanning every sport and season… a few seconds';
   const j = await fullScan('&page=swaps', p => { $('#scanmsg').textContent = `Scanning every sport and season… ${p.next + 1}/${p.parts} · ${p.found} passes so far`; });
   $('#scan').disabled = false;
   if(j.error){ $('#scanmsg').textContent = j.error; return; }

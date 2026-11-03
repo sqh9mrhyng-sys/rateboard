@@ -396,7 +396,7 @@ async function fullScan(extra, onPart){
 $('#scan').addEventListener('click', async () => {
   const u = $('#rsuser').value.trim();
   if(!u){ $('#scanmsg').textContent = 'Enter your Real username first.'; return; }
-  $('#scan').disabled = true; $('#scanmsg').textContent = 'Scanning every sport and season… 1/5';
+  $('#scan').disabled = true; $('#scanmsg').textContent = 'Scanning every sport and season… a few seconds';
   const j = await fullScan('&page=boosts', p => { $('#scanmsg').textContent = `Scanning every sport and season… ${p.next + 1}/${p.parts} · ${p.found} passes so far`; });
   $('#scan').disabled = false;
   if(j.error){ $('#scanmsg').textContent = j.error; return; }

@@ -105,7 +105,7 @@ const SWAP_SEASONS = {
 };
 // Every call one full scan makes, in order, and how many go in each part.
 const SCAN_STEPS = Object.entries(SWAP_SEASONS).flatMap(([sp, v]) => v.flatMap(se => sp === 'ufc' ? [[sp, se, 'team']] : [[sp, se, 'player'], [sp, se, 'team']]));
-const SCAN_PER_PART = 20;   // 10 calls on each of the two scanning accounts per part
+const SCAN_PER_PART = 90;   // the whole scan in one go
 
 // What the Swaps page scans: no FC or UFC (nothing to swap there), golf back to 2014.
 const SWAPS_SCAN = Object.fromEntries(Object.entries(SWAP_SEASONS).filter(([k]) => k !== 'soccer' && k !== 'ufc')
@@ -1780,7 +1780,6 @@ async function handle({ request, env, waitUntil }) {
           return json({ done: true, hashId: u.hashId, passes: parse(u.passes, []), errors: [], cached: true, scannedAt: lastAt,
             note: `From your last scan. A fresh scan is allowed once every ${every >= 60 ? every / 60 + ' hours' : every + ' minutes'} - next in ${m >= 60 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : m + ' min'}.` });
         }
-        if (!(await allow(url.origin, 'passread-all', 15, 60))) return json({ error: HIGH_VOL }, 429);
       } else if (!(await allow(url.origin, 'swapscan:' + me, 20, 600))) return json({ error: 'Twenty scans per ten minutes.' }, 429);
       // Members scan their own Real account; an admin may name another (OTD).
       const rsUser = acc.admin && url.searchParams.get('rsUser') ? String(url.searchParams.get('rsUser')).trim().replace(/^@/, '') : await realName(db, me);
@@ -1798,21 +1797,20 @@ async function handle({ request, env, waitUntil }) {
        0.6s pace, so no one account is hit harder but the scan is ~3x faster. */
     const steps = SCAN_STEPS.slice(part * SCAN_PER_PART, (part + 1) * SCAN_PER_PART);
     const toks = scanToks(env);   // board + market accounts - never the bot, which only handles DMs
-    const lanes = toks.map(() => []);
-    steps.forEach((st, i) => lanes[i % toks.length].push(st));
-    await Promise.all(lanes.map(async (list, li) => {
-      for (const [sport, season, kind] of list) {
-        let ok = false;
-        const tries = [...new Set([toks[li], toks[(li + 1) % toks.length]])];   // a failed call tries the other account once
-        for (let t = 0; t < tries.length && !ok; t++) {
+    // As fast as it goes: 6 calls at once (Cloudflare's open-connection limit), no pauses,
+    // shared across the scanning accounts; a failed call tries the other account once.
+    let next = 0, n = 0;
+    await Promise.all(Array.from({ length: 6 }, async () => {
+      while (next < steps.length) {
+        const [sport, season, kind] = steps[next++], first = toks[(n++) % toks.length];
+        const tries = [...new Set([first, toks.find(t => t !== first) || first])];
+        for (let t = 0; t < tries.length; t++) {
           try {
             const d = await rsGetJson(`https://web.realapp.com/userpasses/${encodeURIComponent(job.hashId)}/passes?entityType=${kind}&season=${season}&sport=${sport}`, tries[t]);
             for (const r of rowsOf(d)) { const p = passOf(r, sport, season, kind); if (p) job.passes.push(p); }
-            ok = true;
+            break;
           } catch (e) { if (t === tries.length - 1) job.errors.push(`${sport} ${season} ${kind}: ${String(e.message || e).slice(0, 100)}`); }
         }
-        void ok;
-        await sleep(600);
       }
     }));
     const parts = Math.ceil(SCAN_STEPS.length / SCAN_PER_PART), last = part + 1 >= parts;
