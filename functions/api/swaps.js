@@ -843,7 +843,7 @@ const CBB_TOP175 = {"4711255":[1,"MSU","jxtRc6FPBpw9"],"5187600":[2,"VAN","aetec
    as long as they're playing and not hurt. */
 const CBB_PIN = { 4711255: [1, 5], 5187600: [2, 5], 5080489: [3, 5], 5142731: [4, 4], 4858604: [5, 4] };   // Fears, Tanner, Haugh, Stokes, Sandfort
 // Player shots Dennis made for the Buys list (img/cbb/<id>.png).
-const CBB_SHOTS = new Set([4711255, 5187600, 5080489, 5174657, 5106275, 5044426, 5103630, 5142609, 4858604]);
+const CBB_SHOTS = new Set([4711255, 5187600, 5080489, 5174657, 5106275, 5044426, 5103630, 5142609, 4858604, 5060709, 5095152, 5054083, 5142722, 5142715, 5311832, 5101833]);
 const FRESH_LINE = { PTS: 11, REB: 4.5, AST: 2, STL: 0.9, BLK: 0.5, '3PM': 1.3 };
 const STAT_COL = { PTS: 'pts', REB: 'reb', AST: 'ast', STL: 'stl', BLK: 'blk' };
 const statKey = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
