@@ -268,7 +268,7 @@ async function runMatching(db) {
       AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`).all()).results || [])
     .map(u => ({ ...u, wants: parse(u.wants, []), keep: new Set(parse(u.keep, [])), slots: parse(u.slots, []),
                  passes: parse(u.passes, []) }));
-  const open = ((await db.prepare(`SELECT a, b, aGets, bGets FROM swap_matches WHERE status IN ('pending','sending') OR (status='sent' AND sentAt > ?)`).bind(Date.now() - 86400000).all()).results || []);
+  const open = ((await db.prepare(`SELECT a, b, aGets, bGets FROM swap_matches WHERE status IN ('pending','sending','warned') OR (status='sent' AND sentAt > ?)`).bind(Date.now() - 86400000).all()).results || []);
   const busy = new Set(), promised = new Set();
   for (const m of open) {
     busy.add(m.a); busy.add(m.b);
@@ -510,6 +510,49 @@ async function acceptRequests(db, auth) {
   return { requests: new Set(reqs.map(r => r.channelId)).size, accepted };
 }
 
+/* Real's own link codes (hashids, salt 'routing', min length 11): a player is
+   [2, sport code, 0, id], a pass is [18, 0, 0, passId]. */
+function routeId(numbers) {
+  const ALPHA0 = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890', SEPS0 = 'cfhistuCFHISTU';
+  const salt = Array.from('routing'), minLength = 11;
+  const shuffle = (alpha, sl) => { if (!sl.length) return alpha; const t = alpha.slice();
+    for (let i = t.length - 1, v = 0, p = 0; i > 0; i--, v++) { v %= sl.length; const n = sl[v].codePointAt(0); p += n; const j = (n + v + p) % i; [t[i], t[j]] = [t[j], t[i]]; } return t; };
+  const toAlpha = (n, alpha) => { const id = []; let v = n; do { id.unshift(alpha[v % alpha.length]); v = Math.floor(v / alpha.length); } while (v > 0); return id; };
+  let alpha = [...new Set(Array.from(ALPHA0))], seps = Array.from(SEPS0).filter(c => alpha.includes(c));
+  alpha = alpha.filter(c => !seps.includes(c)); seps = shuffle(seps, salt);
+  if (!seps.length || alpha.length / seps.length > 3.5) { let sl = Math.ceil(alpha.length / 3.5); if (sl === 1) sl = 2;
+    if (sl > seps.length) { const d = sl - seps.length; seps = seps.concat(alpha.slice(0, d)); alpha = alpha.slice(d); } else seps = seps.slice(0, sl); }
+  alpha = shuffle(alpha, salt);
+  const gc = Math.ceil(alpha.length / 12); let guards;
+  if (alpha.length < 3) { guards = seps.slice(0, gc); seps = seps.slice(gc); } else { guards = alpha.slice(0, gc); alpha = alpha.slice(gc); }
+  let hashInt = 0; for (let i = 0; i < numbers.length; i++) hashInt += numbers[i] % (i + 100);
+  const lottery = alpha[hashInt % alpha.length]; let ret = [lottery];
+  for (let i = 0; i < numbers.length; i++) { let num = numbers[i];
+    alpha = shuffle(alpha, [lottery].concat(salt, alpha).slice(0, alpha.length));
+    const last = toAlpha(num, alpha); ret = ret.concat(last);
+    if (i + 1 < numbers.length) { num %= (last[0].codePointAt(0) + i); ret.push(seps[num % seps.length]); } }
+  if (ret.length < minLength) { let gi = (hashInt + ret[0].codePointAt(0)) % guards.length; ret.unshift(guards[gi]);
+    if (ret.length < minLength) { gi = (hashInt + ret[2].codePointAt(0)) % guards.length; ret.push(guards[gi]); } }
+  const half = Math.floor(alpha.length / 2);
+  while (ret.length < minLength) { alpha = shuffle(alpha, alpha); ret = alpha.slice(half).concat(ret, alpha.slice(0, half));
+    const ex = ret.length - minLength; if (ex > 0) ret = ret.slice(ex / 2, ex / 2 + minLength); }
+  return ret.join('');
+}
+const REAL_SPORT = { nba: [2, 1], nfl: [2, 2], ncaam: [2, 3], mlb: [2, 4], nhl: [2, 7], ufc: [3, 10], ncaaf: [2, 11], wnba: [2, 12], soccer: [2, 14], golf: [2, 15] };
+function playerUrl(key) {
+  const [sp, se, id] = String(key).split(':'); const k = REAL_SPORT[sp]; const n = Number(id);
+  return k && Number.isFinite(n) && n > 0 ? `https://www.realapp.com/${routeId([k[0], k[1], 0, n])}/${se}` : null;
+}
+function passUrl(owner, key) {
+  const p = (owner.passes || []).find(x => x.key === key);
+  return p && p.passId ? `https://www.realapp.com/${routeId([18, 0, 0, Number(p.passId)])}` : null;
+}
+function playerName(owner, key) {
+  const p = (owner.passes || []).find(x => x.key === key);
+  const [, se, id] = String(key).split(':');
+  return `${p && p.name && !/^player$/i.test(p.name) ? p.name : 'Player ' + id} ${se}`;
+}
+
 const SPORT_NAME = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf' };
 function passLabel(owner, key) {
   const p = (owner.passes || []).find(x => x.key === key);
@@ -532,25 +575,79 @@ function matchText(me, other, gets, gives, slot) {
     + `Message @${other.rsUser} to set it up. Manage your swaps at raxacademy.app/swaps`;
 }
 
-// Sends one match to both members. Returns a note for the record.
+/* Two DMs per member per swap day:
+   1. "warn" - 30 minutes before their first swap: the players they're
+      swapping for, each with a link to the player and to the partner's pass.
+   2. "contact" - at the swap hour: each partner's @, their comment on the
+      swap post, and the player.
+   Each side of a match is marked once its DM has gone, so nothing repeats. */
+function warnText(lines) {
+  return 'You are swapping the following players today, please buy the following packs within 30 mins\n\n' + lines.join('\n\n');
+}
+function contactText(lines) {
+  return "Here are comments to contact the following swaps, please send 12 hour offers and report anyone who's doing anything wrong.\n\n" + lines.join('\n');
+}
+async function loadMember(db, k) {
+  const u = await db.prepare('SELECT key, rsUser, hashId, passes, comment FROM swap_users WHERE key=?').bind(k).first();
+  return u ? { ...u, passes: parse(u.passes, []) } : null;
+}
+// Sends one phase to every member with a side of these matches due. Returns notes.
+async function sendPhase(env, db, auth, matches, phase, max) {
+  const col = side => (phase === 'warn' ? 'warn' : 'done') + side;      // warnA, warnB, doneA, doneB
+  const per = new Map();                                                  // member -> [{ m, side }]
+  for (const m of matches) for (const side of ['A', 'B']) {
+    if (m[col(side)]) continue;
+    const who = side === 'A' ? m.a : m.b;
+    (per.get(who) || per.set(who, []).get(who)).push({ m, side });
+  }
+  const cache = new Map(), member = async k => cache.has(k) ? cache.get(k) : (cache.set(k, await loadMember(db, k)), cache.get(k));
+  const notes = []; let sent = 0;
+  for (const [who, list] of per) {
+    if (sent >= max) break;
+    const me = await member(who);
+    if (!me || !me.hashId) { notes.push(`${who}: never verified`); continue; }
+    const lines = [];
+    for (const { m, side } of list) {
+      const otherKey = side === 'A' ? m.b : m.a, gets = side === 'A' ? m.aGets : m.bGets;
+      const o = await member(otherKey); if (!o) continue;
+      if (phase === 'warn') lines.push(`${playerName(o, gets)}\n${playerUrl(gets) || ''}\n${passUrl(o, gets) || '(pass link not found)'}`);
+      else lines.push(`@${o.rsUser} - ${o.comment || '(no comment link)'} - ${playerUrl(gets) || playerName(o, gets)}`);
+    }
+    if (!lines.length) continue;
+    try {
+      const ch = await dmChannel(db, auth, me.hashId, me.rsUser, env);
+      await dmSend(auth, ch, phase === 'warn' ? warnText(lines) : contactText(lines));
+      sent++; notes.push(`${phase} sent to @${me.rsUser}`);
+      for (const { m, side } of list) {
+        await db.prepare(`UPDATE swap_matches SET ${col(side)}=? WHERE id=?`).bind(Date.now(), m.id).run();
+        m[col(side)] = Date.now();
+      }
+    } catch (e) { notes.push(`${phase} to @${me.rsUser} failed: ${String(e.message || e).slice(0, 160)}`); }
+    await sleep(1200);
+  }
+  // A match is finished once both members have both DMs.
+  for (const m of matches) {
+    const st = m.doneA && m.doneB ? 'sent' : (m.warnA && m.warnB ? 'warned' : m.status);
+    if (st !== m.status) { await db.prepare('UPDATE swap_matches SET status=?, sentAt=? WHERE id=?').bind(st, st === 'sent' ? Date.now() : null, m.id).run(); m.status = st; }
+  }
+  return notes;
+}
+async function matchCols(db) {
+  for (const c of ['warnA', 'warnB', 'doneA', 'doneB']) { try { await db.prepare(`ALTER TABLE swap_matches ADD COLUMN ${c} INTEGER`).run(); } catch (e) {} }
+  try { await db.prepare('ALTER TABLE swap_users ADD COLUMN comment TEXT').run(); } catch (e) {}
+}
+// Admin "Send now": both DMs for one match, straight away.
 async function sendMatch(env, db, auth, m) {
-  const load = async k => {
-    const u = await db.prepare('SELECT key, rsUser, hashId, passes FROM swap_users WHERE key=?').bind(k).first();
-    return u ? { ...u, passes: parse(u.passes, []) } : null;
-  };
-  const A = await load(m.a), B = await load(m.b);
-  if (!A || !B || !A.hashId || !B.hashId) throw new Error('member missing or never scanned');
-  // Both chats first, so a member is never messaged when the other can't be.
-  const chA = await dmChannel(db, auth, A.hashId, A.rsUser, env);
-  const chB = await dmChannel(db, auth, B.hashId, B.rsUser, env);
-  await dmSend(auth, chA, matchText(A, B, m.aGets, m.bGets, m.slot));
-  await sleep(1200);
-  await dmSend(auth, chB, matchText(B, A, m.bGets, m.aGets, m.slot));
-  return `sent to @${A.rsUser} (${chA}) and @${B.rsUser} (${chB})`;
+  const one = [m];
+  const n1 = await sendPhase(env, db, auth, one, 'warn', 4);
+  const n2 = await sendPhase(env, db, auth, one, 'contact', 4);
+  return n1.concat(n2).join('; ');
 }
 
-/* Called once a minute from the collector tick. Matching runs once an hour;
-   pending matches go out in the hour of their shared slot, a few a minute. */
+/* Called once a minute from the collector tick. Matching runs once an hour.
+   No chat reading here: members verify their DM with the button on /swaps.
+   At :30 the matches whose swap hour is next get the warn DM; in the swap
+   hour itself any warn still owed goes first, then the contact DM. */
 export async function swapTick(env) {
   if (!DM_ON) return null;
   const db = env.RATEBOARD_DB, auth = swapToken(env);
@@ -560,25 +657,17 @@ export async function swapTick(env) {
   let last = null; try { last = await env.RATEBOARD_KV.get(hourKey); } catch (e) {}
   if (last !== hour) {
     try { await env.RATEBOARD_KV.put(hourKey, hour); } catch (e) {}
-    try { await acceptRequests(db, auth); } catch (e) {}
-    try { await syncChats(db, auth); } catch (e) {}
+    try { await matchCols(db); } catch (e) {}
     try { await runMatching(db); } catch (e) {}
   }
-  const h = new Date().getUTCHours();
-  const due = (await db.prepare(`SELECT * FROM swap_matches WHERE status='pending' AND slot=? ORDER BY id LIMIT 3`).bind(h).all()).results || [];
-  const out = [];
-  for (const m of due) {
-    // Claim it first, so two ticks running at once can't both send it.
-    const c = await db.prepare(`UPDATE swap_matches SET status='sending' WHERE id=? AND status='pending'`).bind(m.id).run();
-    if (!(c && c.meta && c.meta.changes)) continue;
-    let status = 'sent', note = '';
-    try { note = await sendMatch(env, db, auth, m); }
-    catch (e) { status = /5 new chats/.test(String(e.message)) ? 'pending' : 'error'; note = String(e.message || e).slice(0, 300); }
-    await db.prepare('UPDATE swap_matches SET status=?, sentAt=?, note=? WHERE id=?')
-      .bind(status, status === 'sent' ? Date.now() : null, note, m.id).run();
-    out.push({ id: m.id, status, note });
-    if (status === 'pending') break;
-  }
+  const d = new Date(), h = d.getUTCHours(), next = (h + 1) % 24;
+  const hours = d.getUTCMinutes() >= 30 ? [h, next] : [h];
+  const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned') AND slot IN (${hours.map(() => '?').join(',')}) ORDER BY id LIMIT 40`)
+    .bind(...hours).all()).results) || [];
+  if (!rows.length) return [];
+  let out = await sendPhase(env, db, auth, rows, 'warn', 4);
+  const now = rows.filter(m => Number(m.slot) === h && m.warnA && m.warnB);
+  if (now.length) out = out.concat(await sendPhase(env, db, auth, now, 'contact', 4));
   return out;
 }
 
@@ -1087,7 +1176,7 @@ async function handle({ request, env, waitUntil }) {
         connected = !!(await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=? AND channelId IS NOT NULL').bind(u.hashId).first()); } catch (e) {}
     }
     return json({ key: me, admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
-      keep: parse(u.keep, []), slots: parse(u.slots, []), passes: parse(u.passes, []), scannedAt: u.scannedAt, active: !!u.active } : null });
+      keep: parse(u.keep, []), slots: parse(u.slots, []), passes: parse(u.passes, []), scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '' } : null });
   }
 
   if (op === 'save' && request.method === 'POST') {
@@ -1097,10 +1186,13 @@ async function handle({ request, env, waitUntil }) {
     const keep = (Array.isArray(b.keep) ? b.keep : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, 2000);
     const slots = [...new Set((Array.isArray(b.slots) ? b.slots : []).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24))].slice(0, 5);
     const rsUser = String(me);   // the board username is the Real account
-    await db.prepare(`INSERT INTO swap_users (key, rsUser, wants, keep, slots, updatedAt, active) VALUES (?, ?, ?, ?, ?, ?, 1)
+    const comment = String(b.comment || '').trim();
+    if (!/^https:\/\/(www\.)?realapp\.com\/\S{4,}$/i.test(comment)) return json({ error: 'Paste the link to your comment on the swap post (step 2).' }, 400);
+    await matchCols(db);
+    await db.prepare(`INSERT INTO swap_users (key, rsUser, wants, keep, slots, updatedAt, active, comment) VALUES (?, ?, ?, ?, ?, ?, 1, ?)
       ON CONFLICT(key) DO UPDATE SET rsUser=excluded.rsUser, wants=excluded.wants, keep=excluded.keep,
-        slots=excluded.slots, updatedAt=excluded.updatedAt, active=1`)
-      .bind(me, rsUser, JSON.stringify(wants), JSON.stringify(keep), JSON.stringify(slots), Date.now()).run();
+        slots=excluded.slots, updatedAt=excluded.updatedAt, active=1, comment=excluded.comment`)
+      .bind(me, rsUser, JSON.stringify(wants), JSON.stringify(keep), JSON.stringify(slots), Date.now(), comment.slice(0, 200)).run();
     return json({ ok: true, wants, keep: keep.length, slots });
   }
 
@@ -1599,12 +1691,13 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'sendnow' && request.method === 'POST') {
     if (!auth) return json({ error: 'No swap token found.' }, 503);
     const id = Number(url.searchParams.get('id'));
+    await matchCols(db);
     const m = await db.prepare('SELECT * FROM swap_matches WHERE id=?').bind(id).first();
     if (!m) return json({ error: 'no such match' }, 404);
     try {
       const note = await sendMatch(env, db, auth, m);
-      await db.prepare(`UPDATE swap_matches SET status='sent', sentAt=?, note=? WHERE id=?`).bind(Date.now(), note, id).run();
-      return json({ ok: true, note });
+      await db.prepare(`UPDATE swap_matches SET note=? WHERE id=?`).bind(note.slice(0, 300), id).run();
+      return json({ ok: true, note, status: m.status });
     } catch (e) {
       await db.prepare(`UPDATE swap_matches SET note=? WHERE id=?`).bind(String(e.message || e).slice(0, 300), id).run();
       return json({ error: String(e.message || e) }, 502);

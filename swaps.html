@@ -72,20 +72,22 @@
 
   <section>
     <h2>1. Create a DM with @raxacademy.app on Real</h2>
-    <p class="note">Open Real, start a DM with <b>@raxacademy.app</b> and send <b>#packswap</b>. That's how the bot reaches you when you're matched. Then tap the button so it can check.</p>
-    <div class="bar"><a class="btn" href="https://www.realapp.com/" target="_blank" rel="noopener">Open Real</a><button type="button" id="copytag">Copy #packswap</button></div>
-    <div class="bar" id="connbox"><span class="note" id="connmsg"></span><button class="primary" id="connect">I sent it - verify</button></div>
+    <p class="note">Open Real, start a DM with <b>@raxacademy.app</b> and send <b>#packswap</b>. That's how the bot reaches you when you're matched. Then tap <b>Check verification</b> - the bot only looks when you tap it.</p>
+    <div class="bar"><a class="btn" href="https://www.realapp.com/" target="_blank" rel="noopener">Open Real</a><button type="button" id="copytag">Copy #packswap</button><button class="primary" id="connect">Check verification</button></div>
+    <div class="note" id="connmsg"></div>
   </section>
 
   <section>
     <h2>2. Comment on the swap post</h2>
     <p class="note">Create a comment under the swap post so people can get ahold of you - ideally with the player you're swapping for.</p>
     <div class="bar"><a class="btn" href="https://www.realapp.com/9DHKtlFNQA4" target="_blank" rel="noopener">Open the swap post</a></div>
+    <p class="note" style="margin:6px 0 0">Then copy the link to your comment and paste it here - your swap partners get it in their DM.</p>
+    <div class="bar"><input id="clink" placeholder="https://www.realapp.com/…" autocomplete="off" inputmode="url"></div>
   </section>
 
   <section>
     <h2>3. Your player passes</h2>
-    <p class="note">Scans the Real account with your board username. Tick any pass you <b>won't</b> swap away; everything else is fair game.</p>
+    <p class="note">Checks your Real account for every pass you own. Select the empty box on the left if you do not want to swap that player to people. Everything else will be used to find compatible swaps.</p>
     <div class="bar"><span class="note">Real account: <span class="who" id="rsuser"></span></span><button class="primary" id="scan" style="margin-left:auto">Scan my passes</button></div>
     <div class="note" id="scanmsg"></div>
     <div class="bar" id="pctl" hidden>
@@ -405,8 +407,9 @@ $('#wants').addEventListener('click', e => { const x = e.target.dataset.x; if(x)
 $('#save').addEventListener('click', async () => {
   if(!connected){ $('#savemsg').textContent = 'Do step 1 first - the bot has to be able to DM you.'; return; }
   if(!prof.slots.length){ $('#savemsg').textContent = 'Pick at least one hour.'; return; }
+  if(!/^https:\/\/(www\.)?realapp\.com\/\S{4,}$/i.test($('#clink').value.trim())){ $('#savemsg').textContent = 'Paste the link to your comment on the swap post (step 2).'; return; }
   const j = await api('/api/swaps?op=save', { method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 1), keep: prof.keep, slots: prof.slots, names: wantNames }) });
+    body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 1), comment: $('#clink').value.trim(), keep: prof.keep, slots: prof.slots, names: wantNames }) });
   $('#savemsg').textContent = j.error ? j.error : 'Saved.';
   try{ localStorage.setItem('ratebrd_swapnames', JSON.stringify(wantNames)); }catch(e){}
 });
@@ -419,7 +422,7 @@ async function loadMatches(){
   $('#matches').innerHTML = m.length ? '<table><tr><th>Who</th><th>Gets</th><th>Hour</th><th>Status</th><th></th></tr>' + m.map(x =>
     `<tr><td>${esc(x.aUser || x.a)} ↔ ${esc(x.bUser || x.b)}</td><td>${esc(x.aGetsName || x.aGets)} / ${esc(x.bGetsName || x.bGets)}</td>
      <td>${hLbl(toLocal(x.slot))}</td><td>${esc(x.status)}${x.note ? `<div class="note">${esc(x.note)}</div>` : ''}</td>
-     <td>${x.status === 'pending' || x.status === 'error' ? `<button data-send="${x.id}">Send now</button>` : ''}</td></tr>`).join('') + '</table>' : 'No matches yet.';
+     <td>${x.status === 'pending' || x.status === 'warned' || x.status === 'error' ? `<button data-send="${x.id}">Send now</button>` : ''}</td></tr>`).join('') + '</table>' : 'No matches yet.';
 }
 $('#matches').addEventListener('click', async e => {
   const b = e.target.closest('[data-send]'); if(!b) return;
@@ -520,6 +523,7 @@ async function proGate(){
   if(j.profile) prof = Object.assign(prof, j.profile);
   if(!j.tokenFound) $('#scanmsg').innerHTML = '<span style="color:var(--bad)">No swap token found in Cloudflare yet.</span>';
   $('#rsuser').textContent = '@' + (j.key || '');
+  $('#clink').value = (j.profile && j.profile.comment) || '';
   if(prof.passes.length && prof.keep.length) collapsed = true;   // back again with picks made: start folded
   paintConn(!!j.connected);
   $('#admin').hidden = !j.admin;
