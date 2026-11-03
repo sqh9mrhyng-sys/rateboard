@@ -587,6 +587,10 @@ export async function swapTick(env) {
 const SWAP_MEMBERS = ['scantrawn', 'prod', 'nebula57', 'thinkpoker', 'harris', 'reschny', 'six',
   'uawheel', 'topfloorboss', 'aayan.t', 'nicohoerner', 'gabby', 'rhjin', 'lax', 'thathuey5', 'puka', 'mar'];
 const SACCESS_DDL = `CREATE TABLE IF NOT EXISTS swap_access (key TEXT PRIMARY KEY, grantedAt INTEGER)`;
+/* The Real Pro wall in front of Swaps: one check per member, ever. Their
+   board username is looked up on Real (they can't type another one), and
+   the answer is kept, so it is never asked again. Dennis can clear it. */
+const SPRO_DDL = `CREATE TABLE IF NOT EXISTS swap_pro (key TEXT PRIMARY KEY, pro INTEGER, tier INTEGER, rsId TEXT, at INTEGER)`;
 const OTD_DDL = `CREATE TABLE IF NOT EXISTS otd_access (key TEXT PRIMARY KEY, grantedAt INTEGER)`;
 /* Who can use Swaps and who can use OTD optimization - two separate grants.
    ok means either; swaps and otd say which. */
@@ -605,10 +609,12 @@ export async function swapAccess(env, request) {
     }
     await db.prepare(SACCESS_DDL).run();
     await db.prepare(OTD_DDL).run();
-    const [a, b] = await db.batch([
+    await db.prepare(SPRO_DDL).run();
+    const [a, b, c] = await db.batch([
       db.prepare('SELECT 1 AS x FROM swap_access WHERE key=?').bind(who),
-      db.prepare('SELECT 1 AS x FROM otd_access WHERE key=?').bind(who)]);
-    swaps = swaps || !!(a.results && a.results.length);
+      db.prepare('SELECT 1 AS x FROM otd_access WHERE key=?').bind(who),
+      db.prepare('SELECT 1 AS x FROM swap_pro WHERE key=? AND pro=1').bind(who)]);
+    swaps = swaps || !!(a.results && a.results.length) || !!(c.results && c.results.length);
     otd = !!(b.results && b.results.length);
   } catch (e) {}
   return { who, admin: false, ok: swaps || otd, swaps, otd };
@@ -939,6 +945,29 @@ export async function onRequest(ctx) {
   catch (e) { return json({ error: 'Swaps hit an error: ' + String((e && e.message) || e).slice(0, 300) }, 500); }
 }
 
+async function proCheck(env, db, url, acc) {
+  if (!acc.who) return json({ error: 'Sign in on the board first.' }, 401);
+  if (acc.swaps) return json({ access: true });
+  await db.prepare(SPRO_DDL).run();
+  const had = await db.prepare('SELECT pro FROM swap_pro WHERE key=?').bind(acc.who).first();
+  if (had) return json({ access: !!had.pro, checked: true, pro: !!had.pro });
+  if (url.searchParams.get('peek') === '1') return json({ access: false, checked: false });
+  // One real check per member, ever; this only guards against double taps.
+  if (!(await allow(url.origin, 'procheck:' + acc.who, 3, 600)) || !(await allow(url.origin, 'procheck-all', 20, 60)))
+    return json({ error: 'Busy - try again in a minute.' }, 429);
+  const auth = swapToken(env);
+  if (!auth) return json({ error: 'The check is not set up yet.' }, 503);
+  let d;
+  try { d = await rsGetJson(`https://web.realapp.com/searchusers?query=${encodeURIComponent(acc.who)}`, auth); }
+  catch (e) { return json({ error: 'Could not reach Real just now - try again in a minute.' }, 502); }
+  if (!d || !Array.isArray(d.users)) return json({ error: 'Could not reach Real just now - try again in a minute.' }, 502);
+  const u = d.users.find(x => String(x.userName || '').toLowerCase() === String(acc.who).toLowerCase()) || null;
+  const pro = !!(u && u.isRealPro);
+  await db.prepare('INSERT INTO swap_pro (key, pro, tier, rsId, at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(key) DO NOTHING')
+    .bind(acc.who, pro ? 1 : 0, u && u.realProTier != null ? Number(u.realProTier) : null, u ? String(u.id) : null, Date.now()).run();
+  return json({ access: pro, checked: true, pro });
+}
+
 async function handle({ request, env, waitUntil }) {
   const url = new URL(request.url);
   const db = env.RATEBOARD_DB;
@@ -946,6 +975,7 @@ async function handle({ request, env, waitUntil }) {
   // Password resets happen signed out, so they come before the access check.
   if (op === 'resetstart' || op === 'resetcheck') return resetFlow(env, db, url, request, op, waitUntil);
   const acc = await swapAccess(env, request);
+  if (op === 'procheck') return proCheck(env, db, url, acc);
   // Boosts (BETA) is open to every signed-in member; its calls say page=boosts.
   // Limited to Dennis (admins) while in beta: set BOOSTS_OPEN to open it to everyone signed in.
   const boostCall = BOOSTS_OPEN && url.searchParams.get('page') === 'boosts' && BOOST_OPS.has(op) && !!acc.who;
@@ -1086,9 +1116,12 @@ async function handle({ request, env, waitUntil }) {
           note: `From your last scan. A fresh scan is allowed once every ${every >= 60 ? every / 60 + ' hours' : every + ' minutes'} - next in ${m >= 60 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : m + ' min'}.` });
       }
     } else if (!(await allow(url.origin, 'swapscan:' + me, 20, 600))) return json({ error: 'Twenty scans per ten minutes.' }, 429);
-    const rsUser = String(url.searchParams.get('rsUser') || (u && u.rsUser) || '').trim();
+    // On Swaps a member's Real account is their board username - no other.
+    const rsUser = (!acc.admin && url.searchParams.get('page') !== 'boosts') ? String(me)
+      : String(url.searchParams.get('rsUser') || (u && u.rsUser) || '').trim();
     if (!rsUser) return json({ error: 'Enter your Real username first.' }, 400);
     let hashId = u && u.rsUser === rsUser ? u.hashId : null;
+    if (!hashId && rsUser === String(me)) { try { const pr = await db.prepare('SELECT rsId FROM swap_pro WHERE key=?').bind(me).first(); if (pr && pr.rsId) hashId = pr.rsId; } catch (e) {} }
     try { if (!hashId) hashId = await resolveHashId(rsUser, auth); } catch (e) { return json({ error: String(e.message || e) }, 502); }
     if (!hashId) return json({ error: `No Real user called ${rsUser}.` }, 404);
     // From Boosts only its three current seasons are read (6 calls, not ~80),
@@ -1417,6 +1450,11 @@ async function handle({ request, env, waitUntil }) {
     if (!auth) return json({ error: 'No swap token found.' }, 503);
     const name = String(url.searchParams.get('user') || '').trim().replace(/^@/, '');
     if (!name) return json({ error: 'Enter a Real username.' }, 400);
+    if (url.searchParams.get('clear') === '1') {
+      await db.prepare(SPRO_DDL).run();
+      const r = await db.prepare('DELETE FROM swap_pro WHERE key=?').bind(name.toLowerCase()).run();
+      return json({ cleared: !!(r.meta && r.meta.changes) });
+    }
     if (!(await allow(url.origin, 'proprobe', 6, 600))) return json({ error: 'Six checks per ten minutes.' }, 429);
     const LOOK = /pro|premium|subscri|plus|tier|plan|badge|verified|member|vip|paid|level|perk/i;
     const hits = [];

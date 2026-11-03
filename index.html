@@ -922,7 +922,7 @@ function applyGameDataVisibility(){
   const pick = $('#pagepick'), sel = $('#pagesel');
   checkMarketAccess();
   const otdOn = typeof reallyAdmin === 'function' && reallyAdmin();     // OTD: admin only
-  const swapsOn = otdOn || swapsAccess;
+  const swapsOn = true;   // everyone - the page itself runs the one-time Real Pro check
   // Boosts & Buys (BETA): everyone signed in.
   const boostsOn = true;   // everyone - the page itself asks them to sign in if they haven't
   if(pick) pick.classList.toggle('hide', !canSeePackData() && !marketAccess && !swapsOn && !boostsOn);

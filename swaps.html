@@ -44,7 +44,7 @@
 </style>
 </head>
 <body>
-<div class="lock" id="lock" hidden><h1>Swaps</h1><p class="note" id="lockmsg">Checking…</p><p><a href="/">Back to the board</a></p></div>
+<div class="lock" id="lock" hidden><h1>Swaps</h1><p class="note" id="lockmsg">Checking…</p><p id="probox" hidden><button class="primary" id="procheck">Pro check</button></p><p><a href="/">Back to the board</a></p></div>
 <div class="wrap" id="main" hidden>
   <header><h1>Swaps</h1><span class="note">Pack swaps · admin preview</span><a href="/" style="margin-left:auto">Back to the board</a></header>
 
@@ -418,8 +418,32 @@ $('#probe').addEventListener('click', async () => { const j = await api('/api/sw
 $('#dmsend').addEventListener('click', async () => { $('#praw').textContent = JSON.stringify(await api(`/api/swaps?op=dmtest&channel=${encodeURIComponent($('#dmch').value.trim())}&text=${encodeURIComponent($('#dmtext').value)}`), null, 2); });
 $('#envb').addEventListener('click', async () => { $('#praw').textContent = JSON.stringify(await api('/api/swaps?op=env'), null, 2); });
 
+// The Real Pro wall: one check per member, ever.
+async function proGate(){
+  let p = await api('/api/swaps?op=procheck&peek=1');
+  for(let i = 0; i < 2 && p.error && /sign in/i.test(p.error) && (()=>{try{return !!localStorage.getItem('ratebrd_token_v1')}catch(e){return false}})(); i++){
+    await new Promise(r => setTimeout(r, 1200 * (i + 1)));
+    p = await api('/api/swaps?op=procheck&peek=1');
+  }
+  if(p.access) return true;
+  $('#lock').hidden = false;
+  if(p.error){ $('#lockmsg').textContent = p.error; return false; }
+  if(p.checked){ $('#lockmsg').textContent = 'Real pro required for this page'; return false; }
+  $('#lockmsg').textContent = ''; $('#probox').hidden = false;
+  return new Promise(done => {
+    $('#procheck').addEventListener('click', async () => {
+      $('#procheck').disabled = true; $('#lockmsg').textContent = 'Checking…';
+      const r = await api('/api/swaps?op=procheck');
+      if(r.access){ $('#lock').hidden = true; done(true); return; }
+      if(r.checked){ $('#probox').hidden = true; $('#lockmsg').textContent = 'Real pro required for this page'; done(false); return; }
+      $('#procheck').disabled = false; $('#lockmsg').textContent = r.error || 'Could not check - try again.';
+    });
+  });
+}
+
 (async () => {
   $('#tz').textContent = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if(!(await proGate())) return;
   let j = await api('/api/swaps?op=me');
   // Signed in here but the check came back empty: the database was busy. Ask again.
   for(let i = 0; i < 2 && j.error && /sign in/i.test(j.error) && (()=>{try{return !!localStorage.getItem('ratebrd_token_v1')}catch(e){return false}})(); i++){
@@ -431,7 +455,8 @@ $('#envb').addEventListener('click', async () => { $('#praw').textContent = JSON
   try{ wantNames = JSON.parse(localStorage.getItem('ratebrd_swapnames') || '{}') || {}; }catch(e){}
   if(j.profile) prof = Object.assign(prof, j.profile);
   if(!j.tokenFound) $('#scanmsg').innerHTML = '<span style="color:var(--bad)">No swap token found in Cloudflare yet.</span>';
-  $('#rsuser').value = prof.rsUser || '';
+  $('#rsuser').value = j.admin ? (prof.rsUser || '') : (j.key || prof.rsUser || '');
+  if(!j.admin){ $('#rsuser').readOnly = true; $('#rsuser').title = 'Your board username is your Real username'; }
   paintConn(!!j.connected);
   $('#admin').hidden = !j.admin;
   drawPasses(); drawWants(); drawHours(); if(j.admin){ loadMatches(); loadAccess(); }

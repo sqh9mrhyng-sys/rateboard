@@ -176,7 +176,7 @@
       </section>
       <section>
         <h2>Real Pro check</h2>
-        <div class="bar"><input id="pp-user" placeholder="Real username" autocomplete="off" style="flex:0 1 180px"><button id="pp-go">Check profile</button><span class="note" id="pp-msg">Reads one profile on the bot account and shows what Real sends back.</span></div>
+        <div class="bar"><input id="pp-user" placeholder="Real username" autocomplete="off" style="flex:0 1 180px"><button id="pp-go">Check profile</button><button id="pp-clear" title="Lets them run the Swaps Pro check again">Clear their Swaps Pro check</button><span class="note" id="pp-msg">Reads one profile on the bot account and shows what Real sends back.</span></div>
         <div id="pp-hits" class="note"></div>
         <details><summary class="note">Everything Real sent</summary><pre id="pp-raw" style="max-height:420px;overflow:auto;white-space:pre-wrap;font-size:11px"></pre></details>
       </section>
@@ -588,6 +588,11 @@ $('#t-reports').addEventListener('click', async e => {
 });
 
 /* ---------- swaps ---------- */
+$('#pp-clear').addEventListener('click', async () => {
+  const u = $('#pp-user').value.trim(); if(!u){ $('#pp-msg').textContent = 'Type a username.'; return; }
+  const j = await api('/api/swaps?op=proprobe&clear=1&user=' + encodeURIComponent(u));
+  $('#pp-msg').textContent = j.error || (j.cleared ? `${u} can run the Pro check again.` : `${u} hadn't run the Pro check.`);
+});
 $('#pp-go').addEventListener('click', async () => {
   const u = $('#pp-user').value.trim(); if(!u){ $('#pp-msg').textContent = 'Type a username.'; return; }
   $('#pp-go').disabled = true; $('#pp-msg').textContent = 'Checking…'; $('#pp-hits').innerHTML = ''; $('#pp-raw').textContent = '';
