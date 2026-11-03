@@ -276,6 +276,20 @@ document.querySelectorAll('#tab button').forEach(b => b.addEventListener('click'
 }));
 
 let buysOnly = false;
+/* Save a player shot: on phones the share sheet (Save Image puts it straight
+   in the camera roll); anywhere that can't share files, a normal download. */
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-save]'); if(!b) return;
+  e.preventDefault();
+  const url = b.dataset.save, fname = (b.dataset.nm || 'player').replace(/[^A-Za-z0-9]+/g, '-') + '.png';
+  try{
+    const blob = await (await fetch(url)).blob();
+    const file = new File([blob], fname, { type: blob.type || 'image/png' });
+    if(navigator.canShare && navigator.canShare({ files: [file] })){ await navigator.share({ files: [file] }); return; }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = fname; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }catch(err){ if(err && err.name === 'AbortError') return; window.open(url, '_blank'); }
+});
 async function loadBuys(){
   $('#buyrows').innerHTML = '<tr><td colspan="4" class="note">Loading…</td></tr>';
   const j = await api('/api/swaps?op=buys&page=boosts');
@@ -287,7 +301,8 @@ async function loadBuys(){
     + `<span><label class="note"><input type="checkbox" id="buyonly"${buysOnly ? ' checked' : ''}> Only show buys</label></span>`;
   $('#buyonly').addEventListener('change', e => { buysOnly = e.target.checked; loadBuys(); });
   $('#buyrows').innerHTML = rows.map(x => `<tr${x.owned ? ' style="opacity:.55"' : ''}><td data-l="#">${x.rank}</td>
-    <td data-l="Player" class="pc"><div style="display:flex;align-items:center;gap:10px">${x.img ? `<a href="${esc(x.img)}" download="${esc((x.name || 'player').replace(/[^A-Za-z0-9]+/g, '-'))}.png" title="Download"><img src="${esc(x.img)}" alt="" loading="lazy" style="width:44px;height:44px;border-radius:50%;object-fit:cover;flex:none"></a>` : ''}<div><a href="${esc(x.link)}" target="_blank" rel="noopener">${esc(x.name || 'Open player')}</a>${x.name ? '' : '<span class="sub">freshman - name shows in Real</span>'}${x.img ? `<span class="sub"><a href="${esc(x.img)}" download="${esc((x.name || 'player').replace(/[^A-Za-z0-9]+/g, '-'))}.png">Download photo</a></span>` : ''}</div></div></td>
+    <td data-l="Player" class="pc"><div style="display:flex;align-items:center;gap:10px">${x.img ? `<button type="button" data-save="${esc(x.img)}" data-nm="${esc(x.name || 'player')}" title="Save photo" style="padding:0;border:0;background:none;flex:none"><img src="${esc(x.img)}" alt="" loading="lazy" style="width:44px;height:44px;border-radius:50%;object-fit:cover;display:block"></button>` : ''}<div><a href="${esc(x.link)}" target="_blank" rel="noopener">${esc(x.name || 'Open player')}</a>${x.name ? '' : '<span class="sub">freshman - name shows in Real</span>'}
+      <span class="sub">${x.passId ? `<a href="https://www.realapp.com/${hashidsEncode('routing', 11, [18, 0, 0, Number(x.passId)])}" target="_blank" rel="noopener">My card</a>` : ''}${x.passId && x.img ? ' · ' : ''}${x.img ? `<a href="#" data-save="${esc(x.img)}" data-nm="${esc(x.name || 'player')}">Save photo</a>` : ''}</span></div></div></td>
     <td data-l="Team" style="text-align:left">${esc(x.team)}</td>
     <td data-l="You">${x.owned ? '<span class="b none">Owned</span>' : '<span class="b rare">Buy</span>'}</td></tr>`).join('') || '<tr><td colspan="4" class="note">You own all of them.</td></tr>';
 }
