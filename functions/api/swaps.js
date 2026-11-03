@@ -1517,9 +1517,19 @@ async function handle({ request, env, waitUntil }) {
   // A member says they've messaged the bot: re-read its chat list.
   if (op === 'connect') {
     if (!auth) return json({ error: 'No swap token found.' }, 503);
-    if (!(await allow(url.origin, 'swapdm-connect', 6, 600))) return json({ error: 'Too many checks - try again in a few minutes.' }, 429);
-    const u = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(me).first();
-    if (!u || !u.hashId) return json({ error: 'Scan your passes first so the bot knows your Real account.' }, 400);
+    if (!(await allow(url.origin, 'swapdm-connect:' + me, 4, 600))) return json({ error: 'Too many checks - wait a few minutes and try again.' }, 429);
+    if (!(await allow(url.origin, 'swapdm-connect-all', 20, 60))) return json({ error: 'Lots of people are verifying right now - try again in a minute.' }, 429);
+    // Their Real account: from a scan, else the Pro check, else one lookup of their board username.
+    let u = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(me).first();
+    if (!u || !u.hashId) {
+      let hid = null;
+      try { await db.prepare(SPRO_DDL).run(); const pr = await db.prepare('SELECT rsId FROM swap_pro WHERE key=?').bind(me).first(); hid = pr && pr.rsId; } catch (e) {}
+      if (!hid) { try { hid = await resolveHashId(String(me), auth); } catch (e) { return json({ error: 'Could not reach Real just now - try again in a minute.' }, 502); } }
+      if (!hid) return json({ error: `No Real account called ${me} - your board username has to match your Real username.` }, 404);
+      await db.prepare(`INSERT INTO swap_users (key, rsUser, hashId) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET hashId=excluded.hashId, rsUser=excluded.rsUser`)
+        .bind(me, String(me), hid).run();
+      u = { hashId: hid };
+    }
     try { await acceptRequests(db, auth); } catch (e) {}
     try { await syncChats(db, auth); } catch (e) { return json({ error: String(e.message || e) }, 502); }
     const c = await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=? AND channelId IS NOT NULL').bind(u.hashId).first();

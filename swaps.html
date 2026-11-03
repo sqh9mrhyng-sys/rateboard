@@ -39,6 +39,7 @@
   .pass a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)}
   .psum{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;padding:10px 12px;margin-top:8px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
   .who{font-weight:700}
+  a.btn{display:inline-block;padding:9px 13px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);text-decoration:none;font-weight:600}
   [hidden]{display:none !important}
   .want1{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:10px 12px;margin-top:8px;border:1px solid var(--accent);border-radius:10px;background:color-mix(in srgb,var(--accent) 12%,var(--panel2))}
   @media (max-width:600px){
@@ -70,7 +71,20 @@
   <header><h1>Swaps</h1><a href="/" style="margin-left:auto">Back to the board</a></header>
 
   <section>
-    <h2>1. Your player passes</h2>
+    <h2>1. Create a DM with @raxacademy.app on Real</h2>
+    <p class="note">Open Real, start a DM with <b>@raxacademy.app</b> and send <b>#packswap</b>. That's how the bot reaches you when you're matched. Then tap the button so it can check.</p>
+    <div class="bar"><a class="btn" href="https://www.realapp.com/" target="_blank" rel="noopener">Open Real</a><button type="button" id="copytag">Copy #packswap</button></div>
+    <div class="bar" id="connbox"><span class="note" id="connmsg"></span><button class="primary" id="connect">I sent it - verify</button></div>
+  </section>
+
+  <section>
+    <h2>2. Comment on the swap post</h2>
+    <p class="note">Create a comment under the swap post so people can get ahold of you - ideally with the player you're swapping for.</p>
+    <div class="bar"><a class="btn" href="https://www.realapp.com/9DHKtlFNQA4" target="_blank" rel="noopener">Open the swap post</a></div>
+  </section>
+
+  <section>
+    <h2>3. Your player passes</h2>
     <p class="note">Scans the Real account with your board username. Tick any pass you <b>won't</b> swap away; everything else is fair game.</p>
     <div class="bar"><span class="note">Real account: <span class="who" id="rsuser"></span></span><button class="primary" id="scan" style="margin-left:auto">Scan my passes</button></div>
     <div class="note" id="scanmsg"></div>
@@ -85,7 +99,7 @@
   </section>
 
   <section>
-    <h2>2. Who you want</h2>
+    <h2>4. Who you want</h2>
     <p class="note">Search a player and pick the season you want their pass for. One player per swap - picking another replaces it.</p>
     <div class="bar"><input id="wq" placeholder="Search a player" autocomplete="off"></div>
     <div class="res" id="wres"></div>
@@ -93,12 +107,11 @@
   </section>
 
   <section>
-    <h2>3. When you can be messaged</h2>
+    <h2>5. When you can be messaged</h2>
     <p class="note">Pick up to 5 hours a day, shown in your time (<span id="tz"></span>). You only get matched with someone who picked at least one of the same hours, and you're both messaged on Real at that hour.</p>
     <div class="hours" id="hours"></div>
   </section>
 
-  <div class="bar" id="connbox"><span class="note" id="connmsg">Swap matches are sent as a DM from <b>@raxacademy.app</b> on Real. Send it any message once so it can reach you, then tap the button.</span><button id="connect">I messaged @raxacademy.app</button></div>
   <div class="bar"><button class="primary" id="save">Save my swap</button><span class="note" id="savemsg"></span></div>
 
   <section id="admin">
@@ -390,6 +403,7 @@ function drawWants(){
 $('#wants').addEventListener('click', e => { const x = e.target.dataset.x; if(x){ prof.wants = prof.wants.filter(k => k !== x); drawWants(); } });
 
 $('#save').addEventListener('click', async () => {
+  if(!connected){ $('#savemsg').textContent = 'Do step 1 first - the bot has to be able to DM you.'; return; }
   if(!prof.slots.length){ $('#savemsg').textContent = 'Pick at least one hour.'; return; }
   const j = await api('/api/swaps?op=save', { method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 1), keep: prof.keep, slots: prof.slots, names: wantNames }) });
@@ -414,18 +428,24 @@ $('#matches').addEventListener('click', async e => {
   $('#runmsg').textContent = j.error || j.note || 'Sent.';
   loadMatches();
 });
+let connected = false;
 function paintConn(ok){
-  $('#connmsg').innerHTML = ok ? '✅ Connected - match DMs will reach you from <b>@raxacademy.app</b>.'
-    : 'Swap matches are sent as a DM from <b>@raxacademy.app</b> on Real. Send it any message once so it can reach you, then tap the button.';
+  connected = !!ok;
+  $('#connmsg').innerHTML = ok ? '✅ Verified - match DMs will reach you from <b>@raxacademy.app</b>.' : 'Not verified yet.';
   $('#connect').style.display = ok ? 'none' : '';
 }
+$('#copytag').addEventListener('click', async () => {
+  let ok = false; try{ await navigator.clipboard.writeText('#packswap'); ok = true; }catch(e){}
+  if(!ok){ try{ const a = document.createElement('textarea'); a.value = '#packswap'; document.body.appendChild(a); a.select(); ok = document.execCommand('copy'); a.remove(); }catch(e){} }
+  $('#copytag').textContent = ok ? 'Copied' : 'Type #packswap'; setTimeout(() => { $('#copytag').textContent = 'Copy #packswap'; }, 2000);
+});
 $('#connect').addEventListener('click', async () => {
   $('#connect').disabled = true;
   const j = await api('/api/swaps?op=connect');
   $('#connect').disabled = false;
   if(j.error){ $('#connmsg').textContent = j.error; return; }
   if(j.connected) paintConn(true);
-  else $('#connmsg').innerHTML = 'No chat from you yet. Message <b>@raxacademy.app</b> on Real, then tap again.';
+  else $('#connmsg').innerHTML = 'No DM from you yet. Send <b>#packswap</b> to <b>@raxacademy.app</b> on Real, wait a few seconds, then tap again.';
 });
 async function loadAccess(extra){
   const q = $('#accq').value.trim();
