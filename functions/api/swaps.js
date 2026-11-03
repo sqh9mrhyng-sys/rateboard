@@ -689,8 +689,9 @@ function matchText(me, other, gets, gives, slot) {
     + `Message @${other.rsUser} to set it up. Manage your swaps at raxacademy.app/swaps`;
 }
 
-/* Swap DMs: at most 5 to a member on a swap day.
-   1. warn    - 30 min before their first swap hour: every pack to buy that day
+/* Swap DMs on a swap day: for each of their swap hours (up to 3) a warn 30
+   min before it and a contact at it, then one follow-up after the last.
+   1. warn    - 30 min before each swap hour: that hour's packs
                 (each line: player link, season - their own pass to buy it on).
    2-4. contact - at each of their swap hours (up to 3): each partner's @,
                 comment link and player.
@@ -803,14 +804,18 @@ async function runDms(env, db, auth, rows, max, force) {
     const who = list[0].who;
     const first = Math.min(...list.map(x => x.due)), last = Math.max(...list.map(x => x.due));
     // 1. warn: every pack for the day, once.
-    let unwarned = list.filter(x => !x.m['warn' + x.side]);
-    if (unwarned.length && (now >= first - 30 * 60000)) {
-      unwarned = await claim(unwarned, 'warn');
-      if (unwarned.length) {
-        const lines = []; for (const x of unwarned) { const l = await sideLines(member, x.m, x.side); if (l) lines.push(l.buy); }
-        if (!(lines.length && await send(who, warnText(lines), 'warn'))) { await unclaim(unwarned, 'warn'); continue; }
-      }
+    // 1. warn: 30 min before each swap hour, that hour's packs only.
+    const warnHours = new Map();
+    for (const x of list) if (!x.m['warn' + x.side] && (force || now >= x.due - 30 * 60000)) { const k = force ? 'now' : x.due; (warnHours.get(k) || warnHours.set(k, []).get(k)).push(x); }
+    let warnFail = false;
+    for (const [, wh0] of warnHours) {
+      if (sent >= max) break;
+      const wh = await claim(wh0, 'warn');
+      if (!wh.length) continue;
+      const lines = []; for (const x of wh) { const l = await sideLines(member, x.m, x.side); if (l) lines.push(l.buy); }
+      if (!(lines.length && await send(who, warnText(lines), 'warn'))) { await unclaim(wh, 'warn'); warnFail = true; }
     }
+    if (warnFail) continue;
     // 2-4. contact: one per swap hour that has come.
     const byHour = new Map();
     for (const x of list) if (!x.m['done' + x.side] && now >= x.due) { const k = force ? 'now' : x.due; (byHour.get(k) || byHour.set(k, []).get(k)).push(x); }
