@@ -175,6 +175,10 @@
         <p class="note" id="sw-dmout"></p>
       </section>
       <section>
+        <h2>Swap reports <span class="note" id="sr-n"></span></h2>
+        <div id="sr-list" class="note">Loading…</div>
+      </section>
+      <section>
         <h2>Bot stats <span class="note">@raxacademy.app</span></h2>
         <div class="bar"><button id="bs-load">Refresh</button><span class="note" id="bs-top"></span></div>
         <div class="scroll" id="bs-days" class="note">Loading…</div>
@@ -594,9 +598,19 @@ $('#t-reports').addEventListener('click', async e => {
 });
 
 /* ---------- swaps ---------- */
+async function loadSwapReports(close){
+  const j = await api('/api/swaps?op=reports' + (close ? '&close=' + close : ''));
+  if(j.error){ $('#sr-list').textContent = j.error; return; }
+  const r = j.rows || [];
+  $('#sr-n').textContent = r.length ? `${r.length} open` : '';
+  $('#sr-list').innerHTML = r.map(x => `<div class="ucard" style="margin-bottom:8px"><div><b>${x.kind === 'user' ? 'Wrong usage' : 'Problem'}</b>`
+    + `${x.target ? ` · against <b>@${esc(x.target)}</b>` : ''} · from ${esc(x.by_user)} · ${new Date(x.ts).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</div>`
+    + `<div style="white-space:pre-wrap;margin:4px 0">${esc(x.detail)}</div><button data-srclose="${x.id}">Done</button></div>`).join('') || 'No open reports.';
+}
+$('#sr-list').addEventListener('click', e => { const b = e.target.closest('[data-srclose]'); if(b){ b.disabled = true; loadSwapReports(b.dataset.srclose); } });
 const BS_COLS = [['dm_warn','Warn DMs'],['dm_contact','Contact DMs'],['dm_follow','Follow-ups'],['dm_reset','Reset replies'],['dm_rename','Username replies'],
   ['fail','Failed'],['verify_try','Verify taps'],['verify_ok','Verified'],['pro_check','Pro checks'],['pro_yes','Pro yes'],['rename_ok','Username links'],
-  ['reset_ok','Password resets'],['matches','Matches made'],['rescans','Daily rescans'],['rescan_fail','Rescans failed']];
+  ['reset_ok','Password resets'],['report_user','Usage reports'],['report_problem','Problem reports'],['matches','Matches made'],['rescans','Daily rescans'],['rescan_fail','Rescans failed']];
 async function loadBot(){
   const j = await api('/api/swaps?op=botstats');
   if(j.error){ $('#bs-days').textContent = j.error; return; }
@@ -625,7 +639,7 @@ $('#pp-go').addEventListener('click', async () => {
     : (j.search ? 'No field with a name like pro, premium, subscription, plan, tier or badge.' : '');
   $('#pp-raw').textContent = JSON.stringify(j, null, 2);
 });
-function loadSwaps(){ loadMatches(); loadNamed(); loadEvery(); loadBot(); }
+function loadSwaps(){ loadMatches(); loadNamed(); loadEvery(); loadBot(); loadSwapReports(); }
 const everyLbl = m => m === 15 ? 'every 15 minutes' : 'every 3 hours';
 function drawEvery(m){ const b = $('#sw-every'); b.dataset.m = m;
   b.textContent = m === 15 ? 'Members: every 15 min · switch to 3 hours' : 'Members: every 3 hours · switch to 15 min'; }

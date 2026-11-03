@@ -41,6 +41,16 @@
   .who{font-weight:700}
   a.btn{display:inline-block;padding:9px 13px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);text-decoration:none;font-weight:600}
   [hidden]{display:none !important}
+  .bigbtn{display:block;width:100%;padding:14px;border-radius:12px;font-size:16px;font-weight:800;text-align:center;cursor:pointer}
+  .bigbtn.rep{background:var(--bad);border:1px solid var(--bad);color:#fff}
+  .bigbtn.what{background:var(--panel2);border:2px solid var(--accent);color:var(--accent);margin-top:10px}
+  .explain{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:8px}
+  .explain h3{font-size:15px;margin:10px 0 4px} .explain h3:first-child{margin-top:0}
+  .hours label{flex-direction:column;gap:1px;line-height:1.15;position:relative}
+  .hours .cnt{font-size:11px;color:var(--mute)}
+  .hours .rk{position:absolute;top:2px;right:4px;font-size:10px;font-weight:800;color:var(--accent)}
+  .repbox{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:8px}
+  .repbox textarea{width:100%;font:inherit;padding:9px 11px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
   .want1{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:10px 12px;margin-top:8px;border:1px solid var(--accent);border-radius:10px;background:color-mix(in srgb,var(--accent) 12%,var(--panel2))}
   @media (max-width:600px){
     .wrap{padding:10px}
@@ -69,7 +79,26 @@
 <div class="lock" id="lock" hidden><h1>Swaps</h1><p class="note" id="lockmsg">Checking…</p><p id="probox" hidden><button class="primary" id="procheck">Pro check</button></p><p class="note" id="rnhint" hidden>Is your Real username different from your board username? <a href="/username">Link your Real account</a> first.</p><p><a href="/">Back to the board</a></p></div>
 <div class="wrap" id="main" hidden>
   <header><h1>Swaps</h1><a href="/" style="margin-left:auto">Back to the board</a></header>
-  <p class="note" style="margin:-6px 0 12px">Swaps uses your Real account <b id="rstop"></b>. Real username different from your board name? <a href="/username">Change Real username</a></p>
+  <button class="bigbtn rep" id="repopen">REPORT</button>
+  <div class="repbox" id="repbox" hidden>
+    <div class="bar" style="margin-top:0"><button class="primary" id="rk-user">Report wrong usage</button><button id="rk-problem">Report a problem</button></div>
+    <div id="repform" hidden>
+      <div class="bar" id="reptarget"><input id="rept" placeholder="Their Real username" autocomplete="off" autocapitalize="off"></div>
+      <textarea id="repd" rows="4" maxlength="1000"></textarea>
+      <div class="bar"><button class="primary" id="repsend">Send report</button><span class="note" id="repmsg"></span></div>
+    </div>
+  </div>
+  <button class="bigbtn what" id="whatopen">DO YOU KNOW WHAT SWAPS ARE?</button>
+  <div class="explain" id="what" hidden>
+    <h3>What are swaps?</h3>
+    <p class="note">Swaps are the most efficient way on the app to grind a player.</p>
+    <h3>How it works</h3>
+    <p class="note">You select a player you want, for example JSN. You find someone who wants a different player, for example Jahmyr Gibbs.</p>
+    <p class="note">You buy a Jahmyr Gibbs pack, and the other user buys a JSN pack. You go to his profile and his collection and offer on the 3 JSN cards he just got. He goes to your profile and offers on the 3 Gibbs cards you just got.</p>
+    <h3>What it costs</h3>
+    <p class="note">You "swap" packs. A swap typically costs <b>241 rax</b>. For a legendary player pass you're paying <b>9,200 at the very most</b> - all top tier players will profit that 9,200, or you can resell for more.</p>
+  </div>
+  <p class="note" style="margin:12px 0 12px">Swaps uses your Real account <b id="rstop"></b>. Real username different from your board name? <a href="/username">Change Real username</a></p>
 
   <section>
     <h2>1. Create a DM with @raxacademy.app on Real</h2>
@@ -91,6 +120,7 @@
     <p class="note">Checks your Real account for every pass you own. Select the empty box on the left if you do not want to swap that player to people. Everything else will be used to find compatible swaps.</p>
     <div class="bar"><span class="note">Real account: <span class="who" id="rsuser"></span> · <a href="/username">not you?</a></span><button class="primary" id="scan" style="margin-left:auto">Scan my passes</button></div>
     <div class="note" id="scanmsg"></div>
+    <div class="psum" id="psum" hidden style="margin-bottom:8px"><span id="psumtxt"></span><button id="ptoggle">Done - collapse</button></div>
     <div class="bar" id="pctl" hidden>
       <select id="pview" aria-label="View"><option value="all">All passes</option><option value="season">By season</option></select>
       <select id="prar" aria-label="Rarity"><option value="">Every rarity</option><option value="0">General</option><option value="1">Common</option><option value="2">Uncommon</option><option value="3">Rare</option><option value="4">Epic</option><option value="5">Legendary</option><option value="6">Mystic</option><option value="7">Iconic</option></select>
@@ -98,7 +128,6 @@
       <input id="pq" placeholder="Find a player" autocomplete="off">
     </div>
     <div id="passes"></div>
-    <div class="psum" id="psum" hidden><span id="psumtxt"></span><button id="ptoggle">Done - collapse</button></div>
   </section>
 
   <section>
@@ -113,7 +142,7 @@
 
   <section>
     <h2>5. When you can be messaged</h2>
-    <p class="note">Pick up to 3 hours a day, shown in your time (<span id="tz"></span>). You only get matched with someone who picked at least one of the same hours, and you're both messaged on Real at that hour.</p>
+    <p class="note">Pick up to 3 hours a day. The first one you tap is your <b>primary</b>, then 2nd and 3rd - if two people want the same player, the one whose primary hour it is gets the swap. The number under each hour is how many people picked it. Shown in your time (<span id="tz"></span>). You only get matched with someone who picked at least one of the same hours, and you're both messaged on Real at that hour.</p>
     <div class="hours" id="hours"></div>
   </section>
 
@@ -282,11 +311,19 @@ const keyLbl = k => { const [sp, se] = k.split(':'); return `${SPORT[sp] || sp} 
 const tzOff = -new Date().getTimezoneOffset() / 60;
 const toUtc = h => ((h - tzOff) % 24 + 24) % 24, toLocal = h => ((h + tzOff) % 24 + 24) % 24;
 const hLbl = h => `${(h % 12) || 12}${h < 12 ? 'am' : 'pm'}`;
+// The first hour picked is their primary, then 2nd and 3rd: an earlier pick wins
+// when two people want the same player. Under each hour: how many have picked it.
+let hourCounts = null;
+const RANK = ['1st', '2nd', '3rd'];
 function drawHours(){
-  const local = new Set(prof.slots.map(toLocal));
-  $('#hours').innerHTML = Array.from({length: 24}, (_, h) =>
-    `<label class="${local.has(h) ? 'on' : ''}"><input type="checkbox" value="${h}" ${local.has(h) ? 'checked' : ''}>${hLbl(h)}</label>`).join('');
+  const local = prof.slots.map(toLocal);
+  $('#hours').innerHTML = Array.from({length: 24}, (_, h) => {
+    const r = local.indexOf(h), n = hourCounts ? hourCounts[Math.round(toUtc(h))] || 0 : null;
+    return `<label class="${r >= 0 ? 'on' : ''}"><input type="checkbox" value="${h}" ${r >= 0 ? 'checked' : ''}>${r >= 0 ? `<span class="rk">${RANK[r]}</span>` : ''}${hLbl(h)}`
+      + (n != null ? `<span class="cnt">${n} ${n === 1 ? 'user' : 'users'}</span>` : '') + '</label>';
+  }).join('');
 }
+async function loadHourCounts(){ const j = await api('/api/swaps?op=hourcounts'); if(j && Array.isArray(j.n)){ hourCounts = j.n; drawHours(); } }
 $('#hours').addEventListener('change', e => {
   const h = Number(e.target.value), u = Math.round(toUtc(h));
   if(e.target.checked){
@@ -299,6 +336,9 @@ $('#hours').addEventListener('change', e => {
 // --- passes
 // Real's own level for a pass when the scan has it (boostInfo), else the ladder.
 const isTeam = p => p.kind === 'team';
+// 2026-27 CBB and NBA can't be swapped yet.
+const SEASON_OFF = new Set(['ncaam:2027', 'nba:2027']);
+const offSeason = p => SEASON_OFF.has(`${p.sport}:${p.season}`);
 let collapsed = false;
 const tierOf = p => p.rarity != null ? Number(p.rarity) : (l => l ? l[1] : 0)(levelOf(p.rating, p));
 function passTag(p){
@@ -320,7 +360,7 @@ function passRow(p, keep, showSeason){
     <span class="meta">${passTag(p)} ${showSeason ? esc(keyLbl(p.key)) : ''}${prog ? ' · ' + prog : ''}${earned ? ' ' + earned : ''}</span></label>`;
 }
 function drawSum(){
-  const all = prof.passes.filter(p => !NO_SWAP.has(p.sport) && !isTeam(p));
+  const all = prof.passes.filter(p => !NO_SWAP.has(p.sport) && !isTeam(p) && !offSeason(p));
   const keep = new Set(prof.keep), kept = all.filter(p => keep.has(p.key)).length;
   $('#psum').hidden = !all.length;
   $('#psumtxt').innerHTML = `<b>${all.length - kept}</b> swappable · <b>${kept}</b> keeping`;
@@ -329,11 +369,11 @@ function drawSum(){
 function drawPasses(){
   const keep = new Set(prof.keep);
   drawSum();
-  $('#pctl').hidden = collapsed || !prof.passes.some(p => !NO_SWAP.has(p.sport) && !isTeam(p));
+  $('#pctl').hidden = collapsed || !prof.passes.some(p => !NO_SWAP.has(p.sport) && !isTeam(p) && !offSeason(p));
   if(collapsed){ $('#passes').innerHTML = ''; return; }
   if(!prof.passes.length){ $('#passes').innerHTML = prof.scannedAt ? '<p class="note">No player passes found.</p>' : ''; return; }
   const view = $('#pview').value, rar = $('#prar').value, sort = $('#psort').value, q = $('#pq').value.trim().toLowerCase();
-  let list = prof.passes.filter(p => !NO_SWAP.has(p.sport) && !isTeam(p) && (rar === '' || String(tierOf(p)) === rar) && (!q || String(p.name || '').toLowerCase().includes(q)));
+  let list = prof.passes.filter(p => !NO_SWAP.has(p.sport) && !isTeam(p) && !offSeason(p) && (rar === '' || String(tierOf(p)) === rar) && (!q || String(p.name || '').toLowerCase().includes(q)));
   const cmp = sort === 'name' ? (a, b) => String(a.name).localeCompare(String(b.name))
     : sort === 'low' ? (a, b) => (a.rating || 0) - (b.rating || 0) : (a, b) => (b.rating || 0) - (a.rating || 0);
   list.sort(cmp);
@@ -388,7 +428,7 @@ function drawResults(rows){
 $('#wq').addEventListener('input', e => {
   const q = e.target.value.trim().toLowerCase();
   if(q.length < 2){ $('#wres').innerHTML = ''; return; }
-  const own = prof.passes.filter(p => !NO_SWAP.has(p.sport) && !isTeam(p) && String(p.name || '').toLowerCase().includes(q))
+  const own = prof.passes.filter(p => !NO_SWAP.has(p.sport) && !isTeam(p) && !offSeason(p) && String(p.name || '').toLowerCase().includes(q))
     .sort((x, y) => (y.rating || 0) - (x.rating || 0)).slice(0, 30);
   if(!prof.passes.length){ $('#wres').innerHTML = '<div class="note">Scan your passes in step 3 first.</div>'; return; }
   $('#wres').innerHTML = own.map(p => `<div data-k="${p.key}" data-n="${esc(p.name || 'Player ' + p.id)}">${esc(p.name || 'Player ' + p.id)}
@@ -414,6 +454,7 @@ $('#save').addEventListener('click', async () => {
   const j = await api('/api/swaps?op=save', { method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 1), comment: $('#clink').value.trim(), goal: $('#goal').value.trim(), keep: prof.keep, slots: prof.slots, names: wantNames }) });
   $('#savemsg').textContent = j.error ? j.error : 'Saved.';
+  if(!j.error) loadHourCounts();
   try{ localStorage.setItem('ratebrd_swapnames', JSON.stringify(wantNames)); }catch(e){}
 });
 
@@ -435,6 +476,24 @@ $('#matches').addEventListener('click', async e => {
   loadMatches();
 });
 let connected = false;
+$('#whatopen').addEventListener('click', () => { $('#what').hidden = !$('#what').hidden; });
+let repKind = 'user';
+$('#repopen').addEventListener('click', () => { $('#repbox').hidden = !$('#repbox').hidden; });
+function repPick(k){
+  repKind = k; $('#repform').hidden = false; $('#reptarget').hidden = k !== 'user'; $('#repmsg').textContent = '';
+  $('#repd').placeholder = k === 'user' ? "What did they do? (didn't buy the pack, no offer, wrong offer...)" : 'What went wrong, and on which step?';
+  $('#rk-user').classList.toggle('primary', k === 'user'); $('#rk-problem').classList.toggle('primary', k === 'problem');
+}
+$('#rk-user').addEventListener('click', () => repPick('user'));
+$('#rk-problem').addEventListener('click', () => repPick('problem'));
+$('#repsend').addEventListener('click', async () => {
+  $('#repsend').disabled = true;
+  const j = await api('/api/swaps?op=report', { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ kind: repKind, target: $('#rept').value.trim(), detail: $('#repd').value.trim() }) });
+  $('#repsend').disabled = false;
+  if(j.error){ $('#repmsg').textContent = j.error; return; }
+  $('#repmsg').textContent = 'Sent - thanks. Dennis reads every one.'; $('#repd').value = ''; $('#rept').value = '';
+});
 const SWAP_COMMENT_RE = /^https:\/\/(www\.)?realapp\.com\/0VH8Fy0KQ01CBqj5\/[0-9A-Za-z]{4,}([\/?#].*)?$/;
 $('#whynot').addEventListener('click', async () => {
   $('#whynot').disabled = true; $('#whyout').textContent = 'Checking…';
@@ -547,7 +606,7 @@ async function proGate(){
   if(prof.passes.length && prof.keep.length) collapsed = true;   // back again with picks made: start folded
   paintConn(!!j.connected);
   $('#admin').hidden = !j.admin;
-  drawPasses(); drawWants(); drawHours(); if(j.admin){ loadMatches(); loadAccess(); }
+  drawPasses(); drawWants(); drawHours(); loadHourCounts(); if(j.admin){ loadMatches(); loadAccess(); }
   api('/api/swaps?op=buildindex');   // adds one season to the search table, at most every 5 minutes
 })();
 </script>

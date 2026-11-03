@@ -325,7 +325,7 @@ async function runMatching(db) {
     if (m.followA) closed.add(`${m.a}|${d}`); if (m.followB) closed.add(`${m.b}|${d}`);
   }
   // FC and UFC have no packs to swap, so neither is ever offered or matched.
-  const swappable = k => !/^(soccer|ufc):/.test(k);
+  const swappable = k => !/^(soccer|ufc):/.test(k) && !seasonOff(k);
   // One player per swap, and only a pass they own: they buy cards for it.
   for (const u of users) { const own = new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key)); u.wants = u.wants.filter(k => swappable(k) && own.has(k)).slice(0, 1); }
   // Goal rating: how many more swaps they can take in all.
@@ -337,27 +337,30 @@ async function runMatching(db) {
   }
   const roomFor = (k, d) => !closed.has(`${k}|${d}`) && (count.get(`${k}|${d}`) || 0) < SWAPS_PER_DAY && goalLeft.get(k) > 0;
   const gives = (u, d) => new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !given.has(`${u.key}|${k}|${d}`)));
-  const made = [], now = Date.now();
-  for (let i = 0; i < users.length; i++) {
-    const A = users[i]; if (!A.wants.length) continue;
-    for (let j = 0; j < users.length && goalLeft.get(A.key) > 0; j++) {
-      if (i === j) continue;
-      const B = users[j]; if (!B.wants.length) continue;
-      const aGets = A.wants[0], bGets = B.wants[0];
-      if (aGets === bGets) continue;            // same player both ways is no swap
-      // The first shared hour whose swap day still has room for both.
-      for (const slot of A.slots.filter(h => B.slots.includes(h)).sort((x, y) => dueFor(x, now) - dueFor(y, now))) {
-        const due = dueFor(slot, now), d = swapDay(due);
-        if (paired.has(`${A.key}|${B.key}|${d}`) || !roomFor(A.key, d) || !roomFor(B.key, d)) continue;
-        if (!gives(B, d).has(aGets) || !gives(A, d).has(bGets)) continue;
-        made.push({ a: A.key, b: B.key, aGets, bGets, slot, due });
-        paired.add(`${A.key}|${B.key}|${d}`); paired.add(`${B.key}|${A.key}|${d}`);
-        given.add(`${B.key}|${aGets}|${d}`); given.add(`${A.key}|${bGets}|${d}`);
-        bump(count, `${A.key}|${d}`); bump(count, `${B.key}|${d}`);
-        goalLeft.set(A.key, goalLeft.get(A.key) - 1); goalLeft.set(B.key, goalLeft.get(B.key) - 1);
-        break;
-      }
+  /* Every possible pair and shared hour, best first: an hour someone picked
+     first is their primary, so pairs on both members' earliest picks go
+     ahead - when two people want the same player, the one whose primary
+     hour it is gets it. */
+  const made = [], now = Date.now(), cands = [];
+  for (let i = 0; i < users.length; i++) for (let j = i + 1; j < users.length; j++) {
+    const A = users[i], B = users[j];
+    if (!A.wants.length || !B.wants.length || A.wants[0] === B.wants[0]) continue;   // same player both ways is no swap
+    for (const slot of A.slots) {
+      const rb = B.slots.indexOf(slot); if (rb < 0) continue;
+      const ra = A.slots.indexOf(slot);
+      cands.push({ A, B, slot, best: Math.min(ra, rb), sum: ra + rb, due: dueFor(slot, now), i });
     }
+  }
+  cands.sort((x, y) => x.best - y.best || x.sum - y.sum || x.due - y.due || x.i - y.i);
+  for (const { A, B, slot, due } of cands) {
+    const aGets = A.wants[0], bGets = B.wants[0], d = swapDay(due);
+    if (paired.has(`${A.key}|${B.key}|${d}`) || !roomFor(A.key, d) || !roomFor(B.key, d)) continue;
+    if (!gives(B, d).has(aGets) || !gives(A, d).has(bGets)) continue;
+    made.push({ a: A.key, b: B.key, aGets, bGets, slot, due });
+    paired.add(`${A.key}|${B.key}|${d}`); paired.add(`${B.key}|${A.key}|${d}`);
+    given.add(`${B.key}|${aGets}|${d}`); given.add(`${A.key}|${bGets}|${d}`);
+    bump(count, `${A.key}|${d}`); bump(count, `${B.key}|${d}`);
+    goalLeft.set(A.key, goalLeft.get(A.key) - 1); goalLeft.set(B.key, goalLeft.get(B.key) - 1);
   }
   for (const m of made) {
     try { await db.prepare('ALTER TABLE swap_matches ADD COLUMN dueAt INTEGER').run(); } catch (e) {}
@@ -808,6 +811,17 @@ export async function swapTick(env) {
     try { await matchCols(db); } catch (e) {}
     try { const made = await runMatching(db); await stat(db, 'matches', made.length); await stat(db, 'match_runs'); } catch (e) { await botFail(db, 'matching', e.message); }
   }
+  // One-time (2026-11-03): clear every swap submission before launch.
+  try {
+    if (!(await env.RATEBOARD_KV.get('swap_clear_v1'))) {
+      await env.RATEBOARD_KV.put('swap_clear_v1', String(Date.now()));
+      try { await db.prepare('ALTER TABLE swap_users ADD COLUMN goal REAL').run(); } catch (e) {}
+      await db.prepare("UPDATE swap_users SET wants='[]', keep='[]', slots='[]', goal=NULL, active=0").run();
+      await db.prepare("UPDATE swap_matches SET status='cleared' WHERE status IN ('pending','warned','sending','error')").run();
+      try { await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); } catch (e) {}
+      await stat(db, 'cleared');
+    }
+  } catch (e) {}
   // One-time (2026-11-02): clear everyone's scan timers and queue a fresh scan.
   try {
     if (!(await env.RATEBOARD_KV.get('scan_reset_v1'))) {
@@ -837,6 +851,10 @@ const SACCESS_DDL = `CREATE TABLE IF NOT EXISTS swap_access (key TEXT PRIMARY KE
 // this is true; then the Pro check opens it to every Real Pro member.
 const SWAPS_OPEN = true;   // open quietly 2026-11-02: reachable at /swaps, not in the menu yet (index.html)
 const SPRO_DDL = `CREATE TABLE IF NOT EXISTS swap_pro (key TEXT PRIMARY KEY, pro INTEGER, tier INTEGER, rsId TEXT, at INTEGER)`;
+// Seasons that can't be swapped for now (2026-27 college and pro basketball).
+const NO_SWAP_SEASONS = new Set(['ncaam:2027', 'nba:2027']);
+const seasonOff = k => NO_SWAP_SEASONS.has(String(k).split(':').slice(0, 2).join(':'));
+const SREPORT_DDL = `CREATE TABLE IF NOT EXISTS swap_reports (ts INTEGER, by_user TEXT, kind TEXT, target TEXT, detail TEXT, status TEXT)`;
 const HIGH_VOL = "We're experiencing high volume, give it 1-2 mins then try again";
 const PRO_RETRY_MS = 3 * 86400000;           // a failed Pro check can be run again after 3 days
 // Comment links must sit under the swap post (its long id; the share link is 9DHKtlFNQA4).
@@ -878,7 +896,7 @@ export async function swapAccess(env, request) {
 }
 // What a member (not an admin) may do: their own swap and nothing else, and
 // for OTD their own passes and games.
-const MEMBER_OPS = new Set(['me', 'save', 'scan', 'search', 'connect', 'whynot']);
+const MEMBER_OPS = new Set(['me', 'save', 'scan', 'search', 'connect', 'whynot', 'hourcounts', 'report']);
 const OTD_OPS = new Set(['me', 'scan', 'games', 'boostplan']);
 const BOOST_OPS = new Set(['me', 'scan', 'boostplan', 'boostinv', 'buys']);
 const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
@@ -1370,6 +1388,41 @@ async function handle({ request, env, waitUntil }) {
       newChatsLeft: await newChatsLeft(env) });
   }
 
+  // How many saved swappers picked each hour (UTC), kept 5 minutes.
+  if (op === 'hourcounts') {
+    let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get('swap_hourcounts_v1')) || 'null'); } catch (e) {}
+    if (!c || Date.now() - c.at > 300000) {
+      const n = Array(24).fill(0);
+      for (const r of ((await db.prepare(`SELECT slots FROM swap_users WHERE active=1 AND slots IS NOT NULL AND slots <> '[]'`).all()).results || []))
+        for (const h of parse(r.slots, [])) if (h >= 0 && h < 24) n[h]++;
+      c = { at: Date.now(), n };
+      try { await env.RATEBOARD_KV.put('swap_hourcounts_v1', JSON.stringify(c)); } catch (e) {}
+    }
+    return json(c);
+  }
+
+  // Reports from the Swaps page: someone misusing swaps, or a problem with it.
+  if (op === 'report' && request.method === 'POST') {
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    const kind = b.kind === 'problem' ? 'problem' : 'user';
+    const target = String(b.target || '').trim().replace(/^@/, '').slice(0, 60), detail = String(b.detail || '').trim().slice(0, 1000);
+    if (detail.length < 5) return json({ error: 'Say what happened.' }, 400);
+    if (kind === 'user' && target.length < 2) return json({ error: 'Enter their Real username.' }, 400);
+    if (!(await allow(url.origin, 'swapreport:' + me, 6, 3600))) return json({ error: 'You have sent a lot of reports - try again later.' }, 429);
+    await db.prepare(SREPORT_DDL).run();
+    await db.prepare('INSERT INTO swap_reports (ts, by_user, kind, target, detail, status) VALUES (?, ?, ?, ?, ?, ?)').bind(Date.now(), me, kind, target || null, detail, 'open').run();
+    await stat(db, kind === 'user' ? 'report_user' : 'report_problem');
+    return json({ ok: true });
+  }
+  // Admin: the reports, and closing one out.
+  if (op === 'reports') {
+    await db.prepare(SREPORT_DDL).run();
+    const id = Number(url.searchParams.get('close'));
+    if (id) await db.prepare("UPDATE swap_reports SET status='closed' WHERE rowid=?").bind(id).run();
+    const rows = ((await db.prepare("SELECT rowid AS id, ts, by_user, kind, target, detail FROM swap_reports WHERE status='open' ORDER BY ts DESC LIMIT 200").all()).results) || [];
+    return json({ rows });
+  }
+
   if (op === 'search') {
     const q = String(url.searchParams.get('q') || '').trim().toLowerCase().replace(/[%_]/g, '');
     try { waitUntil(indexOne(db).catch(() => {})); } catch (e) {}
@@ -1481,6 +1534,7 @@ async function handle({ request, env, waitUntil }) {
     const mine = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
     const owned = new Set(parse(mine && mine.passes, []).filter(p => p.kind !== 'team').map(p => p.key));
     if (wants.length && !owned.has(wants[0])) return json({ error: 'You can only swap for a pass you own - scan your passes, then pick one of them.' }, 400);
+    if (wants.length && seasonOff(wants[0])) return json({ error: '2026-27 CBB and NBA passes can\'t be swapped yet.' }, 400);
     const comment = String(b.comment || '').trim();
     if (!SWAP_COMMENT_RE.test(comment)) return json({ error: 'That link is not a comment under the swap post. Open the swap post, copy the link to your comment, and paste it in step 2.' }, 400);
     const goal = b.goal === '' || b.goal == null ? null : Number(b.goal);
@@ -1490,6 +1544,7 @@ async function handle({ request, env, waitUntil }) {
       ON CONFLICT(key) DO UPDATE SET rsUser=excluded.rsUser, wants=excluded.wants, keep=excluded.keep,
         slots=excluded.slots, updatedAt=excluded.updatedAt, active=1, comment=excluded.comment, goal=excluded.goal`)
       .bind(me, rsUser, JSON.stringify(wants), JSON.stringify(keep), JSON.stringify(slots), Date.now(), comment.slice(0, 300), goal).run();
+    try { await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); } catch (e) {}
     return json({ ok: true, wants, keep: keep.length, slots });
   }
 
