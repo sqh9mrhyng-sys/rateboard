@@ -400,7 +400,7 @@ $('#scan').addEventListener('click', async () => {
   const j = await fullScan('&page=boosts', p => { $('#scanmsg').textContent = `Scanning every sport and season… ${p.next + 1}/${p.parts} · ${p.found} passes so far`; });
   $('#scan').disabled = false;
   if(j.error){ $('#scanmsg').textContent = j.error; return; }
-  $('#scanmsg').textContent = j.cached ? j.note : `${(j.passes || []).length} passes read just now.`;
+  $('#scanmsg').textContent = j.cached ? j.note : `${(j.passes || []).length} passes read just now.` + (j.note ? ' ' + j.note : '');
   if(!$('#out').hidden) run();
 });
 
