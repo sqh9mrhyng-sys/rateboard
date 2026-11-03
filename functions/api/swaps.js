@@ -811,6 +811,15 @@ export async function swapTick(env) {
     try { await matchCols(db); } catch (e) {}
     try { const made = await runMatching(db); await stat(db, 'matches', made.length); await stat(db, 'match_runs'); } catch (e) { await botFail(db, 'matching', e.message); }
   }
+  // One-time (2026-11-03): a match sent early by hand goes back on schedule.
+  try {
+    if (!(await env.RATEBOARD_KV.get('swap_unsend_v1'))) {
+      await env.RATEBOARD_KV.put('swap_unsend_v1', String(Date.now()));
+      await db.prepare(`UPDATE swap_matches SET status='pending', warnA=NULL, warnB=NULL, doneA=NULL, doneB=NULL, followA=NULL, followB=NULL, sentAt=NULL, note='reset to schedule after a manual send'
+        WHERE createdAt >= ? AND status <> 'cleared' AND dueAt IS NOT NULL AND (COALESCE(doneA, 0) BETWEEN 1 AND dueAt - 1 OR COALESCE(doneB, 0) BETWEEN 1 AND dueAt - 1)`)
+        .bind(Date.UTC(2026, 10, 3, 10, 20)).run();
+    }
+  } catch (e) {}
   // One-time (2026-11-03, launch): every match made before now - test ones included - is cleared.
   try {
     if (!(await env.RATEBOARD_KV.get('swap_clear_v2'))) {
@@ -2084,6 +2093,14 @@ async function handle({ request, env, waitUntil }) {
   }
 
   // Sends one match right now, whatever its slot - for testing.
+  // Admin: put a match back on schedule (its DMs go out again at the normal times).
+  if (op === 'resetmatch' && request.method === 'POST') {
+    await matchCols(db);
+    const id = Number(url.searchParams.get('id'));
+    const r = await db.prepare(`UPDATE swap_matches SET status='pending', warnA=NULL, warnB=NULL, doneA=NULL, doneB=NULL, followA=NULL, followB=NULL, sentAt=NULL, note='reset to schedule' WHERE id=? AND status <> 'cleared'`).bind(id).run();
+    return json({ ok: !!(r.meta && r.meta.changes) });
+  }
+
   if (op === 'sendnow' && request.method === 'POST') {
     if (!auth) return json({ error: 'No swap token found.' }, 503);
     const id = Number(url.searchParams.get('id'));

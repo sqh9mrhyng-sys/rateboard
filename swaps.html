@@ -476,10 +476,15 @@ async function loadMatches(){
   $('#matches').innerHTML = m.length ? '<table><tr><th>Who</th><th>Gets</th><th>Hour</th><th>Status</th><th></th></tr>' + m.map(x =>
     `<tr><td>${esc(x.aUser || x.a)} ↔ ${esc(x.bUser || x.b)}</td><td>${esc(x.aGetsName || x.aGets)} / ${esc(x.bGetsName || x.bGets)}</td>
      <td>${hLbl(toLocal(x.slot))}</td><td>${esc(x.status)}${x.note ? `<div class="note">${esc(x.note)}</div>` : ''}</td>
-     <td>${x.status === 'pending' || x.status === 'warned' || x.status === 'error' ? `<button data-send="${x.id}">Send now</button>` : ''}</td></tr>`).join('') + '</table>' : 'No matches yet.';
+     <td>${x.status === 'pending' || x.status === 'warned' || x.status === 'error' ? `<button data-send="${x.id}">Send now</button> ` : ''}<button data-reset="${x.id}">Reset</button></td></tr>`).join('') + '</table>' : 'No matches yet.';
 }
 $('#matches').addEventListener('click', async e => {
+  const rb = e.target.closest('[data-reset]');
+  if(rb){ rb.disabled = true; const j = await api('/api/swaps?op=resetmatch&id=' + rb.dataset.reset, { method: 'POST' });
+    $('#runmsg').textContent = j.ok ? 'Back on schedule - its DMs go out again at the normal times.' : (j.error || 'Could not reset it.'); loadMatches(); return; }
   const b = e.target.closest('[data-send]'); if(!b) return;
+  // Two taps, so it can't go out by accident.
+  if(b.dataset.armed !== '1'){ b.dataset.armed = '1'; b.textContent = 'Tap again to send ALL its DMs now'; setTimeout(() => { if(document.body.contains(b)){ b.dataset.armed = ''; b.textContent = 'Send now'; } }, 4000); return; }
   b.disabled = true; b.textContent = 'Sending…';
   const j = await api('/api/swaps?op=sendnow&id=' + b.dataset.send, { method: 'POST' });
   $('#runmsg').textContent = j.error || j.note || 'Sent.';
