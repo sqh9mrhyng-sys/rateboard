@@ -306,57 +306,63 @@ async function runMatching(db) {
       AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`).all()).results || [])
     .map(u => ({ ...u, wants: parse(u.wants, []), keep: new Set(parse(u.keep, [])), slots: parse(u.slots, []),
                  passes: parse(u.passes, []) }));
-  /* A member can be in several swaps a day: each one with a different
+  /* A member can be in several swaps a swap day: each one with a different
      partner, receiving the pass they picked from each, and giving each
-     partner a different player (a pass of theirs goes out once a day).
-     Capped at SWAPS_PER_DAY, and by their goal rating when they set one. */
-  const open = ((await db.prepare(`SELECT a, b, aGets, bGets FROM swap_matches WHERE createdAt > ? AND status <> 'error'`).bind(Date.now() - 20 * 3600000).all()).results || []);
-  // Anyone whose follow-up has gone out has finished their swap day (5 DMs at most).
-  const closed = new Set();
-  for (const m of ((await db.prepare('SELECT a, b, followA, followB FROM swap_matches WHERE createdAt > ? AND (followA IS NOT NULL OR followB IS NOT NULL)').bind(Date.now() - 20 * 3600000).all()).results || [])) {
-    if (m.followA) closed.add(m.a); if (m.followB) closed.add(m.b);
-  }
-  const paired = new Set(), given = new Set(), count = new Map();
-  const bump = k => count.set(k, (count.get(k) || 0) + 1);
+     partner a different player (a pass of theirs goes out once a swap day).
+     The swap day runs 7am to 7am ET, by the hour the swap happens, so a
+     player can go out at 6am and again at 7am. Capped at SWAPS_PER_DAY a swap
+     day, and by their goal rating when they set one. */
+  const open = ((await db.prepare(`SELECT a, b, aGets, bGets, slot, createdAt, dueAt, followA, followB FROM swap_matches WHERE createdAt > ? AND status <> 'error'`)
+    .bind(Date.now() - 2 * 86400000).all()).results || []);
+  const paired = new Set(), given = new Set(), count = new Map(), closed = new Set(), goalUsed = new Map();
+  const bump = (m, k) => m.set(k, (m.get(k) || 0) + 1);
   for (const m of open) {
-    paired.add(`${m.a}|${m.b}`); paired.add(`${m.b}|${m.a}`);
-    given.add(`${m.b}|${m.aGets}`); given.add(`${m.a}|${m.bGets}`);     // B gave aGets, A gave bGets
-    bump(m.a); bump(m.b);
+    const d = swapDay(sideDue(m));
+    paired.add(`${m.a}|${m.b}|${d}`); paired.add(`${m.b}|${m.a}|${d}`);
+    given.add(`${m.b}|${m.aGets}|${d}`); given.add(`${m.a}|${m.bGets}|${d}`);     // B gave aGets, A gave bGets
+    bump(count, `${m.a}|${d}`); bump(count, `${m.b}|${d}`);
+    // Anyone whose follow-up has gone out has finished that swap day (5 DMs at most).
+    if (m.followA) closed.add(`${m.a}|${d}`); if (m.followB) closed.add(`${m.b}|${d}`);
   }
   // FC and UFC have no packs to swap, so neither is ever offered or matched.
   const swappable = k => !/^(soccer|ufc):/.test(k);
   // One player per swap, and only a pass they own: they buy cards for it.
   for (const u of users) { const own = new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key)); u.wants = u.wants.filter(k => swappable(k) && own.has(k)).slice(0, 1); }
-  // How many more they can take today: the daily cap, and their goal rating.
-  const cache = new Map(), room = new Map();
+  // Goal rating: how many more swaps they can take in all.
+  const cache = new Map(), goalLeft = new Map();
   for (const u of users) {
-    let left = closed.has(u.key) ? 0 : SWAPS_PER_DAY - (count.get(u.key) || 0);
-    try { const g = await goalRoom(db, cache, u, (x, w) => usedSince(db, x, w)); if (g.limited) left = Math.min(left, g.left); } catch (e) {}
-    room.set(u.key, Math.max(0, left));
+    let left = Infinity;
+    try { const g = await goalRoom(db, cache, u, (x, w) => usedSince(db, x, w)); if (g.limited) left = g.left; } catch (e) {}
+    goalLeft.set(u.key, left);
   }
-  const gives = u => new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !given.has(`${u.key}|${k}`)));
-  const made = [];
+  const roomFor = (k, d) => !closed.has(`${k}|${d}`) && (count.get(`${k}|${d}`) || 0) < SWAPS_PER_DAY && goalLeft.get(k) > 0;
+  const gives = (u, d) => new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !given.has(`${u.key}|${k}|${d}`)));
+  const made = [], now = Date.now();
   for (let i = 0; i < users.length; i++) {
     const A = users[i]; if (!A.wants.length) continue;
-    for (let j = 0; j < users.length && room.get(A.key) > 0; j++) {
+    for (let j = 0; j < users.length && goalLeft.get(A.key) > 0; j++) {
       if (i === j) continue;
-      const B = users[j]; if (!B.wants.length || room.get(B.key) <= 0 || paired.has(`${A.key}|${B.key}`)) continue;
-      const slot = A.slots.find(h => B.slots.includes(h));
-      if (slot == null) continue;
+      const B = users[j]; if (!B.wants.length) continue;
       const aGets = A.wants[0], bGets = B.wants[0];
       if (aGets === bGets) continue;            // same player both ways is no swap
-      if (!gives(B).has(aGets) || !gives(A).has(bGets)) continue;
-      made.push({ a: A.key, b: B.key, aGets, bGets, slot });
-      paired.add(`${A.key}|${B.key}`); paired.add(`${B.key}|${A.key}`);
-      given.add(`${B.key}|${aGets}`); given.add(`${A.key}|${bGets}`);
-      room.set(A.key, room.get(A.key) - 1); room.set(B.key, room.get(B.key) - 1);
+      // The first shared hour whose swap day still has room for both.
+      for (const slot of A.slots.filter(h => B.slots.includes(h)).sort((x, y) => dueFor(x, now) - dueFor(y, now))) {
+        const due = dueFor(slot, now), d = swapDay(due);
+        if (paired.has(`${A.key}|${B.key}|${d}`) || !roomFor(A.key, d) || !roomFor(B.key, d)) continue;
+        if (!gives(B, d).has(aGets) || !gives(A, d).has(bGets)) continue;
+        made.push({ a: A.key, b: B.key, aGets, bGets, slot, due });
+        paired.add(`${A.key}|${B.key}|${d}`); paired.add(`${B.key}|${A.key}|${d}`);
+        given.add(`${B.key}|${aGets}|${d}`); given.add(`${A.key}|${bGets}|${d}`);
+        bump(count, `${A.key}|${d}`); bump(count, `${B.key}|${d}`);
+        goalLeft.set(A.key, goalLeft.get(A.key) - 1); goalLeft.set(B.key, goalLeft.get(B.key) - 1);
+        break;
+      }
     }
   }
-  const now = Date.now();
   for (const m of made) {
     try { await db.prepare('ALTER TABLE swap_matches ADD COLUMN dueAt INTEGER').run(); } catch (e) {}
     await db.prepare(`INSERT INTO swap_matches (a, b, aGets, bGets, slot, createdAt, status, dueAt) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`)
-      .bind(m.a, m.b, m.aGets, m.bGets, m.slot, now, dueFor(m.slot, now)).run();
+      .bind(m.a, m.b, m.aGets, m.bGets, m.slot, now, m.due).run();
   }
   return made;
 }
@@ -703,6 +709,8 @@ function dueFor(slot, from) {
   while (d.getUTCHours() !== Number(slot)) d.setUTCHours(d.getUTCHours() + 1);
   return d.getTime();
 }
+// The swap day a moment belongs to: it starts at 7am ET.
+const swapDay = ms => etDay(ms - 7 * 3600000);
 const sideDue = m => Number(m.dueAt) || dueFor(m.slot, Number(m.createdAt) || Date.now());
 
 /* Runs every minute. Groups the open matches by member and sends whatever
@@ -711,9 +719,10 @@ async function runDms(env, db, auth, rows, max, force) {
   const now = Date.now(), notes = [];
   const cache = new Map(), member = async k => cache.has(k) ? cache.get(k) : (cache.set(k, await loadMember(db, k)), cache.get(k));
   const per = new Map();
+  // One group per member per swap day (7am to 7am ET): that's the 5-DM day.
   for (const m of rows) for (const side of ['A', 'B']) {
-    const who = side === 'A' ? m.a : m.b;
-    (per.get(who) || per.set(who, []).get(who)).push({ m, side, due: force ? now : sideDue(m) });
+    const who = side === 'A' ? m.a : m.b, due = force ? now : sideDue(m), g = who + '|' + swapDay(due);
+    (per.get(g) || per.set(g, []).get(g)).push({ m, side, due, who });
   }
   let sent = 0;
   const mark = async (list, col) => { for (const { m, side } of list) { await db.prepare(`UPDATE swap_matches SET ${col + side}=? WHERE id=?`).bind(now, m.id).run(); m[col + side] = now; } };
@@ -723,8 +732,9 @@ async function runDms(env, db, auth, rows, max, force) {
     try { const ch = await dmChannel(db, auth, me.hashId, me.rsUser, env); await dmSend(auth, ch, text); sent++; await stat(db, 'dm_' + kind); notes.push(`${kind} sent to @${me.rsUser}`); await sleep(900); return true; }
     catch (e) { notes.push(`${kind} to @${me.rsUser} failed: ${String(e.message || e).slice(0, 160)}`); await botFail(db, 'dm_' + kind, `@${me.rsUser}: ${e.message || e}`); return false; }
   };
-  for (const [who, list] of per) {
+  for (const [, list] of per) {
     if (sent >= max) break;
+    const who = list[0].who;
     const first = Math.min(...list.map(x => x.due)), last = Math.max(...list.map(x => x.due));
     // 1. warn: every pack for the day, once.
     const unwarned = list.filter(x => !x.m['warn' + x.side]);
@@ -1305,7 +1315,7 @@ async function handle({ request, env, waitUntil }) {
       else if (g.limited && g.left <= 0) why.push(`You already have the ${g.need} swap${g.need === 1 ? '' : 's'} it should take to reach your goal (about ${g.avg} rating a pack). New ones start after your next daily scan.`);
     }
     const open = await db.prepare(`SELECT COUNT(*) AS n FROM swap_matches WHERE (a=? OR b=?) AND (status IN ('pending','sending','warned') OR (status='sent' AND sentAt > ?))`).bind(me, me, Date.now() - 86400000).first();
-    if (Number(open && open.n) >= SWAPS_PER_DAY) why.push(`You already have ${SWAPS_PER_DAY} swaps in the last 24 hours - that's the daily most.`);
+    if (Number(open && open.n) >= SWAPS_PER_DAY) why.push(`You already have ${SWAPS_PER_DAY} swaps this swap day - that's the most. Swap days reset at 7am ET.`);
     // Who could swap with them.
     let can = 0, hour = 0, both = 0;
     if (u && want && !why.length) {
