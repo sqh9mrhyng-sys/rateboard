@@ -276,8 +276,8 @@ async function runMatching(db) {
   }
   // FC and UFC have no packs to swap, so neither is ever offered or matched.
   const swappable = k => !/^(soccer|ufc):/.test(k);
-  for (const u of users) u.wants = u.wants.filter(swappable);
-  const gives = u => new Set(u.passes.map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !promised.has(`${u.key}|${k}`)));
+  for (const u of users) u.wants = u.wants.filter(swappable).slice(0, 1);   // one player per swap
+  const gives = u => new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !promised.has(`${u.key}|${k}`)));
   const made = [];
   for (let i = 0; i < users.length; i++) {
     const A = users[i]; if (busy.has(A.key) || !A.wants.length) continue;
@@ -1093,10 +1093,10 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'save' && request.method === 'POST') {
     let b = {};
     try { b = await request.json(); } catch (e) {}
-    const wants = (Array.isArray(b.wants) ? b.wants : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, 20);
+    const wants = (Array.isArray(b.wants) ? b.wants : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, 1);   // one player per swap
     const keep = (Array.isArray(b.keep) ? b.keep : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, 2000);
     const slots = [...new Set((Array.isArray(b.slots) ? b.slots : []).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24))].slice(0, 5);
-    const rsUser = String(b.rsUser || '').trim().slice(0, 40);
+    const rsUser = String(me);   // the board username is the Real account
     await db.prepare(`INSERT INTO swap_users (key, rsUser, wants, keep, slots, updatedAt, active) VALUES (?, ?, ?, ?, ?, ?, 1)
       ON CONFLICT(key) DO UPDATE SET rsUser=excluded.rsUser, wants=excluded.wants, keep=excluded.keep,
         slots=excluded.slots, updatedAt=excluded.updatedAt, active=1`)
@@ -1121,7 +1121,7 @@ async function handle({ request, env, waitUntil }) {
       }
     } else if (!(await allow(url.origin, 'swapscan:' + me, 20, 600))) return json({ error: 'Twenty scans per ten minutes.' }, 429);
     // On Swaps a member's Real account is their board username - no other.
-    const rsUser = (!acc.admin && url.searchParams.get('page') !== 'boosts') ? String(me)
+    const rsUser = url.searchParams.get('page') !== 'boosts' ? String(me)
       : String(url.searchParams.get('rsUser') || (u && u.rsUser) || '').trim();
     if (!rsUser) return json({ error: 'Enter your Real username first.' }, 400);
     let hashId = u && u.rsUser === rsUser ? u.hashId : null;

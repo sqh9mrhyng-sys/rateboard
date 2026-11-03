@@ -29,10 +29,31 @@
   .hours input{display:none}
   .group{margin-top:10px}
   .group summary{cursor:pointer;color:var(--mute)}
-  .pass{display:flex;align-items:center;gap:8px;padding:5px 2px;border-bottom:1px solid var(--line);font-size:14px}
+  .pass{display:grid;grid-template-columns:28px 1fr auto;align-items:center;gap:2px 10px;padding:9px 2px;border-bottom:1px solid var(--line);font-size:14px;cursor:pointer}
   .pass:last-child{border-bottom:0}
-  .pass .k{margin-left:auto;font-size:12px;color:var(--mute)}
+  .pass input{width:20px;height:20px;margin:0;grid-row:span 2;accent-color:var(--accent)}
+  .pass .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+  .pass .meta{grid-column:2 / 4;font-size:12px;color:var(--mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pass .k{font-size:12px;color:var(--mute);text-align:right}
+  .pass.keep .k{color:var(--accent);font-weight:700}
   .pass a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)}
+  .psum{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;padding:10px 12px;margin-top:8px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
+  .who{font-weight:700}
+  [hidden]{display:none !important}
+  .want1{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:10px 12px;margin-top:8px;border:1px solid var(--accent);border-radius:10px;background:color-mix(in srgb,var(--accent) 12%,var(--panel2))}
+  @media (max-width:600px){
+    .wrap{padding:10px}
+    section{padding:12px;border-radius:10px;margin-bottom:10px}
+    header{flex-wrap:wrap;gap:6px}
+    #pctl{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+    #pctl input{grid-column:1 / -1}
+    #pctl select,#pctl input{width:100%;min-width:0;font-size:14px;padding:8px}
+    .hours{grid-template-columns:repeat(4,1fr)}
+    .res div{padding:9px 4px}
+    .res .note{display:block}
+    #save,#connect{width:100%}
+    #admin table{display:block;overflow-x:auto}
+  }
   .tag{display:inline-block;padding:1px 7px;border-radius:6px;font-size:11.5px;font-weight:700;color:#10131b}
   .res{max-height:240px;overflow:auto;margin-top:6px}
   .res div{padding:6px 4px;border-bottom:1px solid var(--line);cursor:pointer}
@@ -46,12 +67,12 @@
 <body>
 <div class="lock" id="lock" hidden><h1>Swaps</h1><p class="note" id="lockmsg">Checking…</p><p id="probox" hidden><button class="primary" id="procheck">Pro check</button></p><p><a href="/">Back to the board</a></p></div>
 <div class="wrap" id="main" hidden>
-  <header><h1>Swaps</h1><span class="note">Pack swaps · admin preview</span><a href="/" style="margin-left:auto">Back to the board</a></header>
+  <header><h1>Swaps</h1><a href="/" style="margin-left:auto">Back to the board</a></header>
 
   <section>
     <h2>1. Your player passes</h2>
-    <p class="note">Enter your Real username and scan. Every player pass you hold is read from Real. Tick any you <b>won't</b> swap away; everything else is fair game.</p>
-    <div class="bar"><input id="rsuser" placeholder="Real username" autocomplete="off"><button class="primary" id="scan">Scan my passes</button></div>
+    <p class="note">Scans the Real account with your board username. Tick any pass you <b>won't</b> swap away; everything else is fair game.</p>
+    <div class="bar"><span class="note">Real account: <span class="who" id="rsuser"></span></span><button class="primary" id="scan" style="margin-left:auto">Scan my passes</button></div>
     <div class="note" id="scanmsg"></div>
     <div class="bar" id="pctl" hidden>
       <select id="pview" aria-label="View"><option value="all">All passes</option><option value="season">By season</option></select>
@@ -60,14 +81,15 @@
       <input id="pq" placeholder="Find a player" autocomplete="off">
     </div>
     <div id="passes"></div>
+    <div class="psum" id="psum" hidden><span id="psumtxt"></span><button id="ptoggle">Done - collapse</button></div>
   </section>
 
   <section>
     <h2>2. Who you want</h2>
-    <p class="note">Search a player and pick the season you want their pass for. You can add a few.</p>
+    <p class="note">Search a player and pick the season you want their pass for. One player per swap - picking another replaces it.</p>
     <div class="bar"><input id="wq" placeholder="Search a player" autocomplete="off"></div>
     <div class="res" id="wres"></div>
-    <div class="chips" id="wants"></div>
+    <div id="wants"></div>
   </section>
 
   <section>
@@ -256,6 +278,8 @@ $('#hours').addEventListener('change', e => {
 
 // --- passes
 // Real's own level for a pass when the scan has it (boostInfo), else the ladder.
+const isTeam = p => p.kind === 'team';
+let collapsed = false;
 const tierOf = p => p.rarity != null ? Number(p.rarity) : (l => l ? l[1] : 0)(levelOf(p.rating, p));
 function passTag(p){
   const lv = levelOf(p.rating, p);
@@ -270,17 +294,26 @@ function passRow(p, keep, showSeason){
   const nm = esc(p.name && !/^player$/i.test(p.name) ? p.name : 'Player ' + p.id);
   const prog = p.progress ? `<span class="note">${esc(p.progress)}${p.toward ? ' ' + esc(p.toward) : ''}</span>` : '';
   const earned = p.earned != null ? `<span class="note">· ${Number(p.earned).toLocaleString()} earned</span>` : '';
-  return `<div class="pass"><input type="checkbox" data-keep="${p.key}" ${keep.has(p.key) ? 'checked' : ''} aria-label="Keep ${nm}">
-    ${passTag(p)}${u ? `<a href="${u}" target="_blank" rel="noopener">${nm}</a>` : nm}
-    ${p.kind === 'team' ? '<span class="note">team</span>' : ''}${showSeason ? `<span class="note">${esc(keyLbl(p.key))}</span>` : ''}
-    ${prog}${earned}<span class="k">${keep.has(p.key) ? 'keeping' : 'swappable'}</span></div>`;
+  const k = keep.has(p.key);
+  return `<label class="pass${k ? ' keep' : ''}"><input type="checkbox" data-keep="${p.key}" ${k ? 'checked' : ''} aria-label="Keep ${nm}">
+    <span class="nm">${u ? `<a href="${u}" target="_blank" rel="noopener">${nm}</a>` : nm}</span><span class="k">${k ? 'keeping' : 'swappable'}</span>
+    <span class="meta">${passTag(p)} ${showSeason ? esc(keyLbl(p.key)) : ''}${prog ? ' · ' + prog : ''}${earned ? ' ' + earned : ''}</span></label>`;
+}
+function drawSum(){
+  const all = prof.passes.filter(p => !NO_SWAP.has(p.sport) && !isTeam(p));
+  const keep = new Set(prof.keep), kept = all.filter(p => keep.has(p.key)).length;
+  $('#psum').hidden = !all.length;
+  $('#psumtxt').innerHTML = `<b>${all.length - kept}</b> swappable · <b>${kept}</b> keeping`;
+  $('#ptoggle').textContent = collapsed ? 'Show my passes' : 'Done - collapse';
 }
 function drawPasses(){
   const keep = new Set(prof.keep);
-  $('#pctl').hidden = !prof.passes.some(p => !NO_SWAP.has(p.sport));
+  drawSum();
+  $('#pctl').hidden = collapsed || !prof.passes.some(p => !NO_SWAP.has(p.sport) && !isTeam(p));
+  if(collapsed){ $('#passes').innerHTML = ''; return; }
   if(!prof.passes.length){ $('#passes').innerHTML = prof.scannedAt ? '<p class="note">No player passes found.</p>' : ''; return; }
   const view = $('#pview').value, rar = $('#prar').value, sort = $('#psort').value, q = $('#pq').value.trim().toLowerCase();
-  let list = prof.passes.filter(p => !NO_SWAP.has(p.sport) && (rar === '' || String(tierOf(p)) === rar) && (!q || String(p.name || '').toLowerCase().includes(q)));
+  let list = prof.passes.filter(p => !NO_SWAP.has(p.sport) && !isTeam(p) && (rar === '' || String(tierOf(p)) === rar) && (!q || String(p.name || '').toLowerCase().includes(q)));
   const cmp = sort === 'name' ? (a, b) => String(a.name).localeCompare(String(b.name))
     : sort === 'low' ? (a, b) => (a.rating || 0) - (b.rating || 0) : (a, b) => (b.rating || 0) - (a.rating || 0);
   list.sort(cmp);
@@ -300,14 +333,23 @@ $('#pq').addEventListener('input', drawPasses);
 $('#passes').addEventListener('change', e => {
   const k = e.target.dataset.keep; if(!k) return;
   prof.keep = e.target.checked ? [...new Set([...prof.keep, k])] : prof.keep.filter(x => x !== k);
-  const s = e.target.closest('.pass').querySelector('.k'); if(s) s.textContent = e.target.checked ? 'keeping' : 'swappable';
+  const row = e.target.closest('.pass'); row.classList.toggle('keep', e.target.checked);
+  const s = row.querySelector('.k'); if(s) s.textContent = e.target.checked ? 'keeping' : 'swappable';
+  drawSum();
+});
+$('#passes').addEventListener('click', e => { if(e.target.closest('a')) e.stopPropagation(); });
+$('#ptoggle').addEventListener('click', () => {
+  collapsed = !collapsed; drawPasses();
+  if(collapsed) $('#psum').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 });
 $('#scan').addEventListener('click', async () => {
-  const u = $('#rsuser').value.trim(); if(!u){ $('#scanmsg').textContent = 'Enter your Real username.'; return; }
-  $('#scanmsg').textContent = 'Scanning every sport and season… this takes about 20 seconds.';
-  const j = await api(`/api/swaps?op=scan&rsUser=${encodeURIComponent(u)}`);
+  const u = $('#rsuser').textContent.trim().replace(/^@/, '');
+  $('#scan').disabled = true;
+  $('#scanmsg').textContent = 'Scanning every sport and season… this takes about 30 seconds.';
+  const j = await api('/api/swaps?op=scan');
+  $('#scan').disabled = false;
   if(j.error){ $('#scanmsg').textContent = j.error; return; }
-  prof.rsUser = u; prof.passes = j.passes || []; prof.scannedAt = j.scannedAt || Date.now();
+  prof.rsUser = u; collapsed = false; prof.passes = j.passes || []; prof.scannedAt = j.scannedAt || Date.now();
   $('#scanmsg').innerHTML = `${prof.passes.length} passes found.` + (j.cached ? ` <span class="note">${esc(j.note || '')}</span>` : '') + ((j.errors || []).length ? ` <span style="color:var(--bad)">${j.errors.length} seasons failed: ${esc(j.errors[0])}</span>` : '')
     + (j.sample ? `<details><summary>What Real sent (first pass)</summary><pre>${esc(JSON.stringify(j.sample, null, 2))}</pre></details>` : '');
   drawPasses();
@@ -336,19 +378,21 @@ $('#wq').addEventListener('input', e => {
 });
 $('#wres').addEventListener('click', e => {
   const d = e.target.closest('[data-k]'); if(!d) return;
-  if(!prof.wants.includes(d.dataset.k)) prof.wants.push(d.dataset.k);
+  prof.wants = [d.dataset.k];          // one player per swap
   wantNames[d.dataset.k] = d.dataset.n; drawWants();
+  $('#wres').innerHTML = ''; $('#wq').value = '';
 });
 function drawWants(){
-  $('#wants').innerHTML = prof.wants.map(k => `<span class="chip">${esc(wantNames[k] || 'Player ' + k.split(':')[2])} · ${esc(keyLbl(k))}<button data-x="${k}" aria-label="Remove">✕</button></span>`).join('')
-    || '<span class="note">Nobody picked yet.</span>';
+  if(prof.wants.length > 1) prof.wants = prof.wants.slice(0, 1);
+  $('#wants').innerHTML = prof.wants.map(k => `<div class="want1"><span><b>${esc(wantNames[k] || 'Player ' + k.split(':')[2])}</b> <span class="note">· ${esc(keyLbl(k))}</span></span><button data-x="${k}" aria-label="Remove">✕</button></div>`).join('')
+    || '<p class="note" style="margin:8px 0 0">Nobody picked yet.</p>';
 }
 $('#wants').addEventListener('click', e => { const x = e.target.dataset.x; if(x){ prof.wants = prof.wants.filter(k => k !== x); drawWants(); } });
 
 $('#save').addEventListener('click', async () => {
   if(!prof.slots.length){ $('#savemsg').textContent = 'Pick at least one hour.'; return; }
   const j = await api('/api/swaps?op=save', { method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ rsUser: $('#rsuser').value.trim(), wants: prof.wants, keep: prof.keep, slots: prof.slots, names: wantNames }) });
+    body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 1), keep: prof.keep, slots: prof.slots, names: wantNames }) });
   $('#savemsg').textContent = j.error ? j.error : 'Saved.';
   try{ localStorage.setItem('ratebrd_swapnames', JSON.stringify(wantNames)); }catch(e){}
 });
@@ -455,8 +499,8 @@ async function proGate(){
   try{ wantNames = JSON.parse(localStorage.getItem('ratebrd_swapnames') || '{}') || {}; }catch(e){}
   if(j.profile) prof = Object.assign(prof, j.profile);
   if(!j.tokenFound) $('#scanmsg').innerHTML = '<span style="color:var(--bad)">No swap token found in Cloudflare yet.</span>';
-  $('#rsuser').value = j.admin ? (prof.rsUser || '') : (j.key || prof.rsUser || '');
-  if(!j.admin){ $('#rsuser').readOnly = true; $('#rsuser').title = 'Your board username is your Real username'; }
+  $('#rsuser').textContent = '@' + (j.key || '');
+  if(prof.passes.length && prof.keep.length) collapsed = true;   // back again with picks made: start folded
   paintConn(!!j.connected);
   $('#admin').hidden = !j.admin;
   drawPasses(); drawWants(); drawHours(); if(j.admin){ loadMatches(); loadAccess(); }
