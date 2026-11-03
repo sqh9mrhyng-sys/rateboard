@@ -590,10 +590,10 @@ $('#t-reports').addEventListener('click', async e => {
 /* ---------- swaps ---------- */
 $('#pp-go').addEventListener('click', async () => {
   const u = $('#pp-user').value.trim(); if(!u){ $('#pp-msg').textContent = 'Type a username.'; return; }
-  $('#pp-go').disabled = true; $('#pp-msg').textContent = 'Checking… (about 5 seconds)'; $('#pp-hits').innerHTML = ''; $('#pp-raw').textContent = '';
+  $('#pp-go').disabled = true; $('#pp-msg').textContent = 'Checking…'; $('#pp-hits').innerHTML = ''; $('#pp-raw').textContent = '';
   const j = await api('/api/swaps?op=proprobe&user=' + encodeURIComponent(u), {}, 40000);
   $('#pp-go').disabled = false;
-  $('#pp-msg').textContent = j.error || `Profile pages that answered: ${(j.tried || []).filter(t => t.status === 200).map(t => t.path).join(', ') || 'none besides search'}`;
+  $('#pp-msg').textContent = j.error || (j.pro ? `${j.search.userName}: ${j.pro.isRealPro ? 'Real Pro (tier ' + (j.pro.realProTier ?? '?') + ')' : 'no Real Pro'}${j.pro.supporterTier != null ? ' · supporter tier ' + j.pro.supporterTier : ''}` : '');
   const h = j.hits || [];
   $('#pp-hits').innerHTML = h.length ? '<b>Fields that look like a plan or badge:</b><br>' + h.map(x => `${esc(x.src)} → <b>${esc(x.field)}</b> = ${esc(String(x.value))}`).join('<br>')
     : (j.search ? 'No field with a name like pro, premium, subscription, plan, tier or badge.' : '');

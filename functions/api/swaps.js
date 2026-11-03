@@ -1436,18 +1436,7 @@ async function handle({ request, env, waitUntil }) {
       out.search = found; if (found) walk(found, '', 'searchusers');
     } catch (e) { out.searchError = String(e.message || e).slice(0, 200); }
     if (!found) return json({ ...out, error: 'No Real user with that exact username.' }, 404);
-    const id = found.id;
-    const paths = [`users/${id}`, `users/${id}/profile`, `userprofile/${id}`, `profile/${id}`, `users/${encodeURIComponent(found.userName)}`, `users/${id}/stats`];
-    for (const path of paths) {
-      try {
-        const res = await fetch('https://web.realapp.com/' + path, { headers: rsHeaders(auth) });
-        const text = await res.text();
-        let body = null; try { body = JSON.parse(text); } catch (e) {}
-        if (res.ok && body) walk(body, '', path);
-        out.tried.push({ path, status: res.status, body: res.ok ? (body || text.slice(0, 3000)) : text.slice(0, 200) });
-      } catch (e) { out.tried.push({ path, error: String(e.message || e).slice(0, 200) }); }
-      await new Promise(r => setTimeout(r, 700));
-    }
+    out.pro = { isRealPro: !!found.isRealPro, realProTier: found.realProTier ?? null, supporterTier: found.supporterTier ?? null, emblems: found.emblemIds || [] };
     out.hits = hits;
     return json(out);
   }
