@@ -152,6 +152,15 @@
     <div id="ugranted"><span class="note">Loading…</span></div>
   </section>
 
+  <section class="acc" id="pg" hidden>
+    <h2>Who can queue &amp; pull</h2>
+    <p class="note" style="margin:0 0 8px">Pick the sports a member can put at the front of the queue, and the sports they can pull single players in. To give them one player only, open that player below and use <b>Let them pull this player</b>. Giving either also gives them market data. Five player pulls per ten minutes is shared by everyone.</p>
+    <div class="bar" style="margin:0 0 6px;flex-wrap:wrap;gap:6px"><input id="pgkey" placeholder="Member username" autocomplete="off" style="max-width:180px"></div>
+    <div id="pgsports" style="display:grid;grid-template-columns:auto auto auto;gap:4px 14px;align-items:center;max-width:320px;margin:4px 0 8px"></div>
+    <div class="bar" style="margin:0 0 10px"><button id="pgsave">Save</button><span class="note" id="pgmsgtop"></span></div>
+    <div id="pglist"><span class="note">Loading…</span></div>
+  </section>
+
   <details id="admintools" hidden>
     <summary>Raw check of one page from Real (admin)</summary>
     <p class="note">Asks Real for one page live, on the marketplace account, and shows it untouched. Needs you signed in to the board as admin in this browser.</p>
@@ -500,8 +509,16 @@ function planHtml(){
 }
 
 // Admin: pull this one player's listings fresh, on the bot account.
-const pullBar = () => me && (me.admin || me.puller) ? `<div class="goal"><button type="button" data-pull="1">Pull this player now</button>
-  <span class="note" id="pullmsg">Fresh listings from Real for just this player</span></div>` : '';
+const canPull = key => {
+  if(!me) return false; if(me.admin) return true;
+  const g = me.grant; if(!g) return false; if(g.all) return true;
+  const [sp, , pid] = String(key || '').split(':');
+  return (g.pull || []).includes(sp) || (g.players || []).some(p => p.sport === sp && Number(p.id) === Number(pid));
+};
+const pullBar = () => (canPull(detKey) ? `<div class="goal"><button type="button" data-pull="1">Pull this player now</button>
+  <span class="note" id="pullmsg">Fresh listings from Real for just this player</span></div>` : '')
+  + (me && me.admin ? `<div class="goal"><input id="pgu" placeholder="Member username" autocomplete="off" style="max-width:170px">
+  <button type="button" data-pgrant="1">Let them pull this player</button><span class="note" id="pgmsg"></span></div>` : '');
 function drawDetail(){
   const el = $('#det'); if(!el) return;
   if(!detRows.length){ el.innerHTML = pullBar() + '<span class="note">No listings up for this player right now.</span>'; return; }
@@ -659,7 +676,8 @@ async function loadQueue(){
   if((s.log || []).length) bits.push(`<details style="margin-top:8px"><summary>Recent pulls</summary><pre style="max-height:240px">${s.log.map(l => esc(l.replace(/^(\w+:\d+)/, m => jobLbl(m)))).join('\n')}</pre></details>`);
   $('#qnow').innerHTML = bits.join(' ') || 'Starting…';
   const sel = $('#qpick'), keep = sel.value || pick;
-  sel.innerHTML = (s.seasons || []).map(x => `<option value="${x.job}">${esc(jobLbl(x.job))}${x.listings ? ' · ' + fmt(x.listings) : ''}</option>`).join('');
+  const qOk = x => !me || me.admin || !me.grant || me.grant.all || (me.grant.queue || []).includes(String(x.job).split(':')[0]);
+  sel.innerHTML = (s.seasons || []).filter(qOk).map(x => `<option value="${x.job}">${esc(jobLbl(x.job))}${x.listings ? ' · ' + fmt(x.listings) : ''}</option>`).join('');
   if(keep) sel.value = keep;
   const rows = (s.seasons || []).filter(x => x.listings || x.live || x.job === s.pulling)
     .sort((a, b) => (b.listings || 0) - (a.listings || 0));
@@ -696,7 +714,8 @@ async function start(){
   }
   $('#main').hidden = false;
   if(me.admin){ $('#acc').hidden = false; $('#admintools').hidden = false; loadAccess(''); }
-  else if(!me.puller){ $('#qpick').hidden = true; $('#qfront').hidden = true; }
+  if(me.admin){ $('#pg').hidden = false; loadGrants(); }
+  else if(!me.puller || (me.grant && !me.grant.all && !(me.grant.queue || []).length)){ $('#qpick').hidden = true; $('#qfront').hidden = true; }
   await Promise.all([loadQueue(), loadFavs(), (me.admin || me.puller) ? loadRecents() : null]);
   await load();
   setInterval(loadQueue, 60000);
@@ -728,6 +747,57 @@ $('#acc').addEventListener('click', e => {
   b.disabled = true;
   loadAccess($('#usearch').value.trim(), b.dataset.act, b.dataset.key);
 });
+
+// Admin: who can queue seasons and pull players.
+let grants = [], gSports = [];
+const SP_LBL = { nba:'NBA', ncaam:'CBB', nfl:'NFL', ncaaf:'CFB', nhl:'NHL', mlb:'MLB', wnba:'WNBA', soccer:'FC', golf:'Golf', ufc:'UFC' };
+function drawGrantBoxes(g){
+  g = g || { queue: [], pull: [] };
+  $('#pgsports').innerHTML = '<b class="note">Sport</b><b class="note">Queue</b><b class="note">Pull players</b>'
+    + gSports.map(sp => `<span>${SP_LBL[sp] || sp}</span><input type="checkbox" data-q="${sp}"${(g.queue || []).includes(sp) ? ' checked' : ''}><input type="checkbox" data-p="${sp}"${(g.pull || []).includes(sp) ? ' checked' : ''}>`).join('');
+}
+function drawGrants(){
+  const lbl = a => (a || []).map(x => SP_LBL[x] || x).join(', ') || '–';
+  $('#pglist').innerHTML = '<p class="note" style="margin:0 0 4px">Everything: ' + esc(['you'].concat(grantFull).join(', ')) + '</p>'
+    + (grants.map(g => `<div class="u" style="flex-wrap:wrap;gap:6px"><span><b>${esc(g.key)}</b> <span class="note">queue ${esc(lbl(g.queue))} · pull ${esc(lbl(g.pull))}</span>`
+      + ((g.players || []).length ? '<br>' + g.players.map(p => `<span class="note" style="white-space:nowrap">${esc(p.name || ('#' + p.id))} (${SP_LBL[p.sport] || p.sport}) <a href="#" data-pgoff="${esc(g.key)}|${p.sport}|${p.id}">×</a></span>`).join(' · ') : '')
+      + `</span><span><button data-pgedit="${esc(g.key)}">Edit</button> <button data-pgclear="${esc(g.key)}">Remove all</button></span></div>`).join('')
+    || '<span class="note">Nobody else yet.</span>');
+}
+let grantFull = [];
+async function grantCall(qs){
+  let j; try{ j = await (await fetch('/api/rax?' + qs)).json(); }catch(e){ j = { error: 'Could not reach the board.' }; }
+  if(j && j.grants){ grants = j.grants; grantFull = j.full || []; if(!gSports.length){ gSports = j.sports || []; drawGrantBoxes(); } drawGrants(); }
+  return j || {};
+}
+const loadGrants = () => grantCall('market=pullgrants');
+$('#pgkey').addEventListener('change', () => { const k = $('#pgkey').value.trim().toLowerCase(); drawGrantBoxes(grants.find(g => g.key === k)); });
+$('#pgsave').addEventListener('click', async () => {
+  const k = $('#pgkey').value.trim(); if(!k){ $('#pgmsgtop').textContent = 'Type a username.'; return; }
+  const q = [...document.querySelectorAll('#pgsports [data-q]:checked')].map(x => x.dataset.q).join(',');
+  const p = [...document.querySelectorAll('#pgsports [data-p]:checked')].map(x => x.dataset.p).join(',');
+  $('#pgmsgtop').textContent = 'Saving…';
+  const j = await grantCall(`market=pullgrant&key=${encodeURIComponent(k)}&queue=${q}&pull=${p}`);
+  $('#pgmsgtop').textContent = j.error || 'Saved.';
+});
+$('#pglist').addEventListener('click', async e => {
+  const ed = e.target.closest('[data-pgedit]'), cl = e.target.closest('[data-pgclear]'), off = e.target.closest('[data-pgoff]');
+  if(ed){ $('#pgkey').value = ed.dataset.pgedit; drawGrantBoxes(grants.find(g => g.key === ed.dataset.pgedit)); $('#pgkey').scrollIntoView({ block: 'center' }); }
+  if(cl){ cl.disabled = true; await grantCall(`market=pullgrant&clear=1&key=${encodeURIComponent(cl.dataset.pgclear)}`); }
+  if(off){ e.preventDefault(); const [k, sp, id] = off.dataset.pgoff.split('|'); await grantCall(`market=pullgrantplayer&on=0&key=${encodeURIComponent(k)}&sport=${sp}&playerId=${id}`); }
+});
+$('#rows').addEventListener('click', async e => {
+  const b = e.target.closest('[data-pgrant]'); if(!b || !detKey) return;
+  e.stopPropagation();
+  const k = ($('#pgu') || {}).value ? $('#pgu').value.trim() : '';
+  const m = $('#pgmsg'); if(!k){ if(m) m.textContent = 'Type a username.'; return; }
+  const [sp, , pid] = detKey.split(':');
+  const row = ((data && data.rows) || []).find(r => `${r.sport}:${r.season}:${r.playerId}` === detKey);
+  b.disabled = true;
+  const j = await grantCall(`market=pullgrantplayer&key=${encodeURIComponent(k)}&sport=${sp}&playerId=${pid}&player=${encodeURIComponent((row && row.player) || '')}`);
+  b.disabled = false; if(m) m.textContent = j.error || `${k} can pull this player now.`;
+});
+$('#rows').addEventListener('input', e => { if(e.target.id === 'pgu') e.stopPropagation(); });
 
 start();
 </script>

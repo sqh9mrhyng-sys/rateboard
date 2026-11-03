@@ -531,6 +531,29 @@ const MARKET_MANUAL = true;
 const MRECENT_KEY = 'mrecent_v1';
 // Members (besides admins) who can queue market seasons and pull single players.
 const MARKET_PULLERS = new Set(['quas23']);
+/* Members Dennis has let queue seasons or pull players, sport by sport or one
+   player at a time. Kept in KV:
+   { "<member key>": { queue: ['ncaam'], pull: ['nfl'], players: [{ sport, id, name }] } }
+   Anyone on MARKET_PULLERS can do everything. */
+const MPULL_KEY = 'mpull_grants_v1';
+async function pullGrants(env) {
+  try { const o = JSON.parse((await env.RATEBOARD_KV.get(MPULL_KEY)) || '{}'); return o && typeof o === 'object' ? o : {}; } catch (e) { return {}; }
+}
+async function pullGrantFor(env, who) {
+  const k = String(who || '').toLowerCase();
+  if (!k) return null;
+  if (MARKET_PULLERS.has(k)) return { all: true, queue: [], pull: [], players: [] };
+  const g = (await pullGrants(env))[k];
+  if (!g || !((g.queue || []).length || (g.pull || []).length || (g.players || []).length)) return null;
+  return { all: false, queue: g.queue || [], pull: g.pull || [], players: g.players || [] };
+}
+function pullAllowed(g, mk, sport, pid) {
+  if (!g) return false;
+  if (g.all || mk === 'recents') return true;
+  if (mk === 'front') return g.queue.includes(sport);
+  if (mk === 'pullplayer') return g.pull.includes(sport) || g.players.some(p => p.sport === sport && Number(p.id) === Number(pid));
+  return false;
+}
 /* Real answers "high volume" to two requests at once, even on the separate
    account, so there is one lane. Speed comes from shorter gaps between pages
    and more pages a tick instead. A sport-season is still cut into windows by
@@ -5368,6 +5391,38 @@ async function handleGet({ request, env, waitUntil }) {
     return json(out);
   }
 
+  /* Admin: who can queue seasons or pull players, and for what. Giving
+     someone either also gives them market data, so they can see the page. */
+  if (['pullgrants', 'pullgrant', 'pullgrantplayer'].includes(url.searchParams.get('market'))) {
+    const db = env.RATEBOARD_DB, mk = url.searchParams.get('market');
+    const all = await pullGrants(env);
+    if (mk !== 'pullgrants') {
+      const key = String(url.searchParams.get('key') || '').trim().toLowerCase();
+      const u = key ? await db.prepare('SELECT key FROM users WHERE LOWER(key)=?').bind(key).first() : null;
+      if (!u) return json({ error: 'No member with that username on the board.' }, 404);
+      const k = String(u.key).toLowerCase();
+      const g = all[k] || { queue: [], pull: [], players: [] };
+      const okSport = x => Object.prototype.hasOwnProperty.call(MARKET_LIST, x);
+      if (mk === 'pullgrant') {
+        const list = n => [...new Set(String(url.searchParams.get(n) || '').split(',').map(x => x.trim()).filter(okSport))];
+        g.queue = list('queue'); g.pull = list('pull');
+        if (url.searchParams.get('clear') === '1') { g.queue = []; g.pull = []; g.players = []; }
+      } else {
+        const sp = String(url.searchParams.get('sport') || ''), id = Number(url.searchParams.get('playerId'));
+        if (!okSport(sp) || !Number.isFinite(id)) return json({ error: 'pick a player' }, 400);
+        g.players = (g.players || []).filter(p => !(p.sport === sp && Number(p.id) === id));
+        if (url.searchParams.get('on') !== '0') g.players.push({ sport: sp, id, name: String(url.searchParams.get('player') || '').slice(0, 60) || null });
+      }
+      if ((g.queue || []).length || (g.pull || []).length || (g.players || []).length) {
+        all[k] = g;
+        try { await db.prepare(MACCESS_DDL).run();
+          await db.prepare('INSERT INTO market_access (key, grantedAt, grantedBy) VALUES (?, ?, ?) ON CONFLICT DO NOTHING').bind(u.key, Date.now(), 'admin').run(); } catch (e) {}
+      } else delete all[k];
+      await env.RATEBOARD_KV.put(MPULL_KEY, JSON.stringify(all));
+    }
+    return json({ grants: Object.entries(all).map(([key, g]) => ({ key, ...g })), full: [...MARKET_PULLERS], sports: Object.keys(MARKET_LIST) });
+  }
+
   // Who has market data, and a user search to give it to more. Admin only.
   if (['access', 'grant', 'revoke'].includes(url.searchParams.get('market'))) {
     const db = env.RATEBOARD_DB, mk = url.searchParams.get('market');
@@ -7522,7 +7577,8 @@ export async function onRequestGet(ctx) {
       let swaps = false, otd = false;
       try { if (a.who) { const sa = await swapAccess(env, request); swaps = sa.swaps; otd = sa.otd; } } catch (e) {}
       return json({ signedIn: !!a.who, access: a.ok, admin: a.admin, swaps, otd,
-        puller: a.admin || (!!a.who && MARKET_PULLERS.has(String(a.who).toLowerCase())) });
+        ...(await (async () => { if (a.admin) return { puller: true, grant: { all: true, queue: [], pull: [], players: [] } };
+          const g = a.who ? await pullGrantFor(env, a.who) : null; return { puller: !!g, grant: g }; })()) });
     }
     if (!a.ok) return json({ error: a.who ? 'Your account does not have market data.' : 'Sign in on the board first.' }, 403);
     if (mk === 'fav' || mk === 'favs') return marketMember(env, url, a.who, ctx.waitUntil);
@@ -7646,7 +7702,9 @@ export async function onRequestGet(ctx) {
      player (and the Recents list those pulls fill). Nothing else. */
   if (['front', 'pullplayer', 'recents'].includes(mk) && !(await isAdminRequest(env, request))) {
     const who = await sessionKey(env, request);
-    if (who && MARKET_PULLERS.has(String(who).toLowerCase())) return handleGet(ctx);
+    const g = who ? await pullGrantFor(env, who) : null;
+    if (pullAllowed(g, mk, url.searchParams.get('sport'), url.searchParams.get('playerId'))) return handleGet(ctx);
+    if (g) return json({ error: mk === 'front' ? 'You can only queue the sports Dennis gave you.' : 'You can only pull the players or sports Dennis gave you.' }, 403);
   }
   if (!(await isAdminRequest(env, request))) return forbidden();
   return handleGet(ctx);
