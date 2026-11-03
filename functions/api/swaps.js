@@ -14,6 +14,16 @@
 import { isAdminRequest, sessionKey, forbidden, allow, clientIp, touchSeen, ADMINS, etDay } from '../../lib/auth.js';
 import { watchEnv } from '../../lib/dbwatch.js';
 
+/* Adding a column that already exists just errors (and is ignored). Each
+   ALTER is tried once per server instance, not on every request. */
+const ALTERED = new Set();
+async function alterOnce(db, sql) {
+  if (ALTERED.has(sql)) return;
+  ALTERED.add(sql);
+  await db.prepare(sql).run();
+}
+
+
 function hashidsEncode(number) {
   const saltChars = Array.from('realwebapp');
   const minLen = 16;
@@ -379,7 +389,7 @@ async function runMatching(db) {
     goalLeft.set(A.key, goalLeft.get(A.key) - 1); goalLeft.set(B.key, goalLeft.get(B.key) - 1);
   }
   for (const m of made) {
-    try { await db.prepare('ALTER TABLE swap_matches ADD COLUMN dueAt INTEGER').run(); } catch (e) {}
+    try { await alterOnce(db, 'ALTER TABLE swap_matches ADD COLUMN dueAt INTEGER'); } catch (e) {}
     // Never the same two people twice on one swap day, even if two runs overlap.
     const d = swapDay(m.due), dayStart = m.due - 30 * 3600000;
     const dupes = ((await db.prepare(`SELECT dueAt, slot, createdAt FROM swap_matches WHERE ((a=? AND b=?) OR (a=? AND b=?)) AND dueAt > ? AND status IN ('pending','sending','warned','sent')`)
@@ -723,10 +733,10 @@ async function sideLines(member, m, side) {
   };
 }
 async function matchCols(db) {
-  for (const c of ['warnA', 'warnB', 'doneA', 'doneB', 'followA', 'followB', 'dueAt']) { try { await db.prepare(`ALTER TABLE swap_matches ADD COLUMN ${c} INTEGER`).run(); } catch (e) {} }
-  try { await db.prepare('ALTER TABLE swap_users ADD COLUMN comment TEXT').run(); } catch (e) {}
-  try { await db.prepare('ALTER TABLE swap_users ADD COLUMN goal REAL').run(); } catch (e) {}
-  try { await db.prepare('ALTER TABLE swap_users ADD COLUMN autoAt INTEGER').run(); } catch (e) {}
+  for (const c of ['warnA', 'warnB', 'doneA', 'doneB', 'followA', 'followB', 'dueAt']) { try { await alterOnce(db, `ALTER TABLE swap_matches ADD COLUMN ${c} INTEGER`); } catch (e) {} }
+  try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN comment TEXT'); } catch (e) {}
+  try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN goal REAL'); } catch (e) {}
+  try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN autoAt INTEGER'); } catch (e) {}
 }
 // When a match's swap hour comes: the next time that UTC hour starts, an
 // hour or more after it was made.
@@ -954,7 +964,7 @@ export async function swapTick(env) {
   try {
     if (!(await env.RATEBOARD_KV.get('swap_clear_v1'))) {
       await env.RATEBOARD_KV.put('swap_clear_v1', String(Date.now()));
-      try { await db.prepare('ALTER TABLE swap_users ADD COLUMN goal REAL').run(); } catch (e) {}
+      try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN goal REAL'); } catch (e) {}
       await db.prepare("UPDATE swap_users SET wants='[]', keep='[]', slots='[]', goal=NULL, active=0").run();
       await db.prepare("UPDATE swap_matches SET status='cleared' WHERE status IN ('pending','warned','sending','error')").run();
       try { await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); await env.RATEBOARD_KV.delete('swap_wantcounts_v1'); } catch (e) {}
@@ -965,8 +975,8 @@ export async function swapTick(env) {
   try {
     if (!(await env.RATEBOARD_KV.get('scan_reset_v3'))) {
       await env.RATEBOARD_KV.put('scan_reset_v3', String(Date.now()));
-      try { await db.prepare('ALTER TABLE swap_users ADD COLUMN boostScanAt INTEGER').run(); } catch (e) {}
-      try { await db.prepare('ALTER TABLE swap_users ADD COLUMN fullPart INTEGER').run(); } catch (e) {}
+      try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN boostScanAt INTEGER'); } catch (e) {}
+      try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN fullPart INTEGER'); } catch (e) {}
       await db.prepare('UPDATE swap_users SET scannedAt = NULL, boostScanAt = NULL, fullPart = NULL').run();
       await stat(db, 'scan_reset');
     }
@@ -982,8 +992,8 @@ export async function swapTick(env) {
   try {
     if (!(await env.RATEBOARD_KV.get('scan_reset_v2'))) {
       await env.RATEBOARD_KV.put('scan_reset_v2', String(Date.now()));
-      try { await db.prepare('ALTER TABLE swap_users ADD COLUMN fullPart INTEGER').run(); } catch (e) {}
-      try { await db.prepare('ALTER TABLE swap_users ADD COLUMN boostScanAt INTEGER').run(); } catch (e) {}
+      try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN fullPart INTEGER'); } catch (e) {}
+      try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN boostScanAt INTEGER'); } catch (e) {}
       await db.prepare('UPDATE swap_users SET scannedAt = MIN(COALESCE(scannedAt, 0), ?), boostScanAt = NULL WHERE hashId IS NOT NULL').bind(Date.now() - 4 * 3600000).run();
       await stat(db, 'scan_reset');
     }
@@ -992,8 +1002,8 @@ export async function swapTick(env) {
   try {
     if (!(await env.RATEBOARD_KV.get('scan_reset_v1'))) {
       await env.RATEBOARD_KV.put('scan_reset_v1', String(Date.now()));
-      try { await db.prepare('ALTER TABLE swap_users ADD COLUMN boostScanAt INTEGER').run(); } catch (e) {}
-      try { await db.prepare('ALTER TABLE swap_users ADD COLUMN autoAt INTEGER').run(); } catch (e) {}
+      try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN boostScanAt INTEGER'); } catch (e) {}
+      try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN autoAt INTEGER'); } catch (e) {}
       await db.prepare('UPDATE swap_users SET scannedAt = MIN(COALESCE(scannedAt, 0), ?), boostScanAt = NULL, autoAt = 0').bind(Date.now() - 4 * 3600000).run();
       await stat(db, 'scan_reset');
     }
@@ -1393,7 +1403,7 @@ export async function onRequest(ctx) {
 const RN_PHRASE = 'CONFIRM USERNAME CHANGE';
 async function renameFlow(env, db, url, acc, op, waitUntil) {
   if (!acc.who) return json({ error: 'Sign in on the board first.' }, 401);
-  try { await db.prepare('ALTER TABLE users ADD COLUMN rsName TEXT').run(); } catch (e) {}
+  try { await alterOnce(db, 'ALTER TABLE users ADD COLUMN rsName TEXT'); } catch (e) {}
   const kvKey = 'rn_v1_' + acc.who;
   if (op === 'rnstatus') {
     let p = null; try { p = JSON.parse((await env.RATEBOARD_KV.get(kvKey)) || 'null'); } catch (e) {}

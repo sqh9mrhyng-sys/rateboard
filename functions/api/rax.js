@@ -2,6 +2,16 @@ import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS, touchSe
 import { swapTick, boostRefresh, swapAccess } from './swaps.js';
 import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, capNow } from '../../lib/dbwatch.js';
 
+/* Adding a column that already exists just errors (and is ignored). Each
+   ALTER is tried once per server instance, not on every request. */
+const ALTERED = new Set();
+async function alterOnce(db, sql) {
+  if (ALTERED.has(sql)) return;
+  ALTERED.add(sql);
+  await db.prepare(sql).run();
+}
+
+
 // GET /api/rax?sport=ncaam&season=2026
 //
 // Season earnings ("rax") straight from RS's own leaderboard endpoint —
@@ -162,10 +172,10 @@ const glChanged = keyCols => GAMELOG_FEED_COLS.filter(c => !keyCols.includes(c))
 // statements are no-ops once they have run.
 async function migrateGamelog(db) {
   await db.prepare(GAMELOG_DDL).run();
-  try { await db.prepare('ALTER TABLE gamelog RENAME COLUMN rax TO rating').run(); } catch (e) {}
-  try { await db.prepare('ALTER TABLE gamelog ADD COLUMN rax INTEGER').run(); } catch (e) {}
-  try { await db.prepare('ALTER TABLE gamelog ADD COLUMN conference TEXT').run(); } catch (e) {}
-  try { await db.prepare('ALTER TABLE gamelog ADD COLUMN stats TEXT').run(); } catch (e) {}
+  try { await alterOnce(db, 'ALTER TABLE gamelog RENAME COLUMN rax TO rating'); } catch (e) {}
+  try { await alterOnce(db, 'ALTER TABLE gamelog ADD COLUMN rax INTEGER'); } catch (e) {}
+  try { await alterOnce(db, 'ALTER TABLE gamelog ADD COLUMN conference TEXT'); } catch (e) {}
+  try { await alterOnce(db, 'ALTER TABLE gamelog ADD COLUMN stats TEXT'); } catch (e) {}
   // Without these the per-player owner lookup rescans the snapshot table for
   // every row, which turns a season view into a half-minute wait.
   try { await db.prepare(
@@ -174,7 +184,7 @@ async function migrateGamelog(db) {
     'CREATE INDEX IF NOT EXISTS owners_latest ON owners (sport, season, day)').run(); } catch (e) {}
   try { await db.prepare(
     'CREATE INDEX IF NOT EXISTS gamelog_scope ON gamelog (sport, season, playerId)').run(); } catch (e) {}
-  try { await db.prepare('ALTER TABLE gamelog ADD COLUMN position TEXT').run(); } catch (e) {}
+  try { await alterOnce(db, 'ALTER TABLE gamelog ADD COLUMN position TEXT'); } catch (e) {}
   try { await db.prepare(TOURNAMENT_DDL).run(); } catch (e) {}
   try { await db.prepare(
     'CREATE INDEX IF NOT EXISTS gamelog_event ON gamelog (sport, season, gameId)').run(); } catch (e) {}
@@ -509,7 +519,7 @@ const MKEY = `(CASE WHEN sport='ufc' THEN teamId ELSE COALESCE(playerId, entityI
 let marketTeamCol = false;
 async function marketTeamReady(db) {
   if (marketTeamCol) return;
-  try { await db.prepare('ALTER TABLE market_v2 ADD COLUMN teamId INTEGER').run(); } catch (e) {}
+  try { await alterOnce(db, 'ALTER TABLE market_v2 ADD COLUMN teamId INTEGER'); } catch (e) {}
   marketTeamCol = true;
 }
 const MARKET_SEASONS = [2027, 2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2016, 2015, 2014];
@@ -878,7 +888,7 @@ async function marketSliceHeld(env, auth, deadline) {
   const db = env.RATEBOARD_DB;
   await db.prepare(MARKET_DDL).run();
   await db.prepare(MSEAS_DDL).run();
-  try { await db.prepare('ALTER TABLE market_v2 ADD COLUMN player TEXT').run(); } catch (e) {}
+  try { await alterOnce(db, 'ALTER TABLE market_v2 ADD COLUMN player TEXT'); } catch (e) {}
   /* Every market read and the end-of-season clear-out pick a season first;
      without these each one read the whole table. Building them on a big
      table holds the database for a while, so it is tried at most every six
@@ -1738,18 +1748,18 @@ async function playsReady(db) {
 async function playsReadyOnce(db) {
   await db.prepare(PLAYS_DDL).run();
   await db.prepare(TAGS_DDL).run();
-  try { await db.prepare('ALTER TABLE plays ADD COLUMN rarity INTEGER').run(); } catch (e) {}
+  try { await alterOnce(db, 'ALTER TABLE plays ADD COLUMN rarity INTEGER'); } catch (e) {}
   /* Real's display label and its hashtag are not the same word - tag 2202
      reads "Self-pass-touchdown" but hashes to "selfpasstd", and the rules are
      written from the hashtags. Keying off the label silently dropped the
      rule. */
-  try { await db.prepare('ALTER TABLE tags ADD COLUMN hash TEXT').run(); } catch (e) {}
+  try { await alterOnce(db, 'ALTER TABLE tags ADD COLUMN hash TEXT'); } catch (e) {}
   /* Real sorts its own tags into kinds: 'play' for the ones that sit on a
      snap, 'playerboxscore' for the performance tags - Hundo, Air-force,
      Marksman - and team and game ones above those. The marketplace harvest
      cannot tell them apart and had been letting a performance tag's rarity
      land on a play. */
-  try { await db.prepare('ALTER TABLE tags ADD COLUMN kind TEXT').run(); } catch (e) {}
+  try { await alterOnce(db, 'ALTER TABLE tags ADD COLUMN kind TEXT'); } catch (e) {}
   /* Hockey puts up to three earners on one play - a goal carries its scorer
      and both assists - and what the play is worth depends on which of them
      you are asking about: the same row is a goal for the scorer and an assist
@@ -1757,9 +1767,9 @@ async function playsReadyOnce(db) {
      rarity of each side. */
   for (const c of ['player3Id INTEGER', 'player3 TEXT',
                    'rarity2 INTEGER', 'rarity3 INTEGER']) {
-    try { await db.prepare(`ALTER TABLE plays ADD COLUMN ${c}`).run(); } catch (e) {}
+    try { await alterOnce(db, `ALTER TABLE plays ADD COLUMN ${c}`); } catch (e) {}
   }
-  try { await db.prepare('ALTER TABLE tags ADD COLUMN altRarity TEXT').run(); } catch (e) {}
+  try { await alterOnce(db, 'ALTER TABLE tags ADD COLUMN altRarity TEXT'); } catch (e) {}
   for (const ix of [
     'CREATE INDEX IF NOT EXISTS plays_sp ON plays (sport, season, playerId)',
     'CREATE INDEX IF NOT EXISTS plays_game ON plays (gameId)',
@@ -5471,7 +5481,7 @@ async function handleGet({ request, env, waitUntil }) {
     try {
       await marketTeamReady(db);
       await db.prepare(MARKET_DDL).run();
-      try { await db.prepare('ALTER TABLE market_v2 ADD COLUMN player TEXT').run(); } catch (e) {}
+      try { await alterOnce(db, 'ALTER TABLE market_v2 ADD COLUMN player TEXT'); } catch (e) {}
       const nowIso = new Date().toISOString();
       if (url.searchParams.get('market') === 'listings') {
         const pid = Number(url.searchParams.get('playerId'));
@@ -5879,7 +5889,7 @@ async function handleGet({ request, env, waitUntil }) {
     // tournament table and position column are created by the collectors, so
     // make sure they exist rather than answering with a database error.
     try { await db.prepare(TOURNAMENT_DDL).run(); } catch (e) {}
-    try { await db.prepare('ALTER TABLE gamelog ADD COLUMN position TEXT').run(); } catch (e) {}
+    try { await alterOnce(db, 'ALTER TABLE gamelog ADD COLUMN position TEXT'); } catch (e) {}
 
     // Players who miss the cut stop after two rounds, so their score to par is
     // a 36 hole number while everyone else's is a 72 hole one. That makes the
