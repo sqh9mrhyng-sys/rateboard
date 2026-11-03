@@ -682,7 +682,7 @@ const SACCESS_DDL = `CREATE TABLE IF NOT EXISTS swap_access (key TEXT PRIMARY KE
    the answer is kept, so it is never asked again. Dennis can clear it. */
 // Swaps stays closed to everyone but admins and hand-picked members until
 // this is true; then the Pro check opens it to every Real Pro member.
-const SWAPS_OPEN = false;
+const SWAPS_OPEN = true;   // open quietly 2026-11-02: reachable at /swaps, not in the menu yet (index.html)
 const SPRO_DDL = `CREATE TABLE IF NOT EXISTS swap_pro (key TEXT PRIMARY KEY, pro INTEGER, tier INTEGER, rsId TEXT, at INTEGER)`;
 const OTD_DDL = `CREATE TABLE IF NOT EXISTS otd_access (key TEXT PRIMARY KEY, grantedAt INTEGER)`;
 /* Who can use Swaps and who can use OTD optimization - two separate grants.
