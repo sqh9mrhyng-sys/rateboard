@@ -818,7 +818,7 @@ export async function swapTick(env) {
       try { await db.prepare('ALTER TABLE swap_users ADD COLUMN goal REAL').run(); } catch (e) {}
       await db.prepare("UPDATE swap_users SET wants='[]', keep='[]', slots='[]', goal=NULL, active=0").run();
       await db.prepare("UPDATE swap_matches SET status='cleared' WHERE status IN ('pending','warned','sending','error')").run();
-      try { await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); } catch (e) {}
+      try { await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); await env.RATEBOARD_KV.delete('swap_wantcounts_v1'); } catch (e) {}
       await stat(db, 'cleared');
     }
   } catch (e) {}
@@ -896,7 +896,7 @@ export async function swapAccess(env, request) {
 }
 // What a member (not an admin) may do: their own swap and nothing else, and
 // for OTD their own passes and games.
-const MEMBER_OPS = new Set(['me', 'save', 'scan', 'search', 'connect', 'whynot', 'hourcounts', 'report']);
+const MEMBER_OPS = new Set(['me', 'save', 'scan', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report']);
 const OTD_OPS = new Set(['me', 'scan', 'games', 'boostplan']);
 const BOOST_OPS = new Set(['me', 'scan', 'boostplan', 'boostinv', 'buys']);
 const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
@@ -1388,6 +1388,19 @@ async function handle({ request, env, waitUntil }) {
       newChatsLeft: await newChatsLeft(env) });
   }
 
+  // How many saved swappers picked each player, kept 5 minutes.
+  if (op === 'wantcounts') {
+    let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get('swap_wantcounts_v1')) || 'null'); } catch (e) {}
+    if (!c || Date.now() - c.at > 300000) {
+      const n = {};
+      for (const r of ((await db.prepare(`SELECT wants FROM swap_users WHERE active=1 AND wants IS NOT NULL AND wants <> '[]'`).all()).results || []))
+        { const w = parse(r.wants, [])[0]; if (w) n[w] = (n[w] || 0) + 1; }
+      c = { at: Date.now(), n };
+      try { await env.RATEBOARD_KV.put('swap_wantcounts_v1', JSON.stringify(c)); } catch (e) {}
+    }
+    return json(c);
+  }
+
   // How many saved swappers picked each hour (UTC), kept 5 minutes.
   if (op === 'hourcounts') {
     let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get('swap_hourcounts_v1')) || 'null'); } catch (e) {}
@@ -1544,7 +1557,7 @@ async function handle({ request, env, waitUntil }) {
       ON CONFLICT(key) DO UPDATE SET rsUser=excluded.rsUser, wants=excluded.wants, keep=excluded.keep,
         slots=excluded.slots, updatedAt=excluded.updatedAt, active=1, comment=excluded.comment, goal=excluded.goal`)
       .bind(me, rsUser, JSON.stringify(wants), JSON.stringify(keep), JSON.stringify(slots), Date.now(), comment.slice(0, 300), goal).run();
-    try { await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); } catch (e) {}
+    try { await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); await env.RATEBOARD_KV.delete('swap_wantcounts_v1'); } catch (e) {}
     return json({ ok: true, wants, keep: keep.length, slots });
   }
 

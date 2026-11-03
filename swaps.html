@@ -425,14 +425,21 @@ function drawResults(rows){
       <span class="note">· ${esc(keyLbl(r.sport + ':' + r.season))}${r.team ? ' · ' + esc(r.team) : ''} · <b>${fmtN(r.rax)}</b> rax · ${fmtN(r.owners)} owners</span></div>`).join('')
     || '<div class="note">No player found.</div>';
 }
+// How many people have already picked each player, so a crowded one is easy to spot.
+let wantCounts = {}, savedWant = null;
+async function loadWantCounts(){ const j = await api('/api/swaps?op=wantcounts'); if(j && j.n){ wantCounts = j.n; drawWants(); } }
+const othersOn = k => Math.max(0, (wantCounts[k] || 0) - (k === savedWant ? 1 : 0));
+const crowdTxt = n => n === 0 ? 'nobody else yet' : `${n} other${n === 1 ? '' : 's'} picked this`;
+const crowdCol = n => n >= 10 ? 'var(--bad)' : n >= 4 ? 'var(--accent)' : 'var(--ok)';
 $('#wq').addEventListener('input', e => {
   const q = e.target.value.trim().toLowerCase();
   if(q.length < 2){ $('#wres').innerHTML = ''; return; }
   const own = prof.passes.filter(p => !NO_SWAP.has(p.sport) && !isTeam(p) && !offSeason(p) && String(p.name || '').toLowerCase().includes(q))
     .sort((x, y) => (y.rating || 0) - (x.rating || 0)).slice(0, 30);
   if(!prof.passes.length){ $('#wres').innerHTML = '<div class="note">Scan your passes in step 3 first.</div>'; return; }
-  $('#wres').innerHTML = own.map(p => `<div data-k="${p.key}" data-n="${esc(p.name || 'Player ' + p.id)}">${esc(p.name || 'Player ' + p.id)}
-      <span class="note">· ${esc(keyLbl(p.key))}</span></div>`).join('') || '<div class="note">None of your passes match.</div>';
+  $('#wres').innerHTML = own.map(p => { const n = othersOn(p.key);
+    return `<div data-k="${p.key}" data-n="${esc(p.name || 'Player ' + p.id)}">${esc(p.name || 'Player ' + p.id)}
+      <span class="note">· ${esc(keyLbl(p.key))} · </span><span style="font-size:13px;font-weight:700;color:${crowdCol(n)}">${crowdTxt(n)}</span></div>`; }).join('') || '<div class="note">None of your passes match.</div>';
 });
 $('#wres').addEventListener('click', e => {
   const d = e.target.closest('[data-k]'); if(!d) return;
@@ -442,7 +449,10 @@ $('#wres').addEventListener('click', e => {
 });
 function drawWants(){
   if(prof.wants.length > 1) prof.wants = prof.wants.slice(0, 1);
-  $('#wants').innerHTML = prof.wants.map(k => `<div class="want1"><span><b>${esc(wantNames[k] || 'Player ' + k.split(':')[2])}</b> <span class="note">· ${esc(keyLbl(k))}</span></span><button data-x="${k}" aria-label="Remove">✕</button></div>`).join('')
+  $('#wants').innerHTML = prof.wants.map(k => { const n = othersOn(k);
+    return `<div class="want1"><span><b>${esc(wantNames[k] || 'Player ' + k.split(':')[2])}</b> <span class="note">· ${esc(keyLbl(k))}</span>`
+      + `<br><span style="font-size:13px;font-weight:700;color:${crowdCol(n)}">${crowdTxt(n)}</span>${n >= 4 ? '<span class="note"> - a less popular player will match faster</span>' : ''}</span>`
+      + `<button data-x="${k}" aria-label="Remove">✕</button></div>`; }).join('')
     || '<p class="note" style="margin:8px 0 0">Nobody picked yet.</p>';
 }
 $('#wants').addEventListener('click', e => { const x = e.target.dataset.x; if(x){ prof.wants = prof.wants.filter(k => k !== x); drawWants(); } });
@@ -454,7 +464,7 @@ $('#save').addEventListener('click', async () => {
   const j = await api('/api/swaps?op=save', { method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 1), comment: $('#clink').value.trim(), goal: $('#goal').value.trim(), keep: prof.keep, slots: prof.slots, names: wantNames }) });
   $('#savemsg').textContent = j.error ? j.error : 'Saved.';
-  if(!j.error) loadHourCounts();
+  if(!j.error){ savedWant = prof.wants[0] || null; loadHourCounts(); loadWantCounts(); }
   try{ localStorage.setItem('ratebrd_swapnames', JSON.stringify(wantNames)); }catch(e){}
 });
 
@@ -606,7 +616,8 @@ async function proGate(){
   if(prof.passes.length && prof.keep.length) collapsed = true;   // back again with picks made: start folded
   paintConn(!!j.connected);
   $('#admin').hidden = !j.admin;
-  drawPasses(); drawWants(); drawHours(); loadHourCounts(); if(j.admin){ loadMatches(); loadAccess(); }
+  savedWant = (j.profile && j.profile.active && (j.profile.wants || [])[0]) || null;
+  drawPasses(); drawWants(); drawHours(); loadHourCounts(); loadWantCounts(); if(j.admin){ loadMatches(); loadAccess(); }
   api('/api/swaps?op=buildindex');   // adds one season to the search table, at most every 5 minutes
 })();
 </script>
