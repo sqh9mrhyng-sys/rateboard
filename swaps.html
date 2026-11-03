@@ -69,6 +69,7 @@
 <div class="lock" id="lock" hidden><h1>Swaps</h1><p class="note" id="lockmsg">Checking…</p><p id="probox" hidden><button class="primary" id="procheck">Pro check</button></p><p class="note" id="rnhint" hidden>Is your Real username different from your board username? <a href="/username">Link your Real account</a> first.</p><p><a href="/">Back to the board</a></p></div>
 <div class="wrap" id="main" hidden>
   <header><h1>Swaps</h1><a href="/" style="margin-left:auto">Back to the board</a></header>
+  <p class="note" style="margin:-6px 0 12px">Swaps uses your Real account <b id="rstop"></b>. Real username different from your board name? <a href="/username">Change Real username</a></p>
 
   <section>
     <h2>1. Create a DM with @raxacademy.app on Real</h2>
@@ -539,6 +540,7 @@ async function proGate(){
   if(j.profile) prof = Object.assign(prof, j.profile);
   if(!j.tokenFound) $('#scanmsg').innerHTML = '<span style="color:var(--bad)">No swap token found in Cloudflare yet.</span>';
   $('#rsuser').textContent = '@' + (j.real || j.key || '');
+  $('#rstop').textContent = '@' + (j.real || j.key || '');
   $('#goal').value = (j.profile && j.profile.goal != null) ? j.profile.goal : '';
   $('#clink').value = (j.profile && j.profile.comment) || '';
   if(prof.passes.length && prof.keep.length) collapsed = true;   // back again with picks made: start folded
