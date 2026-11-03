@@ -774,14 +774,17 @@ async function sendMatch(env, db, auth, m) {
 async function autoRescan(env, db, auth) {
   const day = Date.now() - 86400000;
   const u = await db.prepare(`SELECT key, hashId, passes FROM swap_users WHERE active=1 AND hashId IS NOT NULL AND passes IS NOT NULL
-      AND wants IS NOT NULL AND wants <> '[]' AND COALESCE(autoAt, scannedAt, 0) < ? ORDER BY COALESCE(autoAt, scannedAt, 0) LIMIT 1`).bind(day).first();
+      AND ((wants IS NOT NULL AND wants <> '[]') OR autoAt = 0) AND COALESCE(autoAt, scannedAt, 0) < ? ORDER BY COALESCE(autoAt, scannedAt, 0) LIMIT 1`).bind(day).first();
   if (!u) return null;
   await db.prepare('UPDATE swap_users SET autoAt=? WHERE key=?').bind(Date.now(), u.key).run();   // claimed, even if it fails
   const prev = parse(u.passes, []);
   const only = {};
-  for (const p of prev) if (!/^(soccer|ufc)$/.test(p.sport)) { (only[p.sport] = only[p.sport] || []); if (!only[p.sport].includes(Number(p.season))) only[p.sport].push(Number(p.season)); }
-  // At most 10 sport-seasons, so one run stays short.
-  let n = 0; for (const k of Object.keys(only)) { only[k] = only[k].slice(0, Math.max(0, 10 - n)); n += only[k].length; if (!only[k].length) delete only[k]; }
+  // Every sport's current season (where new passes show up), then the seasons they hold passes in.
+  const add = (sp, se) => { (only[sp] = only[sp] || []); if (!only[sp].includes(Number(se))) only[sp].push(Number(se)); };
+  for (const [sp, list] of Object.entries(SWAP_SEASONS)) if (!/^(soccer|ufc)$/.test(sp)) add(sp, list[0]);
+  for (const p of prev) if (!/^(soccer|ufc)$/.test(p.sport)) add(p.sport, p.season);
+  // At most 14 sport-seasons, so one run stays short.
+  let n = 0; for (const k of Object.keys(only)) { only[k] = only[k].slice(0, Math.max(0, 14 - n)); n += only[k].length; if (!only[k].length) delete only[k]; }
   if (!n) return null;
   const r = await scanPasses(u.hashId, auth, only);
   if ((r.errors || []).length) { await stat(db, 'rescan_fail'); return { key: u.key, skipped: r.errors.length }; }   // try again tomorrow rather than drop passes
@@ -805,6 +808,16 @@ export async function swapTick(env) {
     try { await matchCols(db); } catch (e) {}
     try { const made = await runMatching(db); await stat(db, 'matches', made.length); await stat(db, 'match_runs'); } catch (e) { await botFail(db, 'matching', e.message); }
   }
+  // One-time (2026-11-02): clear everyone's scan timers and queue a fresh scan.
+  try {
+    if (!(await env.RATEBOARD_KV.get('scan_reset_v1'))) {
+      await env.RATEBOARD_KV.put('scan_reset_v1', String(Date.now()));
+      try { await db.prepare('ALTER TABLE swap_users ADD COLUMN boostScanAt INTEGER').run(); } catch (e) {}
+      try { await db.prepare('ALTER TABLE swap_users ADD COLUMN autoAt INTEGER').run(); } catch (e) {}
+      await db.prepare('UPDATE swap_users SET scannedAt = MIN(COALESCE(scannedAt, 0), ?), boostScanAt = NULL, autoAt = 0').bind(Date.now() - 4 * 3600000).run();
+      await stat(db, 'scan_reset');
+    }
+  } catch (e) {}
   try { await autoRescan(env, db, auth); } catch (e) { await botFail(db, 'rescan', e.message); }
   const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned') AND createdAt > ? ORDER BY id LIMIT 500`)
     .bind(Date.now() - 2 * 86400000).all()).results) || [];
@@ -1482,17 +1495,21 @@ async function handle({ request, env, waitUntil }) {
 
   if (op === 'scan') {
     if (!auth) return json({ error: 'No swap token found in the Cloudflare settings.' }, 503);
-    const u = await db.prepare('SELECT rsUser, hashId, scannedAt, passes FROM swap_users WHERE key=?').bind(me).first();
-    /* Members can scan once per interval (3 hours, or 15 minutes when Dennis
-       switches it on); the last scan time is the one saved with their passes,
-       so it holds wherever they scan from. Admins aren't limited. */
-    if (!acc.admin && !(url.searchParams.get('page') === 'boosts' && BOOST_FAST.has(String(me || '').toLowerCase()))) {
-      const every = url.searchParams.get('page') === 'boosts' ? 120 : await scanEvery(env);
-      const left = (Number(u && u.scannedAt) || 0) + every * 60000 - Date.now();
+    try { await db.prepare('ALTER TABLE swap_users ADD COLUMN boostScanAt INTEGER').run(); } catch (e) {}
+    const u = await db.prepare('SELECT rsUser, hashId, scannedAt, boostScanAt, passes FROM swap_users WHERE key=?').bind(me).first();
+    /* Two separate timers: the Swaps scan (every season, once per 3 hours or
+       15 minutes when Dennis switches it on) and the Boosts scan (its three
+       current seasons, once per 2 hours). One never uses up the other.
+       Admins aren't limited. */
+    const fromBoosts = url.searchParams.get('page') === 'boosts';
+    if (!acc.admin && !(fromBoosts && BOOST_FAST.has(String(me || '').toLowerCase()))) {
+      const every = fromBoosts ? 120 : await scanEvery(env);
+      const lastAt = fromBoosts ? Number(u && u.boostScanAt) || 0 : Number(u && u.scannedAt) || 0;
+      const left = lastAt + every * 60000 - Date.now();
       // Too soon for a fresh scan: hand back the last one instead.
       if (left > 0 && u && u.passes) {
         const m = Math.ceil(left / 60000);
-        return json({ hashId: u.hashId, passes: parse(u.passes, []), errors: [], cached: true, scannedAt: Number(u.scannedAt) || null,
+        return json({ hashId: u.hashId, passes: parse(u.passes, []), errors: [], cached: true, scannedAt: lastAt || null,
           note: `From your last scan. A fresh scan is allowed once every ${every >= 60 ? every / 60 + ' hours' : every + ' minutes'} - next in ${m >= 60 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : m + ' min'}.` });
       }
     } else if (!(await allow(url.origin, 'swapscan:' + me, 20, 600))) return json({ error: 'Twenty scans per ten minutes.' }, 429);
@@ -1517,7 +1534,11 @@ async function handle({ request, env, waitUntil }) {
       r.passes = prevP.filter(p => !(fresh.has(`${p.sport}:${p.season}`) && p.kind !== 'team')).concat(r.passes);
     }
     await fillNames(db, r.passes);
-    await db.prepare(`INSERT INTO swap_users (key, rsUser, hashId, passes, scannedAt, updatedAt, wants, keep, slots) VALUES (?, ?, ?, ?, ?, ?, '[]', '[]', '[]')
+    if (boostsOnly) await db.prepare(`INSERT INTO swap_users (key, rsUser, hashId, passes, boostScanAt, updatedAt, wants, keep, slots) VALUES (?, ?, ?, ?, ?, ?, '[]', '[]', '[]')
+      ON CONFLICT(key) DO UPDATE SET rsUser=excluded.rsUser, hashId=excluded.hashId, passes=excluded.passes,
+        boostScanAt=excluded.boostScanAt, updatedAt=excluded.updatedAt`)
+      .bind(me, rsUser, hashId, JSON.stringify(r.passes), Date.now(), Date.now()).run();
+    else await db.prepare(`INSERT INTO swap_users (key, rsUser, hashId, passes, scannedAt, updatedAt, wants, keep, slots) VALUES (?, ?, ?, ?, ?, ?, '[]', '[]', '[]')
       ON CONFLICT(key) DO UPDATE SET rsUser=excluded.rsUser, hashId=excluded.hashId, passes=excluded.passes,
         scannedAt=excluded.scannedAt, updatedAt=excluded.updatedAt`)
       .bind(me, rsUser, hashId, JSON.stringify(r.passes), Date.now(), Date.now()).run();
