@@ -590,6 +590,9 @@ const SACCESS_DDL = `CREATE TABLE IF NOT EXISTS swap_access (key TEXT PRIMARY KE
 /* The Real Pro wall in front of Swaps: one check per member, ever. Their
    board username is looked up on Real (they can't type another one), and
    the answer is kept, so it is never asked again. Dennis can clear it. */
+// Swaps stays closed to everyone but admins and hand-picked members until
+// this is true; then the Pro check opens it to every Real Pro member.
+const SWAPS_OPEN = false;
 const SPRO_DDL = `CREATE TABLE IF NOT EXISTS swap_pro (key TEXT PRIMARY KEY, pro INTEGER, tier INTEGER, rsId TEXT, at INTEGER)`;
 const OTD_DDL = `CREATE TABLE IF NOT EXISTS otd_access (key TEXT PRIMARY KEY, grantedAt INTEGER)`;
 /* Who can use Swaps and who can use OTD optimization - two separate grants.
@@ -614,7 +617,7 @@ export async function swapAccess(env, request) {
       db.prepare('SELECT 1 AS x FROM swap_access WHERE key=?').bind(who),
       db.prepare('SELECT 1 AS x FROM otd_access WHERE key=?').bind(who),
       db.prepare('SELECT 1 AS x FROM swap_pro WHERE key=? AND pro=1').bind(who)]);
-    swaps = swaps || !!(a.results && a.results.length) || !!(c.results && c.results.length);
+    swaps = swaps || !!(a.results && a.results.length) || (SWAPS_OPEN && !!(c.results && c.results.length));
     otd = !!(b.results && b.results.length);
   } catch (e) {}
   return { who, admin: false, ok: swaps || otd, swaps, otd };
@@ -948,6 +951,7 @@ export async function onRequest(ctx) {
 async function proCheck(env, db, url, acc) {
   if (!acc.who) return json({ error: 'Sign in on the board first.' }, 401);
   if (acc.swaps) return json({ access: true });
+  if (!SWAPS_OPEN) return json({ error: 'Swaps is not open yet.' }, 403);
   await db.prepare(SPRO_DDL).run();
   const had = await db.prepare('SELECT pro FROM swap_pro WHERE key=?').bind(acc.who).first();
   if (had) return json({ access: !!had.pro, checked: true, pro: !!had.pro });
