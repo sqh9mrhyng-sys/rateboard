@@ -647,7 +647,7 @@ async function loadSwapReports(close){
     + `<div style="white-space:pre-wrap;margin:4px 0">${esc(x.detail)}</div><button data-srclose="${x.id}">Done</button></div>`).join('') || 'No open reports.';
 }
 $('#sr-list').addEventListener('click', e => { const b = e.target.closest('[data-srclose]'); if(b){ b.disabled = true; loadSwapReports(b.dataset.srclose); } });
-const BS_COLS = [['dm_warn','Warn DMs'],['dm_contact','Contact DMs'],['dm_follow','Follow-ups'],['dm_reset','Reset replies'],['dm_rename','Username replies'],
+const BS_COLS = [['dm_warn','Warn DMs'],['dm_contact','Contact DMs'],['dm_follow','Follow-ups'],['dm_cancel','Called-off notices'],['cancel_kept','Swaps called off'],['dm_reset','Reset replies'],['dm_rename','Username replies'],
   ['fail','Failed'],['verify_try','Verify taps'],['verify_ok','Verified'],['pro_check','Pro checks'],['pro_yes','Pro yes'],['rename_ok','Username links'],
   ['reset_ok','Password resets'],['report_user','Usage reports'],['report_problem','Problem reports'],['matches','Matches made'],['rescans','Daily rescans'],['rescan_fail','Rescans failed']];
 async function loadBot(){

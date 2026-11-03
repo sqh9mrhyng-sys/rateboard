@@ -745,8 +745,21 @@ async function runDms(env, db, auth, rows, max, force) {
       await db.prepare(`UPDATE swap_matches SET status='cancelled', note='cancelled: same pass both ways' WHERE id=?`).bind(m.id).run();
       notes.push(`match ${m.id} cancelled (same pass)`); continue;
     }
-    if ((keeps.get(m.a) || new Set()).has(m.bGets) || (keeps.get(m.b) || new Set()).has(m.aGets)) {
-      await db.prepare(`UPDATE swap_matches SET status='cancelled', note='cancelled: a pass in it is kept now' WHERE id=?`).bind(m.id).run();
+    if (m.status === 'cancelling' || (keeps.get(m.a) || new Set()).has(m.bGets) || (keeps.get(m.b) || new Set()).has(m.aGets)) {
+      // Anyone already told to buy hears it's off, once.
+      for (const side of ['A', 'B']) {
+        if (!m['warn' + side] && !m['done' + side]) continue;
+        const r = await db.prepare(`UPDATE swap_matches SET ${'follow' + side}=? WHERE id=? AND ${'follow' + side} IS NULL`).bind(now, m.id).run();
+        if (!(r && r.meta && r.meta.changes)) continue;
+        const who = side === 'A' ? m.a : m.b, other = side === 'A' ? m.b : m.a, gets = side === 'A' ? m.bGets : m.aGets;
+        try {
+          const u = await loadMember(db, who), o = await loadMember(db, other);
+          if (u && u.hashId) { const ch = await dmChannel(db, auth, u.hashId, u.rsUser, env);
+            await dmSend(auth, ch, `Your swap with @${(o && o.rsUser) || other} for ${playerName(u, gets)} is called off - a pass in it isn't being swapped anymore. Don't buy that pack; if you already did, the cards stay yours.`);
+            await stat(db, 'dm_cancel'); }
+        } catch (e) { await botFail(db, 'dm_cancel', `${who}: ${e.message || e}`); }
+      }
+      await db.prepare(`UPDATE swap_matches SET status='cancelled', note=COALESCE(note, 'called off: a pass in it is kept now') WHERE id=?`).bind(m.id).run();
       notes.push(`match ${m.id} cancelled (kept pass)`); await stat(db, 'cancel_kept');
     } else live.push(m);
   }
@@ -760,6 +773,17 @@ async function runDms(env, db, auth, rows, max, force) {
   }
   let sent = 0;
   const mark = async (list, col) => { for (const { m, side } of list) { await db.prepare(`UPDATE swap_matches SET ${col + side}=? WHERE id=?`).bind(now, m.id).run(); m[col + side] = now; } };
+  /* Claim before sending: only the run that sets the column first sends the DM,
+     so two overlapping runs can never both send it. A failed send gives it back. */
+  const claim = async (list, col) => {
+    const got = [];
+    for (const x of list) {
+      const r = await db.prepare(`UPDATE swap_matches SET ${col + x.side}=? WHERE id=? AND ${col + x.side} IS NULL`).bind(now, x.m.id).run();
+      if (r && r.meta && r.meta.changes) { x.m[col + x.side] = now; got.push(x); }
+    }
+    return got;
+  };
+  const unclaim = async (list, col) => { for (const x of list) { await db.prepare(`UPDATE swap_matches SET ${col + x.side}=NULL WHERE id=? AND ${col + x.side}=?`).bind(x.m.id, now).run(); x.m[col + x.side] = null; } };
   const send = async (who, text, kind) => {
     const me = await member(who);
     if (!me || !me.hashId) { notes.push(`${who}: never verified`); await botFail(db, kind, `${who}: never verified`); return false; }
@@ -771,23 +795,31 @@ async function runDms(env, db, auth, rows, max, force) {
     const who = list[0].who;
     const first = Math.min(...list.map(x => x.due)), last = Math.max(...list.map(x => x.due));
     // 1. warn: every pack for the day, once.
-    const unwarned = list.filter(x => !x.m['warn' + x.side]);
+    let unwarned = list.filter(x => !x.m['warn' + x.side]);
     if (unwarned.length && (now >= first - 30 * 60000)) {
-      const lines = []; for (const x of unwarned) { const l = await sideLines(member, x.m, x.side); if (l) lines.push(l.buy); }
-      if (lines.length && await send(who, warnText(lines), 'warn')) await mark(unwarned, 'warn'); else continue;
+      unwarned = await claim(unwarned, 'warn');
+      if (unwarned.length) {
+        const lines = []; for (const x of unwarned) { const l = await sideLines(member, x.m, x.side); if (l) lines.push(l.buy); }
+        if (!(lines.length && await send(who, warnText(lines), 'warn'))) { await unclaim(unwarned, 'warn'); continue; }
+      }
     }
     // 2-4. contact: one per swap hour that has come.
     const byHour = new Map();
     for (const x of list) if (!x.m['done' + x.side] && now >= x.due) { const k = force ? 'now' : x.due; (byHour.get(k) || byHour.set(k, []).get(k)).push(x); }
-    for (const [, hr] of byHour) {
+    for (const [, hr0] of byHour) {
       if (sent >= max) break;
+      const noWarn = hr0.filter(x => !x.m['warn' + x.side]);
+      const hr = await claim(hr0, 'done');
+      if (!hr.length) continue;
       const lines = [], buy = [];
-      for (const x of hr) { const l = await sideLines(member, x.m, x.side); if (!l) continue; lines.push(l.contact); if (!x.m['warn' + x.side]) buy.push(l.buy); }
-      if (lines.length && await send(who, contactText(lines, buy), 'contact')) { await mark(hr, 'done'); await mark(hr.filter(x => !x.m['warn' + x.side]), 'warn'); }
+      for (const x of hr) { const l = await sideLines(member, x.m, x.side); if (!l) continue; lines.push(l.contact); if (noWarn.includes(x)) buy.push(l.buy); }
+      if (lines.length && await send(who, contactText(lines, buy), 'contact')) await mark(hr.filter(x => noWarn.includes(x)), 'warn');
+      else await unclaim(hr, 'done');
     }
     // 5. follow-up, 90 min after their last swap hour, once every contact is out.
     if (sent < max && list.every(x => x.m['done' + x.side]) && list.some(x => !x.m['follow' + x.side]) && (force || now >= last + 90 * 60000)) {
-      if (await send(who, FOLLOW_TEXT, 'follow')) await mark(list.filter(x => !x.m['follow' + x.side]), 'follow');
+      const fl = await claim(list.filter(x => !x.m['follow' + x.side]), 'follow');
+      if (fl.length && !(await send(who, FOLLOW_TEXT, 'follow'))) await unclaim(fl, 'follow');
     }
   }
   // Status: sent once both sides have had the follow-up.
@@ -805,7 +837,7 @@ async function cancelKept(db, who, keep) {
   let n = 0;
   for (const m of rows) {
     const gives = m.a === who ? m.bGets : m.aGets;      // A gives what B asked for, and the other way round
-    if (keep.has(gives)) { await db.prepare(`UPDATE swap_matches SET status='cancelled', note=? WHERE id=?`).bind(`cancelled: ${who} keeps that pass`, m.id).run(); n++; }
+    if (keep.has(gives)) { await db.prepare(`UPDATE swap_matches SET status='cancelling', note=? WHERE id=?`).bind(`called off: @${who} keeps that pass`, m.id).run(); n++; }
   }
   return n;
 }
@@ -954,7 +986,7 @@ export async function swapTick(env) {
     }
   } catch (e) {}
   try { await autoRescan(env, db, auth); } catch (e) { await botFail(db, 'rescan', e.message); }
-  const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned') AND createdAt > ? ORDER BY id LIMIT 500`)
+  const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned','cancelling') AND createdAt > ? ORDER BY id LIMIT 500`)
     .bind(Date.now() - 2 * 86400000).all()).results) || [];
   if (!rows.length) return [];
   return runDms(env, db, auth, rows, 9, false);
