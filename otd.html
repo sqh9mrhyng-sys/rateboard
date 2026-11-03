@@ -571,7 +571,7 @@ $('#scan').addEventListener('click', async () => {
   const u = $('#rsuser').value.trim();
   if(!u){ $('#status').textContent = 'Enter your Real username first.'; return; }
   $('#scan').disabled = true;
-  $('#status').textContent = 'Scanning every sport and season… 1/3';
+  $('#status').textContent = 'Scanning every sport and season… 1/5';
   const j = await fullScan(`&rsUser=${encodeURIComponent(u)}`, p => { $('#status').textContent = `Scanning every sport and season… ${p.next + 1}/${p.parts} · ${p.found} passes so far`; });
   $('#scan').disabled = false;
   if(j.error){ $('#status').textContent = j.error; return; }

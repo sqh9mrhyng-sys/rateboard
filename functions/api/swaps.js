@@ -105,7 +105,7 @@ const SWAP_SEASONS = {
 };
 // Every call one full scan makes, in order, and how many go in each part.
 const SCAN_STEPS = Object.entries(SWAP_SEASONS).flatMap(([sp, v]) => v.flatMap(se => sp === 'ufc' ? [[sp, se, 'team']] : [[sp, se, 'player'], [sp, se, 'team']]));
-const SCAN_PER_PART = 30;   // 10 calls on each of the three Real accounts per part
+const SCAN_PER_PART = 20;   // 10 calls on each of the two scanning accounts per part
 
 // What the Swaps page scans: no FC or UFC (nothing to swap there), golf back to 2014.
 const SWAPS_SCAN = Object.fromEntries(Object.entries(SWAP_SEASONS).filter(([k]) => k !== 'soccer' && k !== 'ufc')
@@ -232,6 +232,14 @@ async function rsGetJson(url, auth) {
     throw new Error(`Real ${res.status}: ${text.slice(0, 160)}`);
   }
 }
+
+/* The bot account (RS_SWAP_TOKEN) only handles DMs. Reading passes and
+   looking people up goes through the board's and the market's accounts. */
+function scanToks(env) {
+  const t = [env.RS_AUTH_TOKEN, env.RS_MARKET_TOKEN].filter(x => typeof x === 'string' && x.length > 20);
+  return t.length ? [...new Set(t)] : [swapToken(env)].filter(Boolean);
+}
+const scanTok = env => scanToks(env)[Math.floor(Math.random() * scanToks(env).length)];
 
 async function resolveHashId(username, auth) {
   const d = await rsGetJson(`https://web.realapp.com/searchusers?query=${encodeURIComponent(username)}`, auth);
@@ -863,7 +871,7 @@ async function fullRescan(env, db, auth) {
   await db.prepare('UPDATE swap_users SET fullPart=? WHERE key=?').bind(done ? null : part + 1, u.key).run();
   if (!chunk.length) return null;
   const only = {}; for (const [sp, se] of chunk) (only[sp] = only[sp] || []).push(se);
-  const r = await scanPasses(u.hashId, auth, only);
+  const r = await scanPasses(u.hashId, scanTok(env), only);
   if ((r.errors || []).length) { await stat(db, 'rescan_fail'); return { key: u.key, part, skipped: r.errors.length }; }   // that part keeps its old passes
   const fresh = new Set(chunk.map(([sp, se]) => `${sp}:${se}`));
   const merged = parse(u.passes, []).filter(p => !fresh.has(`${p.sport}:${p.season}`)).concat(r.passes);
@@ -892,7 +900,7 @@ async function autoRescan(env, db, auth) {
   // At most 14 sport-seasons, so one run stays short.
   let n = 0; for (const k of Object.keys(only)) { only[k] = only[k].slice(0, Math.max(0, 14 - n)); n += only[k].length; if (!only[k].length) delete only[k]; }
   if (!n) return null;
-  const r = await scanPasses(u.hashId, auth, only);
+  const r = await scanPasses(u.hashId, scanTok(env), only);
   if ((r.errors || []).length) { await stat(db, 'rescan_fail'); return { key: u.key, skipped: r.errors.length }; }   // try again tomorrow rather than drop passes
   const fresh = new Set(Object.entries(only).flatMap(([k, v]) => v.map(se => `${k}:${se}`)));
   const merged = prev.filter(p => !fresh.has(`${p.sport}:${p.season}`)).concat(r.passes);
@@ -1446,7 +1454,7 @@ async function proCheck(env, db, url, acc) {
   if (!auth) return json({ error: 'The check is not set up yet.' }, 503);
   let d;
   const rn = await realName(db, acc.who);
-  try { d = await rsGetJson(`https://web.realapp.com/searchusers?query=${encodeURIComponent(rn)}`, auth); }
+  try { d = await rsGetJson(`https://web.realapp.com/searchusers?query=${encodeURIComponent(rn)}`, scanTok(env)); }
   catch (e) { return json({ error: 'Could not reach Real just now - try again in a minute.' }, 502); }
   if (!d || !Array.isArray(d.users)) return json({ error: 'Could not reach Real just now - try again in a minute.' }, 502);
   const u = d.users.find(x => String(x.userName || '').toLowerCase() === rn.toLowerCase()) || null;
@@ -1778,7 +1786,7 @@ async function handle({ request, env, waitUntil }) {
       const rsUser = acc.admin && url.searchParams.get('rsUser') ? String(url.searchParams.get('rsUser')).trim().replace(/^@/, '') : await realName(db, me);
       let hashId = u && String(u.rsUser || '').toLowerCase() === rsUser.toLowerCase() ? u.hashId : null;
       if (!hashId && rsUser.toLowerCase() === String(await realName(db, me)).toLowerCase()) { try { await db.prepare(SPRO_DDL).run(); const pr = await db.prepare('SELECT rsId FROM swap_pro WHERE key=?').bind(me).first(); if (pr && pr.rsId) hashId = pr.rsId; } catch (e) {} }
-      try { if (!hashId) hashId = await resolveHashId(rsUser, auth); } catch (e) { return json({ error: 'Could not reach Real just now - try again in a minute.' }, 502); }
+      try { if (!hashId) hashId = await resolveHashId(rsUser, scanTok(env)); } catch (e) { return json({ error: 'Could not reach Real just now - try again in a minute.' }, 502); }
       if (!hashId) return json({ error: `No Real account called ${rsUser}. If your Real username is different, link it at raxacademy.app/username.` }, 404);
       job = { rsUser, hashId, passes: [], errors: [], at: Date.now() };
     } else {
@@ -1789,19 +1797,19 @@ async function handle({ request, env, waitUntil }) {
        board's, the market's and the bot's), each in its own lane at its own
        0.6s pace, so no one account is hit harder but the scan is ~3x faster. */
     const steps = SCAN_STEPS.slice(part * SCAN_PER_PART, (part + 1) * SCAN_PER_PART);
-    const toks = [...new Set([auth, env.RS_AUTH_TOKEN, env.RS_MARKET_TOKEN].filter(t => typeof t === 'string' && t.length > 20))];
+    const toks = scanToks(env);   // board + market accounts - never the bot, which only handles DMs
     const lanes = toks.map(() => []);
     steps.forEach((st, i) => lanes[i % toks.length].push(st));
     await Promise.all(lanes.map(async (list, li) => {
       for (const [sport, season, kind] of list) {
         let ok = false;
-        for (const tok of [toks[li], auth]) {          // if a lane's account fails, the bot's tries once
+        const tries = [...new Set([toks[li], toks[(li + 1) % toks.length]])];   // a failed call tries the other account once
+        for (let t = 0; t < tries.length && !ok; t++) {
           try {
-            const d = await rsGetJson(`https://web.realapp.com/userpasses/${encodeURIComponent(job.hashId)}/passes?entityType=${kind}&season=${season}&sport=${sport}`, tok);
+            const d = await rsGetJson(`https://web.realapp.com/userpasses/${encodeURIComponent(job.hashId)}/passes?entityType=${kind}&season=${season}&sport=${sport}`, tries[t]);
             for (const r of rowsOf(d)) { const p = passOf(r, sport, season, kind); if (p) job.passes.push(p); }
-            ok = true; break;
-          } catch (e) { if (tok === auth) job.errors.push(`${sport} ${season} ${kind}: ${String(e.message || e).slice(0, 100)}`); }
-          if (tok === auth) break;
+            ok = true;
+          } catch (e) { if (t === tries.length - 1) job.errors.push(`${sport} ${season} ${kind}: ${String(e.message || e).slice(0, 100)}`); }
         }
         void ok;
         await sleep(600);
@@ -2199,7 +2207,7 @@ async function handle({ request, env, waitUntil }) {
       let hid = null;
       try { await db.prepare(SPRO_DDL).run(); const pr = await db.prepare('SELECT rsId FROM swap_pro WHERE key=?').bind(me).first(); hid = pr && pr.rsId; } catch (e) {}
       const rn = await realName(db, me);
-      if (!hid) { try { hid = await resolveHashId(rn, auth); } catch (e) { return json({ error: 'Could not reach Real just now - try again in a minute.' }, 502); } }
+      if (!hid) { try { hid = await resolveHashId(rn, scanTok(env)); } catch (e) { return json({ error: 'Could not reach Real just now - try again in a minute.' }, 502); } }
       if (!hid) return json({ error: `No Real account called ${rn}. If your Real username is different, link it at raxacademy.app/username.` }, 404);
       await db.prepare(`INSERT INTO swap_users (key, rsUser, hashId) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET hashId=excluded.hashId, rsUser=excluded.rsUser`)
         .bind(me, rn, hid).run();
