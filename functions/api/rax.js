@@ -1076,7 +1076,24 @@ async function marketAgg(db, sport, season, nowIso, pids) {
 // Forgetting what has been walked is all a requeue is: the rows stay, and the
 // game-log insert updates in place, so the collector tops a season up rather
 // than building it again.
+/* A sweep's window: from the day after the last finished sweep, up to
+   yesterday (Eastern). Passes only write games inside it, so a sweep never
+   re-writes what was already collected and never picks up a game that is
+   still being played, or whose rax Real hasn't posted yet. */
+const etYesterday = () => { const d = new Date(Date.now() - 86400000);
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d); };
+const nextDay = day => { const d = new Date(day + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); };
+async function sweepWindow(env, sport, season) {
+  try { return JSON.parse((await env.RATEBOARD_KV.get(`gl_window_${sport}_${season}`)) || 'null'); } catch (e) { return null; }
+}
+const inWindow = (w, day) => !w || !day || ((!w.from || String(day) >= w.from) && (!w.to || String(day) <= w.to));
+
 async function forgetWalk(env, sport, season) {
+  try {
+    const through = await env.RATEBOARD_KV.get(`gl_through_${sport}_${season}`);
+    const to = etYesterday();
+    await env.RATEBOARD_KV.put(`gl_window_${sport}_${season}`, JSON.stringify({ from: through ? nextDay(through) : null, to, at: Date.now() }));
+  } catch (e) {}
   const keys = [`games_${sport}_${season}`,
                 `gamelog_done_${sport}_${season}`,
                 `gamelog_rax_${sport}_${season}`,
@@ -1650,7 +1667,7 @@ const GAMES_PER_TICK = 10;        // games per call, each one a full game
    the asking, so fetching more at once buys nothing. 150 fills about
    forty-five seconds of the minute between ticks, which is as much as can be
    taken without a call still running when the next one starts. */
-const GAMES_PER_TICK_BY_SPORT = { mlb: 60, ncaaf: 40, nfl: 80, nba: 80, wnba: 60, nhl: 60, ncaam: 150 };   // nfl/nba/ncaam back up 2026-11-03 so CBB and NFL keep up
+const GAMES_PER_TICK_BY_SPORT = { mlb: 60, ncaaf: 80, nfl: 80, nba: 80, wnba: 60, nhl: 60, ncaam: 150 };   // nfl/nba/ncaam back up 2026-11-03 so CBB and NFL keep up
 
 /* ----- historical seasons ---------------------------------------------------
    Real serves game logs with a real per-game rating all the way back to the
@@ -1858,7 +1875,7 @@ const COLLECT_PAUSE_UNTIL = 0;   // back on 2026-11-02: change-only writes, held
 // NFL 2026 first: a week of NFL is small, and behind CBB's daily sweep (a
 // whole Division I season) it was never reached - Sunday's games were missed
 // and NFL Boosts had nothing to go on (2026-11-03).
-const EXTRA_JOBS = [['nfl', 2026], ['ncaam', 2027], ['nba', 2027], ['ufc', 2023]];   // CBB second (2026-11-03): it was never reached at the back
+const EXTRA_JOBS = [['nfl', 2026], ['ncaaf', 2026], ['ncaam', 2027], ['nba', 2027], ['ufc', 2023]];   // CBB second (2026-11-03): it was never reached at the back
 
 /* Game-data sweeps, on a set schedule at 9am Eastern. On a sweep day the
    season's walk is forgotten, so the queue re-walks it and picks up every game
@@ -1888,7 +1905,10 @@ const ONE_OFF_RESCANS = [
   { id: 'wnba2026-final-plays', sport: 'wnba', season: 2026, at: Date.parse('2026-11-01T16:00:00Z'), plays: true },
   // NFL 2026 catch-up: Sunday 1 November was never pulled. Re-walk now, plays two hours later.
   { id: 'nfl2026-catchup-1103', sport: 'nfl', season: 2026, at: Date.parse('2026-11-04T05:30:00Z'), walk: true },
-  { id: 'nfl2026-catchup-1103-plays', sport: 'nfl', season: 2026, at: Date.parse('2026-11-04T07:30:00Z'), plays: true }
+  { id: 'nfl2026-catchup-1103-plays', sport: 'nfl', season: 2026, at: Date.parse('2026-11-04T07:30:00Z'), plays: true },
+  // CFB 2026 catch-up: Saturday 31 October's games, behind the daily sweeps.
+  { id: 'cfb2026-catchup-1103', sport: 'ncaaf', season: 2026, at: Date.parse('2026-11-04T07:20:00Z'), walk: true },
+  { id: 'cfb2026-catchup-1103-plays', sport: 'ncaaf', season: 2026, at: Date.parse('2026-11-04T09:20:00Z'), plays: true }
 ];
 const ONE_OFF_KEY = 'queue_oneoff_v1';
 const PACE_CLEAR_ONCE = 'queue_pace_clear_1103';
@@ -5164,7 +5184,7 @@ async function handleGet({ request, env, waitUntil }) {
       const key = `${sp}:${se}`;
       /* Sports being rescanned flat out, with no rest going into, between or
          out of their seasons. Empty this set again once the rescan is done. */
-      const NO_REST = new Set(['nhl', 'nfl', 'ncaam', 'nba']);   // the seasons Boosts and the board need fresh: no 2-hour rests around them
+      const NO_REST = new Set(['nhl', 'nfl', 'ncaaf', 'ncaam', 'nba']);   // the seasons Boosts and the board need fresh: no 2-hour rests around them
       const prevSp = String(pace.lastJob || '').split(':')[0];
       if (pace.lastJob && pace.lastJob !== key && (NO_REST.has(sp) || NO_REST.has(prevSp))) {
         try { await env.RATEBOARD_KV.put(PACE_KEY, JSON.stringify({ lastJob: key, holdUntil: 0 })); } catch (e) {}
@@ -6724,8 +6744,11 @@ async function handleGet({ request, env, waitUntil }) {
             return;
           }
           const done = await readRaxDone();
+          const raxWin = (await sweepWindow(env, sport, season)) || { from: null, to: etYesterday() };
           const todo = store.ids.filter(id => !done[id]).slice(0, LIMIT);
           if (!todo.length) {
+            // Both passes done for this sweep: next sweep starts the day after this window.
+            try { if (raxWin && raxWin.to) await env.RATEBOARD_KV.put(`gl_through_${sport}_${season}`, raxWin.to); } catch (e) {}
             await send(`nothing left - all ${store.ids.length} players have their rax.\n`);
             await send(`##STATE ${store.ids.length} ${store.ids.length} 0\n`);
             await w.close();
@@ -6748,13 +6771,16 @@ async function handleGet({ request, env, waitUntil }) {
                  longer on the screen go to 0 if they aren't already, and the
                  rest only where the figure differs. Zeroing everything and
                  writing it all back cost two writes per game per walk. */
-              const listed = list.filter(e => e && e.day && e.earnings != null).map(e => String(e.day).replace(/'/g, ''));
+              // Only the sweep's window: older games keep what they have, today's wait.
+              const win = raxWin;
+              const listed = list.filter(e => e && e.day && e.earnings != null && inWindow(win, e.day)).map(e => String(e.day).replace(/'/g, ''));
+              const winSql = (win && win.from ? ` AND day >= '${win.from}'` : '') + (win && win.to ? ` AND day <= '${win.to}'` : '');
               const stmts = [db.prepare(
-                `UPDATE gamelog SET rax = 0 WHERE sport = ? AND season = ? AND playerId = ? AND (rax IS NULL OR rax <> 0)`
+                `UPDATE gamelog SET rax = 0 WHERE sport = ? AND season = ? AND playerId = ? AND (rax IS NULL OR rax <> 0)${winSql}`
                 + (listed.length ? ` AND day NOT IN (${listed.map(d => `'${d}'`).join(',')})` : ''))
                 .bind(sport, Number(season), Number(id))];
               for (const e of list) {
-                if (!e || !e.day || e.earnings == null) continue;
+                if (!e || !e.day || e.earnings == null || !inWindow(win, e.day)) continue;
                 if (Array.isArray(e.playerBoxScoreIds) && e.playerBoxScoreIds.length > 1) { skipped++; continue; }
                 stmts.push(db.prepare(sql).bind(Number(e.earnings), sport, Number(season), Number(id), e.day, Number(e.earnings)));
               }
@@ -6781,6 +6807,7 @@ async function handleGet({ request, env, waitUntil }) {
 
           const have = store.ids.filter(id => done[id]).length;
           const left = store.ids.length - have;
+          if (!left) { try { if (raxWin && raxWin.to) await env.RATEBOARD_KV.put(`gl_through_${sport}_${season}`, raxWin.to); } catch (e) {} }
           await send(`\n${n} players this run, ${updates} game rows updated`
                      + (skipped ? `, ${skipped} skipped for sharing a date with another game` : '') + '.\n');
           await send(left > 0 ? `${have} of ${store.ids.length} players done - ${left} to go.\n`
@@ -6831,11 +6858,13 @@ async function handleGet({ request, env, waitUntil }) {
           const WALKED_KEY = `gamelog_walked_${sport}_${season}`;
           let walked = null; try { walked = await env.RATEBOARD_KV.get(WALKED_KEY); } catch (e) {}
           const feedN = walked ? 12 : 200;
+          const glWin = walked ? await sweepWindow(env, sport, season) : { from: null, to: etYesterday() };
           for (const id of todo) {
             try {
               const d = await rsGet(feedUrl(id, feedN), auth);
               const bs = (d && d.playerBoxScores) || [];
-              const rows = bs.filter(b => b && b.gameId != null).map(b => gamelogRow(sport, season, b));
+              const rows = bs.filter(b => b && b.gameId != null).map(b => gamelogRow(sport, season, b))
+                .filter(r => inWindow(glWin, r.day));
               // One statement per row: D1 caps how many values a single query
               // may bind, so rows go in as a batch of small statements instead
               // of one wide insert.
