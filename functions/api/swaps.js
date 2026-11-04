@@ -302,7 +302,10 @@ async function packAvg(db, cache, key) {
     cache.set(sk, { by, all: vals.length ? vals.reduce((a, v) => a + v, 0) / vals.length : null });
   }
   const c = cache.get(sk);
-  return c.by.get(Number(id)) || c.all || null;
+  // A swap is one pack, and a pack is three cards (floor of 10, as on the pack data tab).
+  // This used to count one card per swap, so it allowed about three times the swaps a goal needed.
+  const card = c.by.get(Number(id)) || c.all || null;
+  return card ? Math.max(10, card * 3) : null;
 }
 async function goalRoom(db, cache, u, usedFor, wantKey) {
   const want = wantKey || (u.wants || [])[0];
@@ -1916,7 +1919,7 @@ async function handle({ request, env, waitUntil }) {
     if (u && want) {
       const g = await goalRoom(db, new Map(), u, (x, w) => usedSince(db, x, w));
       if (g.reached) why.push(`Your pass is at ${g.rating}, which already meets your goal of ${g.goal}.`);
-      else if (g.limited && g.left <= 0) why.push(`You already have the ${g.need} swap${g.need === 1 ? '' : 's'} it should take to reach your goal (about ${g.avg} rating a pack). New ones start after your next daily scan.`);
+      else if (g.limited && g.left <= 0) why.push(`You already have the ${g.need} swap${g.need === 1 ? '' : 's'} it should take to reach your goal (about ${g.avg} rating a pack of 3 cards). New ones start after your next daily scan.`);
     }
     const open = await db.prepare(`SELECT COUNT(*) AS n FROM swap_matches WHERE (a=? OR b=?) AND (status IN ('pending','sending','warned') OR (status='sent' AND sentAt > ?))`).bind(me, me, Date.now() - 86400000).first();
     if (u && Number(u.dayCap) > 0 && Number(open && open.n) >= Number(u.dayCap)) why.push(`You have ${open.n} swap${open.n == 1 ? '' : 's'} going - your Scale limit is ${u.dayCap} a day (step 6). Raise it for more.`);
@@ -2022,8 +2025,12 @@ async function handle({ request, env, waitUntil }) {
      matches; ?user= adds that member's matches, newest first. */
   if (op === 'swappers') {
     await matchCols(db);
-    const rows = ((await db.prepare(`SELECT key, rsUser, wants, slots, dayCap, caps, scannedAt, updatedAt, active, hashId,
-        (SELECT json_group_array(json_object('key', w.value, 'name', (SELECT json_extract(p.value, '$.name') FROM json_each(swap_users.passes) p WHERE json_extract(p.value, '$.key') = w.value LIMIT 1)))
+    const rows = ((await db.prepare(`SELECT key, rsUser, wants, slots, dayCap, caps, goal, scannedAt, updatedAt, active, hashId,
+        (SELECT json_group_array(json_object('key', w.value,
+             'name', (SELECT json_extract(p.value, '$.name') FROM json_each(swap_users.passes) p WHERE json_extract(p.value, '$.key') = w.value LIMIT 1),
+             'rating', (SELECT json_extract(p.value, '$.rating') FROM json_each(swap_users.passes) p WHERE json_extract(p.value, '$.key') = w.value LIMIT 1),
+             'level', (SELECT json_extract(p.value, '$.levelLabel') FROM json_each(swap_users.passes) p WHERE json_extract(p.value, '$.key') = w.value LIMIT 1),
+             'progress', (SELECT json_extract(p.value, '$.progress') FROM json_each(swap_users.passes) p WHERE json_extract(p.value, '$.key') = w.value LIMIT 1)))
            FROM json_each(swap_users.wants) w) AS picks
         FROM swap_users WHERE wants IS NOT NULL AND wants <> '[]' ORDER BY updatedAt DESC LIMIT 500`).all()).results) || [];
     const since = Date.now() - 14 * 86400000;
@@ -2032,7 +2039,7 @@ async function handle({ request, env, waitUntil }) {
     const cm = new Map(cnt.map(x => [x.k, x]));
     let restricted = new Set(); try { await db.prepare(RESTRICT_DDL).run(); restricted = new Set((((await db.prepare('SELECT key FROM restricted').all()).results) || []).map(x => x.key)); } catch (e) {}
     const users = rows.map(r => ({ key: r.key, rsUser: r.rsUser || r.key, active: !!r.active, restricted: restricted.has(r.key), slots: parse(r.slots, []),
-      picks: parse(r.picks, []), dayCap: r.dayCap ?? null, caps: parse(r.caps, {}) || {}, scannedAt: r.scannedAt, updatedAt: r.updatedAt,
+      picks: parse(r.picks, []), goal: r.goal ?? null, dayCap: r.dayCap ?? null, caps: parse(r.caps, {}) || {}, scannedAt: r.scannedAt, updatedAt: r.updatedAt,
       open: Number((cm.get(r.key) || {}).open) || 0, matches14: Number((cm.get(r.key) || {}).n) || 0 }));
     let matches = null;
     const who = String(url.searchParams.get('user') || '');

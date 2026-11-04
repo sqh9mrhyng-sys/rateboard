@@ -801,8 +801,8 @@ function drawSwappers(){
     return `<div class="ucard su1" data-su="${esc(u.key)}"><div class="top"><b>@${esc(u.rsUser)}</b>${u.rsUser.toLowerCase() !== String(u.key).toLowerCase() ? `<span class="note">board: ${esc(u.key)}</span>` : ''}
         ${u.active ? '' : '<span class="pill">not saved</span>'}${u.restricted ? '<span class="pill off">no posts/swaps</span>' : ''}
         <span class="note" style="margin-left:auto"><b>${u.open}</b> open · ${u.matches14} in 14 days</span></div>
-      <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">${u.picks.map((p, i) => `<span class="pill">${i + 1}. ${esc(p.name || 'player')} · ${esc(suSeason(p.key))}</span>`).join('')}</div>
-      <div class="note" style="margin-top:4px">Hours: ${u.slots.map(suHour).join(', ') || 'none'}${lim.length ? ' · Scale: ' + esc(lim.join(' · ')) : ''}</div>
+      <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">${u.picks.map((p, i) => `<span class="pill">${i + 1}. ${esc(p.name || 'player')} · ${esc(suSeason(p.key))}${p.rating != null ? ` · <b>${esc(Math.round(p.rating * 10) / 10)}</b> rating${p.level ? ' (' + esc(p.level) + (p.progress ? ', ' + esc(p.progress) : '') + ')' : ''}` : ''}</span>`).join('')}</div>
+      <div class="note" style="margin-top:4px">${u.goal ? `Goal rating: <b>${esc(u.goal)}</b> · ` : ''}Scanned ${u.scannedAt ? esc(new Date(u.scannedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })) : 'never'} · Hours: ${u.slots.map(suHour).join(', ') || 'none'}${lim.length ? ' · Scale: ' + esc(lim.join(' · ')) : ''}</div>
       ${suOpen === u.key ? '<div class="sum-m" data-sm>Loading matches…</div>' : ''}</div>`; }).join('') || 'Nobody.';
 }
 async function loadSwappers(){ const j = await api('/api/swaps?op=swappers'); if(j.error){ $('#su-list').textContent = j.error; return; } suData = j.users || []; drawSwappers(); }
