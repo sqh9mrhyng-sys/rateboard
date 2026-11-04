@@ -575,7 +575,7 @@ $('#wants').addEventListener('click', async e => { const b = e.target.closest('b
     const j = await api('/api/swaps?op=dropwant', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: x }) });
     if(j.error){ $('#savemsg').textContent = j.error; return; }
     savedWants.delete(x); loadWantCounts(); loadSwaps();
-    $('#savemsg').textContent = 'Player removed and saved.' + (j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} for him ${j.calledOff === 1 ? 'is' : 'are'} called off - you'll both get a message.` : '');
+    $('#savemsg').textContent = 'Player removed and saved.' + (j.late ? ' Too late to change swaps already warned - please do them at :00.' : '') + (j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} for him ${j.calledOff === 1 ? 'is' : 'are'} called off - you'll both get a message.` : '');
     return; }
   // ▲/▼ move a pick up or down the priority order (saved with Save).
   const i = b.dataset.up != null ? Number(b.dataset.up) : b.dataset.dn != null ? Number(b.dataset.dn) : -1; if(i < 0) return;
@@ -604,7 +604,7 @@ $('#save').addEventListener('click', async () => {
   if(!SWAP_COMMENT_RE.test($('#clink').value.trim())){ $('#savemsg').textContent = 'That link is not a comment under the swap post. Open the swap post, copy the link to your comment, and paste it in step 2.'; return; }
   const j = await api('/api/swaps?op=save', { method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 5), comment: $('#clink').value.trim(), goal: $('#goal').value.trim(), dayCap: $('#daycap').value.trim(), caps, keep: prof.keep, slots: prof.slots, names: wantNames }) });
-  $('#savemsg').textContent = j.error ? j.error : 'Saved.' + (j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} for a player or hour you removed ${j.calledOff === 1 ? 'is' : 'are'} called off - you'll both get a message.` : '');
+  $('#savemsg').textContent = j.error ? j.error : 'Saved.' + (j.late ? ' Too late to change swaps already warned - please do them at :00.' : '') + (j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} for a player or hour you removed ${j.calledOff === 1 ? 'is' : 'are'} called off - you'll both get a message.` : '');
   if(!j.error){ savedWants = new Set(prof.wants); prof.active = true; paintPaused(); loadHourCounts(); loadWantCounts(); loadSwaps(); }
   try{ localStorage.setItem('ratebrd_swapnames', JSON.stringify(wantNames)); }catch(e){}
 });

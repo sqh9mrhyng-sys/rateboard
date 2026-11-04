@@ -1090,7 +1090,8 @@ async function runDms(env, db, auth, rows, max, force) {
       await db.prepare(`UPDATE swap_matches SET status='cancelled', note='cancelled: same pass both ways' WHERE id=?`).bind(m.id).run();
       notes.push(`match ${m.id} cancelled (same pass)`); continue;
     }
-    if (m.status === 'cancelling' || (keeps.get(m.a) || new Set()).has(m.bGets) || (keeps.get(m.b) || new Set()).has(m.aGets)) {
+    const keptNow = (keeps.get(m.a) || new Set()).has(m.bGets) || (keeps.get(m.b) || new Set()).has(m.aGets);
+    if (m.status === 'cancelling' || (keptNow && !lateStage(m))) {   // a late keep doesn't undo a warned swap
       /* Whoever called it off (removed the player or hour, paused/ended, or
          now keeps the pass) gets no notice and no refund offer - it was their
          doing. Only their partner, if already told to buy, hears it's off. */
@@ -1206,15 +1207,38 @@ async function runDms(env, db, auth, rows, max, force) {
 }
 /* A swap that would have someone give a pass they've since ticked as keep is
    called off before any more DMs go. Returns how many were cancelled. */
+/* Calling off a swap at a member's request (Dennis, 2026-11-04):
+     - once its warning stage has begun (from :25, or anyone already warned),
+       it is too late: the swap stands and the member is told so;
+     - otherwise it's called off; if that happens between :20 and :25 (the
+       hour was matched at :20 but nobody warned yet) the matching runs again
+       straight away so partners get a new swap for the hour. */
+const LATE_TEXT = 'Sorry you requested a late change/removal, please do the swaps at :00';
+const lateStage = m => !!(m.warnA || m.warnB || m.doneA || m.doneB) || sideDue(m) - Date.now() <= 35 * 60000;
+async function callOff(db, m, note, res) {
+  if (sideDue(m) <= Date.now()) return;                      // its hour has come: leave it
+  if (lateStage(m)) { res.late++; return; }
+  await db.prepare(`UPDATE swap_matches SET status='cancelling', note=? WHERE id=?`).bind(note, m.id).run(); res.n++;
+  if (sideDue(m) - Date.now() <= 40 * 60000) res.soon++;
+}
+async function afterCallOff(env, db, auth, who, res) {
+  if (res.late) {
+    try { const u = await loadMember(db, who); if (u && u.hashId && auth) { const ch = await dmChannel(db, auth, u.hashId, u.rsUser, env); await dmSendRetry(auth, ch, LATE_TEXT); await stat(db, 'dm_late'); } }
+    catch (e) { await botFail(db, 'dm_late', `${who}: ${e.message || e}`); }
+  }
+  const mi = new Date().getUTCMinutes();
+  if (res.soon && mi >= 20 && mi < 25) { try { await matchCols(db); await runMatching(db); await stat(db, 'match_refresh'); } catch (e) { await botFail(db, 'matching', 'refresh: ' + e.message); } }
+  return res;
+}
 async function cancelKept(db, who, keep) {
   try { await matchCols(db); } catch (e) {}
-  const rows = ((await db.prepare(`SELECT id, a, b, aGets, bGets FROM swap_matches WHERE status IN ('pending','warned') AND (a=? OR b=?)`).bind(who, who).all()).results) || [];
-  let n = 0;
+  const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned') AND (a=? OR b=?)`).bind(who, who).all()).results) || [];
+  const res = { n: 0, late: 0, soon: 0 };
   for (const m of rows) {
     const gives = m.a === who ? m.bGets : m.aGets;      // A gives what B asked for, and the other way round
-    if (keep.has(gives)) { await db.prepare(`UPDATE swap_matches SET status='cancelling', note=? WHERE id=?`).bind(`called off: @${who} keeps that pass`, m.id).run(); n++; }
+    if (keep.has(gives)) await callOff(db, m, `called off: @${who} keeps that pass`, res);
   }
-  return n;
+  return res;
 }
 /* A swap still to come for a player they no longer pick, or at an hour they
    no longer pick, is called off when they save: both sides are told (if
@@ -1222,15 +1246,13 @@ async function cancelKept(db, who, keep) {
 async function cancelDropped(db, who, wants, slots) {
   try { await matchCols(db); } catch (e) {}
   const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned') AND (a=? OR b=?)`).bind(who, who).all()).results) || [];
-  let n = 0;
+  const res = { n: 0, late: 0, soon: 0 };
   for (const m of rows) {
-    if (sideDue(m) <= Date.now()) continue;                  // its hour has come: leave it
     const gets = m.a === who ? m.aGets : m.bGets;
     const why = !wants.has(gets) ? 'no longer swapping for that player' : !slots.has(Number(m.slot)) ? 'no longer picks that hour' : null;
-    if (!why) continue;
-    await db.prepare(`UPDATE swap_matches SET status='cancelling', note=? WHERE id=?`).bind(`called off: @${who} ${why}`, m.id).run(); n++;
+    if (why) await callOff(db, m, `called off: @${who} ${why}`, res);
   }
-  return n;
+  return res;
 }
 // Admin "Send now": every DM for one match straight away (warn, contact, follow-up).
 async function sendMatch(env, db, auth, m) {
@@ -2153,8 +2175,8 @@ async function handle({ request, env, waitUntil }) {
     const wants = parse(r.wants, []).filter(w => w !== k);
     await db.prepare('UPDATE swap_users SET wants=?, updatedAt=? WHERE key=?').bind(JSON.stringify(wants), Date.now(), me).run();
     try { await env.RATEBOARD_KV.delete('swap_wantcounts_v1'); } catch (e) {}
-    let calledOff = 0; try { calledOff = await cancelDropped(db, me, new Set(wants), new Set(parse(r.slots, []))); } catch (e) {}
-    return json({ ok: true, wants, calledOff });
+    let res = { n: 0, late: 0 }; try { res = await afterCallOff(env, db, auth, me, await cancelDropped(db, me, new Set(wants), new Set(parse(r.slots, [])))); } catch (e) {}
+    return json({ ok: true, wants, calledOff: res.n, late: res.late });
   }
   /* Pause: no new matches until they save again; swaps already set keep going.
      End all: paused, and every swap still to come is called off too. */
@@ -2162,15 +2184,13 @@ async function handle({ request, env, waitUntil }) {
     await matchCols(db);
     await db.prepare('UPDATE swap_users SET active=0, updatedAt=? WHERE key=?').bind(Date.now(), me).run();
     try { await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); await env.RATEBOARD_KV.delete('swap_wantcounts_v1'); } catch (e) {}
-    let calledOff = 0;
+    let res = { n: 0, late: 0, soon: 0 };
     if (op === 'endall') {
       const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned') AND (a=? OR b=?)`).bind(me, me).all()).results) || [];
-      for (const m of rows) {
-        if (sideDue(m) <= Date.now()) continue;
-        await db.prepare(`UPDATE swap_matches SET status='cancelling', note=? WHERE id=?`).bind(`called off: @${me} ended their swaps`, m.id).run(); calledOff++;
-      }
+      for (const m of rows) await callOff(db, m, `called off: @${me} ended their swaps`, res);
+      try { await afterCallOff(env, db, auth, me, res); } catch (e) {}
     }
-    return json({ ok: true, paused: true, calledOff });
+    return json({ ok: true, paused: true, calledOff: res.n, late: res.late });
   }
 
   /* A member's own swaps: coming up, and the last two weeks of past ones. */
@@ -2612,8 +2632,8 @@ async function handle({ request, env, waitUntil }) {
     const keep = (Array.isArray(b.keep) ? b.keep : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, 3000);
     await db.prepare(`INSERT INTO swap_users (key, keep, updatedAt, active, wants, slots) VALUES (?, ?, ?, 0, '[]', '[]')
       ON CONFLICT(key) DO UPDATE SET keep=excluded.keep, updatedAt=excluded.updatedAt`).bind(me, JSON.stringify(keep), Date.now()).run();
-    const n = await cancelKept(db, me, new Set(keep));
-    return json({ ok: true, keep: keep.length, cancelled: n });
+    const res = await afterCallOff(env, db, auth, me, await cancelKept(db, me, new Set(keep)));
+    return json({ ok: true, keep: keep.length, cancelled: res.n, late: res.late });
   }
 
   if (op === 'save' && request.method === 'POST') {
@@ -2656,10 +2676,10 @@ async function handle({ request, env, waitUntil }) {
       .bind(me, rsUser, JSON.stringify(wants), JSON.stringify(keep), JSON.stringify(slots), Date.now(), comment.slice(0, 300), goal).run();
     await db.prepare('UPDATE swap_users SET dayCap=?, caps=? WHERE key=?').bind(dayCap, JSON.stringify(caps), me).run();
     try { await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); await env.RATEBOARD_KV.delete('swap_wantcounts_v1'); } catch (e) {}
-    try { await cancelKept(db, me, new Set(keep)); } catch (e) {}
-    let calledOff = 0;
-    try { calledOff = await cancelDropped(db, me, new Set(wants), new Set(slots)); } catch (e) {}
-    return json({ ok: true, wants, keep: keep.length, slots, calledOff });
+    let calledOff = 0, late = 0;
+    try { const a = await cancelKept(db, me, new Set(keep)), d = await cancelDropped(db, me, new Set(wants), new Set(slots));
+      const res = await afterCallOff(env, db, auth, me, { n: a.n + d.n, late: a.late + d.late, soon: a.soon + d.soon }); calledOff = res.n; late = res.late; } catch (e) {}
+    return json({ ok: true, wants, keep: keep.length, slots, calledOff, late });
   }
 
   /* One scan for the whole site (Swaps, Boosts, OTD). The page keeps asking
