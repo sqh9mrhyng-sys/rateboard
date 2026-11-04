@@ -1913,6 +1913,8 @@ const ONE_OFF_RESCANS = [
   { id: 'cfb2026-catchup-1103-plays', sport: 'ncaaf', season: 2026, at: Date.parse('2026-11-04T09:20:00Z'), plays: true },
   // CFB 2026 stopped at Oct 24: re-walk now with the whole season in the window (no "since last sweep" cut), plays after.
   { id: 'cfb2026-full-1104', sport: 'ncaaf', season: 2026, at: Date.parse('2026-11-04T10:40:00Z'), walk: true, full: true },
+  // The by-player tables were built before the catch-ups landed: drop them so they're built again.
+  { id: 'glsnap-drop-1104', sport: 'ncaaf', season: 2026, at: Date.parse('2026-11-04T12:50:00Z'), snaps: ['ncaaf:2026', 'nfl:2026', 'ncaam:2027', 'nba:2027'] },
   { id: 'cfb2026-full-1104-plays', sport: 'ncaaf', season: 2026, at: Date.parse('2026-11-04T14:40:00Z'), plays: true }
 ];
 const ONE_OFF_KEY = 'queue_oneoff_v1';
@@ -1958,6 +1960,7 @@ async function weeklyRescan(env) {
   for (const job of ONE_OFF_RESCANS) {
     if (Date.now() < job.at || ran[job.id]) continue;
     if (job.walk) await forgetWalk(env, job.sport, job.season);
+    for (const j of (job.snaps || [])) { try { await env.RATEBOARD_KV.delete(`glsnap_v1_${j}`); } catch (e) {} }
     if (job.full) {
       try { await env.RATEBOARD_KV.delete(`gl_through_${job.sport}_${job.season}`); } catch (e) {}
       try { await env.RATEBOARD_KV.put(`gl_window_${job.sport}_${job.season}`, JSON.stringify({ from: null, to: etYesterday(), at: Date.now() })); } catch (e) {}
@@ -6774,6 +6777,9 @@ async function handleGet({ request, env, waitUntil }) {
           if (!todo.length) {
             // Both passes done for this sweep: next sweep starts the day after this window.
             try { if (raxWin && raxWin.to) await env.RATEBOARD_KV.put(`gl_through_${sport}_${season}`, raxWin.to); } catch (e) {}
+            try { if (!(await env.RATEBOARD_KV.get(`glsnap_fresh_${sport}_${season}_${raxWin && raxWin.to}`))) {
+              await env.RATEBOARD_KV.put(`glsnap_fresh_${sport}_${season}_${raxWin && raxWin.to}`, '1', { expirationTtl: 3 * 86400 });
+              await env.RATEBOARD_KV.delete(`glsnap_v1_${sport}:${season}`); } } catch (e) {}
             await send(`nothing left - all ${store.ids.length} players have their rax.\n`);
             await send(`##STATE ${store.ids.length} ${store.ids.length} 0\n`);
             await w.close();
@@ -6834,7 +6840,9 @@ async function handleGet({ request, env, waitUntil }) {
 
           const have = store.ids.filter(id => done[id]).length;
           const left = store.ids.length - have;
-          if (!left) { try { if (raxWin && raxWin.to) await env.RATEBOARD_KV.put(`gl_through_${sport}_${season}`, raxWin.to); } catch (e) {} }
+          if (!left) { try { if (raxWin && raxWin.to) await env.RATEBOARD_KV.put(`gl_through_${sport}_${season}`, raxWin.to); } catch (e) {}
+            // A finished pass: the by-player table is built again on its next view.
+            try { await env.RATEBOARD_KV.delete(`glsnap_v1_${sport}:${season}`); } catch (e) {} }
           await send(`\n${n} players this run, ${updates} game rows updated`
                      + (skipped ? `, ${skipped} skipped for sharing a date with another game` : '') + '.\n');
           await send(left > 0 ? `${have} of ${store.ids.length} players done - ${left} to go.\n`
@@ -7456,7 +7464,7 @@ async function glSnap(env, db, sp, se, waitUntil) {
     return rows;
   };
   if (c && c.rows) {
-    const age = Date.now() - c.at, ttl = GL_LIVE.has(job) ? 12 * 3600000 : 7 * 86400000;
+    const age = Date.now() - c.at, ttl = GL_LIVE.has(job) ? 3 * 3600000 : 7 * 86400000;   // live seasons: 3 hours (was 12), and dropped when a rax pass finishes
     if (age > ttl && waitUntil) {
       let locked = null; try { locked = await env.RATEBOARD_KV.get(LOCK); } catch (e) {}
       if (!locked) {
