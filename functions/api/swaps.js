@@ -1002,6 +1002,14 @@ export async function swapTick(env) {
       await stat(db, 'cleared');
     }
   } catch (e) {}
+  // One-time (2026-11-03 evening): clear everyone's scan timer after the scan fix.
+  try {
+    if (!(await env.RATEBOARD_KV.get('scan_reset_v5'))) {
+      await env.RATEBOARD_KV.put('scan_reset_v5', String(Date.now()));
+      await db.prepare('UPDATE swap_users SET scannedAt = NULL, boostScanAt = NULL').run();
+      await stat(db, 'scan_reset');
+    }
+  } catch (e) {}
   // One-time (2026-11-03): scans made while there were no pauses may have lost a sport - let them rescan now.
   try {
     if (!(await env.RATEBOARD_KV.get('scan_reset_v4'))) {
