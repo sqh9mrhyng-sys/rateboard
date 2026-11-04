@@ -55,6 +55,13 @@
   .want1 .mv button{padding:2px 9px;font-size:12px;line-height:1.2}
   .want1 .mv button:disabled{opacity:.3}
   .want1 .acts{display:flex;align-items:center;gap:8px;flex:none}
+  .stabs{display:flex;gap:6px;margin:4px 0 10px}
+  .stabs button{flex:1}
+  .stabs button.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 18%,var(--panel2));font-weight:700}
+  .sw1{padding:10px 12px;margin-top:8px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
+  .sw1 .top{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+  .sw1 a{color:inherit}
+  .sw1 .tag{font-size:12px;font-weight:700;padding:1px 8px;border-radius:999px;border:1px solid currentColor}
   .want1{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:10px 12px;margin-top:8px;border:1px solid var(--accent);border-radius:10px;background:color-mix(in srgb,var(--accent) 12%,var(--panel2))}
   @media (max-width:600px){
     .wrap{padding:10px}
@@ -169,6 +176,12 @@
   <div class="bar"><button class="primary" id="save">Save my swap</button><span class="note" id="savemsg"></span></div>
   <div class="bar"><button id="whynot">Why haven't I matched?</button></div>
   <div class="note" id="whyout"></div>
+
+  <section id="mysw">
+    <h2>Your swaps</h2>
+    <div class="stabs"><button id="tabup" class="on">Scheduled</button><button id="tabpast">Previous</button></div>
+    <div id="swlist"><p class="note">Loading…</p></div>
+  </section>
 
   <section id="admin">
     <h2>Matches (admin)</h2>
@@ -552,9 +565,29 @@ $('#save').addEventListener('click', async () => {
   const j = await api('/api/swaps?op=save', { method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 5), comment: $('#clink').value.trim(), goal: $('#goal').value.trim(), dayCap: $('#daycap').value.trim(), caps, keep: prof.keep, slots: prof.slots, names: wantNames }) });
   $('#savemsg').textContent = j.error ? j.error : 'Saved.';
-  if(!j.error){ savedWants = new Set(prof.wants); loadHourCounts(); loadWantCounts(); }
+  if(!j.error){ savedWants = new Set(prof.wants); loadHourCounts(); loadWantCounts(); loadSwaps(); }
   try{ localStorage.setItem('ratebrd_swapnames', JSON.stringify(wantNames)); }catch(e){}
 });
+
+// --- your swaps
+let mySwaps = [], swTab = 'up';
+const TAG = { scheduled: ['Scheduled', 'var(--mute)'], warned: ['Warned - buy your pack', 'var(--accent)'], done: ['Contacted', 'var(--ok)'], off: ['Called off', 'var(--bad)'] };
+function drawSwaps(){
+  $('#tabup').classList.toggle('on', swTab === 'up'); $('#tabpast').classList.toggle('on', swTab === 'past');
+  const list = mySwaps.filter(x => swTab === 'up' ? x.upcoming : !x.upcoming);
+  if(swTab === 'up') list.sort((a, b) => a.due - b.due);
+  const when = ms => new Date(ms).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)}</a>` : esc(t);
+  $('#swlist').innerHTML = list.map(x => { const t = TAG[x.state] || TAG.scheduled;
+    return `<div class="sw1"><div class="top"><b>${when(x.due)}</b><span class="tag" style="color:${t[1]}">${t[0]}</span></div>`
+      + `<div style="margin-top:6px">With <b>@${esc(x.partner || '?')}</b>${x.comment ? ` · ${lnk('their comment', x.comment)}` : ''}</div>`
+      + `<div class="note" style="margin-top:4px">You buy: ${lnk(x.give, x.giveUrl)} · You get: ${lnk(x.get, x.getUrl)}</div>`
+      + (x.note ? `<div class="note" style="margin-top:4px">${esc(x.note)}</div>` : '') + `</div>`; }).join('')
+    || `<p class="note">${swTab === 'up' ? 'No swaps scheduled yet. Matching runs every hour at :20.' : 'No swaps in the last 14 days.'}</p>`;
+}
+async function loadSwaps(){ const j = await api('/api/swaps?op=myswaps'); if(j.error){ $('#swlist').innerHTML = `<p class="note">${esc(j.error)}</p>`; return; } mySwaps = j.swaps || []; drawSwaps(); }
+$('#tabup').addEventListener('click', () => { swTab = 'up'; drawSwaps(); });
+$('#tabpast').addEventListener('click', () => { swTab = 'past'; drawSwaps(); });
 
 // --- admin
 async function loadMatches(){
@@ -695,7 +728,7 @@ async function proGate(){
   paintConn(!!j.connected);
   $('#admin').hidden = !j.admin;
   savedWants = new Set((j.profile && j.profile.active && j.profile.wants) || []);
-  drawPasses(); drawWants(); drawHours(); loadHourCounts(); loadWantCounts(); if(j.admin){ loadMatches(); }
+  drawPasses(); drawWants(); drawHours(); loadHourCounts(); loadWantCounts(); loadSwaps(); if(j.admin){ loadMatches(); }
   resumeScan();
   api('/api/swaps?op=buildindex');   // adds one season to the search table, at most every 5 minutes
 })();

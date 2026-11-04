@@ -1737,6 +1737,26 @@ async function handle({ request, env, waitUntil }) {
   const auth = swapToken(env);
 
   /* Why haven't I matched? Run when they tap the button, never on its own. */
+  /* A member's own swaps: coming up, and the last two weeks of past ones. */
+  if (op === 'myswaps') {
+    if (!(await allow(url.origin, 'myswaps:' + me, 40, 600))) return json({ error: 'Wait a few minutes and try again.' }, 429);
+    await matchCols(db);
+    const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE (a=? OR b=?) AND createdAt > ? AND status <> 'cleared' ORDER BY COALESCE(dueAt, createdAt) DESC LIMIT 150`)
+      .bind(me, me, Date.now() - 14 * 86400000).all()).results) || [];
+    const cache = new Map(), member = async k => cache.has(k) ? cache.get(k) : (cache.set(k, await loadMember(db, k)), cache.get(k));
+    const mine = await member(me), now = Date.now(), out = [];
+    for (const m of rows) {
+      const side = m.a === me ? 'A' : 'B', o = await member(side === 'A' ? m.b : m.a);
+      const give = side === 'A' ? m.bGets : m.aGets, get = side === 'A' ? m.aGets : m.bGets, due = sideDue(m);
+      const off = m.status === 'cancelled' || m.status === 'cancelling', done = !!m['done' + side];
+      out.push({ id: m.id, due, partner: (o && o.rsUser) || null, comment: done && o ? o.comment || null : null,
+        give: mine ? playerName(mine, give) : give, giveUrl: playerUrl(give), get: mine ? playerName(mine, get) : get, getUrl: playerUrl(get),
+        state: off ? 'off' : done ? 'done' : m['warn' + side] ? 'warned' : 'scheduled',
+        upcoming: !off && !done && ['pending', 'sending', 'warned'].includes(m.status), note: off ? (m.note || 'called off') : null });
+    }
+    return json({ swaps: out, now });
+  }
+
   if (op === 'whynot') {
     if (!(await allow(url.origin, 'whynot:' + me, 6, 600))) return json({ error: 'Wait a few minutes and try again.' }, 429);
     if (!(await allow(url.origin, 'whynot-all', 30, 60))) return json({ error: HIGH_VOL }, 429);
