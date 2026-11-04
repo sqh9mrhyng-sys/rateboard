@@ -326,12 +326,23 @@ async function usedSince(db, u, want) {
 
 const MAX_WANTS = 5;     // players a member can swap for at once
 const MAX_SLOTS = 5;     // hours a member can pick
+/* Members' saved passes are big (every sport and season), and D1 won't hand
+   back more than 50 MB in one answer, so wide reads go a page at a time. */
+async function pagedRows(db, sql, binds = [], size = 25) {
+  const out = [];
+  for (let off = 0; ; off += size) {
+    const r = ((await db.prepare(`${sql} ORDER BY key LIMIT ? OFFSET ?`).bind(...binds, size, off).all()).results) || [];
+    out.push(...r);
+    if (r.length < size) return out;
+  }
+}
 async function runMatching(db) {
   // Only members the bot already has a chat with: new chats are capped at
   // five a day, so a match with anyone else might never be delivered.
   await db.prepare(DM_DDL).run();
-  const users = ((await db.prepare(`SELECT * FROM swap_users WHERE active=1 AND passes IS NOT NULL
-      AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`).all()).results || [])
+  const users = (await pagedRows(db, `SELECT * FROM swap_users WHERE active=1 AND passes IS NOT NULL
+      AND wants IS NOT NULL AND wants <> '[]' AND slots IS NOT NULL AND slots <> '[]'
+      AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`))
     .map(u => ({ ...u, wants: parse(u.wants, []), keep: new Set(parse(u.keep, [])), slots: parse(u.slots, []),
                  passes: parse(u.passes, []), caps: parse(u.caps, {}) || {} }));
   /* A member can be in any number of swaps a swap day, with anyone, the same
@@ -1825,8 +1836,8 @@ async function handle({ request, env, waitUntil }) {
     // Who could swap with them.
     let can = 0, hour = 0, both = 0;
     if (u && want && !why.length) {
-      const others = ((await db.prepare(`SELECT key, wants, keep, slots, passes FROM swap_users WHERE active=1 AND passes IS NOT NULL AND key<>?
-          AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`).bind(me).all()).results || []);
+      const others = await pagedRows(db, `SELECT key, wants, keep, slots, passes FROM swap_users WHERE active=1 AND passes IS NOT NULL AND key<>?
+          AND wants IS NOT NULL AND wants <> '[]' AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`, [me]);
       const mine = new Set(u.passes.filter(p => p.kind !== 'team' && !u.keep.has(p.key)).map(p => p.key));
       for (const o of others) {
         const op_ = parse(o.passes, []), ok = new Set(parse(o.keep, []));
@@ -1914,11 +1925,14 @@ async function handle({ request, env, waitUntil }) {
 
   // Admin: who picked each hour (UTC), with their rank for it and their pick.
   if (op === 'hourusers') {
-    const rows = ((await db.prepare(`SELECT key, rsUser, slots, wants, passes FROM swap_users WHERE active=1 AND slots IS NOT NULL AND slots <> '[]'`).all()).results) || [];
+    // Just the name of their first pick, picked out in the database rather than shipping every pass.
+    const rows = ((await db.prepare(`SELECT key, rsUser, slots, wants,
+        (SELECT json_extract(j.value, '$.name') FROM json_each(swap_users.passes) j WHERE json_extract(j.value, '$.key') = json_extract(swap_users.wants, '$[0]') LIMIT 1) AS wantName
+        FROM swap_users WHERE active=1 AND slots IS NOT NULL AND slots <> '[]'`).all()).results) || [];
     const hours = Array.from({ length: 24 }, () => []);
     for (const r of rows) {
       const want = parse(r.wants, [])[0] || null;
-      const p = want ? parse(r.passes, []).find(x => x.key === want) : null;
+      const p = want ? { name: r.wantName } : null;
       parse(r.slots, []).forEach((h, i) => { if (h >= 0 && h < 24) hours[h].push({ key: r.key, rsUser: r.rsUser || r.key, rank: i + 1, want, wantName: p && p.name || null }); });
     }
     for (const l of hours) l.sort((a, b) => a.rank - b.rank || String(a.rsUser).localeCompare(String(b.rsUser)));
@@ -2457,9 +2471,16 @@ async function handle({ request, env, waitUntil }) {
 
   if (op === 'matches') {
     const rows = (await db.prepare(`SELECT * FROM swap_matches WHERE status <> 'cleared' ORDER BY id DESC LIMIT 200`).all()).results || [];
-    const users = (await db.prepare('SELECT key, rsUser, passes FROM swap_users').all()).results || [];
+    // Only the members in these matches, a page at a time (all passes at once is past D1's 50 MB).
+    const keys = [...new Set(rows.flatMap(m => [m.a, m.b]))];
+    const users = [];
+    for (let i = 0; i < keys.length; i += 20) {
+      const part = keys.slice(i, i + 20);
+      users.push(...(((await db.prepare(`SELECT key, rsUser, passes FROM swap_users WHERE key IN (${part.map(() => '?').join(',')})`).bind(...part).all()).results) || []));
+    }
+    const want = new Set(rows.flatMap(m => [m.aGets, m.bGets]));
     const names = {};
-    for (const u of users) for (const p of parse(u.passes, [])) names[p.key] = p.name;
+    for (const u of users) for (const p of parse(u.passes, [])) if (want.has(p.key)) names[p.key] = p.name;
     const rs = Object.fromEntries(users.map(u => [u.key, u.rsUser]));
     return json({ matches: rows.map(m => ({ ...m, aUser: rs[m.a], bUser: rs[m.b], aGetsName: names[m.aGets], bGetsName: names[m.bGets] })) });
   }
