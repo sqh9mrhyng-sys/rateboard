@@ -1242,12 +1242,20 @@ const LATE_TEXT = 'Sorry you requested a late change/removal, please do the swap
 const lateStage = m => !!(m.warnA || m.warnB || m.doneA || m.doneB) || sideDue(m) - Date.now() <= 35 * 60000;
 async function callOff(db, m, note, res) {
   if (sideDue(m) <= Date.now()) return;                      // its hour has come: leave it
-  if (lateStage(m)) { res.late++; return; }
+  if (lateStage(m)) { res.late++; res.lateHours = (res.lateHours || new Set()).add(sideDue(m)); return; }
   await db.prepare(`UPDATE swap_matches SET status='cancelling', note=? WHERE id=?`).bind(note, m.id).run(); res.n++;
   if (sideDue(m) - Date.now() <= 40 * 60000) res.soon++;
 }
 async function afterCallOff(env, db, auth, who, res) {
+  /* Once per member per swap hour, however many times they tap or save
+     (it was going out on every keep tick - a member got dozens). */
+  let fresh = false;
   if (res.late) {
+    try { await db.prepare('CREATE TABLE IF NOT EXISTS bot_once (campaign TEXT, key TEXT, at INTEGER, ok INTEGER, PRIMARY KEY (campaign, key))').run();
+      for (const h of (res.lateHours || [])) { const c = await db.prepare('INSERT OR IGNORE INTO bot_once (campaign, key, at, ok) VALUES (?, ?, ?, 1)').bind('late_' + h, String(who).toLowerCase(), Date.now()).run();
+        if (c && c.meta && c.meta.changes) fresh = true; } } catch (e) { fresh = false; }
+  }
+  if (res.late && fresh) {
     try { const u = await loadMember(db, who); if (u && u.hashId && auth) { const ch = await dmChannel(db, auth, u.hashId, u.rsUser, env); await dmSendRetry(auth, ch, LATE_TEXT); await stat(db, 'dm_late'); } }
     catch (e) { await botFail(db, 'dm_late', `${who}: ${e.message || e}`); }
   }
