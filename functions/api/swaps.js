@@ -711,13 +711,16 @@ function matchText(me, other, gets, gives, slot) {
    Matching runs once a day, so a member's whole day is known before the warn.
    Each side of a match is marked as each DM goes, so nothing repeats. */
 const FOLLOW_TEXT = "Please make sure you bought all packs and offered 12 hours on everyone else's, there are no warnings if you scam or don't communicate, you will be banned.";
+// Long lists are split: the heading on its own, then at most 8 lines a message.
+const LINES_PER_DM = 8;
+const chunks = (lines, n = LINES_PER_DM) => { const out = []; for (let i = 0; i < lines.length; i += n) out.push(lines.slice(i, i + n).join('\n')); return out; };
 function warnText(lines) {
-  return 'You are swapping the following players today, please buy the following packs within 30 mins\n\n' + lines.join('\n');
+  return ['You are swapping the following players today, please buy the following packs within 30 mins', ...chunks(lines)];
 }
 function contactText(lines, buy) {
-  return "Here are comments to contact the following swaps, please send 12 hour offers and report anyone who's doing anything wrong.\n"
-    + "Comments are to get ahold of other users if they didn't buy the pack in the warning period, ideally this should be communication-less.\n\n" + lines.join('\n')
-    + (buy && buy.length ? '\n\nAlso buy these packs now:\n' + buy.join('\n') : '');
+  return ["Here are comments to contact the following swaps, please send 12 hour offers and report anyone who's doing anything wrong.\n"
+    + "Comments are to get ahold of other users if they didn't buy the pack in the warning period, ideally this should be communication-less.",
+    ...chunks(lines), ...(buy && buy.length ? chunks(buy).map((c, i) => (i ? '' : 'Also buy these packs now:\n') + c) : [])];
 }
 async function loadMember(db, k) {
   const u = await db.prepare('SELECT key, rsUser, hashId, passes, comment FROM swap_users WHERE key=?').bind(k).first();
@@ -808,7 +811,16 @@ async function runDms(env, db, auth, rows, max, force) {
   const send = async (who, text, kind) => {
     const me = await member(who);
     if (!me || !me.hashId) { notes.push(`${who}: never verified`); await botFail(db, kind, `${who}: never verified`); return false; }
-    try { const ch = await dmChannel(db, auth, me.hashId, me.rsUser, env); await dmSend(auth, ch, text); sent++; await stat(db, 'dm_' + kind); notes.push(`${kind} sent to @${me.rsUser}`); await sleep(900); return true; }
+    try {
+      const ch = await dmChannel(db, auth, me.hashId, me.rsUser, env);
+      const msgs = Array.isArray(text) ? text : [text];
+      for (let i = 0; i < msgs.length; i++) {
+        try { await dmSend(auth, ch, msgs[i]); }
+        catch (e) { if (i === 0) throw e; await botFail(db, 'dm_' + kind, `@${me.rsUser} part ${i + 1}/${msgs.length}: ${e.message || e}`); }   // heading went: the DM counts as sent
+        sent++; await stat(db, 'dm_' + kind); await sleep(900);
+      }
+      notes.push(`${kind} sent to @${me.rsUser} (${msgs.length} message${msgs.length === 1 ? '' : 's'})`); return true;
+    }
     catch (e) { notes.push(`${kind} to @${me.rsUser} failed: ${String(e.message || e).slice(0, 160)}`); await botFail(db, 'dm_' + kind, `@${me.rsUser}: ${e.message || e}`); return false; }
   };
   for (const [, list] of per) {
