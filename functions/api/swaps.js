@@ -2544,31 +2544,39 @@ async function handle({ request, env, waitUntil }) {
      one is young); and, per booster, what swapping would make over the games
      left. Getting rid of a card costs whatever it has earned past 100 rax, and
      a new one costs 200. */
+  /* CFB too (Dennis, 2026-11-04): a 12-game regular season, 5+ games to count,
+     offensive players only as buys, and no sells at all for anyone holding
+     fewer than 100 CFB 2026 passes - they're shown buys instead. */
   if (op === 'resell') {
-    const SEASON = 2027, PREV = 2026, SEASON_GAMES = 31, MIN_G = 4, PACK = 200;
+    const SP = url.searchParams.get('sport') === 'ncaaf' ? 'ncaaf' : 'ncaam';
+    const CFG = SP === 'ncaaf' ? { SEASON: 2026, PREV: 2025, SEASON_GAMES: 12, MIN_G: 5, offense: true, sellMin: 100 }
+                               : { SEASON: 2027, PREV: 2026, SEASON_GAMES: 31, MIN_G: 4, offense: false, sellMin: 0 };
+    const { SEASON, PREV, SEASON_GAMES, MIN_G } = CFG, PACK = 200;
+    const OFF = /^(QB|RB|HB|FB|WR|TE)$/i;
     const u = await db.prepare('SELECT passes, scannedAt FROM swap_users WHERE key=?').bind(me).first();
     if (!u || !u.passes) return json({ error: 'Read your passes on the Boosts tab first.' }, 400);
-    const mine = parse(u.passes, []).filter(p => p.sport === 'ncaam' && Number(p.season) === SEASON && p.kind !== 'team');
+    const mine = parse(u.passes, []).filter(p => p.sport === SP && Number(p.season) === SEASON && p.kind !== 'team');
+    const sells = mine.length >= CFG.sellMin;
     // Every CBB player's rax a game this season and last (one grouped read each, kept 30 minutes).
-    const rkey = 'resell_rpg_v1';
+    const rkey = 'resell_rpg_v2_' + SP;
     let R = null; try { R = JSON.parse((await env.RATEBOARD_KV.get(rkey)) || 'null'); } catch (e) {}
     if (!R || Date.now() - R.at > 30 * 60000) {
-      const grab = async se => ((await db.prepare(`SELECT playerId AS id, MAX(player) AS n, MAX(team) AS t, COUNT(*) AS g, SUM(rax) AS r, ROUND(AVG(min), 1) AS m
-        FROM gamelog WHERE sport='ncaam' AND season=? AND rax IS NOT NULL AND seasonType='regularseason' GROUP BY playerId`).bind(se).all()).results) || [];
+      const grab = async se => ((await db.prepare(`SELECT playerId AS id, MAX(player) AS n, MAX(team) AS t, MAX(position) AS pos, COUNT(*) AS g, SUM(rax) AS r, ROUND(AVG(min), 1) AS m
+        FROM gamelog WHERE sport=? AND season=? AND rax IS NOT NULL AND seasonType='regularseason' GROUP BY playerId`).bind(SP, se).all()).results) || [];
       R = { at: Date.now(), cur: await grab(SEASON), prev: await grab(PREV) };
       try { await env.RATEBOARD_KV.put(rkey, JSON.stringify(R), { expirationTtl: 3600 }); } catch (e) {}
     }
     const cur = new Map(R.cur.map(x => [Number(x.id), x])), prev = new Map(R.prev.map(x => [Number(x.id), x]));
     // Out for the season: ESPN's injury list, any date, read for "season" / "indefinitely".
     let out = {};
-    try { const c = JSON.parse((await env.RATEBOARD_KV.get('resell_out_v1')) || 'null'); if (c && Date.now() - c.at < 6 * 3600000) out = c.m; else throw 0; }
+    try { const c = JSON.parse((await env.RATEBOARD_KV.get('resell_out_v1_' + SP)) || 'null'); if (c && Date.now() - c.at < 6 * 3600000) out = c.m; else throw 0; }
     catch (e) {
-      try { const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${ESPN_PATH.ncaam}/injuries`); const d = r.ok ? await r.json() : {};
+      try { const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${ESPN_PATH[SP]}/injuries`); const d = r.ok ? await r.json() : {};
         for (const t of (d.injuries || [])) for (const x of (t.injuries || [])) {
           const txt = `${x.status || ''} ${x.shortComment || ''} ${x.longComment || ''}`;
           if (x.athlete && /season|indefinite/i.test(txt) && !/^active$/i.test(x.status || '')) out[boostName(x.athlete.displayName)] = String(x.shortComment || x.status || '').slice(0, 140);
         } } catch (e2) {}
-      try { await env.RATEBOARD_KV.put('resell_out_v1', JSON.stringify({ at: Date.now(), m: out }), { expirationTtl: 86400 }); } catch (e) {}
+      try { await env.RATEBOARD_KV.put('resell_out_v1_' + SP, JSON.stringify({ at: Date.now(), m: out }), { expirationTtl: 86400 }); } catch (e) {}
     }
     const MULTS = [['none', 1], ['rare', 10], ['epic', 15], ['legendary', 25]];
     const rate = id => { const c = cur.get(id), o = prev.get(id);
@@ -2579,9 +2587,9 @@ async function handle({ request, env, waitUntil }) {
       return null; };
     const played = id => (cur.get(id) || {}).g || 0;
     const owned = new Set(mine.map(p => Number(p.id)));
-    const cards = mine.map(p => { const id = Number(p.id), r = rate(id), nm = p.name || (CBB_TOP175[id] && CBB_TOP175[id][3]) || (cur.get(id) || prev.get(id) || {}).n || 'Player ' + id;
+    const cards = mine.map(p => { const id = Number(p.id), r = rate(id), nm = p.name || (SP === 'ncaam' && CBB_TOP175[id] && CBB_TOP175[id][3]) || (cur.get(id) || prev.get(id) || {}).n || 'Player ' + id;
       const earned = Number(p.earned) || 0, isOut = out[boostName(nm)] || null;
-      return { id, name: nm, team: (cur.get(id) || prev.get(id) || {}).t || (CBB_TOP175[id] && CBB_TOP175[id][1]) || null, link: playerUrl(`ncaam:${SEASON}:${id}`),
+      return { id, name: nm, team: (cur.get(id) || prev.get(id) || {}).t || (SP === 'ncaam' && CBB_TOP175[id] && CBB_TOP175[id][1]) || null, link: playerUrl(`${SP}:${SEASON}:${id}`),
         card: p.passId ? `https://www.realapp.com/${routeId([18, 0, 0, Number(p.passId)])}` : null,
         rpg: r ? Math.round(r.rpg * 10) / 10 : null, basis: r ? r.basis : 'no games yet', played: played(id),
         left: isOut ? 0 : Math.max(0, SEASON_GAMES - played(id)), earned, sellCost: Math.max(0, earned - 100), out: isOut }; })
@@ -2593,15 +2601,18 @@ async function handle({ request, env, waitUntil }) {
       const c = cur.get(id), o = prev.get(id);
       const nm = (c || o).n;
       if (out[boostName(nm)]) continue;
+      if (CFG.offense && !OFF.test(String((c || o).pos || ''))) continue;      // CFB buys: offence only
       if (c && c.g >= MIN_G) pool.push({ id, name: nm, team: c.t, rpg: c.r / c.g, games: c.g, basis: 'this season' });
-      else if (!c || c.g < MIN_G) { if (o && o.g >= 10 && c && c.g) pool.push({ id, name: nm, team: c.t, rpg: o.r / o.g, games: c.g, basis: 'last season (fewer than 4 games yet)' }); }
+      else if (!c || c.g < MIN_G) { if (o && o.g >= 10 && c && c.g) pool.push({ id, name: nm, team: c.t, rpg: o.r / o.g, games: c.g, basis: `last season (fewer than ${MIN_G} games yet)` }); }
     }
     const thisSeasonEnough = pool.some(x => x.basis === 'this season');
     const reps = pool.filter(x => !thisSeasonEnough || x.basis === 'this season').sort((a, b) => b.rpg - a.rpg).slice(0, 15)
-      .map(x => ({ ...x, rpg: Math.round(x.rpg * 10) / 10, left: Math.max(0, SEASON_GAMES - played(x.id)), link: playerUrl(`ncaam:${SEASON}:${x.id}`) }));
+      .map(x => ({ ...x, pos: (cur.get(x.id) || prev.get(x.id) || {}).pos || null, rpg: Math.round(x.rpg * 10) / 10, left: Math.max(0, SEASON_GAMES - played(x.id)), link: playerUrl(`${SP}:${SEASON}:${x.id}`),
+        // A straight buy: his rax over his games left x the booster, less the 200 pack.
+        buy: MULTS.map(([k, m]) => ({ booster: k, mult: m, profit: Math.round(Math.max(0, SEASON_GAMES - played(x.id)) * x.rpg * m - PACK) })) }));
     // For each of their worst 10: the best replacement, and swap vs keep per booster over the games left.
     // Worst card gets the best replacement, the next worst the next one, so no one is suggested twice.
-    const plans = cards.slice(0, 10).map((c, i) => {
+    const plans = (sells ? cards : []).slice(0, 10).map((c, i) => {
       const best = reps[i] || null;
       const per = MULTS.map(([k, m]) => {
         const keep = c.rpg != null ? Math.round(c.left * c.rpg * m) : 0;
@@ -2611,7 +2622,8 @@ async function handle({ request, env, waitUntil }) {
       const leg = per.find(x => x.booster === 'legendary');
       return { ...c, replaceWith: best, per, verdict: !best ? 'no replacement yet' : leg.gain > 0 ? 'replace' : 'keep - let him sit, don\'t boost' };
     });
-    return json({ scannedAt: u.scannedAt || null, cards, plans, replacements: reps, seasonGames: SEASON_GAMES, minGames: MIN_G, pack: PACK, earlySeason: !thisSeasonEnough });
+    return json({ sport: SP, scannedAt: u.scannedAt || null, cards, plans, replacements: reps, seasonGames: SEASON_GAMES, minGames: MIN_G, pack: PACK, earlySeason: !thisSeasonEnough,
+      sells, held: mine.length, sellMin: CFG.sellMin, offenseOnly: CFG.offense });
   }
 
   if (op === 'boostinv') {

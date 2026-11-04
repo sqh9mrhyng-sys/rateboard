@@ -132,7 +132,7 @@
       <div class="bar"><b style="font-size:15px">Resell / replacements · CBB 2026-27</b></div>
       <p class="note" id="rsmsg" style="margin:8px 0 0">Your worst cards by rax a game, who's out for the season, and who to replace them with.</p>
       <div id="rslist" style="margin-top:10px"><p class="note">Loading…</p></div>
-      <p class="note" style="margin:10px 0 0">Games left assume a 31-game regular season. <b>Swap</b> = new card's rax over his games left × the booster, minus 200 for the pack and the resell cost (everything your old card made past 100 rax). <b>Keep</b> = your card's rax over his games left × the booster (0 if he's out for the season). Replace only when swap beats keep.</p>
+      <p class="note" style="margin:10px 0 0">Games left assume a 31-game CBB / 12-game CFB regular season. <b>Swap</b> = new card's rax over his games left × the booster, minus 200 for the pack and the resell cost (everything your old card made past 100 rax). <b>Keep</b> = your card's rax over his games left × the booster (0 if he's out for the season). Replace only when swap beats keep.</p>
     </section>
     <section id="legs" hidden>
       <div class="bar"><b style="font-size:15px">Legendary boosts · CFB</b><div class="seg" id="legseg" style="margin-left:auto"><button data-p="daily" aria-pressed="true">Daily packs</button><button data-p="weekly" aria-pressed="false">Weekly packs</button></div></div>
@@ -316,7 +316,7 @@ function showTab(t){
   $('#t-boosts').hidden = t !== 'boosts'; $('#t-buys').hidden = t !== 'buys';
   const sp = $('#sport').value;
   // The second tab's sub-pick: what each sport has.
-  const subs = sp === 'ncaam' ? [['top', 'Top 70 buys'], ['resell', 'Resell / replacements']] : sp === 'ncaaf' ? [['legs', 'Legendary boosts']] : [];
+  const subs = sp === 'ncaam' ? [['top', 'Top 70 buys'], ['resell', 'Resell / replacements']] : sp === 'ncaaf' ? [['legs', 'Legendary boosts'], ['resell', 'Resell / buys']] : [];
   const sel = $('#sub'), was = sel.value;
   sel.innerHTML = subs.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
   if(subs.some(([v]) => v === was)) sel.value = was;
@@ -326,15 +326,26 @@ function showTab(t){
 }
 $('#sub').addEventListener('change', () => showTab('buys'));
 // --- Resell / replacements (CBB)
-let rsData = null;
+const rsData = {};
 async function loadResell(){
-  if(!rsData){ $('#rslist').innerHTML = '<p class="note">Working it out…</p>';
-    const j = await api('/api/swaps?op=resell&page=boosts');
+  const sp = $('#sport').value === 'ncaaf' ? 'ncaaf' : 'ncaam', SL = sp === 'ncaaf' ? 'CFB 2026' : 'CBB 2026-27';
+  $('#resell .bar b').textContent = `Resell / ${sp === 'ncaaf' ? 'buys' : 'replacements'} · ${SL}`;
+  if(!rsData[sp]){ $('#rslist').innerHTML = '<p class="note">Working it out…</p>';
+    const j = await api('/api/swaps?op=resell&page=boosts&sport=' + sp);
     if(j.error){ $('#rslist').innerHTML = `<p class="note">${esc(j.error)}</p>`; return; }
-    rsData = j; }
-  const j = rsData, n = v => v == null ? '-' : Math.round(v).toLocaleString(), lk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)}</a>` : esc(t);
-  $('#rsmsg').textContent = `${j.cards.length} CBB 2026-27 cards checked` + (j.scannedAt ? ` (passes read ${new Date(j.scannedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` : '')
-    + (j.earlySeason ? '. Early season: nobody has 4 games yet, so replacements use last season\'s rax a game until they do.' : '.');
+    rsData[sp] = j; }
+  const j = rsData[sp], n = v => v == null ? '-' : Math.round(v).toLocaleString(), lk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)}</a>` : esc(t);
+  $('#rsmsg').textContent = `${j.cards.length} ${SL} cards checked` + (j.scannedAt ? ` (passes read ${new Date(j.scannedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` : '')
+    + (j.earlySeason ? `. Early season: nobody has ${j.minGames} games yet, so replacements use last season's rax a game until they do.` : '.')
+    + (!j.sells ? ` You hold ${j.held} - sells are only suggested from ${j.sellMin} passes, so here are buys instead.` : '')
+    + (j.offenseOnly ? ' Buys are offensive players only (QB, RB, WR, TE).' : '');
+  // A buy list with roughly what each makes over his games left, per booster.
+  const buyTable = r => `<table><thead><tr><th>Booster</th><th>Profit over his ${r.left} left</th></tr></thead><tbody>${(r.buy || []).map(x => `<tr><td style="text-align:left">${x.booster === 'none' ? 'No booster' : x.booster[0].toUpperCase() + x.booster.slice(1) + ' x' + x.mult}</td><td style="color:${x.profit > 0 ? 'var(--ok)' : 'var(--bad)'};font-weight:700">${x.profit > 0 ? '+' : ''}${n(x.profit)}</td></tr>`).join('')}</tbody></table>`;
+  if(!j.sells){
+    $('#rslist').innerHTML = j.replacements.map((r, i) => `<div class="rs1"><div class="hd"><b>${i + 1}. ${lk(r.name, r.link)}</b><span class="note">${esc(r.pos || '')} · ${esc(r.team || '')}</span><span class="vd" style="color:var(--ok)">Buy</span></div>
+      <div class="note" style="margin-top:4px"><b>${r.rpg}</b> rax/game · ${r.games} played · ${r.left} left · ${esc(r.basis)}</div>${buyTable(r)}</div>`).join('') || '<p class="note">No one with enough games yet.</p>';
+    return;
+  }
   const out = j.cards.filter(c => c.out);
   $('#rslist').innerHTML = (out.length ? `<div class="rs1" style="border-color:var(--bad)"><b style="color:var(--bad)">Out for the season</b>${out.map(c => `<div class="note" style="margin-top:4px">${lk(c.name, c.card || c.link)} · ${esc(c.out)}</div>`).join('')}</div>` : '')
     + j.plans.map(c => { const r = c.replaceWith, rep = c.verdict === 'replace';
@@ -343,8 +354,8 @@ async function loadResell(){
         <div class="two"><div><span class="sub">Your card</span><b>${c.rpg ?? '-'}</b> rax/game · ${c.played} played · ${c.left} left<br><span class="note">${esc(c.basis)} · made ${n(c.earned)} · resell costs <b>${n(c.sellCost)}</b></span></div>
           <div><span class="sub">Replace with</span>${r ? `<b>${lk(r.name, r.link)}</b> ${esc(r.team || '')}<br><b>${r.rpg}</b> rax/game · ${r.games} played · ${r.left} left<br><span class="note">${esc(r.basis)}</span>` : '<span class="note">No one with enough games yet.</span>'}</div></div>
         ${r ? `<table><thead><tr><th>Booster</th><th>Keep</th><th>Swap</th><th>Swap gain</th></tr></thead><tbody>${c.per.map(x => `<tr><td style="text-align:left">${x.booster === 'none' ? 'No booster' : x.booster[0].toUpperCase() + x.booster.slice(1) + ' x' + x.mult}</td><td>${n(x.keep)}</td><td>${n(x.swap)}</td><td style="color:${x.gain > 0 ? 'var(--ok)' : 'var(--bad)'};font-weight:700">${x.gain > 0 ? '+' : ''}${n(x.gain)}</td></tr>`).join('')}</tbody></table>` : ''}</div>`; }).join('')
-    + (j.replacements.length ? `<details class="rs1"><summary><b>Top replacements</b> <span class="note">(highest rax a game you don't hold)</span></summary>${j.replacements.map((r, i) => `<div class="note" style="margin-top:4px">${i + 1}. ${lk(r.name, r.link)} ${esc(r.team || '')} · <b>${r.rpg}</b> rax/game · ${r.games} played · ${esc(r.basis)}</div>`).join('')}</details>` : '')
-    || '<p class="note">No CBB 2026-27 cards in your last scan.</p>';
+    + (j.replacements.length ? `<details class="rs1"><summary><b>Top ${sp === 'ncaaf' ? 'buys' : 'replacements'}</b> <span class="note">(highest rax a game you don't hold)</span></summary>${j.replacements.map((r, i) => `<div style="margin-top:8px"><div class="note">${i + 1}. ${lk(r.name, r.link)} ${esc(r.pos || '')} ${esc(r.team || '')} · <b>${r.rpg}</b> rax/game · ${r.games} played · ${r.left} left · ${esc(r.basis)}</div>${buyTable(r)}</div>`).join('')}</details>` : '')
+    || `<p class="note">No ${SL} cards in your last scan.</p>`;
 }
 document.querySelectorAll('#tab button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.t)));
 // The sport picker at the top: CBB's second tab is Buys, CFB's is Legendary boosts, NFL has none.
