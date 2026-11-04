@@ -4864,7 +4864,7 @@ const CB_SPORT_LABEL = { ncaam:'CBB', ncaaf:'CFB', nfl:'NFL', nba:'NBA', nhl:'NH
 
 async function cbbPanel(){
   const st = { mode:'players', sort:'rax', dir:'desc', offset:0, limit:100,
-               q:'', team:'', conference:'', seasonType:'', homeAway:'', result:'',
+               q:'', team:'', conference:'', position:'', seasonType:'', homeAway:'', result:'',
                from:'', to:'', minGames:'', playedOnly:'', exact:false,
                minOwners:'', maxOwners:'', minRax:'', maxRax:'',
                pairs:[], extra:[] };
@@ -4888,6 +4888,7 @@ async function cbbPanel(){
       <input class="field grow" id="cb-q" placeholder="Player name" autocomplete="off">
       <select class="field" id="cb-conf"><option value="">Any conference</option></select>
       <select class="field" id="cb-team"><option value="">Any team</option></select>
+      <select class="field" id="cb-pos" title="Position in that game - SP is a pitcher's starts"><option value="">Any position</option></select>
       <select class="field" id="cb-type">
         <option value="">Reg + post</option>
         <option value="regularseason">Regular only</option>
@@ -5103,7 +5104,7 @@ async function cbbPanel(){
       limit: st.limit, offset: st.offset });
     const first = (st.pairs[0] || 'ncaam|2026').split('|');
     p.set('sport', first[0]); p.set('season', first[1]);
-    for(const k of ['q','team','conference','seasonType','homeAway','result','minGames','playedOnly',
+    for(const k of ['q','team','conference','position','seasonType','homeAway','result','minGames','playedOnly',
                     'minOwners','maxOwners','minRax','maxRax']){
       if(st[k]) p.set(k, st[k]);
     }
@@ -5397,14 +5398,21 @@ async function cbbPanel(){
   }
 
   async function loadTeams(){
-    const sel = $b('#cb-team'), cf = $b('#cb-conf');
+    const sel = $b('#cb-team'), cf = $b('#cb-conf'), ps = $b('#cb-pos');
     sel.innerHTML = '<option value="">Any team</option>';
+    ps.innerHTML = '<option value="">Any position</option>';
     cf.innerHTML = '<option value="">Any conference</option>';
     if(!st.pairs.length) return;
     try {
       const f = await (await fetch(qs({ gamelog:'facets' }))).json();
       if(f && f.teams) sel.insertAdjacentHTML('beforeend',
         f.teams.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join(''));
+      // Positions as the games list them, commonest first; a pick that this sport doesn't have is let go.
+      if(f && f.positions && f.positions.length){
+        ps.insertAdjacentHTML('beforeend', f.positions.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join(''));
+        if(st.position && f.positions.includes(st.position)) ps.value = st.position;
+        else if(st.position){ st.position = ''; }
+      }
       if(f && f.conferences && f.conferences.length) cf.insertAdjacentHTML('beforeend',
         f.conferences.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join(''));
       else if(CB_HAS_GROUP.some(sp => sportsOn().includes(sp)))
@@ -7283,7 +7291,7 @@ async function cbbPanel(){
       loadoutsWrite(all);
       return lkBag();
     }
-    const map = { 'cb-team':'team', 'cb-conf':'conference', 'cb-type':'seasonType',
+    const map = { 'cb-team':'team', 'cb-conf':'conference', 'cb-pos':'position', 'cb-type':'seasonType',
                   'cb-ha':'homeAway', 'cb-res':'result' };
     if(!map[e.target.id]) return;
     st[map[e.target.id]] = e.target.value;
@@ -7537,7 +7545,7 @@ async function cbbPanel(){
     if(pair){
       const key = pair.dataset.pair;
       st.pairs = st.pairs.includes(key) ? st.pairs.filter(x => x !== key) : st.pairs.concat([key]);
-      st.team = ''; st.conference = ''; st.offset = 0;
+      st.team = ''; st.conference = ''; st.position = ''; st.offset = 0;
       st.extra = st.extra.filter(k => allStats().some(c => c[0] === k));
       drawSeasons(); drawCols(); applyFilterVisibility();
       await loadTeams();

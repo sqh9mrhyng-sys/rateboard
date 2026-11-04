@@ -6319,6 +6319,9 @@ async function handleGet({ request, env, waitUntil }) {
       if (P('q')) { where.push('player LIKE ?'); binds.push('%' + P('q').replace(/[%_]/g, '') + '%'); }
       eq('team', 'team');
       eq('conference', 'conference');
+      // Position, game by game (a pitcher is SP only on the days he starts); several can be given, comma-separated.
+      { const ps = P('position').split(',').map(x => x.trim().toUpperCase()).filter(x => /^[A-Z0-9]{1,4}$/.test(x)).slice(0, 12);
+        if (ps.length) { where.push(`position IN (${ps.map(() => '?').join(',')})`); binds.push(...ps); } }
       eq('opponent', 'opponent');
       eq('seasonType', 'seasonType', ['regularseason', 'postseason']);
       eq('homeAway', 'homeAway', ['home', 'away']);
@@ -6369,7 +6372,7 @@ async function handleGet({ request, env, waitUntil }) {
          grouping the game log again. Only filters that work game by game
          (dates, opponent, home/away, result, regular/post) still read the
          game log, and those are cached like before. */
-      const gameLevel = ['opponent', 'seasonType', 'homeAway', 'result', 'from', 'to', 'fromMD', 'toMD']
+      const gameLevel = ['opponent', 'seasonType', 'homeAway', 'result', 'from', 'to', 'fromMD', 'toMD', 'position']
         .some(k => P(k)) || P('playedOnly') === '1';
       if (mode === 'players' && !asCsv && !gameLevel) {
         try {
@@ -6611,8 +6614,11 @@ async function handleGet({ request, env, waitUntil }) {
         const d = await db.prepare(
           `SELECT MIN(day) AS first, MAX(day) AS last FROM gamelog WHERE ${fScope}`)
           .bind(...fBinds).first();
+        let pos = [];
+        try { pos = ((await db.prepare(`SELECT position AS k, COUNT(*) AS n FROM gamelog WHERE ${fScope} AND position IS NOT NULL AND position <> '' GROUP BY position ORDER BY n DESC`)
+          .bind(...fBinds).all()).results || []).map(x => x.k); } catch (e) {}
         return json({ teams: ((t && t.results) || []).map(x => x.k),
-                      conferences: ((cf && cf.results) || []).map(x => x.k),
+                      conferences: ((cf && cf.results) || []).map(x => x.k), positions: pos,
                       dates: d || null });
       } catch (e) { return json({ error: String((e && e.message) || e) }, 500); }
     }
