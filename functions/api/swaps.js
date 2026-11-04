@@ -387,7 +387,7 @@ async function inboxItems(env, db) {
   for (const x of out) { x.from = await look(x.by); x.about = x.target ? await look(x.target) : null; }
   // Board reports: every board listing (with its comment link) of the person reported.
   for (const x of out) if (x.src === 'board' && x.about) {
-    try { x.about = { ...x.about, offers: ((await db.prepare('SELECT sport, player, rate, link, ts FROM offers WHERE LOWER(user)=? ORDER BY ts DESC LIMIT 100')
+    try { x.about = { ...x.about, offers: ((await db.prepare('SELECT id, sport, player, rate, link, ts FROM offers WHERE LOWER(user)=? ORDER BY ts DESC LIMIT 100')
       .bind(String(x.about.key || x.target).toLowerCase()).all()).results) || [] }; } catch (e) {}
   }
   return out;

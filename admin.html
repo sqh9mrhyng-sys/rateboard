@@ -57,6 +57,7 @@
   .ibx .party button{align-self:flex-start}
   .ibx .tags{display:flex;gap:4px;flex-wrap:wrap}
   .ibx .ev summary{cursor:pointer;font-size:13px}
+  .ibx .oa{display:flex;align-items:center;gap:8px} .ibx .ox{padding:1px 7px;line-height:1.3}
   .ibx .off1{display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid var(--line);font-size:13px}
   .ibx .foot{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
   .ibx .foot .sep{width:1px;height:18px;background:var(--line);margin:0 2px}
@@ -612,7 +613,7 @@ function drawInbox(){
       const tags = `${ab && ab.swapper ? '<span class="pill">swapper</span>' : ''}${ab && ab.restricted ? '<span class="pill off">no posts/swaps</span>' : ''}${ab && ab.banned ? '<span class="pill off">banned</span>' : ''}${ab && !ab.key ? '<span class="pill off">no board account found</span>' : ''}`;
       const ev = x.src === 'swap'
         ? (ab && ab.comment ? `<div class="ev"><a href="${esc(ab.comment)}" target="_blank" rel="noopener">Their swap comment ↗</a></div>` : '<div class="ev note">No swap comment saved.</div>')
-        : `<details class="ev"><summary>Their board comments (${(ab && ab.offers || []).length})</summary>${(ab && ab.offers || []).map(o => `<div class="off1"><span>${esc(SPORT_LBL[o.sport] || o.sport)} · <b>${esc(o.player)}</b> · ${esc(o.rate)}</span>${o.link ? `<a href="${esc(o.link)}" target="_blank" rel="noopener">comment ↗</a>` : '<span class="note">no link</span>'}</div>`).join('') || '<div class="note">No listings on the board.</div>'}</details>`;
+        : `<details class="ev"><summary>Their board comments (${(ab && ab.offers || []).length})</summary>${(ab && ab.offers || []).map(o => `<div class="off1"><span>${esc(SPORT_LBL[o.sport] || o.sport)} · <b>${esc(o.player)}</b> · ${esc(o.rate)}</span><span class="oa">${o.link ? `<a href="${esc(o.link)}" target="_blank" rel="noopener">comment ↗</a>` : '<span class="note">no link</span>'}<button class="sm danger ox" data-offx="${esc(o.id)}" title="Delete this listing from the board">✕</button></span></div>`).join('') || '<div class="note">No listings on the board.</div>'}</details>`;
       about = party('Reported', ab, x.target, 'replyabout', (tags ? `<div class="tags">${tags}</div>` : '') + ev);
     }
     return `<div class="ibx" data-k="${esc(k)}">
@@ -629,6 +630,19 @@ async function loadInbox(){ $('#ib-list').textContent = 'Loading…'; const j = 
 $('#ib-load').addEventListener('click', loadInbox);
 $('#ib-f').addEventListener('change', drawInbox);
 $('#ib-list').addEventListener('click', async e => {
+  // ✕ on a board listing: two taps, then it's removed from the board.
+  const ox = e.target.closest('[data-offx]');
+  if(ox){
+    if(ox.dataset.armed !== '1'){ ox.dataset.armed = '1'; ox.textContent = 'Delete?'; setTimeout(() => { ox.dataset.armed = ''; ox.textContent = '✕'; }, 4000); return; }
+    ox.disabled = true;
+    const j = await post({ op: 'removeOffer', id: ox.dataset.offx });
+    if(j.error){ toast(j.error); ox.disabled = false; return; }
+    const card = ox.closest('[data-k]'), [src, id] = card.dataset.k.split('|'), it = ibItems.find(x => x.src === src && x.id === id);
+    if(it && it.about && it.about.offers) it.about.offers = it.about.offers.filter(o => String(o.id) !== ox.dataset.offx);
+    const row = ox.closest('.off1'), sum = card.querySelector('.ev summary'); row.remove();
+    if(sum && it) sum.textContent = `Their board comments (${it.about.offers.length})`;
+    toast('Listing deleted from the board.'); return;
+  }
   const b = e.target.closest('[data-a]'); if(!b) return;
   const card = b.closest('[data-k]'), [src, id] = card.dataset.k.split('|'), a = b.dataset.a;
   // Delete, take posts/swaps and ban take two clicks.
