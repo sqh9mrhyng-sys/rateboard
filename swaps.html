@@ -563,7 +563,7 @@ function drawWants(){
   drawCaps();
 }
 $('#wants').addEventListener('click', e => { const b = e.target.closest('button'); if(!b) return;
-  const x = b.dataset.x; if(x){ prof.wants = prof.wants.filter(k => k !== x); drawWants(); return; }
+  const x = b.dataset.x; if(x){ prof.wants = prof.wants.filter(k => k !== x); drawWants(); $('#savemsg').textContent = 'Player removed - tap Save my swap to keep the change (any swap for him still to come is then called off).'; return; }
   // ▲/▼ move a pick up or down the priority order (saved with Save).
   const i = b.dataset.up != null ? Number(b.dataset.up) : b.dataset.dn != null ? Number(b.dataset.dn) : -1; if(i < 0) return;
   const j = b.dataset.up != null ? i - 1 : i + 1; if(j < 0 || j >= prof.wants.length) return;
@@ -576,7 +576,7 @@ $('#save').addEventListener('click', async () => {
   if(!SWAP_COMMENT_RE.test($('#clink').value.trim())){ $('#savemsg').textContent = 'That link is not a comment under the swap post. Open the swap post, copy the link to your comment, and paste it in step 2.'; return; }
   const j = await api('/api/swaps?op=save', { method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 5), comment: $('#clink').value.trim(), goal: $('#goal').value.trim(), dayCap: $('#daycap').value.trim(), caps, keep: prof.keep, slots: prof.slots, names: wantNames }) });
-  $('#savemsg').textContent = j.error ? j.error : 'Saved.';
+  $('#savemsg').textContent = j.error ? j.error : 'Saved.' + (j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} for a player or hour you removed ${j.calledOff === 1 ? 'is' : 'are'} called off - you'll both get a message.` : '');
   if(!j.error){ savedWants = new Set(prof.wants); loadHourCounts(); loadWantCounts(); loadSwaps(); }
   try{ localStorage.setItem('ratebrd_swapnames', JSON.stringify(wantNames)); }catch(e){}
 });

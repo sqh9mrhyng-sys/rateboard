@@ -1022,6 +1022,22 @@ async function cancelKept(db, who, keep) {
   }
   return n;
 }
+/* A swap still to come for a player they no longer pick, or at an hour they
+   no longer pick, is called off when they save: both sides are told (if
+   they'd been warned) by the next DM run, the same as a kept pass. */
+async function cancelDropped(db, who, wants, slots) {
+  try { await matchCols(db); } catch (e) {}
+  const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned') AND (a=? OR b=?)`).bind(who, who).all()).results) || [];
+  let n = 0;
+  for (const m of rows) {
+    if (sideDue(m) <= Date.now()) continue;                  // its hour has come: leave it
+    const gets = m.a === who ? m.aGets : m.bGets;
+    const why = !wants.has(gets) ? 'no longer swapping for that player' : !slots.has(Number(m.slot)) ? 'no longer picks that hour' : null;
+    if (!why) continue;
+    await db.prepare(`UPDATE swap_matches SET status='cancelling', note=? WHERE id=?`).bind(`called off: @${who} ${why}`, m.id).run(); n++;
+  }
+  return n;
+}
 // Admin "Send now": every DM for one match straight away (warn, contact, follow-up).
 async function sendMatch(env, db, auth, m) {
   return (await runDms(env, db, auth, [m], 6, true)).join('; ');
@@ -2315,7 +2331,9 @@ async function handle({ request, env, waitUntil }) {
     await db.prepare('UPDATE swap_users SET dayCap=?, caps=? WHERE key=?').bind(dayCap, JSON.stringify(caps), me).run();
     try { await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); await env.RATEBOARD_KV.delete('swap_wantcounts_v1'); } catch (e) {}
     try { await cancelKept(db, me, new Set(keep)); } catch (e) {}
-    return json({ ok: true, wants, keep: keep.length, slots });
+    let calledOff = 0;
+    try { calledOff = await cancelDropped(db, me, new Set(wants), new Set(slots)); } catch (e) {}
+    return json({ ok: true, wants, keep: keep.length, slots, calledOff });
   }
 
   /* One scan for the whole site (Swaps, Boosts, OTD). The page keeps asking
