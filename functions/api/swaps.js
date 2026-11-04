@@ -1533,6 +1533,36 @@ async function backgroundScans(env, db, auth) {
   }
 }
 
+/* Second feedback round (Dennis, 2026-11-04): from 5:10pm ET, everyone the
+   bot sent a swap warning or contact to today (since 7am ET). Five a minute,
+   and only outside the :25-:10 warning/contact window so it never gets in
+   their way. */
+const FEEDBACK2_TEXT = "Rate your experience so far 1-10, it's okay to be harsh this is to improve the experience.\nIs there any additions you want to see to the website or swaps?";
+async function feedbackDms2(env, db, auth) {
+  const C = 'feedback_1104', AT = Date.parse('2026-11-04T22:10:00Z');
+  if (Date.now() < AT || Date.now() > AT + 6 * 3600000) return;
+  await db.prepare('CREATE TABLE IF NOT EXISTS bot_once (campaign TEXT, key TEXT, at INTEGER, ok INTEGER, PRIMARY KEY (campaign, key))').run();
+  if (!(await env.RATEBOARD_KV.get('bot_once_' + C))) {
+    await env.RATEBOARD_KV.put('bot_once_' + C, String(Date.now()));
+    const rows = ((await db.prepare(`SELECT a, b, warnA, warnB, doneA, doneB FROM swap_matches WHERE dueAt >= ? AND dueAt <= ?`).bind(Date.parse('2026-11-04T12:00:00Z'), Date.now()).all()).results) || [];
+    const who = new Set();
+    for (const m of rows) { if (m.warnA || m.doneA) who.add(m.a); if (m.warnB || m.doneB) who.add(m.b); }
+    for (const k of who) await db.prepare('INSERT OR IGNORE INTO bot_once (campaign, key) VALUES (?, ?)').bind(C, k).run();
+    await stat(db, 'feedback2_queued', who.size);
+  }
+  if (dmWindow()) return;
+  const due = ((await db.prepare('SELECT key FROM bot_once WHERE campaign=? AND at IS NULL LIMIT 5').bind(C).all()).results) || [];
+  for (const { key } of due) {
+    const c = await db.prepare('UPDATE bot_once SET at=? WHERE campaign=? AND key=? AND at IS NULL').bind(Date.now(), C, key).run();
+    if (!(c && c.meta && c.meta.changes)) continue;
+    const u = await loadMember(db, key);
+    let ok = 0;
+    try { if (u && u.hashId) { const ch = await dmChannel(db, auth, u.hashId, u.rsUser, env); await dmSendRetry(auth, ch, FEEDBACK2_TEXT); ok = 1; await stat(db, 'dm_feedback2'); } }
+    catch (e) { await botFail(db, 'dm_feedback', `${key}: ${e.message || e}`); }
+    await db.prepare('UPDATE bot_once SET ok=? WHERE campaign=? AND key=?').bind(ok, C, key).run();
+    await sleep(1500);
+  }
+}
 async function feedbackDms(env, db, auth) {
   await db.prepare('CREATE TABLE IF NOT EXISTS bot_once (campaign TEXT, key TEXT, at INTEGER, ok INTEGER, PRIMARY KEY (campaign, key))').run();
   const C = 'feedback_day1';
@@ -1679,6 +1709,7 @@ export async function swapTick(env) {
   try { await db.prepare(DMV_DDL).run(); await db.prepare('DELETE FROM dm_verify').run(); } catch (e) {}   // second look off: drop anything still waiting
   try { await db.prepare(DMQ_DDL).run(); await db.prepare("DELETE FROM dm_retry WHERE label LIKE '%2nd look%'").run(); } catch (e) {}
   try { await feedbackDms(env, db, auth); } catch (e) { await botFail(db, 'dm_feedback', e.message); }
+  try { await feedbackDms2(env, db, auth); } catch (e) { await botFail(db, 'dm_feedback', e.message); }
   try { await backgroundScans(env, db, auth); } catch (e) { await botFail(db, 'scan_bg', e.message); }
   const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned','cancelling') AND createdAt > ? ORDER BY id LIMIT 500`)
     .bind(Date.now() - 2 * 86400000).all()).results) || [];
