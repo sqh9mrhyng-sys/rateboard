@@ -301,9 +301,10 @@ function drawDays(){
 $('#sport').addEventListener('change', drawDays);
 // CFB Balanced has its own bars (one slate a week).
 const drawMode = () => { const m = $('#mode').value;
-  $('#modenote').textContent = $('#sport').value === 'ncaaf' && m === 'balanced'
-    ? 'Balanced (CFB): Legendary for 27.5+ projected rax (up to 70% of your Legendaries in a week), Epic for 26+, Rare for anyone at 10+.'
-    : $('#sport').value === 'ncaaf' ? MODE_NOTE[m].replace('Rare for anyone at 5+', 'Rare for anyone at 10+') : MODE_NOTE[m]; };
+  const CFB_NOTE = { balanced: 'Balanced (CFB): Legendary for 27.5+ projected rax (up to 70% of your Legendaries in a week), Epic for 26+, Rare for anyone at 10+.',
+    heavy: 'Heavy Legendary (CFB): Legendary for 23+ projected rax (all of your Legendaries can go), Epic for 19.5+, Rare for anyone at 10+.',
+    saver: 'Boost saver (CFB): Legendary for 30+ projected rax (at most 20% of your Legendaries in a week), Epic for 26+, Rare for anyone at 10+.' };
+  $('#modenote').textContent = $('#sport').value === 'ncaaf' ? (CFB_NOTE[m] || MODE_NOTE[m]) : MODE_NOTE[m]; };
 $('#sport').addEventListener('change', () => drawMode());
 $('#mode').addEventListener('change', () => { drawMode(); if(!$('#out').hidden) run(); });
 drawMode();

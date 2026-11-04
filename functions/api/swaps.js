@@ -2857,10 +2857,15 @@ async function handle({ request, env, waitUntil }) {
     /* CFB on Balanced (Dennis, 2026-11-04): 67 players make 25+ rax a game over
        5+ games, so Legendary from 27.5 projected and Epic from 26, and up to 70%
        of the Legendaries held go out in a week (one slate a week in college football). */
-    const cfbBal = sp === 'ncaaf' && mode === 'balanced';
-    if (cfbBal) R.cap = 0.7;
-    // CFB: no Rare under 10 projected rax, on any setting.
-    const legBar = cfbBal ? 27.5 : R.leg * scale, epicBar = cfbBal ? 26 : R.epic * scale, rareFloor = sp === 'ncaaf' ? 10 : 5, cutAt = null;
+    /* CFB bars of its own (Dennis, 2026-11-04), per week:
+         balanced  Legendary 27.5+ (up to 70% of Legendaries), Epic 26+
+         heavy     Legendary 23+ (all of them can go), Epic 19.5+
+         saver     Legendary 30+ (at most 20%), Epic 26+
+       and no Rare under 10 projected on any of them. */
+    const CFB_RULES = { balanced: { leg: 27.5, epic: 26, cap: 0.7 }, heavy: { leg: 23, epic: 19.5, cap: 1 }, saver: { leg: 30, epic: 26, cap: 0.2 } };
+    const cfb = sp === 'ncaaf' ? CFB_RULES[mode] || CFB_RULES.balanced : null;
+    if (cfb) R.cap = cfb.cap;
+    const legBar = cfb ? cfb.leg : R.leg * scale, epicBar = cfb ? cfb.epic : R.epic * scale, rareFloor = sp === 'ncaaf' ? 10 : 5, cutAt = null;
     bars.splice(0, 3, Math.round(legBar * 10) / 10, Math.round(epicBar * 10) / 10, rareFloor);
     const held = r => inv ? inv.filter(b => b.rarity === r).reduce((t, b) => t + b.count, 0) : 0;
     const dayCap = { 5: held(5) ? Math.max(1, Math.floor(held(5) * R.cap)) : 0, 4: Infinity, 3: Infinity };
