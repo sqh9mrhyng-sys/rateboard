@@ -1219,7 +1219,9 @@ async function scanWork(env, db, me, job, auth) {
   const read = async (step, tok) => {
     const [sport, season, kind] = step;
     const base = `https://web.realapp.com/userpasses/${encodeURIComponent(job.hashId)}/passes?entityType=${kind}&season=${season}&sport=${sport}`;
+    const tq = Date.now();
     const res = await fetch(base, { headers: rsHeaders(tok) });
+    job.calls = (job.calls || 0) + 1; job.callMs = (job.callMs || 0) + (Date.now() - tq);
     const text = await res.text();
     if (!res.ok) throw new Error(`Real ${res.status}: ${text.slice(0, 80)}`);
     let d = null; try { d = JSON.parse(text); } catch (e) {}
@@ -1274,6 +1276,11 @@ async function scanWork(env, db, me, job, auth) {
   if (job.full !== false) { try { await db.prepare('UPDATE swap_users SET fullScanAt=? WHERE key=?').bind(Date.now(), me).run(); } catch (e) {} }
   try { await db.prepare('DELETE FROM scan_jobs WHERE key=?').bind(me).run(); } catch (e) {}
   try { await db.prepare('DELETE FROM scan_queue WHERE key=?').bind(me).run(); } catch (e) {}   // next in line goes
+  // How long scans take, for the health page: the last 15.
+  try { const k = 'scan_perf_v1'; const l = JSON.parse((await env.RATEBOARD_KV.get(k)) || '[]') || [];
+    l.unshift({ at: new Date().toISOString(), secs: Math.round((Date.now() - job.at) / 1000), steps: (job.steps || SCAN_STEPS).length, full: job.full !== false,
+      calls: job.calls || 0, avgMs: job.calls ? Math.round(job.callMs / job.calls) : null, failed: job.failed.length });
+    await env.RATEBOARD_KV.put(k, JSON.stringify(l.slice(0, 15))); } catch (e) {}
   if (job.kept) { await stat(db, 'scan_partial'); await botFail(db, 'scan', `${me}: ${job.kept} season(s) kept from last scan - ${job.errors.slice(0, 3).join(' | ')}`); }
   else await stat(db, 'scan_ok');
   return { done: true, hashId: job.hashId, passes: job.passes, errors: job.errors, scannedAt: Date.now(),
