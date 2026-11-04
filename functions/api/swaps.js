@@ -2857,12 +2857,16 @@ async function handle({ request, env, waitUntil }) {
     /* CFB on Balanced (Dennis, 2026-11-04): 67 players make 25+ rax a game over
        5+ games, so Legendary from 27.5 projected and Epic from 26, and up to 70%
        of the Legendaries held go out in a week (one slate a week in college football). */
-    /* CFB bars of its own (Dennis, 2026-11-04), per week:
-         balanced  Legendary 27.5+ (up to 70% of Legendaries), Epic 26+
-         heavy     Legendary 23+ (all of them can go), Epic 19.5+
-         saver     Legendary 30+ (at most 20%), Epic 26+
+    /* CFB bars of its own, per week. Set from the season so far (2026-11-04):
+       of the CFB players with 4+ games, 26 average 27.5+ rax, 113 average 23+,
+       268 average 20+ and about 990 average 15+. Legendaries are easy to come
+       by in CFB, so they're spent freely - the old bars (27.5 / 23 / 30) left
+       most of them unused and put Rares on 20-rax players.
+         balanced  Legendary 22+ (up to 70% of Legendaries), Epic 15+
+         heavy     Legendary 18+ (all of them can go), Epic 12+
+         saver     Legendary 27.5+ (at most 20%), Epic 20+
        and no Rare under 10 projected on any of them. */
-    const CFB_RULES = { balanced: { leg: 27.5, epic: 26, cap: 0.7 }, heavy: { leg: 23, epic: 19.5, cap: 1 }, saver: { leg: 30, epic: 26, cap: 0.2 } };
+    const CFB_RULES = { balanced: { leg: 22, epic: 15, cap: 0.7 }, heavy: { leg: 18, epic: 12, cap: 1 }, saver: { leg: 27.5, epic: 20, cap: 0.2 } };
     const cfb = sp === 'ncaaf' ? CFB_RULES[mode] || CFB_RULES.balanced : null;
     if (cfb) R.cap = cfb.cap;
     const legBar = cfb ? cfb.leg : R.leg * scale, epicBar = cfb ? cfb.epic : R.epic * scale, rareFloor = sp === 'ncaaf' ? 10 : 5, cutAt = null;
