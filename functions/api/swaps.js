@@ -616,6 +616,33 @@ async function botFail(db, kind, msg) {
     if (Math.random() < 0.05) await db.prepare('DELETE FROM bot_log WHERE at < ?').bind(Date.now() - 14 * 86400000).run(); } catch (e) {}
 }
 
+// A send that waits and tries again when Real is busy (429) or hiccups (5xx).
+async function dmSendRetry(auth, channelId, text) {
+  let last;
+  for (const wait of [0, 1500, 4000]) {
+    if (wait) await sleep(wait);
+    try { return await dmSend(auth, channelId, text); } catch (e) { last = e; if (!/send (429|5\d\d)/.test(String(e.message || e))) throw e; }
+  }
+  throw last;
+}
+/* Parts that still wouldn't go: kept in order and sent again each minute
+   (tick) until they do, for up to an hour. */
+const DMQ_DDL = 'CREATE TABLE IF NOT EXISTS dm_retry (id INTEGER PRIMARY KEY AUTOINCREMENT, channelId INTEGER, parts TEXT, label TEXT, tries INTEGER, at INTEGER)';
+async function queueDm(db, channelId, parts, label) {
+  try { await db.prepare(DMQ_DDL).run();
+    await db.prepare('INSERT INTO dm_retry (channelId, parts, label, tries, at) VALUES (?, ?, ?, 0, ?)').bind(Number(channelId), JSON.stringify(parts), String(label || '').slice(0, 120), Date.now()).run(); } catch (e) {}
+}
+async function retryDms(db, auth) {
+  await db.prepare(DMQ_DDL).run();
+  const rows = ((await db.prepare('SELECT * FROM dm_retry ORDER BY id LIMIT 6').all()).results) || [];
+  for (const r of rows) {
+    let parts = parse(r.parts, []);
+    while (parts.length) { try { await dmSendRetry(auth, r.channelId, parts[0]); parts.shift(); await stat(db, 'dm_retried'); await sleep(900); } catch (e) { break; } }
+    if (!parts.length) await db.prepare('DELETE FROM dm_retry WHERE id=?').bind(r.id).run();
+    else if (Number(r.tries) >= 60) { await db.prepare('DELETE FROM dm_retry WHERE id=?').bind(r.id).run(); await botFail(db, 'dm_retry', `${r.label}: gave up after an hour, ${parts.length} part(s) unsent`); }
+    else await db.prepare('UPDATE dm_retry SET parts=?, tries=tries+1 WHERE id=?').bind(JSON.stringify(parts), r.id).run();
+  }
+}
 async function dmSend(auth, channelId, text) {
   const res = await fetch(`https://web.realapp.com/messages/channels/${channelId}/messages`, {
     method: 'POST', headers: { ...rsHeaders(auth), 'content-type': 'application/json' },
@@ -1009,9 +1036,12 @@ async function runDms(env, db, auth, rows, max, force) {
     try {
       const ch = await dmChannel(db, auth, me.hashId, me.rsUser, env);
       const msgs = Array.isArray(text) ? text : [text];
+      /* Each part is tried a few times on the spot; a part after the heading
+         that still won't go is queued and sent again every minute until it
+         does (a busy Real was dropping the player lines after the heading). */
       for (let i = 0; i < msgs.length; i++) {
-        try { await dmSend(auth, ch, msgs[i]); }
-        catch (e) { if (i === 0) throw e; await botFail(db, 'dm_' + kind, `@${me.rsUser} part ${i + 1}/${msgs.length}: ${e.message || e}`); }   // heading went: the DM counts as sent
+        try { await dmSendRetry(auth, ch, msgs[i]); }
+        catch (e) { if (i === 0) throw e; await queueDm(db, ch, msgs.slice(i), `${kind} @${me.rsUser}`); await botFail(db, 'dm_' + kind, `@${me.rsUser} part ${i + 1}/${msgs.length} queued for retry: ${e.message || e}`); break; }
         sent++; await stat(db, 'dm_' + kind); await sleep(900);
       }
       notes.push(`${kind} sent to @${me.rsUser} (${msgs.length} message${msgs.length === 1 ? '' : 's'})`); return true;
@@ -1465,6 +1495,7 @@ export async function swapTick(env) {
     }
   } catch (e) {}
   try { await autoRescan(env, db, auth); } catch (e) { await botFail(db, 'rescan', e.message); }
+  try { await retryDms(db, auth); } catch (e) { await botFail(db, 'dm_retry', e.message); }   // unsent parts first
   try { await feedbackDms(env, db, auth); } catch (e) { await botFail(db, 'dm_feedback', e.message); }
   try { await backgroundScans(env, db, auth); } catch (e) { await botFail(db, 'scan_bg', e.message); }
   const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned','cancelling') AND createdAt > ? ORDER BY id LIMIT 500`)
