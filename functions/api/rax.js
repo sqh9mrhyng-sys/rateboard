@@ -1089,6 +1089,8 @@ async function sweepWindow(env, sport, season) {
 const inWindow = (w, day) => !w || !day || ((!w.from || String(day) >= w.from) && (!w.to || String(day) <= w.to));
 
 async function forgetWalk(env, sport, season) {
+  // A run already in flight must not write its old "done" list back over this reset.
+  try { await env.RATEBOARD_KV.put(`gl_gen_${sport}_${season}`, String(Date.now())); } catch (e) {}
   try {
     const through = await env.RATEBOARD_KV.get(`gl_through_${sport}_${season}`);
     const to = etYesterday();
@@ -1875,7 +1877,7 @@ const COLLECT_PAUSE_UNTIL = 0;   // back on 2026-11-02: change-only writes, held
 // NFL 2026 first: a week of NFL is small, and behind CBB's daily sweep (a
 // whole Division I season) it was never reached - Sunday's games were missed
 // and NFL Boosts had nothing to go on (2026-11-03).
-const EXTRA_JOBS = [['nfl', 2026], ['ncaaf', 2026], ['ncaam', 2027], ['nba', 2027], ['ufc', 2023]];   // CBB second (2026-11-03): it was never reached at the back
+const EXTRA_JOBS = [['ncaaf', 2026], ['nfl', 2026], ['ncaam', 2027], ['nba', 2027], ['ufc', 2023]];   // CFB first (2026-11-04): stuck at Oct 24   // CBB second (2026-11-03): it was never reached at the back
 
 /* Game-data sweeps, on a set schedule at 9am Eastern. On a sweep day the
    season's walk is forgotten, so the queue re-walks it and picks up every game
@@ -1908,7 +1910,10 @@ const ONE_OFF_RESCANS = [
   { id: 'nfl2026-catchup-1103-plays', sport: 'nfl', season: 2026, at: Date.parse('2026-11-04T07:30:00Z'), plays: true },
   // CFB 2026 catch-up: Saturday 31 October's games, behind the daily sweeps.
   { id: 'cfb2026-catchup-1103', sport: 'ncaaf', season: 2026, at: Date.parse('2026-11-04T07:20:00Z'), walk: true },
-  { id: 'cfb2026-catchup-1103-plays', sport: 'ncaaf', season: 2026, at: Date.parse('2026-11-04T09:20:00Z'), plays: true }
+  { id: 'cfb2026-catchup-1103-plays', sport: 'ncaaf', season: 2026, at: Date.parse('2026-11-04T09:20:00Z'), plays: true },
+  // CFB 2026 stopped at Oct 24: re-walk now with the whole season in the window (no "since last sweep" cut), plays after.
+  { id: 'cfb2026-full-1104', sport: 'ncaaf', season: 2026, at: Date.parse('2026-11-04T10:40:00Z'), walk: true, full: true },
+  { id: 'cfb2026-full-1104-plays', sport: 'ncaaf', season: 2026, at: Date.parse('2026-11-04T14:40:00Z'), plays: true }
 ];
 const ONE_OFF_KEY = 'queue_oneoff_v1';
 const PACE_CLEAR_ONCE = 'queue_pace_clear_1103';
@@ -1953,6 +1958,10 @@ async function weeklyRescan(env) {
   for (const job of ONE_OFF_RESCANS) {
     if (Date.now() < job.at || ran[job.id]) continue;
     if (job.walk) await forgetWalk(env, job.sport, job.season);
+    if (job.full) {
+      try { await env.RATEBOARD_KV.delete(`gl_through_${job.sport}_${job.season}`); } catch (e) {}
+      try { await env.RATEBOARD_KV.put(`gl_window_${job.sport}_${job.season}`, JSON.stringify({ from: null, to: etYesterday(), at: Date.now() })); } catch (e) {}
+    }
     if (job.plays) {
       try { await env.RATEBOARD_KV.delete(sweptKey(job.sport, job.season)); } catch (e) {}
     }
@@ -6743,9 +6752,11 @@ async function handleGet({ request, env, waitUntil }) {
             await w.close();
             return;
           }
+          const gen0 = await env.RATEBOARD_KV.get(`gl_gen_${sport}_${season}`);
+          const reset = async () => (await env.RATEBOARD_KV.get(`gl_gen_${sport}_${season}`)) !== gen0;
           const done = await readRaxDone();
           const raxWin = (await sweepWindow(env, sport, season)) || { from: null, to: etYesterday() };
-          const todo = store.ids.filter(id => !done[id]).slice(0, LIMIT);
+          const todo = (url.searchParams.get('tail') === '1' ? store.ids.filter(id => !done[id]).reverse() : store.ids.filter(id => !done[id])).slice(0, LIMIT);   // tail: the second account works from the far end
           if (!todo.length) {
             // Both passes done for this sweep: next sweep starts the day after this window.
             try { if (raxWin && raxWin.to) await env.RATEBOARD_KV.put(`gl_through_${sport}_${season}`, raxWin.to); } catch (e) {}
@@ -6798,12 +6809,14 @@ async function handleGet({ request, env, waitUntil }) {
             }
             n++;
             if (n % 10 === 0) {
-              await env.RATEBOARD_KV.put(RAX_DONE_KEY, JSON.stringify({ done, updated: Date.now() }));
+              if (await reset()) { await send('season was reset - stopping\n'); break; }
+              Object.assign(done, await readRaxDone()); await env.RATEBOARD_KV.put(RAX_DONE_KEY, JSON.stringify({ done, updated: Date.now() }));
               await send(`  ${n} / ${todo.length}  (${updates} game rows given a rax figure)\n`);
             }
             await sleep(80);
           }
-          await env.RATEBOARD_KV.put(RAX_DONE_KEY, JSON.stringify({ done, updated: Date.now() }));
+          if (await reset()) { await send('season was reset - nothing written\n'); await w.close(); return; }
+          Object.assign(done, await readRaxDone()); await env.RATEBOARD_KV.put(RAX_DONE_KEY, JSON.stringify({ done, updated: Date.now() }));
 
           const have = store.ids.filter(id => done[id]).length;
           const left = store.ids.length - have;
@@ -6840,8 +6853,10 @@ async function handleGet({ request, env, waitUntil }) {
             await w.close();
             return;
           }
+          const gen0 = await env.RATEBOARD_KV.get(`gl_gen_${sport}_${season}`);
+          const reset = async () => (await env.RATEBOARD_KV.get(`gl_gen_${sport}_${season}`)) !== gen0;
           const done = await readDone();
-          const todo = store.ids.filter(id => !done[id]).slice(0, LIMIT);
+          const todo = (url.searchParams.get('tail') === '1' ? store.ids.filter(id => !done[id]).reverse() : store.ids.filter(id => !done[id])).slice(0, LIMIT);
           if (!todo.length) {
             await send(`nothing left - all ${store.ids.length} players have their game log.\n`);
             await send(`##STATE ${store.ids.length} ${store.ids.length} 0\n`);
@@ -6890,12 +6905,14 @@ async function handleGet({ request, env, waitUntil }) {
             }
             n++;
             if (n % 10 === 0) {
-              await env.RATEBOARD_KV.put(DONE_KEY, JSON.stringify({ done, updated: Date.now() }));
+              if (await reset()) { await send('season was reset - stopping\n'); break; }
+              Object.assign(done, await readDone()); await env.RATEBOARD_KV.put(DONE_KEY, JSON.stringify({ done, updated: Date.now() }));
               await send(`  ${n} / ${todo.length}  (${rowsWritten} game rows)\n`);
             }
             await sleep(80);
           }
-          await env.RATEBOARD_KV.put(DONE_KEY, JSON.stringify({ done, updated: Date.now() }));
+          if (await reset()) { await send('season was reset - nothing written\n'); await w.close(); return; }
+          Object.assign(done, await readDone()); await env.RATEBOARD_KV.put(DONE_KEY, JSON.stringify({ done, updated: Date.now() }));
 
           const have = store.ids.filter(id => done[id]).length;
           const left = store.ids.length - have;
@@ -7608,6 +7625,35 @@ async function packSeasonRows(db, sport, season, waitUntil) {
   throw err;
 }
 
+/* CFB 2026 catch-up on a second account (2026-11-04): every tick, alongside
+   the queue, the market account walks CFB players from the far end of the
+   list - game logs first, then rax - so the two never ask for the same player.
+   Ends by itself. */
+const CFB_PUSH_UNTIL = Date.parse('2026-11-07T00:00:00Z');
+const CFB_PUSH_PER_TICK = 30;
+async function cfbPush(ctx) {
+  const env0 = ctx.env, alt = env0.RS_MARKET_TOKEN;
+  if (!alt) return;
+  const env = new Proxy(env0, { get: (t, k) => k === 'RS_AUTH_TOKEN' ? alt : t[k] });
+  const base = new URL(ctx.request.url).origin + '/api/rax?sport=ncaaf&season=2026';
+  const run = async q => { const r = await handleGet({ request: new Request(`${base}&${q}&limit=${CFB_PUSH_PER_TICK}&tail=1`), env, waitUntil: ctx.waitUntil }); return r.text(); };
+  let ran = {}; try { ran = JSON.parse((await env0.RATEBOARD_KV.get(ONE_OFF_KEY)) || '{}') || {}; } catch (e) {}
+  const resetAt = ran['cfb2026-full-1104'] ? Date.parse(ran['cfb2026-full-1104']) : 0;
+  if (!resetAt) return;                      // wait for the full re-walk to start
+  const t = await run('gamelog=1');
+  if (Date.now() > resetAt + 20 * 60000 && /nothing left/.test(t) && /nothing left/.test(await run('gamelog=rax'))) {
+    // Both passes done: the market account goes back to the marketplace pull.
+    try { await env0.RATEBOARD_KV.put(CFB_PUSH_DONE, '1', { expirationTtl: 7 * 86400 }); } catch (e) {}
+  }
+}
+const CFB_PUSH_DONE = 'cfbpush_done_1104';
+let cfbPushDone = false;
+async function cfbPushOn(env) {
+  if (cfbPushDone || Date.now() >= CFB_PUSH_UNTIL || !env.RS_MARKET_TOKEN) return false;
+  try { if (await env.RATEBOARD_KV.get(CFB_PUSH_DONE)) { cfbPushDone = true; return false; } } catch (e) {}
+  return true;
+}
+
 export async function onRequestGet(ctx) {
   ctx = Object.assign({}, ctx, { env: watchEnv(ctx.env, ctx.request, ctx.waitUntil) });
   const { request, env } = ctx;
@@ -7619,6 +7665,7 @@ export async function onRequestGet(ctx) {
   if (url.searchParams.get('queue') === 'next' && ctx.waitUntil) {
     ctx.waitUntil(swapTick(env).catch(() => {}));
     ctx.waitUntil(boostRefresh(env).catch(() => {}));
+    if (await cfbPushOn(env)) ctx.waitUntil(cfbPush(ctx).catch(() => {}));
   }
   const mk = url.searchParams.get('market');
   if (MARKET_MEMBER.includes(mk)) {
@@ -7733,7 +7780,8 @@ export async function onRequestGet(ctx) {
     const tally = env.RATEBOARD_DB && env.RATEBOARD_DB.__tally;
     const label = url.searchParams.get('queue') === 'next' ? 'tick' : ([...url.searchParams.entries()].find(([k]) => !['sport', 'season', 'jobs', 't'].includes(k)) || ['other'])[0];
     const record = () => { try { ctx.waitUntil(addJobUse(env, tally, label).catch(() => {})); } catch (e) {} };
-    if (!(MARKET_ON && env.RS_MARKET_TOKEN)) { const r0 = await handleGet(ctx); record(); return r0; }
+    // The market account is on the CFB catch-up until it's done (cfbPush).
+    if (!(MARKET_ON && env.RS_MARKET_TOKEN) || await cfbPushOn(env)) { const r0 = await handleGet(ctx); record(); return r0; }
     /* The marketplace pull rides alongside the collector call rather than
        ahead of it: it is a different Real account, one request at a time,
        and it stops when the collector's own work is done, so the tick is no
