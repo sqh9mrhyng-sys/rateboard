@@ -1650,7 +1650,7 @@ const GAMES_PER_TICK = 10;        // games per call, each one a full game
    the asking, so fetching more at once buys nothing. 150 fills about
    forty-five seconds of the minute between ticks, which is as much as can be
    taken without a call still running when the next one starts. */
-const GAMES_PER_TICK_BY_SPORT = { mlb: 60, ncaaf: 40, nfl: 30, nba: 60, wnba: 60, nhl: 60 };   // slowed 2026-11-02
+const GAMES_PER_TICK_BY_SPORT = { mlb: 60, ncaaf: 40, nfl: 80, nba: 80, wnba: 60, nhl: 60, ncaam: 150 };   // nfl/nba/ncaam back up 2026-11-03 so CBB and NFL keep up
 
 /* ----- historical seasons ---------------------------------------------------
    Real serves game logs with a real per-game rating all the way back to the
@@ -1858,7 +1858,7 @@ const COLLECT_PAUSE_UNTIL = 0;   // back on 2026-11-02: change-only writes, held
 // NFL 2026 first: a week of NFL is small, and behind CBB's daily sweep (a
 // whole Division I season) it was never reached - Sunday's games were missed
 // and NFL Boosts had nothing to go on (2026-11-03).
-const EXTRA_JOBS = [['nfl', 2026], ['nba', 2027], ['ufc', 2023], ['ncaam', 2027]];
+const EXTRA_JOBS = [['nfl', 2026], ['ncaam', 2027], ['nba', 2027], ['ufc', 2023]];   // CBB second (2026-11-03): it was never reached at the back
 
 /* Game-data sweeps, on a set schedule at 9am Eastern. On a sweep day the
    season's walk is forgotten, so the queue re-walks it and picks up every game
@@ -1867,8 +1867,8 @@ const SWEEP_HOUR_ET = 9;
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 const SWEEPS = [
   { sport: 'nba',    season: 2027, days: ALL_DAYS },
-  { sport: 'nhl',    season: 2026, days: ALL_DAYS },
-  { sport: 'soccer', season: 2026, days: ALL_DAYS },
+  { sport: 'nhl',    season: 2026, days: [0, 2, 4] },   // every other day (was daily) - frees the queue for CBB/NFL
+  { sport: 'soccer', season: 2026, days: [1] },       // Monday (was daily): the biggest season, not used by Boosts/Swaps
   { sport: 'ncaaf',  season: 2026, days: [0] },          // Sunday
   { sport: 'nfl',    season: 2026, days: [5, 1, 2] },    // Friday, Monday, Tuesday
   { sport: 'golf',   season: 2026, days: [1] },          // Monday
@@ -1891,6 +1891,7 @@ const ONE_OFF_RESCANS = [
   { id: 'nfl2026-catchup-1103-plays', sport: 'nfl', season: 2026, at: Date.parse('2026-11-04T07:30:00Z'), plays: true }
 ];
 const ONE_OFF_KEY = 'queue_oneoff_v1';
+const PACE_CLEAR_ONCE = 'queue_pace_clear_1103';
 const PLAYS_DUE_KEY = 'plays_due_v1';
 const PLAYS_AFTER_SWEEP_MS = 2 * 3600000;
 const RESCAN_KEY = 'queue_rescan_v1';
@@ -1906,6 +1907,8 @@ function easternNow() {
 }
 
 async function weeklyRescan(env) {
+  // One-off (2026-11-03): drop whatever rest the queue was holding so CBB/NFL start now.
+  try { if (!(await env.RATEBOARD_KV.get(PACE_CLEAR_ONCE))) { await env.RATEBOARD_KV.put(PACE_CLEAR_ONCE, '1'); await env.RATEBOARD_KV.put('queue_pace_v1', JSON.stringify({ lastJob: 'nfl:2026', holdUntil: 0 })); } } catch (e) {}
   // Pack data for a swept season: its plays reopen once the sweep has had
   // time to put the new games in the log.
   {
@@ -5157,7 +5160,7 @@ async function handleGet({ request, env, waitUntil }) {
       const key = `${sp}:${se}`;
       /* Sports being rescanned flat out, with no rest going into, between or
          out of their seasons. Empty this set again once the rescan is done. */
-      const NO_REST = new Set(['nhl', 'nfl']);   // nfl: small, and Boosts needs it fresh after each NFL day
+      const NO_REST = new Set(['nhl', 'nfl', 'ncaam', 'nba']);   // the seasons Boosts and the board need fresh: no 2-hour rests around them
       const prevSp = String(pace.lastJob || '').split(':')[0];
       if (pace.lastJob && pace.lastJob !== key && (NO_REST.has(sp) || NO_REST.has(prevSp))) {
         try { await env.RATEBOARD_KV.put(PACE_KEY, JSON.stringify({ lastJob: key, holdUntil: 0 })); } catch (e) {}
