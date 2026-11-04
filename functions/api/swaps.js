@@ -1068,7 +1068,8 @@ async function sideLines(member, m, side) {
     buy: `${playerUrl(gets) || playerName(me, gets)} ${String(gets).split(':')[1]} - ${passUrl(me, gets) || '(pass link not found)'}`,
     recvKey: side === 'A' ? m.aGets : m.bGets,
     recv: (() => { const k = side === 'A' ? m.aGets : m.bGets; return `${playerUrl(k) || playerName(me, k)} ${String(k).split(':')[1]}`; })(),
-    contact: `@${o.rsUser} - ${o.comment || '(no comment link)'} - ${playerUrl(gets) || playerName(me, gets)}`
+    // With the season, so three Scottie Schefflers can be told apart.
+    contact: `@${o.rsUser} - ${o.comment || '(no comment link)'} - ${playerUrl(gets) || playerName(me, gets)} ${String(gets).split(':')[1]}`
   };
 }
 async function matchCols(db) {
