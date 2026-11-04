@@ -1207,14 +1207,21 @@ async function newScanJob(env, db, me, over, u) {
 /* About 20 seconds of one member's scan, from wherever it got to. Only one
    worker at a time per scan (the page or the server), so nothing is read
    twice. Returns what the page shows. */
+const TOK_COOL = new Map();   // token -> rested until (after a 429)
 async function scanWork(env, db, me, job, auth) {
   const now = Date.now();
   const claim = await db.prepare('UPDATE scan_jobs SET busy=? WHERE key=? AND (busy IS NULL OR busy < ?)').bind(now + 30000, me, now).run();
   if (!(claim && claim.meta && claim.meta.changes)) return { done: false, busy: true };
   job = (await loadJob(db, me)) || job;
-  // What was fast and reliable: the bot account, one call at a time, 0.2s apart.
-  // The market and board accounts only step in for calls the bot couldn't get.
+  /* Real started answering the bot account with 429s on every pass read
+     (2026-11-04: three scans at once, all on the bot, ~15 calls a second), so
+     every call failed and waited for a retry on another account - 2 to 4
+     minutes a scan. Calls now go round the three accounts in turn, and an
+     account that gets a 429 is rested for 3 minutes (across scans). */
   const toks = [...new Set([auth, ...scanToks(env)].filter(Boolean))];
+  let rr = Math.floor(Math.random() * toks.length);
+  const pickTok = () => { for (let i = 0; i < toks.length; i++) { const t = toks[(rr + i) % toks.length]; if (!(TOK_COOL.get(t) > Date.now())) { rr = (rr + i + 1) % toks.length; return t; } }
+    return toks[(rr++) % toks.length]; };
   const t0 = Date.now(), budget = () => Date.now() - t0 < 20000;
   const read = async (step, tok) => {
     const [sport, season, kind] = step;
@@ -1223,6 +1230,7 @@ async function scanWork(env, db, me, job, auth) {
     const res = await fetch(base, { headers: rsHeaders(tok) });
     job.calls = (job.calls || 0) + 1; job.callMs = (job.callMs || 0) + (Date.now() - tq);
     const text = await res.text();
+    if (res.status === 429) TOK_COOL.set(tok, Date.now() + 3 * 60000);
     if (!res.ok) throw new Error(`Real ${res.status}: ${text.slice(0, 80)}`);
     let d = null; try { d = JSON.parse(text); } catch (e) {}
     // Only a reply that says it's an error counts as a failure; an empty or
@@ -1236,7 +1244,7 @@ async function scanWork(env, db, me, job, auth) {
   const STEPS = job.steps || SCAN_STEPS;
   while (job.idx < STEPS.length && budget()) {
     const step = STEPS[job.idx++];
-    try { await read(step, auth); } catch (e) { job.failed.push(step); if (!job.firstErr) job.firstErr = String(e.message || e).slice(0, 120); }
+    try { await read(step, pickTok()); } catch (e) { job.failed.push(step); if (!job.firstErr) job.firstErr = String(e.message || e).slice(0, 120); }
     await sleep(200);
   }
   if (job.idx >= STEPS.length) {
@@ -1244,7 +1252,7 @@ async function scanWork(env, db, me, job, auth) {
       const step = job.failed[job.ri++]; let err = null;
       for (let t = 0; t < toks.length; t++) {
         await sleep(600);
-        try { await read(step, toks[(job.ri + t) % toks.length]); err = null; break; } catch (e) { err = e; }
+        try { await read(step, pickTok()); err = null; break; } catch (e) { err = e; }
       }
       if (err) { job.still.push(step); job.errors.push(`${step[0]} ${step[1]} ${step[2]}: ${String(err.message || err).slice(0, 100)}`); }
     }
