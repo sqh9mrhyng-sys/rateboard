@@ -635,6 +635,12 @@ async function dmSendRetry(auth, channelId, text) {
 }
 /* Parts that still wouldn't go: kept in order and sent again each minute
    (tick) until they do, for up to an hour. */
+/* At :30 and :00 the bot has a lot to send (an hour can hold 180 swaps and
+   50+ people). It sends up to 20 messages a minute, and pass scans stay off
+   the bot from :25 to :40 and :55 to :10 so Real doesn't throttle it while
+   the warnings and contacts go out. */
+const DM_PER_TICK = 20;
+const dmWindow = (t = new Date()) => { const m = t.getUTCMinutes(); return (m >= 25 && m < 40) || m >= 55 || m < 10; };
 const DMQ_DDL = 'CREATE TABLE IF NOT EXISTS dm_retry (id INTEGER PRIMARY KEY AUTOINCREMENT, channelId INTEGER, parts TEXT, label TEXT, tries INTEGER, at INTEGER)';
 async function queueDm(db, channelId, parts, label) {
   try { await db.prepare(DMQ_DDL).run();
@@ -674,7 +680,7 @@ async function verifyDms(db, auth) {
 }
 async function retryDms(db, auth) {
   await db.prepare(DMQ_DDL).run();
-  const rows = ((await db.prepare('SELECT * FROM dm_retry ORDER BY id LIMIT 6').all()).results) || [];
+  const rows = ((await db.prepare('SELECT * FROM dm_retry ORDER BY id LIMIT 12').all()).results) || [];
   for (const r of rows) {
     let parts = parse(r.parts, []);
     while (parts.length) { try { await dmSendRetry(auth, r.channelId, parts[0]); parts.shift(); await stat(db, 'dm_retried'); await sleep(900); } catch (e) { break; } }
@@ -1083,7 +1089,7 @@ async function runDms(env, db, auth, rows, max, force) {
       for (let i = 0; i < msgs.length; i++) {
         try { await dmSendRetry(auth, ch, msgs[i]); }
         catch (e) { if (i === 0) throw e; await queueDm(db, ch, msgs.slice(i), `${kind} @${me.rsUser}`); await botFail(db, 'dm_' + kind, `@${me.rsUser} part ${i + 1}/${msgs.length} queued for retry: ${e.message || e}`); break; }
-        sent++; await stat(db, 'dm_' + kind); await sleep(900);
+        sent++; await stat(db, 'dm_' + kind); await sleep(700);
       }
       // A second look in a few minutes: read the chat back and re-send any part that isn't there.
       if (kind === 'warn' || kind === 'contact') await queueVerify(db, ch, msgs, `${kind} @${me.rsUser}`);
@@ -1303,7 +1309,8 @@ async function scanWork(env, db, me, job, auth) {
      minutes a scan. Calls now go round the three accounts in turn, and an
      account that gets a 429 is rested for 3 minutes (across scans). */
   // Not the collector's account: scans on it got it 429'd and stalled game data (2026-11-04).
-  const toks = [...new Set([auth, env.RS_MARKET_TOKEN].filter(x => typeof x === 'string' && x.length > 20))];
+  const toks0 = [...new Set([auth, env.RS_MARKET_TOKEN].filter(x => typeof x === 'string' && x.length > 20))];
+  const toks = dmWindow() && toks0.length > 1 ? toks0.filter(t => t !== auth) : toks0;   // the bot is busy with DMs at :30 / :00
   let rr = Math.floor(Math.random() * toks.length);
   const pickTok = () => { for (let i = 0; i < toks.length; i++) { const t = toks[(rr + i) % toks.length]; if (!(TOK_COOL.get(t) > Date.now())) { rr = (rr + i + 1) % toks.length; return t; } }
     return toks[(rr++) % toks.length]; };
@@ -1546,7 +1553,7 @@ export async function swapTick(env) {
   const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned','cancelling') AND createdAt > ? ORDER BY id LIMIT 500`)
     .bind(Date.now() - 2 * 86400000).all()).results) || [];
   if (!rows.length) return [];
-  return runDms(env, db, auth, rows, 9, false);
+  return runDms(env, db, auth, rows, DM_PER_TICK, false);
 }
 
 /* Who can use Swaps besides admins: these Real usernames, matched against
