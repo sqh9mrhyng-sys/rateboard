@@ -383,8 +383,11 @@ $('#invgo').addEventListener('click', async () => {
 });
 
 // One scan for the whole site, in parts: keeps asking until it's done.
+let scanStart = 0;
 async function fullScan(extra, onPart){
-  let part = 0, j;
+  let part = 0, j; scanStart = Date.now();
+  const slow = setTimeout(() => { if(onPart) onPart({ retrying: true }); }, 26000);
+  try{
   for(let i = 0; i < 60; i++){
     j = await api(`/api/swaps?op=scan&part=${part}${extra || ''}`);
     if(!j || j.error || j.done) return j || { error: 'Could not reach the board.' };
@@ -392,12 +395,13 @@ async function fullScan(extra, onPart){
     part = j.next;
   }
   return { error: 'The scan took too long - try again.' };
+  } finally { clearTimeout(slow); }
 }
 $('#scan').addEventListener('click', async () => {
   const u = $('#rsuser').value.trim();
   if(!u){ $('#scanmsg').textContent = 'Enter your Real username first.'; return; }
-  $('#scan').disabled = true; $('#scanmsg').textContent = 'Scanning every sport and season… 0%';
-  const j = await fullScan('&page=boosts', p => { $('#scanmsg').textContent = `Scanning every sport and season… ${p.pct}% · ${p.found} passes so far${p.retrying ? ' · retrying a few Real was slow on' : ''}`; });
+  $('#scan').disabled = true; $('#scanmsg').textContent = 'Scans typically take 25 seconds, longer at high website volume';
+  const j = await fullScan('&page=boosts', p => { $('#scanmsg').textContent = 'Scans typically take 25 seconds, longer at high website volume' + ((p.retrying || Date.now() - scanStart > 25000) ? ' • Scan taking longer than expected, please be patient' : ''); });
   $('#scan').disabled = false;
   if(j.error){ $('#scanmsg').textContent = j.error; return; }
   $('#scanmsg').textContent = j.cached ? j.note : `${(j.passes || []).length} passes read just now.` + (j.note ? ' ' + j.note : '');
