@@ -522,12 +522,15 @@ $('#wq').addEventListener('input', e => {
   const own = prof.passes.filter(p => !NO_SWAP.has(p.sport) && !isTeam(p) && !offSeason(p) && String(p.name || '').toLowerCase().includes(q))
     .sort((x, y) => (y.rating || 0) - (x.rating || 0)).slice(0, 30);
   if(!prof.passes.length){ $('#wres').innerHTML = '<div class="note">Scan your passes in step 3 first.</div>'; return; }
-  $('#wres').innerHTML = own.map(p => { const n = othersOn(p.key);
-    return `<div data-k="${p.key}" data-n="${esc(p.name || 'Player ' + p.id)}">${esc(p.name || 'Player ' + p.id)}
-      <span class="note">· ${esc(keyLbl(p.key))} · </span><span style="font-size:13px;font-weight:700;color:${crowdCol(n)}">${crowdTxt(n)}</span></div>`; }).join('') || '<div class="note">None of your passes match.</div>';
+  // Players under 27 collectible plays can't be picked: shown greyed out with why.
+  const low = new Set(prof.lowPlays || []);
+  $('#wres').innerHTML = own.map(p => { const n = othersOn(p.key), lo = low.has(p.key);
+    return `<div data-k="${p.key}" data-n="${esc(p.name || 'Player ' + p.id)}"${lo ? ' data-low="1" style="opacity:.45;cursor:not-allowed"' : ''}>${esc(p.name || 'Player ' + p.id)}
+      <span class="note">· ${esc(keyLbl(p.key))} · </span>${lo ? '<span class="note" style="color:var(--bad);font-weight:700">under 27 plays - can\'t be swapped</span>' : `<span style="font-size:13px;font-weight:700;color:${crowdCol(n)}">${crowdTxt(n)}</span>`}</div>`; }).join('') || '<div class="note">None of your passes match.</div>';
 });
 $('#wres').addEventListener('click', e => {
   const d = e.target.closest('[data-k]'); if(!d) return;
+  if(d.dataset.low){ $('#savemsg').textContent = 'Only players with 27+ collectible plays can be swapped for.'; return; }
   if(!prof.wants.includes(d.dataset.k)){
     if(prof.wants.length >= 5){ $('#savemsg').textContent = 'Up to 5 players - remove one first.'; return; }
     prof.wants.push(d.dataset.k);
@@ -561,7 +564,8 @@ for(const [id, f] of [['#capn', 'n'], ['#capd', 'd']]) $(id).addEventListener('i
 function drawWants(){
   if(prof.wants.length > 5) prof.wants = prof.wants.slice(0, 5);
   $('#wants').innerHTML = prof.wants.map((k, i) => { const n = othersOn(k);
-    return `<div class="want1"><span><span class="note">${['1st', '2nd', '3rd', '4th', '5th'][i]} pick · </span><b>${esc(wantNames[k] || 'Player ' + k.split(':')[2])}</b> <span class="note">· ${esc(keyLbl(k))}</span>`
+    const lo = (prof.lowPlays || []).includes(k);
+    return `<div class="want1"${lo ? ' style="border-color:var(--bad)"' : ''}><span>${lo ? '<b style="color:var(--bad);font-size:12px">Under 27 plays - remove him, he won\'t be matched</b><br>' : ''}<span class="note">${['1st', '2nd', '3rd', '4th', '5th'][i]} pick · </span><b>${esc(wantNames[k] || 'Player ' + k.split(':')[2])}</b> <span class="note">· ${esc(keyLbl(k))}</span>`
       + `<br><span style="font-size:13px;font-weight:700;color:${crowdCol(n)}">${crowdTxt(n)}</span>${n >= 4 ? '<span class="note"> - a less popular player will match faster</span>' : ''}</span>`
       + `<span class="acts"><span class="mv"><button data-up="${i}" aria-label="Move up"${i === 0 ? ' disabled' : ''}>▲</button><button data-dn="${i}" aria-label="Move down"${i === prof.wants.length - 1 ? ' disabled' : ''}>▼</button></span>`
       + `<button data-x="${k}" aria-label="Remove">✕</button></span></div>`; }).join('')

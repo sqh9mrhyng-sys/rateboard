@@ -335,6 +335,29 @@ async function packAvg(db, cache, key) {
   const card = c.by.get(Number(id)) || c.all || null;
   return card ? Math.max(10, card * 3) : null;
 }
+/* Only players with 27+ collectible plays can be swapped for (Dennis,
+   2026-11-04): a pack of a thin player is mostly the same few cards. Counts
+   come from pack data (each season's saved board), kept 12 hours as a small
+   id -> plays map. A season with no pack data at all isn't held back. */
+const MIN_PLAYS = 27;
+async function playsMap(env, db, sp, se) {
+  const k = `plays_ct_v1_${sp}_${se}`;
+  try { const c = JSON.parse((await env.RATEBOARD_KV.get(k)) || 'null'); if (c && Date.now() - c.at < 12 * 3600000) return c.m; } catch (e) {}
+  let m = null;
+  try { const r = await db.prepare('SELECT body FROM pack_snap WHERE sport=? AND season=?').bind(sp, Number(se)).first();
+    const rows = parse(r && r.body, null);
+    if (Array.isArray(rows) && rows.length) { m = {}; for (const x of rows) if (x && x.playerId != null) m[x.playerId] = Number(x.plays) || 0; } } catch (e) {}
+  try { await env.RATEBOARD_KV.put(k, JSON.stringify({ at: Date.now(), m }), { expirationTtl: 86400 }); } catch (e) {}
+  return m;
+}
+// The keys (sport:season:id) with fewer than MIN_PLAYS collectible plays, among those given.
+async function lowPlays(env, db, keys) {
+  const bySeason = new Map(), low = new Set();
+  for (const k of keys) { const [sp, se, id] = String(k).split(':'); if (/^t/.test(id)) continue; (bySeason.get(`${sp}:${se}`) || bySeason.set(`${sp}:${se}`, []).get(`${sp}:${se}`)).push([k, id]); }
+  for (const [ss, list] of bySeason) { const [sp, se] = ss.split(':'); const m = await playsMap(env, db, sp, se);
+    if (!m) continue; for (const [k, id] of list) if ((m[id] || 0) < MIN_PLAYS) low.add(k); }
+  return low;
+}
 async function goalRoom(db, cache, u, usedFor, wantKey) {
   const want = wantKey || (u.wants || [])[0];
   const g = Number(u.goal);
@@ -483,7 +506,7 @@ async function chatState(auth, channelId, theirId, since) {
   return { messages: msgs.length, replied: !!(last && when(last) > since), lastTheirs: last ? { at: when(last), text: String(last.text).slice(0, 300) } : null };
 }
 
-async function runMatching(db) {
+async function runMatching(db, env) {
   // Only members the bot already has a chat with: new chats are capped at
   // five a day, so a match with anyone else might never be delivered.
   await db.prepare(DM_DDL).run();
@@ -525,6 +548,8 @@ async function runMatching(db) {
   const swappable = k => !/^(soccer|ufc):/.test(k) && !seasonOff(k);
   // Up to 5 players each, in their order, and only passes they own: they buy cards for those.
   for (const u of users) { const own = new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key)); u.wants = u.wants.filter(k => swappable(k) && own.has(k)).slice(0, MAX_WANTS); }
+  // Players with fewer than 27 collectible plays are never matched, even if picked before the rule.
+  if (env) { try { const low = await lowPlays(env, db, [...new Set(users.flatMap(u => u.wants))]); if (low.size) for (const u of users) u.wants = u.wants.filter(k => !low.has(k)); } catch (e) {} }
   // Goal rating, per player they want: how many more swaps that pass can take.
   const cache = new Map(), goalLeft = new Map();
   for (const u of users) for (const w of u.wants) {
@@ -1227,7 +1252,7 @@ async function afterCallOff(env, db, auth, who, res) {
     catch (e) { await botFail(db, 'dm_late', `${who}: ${e.message || e}`); }
   }
   const mi = new Date().getUTCMinutes();
-  if (res.soon && mi >= 20 && mi < 25) { try { await matchCols(db); await runMatching(db); await stat(db, 'match_refresh'); } catch (e) { await botFail(db, 'matching', 'refresh: ' + e.message); } }
+  if (res.soon && mi >= 20 && mi < 25) { try { await matchCols(db); await runMatching(db, env); await stat(db, 'match_refresh'); } catch (e) { await botFail(db, 'matching', 'refresh: ' + e.message); } }
   return res;
 }
 async function cancelKept(db, who, keep) {
@@ -1541,7 +1566,7 @@ export async function swapTick(env) {
   }
   if (mine) {
     try { await matchCols(db); } catch (e) {}
-    try { const made = await runMatching(db); await stat(db, 'matches', made.length); await stat(db, 'match_runs'); } catch (e) { await botFail(db, 'matching', e.message); }
+    try { const made = await runMatching(db, env); await stat(db, 'matches', made.length); await stat(db, 'match_runs'); } catch (e) { await botFail(db, 'matching', e.message); }
   }
   // One-time (2026-11-03): a match sent early by hand goes back on schedule.
   try {
@@ -2623,7 +2648,7 @@ async function handle({ request, env, waitUntil }) {
         connected = !!(await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=? AND channelId IS NOT NULL').bind(u.hashId).first()); } catch (e) {}
     }
     return json({ key: me, admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
-      keep: parse(u.keep, []), slots: parse(u.slots, []), passes: parse(u.passes, []), scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {} } : null, real: await realName(db, me) });
+      keep: parse(u.keep, []), slots: parse(u.slots, []), passes: parse(u.passes, []), lowPlays: await (async () => { try { return [...await lowPlays(env, db, parse(u.passes, []).filter(p => p.kind !== 'team').map(p => p.key))]; } catch (e) { return []; } })(), scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {} } : null, real: await realName(db, me) });
   }
 
   // A tick in the passes list saves at once: the passes they won't give.
@@ -2648,6 +2673,8 @@ async function handle({ request, env, waitUntil }) {
     const owned = new Set(parse(mine && mine.passes, []).filter(p => p.kind !== 'team').map(p => p.key));
     if (wants.some(w => !owned.has(w))) return json({ error: 'You can only swap for passes you own - scan your passes, then pick from them.' }, 400);
     if (wants.some(w => seasonOff(w))) return json({ error: '2026-27 CBB and NBA passes can\'t be swapped yet.' }, 400);
+    { const low = await lowPlays(env, db, wants);
+      if (low.size) return json({ error: `Only players with ${MIN_PLAYS}+ collectible plays can be swapped for - remove ${[...low].length === 1 ? 'the one' : 'the ones'} marked "under ${MIN_PLAYS} plays".`, low: [...low] }, 400); }
     const comment = String(b.comment || '').trim();
     if (!SWAP_COMMENT_RE.test(comment)) return json({ error: 'That link is not a comment under the swap post. Open the swap post, copy the link to your comment, and paste it in step 2.' }, 400);
     const goal = b.goal === '' || b.goal == null ? null : Number(b.goal);
@@ -3233,7 +3260,7 @@ async function handle({ request, env, waitUntil }) {
     return json({ matches: rows.map(m => ({ ...m, aUser: rs[m.a], bUser: rs[m.b], aGetsName: names[m.aGets], bGetsName: names[m.bGets] })) });
   }
 
-  if (op === 'run') return json({ made: await runMatching(db) });
+  if (op === 'run') return json({ made: await runMatching(db, env) });
 
   // A raw look at a Real endpoint with the swap token: GET only, and only the
   // paths swaps need, for working out response shapes.
