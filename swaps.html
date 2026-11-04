@@ -430,6 +430,8 @@ async function fullScan(extra, onPart){
     // Waiting in the scan line: show the place, ask again in a few seconds.
     inLine = !!(j && j.queued);
     if(j && j.queued){ if(onPart) onPart(j); await new Promise(r => setTimeout(r, 4000)); i--; scanStart = Date.now(); if(++waits > 900) return { error: 'The scan line is very long right now - try again later.' }; continue; }
+    // The server is working on this scan this moment: give it a few seconds.
+    if(j && j.busy){ await new Promise(r => setTimeout(r, 3000)); i--; if(++waits > 900) return { error: 'Try again in a minute.' }; continue; }
     if(!j || j.error || j.done) return j || { error: 'Could not reach the board.' };
     if(onPart) onPart(j);
     part = j.next;
@@ -437,11 +439,16 @@ async function fullScan(extra, onPart){
   return { error: 'The scan took too long - try again.' };
   } finally { clearInterval(slowTick); }
 }
+// A scan they started (queued, or carried on by the server while they were away)
+// picks up again on its own when they come back.
+async function resumeScan(){
+  try{ const st = await api('/api/swaps?op=scanstatus' + ''); if(st && (st.state === 'queued' || st.state === 'running')) $('#scan').click(); }catch(e){}
+}
 $('#scan').addEventListener('click', async () => {
   const u = $('#rsuser').textContent.trim().replace(/^@/, '');
   $('#scan').disabled = true;
   $('#scanmsg').textContent = 'Scans typically take 25 seconds, longer at high website volume';
-  const j = await fullScan('&page=swaps', p => { if(p.queued){ $('#scanmsg').textContent = `You're #${p.position} in the scan line - about ${p.wait}. Keep this page open, it starts on its own.`; return; } $('#scanmsg').textContent = 'Scans typically take 25 seconds, longer at high website volume' + ((p.retrying || Date.now() - scanStart > 25000) ? ' • Scan taking longer than expected, please be patient' : ''); });
+  const j = await fullScan('&page=swaps', p => { if(p.queued){ $('#scanmsg').textContent = `You're #${p.position} in the scan line - about ${p.wait}. You can leave - it runs on its own and your scan will be ready when you come back.`; return; } $('#scanmsg').textContent = 'Scans typically take 25 seconds, longer at high website volume' + ((p.retrying || Date.now() - scanStart > 25000) ? ' • Scan taking longer than expected, please be patient' : ''); });
   $('#scan').disabled = false;
   if(j.error){ $('#scanmsg').textContent = j.error; return; }
   prof.rsUser = u; collapsed = false; prof.passes = j.passes || []; prof.scannedAt = j.scannedAt || Date.now();
@@ -666,6 +673,7 @@ async function proGate(){
   $('#admin').hidden = !j.admin;
   savedWant = (j.profile && j.profile.active && (j.profile.wants || [])[0]) || null;
   drawPasses(); drawWants(); drawHours(); loadHourCounts(); loadWantCounts(); if(j.admin){ loadMatches(); loadAccess(); }
+  resumeScan();
   api('/api/swaps?op=buildindex');   // adds one season to the search table, at most every 5 minutes
 })();
 </script>

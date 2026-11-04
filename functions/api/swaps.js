@@ -115,7 +115,6 @@ const SWAP_SEASONS = {
 };
 // Every call one full scan makes, in order, and how many go in each part.
 const SCAN_STEPS = Object.entries(SWAP_SEASONS).flatMap(([sp, v]) => v.flatMap(se => sp === 'ufc' ? [[sp, se, 'team']] : sp === 'golf' ? [[sp, se, 'player']] : [[sp, se, 'player'], [sp, se, 'team']]));   // golf has no team passes
-const SCAN_AT_ONCE = 3;      // scans running at the same time; the rest wait in line
 const SCAN_PER_PART = 90;   // the whole scan in one go
 
 // What the Swaps page scans: no FC or UFC (nothing to swap there), golf back to 2014.
@@ -944,6 +943,145 @@ async function autoRescan(env, db, auth) {
    (2026-11-03): everyone who got a swap DM since launch. Replies land in the
    bot's DMs, where Dennis reads them. */
 const FEEDBACK_TEXT = 'After day 1 of this project, rate your experience 1-10 with any feedback or change requests.';
+
+/* ---- Pass scans: the line, the saved progress, and the work itself ------ */
+const SCAN_AT_ONCE = 3;            // scans running at the same time; the rest wait in line
+const SCAN_HOLD_MS = 5 * 60000;    // a place in line is kept this long after the page stops asking
+const SCAN_PAGE_GONE_MS = 25000;   // a running scan nobody's page has asked about for this long is carried on by the server
+async function scanTables(db) {
+  await db.prepare('CREATE TABLE IF NOT EXISTS scan_queue (key TEXT PRIMARY KEY, joinedAt INTEGER, startedAt INTEGER, lastSeen INTEGER)').run();
+  await db.prepare('CREATE TABLE IF NOT EXISTS scan_jobs (key TEXT PRIMARY KEY, body TEXT, at INTEGER)').run();
+  try { await alterOnce(db, 'ALTER TABLE scan_jobs ADD COLUMN busy INTEGER'); } catch (e) {}
+}
+async function loadJob(db, key) {
+  try {
+    const r = await db.prepare('SELECT body FROM scan_jobs WHERE key=?').bind(key).first();
+    const j = r ? JSON.parse(r.body) : null;
+    if (j && Date.now() - j.at > 20 * 60000) { await db.prepare('DELETE FROM scan_jobs WHERE key=?').bind(key).run(); await db.prepare('DELETE FROM scan_queue WHERE key=?').bind(key).run(); return null; }
+    return j;
+  } catch (e) { return null; }
+}
+// Join the line (or keep your place) and see whether it's your turn.
+async function scanQueueTurn(db, me, now) {
+  await db.prepare('DELETE FROM scan_queue WHERE startedAt IS NULL AND lastSeen < ?').bind(now - SCAN_HOLD_MS).run();
+  await db.prepare('DELETE FROM scan_queue WHERE startedAt IS NOT NULL AND key NOT IN (SELECT key FROM scan_jobs) AND startedAt < ?').bind(now - 60000).run();
+  await db.prepare('INSERT INTO scan_queue (key, joinedAt, lastSeen) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET lastSeen=excluded.lastSeen').bind(me, now, now).run();
+  const mine = await db.prepare('SELECT joinedAt, startedAt FROM scan_queue WHERE key=?').bind(me).first();
+  if (mine && mine.startedAt) return { go: true };
+  const joined = Number(mine && mine.joinedAt) || now;
+  // Start only if fewer than SCAN_AT_ONCE are running and nobody waiting joined earlier.
+  const c = await db.prepare(`UPDATE scan_queue SET startedAt=? WHERE key=? AND startedAt IS NULL
+      AND (SELECT COUNT(*) FROM scan_queue WHERE startedAt IS NOT NULL) < ?
+      AND NOT EXISTS (SELECT 1 FROM scan_queue q WHERE q.startedAt IS NULL AND q.joinedAt < ? AND q.key <> ?)`)
+    .bind(now, me, SCAN_AT_ONCE, joined, me).run();
+  if (c && c.meta && c.meta.changes) return { go: true };
+  const ahead = await db.prepare('SELECT COUNT(*) AS n FROM scan_queue WHERE startedAt IS NULL AND joinedAt < ?').bind(joined).first();
+  const pos = (Number(ahead && ahead.n) || 0) + 1, secs = Math.ceil(pos / SCAN_AT_ONCE) * 25;
+  return { go: false, position: pos, wait: secs < 60 ? `${secs} seconds` : `${Math.ceil(secs / 60)} minute${secs > 60 ? 's' : ''}` };
+}
+async function newScanJob(env, db, me, over, u) {
+  const own = await realName(db, me), rsUser = over || own;
+  let hashId = u && String(u.rsUser || '').toLowerCase() === rsUser.toLowerCase() ? u.hashId : null;
+  if (!hashId && rsUser.toLowerCase() === String(own).toLowerCase()) { try { await db.prepare(SPRO_DDL).run(); const pr = await db.prepare('SELECT rsId FROM swap_pro WHERE key=?').bind(me).first(); if (pr && pr.rsId) hashId = pr.rsId; } catch (e) {} }
+  try { if (!hashId) hashId = await resolveHashId(rsUser, scanTok(env)); } catch (e) { return { error: 'Could not reach Real just now - try again in a minute.', status: 502 }; }
+  if (!hashId) return { error: `No Real account called ${rsUser}. If your Real username is different, link it at raxacademy.app/username.`, status: 404 };
+  const job = { rsUser, hashId, passes: [], errors: [], at: Date.now(), idx: 0, failed: [], ri: 0, still: [] };
+  await db.prepare('INSERT INTO scan_jobs (key, body, at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET body=excluded.body, at=excluded.at, busy=NULL').bind(me, JSON.stringify(job), Date.now()).run();
+  return job;
+}
+/* About 20 seconds of one member's scan, from wherever it got to. Only one
+   worker at a time per scan (the page or the server), so nothing is read
+   twice. Returns what the page shows. */
+async function scanWork(env, db, me, job, auth) {
+  const now = Date.now();
+  const claim = await db.prepare('UPDATE scan_jobs SET busy=? WHERE key=? AND (busy IS NULL OR busy < ?)').bind(now + 30000, me, now).run();
+  if (!(claim && claim.meta && claim.meta.changes)) return { done: false, busy: true };
+  job = (await loadJob(db, me)) || job;
+  // What was fast and reliable: the bot account, one call at a time, 0.2s apart.
+  // The market and board accounts only step in for calls the bot couldn't get.
+  const toks = [...new Set([auth, ...scanToks(env)].filter(Boolean))];
+  const t0 = Date.now(), budget = () => Date.now() - t0 < 20000;
+  const read = async (step, tok) => {
+    const [sport, season, kind] = step;
+    const res = await fetch(`https://web.realapp.com/userpasses/${encodeURIComponent(job.hashId)}/passes?entityType=${kind}&season=${season}&sport=${sport}`, { headers: rsHeaders(tok) });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`Real ${res.status}: ${text.slice(0, 80)}`);
+    let d = null; try { d = JSON.parse(text); } catch (e) {}
+    // Only a reply that says it's an error counts as a failure; an empty or
+    // differently-shaped reply just means no passes in that season.
+    if (d && typeof d === 'object' && !Array.isArray(d) && !rowsOf(d).length
+        && (d.error || (Number(d.statusCode) >= 400) || /high volume|rate limit|too many/i.test(String(d.message || '')))) throw new Error(`Real said: ${String(d.message || d.error || d.statusCode).slice(0, 80)}`);
+    for (const r of rowsOf(d)) { const p = passOf(r, sport, season, kind); if (p) job.passes.push(p); }
+  };
+  while (job.idx < SCAN_STEPS.length && budget()) {
+    const step = SCAN_STEPS[job.idx++];
+    try { await read(step, auth); } catch (e) { job.failed.push(step); }
+    await sleep(200);
+  }
+  if (job.idx >= SCAN_STEPS.length) {
+    while (job.ri < job.failed.length && budget()) {
+      const step = job.failed[job.ri++]; let err = null;
+      for (let t = 0; t < toks.length; t++) {
+        await sleep(600);
+        try { await read(step, toks[(job.ri + t) % toks.length]); err = null; break; } catch (e) { err = e; }
+      }
+      if (err) { job.still.push(step); job.errors.push(`${step[0]} ${step[1]} ${step[2]}: ${String(err.message || err).slice(0, 100)}`); }
+    }
+  }
+  if (job.idx < SCAN_STEPS.length || job.ri < job.failed.length) {
+    await db.prepare('UPDATE scan_jobs SET body=?, busy=NULL WHERE key=?').bind(JSON.stringify(job), me).run();
+    return { done: false, next: 1, found: job.passes.length, retrying: job.idx >= SCAN_STEPS.length };
+  }
+  // Whatever still failed keeps its passes from the last scan.
+  const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
+  if (job.still.length) {
+    const miss = new Set(job.still.map(([sp, se, k]) => `${sp}:${se}:${k}`));
+    for (const p of parse(u && u.passes, [])) if (miss.has(`${p.sport}:${p.season}:${p.kind || 'player'}`)) job.passes.push(p);
+    job.kept = job.still.length;
+  }
+  await fillNames(db, job.passes);
+  // A scan with seasons that still failed can be run again in 5 minutes.
+  const stamp = job.kept ? Date.now() - (await scanEvery(env)) * 60000 + 5 * 60000 : Date.now();
+  await db.prepare(`INSERT INTO swap_users (key, rsUser, hashId, passes, scannedAt, updatedAt, wants, keep, slots) VALUES (?, ?, ?, ?, ?, ?, '[]', '[]', '[]')
+    ON CONFLICT(key) DO UPDATE SET rsUser=excluded.rsUser, hashId=excluded.hashId, passes=excluded.passes,
+      scannedAt=excluded.scannedAt, updatedAt=excluded.updatedAt`)
+    .bind(me, job.rsUser, job.hashId, JSON.stringify(job.passes), stamp, Date.now()).run();
+  try { await db.prepare('UPDATE swap_users SET fullPart=NULL, boostScanAt=NULL WHERE key=?').bind(me).run(); } catch (e) {}
+  try { await db.prepare('DELETE FROM scan_jobs WHERE key=?').bind(me).run(); } catch (e) {}
+  try { await db.prepare('DELETE FROM scan_queue WHERE key=?').bind(me).run(); } catch (e) {}   // next in line goes
+  if (job.kept) { await stat(db, 'scan_partial'); await botFail(db, 'scan', `${me}: ${job.kept} season(s) kept from last scan - ${job.errors.slice(0, 3).join(' | ')}`); }
+  else await stat(db, 'scan_ok');
+  return { done: true, hashId: job.hashId, passes: job.passes, errors: job.errors, scannedAt: Date.now(),
+    note: job.kept ? `${job.kept} season${job.kept === 1 ? '' : 's'} couldn't be read from Real just now, so ${job.kept === 1 ? 'it keeps' : 'they keep'} your passes from your last scan. Scan again in 5 minutes to refresh ${job.kept === 1 ? 'it' : 'them'}.` : null };
+}
+/* The server's share, once a minute: carry on scans whose page went away,
+   and start the next person in line if they've left the page. */
+async function backgroundScans(env, db, auth) {
+  await scanTables(db);
+  const now = Date.now(), t0 = now;
+  const gone = ((await db.prepare(`SELECT q.key FROM scan_queue q JOIN scan_jobs j ON j.key = q.key WHERE q.startedAt IS NOT NULL AND q.lastSeen < ? ORDER BY q.startedAt LIMIT 2`)
+    .bind(now - SCAN_PAGE_GONE_MS).all()).results) || [];
+  for (const { key } of gone) {
+    if (Date.now() - t0 > 25000) break;
+    const job = await loadJob(db, key);
+    if (job) { const r = await scanWork(env, db, key, job, auth); if (r.done) await stat(db, 'scan_background'); }
+  }
+  // Next in line but not on the page: start it here.
+  const running = await db.prepare('SELECT COUNT(*) AS n FROM scan_queue WHERE startedAt IS NOT NULL').first();
+  if ((Number(running && running.n) || 0) < SCAN_AT_ONCE && Date.now() - t0 < 15000) {
+    const first = await db.prepare('SELECT key, lastSeen FROM scan_queue WHERE startedAt IS NULL ORDER BY joinedAt LIMIT 1').first();
+    if (first && Number(first.lastSeen) < now - 20000) {
+      const c = await db.prepare('UPDATE scan_queue SET startedAt=?, lastSeen=? WHERE key=? AND startedAt IS NULL').bind(Date.now(), now - SCAN_PAGE_GONE_MS, first.key).run();
+      if (c && c.meta && c.meta.changes) {
+        const u = await db.prepare('SELECT rsUser, hashId, scannedAt, passes FROM swap_users WHERE key=?').bind(first.key).first();
+        const job = await newScanJob(env, db, first.key, null, u);
+        if (job.error) await db.prepare('DELETE FROM scan_queue WHERE key=?').bind(first.key).run();
+        else await scanWork(env, db, first.key, job, auth);
+      }
+    }
+  }
+}
+
 async function feedbackDms(env, db, auth) {
   await db.prepare('CREATE TABLE IF NOT EXISTS bot_once (campaign TEXT, key TEXT, at INTEGER, ok INTEGER, PRIMARY KEY (campaign, key))').run();
   const C = 'feedback_day1';
@@ -1069,6 +1207,7 @@ export async function swapTick(env) {
   } catch (e) {}
   try { await autoRescan(env, db, auth); } catch (e) { await botFail(db, 'rescan', e.message); }
   try { await feedbackDms(env, db, auth); } catch (e) { await botFail(db, 'dm_feedback', e.message); }
+  try { await backgroundScans(env, db, auth); } catch (e) { await botFail(db, 'scan_bg', e.message); }
   const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned','cancelling') AND createdAt > ? ORDER BY id LIMIT 500`)
     .bind(Date.now() - 2 * 86400000).all()).results) || [];
   if (!rows.length) return [];
@@ -1132,9 +1271,9 @@ export async function swapAccess(env, request) {
 }
 // What a member (not an admin) may do: their own swap and nothing else, and
 // for OTD their own passes and games.
-const MEMBER_OPS = new Set(['me', 'save', 'keep', 'scan', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report']);
-const OTD_OPS = new Set(['me', 'scan', 'games', 'boostplan']);
-const BOOST_OPS = new Set(['me', 'scan', 'boostplan', 'boostinv', 'buys']);
+const MEMBER_OPS = new Set(['me', 'save', 'keep', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report']);
+const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan']);
+const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostinv', 'buys']);
 const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
 
 /* ---- OTD: saved game lists ------------------------------------------------
@@ -1832,130 +1971,52 @@ async function handle({ request, env, waitUntil }) {
     return json({ ok: true, wants, keep: keep.length, slots });
   }
 
-  /* One scan for the whole site (Swaps, Boosts, OTD): every sport and
-     season, player and team passes, golf back to 2014. It runs in parts the
-     page asks for one after another (part=0,1,2...), so no single request is
-     long; the parts build up in KV and the last one replaces the member's
-     saved passes outright. One timer for everyone: once per 3 hours (or 15
-     minutes when Dennis switches that on), starting when a scan finishes.
-     Inside the timer, part 0 hands back the last scan. Admins aren't limited. */
+  /* One scan for the whole site (Swaps, Boosts, OTD). The page keeps asking
+     (each ask works ~20s and saves progress); if the page goes away, the
+     server's every-minute job carries the scan on, so people can tap scan and
+     leave. A line keeps it to SCAN_AT_ONCE scans at a time. */
+  if (op === 'scanstatus') {
+    await scanTables(db);
+    const q = await db.prepare('SELECT joinedAt, startedAt FROM scan_queue WHERE key=?').bind(me).first();
+    const job = await loadJob(db, me);
+    if (job) return json({ state: 'running' });
+    if (q && !q.startedAt) {
+      const ahead = await db.prepare('SELECT COUNT(*) AS n FROM scan_queue WHERE startedAt IS NULL AND joinedAt < ?').bind(Number(q.joinedAt) || 0).first();
+      return json({ state: 'queued', position: (Number(ahead && ahead.n) || 0) + 1 });
+    }
+    return json({ state: 'none' });
+  }
   if (op === 'scan') {
     if (!auth) return json({ error: 'No swap token found in the Cloudflare settings.' }, 503);
-    const part = Math.max(0, Number(url.searchParams.get('part')) || 0);
-    const jobKey = 'scanjob_v1_' + me;
+    await scanTables(db);
+    const now = Date.now();
+    // A scan already under way (started here, or carried on by the server) just continues.
+    let job = await loadJob(db, me);
+    if (job) {
+      try { await db.prepare('UPDATE scan_queue SET lastSeen=? WHERE key=?').bind(now, me).run(); } catch (e) {}
+      return json(await scanWork(env, db, me, job, auth));
+    }
     const u = await db.prepare('SELECT rsUser, hashId, scannedAt, passes FROM swap_users WHERE key=?').bind(me).first();
     const fast = acc.admin || BOOST_FAST.has(String(me || '').toLowerCase());
-    let job = null;
-    if (part === 0) {
-      if (!fast) {
-        const every = await scanEvery(env);
-        const lastAt = Number(u && u.scannedAt) || 0, left = lastAt + every * 60000 - Date.now();
-        if (left > 0 && u && u.passes) {
-          const m = Math.ceil(left / 60000);
-          return json({ done: true, hashId: u.hashId, passes: parse(u.passes, []), errors: [], cached: true, scannedAt: lastAt,
-            note: `From your last scan. A fresh scan is allowed once every ${every >= 60 ? every / 60 + ' hours' : every + ' minutes'} - next in ${m >= 60 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : m + ' min'}.` });
-        }
-      } else if (!(await allow(url.origin, 'swapscan:' + me, 20, 600))) return json({ error: 'Twenty scans per ten minutes.' }, 429);
-      /* The scan line: 3 scans run at once, everyone else waits their turn
-         (their page asks again every few seconds). A spot frees when a scan
-         finishes, when a waiting page stops asking (30s), or when a running
-         scan goes quiet (60s). Admins skip the line. */
-      if (!acc.admin) {
-        const now = Date.now();
-        await db.prepare('CREATE TABLE IF NOT EXISTS scan_queue (key TEXT PRIMARY KEY, joinedAt INTEGER, startedAt INTEGER, lastSeen INTEGER)').run();
-        await db.prepare('DELETE FROM scan_queue WHERE (startedAt IS NULL AND lastSeen < ?) OR (startedAt IS NOT NULL AND lastSeen < ?)').bind(now - 30000, now - 60000).run();
-        await db.prepare('INSERT INTO scan_queue (key, joinedAt, lastSeen) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET lastSeen=excluded.lastSeen').bind(me, now, now).run();
-        const mine = await db.prepare('SELECT joinedAt, startedAt FROM scan_queue WHERE key=?').bind(me).first();
-        if (!(mine && mine.startedAt)) {
-          // Start only if fewer than 3 are running and nobody waiting joined earlier.
-          const c = await db.prepare(`UPDATE scan_queue SET startedAt=? WHERE key=? AND startedAt IS NULL
-              AND (SELECT COUNT(*) FROM scan_queue WHERE startedAt IS NOT NULL) < ?
-              AND NOT EXISTS (SELECT 1 FROM scan_queue q WHERE q.startedAt IS NULL AND q.joinedAt < ? AND q.key <> ?)`)
-            .bind(now, me, SCAN_AT_ONCE, Number(mine && mine.joinedAt) || now, me).run();
-          if (!(c && c.meta && c.meta.changes)) {
-            const ahead = await db.prepare('SELECT COUNT(*) AS n FROM scan_queue WHERE startedAt IS NULL AND joinedAt < ?').bind(Number(mine && mine.joinedAt) || now).first();
-            const pos = (Number(ahead && ahead.n) || 0) + 1, secs = Math.ceil(pos / SCAN_AT_ONCE) * 25;
-            return json({ queued: true, position: pos, wait: secs < 60 ? `${secs} seconds` : `${Math.ceil(secs / 60)} minute${secs > 60 ? 's' : ''}` });
-          }
-        }
+    if (!fast) {
+      const every = await scanEvery(env);
+      const lastAt = Number(u && u.scannedAt) || 0, left = lastAt + every * 60000 - now;
+      if (left > 0 && u && u.passes) {
+        const m = Math.ceil(left / 60000);
+        return json({ done: true, hashId: u.hashId, passes: parse(u.passes, []), errors: [], cached: true, scannedAt: lastAt,
+          note: `From your last scan. A fresh scan is allowed once every ${every >= 60 ? every / 60 + ' hours' : every + ' minutes'} - next in ${m >= 60 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : m + ' min'}.` });
       }
-      // Members scan their own Real account; an admin may name another (OTD).
-      const rsUser = acc.admin && url.searchParams.get('rsUser') ? String(url.searchParams.get('rsUser')).trim().replace(/^@/, '') : await realName(db, me);
-      let hashId = u && String(u.rsUser || '').toLowerCase() === rsUser.toLowerCase() ? u.hashId : null;
-      if (!hashId && rsUser.toLowerCase() === String(await realName(db, me)).toLowerCase()) { try { await db.prepare(SPRO_DDL).run(); const pr = await db.prepare('SELECT rsId FROM swap_pro WHERE key=?').bind(me).first(); if (pr && pr.rsId) hashId = pr.rsId; } catch (e) {} }
-      try { if (!hashId) hashId = await resolveHashId(rsUser, scanTok(env)); } catch (e) { return json({ error: 'Could not reach Real just now - try again in a minute.' }, 502); }
-      if (!hashId) return json({ error: `No Real account called ${rsUser}. If your Real username is different, link it at raxacademy.app/username.` }, 404);
-      job = { rsUser, hashId, passes: [], errors: [], at: Date.now(), idx: 0, failed: [], ri: 0, still: [] };
-    } else {
-      try { const r = await db.prepare('SELECT body FROM scan_jobs WHERE key=?').bind(me).first(); job = r ? JSON.parse(r.body) : null; } catch (e) {}
-      if (!job || Date.now() - job.at > 20 * 60000) return json({ error: 'That scan expired - tap scan again.' }, 410);
-      try { await db.prepare('UPDATE scan_queue SET lastSeen=? WHERE key=?').bind(Date.now(), me).run(); } catch (e) {}
+    } else if (!(await allow(url.origin, 'swapscan:' + me, 20, 600))) return json({ error: 'Twenty scans per ten minutes.' }, 429);
+    // The line. Admins skip it.
+    if (!acc.admin) {
+      const q = await scanQueueTurn(db, me, now);
+      if (!q.go) return json({ queued: true, position: q.position, wait: q.wait });
     }
-    /* Each request works for about 20 seconds at most, saves where it got to
-       (in the database, so the next request always finds it) and the page asks
-       again - a slow Real can make a scan longer but never time it out.
-       Main pass: 4 calls at once across the board and market accounts, one try
-       each; anything refused is set aside. Then one slower pass over those,
-       each on every account. Whatever still fails keeps its last-scan passes. */
-    // What was fast and reliable: the bot account, one call at a time, 0.2s apart.
-    // The market and board accounts only step in for calls the bot couldn't get.
-    const toks = [...new Set([auth, ...scanToks(env)].filter(Boolean))];
-    const t0 = Date.now(), budget = () => Date.now() - t0 < 20000;
-    const read = async (step, tok) => {
-      const [sport, season, kind] = step;
-      const res = await fetch(`https://web.realapp.com/userpasses/${encodeURIComponent(job.hashId)}/passes?entityType=${kind}&season=${season}&sport=${sport}`, { headers: rsHeaders(tok) });
-      const text = await res.text();
-      if (!res.ok) throw new Error(`Real ${res.status}: ${text.slice(0, 80)}`);
-      let d = null; try { d = JSON.parse(text); } catch (e) {}
-      // Only a reply that says it's an error counts as a failure; an empty or
-      // differently-shaped reply just means no passes in that season.
-      if (d && typeof d === 'object' && !Array.isArray(d) && !rowsOf(d).length
-          && (d.error || (Number(d.statusCode) >= 400) || /high volume|rate limit|too many/i.test(String(d.message || '')))) throw new Error(`Real said: ${String(d.message || d.error || d.statusCode).slice(0, 80)}`);
-      for (const r of rowsOf(d)) { const p = passOf(r, sport, season, kind); if (p) job.passes.push(p); }
-    };
-    while (job.idx < SCAN_STEPS.length && budget()) {
-      const step = SCAN_STEPS[job.idx++];
-      try { await read(step, auth); } catch (e) { job.failed.push(step); }
-      await sleep(200);
-    }
-    if (job.idx >= SCAN_STEPS.length) {
-      while (job.ri < job.failed.length && budget()) {
-        const step = job.failed[job.ri++]; let err = null;
-        for (let t = 0; t < toks.length; t++) {
-          await sleep(600);
-          try { await read(step, toks[(job.ri + t) % toks.length]); err = null; break; } catch (e) { err = e; }
-        }
-        if (err) { job.still.push(step); job.errors.push(`${step[0]} ${step[1]} ${step[2]}: ${String(err.message || err).slice(0, 100)}`); }
-      }
-    }
-    const total = SCAN_STEPS.length + job.failed.length, doneSteps = job.idx + job.ri;
-    if (job.idx < SCAN_STEPS.length || job.ri < job.failed.length) {
-      await db.prepare('CREATE TABLE IF NOT EXISTS scan_jobs (key TEXT PRIMARY KEY, body TEXT, at INTEGER)').run();
-      await db.prepare('INSERT INTO scan_jobs (key, body, at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET body=excluded.body, at=excluded.at').bind(me, JSON.stringify(job), Date.now()).run();
-      return json({ done: false, next: part + 1, pct: Math.min(99, Math.round(doneSteps / total * 100)), found: job.passes.length, retrying: job.idx >= SCAN_STEPS.length });
-    }
-    // Whatever still failed keeps its passes from the last scan.
-    if (job.still.length) {
-      const miss = new Set(job.still.map(([sp, se, k]) => `${sp}:${se}:${k}`));
-      for (const p of parse(u && u.passes, [])) if (miss.has(`${p.sport}:${p.season}:${p.kind || 'player'}`)) job.passes.push(p);
-      job.kept = job.still.length;
-    }
-    const parts = part + 1;
-    try { await db.prepare('DELETE FROM scan_jobs WHERE key=?').bind(me).run(); } catch (e) {}
-    try { await db.prepare('DELETE FROM scan_queue WHERE key=?').bind(me).run(); } catch (e) {}   // next in line goes
-    try { await env.RATEBOARD_KV.delete(jobKey); } catch (e) {}
-    await fillNames(db, job.passes);
-    // A scan with seasons that still failed can be run again in 5 minutes.
-    const stamp = job.kept ? Date.now() - (await scanEvery(env)) * 60000 + 5 * 60000 : Date.now();
-    await db.prepare(`INSERT INTO swap_users (key, rsUser, hashId, passes, scannedAt, updatedAt, wants, keep, slots) VALUES (?, ?, ?, ?, ?, ?, '[]', '[]', '[]')
-      ON CONFLICT(key) DO UPDATE SET rsUser=excluded.rsUser, hashId=excluded.hashId, passes=excluded.passes,
-        scannedAt=excluded.scannedAt, updatedAt=excluded.updatedAt`)
-      .bind(me, job.rsUser, job.hashId, JSON.stringify(job.passes), stamp, Date.now()).run();
-    try { await db.prepare('UPDATE swap_users SET fullPart=NULL, boostScanAt=NULL WHERE key=?').bind(me).run(); } catch (e) {}
-    if (job.kept) { await stat(db, 'scan_partial'); await botFail(db, 'scan', `${me}: ${job.kept} season(s) kept from last scan - ${job.errors.slice(0, 3).join(' | ')}`); }
-    else await stat(db, 'scan_ok');
-    return json({ done: true, hashId: job.hashId, passes: job.passes, errors: job.errors, scannedAt: Date.now(), parts,
-      note: job.kept ? `${job.kept} season${job.kept === 1 ? '' : 's'} couldn't be read from Real just now, so ${job.kept === 1 ? 'it keeps' : 'they keep'} your passes from your last scan. Scan again in 5 minutes to refresh ${job.kept === 1 ? 'it' : 'them'}.` : null });
+    // Members scan their own Real account; an admin may name another (OTD).
+    const over = acc.admin && url.searchParams.get('rsUser') ? String(url.searchParams.get('rsUser')).trim().replace(/^@/, '') : null;
+    job = await newScanJob(env, db, me, over, u);
+    if (job.error) { try { await db.prepare('DELETE FROM scan_queue WHERE key=?').bind(me).run(); } catch (e) {} return json({ error: job.error }, job.status || 400); }
+    return json(await scanWork(env, db, me, job, auth));
   }
 
   // Admin: how often members may scan - 180 (every 3 hours) or 15 minutes.

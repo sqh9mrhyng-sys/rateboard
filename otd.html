@@ -568,6 +568,8 @@ async function fullScan(extra, onPart){
     // Waiting in the scan line: show the place, ask again in a few seconds.
     inLine = !!(j && j.queued);
     if(j && j.queued){ if(onPart) onPart(j); await new Promise(r => setTimeout(r, 4000)); i--; scanStart = Date.now(); if(++waits > 900) return { error: 'The scan line is very long right now - try again later.' }; continue; }
+    // The server is working on this scan this moment: give it a few seconds.
+    if(j && j.busy){ await new Promise(r => setTimeout(r, 3000)); i--; if(++waits > 900) return { error: 'Try again in a minute.' }; continue; }
     if(!j || j.error || j.done) return j || { error: 'Could not reach the board.' };
     if(onPart) onPart(j);
     part = j.next;
@@ -575,12 +577,17 @@ async function fullScan(extra, onPart){
   return { error: 'The scan took too long - try again.' };
   } finally { clearInterval(slowTick); }
 }
+// A scan they started (queued, or carried on by the server while they were away)
+// picks up again on its own when they come back.
+async function resumeScan(){
+  try{ const st = await api('/api/swaps?op=scanstatus' + ''); if(st && (st.state === 'queued' || st.state === 'running')) $('#scan').click(); }catch(e){}
+}
 $('#scan').addEventListener('click', async () => {
   const u = $('#rsuser').value.trim();
   if(!u){ $('#status').textContent = 'Enter your Real username first.'; return; }
   $('#scan').disabled = true;
   $('#status').textContent = 'Scans typically take 25 seconds, longer at high website volume';
-  const j = await fullScan(`&rsUser=${encodeURIComponent(u)}`, p => { if(p.queued){ $('#status').textContent = `You're #${p.position} in the scan line - about ${p.wait}. Keep this page open, it starts on its own.`; return; } $('#status').textContent = 'Scans typically take 25 seconds, longer at high website volume' + ((p.retrying || Date.now() - scanStart > 25000) ? ' • Scan taking longer than expected, please be patient' : ''); });
+  const j = await fullScan(`&rsUser=${encodeURIComponent(u)}`, p => { if(p.queued){ $('#status').textContent = `You're #${p.position} in the scan line - about ${p.wait}. You can leave - it runs on its own and your scan will be ready when you come back.`; return; } $('#status').textContent = 'Scans typically take 25 seconds, longer at high website volume' + ((p.retrying || Date.now() - scanStart > 25000) ? ' • Scan taking longer than expected, please be patient' : ''); });
   $('#scan').disabled = false;
   if(j.error){ $('#status').textContent = j.error; return; }
   PACK = {}; PLAYS = {}; MKT = {}; upOpen = null;
@@ -598,6 +605,7 @@ $('#scan').addEventListener('click', async () => {
   if(me.error){ $('#lock').hidden = false; $('#lockmsg').textContent = me.error; return; }
   $('#main').hidden = false;
   $('#rsuser').value = (me.profile && me.profile.rsUser) || '';
+  setTimeout(resumeScan, 300);
   if(!me.profile || !(me.profile.passes || []).length){ $('#status').textContent = 'No passes yet - enter your Real username and tap Scan my passes.'; return; }
   drawRange();
   await loadAll();
