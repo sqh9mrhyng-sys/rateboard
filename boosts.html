@@ -388,7 +388,7 @@ document.querySelectorAll('#sportseg button').forEach(b => b.addEventListener('c
 }));
 
 // --- Legendary boosts (CFB): fetched once per visit; the numbers behind it are kept on the server.
-let legData = null, legPack = 'daily', legOpen = null;
+let legData = null, legPack = 'daily', legOpen = null, legHide26 = null;
 const CFB_SEASON = se => `${se}-${String(Number(se) + 1).slice(2)}`;
 async function loadLegs(){
   if(!legData){ $('#leglist').innerHTML = '<p class="note">Loading…</p>';
@@ -405,7 +405,11 @@ function drawLegs(){
   if(j.admin && !$('#legref')){ const r = document.createElement('button'); r.id = 'legref'; r.textContent = 'Refresh pack data (admin)'; r.style.marginTop = '8px';
     r.onclick = async () => { r.disabled = true; const k = await api('/api/swaps?op=legboosts&page=boosts&refresh=1'); r.disabled = false; if(!k.error){ legData = k; drawLegs(); } };
     $('#legmsg').after(r); }
-  const list = j[legPack] || [];
+  // Weekly packs: a button to hide the 2026-27 cards (remembered on this device).
+  if(legHide26 == null){ legHide26 = false; try{ legHide26 = localStorage.getItem('leg_hide26') === '1'; }catch(e){} }
+  const hide26 = legHide26;
+  const list = (j[legPack] || []).filter(x => !(legPack === 'weekly' && hide26 && Number(x.season) === 2026));
+  const top = legPack === 'weekly' ? `<div class="bar" style="margin-bottom:8px"><button id="leghide26">${hide26 ? 'Show 2026-27' : 'Hide 2026-27'}</button></div>` : '';
   const f2 = v => v == null ? '-' : (Math.round(v * 100) / 100).toFixed(2);
   $('#leglist').innerHTML = list.map((x, i) => {
     const k = legPack + i, need = x.boost ? 200 / x.boost : null;
@@ -427,8 +431,10 @@ function drawLegs(){
       + `<div class="v"><small>Base rax to profit</small>${need == null ? '-' : f2(need)}</div>`
       + `<div class="v" style="color:var(--mute)">${legOpen === k ? '▲' : '▼'}</div></div>${rows}</div>`;
   }).join('') || '<p class="note">Nothing here yet.</p>';
+  if(top) $('#leglist').insertAdjacentHTML('afterbegin', top);
 }
-$('#leglist').addEventListener('click', e => { if(e.target.closest('a')) return; const b = e.target.closest('[data-leg]'); if(!b) return;
+$('#leglist').addEventListener('click', e => { if(e.target.closest('a')) return;
+  if(e.target.closest('#leghide26')){ legHide26 = !legHide26; try{ localStorage.setItem('leg_hide26', legHide26 ? '1' : '0'); }catch(err){} legOpen = null; drawLegs(); return; } const b = e.target.closest('[data-leg]'); if(!b) return;
   legOpen = legOpen === b.dataset.leg ? null : b.dataset.leg; drawLegs(); });
 document.querySelectorAll('#legseg button').forEach(b => b.addEventListener('click', () => { legPack = b.dataset.p; legOpen = null; drawLegs(); }));
 paintSport();
