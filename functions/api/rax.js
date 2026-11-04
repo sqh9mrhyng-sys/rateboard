@@ -7724,7 +7724,11 @@ async function collectorHealth(env, url) {
         const sd = ms2 => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms2 - 7 * 3600000));
         const g = new Map(), r = new Map(), bump = (m, k) => m.set(k, (m.get(k) || 0) + 1);
         for (const m of ms) { const d = sd(Number(m.dueAt)); bump(g, `${m.b}|${m.aGets}|${d}`); bump(g, `${m.a}|${m.bGets}|${d}`); bump(r, `${m.a}|${m.aGets}|${d}`); bump(r, `${m.b}|${m.bGets}|${d}`); }
-        dupes = { givenTwice: [...g.values()].filter(n => n > 1).length, receivedTwice: [...r.values()].filter(n => n > 1).length, swaps: ms.length };
+        // Plus called-off swaps on the side that had been told to buy (they may have bought it).
+        const off = ((await db.prepare("SELECT a, b, aGets, bGets, dueAt, warnA, warnB, doneA, doneB FROM swap_matches WHERE status IN ('cancelled','cancelling') AND dueAt > ?").bind(Date.now() - 30 * 3600000).all()).results) || [];
+        const g2 = new Map(g);
+        for (const m of off) { const d = sd(Number(m.dueAt)); if (m.warnB || m.doneB) bump(g2, `${m.b}|${m.aGets}|${d}`); if (m.warnA || m.doneA) bump(g2, `${m.a}|${m.bGets}|${d}`); }
+        dupes = { givenTwice: [...g.values()].filter(n => n > 1).length, givenTwiceCountingCalledOff: [...g2.values()].filter(n => n > 1).length, receivedTwice: [...r.values()].filter(n => n > 1).length, swaps: ms.length };
       } catch (e) { dupes = { error: String(e.message || e).slice(0, 80) }; }
       // Swaps by hour around now (no names): how many matches, how many sides warned / contacted.
       let hours = []; try { hours = ((await db.prepare(`SELECT dueAt, COUNT(*) AS matches, SUM(CASE WHEN warnA IS NOT NULL THEN 1 ELSE 0 END) + SUM(CASE WHEN warnB IS NOT NULL THEN 1 ELSE 0 END) AS warnedSides,

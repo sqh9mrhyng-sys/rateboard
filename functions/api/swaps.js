@@ -489,6 +489,12 @@ async function runMatching(db) {
      goal rating when they set one. */
   const open = ((await db.prepare(`SELECT a, b, aGets, bGets, slot, createdAt, dueAt, followA, followB FROM swap_matches WHERE createdAt > ? AND status IN ('pending','sending','warned','sent')`)
     .bind(Date.now() - 2 * 86400000).all()).results || []);
+  /* A called-off swap still uses up a pass for the day on whichever side had
+     already been told to buy it - they may well have bought the pack - so it
+     isn't handed to them to give again (people were told to give the same
+     card twice in one day). */
+  const offTold = ((await db.prepare(`SELECT a, b, aGets, bGets, slot, createdAt, dueAt, warnA, warnB, doneA, doneB FROM swap_matches WHERE createdAt > ? AND status IN ('cancelled','cancelling')
+      AND (warnA IS NOT NULL OR warnB IS NOT NULL OR doneA IS NOT NULL OR doneB IS NOT NULL)`).bind(Date.now() - 2 * 86400000).all()).results || []);
   const paired = new Set(), given = new Set(), count = new Map(), recv = new Map(), closed = new Set(), goalUsed = new Map();
   const bump = (m, k) => m.set(k, (m.get(k) || 0) + 1);
   for (const m of open) {
@@ -497,8 +503,10 @@ async function runMatching(db) {
     bump(count, `${m.a}|${d}`); bump(count, `${m.b}|${d}`);
     bump(recv, `${m.a}|${m.aGets}|${d}`); bump(recv, `${m.b}|${m.bGets}|${d}`);
     // Finished swaps are marked (followA/followB) but no longer close the swap day.
-    // (A finished swap day no longer closes them to more matches - the follow-up is gone.)
   }
+  for (const m of offTold) { const d = swapDay(sideDue(m));
+    if (m.warnB || m.doneB) given.add(`${m.b}|${m.aGets}|${d}`);
+    if (m.warnA || m.doneA) given.add(`${m.a}|${m.bGets}|${d}`); }
   // FC and UFC have no packs to swap, so neither is ever offered or matched.
   const swappable = k => !/^(soccer|ufc):/.test(k) && !seasonOff(k);
   // Up to 5 players each, in their order, and only passes they own: they buy cards for those.
@@ -519,8 +527,8 @@ async function runMatching(db) {
   const goalOk = (k, w) => (goalLeft.get(`${k}|${w}`) ?? Infinity) > 0;
   // Scale: their swaps-a-day for one player.
   const capsOf = new Map(users.map(u => [u.key, u.caps]));
-  // A member receives a given pass once a swap day, like giving (Dennis, 2026-11-04: 160 people were getting the same card twice).
-  const perDayOk = (k, w, d) => (recv.get(`${k}|${w}|${d}`) || 0) < 1;
+  // Receiving the same pass more than once a day is fine (Dennis, 2026-11-04); only their own Scale per-day limit applies.
+  const perDayOk = (k, w, d) => { const c = (capsOf.get(k) || {})[w]; return !(c && Number(c.d) > 0) || (recv.get(`${k}|${w}|${d}`) || 0) < Number(c.d); };
   const gives = (u, d) => new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !given.has(`${u.key}|${k}|${d}`)));
   /* Every possible pair and shared hour, best first: an hour someone picked
      first is their primary, so pairs on both members' earliest picks go
