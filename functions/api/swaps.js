@@ -371,6 +371,9 @@ async function runMatching(db) {
      first is their primary, so pairs on both members' earliest picks go
      ahead - when two people want the same player, the one whose primary
      hour it is gets it. */
+  /* An hour closes to new matches once its warning has gone out (30 min
+     before): the 11:30 run can't add anyone to 12:00, so everyone in an
+     hour got the same warning. That hour's next turn is the following day. */
   const made = [], now = Date.now(), cands = [];
   for (let i = 0; i < users.length; i++) for (let j = i + 1; j < users.length; j++) {
     const A = users[i], B = users[j];
@@ -378,7 +381,7 @@ async function runMatching(db) {
     for (const slot of A.slots) {
       const rb = B.slots.indexOf(slot); if (rb < 0) continue;
       const ra = A.slots.indexOf(slot);
-      cands.push({ A, B, slot, best: Math.min(ra, rb), sum: ra + rb, due: dueFor(slot, now), i });
+      cands.push({ A, B, slot, best: Math.min(ra, rb), sum: ra + rb, due: dueFor(slot, now + 30 * 60000), i });
     }
   }
   cands.sort((x, y) => x.best - y.best || x.sum - y.sum || x.due - y.due || x.i - y.i);
