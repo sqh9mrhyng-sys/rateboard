@@ -1236,7 +1236,7 @@ async function scanWork(env, db, me, job, auth) {
   const STEPS = job.steps || SCAN_STEPS;
   while (job.idx < STEPS.length && budget()) {
     const step = STEPS[job.idx++];
-    try { await read(step, auth); } catch (e) { job.failed.push(step); }
+    try { await read(step, auth); } catch (e) { job.failed.push(step); if (!job.firstErr) job.firstErr = String(e.message || e).slice(0, 120); }
     await sleep(200);
   }
   if (job.idx >= STEPS.length) {
@@ -1279,7 +1279,7 @@ async function scanWork(env, db, me, job, auth) {
   // How long scans take, for the health page: the last 15.
   try { const k = 'scan_perf_v1'; const l = JSON.parse((await env.RATEBOARD_KV.get(k)) || '[]') || [];
     l.unshift({ at: new Date().toISOString(), secs: Math.round((Date.now() - job.at) / 1000), steps: (job.steps || SCAN_STEPS).length, full: job.full !== false,
-      calls: job.calls || 0, avgMs: job.calls ? Math.round(job.callMs / job.calls) : null, failed: job.failed.length });
+      calls: job.calls || 0, avgMs: job.calls ? Math.round(job.callMs / job.calls) : null, failed: job.failed.length, firstErr: job.firstErr || null, botTok: !!auth });
     await env.RATEBOARD_KV.put(k, JSON.stringify(l.slice(0, 15))); } catch (e) {}
   if (job.kept) { await stat(db, 'scan_partial'); await botFail(db, 'scan', `${me}: ${job.kept} season(s) kept from last scan - ${job.errors.slice(0, 3).join(' | ')}`); }
   else await stat(db, 'scan_ok');
