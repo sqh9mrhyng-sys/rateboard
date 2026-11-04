@@ -6762,6 +6762,14 @@ async function handleGet({ request, env, waitUntil }) {
           const reset = async () => (await env.RATEBOARD_KV.get(`gl_gen_${sport}_${season}`)) !== gen0;
           const done = await readRaxDone();
           const raxWin = (await sweepWindow(env, sport, season)) || { from: null, to: etYesterday() };
+          /* Only players with a game still waiting for its rax are asked about.
+             Everyone else (no new games since the last pass - most of a big
+             roster) is ticked off without a call to Real. */
+          let waiting = null;
+          try { const r = await db.prepare('SELECT DISTINCT playerId AS p FROM gamelog WHERE sport = ? AND season = ? AND rax IS NULL').bind(sport, Number(season)).all();
+            waiting = new Set((r.results || []).map(x => String(x.p))); } catch (e) {}
+          if (waiting) { let ticked = 0; for (const id of store.ids) if (!done[id] && !waiting.has(String(id))) { done[id] = 1; ticked++; }
+            if (ticked) { Object.assign(done, await readRaxDone()); await env.RATEBOARD_KV.put(RAX_DONE_KEY, JSON.stringify({ done, updated: Date.now() })); } }
           const todo = (url.searchParams.get('tail') === '1' ? store.ids.filter(id => !done[id]).reverse() : store.ids.filter(id => !done[id])).slice(0, LIMIT);   // tail: the second account works from the far end
           if (!todo.length) {
             // Both passes done for this sweep: next sweep starts the day after this window.
