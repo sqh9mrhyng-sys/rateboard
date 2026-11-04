@@ -356,6 +356,7 @@ async function usedSince(db, u, want) {
 }
 
 const MAX_WANTS = 5;     // players a member can swap for at once
+const MATCH_AHEAD_MS = 3 * 3600000 + 30 * 60000;   // a run fills the hours starting in the next 3.5 hours
 const MAX_SLOTS = 5;     // hours a member can pick
 /* Members' saved passes are big (every sport and season), and D1 won't hand
    back more than 50 MB in one answer, so wide reads go a page at a time. */
@@ -534,10 +535,17 @@ async function runMatching(db) {
     for (const slot of A.slots) {
       const rb = B.slots.indexOf(slot); if (rb < 0) continue;
       const ra = A.slots.indexOf(slot);
-      cands.push({ A, B, slot, best: Math.min(ra, rb), sum: ra + rb, due: dueFor(slot, now + 30 * 60000), i });
+      const due = dueFor(slot, now + 30 * 60000);
+      /* Only the next few hours are filled each run (Dennis, 2026-11-04): a
+         run used to fill the whole day, primary hours first, so a 2pm hour
+         took everyone's passes before 9am came round. Hours now fill in time
+         order as they come up. */
+      if (due - now > MATCH_AHEAD_MS) continue;
+      cands.push({ A, B, slot, best: Math.min(ra, rb), sum: ra + rb, due, i, boss: ADMINS.includes(String(A.key).toLowerCase()) || ADMINS.includes(String(B.key).toLowerCase()) });
     }
   }
-  cands.sort((x, y) => x.best - y.best || x.sum - y.sum || x.due - y.due || x.i - y.i);
+  // Dennis first, in every hour he picks; then the soonest hour; then primary hours.
+  cands.sort((x, y) => (y.boss - x.boss) || x.due - y.due || x.best - y.best || x.sum - y.sum || x.i - y.i);
   for (const { A, B, slot, due } of cands) {
     const d = swapDay(due);
     if (!roomFor(A.key, d) || !roomFor(B.key, d)) continue;
@@ -631,6 +639,38 @@ const DMQ_DDL = 'CREATE TABLE IF NOT EXISTS dm_retry (id INTEGER PRIMARY KEY AUT
 async function queueDm(db, channelId, parts, label) {
   try { await db.prepare(DMQ_DDL).run();
     await db.prepare('INSERT INTO dm_retry (channelId, parts, label, tries, at) VALUES (?, ?, ?, 0, ?)').bind(Number(channelId), JSON.stringify(parts), String(label || '').slice(0, 120), Date.now()).run(); } catch (e) {}
+}
+/* Second look (Dennis, 2026-11-04): three minutes after a warning or contact
+   message, the chat is read back and any part that didn't land is queued to
+   go again. A few chats a minute, so it never floods Real. */
+const DMV_DDL = 'CREATE TABLE IF NOT EXISTS dm_verify (id INTEGER PRIMARY KEY AUTOINCREMENT, channelId INTEGER, parts TEXT, label TEXT, checkAt INTEGER, tries INTEGER)';
+async function queueVerify(db, channelId, parts, label) {
+  try { await db.prepare(DMV_DDL).run();
+    await db.prepare('INSERT INTO dm_verify (channelId, parts, label, checkAt, tries) VALUES (?, ?, ?, ?, 0)').bind(Number(channelId), JSON.stringify(parts), String(label || '').slice(0, 120), Date.now() + 3 * 60000).run(); } catch (e) {}
+}
+// Something in a message that's sure to be in Real's copy of it: its first link, else its opening words.
+const dmFlat = t => String(t).replace(/[^A-Za-z0-9]+/g, ' ').trim();
+const dmMark = t => { const u = String(t).match(/https?:\/\/[^\s)]+/); return u ? dmFlat(u[0]) : dmFlat(t).slice(0, 30); };
+async function verifyDms(db, auth) {
+  await db.prepare(DMV_DDL).run();
+  const rows = ((await db.prepare('SELECT * FROM dm_verify WHERE checkAt <= ? ORDER BY checkAt LIMIT 4').bind(Date.now()).all()).results) || [];
+  for (const r of rows) {
+    // Every bit of text in the chat, flattened the same way as the marks.
+    let blob = null;
+    try { const d = await rsGetJson(`https://web.realapp.com/messages/channels/${r.channelId}/messages`, auth); const bits = [];
+      const walk = o => { if (typeof o === 'string') bits.push(o); else if (o && typeof o === 'object') Object.values(o).forEach(walk); }; walk(d);
+      blob = dmFlat(bits.join(' ')); } catch (e) {}
+    if (blob == null) {
+      if (Number(r.tries) >= 10) await db.prepare('DELETE FROM dm_verify WHERE id=?').bind(r.id).run();
+      else await db.prepare('UPDATE dm_verify SET tries=tries+1, checkAt=? WHERE id=?').bind(Date.now() + 60000, r.id).run();
+      continue;
+    }
+    const missing = parse(r.parts, []).filter(t => { const k = dmMark(t); return k && !blob.includes(k); });
+    if (missing.length) { await queueDm(db, r.channelId, missing, `${r.label} (2nd look)`); await stat(db, 'dm_verify_resend', missing.length); }
+    else await stat(db, 'dm_verify_ok');
+    await db.prepare('DELETE FROM dm_verify WHERE id=?').bind(r.id).run();
+    await sleep(400);
+  }
 }
 async function retryDms(db, auth) {
   await db.prepare(DMQ_DDL).run();
@@ -993,8 +1033,9 @@ async function runDms(env, db, auth, rows, max, force) {
         if (canceller && String(side === 'A' ? m.a : m.b).toLowerCase() === canceller) { try { await db.prepare(`UPDATE swap_matches SET ${'follow' + side}=COALESCE(${'follow' + side}, ?) WHERE id=?`).bind(now, m.id).run(); } catch (e) {} continue; }
         // Only a swap they've actually been warned about: its warning went out and its hour is
         // under 35 minutes away (or here). One scheduled hours ahead gets no message at all.
-        if (!m['warn' + side] && !m['done' + side]) continue;
-        if (!m['done' + side] && sideDue(m) - now > 35 * 60000) continue;
+        // Only in the half hour between its warning and its swap (:30 to :00), and only if warned.
+        if (!m['warn' + side]) continue;
+        { const left = sideDue(m) - now; if (!(left > 0 && left <= 31 * 60000)) continue; }
         const r = await db.prepare(`UPDATE swap_matches SET ${'follow' + side}=? WHERE id=? AND ${'follow' + side} IS NULL`).bind(now, m.id).run();
         if (!(r && r.meta && r.meta.changes)) continue;
         const who = side === 'A' ? m.a : m.b, other = side === 'A' ? m.b : m.a, gets = side === 'A' ? m.bGets : m.aGets;
@@ -1044,6 +1085,8 @@ async function runDms(env, db, auth, rows, max, force) {
         catch (e) { if (i === 0) throw e; await queueDm(db, ch, msgs.slice(i), `${kind} @${me.rsUser}`); await botFail(db, 'dm_' + kind, `@${me.rsUser} part ${i + 1}/${msgs.length} queued for retry: ${e.message || e}`); break; }
         sent++; await stat(db, 'dm_' + kind); await sleep(900);
       }
+      // A second look in a few minutes: read the chat back and re-send any part that isn't there.
+      if (kind === 'warn' || kind === 'contact') await queueVerify(db, ch, msgs, `${kind} @${me.rsUser}`);
       notes.push(`${kind} sent to @${me.rsUser} (${msgs.length} message${msgs.length === 1 ? '' : 's'})`); return true;
     }
     catch (e) { notes.push(`${kind} to @${me.rsUser} failed: ${String(e.message || e).slice(0, 160)}`); await botFail(db, 'dm_' + kind, `@${me.rsUser}: ${e.message || e}`); return false; }
@@ -1497,6 +1540,7 @@ export async function swapTick(env) {
   } catch (e) {}
   try { await autoRescan(env, db, auth); } catch (e) { await botFail(db, 'rescan', e.message); }
   try { await retryDms(db, auth); } catch (e) { await botFail(db, 'dm_retry', e.message); }   // unsent parts first
+  try { await verifyDms(db, auth); } catch (e) { await botFail(db, 'dm_verify', e.message); }   // then the second look
   try { await feedbackDms(env, db, auth); } catch (e) { await botFail(db, 'dm_feedback', e.message); }
   try { await backgroundScans(env, db, auth); } catch (e) { await botFail(db, 'scan_bg', e.message); }
   const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned','cancelling') AND createdAt > ? ORDER BY id LIMIT 500`)
