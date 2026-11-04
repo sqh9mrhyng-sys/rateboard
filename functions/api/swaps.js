@@ -2041,7 +2041,11 @@ async function handle({ request, env, waitUntil }) {
     if (action === 'reply') {
       const text = String(b.text || '').trim().slice(0, 1000);
       if (!text) return json({ error: 'Write a reply first.' }, 400);
-      out.dm = await adminDm(db, auth, item.from, text, `${item.src}:${item.id}`);
+      // Says what it's about at the top, then a dash line, then the reply.
+      const q = String(item.src === 'feature' ? item.title || item.detail || '' : item.detail || '').replace(/\s+/g, ' ').trim();
+      const quote = q.length > 140 ? q.slice(0, 140) + '…' : q;
+      const head = `This message is in reference to your ${item.src === 'feature' ? 'feature request' : 'report'} for "${quote}"`;
+      out.dm = await adminDm(db, auth, item.from, `${head}\n-\n${text}`, `${item.src}:${item.id}`);
       return json(out);
     }
     if (action === 'restrict' || action === 'ban') {
