@@ -840,9 +840,22 @@ async function openSwapper(k){
   if(j.error){ box.textContent = j.error; return; }
   const when = ms => new Date(ms).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   const st = m => m.status === 'cancelled' ? '<span class="pill off">called off</span>' : m.followed ? '<span class="pill on">done</span>' : m.contacted ? '<span class="pill on">contacted</span>' : m.warned ? '<span class="pill">warned</span>' : '<span class="pill">scheduled</span>';
-  box.innerHTML = (j.matches || []).map(m => `<div class="sm1"><b>${esc(when(m.due))}</b> ${st(m)} with <b>@${esc(m.partner)}</b><br><span class="note">buys ${esc(m.give)} · gets ${esc(m.get)}${m.note ? ' · ' + esc(m.note) : ''}</span></div>`).join('') || '<span class="note">No matches in the last 14 days.</span>';
+  // Grouped by swap hour, each with a button to send them that hour's DMs again.
+  const byDue = new Map(); for (const m of (j.matches || [])) (byDue.get(m.due) || byDue.set(m.due, []).get(m.due)).push(m);
+  box.innerHTML = [...byDue].map(([due, ms]) => `<div class="sm1"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><b>${esc(when(due))}</b><span class="note">${ms.length} swap${ms.length === 1 ? '' : 's'}</span>
+      <button class="sm" data-resend="${due}" data-user="${esc(k)}" style="margin-left:auto">Resend this hour's DMs</button></div>`
+    + ms.map(m => `<div style="margin-top:4px">${st(m)} with <b>@${esc(m.partner)}</b> <span class="note">buys ${esc(m.give)} · gets ${esc(m.get)}${m.note ? ' · ' + esc(m.note) : ''}</span></div>`).join('') + '</div>').join('')
+    || '<span class="note">No matches in the last 14 days.</span>';
 }
-$('#su-list').addEventListener('click', e => { const c = e.target.closest('[data-su]'); if(c && !e.target.closest('[data-sm]')) openSwapper(c.dataset.su); });
+$('#su-list').addEventListener('click', async e => {
+  const rb = e.target.closest('[data-resend]');
+  if(rb){ // two taps, then the warning and contact for that hour go to them again
+    if(rb.dataset.armed !== '1'){ rb.dataset.armed = '1'; rb.textContent = 'Tap again to resend'; setTimeout(() => { rb.dataset.armed = ''; rb.textContent = "Resend this hour's DMs"; }, 4000); return; }
+    rb.disabled = true; rb.textContent = 'Sending…';
+    const j = await api('/api/swaps?op=resendhour', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user: rb.dataset.user, due: Number(rb.dataset.resend) }) }, 90000);
+    rb.textContent = j.error ? j.error : `Sent ${j.sent} of ${j.messages} messages${j.queued ? ` (${j.queued} queued, going out shortly)` : ''}`; return;
+  }
+  const c = e.target.closest('[data-su]'); if(c && !e.target.closest('[data-sm]')) openSwapper(c.dataset.su); });
 ['#su-q', '#su-sort', '#su-act'].forEach(id => $(id).addEventListener(id === '#su-q' ? 'input' : 'change', drawSwappers));
 $('#su-load').addEventListener('click', loadSwappers);
 function loadSwaps(){ loadSwappers(); loadMatches(); loadNamed(); loadEvery(); loadBot(); loadSwapReports(); loadHourUsers(); }

@@ -2437,6 +2437,31 @@ async function handle({ request, env, waitUntil }) {
   }
 
   // Admin: the reports, and closing one out.
+  /* Admin: send one member everything for one swap hour again - the warning
+     and the contact message, for every swap of theirs in that hour that's
+     still on. Their swaps aren't touched; it's only the messages. */
+  if (op === 'resendhour' && request.method === 'POST') {
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    const who = String(b.user || ''), due = Number(b.due);
+    if (!who || !due) return json({ error: 'Pick a member and a swap hour.' }, 400);
+    await matchCols(db);
+    const ms = ((await db.prepare(`SELECT * FROM swap_matches WHERE (a=? OR b=?) AND dueAt=? AND status NOT IN ('cancelled','cancelling','cleared')`).bind(who, who, due).all()).results) || [];
+    if (!ms.length) return json({ error: 'No swaps of theirs in that hour.' }, 404);
+    const cache = new Map(), member = async k => cache.has(k) ? cache.get(k) : (cache.set(k, await loadMember(db, k)), cache.get(k));
+    const items = [];
+    for (const m of ms) { const l = await sideLines(member, m, m.a === who ? 'A' : 'B'); if (l) items.push(l); }
+    const me2 = await member(who);
+    if (!me2 || !me2.hashId) return json({ error: 'They have no Real account on file.' }, 400);
+    let ch; try { ch = await dmChannel(db, auth, me2.hashId, me2.rsUser, env); } catch (e) { return json({ error: 'No chat with them: ' + String(e.message || e).slice(0, 120) }, 400); }
+    const msgs = [...warnGrouped(items), ...contactGrouped(items, [])];
+    let sentN = 0;
+    for (let i = 0; i < msgs.length; i++) {
+      try { await dmSendRetry(auth, ch, msgs[i]); sentN++; await stat(db, 'dm_resend'); await sleep(1500); }
+      catch (e) { await queueDm(db, ch, msgs.slice(i), `resend @${me2.rsUser}`); break; }
+    }
+    return json({ ok: true, swaps: ms.length, messages: msgs.length, sent: sentN, queued: msgs.length - sentN });
+  }
+
   /* ---- Admin inbox ---- */
   if (op === 'inbox') return json({ items: await inboxItems(env, db) });
   if (op === 'inboxact' && request.method === 'POST') {
