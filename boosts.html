@@ -299,7 +299,11 @@ function drawDays(){
     : '<option value="">No NFL games in the next 4 days</option>';
 }
 $('#sport').addEventListener('change', drawDays);
-const drawMode = () => { $('#modenote').textContent = MODE_NOTE[$('#mode').value]; };
+// CFB Balanced has its own bars (one slate a week).
+const drawMode = () => { const m = $('#mode').value;
+  $('#modenote').textContent = $('#sport').value === 'ncaaf' && m === 'balanced'
+    ? 'Balanced (CFB): Legendary for 27.5+ projected rax (up to 70% of your Legendaries in a week), Epic for 26+, Rare for anyone at 5+.' : MODE_NOTE[m]; };
+$('#sport').addEventListener('change', () => drawMode());
 $('#mode').addEventListener('change', () => { drawMode(); if(!$('#out').hidden) run(); });
 drawMode();
 try{ const s = JSON.parse(localStorage.getItem('boosts_pick_v1') || '{}'); if(s.sport) $('#sport').value = s.sport; if(s.mode){ $('#mode').value = s.mode; drawMode(); } }catch(e){}
