@@ -76,7 +76,7 @@
 </style>
 </head>
 <body>
-<div class="lock" id="lock" hidden><h1>Swaps <span style="font-size:11px;font-weight:800;padding:2px 7px;border-radius:6px;background:var(--accent);color:#141925;vertical-align:middle">BETA</span></h1><p class="note" id="lockmsg">Checking…</p><p id="probox" hidden><button class="primary" id="procheck">Pro check</button></p><p class="note" id="rnhint" hidden>Is your Real username different from your board username? <a href="/username">Link your Real account</a> first.</p><p><a href="/">Back to the board</a></p></div>
+<div class="lock" id="lock" hidden><h1>Swaps <span style="font-size:11px;font-weight:800;padding:2px 7px;border-radius:6px;background:var(--accent);color:#141925;vertical-align:middle">BETA</span></h1><p class="note" id="lockmsg">Checking…</p><p id="probox" hidden><button class="primary" id="procheck">Pro check</button></p><p class="note" id="rnhint" hidden>Is your Real username different from your board username? <a href="/username">Link your Real account</a> first.</p><p id="signinbtn" hidden><a class="btn" href="/" style="display:inline-block;padding:10px 14px;border-radius:9px;background:#E8A33D;color:#141925;font-weight:700;text-decoration:none">Sign in on the board</a></p><p class="note" id="signinhint" hidden>Signed in already? Open the board once - it will ask for your password one more time, then this page works. Opened this from inside Real? Use the browser you signed in with.</p><p><a href="/">Back to the board</a></p></div>
 <div class="wrap" id="main" hidden>
   <header><h1>Swaps <span style="font-size:11px;font-weight:800;letter-spacing:.06em;padding:2px 7px;border-radius:6px;background:var(--accent);color:#141925;vertical-align:middle">BETA</span></h1><a href="/" style="margin-left:auto">Back to the board</a></header>
   <button class="bigbtn rep" id="repopen">REPORT</button>
@@ -603,16 +603,17 @@ function proAfter(p){
   el.innerHTML = (n ? `You can check again in ${n} day${n === 1 ? '' : 's'}. ` : '')
     + 'If your Real username is different from your board username, <a href="/username">link your Real account</a>.';
 }
+const showSignin = msg => { $('#lock').hidden = false; $('#lockmsg').textContent = msg; if(/sign in/i.test(msg)){ $('#signinbtn').hidden = false; $('#signinhint').hidden = false; } };
 // The Real Pro wall: one check per member, then once every 3 days after a no.
 async function proGate(){
   let p = await api('/api/swaps?op=procheck&peek=1');
-  for(let i = 0; i < 2 && p.error && /sign in/i.test(p.error) && (()=>{try{return !!localStorage.getItem('ratebrd_token_v1')}catch(e){return false}})(); i++){
+  for(let i = 0; i < 4 && p.error && /sign in/i.test(p.error) && (()=>{try{return !!localStorage.getItem('ratebrd_token_v1')}catch(e){return false}})(); i++){
     await new Promise(r => setTimeout(r, 1200 * (i + 1)));
     p = await api('/api/swaps?op=procheck&peek=1');
   }
   if(p.access) return true;
   $('#lock').hidden = false;
-  if(p.error){ $('#lockmsg').textContent = p.error; return false; }
+  if(p.error){ showSignin(p.error); return false; }
   if(p.checked){ $('#lockmsg').textContent = 'Real pro required for this page'; proAfter(p); return false; }
   $('#lockmsg').textContent = ''; $('#probox').hidden = false; $('#rnhint').hidden = false;
   return new Promise(done => {
@@ -635,7 +636,7 @@ async function proGate(){
     await new Promise(r => setTimeout(r, 1200 * (i + 1)));
     j = await api('/api/swaps?op=me');
   }
-  if(j.error){ $('#lock').hidden = false; $('#lockmsg').textContent = j.error; return; }
+  if(j.error){ showSignin(j.error); return; }
   $('#main').hidden = false;
   try{ wantNames = JSON.parse(localStorage.getItem('ratebrd_swapnames') || '{}') || {}; }catch(e){}
   if(j.profile) prof = Object.assign(prof, j.profile);

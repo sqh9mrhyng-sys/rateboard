@@ -246,7 +246,9 @@ async function rsGetJson(url, auth) {
 /* The bot account (RS_SWAP_TOKEN) only handles DMs. Reading passes and
    looking people up goes through the board's and the market's accounts. */
 function scanToks(env) {
-  const t = [env.RS_AUTH_TOKEN, env.RS_MARKET_TOKEN].filter(x => typeof x === 'string' && x.length > 20);
+  // The market account first: it sits idle unless a market pull is queued,
+  // while the board account is busy with the game-data collectors all day.
+  const t = [env.RS_MARKET_TOKEN, env.RS_AUTH_TOKEN].filter(x => typeof x === 'string' && x.length > 20);
   return t.length ? [...new Set(t)] : [swapToken(env)].filter(Boolean);
 }
 const scanTok = env => scanToks(env)[Math.floor(Math.random() * scanToks(env).length)];
@@ -925,6 +927,35 @@ async function autoRescan(env, db, auth) {
   return { key: u.key, passes: merged.length };
 }
 
+/* One-off message campaigns from the bot, each member once. Day-1 feedback
+   (2026-11-03): everyone who got a swap DM since launch. Replies land in the
+   bot's DMs, where Dennis reads them. */
+const FEEDBACK_TEXT = 'After day 1 of this project, rate your experience 1-10 with any feedback or change requests.';
+async function feedbackDms(env, db, auth) {
+  await db.prepare('CREATE TABLE IF NOT EXISTS bot_once (campaign TEXT, key TEXT, at INTEGER, ok INTEGER, PRIMARY KEY (campaign, key))').run();
+  const C = 'feedback_day1';
+  if (!(await env.RATEBOARD_KV.get('bot_once_' + C))) {
+    await env.RATEBOARD_KV.put('bot_once_' + C, String(Date.now()));
+    const since = Date.UTC(2026, 10, 3, 10, 20);
+    const rows = ((await db.prepare(`SELECT a, b, warnA, warnB, doneA, doneB, followA, followB FROM swap_matches WHERE createdAt >= ?`).bind(since).all()).results) || [];
+    const who = new Set();
+    for (const m of rows) { if (m.warnA || m.doneA || m.followA) who.add(m.a); if (m.warnB || m.doneB || m.followB) who.add(m.b); }
+    for (const k of who) await db.prepare('INSERT OR IGNORE INTO bot_once (campaign, key) VALUES (?, ?)').bind(C, k).run();
+    await stat(db, 'feedback_queued', who.size);
+  }
+  const due = ((await db.prepare('SELECT key FROM bot_once WHERE campaign=? AND at IS NULL LIMIT 5').bind(C).all()).results) || [];
+  for (const { key } of due) {
+    const c = await db.prepare('UPDATE bot_once SET at=? WHERE campaign=? AND key=? AND at IS NULL').bind(Date.now(), C, key).run();
+    if (!(c && c.meta && c.meta.changes)) continue;          // another run took it
+    const u = await loadMember(db, key);
+    let ok = 0;
+    try { if (u && u.hashId) { const ch = await dmChannel(db, auth, u.hashId, u.rsUser, env); await dmSend(auth, ch, FEEDBACK_TEXT); ok = 1; await stat(db, 'dm_feedback'); } }
+    catch (e) { await botFail(db, 'dm_feedback', `${key}: ${e.message || e}`); }
+    await db.prepare('UPDATE bot_once SET ok=? WHERE campaign=? AND key=?').bind(ok, C, key).run();
+    await sleep(900);
+  }
+}
+
 export async function swapTick(env) {
   if (!DM_ON) return null;
   const db = env.RATEBOARD_DB, auth = swapToken(env);
@@ -1016,6 +1047,7 @@ export async function swapTick(env) {
     }
   } catch (e) {}
   try { await autoRescan(env, db, auth); } catch (e) { await botFail(db, 'rescan', e.message); }
+  try { await feedbackDms(env, db, auth); } catch (e) { await botFail(db, 'dm_feedback', e.message); }
   const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned','cancelling') AND createdAt > ? ORDER BY id LIMIT 500`)
     .bind(Date.now() - 2 * 86400000).all()).results) || [];
   if (!rows.length) return [];
@@ -1827,8 +1859,10 @@ async function handle({ request, env, waitUntil }) {
     const read = async (step, tok) => {
       const [sport, season, kind] = step;
       const d = await rsGetJson(`https://web.realapp.com/userpasses/${encodeURIComponent(job.hashId)}/passes?entityType=${kind}&season=${season}&sport=${sport}`, tok);
-      const known = Array.isArray(d) || ['passes', 'items', 'entities', 'results', 'data', 'userPasses', 'players'].some(k => Array.isArray(d && d[k]));
-      if (!known) throw new Error('unexpected reply');
+      // Only a reply that says it's an error counts as a failure; an empty or
+      // differently-shaped reply just means no passes in that season.
+      if (d && typeof d === 'object' && !Array.isArray(d) && !rowsOf(d).length
+          && (d.error || (Number(d.statusCode) >= 400) || /high volume|rate limit|too many/i.test(String(d.message || '')))) throw new Error(`Real said: ${String(d.message || d.error || d.statusCode).slice(0, 80)}`);
       for (const r of rowsOf(d)) { const p = passOf(r, sport, season, kind); if (p) job.passes.push(p); }
     };
     let next = 0, n = 0;
@@ -1871,7 +1905,8 @@ async function handle({ request, env, waitUntil }) {
         scannedAt=excluded.scannedAt, updatedAt=excluded.updatedAt`)
       .bind(me, job.rsUser, job.hashId, JSON.stringify(job.passes), stamp, Date.now()).run();
     try { await db.prepare('UPDATE swap_users SET fullPart=NULL, boostScanAt=NULL WHERE key=?').bind(me).run(); } catch (e) {}
-    if (job.kept) await stat(db, 'scan_partial');
+    if (job.kept) { await stat(db, 'scan_partial'); await botFail(db, 'scan', `${me}: ${job.kept} season(s) kept from last scan - ${job.errors.slice(0, 3).join(' | ')}`); }
+    else await stat(db, 'scan_ok');
     return json({ done: true, hashId: job.hashId, passes: job.passes, errors: job.errors, scannedAt: Date.now(), parts,
       note: job.kept ? `${job.kept} season${job.kept === 1 ? '' : 's'} couldn't be read from Real just now, so ${job.kept === 1 ? 'it keeps' : 'they keep'} your passes from your last scan. Scan again in 5 minutes to refresh ${job.kept === 1 ? 'it' : 'them'}.` : null });
   }

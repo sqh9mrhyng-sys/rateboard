@@ -2673,6 +2673,25 @@ async function resume(){
   // before sessions existed means one more password sign-in.
   if(ADMINS.includes(String(d.key).toLowerCase()) && !getToken()){ clearDevice(); me = null; return false; }
 
+  /* The board itself only needs the device, but Swaps, Boosts and Market need a
+     live sign-in token. A browser with no token, or one the server no longer
+     knows (signed in before tokens existed, or after a password reset), goes
+     through one password sign-in so every page knows who it is. Only when the
+     server actually answered - a flaky network never signs anyone out. */
+  let live = !!getToken();
+  if(live){
+    try{
+      const r = await fetch('/api/rax?market=me&session=1', { headers: { 'x-rb-token': getToken() } });
+      if(r.ok){ const j = await r.json().catch(() => null); if(j && j.session === 'none') live = false; }
+    }catch(e){}
+  }
+  if(!live){
+    setToken(''); clearDevice(); me = null;
+    setTimeout(() => { try{ const f = $('#g-user'); if(f && !f.value) f.value = u.name || d.key; }catch(e){}
+      gateMsg('Please sign in once more with your password - it keeps you signed in on Swaps, Boosts and Market data too.'); }, 50);
+    return false;
+  }
+
   me = u.name;
   saveDevice(d.key, me);             // refresh the stamp on every visit
   return true;

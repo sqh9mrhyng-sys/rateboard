@@ -647,13 +647,13 @@ async function loadSwapReports(close){
     + `<div style="white-space:pre-wrap;margin:4px 0">${esc(x.detail)}</div><button data-srclose="${x.id}">Done</button></div>`).join('') || 'No open reports.';
 }
 $('#sr-list').addEventListener('click', e => { const b = e.target.closest('[data-srclose]'); if(b){ b.disabled = true; loadSwapReports(b.dataset.srclose); } });
-const BS_COLS = [['dm_warn','Warn DMs'],['dm_contact','Contact DMs'],['dm_follow','Follow-ups'],['dm_cancel','Called-off notices'],['cancel_kept','Swaps called off'],['dm_reset','Reset replies'],['dm_rename','Username replies'],
+const BS_COLS = [['dm_warn','Warn DMs'],['dm_contact','Contact DMs'],['dm_follow','Follow-ups'],['dm_feedback','Feedback DMs'],['feedback_queued','Feedback queued'],['dm_cancel','Called-off notices'],['cancel_kept','Swaps called off'],['dm_reset','Reset replies'],['dm_rename','Username replies'],
   ['fail','Failed'],['verify_try','Verify taps'],['verify_ok','Verified'],['pro_check','Pro checks'],['pro_yes','Pro yes'],['rename_ok','Username links'],
-  ['reset_ok','Password resets'],['report_user','Usage reports'],['report_problem','Problem reports'],['matches','Matches made'],['rescans','Daily rescans'],['rescan_fail','Rescans failed']];
+  ['reset_ok','Password resets'],['report_user','Usage reports'],['report_problem','Problem reports'],['matches','Matches made'],['scan_ok','Clean scans'],['scan_partial','Scans with seasons kept'],['rescans','Daily rescans'],['rescan_fail','Rescans failed']];
 async function loadBot(){
   const j = await api('/api/swaps?op=botstats');
   if(j.error){ $('#bs-days').textContent = j.error; return; }
-  const dmSum = d => ['dm_warn','dm_contact','dm_follow','dm_reset','dm_rename'].reduce((a, k) => a + (d[k] || 0), 0);
+  const dmSum = d => ['dm_warn','dm_contact','dm_follow','dm_reset','dm_rename','dm_feedback','dm_cancel'].reduce((a, k) => a + (d[k] || 0), 0);
   const t = j.days[0] || {};
   $('#bs-top').innerHTML = `Today: <b>${dmSum(t)}</b> DMs sent · <b>${t.fail || 0}</b> failed · <b>${j.chats}</b> verified chats · <b>${j.swappers}</b> active swappers · <b>${j.open}</b> open matches · <b>${j.errors}</b> errored · Pro ${j.proYes} yes / ${j.proNo} no · ${j.newChatsLeft} new chats left today`;
   $('#bs-days').innerHTML = '<table><tr><th></th>' + j.days.map(d => `<th>${esc(d.day.slice(5))}</th>`).join('') + '</tr>'

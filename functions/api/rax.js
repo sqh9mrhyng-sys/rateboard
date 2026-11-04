@@ -1,4 +1,4 @@
-import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS, touchSeen, userStats } from '../../lib/auth.js';
+import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS, touchSeen, userStats, sessionState } from '../../lib/auth.js';
 import { swapTick, boostRefresh, swapAccess } from './swaps.js';
 import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, capNow } from '../../lib/dbwatch.js';
 
@@ -7581,6 +7581,10 @@ export async function onRequestGet(ctx) {
   const mk = url.searchParams.get('market');
   if (MARKET_MEMBER.includes(mk)) {
     const a = await marketWho(env, request);
+    if (mk === 'me' && url.searchParams.get('session') === '1') {
+      // The board asks this once on open: is this browser's sign-in still live?
+      return json({ session: a.who ? 'ok' : await sessionState(env, request) });
+    }
     if (mk === 'me') {
       // Every board and market load asks this once: it's the activity count.
       if (a.who) touchSeen(env, a.who, ctx.waitUntil);
