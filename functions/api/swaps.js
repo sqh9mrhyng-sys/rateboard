@@ -1315,9 +1315,9 @@ export async function swapAccess(env, request) {
 }
 // What a member (not an admin) may do: their own swap and nothing else, and
 // for OTD their own passes and games.
-const MEMBER_OPS = new Set(['me', 'save', 'keep', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report']);
+const MEMBER_OPS = new Set(['me', 'save', 'keep', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report', 'myswaps']);
 const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan']);
-const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostinv', 'buys']);
+const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostinv', 'buys', 'legboosts']);
 const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
 
 /* ---- OTD: saved game lists ------------------------------------------------
@@ -1543,6 +1543,35 @@ const CBB_TOP175 = {"4711255":[1,"MSU","jxtRc6FPBpw9"],"5187600":[2,"VAN","aetec
    as long as they're playing and not hurt. */
 const CBB_PIN = { 4711255: [1, 5], 5187600: [2, 5], 5080489: [3, 5], 5142731: [4, 4], 4858604: [5, 4] };   // Fears, Tanner, Haugh, Stokes, Sandfort
 // Player shots Dennis made for the Buys list (img/cbb/<id>.png).
+/* Legendary boosts. Daily packs are Dennis's four (the team card's numbers are
+   his: team packs aren't in pack data); weekly packs are his gallery. CFB
+   season is the year it starts (2025 = 2025-26). */
+const LEG_KEY = 'legboost_stats_v1';
+const LEG_DAILY = [
+  { name: 'Eric Weatherly', season: 2025, id: 505394 },
+  { name: 'Sam Jackson V', season: 2025, id: 228721 },
+  { name: 'Kiael Kelly', season: 2025, id: 220706 },
+  { name: 'Ball State team card', season: 2025, team: 'ball state', odds: 0.90, boost: 23.8 }
+];
+const LEG_WEEKLY = [
+  { name: 'Michael Johnson Jr.', season: 2025, id: 570465 }, { name: 'Donovan Hamilton', season: 2025, id: 523814 },
+  { name: 'Ty Robinson', season: 2025, id: 203781 },        { name: 'Koby Gross', season: 2025, id: 212712 },
+  { name: 'Qian Magwood', season: 2025, id: 470499 },      { name: 'Malcolm Gillie', season: 2025, id: 511372 },
+  { name: 'Elijah Owens', season: 2026, id: 584060 },      { name: 'DJ Williams', season: 2026, id: 595598 },
+  { name: 'Erik Sandvik', season: 2026, id: 501184 },      { name: 'Jeremiah Beck', season: 2026, id: 554256 },
+  { name: 'Xavier Terrell', season: 2024, id: 515055 },    { name: 'Isaiah Hankins', season: 2024, id: 224067 },
+  { name: 'Jack Sawyer', season: 2024, id: 207626 }
+];
+// The pack data tab's sums: a pack is 3 of a player's card plays, its booster matches the best card.
+const legFrom = (a, n) => n < 3 || a < 3 ? 0 : (a * (a - 1) * (a - 2)) / (n * (n - 1) * (n - 2));
+function packOdds(n, k) { n = Number(n) || 0; k = Number(k) || 0; if (k <= 0 || n < 3) return 0; if (k > n - 3) return 1; return 1 - ((n - k) * (n - k - 1) * (n - k - 2)) / (n * (n - 1) * (n - 2)); }
+function avgBooster(r) {
+  const n = Number(r.plays) || 0; if (n < 3) return null;
+  const ic = Number(r.iconic) || 0, my = Number(r.mystic) || 0, lg = Number(r.legendary) || 0, ep = Number(r.epic) || 0;
+  const low = Math.max(0, n - ic - my - lg - ep), M = [10, 15, 25, 50, 100];
+  const up = [low, low + ep, low + ep + lg, low + ep + lg + my, n].map(a => a >= n ? 1 : legFrom(a, n));
+  let prev = 0, out = 0; for (let i = 0; i < 5; i++) { out += (up[i] - prev) * M[i]; prev = up[i]; } return out;
+}
 const CBB_SHOTS = new Set([4711255, 5187600, 5080489, 5174657, 5106275, 5044426, 5103630, 5142609, 4858604, 5060709, 5095152, 5054083, 5142722, 5142715, 5311832, 5101833, 4869764, 4873209, 5142731, 5347090, 5164368, 5142729, 4848637, 4684634, 5174954, 5210407, 5174971, 5311846, 5196916, 4894445, 5239838, 5101809, 5254159, 4873184, 4712832, 5175007, 5177233, 5174955, 5238195, 5144105, 5311896, 5144495, 4873093, 5144108, 5060732, 5241360, 5101623, 4873219, 5101849, 4845361, 4684276, 5060700, 5149078, 4711256, 5165276, 5060705, 5150404, 5060685, 5312258, 5105534, 5174952, 4869770, 5311991, 4872740, 4683680, 4845373, 5238184, 5093142, 5214642]);
 const FRESH_LINE = { PTS: 11, REB: 4.5, AST: 2, STL: 0.9, BLK: 0.5, '3PM': 1.3 };
 const STAT_COL = { PTS: 'pts', REB: 'reb', AST: 'ast', STL: 'stl', BLK: 'blk' };
@@ -2137,6 +2166,39 @@ async function handle({ request, env, waitUntil }) {
     const passIdOf = new Map(parse(u && u.passes, []).filter(p => p.sport === 'ncaam' && Number(p.season) === 2027 && p.kind !== 'team' && p.passId).map(p => [Number(p.id), p.passId]));
     for (const x of list) { x.name = CBB_TOP175[x.id][3] || names.get(x.id) || passName.get(x.id) || null; x.owned = own.has(x.id); x.passId = passIdOf.get(x.id) || null; if (CBB_SHOTS.has(x.id)) x.img = `/img/cbb/${x.id}.png`; }
     return json({ scannedAt: (u && u.scannedAt) || null, scanned: !!(u && u.passes), list, missing: list.filter(x => !x.owned).length });
+  }
+
+  /* Legendary boosts (CFB): packs whose booster is nearly always legendary.
+     Leg odds and the expected booster come from pack data (the same sums as
+     the board's Pack data tab), pulled once and kept; an admin can refresh. */
+  if (op === 'legboosts') {
+    let stats = null;
+    try { stats = JSON.parse((await env.RATEBOARD_KV.get(LEG_KEY)) || 'null'); } catch (e) {}
+    if (!stats || (acc.admin && url.searchParams.get('refresh') === '1')) {
+      const by = {};
+      for (const se of [...new Set(LEG_WEEKLY.concat(LEG_DAILY).filter(x => x.id).map(x => x.season))]) {
+        try {
+          const r = await fetch(`${url.origin}/api/rax?plays=board&seasons=ncaaf:${se}&min=1`);
+          const j = await r.json();
+          for (const row of (j.rows || [])) by[`${se}:${row.playerId}`] = row;
+        } catch (e) {}
+      }
+      const fresh = {};
+      for (const x of LEG_WEEKLY.concat(LEG_DAILY)) {
+        const r = x.id ? by[`${x.season}:${x.id}`] : null;
+        if (r) fresh[`${x.season}:${x.id}`] = { plays: r.plays, legendary: r.legendary, odds: packOdds(r.plays, r.legendary), boost: avgBooster(r) };
+      }
+      if (Object.keys(fresh).length) { stats = { at: Date.now(), by: fresh }; try { await env.RATEBOARD_KV.put(LEG_KEY, JSON.stringify(stats)); } catch (e) {} }
+    }
+    const u = await db.prepare('SELECT passes, scannedAt FROM swap_users WHERE key=?').bind(me).first();
+    const ps = parse(u && u.passes, []).filter(p => p.sport === 'ncaaf');
+    const owns = x => x.team ? ps.some(p => p.kind === 'team' && Number(p.season) === x.season && new RegExp(x.team, 'i').test(String(p.name || '')))
+      : ps.some(p => p.kind !== 'team' && Number(p.season) === x.season && Number(p.id) === x.id);
+    const out = list => list.map(x => { const st = x.id && stats && stats.by[`${x.season}:${x.id}`];
+      const odds = st ? st.odds : x.odds ?? null, boost = st ? st.boost : x.boost ?? null;
+      return { name: x.name, season: x.season, team: !!x.team, link: x.id ? playerUrl(`ncaaf:${x.season}:${x.id}`) : null,
+        odds, boost, plays: st ? st.plays : null, owned: owns(x) }; });
+    return json({ daily: out(LEG_DAILY), weekly: out(LEG_WEEKLY), at: stats && stats.at, scanned: !!(u && u.passes), scannedAt: (u && u.scannedAt) || null, admin: acc.admin });
   }
 
   if (op === 'boostinv') {

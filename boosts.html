@@ -37,6 +37,13 @@
   .sum span{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:5px 10px;font-size:13px}
   td a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)}
   .sub{display:block;color:var(--mute);font-size:11.5px}
+  .leg1{background:var(--panel2);border:1px solid var(--line);border-radius:10px;margin:0 0 8px;overflow:hidden}
+  .leg1 > .hd{box-sizing:border-box;cursor:pointer;display:grid;grid-template-columns:1fr auto auto auto auto;gap:4px 14px;align-items:center;width:100%;padding:10px 12px}
+  .leg1 .v{text-align:right;font-variant-numeric:tabular-nums} .leg1 .v small{display:block;color:var(--mute);font-size:10.5px;text-transform:uppercase;letter-spacing:.04em}
+  .leg1 .pt{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;border-top:1px solid var(--line);font-size:13px}
+  .leg1 .pt div{padding:5px 12px;text-align:right;font-variant-numeric:tabular-nums} .leg1 .pt div:nth-child(3n+1){text-align:left}
+  .leg1 .pt .h{color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+  @media (max-width: 680px){ .leg1 > .hd{grid-template-columns:1fr 1fr 1fr} .leg1 .nm{grid-column:1 / -1} .leg1 .v{text-align:left} }
   .lock{max-width:460px;margin:12vh auto;text-align:center}
   /* Phones: each player becomes a card instead of a wide table row. */
   @media (max-width: 680px){
@@ -81,13 +88,14 @@
   <header><h1>Boosts &amp; Buys</h1><span class="beta">BETA</span><a href="/" style="margin-left:auto">Back to the board</a></header>
   <div class="betabar"><b>BETA</b> - this page is still in development. Projections are estimates from averages.</div>
 
-  <div class="bar" style="margin-bottom:14px"><div class="seg" id="tab"><button data-t="boosts" aria-pressed="true">Boosts</button><button data-t="buys" aria-pressed="false">Buys</button></div></div>
+  <div class="bar" style="margin-bottom:10px"><div class="seg" id="sportseg"><button data-s="ncaam" aria-pressed="true">CBB</button><button data-s="ncaaf" aria-pressed="false">CFB</button><button data-s="nfl" aria-pressed="false">NFL</button></div></div>
+  <div class="bar" style="margin-bottom:14px"><div class="seg" id="tab"><button data-t="boosts" aria-pressed="true">Boosts</button><button data-t="buys" aria-pressed="false" id="tab2">Buys</button></div></div>
 
   <div id="t-boosts">
     <section>
       <div class="bar">
         <label class="note">Day <select id="day"></select></label>
-        <label class="note">Sport <select id="sport"><option value="ncaam">CBB 2026-27</option><option value="ncaaf">CFB 2026</option><option value="nfl">NFL 2026</option></select></label>
+        <select id="sport" hidden><option value="ncaam">CBB 2026-27</option><option value="ncaaf">CFB 2026</option><option value="nfl">NFL 2026</option></select>
         <label class="note">Setting <select id="mode"><option value="balanced" selected>Balanced</option></select></label>
         <button class="go" id="run">Show my boosts</button>
       </div>
@@ -112,7 +120,13 @@
   </div>
 
   <div id="t-buys" hidden>
-    <section>
+    <section id="legs" hidden>
+      <div class="bar"><b style="font-size:15px">Legendary boosts · CFB</b><div class="seg" id="legseg" style="margin-left:auto"><button data-p="daily" aria-pressed="true">Daily packs</button><button data-p="weekly" aria-pressed="false">Weekly packs</button></div></div>
+      <p class="note" id="legmsg" style="margin:8px 0 0">Packs whose booster is nearly always legendary. Tap a player for profit by base rax.</p>
+      <div id="leglist" style="margin-top:10px"><p class="note">Loading…</p></div>
+      <p class="note" style="margin:10px 0 0">Leg odds and avg boost come from pack data. <b>Base rax to profit</b> = 200 ÷ avg boost (a pack costs 200). Profit = base rax × avg boost − 200.</p>
+    </section>
+    <section id="cbbbuys">
       <div class="betabar" style="margin-bottom:12px"><b>TO ADD A PLAYER HEADSHOT TO YOUR CARD</b>
         <ol style="margin:6px 0 0;padding-left:20px">
           <li>Click <b>Save photo</b> underneath a player</li>
@@ -277,11 +291,70 @@ drawMode();
 try{ const s = JSON.parse(localStorage.getItem('boosts_pick_v1') || '{}'); if(s.sport) $('#sport').value = s.sport; if(s.mode){ $('#mode').value = s.mode; drawMode(); } }catch(e){}
 drawDays();
 
-document.querySelectorAll('#tab button').forEach(b => b.addEventListener('click', () => {
-  document.querySelectorAll('#tab button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
-  $('#t-boosts').hidden = b.dataset.t !== 'boosts'; $('#t-buys').hidden = b.dataset.t !== 'buys';
-  if(b.dataset.t === 'buys') loadBuys();
+let curTab = 'boosts';
+function showTab(t){
+  curTab = t;
+  document.querySelectorAll('#tab button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.t === t)));
+  $('#t-boosts').hidden = t !== 'boosts'; $('#t-buys').hidden = t !== 'buys';
+  const sp = $('#sport').value;
+  $('#cbbbuys').hidden = sp !== 'ncaam'; $('#legs').hidden = sp !== 'ncaaf';
+  if(t === 'buys'){ if(sp === 'ncaam') loadBuys(); else if(sp === 'ncaaf') loadLegs(); }
+}
+document.querySelectorAll('#tab button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.t)));
+// The sport picker at the top: CBB's second tab is Buys, CFB's is Legendary boosts, NFL has none.
+function paintSport(){
+  const sp = $('#sport').value;
+  document.querySelectorAll('#sportseg button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.s === sp)));
+  $('#tab2').hidden = sp === 'nfl'; $('#tab2').textContent = sp === 'ncaaf' ? 'Legendary boosts' : 'Buys';
+  showTab(sp === 'nfl' ? 'boosts' : curTab);
+}
+document.querySelectorAll('#sportseg button').forEach(b => b.addEventListener('click', () => {
+  if($('#sport').value === b.dataset.s) return;
+  $('#sport').value = b.dataset.s; $('#sport').dispatchEvent(new Event('change'));
+  try{ const s = JSON.parse(localStorage.getItem('boosts_pick_v1') || '{}'); s.sport = b.dataset.s; localStorage.setItem('boosts_pick_v1', JSON.stringify(s)); }catch(e){}
+  $('#out').hidden = true; paintSport();
 }));
+
+// --- Legendary boosts (CFB): fetched once per visit; the numbers behind it are kept on the server.
+let legData = null, legPack = 'daily', legOpen = null;
+const CFB_SEASON = se => `${se}-${String(Number(se) + 1).slice(2)}`;
+async function loadLegs(){
+  if(!legData){ $('#leglist').innerHTML = '<p class="note">Loading…</p>';
+    const j = await api('/api/swaps?op=legboosts&page=boosts');
+    if(j.error){ $('#leglist').innerHTML = `<p class="note">${esc(j.error)}</p>`; return; }
+    legData = j; }
+  drawLegs();
+}
+function drawLegs(){
+  const j = legData; if(!j) return;
+  document.querySelectorAll('#legseg button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.p === legPack)));
+  $('#legmsg').textContent = (j.scanned ? 'Checked against your passes' + (j.scannedAt ? ` (read ${new Date(j.scannedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` : '') : 'Read your passes on the Boosts tab to see which you own')
+    + '. Tap a player for profit by base rax.' + (j.at ? ` Pack data from ${new Date(j.at).toLocaleString('en-US', { month: 'short', day: 'numeric' })}.` : '');
+  if(j.admin && !$('#legref')){ const r = document.createElement('button'); r.id = 'legref'; r.textContent = 'Refresh pack data (admin)'; r.style.marginTop = '8px';
+    r.onclick = async () => { r.disabled = true; const k = await api('/api/swaps?op=legboosts&page=boosts&refresh=1'); r.disabled = false; if(!k.error){ legData = k; drawLegs(); } };
+    $('#legmsg').after(r); }
+  const list = j[legPack] || [];
+  const f2 = v => v == null ? '-' : (Math.round(v * 100) / 100).toFixed(2);
+  $('#leglist').innerHTML = list.map((x, i) => {
+    const k = legPack + i, need = x.boost ? 200 / x.boost : null;
+    let rows = '';
+    if(legOpen === k && x.boost){
+      rows = '<div class="pt"><div class="h">Base rax</div><div class="h">Payout</div><div class="h">Profit</div>';
+      for(let b = 40; b >= 4; b -= 4){ const pay = b * x.boost, pr = pay - 200;
+        rows += `<div>${b}</div><div>${Math.round(pay).toLocaleString()}</div><div style="color:${pr >= 0 ? 'var(--ok)' : 'var(--bad)'};font-weight:700">${pr >= 0 ? '+' : ''}${Math.round(pr).toLocaleString()}</div>`; }
+      rows += '</div>';
+    }
+    return `<div class="leg1"><div class="hd" data-leg="${k}" role="button" tabindex="0"><div class="nm"><b>${x.link ? `<a href="${esc(x.link)}" target="_blank" rel="noopener">${esc(x.name)}</a>` : esc(x.name)}</b><span class="sub">CFB ${CFB_SEASON(x.season)}${x.owned ? ' · <b style="color:var(--ok)">Owned</b>' : ''}</span></div>`
+      + `<div class="v"><small>Leg odds</small>${x.odds == null ? '-' : (x.odds * 100).toFixed(1) + '%'}</div>`
+      + `<div class="v"><small>Avg boost</small>${x.boost == null ? '-' : f2(x.boost) + 'x'}</div>`
+      + `<div class="v"><small>Base rax to profit</small>${need == null ? '-' : f2(need)}</div>`
+      + `<div class="v" style="color:var(--mute)">${legOpen === k ? '▲' : '▼'}</div></div>${rows}</div>`;
+  }).join('') || '<p class="note">Nothing here yet.</p>';
+}
+$('#leglist').addEventListener('click', e => { if(e.target.closest('a')) return; const b = e.target.closest('[data-leg]'); if(!b) return;
+  legOpen = legOpen === b.dataset.leg ? null : b.dataset.leg; drawLegs(); });
+document.querySelectorAll('#legseg button').forEach(b => b.addEventListener('click', () => { legPack = b.dataset.p; legOpen = null; drawLegs(); }));
+paintSport();
 
 let buysOnly = false;
 /* Save a player shot: on phones the share sheet (Save Image puts it straight
