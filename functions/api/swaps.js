@@ -970,6 +970,19 @@ const chunks = (lines, n = LINES_PER_DM) => { const out = []; let cur = [];
 // A message that's still too long, cut at line breaks into pieces Real will take.
 const fitDm = t => String(t).length <= 1000 ? [t] : chunks(String(t).split('\n'), 999);
 // Warn: heading plus the first 5 swaps in one message, then up to 8 a message.
+/* Warning, grouped by the player they receive (Dennis, 2026-11-04): the
+   heading, then one message per player received - his link on top, the packs
+   to buy for him under it - so "you are receiving" isn't on every line. Big
+   groups run on into more messages, each kept under Real's length limit. */
+function warnGrouped(items) {
+  const head = "You are swapping the following players today, please buy the following packs within 30 mins. This is a heads up DM - the users you're swapping with in 30 mins:";
+  const groups = new Map();
+  for (const it of items) (groups.get(it.recvKey) || groups.set(it.recvKey, { recv: it.recv, lines: [] }).get(it.recvKey)).lines.push(it.buy);
+  if (groups.size <= 1) { const lines = items.map(x => x.buy); return [head + '\n' + lines.slice(0, 5).join('\n'), ...chunks(lines.slice(5))].filter(Boolean); }
+  const out = [head];
+  for (const g of groups.values()) { const parts = chunks(g.lines, 12); parts.forEach((c, i) => out.push((i ? `${g.recv} (cont.)` : `You are receiving ${g.recv}:`) + '\n' + c)); }
+  return out;
+}
 function warnText(lines) {
   const head = "You are swapping the following players today, please buy the following packs within 30 mins. This is a heads up DM - the users you're swapping with in 30 mins:";
   let k = Math.min(5, lines.length);
@@ -992,9 +1005,10 @@ async function sideLines(member, m, side) {
   if (!o || !me) return null;
   const gets = side === 'A' ? m.bGets : m.aGets;
   return {
-    // "you are receiving" only when they're swapping for more than one player - with one, they know who.
-    buy: `${playerUrl(gets) || playerName(me, gets)} ${String(gets).split(':')[1]} - ${passUrl(me, gets) || '(pass link not found)'}`
-      + ((me.wants || []).length > 1 ? ` - you are receiving ${playerUrl(side === 'A' ? m.aGets : m.bGets) || playerName(me, side === 'A' ? m.aGets : m.bGets)}` : ''),
+    // What to buy; the player they receive goes at the top of its own message instead of on every line.
+    buy: `${playerUrl(gets) || playerName(me, gets)} ${String(gets).split(':')[1]} - ${passUrl(me, gets) || '(pass link not found)'}`,
+    recvKey: side === 'A' ? m.aGets : m.bGets,
+    recv: (() => { const k = side === 'A' ? m.aGets : m.bGets; return `${playerUrl(k) || playerName(me, k)} ${String(k).split(':')[1]}`; })(),
     contact: `@${o.rsUser} - ${o.comment || '(no comment link)'} - ${playerUrl(gets) || playerName(me, gets)}`
   };
 }
@@ -1105,7 +1119,7 @@ async function runDms(env, db, auth, rows, max, force) {
         sent++; await stat(db, 'dm_' + kind); await sleep(1500);   // Real has a per-chat slowmode
       }
       // A second look in a few minutes: read the chat back and re-send any part that isn't there.
-      if (kind === 'warn' || kind === 'contact') await queueVerify(db, ch, msgs, `${kind} @${me.rsUser}`);
+      // (The read-back second look is off: Real stores links differently from what was sent, so it re-sent messages that had landed.)
       notes.push(`${kind} sent to @${me.rsUser} (${msgs.length} message${msgs.length === 1 ? '' : 's'})`); return true;
     }
     catch (e) { notes.push(`${kind} to @${me.rsUser} failed: ${String(e.message || e).slice(0, 160)}`); await botFail(db, 'dm_' + kind, `@${me.rsUser}: ${e.message || e}`); return false; }
@@ -1123,8 +1137,8 @@ async function runDms(env, db, auth, rows, max, force) {
       if (sent >= max || Date.now() - now > 40000) break;   // and never past 40s of the minute
       const wh = await claim(wh0, 'warn');
       if (!wh.length) continue;
-      const lines = []; for (const x of wh) { const l = await sideLines(member, x.m, x.side); if (l) lines.push(l.buy); }
-      if (!(lines.length && await send(who, warnText(lines), 'warn'))) { await unclaim(wh, 'warn'); warnFail = true; }
+      const items = []; for (const x of wh) { const l = await sideLines(member, x.m, x.side); if (l) items.push(l); }
+      if (!(items.length && await send(who, warnGrouped(items), 'warn'))) { await unclaim(wh, 'warn'); warnFail = true; }
     }
     if (warnFail) continue;
     // 2-4. contact: one per swap hour that has come.
@@ -1570,7 +1584,8 @@ export async function swapTick(env) {
       seen.add(ka); seen.add(kb); }
     await stat(db, 'recv_dupe_fixed', n); } } catch (e) { await botFail(db, 'dupefix', e.message); }
   try { await retryDms(db, auth); } catch (e) { await botFail(db, 'dm_retry', e.message); }   // unsent parts first
-  try { await verifyDms(db, auth); } catch (e) { await botFail(db, 'dm_verify', e.message); }   // then the second look
+  try { await db.prepare(DMV_DDL).run(); await db.prepare('DELETE FROM dm_verify').run(); } catch (e) {}   // second look off: drop anything still waiting
+  try { await db.prepare(DMQ_DDL).run(); await db.prepare("DELETE FROM dm_retry WHERE label LIKE '%2nd look%'").run(); } catch (e) {}
   try { await feedbackDms(env, db, auth); } catch (e) { await botFail(db, 'dm_feedback', e.message); }
   try { await backgroundScans(env, db, auth); } catch (e) { await botFail(db, 'scan_bg', e.message); }
   const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned','cancelling') AND createdAt > ? ORDER BY id LIMIT 500`)
