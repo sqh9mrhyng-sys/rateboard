@@ -304,8 +304,8 @@ async function packAvg(db, cache, key) {
   const c = cache.get(sk);
   return c.by.get(Number(id)) || c.all || null;
 }
-async function goalRoom(db, cache, u, usedFor) {
-  const want = (u.wants || [])[0];
+async function goalRoom(db, cache, u, usedFor, wantKey) {
+  const want = wantKey || (u.wants || [])[0];
   const g = Number(u.goal);
   if (!want || !(g > 0)) return { limited: false, left: Infinity };
   const p = (u.passes || []).find(x => x.key === want);
@@ -325,6 +325,8 @@ async function usedSince(db, u, want) {
 }
 
 const SWAPS_PER_DAY = 10;
+const MAX_WANTS = 5;     // players a member can swap for at once
+const MAX_SLOTS = 5;     // hours a member can pick
 async function runMatching(db) {
   // Only members the bot already has a chat with: new chats are capped at
   // five a day, so a match with anyone else might never be delivered.
@@ -353,16 +355,17 @@ async function runMatching(db) {
   }
   // FC and UFC have no packs to swap, so neither is ever offered or matched.
   const swappable = k => !/^(soccer|ufc):/.test(k) && !seasonOff(k);
-  // One player per swap, and only a pass they own: they buy cards for it.
-  for (const u of users) { const own = new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key)); u.wants = u.wants.filter(k => swappable(k) && own.has(k)).slice(0, 1); }
-  // Goal rating: how many more swaps they can take in all.
+  // Up to 5 players each, in their order, and only passes they own: they buy cards for those.
+  for (const u of users) { const own = new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key)); u.wants = u.wants.filter(k => swappable(k) && own.has(k)).slice(0, MAX_WANTS); }
+  // Goal rating, per player they want: how many more swaps that pass can take.
   const cache = new Map(), goalLeft = new Map();
-  for (const u of users) {
+  for (const u of users) for (const w of u.wants) {
     let left = Infinity;
-    try { const g = await goalRoom(db, cache, u, (x, w) => usedSince(db, x, w)); if (g.limited) left = g.left; } catch (e) {}
-    goalLeft.set(u.key, left);
+    try { const g = await goalRoom(db, cache, u, (x, ww) => usedSince(db, x, ww), w); if (g.limited) left = g.left; } catch (e) {}
+    goalLeft.set(`${u.key}|${w}`, left);
   }
-  const roomFor = (k, d) => !closed.has(`${k}|${d}`) && (count.get(`${k}|${d}`) || 0) < SWAPS_PER_DAY && goalLeft.get(k) > 0;
+  const roomFor = (k, d) => !closed.has(`${k}|${d}`) && (count.get(`${k}|${d}`) || 0) < SWAPS_PER_DAY;
+  const goalOk = (k, w) => (goalLeft.get(`${k}|${w}`) ?? Infinity) > 0;
   const gives = (u, d) => new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !given.has(`${u.key}|${k}|${d}`)));
   /* Every possible pair and shared hour, best first: an hour someone picked
      first is their primary, so pairs on both members' earliest picks go
@@ -371,8 +374,7 @@ async function runMatching(db) {
   const made = [], now = Date.now(), cands = [];
   for (let i = 0; i < users.length; i++) for (let j = i + 1; j < users.length; j++) {
     const A = users[i], B = users[j];
-    // The exact same pass both ways is no swap; the same player in two different seasons is fine.
-    if (!A.wants.length || !B.wants.length || A.wants[0] === B.wants[0]) continue;
+    if (!A.wants.length || !B.wants.length) continue;
     for (const slot of A.slots) {
       const rb = B.slots.indexOf(slot); if (rb < 0) continue;
       const ra = A.slots.indexOf(slot);
@@ -381,14 +383,23 @@ async function runMatching(db) {
   }
   cands.sort((x, y) => x.best - y.best || x.sum - y.sum || x.due - y.due || x.i - y.i);
   for (const { A, B, slot, due } of cands) {
-    const aGets = A.wants[0], bGets = B.wants[0], d = swapDay(due);
+    const d = swapDay(due);
     if (paired.has(`${A.key}|${B.key}|${d}`) || !roomFor(A.key, d) || !roomFor(B.key, d)) continue;
-    if (!gives(B, d).has(aGets) || !gives(A, d).has(bGets)) continue;
+    // The best pair of picks that works both ways (earlier picks first). The
+    // exact same pass both ways is no swap; the same player in two seasons is fine.
+    const gB = gives(B, d), gA = gives(A, d);
+    const aOk = A.wants.filter(w => gB.has(w) && goalOk(A.key, w)), bOk = B.wants.filter(w => gA.has(w) && goalOk(B.key, w));
+    let pick = null;
+    for (let s = 0; s < aOk.length + bOk.length && !pick; s++)
+      for (let x = 0; x <= s && !pick; x++) { const aw = aOk[x], bw = bOk[s - x]; if (aw && bw && aw !== bw) pick = [aw, bw]; }
+    if (!pick) continue;
+    const [aGets, bGets] = pick;
     made.push({ a: A.key, b: B.key, aGets, bGets, slot, due });
     paired.add(`${A.key}|${B.key}|${d}`); paired.add(`${B.key}|${A.key}|${d}`);
     given.add(`${B.key}|${aGets}|${d}`); given.add(`${A.key}|${bGets}|${d}`);
     bump(count, `${A.key}|${d}`); bump(count, `${B.key}|${d}`);
-    goalLeft.set(A.key, goalLeft.get(A.key) - 1); goalLeft.set(B.key, goalLeft.get(B.key) - 1);
+    goalLeft.set(`${A.key}|${aGets}`, (goalLeft.get(`${A.key}|${aGets}`) ?? Infinity) - 1);
+    goalLeft.set(`${B.key}|${bGets}`, (goalLeft.get(`${B.key}|${bGets}`) ?? Infinity) - 1);
   }
   for (const m of made) {
     try { await alterOnce(db, 'ALTER TABLE swap_matches ADD COLUMN dueAt INTEGER'); } catch (e) {}
@@ -714,8 +725,10 @@ const FOLLOW_TEXT = "Please make sure you bought all packs and offered 12 hours 
 // Long lists are split: the heading on its own, then at most 8 lines a message.
 const LINES_PER_DM = 8;
 const chunks = (lines, n = LINES_PER_DM) => { const out = []; for (let i = 0; i < lines.length; i += n) out.push(lines.slice(i, i + n).join('\n')); return out; };
+// Warn: heading plus the first 5 swaps in one message, then up to 8 a message.
 function warnText(lines) {
-  return ['You are swapping the following players today, please buy the following packs within 30 mins', ...chunks(lines)];
+  const head = "You are swapping the following players today, please buy the following packs within 30 mins. This is a heads up DM - the users you're swapping with in 30 mins:";
+  return [head + '\n\n' + lines.slice(0, 5).join('\n'), ...chunks(lines.slice(5))];
 }
 function contactText(lines, buy) {
   return ["Here are comments to contact the following swaps, please send 12 hour offers and report anyone who's doing anything wrong.\n"
@@ -733,7 +746,7 @@ async function sideLines(member, m, side) {
   if (!o || !me) return null;
   const gets = side === 'A' ? m.bGets : m.aGets;
   return {
-    buy: `${playerUrl(gets) || playerName(me, gets)} ${String(gets).split(':')[1]} - ${passUrl(me, gets) || '(pass link not found)'}`,
+    buy: `${playerUrl(gets) || playerName(me, gets)} ${String(gets).split(':')[1]} - ${passUrl(me, gets) || '(pass link not found)'} - you are receiving ${playerUrl(side === 'A' ? m.aGets : m.bGets) || playerName(me, side === 'A' ? m.aGets : m.bGets)}`,
     contact: `@${o.rsUser} - ${o.comment || '(no comment link)'} - ${playerUrl(gets) || playerName(me, gets)}`
   };
 }
@@ -1718,9 +1731,9 @@ async function handle({ request, env, waitUntil }) {
     if (!dm) why.push('Step 1 is not verified - the bot cannot DM you, so you are never matched.');
     if (!u || !u.comment) why.push('No comment link saved (step 2).');
     if (!u || !u.passes.length) why.push('Your passes have not been scanned (step 3).');
-    const want = u && u.wants[0];
+    const wantsAll = u ? u.wants.slice(0, MAX_WANTS) : [], want = wantsAll[0];
     if (!want) why.push('You have not picked a pass to swap for (step 4).');
-    else if (!u.passes.some(p => p.key === want)) why.push('The pass you picked is not in your last scan - scan again or pick another.');
+    else if (wantsAll.some(w => !u.passes.some(p => p.key === w))) why.push('A pass you picked is not in your last scan - scan again or pick another.');
     if (!u || !u.slots.length) why.push('No hours picked (step 5).');
     if (u && !u.active) why.push('Your swap is not saved.');
     if (u && want) {
@@ -1738,12 +1751,11 @@ async function handle({ request, env, waitUntil }) {
       const mine = new Set(u.passes.filter(p => p.kind !== 'team' && !u.keep.has(p.key)).map(p => p.key));
       for (const o of others) {
         const op_ = parse(o.passes, []), ok = new Set(parse(o.keep, []));
-        if (!op_.some(p => p.key === want && p.kind !== 'team' && !ok.has(p.key))) continue;
+        if (!op_.some(p => wantsAll.includes(p.key) && p.kind !== 'team' && !ok.has(p.key))) continue;
         can++;
         if (!parse(o.slots, []).some(h => u.slots.includes(h))) continue;
         hour++;
-        const ow = parse(o.wants, [])[0];
-        if (ow && mine.has(ow)) both++;
+        if (parse(o.wants, []).slice(0, MAX_WANTS).some(w => mine.has(w))) both++;
       }
       if (!can) why.push('Nobody signed up has your pass free to swap yet.');
       else if (!hour) why.push(`${can} member${can === 1 ? ' has' : 's have'} your pass free, but none share your hours - try adding hours.`);
@@ -1777,7 +1789,7 @@ async function handle({ request, env, waitUntil }) {
     if (!c || Date.now() - c.at > 300000) {
       const n = {};
       for (const r of ((await db.prepare(`SELECT wants FROM swap_users WHERE active=1 AND wants IS NOT NULL AND wants <> '[]'`).all()).results || []))
-        { const w = parse(r.wants, [])[0]; if (w) n[w] = (n[w] || 0) + 1; }
+        { for (const w of parse(r.wants, []).slice(0, MAX_WANTS)) n[w] = (n[w] || 0) + 1; }
       c = { at: Date.now(), n };
       try { await env.RATEBOARD_KV.put('swap_wantcounts_v1', JSON.stringify(c)); } catch (e) {}
     }
@@ -1957,14 +1969,14 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'save' && request.method === 'POST') {
     let b = {};
     try { b = await request.json(); } catch (e) {}
-    const wants = (Array.isArray(b.wants) ? b.wants : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, 1);   // one player per swap
+    const wants = (Array.isArray(b.wants) ? b.wants : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, MAX_WANTS);
     const keep = (Array.isArray(b.keep) ? b.keep : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, 2000);
-    const slots = [...new Set((Array.isArray(b.slots) ? b.slots : []).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24))].slice(0, 3);
+    const slots = [...new Set((Array.isArray(b.slots) ? b.slots : []).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24))].slice(0, MAX_SLOTS);
     const rsUser = await realName(db, me);   // their Real account: board username, or the one they linked
     const mine = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
     const owned = new Set(parse(mine && mine.passes, []).filter(p => p.kind !== 'team').map(p => p.key));
-    if (wants.length && !owned.has(wants[0])) return json({ error: 'You can only swap for a pass you own - scan your passes, then pick one of them.' }, 400);
-    if (wants.length && seasonOff(wants[0])) return json({ error: '2026-27 CBB and NBA passes can\'t be swapped yet.' }, 400);
+    if (wants.some(w => !owned.has(w))) return json({ error: 'You can only swap for passes you own - scan your passes, then pick from them.' }, 400);
+    if (wants.some(w => seasonOff(w))) return json({ error: '2026-27 CBB and NBA passes can\'t be swapped yet.' }, 400);
     const comment = String(b.comment || '').trim();
     if (!SWAP_COMMENT_RE.test(comment)) return json({ error: 'That link is not a comment under the swap post. Open the swap post, copy the link to your comment, and paste it in step 2.' }, 400);
     const goal = b.goal === '' || b.goal == null ? null : Number(b.goal);

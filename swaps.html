@@ -137,7 +137,7 @@
 
   <section>
     <h2>4. Who you want</h2>
-    <p class="note">Pick the pass you want cards bought for - it has to be one you own (scan in step 3 first). One player per swap - picking another replaces it.</p>
+    <p class="note">Pick up to <b>5</b> passes you want cards bought for - each has to be one you own (scan in step 3 first). More picks means more people you can swap with; your first pick is tried first.</p>
     <div class="bar"><input id="wq" placeholder="Search your passes" autocomplete="off"></div>
     <div class="res" id="wres"></div>
     <div id="wants"></div>
@@ -147,7 +147,7 @@
 
   <section>
     <h2>5. When you can be messaged</h2>
-    <p class="note">Pick up to 3 hours a day. The first one you tap is your <b>primary</b>, then 2nd and 3rd - if two people want the same player, the one whose primary hour it is gets the swap. The number under each hour is how many people picked it. Shown in your time (<span id="tz"></span>). You only get matched with someone who picked at least one of the same hours, and you're both messaged on Real at that hour.</p>
+    <p class="note">Pick up to 5 hours a day. The first one you tap is your <b>primary</b>, then 2nd, 3rd and so on - if two people want the same player, the one whose primary hour it is gets the swap. The number under each hour is how many people picked it. Shown in your time (<span id="tz"></span>). You only get matched with someone who picked at least one of the same hours, and you're both messaged on Real at that hour.</p>
     <div class="hours" id="hours"></div>
   </section>
 
@@ -159,9 +159,6 @@
     <h2>Matches (admin)</h2>
     <div class="bar"><button id="run">Run matching now</button><button id="reload">Refresh</button><span class="note" id="runmsg"></span></div>
     <div id="matches" class="note">Loading…</div>
-    <h2 style="margin-top:16px">Who has Swaps</h2>
-    <div class="bar"><input id="accq" placeholder="Search board accounts" autocomplete="off" style="flex:0 1 220px"></div>
-    <div id="accout" class="note">Loading…</div>
     <h2 style="margin-top:16px">Test a DM</h2>
     <p class="note">Sends from raxacademy.app to any Real username. Uses the existing chat if there is one; opening a new chat uses one of the 5 a day. <button id="chatsync">Re-read bot chats</button> <span id="chatinfo"></span></p>
     <div class="bar"><input id="dmuser" placeholder="Real username" autocomplete="off" style="flex:0 1 180px"><input id="dmutext" value="Swap bot test"><button id="dmopen">Send DM</button></div>
@@ -319,7 +316,7 @@ const hLbl = h => `${(h % 12) || 12}${h < 12 ? 'am' : 'pm'}`;
 // The first hour picked is their primary, then 2nd and 3rd: an earlier pick wins
 // when two people want the same player. Under each hour: how many have picked it.
 let hourCounts = null;
-const RANK = ['1st', '2nd', '3rd'];
+const RANK = ['1st', '2nd', '3rd', '4th', '5th'];
 function drawHours(){
   const local = prof.slots.map(toLocal);
   $('#hours').innerHTML = Array.from({length: 24}, (_, h) => {
@@ -332,7 +329,7 @@ async function loadHourCounts(){ const j = await api('/api/swaps?op=hourcounts')
 $('#hours').addEventListener('change', e => {
   const h = Number(e.target.value), u = Math.round(toUtc(h));
   if(e.target.checked){
-    if(prof.slots.length >= 3){ e.target.checked = false; $('#savemsg').textContent = 'Up to 3 hours.'; return; }
+    if(prof.slots.length >= 5){ e.target.checked = false; $('#savemsg').textContent = 'Up to 5 hours.'; return; }
     prof.slots.push(u);
   } else prof.slots = prof.slots.filter(x => x !== u);
   drawHours();
@@ -475,9 +472,9 @@ function drawResults(rows){
     || '<div class="note">No player found.</div>';
 }
 // How many people have already picked each player, so a crowded one is easy to spot.
-let wantCounts = {}, savedWant = null;
+let wantCounts = {}, savedWants = new Set();
 async function loadWantCounts(){ const j = await api('/api/swaps?op=wantcounts'); if(j && j.n){ wantCounts = j.n; drawWants(); } }
-const othersOn = k => Math.max(0, (wantCounts[k] || 0) - (k === savedWant ? 1 : 0));
+const othersOn = k => Math.max(0, (wantCounts[k] || 0) - (savedWants.has(k) ? 1 : 0));
 const crowdTxt = n => n === 0 ? 'nobody else yet' : `${n} other${n === 1 ? '' : 's'} picked this`;
 const crowdCol = n => n >= 10 ? 'var(--bad)' : n >= 4 ? 'var(--accent)' : 'var(--ok)';
 $('#wq').addEventListener('input', e => {
@@ -492,14 +489,17 @@ $('#wq').addEventListener('input', e => {
 });
 $('#wres').addEventListener('click', e => {
   const d = e.target.closest('[data-k]'); if(!d) return;
-  prof.wants = [d.dataset.k];          // one player per swap
+  if(!prof.wants.includes(d.dataset.k)){
+    if(prof.wants.length >= 5){ $('#savemsg').textContent = 'Up to 5 players - remove one first.'; return; }
+    prof.wants.push(d.dataset.k);
+  }
   wantNames[d.dataset.k] = d.dataset.n; drawWants();
   $('#wres').innerHTML = ''; $('#wq').value = '';
 });
 function drawWants(){
-  if(prof.wants.length > 1) prof.wants = prof.wants.slice(0, 1);
-  $('#wants').innerHTML = prof.wants.map(k => { const n = othersOn(k);
-    return `<div class="want1"><span><b>${esc(wantNames[k] || 'Player ' + k.split(':')[2])}</b> <span class="note">· ${esc(keyLbl(k))}</span>`
+  if(prof.wants.length > 5) prof.wants = prof.wants.slice(0, 5);
+  $('#wants').innerHTML = prof.wants.map((k, i) => { const n = othersOn(k);
+    return `<div class="want1"><span><span class="note">${['1st', '2nd', '3rd', '4th', '5th'][i]} pick · </span><b>${esc(wantNames[k] || 'Player ' + k.split(':')[2])}</b> <span class="note">· ${esc(keyLbl(k))}</span>`
       + `<br><span style="font-size:13px;font-weight:700;color:${crowdCol(n)}">${crowdTxt(n)}</span>${n >= 4 ? '<span class="note"> - a less popular player will match faster</span>' : ''}</span>`
       + `<button data-x="${k}" aria-label="Remove">✕</button></div>`; }).join('')
     || '<p class="note" style="margin:8px 0 0">Nobody picked yet.</p>';
@@ -511,9 +511,9 @@ $('#save').addEventListener('click', async () => {
   if(!prof.slots.length){ $('#savemsg').textContent = 'Pick at least one hour.'; return; }
   if(!SWAP_COMMENT_RE.test($('#clink').value.trim())){ $('#savemsg').textContent = 'That link is not a comment under the swap post. Open the swap post, copy the link to your comment, and paste it in step 2.'; return; }
   const j = await api('/api/swaps?op=save', { method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 1), comment: $('#clink').value.trim(), goal: $('#goal').value.trim(), keep: prof.keep, slots: prof.slots, names: wantNames }) });
+    body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 5), comment: $('#clink').value.trim(), goal: $('#goal').value.trim(), keep: prof.keep, slots: prof.slots, names: wantNames }) });
   $('#savemsg').textContent = j.error ? j.error : 'Saved.';
-  if(!j.error){ savedWant = prof.wants[0] || null; loadHourCounts(); loadWantCounts(); }
+  if(!j.error){ savedWants = new Set(prof.wants); loadHourCounts(); loadWantCounts(); }
   try{ localStorage.setItem('ratebrd_swapnames', JSON.stringify(wantNames)); }catch(e){}
 });
 
@@ -583,25 +583,6 @@ $('#connect').addEventListener('click', async () => {
   if(j.connected) paintConn(true);
   else $('#connmsg').innerHTML = 'No DM from you yet. Send <b>#packswap</b> to <b>@raxacademy.app</b> on Real, wait a few seconds, then tap again.';
 });
-async function loadAccess(extra){
-  const q = $('#accq').value.trim();
-  const j = await api('/api/swaps?op=access&q=' + encodeURIComponent(q) + (extra || ''));
-  if(j.error){ $('#accout').textContent = j.error; return; }
-  const missing = (j.named || []).filter(x => !x.account).map(x => x.name);
-  const ok = (j.named || []).filter(x => x.account).map(x => x.name);
-  $('#accout').innerHTML =
-    `<div>On the list with a board account (${ok.length}): ${esc(ok.join(', ') || 'none')}</div>`
-    + `<div style="color:var(--bad)">On the list, no board account under that name (${missing.length}): ${esc(missing.join(', ') || 'none')}</div>`
-    + `<div>Granted by hand: ${(j.granted || []).map(g => `${esc(g.name || g.key)} <button data-acc="revoke" data-k="${esc(g.key)}">remove</button>`).join(' ') || 'none'}</div>`
-    + ((j.found || []).length ? '<div style="margin-top:6px">' + j.found.map(f => `<div>${esc(f.name || f.key)} <span class="note">${esc(f.key)}</span> `
-      + (f.access ? '✓ has Swaps' : `<button data-acc="grant" data-k="${esc(f.key)}">Give Swaps</button>`) + '</div>').join('') + '</div>' : '');
-}
-let accT = null;
-$('#accq').addEventListener('input', () => { clearTimeout(accT); accT = setTimeout(() => loadAccess(), 250); });
-$('#accout').addEventListener('click', e => {
-  const b = e.target.closest('[data-acc]'); if(!b) return;
-  loadAccess(`&act=${b.dataset.acc}&key=${encodeURIComponent(b.dataset.k)}`);
-});
 $('#chatsync').addEventListener('click', async () => {
   const j = await api('/api/swaps?op=chats&sync=1');
   $('#chatinfo').textContent = (j.error ? j.error + ' · ' : '') + `${j.chatsKnown} chats known · ${j.requests ? `${j.requests.requests} requests, accepted ${j.requests.accepted.length ? j.requests.accepted.join(', ') : 'none'} · ` : ''}${j.newChatsLeftToday} new chats left today`;
@@ -665,14 +646,14 @@ async function proGate(){
   if(!j.tokenFound) $('#scanmsg').innerHTML = '<span style="color:var(--bad)">No swap token found in Cloudflare yet.</span>';
   $('#rsuser').textContent = '@' + (j.real || j.key || '');
   $('#rstop').textContent = '@' + (j.real || j.key || '');
-  if(prof.slots.length > 3){ prof.slots = prof.slots.slice(0, 3); drawHours(); }
+  if(prof.slots.length > 5){ prof.slots = prof.slots.slice(0, 5); drawHours(); }
   $('#goal').value = (j.profile && j.profile.goal != null) ? j.profile.goal : '';
   $('#clink').value = (j.profile && j.profile.comment) || '';
   if(prof.passes.length && prof.keep.length) collapsed = true;   // back again with picks made: start folded
   paintConn(!!j.connected);
   $('#admin').hidden = !j.admin;
-  savedWant = (j.profile && j.profile.active && (j.profile.wants || [])[0]) || null;
-  drawPasses(); drawWants(); drawHours(); loadHourCounts(); loadWantCounts(); if(j.admin){ loadMatches(); loadAccess(); }
+  savedWants = new Set((j.profile && j.profile.active && j.profile.wants) || []);
+  drawPasses(); drawWants(); drawHours(); loadHourCounts(); loadWantCounts(); if(j.admin){ loadMatches(); }
   resumeScan();
   api('/api/swaps?op=buildindex');   // adds one season to the search table, at most every 5 minutes
 })();
