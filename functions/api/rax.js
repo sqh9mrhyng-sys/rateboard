@@ -7670,7 +7670,7 @@ async function collectorHealth(env, url) {
     const gd = ((await kvj(`gamelog_done_${sp}_${se}`)) || {}).done || {}, rd = ((await kvj(`gamelog_rax_${sp}_${se}`)) || {}).done || {};
     let last = null;
     try { last = await db.prepare(`SELECT MAX(day) AS day, MAX(CASE WHEN rax IS NOT NULL THEN day END) AS raxDay, COUNT(*) AS rows FROM gamelog WHERE sport=? AND season=?`).bind(sp, se).first(); } catch (e) {}
-    seasons.push({ season: `${sp}:${se}`, players: ids.length, gamelogDone: ids.filter(i => gd[i]).length, raxDone: ids.filter(i => rd[i]).length,
+    seasons.push({ season: `${sp}:${se}`, players: ids.length, listBuilding: (games && games.building && games.building.ids && games.building.ids.length) || null, gamelogDone: ids.filter(i => gd[i]).length, raxDone: ids.filter(i => rd[i]).length,
       lastGameDay: last && last.day, lastRaxDay: last && last.raxDay, rows: last && last.rows,
       window: await kvj(`gl_window_${sp}_${se}`), through: await env.RATEBOARD_KV.get(`gl_through_${sp}_${se}`) });
   }
