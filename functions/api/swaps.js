@@ -519,7 +519,8 @@ async function runMatching(db) {
   const goalOk = (k, w) => (goalLeft.get(`${k}|${w}`) ?? Infinity) > 0;
   // Scale: their swaps-a-day for one player.
   const capsOf = new Map(users.map(u => [u.key, u.caps]));
-  const perDayOk = (k, w, d) => { const c = (capsOf.get(k) || {})[w]; return !(c && Number(c.d) > 0) || (recv.get(`${k}|${w}|${d}`) || 0) < Number(c.d); };
+  // A member receives a given pass once a swap day, like giving (Dennis, 2026-11-04: 160 people were getting the same card twice).
+  const perDayOk = (k, w, d) => (recv.get(`${k}|${w}|${d}`) || 0) < 1;
   const gives = (u, d) => new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !given.has(`${u.key}|${k}|${d}`)));
   /* Every possible pair and shared hour, best first: an hour someone picked
      first is their primary, so pairs on both members' earliest picks go
@@ -639,7 +640,7 @@ async function dmSendRetry(auth, channelId, text) {
    50+ people). It sends up to 20 messages a minute, and pass scans stay off
    the bot from :25 to :40 and :55 to :10 so Real doesn't throttle it while
    the warnings and contacts go out. */
-const DM_PER_TICK = 20;
+const DM_PER_TICK = 10;   // Real's message slowmode: 10, then the rest of the minute off
 const dmWindow = (t = new Date()) => { const m = t.getUTCMinutes(); return (m >= 25 && m < 40) || m >= 55 || m < 10; };
 const DMQ_DDL = 'CREATE TABLE IF NOT EXISTS dm_retry (id INTEGER PRIMARY KEY AUTOINCREMENT, channelId INTEGER, parts TEXT, label TEXT, tries INTEGER, at INTEGER)';
 async function queueDm(db, channelId, parts, label) {
@@ -1053,7 +1054,7 @@ async function runDms(env, db, auth, rows, max, force) {
         // under 35 minutes away (or here). One scheduled hours ahead gets no message at all.
         // Only in the half hour between its warning and its swap (:30 to :00), and only if warned.
         if (!m['warn' + side]) continue;
-        { const left = sideDue(m) - now; if (!(left > 0 && left <= 31 * 60000)) continue; }
+        { const left = sideDue(m) - now; if (!(left > 0 && left <= 36 * 60000)) continue; }
         const r = await db.prepare(`UPDATE swap_matches SET ${'follow' + side}=? WHERE id=? AND ${'follow' + side} IS NULL`).bind(now, m.id).run();
         if (!(r && r.meta && r.meta.changes)) continue;
         const who = side === 'A' ? m.a : m.b, other = side === 'A' ? m.b : m.a, gets = side === 'A' ? m.bGets : m.aGets;
@@ -1116,7 +1117,7 @@ async function runDms(env, db, auth, rows, max, force) {
     // 1. warn: every pack for the day, once.
     // 1. warn: 30 min before each swap hour, that hour's packs only.
     const warnHours = new Map();
-    for (const x of list) if (!x.m['warn' + x.side] && (force || now >= x.due - 30 * 60000)) { const k = force ? 'now' : x.due; (warnHours.get(k) || warnHours.set(k, []).get(k)).push(x); }
+    for (const x of list) if (!x.m['warn' + x.side] && (force || now >= x.due - 35 * 60000)) {   // from :25 const k = force ? 'now' : x.due; (warnHours.get(k) || warnHours.set(k, []).get(k)).push(x); }
     let warnFail = false;
     for (const [, wh0] of warnHours) {
       if (sent >= max || Date.now() - now > 40000) break;   // and never past 40s of the minute
@@ -1558,6 +1559,16 @@ export async function swapTick(env) {
     }
   } catch (e) {}
   try { await autoRescan(env, db, auth); } catch (e) { await botFail(db, 'rescan', e.message); }
+  // One-off (2026-11-04): call off, quietly, the second (and later) copies of a pass someone
+  // receives twice in a swap day, where nobody in that swap has been warned yet.
+  try { if (!(await env.RATEBOARD_KV.get('recv_dupe_fix_1104'))) { await env.RATEBOARD_KV.put('recv_dupe_fix_1104', '1');
+    const ms = ((await db.prepare("SELECT * FROM swap_matches WHERE status IN ('pending','warned') AND dueAt > ? ORDER BY dueAt, id").bind(Date.now() - 30 * 3600000).all()).results) || [];
+    const seen = new Set(); let n = 0;
+    for (const m of ms) { const d = swapDay(sideDue(m)), ka = `${m.a}|${m.aGets}|${d}`, kb = `${m.b}|${m.bGets}|${d}`;
+      if ((seen.has(ka) || seen.has(kb)) && !m.warnA && !m.warnB && !m.doneA && !m.doneB) {
+        await db.prepare("UPDATE swap_matches SET status='cancelled', note='called off: same card twice in a day' WHERE id=?").bind(m.id).run(); n++; continue; }
+      seen.add(ka); seen.add(kb); }
+    await stat(db, 'recv_dupe_fixed', n); } } catch (e) { await botFail(db, 'dupefix', e.message); }
   try { await retryDms(db, auth); } catch (e) { await botFail(db, 'dm_retry', e.message); }   // unsent parts first
   try { await verifyDms(db, auth); } catch (e) { await botFail(db, 'dm_verify', e.message); }   // then the second look
   try { await feedbackDms(env, db, auth); } catch (e) { await botFail(db, 'dm_feedback', e.message); }
