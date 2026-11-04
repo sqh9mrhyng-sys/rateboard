@@ -51,6 +51,10 @@
   .hours .rk{position:absolute;top:2px;right:4px;font-size:10px;font-weight:800;color:var(--accent)}
   .repbox{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:8px}
   .repbox textarea{width:100%;font:inherit;padding:9px 11px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
+  .want1 .mv{display:flex;flex-direction:column;gap:3px}
+  .want1 .mv button{padding:2px 9px;font-size:12px;line-height:1.2}
+  .want1 .mv button:disabled{opacity:.3}
+  .want1 .acts{display:flex;align-items:center;gap:8px;flex:none}
   .want1{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:10px 12px;margin-top:8px;border:1px solid var(--accent);border-radius:10px;background:color-mix(in srgb,var(--accent) 12%,var(--panel2))}
   @media (max-width:600px){
     .wrap{padding:10px}
@@ -501,10 +505,17 @@ function drawWants(){
   $('#wants').innerHTML = prof.wants.map((k, i) => { const n = othersOn(k);
     return `<div class="want1"><span><span class="note">${['1st', '2nd', '3rd', '4th', '5th'][i]} pick · </span><b>${esc(wantNames[k] || 'Player ' + k.split(':')[2])}</b> <span class="note">· ${esc(keyLbl(k))}</span>`
       + `<br><span style="font-size:13px;font-weight:700;color:${crowdCol(n)}">${crowdTxt(n)}</span>${n >= 4 ? '<span class="note"> - a less popular player will match faster</span>' : ''}</span>`
-      + `<button data-x="${k}" aria-label="Remove">✕</button></div>`; }).join('')
+      + `<span class="acts"><span class="mv"><button data-up="${i}" aria-label="Move up"${i === 0 ? ' disabled' : ''}>▲</button><button data-dn="${i}" aria-label="Move down"${i === prof.wants.length - 1 ? ' disabled' : ''}>▼</button></span>`
+      + `<button data-x="${k}" aria-label="Remove">✕</button></span></div>`; }).join('')
     || '<p class="note" style="margin:8px 0 0">Nobody picked yet.</p>';
 }
-$('#wants').addEventListener('click', e => { const x = e.target.dataset.x; if(x){ prof.wants = prof.wants.filter(k => k !== x); drawWants(); } });
+$('#wants').addEventListener('click', e => { const b = e.target.closest('button'); if(!b) return;
+  const x = b.dataset.x; if(x){ prof.wants = prof.wants.filter(k => k !== x); drawWants(); return; }
+  // ▲/▼ move a pick up or down the priority order (saved with Save).
+  const i = b.dataset.up != null ? Number(b.dataset.up) : b.dataset.dn != null ? Number(b.dataset.dn) : -1; if(i < 0) return;
+  const j = b.dataset.up != null ? i - 1 : i + 1; if(j < 0 || j >= prof.wants.length) return;
+  [prof.wants[i], prof.wants[j]] = [prof.wants[j], prof.wants[i]]; drawWants();
+  $('#savemsg').textContent = 'Order changed - tap Save to keep it.'; });
 
 $('#save').addEventListener('click', async () => {
   if(!connected){ $('#savemsg').textContent = 'Do step 1 first - the bot has to be able to DM you.'; return; }
