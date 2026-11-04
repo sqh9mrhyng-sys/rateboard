@@ -683,7 +683,8 @@ async function retryDms(db, auth) {
   const rows = ((await db.prepare('SELECT * FROM dm_retry ORDER BY id LIMIT 12').all()).results) || [];
   for (const r of rows) {
     let parts = parse(r.parts, []);
-    while (parts.length) { try { await dmSendRetry(auth, r.channelId, parts[0]); parts.shift(); await stat(db, 'dm_retried'); await sleep(900); } catch (e) { break; } }
+    while (parts.length) { try { await dmSendRetry(auth, r.channelId, parts[0]); parts.shift(); await stat(db, 'dm_retried'); await sleep(900); }
+      catch (e) { if (Number(r.tries) % 5 === 0) await botFail(db, 'dm_retry', `${r.label} try ${r.tries}: ${String(e.message || e).slice(0, 120)}`); break; } }
     if (!parts.length) await db.prepare('DELETE FROM dm_retry WHERE id=?').bind(r.id).run();
     else if (Number(r.tries) >= 60) { await db.prepare('DELETE FROM dm_retry WHERE id=?').bind(r.id).run(); await botFail(db, 'dm_retry', `${r.label}: gave up after an hour, ${parts.length} part(s) unsent`); }
     else await db.prepare('UPDATE dm_retry SET parts=?, tries=tries+1 WHERE id=?').bind(JSON.stringify(parts), r.id).run();
