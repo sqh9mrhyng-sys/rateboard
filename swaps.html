@@ -437,7 +437,11 @@ $('#scan').addEventListener('click', async () => {
   $('#scan').disabled = false;
   if(j.error){ $('#scanmsg').textContent = j.error; return; }
   prof.rsUser = u; collapsed = false; prof.passes = j.passes || []; prof.scannedAt = j.scannedAt || Date.now();
-  $('#scanmsg').innerHTML = `${prof.passes.length} passes found.` + (j.note && !j.cached ? ` <span class="note">${esc(j.note)}</span>` : '') + (j.cached ? ` <span class="note">${esc(j.note || '')}</span>` : '') + ((j.errors || []).length ? ` <span style="color:var(--bad)">${j.errors.length} seasons failed: ${esc(j.errors[0])}</span>` : '')
+  const hid = { team: 0, fcufc: 0, off: 0 };
+  for(const p of prof.passes){ if(NO_SWAP.has(p.sport)) hid.fcufc++; else if(isTeam(p)) hid.team++; else if(offSeason(p)) hid.off++; }
+  const shown = prof.passes.length - hid.team - hid.fcufc - hid.off;
+  const why = [hid.team && `${hid.team} team`, hid.fcufc && `${hid.fcufc} FC/UFC`, hid.off && `${hid.off} 2026-27 CBB/NBA (not swappable yet)`].filter(Boolean).join(', ');
+  $('#scanmsg').innerHTML = `${prof.passes.length.toLocaleString()} passes found · <b>${shown.toLocaleString()}</b> can be swapped` + (why ? ` <span class="note">(not shown: ${esc(why)})</span>` : '') + (j.note && !j.cached ? ` <span class="note">${esc(j.note)}</span>` : '') + (j.cached ? ` <span class="note">${esc(j.note || '')}</span>` : '') + ((j.errors || []).length ? ` <span style="color:var(--bad)">${j.errors.length} seasons failed: ${esc(j.errors[0])}</span>` : '')
     + (j.sample ? `<details><summary>What Real sent (first pass)</summary><pre>${esc(JSON.stringify(j.sample, null, 2))}</pre></details>` : '');
   drawPasses();
 });
