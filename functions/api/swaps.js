@@ -115,6 +115,7 @@ const SWAP_SEASONS = {
 };
 // Every call one full scan makes, in order, and how many go in each part.
 const SCAN_STEPS = Object.entries(SWAP_SEASONS).flatMap(([sp, v]) => v.flatMap(se => sp === 'ufc' ? [[sp, se, 'team']] : sp === 'golf' ? [[sp, se, 'player']] : [[sp, se, 'player'], [sp, se, 'team']]));   // golf has no team passes
+const SCAN_AT_ONCE = 3;      // scans running at the same time; the rest wait in line
 const SCAN_PER_PART = 90;   // the whole scan in one go
 
 // What the Swaps page scans: no FC or UFC (nothing to swap there), golf back to 2014.
@@ -1855,6 +1856,29 @@ async function handle({ request, env, waitUntil }) {
             note: `From your last scan. A fresh scan is allowed once every ${every >= 60 ? every / 60 + ' hours' : every + ' minutes'} - next in ${m >= 60 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : m + ' min'}.` });
         }
       } else if (!(await allow(url.origin, 'swapscan:' + me, 20, 600))) return json({ error: 'Twenty scans per ten minutes.' }, 429);
+      /* The scan line: 3 scans run at once, everyone else waits their turn
+         (their page asks again every few seconds). A spot frees when a scan
+         finishes, when a waiting page stops asking (30s), or when a running
+         scan goes quiet (60s). Admins skip the line. */
+      if (!acc.admin) {
+        const now = Date.now();
+        await db.prepare('CREATE TABLE IF NOT EXISTS scan_queue (key TEXT PRIMARY KEY, joinedAt INTEGER, startedAt INTEGER, lastSeen INTEGER)').run();
+        await db.prepare('DELETE FROM scan_queue WHERE (startedAt IS NULL AND lastSeen < ?) OR (startedAt IS NOT NULL AND lastSeen < ?)').bind(now - 30000, now - 60000).run();
+        await db.prepare('INSERT INTO scan_queue (key, joinedAt, lastSeen) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET lastSeen=excluded.lastSeen').bind(me, now, now).run();
+        const mine = await db.prepare('SELECT joinedAt, startedAt FROM scan_queue WHERE key=?').bind(me).first();
+        if (!(mine && mine.startedAt)) {
+          // Start only if fewer than 3 are running and nobody waiting joined earlier.
+          const c = await db.prepare(`UPDATE scan_queue SET startedAt=? WHERE key=? AND startedAt IS NULL
+              AND (SELECT COUNT(*) FROM scan_queue WHERE startedAt IS NOT NULL) < ?
+              AND NOT EXISTS (SELECT 1 FROM scan_queue q WHERE q.startedAt IS NULL AND q.joinedAt < ? AND q.key <> ?)`)
+            .bind(now, me, SCAN_AT_ONCE, Number(mine && mine.joinedAt) || now, me).run();
+          if (!(c && c.meta && c.meta.changes)) {
+            const ahead = await db.prepare('SELECT COUNT(*) AS n FROM scan_queue WHERE startedAt IS NULL AND joinedAt < ?').bind(Number(mine && mine.joinedAt) || now).first();
+            const pos = (Number(ahead && ahead.n) || 0) + 1, secs = Math.ceil(pos / SCAN_AT_ONCE) * 25;
+            return json({ queued: true, position: pos, wait: secs < 60 ? `${secs} seconds` : `${Math.ceil(secs / 60)} minute${secs > 60 ? 's' : ''}` });
+          }
+        }
+      }
       // Members scan their own Real account; an admin may name another (OTD).
       const rsUser = acc.admin && url.searchParams.get('rsUser') ? String(url.searchParams.get('rsUser')).trim().replace(/^@/, '') : await realName(db, me);
       let hashId = u && String(u.rsUser || '').toLowerCase() === rsUser.toLowerCase() ? u.hashId : null;
@@ -1865,6 +1889,7 @@ async function handle({ request, env, waitUntil }) {
     } else {
       try { const r = await db.prepare('SELECT body FROM scan_jobs WHERE key=?').bind(me).first(); job = r ? JSON.parse(r.body) : null; } catch (e) {}
       if (!job || Date.now() - job.at > 20 * 60000) return json({ error: 'That scan expired - tap scan again.' }, 410);
+      try { await db.prepare('UPDATE scan_queue SET lastSeen=? WHERE key=?').bind(Date.now(), me).run(); } catch (e) {}
     }
     /* Each request works for about 20 seconds at most, saves where it got to
        (in the database, so the next request always finds it) and the page asks
@@ -1917,6 +1942,7 @@ async function handle({ request, env, waitUntil }) {
     }
     const parts = part + 1;
     try { await db.prepare('DELETE FROM scan_jobs WHERE key=?').bind(me).run(); } catch (e) {}
+    try { await db.prepare('DELETE FROM scan_queue WHERE key=?').bind(me).run(); } catch (e) {}   // next in line goes
     try { await env.RATEBOARD_KV.delete(jobKey); } catch (e) {}
     await fillNames(db, job.passes);
     // A scan with seasons that still failed can be run again in 5 minutes.

@@ -385,23 +385,27 @@ $('#invgo').addEventListener('click', async () => {
 // One scan for the whole site, in parts: keeps asking until it's done.
 let scanStart = 0;
 async function fullScan(extra, onPart){
-  let part = 0, j; scanStart = Date.now();
-  const slow = setTimeout(() => { if(onPart) onPart({ retrying: true }); }, 26000);
+  let part = 0, j, waits = 0; scanStart = Date.now();
+  let inLine = false;
+  const slowTick = setInterval(() => { if(onPart && !inLine && Date.now() - scanStart > 26000) onPart({ retrying: true }); }, 3000);
   try{
   for(let i = 0; i < 60; i++){
     j = await api(`/api/swaps?op=scan&part=${part}${extra || ''}`);
+    // Waiting in the scan line: show the place, ask again in a few seconds.
+    inLine = !!(j && j.queued);
+    if(j && j.queued){ if(onPart) onPart(j); await new Promise(r => setTimeout(r, 4000)); i--; scanStart = Date.now(); if(++waits > 900) return { error: 'The scan line is very long right now - try again later.' }; continue; }
     if(!j || j.error || j.done) return j || { error: 'Could not reach the board.' };
     if(onPart) onPart(j);
     part = j.next;
   }
   return { error: 'The scan took too long - try again.' };
-  } finally { clearTimeout(slow); }
+  } finally { clearInterval(slowTick); }
 }
 $('#scan').addEventListener('click', async () => {
   const u = $('#rsuser').value.trim();
   if(!u){ $('#scanmsg').textContent = 'Enter your Real username first.'; return; }
   $('#scan').disabled = true; $('#scanmsg').textContent = 'Scans typically take 25 seconds, longer at high website volume';
-  const j = await fullScan('&page=boosts', p => { $('#scanmsg').textContent = 'Scans typically take 25 seconds, longer at high website volume' + ((p.retrying || Date.now() - scanStart > 25000) ? ' • Scan taking longer than expected, please be patient' : ''); });
+  const j = await fullScan('&page=boosts', p => { if(p.queued){ $('#scanmsg').textContent = `You're #${p.position} in the scan line - about ${p.wait}. Keep this page open, it starts on its own.`; return; } $('#scanmsg').textContent = 'Scans typically take 25 seconds, longer at high website volume' + ((p.retrying || Date.now() - scanStart > 25000) ? ' • Scan taking longer than expected, please be patient' : ''); });
   $('#scan').disabled = false;
   if(j.error){ $('#scanmsg').textContent = j.error; return; }
   $('#scanmsg').textContent = j.cached ? j.note : `${(j.passes || []).length} passes read just now.` + (j.note ? ' ' + j.note : '');
