@@ -92,9 +92,13 @@
   <header><h1>Swaps <span style="font-size:11px;font-weight:800;letter-spacing:.06em;padding:2px 7px;border-radius:6px;background:var(--accent);color:#141925;vertical-align:middle">BETA</span></h1><a href="/" style="margin-left:auto">Back to the board</a></header>
   <button class="bigbtn rep" id="repopen">REPORT</button>
   <div class="repbox" id="repbox" hidden>
-    <div class="bar" style="margin-top:0"><button class="primary" id="rk-user">Report wrong usage</button><button id="rk-problem">Report a problem</button></div>
+    <div class="bar" style="margin-top:0"><button class="primary" id="rk-user">Report wrong usage</button><button id="rk-problem">Report a problem</button><button id="rk-refund">Called-off swap (rax back)</button></div>
     <div id="repform" hidden>
       <div class="bar" id="reptarget"><input id="rept" placeholder="Their Real username" autocomplete="off" autocapitalize="off"></div>
+      <div id="repoff" hidden>
+        <div class="bar"><select id="repm" style="flex:1 1 100%"></select></div>
+        <div class="bar"><label class="note"><input type="radio" name="repw" value="rax" checked> Rax back for the pack</label><label class="note"><input type="radio" name="repw" value="replace"> A replacement swap</label></div>
+      </div>
       <textarea id="repd" rows="4" maxlength="1000"></textarea>
       <div class="bar"><button class="primary" id="repsend">Send report</button><span class="note" id="repmsg"></span></div>
     </div>
@@ -651,17 +655,24 @@ let connected = false;
 $('#whatopen').addEventListener('click', () => { $('#what').hidden = !$('#what').hidden; });
 let repKind = 'user';
 $('#repopen').addEventListener('click', () => { $('#repbox').hidden = !$('#repbox').hidden; });
-function repPick(k){
-  repKind = k; $('#repform').hidden = false; $('#reptarget').hidden = k !== 'user'; $('#repmsg').textContent = '';
-  $('#repd').placeholder = k === 'user' ? "What did they do? (didn't buy the pack, no offer, wrong offer...)" : 'What went wrong, and on which step?';
-  $('#rk-user').classList.toggle('primary', k === 'user'); $('#rk-problem').classList.toggle('primary', k === 'problem');
+async function repPick(k){
+  repKind = k; $('#repform').hidden = false; $('#reptarget').hidden = k !== 'user'; $('#repoff').hidden = k !== 'refund'; $('#repmsg').textContent = '';
+  $('#repd').placeholder = k === 'user' ? "What did they do? (didn't buy the pack, no offer, wrong offer...)" : k === 'refund' ? 'Anything to add (optional)' : 'What went wrong, and on which step?';
+  $('#rk-user').classList.toggle('primary', k === 'user'); $('#rk-problem').classList.toggle('primary', k === 'problem'); $('#rk-refund').classList.toggle('primary', k === 'refund');
+  if(k === 'refund'){
+    // Their called-off swaps, to pick the one they want rax back (or a replacement) for.
+    if(!mySwaps.length) await loadSwaps();
+    const off = mySwaps.filter(x => x.state === 'off'), when = ms => new Date(ms).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    $('#repm').innerHTML = off.length ? off.map(x => `<option value="${x.id}">${esc(when(x.due))} · with @${esc(x.partner || '?')} · you bought ${esc(x.give)}</option>`).join('') : '<option value="">No called-off swaps in the last 14 days</option>';
+  }
 }
+$('#rk-refund').addEventListener('click', () => repPick('refund'));
 $('#rk-user').addEventListener('click', () => repPick('user'));
 $('#rk-problem').addEventListener('click', () => repPick('problem'));
 $('#repsend').addEventListener('click', async () => {
   $('#repsend').disabled = true;
   const j = await api('/api/swaps?op=report', { method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ kind: repKind, target: $('#rept').value.trim(), detail: $('#repd').value.trim() }) });
+    body: JSON.stringify({ kind: repKind, target: $('#rept').value.trim(), detail: $('#repd').value.trim(), matchId: $('#repm').value, want: (document.querySelector('[name=repw]:checked') || {}).value }) });
   $('#repsend').disabled = false;
   if(j.error){ $('#repmsg').textContent = j.error; return; }
   $('#repmsg').textContent = 'Sent - thanks. Dennis reads every one.'; $('#repd').value = ''; $('#rept').value = '';

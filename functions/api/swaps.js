@@ -378,8 +378,10 @@ async function adminDm(db, auth, who, text, ref) {
 async function inboxItems(env, db) {
   const out = [];
   await db.prepare(SREPORT_DDL).run();
-  for (const r of ((await db.prepare("SELECT rowid AS id, ts, by_user, kind, target, detail FROM swap_reports WHERE status='open' ORDER BY ts DESC LIMIT 200").all()).results || []))
-    out.push({ src: 'swap', id: String(r.id), ts: r.ts, by: r.by_user, target: r.target, kind: r.kind === 'user' ? 'Swaps: wrong usage' : 'Swaps: problem', detail: r.detail });
+  try { await alterOnce(db, 'ALTER TABLE swap_reports ADD COLUMN matchId INTEGER'); } catch (e) {}
+  for (const r of ((await db.prepare("SELECT rowid AS id, ts, by_user, kind, target, detail, matchId FROM swap_reports WHERE status='open' ORDER BY ts DESC LIMIT 200").all()).results || []))
+    out.push({ src: 'swap', id: String(r.id), ts: r.ts, by: r.by_user, target: r.target, matchId: r.matchId || null,
+      kind: r.kind === 'user' ? 'Swaps: wrong usage' : r.kind === 'refund' ? 'Swaps: called-off swap' : 'Swaps: problem', detail: r.detail });
   try { const m = JSON.parse((await env.RATEBOARD_KV.get(BOARD_KV)) || '{}') || {};
     for (const r of (m.reports || []).filter(x => x.status === 'open')) out.push({ src: 'board', id: String(r.id), ts: r.ts, by: r.by, target: r.target, kind: 'Board: member report', detail: r.reason || '' }); } catch (e) {}
   try { await db.prepare(`CREATE TABLE IF NOT EXISTS features (id TEXT PRIMARY KEY, ts INTEGER NOT NULL, by_user TEXT NOT NULL, kind TEXT, title TEXT NOT NULL, detail TEXT, status TEXT NOT NULL DEFAULT 'open')`).run();
@@ -388,6 +390,14 @@ async function inboxItems(env, db) {
   out.sort((a, b) => b.ts - a.ts);
   const cache = new Map(), look = async n => { const k = String(n || '').toLowerCase(); if (!k) return null; if (!cache.has(k)) cache.set(k, await whoIs(db, k)); return cache.get(k); };
   for (const x of out) { x.from = await look(x.by); x.about = x.target ? await look(x.target) : null; }
+  // Swaps reports: the called-off swaps (last 30 days) the reporter was in, and whether they were refunded.
+  try { await matchCols(db); } catch (e) {}
+  for (const x of out) if (x.src === 'swap' && x.from && x.from.key) {
+    const k = x.from.key;
+    const ms = ((await db.prepare(`SELECT * FROM swap_matches WHERE status='cancelled' AND (a=? OR b=?) AND createdAt > ? ORDER BY id DESC LIMIT 20`).bind(k, k, Date.now() - 30 * 86400000).all()).results) || [];
+    x.offs = ms.map(m => { const side = m.a === k ? 'A' : 'B';
+      return { id: m.id, due: sideDue(m), partner: side === 'A' ? m.b : m.a, side, told: !!(m['warn' + side] || m['done' + side]), refunded: m['refund' + side] || null, note: m.note || null, reported: x.matchId === m.id }; });
+  }
   // Board reports: every board listing (with its comment link) of the person reported.
   for (const x of out) if (x.src === 'board' && x.about) {
     try { x.about = { ...x.about, offers: ((await db.prepare('SELECT id, sport, player, rate, link, ts FROM offers WHERE LOWER(user)=? ORDER BY ts DESC LIMIT 100')
@@ -880,6 +890,8 @@ async function matchCols(db) {
   // Scale: dayCap = most swaps a swap day (all players); caps = { passKey: { n, at } }, most swaps for that player overall, counted from when it was set.
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN dayCap INTEGER'); } catch (e) {}
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN caps TEXT'); } catch (e) {}
+  // Called-off swaps: when Dennis marked each side refunded (rax back) by hand.
+  for (const c of ['refundA', 'refundB']) { try { await alterOnce(db, `ALTER TABLE swap_matches ADD COLUMN ${c} INTEGER`); } catch (e) {} }
 }
 // Swaps a member has had for one player since a moment (made, not called off).
 async function usedFor(db, key, want, since) {
@@ -923,7 +935,7 @@ async function runDms(env, db, auth, rows, max, force) {
         try {
           const u = await loadMember(db, who), o = await loadMember(db, other);
           if (u && u.hashId) { const ch = await dmChannel(db, auth, u.hashId, u.rsUser, env);
-            await dmSend(auth, ch, `Your swap with @${(o && o.rsUser) || other} for ${playerName(u, gets)} is called off - a pass in it isn't being swapped anymore. Don't buy that pack; if you already did, the cards stay yours.`);
+            await dmSend(auth, ch, `Your swap with @${(o && o.rsUser) || other} for ${playerName(u, gets)} is called off - a pass in it isn't being swapped anymore. Don't buy that pack; if you already did, the cards stay yours.\n\nTo receive rax back for the pack or a replacement swap, go to REPORT on https://raxacademy.app/swaps and report the swap you want rax back for.`);
             await stat(db, 'dm_cancel'); }
         } catch (e) { await botFail(db, 'dm_cancel', `${who}: ${e.message || e}`); }
       }
@@ -2044,13 +2056,23 @@ async function handle({ request, env, waitUntil }) {
   // Reports from the Swaps page: someone misusing swaps, or a problem with it.
   if (op === 'report' && request.method === 'POST') {
     let b = {}; try { b = await request.json(); } catch (e) {}
-    const kind = b.kind === 'problem' ? 'problem' : 'user';
-    const target = String(b.target || '').trim().replace(/^@/, '').slice(0, 60), detail = String(b.detail || '').trim().slice(0, 1000);
-    if (detail.length < 5) return json({ error: 'Say what happened.' }, 400);
+    const kind = b.kind === 'problem' ? 'problem' : b.kind === 'refund' ? 'refund' : 'user';
+    let target = String(b.target || '').trim().replace(/^@/, '').slice(0, 60), detail = String(b.detail || '').trim().slice(0, 1000), matchId = null;
+    if (kind === 'refund') {
+      // A called-off swap they were in: rax back for the pack, or a replacement swap.
+      await matchCols(db);
+      const m = await db.prepare(`SELECT * FROM swap_matches WHERE id=? AND (a=? OR b=?) AND status IN ('cancelled','cancelling')`).bind(Number(b.matchId), me, me).first();
+      if (!m) return json({ error: 'Pick the called-off swap.' }, 400);
+      const side = m.a === me ? 'A' : 'B', o = await loadMember(db, side === 'A' ? m.b : m.a), mine = await loadMember(db, me);
+      matchId = m.id; target = (o && o.rsUser) || (side === 'A' ? m.b : m.a);
+      const want = b.want === 'replace' ? 'a replacement swap' : 'rax back for the pack';
+      detail = `Called-off swap #${m.id} (${new Date(sideDue(m)).toISOString().slice(0, 16).replace('T', ' ')} UTC): bought ${mine ? playerName(mine, side === 'A' ? m.bGets : m.aGets) : '?'} for @${target}. Wants ${want}.` + (detail ? `\n${detail}` : '');
+    } else if (detail.length < 5) return json({ error: 'Say what happened.' }, 400);
     if (kind === 'user' && target.length < 2) return json({ error: 'Enter their Real username.' }, 400);
     if (!(await allow(url.origin, 'swapreport:' + me, 6, 3600))) return json({ error: 'You have sent a lot of reports - try again later.' }, 429);
     await db.prepare(SREPORT_DDL).run();
-    await db.prepare('INSERT INTO swap_reports (ts, by_user, kind, target, detail, status) VALUES (?, ?, ?, ?, ?, ?)').bind(Date.now(), me, kind, target || null, detail, 'open').run();
+    try { await alterOnce(db, 'ALTER TABLE swap_reports ADD COLUMN matchId INTEGER'); } catch (e) {}
+    await db.prepare('INSERT INTO swap_reports (ts, by_user, kind, target, detail, status, matchId) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(Date.now(), me, kind, target || null, detail, 'open', matchId).run();
     await stat(db, kind === 'user' ? 'report_user' : 'report_problem');
     return json({ ok: true });
   }
@@ -2125,7 +2147,7 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'inbox') return json({ items: await inboxItems(env, db) });
   if (op === 'inboxact' && request.method === 'POST') {
     let b = {}; try { b = await request.json(); } catch (e) {}
-    const action = ['done', 'declined', 'delete', 'reply', 'replyabout', 'restrict', 'ban'].includes(b.action) ? b.action : null;
+    const action = ['done', 'declined', 'delete', 'reply', 'replyabout', 'restrict', 'ban', 'refunded'].includes(b.action) ? b.action : null;
     if (!action) return json({ error: 'bad action' }, 400);
     const item = (await inboxItems(env, db)).find(x => x.src === b.src && x.id === String(b.id));
     if (!item) return json({ error: 'That one is already closed.' }, 404);
@@ -2149,6 +2171,17 @@ async function handle({ request, env, waitUntil }) {
       out.dm = await adminDm(db, auth, item.from, `${head}\n-\n${text}`, `${item.src}:${item.id}`);
       return json(out);
     }
+    // Rax sent back by hand for a called-off swap: marked on the swap, report completed, reporter told.
+    if (action === 'refunded') {
+      const mid = Number(b.matchId) || item.matchId; const m = mid ? await db.prepare('SELECT a, b FROM swap_matches WHERE id=?').bind(mid).first() : null;
+      if (!m || !item.from) return json({ error: 'No called-off swap to mark.' }, 400);
+      const side = m.a === item.from.key ? 'A' : m.b === item.from.key ? 'B' : null;
+      if (!side) return json({ error: 'They were not in that swap.' }, 400);
+      await db.prepare(`UPDATE swap_matches SET refund${side}=? WHERE id=?`).bind(Date.now(), mid).run();
+      await closeItem(env, db, item, 'done');
+      if (b.notify !== false) out.dm = await adminDm(db, auth, item.from, `Your rax for the called-off swap with @${item.target || 'your partner'} has been refunded. Your report has been completed.`, `${item.src}:${item.id}`);
+      return json(out);
+    }
     if (action === 'restrict' || action === 'ban') {
       const t = item.about; if (!t || !t.key) return json({ error: 'No board account found for the reported user.' }, 404);
       await db.prepare(RESTRICT_DDL).run();
@@ -2162,6 +2195,29 @@ async function handle({ request, env, waitUntil }) {
     await closeItem(env, db, item, status);
     if (status !== 'delete' && b.notify !== false) out.dm = await adminDm(db, auth, item.from, outcomeText(item, status), `${item.src}:${item.id}`);
     return json(out);
+  }
+  // Every called-off swap in the last 30 days, both sides, with who was told to buy and who's been refunded.
+  if (op === 'calledoff') {
+    await matchCols(db);
+    const mark = url.searchParams.get('refund'), side = url.searchParams.get('side');
+    if (mark && (side === 'A' || side === 'B')) await db.prepare(`UPDATE swap_matches SET refund${side}=CASE WHEN refund${side} IS NULL THEN ? ELSE NULL END WHERE id=?`).bind(Date.now(), Number(mark)).run();
+    const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('cancelled','cancelling') AND createdAt > ? ORDER BY COALESCE(dueAt, createdAt) DESC LIMIT 300`).bind(Date.now() - 30 * 86400000).all()).results) || [];
+    try { await alterOnce(db, 'ALTER TABLE swap_reports ADD COLUMN matchId INTEGER'); } catch (e) {}
+    const reps = new Set((((await db.prepare("SELECT matchId, by_user FROM swap_reports WHERE matchId IS NOT NULL").all()).results) || []).map(r => `${r.matchId}|${r.by_user}`));
+    // Names without loading anyone's passes: Real usernames from swap_users, player names from the search index.
+    const keys = [...new Set(rows.flatMap(m => [m.a, m.b]))], rs = new Map();
+    for (let i = 0; i < keys.length; i += 50) { const part = keys.slice(i, i + 50);
+      for (const r of (((await db.prepare(`SELECT key, rsUser FROM swap_users WHERE key IN (${part.map(() => '?').join(',')})`).bind(...part).all()).results) || [])) rs.set(r.key, r.rsUser || r.key); }
+    const pn = new Map(), pname = async k => { if (pn.has(k)) return pn.get(k); const [sp, se, id] = String(k).split(':'); let n = null;
+      try { const r = await db.prepare('SELECT player FROM swap_index WHERE sport=? AND season=? AND playerId=? LIMIT 1').bind(sp, Number(se), Number(String(id).replace(/^t/, ''))).first(); n = r && r.player; } catch (e) {}
+      const v = `${n || 'Player ' + id} ${se}`; pn.set(k, v); return v; };
+    const out = [];
+    for (const m of rows) {
+      out.push({ id: m.id, due: sideDue(m), note: m.note || null, status: m.status,
+        a: { key: m.a, rsUser: rs.get(m.a) || m.a, buys: await pname(m.bGets), told: !!(m.warnA || m.doneA), refunded: m.refundA || null, reported: reps.has(`${m.id}|${m.a}`) },
+        b: { key: m.b, rsUser: rs.get(m.b) || m.b, buys: await pname(m.aGets), told: !!(m.warnB || m.doneB), refunded: m.refundB || null, reported: reps.has(`${m.id}|${m.b}`) } });
+    }
+    return json({ rows: out });
   }
   // Take a restriction off again.
   if (op === 'unrestrict' && request.method === 'POST') {

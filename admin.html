@@ -180,6 +180,10 @@
         <p class="note" style="margin:0 0 8px">Swaps reports, board member reports and feature requests. When the sender has a chat with the bot, your reply and the outcome are sent to them on Real.</p>
         <div class="bar"><select id="ib-f"><option value="">All</option><option value="swap">Swaps reports</option><option value="board">Board reports</option><option value="feature">Feature requests</option></select><button id="ib-load" class="sm">Refresh</button></div>
         <div id="ib-list" class="note">Loading…</div></section>
+      <section><h2>Called-off swaps <span class="note" id="co-n"></span></h2>
+        <p class="note" style="margin:0 0 8px">Last 30 days. "Told to buy" means they got the warning or contact DM, so they may have bought the pack. Send the rax on Real, then tap <b>Mark refunded</b> (tap again to undo). <span class="pill off">reported</span> = they've filed a called-off report for it.</p>
+        <div class="bar"><label class="note"><input type="checkbox" id="co-told" checked> only people told to buy</label><button id="co-load" class="sm">Refresh</button></div>
+        <div id="co-list" class="note">Loading…</div></section>
       <section><h2>Bot messages <span class="note" id="bm-n"></span></h2>
         <p class="note" style="margin:0 0 8px">Everyone you've messaged through the bot. <b>Check replies</b> reads their chats on Real (up to 25). <b>Check</b> sends them "check", which puts the chat at the top of the bot's DMs so you can read the whole conversation there.</p>
         <div class="bar"><button id="bm-load" class="sm">Load</button><button id="bm-check" class="sm">Check replies</button></div>
@@ -611,6 +615,13 @@ function party(role, w, fallback, action, extra){
     <textarea data-txt="${action}" placeholder="${open ? 'Message - sent by the bot on Real' : 'No chat with the bot - a message can\'t be sent'}"${open ? '' : ' disabled'}></textarea>
     <button class="sm" data-a="${action}"${open ? '' : ' disabled'}>Send to @${esc(nm)}</button></div>`;
 }
+// The called-off swaps a Swaps reporter was in, each with Mark refunded.
+function offsBox(x){
+  if(x.src !== 'swap' || !(x.offs || []).length) return x.src === 'swap' && x.matchId ? '<div class="note">Swap not found among their called-off swaps.</div>' : '';
+  const when = ms => new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return `<details class="ev"${x.matchId ? ' open' : ''}><summary>In ${x.offs.length} called-off swap${x.offs.length === 1 ? '' : 's'} (30 days)</summary>${x.offs.map(o => `<div class="off1"><span>${o.reported ? '<b>▶ </b>' : ''}${esc(when(o.due))} · with ${esc(o.partner)} ${o.told ? '<span class="pill">told to buy</span>' : '<span class="pill">not told</span>'}</span>
+    ${o.refunded ? '<span class="pill on">refunded</span>' : `<button class="sm ok" data-a="refunded" data-mid="${o.id}">Mark refunded</button>`}</div>`).join('')}</details>`;
+}
 function drawInbox(){
   const f = $('#ib-f').value, list = ibItems.filter(x => !f || x.src === f);
   const when = ts => ts ? new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
@@ -625,10 +636,10 @@ function drawInbox(){
       about = party('Reported', ab, x.target, 'replyabout', (tags ? `<div class="tags">${tags}</div>` : '') + ev);
     }
     return `<div class="ibx" data-k="${esc(k)}">
-      <div class="ih"><span class="tag t-${x.src}">${SRC_LBL[x.src]}</span>${x.src === 'swap' ? `<span class="note">${x.kind === 'Swaps: problem' ? 'problem' : 'wrong usage'}</span>` : ''}<span class="note" style="margin-left:auto">${esc(when(x.ts))}</span></div>
+      <div class="ih"><span class="tag t-${x.src}">${SRC_LBL[x.src]}</span>${x.src === 'swap' ? `<span class="note">${x.kind === 'Swaps: problem' ? 'problem' : x.kind === 'Swaps: called-off swap' ? '<b style="color:var(--accent)">called-off swap - rax back / replacement</b>' : 'wrong usage'}</span>` : ''}<span class="note" style="margin-left:auto">${esc(when(x.ts))}</span></div>
       ${x.title ? `<div class="ttl">${esc(x.title)}</div>` : ''}
       ${x.detail ? `<blockquote>${esc(x.detail)}</blockquote>` : ''}
-      <div class="parties">${party(isRep ? 'Reported by' : 'From', x.from, x.by, 'reply')}${about}</div>
+      <div class="parties">${party(isRep ? 'Reported by' : 'From', x.from, x.by, 'reply', offsBox(x))}${about}</div>
       <div class="foot"><button class="sm ok" data-a="done">${isRep ? 'Complete' : 'Completed'}</button><button class="sm danger" data-a="declined">Decline</button>
         ${x.target ? `<span class="sep"></span><button class="sm danger" data-a="restrict" data-two="1">Take posts/swaps</button><button class="sm danger" data-a="ban" data-two="1">Ban from site</button>` : ''}
         <span class="sep"></span><button class="sm ghost" data-a="delete" data-two="1" title="Remove it with no DM - for spam or duplicates">Delete</button>
@@ -659,14 +670,31 @@ $('#ib-list').addEventListener('click', async e => {
   const ta = card.querySelector(`[data-txt="${a}"]`), text = ta ? ta.value.trim() : '', notify = card.querySelector('[data-notify]').checked;
   if((a === 'reply' || a === 'replyabout') && !text){ toast('Write a message first.'); return; }
   b.disabled = true;
-  const j = await api('/api/swaps?op=inboxact', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ src, id, action: a, text, notify }) });
+  const j = await api('/api/swaps?op=inboxact', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ src, id, action: a, text, notify, matchId: b.dataset.mid }) });
   b.disabled = false;
   if(j.error){ toast(j.error); return; }
   const dm = j.dm ? (j.dm.sent ? ' · DM sent' : ' · DM not sent: ' + j.dm.why) : '';
   if(a === 'reply' || a === 'replyabout'){ if(j.dm && j.dm.sent) ta.value = ''; toast(j.dm && j.dm.sent ? 'Sent on Real.' : 'Not sent: ' + ((j.dm && j.dm.why) || '?')); return; }
   ibItems = ibItems.filter(x => !(x.src === src && x.id === id)); drawInbox();
-  toast(({ done: 'Completed', declined: 'Declined', delete: 'Deleted', restrict: 'Posts and swaps taken away', ban: 'Banned from the site' })[a] + dm);
+  toast(({ done: 'Completed', declined: 'Declined', delete: 'Deleted', restrict: 'Posts and swaps taken away', ban: 'Banned from the site', refunded: 'Marked refunded, report completed' })[a] + dm);
+  if(a === 'refunded') loadCalledOff();
 });
+let coRows = [];
+function drawCalledOff(){
+  const only = $('#co-told').checked, when = ms => new Date(ms).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const l = coRows.filter(r => !only || r.a.told || r.b.told);
+  $('#co-n').textContent = `(${l.length})`;
+  const side = (r, s, x) => `<div class="party" style="gap:4px"><div class="ph"><b>@${esc(x.rsUser)}</b>${x.told ? '<span class="pill">told to buy</span>' : '<span class="pill">not told</span>'}${x.reported ? '<span class="pill off">reported</span>' : ''}</div>
+      <span class="note">bought ${esc(x.buys)}</span>
+      <button class="sm ${x.refunded ? '' : 'ok'}" data-co="${r.id}" data-side="${s}">${x.refunded ? 'Refunded ✓ (undo)' : 'Mark refunded'}</button></div>`;
+  $('#co-list').innerHTML = l.map(r => `<div class="ibx"><div class="ih"><span class="tag t-swap">Called off</span><b>${esc(when(r.due))}</b><span class="note" style="margin-left:auto">#${r.id}</span></div>
+      ${r.note ? `<div class="note" style="margin-top:4px">${esc(r.note)}</div>` : ''}
+      <div class="parties">${side(r, 'A', r.a)}${side(r, 'B', r.b)}</div></div>`).join('') || '<span class="note">No called-off swaps.</span>';
+}
+async function loadCalledOff(q){ const j = await api('/api/swaps?op=calledoff' + (q || '')); if(j.error){ $('#co-list').textContent = j.error; return; } coRows = j.rows || []; drawCalledOff(); }
+$('#co-load').addEventListener('click', () => loadCalledOff());
+$('#co-told').addEventListener('change', drawCalledOff);
+$('#co-list').addEventListener('click', e => { const b = e.target.closest('[data-co]'); if(!b) return; b.disabled = true; loadCalledOff(`&refund=${b.dataset.co}&side=${b.dataset.side}`); });
 async function loadBotMsgs(check){
   $('#bm-list').textContent = check ? 'Reading their chats…' : 'Loading…';
   const j = await api('/api/swaps?op=dmlog' + (check ? '&check=1' : ''), {}, 60000);
@@ -687,7 +715,7 @@ $('#bm-list').addEventListener('click', async e => { const b = e.target.closest(
   b.disabled = false; toast(j.error || (j.sent ? '"check" sent - the chat is at the top of the bot\'s DMs.' : 'Not sent: ' + j.why)); });
 
 async function loadReports(){
-  loadInbox(); loadBotMsgs(false);
+  loadInbox(); loadCalledOff(); loadBotMsgs(false);
   const d = await api('/api/kv?datareports=1');
   const when = ts => ts ? new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
   if(d.error) $('#rp-data').textContent = d.error;
