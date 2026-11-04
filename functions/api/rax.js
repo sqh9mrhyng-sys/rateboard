@@ -7672,6 +7672,30 @@ async function gapPush(ctx) {
   try { await env0.RATEBOARD_KV.put('gap_push_last', JSON.stringify({ at: Date.now(), job: job.join(':'), phase })); } catch (e) {}
 }
 
+async function collectorHealth(env, url) {
+  const ck = new Request(url.origin + '/__cache/collector-health');
+  try { const hit = await caches.default.match(ck); if (hit) return hit; } catch (e) {}
+  const kvj = async k => { try { return JSON.parse((await env.RATEBOARD_KV.get(k)) || 'null'); } catch (e) { return null; } };
+  const db = env.RATEBOARD_DB, seasons = [];
+  for (const [sp, se] of EXTRA_JOBS.filter(([sp]) => sp !== 'ufc')) {
+    const games = await kvj(`games_${sp}_${se}`), ids = (games && games.ids) || [];
+    const gd = ((await kvj(`gamelog_done_${sp}_${se}`)) || {}).done || {}, rd = ((await kvj(`gamelog_rax_${sp}_${se}`)) || {}).done || {};
+    let last = null;
+    try { last = await db.prepare(`SELECT MAX(day) AS day, MAX(CASE WHEN rax IS NOT NULL THEN day END) AS raxDay, COUNT(*) AS rows FROM gamelog WHERE sport=? AND season=?`).bind(sp, se).first(); } catch (e) {}
+    seasons.push({ season: `${sp}:${se}`, players: ids.length, listBuilding: (games && games.building && games.building.ids && games.building.ids.length) || null, gamelogDone: ids.filter(i => gd[i]).length, raxDone: ids.filter(i => rd[i]).length,
+      lastGameDay: last && last.day, lastRaxDay: last && last.raxDay, rows: last && last.rows,
+      window: await kvj(`gl_window_${sp}_${se}`), through: await env.RATEBOARD_KV.get(`gl_through_${sp}_${se}`) });
+  }
+  const pace = await kvj('queue_pace_v1'), stuck = await kvj('queue_stuck_v1');
+  const body = JSON.stringify({ at: new Date().toISOString(), seasons,
+    queue: { lastJob: pace && pace.lastJob, restingUntil: pace && pace.holdUntil > Date.now() ? new Date(pace.holdUntil).toISOString() : null,
+      stuckOn: stuck && stuck.tag, stuckPasses: stuck && stuck.n, setAsideToday: stuck && stuck.skip ? Object.keys(stuck.skip).filter(k => stuck.skip[k] === new Date().toISOString().slice(0, 10)) : [] },
+    oneOffsRun: await kvj(ONE_OFF_KEY), marketAccount: { busyWithMarket: await marketBusy(env), lastGapHelp: await kvj('gap_push_last') }, budget: await jobOverBudget(env) ? 'over' : 'ok' }, null, 1);
+  const res = new Response(body, { headers: { 'content-type': 'application/json', 'cache-control': 'max-age=60' } });
+  try { await caches.default.put(ck, res.clone()); } catch (e) {}
+  return res;
+}
+
 export async function onRequestGet(ctx) {
   ctx = Object.assign({}, ctx, { env: watchEnv(ctx.env, ctx.request, ctx.waitUntil) });
   const { request, env } = ctx;
