@@ -853,7 +853,7 @@ function matchText(me, other, gets, gives, slot) {
    5. follow  - 90 min after their last swap hour: the reminder.
    Matching runs once a day, so a member's whole day is known before the warn.
    Each side of a match is marked as each DM goes, so nothing repeats. */
-const FOLLOW_TEXT = "Please make sure you bought all packs and offered 12 hours on everyone else's, there are no warnings if you scam or don't communicate, you will be banned.";
+const FOLLOW_TEXT = "(This is automatic dm 90 mins after final swap for everyone)\nPlease make sure you bought all packs and offered 12 hours on everyone else's, there are no warnings if you scam or don't communicate, you will be banned.";
 // Long lists are split: the heading on its own, then at most 8 lines a message.
 const LINES_PER_DM = 8;
 const chunks = (lines, n = LINES_PER_DM) => { const out = []; for (let i = 0; i < lines.length; i += n) out.push(lines.slice(i, i + n).join('\n')); return out; };
