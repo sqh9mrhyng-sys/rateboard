@@ -7717,8 +7717,14 @@ async function collectorHealth(env, url) {
       const q = await db.prepare('SELECT SUM(CASE WHEN startedAt IS NOT NULL THEN 1 ELSE 0 END) AS running, SUM(CASE WHEN startedAt IS NULL THEN 1 ELSE 0 END) AS waiting FROM scan_queue').first();
       const fails = ((await db.prepare("SELECT at, msg FROM bot_log WHERE kind IN ('scan','rescan','scan_bg') ORDER BY at DESC LIMIT 8").all()).results) || [];
       let dmq = null; try { dmq = await db.prepare('SELECT COUNT(*) AS n, MAX(tries) AS t FROM dm_retry').first(); } catch (e) {}
+      // Swaps by hour around now (no names): how many matches, how many sides warned / contacted.
+      let hours = []; try { hours = ((await db.prepare(`SELECT dueAt, COUNT(*) AS matches, SUM(CASE WHEN warnA IS NOT NULL THEN 1 ELSE 0 END) + SUM(CASE WHEN warnB IS NOT NULL THEN 1 ELSE 0 END) AS warnedSides,
+          SUM(CASE WHEN doneA IS NOT NULL THEN 1 ELSE 0 END) + SUM(CASE WHEN doneB IS NOT NULL THEN 1 ELSE 0 END) AS contactedSides, COUNT(DISTINCT a) + COUNT(DISTINCT b) AS people,
+          SUM(CASE WHEN status IN ('cancelled','cancelling') THEN 1 ELSE 0 END) AS calledOff
+          FROM swap_matches WHERE dueAt BETWEEN ? AND ? GROUP BY dueAt ORDER BY dueAt`).bind(Date.now() - 4 * 3600000, Date.now() + 6 * 3600000).all()).results || [])
+          .map(h => ({ ...h, dueAt: new Date(h.dueAt).toISOString().slice(0, 16) })); } catch (e) {}
       const dms = ((await db.prepare("SELECT k, n FROM bot_stats WHERE day=? AND (k LIKE 'dm_%' OR k = 'fail')").bind(day).all()).results) || [];
-      return { today: Object.fromEntries(st.map(x => [x.k, x.n])), running: q && q.running, waiting: q && q.waiting, recent: await kvj('scan_perf_v1'), dmsToday: Object.fromEntries(dms.map(x => [x.k, x.n])), dmRetryQueue: dmq,
+      return { today: Object.fromEntries(st.map(x => [x.k, x.n])), running: q && q.running, waiting: q && q.waiting, recent: await kvj('scan_perf_v1'), dmsToday: Object.fromEntries(dms.map(x => [x.k, x.n])), dmRetryQueue: dmq, swapHours: hours,
         lastFailures: fails.map(f => ({ at: new Date(f.at).toISOString(), msg: String(f.msg || '').replace(/^[^:]{1,60}:\s*/, '') })) };
     } catch (e) { return { error: String(e.message || e).slice(0, 100) }; } })(),
     oneOffsRun: await kvj(ONE_OFF_KEY), marketAccount: { busyWithMarket: await marketBusy(env), lastGapHelp: await kvj('gap_push_last') }, budget: await jobOverBudget(env) ? 'over' : 'ok' }, null, 1);
