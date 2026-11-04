@@ -619,7 +619,7 @@ function party(role, w, fallback, action, extra){
 function offsBox(x){
   if(x.src !== 'swap' || !(x.offs || []).length) return x.src === 'swap' && x.matchId ? '<div class="note">Swap not found among their called-off swaps.</div>' : '';
   const when = ms => new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-  return `<details class="ev"${x.matchId ? ' open' : ''}><summary>In ${x.offs.length} called-off swap${x.offs.length === 1 ? '' : 's'} (30 days)</summary>${x.offs.map(o => `<div class="off1"><span>${o.reported ? '<b>▶ </b>' : ''}${esc(when(o.due))} · with ${esc(o.partner)} ${o.told ? '<span class="pill">told to buy</span>' : '<span class="pill">not told</span>'}</span>
+  return `<details class="ev"${x.matchId ? ' open' : ''}><summary>In ${x.offs.length} called-off swap${x.offs.length === 1 ? '' : 's'} (30 days)</summary>${x.offs.map(o => `<div class="off1"><span>${o.reported ? '<b>▶ </b>' : ''}${esc(when(o.due))} · with ${esc(o.partner)} ${o.told ? '<span class="pill">told to buy</span>' : '<span class="pill">not told</span>'}<br><span class="note">bought <b>${esc(o.buys || '?')}</b> · was to get <b>${esc(o.gets || '?')}</b></span></span>
     ${o.refunded ? '<span class="pill on">refunded</span>' : `<button class="sm ok" data-a="refunded" data-mid="${o.id}">Mark refunded</button>`}</div>`).join('')}</details>`;
 }
 function drawInbox(){
@@ -685,7 +685,7 @@ function drawCalledOff(){
   const l = coRows.filter(r => !only || r.a.told || r.b.told);
   $('#co-n').textContent = `(${l.length})`;
   const side = (r, s, x) => `<div class="party" style="gap:4px"><div class="ph"><b>@${esc(x.rsUser)}</b>${x.told ? '<span class="pill">told to buy</span>' : '<span class="pill">not told</span>'}${x.reported ? '<span class="pill off">reported</span>' : ''}</div>
-      <span class="note">bought ${esc(x.buys)}</span>
+      <span class="note">bought <b>${esc(x.buys)}</b> for @${esc(s === 'A' ? r.b.rsUser : r.a.rsUser)}</span>
       <button class="sm ${x.refunded ? '' : 'ok'}" data-co="${r.id}" data-side="${s}">${x.refunded ? 'Refunded ✓ (undo)' : 'Mark refunded'}</button></div>`;
   $('#co-list').innerHTML = l.map(r => `<div class="ibx"><div class="ih"><span class="tag t-swap">Called off</span><b>${esc(when(r.due))}</b><span class="note" style="margin-left:auto">#${r.id}</span></div>
       ${r.note ? `<div class="note" style="margin-top:4px">${esc(r.note)}</div>` : ''}

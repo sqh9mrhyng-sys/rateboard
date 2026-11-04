@@ -404,6 +404,14 @@ async function adminDm(db, auth, who, text, ref) {
     return { sent: true };
   } catch (e) { await botFail(db, 'dm_admin', `${who.name}: ${e.message || e}`); return { sent: false, why: String(e.message || e).slice(0, 160) }; }
 }
+// A player's name for a pass key, from the search index (no member passes loaded).
+async function indexName(db, k, cache) {
+  if (cache && cache.has(k)) return cache.get(k);
+  const [sp, se, id] = String(k).split(':'); let n = null;
+  try { const r = await db.prepare('SELECT player FROM swap_index WHERE sport=? AND season=? AND playerId=? LIMIT 1').bind(sp, Number(se), Number(String(id).replace(/^t/, ''))).first(); n = r && r.player; } catch (e) {}
+  const v = `${n || 'Player ' + id} ${({ nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf' })[sp] || sp} ${se}`;
+  if (cache) cache.set(k, v); return v;
+}
 async function inboxItems(env, db) {
   const out = [];
   await db.prepare(SREPORT_DDL).run();
@@ -424,8 +432,13 @@ async function inboxItems(env, db) {
   for (const x of out) if (x.src === 'swap' && x.from && x.from.key) {
     const k = x.from.key;
     const ms = ((await db.prepare(`SELECT * FROM swap_matches WHERE status='cancelled' AND (a=? OR b=?) AND createdAt > ? ORDER BY id DESC LIMIT 20`).bind(k, k, Date.now() - 30 * 86400000).all()).results) || [];
-    x.offs = ms.map(m => { const side = m.a === k ? 'A' : 'B';
-      return { id: m.id, due: sideDue(m), partner: side === 'A' ? m.b : m.a, side, told: !!(m['warn' + side] || m['done' + side]), refunded: m['refund' + side] || null, note: m.note || null, reported: x.matchId === m.id }; });
+    const nc = new Map();
+    x.offs = [];
+    for (const m of ms) { const side = m.a === k ? 'A' : 'B';
+      // The players in it: what the reporter was to buy (give) and what they were to get.
+      const gives = side === 'A' ? m.bGets : m.aGets, gets = side === 'A' ? m.aGets : m.bGets;
+      x.offs.push({ id: m.id, due: sideDue(m), partner: side === 'A' ? m.b : m.a, side, told: !!(m['warn' + side] || m['done' + side]), refunded: m['refund' + side] || null,
+        note: m.note || null, reported: x.matchId === m.id, buys: await indexName(db, gives, nc), gets: await indexName(db, gets, nc) }); }
   }
   // Board reports: every board listing (with its comment link) of the person reported.
   for (const x of out) if (x.src === 'board' && x.about) {
@@ -2293,7 +2306,8 @@ async function handle({ request, env, waitUntil }) {
       const side = m.a === me ? 'A' : 'B', o = await loadMember(db, side === 'A' ? m.b : m.a), mine = await loadMember(db, me);
       matchId = m.id; target = (o && o.rsUser) || (side === 'A' ? m.b : m.a);
       const want = b.want === 'replace' ? 'a replacement swap' : 'rax back for the pack';
-      detail = `Called-off swap #${m.id} (${new Date(sideDue(m)).toISOString().slice(0, 16).replace('T', ' ')} UTC): bought ${mine ? playerName(mine, side === 'A' ? m.bGets : m.aGets) : '?'} for @${target}. Wants ${want}.` + (detail ? `\n${detail}` : '');
+      const nc = new Map(), gaveP = await indexName(db, side === 'A' ? m.bGets : m.aGets, nc), getP = await indexName(db, side === 'A' ? m.aGets : m.bGets, nc);
+      detail = `Called-off swap #${m.id} (${new Date(sideDue(m)).toISOString().slice(0, 16).replace('T', ' ')} UTC) with @${target}: they bought ${gaveP} (for @${target}), and were to get ${getP} from @${target}. Wants ${want}.` + (detail ? `\n${detail}` : '');
     } else if (detail.length < 5) return json({ error: 'Say what happened.' }, 400);
     if (kind === 'user' && target.length < 2) return json({ error: 'Enter their Real username.' }, 400);
     if (!(await allow(url.origin, 'swapreport:' + me, 6, 3600))) return json({ error: 'You have sent a lot of reports - try again later.' }, 429);
