@@ -967,7 +967,7 @@ function matchText(me, other, gets, gives, slot) {
    Each side of a match is marked as each DM goes, so nothing repeats. */
 const FOLLOW_TEXT = "(This is automatic dm 90 mins after final swap for everyone)\nPlease make sure you bought all packs and offered 12 hours on everyone else's, there are no warnings if you scam or don't communicate, you will be banned.";
 // Long lists are split: the heading on its own, then at most 8 lines a message.
-const LINES_PER_DM = 8;
+const LINES_PER_DM = 6;   // 6 players a message (Dennis, 2026-11-04), easier on Real's slowmode
 /* Up to 8 lines a message, and never more than DM_MAX_CHARS: Real refuses a
    long message ("Message is too long"), and 8 warning lines with three links
    each went over, so everything after the heading was being dropped. */
@@ -986,9 +986,22 @@ function warnGrouped(items) {
   const head = "You are swapping the following players today, please buy the following packs within 30 mins. This is a heads up DM - the users you're swapping with in 30 mins:";
   const groups = new Map();
   for (const it of items) (groups.get(it.recvKey) || groups.set(it.recvKey, { recv: it.recv, lines: [] }).get(it.recvKey)).lines.push(it.buy);
-  if (groups.size <= 1) { const lines = items.map(x => x.buy); return [head + '\n' + lines.slice(0, 5).join('\n'), ...chunks(lines.slice(5))].filter(Boolean); }
+  if (groups.size <= 1) { const lines = items.map(x => x.buy); return [head + '\n' + lines.slice(0, LINES_PER_DM).join('\n'), ...chunks(lines.slice(LINES_PER_DM))].filter(Boolean); }
   const out = [head];
-  for (const g of groups.values()) { const parts = chunks(g.lines, 12); parts.forEach((c, i) => out.push((i ? `${g.recv} (cont.)` : `You are receiving ${g.recv}:`) + '\n' + c)); }
+  for (const g of groups.values()) { const parts = chunks(g.lines); parts.forEach((c, i) => out.push((i ? `${g.recv} (cont.)` : `You are receiving ${g.recv}:`) + '\n' + c)); }
+  return out;
+}
+/* Contact message, the same way: heading, then per player they receive his
+   link on top and the partners to contact under it (6 a message). */
+function contactGrouped(items, buyItems) {
+  const head = "Here are comments to contact the following swaps, please send 12 hour offers and report anyone who's doing anything wrong.\n"
+    + "Comments are to get ahold of other users if they didn't buy the pack in the warning period, ideally this should be communication-less.";
+  const groups = new Map();
+  for (const it of items) (groups.get(it.recvKey) || groups.set(it.recvKey, { recv: it.recv, lines: [] }).get(it.recvKey)).lines.push(it.contact);
+  const out = [head];
+  if (groups.size <= 1) out.push(...chunks(items.map(x => x.contact)));
+  else for (const g of groups.values()) chunks(g.lines).forEach((c, i) => out.push((i ? `${g.recv} (cont.)` : `You are receiving ${g.recv}:`) + '\n' + c));
+  if (buyItems.length) chunks(buyItems.map(x => x.buy)).forEach((c, i) => out.push((i ? '' : 'Also buy these packs now:\n') + c));
   return out;
 }
 function warnText(lines) {
@@ -1139,7 +1152,8 @@ async function runDms(env, db, auth, rows, max, force) {
     // 1. warn: every pack for the day, once.
     // 1. warn: 30 min before each swap hour, that hour's packs only.
     const warnHours = new Map();
-    for (const x of list) if (!x.m['warn' + x.side] && (force || now >= x.due - 35 * 60000)) {   // from :25 const k = force ? 'now' : x.due; (warnHours.get(k) || warnHours.set(k, []).get(k)).push(x); }
+    // From :25 (35 minutes before the hour).
+    for (const x of list) if (!x.m['warn' + x.side] && (force || now >= x.due - 35 * 60000)) { const k = force ? 'now' : x.due; (warnHours.get(k) || warnHours.set(k, []).get(k)).push(x); }
     let warnFail = false;
     for (const [, wh0] of warnHours) {
       if (sent >= max || Date.now() - now > 40000) break;   // and never past 40s of the minute
@@ -1151,15 +1165,16 @@ async function runDms(env, db, auth, rows, max, force) {
     if (warnFail) continue;
     // 2-4. contact: one per swap hour that has come.
     const byHour = new Map();
-    for (const x of list) if (!x.m['done' + x.side] && now >= x.due) { const k = force ? 'now' : x.due; (byHour.get(k) || byHour.set(k, []).get(k)).push(x); }
+    // From :55 (5 minutes before the hour).
+    for (const x of list) if (!x.m['done' + x.side] && now >= x.due - 5 * 60000) { const k = force ? 'now' : x.due; (byHour.get(k) || byHour.set(k, []).get(k)).push(x); }
     for (const [, hr0] of byHour) {
       if (sent >= max || Date.now() - now > 40000) break;   // and never past 40s of the minute
       const noWarn = hr0.filter(x => !x.m['warn' + x.side]);
       const hr = await claim(hr0, 'done');
       if (!hr.length) continue;
-      const lines = [], buy = [];
-      for (const x of hr) { const l = await sideLines(member, x.m, x.side); if (!l) continue; lines.push(l.contact); if (noWarn.includes(x)) buy.push(l.buy); }
-      if (lines.length && await send(who, contactText(lines, buy), 'contact')) await mark(hr.filter(x => noWarn.includes(x)), 'warn');
+      const items = [], buy = [];
+      for (const x of hr) { const l = await sideLines(member, x.m, x.side); if (!l) continue; items.push(l); if (noWarn.includes(x)) buy.push(l); }
+      if (items.length && await send(who, contactGrouped(items, buy), 'contact')) await mark(hr.filter(x => noWarn.includes(x)), 'warn');
       else await unclaim(hr, 'done');
     }
     // 5. follow-up, 90 min after their last swap hour, once every contact is out.
@@ -1581,16 +1596,6 @@ export async function swapTick(env) {
     }
   } catch (e) {}
   try { await autoRescan(env, db, auth); } catch (e) { await botFail(db, 'rescan', e.message); }
-  // One-off (2026-11-04): call off, quietly, the second (and later) copies of a pass someone
-  // receives twice in a swap day, where nobody in that swap has been warned yet.
-  try { if (!(await env.RATEBOARD_KV.get('recv_dupe_fix_1104'))) { await env.RATEBOARD_KV.put('recv_dupe_fix_1104', '1');
-    const ms = ((await db.prepare("SELECT * FROM swap_matches WHERE status IN ('pending','warned') AND dueAt > ? ORDER BY dueAt, id").bind(Date.now() - 30 * 3600000).all()).results) || [];
-    const seen = new Set(); let n = 0;
-    for (const m of ms) { const d = swapDay(sideDue(m)), ka = `${m.a}|${m.aGets}|${d}`, kb = `${m.b}|${m.bGets}|${d}`;
-      if ((seen.has(ka) || seen.has(kb)) && !m.warnA && !m.warnB && !m.doneA && !m.doneB) {
-        await db.prepare("UPDATE swap_matches SET status='cancelled', note='called off: same card twice in a day' WHERE id=?").bind(m.id).run(); n++; continue; }
-      seen.add(ka); seen.add(kb); }
-    await stat(db, 'recv_dupe_fixed', n); } } catch (e) { await botFail(db, 'dupefix', e.message); }
   try { await retryDms(db, auth); } catch (e) { await botFail(db, 'dm_retry', e.message); }   // unsent parts first
   try { await db.prepare(DMV_DDL).run(); await db.prepare('DELETE FROM dm_verify').run(); } catch (e) {}   // second look off: drop anything still waiting
   try { await db.prepare(DMQ_DDL).run(); await db.prepare("DELETE FROM dm_retry WHERE label LIKE '%2nd look%'").run(); } catch (e) {}
