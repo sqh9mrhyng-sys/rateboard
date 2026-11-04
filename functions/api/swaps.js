@@ -385,6 +385,11 @@ async function inboxItems(env, db) {
   out.sort((a, b) => b.ts - a.ts);
   const cache = new Map(), look = async n => { const k = String(n || '').toLowerCase(); if (!k) return null; if (!cache.has(k)) cache.set(k, await whoIs(db, k)); return cache.get(k); };
   for (const x of out) { x.from = await look(x.by); x.about = x.target ? await look(x.target) : null; }
+  // Board reports: every board listing (with its comment link) of the person reported.
+  for (const x of out) if (x.src === 'board' && x.about) {
+    try { x.about = { ...x.about, offers: ((await db.prepare('SELECT sport, player, rate, link, ts FROM offers WHERE LOWER(user)=? ORDER BY ts DESC LIMIT 100')
+      .bind(String(x.about.key || x.target).toLowerCase()).all()).results) || [] }; } catch (e) {}
+  }
   return out;
 }
 // The outcome note to the person who sent it.
@@ -2033,11 +2038,20 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'inbox') return json({ items: await inboxItems(env, db) });
   if (op === 'inboxact' && request.method === 'POST') {
     let b = {}; try { b = await request.json(); } catch (e) {}
-    const action = ['done', 'declined', 'delete', 'reply', 'restrict', 'ban'].includes(b.action) ? b.action : null;
+    const action = ['done', 'declined', 'delete', 'reply', 'replyabout', 'restrict', 'ban'].includes(b.action) ? b.action : null;
     if (!action) return json({ error: 'bad action' }, 400);
     const item = (await inboxItems(env, db)).find(x => x.src === b.src && x.id === String(b.id));
     if (!item) return json({ error: 'That one is already closed.' }, 404);
     const out = { ok: true };
+    // A custom message to the person who was reported (outcome notes only ever go to whoever reported).
+    if (action === 'replyabout') {
+      const text = String(b.text || '').trim().slice(0, 1000);
+      if (!text) return json({ error: 'Write a message first.' }, 400);
+      if (!item.about) return json({ error: 'Nobody is named in this report.' }, 400);
+      const head = `This message is in reference to a ${item.src === 'swap' ? 'Swaps' : 'board'} report made about you`;
+      out.dm = await adminDm(db, auth, item.about, `${head}\n-\n${text}`, `${item.src}:${item.id}:about`);
+      return json(out);
+    }
     if (action === 'reply') {
       const text = String(b.text || '').trim().slice(0, 1000);
       if (!text) return json({ error: 'Write a reply first.' }, 400);

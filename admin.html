@@ -44,6 +44,25 @@
   .pill.off{border-color:var(--bad);color:var(--bad)}
   pre{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;overflow:auto;font-size:12px;max-height:40vh;white-space:pre-wrap;word-break:break-word}
   .ms{font-variant-numeric:tabular-nums}
+  .ibx{border:1px solid var(--line);border-radius:12px;padding:12px;margin:0 0 12px;background:var(--panel2,#232b3d)}
+  .ibx .ih{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .ibx .tag{font-size:12px;font-weight:800;padding:2px 9px;border-radius:999px;border:1px solid currentColor}
+  .ibx .t-swap{color:var(--accent,#E8A33D)} .ibx .t-board{color:#6aa9ff} .ibx .t-feature{color:var(--ok,#5fbf7a)}
+  .ibx .ttl{font-weight:800;margin-top:8px}
+  .ibx blockquote{margin:8px 0 0;padding:8px 10px;border-left:3px solid var(--line);background:rgba(0,0,0,.15);border-radius:6px;white-space:pre-wrap}
+  .ibx .parties{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-top:10px}
+  .ibx .party{border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:6px;min-width:0}
+  .ibx .party .ph{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+  .ibx .party textarea{width:100%;min-height:50px;font:inherit;padding:7px;border-radius:8px;border:1px solid var(--line);background:var(--bg,#141925);color:inherit;box-sizing:border-box}
+  .ibx .party button{align-self:flex-start}
+  .ibx .tags{display:flex;gap:4px;flex-wrap:wrap}
+  .ibx .ev summary{cursor:pointer;font-size:13px}
+  .ibx .off1{display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .ibx .foot{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+  .ibx .foot .sep{width:1px;height:18px;background:var(--line);margin:0 2px}
+  .ibx .foot .nt{display:flex;align-items:center;gap:4px;margin-left:auto}
+  .ibx button.ok{border-color:var(--ok,#5fbf7a);color:var(--ok,#5fbf7a)} .ibx button.ghost{opacity:.7}
+  @media (max-width: 680px){ .ibx .parties{grid-template-columns:1fr} .ibx .foot .nt{margin-left:0;width:100%} }
   .ib .who{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;font-size:13px}
   .ib textarea{width:100%;min-height:54px;margin-top:8px;font:inherit;padding:8px;border-radius:9px;border:1px solid var(--line);background:var(--panel2,#232b3d);color:inherit;box-sizing:border-box}
   .ib .acts2{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
@@ -573,24 +592,38 @@ $('#us-rows').addEventListener('click', async e => {
 /* ---------- inbox: reports + feature requests, answered through the bot ---------- */
 let ibItems = [];
 const chatPill = w => !w ? '' : w.channelId ? '<span class="pill on">bot chat open</span>' : '<span class="pill off">no bot chat</span>';
+const SRC_LBL = { swap: 'Swaps report', board: 'Board report', feature: 'Feature request' };
+const SPORT_LBL = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', mlb: 'MLB', nhl: 'NHL', wnba: 'WNBA', soccer: 'FC', golf: 'Golf', ufc: 'UFC' };
+function party(role, w, fallback, action, extra){
+  const nm = (w && (w.rsUser || w.key)) || fallback || '?';
+  const open = !!(w && w.channelId);
+  return `<div class="party"><div class="ph"><span class="note">${role}</span><b>@${esc(nm)}</b>${w && w.key && w.rsUser && w.rsUser.toLowerCase() !== String(w.key).toLowerCase() ? `<span class="note">board: ${esc(w.key)}</span>` : ''}${chatPill(w)}</div>
+    ${extra || ''}
+    <textarea data-txt="${action}" placeholder="${open ? 'Message - sent by the bot on Real' : 'No chat with the bot - a message can\'t be sent'}"${open ? '' : ' disabled'}></textarea>
+    <button class="sm" data-a="${action}"${open ? '' : ' disabled'}>Send to @${esc(nm)}</button></div>`;
+}
 function drawInbox(){
   const f = $('#ib-f').value, list = ibItems.filter(x => !f || x.src === f);
   const when = ts => ts ? new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
   $('#ib-n').textContent = `(${ibItems.length} open)`;
-  $('#ib-list').innerHTML = list.map(x => { const fr = x.from, ab = x.about, k = `${x.src}|${x.id}`;
-    return `<div class="ucard ib" data-k="${esc(k)}"><div class="top"><b>${esc(x.kind)}</b><span class="note">${esc(when(x.ts))}</span></div>
-      ${x.title ? `<div style="margin-top:4px;font-weight:700">${esc(x.title)}</div>` : ''}
-      ${x.detail ? `<div style="margin-top:4px;white-space:pre-wrap">${esc(x.detail)}</div>` : ''}
-      <div class="who">From <b>@${esc((fr && (fr.rsUser || fr.key)) || x.by || '?')}</b>${fr && fr.rsUser && fr.key && fr.rsUser.toLowerCase() !== String(fr.key).toLowerCase() ? ` <span class="note">(board: ${esc(fr.key)})</span>` : ''} ${chatPill(fr)}</div>
-      ${x.target ? `<div class="who">About <b>@${esc((ab && ab.rsUser) || x.target)}</b>${ab && ab.key ? ` <span class="note">(board: ${esc(ab.key)})</span>` : ' <span class="pill off">no board account found</span>'} ${chatPill(ab)}
-        ${ab && ab.swapper ? '<span class="pill">swapper</span>' : ''}${ab && ab.restricted ? '<span class="pill off">no posts/swaps</span>' : ''}${ab && ab.banned ? '<span class="pill off">banned</span>' : ''}
-        ${ab && ab.comment ? ` · <a href="${esc(ab.comment)}" target="_blank" rel="noopener">their swap comment</a>` : ' · <span class="note">no swap comment saved</span>'}</div>` : ''}
-      <textarea data-reply placeholder="${fr && fr.channelId ? 'Reply - sent to them by the bot on Real' : 'They have no chat with the bot, so a reply can\'t be sent'}"${fr && fr.channelId ? '' : ' disabled'}></textarea>
-      <div class="acts2"><button class="sm" data-a="reply"${fr && fr.channelId ? '' : ' disabled'}>Send reply</button>
-        <button class="sm" data-a="done">${x.src === 'feature' ? 'Completed' : 'Complete'}</button><button class="sm danger" data-a="declined">Decline</button>
-        ${x.target ? `<button class="sm danger" data-a="restrict" data-two="1">Take posts/swaps</button><button class="sm danger" data-a="ban" data-two="1">Ban from site</button>` : ''}
-        <button class="sm danger" data-a="delete" data-two="1">Delete</button>
-        <label class="note" style="display:flex;align-items:center;gap:4px"><input type="checkbox" data-notify checked${fr && fr.channelId ? '' : ' disabled'}> DM them the outcome</label></div></div>`; }).join('') || '<span class="note">Nothing open.</span>';
+  $('#ib-list').innerHTML = list.map(x => { const ab = x.about, k = `${x.src}|${x.id}`, isRep = x.src !== 'feature';
+    let about = '';
+    if(x.target){
+      const tags = `${ab && ab.swapper ? '<span class="pill">swapper</span>' : ''}${ab && ab.restricted ? '<span class="pill off">no posts/swaps</span>' : ''}${ab && ab.banned ? '<span class="pill off">banned</span>' : ''}${ab && !ab.key ? '<span class="pill off">no board account found</span>' : ''}`;
+      const ev = x.src === 'swap'
+        ? (ab && ab.comment ? `<div class="ev"><a href="${esc(ab.comment)}" target="_blank" rel="noopener">Their swap comment ↗</a></div>` : '<div class="ev note">No swap comment saved.</div>')
+        : `<details class="ev"><summary>Their board comments (${(ab && ab.offers || []).length})</summary>${(ab && ab.offers || []).map(o => `<div class="off1"><span>${esc(SPORT_LBL[o.sport] || o.sport)} · <b>${esc(o.player)}</b> · ${esc(o.rate)}</span>${o.link ? `<a href="${esc(o.link)}" target="_blank" rel="noopener">comment ↗</a>` : '<span class="note">no link</span>'}</div>`).join('') || '<div class="note">No listings on the board.</div>'}</details>`;
+      about = party('Reported', ab, x.target, 'replyabout', (tags ? `<div class="tags">${tags}</div>` : '') + ev);
+    }
+    return `<div class="ibx" data-k="${esc(k)}">
+      <div class="ih"><span class="tag t-${x.src}">${SRC_LBL[x.src]}</span>${x.src === 'swap' ? `<span class="note">${x.kind === 'Swaps: problem' ? 'problem' : 'wrong usage'}</span>` : ''}<span class="note" style="margin-left:auto">${esc(when(x.ts))}</span></div>
+      ${x.title ? `<div class="ttl">${esc(x.title)}</div>` : ''}
+      ${x.detail ? `<blockquote>${esc(x.detail)}</blockquote>` : ''}
+      <div class="parties">${party(isRep ? 'Reported by' : 'From', x.from, x.by, 'reply')}${about}</div>
+      <div class="foot"><button class="sm ok" data-a="done">${isRep ? 'Complete' : 'Completed'}</button><button class="sm danger" data-a="declined">Decline</button>
+        ${x.target ? `<span class="sep"></span><button class="sm danger" data-a="restrict" data-two="1">Take posts/swaps</button><button class="sm danger" data-a="ban" data-two="1">Ban from site</button>` : ''}
+        <span class="sep"></span><button class="sm ghost" data-a="delete" data-two="1" title="Remove it with no DM - for spam or duplicates">Delete</button>
+        <label class="note nt"><input type="checkbox" data-notify checked${x.from && x.from.channelId ? '' : ' disabled'}> DM ${isRep ? 'the reporter' : 'them'} the outcome</label></div></div>`; }).join('') || '<span class="note">Nothing open.</span>';
 }
 async function loadInbox(){ $('#ib-list').textContent = 'Loading…'; const j = await api('/api/swaps?op=inbox'); if(j.error){ $('#ib-list').textContent = j.error; return; } ibItems = j.items || []; drawInbox(); }
 $('#ib-load').addEventListener('click', loadInbox);
@@ -601,14 +634,14 @@ $('#ib-list').addEventListener('click', async e => {
   // Delete, take posts/swaps and ban take two clicks.
   if(b.dataset.two && b.dataset.armed !== '1'){ b.dataset.armed = '1'; const was = b.textContent; b.textContent = 'Click again to confirm';
     setTimeout(() => { b.dataset.armed = ''; b.textContent = was; }, 4000); return; }
-  const text = card.querySelector('[data-reply]').value.trim(), notify = card.querySelector('[data-notify]').checked;
-  if(a === 'reply' && !text){ toast('Write a reply first.'); return; }
+  const ta = card.querySelector(`[data-txt="${a}"]`), text = ta ? ta.value.trim() : '', notify = card.querySelector('[data-notify]').checked;
+  if((a === 'reply' || a === 'replyabout') && !text){ toast('Write a message first.'); return; }
   b.disabled = true;
   const j = await api('/api/swaps?op=inboxact', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ src, id, action: a, text, notify }) });
   b.disabled = false;
   if(j.error){ toast(j.error); return; }
   const dm = j.dm ? (j.dm.sent ? ' · DM sent' : ' · DM not sent: ' + j.dm.why) : '';
-  if(a === 'reply'){ card.querySelector('[data-reply]').value = ''; toast('Reply' + (j.dm && j.dm.sent ? ' sent on Real.' : ' not sent: ' + ((j.dm && j.dm.why) || '?'))); return; }
+  if(a === 'reply' || a === 'replyabout'){ if(j.dm && j.dm.sent) ta.value = ''; toast(j.dm && j.dm.sent ? 'Sent on Real.' : 'Not sent: ' + ((j.dm && j.dm.why) || '?')); return; }
   ibItems = ibItems.filter(x => !(x.src === src && x.id === id)); drawInbox();
   toast(({ done: 'Completed', declined: 'Declined', delete: 'Deleted', restrict: 'Posts and swaps taken away', ban: 'Banned from the site' })[a] + dm);
 });
