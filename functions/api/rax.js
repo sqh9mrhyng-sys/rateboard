@@ -1917,6 +1917,7 @@ const ONE_OFF_RESCANS = [
   { id: 'glsnap-drop-1104', sport: 'ncaaf', season: 2026, at: Date.parse('2026-11-04T12:50:00Z'), snaps: ['ncaaf:2026', 'nfl:2026', 'ncaam:2027', 'nba:2027'] },
   // Scans borrowed the collector's account for a while and got it rate-limited, so today's game-log walks were set aside: take them back.
   { id: 'unstick-1104', sport: 'ncaam', season: 2027, at: Date.parse('2026-11-04T17:25:00Z'), unstick: true },
+  { id: 'unstick-1104b', sport: 'ncaam', season: 2027, at: Date.parse('2026-11-04T17:30:00Z'), unstick: true },
   { id: 'cfb2026-full-1104-plays', sport: 'ncaaf', season: 2026, at: Date.parse('2026-11-04T14:40:00Z'), plays: true }
 ];
 const ONE_OFF_KEY = 'queue_oneoff_v1';
@@ -5150,6 +5151,8 @@ async function handleGet({ request, env, waitUntil }) {
     // queue. This only forgets what has been walked, so the next pass tops the
     // season up with whatever Real has added since.
     const rescanned = await weeklyRescan(env);
+    // A one-off may have just cleared the set-aside list: read it again so this tick doesn't write the old one back.
+    try { stuck = JSON.parse((await env.RATEBOARD_KV.get(STUCK_KEY)) || '{}') || {}; } catch (e) {}
     if (!stuck.skip || typeof stuck.skip !== 'object') stuck.skip = {};
 
     const setAside = (sp, se, phase) => stuck.skip[`${sp}:${se}:${phase}`] === today;
