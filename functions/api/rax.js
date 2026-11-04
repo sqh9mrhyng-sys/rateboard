@@ -1915,6 +1915,8 @@ const ONE_OFF_RESCANS = [
   { id: 'cfb2026-full-1104', sport: 'ncaaf', season: 2026, at: Date.parse('2026-11-04T10:40:00Z'), walk: true, full: true },
   // The by-player tables were built before the catch-ups landed: drop them so they're built again.
   { id: 'glsnap-drop-1104', sport: 'ncaaf', season: 2026, at: Date.parse('2026-11-04T12:50:00Z'), snaps: ['ncaaf:2026', 'nfl:2026', 'ncaam:2027', 'nba:2027'] },
+  // Scans borrowed the collector's account for a while and got it rate-limited, so today's game-log walks were set aside: take them back.
+  { id: 'unstick-1104', sport: 'ncaam', season: 2027, at: Date.parse('2026-11-04T17:25:00Z'), unstick: true },
   { id: 'cfb2026-full-1104-plays', sport: 'ncaaf', season: 2026, at: Date.parse('2026-11-04T14:40:00Z'), plays: true }
 ];
 const ONE_OFF_KEY = 'queue_oneoff_v1';
@@ -1961,6 +1963,7 @@ async function weeklyRescan(env) {
     if (Date.now() < job.at || ran[job.id]) continue;
     if (job.walk) await forgetWalk(env, job.sport, job.season);
     for (const j of (job.snaps || [])) { try { await env.RATEBOARD_KV.delete(`glsnap_v1_${j}`); } catch (e) {} }
+    if (job.unstick) { try { const st = JSON.parse((await env.RATEBOARD_KV.get('queue_stuck_v1')) || '{}') || {}; st.skip = {}; st.tag = ''; st.n = 0; st.progress = null; await env.RATEBOARD_KV.put('queue_stuck_v1', JSON.stringify(st)); } catch (e) {} }
     if (job.full) {
       try { await env.RATEBOARD_KV.delete(`gl_through_${job.sport}_${job.season}`); } catch (e) {}
       try { await env.RATEBOARD_KV.put(`gl_window_${job.sport}_${job.season}`, JSON.stringify({ from: null, to: etYesterday(), at: Date.now() })); } catch (e) {}

@@ -1259,7 +1259,8 @@ async function scanWork(env, db, me, job, auth) {
      every call failed and waited for a retry on another account - 2 to 4
      minutes a scan. Calls now go round the three accounts in turn, and an
      account that gets a 429 is rested for 3 minutes (across scans). */
-  const toks = [...new Set([auth, ...scanToks(env)].filter(Boolean))];
+  // Not the collector's account: scans on it got it 429'd and stalled game data (2026-11-04).
+  const toks = [...new Set([auth, env.RS_MARKET_TOKEN].filter(x => typeof x === 'string' && x.length > 20))];
   let rr = Math.floor(Math.random() * toks.length);
   const pickTok = () => { for (let i = 0; i < toks.length; i++) { const t = toks[(rr + i) % toks.length]; if (!(TOK_COOL.get(t) > Date.now())) { rr = (rr + i + 1) % toks.length; return t; } }
     return toks[(rr++) % toks.length]; };
