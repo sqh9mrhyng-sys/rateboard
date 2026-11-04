@@ -1025,7 +1025,7 @@ function warnGrouped(items) {
   const head = "You are swapping the following players today, please buy the following packs within 30 mins. This is a heads up DM - the users you're swapping with in 30 mins:";
   const groups = new Map();
   for (const it of items) (groups.get(it.recvKey) || groups.set(it.recvKey, { recv: it.recv, lines: [] }).get(it.recvKey)).lines.push(it.buy);
-  if (groups.size <= 1) { const lines = items.map(x => x.buy); return [head + '\n' + lines.slice(0, LINES_PER_DM).join('\n'), ...chunks(lines.slice(LINES_PER_DM))].filter(Boolean); }
+  // Always labelled with the player received, even when it's just one (Dennis, 2026-11-04).
   const out = [head];
   for (const g of groups.values()) { const parts = chunks(g.lines); parts.forEach((c, i) => out.push((i ? `${g.recv} (cont.)` : `You are receiving ${g.recv}:`) + '\n' + c)); }
   return out;
@@ -1038,8 +1038,7 @@ function contactGrouped(items, buyItems) {
   const groups = new Map();
   for (const it of items) (groups.get(it.recvKey) || groups.set(it.recvKey, { recv: it.recv, lines: [] }).get(it.recvKey)).lines.push(it.contact);
   const out = [head];
-  if (groups.size <= 1) out.push(...chunks(items.map(x => x.contact)));
-  else for (const g of groups.values()) chunks(g.lines).forEach((c, i) => out.push((i ? `${g.recv} (cont.)` : `You are receiving ${g.recv}:`) + '\n' + c));
+  for (const g of groups.values()) chunks(g.lines).forEach((c, i) => out.push((i ? `${g.recv} (cont.)` : `You are receiving ${g.recv}:`) + '\n' + c));
   if (buyItems.length) chunks(buyItems.map(x => x.buy)).forEach((c, i) => out.push((i ? '' : 'Also buy these packs now:\n') + c));
   return out;
 }
