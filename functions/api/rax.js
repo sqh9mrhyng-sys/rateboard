@@ -7718,6 +7718,14 @@ async function collectorHealth(env, url) {
       const fails = ((await db.prepare("SELECT at, msg FROM bot_log WHERE kind IN ('scan','rescan','scan_bg') ORDER BY at DESC LIMIT 8").all()).results) || [];
       const dmFails = ((await db.prepare("SELECT at, kind, msg FROM bot_log WHERE kind LIKE 'dm_%' ORDER BY at DESC LIMIT 8").all()).results) || [];
       let dmq = null; try { dmq = await db.prepare('SELECT COUNT(*) AS n, MAX(tries) AS t FROM dm_retry').first(); } catch (e) {}
+      // Same pass given (or received) twice on one swap day, among swaps still on.
+      let dupes = null; try {
+        const ms = ((await db.prepare("SELECT a, b, aGets, bGets, dueAt FROM swap_matches WHERE status IN ('pending','sending','warned','sent') AND dueAt > ?").bind(Date.now() - 30 * 3600000).all()).results) || [];
+        const sd = ms2 => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms2 - 7 * 3600000));
+        const g = new Map(), r = new Map(), bump = (m, k) => m.set(k, (m.get(k) || 0) + 1);
+        for (const m of ms) { const d = sd(Number(m.dueAt)); bump(g, `${m.b}|${m.aGets}|${d}`); bump(g, `${m.a}|${m.bGets}|${d}`); bump(r, `${m.a}|${m.aGets}|${d}`); bump(r, `${m.b}|${m.bGets}|${d}`); }
+        dupes = { givenTwice: [...g.values()].filter(n => n > 1).length, receivedTwice: [...r.values()].filter(n => n > 1).length, swaps: ms.length };
+      } catch (e) { dupes = { error: String(e.message || e).slice(0, 80) }; }
       // Swaps by hour around now (no names): how many matches, how many sides warned / contacted.
       let hours = []; try { hours = ((await db.prepare(`SELECT dueAt, COUNT(*) AS matches, SUM(CASE WHEN warnA IS NOT NULL THEN 1 ELSE 0 END) + SUM(CASE WHEN warnB IS NOT NULL THEN 1 ELSE 0 END) AS warnedSides,
           SUM(CASE WHEN doneA IS NOT NULL THEN 1 ELSE 0 END) + SUM(CASE WHEN doneB IS NOT NULL THEN 1 ELSE 0 END) AS contactedSides, COUNT(DISTINCT a) + COUNT(DISTINCT b) AS people,
@@ -7725,7 +7733,7 @@ async function collectorHealth(env, url) {
           FROM swap_matches WHERE dueAt BETWEEN ? AND ? GROUP BY dueAt ORDER BY dueAt`).bind(Date.now() - 4 * 3600000, Date.now() + 6 * 3600000).all()).results || [])
           .map(h => ({ ...h, dueAt: new Date(h.dueAt).toISOString().slice(0, 16) })); } catch (e) {}
       const dms = ((await db.prepare("SELECT k, n FROM bot_stats WHERE day=? AND (k LIKE 'dm_%' OR k = 'fail')").bind(day).all()).results) || [];
-      return { today: Object.fromEntries(st.map(x => [x.k, x.n])), running: q && q.running, waiting: q && q.waiting, recent: await kvj('scan_perf_v1'), dmsToday: Object.fromEntries(dms.map(x => [x.k, x.n])), dmRetryQueue: dmq, swapHours: hours, dmFailures: dmFails.map(f => ({ at: new Date(f.at).toISOString().slice(11, 19), kind: f.kind, msg: String(f.msg || '').replace(/@[A-Za-z0-9._-]+/g, '@…').slice(0, 160) })),
+      return { today: Object.fromEntries(st.map(x => [x.k, x.n])), running: q && q.running, waiting: q && q.waiting, recent: await kvj('scan_perf_v1'), dmsToday: Object.fromEntries(dms.map(x => [x.k, x.n])), dmRetryQueue: dmq, swapHours: hours, dupes, dmFailures: dmFails.map(f => ({ at: new Date(f.at).toISOString().slice(11, 19), kind: f.kind, msg: String(f.msg || '').replace(/@[A-Za-z0-9._-]+/g, '@…').slice(0, 160) })),
         lastFailures: fails.map(f => ({ at: new Date(f.at).toISOString(), msg: String(f.msg || '').replace(/^[^:]{1,60}:\s*/, '') })) };
     } catch (e) { return { error: String(e.message || e).slice(0, 100) }; } })(),
     oneOffsRun: await kvj(ONE_OFF_KEY), marketAccount: { busyWithMarket: await marketBusy(env), lastGapHelp: await kvj('gap_push_last') }, budget: await jobOverBudget(env) ? 'over' : 'ok' }, null, 1);
