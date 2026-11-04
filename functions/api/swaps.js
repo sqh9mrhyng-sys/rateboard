@@ -493,8 +493,11 @@ async function runMatching(db) {
      already been told to buy it - they may well have bought the pack - so it
      isn't handed to them to give again (people were told to give the same
      card twice in one day). */
-  const offTold = ((await db.prepare(`SELECT a, b, aGets, bGets, slot, createdAt, dueAt, warnA, warnB, doneA, doneB FROM swap_matches WHERE createdAt > ? AND status IN ('cancelled','cancelling')
-      AND (warnA IS NOT NULL OR warnB IS NOT NULL OR doneA IS NOT NULL OR doneB IS NOT NULL)`).bind(Date.now() - 2 * 86400000).all()).results || []);
+  /* Once a pass has been scheduled to go out from someone, it's theirs for the
+     swap day (to 7am ET) whatever happens to that swap - called off, cleared,
+     anything (Dennis, 2026-11-04). So every swap made, in any state, counts. */
+  const offTold = ((await db.prepare(`SELECT a, b, aGets, bGets, slot, createdAt, dueAt FROM swap_matches WHERE createdAt > ? AND status NOT IN ('pending','sending','warned','sent')`)
+      .bind(Date.now() - 2 * 86400000).all()).results || []);
   const paired = new Set(), given = new Set(), count = new Map(), recv = new Map(), closed = new Set(), goalUsed = new Map();
   const bump = (m, k) => m.set(k, (m.get(k) || 0) + 1);
   for (const m of open) {
@@ -504,9 +507,7 @@ async function runMatching(db) {
     bump(recv, `${m.a}|${m.aGets}|${d}`); bump(recv, `${m.b}|${m.bGets}|${d}`);
     // Finished swaps are marked (followA/followB) but no longer close the swap day.
   }
-  for (const m of offTold) { const d = swapDay(sideDue(m));
-    if (m.warnB || m.doneB) given.add(`${m.b}|${m.aGets}|${d}`);
-    if (m.warnA || m.doneA) given.add(`${m.a}|${m.bGets}|${d}`); }
+  for (const m of offTold) { const d = swapDay(sideDue(m)); given.add(`${m.b}|${m.aGets}|${d}`); given.add(`${m.a}|${m.bGets}|${d}`); }
   // FC and UFC have no packs to swap, so neither is ever offered or matched.
   const swappable = k => !/^(soccer|ufc):/.test(k) && !seasonOff(k);
   // Up to 5 players each, in their order, and only passes they own: they buy cards for those.
@@ -1596,6 +1597,16 @@ export async function swapTick(env) {
     }
   } catch (e) {}
   try { await autoRescan(env, db, auth); } catch (e) { await botFail(db, 'rescan', e.message); }
+  // One-off (2026-11-04): swaps still to come, nobody warned yet, where the giver had already been
+  // scheduled to give that pass earlier in the swap day (in any swap, even a called-off one): called off quietly.
+  try { if (!(await env.RATEBOARD_KV.get('give_dupe_fix_1104'))) { await env.RATEBOARD_KV.put('give_dupe_fix_1104', '1');
+    const ms = ((await db.prepare("SELECT * FROM swap_matches WHERE createdAt > ? ORDER BY createdAt, id").bind(Date.now() - 2 * 86400000).all()).results) || [];
+    const seen = new Set(); let n = 0;
+    for (const m of ms) { const d = swapDay(sideDue(m)), ga = `${m.a}|${m.bGets}|${d}`, gb = `${m.b}|${m.aGets}|${d}`;
+      const live = ['pending', 'warned'].includes(m.status) && !m.warnA && !m.warnB && !m.doneA && !m.doneB && sideDue(m) > Date.now();
+      if (live && (seen.has(ga) || seen.has(gb))) { await db.prepare("UPDATE swap_matches SET status='cancelled', note='called off: pass already scheduled to go out today' WHERE id=?").bind(m.id).run(); n++; continue; }
+      seen.add(ga); seen.add(gb); }
+    await stat(db, 'give_dupe_fixed', n); } } catch (e) { await botFail(db, 'dupefix', e.message); }
   try { await retryDms(db, auth); } catch (e) { await botFail(db, 'dm_retry', e.message); }   // unsent parts first
   try { await db.prepare(DMV_DDL).run(); await db.prepare('DELETE FROM dm_verify').run(); } catch (e) {}   // second look off: drop anything still waiting
   try { await db.prepare(DMQ_DDL).run(); await db.prepare("DELETE FROM dm_retry WHERE label LIKE '%2nd look%'").run(); } catch (e) {}
