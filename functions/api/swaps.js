@@ -2017,6 +2017,41 @@ async function handle({ request, env, waitUntil }) {
       counts: Object.entries(c).sort((a, b) => a[0].localeCompare(b[0])) });
   }
 
+  /* Admin: every saved swapper - their picks (names from their own passes,
+     picked out in the database), hours, Scale limits, and a count of their
+     matches; ?user= adds that member's matches, newest first. */
+  if (op === 'swappers') {
+    await matchCols(db);
+    const rows = ((await db.prepare(`SELECT key, rsUser, wants, slots, dayCap, caps, scannedAt, updatedAt, active, hashId,
+        (SELECT json_group_array(json_object('key', w.value, 'name', (SELECT json_extract(p.value, '$.name') FROM json_each(swap_users.passes) p WHERE json_extract(p.value, '$.key') = w.value LIMIT 1)))
+           FROM json_each(swap_users.wants) w) AS picks
+        FROM swap_users WHERE wants IS NOT NULL AND wants <> '[]' ORDER BY updatedAt DESC LIMIT 500`).all()).results) || [];
+    const since = Date.now() - 14 * 86400000;
+    const cnt = ((await db.prepare(`SELECT k, SUM(CASE WHEN status IN ('pending','sending','warned') THEN 1 ELSE 0 END) AS open, COUNT(*) AS n FROM (
+        SELECT a AS k, status FROM swap_matches WHERE createdAt > ? AND status <> 'cleared' UNION ALL SELECT b AS k, status FROM swap_matches WHERE createdAt > ? AND status <> 'cleared') GROUP BY k`).bind(since, since).all()).results) || [];
+    const cm = new Map(cnt.map(x => [x.k, x]));
+    let restricted = new Set(); try { await db.prepare(RESTRICT_DDL).run(); restricted = new Set((((await db.prepare('SELECT key FROM restricted').all()).results) || []).map(x => x.key)); } catch (e) {}
+    const users = rows.map(r => ({ key: r.key, rsUser: r.rsUser || r.key, active: !!r.active, restricted: restricted.has(r.key), slots: parse(r.slots, []),
+      picks: parse(r.picks, []), dayCap: r.dayCap ?? null, caps: parse(r.caps, {}) || {}, scannedAt: r.scannedAt, updatedAt: r.updatedAt,
+      open: Number((cm.get(r.key) || {}).open) || 0, matches14: Number((cm.get(r.key) || {}).n) || 0 }));
+    let matches = null;
+    const who = String(url.searchParams.get('user') || '');
+    if (who) {
+      const ms = ((await db.prepare(`SELECT * FROM swap_matches WHERE (a=? OR b=?) AND createdAt > ? AND status <> 'cleared' ORDER BY COALESCE(dueAt, createdAt) DESC LIMIT 100`).bind(who, who, since).all()).results) || [];
+      const cache = new Map(), member = async k => cache.has(k) ? cache.get(k) : (cache.set(k, await loadMember(db, k)), cache.get(k));
+      const mine = await member(who);
+      matches = [];
+      for (const m of ms) {
+        const side = m.a === who ? 'A' : 'B', o = await member(side === 'A' ? m.b : m.a);
+        const give = side === 'A' ? m.bGets : m.aGets, get = side === 'A' ? m.aGets : m.bGets;
+        matches.push({ id: m.id, due: sideDue(m), status: m.status, note: m.note || null, partner: (o && o.rsUser) || (side === 'A' ? m.b : m.a),
+          give: mine ? playerName(mine, give) : give, get: mine ? playerName(mine, get) : get,
+          warned: !!m['warn' + side], contacted: !!m['done' + side], followed: !!m['follow' + side] });
+      }
+    }
+    return json({ users, matches });
+  }
+
   // Admin: who picked each hour (UTC), with their rank for it and their pick.
   if (op === 'hourusers') {
     // Just the name of their first pick, picked out in the database rather than shipping every pass.

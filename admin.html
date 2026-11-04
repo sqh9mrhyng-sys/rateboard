@@ -67,6 +67,7 @@
   .ib .who{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;font-size:13px}
   .ib textarea{width:100%;min-height:54px;margin-top:8px;font:inherit;padding:8px;border-radius:9px;border:1px solid var(--line);background:var(--panel2,#232b3d);color:inherit;box-sizing:border-box}
   .ib .acts2{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .su1{cursor:pointer} .su1 .sum-m{margin-top:8px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;cursor:default} .su1 .sm1{padding:5px 0;border-bottom:1px solid var(--line)} .su1 .sm1:last-child{border:0}
   .ucard{border-bottom:1px solid var(--line);padding:10px 2px}
   .ucard .top{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
   .ucard .top .acts{margin-left:auto;display:flex;gap:6px}
@@ -192,6 +193,13 @@
         <h2>Matches</h2>
         <div class="bar"><button id="sw-run">Run matching now</button><button id="sw-reload">Refresh</button><span class="note" id="sw-msg"></span></div>
         <div class="scroll" id="sw-matches">Loading…</div>
+      </section>
+      <section>
+        <h2>Swappers <span class="note" id="su-n"></span></h2>
+        <div class="bar"><input id="su-q" placeholder="Search username" autocomplete="off" style="flex:1 1 160px">
+          <select id="su-sort"><option value="open">Most open matches</option><option value="m14">Most matches (14 days)</option><option value="recent">Recently saved</option><option value="name">Username A-Z</option></select>
+          <label class="note"><input type="checkbox" id="su-act" checked> active only</label><button id="su-load" class="sm">Refresh</button></div>
+        <div id="su-list" class="note">Loading…</div>
       </section>
       <section>
         <h2>Pass scans</h2>
@@ -778,7 +786,38 @@ $('#pp-go').addEventListener('click', async () => {
     : (j.search ? 'No field with a name like pro, premium, subscription, plan, tier or badge.' : '');
   $('#pp-raw').textContent = JSON.stringify(j, null, 2);
 });
-function loadSwaps(){ loadMatches(); loadNamed(); loadEvery(); loadBot(); loadSwapReports(); loadHourUsers(); }
+/* ---------- swappers: each user's picks, hours, limits and matches ---------- */
+let suData = [], suOpen = null;
+const suSeason = k => { const [sp, se] = String(k || '').split(':'); return (SPORT[sp] || sp || '') + ' ' + (se || ''); };
+const suHour = h => { const off = -new Date().getTimezoneOffset() / 60, l = ((h + off) % 24 + 24) % 24; return `${(l % 12) || 12}${l < 12 ? 'am' : 'pm'}`; };
+function drawSwappers(){
+  const q = $('#su-q').value.trim().toLowerCase().replace(/^@/, ''), act = $('#su-act').checked, so = $('#su-sort').value;
+  let l = suData.filter(u => (!act || u.active) && (!q || String(u.rsUser).toLowerCase().includes(q) || String(u.key).toLowerCase().includes(q)));
+  const by = { open: (a, b) => b.open - a.open || b.matches14 - a.matches14, m14: (a, b) => b.matches14 - a.matches14, recent: (a, b) => (b.updatedAt || 0) - (a.updatedAt || 0), name: (a, b) => String(a.rsUser).localeCompare(String(b.rsUser)) }[so];
+  l.sort(by);
+  $('#su-n').textContent = `(${l.length} of ${suData.length})`;
+  $('#su-list').innerHTML = l.map(u => {
+    const lim = [u.dayCap ? `${u.dayCap}/day total` : ''].concat(Object.entries(u.caps || {}).map(([k, c]) => { const p = u.picks.find(x => x.key === k); return `${(p && p.name) || 'player'}: ${[c.n ? c.n + ' total' : '', c.d ? c.d + '/day' : ''].filter(Boolean).join(', ')}`; })).filter(Boolean);
+    return `<div class="ucard su1" data-su="${esc(u.key)}"><div class="top"><b>@${esc(u.rsUser)}</b>${u.rsUser.toLowerCase() !== String(u.key).toLowerCase() ? `<span class="note">board: ${esc(u.key)}</span>` : ''}
+        ${u.active ? '' : '<span class="pill">not saved</span>'}${u.restricted ? '<span class="pill off">no posts/swaps</span>' : ''}
+        <span class="note" style="margin-left:auto"><b>${u.open}</b> open · ${u.matches14} in 14 days</span></div>
+      <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">${u.picks.map((p, i) => `<span class="pill">${i + 1}. ${esc(p.name || 'player')} · ${esc(suSeason(p.key))}</span>`).join('')}</div>
+      <div class="note" style="margin-top:4px">Hours: ${u.slots.map(suHour).join(', ') || 'none'}${lim.length ? ' · Scale: ' + esc(lim.join(' · ')) : ''}</div>
+      ${suOpen === u.key ? '<div class="sum-m" data-sm>Loading matches…</div>' : ''}</div>`; }).join('') || 'Nobody.';
+}
+async function loadSwappers(){ const j = await api('/api/swaps?op=swappers'); if(j.error){ $('#su-list').textContent = j.error; return; } suData = j.users || []; drawSwappers(); }
+async function openSwapper(k){
+  suOpen = suOpen === k ? null : k; drawSwappers(); if(!suOpen) return;
+  const j = await api('/api/swaps?op=swappers&user=' + encodeURIComponent(k)), box = document.querySelector(`[data-su="${CSS.escape(k)}"] [data-sm]`); if(!box) return;
+  if(j.error){ box.textContent = j.error; return; }
+  const when = ms => new Date(ms).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const st = m => m.status === 'cancelled' ? '<span class="pill off">called off</span>' : m.followed ? '<span class="pill on">done</span>' : m.contacted ? '<span class="pill on">contacted</span>' : m.warned ? '<span class="pill">warned</span>' : '<span class="pill">scheduled</span>';
+  box.innerHTML = (j.matches || []).map(m => `<div class="sm1"><b>${esc(when(m.due))}</b> ${st(m)} with <b>@${esc(m.partner)}</b><br><span class="note">buys ${esc(m.give)} · gets ${esc(m.get)}${m.note ? ' · ' + esc(m.note) : ''}</span></div>`).join('') || '<span class="note">No matches in the last 14 days.</span>';
+}
+$('#su-list').addEventListener('click', e => { const c = e.target.closest('[data-su]'); if(c && !e.target.closest('[data-sm]')) openSwapper(c.dataset.su); });
+['#su-q', '#su-sort', '#su-act'].forEach(id => $(id).addEventListener(id === '#su-q' ? 'input' : 'change', drawSwappers));
+$('#su-load').addEventListener('click', loadSwappers);
+function loadSwaps(){ loadSwappers(); loadMatches(); loadNamed(); loadEvery(); loadBot(); loadSwapReports(); loadHourUsers(); }
 const everyLbl = m => m === 15 ? 'every 15 minutes' : 'every 3 hours';
 function drawEvery(m){ const b = $('#sw-every'); b.dataset.m = m;
   b.textContent = m === 15 ? 'Members: every 15 min · switch to 3 hours' : 'Members: every 3 hours · switch to 15 min'; }
