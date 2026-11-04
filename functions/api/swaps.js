@@ -896,8 +896,8 @@ function contactText(lines, buy) {
     ...chunks(lines), ...(buy && buy.length ? chunks(buy).map((c, i) => (i ? '' : 'Also buy these packs now:\n') + c) : [])];
 }
 async function loadMember(db, k) {
-  const u = await db.prepare('SELECT key, rsUser, hashId, passes, comment FROM swap_users WHERE key=?').bind(k).first();
-  return u ? { ...u, passes: parse(u.passes, []) } : null;
+  const u = await db.prepare('SELECT key, rsUser, hashId, passes, comment, wants FROM swap_users WHERE key=?').bind(k).first();
+  return u ? { ...u, passes: parse(u.passes, []), wants: parse(u.wants, []) } : null;
 }
 // The line for one side of a match. What they buy is the player their
 // PARTNER asked for, on their own pass of that player.
@@ -906,7 +906,9 @@ async function sideLines(member, m, side) {
   if (!o || !me) return null;
   const gets = side === 'A' ? m.bGets : m.aGets;
   return {
-    buy: `${playerUrl(gets) || playerName(me, gets)} ${String(gets).split(':')[1]} - ${passUrl(me, gets) || '(pass link not found)'} - you are receiving ${playerUrl(side === 'A' ? m.aGets : m.bGets) || playerName(me, side === 'A' ? m.aGets : m.bGets)}`,
+    // "you are receiving" only when they're swapping for more than one player - with one, they know who.
+    buy: `${playerUrl(gets) || playerName(me, gets)} ${String(gets).split(':')[1]} - ${passUrl(me, gets) || '(pass link not found)'}`
+      + ((me.wants || []).length > 1 ? ` - you are receiving ${playerUrl(side === 'A' ? m.aGets : m.bGets) || playerName(me, side === 'A' ? m.aGets : m.bGets)}` : ''),
     contact: `@${o.rsUser} - ${o.comment || '(no comment link)'} - ${playerUrl(gets) || playerName(me, gets)}`
   };
 }
