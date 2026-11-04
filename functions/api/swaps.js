@@ -1687,7 +1687,7 @@ const LEG_DAILY = [
   { name: 'Eric Weatherly', season: 2025, id: 505394 },
   { name: 'Sam Jackson V', season: 2025, id: 228721 },
   { name: 'Kiael Kelly', season: 2025, id: 220706 },
-  { name: 'Ball State team card', season: 2025, team: 'ball state', odds: 0.90, boost: 23.8 }
+  { name: 'Ball State team card', season: 2025, team: 'ball st', teamVia: 220706, odds: 0.90, boost: 23.8 }   // teamVia: a Ball State player, to find the team's id
 ];
 const LEG_WEEKLY = [
   { name: 'Michael Johnson Jr.', season: 2025, id: 570465 }, { name: 'Donovan Hamilton', season: 2025, id: 523814 },
@@ -2525,7 +2525,16 @@ async function handle({ request, env, waitUntil }) {
     }
     const u = await db.prepare('SELECT passes, scannedAt FROM swap_users WHERE key=?').bind(me).first();
     const ps = parse(u && u.passes, []).filter(p => p.sport === 'ncaaf');
-    const ownPass = x => x.team ? ps.find(p => p.kind === 'team' && Number(p.season) === x.season && new RegExp(x.team, 'i').test(String(p.name || '')))
+    // Team cards: the team's id from one of its players' plays (kept), so ownership goes by id, not by name.
+    const teamIds = {};
+    for (const x of LEG_DAILY.concat(LEG_WEEKLY).filter(x => x.teamVia)) {
+      const k = `legteam_${x.season}_${x.teamVia}`;
+      let tid = null; try { tid = Number(await env.RATEBOARD_KV.get(k)) || null; } catch (e) {}
+      if (!tid) { try { const r = await db.prepare('SELECT teamId FROM plays WHERE sport=? AND season=? AND playerId=? AND teamId IS NOT NULL GROUP BY teamId ORDER BY COUNT(*) DESC LIMIT 1').bind('ncaaf', x.season, x.teamVia).first();
+        tid = r && Number(r.teamId) || null; if (tid) await env.RATEBOARD_KV.put(k, String(tid)); } catch (e) {} }
+      teamIds[x.name] = tid;
+    }
+    const ownPass = x => x.team ? ps.find(p => p.kind === 'team' && Number(p.season) === x.season && ((teamIds[x.name] && Number(p.id) === teamIds[x.name]) || new RegExp(x.team.replace(' ', '\\s*'), 'i').test(String(p.name || ''))))
       : ps.find(p => p.kind !== 'team' && Number(p.season) === x.season && Number(p.id) === x.id);
     const owns = x => !!ownPass(x);
     const out = list => list.map(x => { const st = x.id && stats && stats.by[`${x.season}:${x.id}`];
@@ -2533,9 +2542,28 @@ async function handle({ request, env, waitUntil }) {
       const mine = ownPass(x);
       // The name opens their own card when they hold it (like the CBB list), else the player on Real.
       const card = mine && mine.passId ? `https://www.realapp.com/${routeId([18, 0, 0, Number(mine.passId)])}` : null;
-      return { name: x.name, season: x.season, team: !!x.team, link: card || (x.id ? playerUrl(`ncaaf:${x.season}:${x.id}`) : null), card: !!card,
+      // A team's page on Real: record type 3 (the type UFC fighters use), CFB code 11.
+      const teamPage = x.team && teamIds[x.name] ? `https://www.realapp.com/${routeId([3, 11, 0, teamIds[x.name]])}/${x.season}` : null;
+      return { name: x.name, season: x.season, team: !!x.team, link: card || teamPage || (x.id ? playerUrl(`ncaaf:${x.season}:${x.id}`) : null), card: !!card,
         playerLink: x.id ? playerUrl(`ncaaf:${x.season}:${x.id}`) : null, odds, boost, plays: st ? st.plays : null, owned: !!mine }; });
-    return json({ daily: out(LEG_DAILY), weekly: out(LEG_WEEKLY), at: stats && stats.at, scanned: !!(u && u.passes), scannedAt: (u && u.scannedAt) || null, admin: acc.admin });
+    /* Their own base rax: every CFB 2026 card they hold, total rax over total
+       games this season. Kept until their next scan. */
+    let myBase = null;
+    const myIds = [...new Set(ps.filter(p => p.kind !== 'team' && Number(p.season) === 2026).map(p => Number(p.id)).filter(Number.isFinite))];
+    if (myIds.length && u && u.scannedAt) {
+      const bk = `legbase_v1_${me}`;
+      try { const c = JSON.parse((await env.RATEBOARD_KV.get(bk)) || 'null'); if (c && c.scannedAt === u.scannedAt && Date.now() - c.at < 12 * 3600000) myBase = c.v; } catch (e) {}
+      if (!myBase) {
+        let rax = 0, games = 0;
+        for (let i = 0; i < myIds.length; i += 90) { const part = myIds.slice(i, i + 90);
+          try { const r = await db.prepare(`SELECT SUM(rax) AS r, COUNT(*) AS g FROM gamelog WHERE sport='ncaaf' AND season=2026 AND rax IS NOT NULL AND playerId IN (${part.map(() => '?').join(',')})`).bind(...part).first();
+            rax += Number(r && r.r) || 0; games += Number(r && r.g) || 0; } catch (e) {} }
+        myBase = games ? { rax, games, players: myIds.length, avg: Math.round(rax / games * 10) / 10 } : null;
+        try { await env.RATEBOARD_KV.put(bk, JSON.stringify({ at: Date.now(), scannedAt: u.scannedAt, v: myBase }), { expirationTtl: 86400 }); } catch (e) {}
+      }
+    }
+    const weekly = out(LEG_WEEKLY).sort((a, b) => (b.odds ?? -1) - (a.odds ?? -1));   // highest leg odds first
+    return json({ daily: out(LEG_DAILY), weekly, myBase, at: stats && stats.at, scanned: !!(u && u.passes), scannedAt: (u && u.scannedAt) || null, admin: acc.admin });
   }
 
   /* Resell / replacements (CBB 2026-27). Their CBB cards, worst rax a game
@@ -2821,7 +2849,8 @@ async function handle({ request, env, waitUntil }) {
        of the Legendaries held go out in a week (one slate a week in college football). */
     const cfbBal = sp === 'ncaaf' && mode === 'balanced';
     if (cfbBal) R.cap = 0.7;
-    const legBar = cfbBal ? 27.5 : R.leg * scale, epicBar = cfbBal ? 26 : R.epic * scale, rareFloor = 5, cutAt = null;
+    // CFB: no Rare under 10 projected rax, on any setting.
+    const legBar = cfbBal ? 27.5 : R.leg * scale, epicBar = cfbBal ? 26 : R.epic * scale, rareFloor = sp === 'ncaaf' ? 10 : 5, cutAt = null;
     bars.splice(0, 3, Math.round(legBar * 10) / 10, Math.round(epicBar * 10) / 10, rareFloor);
     const held = r => inv ? inv.filter(b => b.rarity === r).reduce((t, b) => t + b.count, 0) : 0;
     const dayCap = { 5: held(5) ? Math.max(1, Math.floor(held(5) * R.cap)) : 0, 4: Infinity, 3: Infinity };

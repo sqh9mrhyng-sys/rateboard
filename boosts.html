@@ -168,7 +168,7 @@
 })();
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const api = async u => { try{ const r = await fetch(u); const j = await r.json().catch(() => ({})); if(!r.ok && !j.error) j.error = 'Error ' + r.status; return j; }catch(e){ return { error: 'Could not reach the board.' }; } };
+const api = async (u, o) => { try{ const r = await fetch(u, o); const j = await r.json().catch(() => ({})); if(!r.ok && !j.error) j.error = 'Error ' + r.status; return j; }catch(e){ return { error: 'Could not reach the board.' }; } };
 function hashidsEncode(salt, minLength, numbers){
   const ALPHA0 = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890';
   const SEPS0  = 'cfhistuCFHISTU';
@@ -302,7 +302,8 @@ $('#sport').addEventListener('change', drawDays);
 // CFB Balanced has its own bars (one slate a week).
 const drawMode = () => { const m = $('#mode').value;
   $('#modenote').textContent = $('#sport').value === 'ncaaf' && m === 'balanced'
-    ? 'Balanced (CFB): Legendary for 27.5+ projected rax (up to 70% of your Legendaries in a week), Epic for 26+, Rare for anyone at 5+.' : MODE_NOTE[m]; };
+    ? 'Balanced (CFB): Legendary for 27.5+ projected rax (up to 70% of your Legendaries in a week), Epic for 26+, Rare for anyone at 10+.'
+    : $('#sport').value === 'ncaaf' ? MODE_NOTE[m].replace('Rare for anyone at 5+', 'Rare for anyone at 10+') : MODE_NOTE[m]; };
 $('#sport').addEventListener('change', () => drawMode());
 $('#mode').addEventListener('change', () => { drawMode(); if(!$('#out').hidden) run(); });
 drawMode();
@@ -329,7 +330,7 @@ $('#subseg').addEventListener('click', e => { const b = e.target.closest('[data-
 // "Don't sell" / "Allow selling" on a card, then the list is worked out again.
 document.addEventListener('click', async e => { const b = e.target.closest('[data-nosell]'); if(!b) return; b.disabled = true;
   const j = await api('/api/swaps?op=nosell&page=boosts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: b.dataset.nosell, on: b.dataset.on === '1' }) });
-  if(j.error){ b.disabled = false; return; }
+  if(j.error){ b.disabled = false; b.textContent = j.error; return; }
   delete rsData[$('#sport').value === 'ncaaf' ? 'ncaaf' : 'ncaam']; loadResell(); });
 // --- Resell / replacements (CBB)
 const rsData = {};
@@ -411,11 +412,16 @@ function drawLegs(){
     let rows = '';
     if(legOpen === k && x.boost){
       rows = '<div class="pt"><div class="h">Base rax</div><div class="h">Payout</div><div class="h">Profit</div>';
-      for(let b = 40; b >= 4; b -= 4){ const pay = b * x.boost, pr = pay - 200;
-        rows += `<div>${b}</div><div>${Math.round(pay).toLocaleString()}</div><div style="color:${pr >= 0 ? 'var(--ok)' : 'var(--bad)'};font-weight:700">${pr >= 0 ? '+' : ''}${Math.round(pr).toLocaleString()}</div>`; }
+      // Their own average (all their CFB 2026 cards' rax over their games) slots in among the tiers.
+      const my = j.myBase && j.myBase.avg, tiers = [40, 36, 32, 28, 24, 20, 16, 12, 8, 4].map(b => [b, false]);
+      if(my) tiers.push([my, true]);
+      tiers.sort((a, b) => b[0] - a[0] || (b[1] - a[1]));
+      for(const [b, mine] of tiers){ const pay = b * x.boost, pr = pay - 200, st = mine ? ' style="background:rgba(232,163,61,.14);font-weight:800"' : '';
+        rows += `<div${st}>${mine ? `Your avg ${b}` : b}</div><div${st}>${Math.round(pay).toLocaleString()}</div><div${st}><span style="color:${pr >= 0 ? 'var(--ok)' : 'var(--bad)'};font-weight:700">${pr >= 0 ? '+' : ''}${Math.round(pr).toLocaleString()}</span></div>`; }
+      if(my) rows += `<div style="grid-column:1 / -1;color:var(--mute);font-size:11.5px">Your avg: ${j.myBase.rax.toLocaleString()} rax over ${j.myBase.games.toLocaleString()} games from your ${j.myBase.players} CFB 2026 cards (last scan).</div>`;
       rows += '</div>';
     }
-    return `<div class="leg1"><div class="hd" data-leg="${k}" role="button" tabindex="0"><div class="nm"><b>${x.link ? `<a href="${esc(x.link)}" target="_blank" rel="noopener">${esc(x.name)}</a>` : esc(x.name)}</b><span class="sub">CFB ${CFB_SEASON(x.season)}${x.owned ? ' · <b style="color:var(--ok)">Owned</b>' + (x.card ? ' - name opens your card' : '') : ''}${x.card && x.playerLink ? ` · <a href="${esc(x.playerLink)}" target="_blank" rel="noopener">player</a>` : ''}</span></div>`
+    return `<div class="leg1"><div class="hd" data-leg="${k}" role="button" tabindex="0"><div class="nm"><b>${x.link ? `<a href="${esc(x.link)}" target="_blank" rel="noopener">${esc(x.name)}</a>` : esc(x.name)}</b><span class="sub">CFB ${CFB_SEASON(x.season)}${x.owned ? ' · <b style="color:var(--ok)">Owned</b>' + (x.card ? ' - name opens your card' : '') : j.scanned ? ' · <span style="color:var(--mute)">Not owned</span>' : ''}${x.card && x.playerLink ? ` · <a href="${esc(x.playerLink)}" target="_blank" rel="noopener">player</a>` : ''}</span></div>`
       + `<div class="v"><small>Leg odds</small>${x.odds == null ? '-' : (x.odds * 100).toFixed(1) + '%'}</div>`
       + `<div class="v"><small>Avg boost</small>${x.boost == null ? '-' : f2(x.boost) + 'x'}</div>`
       + `<div class="v"><small>Base rax to profit</small>${need == null ? '-' : f2(need)}</div>`
