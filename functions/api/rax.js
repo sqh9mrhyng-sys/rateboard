@@ -1855,7 +1855,10 @@ const seasonTypeSql = sp => seasonTypesFor(sp).map(x => `'${x}'`).join(',');
 const COLLECT_PAUSE_UNTIL = 0;   // back on 2026-11-02: change-only writes, held to the daily job budget (lib/dbwatch.js). Set a future Date.parse(...) to pause again.
 
 // NBA 2026-27 has started: its game log is built ahead of everything else.
-const EXTRA_JOBS = [['nba', 2027], ['ufc', 2023], ['ncaam', 2027]];
+// NFL 2026 first: a week of NFL is small, and behind CBB's daily sweep (a
+// whole Division I season) it was never reached - Sunday's games were missed
+// and NFL Boosts had nothing to go on (2026-11-03).
+const EXTRA_JOBS = [['nfl', 2026], ['nba', 2027], ['ufc', 2023], ['ncaam', 2027]];
 
 /* Game-data sweeps, on a set schedule at 9am Eastern. On a sweep day the
    season's walk is forgotten, so the queue re-walks it and picks up every game
@@ -1882,7 +1885,10 @@ const ONE_OFF_RESCANS = [
   { id: 'mlb2026-final-plays', sport: 'mlb', season: 2026, at: Date.parse('2026-10-30T16:00:00Z'), plays: true },
   // WNBA 2026's last sweep: 9am Eastern on Sunday 1 November (EST by then).
   { id: 'wnba2026-final', sport: 'wnba', season: 2026, at: Date.parse('2026-11-01T14:00:00Z'), walk: true },
-  { id: 'wnba2026-final-plays', sport: 'wnba', season: 2026, at: Date.parse('2026-11-01T16:00:00Z'), plays: true }
+  { id: 'wnba2026-final-plays', sport: 'wnba', season: 2026, at: Date.parse('2026-11-01T16:00:00Z'), plays: true },
+  // NFL 2026 catch-up: Sunday 1 November was never pulled. Re-walk now, plays two hours later.
+  { id: 'nfl2026-catchup-1103', sport: 'nfl', season: 2026, at: Date.parse('2026-11-04T05:30:00Z'), walk: true },
+  { id: 'nfl2026-catchup-1103-plays', sport: 'nfl', season: 2026, at: Date.parse('2026-11-04T07:30:00Z'), plays: true }
 ];
 const ONE_OFF_KEY = 'queue_oneoff_v1';
 const PLAYS_DUE_KEY = 'plays_due_v1';
@@ -5151,7 +5157,7 @@ async function handleGet({ request, env, waitUntil }) {
       const key = `${sp}:${se}`;
       /* Sports being rescanned flat out, with no rest going into, between or
          out of their seasons. Empty this set again once the rescan is done. */
-      const NO_REST = new Set(['nhl']);
+      const NO_REST = new Set(['nhl', 'nfl']);   // nfl: small, and Boosts needs it fresh after each NFL day
       const prevSp = String(pace.lastJob || '').split(':')[0];
       if (pace.lastJob && pace.lastJob !== key && (NO_REST.has(sp) || NO_REST.has(prevSp))) {
         try { await env.RATEBOARD_KV.put(PACE_KEY, JSON.stringify({ lastJob: key, holdUntil: 0 })); } catch (e) {}
