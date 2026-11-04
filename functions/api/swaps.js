@@ -2589,13 +2589,16 @@ async function handle({ request, env, waitUntil }) {
     const mine = parse(u.passes, []).filter(p => p.sport === SP && Number(p.season) === SEASON && p.kind !== 'team');
     const sells = mine.length >= CFG.sellMin;
     // Every CBB player's rax a game this season and last (one grouped read each, kept 30 minutes).
-    const rkey = 'resell_rpg_v3_' + SP;
+    const rkey = 'resell_rpg_v4_' + SP;
     let R = null; try { R = JSON.parse((await env.RATEBOARD_KV.get(rkey)) || 'null'); } catch (e) {}
     if (!R || Date.now() - R.at > 30 * 60000) {
       const grab = async se => ((await db.prepare(`SELECT playerId AS id, MAX(player) AS n, MAX(team) AS t, MAX(position) AS pos, COUNT(*) AS g, SUM(rax) AS r, MAX(rax) AS mx,
           SUM(CASE WHEN rax >= ? THEN 1 ELSE 0 END) AS hit, ROUND(AVG(min), 1) AS m
-        FROM gamelog WHERE sport=? AND season=? AND rax IS NOT NULL AND seasonType='regularseason' GROUP BY playerId`).bind(CFG.HIT, SP, se).all()).results) || [];
-      R = { at: Date.now(), cur: await grab(SEASON), prev: await grab(PREV) };
+        FROM gamelog WHERE sport=? AND season=? AND rax IS NOT NULL AND seasonType IN ('regularseason','postseason') GROUP BY playerId`).bind(CFG.HIT, SP, se).all()).results) || [];
+      // Games each team has played this season (regular season, then postseason apart), from every game in the log.
+      const tg = ((await db.prepare(`SELECT team AS t, SUM(CASE WHEN seasonType='regularseason' THEN 1 ELSE 0 END) AS reg, SUM(CASE WHEN seasonType='postseason' THEN 1 ELSE 0 END) AS post
+          FROM (SELECT DISTINCT team, gameId, seasonType FROM gamelog WHERE sport=? AND season=? AND team IS NOT NULL) GROUP BY team`).bind(SP, SEASON).all()).results) || [];
+      R = { at: Date.now(), cur: await grab(SEASON), prev: await grab(PREV), teams: tg };
       try { await env.RATEBOARD_KV.put(rkey, JSON.stringify(R), { expirationTtl: 3600 }); } catch (e) {}
     }
     const cur = new Map(R.cur.map(x => [Number(x.id), x])), prev = new Map(R.prev.map(x => [Number(x.id), x]));
@@ -2618,13 +2621,20 @@ async function handle({ request, env, waitUntil }) {
       if (o && o.g >= 10) return { rpg: o.r / o.g, games: 0, basis: 'last season' };
       return null; };
     const played = id => (cur.get(id) || {}).g || 0;
+    /* Games left go by his team, not by how many he played (a game he sat out
+       still counts as gone): the regular season left, and once a team is in
+       the postseason (bowl, CFP, March) those games are counted as they're played. */
+    const teamG = new Map((R.teams || []).map(x => [x.t, x]));
+    const teamOf = id => (cur.get(id) || {}).t || null;
+    const left = id => { const t = teamG.get(teamOf(id)); return t ? (Number(t.post) > 0 ? 0 : Math.max(0, SEASON_GAMES - Number(t.reg))) : Math.max(0, SEASON_GAMES - played(id)); };
+    const teamPlayed = id => { const t = teamG.get(teamOf(id)); return t ? Number(t.reg) + Number(t.post) : null; };
     const owned = new Set(mine.map(p => Number(p.id)));
     const cards = mine.map(p => { const id = Number(p.id), r = rate(id), nm = p.name || (SP === 'ncaam' && CBB_TOP175[id] && CBB_TOP175[id][3]) || (cur.get(id) || prev.get(id) || {}).n || 'Player ' + id;
       const earned = Number(p.earned) || 0, isOut = out[boostName(nm)] || null;
       return { id, name: nm, team: (cur.get(id) || prev.get(id) || {}).t || (SP === 'ncaam' && CBB_TOP175[id] && CBB_TOP175[id][1]) || null, link: playerUrl(`${SP}:${SEASON}:${id}`),
         card: p.passId ? `https://www.realapp.com/${routeId([18, 0, 0, Number(p.passId)])}` : null,
         rpg: r ? Math.round(r.rpg * 10) / 10 : null, basis: r ? r.basis : 'no games yet', played: played(id),
-        left: isOut ? 0 : Math.max(0, SEASON_GAMES - played(id)), earned, sellCost: Math.max(0, earned - 100), out: isOut, noSell: noSell.has(String(id)) }; })
+        left: isOut ? 0 : left(id), teamPlayed: teamPlayed(id), earned, sellCost: Math.max(0, earned - 100), out: isOut, noSell: noSell.has(String(id)) }; })
       .sort((a, b) => (b.out ? 1 : 0) - (a.out ? 1 : 0) || (a.rpg ?? -1) - (b.rpg ?? -1));
     /* Consistency: his average with his best game left out (one huge game can't
        carry it), and how often he clears a good game (CFB 20+, CBB 10+). Buys
@@ -2647,9 +2657,9 @@ async function handle({ request, env, waitUntil }) {
     const thisSeasonEnough = pool.some(x => x.basis === 'this season');
     const reps = pool.filter(x => !thisSeasonEnough || x.basis === 'this season').sort((a, b) => b.score - a.score).slice(0, 15)
       .map(x => ({ ...x, pos: (cur.get(x.id) || prev.get(x.id) || {}).pos || null, rpg: Math.round(x.rpg * 10) / 10, avg: Math.round(x.avg * 10) / 10,
-        hitPct: Math.round(x.hitRate * 100), score: Math.round(x.score * 10) / 10, left: Math.max(0, SEASON_GAMES - played(x.id)), link: playerUrl(`${SP}:${SEASON}:${x.id}`),
+        hitPct: Math.round(x.hitRate * 100), score: Math.round(x.score * 10) / 10, left: left(x.id), teamPlayed: teamPlayed(x.id), link: playerUrl(`${SP}:${SEASON}:${x.id}`),
         // A straight buy: his rax over his games left x the booster, less the 200 pack.
-        buy: MULTS.map(([k, m]) => ({ booster: k, mult: m, profit: Math.round(Math.max(0, SEASON_GAMES - played(x.id)) * x.rpg * m - PACK) })) }));
+        buy: MULTS.map(([k, m]) => ({ booster: k, mult: m, profit: Math.round(left(x.id) * x.rpg * m - PACK) })) }));
     // For each of their worst 10: the best replacement, and swap vs keep per booster over the games left.
     // Worst card gets the best replacement, the next worst the next one, so no one is suggested twice.
     const plans = (sells ? cards.filter(c => !c.noSell) : []).slice(0, 10).map((c, i) => {
