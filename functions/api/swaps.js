@@ -495,8 +495,8 @@ async function runMatching(db) {
     given.add(`${m.b}|${m.aGets}|${d}`); given.add(`${m.a}|${m.bGets}|${d}`);     // B gave aGets, A gave bGets: each pass goes out once a swap day
     bump(count, `${m.a}|${d}`); bump(count, `${m.b}|${d}`);
     bump(recv, `${m.a}|${m.aGets}|${d}`); bump(recv, `${m.b}|${m.bGets}|${d}`);
-    // Anyone whose follow-up has gone out has finished that swap day (5 DMs at most).
-    if (m.followA) closed.add(`${m.a}|${d}`); if (m.followB) closed.add(`${m.b}|${d}`);
+    // Finished swaps are marked (followA/followB) but no longer close the swap day.
+    // (A finished swap day no longer closes them to more matches - the follow-up is gone.)
   }
   // FC and UFC have no packs to swap, so neither is ever offered or matched.
   const swappable = k => !/^(soccer|ufc):/.test(k) && !seasonOff(k);
@@ -1039,8 +1039,8 @@ async function runDms(env, db, auth, rows, max, force) {
     }
     // 5. follow-up, 90 min after their last swap hour, once every contact is out.
     if (sent < max && list.every(x => x.m['done' + x.side]) && list.some(x => !x.m['follow' + x.side]) && (force || now >= last + 90 * 60000)) {
-      const fl = await claim(list.filter(x => !x.m['follow' + x.side]), 'follow');
-      if (fl.length && !(await send(who, FOLLOW_TEXT, 'follow'))) await unclaim(fl, 'follow');
+      // The follow-up DM is off (Dennis, 2026-11-04): the swaps are just marked finished, nothing is sent.
+      await claim(list.filter(x => !x.m['follow' + x.side]), 'follow');
     }
   }
   // Status: sent once both sides have had the follow-up.
