@@ -1551,14 +1551,18 @@ async function feedbackDms2(env, db, auth) {
     await stat(db, 'feedback2_queued', who.size);
   }
   if (dmWindow()) return;
+  // One more try, 10 minutes on, for anyone whose message Real's slowmode refused.
+  try { await db.prepare('UPDATE bot_once SET at=NULL, ok=-1 WHERE campaign=? AND ok=0 AND at < ?').bind(C, Date.now() - 10 * 60000).run(); } catch (e) {}
   const due = ((await db.prepare('SELECT key FROM bot_once WHERE campaign=? AND at IS NULL LIMIT 5').bind(C).all()).results) || [];
   for (const { key } of due) {
     const c = await db.prepare('UPDATE bot_once SET at=? WHERE campaign=? AND key=? AND at IS NULL').bind(Date.now(), C, key).run();
     if (!(c && c.meta && c.meta.changes)) continue;
     const u = await loadMember(db, key);
     let ok = 0;
+    const was = await db.prepare('SELECT ok FROM bot_once WHERE campaign=? AND key=?').bind(C, key).first();
     try { if (u && u.hashId) { const ch = await dmChannel(db, auth, u.hashId, u.rsUser, env); await dmSendRetry(auth, ch, FEEDBACK2_TEXT); ok = 1; await stat(db, 'dm_feedback2'); } }
     catch (e) { await botFail(db, 'dm_feedback', `${key}: ${e.message || e}`); }
+    if (!ok && was && Number(was.ok) === -1) ok = -2;      // second miss: left alone
     await db.prepare('UPDATE bot_once SET ok=? WHERE campaign=? AND key=?').bind(ok, C, key).run();
     await sleep(1500);
   }
