@@ -360,7 +360,8 @@ async function loadResell(){
   }
   const out = j.cards.filter(c => c.out);
   $('#rslist').innerHTML = (out.length ? `<div class="rs1" style="border-color:var(--bad)"><b style="color:var(--bad)">Out for the season</b>${out.map(c => `<div class="note" style="margin-top:4px">${lk(c.name, c.card || c.link)} · ${esc(c.out)}</div>`).join('')}</div>` : '')
-    + j.plans.map(c => { const r = c.replaceWith, rep = c.verdict === 'replace';
+    // Only cards worth replacing are shown; a keep is just left off the page.
+    + j.plans.filter(c => c.verdict === 'replace').map(c => { const r = c.replaceWith, rep = c.verdict === 'replace';
       return `<div class="rs1"><div class="hd"><b>${lk(c.name, c.card || c.link)}</b><span class="note">${esc(c.team || '')}</span>${c.out ? '<span class="b none" style="background:var(--bad);color:#10131b">OUT FOR SEASON</span>' : ''}
           <span class="vd" style="color:${rep ? 'var(--ok)' : 'var(--mute)'}">${rep ? 'Replace' : esc(c.verdict)}</span></div>
         <div class="two"><div><span class="sub">Your card</span><b>${c.rpg ?? '-'}</b> rax/game · ${c.played} played${c.teamPlayed != null ? ` (team ${c.teamPlayed})` : ''} · ${c.left} left<br><span class="note">${esc(c.basis)} · made ${n(c.earned)} · resell costs <b>${n(c.sellCost)}</b></span></div>
