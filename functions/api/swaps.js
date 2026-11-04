@@ -333,7 +333,7 @@ async function runMatching(db) {
   const users = ((await db.prepare(`SELECT * FROM swap_users WHERE active=1 AND passes IS NOT NULL
       AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`).all()).results || [])
     .map(u => ({ ...u, wants: parse(u.wants, []), keep: new Set(parse(u.keep, [])), slots: parse(u.slots, []),
-                 passes: parse(u.passes, []) }));
+                 passes: parse(u.passes, []), caps: parse(u.caps, {}) || {} }));
   /* A member can be in any number of swaps a swap day, with anyone, the same
      partner again (even in the same hour) included. Each specific pass
      (player + season) a member gives goes out once a swap day: they hold one
@@ -360,10 +360,14 @@ async function runMatching(db) {
   for (const u of users) for (const w of u.wants) {
     let left = Infinity;
     try { const g = await goalRoom(db, cache, u, (x, ww) => usedSince(db, x, ww), w); if (g.limited) left = g.left; } catch (e) {}
+    // Scale: their own cap for this player, overall since they set it.
+    const c = u.caps[w];
+    if (c && Number(c.n) > 0) { try { left = Math.min(left, Math.max(0, Number(c.n) - await usedFor(db, u.key, w, c.at))); } catch (e) {} }
     goalLeft.set(`${u.key}|${w}`, left);
   }
   // No daily cap and no limit per partner: two members swap as often as they have compatible picks.
-  const roomFor = (k, d) => !closed.has(`${k}|${d}`);
+  const dayCap = new Map(users.filter(u => Number(u.dayCap) > 0).map(u => [u.key, Number(u.dayCap)]));
+  const roomFor = (k, d) => !closed.has(`${k}|${d}`) && (count.get(`${k}|${d}`) || 0) < (dayCap.get(k) ?? Infinity);   // Scale: their swaps-a-day, if set
   const goalOk = (k, w) => (goalLeft.get(`${k}|${w}`) ?? Infinity) > 0;
   const gives = (u, d) => new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !given.has(`${u.key}|${k}|${d}`)));
   /* Every possible pair and shared hour, best first: an hour someone picked
@@ -389,6 +393,7 @@ async function runMatching(db) {
     if (!roomFor(A.key, d) || !roomFor(B.key, d)) continue;
     // The same two can swap again, even in the same hour, while each still has a pass the other wants.
     for (;;) {
+    if (!roomFor(A.key, d) || !roomFor(B.key, d)) break;
     // The best pair of picks that works both ways (earlier picks first). The
     // exact same pass both ways is no swap; the same player in two seasons is fine.
     const gB = gives(B, d), gA = gives(A, d);
@@ -759,6 +764,15 @@ async function matchCols(db) {
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN comment TEXT'); } catch (e) {}
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN goal REAL'); } catch (e) {}
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN autoAt INTEGER'); } catch (e) {}
+  // Scale: dayCap = most swaps a swap day (all players); caps = { passKey: { n, at } }, most swaps for that player overall, counted from when it was set.
+  try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN dayCap INTEGER'); } catch (e) {}
+  try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN caps TEXT'); } catch (e) {}
+}
+// Swaps a member has had for one player since a moment (made, not called off).
+async function usedFor(db, key, want, since) {
+  const r = await db.prepare(`SELECT COUNT(*) AS n FROM swap_matches WHERE createdAt > ? AND status IN ('pending','sending','warned','sent')
+    AND ((a=? AND aGets=?) OR (b=? AND bGets=?))`).bind(Number(since) || 0, key, want, key, want).first();
+  return Number(r && r.n) || 0;
 }
 // When a match's swap hour comes: the next time that UTC hour starts, an
 // hour or more after it was made.
@@ -1746,6 +1760,12 @@ async function handle({ request, env, waitUntil }) {
       else if (g.limited && g.left <= 0) why.push(`You already have the ${g.need} swap${g.need === 1 ? '' : 's'} it should take to reach your goal (about ${g.avg} rating a pack). New ones start after your next daily scan.`);
     }
     const open = await db.prepare(`SELECT COUNT(*) AS n FROM swap_matches WHERE (a=? OR b=?) AND (status IN ('pending','sending','warned') OR (status='sent' AND sentAt > ?))`).bind(me, me, Date.now() - 86400000).first();
+    if (u && Number(u.dayCap) > 0 && Number(open && open.n) >= Number(u.dayCap)) why.push(`You have ${open.n} swap${open.n == 1 ? '' : 's'} going - your Scale limit is ${u.dayCap} a day (step 6). Raise it for more.`);
+    if (u && wantsAll.length) {
+      const caps = parse(u.caps, {}) || {}, full = [];
+      for (const w of wantsAll) { const c = caps[w]; if (c && Number(c.n) > 0 && await usedFor(db, me, w, c.at) >= Number(c.n)) full.push(w); }
+      if (full.length && full.length === wantsAll.length) why.push(`Every player you picked has reached your Scale limit for him (step 6). Raise a limit or pick another player.`);
+    }
     // Who could swap with them.
     let can = 0, hour = 0, both = 0;
     if (u && want && !why.length) {
@@ -1956,7 +1976,7 @@ async function handle({ request, env, waitUntil }) {
         connected = !!(await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=? AND channelId IS NOT NULL').bind(u.hashId).first()); } catch (e) {}
     }
     return json({ key: me, admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
-      keep: parse(u.keep, []), slots: parse(u.slots, []), passes: parse(u.passes, []), scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null } : null, real: await realName(db, me) });
+      keep: parse(u.keep, []), slots: parse(u.slots, []), passes: parse(u.passes, []), scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {} } : null, real: await realName(db, me) });
   }
 
   // A tick in the passes list saves at once: the passes they won't give.
@@ -1985,10 +2005,24 @@ async function handle({ request, env, waitUntil }) {
     const goal = b.goal === '' || b.goal == null ? null : Number(b.goal);
     if (goal != null && !(goal > 0 && goal < 100000)) return json({ error: 'Goal rating has to be a number.' }, 400);
     await matchCols(db);
+    // Scale (optional): swaps a day, and swaps per player overall.
+    const dayCap = b.dayCap === '' || b.dayCap == null ? null : Number(b.dayCap);
+    if (dayCap != null && !(Number.isInteger(dayCap) && dayCap >= 1 && dayCap <= 999)) return json({ error: 'Swaps a day has to be a whole number, 1 or more.' }, 400);
+    const oldCaps = parse((await db.prepare('SELECT caps FROM swap_users WHERE key=?').bind(me).first() || {}).caps, {}) || {};
+    const caps = {};
+    for (const w of wants) {
+      const v = b.caps && b.caps[w];
+      if (v === '' || v == null) continue;
+      const n = Number(v);
+      if (!(Number.isInteger(n) && n >= 1 && n <= 999)) return json({ error: 'Swaps per player has to be a whole number, 1 or more.' }, 400);
+      // The count starts when the number is set; saving it again unchanged keeps the count going.
+      caps[w] = { n, at: oldCaps[w] && Number(oldCaps[w].n) === n ? oldCaps[w].at : Date.now() };
+    }
     await db.prepare(`INSERT INTO swap_users (key, rsUser, wants, keep, slots, updatedAt, active, comment, goal) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
       ON CONFLICT(key) DO UPDATE SET rsUser=excluded.rsUser, wants=excluded.wants, keep=excluded.keep,
         slots=excluded.slots, updatedAt=excluded.updatedAt, active=1, comment=excluded.comment, goal=excluded.goal`)
       .bind(me, rsUser, JSON.stringify(wants), JSON.stringify(keep), JSON.stringify(slots), Date.now(), comment.slice(0, 300), goal).run();
+    await db.prepare('UPDATE swap_users SET dayCap=?, caps=? WHERE key=?').bind(dayCap, JSON.stringify(caps), me).run();
     try { await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); await env.RATEBOARD_KV.delete('swap_wantcounts_v1'); } catch (e) {}
     try { await cancelKept(db, me, new Set(keep)); } catch (e) {}
     return json({ ok: true, wants, keep: keep.length, slots });
