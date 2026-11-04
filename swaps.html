@@ -437,11 +437,14 @@ $('#scan').addEventListener('click', async () => {
   $('#scan').disabled = false;
   if(j.error){ $('#scanmsg').textContent = j.error; return; }
   prof.rsUser = u; collapsed = false; prof.passes = j.passes || []; prof.scannedAt = j.scannedAt || Date.now();
-  const hid = { team: 0, fcufc: 0, off: 0 };
-  for(const p of prof.passes){ if(NO_SWAP.has(p.sport)) hid.fcufc++; else if(isTeam(p)) hid.team++; else if(offSeason(p)) hid.off++; }
-  const shown = prof.passes.length - hid.team - hid.fcufc - hid.off;
-  const why = [hid.team && `${hid.team} team`, hid.fcufc && `${hid.fcufc} FC/UFC`, hid.off && `${hid.off} 2026-27 CBB/NBA (not swappable yet)`].filter(Boolean).join(', ');
-  $('#scanmsg').innerHTML = `${prof.passes.length.toLocaleString()} passes found · <b>${shown.toLocaleString()}</b> can be swapped` + (why ? ` <span class="note">(not shown: ${esc(why)})</span>` : '') + (j.note && !j.cached ? ` <span class="note">${esc(j.note)}</span>` : '') + (j.cached ? ` <span class="note">${esc(j.note || '')}</span>` : '') + ((j.errors || []).length ? ` <span style="color:var(--bad)">${j.errors.length} seasons failed: ${esc(j.errors[0])}</span>` : '')
+  // Not shown on Swaps, counted per sport and season so it can be checked against Real.
+  const hid = new Map(); let shown = 0;
+  for(const p of prof.passes){
+    const lbl = p.sport === 'ufc' ? 'UFC' : NO_SWAP.has(p.sport) ? keyLbl(p.sport + ':' + p.season) : isTeam(p) ? `${keyLbl(p.sport + ':' + p.season)} team` : offSeason(p) ? keyLbl(p.sport + ':' + p.season) : null;
+    if(lbl) hid.set(lbl, (hid.get(lbl) || 0) + 1); else shown++;
+  }
+  const why = [...hid].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n} ${k}`).join(', ');
+  $('#scanmsg').innerHTML = `${prof.passes.length.toLocaleString()} passes found · <b>${shown.toLocaleString()}</b> can be swapped` + (why ? ` <span class="note">(not shown: ${esc(why)} - team passes, FC, UFC and 2026-27 CBB/NBA can't be swapped)</span>` : '') + (j.note && !j.cached ? ` <span class="note">${esc(j.note)}</span>` : '') + (j.cached ? ` <span class="note">${esc(j.note || '')}</span>` : '') + ((j.errors || []).length ? ` <span style="color:var(--bad)">${j.errors.length} seasons failed: ${esc(j.errors[0])}</span>` : '')
     + (j.sample ? `<details><summary>What Real sent (first pass)</summary><pre>${esc(JSON.stringify(j.sample, null, 2))}</pre></details>` : '');
   drawPasses();
 });
