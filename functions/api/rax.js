@@ -7639,57 +7639,37 @@ async function packSeasonRows(db, sport, season, waitUntil) {
   throw err;
 }
 
-/* CFB 2026 catch-up on a second account (2026-11-04): every tick, alongside
-   the queue, the market account walks CFB players from the far end of the
-   list - game logs first, then rax - so the two never ask for the same player.
-   Ends by itself. */
-const CFB_PUSH_UNTIL = Date.parse('2026-11-07T00:00:00Z');
-const CFB_PUSH_PER_TICK = 30;
-async function cfbPush(ctx) {
+/* The market account's spare time (Dennis, 2026-11-04): it pulls the market
+   only when someone queues a season or a player. The rest of the time, every
+   tick, it helps the collector with game data - the first of the queue's
+   front seasons (EXTRA_JOBS) still missing game logs or rax - working that
+   season's player list from the far end, so it never asks for the same
+   player as the main account. */
+const GAP_PER_TICK = 30;
+async function marketBusy(env) {
+  try { const st = JSON.parse((await env.RATEBOARD_KV.get(MARKET_KEY)) || '{}') || {}; if (st.cur) return true; } catch (e) {}
+  try { const r = await env.RATEBOARD_DB.prepare('SELECT 1 AS x FROM market_seasons WHERE front IS NOT NULL LIMIT 1').first(); if (r) return true; } catch (e) {}
+  return false;
+}
+async function gapPush(ctx) {
   const env0 = ctx.env, alt = env0.RS_MARKET_TOKEN;
-  if (!alt) return;
+  if (!alt || await marketBusy(env0)) return;
+  const kvj = async k => { try { return JSON.parse((await env0.RATEBOARD_KV.get(k)) || 'null'); } catch (e) { return null; } };
+  let job = null, phase = null;
+  for (const [sp, se] of EXTRA_JOBS) {
+    const ids = ((await kvj(`games_${sp}_${se}`)) || {}).ids || [];
+    if (!ids.length) continue;                         // the main account builds the list
+    const gd = ((await kvj(`gamelog_done_${sp}_${se}`)) || {}).done || {};
+    if (ids.some(i => !gd[i])) { job = [sp, se]; phase = 'gamelog=1'; break; }
+    const rd = ((await kvj(`gamelog_rax_${sp}_${se}`)) || {}).done || {};
+    if (ids.some(i => !rd[i])) { job = [sp, se]; phase = 'gamelog=rax'; break; }
+  }
+  if (!job) return;
   const env = new Proxy(env0, { get: (t, k) => k === 'RS_AUTH_TOKEN' ? alt : t[k] });
-  const base = new URL(ctx.request.url).origin + '/api/rax?sport=ncaaf&season=2026';
-  const run = async q => { const r = await handleGet({ request: new Request(`${base}&${q}&limit=${CFB_PUSH_PER_TICK}&tail=1`), env, waitUntil: ctx.waitUntil }); return r.text(); };
-  let ran = {}; try { ran = JSON.parse((await env0.RATEBOARD_KV.get(ONE_OFF_KEY)) || '{}') || {}; } catch (e) {}
-  const resetAt = ran['cfb2026-full-1104'] ? Date.parse(ran['cfb2026-full-1104']) : 0;
-  if (!resetAt) return;                      // wait for the full re-walk to start
-  const t = await run('gamelog=1');
-  if (Date.now() > resetAt + 20 * 60000 && /nothing left/.test(t) && /nothing left/.test(await run('gamelog=rax'))) {
-    // Both passes done: the market account goes back to the marketplace pull.
-    try { await env0.RATEBOARD_KV.put(CFB_PUSH_DONE, '1', { expirationTtl: 7 * 86400 }); } catch (e) {}
-  }
-}
-const CFB_PUSH_DONE = 'cfbpush_done_1104';
-let cfbPushDone = false;
-async function cfbPushOn(env) {
-  if (cfbPushDone || Date.now() >= CFB_PUSH_UNTIL || !env.RS_MARKET_TOKEN) return false;
-  try { if (await env.RATEBOARD_KV.get(CFB_PUSH_DONE)) { cfbPushDone = true; return false; } } catch (e) {}
-  return true;
-}
-
-async function collectorHealth(env, url) {
-  const ck = new Request(url.origin + '/__cache/collector-health');
-  try { const hit = await caches.default.match(ck); if (hit) return hit; } catch (e) {}
-  const kvj = async k => { try { return JSON.parse((await env.RATEBOARD_KV.get(k)) || 'null'); } catch (e) { return null; } };
-  const db = env.RATEBOARD_DB, seasons = [];
-  for (const [sp, se] of EXTRA_JOBS.filter(([sp]) => sp !== 'ufc')) {
-    const games = await kvj(`games_${sp}_${se}`), ids = (games && games.ids) || [];
-    const gd = ((await kvj(`gamelog_done_${sp}_${se}`)) || {}).done || {}, rd = ((await kvj(`gamelog_rax_${sp}_${se}`)) || {}).done || {};
-    let last = null;
-    try { last = await db.prepare(`SELECT MAX(day) AS day, MAX(CASE WHEN rax IS NOT NULL THEN day END) AS raxDay, COUNT(*) AS rows FROM gamelog WHERE sport=? AND season=?`).bind(sp, se).first(); } catch (e) {}
-    seasons.push({ season: `${sp}:${se}`, players: ids.length, listBuilding: (games && games.building && games.building.ids && games.building.ids.length) || null, gamelogDone: ids.filter(i => gd[i]).length, raxDone: ids.filter(i => rd[i]).length,
-      lastGameDay: last && last.day, lastRaxDay: last && last.raxDay, rows: last && last.rows,
-      window: await kvj(`gl_window_${sp}_${se}`), through: await env.RATEBOARD_KV.get(`gl_through_${sp}_${se}`) });
-  }
-  const pace = await kvj('queue_pace_v1'), stuck = await kvj('queue_stuck_v1');
-  const body = JSON.stringify({ at: new Date().toISOString(), seasons,
-    queue: { lastJob: pace && pace.lastJob, restingUntil: pace && pace.holdUntil > Date.now() ? new Date(pace.holdUntil).toISOString() : null,
-      stuckOn: stuck && stuck.tag, stuckPasses: stuck && stuck.n, setAsideToday: stuck && stuck.skip ? Object.keys(stuck.skip).filter(k => stuck.skip[k] === new Date().toISOString().slice(0, 10)) : [] },
-    oneOffsRun: await kvj(ONE_OFF_KEY), cfbPush: await cfbPushOn(env), budget: await jobOverBudget(env) ? 'over' : 'ok' }, null, 1);
-  const res = new Response(body, { headers: { 'content-type': 'application/json', 'cache-control': 'max-age=60' } });
-  try { await caches.default.put(ck, res.clone()); } catch (e) {}
-  return res;
+  const u = `${new URL(ctx.request.url).origin}/api/rax?sport=${job[0]}&season=${job[1]}&${phase}&limit=${GAP_PER_TICK}&tail=1`;
+  const r = await handleGet({ request: new Request(u), env, waitUntil: ctx.waitUntil });
+  await r.text();
+  try { await env0.RATEBOARD_KV.put('gap_push_last', JSON.stringify({ at: Date.now(), job: job.join(':'), phase })); } catch (e) {}
 }
 
 export async function onRequestGet(ctx) {
@@ -7703,7 +7683,7 @@ export async function onRequestGet(ctx) {
   if (url.searchParams.get('queue') === 'next' && ctx.waitUntil) {
     ctx.waitUntil(swapTick(env).catch(() => {}));
     ctx.waitUntil(boostRefresh(env).catch(() => {}));
-    if (await cfbPushOn(env)) ctx.waitUntil(cfbPush(ctx).catch(() => {}));
+    ctx.waitUntil(gapPush(ctx).catch(() => {}));
   }
   // Read-only collector progress, no sign-in: counts and dates only, nothing from the market or any account.
   if (url.searchParams.get('collector') === 'health') return collectorHealth(env, url);
@@ -7820,8 +7800,7 @@ export async function onRequestGet(ctx) {
     const tally = env.RATEBOARD_DB && env.RATEBOARD_DB.__tally;
     const label = url.searchParams.get('queue') === 'next' ? 'tick' : ([...url.searchParams.entries()].find(([k]) => !['sport', 'season', 'jobs', 't'].includes(k)) || ['other'])[0];
     const record = () => { try { ctx.waitUntil(addJobUse(env, tally, label).catch(() => {})); } catch (e) {} };
-    // The market account is on the CFB catch-up until it's done (cfbPush).
-    if (!(MARKET_ON && env.RS_MARKET_TOKEN) || await cfbPushOn(env)) { const r0 = await handleGet(ctx); record(); return r0; }
+    if (!(MARKET_ON && env.RS_MARKET_TOKEN)) { const r0 = await handleGet(ctx); record(); return r0; }
     /* The marketplace pull rides alongside the collector call rather than
        ahead of it: it is a different Real account, one request at a time,
        and it stops when the collector's own work is done, so the tick is no
