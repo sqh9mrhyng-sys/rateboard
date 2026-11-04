@@ -627,7 +627,7 @@ async function botFail(db, kind, msg) {
 // A send that waits and tries again when Real is busy (429) or hiccups (5xx).
 async function dmSendRetry(auth, channelId, text) {
   let last;
-  for (const wait of [0, 1500, 4000]) {
+  for (const wait of [0, 2500, 6000]) {
     if (wait) await sleep(wait);
     try { return await dmSend(auth, channelId, text); } catch (e) { last = e; if (!/send (429|5\d\d)/.test(String(e.message || e))) throw e; }
   }
@@ -683,7 +683,8 @@ async function retryDms(db, auth) {
   const rows = ((await db.prepare('SELECT * FROM dm_retry ORDER BY id LIMIT 12').all()).results) || [];
   for (const r of rows) {
     let parts = parse(r.parts, []);
-    while (parts.length) { try { await dmSendRetry(auth, r.channelId, parts[0]); parts.shift(); await stat(db, 'dm_retried'); await sleep(900); }
+    parts = parts.flatMap(fitDm);   // queued before the length fix: cut down to size
+    while (parts.length) { try { await dmSendRetry(auth, r.channelId, parts[0]); parts.shift(); await stat(db, 'dm_retried'); await sleep(1500); }
       catch (e) { if (Number(r.tries) % 5 === 0) await botFail(db, 'dm_retry', `${r.label} try ${r.tries}: ${String(e.message || e).slice(0, 120)}`); break; } }
     if (!parts.length) await db.prepare('DELETE FROM dm_retry WHERE id=?').bind(r.id).run();
     else if (Number(r.tries) >= 60) { await db.prepare('DELETE FROM dm_retry WHERE id=?').bind(r.id).run(); await botFail(db, 'dm_retry', `${r.label}: gave up after an hour, ${parts.length} part(s) unsent`); }
@@ -958,11 +959,21 @@ function matchText(me, other, gets, gives, slot) {
 const FOLLOW_TEXT = "(This is automatic dm 90 mins after final swap for everyone)\nPlease make sure you bought all packs and offered 12 hours on everyone else's, there are no warnings if you scam or don't communicate, you will be banned.";
 // Long lists are split: the heading on its own, then at most 8 lines a message.
 const LINES_PER_DM = 8;
-const chunks = (lines, n = LINES_PER_DM) => { const out = []; for (let i = 0; i < lines.length; i += n) out.push(lines.slice(i, i + n).join('\n')); return out; };
+/* Up to 8 lines a message, and never more than DM_MAX_CHARS: Real refuses a
+   long message ("Message is too long"), and 8 warning lines with three links
+   each went over, so everything after the heading was being dropped. */
+const DM_MAX_CHARS = 900;
+const chunks = (lines, n = LINES_PER_DM) => { const out = []; let cur = [];
+  for (const l of lines) { if (cur.length && (cur.length >= n || [...cur, l].join('\n').length > DM_MAX_CHARS)) { out.push(cur.join('\n')); cur = []; } cur.push(l); }
+  if (cur.length) out.push(cur.join('\n')); return out; };
+// A message that's still too long, cut at line breaks into pieces Real will take.
+const fitDm = t => String(t).length <= 1000 ? [t] : chunks(String(t).split('\n'), 999);
 // Warn: heading plus the first 5 swaps in one message, then up to 8 a message.
 function warnText(lines) {
   const head = "You are swapping the following players today, please buy the following packs within 30 mins. This is a heads up DM - the users you're swapping with in 30 mins:";
-  return [head + '\n\n' + lines.slice(0, 5).join('\n'), ...chunks(lines.slice(5))];
+  let k = Math.min(5, lines.length);
+  while (k > 1 && (head + '\n\n' + lines.slice(0, k).join('\n')).length > DM_MAX_CHARS + 100) k--;
+  return [head + '\n\n' + lines.slice(0, k).join('\n'), ...chunks(lines.slice(k))];
 }
 function contactText(lines, buy) {
   return ["Here are comments to contact the following swaps, please send 12 hour offers and report anyone who's doing anything wrong.\n"
@@ -1090,7 +1101,7 @@ async function runDms(env, db, auth, rows, max, force) {
       for (let i = 0; i < msgs.length; i++) {
         try { await dmSendRetry(auth, ch, msgs[i]); }
         catch (e) { if (i === 0) throw e; await queueDm(db, ch, msgs.slice(i), `${kind} @${me.rsUser}`); await botFail(db, 'dm_' + kind, `@${me.rsUser} part ${i + 1}/${msgs.length} queued for retry: ${e.message || e}`); break; }
-        sent++; await stat(db, 'dm_' + kind); await sleep(700);
+        sent++; await stat(db, 'dm_' + kind); await sleep(1500);   // Real has a per-chat slowmode
       }
       // A second look in a few minutes: read the chat back and re-send any part that isn't there.
       if (kind === 'warn' || kind === 'contact') await queueVerify(db, ch, msgs, `${kind} @${me.rsUser}`);
@@ -1099,7 +1110,7 @@ async function runDms(env, db, auth, rows, max, force) {
     catch (e) { notes.push(`${kind} to @${me.rsUser} failed: ${String(e.message || e).slice(0, 160)}`); await botFail(db, 'dm_' + kind, `@${me.rsUser}: ${e.message || e}`); return false; }
   };
   for (const [, list] of per) {
-    if (sent >= max) break;
+    if (sent >= max || Date.now() - now > 40000) break;   // and never past 40s of the minute
     const who = list[0].who;
     const first = Math.min(...list.map(x => x.due)), last = Math.max(...list.map(x => x.due));
     // 1. warn: every pack for the day, once.
@@ -1108,7 +1119,7 @@ async function runDms(env, db, auth, rows, max, force) {
     for (const x of list) if (!x.m['warn' + x.side] && (force || now >= x.due - 30 * 60000)) { const k = force ? 'now' : x.due; (warnHours.get(k) || warnHours.set(k, []).get(k)).push(x); }
     let warnFail = false;
     for (const [, wh0] of warnHours) {
-      if (sent >= max) break;
+      if (sent >= max || Date.now() - now > 40000) break;   // and never past 40s of the minute
       const wh = await claim(wh0, 'warn');
       if (!wh.length) continue;
       const lines = []; for (const x of wh) { const l = await sideLines(member, x.m, x.side); if (l) lines.push(l.buy); }
@@ -1119,7 +1130,7 @@ async function runDms(env, db, auth, rows, max, force) {
     const byHour = new Map();
     for (const x of list) if (!x.m['done' + x.side] && now >= x.due) { const k = force ? 'now' : x.due; (byHour.get(k) || byHour.set(k, []).get(k)).push(x); }
     for (const [, hr0] of byHour) {
-      if (sent >= max) break;
+      if (sent >= max || Date.now() - now > 40000) break;   // and never past 40s of the minute
       const noWarn = hr0.filter(x => !x.m['warn' + x.side]);
       const hr = await claim(hr0, 'done');
       if (!hr.length) continue;
