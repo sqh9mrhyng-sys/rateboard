@@ -259,6 +259,33 @@ async function resolveHashId(username, auth) {
   return u ? u.id : null;
 }
 
+/* A season's passes can come back a page at a time: someone holding more
+   cards than a page holds was silently cut short (a member was missing 3 CBB
+   cards). After a page that's full - a round 20, 25, 50 or 100 - or that
+   carries a cursor, the next one is asked for (Real's lists page with a cursor
+   or with before=<how many so far>, as the shop does), until a page brings
+   nothing new. A season with fewer cards costs no extra call. */
+const passCursor = o => o && typeof o === 'object' && !Array.isArray(o) ? (o.nextCursor || o.cursor || o.next || o.nextPage || (o.meta && (o.meta.nextCursor || o.meta.cursor)) || null) : null;
+async function morePassPages(base, tok, first, rows) {
+  const seen = new Set(rows.map(r => String(r && r.id))), extra = [];
+  let d = first, n = rows.length;
+  for (let i = 0; i < 12; i++) {
+    const cur = passCursor(d);
+    const full = n >= 20 && [20, 25, 50, 100].some(z => n % z === 0);
+    if (!(cur && typeof cur !== 'object') && !full) break;
+    await sleep(250);
+    const u = base + (cur && typeof cur !== 'object' ? `&cursor=${encodeURIComponent(cur)}&before=${encodeURIComponent(cur)}` : `&before=${seen.size}`);
+    const res = await fetch(u, { headers: rsHeaders(tok) });
+    if (!res.ok) throw new Error(`Real ${res.status} (page ${i + 2})`);
+    try { d = JSON.parse(await res.text()); } catch (e) { break; }
+    const page = rowsOf(d), fresh = page.filter(r => r && !seen.has(String(r.id)));
+    if (!fresh.length) break;
+    for (const r of fresh) { seen.add(String(r.id)); extra.push(r); }
+    n = page.length;
+  }
+  return extra;
+}
+
 // Reads every player pass a member has, one sport-season at a time, one
 // request at a time.
 async function scanPasses(hashId, auth, only) {
@@ -269,9 +296,10 @@ async function scanPasses(hashId, auth, only) {
       // Player passes, then team passes (UFC fighters are filed as teams).
       for (const kind of (only ? ['player'] : ['player', 'team'])) {
         try {
-          const d = await rsGetJson(`https://web.realapp.com/userpasses/${encodeURIComponent(hashId)}/passes`
-            + `?entityType=${kind}&season=${season}&sport=${sport}`, auth);
+          const base = `https://web.realapp.com/userpasses/${encodeURIComponent(hashId)}/passes?entityType=${kind}&season=${season}&sport=${sport}`;
+          const d = await rsGetJson(base, auth);
           const rows = rowsOf(d);
+          rows.push(...(await morePassPages(base, auth, d, rows)));
           if (rows.length && !sample) sample = { sport, season, keys: Object.keys(d || {}), first: rows[0] };
           for (const r of rows) { const p = passOf(r, sport, season, kind); if (p) out.push(p); }
         } catch (e) { errors.push(`${sport} ${season} ${kind}: ${String(e.message || e).slice(0, 100)}`); }
@@ -1175,7 +1203,8 @@ async function scanWork(env, db, me, job, auth) {
   const t0 = Date.now(), budget = () => Date.now() - t0 < 20000;
   const read = async (step, tok) => {
     const [sport, season, kind] = step;
-    const res = await fetch(`https://web.realapp.com/userpasses/${encodeURIComponent(job.hashId)}/passes?entityType=${kind}&season=${season}&sport=${sport}`, { headers: rsHeaders(tok) });
+    const base = `https://web.realapp.com/userpasses/${encodeURIComponent(job.hashId)}/passes?entityType=${kind}&season=${season}&sport=${sport}`;
+    const res = await fetch(base, { headers: rsHeaders(tok) });
     const text = await res.text();
     if (!res.ok) throw new Error(`Real ${res.status}: ${text.slice(0, 80)}`);
     let d = null; try { d = JSON.parse(text); } catch (e) {}
@@ -1183,7 +1212,9 @@ async function scanWork(env, db, me, job, auth) {
     // differently-shaped reply just means no passes in that season.
     if (d && typeof d === 'object' && !Array.isArray(d) && !rowsOf(d).length
         && (d.error || (Number(d.statusCode) >= 400) || /high volume|rate limit|too many/i.test(String(d.message || '')))) throw new Error(`Real said: ${String(d.message || d.error || d.statusCode).slice(0, 80)}`);
-    for (const r of rowsOf(d)) { const p = passOf(r, sport, season, kind); if (p) job.passes.push(p); }
+    const rows = rowsOf(d);
+    rows.push(...(await morePassPages(base, tok, d, rows)));
+    for (const r of rows) { const p = passOf(r, sport, season, kind); if (p) job.passes.push(p); }
   };
   while (job.idx < SCAN_STEPS.length && budget()) {
     const step = SCAN_STEPS[job.idx++];

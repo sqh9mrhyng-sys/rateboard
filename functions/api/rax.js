@@ -7704,6 +7704,15 @@ async function collectorHealth(env, url) {
   const body = JSON.stringify({ at: new Date().toISOString(), seasons,
     queue: { lastJob: pace && pace.lastJob, restingUntil: pace && pace.holdUntil > Date.now() ? new Date(pace.holdUntil).toISOString() : null,
       stuckOn: stuck && stuck.tag, stuckPasses: stuck && stuck.n, setAsideToday: stuck && stuck.skip ? Object.keys(stuck.skip).filter(k => stuck.skip[k] === new Date().toISOString().slice(0, 10)) : [] },
+    scans: await (async () => { try {
+      // Pass scans today (Eastern): counts, the line, and the last few failures with no usernames in them.
+      const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+      const st = ((await db.prepare("SELECT k, n FROM bot_stats WHERE day=? AND (k LIKE 'scan%' OR k LIKE 'rescan%')").bind(day).all()).results) || [];
+      const q = await db.prepare('SELECT SUM(CASE WHEN startedAt IS NOT NULL THEN 1 ELSE 0 END) AS running, SUM(CASE WHEN startedAt IS NULL THEN 1 ELSE 0 END) AS waiting FROM scan_queue').first();
+      const fails = ((await db.prepare("SELECT at, msg FROM bot_log WHERE kind IN ('scan','rescan','scan_bg') ORDER BY at DESC LIMIT 8").all()).results) || [];
+      return { today: Object.fromEntries(st.map(x => [x.k, x.n])), running: q && q.running, waiting: q && q.waiting,
+        lastFailures: fails.map(f => ({ at: new Date(f.at).toISOString(), msg: String(f.msg || '').replace(/^[^:]{1,60}:\s*/, '') })) };
+    } catch (e) { return { error: String(e.message || e).slice(0, 100) }; } })(),
     oneOffsRun: await kvj(ONE_OFF_KEY), marketAccount: { busyWithMarket: await marketBusy(env), lastGapHelp: await kvj('gap_push_last') }, budget: await jobOverBudget(env) ? 'over' : 'ok' }, null, 1);
   const res = new Response(body, { headers: { 'content-type': 'application/json', 'cache-control': 'max-age=60' } });
   try { await caches.default.put(ck, res.clone()); } catch (e) {}
