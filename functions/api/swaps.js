@@ -1185,7 +1185,22 @@ async function newScanJob(env, db, me, over, u) {
   if (!hashId && rsUser.toLowerCase() === String(own).toLowerCase()) { try { await db.prepare(SPRO_DDL).run(); const pr = await db.prepare('SELECT rsId FROM swap_pro WHERE key=?').bind(me).first(); if (pr && pr.rsId) hashId = pr.rsId; } catch (e) {} }
   try { if (!hashId) hashId = await resolveHashId(rsUser, scanTok(env)); } catch (e) { return { error: 'Could not reach Real just now - try again in a minute.', status: 502 }; }
   if (!hashId) return { error: `No Real account called ${rsUser}. If your Real username is different, link it at raxacademy.app/username.`, status: 404 };
-  const job = { rsUser, hashId, passes: [], errors: [], at: Date.now(), idx: 0, failed: [], ri: 0, still: [] };
+  /* Faster scans (2026-11-04): every current season, plus any old season
+     they held cards in last time, is read each scan; the old seasons they had
+     nothing in (most of the 76) are only read on a full scan, once a week or
+     on their first. Unread seasons keep their passes from the last scan. */
+  try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN fullScanAt INTEGER'); } catch (e) {}
+  let steps = SCAN_STEPS, full = true;
+  try {
+    const pr = await db.prepare('SELECT passes, fullScanAt FROM swap_users WHERE key=?').bind(me).first();
+    const prev = parse(pr && pr.passes, []);
+    if (pr && prev.length && Date.now() - (Number(pr.fullScanAt) || 0) < 7 * 86400000) {
+      const had = new Set(prev.map(p => `${p.sport}:${p.season}`));
+      const current = new Set(Object.entries(SWAP_SEASONS).flatMap(([sp, v]) => v.slice(0, 2).map(se => `${sp}:${se}`)));   // this season and last, every sport
+      steps = SCAN_STEPS.filter(([sp, se]) => had.has(`${sp}:${se}`) || current.has(`${sp}:${se}`)); full = false;
+    }
+  } catch (e) {}
+  const job = { rsUser, hashId, passes: [], errors: [], at: Date.now(), idx: 0, failed: [], ri: 0, still: [], steps, full };
   await db.prepare('INSERT INTO scan_jobs (key, body, at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET body=excluded.body, at=excluded.at, busy=NULL').bind(me, JSON.stringify(job), Date.now()).run();
   return job;
 }
@@ -1216,12 +1231,13 @@ async function scanWork(env, db, me, job, auth) {
     rows.push(...(await morePassPages(base, tok, d, rows)));
     for (const r of rows) { const p = passOf(r, sport, season, kind); if (p) job.passes.push(p); }
   };
-  while (job.idx < SCAN_STEPS.length && budget()) {
-    const step = SCAN_STEPS[job.idx++];
+  const STEPS = job.steps || SCAN_STEPS;
+  while (job.idx < STEPS.length && budget()) {
+    const step = STEPS[job.idx++];
     try { await read(step, auth); } catch (e) { job.failed.push(step); }
     await sleep(200);
   }
-  if (job.idx >= SCAN_STEPS.length) {
+  if (job.idx >= STEPS.length) {
     while (job.ri < job.failed.length && budget()) {
       const step = job.failed[job.ri++]; let err = null;
       for (let t = 0; t < toks.length; t++) {
@@ -1231,9 +1247,9 @@ async function scanWork(env, db, me, job, auth) {
       if (err) { job.still.push(step); job.errors.push(`${step[0]} ${step[1]} ${step[2]}: ${String(err.message || err).slice(0, 100)}`); }
     }
   }
-  if (job.idx < SCAN_STEPS.length || job.ri < job.failed.length) {
+  if (job.idx < STEPS.length || job.ri < job.failed.length) {
     await db.prepare('UPDATE scan_jobs SET body=?, busy=NULL WHERE key=?').bind(JSON.stringify(job), me).run();
-    return { done: false, next: 1, found: job.passes.length, retrying: job.idx >= SCAN_STEPS.length };
+    return { done: false, next: 1, found: job.passes.length, retrying: job.idx >= STEPS.length };
   }
   // Whatever still failed keeps its passes from the last scan.
   const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
@@ -1241,6 +1257,11 @@ async function scanWork(env, db, me, job, auth) {
     const miss = new Set(job.still.map(([sp, se, k]) => `${sp}:${se}:${k}`));
     for (const p of parse(u && u.passes, [])) if (miss.has(`${p.sport}:${p.season}:${p.kind || 'player'}`)) job.passes.push(p);
     job.kept = job.still.length;
+  }
+  // Seasons this (quick) scan didn't read keep what the last scan found.
+  if (job.steps && !job.full) {
+    const read = new Set(STEPS.map(([sp, se, k]) => `${sp}:${se}:${k}`));
+    for (const p of parse(u && u.passes, [])) if (!read.has(`${p.sport}:${p.season}:${p.kind || 'player'}`)) job.passes.push(p);
   }
   await fillNames(db, job.passes);
   // A scan with seasons that still failed can be run again in 5 minutes.
@@ -1250,6 +1271,7 @@ async function scanWork(env, db, me, job, auth) {
       scannedAt=excluded.scannedAt, updatedAt=excluded.updatedAt`)
     .bind(me, job.rsUser, job.hashId, JSON.stringify(job.passes), stamp, Date.now()).run();
   try { await db.prepare('UPDATE swap_users SET fullPart=NULL, boostScanAt=NULL WHERE key=?').bind(me).run(); } catch (e) {}
+  if (job.full !== false) { try { await db.prepare('UPDATE swap_users SET fullScanAt=? WHERE key=?').bind(Date.now(), me).run(); } catch (e) {} }
   try { await db.prepare('DELETE FROM scan_jobs WHERE key=?').bind(me).run(); } catch (e) {}
   try { await db.prepare('DELETE FROM scan_queue WHERE key=?').bind(me).run(); } catch (e) {}   // next in line goes
   if (job.kept) { await stat(db, 'scan_partial'); await botFail(db, 'scan', `${me}: ${job.kept} season(s) kept from last scan - ${job.errors.slice(0, 3).join(' | ')}`); }
