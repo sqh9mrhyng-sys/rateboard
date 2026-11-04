@@ -962,7 +962,10 @@ async function runDms(env, db, auth, rows, max, force) {
       const canceller = String(byNote || byKeep || '').toLowerCase();
       for (const side of ['A', 'B']) {
         if (canceller && String(side === 'A' ? m.a : m.b).toLowerCase() === canceller) { try { await db.prepare(`UPDATE swap_matches SET ${'follow' + side}=COALESCE(${'follow' + side}, ?) WHERE id=?`).bind(now, m.id).run(); } catch (e) {} continue; }
+        // Only a swap they've actually been warned about: its warning went out and its hour is
+        // under 35 minutes away (or here). One scheduled hours ahead gets no message at all.
         if (!m['warn' + side] && !m['done' + side]) continue;
+        if (!m['done' + side] && sideDue(m) - now > 35 * 60000) continue;
         const r = await db.prepare(`UPDATE swap_matches SET ${'follow' + side}=? WHERE id=? AND ${'follow' + side} IS NULL`).bind(now, m.id).run();
         if (!(r && r.meta && r.meta.changes)) continue;
         const who = side === 'A' ? m.a : m.b, other = side === 'A' ? m.b : m.a, gets = side === 'A' ? m.bGets : m.aGets;
