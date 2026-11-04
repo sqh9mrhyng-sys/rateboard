@@ -1907,6 +1907,10 @@ function easternNow() {
 }
 
 async function weeklyRescan(env) {
+  // One-off: rebuild the game-data season list at 1am and 6am Alaska (2026-11-04) so CBB 2026-27 shows up once collected.
+  for (const [id, at] of [['gl_list_rebuild_1', Date.parse('2026-11-04T10:00:00Z')], ['gl_list_rebuild_2', Date.parse('2026-11-04T15:00:00Z')]]) {
+    try { if (Date.now() >= at && !(await env.RATEBOARD_KV.get(id))) { await env.RATEBOARD_KV.put(id, '1'); await env.RATEBOARD_KV.delete('list_glseasons_v1'); } } catch (e) {}
+  }
   // One-off (2026-11-03): drop whatever rest the queue was holding so CBB/NFL start now.
   try { if (!(await env.RATEBOARD_KV.get(PACE_CLEAR_ONCE))) { await env.RATEBOARD_KV.put(PACE_CLEAR_ONCE, '1'); await env.RATEBOARD_KV.put('queue_pace_v1', JSON.stringify({ lastJob: 'nfl:2026', holdUntil: 0 })); } } catch (e) {}
   // Pack data for a swept season: its plays reopen once the sweep has had
