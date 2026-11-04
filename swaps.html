@@ -421,7 +421,7 @@ $('#ptoggle').addEventListener('click', () => {
 // One scan for the whole site, in parts: keeps asking until it's done.
 async function fullScan(extra, onPart){
   let part = 0, j;
-  for(let i = 0; i < 20; i++){
+  for(let i = 0; i < 60; i++){
     j = await api(`/api/swaps?op=scan&part=${part}${extra || ''}`);
     if(!j || j.error || j.done) return j || { error: 'Could not reach the board.' };
     if(onPart) onPart(j);
@@ -432,8 +432,8 @@ async function fullScan(extra, onPart){
 $('#scan').addEventListener('click', async () => {
   const u = $('#rsuser').textContent.trim().replace(/^@/, '');
   $('#scan').disabled = true;
-  $('#scanmsg').textContent = 'Scanning every sport and season… a few seconds';
-  const j = await fullScan('&page=swaps', p => { $('#scanmsg').textContent = `Scanning every sport and season… ${p.next + 1}/${p.parts} · ${p.found} passes so far`; });
+  $('#scanmsg').textContent = 'Scanning every sport and season… 0%';
+  const j = await fullScan('&page=swaps', p => { $('#scanmsg').textContent = `Scanning every sport and season… ${p.pct}% · ${p.found} passes so far${p.retrying ? ' · retrying a few Real was slow on' : ''}`; });
   $('#scan').disabled = false;
   if(j.error){ $('#scanmsg').textContent = j.error; return; }
   prof.rsUser = u; collapsed = false; prof.passes = j.passes || []; prof.scannedAt = j.scannedAt || Date.now();

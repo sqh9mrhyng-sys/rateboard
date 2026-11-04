@@ -1861,61 +1861,65 @@ async function handle({ request, env, waitUntil }) {
       if (!hashId && rsUser.toLowerCase() === String(await realName(db, me)).toLowerCase()) { try { await db.prepare(SPRO_DDL).run(); const pr = await db.prepare('SELECT rsId FROM swap_pro WHERE key=?').bind(me).first(); if (pr && pr.rsId) hashId = pr.rsId; } catch (e) {} }
       try { if (!hashId) hashId = await resolveHashId(rsUser, scanTok(env)); } catch (e) { return json({ error: 'Could not reach Real just now - try again in a minute.' }, 502); }
       if (!hashId) return json({ error: `No Real account called ${rsUser}. If your Real username is different, link it at raxacademy.app/username.` }, 404);
-      job = { rsUser, hashId, passes: [], errors: [], at: Date.now() };
+      job = { rsUser, hashId, passes: [], errors: [], at: Date.now(), idx: 0, failed: [], ri: 0, still: [] };
     } else {
-      try { job = JSON.parse((await env.RATEBOARD_KV.get(jobKey)) || 'null'); } catch (e) {}
-      if (!job) return json({ error: 'That scan expired - tap scan again.' }, 410);
+      try { const r = await db.prepare('SELECT body FROM scan_jobs WHERE key=?').bind(me).first(); job = r ? JSON.parse(r.body) : null; } catch (e) {}
+      if (!job || Date.now() - job.at > 20 * 60000) return json({ error: 'That scan expired - tap scan again.' }, 410);
     }
-    /* The part's calls are shared out across all three Real accounts (the
-       board's, the market's and the bot's), each in its own lane at its own
-       0.6s pace, so no one account is hit harder but the scan is ~3x faster. */
-    const steps = SCAN_STEPS.slice(part * SCAN_PER_PART, (part + 1) * SCAN_PER_PART);
+    /* Each request works for about 20 seconds at most, saves where it got to
+       (in the database, so the next request always finds it) and the page asks
+       again - a slow Real can make a scan longer but never time it out.
+       Main pass: 4 calls at once across the board and market accounts, one try
+       each; anything refused is set aside. Then one slower pass over those,
+       each on every account. Whatever still fails keeps its last-scan passes. */
     const toks = scanToks(env);   // board + market accounts - never the bot, which only handles DMs
-    /* Fast but not reckless: 4 calls at once with a short gap, shared across the
-       scanning accounts. Anything Real refuses (rate limit, odd reply) is tried
-       again slowly at the end, and whatever still fails keeps the member's
-       previous passes for that season, so a hiccup never wipes a sport. */
-    const failed = [];
+    const t0 = Date.now(), budget = () => Date.now() - t0 < 20000;
     const read = async (step, tok) => {
       const [sport, season, kind] = step;
-      const d = await rsGetJson(`https://web.realapp.com/userpasses/${encodeURIComponent(job.hashId)}/passes?entityType=${kind}&season=${season}&sport=${sport}`, tok);
+      const res = await fetch(`https://web.realapp.com/userpasses/${encodeURIComponent(job.hashId)}/passes?entityType=${kind}&season=${season}&sport=${sport}`, { headers: rsHeaders(tok) });
+      const text = await res.text();
+      if (!res.ok) throw new Error(`Real ${res.status}: ${text.slice(0, 80)}`);
+      let d = null; try { d = JSON.parse(text); } catch (e) {}
       // Only a reply that says it's an error counts as a failure; an empty or
       // differently-shaped reply just means no passes in that season.
       if (d && typeof d === 'object' && !Array.isArray(d) && !rowsOf(d).length
           && (d.error || (Number(d.statusCode) >= 400) || /high volume|rate limit|too many/i.test(String(d.message || '')))) throw new Error(`Real said: ${String(d.message || d.error || d.statusCode).slice(0, 80)}`);
       for (const r of rowsOf(d)) { const p = passOf(r, sport, season, kind); if (p) job.passes.push(p); }
     };
-    let next = 0, n = 0;
-    await Promise.all(Array.from({ length: 4 }, async () => {
-      while (next < steps.length) {
-        const step = steps[next++], tok = toks[(n++) % toks.length];
-        try { await read(step, tok); } catch (e) { failed.push(step); }
-        await sleep(150);
+    if (job.idx < SCAN_STEPS.length) {
+      let n = job.idx;
+      await Promise.all(Array.from({ length: 4 }, async () => {
+        while (job.idx < SCAN_STEPS.length && budget()) {
+          const step = SCAN_STEPS[job.idx++], tok = toks[(n++) % toks.length];
+          try { await read(step, tok); } catch (e) { job.failed.push(step); }
+          await sleep(150);
+        }
+      }));
+    }
+    if (job.idx >= SCAN_STEPS.length) {
+      while (job.ri < job.failed.length && budget()) {
+        const step = job.failed[job.ri++]; let err = null;
+        for (let t = 0; t < toks.length; t++) {
+          await sleep(600);
+          try { await read(step, toks[(job.ri + t) % toks.length]); err = null; break; } catch (e) { err = e; }
+        }
+        if (err) { job.still.push(step); job.errors.push(`${step[0]} ${step[1]} ${step[2]}: ${String(err.message || err).slice(0, 100)}`); }
       }
-    }));
-    // Second go for anything refused, one at a time and slower, on the other account.
-    const still = [];
-    let good = 0;                      // the account that last worked goes first
-    for (const step of failed) {
-      let err = null;
-      for (let t = 0; t < toks.length; t++) {
-        const ti = (good + t) % toks.length;
-        await sleep(700);
-        try { await read(step, toks[ti]); good = ti; err = null; break; } catch (e) { err = e; }
-      }
-      if (err) { still.push(step); job.errors.push(`${step[0]} ${step[1]} ${step[2]}: ${String(err.message || err).slice(0, 100)}`); }
+    }
+    const total = SCAN_STEPS.length + job.failed.length, doneSteps = job.idx + job.ri;
+    if (job.idx < SCAN_STEPS.length || job.ri < job.failed.length) {
+      await db.prepare('CREATE TABLE IF NOT EXISTS scan_jobs (key TEXT PRIMARY KEY, body TEXT, at INTEGER)').run();
+      await db.prepare('INSERT INTO scan_jobs (key, body, at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET body=excluded.body, at=excluded.at').bind(me, JSON.stringify(job), Date.now()).run();
+      return json({ done: false, next: part + 1, pct: Math.min(99, Math.round(doneSteps / total * 100)), found: job.passes.length, retrying: job.idx >= SCAN_STEPS.length });
     }
     // Whatever still failed keeps its passes from the last scan.
-    if (still.length) {
-      const miss = new Set(still.map(([sp, se, k]) => `${sp}:${se}:${k}`));
+    if (job.still.length) {
+      const miss = new Set(job.still.map(([sp, se, k]) => `${sp}:${se}:${k}`));
       for (const p of parse(u && u.passes, [])) if (miss.has(`${p.sport}:${p.season}:${p.kind || 'player'}`)) job.passes.push(p);
-      job.kept = still.length;
+      job.kept = job.still.length;
     }
-    const parts = Math.ceil(SCAN_STEPS.length / SCAN_PER_PART), last = part + 1 >= parts;
-    if (!last) {
-      await env.RATEBOARD_KV.put(jobKey, JSON.stringify(job), { expirationTtl: 900 });
-      return json({ done: false, next: part + 1, parts, found: job.passes.length });
-    }
+    const parts = part + 1;
+    try { await db.prepare('DELETE FROM scan_jobs WHERE key=?').bind(me).run(); } catch (e) {}
     try { await env.RATEBOARD_KV.delete(jobKey); } catch (e) {}
     await fillNames(db, job.passes);
     // A scan with seasons that still failed can be run again in 5 minutes.
