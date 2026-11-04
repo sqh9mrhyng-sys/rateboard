@@ -114,7 +114,7 @@ const SWAP_SEASONS = {
   golf: [2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2016, 2015, 2014], ufc: [2023]
 };
 // Every call one full scan makes, in order, and how many go in each part.
-const SCAN_STEPS = Object.entries(SWAP_SEASONS).flatMap(([sp, v]) => v.flatMap(se => sp === 'ufc' ? [[sp, se, 'team']] : [[sp, se, 'player'], [sp, se, 'team']]));
+const SCAN_STEPS = Object.entries(SWAP_SEASONS).flatMap(([sp, v]) => v.flatMap(se => sp === 'ufc' ? [[sp, se, 'team']] : sp === 'golf' ? [[sp, se, 'player']] : [[sp, se, 'player'], [sp, se, 'team']]));   // golf has no team passes
 const SCAN_PER_PART = 90;   // the whole scan in one go
 
 // What the Swaps page scans: no FC or UFC (nothing to swap there), golf back to 2014.
@@ -1872,7 +1872,9 @@ async function handle({ request, env, waitUntil }) {
        Main pass: 4 calls at once across the board and market accounts, one try
        each; anything refused is set aside. Then one slower pass over those,
        each on every account. Whatever still fails keeps its last-scan passes. */
-    const toks = scanToks(env);   // board + market accounts - never the bot, which only handles DMs
+    // What was fast and reliable: the bot account, one call at a time, 0.2s apart.
+    // The market and board accounts only step in for calls the bot couldn't get.
+    const toks = [...new Set([auth, ...scanToks(env)].filter(Boolean))];
     const t0 = Date.now(), budget = () => Date.now() - t0 < 20000;
     const read = async (step, tok) => {
       const [sport, season, kind] = step;
@@ -1886,15 +1888,10 @@ async function handle({ request, env, waitUntil }) {
           && (d.error || (Number(d.statusCode) >= 400) || /high volume|rate limit|too many/i.test(String(d.message || '')))) throw new Error(`Real said: ${String(d.message || d.error || d.statusCode).slice(0, 80)}`);
       for (const r of rowsOf(d)) { const p = passOf(r, sport, season, kind); if (p) job.passes.push(p); }
     };
-    if (job.idx < SCAN_STEPS.length) {
-      let n = job.idx;
-      await Promise.all(Array.from({ length: 4 }, async () => {
-        while (job.idx < SCAN_STEPS.length && budget()) {
-          const step = SCAN_STEPS[job.idx++], tok = toks[(n++) % toks.length];
-          try { await read(step, tok); } catch (e) { job.failed.push(step); }
-          await sleep(150);
-        }
-      }));
+    while (job.idx < SCAN_STEPS.length && budget()) {
+      const step = SCAN_STEPS[job.idx++];
+      try { await read(step, auth); } catch (e) { job.failed.push(step); }
+      await sleep(200);
     }
     if (job.idx >= SCAN_STEPS.length) {
       while (job.ri < job.failed.length && budget()) {
