@@ -336,12 +336,101 @@ async function pagedRows(db, sql, binds = [], size = 25) {
     if (r.length < size) return out;
   }
 }
+
+/* ---------- Inbox: reports and feature requests, answered through the bot ----------
+   Three sources: Swaps reports (swap_reports), board member reports (the
+   board blob in KV) and feature requests (features). Dennis can answer any of
+   them; when the person who sent it has a chat with the bot, the answer and
+   the outcome go to them on Real. Every bot message he sends is kept in
+   admin_dm so he can see who has written back. */
+const BOARD_KV = 'ratebrd_market_v1';
+const ADMIN_DM_DDL = `CREATE TABLE IF NOT EXISTS admin_dm (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT, rsUser TEXT, hashId TEXT, channelId INTEGER, text TEXT, ts INTEGER, ref TEXT)`;
+const RESTRICT_DDL = `CREATE TABLE IF NOT EXISTS restricted (key TEXT PRIMARY KEY, at INTEGER, why TEXT)`;
+// Someone named by a board key or a Real username: their board key, Real name, comment and bot chat.
+async function whoIs(db, name) {
+  const n = String(name || '').trim().replace(/^@/, '').toLowerCase();
+  if (!n) return null;
+  await db.prepare(DM_DDL).run();
+  const u = await db.prepare('SELECT key, rsUser, hashId, comment, active FROM swap_users WHERE LOWER(key)=? OR LOWER(rsUser)=? LIMIT 1').bind(n, n).first();
+  const b = await db.prepare('SELECT key, banned FROM users WHERE LOWER(key)=? LIMIT 1').bind(u ? String(u.key).toLowerCase() : n).first().catch(() => null);
+  let ch = null;
+  if (u && u.hashId) ch = await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=? AND channelId IS NOT NULL').bind(u.hashId).first();
+  if (!ch) ch = await db.prepare('SELECT channelId, hashId FROM swap_dm WHERE LOWER(userName)=? AND channelId IS NOT NULL LIMIT 1').bind(u && u.rsUser ? String(u.rsUser).toLowerCase() : n).first();
+  let restricted = false;
+  try { await db.prepare(RESTRICT_DDL).run(); restricted = !!(await db.prepare('SELECT 1 AS x FROM restricted WHERE key=?').bind(b ? b.key : (u ? u.key : n)).first()); } catch (e) {}
+  return { name: n, key: b ? b.key : (u ? u.key : null), rsUser: (u && u.rsUser) || null, hashId: (u && u.hashId) || (ch && ch.hashId) || null,
+    comment: (u && u.comment) || null, channelId: ch ? Number(ch.channelId) : null, banned: !!(b && b.banned), restricted, swapper: !!(u && u.active) };
+}
+async function adminDm(db, auth, who, text, ref) {
+  if (!who || !who.channelId) return { sent: false, why: 'no open chat with the bot' };
+  await db.prepare(ADMIN_DM_DDL).run();
+  try {
+    await dmSend(auth, who.channelId, text);
+    await db.prepare('INSERT INTO admin_dm (key, rsUser, hashId, channelId, text, ts, ref) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .bind(who.key || who.name, who.rsUser || who.name, who.hashId, who.channelId, String(text).slice(0, 1000), Date.now(), ref || null).run();
+    await stat(db, 'dm_admin');
+    return { sent: true };
+  } catch (e) { await botFail(db, 'dm_admin', `${who.name}: ${e.message || e}`); return { sent: false, why: String(e.message || e).slice(0, 160) }; }
+}
+async function inboxItems(env, db) {
+  const out = [];
+  await db.prepare(SREPORT_DDL).run();
+  for (const r of ((await db.prepare("SELECT rowid AS id, ts, by_user, kind, target, detail FROM swap_reports WHERE status='open' ORDER BY ts DESC LIMIT 200").all()).results || []))
+    out.push({ src: 'swap', id: String(r.id), ts: r.ts, by: r.by_user, target: r.target, kind: r.kind === 'user' ? 'Swaps: wrong usage' : 'Swaps: problem', detail: r.detail });
+  try { const m = JSON.parse((await env.RATEBOARD_KV.get(BOARD_KV)) || '{}') || {};
+    for (const r of (m.reports || []).filter(x => x.status === 'open')) out.push({ src: 'board', id: String(r.id), ts: r.ts, by: r.by, target: r.target, kind: 'Board: member report', detail: r.reason || '' }); } catch (e) {}
+  try { await db.prepare(`CREATE TABLE IF NOT EXISTS features (id TEXT PRIMARY KEY, ts INTEGER NOT NULL, by_user TEXT NOT NULL, kind TEXT, title TEXT NOT NULL, detail TEXT, status TEXT NOT NULL DEFAULT 'open')`).run();
+    for (const r of ((await db.prepare("SELECT id, ts, by_user, kind, title, detail FROM features WHERE status='open' ORDER BY ts DESC LIMIT 300").all()).results || []))
+      out.push({ src: 'feature', id: String(r.id), ts: r.ts, by: r.by_user, target: null, kind: 'Feature request' + (r.kind ? ' · ' + r.kind : ''), title: r.title, detail: r.detail || '' }); } catch (e) {}
+  out.sort((a, b) => b.ts - a.ts);
+  const cache = new Map(), look = async n => { const k = String(n || '').toLowerCase(); if (!k) return null; if (!cache.has(k)) cache.set(k, await whoIs(db, k)); return cache.get(k); };
+  for (const x of out) { x.from = await look(x.by); x.about = x.target ? await look(x.target) : null; }
+  return out;
+}
+// The outcome note to the person who sent it.
+function outcomeText(item, status) {
+  const word = status === 'done' ? 'has been completed' : 'has been denied';
+  if (item.src === 'feature') return `Your feature request "${String(item.title || '').slice(0, 120)}" ${word}.`;
+  if (item.target) return `Your report of @${item.target} ${word}.`;
+  return `Your report "${String(item.detail || '').slice(0, 80)}${String(item.detail || '').length > 80 ? '…' : ''}" ${word}.`;
+}
+async function closeItem(env, db, item, status) {
+  if (item.src === 'swap') {
+    if (status === 'delete') await db.prepare('DELETE FROM swap_reports WHERE rowid=?').bind(Number(item.id)).run();
+    else await db.prepare('UPDATE swap_reports SET status=? WHERE rowid=?').bind(status === 'done' ? 'closed' : 'declined', Number(item.id)).run();
+  } else if (item.src === 'feature') {
+    if (status === 'delete') await db.prepare('DELETE FROM features WHERE id=?').bind(item.id).run();
+    else await db.prepare('UPDATE features SET status=? WHERE id=?').bind(status === 'done' ? 'done' : 'declined', item.id).run();
+  } else {
+    const m = JSON.parse((await env.RATEBOARD_KV.get(BOARD_KV)) || '{}') || {};
+    m.reports = m.reports || [];
+    if (status === 'delete') m.reports = m.reports.filter(x => String(x.id) !== item.id);
+    else { const r = m.reports.find(x => String(x.id) === item.id); if (r) r.status = status === 'done' ? 'closed' : 'declined'; }
+    await env.RATEBOARD_KV.put(BOARD_KV, JSON.stringify(m));
+  }
+}
+// Who wrote last in a chat, read from Real's message list (any of the shapes it uses).
+async function chatState(auth, channelId, theirId, since) {
+  const d = await rsGetJson(`https://web.realapp.com/messages/channels/${channelId}/messages`, auth);
+  const msgs = [];
+  const walk = o => { if (!o || typeof o !== 'object') return; if (Array.isArray(o)) { o.forEach(walk); return; }
+    if (typeof o.text === 'string' && (o.createdAt || o.created || o.timestamp || o.id)) msgs.push(o); else Object.values(o).forEach(v => v && typeof v === 'object' && walk(v)); };
+  walk(d);
+  const author = m => String(m.userId || m.senderId || m.authorId || (m.user && (m.user.id || m.user.userId)) || (m.sender && m.sender.id) || '');
+  const when = m => { const t = m.createdAt || m.created || m.timestamp; const n = typeof t === 'number' ? (t < 1e12 ? t * 1000 : t) : Date.parse(t); return Number.isFinite(n) ? n : 0; };
+  const theirs = msgs.filter(m => theirId && author(m) === String(theirId)).sort((a, b) => when(b) - when(a));
+  const last = theirs[0];
+  return { messages: msgs.length, replied: !!(last && when(last) > since), lastTheirs: last ? { at: when(last), text: String(last.text).slice(0, 300) } : null };
+}
+
 async function runMatching(db) {
   // Only members the bot already has a chat with: new chats are capped at
   // five a day, so a match with anyone else might never be delivered.
   await db.prepare(DM_DDL).run();
+  try { await db.prepare(RESTRICT_DDL).run(); } catch (e) {}
   const users = (await pagedRows(db, `SELECT * FROM swap_users WHERE active=1 AND passes IS NOT NULL
       AND wants IS NOT NULL AND wants <> '[]' AND slots IS NOT NULL AND slots <> '[]'
+      AND key NOT IN (SELECT key FROM restricted)
       AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`))
     .map(u => ({ ...u, wants: parse(u.wants, []), keep: new Set(parse(u.keep, [])), slots: parse(u.slots, []),
                  passes: parse(u.passes, []), caps: parse(u.caps, {}) || {} }));
@@ -1940,6 +2029,72 @@ async function handle({ request, env, waitUntil }) {
   }
 
   // Admin: the reports, and closing one out.
+  /* ---- Admin inbox ---- */
+  if (op === 'inbox') return json({ items: await inboxItems(env, db) });
+  if (op === 'inboxact' && request.method === 'POST') {
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    const action = ['done', 'declined', 'delete', 'reply', 'restrict', 'ban'].includes(b.action) ? b.action : null;
+    if (!action) return json({ error: 'bad action' }, 400);
+    const item = (await inboxItems(env, db)).find(x => x.src === b.src && x.id === String(b.id));
+    if (!item) return json({ error: 'That one is already closed.' }, 404);
+    const out = { ok: true };
+    if (action === 'reply') {
+      const text = String(b.text || '').trim().slice(0, 1000);
+      if (!text) return json({ error: 'Write a reply first.' }, 400);
+      out.dm = await adminDm(db, auth, item.from, text, `${item.src}:${item.id}`);
+      return json(out);
+    }
+    if (action === 'restrict' || action === 'ban') {
+      const t = item.about; if (!t || !t.key) return json({ error: 'No board account found for the reported user.' }, 404);
+      await db.prepare(RESTRICT_DDL).run();
+      await db.prepare('INSERT OR REPLACE INTO restricted (key, at, why) VALUES (?, ?, ?)').bind(t.key, Date.now(), `${item.src}:${item.id}`).run();
+      await db.prepare('UPDATE swap_users SET active=0 WHERE key=?').bind(t.key).run();
+      await db.prepare('DELETE FROM offers WHERE user=?').bind(t.key).run().catch(() => {});
+      try { await db.prepare("UPDATE swap_matches SET status='cancelling' WHERE status IN ('pending','warned') AND (a=? OR b=?)").bind(t.key, t.key).run(); } catch (e) {}
+      if (action === 'ban') await db.prepare('UPDATE users SET banned=1 WHERE key=?').bind(t.key).run();
+    }
+    const status = action === 'declined' ? 'declined' : action === 'delete' ? 'delete' : 'done';
+    await closeItem(env, db, item, status);
+    if (status !== 'delete' && b.notify !== false) out.dm = await adminDm(db, auth, item.from, outcomeText(item, status), `${item.src}:${item.id}`);
+    return json(out);
+  }
+  // Take a restriction off again.
+  if (op === 'unrestrict' && request.method === 'POST') {
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    await db.prepare(RESTRICT_DDL).run();
+    await db.prepare('DELETE FROM restricted WHERE key=?').bind(String(b.key || '')).run();
+    if (b.unban) await db.prepare('UPDATE users SET banned=0 WHERE key=?').bind(String(b.key || '')).run();
+    return json({ ok: true });
+  }
+  // Everyone Dennis has messaged through the bot, newest first, with whether they wrote back.
+  if (op === 'dmlog') {
+    await db.prepare(ADMIN_DM_DDL).run();
+    const rows = ((await db.prepare(`SELECT key, rsUser, hashId, channelId, MAX(ts) AS last, COUNT(*) AS n,
+        (SELECT text FROM admin_dm d2 WHERE d2.channelId = admin_dm.channelId ORDER BY ts DESC LIMIT 1) AS lastText
+        FROM admin_dm GROUP BY channelId ORDER BY last DESC LIMIT 60`).all()).results) || [];
+    const check = url.searchParams.get('check') === '1';
+    for (const [i, r] of rows.entries()) {
+      if (!check || i >= 25) continue;
+      try { Object.assign(r, await chatState(auth, r.channelId, r.hashId, Number(r.last))); } catch (e) { r.error = String(e.message || e).slice(0, 120); }
+    }
+    return json({ rows, checked: check });
+  }
+  // "check": puts the chat at the top of the bot's DMs, so the whole conversation is easy to find on Real.
+  if (op === 'dmcheck' && request.method === 'POST') {
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    const who = await whoIs(db, b.who);
+    if (!who || !who.channelId) return json({ error: 'No open chat with the bot.' }, 404);
+    return json(await adminDm(db, auth, who, 'check', 'check'));
+  }
+  // A message to anyone the bot has a chat with.
+  if (op === 'dmsend' && request.method === 'POST') {
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    const who = await whoIs(db, b.who), text = String(b.text || '').trim().slice(0, 1000);
+    if (!text) return json({ error: 'Write a message first.' }, 400);
+    if (!who || !who.channelId) return json({ error: 'No open chat with the bot.' }, 404);
+    return json(await adminDm(db, auth, who, text, 'direct'));
+  }
+
   if (op === 'reports') {
     await db.prepare(SREPORT_DDL).run();
     const id = Number(url.searchParams.get('close'));
@@ -2060,6 +2215,7 @@ async function handle({ request, env, waitUntil }) {
   }
 
   if (op === 'save' && request.method === 'POST') {
+    try { await db.prepare(RESTRICT_DDL).run(); if (await db.prepare('SELECT 1 AS x FROM restricted WHERE key=?').bind(me).first()) return json({ error: 'Your account can no longer use Swaps.' }, 403); } catch (e) {}
     let b = {};
     try { b = await request.json(); } catch (e) {}
     const wants = (Array.isArray(b.wants) ? b.wants : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, MAX_WANTS);

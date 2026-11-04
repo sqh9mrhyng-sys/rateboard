@@ -241,6 +241,9 @@ async function applyOp(env, body) {
   if (op === 'addOffer') {
     const o = body.offer || {};
     const user = str(o.user, 60), player = str(o.player, 80), sport = str(o.sport, 8);
+    // Taken off posting from the admin inbox.
+    try { await db.prepare('CREATE TABLE IF NOT EXISTS restricted (key TEXT PRIMARY KEY, at INTEGER, why TEXT)').run();
+      if (user && await db.prepare('SELECT 1 AS x FROM restricted WHERE LOWER(key)=?').bind(user.toLowerCase()).first()) return 'your account can no longer post offers'; } catch (e) {}
     const rate = Number(o.rate), link = str(o.link, 300) || '';
     if (!user || !player || !sport || !(rate > 0)) return 'bad offer';
 

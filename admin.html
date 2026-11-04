@@ -44,6 +44,9 @@
   .pill.off{border-color:var(--bad);color:var(--bad)}
   pre{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;overflow:auto;font-size:12px;max-height:40vh;white-space:pre-wrap;word-break:break-word}
   .ms{font-variant-numeric:tabular-nums}
+  .ib .who{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;font-size:13px}
+  .ib textarea{width:100%;min-height:54px;margin-top:8px;font:inherit;padding:8px;border-radius:9px;border:1px solid var(--line);background:var(--panel2,#232b3d);color:inherit;box-sizing:border-box}
+  .ib .acts2{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
   .ucard{border-bottom:1px solid var(--line);padding:10px 2px}
   .ucard .top{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
   .ucard .top .acts{margin-left:auto;display:flex;gap:6px}
@@ -152,8 +155,14 @@
 
     <!-- REPORTS -->
     <div id="t-reports" class="hide">
-      <section><h2>Member reports <span class="note" id="rp-n"></span></h2><div id="rp-users" class="note">Loading…</div></section>
-      <section><h2>Feature requests <span class="note" id="rp-fn"></span></h2><div id="rp-feats" class="note">Loading…</div></section>
+      <section><h2>Inbox <span class="note" id="ib-n"></span></h2>
+        <p class="note" style="margin:0 0 8px">Swaps reports, board member reports and feature requests. When the sender has a chat with the bot, your reply and the outcome are sent to them on Real.</p>
+        <div class="bar"><select id="ib-f"><option value="">All</option><option value="swap">Swaps reports</option><option value="board">Board reports</option><option value="feature">Feature requests</option></select><button id="ib-load" class="sm">Refresh</button></div>
+        <div id="ib-list" class="note">Loading…</div></section>
+      <section><h2>Bot messages <span class="note" id="bm-n"></span></h2>
+        <p class="note" style="margin:0 0 8px">Everyone you've messaged through the bot. <b>Check replies</b> reads their chats on Real (up to 25). <b>Check</b> sends them "check", which puts the chat at the top of the bot's DMs so you can read the whole conversation there.</p>
+        <div class="bar"><button id="bm-load" class="sm">Load</button><button id="bm-check" class="sm">Check replies</button></div>
+        <div id="bm-list" class="note"></div></section>
       <section><h2>Data reports <span class="note" id="rp-dn"></span></h2><div id="rp-data" class="note">Loading…</div></section>
     </div>
 
@@ -561,27 +570,71 @@ $('#us-rows').addEventListener('click', async e => {
 });
 
 /* ---------- reports ---------- */
-async function loadReports(){
-  const [b, f, d] = await Promise.all([getBoard(true).catch(e => ({ error: e.message })), api('/api/kv?features=1'), api('/api/kv?datareports=1')]);
+/* ---------- inbox: reports + feature requests, answered through the bot ---------- */
+let ibItems = [];
+const chatPill = w => !w ? '' : w.channelId ? '<span class="pill on">bot chat open</span>' : '<span class="pill off">no bot chat</span>';
+function drawInbox(){
+  const f = $('#ib-f').value, list = ibItems.filter(x => !f || x.src === f);
   const when = ts => ts ? new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
-  if(b.error) $('#rp-users').textContent = b.error;
-  else {
-    const open = (board.reports || []).filter(r => r.status === 'open').sort((x, y) => y.ts - x.ts);
-    $('#rp-n').textContent = `(${open.length} open)`;
-    $('#rp-users').innerHTML = open.length ? open.map(r => `<div class="ucard"><div class="top"><b>${esc(nameOf(String(r.target || '').toLowerCase()) || r.target)}</b>
-      <span class="note">reported by ${esc(r.by || 'unknown')} · ${esc(when(r.ts))}</span>
-      <span class="acts"><button class="sm" data-close="${esc(r.id)}">Close</button></span></div>
-      <div style="margin-top:4px">"${esc(r.reason || '')}"</div></div>`).join('') : '<span class="note">No open reports.</span>';
-  }
-  if(f.error) $('#rp-feats').textContent = f.error;
-  else {
-    const list = f.requests || [];
-    $('#rp-fn').textContent = `(${list.length} open)`;
-    $('#rp-feats').innerHTML = list.length ? list.map(x => `<div class="ucard"><div class="top"><b>${esc(x.title)}</b>
-      <span class="note">${esc(x.kind || '')} · from ${esc(x.by_user)} · ${esc(when(x.ts))}</span>
-      <span class="acts"><button class="sm" data-feat="${esc(x.id)}" data-st="done">Done</button><button class="sm danger" data-feat="${esc(x.id)}" data-st="declined">Decline</button></span></div>
-      ${x.detail ? `<div style="margin-top:4px">${esc(x.detail)}</div>` : ''}</div>`).join('') : '<span class="note">No open requests.</span>';
-  }
+  $('#ib-n').textContent = `(${ibItems.length} open)`;
+  $('#ib-list').innerHTML = list.map(x => { const fr = x.from, ab = x.about, k = `${x.src}|${x.id}`;
+    return `<div class="ucard ib" data-k="${esc(k)}"><div class="top"><b>${esc(x.kind)}</b><span class="note">${esc(when(x.ts))}</span></div>
+      ${x.title ? `<div style="margin-top:4px;font-weight:700">${esc(x.title)}</div>` : ''}
+      ${x.detail ? `<div style="margin-top:4px;white-space:pre-wrap">${esc(x.detail)}</div>` : ''}
+      <div class="who">From <b>@${esc((fr && (fr.rsUser || fr.key)) || x.by || '?')}</b>${fr && fr.rsUser && fr.key && fr.rsUser.toLowerCase() !== String(fr.key).toLowerCase() ? ` <span class="note">(board: ${esc(fr.key)})</span>` : ''} ${chatPill(fr)}</div>
+      ${x.target ? `<div class="who">About <b>@${esc((ab && ab.rsUser) || x.target)}</b>${ab && ab.key ? ` <span class="note">(board: ${esc(ab.key)})</span>` : ' <span class="pill off">no board account found</span>'} ${chatPill(ab)}
+        ${ab && ab.swapper ? '<span class="pill">swapper</span>' : ''}${ab && ab.restricted ? '<span class="pill off">no posts/swaps</span>' : ''}${ab && ab.banned ? '<span class="pill off">banned</span>' : ''}
+        ${ab && ab.comment ? ` · <a href="${esc(ab.comment)}" target="_blank" rel="noopener">their swap comment</a>` : ' · <span class="note">no swap comment saved</span>'}</div>` : ''}
+      <textarea data-reply placeholder="${fr && fr.channelId ? 'Reply - sent to them by the bot on Real' : 'They have no chat with the bot, so a reply can\'t be sent'}"${fr && fr.channelId ? '' : ' disabled'}></textarea>
+      <div class="acts2"><button class="sm" data-a="reply"${fr && fr.channelId ? '' : ' disabled'}>Send reply</button>
+        <button class="sm" data-a="done">${x.src === 'feature' ? 'Completed' : 'Complete'}</button><button class="sm danger" data-a="declined">Decline</button>
+        ${x.target ? `<button class="sm danger" data-a="restrict" data-two="1">Take posts/swaps</button><button class="sm danger" data-a="ban" data-two="1">Ban from site</button>` : ''}
+        <button class="sm danger" data-a="delete" data-two="1">Delete</button>
+        <label class="note" style="display:flex;align-items:center;gap:4px"><input type="checkbox" data-notify checked${fr && fr.channelId ? '' : ' disabled'}> DM them the outcome</label></div></div>`; }).join('') || '<span class="note">Nothing open.</span>';
+}
+async function loadInbox(){ $('#ib-list').textContent = 'Loading…'; const j = await api('/api/swaps?op=inbox'); if(j.error){ $('#ib-list').textContent = j.error; return; } ibItems = j.items || []; drawInbox(); }
+$('#ib-load').addEventListener('click', loadInbox);
+$('#ib-f').addEventListener('change', drawInbox);
+$('#ib-list').addEventListener('click', async e => {
+  const b = e.target.closest('[data-a]'); if(!b) return;
+  const card = b.closest('[data-k]'), [src, id] = card.dataset.k.split('|'), a = b.dataset.a;
+  // Delete, take posts/swaps and ban take two clicks.
+  if(b.dataset.two && b.dataset.armed !== '1'){ b.dataset.armed = '1'; const was = b.textContent; b.textContent = 'Click again to confirm';
+    setTimeout(() => { b.dataset.armed = ''; b.textContent = was; }, 4000); return; }
+  const text = card.querySelector('[data-reply]').value.trim(), notify = card.querySelector('[data-notify]').checked;
+  if(a === 'reply' && !text){ toast('Write a reply first.'); return; }
+  b.disabled = true;
+  const j = await api('/api/swaps?op=inboxact', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ src, id, action: a, text, notify }) });
+  b.disabled = false;
+  if(j.error){ toast(j.error); return; }
+  const dm = j.dm ? (j.dm.sent ? ' · DM sent' : ' · DM not sent: ' + j.dm.why) : '';
+  if(a === 'reply'){ card.querySelector('[data-reply]').value = ''; toast('Reply' + (j.dm && j.dm.sent ? ' sent on Real.' : ' not sent: ' + ((j.dm && j.dm.why) || '?'))); return; }
+  ibItems = ibItems.filter(x => !(x.src === src && x.id === id)); drawInbox();
+  toast(({ done: 'Completed', declined: 'Declined', delete: 'Deleted', restrict: 'Posts and swaps taken away', ban: 'Banned from the site' })[a] + dm);
+});
+async function loadBotMsgs(check){
+  $('#bm-list').textContent = check ? 'Reading their chats…' : 'Loading…';
+  const j = await api('/api/swaps?op=dmlog' + (check ? '&check=1' : ''), {}, 60000);
+  if(j.error){ $('#bm-list').textContent = j.error; return; }
+  const r = j.rows || [], when = ts => ts ? new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+  $('#bm-n').textContent = r.length ? `(${r.length})` : '';
+  $('#bm-list').innerHTML = r.map(x => `<div class="ucard"><div class="top"><b>@${esc(x.rsUser || x.key)}</b>
+      <span class="note">last sent ${esc(when(x.last))} · ${x.n} message${x.n === 1 ? '' : 's'}</span>
+      ${j.checked && !x.error ? (x.replied ? '<span class="pill on">replied</span>' : '<span class="pill">no reply yet</span>') : ''}${x.error ? `<span class="pill off">${esc(x.error)}</span>` : ''}
+      <span class="acts"><button class="sm" data-chk="${esc(x.rsUser || x.key)}">Check</button></span></div>
+      <div class="note" style="margin-top:4px">You: "${esc(String(x.lastText || '').slice(0, 160))}"</div>
+      ${x.lastTheirs ? `<div style="margin-top:4px">Them (${esc(when(x.lastTheirs.at))}): "${esc(x.lastTheirs.text)}"</div>` : ''}</div>`).join('') || 'No bot messages sent yet.';
+}
+$('#bm-load').addEventListener('click', () => loadBotMsgs(false));
+$('#bm-check').addEventListener('click', () => loadBotMsgs(true));
+$('#bm-list').addEventListener('click', async e => { const b = e.target.closest('[data-chk]'); if(!b) return; b.disabled = true;
+  const j = await api('/api/swaps?op=dmcheck', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ who: b.dataset.chk }) });
+  b.disabled = false; toast(j.error || (j.sent ? '"check" sent - the chat is at the top of the bot\'s DMs.' : 'Not sent: ' + j.why)); });
+
+async function loadReports(){
+  loadInbox(); loadBotMsgs(false);
+  const d = await api('/api/kv?datareports=1');
+  const when = ts => ts ? new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
   if(d.error) $('#rp-data').textContent = d.error;
   else {
     const list = d.reports || [];
