@@ -1453,7 +1453,7 @@ export async function swapAccess(env, request) {
 // for OTD their own passes and games.
 const MEMBER_OPS = new Set(['me', 'save', 'keep', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report', 'myswaps', 'dropwant', 'pause', 'endall']);
 const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan']);
-const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostinv', 'buys', 'legboosts', 'resell']);
+const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostinv', 'buys', 'legboosts', 'resell', 'nosell']);
 const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
 
 /* ---- OTD: saved game lists ------------------------------------------------
@@ -2549,20 +2549,24 @@ async function handle({ request, env, waitUntil }) {
      fewer than 100 CFB 2026 passes - they're shown buys instead. */
   if (op === 'resell') {
     const SP = url.searchParams.get('sport') === 'ncaaf' ? 'ncaaf' : 'ncaam';
-    const CFG = SP === 'ncaaf' ? { SEASON: 2026, PREV: 2025, SEASON_GAMES: 12, MIN_G: 5, offense: true, sellMin: 100 }
-                               : { SEASON: 2027, PREV: 2026, SEASON_GAMES: 31, MIN_G: 4, offense: false, sellMin: 0 };
+    // HIT: a good game's rax, for how often a player gets there (consistency).
+    const CFG = SP === 'ncaaf' ? { SEASON: 2026, PREV: 2025, SEASON_GAMES: 12, MIN_G: 5, offense: true, sellMin: 100, HIT: 20 }
+                               : { SEASON: 2027, PREV: 2026, SEASON_GAMES: 31, MIN_G: 4, offense: false, sellMin: 0, HIT: 10 };
     const { SEASON, PREV, SEASON_GAMES, MIN_G } = CFG, PACK = 200;
     const OFF = /^(QB|RB|HB|FB|WR|TE)$/i;
-    const u = await db.prepare('SELECT passes, scannedAt FROM swap_users WHERE key=?').bind(me).first();
+    try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN noSell TEXT'); } catch (e) {}
+    const u = await db.prepare('SELECT passes, scannedAt, noSell FROM swap_users WHERE key=?').bind(me).first();
     if (!u || !u.passes) return json({ error: 'Read your passes on the Boosts tab first.' }, 400);
+    const noSell = new Set((parse(u.noSell, []) || []).map(String));
     const mine = parse(u.passes, []).filter(p => p.sport === SP && Number(p.season) === SEASON && p.kind !== 'team');
     const sells = mine.length >= CFG.sellMin;
     // Every CBB player's rax a game this season and last (one grouped read each, kept 30 minutes).
-    const rkey = 'resell_rpg_v2_' + SP;
+    const rkey = 'resell_rpg_v3_' + SP;
     let R = null; try { R = JSON.parse((await env.RATEBOARD_KV.get(rkey)) || 'null'); } catch (e) {}
     if (!R || Date.now() - R.at > 30 * 60000) {
-      const grab = async se => ((await db.prepare(`SELECT playerId AS id, MAX(player) AS n, MAX(team) AS t, MAX(position) AS pos, COUNT(*) AS g, SUM(rax) AS r, ROUND(AVG(min), 1) AS m
-        FROM gamelog WHERE sport=? AND season=? AND rax IS NOT NULL AND seasonType='regularseason' GROUP BY playerId`).bind(SP, se).all()).results) || [];
+      const grab = async se => ((await db.prepare(`SELECT playerId AS id, MAX(player) AS n, MAX(team) AS t, MAX(position) AS pos, COUNT(*) AS g, SUM(rax) AS r, MAX(rax) AS mx,
+          SUM(CASE WHEN rax >= ? THEN 1 ELSE 0 END) AS hit, ROUND(AVG(min), 1) AS m
+        FROM gamelog WHERE sport=? AND season=? AND rax IS NOT NULL AND seasonType='regularseason' GROUP BY playerId`).bind(CFG.HIT, SP, se).all()).results) || [];
       R = { at: Date.now(), cur: await grab(SEASON), prev: await grab(PREV) };
       try { await env.RATEBOARD_KV.put(rkey, JSON.stringify(R), { expirationTtl: 3600 }); } catch (e) {}
     }
@@ -2592,8 +2596,14 @@ async function handle({ request, env, waitUntil }) {
       return { id, name: nm, team: (cur.get(id) || prev.get(id) || {}).t || (SP === 'ncaam' && CBB_TOP175[id] && CBB_TOP175[id][1]) || null, link: playerUrl(`${SP}:${SEASON}:${id}`),
         card: p.passId ? `https://www.realapp.com/${routeId([18, 0, 0, Number(p.passId)])}` : null,
         rpg: r ? Math.round(r.rpg * 10) / 10 : null, basis: r ? r.basis : 'no games yet', played: played(id),
-        left: isOut ? 0 : Math.max(0, SEASON_GAMES - played(id)), earned, sellCost: Math.max(0, earned - 100), out: isOut }; })
+        left: isOut ? 0 : Math.max(0, SEASON_GAMES - played(id)), earned, sellCost: Math.max(0, earned - 100), out: isOut, noSell: noSell.has(String(id)) }; })
       .sort((a, b) => (b.out ? 1 : 0) - (a.out ? 1 : 0) || (a.rpg ?? -1) - (b.rpg ?? -1));
+    /* Consistency: his average with his best game left out (one huge game can't
+       carry it), and how often he clears a good game (CFB 20+, CBB 10+). Buys
+       rank on steady rax a game x (0.6 + 0.4 x that hit rate); profits use the
+       steady figure. */
+    const steadyOf = x => x.g >= 4 ? (x.r - x.mx) / (x.g - 1) : x.r / x.g;
+    const scoreOf = x => steadyOf(x) * (0.6 + 0.4 * (x.g ? x.hit / x.g : 0));
     // Replacements: not already held, highest rax a game, 4+ games this season (or last season's figure early on).
     const pool = [];
     for (const id of new Set([...cur.keys(), ...prev.keys()])) {
@@ -2602,17 +2612,19 @@ async function handle({ request, env, waitUntil }) {
       const nm = (c || o).n;
       if (out[boostName(nm)]) continue;
       if (CFG.offense && !OFF.test(String((c || o).pos || ''))) continue;      // CFB buys: offence only
-      if (c && c.g >= MIN_G) pool.push({ id, name: nm, team: c.t, rpg: c.r / c.g, games: c.g, basis: 'this season' });
-      else if (!c || c.g < MIN_G) { if (o && o.g >= 10 && c && c.g) pool.push({ id, name: nm, team: c.t, rpg: o.r / o.g, games: c.g, basis: `last season (fewer than ${MIN_G} games yet)` }); }
+      const base = (x, basis, games) => ({ id, name: nm, team: (c || o).t, avg: x.r / x.g, rpg: steadyOf(x), hitRate: x.g ? x.hit / x.g : 0, best: x.mx, score: scoreOf(x), games, basis });
+      if (c && c.g >= MIN_G) pool.push(base(c, 'this season', c.g));
+      else if (o && o.g >= 10 && c && c.g) pool.push(base(o, `last season (fewer than ${MIN_G} games yet)`, c.g));
     }
     const thisSeasonEnough = pool.some(x => x.basis === 'this season');
-    const reps = pool.filter(x => !thisSeasonEnough || x.basis === 'this season').sort((a, b) => b.rpg - a.rpg).slice(0, 15)
-      .map(x => ({ ...x, pos: (cur.get(x.id) || prev.get(x.id) || {}).pos || null, rpg: Math.round(x.rpg * 10) / 10, left: Math.max(0, SEASON_GAMES - played(x.id)), link: playerUrl(`${SP}:${SEASON}:${x.id}`),
+    const reps = pool.filter(x => !thisSeasonEnough || x.basis === 'this season').sort((a, b) => b.score - a.score).slice(0, 15)
+      .map(x => ({ ...x, pos: (cur.get(x.id) || prev.get(x.id) || {}).pos || null, rpg: Math.round(x.rpg * 10) / 10, avg: Math.round(x.avg * 10) / 10,
+        hitPct: Math.round(x.hitRate * 100), score: Math.round(x.score * 10) / 10, left: Math.max(0, SEASON_GAMES - played(x.id)), link: playerUrl(`${SP}:${SEASON}:${x.id}`),
         // A straight buy: his rax over his games left x the booster, less the 200 pack.
         buy: MULTS.map(([k, m]) => ({ booster: k, mult: m, profit: Math.round(Math.max(0, SEASON_GAMES - played(x.id)) * x.rpg * m - PACK) })) }));
     // For each of their worst 10: the best replacement, and swap vs keep per booster over the games left.
     // Worst card gets the best replacement, the next worst the next one, so no one is suggested twice.
-    const plans = (sells ? cards : []).slice(0, 10).map((c, i) => {
+    const plans = (sells ? cards.filter(c => !c.noSell) : []).slice(0, 10).map((c, i) => {
       const best = reps[i] || null;
       const per = MULTS.map(([k, m]) => {
         const keep = c.rpg != null ? Math.round(c.left * c.rpg * m) : 0;
@@ -2623,7 +2635,18 @@ async function handle({ request, env, waitUntil }) {
       return { ...c, replaceWith: best, per, verdict: !best ? 'no replacement yet' : leg.gain > 0 ? 'replace' : 'keep - let him sit, don\'t boost' };
     });
     return json({ sport: SP, scannedAt: u.scannedAt || null, cards, plans, replacements: reps, seasonGames: SEASON_GAMES, minGames: MIN_G, pack: PACK, earlySeason: !thisSeasonEnough,
-      sells, held: mine.length, sellMin: CFG.sellMin, offenseOnly: CFG.offense });
+      sells, held: mine.length, sellMin: CFG.sellMin, offenseOnly: CFG.offense, hitBar: CFG.HIT, kept: cards.filter(c => c.noSell) });
+  }
+  // "Don't sell" on a card: it's left out of the resell suggestions until switched back.
+  if (op === 'nosell' && request.method === 'POST') {
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN noSell TEXT'); } catch (e) {}
+    const r = await db.prepare('SELECT noSell FROM swap_users WHERE key=?').bind(me).first();
+    const set = new Set((parse(r && r.noSell, []) || []).map(String)), id = String(Number(b.id) || '');
+    if (!id) return json({ error: 'bad player' }, 400);
+    if (b.on) set.add(id); else set.delete(id);
+    await db.prepare('UPDATE swap_users SET noSell=? WHERE key=?').bind(JSON.stringify([...set].slice(0, 500)), me).run();
+    return json({ ok: true, noSell: [...set] });
   }
 
   if (op === 'boostinv') {
