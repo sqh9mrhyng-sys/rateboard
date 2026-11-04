@@ -6358,7 +6358,7 @@ async function handleGet({ request, env, waitUntil }) {
                            'ast','stl','blk','tov','fantasyPts'];
       const GAME_COLS = ['day','season','sport','player','position','team','conference','opponent','homeAway','result','teamScore','oppScore',
                          'seasonType','rax','rating','min','pts','reb','ast','stl','blk','tov','pf',
-                         'plusMinus','fg','fg3','ft','tsPct','fantasyPts','comments','stats','playerId'];
+                         'plusMinus','fg','fg3','ft','tsPct','fantasyPts','comments','stats','playerId','gameId'];
 
       /* Saved views. The common "by player" question - any seasons, a name,
          team or conference, minimum games, owner and rax ranges, any sort -

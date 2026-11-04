@@ -188,6 +188,7 @@
   .shcopy{padding:3px 9px;font-size:11px;border-radius:7px;white-space:nowrap}
   /* A name that is also a link - underlined faintly so it reads as a name
      first and a link second. */
+  a.glink{font-size:11px;opacity:.75;white-space:nowrap;margin-left:4px}
   a.plink{color:inherit;text-decoration:underline;text-decoration-style:dotted;
           text-underline-offset:3px;text-decoration-color:var(--mute)}
   a.plink:hover{color:var(--accent);text-decoration-color:var(--accent)}
@@ -2449,6 +2450,13 @@ const REAL_SPORT = {
   soccer: [2, 14],
   golf:   [2, 15]
 };
+// A game on Real: the same routing hash as a player, record type 4 (the Super Bowl, NFL game 19451, is ZdpTytgFBAE).
+function realGameUrl(sport, gameId){
+  const kind = REAL_SPORT[String(sport || '').toLowerCase()];
+  const id = Number(gameId);
+  if(!kind || kind[0] !== 2 || !Number.isFinite(id) || id <= 0) return null;
+  return 'https://www.realapp.com/' + hashidsEncode('routing', 11, [4, kind[1], 0, id]);
+}
 function realPlayerUrl(sport, playerId, season){
   const kind = REAL_SPORT[String(sport || '').toLowerCase()];
   const id = Number(playerId);
@@ -5244,6 +5252,9 @@ async function cbbPanel(){
             v = (url
                   ? `<a class="plink" href="${esc(url)}" target="_blank" rel="noopener">${esc(v)}</a>`
                   : `<span>${esc(v)}</span>`) + pos;
+            // Games view: a second link, to that game on Real.
+            const gurl = st.mode === 'games' && r.gameId ? realGameUrl(r.sport, r.gameId) : null;
+            if(gurl) v += ` <a class="plink glink" href="${esc(gurl)}" target="_blank" rel="noopener" title="Open this game on Real">Game ↗</a>`;
           }
           if(k === 'sport' && v) v = CB_SPORT_LABEL[v] || String(v).toUpperCase();
           if(k === 'rating' && v != null && v !== '') v = Number(v).toFixed(2);
