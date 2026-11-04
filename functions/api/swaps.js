@@ -1453,7 +1453,7 @@ export async function swapAccess(env, request) {
 // for OTD their own passes and games.
 const MEMBER_OPS = new Set(['me', 'save', 'keep', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report', 'myswaps', 'dropwant', 'pause', 'endall']);
 const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan']);
-const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostinv', 'buys', 'legboosts']);
+const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostinv', 'buys', 'legboosts', 'resell']);
 const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
 
 /* ---- OTD: saved game lists ------------------------------------------------
@@ -2525,13 +2525,93 @@ async function handle({ request, env, waitUntil }) {
     }
     const u = await db.prepare('SELECT passes, scannedAt FROM swap_users WHERE key=?').bind(me).first();
     const ps = parse(u && u.passes, []).filter(p => p.sport === 'ncaaf');
-    const owns = x => x.team ? ps.some(p => p.kind === 'team' && Number(p.season) === x.season && new RegExp(x.team, 'i').test(String(p.name || '')))
-      : ps.some(p => p.kind !== 'team' && Number(p.season) === x.season && Number(p.id) === x.id);
+    const ownPass = x => x.team ? ps.find(p => p.kind === 'team' && Number(p.season) === x.season && new RegExp(x.team, 'i').test(String(p.name || '')))
+      : ps.find(p => p.kind !== 'team' && Number(p.season) === x.season && Number(p.id) === x.id);
+    const owns = x => !!ownPass(x);
     const out = list => list.map(x => { const st = x.id && stats && stats.by[`${x.season}:${x.id}`];
       const odds = st ? st.odds : x.odds ?? null, boost = st ? st.boost : x.boost ?? null;
-      return { name: x.name, season: x.season, team: !!x.team, link: x.id ? playerUrl(`ncaaf:${x.season}:${x.id}`) : null,
-        odds, boost, plays: st ? st.plays : null, owned: owns(x) }; });
+      const mine = ownPass(x);
+      // The name opens their own card when they hold it (like the CBB list), else the player on Real.
+      const card = mine && mine.passId ? `https://www.realapp.com/${routeId([18, 0, 0, Number(mine.passId)])}` : null;
+      return { name: x.name, season: x.season, team: !!x.team, link: card || (x.id ? playerUrl(`ncaaf:${x.season}:${x.id}`) : null), card: !!card,
+        playerLink: x.id ? playerUrl(`ncaaf:${x.season}:${x.id}`) : null, odds, boost, plays: st ? st.plays : null, owned: !!mine }; });
     return json({ daily: out(LEG_DAILY), weekly: out(LEG_WEEKLY), at: stats && stats.at, scanned: !!(u && u.passes), scannedAt: (u && u.scannedAt) || null, admin: acc.admin });
+  }
+
+  /* Resell / replacements (CBB 2026-27). Their CBB cards, worst rax a game
+     first, with anyone out for the season flagged; the best replacements
+     (highest rax a game, 4+ games this season, else last season while this
+     one is young); and, per booster, what swapping would make over the games
+     left. Getting rid of a card costs whatever it has earned past 100 rax, and
+     a new one costs 200. */
+  if (op === 'resell') {
+    const SEASON = 2027, PREV = 2026, SEASON_GAMES = 31, MIN_G = 4, PACK = 200;
+    const u = await db.prepare('SELECT passes, scannedAt FROM swap_users WHERE key=?').bind(me).first();
+    if (!u || !u.passes) return json({ error: 'Read your passes on the Boosts tab first.' }, 400);
+    const mine = parse(u.passes, []).filter(p => p.sport === 'ncaam' && Number(p.season) === SEASON && p.kind !== 'team');
+    // Every CBB player's rax a game this season and last (one grouped read each, kept 30 minutes).
+    const rkey = 'resell_rpg_v1';
+    let R = null; try { R = JSON.parse((await env.RATEBOARD_KV.get(rkey)) || 'null'); } catch (e) {}
+    if (!R || Date.now() - R.at > 30 * 60000) {
+      const grab = async se => ((await db.prepare(`SELECT playerId AS id, MAX(player) AS n, MAX(team) AS t, COUNT(*) AS g, SUM(rax) AS r, ROUND(AVG(min), 1) AS m
+        FROM gamelog WHERE sport='ncaam' AND season=? AND rax IS NOT NULL AND seasonType='regularseason' GROUP BY playerId`).bind(se).all()).results) || [];
+      R = { at: Date.now(), cur: await grab(SEASON), prev: await grab(PREV) };
+      try { await env.RATEBOARD_KV.put(rkey, JSON.stringify(R), { expirationTtl: 3600 }); } catch (e) {}
+    }
+    const cur = new Map(R.cur.map(x => [Number(x.id), x])), prev = new Map(R.prev.map(x => [Number(x.id), x]));
+    // Out for the season: ESPN's injury list, any date, read for "season" / "indefinitely".
+    let out = {};
+    try { const c = JSON.parse((await env.RATEBOARD_KV.get('resell_out_v1')) || 'null'); if (c && Date.now() - c.at < 6 * 3600000) out = c.m; else throw 0; }
+    catch (e) {
+      try { const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${ESPN_PATH.ncaam}/injuries`); const d = r.ok ? await r.json() : {};
+        for (const t of (d.injuries || [])) for (const x of (t.injuries || [])) {
+          const txt = `${x.status || ''} ${x.shortComment || ''} ${x.longComment || ''}`;
+          if (x.athlete && /season|indefinite/i.test(txt) && !/^active$/i.test(x.status || '')) out[boostName(x.athlete.displayName)] = String(x.shortComment || x.status || '').slice(0, 140);
+        } } catch (e2) {}
+      try { await env.RATEBOARD_KV.put('resell_out_v1', JSON.stringify({ at: Date.now(), m: out }), { expirationTtl: 86400 }); } catch (e) {}
+    }
+    const MULTS = [['none', 1], ['rare', 10], ['epic', 15], ['legendary', 25]];
+    const rate = id => { const c = cur.get(id), o = prev.get(id);
+      if (c && c.g >= MIN_G) return { rpg: c.r / c.g, games: c.g, basis: 'this season' };
+      if (c && c.g && o && o.g >= 10) return { rpg: (c.r + (o.r / o.g) * MIN_G) / (c.g + MIN_G), games: c.g, basis: `${c.g} game${c.g === 1 ? '' : 's'} this season + last season` };
+      if (c && c.g) return { rpg: c.r / c.g, games: c.g, basis: `${c.g} game${c.g === 1 ? '' : 's'} this season` };
+      if (o && o.g >= 10) return { rpg: o.r / o.g, games: 0, basis: 'last season' };
+      return null; };
+    const played = id => (cur.get(id) || {}).g || 0;
+    const owned = new Set(mine.map(p => Number(p.id)));
+    const cards = mine.map(p => { const id = Number(p.id), r = rate(id), nm = p.name || (CBB_TOP175[id] && CBB_TOP175[id][3]) || (cur.get(id) || prev.get(id) || {}).n || 'Player ' + id;
+      const earned = Number(p.earned) || 0, isOut = out[boostName(nm)] || null;
+      return { id, name: nm, team: (cur.get(id) || prev.get(id) || {}).t || (CBB_TOP175[id] && CBB_TOP175[id][1]) || null, link: playerUrl(`ncaam:${SEASON}:${id}`),
+        card: p.passId ? `https://www.realapp.com/${routeId([18, 0, 0, Number(p.passId)])}` : null,
+        rpg: r ? Math.round(r.rpg * 10) / 10 : null, basis: r ? r.basis : 'no games yet', played: played(id),
+        left: isOut ? 0 : Math.max(0, SEASON_GAMES - played(id)), earned, sellCost: Math.max(0, earned - 100), out: isOut }; })
+      .sort((a, b) => (b.out ? 1 : 0) - (a.out ? 1 : 0) || (a.rpg ?? -1) - (b.rpg ?? -1));
+    // Replacements: not already held, highest rax a game, 4+ games this season (or last season's figure early on).
+    const pool = [];
+    for (const id of new Set([...cur.keys(), ...prev.keys()])) {
+      if (owned.has(id)) continue;
+      const c = cur.get(id), o = prev.get(id);
+      const nm = (c || o).n;
+      if (out[boostName(nm)]) continue;
+      if (c && c.g >= MIN_G) pool.push({ id, name: nm, team: c.t, rpg: c.r / c.g, games: c.g, basis: 'this season' });
+      else if (!c || c.g < MIN_G) { if (o && o.g >= 10 && c && c.g) pool.push({ id, name: nm, team: c.t, rpg: o.r / o.g, games: c.g, basis: 'last season (fewer than 4 games yet)' }); }
+    }
+    const thisSeasonEnough = pool.some(x => x.basis === 'this season');
+    const reps = pool.filter(x => !thisSeasonEnough || x.basis === 'this season').sort((a, b) => b.rpg - a.rpg).slice(0, 15)
+      .map(x => ({ ...x, rpg: Math.round(x.rpg * 10) / 10, left: Math.max(0, SEASON_GAMES - played(x.id)), link: playerUrl(`ncaam:${SEASON}:${x.id}`) }));
+    // For each of their worst 10: the best replacement, and swap vs keep per booster over the games left.
+    // Worst card gets the best replacement, the next worst the next one, so no one is suggested twice.
+    const plans = cards.slice(0, 10).map((c, i) => {
+      const best = reps[i] || null;
+      const per = MULTS.map(([k, m]) => {
+        const keep = c.rpg != null ? Math.round(c.left * c.rpg * m) : 0;
+        const swap = best ? Math.round(best.left * best.rpg * m - PACK - c.sellCost) : null;
+        return { booster: k, mult: m, keep, swap, gain: swap == null ? null : swap - keep };
+      });
+      const leg = per.find(x => x.booster === 'legendary');
+      return { ...c, replaceWith: best, per, verdict: !best ? 'no replacement yet' : leg.gain > 0 ? 'replace' : 'keep - let him sit, don\'t boost' };
+    });
+    return json({ scannedAt: u.scannedAt || null, cards, plans, replacements: reps, seasonGames: SEASON_GAMES, minGames: MIN_G, pack: PACK, earlySeason: !thisSeasonEnough });
   }
 
   if (op === 'boostinv') {
@@ -2700,8 +2780,13 @@ async function handle({ request, env, waitUntil }) {
     const left = inv ? inv.map(b => ({ ...b })) : null;
     const scale = { ncaam: 1, ncaaf: 2.17, nfl: 1.65 }[sp] || 1;
     const MODE_RULES = { balanced: { leg: 14.5, epic: 10, cap: 0.15 }, heavy: { leg: 11.5, epic: 9, cap: 0.4 }, saver: { leg: 18, epic: 14.5, cap: 1 } };
-    const R = MODE_RULES[mode] || MODE_RULES.balanced;
-    const legBar = R.leg * scale, epicBar = R.epic * scale, rareFloor = 5, cutAt = null;
+    const R = { ...(MODE_RULES[mode] || MODE_RULES.balanced) };
+    /* CFB on Balanced (Dennis, 2026-11-04): 67 players make 25+ rax a game over
+       5+ games, so Legendary from 27.5 projected and Epic from 26, and up to 70%
+       of the Legendaries held go out in a week (one slate a week in college football). */
+    const cfbBal = sp === 'ncaaf' && mode === 'balanced';
+    if (cfbBal) R.cap = 0.7;
+    const legBar = cfbBal ? 27.5 : R.leg * scale, epicBar = cfbBal ? 26 : R.epic * scale, rareFloor = 5, cutAt = null;
     bars.splice(0, 3, Math.round(legBar * 10) / 10, Math.round(epicBar * 10) / 10, rareFloor);
     const held = r => inv ? inv.filter(b => b.rarity === r).reduce((t, b) => t + b.count, 0) : 0;
     const dayCap = { 5: held(5) ? Math.max(1, Math.floor(held(5) * R.cap)) : 0, 4: Infinity, 3: Infinity };

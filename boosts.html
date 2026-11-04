@@ -44,6 +44,13 @@
   .leg1 .pt div{padding:5px 12px;text-align:right;font-variant-numeric:tabular-nums} .leg1 .pt div:nth-child(3n+1){text-align:left}
   .leg1 .pt .h{color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
   @media (max-width: 680px){ .leg1 > .hd{grid-template-columns:1fr 1fr 1fr} .leg1 .nm{grid-column:1 / -1} .leg1 .v{text-align:left} }
+  .rs1{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:0 0 10px}
+  .rs1 .hd{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:baseline}
+  .rs1 .vd{margin-left:auto;font-size:12px;font-weight:800;padding:2px 9px;border-radius:999px;border:1px solid currentColor}
+  .rs1 .two{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+  .rs1 .two > div{border:1px solid var(--line);border-radius:8px;padding:8px}
+  .rs1 table{margin-top:8px} .rs1 td,.rs1 th{padding:4px 6px}
+  @media (max-width: 680px){ .rs1 .two{grid-template-columns:1fr} }
   .lock{max-width:460px;margin:12vh auto;text-align:center}
   /* Phones: each player becomes a card instead of a wide table row. */
   @media (max-width: 680px){
@@ -120,6 +127,13 @@
   </div>
 
   <div id="t-buys" hidden>
+    <div class="bar" style="margin-bottom:10px"><label class="note" style="flex:1 1 220px">Show <select id="sub"></select></label></div>
+    <section id="resell" hidden>
+      <div class="bar"><b style="font-size:15px">Resell / replacements · CBB 2026-27</b></div>
+      <p class="note" id="rsmsg" style="margin:8px 0 0">Your worst cards by rax a game, who's out for the season, and who to replace them with.</p>
+      <div id="rslist" style="margin-top:10px"><p class="note">Loading…</p></div>
+      <p class="note" style="margin:10px 0 0">Games left assume a 31-game regular season. <b>Swap</b> = new card's rax over his games left × the booster, minus 200 for the pack and the resell cost (everything your old card made past 100 rax). <b>Keep</b> = your card's rax over his games left × the booster (0 if he's out for the season). Replace only when swap beats keep.</p>
+    </section>
     <section id="legs" hidden>
       <div class="bar"><b style="font-size:15px">Legendary boosts · CFB</b><div class="seg" id="legseg" style="margin-left:auto"><button data-p="daily" aria-pressed="true">Daily packs</button><button data-p="weekly" aria-pressed="false">Weekly packs</button></div></div>
       <p class="note" id="legmsg" style="margin:8px 0 0">Packs whose booster is nearly always legendary. Tap a player for profit by base rax.</p>
@@ -297,15 +311,43 @@ function showTab(t){
   document.querySelectorAll('#tab button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.t === t)));
   $('#t-boosts').hidden = t !== 'boosts'; $('#t-buys').hidden = t !== 'buys';
   const sp = $('#sport').value;
-  $('#cbbbuys').hidden = sp !== 'ncaam'; $('#legs').hidden = sp !== 'ncaaf';
-  if(t === 'buys'){ if(sp === 'ncaam') loadBuys(); else if(sp === 'ncaaf') loadLegs(); }
+  // The second tab's sub-pick: what each sport has.
+  const subs = sp === 'ncaam' ? [['top', 'Top 70 buys'], ['resell', 'Resell / replacements']] : sp === 'ncaaf' ? [['legs', 'Legendary boosts']] : [];
+  const sel = $('#sub'), was = sel.value;
+  sel.innerHTML = subs.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+  if(subs.some(([v]) => v === was)) sel.value = was;
+  const sv = sel.value;
+  $('#cbbbuys').hidden = sv !== 'top'; $('#legs').hidden = sv !== 'legs'; $('#resell').hidden = sv !== 'resell';
+  if(t === 'buys'){ if(sv === 'top') loadBuys(); else if(sv === 'legs') loadLegs(); else if(sv === 'resell') loadResell(); }
+}
+$('#sub').addEventListener('change', () => showTab('buys'));
+// --- Resell / replacements (CBB)
+let rsData = null;
+async function loadResell(){
+  if(!rsData){ $('#rslist').innerHTML = '<p class="note">Working it out…</p>';
+    const j = await api('/api/swaps?op=resell&page=boosts');
+    if(j.error){ $('#rslist').innerHTML = `<p class="note">${esc(j.error)}</p>`; return; }
+    rsData = j; }
+  const j = rsData, n = v => v == null ? '-' : Math.round(v).toLocaleString(), lk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)}</a>` : esc(t);
+  $('#rsmsg').textContent = `${j.cards.length} CBB 2026-27 cards checked` + (j.scannedAt ? ` (passes read ${new Date(j.scannedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` : '')
+    + (j.earlySeason ? '. Early season: nobody has 4 games yet, so replacements use last season\'s rax a game until they do.' : '.');
+  const out = j.cards.filter(c => c.out);
+  $('#rslist').innerHTML = (out.length ? `<div class="rs1" style="border-color:var(--bad)"><b style="color:var(--bad)">Out for the season</b>${out.map(c => `<div class="note" style="margin-top:4px">${lk(c.name, c.card || c.link)} · ${esc(c.out)}</div>`).join('')}</div>` : '')
+    + j.plans.map(c => { const r = c.replaceWith, rep = c.verdict === 'replace';
+      return `<div class="rs1"><div class="hd"><b>${lk(c.name, c.card || c.link)}</b><span class="note">${esc(c.team || '')}</span>${c.out ? '<span class="b none" style="background:var(--bad);color:#10131b">OUT FOR SEASON</span>' : ''}
+          <span class="vd" style="color:${rep ? 'var(--ok)' : 'var(--mute)'}">${rep ? 'Replace' : esc(c.verdict)}</span></div>
+        <div class="two"><div><span class="sub">Your card</span><b>${c.rpg ?? '-'}</b> rax/game · ${c.played} played · ${c.left} left<br><span class="note">${esc(c.basis)} · made ${n(c.earned)} · resell costs <b>${n(c.sellCost)}</b></span></div>
+          <div><span class="sub">Replace with</span>${r ? `<b>${lk(r.name, r.link)}</b> ${esc(r.team || '')}<br><b>${r.rpg}</b> rax/game · ${r.games} played · ${r.left} left<br><span class="note">${esc(r.basis)}</span>` : '<span class="note">No one with enough games yet.</span>'}</div></div>
+        ${r ? `<table><thead><tr><th>Booster</th><th>Keep</th><th>Swap</th><th>Swap gain</th></tr></thead><tbody>${c.per.map(x => `<tr><td style="text-align:left">${x.booster === 'none' ? 'No booster' : x.booster[0].toUpperCase() + x.booster.slice(1) + ' x' + x.mult}</td><td>${n(x.keep)}</td><td>${n(x.swap)}</td><td style="color:${x.gain > 0 ? 'var(--ok)' : 'var(--bad)'};font-weight:700">${x.gain > 0 ? '+' : ''}${n(x.gain)}</td></tr>`).join('')}</tbody></table>` : ''}</div>`; }).join('')
+    + (j.replacements.length ? `<details class="rs1"><summary><b>Top replacements</b> <span class="note">(highest rax a game you don't hold)</span></summary>${j.replacements.map((r, i) => `<div class="note" style="margin-top:4px">${i + 1}. ${lk(r.name, r.link)} ${esc(r.team || '')} · <b>${r.rpg}</b> rax/game · ${r.games} played · ${esc(r.basis)}</div>`).join('')}</details>` : '')
+    || '<p class="note">No CBB 2026-27 cards in your last scan.</p>';
 }
 document.querySelectorAll('#tab button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.t)));
 // The sport picker at the top: CBB's second tab is Buys, CFB's is Legendary boosts, NFL has none.
 function paintSport(){
   const sp = $('#sport').value;
   document.querySelectorAll('#sportseg button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.s === sp)));
-  $('#tab2').hidden = sp === 'nfl'; $('#tab2').textContent = sp === 'ncaaf' ? 'Legendary boosts' : 'Buys';
+  $('#tab2').hidden = sp === 'nfl'; $('#tab2').textContent = 'Buys';
   showTab(sp === 'nfl' ? 'boosts' : curTab);
 }
 document.querySelectorAll('#sportseg button').forEach(b => b.addEventListener('click', () => {
@@ -344,7 +386,7 @@ function drawLegs(){
         rows += `<div>${b}</div><div>${Math.round(pay).toLocaleString()}</div><div style="color:${pr >= 0 ? 'var(--ok)' : 'var(--bad)'};font-weight:700">${pr >= 0 ? '+' : ''}${Math.round(pr).toLocaleString()}</div>`; }
       rows += '</div>';
     }
-    return `<div class="leg1"><div class="hd" data-leg="${k}" role="button" tabindex="0"><div class="nm"><b>${x.link ? `<a href="${esc(x.link)}" target="_blank" rel="noopener">${esc(x.name)}</a>` : esc(x.name)}</b><span class="sub">CFB ${CFB_SEASON(x.season)}${x.owned ? ' · <b style="color:var(--ok)">Owned</b>' : ''}</span></div>`
+    return `<div class="leg1"><div class="hd" data-leg="${k}" role="button" tabindex="0"><div class="nm"><b>${x.link ? `<a href="${esc(x.link)}" target="_blank" rel="noopener">${esc(x.name)}</a>` : esc(x.name)}</b><span class="sub">CFB ${CFB_SEASON(x.season)}${x.owned ? ' · <b style="color:var(--ok)">Owned</b>' + (x.card ? ' - name opens your card' : '') : ''}${x.card && x.playerLink ? ` · <a href="${esc(x.playerLink)}" target="_blank" rel="noopener">player</a>` : ''}</span></div>`
       + `<div class="v"><small>Leg odds</small>${x.odds == null ? '-' : (x.odds * 100).toFixed(1) + '%'}</div>`
       + `<div class="v"><small>Avg boost</small>${x.boost == null ? '-' : f2(x.boost) + 'x'}</div>`
       + `<div class="v"><small>Base rax to profit</small>${need == null ? '-' : f2(need)}</div>`
