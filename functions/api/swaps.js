@@ -2551,7 +2551,7 @@ async function handle({ request, env, waitUntil }) {
     const SP = url.searchParams.get('sport') === 'ncaaf' ? 'ncaaf' : 'ncaam';
     // HIT: a good game's rax, for how often a player gets there (consistency).
     const CFG = SP === 'ncaaf' ? { SEASON: 2026, PREV: 2025, SEASON_GAMES: 12, MIN_G: 5, offense: true, sellMin: 100, HIT: 20 }
-                               : { SEASON: 2027, PREV: 2026, SEASON_GAMES: 31, MIN_G: 4, offense: false, sellMin: 0, HIT: 10 };
+                               : { SEASON: 2027, PREV: 2026, SEASON_GAMES: 31, MIN_G: 4, offense: false, sellMin: 100, HIT: 10 };
     const { SEASON, PREV, SEASON_GAMES, MIN_G } = CFG, PACK = 200;
     const OFF = /^(QB|RB|HB|FB|WR|TE)$/i;
     try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN noSell TEXT'); } catch (e) {}
