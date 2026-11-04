@@ -1439,7 +1439,7 @@ export async function swapAccess(env, request) {
 }
 // What a member (not an admin) may do: their own swap and nothing else, and
 // for OTD their own passes and games.
-const MEMBER_OPS = new Set(['me', 'save', 'keep', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report', 'myswaps']);
+const MEMBER_OPS = new Set(['me', 'save', 'keep', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report', 'myswaps', 'dropwant', 'pause', 'endall']);
 const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan']);
 const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostinv', 'buys', 'legboosts']);
 const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
@@ -1895,6 +1895,35 @@ async function handle({ request, env, waitUntil }) {
   const auth = swapToken(env);
 
   /* Why haven't I matched? Run when they tap the button, never on its own. */
+  /* ✕ on a pick: saved straight away, and that player's swaps still to come are called off. */
+  if (op === 'dropwant' && request.method === 'POST') {
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    const k = String(b.key || '');
+    const r = await db.prepare('SELECT wants, slots FROM swap_users WHERE key=?').bind(me).first();
+    if (!r) return json({ ok: true, wants: [], calledOff: 0 });
+    const wants = parse(r.wants, []).filter(w => w !== k);
+    await db.prepare('UPDATE swap_users SET wants=?, updatedAt=? WHERE key=?').bind(JSON.stringify(wants), Date.now(), me).run();
+    try { await env.RATEBOARD_KV.delete('swap_wantcounts_v1'); } catch (e) {}
+    let calledOff = 0; try { calledOff = await cancelDropped(db, me, new Set(wants), new Set(parse(r.slots, []))); } catch (e) {}
+    return json({ ok: true, wants, calledOff });
+  }
+  /* Pause: no new matches until they save again; swaps already set keep going.
+     End all: paused, and every swap still to come is called off too. */
+  if ((op === 'pause' || op === 'endall') && request.method === 'POST') {
+    await matchCols(db);
+    await db.prepare('UPDATE swap_users SET active=0, updatedAt=? WHERE key=?').bind(Date.now(), me).run();
+    try { await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); await env.RATEBOARD_KV.delete('swap_wantcounts_v1'); } catch (e) {}
+    let calledOff = 0;
+    if (op === 'endall') {
+      const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned') AND (a=? OR b=?)`).bind(me, me).all()).results) || [];
+      for (const m of rows) {
+        if (sideDue(m) <= Date.now()) continue;
+        await db.prepare(`UPDATE swap_matches SET status='cancelling', note=? WHERE id=?`).bind(`called off: @${me} ended their swaps`, m.id).run(); calledOff++;
+      }
+    }
+    return json({ ok: true, paused: true, calledOff });
+  }
+
   /* A member's own swaps: coming up, and the last two weeks of past ones. */
   if (op === 'myswaps') {
     if (!(await allow(url.origin, 'myswaps:' + me, 40, 600))) return json({ error: 'Wait a few minutes and try again.' }, 429);

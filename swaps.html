@@ -179,6 +179,8 @@
   </section>
 
   <div class="bar"><button class="primary" id="save">Save my swap</button><span class="note" id="savemsg"></span></div>
+  <div class="bar"><button id="pauseall">Pause all swaps</button><button id="endall" style="border-color:var(--bad);color:var(--bad)">End all swaps</button><span class="note" id="pausemsg"></span></div>
+  <p class="note" style="margin:4px 0 0"><b>Pause</b> stops new matches - swaps already set still happen. <b>End all</b> also calls off every swap still to come (you and your partners are told). Tap Save my swap to start again.</p>
   <div class="bar"><button id="whynot">Why haven't I matched?</button></div>
   <div class="note" id="whyout"></div>
 
@@ -562,14 +564,36 @@ function drawWants(){
     || '<p class="note" style="margin:8px 0 0">Nobody picked yet.</p>';
   drawCaps();
 }
-$('#wants').addEventListener('click', e => { const b = e.target.closest('button'); if(!b) return;
-  const x = b.dataset.x; if(x){ prof.wants = prof.wants.filter(k => k !== x); drawWants(); $('#savemsg').textContent = 'Player removed - tap Save my swap to keep the change (any swap for him still to come is then called off).'; return; }
+$('#wants').addEventListener('click', async e => { const b = e.target.closest('button'); if(!b) return;
+  const x = b.dataset.x; if(x){
+    prof.wants = prof.wants.filter(k => k !== x); drawWants();
+    // Saved straight away, and his swaps still to come are called off.
+    const j = await api('/api/swaps?op=dropwant', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: x }) });
+    if(j.error){ $('#savemsg').textContent = j.error; return; }
+    savedWants.delete(x); loadWantCounts(); loadSwaps();
+    $('#savemsg').textContent = 'Player removed and saved.' + (j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} for him ${j.calledOff === 1 ? 'is' : 'are'} called off - you'll both get a message.` : '');
+    return; }
   // ▲/▼ move a pick up or down the priority order (saved with Save).
   const i = b.dataset.up != null ? Number(b.dataset.up) : b.dataset.dn != null ? Number(b.dataset.dn) : -1; if(i < 0) return;
   const j = b.dataset.up != null ? i - 1 : i + 1; if(j < 0 || j >= prof.wants.length) return;
   [prof.wants[i], prof.wants[j]] = [prof.wants[j], prof.wants[i]]; drawWants();
   $('#savemsg').textContent = 'Order changed - tap Save to keep it.'; });
 
+function paintPaused(){ $('#pausemsg').innerHTML = prof.active === false && prof.wants.length ? '<b style="color:var(--bad)">Your swaps are paused</b> - no new matches until you tap Save my swap.' : ''; }
+$('#pauseall').addEventListener('click', async () => {
+  const j = await api('/api/swaps?op=pause', { method: 'POST' });
+  if(j.error){ $('#pausemsg').textContent = j.error; return; }
+  prof.active = false; savedWants = new Set(); paintPaused(); loadHourCounts(); loadWantCounts(); loadSwaps();
+});
+$('#endall').addEventListener('click', async e => {
+  const b = e.currentTarget;
+  if(b.dataset.armed !== '1'){ b.dataset.armed = '1'; b.textContent = 'Tap again to end all'; setTimeout(() => { b.dataset.armed = ''; b.textContent = 'End all swaps'; }, 4000); return; }
+  b.dataset.armed = ''; b.textContent = 'End all swaps';
+  const j = await api('/api/swaps?op=endall', { method: 'POST' });
+  if(j.error){ $('#pausemsg').textContent = j.error; return; }
+  prof.active = false; savedWants = new Set(); paintPaused(); loadHourCounts(); loadWantCounts(); loadSwaps();
+  $('#pausemsg').innerHTML += j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} called off.` : ' No upcoming swaps to call off.';
+});
 $('#save').addEventListener('click', async () => {
   if(!connected){ $('#savemsg').textContent = 'Do step 1 first - the bot has to be able to DM you.'; return; }
   if(!prof.slots.length){ $('#savemsg').textContent = 'Pick at least one hour.'; return; }
@@ -577,7 +601,7 @@ $('#save').addEventListener('click', async () => {
   const j = await api('/api/swaps?op=save', { method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 5), comment: $('#clink').value.trim(), goal: $('#goal').value.trim(), dayCap: $('#daycap').value.trim(), caps, keep: prof.keep, slots: prof.slots, names: wantNames }) });
   $('#savemsg').textContent = j.error ? j.error : 'Saved.' + (j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} for a player or hour you removed ${j.calledOff === 1 ? 'is' : 'are'} called off - you'll both get a message.` : '');
-  if(!j.error){ savedWants = new Set(prof.wants); loadHourCounts(); loadWantCounts(); loadSwaps(); }
+  if(!j.error){ savedWants = new Set(prof.wants); prof.active = true; paintPaused(); loadHourCounts(); loadWantCounts(); loadSwaps(); }
   try{ localStorage.setItem('ratebrd_swapnames', JSON.stringify(wantNames)); }catch(e){}
 });
 
@@ -740,6 +764,7 @@ async function proGate(){
   paintConn(!!j.connected);
   $('#admin').hidden = !j.admin;
   savedWants = new Set((j.profile && j.profile.active && j.profile.wants) || []);
+  paintPaused();
   drawPasses(); drawWants(); drawHours(); loadHourCounts(); loadWantCounts(); loadSwaps(); if(j.admin){ loadMatches(); }
   resumeScan();
   api('/api/swaps?op=buildindex');   // adds one season to the search table, at most every 5 minutes
