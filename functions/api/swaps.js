@@ -340,8 +340,7 @@ async function runMatching(db) {
      partner a different player (a pass of theirs goes out once a swap day).
      The swap day runs 7am to 7am ET, by the hour the swap happens, so a
      player can go out at 6am and again at 7am. Each specific pass (player +
-     season) is in at most one of a member's swaps a swap day, given or
-     received: they hold one pack of it. Capped at SWAPS_PER_DAY a swap
+     season) a member gives goes out once a swap day: they hold one pack of it. Capped at SWAPS_PER_DAY a swap
      day, and by their goal rating when they set one. */
   const open = ((await db.prepare(`SELECT a, b, aGets, bGets, slot, createdAt, dueAt, followA, followB FROM swap_matches WHERE createdAt > ? AND status IN ('pending','sending','warned','sent')`)
     .bind(Date.now() - 2 * 86400000).all()).results || []);
@@ -350,7 +349,7 @@ async function runMatching(db) {
   for (const m of open) {
     const d = swapDay(sideDue(m));
     paired.add(`${m.a}|${m.b}|${d}`); paired.add(`${m.b}|${m.a}|${d}`);
-    for (const k of [m.aGets, m.bGets]) { given.add(`${m.a}|${k}|${d}`); given.add(`${m.b}|${k}|${d}`); }     // each pass in one swap a day per member, given or received
+    given.add(`${m.b}|${m.aGets}|${d}`); given.add(`${m.a}|${m.bGets}|${d}`);     // B gave aGets, A gave bGets: each pass goes out once a swap day
     bump(count, `${m.a}|${d}`); bump(count, `${m.b}|${d}`);
     // Anyone whose follow-up has gone out has finished that swap day (5 DMs at most).
     if (m.followA) closed.add(`${m.a}|${d}`); if (m.followB) closed.add(`${m.b}|${d}`);
@@ -393,8 +392,7 @@ async function runMatching(db) {
     // The best pair of picks that works both ways (earlier picks first). The
     // exact same pass both ways is no swap; the same player in two seasons is fine.
     const gB = gives(B, d), gA = gives(A, d);
-    const free = (k, w) => !given.has(`${k}|${w}|${d}`);
-    const aOk = A.wants.filter(w => gB.has(w) && free(A.key, w) && goalOk(A.key, w)), bOk = B.wants.filter(w => gA.has(w) && free(B.key, w) && goalOk(B.key, w));
+    const aOk = A.wants.filter(w => gB.has(w) && goalOk(A.key, w)), bOk = B.wants.filter(w => gA.has(w) && goalOk(B.key, w));
     let pick = null;
     for (let s = 0; s < aOk.length + bOk.length && !pick; s++)
       for (let x = 0; x <= s && !pick; x++) { const aw = aOk[x], bw = bOk[s - x]; if (aw && bw && aw !== bw) pick = [aw, bw]; }
@@ -402,7 +400,7 @@ async function runMatching(db) {
     const [aGets, bGets] = pick;
     made.push({ a: A.key, b: B.key, aGets, bGets, slot, due });
     paired.add(`${A.key}|${B.key}|${d}`); paired.add(`${B.key}|${A.key}|${d}`);
-    for (const k of [aGets, bGets]) { given.add(`${A.key}|${k}|${d}`); given.add(`${B.key}|${k}|${d}`); }
+    given.add(`${B.key}|${aGets}|${d}`); given.add(`${A.key}|${bGets}|${d}`);
     bump(count, `${A.key}|${d}`); bump(count, `${B.key}|${d}`);
     goalLeft.set(`${A.key}|${aGets}`, (goalLeft.get(`${A.key}|${aGets}`) ?? Infinity) - 1);
     goalLeft.set(`${B.key}|${bGets}`, (goalLeft.get(`${B.key}|${bGets}`) ?? Infinity) - 1);
