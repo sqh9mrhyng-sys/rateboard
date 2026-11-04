@@ -165,11 +165,16 @@
   <section>
     <h2>6. Scale</h2>
     <p class="note">Optional - leave a box empty for no limit. Saved with <b>Save my swap</b>.</p>
-    <div class="bar"><label class="note" for="daycap" style="flex:1 1 100%">Swaps per day (all players, 7am-7am ET)</label>
+    <div class="bar"><label class="note" for="daycap" style="flex:1 1 100%"><b>1. Total swaps per day</b> - all players, 7am-7am ET</label>
       <input id="daycap" type="number" inputmode="numeric" min="1" step="1" placeholder="No limit" style="flex:0 1 140px"></div>
-    <div class="bar" id="capbar"><label class="note" for="capn" style="flex:1 1 100%">Swaps overall for <span id="capone"></span></label>
-      <select id="capwho" style="flex:1 1 200px"></select>
-      <input id="capn" type="number" inputmode="numeric" min="1" step="1" placeholder="No limit" style="flex:0 1 140px"></div>
+    <div id="capbar">
+      <div class="bar"><label class="note" for="capwho" style="flex:1 1 100%" id="capfor">Player</label>
+        <select id="capwho" style="flex:1 1 200px"></select><b id="capone"></b></div>
+      <div class="bar"><label class="note" for="capn" style="flex:1 1 100%"><b>2. Total swaps for this player</b></label>
+        <input id="capn" type="number" inputmode="numeric" min="1" step="1" placeholder="No limit" style="flex:0 1 140px"></div>
+      <div class="bar"><label class="note" for="capd" style="flex:1 1 100%"><b>3. Swaps for this player per day</b> - 7am-7am ET</label>
+        <input id="capd" type="number" inputmode="numeric" min="1" step="1" placeholder="No limit" style="flex:0 1 140px"></div>
+    </div>
     <p class="note" id="capnote" style="margin:4px 0 0"></p>
   </section>
 
@@ -524,22 +529,29 @@ $('#wres').addEventListener('click', e => {
   wantNames[d.dataset.k] = d.dataset.n; drawWants();
   $('#wres').innerHTML = ''; $('#wq').value = '';
 });
-// --- scale
+// --- scale: caps = { passKey: { n: total, d: per day } }
 let caps = {};
+const capLbl = (k, i) => { const c = caps[k] || {}, bits = [c.n ? c.n + ' total' : '', c.d ? c.d + '/day' : ''].filter(Boolean);
+  return `${['1st', '2nd', '3rd', '4th', '5th'][i]} · ${wantNames[k] || 'Player ' + k.split(':')[2]} · ${keyLbl(k)}${bits.length ? ' - ' + bits.join(', ') : ''}`; };
+const capKey = () => prof.wants.length > 1 ? $('#capwho').value : prof.wants[0];
 function drawCaps(){
   const w = prof.wants, sel = $('#capwho'), cur = sel.value;
   for(const k of Object.keys(caps)) if(!w.includes(k)) delete caps[k];
   $('#capbar').hidden = !w.length;
-  $('#capnote').textContent = w.length ? 'Per player counts from when you set it; once he reaches it, no more swaps for him until you raise it.' : 'Pick players in step 4 to set a limit per player.';
-  sel.innerHTML = w.map((k, i) => `<option value="${k}">${['1st', '2nd', '3rd', '4th', '5th'][i]} · ${esc(wantNames[k] || 'Player ' + k.split(':')[2])} · ${esc(keyLbl(k))}${caps[k] ? ' - ' + caps[k] : ''}</option>`).join('');
+  $('#capnote').textContent = w.length ? (w.length > 1 ? 'Choose a player, then set his limits. ' : '') + 'The total counts from when you set it; once he reaches it, no more swaps for him until you raise it.' : 'Pick players in step 4 to set limits per player.';
+  sel.innerHTML = w.map((k, i) => `<option value="${k}">${esc(capLbl(k, i))}</option>`).join('');
   sel.hidden = w.length < 2;   // one player: no drop-down, just his name
-  $('#capone').textContent = w.length === 1 ? (wantNames[w[0]] || 'Player ' + w[0].split(':')[2]) + ' · ' + keyLbl(w[0]) : w.length ? 'the player you choose' : '';
+  $('#capfor').textContent = w.length > 1 ? 'Player' : 'For';
+  $('#capone').textContent = w.length === 1 ? capLbl(w[0], 0).replace(/^1st · /, '').replace(/ - .*$/, '') : '';
   if(w.includes(cur)) sel.value = cur;
-  $('#capn').value = caps[sel.value] || '';
+  const c = caps[capKey()] || {}; $('#capn').value = c.n || ''; $('#capd').value = c.d || '';
 }
-$('#capwho').addEventListener('change', () => { $('#capn').value = caps[$('#capwho').value] || ''; });
-$('#capn').addEventListener('input', () => { const k = $('#capwho').value || prof.wants[0]; if(!k) return; const v = $('#capn').value.trim(); if(v) caps[k] = v; else delete caps[k];
-  const o = $('#capwho').selectedOptions[0]; if(o){ const i = prof.wants.indexOf(k); o.textContent = `${['1st', '2nd', '3rd', '4th', '5th'][i]} · ${wantNames[k] || 'Player ' + k.split(':')[2]} · ${keyLbl(k)}${caps[k] ? ' - ' + caps[k] : ''}`; } });
+$('#capwho').addEventListener('change', () => { const c = caps[capKey()] || {}; $('#capn').value = c.n || ''; $('#capd').value = c.d || ''; });
+for(const [id, f] of [['#capn', 'n'], ['#capd', 'd']]) $(id).addEventListener('input', () => {
+  const k = capKey(); if(!k) return; const v = $(id).value.trim(), c = caps[k] || {};
+  if(v) c[f] = v; else delete c[f];
+  if(c.n || c.d) caps[k] = c; else delete caps[k];
+  const o = $('#capwho').selectedOptions[0]; if(o) o.textContent = capLbl(k, prof.wants.indexOf(k)); });
 function drawWants(){
   if(prof.wants.length > 5) prof.wants = prof.wants.slice(0, 5);
   $('#wants').innerHTML = prof.wants.map((k, i) => { const n = othersOn(k);
@@ -721,7 +733,7 @@ async function proGate(){
   if(prof.slots.length > 5){ prof.slots = prof.slots.slice(0, 5); drawHours(); }
   $('#goal').value = (j.profile && j.profile.goal != null) ? j.profile.goal : '';
   $('#daycap').value = (j.profile && j.profile.dayCap != null) ? j.profile.dayCap : '';
-  caps = {}; for(const [k, v] of Object.entries((j.profile && j.profile.caps) || {})) if(v && v.n) caps[k] = String(v.n);
+  caps = {}; for(const [k, v] of Object.entries((j.profile && j.profile.caps) || {})) if(v && (v.n || v.d)) caps[k] = { ...(v.n ? { n: String(v.n) } : {}), ...(v.d ? { d: String(v.d) } : {}) };
   drawCaps();
   $('#clink').value = (j.profile && j.profile.comment) || '';
   if(prof.passes.length && prof.keep.length) collapsed = true;   // back again with picks made: start folded

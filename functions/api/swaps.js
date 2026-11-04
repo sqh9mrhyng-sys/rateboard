@@ -342,12 +342,13 @@ async function runMatching(db) {
      goal rating when they set one. */
   const open = ((await db.prepare(`SELECT a, b, aGets, bGets, slot, createdAt, dueAt, followA, followB FROM swap_matches WHERE createdAt > ? AND status IN ('pending','sending','warned','sent')`)
     .bind(Date.now() - 2 * 86400000).all()).results || []);
-  const paired = new Set(), given = new Set(), count = new Map(), closed = new Set(), goalUsed = new Map();
+  const paired = new Set(), given = new Set(), count = new Map(), recv = new Map(), closed = new Set(), goalUsed = new Map();
   const bump = (m, k) => m.set(k, (m.get(k) || 0) + 1);
   for (const m of open) {
     const d = swapDay(sideDue(m));
     given.add(`${m.b}|${m.aGets}|${d}`); given.add(`${m.a}|${m.bGets}|${d}`);     // B gave aGets, A gave bGets: each pass goes out once a swap day
     bump(count, `${m.a}|${d}`); bump(count, `${m.b}|${d}`);
+    bump(recv, `${m.a}|${m.aGets}|${d}`); bump(recv, `${m.b}|${m.bGets}|${d}`);
     // Anyone whose follow-up has gone out has finished that swap day (5 DMs at most).
     if (m.followA) closed.add(`${m.a}|${d}`); if (m.followB) closed.add(`${m.b}|${d}`);
   }
@@ -362,13 +363,16 @@ async function runMatching(db) {
     try { const g = await goalRoom(db, cache, u, (x, ww) => usedSince(db, x, ww), w); if (g.limited) left = g.left; } catch (e) {}
     // Scale: their own cap for this player, overall since they set it.
     const c = u.caps[w];
-    if (c && Number(c.n) > 0) { try { left = Math.min(left, Math.max(0, Number(c.n) - await usedFor(db, u.key, w, c.at))); } catch (e) {} }
+    if (c && Number(c.n) > 0 && c.at) { try { left = Math.min(left, Math.max(0, Number(c.n) - await usedFor(db, u.key, w, c.at))); } catch (e) {} }
     goalLeft.set(`${u.key}|${w}`, left);
   }
   // No daily cap and no limit per partner: two members swap as often as they have compatible picks.
   const dayCap = new Map(users.filter(u => Number(u.dayCap) > 0).map(u => [u.key, Number(u.dayCap)]));
   const roomFor = (k, d) => !closed.has(`${k}|${d}`) && (count.get(`${k}|${d}`) || 0) < (dayCap.get(k) ?? Infinity);   // Scale: their swaps-a-day, if set
   const goalOk = (k, w) => (goalLeft.get(`${k}|${w}`) ?? Infinity) > 0;
+  // Scale: their swaps-a-day for one player.
+  const capsOf = new Map(users.map(u => [u.key, u.caps]));
+  const perDayOk = (k, w, d) => { const c = (capsOf.get(k) || {})[w]; return !(c && Number(c.d) > 0) || (recv.get(`${k}|${w}|${d}`) || 0) < Number(c.d); };
   const gives = (u, d) => new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !given.has(`${u.key}|${k}|${d}`)));
   /* Every possible pair and shared hour, best first: an hour someone picked
      first is their primary, so pairs on both members' earliest picks go
@@ -397,7 +401,7 @@ async function runMatching(db) {
     // The best pair of picks that works both ways (earlier picks first). The
     // exact same pass both ways is no swap; the same player in two seasons is fine.
     const gB = gives(B, d), gA = gives(A, d);
-    const aOk = A.wants.filter(w => gB.has(w) && goalOk(A.key, w)), bOk = B.wants.filter(w => gA.has(w) && goalOk(B.key, w));
+    const aOk = A.wants.filter(w => gB.has(w) && goalOk(A.key, w) && perDayOk(A.key, w, d)), bOk = B.wants.filter(w => gA.has(w) && goalOk(B.key, w) && perDayOk(B.key, w, d));
     let pick = null;
     for (let s = 0; s < aOk.length + bOk.length && !pick; s++)
       for (let x = 0; x <= s && !pick; x++) { const aw = aOk[x], bw = bOk[s - x]; if (aw && bw && aw !== bw) pick = [aw, bw]; }
@@ -406,6 +410,7 @@ async function runMatching(db) {
     made.push({ a: A.key, b: B.key, aGets, bGets, slot, due });
     given.add(`${B.key}|${aGets}|${d}`); given.add(`${A.key}|${bGets}|${d}`);
     bump(count, `${A.key}|${d}`); bump(count, `${B.key}|${d}`);
+    bump(recv, `${A.key}|${aGets}|${d}`); bump(recv, `${B.key}|${bGets}|${d}`);
     goalLeft.set(`${A.key}|${aGets}`, (goalLeft.get(`${A.key}|${aGets}`) ?? Infinity) - 1);
     goalLeft.set(`${B.key}|${bGets}`, (goalLeft.get(`${B.key}|${bGets}`) ?? Infinity) - 1);
     }
@@ -1783,7 +1788,9 @@ async function handle({ request, env, waitUntil }) {
     if (u && Number(u.dayCap) > 0 && Number(open && open.n) >= Number(u.dayCap)) why.push(`You have ${open.n} swap${open.n == 1 ? '' : 's'} going - your Scale limit is ${u.dayCap} a day (step 6). Raise it for more.`);
     if (u && wantsAll.length) {
       const caps = parse(u.caps, {}) || {}, full = [];
-      for (const w of wantsAll) { const c = caps[w]; if (c && Number(c.n) > 0 && await usedFor(db, me, w, c.at) >= Number(c.n)) full.push(w); }
+      for (const w of wantsAll) { const c = caps[w]; if (!c) continue;
+        if (Number(c.n) > 0 && c.at && await usedFor(db, me, w, c.at) >= Number(c.n)) { full.push(w); continue; }
+        if (Number(c.d) > 0 && await usedFor(db, me, w, Date.now() - 86400000) >= Number(c.d)) full.push(w); }
       if (full.length && full.length === wantsAll.length) why.push(`Every player you picked has reached your Scale limit for him (step 6). Raise a limit or pick another player.`);
     }
     // Who could swap with them.
@@ -2030,13 +2037,17 @@ async function handle({ request, env, waitUntil }) {
     if (dayCap != null && !(Number.isInteger(dayCap) && dayCap >= 1 && dayCap <= 999)) return json({ error: 'Swaps a day has to be a whole number, 1 or more.' }, 400);
     const oldCaps = parse((await db.prepare('SELECT caps FROM swap_users WHERE key=?').bind(me).first() || {}).caps, {}) || {};
     const caps = {};
+    const capNum = v => { if (v === '' || v == null) return null; const n = Number(v); return Number.isInteger(n) && n >= 1 && n <= 999 ? n : NaN; };
     for (const w of wants) {
-      const v = b.caps && b.caps[w];
-      if (v === '' || v == null) continue;
-      const n = Number(v);
-      if (!(Number.isInteger(n) && n >= 1 && n <= 999)) return json({ error: 'Swaps per player has to be a whole number, 1 or more.' }, 400);
-      // The count starts when the number is set; saving it again unchanged keeps the count going.
-      caps[w] = { n, at: oldCaps[w] && Number(oldCaps[w].n) === n ? oldCaps[w].at : Date.now() };
+      const v = (b.caps && b.caps[w]) || {};
+      const n = capNum(typeof v === 'object' ? v.n : v), d = capNum(typeof v === 'object' ? v.d : null);
+      if (Number.isNaN(n) || Number.isNaN(d)) return json({ error: 'Swap limits have to be whole numbers, 1 or more.' }, 400);
+      if (n == null && d == null) continue;
+      const c = {};
+      // The total counts from when it is set; saving it again unchanged keeps the count going.
+      if (n != null) { c.n = n; c.at = oldCaps[w] && Number(oldCaps[w].n) === n && oldCaps[w].at ? oldCaps[w].at : Date.now(); }
+      if (d != null) c.d = d;
+      caps[w] = c;
     }
     await db.prepare(`INSERT INTO swap_users (key, rsUser, wants, keep, slots, updatedAt, active, comment, goal) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
       ON CONFLICT(key) DO UPDATE SET rsUser=excluded.rsUser, wants=excluded.wants, keep=excluded.keep,
