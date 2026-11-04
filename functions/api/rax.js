@@ -5104,8 +5104,13 @@ async function handleGet({ request, env, waitUntil }) {
     }
     /* Seasons the cron Worker's own list doesn't have yet, collected first.
        The Worker isn't redeployed for a new season; it's added here. */
+    /* And moved to the front when the Worker's list has them: they used to
+       stay wherever the Worker put them (behind FC and the rest), so the
+       order here never took effect. */
     for (const [sp, se] of EXTRA_JOBS.slice().reverse()) {
-      if (!jobs.some(([a, b]) => a === sp && b === se)) jobs.unshift([sp, se]);
+      const at = jobs.findIndex(([a, b]) => a === sp && b === se);
+      if (at >= 0) jobs.splice(at, 1);
+      jobs.unshift([sp, se]);
     }
     if (!jobs.length) return json({ phase: null, why: 'no jobs given' });
 
@@ -5230,7 +5235,8 @@ async function handleGet({ request, env, waitUntil }) {
       const games = await kv(`games_${sp}_${se}`);
       const ids = (games && games.ids) || [];
       if (!ids.length) {
-        const r = await pick('list', 0);
+        // Progress is the players paged in so far: a list takes many passes, and a fixed 0 got it set aside for the day.
+        const r = await pick('list', (games && games.building && games.building.ids && games.building.ids.length) || 0);
         if (r) return r;
         continue;                       // without a player list nothing else can run
       }
