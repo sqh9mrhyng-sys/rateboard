@@ -662,7 +662,8 @@ async function repPick(k){
   if(k === 'refund'){
     // Their called-off swaps, to pick the one they want rax back (or a replacement) for.
     if(!mySwaps.length) await loadSwaps();
-    const off = mySwaps.filter(x => x.state === 'off'), when = ms => new Date(ms).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    const off = mySwaps.filter(x => x.state === 'off' && !x.byMe),   // ones they called off themselves don't qualify
+      when = ms => new Date(ms).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
     $('#repm').innerHTML = off.length ? off.map(x => `<option value="${x.id}">${esc(when(x.due))} · with @${esc(x.partner || '?')} · you bought ${esc(x.give)}</option>`).join('') : '<option value="">No called-off swaps in the last 14 days</option>';
   }
 }

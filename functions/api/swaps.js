@@ -954,8 +954,14 @@ async function runDms(env, db, auth, rows, max, force) {
       notes.push(`match ${m.id} cancelled (same pass)`); continue;
     }
     if (m.status === 'cancelling' || (keeps.get(m.a) || new Set()).has(m.bGets) || (keeps.get(m.b) || new Set()).has(m.aGets)) {
-      // Anyone already told to buy hears it's off, once.
+      /* Whoever called it off (removed the player or hour, paused/ended, or
+         now keeps the pass) gets no notice and no refund offer - it was their
+         doing. Only their partner, if already told to buy, hears it's off. */
+      const byNote = (String(m.note || '').match(/called off: @(\S+)/) || [])[1];
+      const byKeep = (keeps.get(m.a) || new Set()).has(m.bGets) ? m.a : (keeps.get(m.b) || new Set()).has(m.aGets) ? m.b : null;
+      const canceller = String(byNote || byKeep || '').toLowerCase();
       for (const side of ['A', 'B']) {
+        if (canceller && String(side === 'A' ? m.a : m.b).toLowerCase() === canceller) { try { await db.prepare(`UPDATE swap_matches SET ${'follow' + side}=COALESCE(${'follow' + side}, ?) WHERE id=?`).bind(now, m.id).run(); } catch (e) {} continue; }
         if (!m['warn' + side] && !m['done' + side]) continue;
         const r = await db.prepare(`UPDATE swap_matches SET ${'follow' + side}=? WHERE id=? AND ${'follow' + side} IS NULL`).bind(now, m.id).run();
         if (!(r && r.meta && r.meta.changes)) continue;
@@ -2019,7 +2025,8 @@ async function handle({ request, env, waitUntil }) {
       out.push({ id: m.id, due, partner: (o && o.rsUser) || null, comment: done && o ? o.comment || null : null,
         give: mine ? playerName(mine, give) : give, giveUrl: playerUrl(give), get: mine ? playerName(mine, get) : get, getUrl: playerUrl(get),
         state: off ? 'off' : done ? 'done' : m['warn' + side] ? 'warned' : 'scheduled',
-        upcoming: !off && !done && ['pending', 'sending', 'warned'].includes(m.status), note: off ? (m.note || 'called off') : null });
+        upcoming: !off && !done && ['pending', 'sending', 'warned'].includes(m.status), note: off ? (m.note || 'called off') : null,
+        byMe: off && String((String(m.note || '').match(/called off: @(\S+)/) || [])[1] || '').toLowerCase() === String(me).toLowerCase() });
     }
     return json({ swaps: out, now });
   }
@@ -2131,6 +2138,8 @@ async function handle({ request, env, waitUntil }) {
       await matchCols(db);
       const m = await db.prepare(`SELECT * FROM swap_matches WHERE id=? AND (a=? OR b=?) AND status IN ('cancelled','cancelling')`).bind(Number(b.matchId), me, me).first();
       if (!m) return json({ error: 'Pick the called-off swap.' }, 400);
+      if (String((String(m.note || '').match(/called off: @(\S+)/) || [])[1] || '').toLowerCase() === String(me).toLowerCase())
+        return json({ error: 'You called that swap off yourself, so there is no rax back for it.' }, 400);
       const side = m.a === me ? 'A' : 'B', o = await loadMember(db, side === 'A' ? m.b : m.a), mine = await loadMember(db, me);
       matchId = m.id; target = (o && o.rsUser) || (side === 'A' ? m.b : m.a);
       const want = b.want === 'replace' ? 'a replacement swap' : 'rax back for the pack';
