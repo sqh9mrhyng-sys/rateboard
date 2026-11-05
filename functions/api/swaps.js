@@ -1756,6 +1756,22 @@ async function dmTick(env) {
   TICK_T0 = Date.now(); TICK_BUDGET = 26000;
   const db = env.RATEBOARD_DB, auth = swapToken(env);
   if (!db || !auth || !DM_ON) return [];
+  // One-off (2026-11-05, Dennis asked): an example of the new one-message DMs, sent to him, built from his own swaps.
+  try { if (!(await env.RATEBOARD_KV.get('example_dm_1105'))) { await env.RATEBOARD_KV.put('example_dm_1105', String(Date.now()));
+    const me = await loadMember(db, 'dennis');
+    if (me && me.hashId) {
+      const m0 = await db.prepare("SELECT dueAt FROM swap_matches WHERE (a='dennis' OR b='dennis') AND status NOT IN ('cleared') AND dueAt IS NOT NULL ORDER BY ABS(dueAt - ?) LIMIT 1").bind(Date.now()).first();
+      const due = (m0 && Number(m0.dueAt)) || Math.ceil(Date.now() / 3600000) * 3600000;
+      const ms = ((await db.prepare("SELECT * FROM swap_matches WHERE (a='dennis' OR b='dennis') AND dueAt=? AND status NOT IN ('cancelled','cleared')").bind(due).all()).results) || [];
+      const cache = new Map(), member = async k => cache.has(k) ? cache.get(k) : (cache.set(k, await loadMember(db, k)), cache.get(k));
+      const items = []; for (const m of ms) { const l = await sideLines(member, m, m.a === 'dennis' ? 'A' : 'B'); if (l) items.push(l); }
+      const link = await hourLink(env, 'dennis', due), n = items.length || 0, sum = items.length ? recvSummary(me, items) : 'Jacob Misiorowski x9, A\'ja Wilson x6, Scottie Scheffler x5';
+      const ch = await dmChannel(db, auth, me.hashId, me.rsUser, env);
+      await dmSend(auth, ch, fitOne(`EXAMPLE (warning, 30 min before):\n\nHeads up - you swap in 30 min. You have ${n} swaps that hour - buy the ${n} packs listed here:\n${link}\n\nYou are receiving: ${sum}`));
+      await sleep(4500);
+      await dmSend(auth, ch, fitOne(`EXAMPLE (contact, 5 min before):\n\nSwap time - send 12 hour offers. You have ${n} swaps now - who to contact, their comments and your cards are here:\n${link}\n\nYou are receiving: ${sum}\n\nReport anyone doing it wrong.`));
+      await stat(db, 'dm_admin', 2);
+    } } } catch (e) { await botFail(db, 'dm_admin', 'example: ' + (e.message || e)); }
   try { await retryDms(db, auth); } catch (e) { await botFail(db, 'dm_retry', e.message); }   // unsent parts first
   try {
     const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned','cancelling') AND createdAt > ? ORDER BY COALESCE(dueAt, createdAt), id LIMIT 800`)
