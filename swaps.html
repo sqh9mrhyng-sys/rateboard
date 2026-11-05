@@ -818,7 +818,7 @@ function drawSwaps(){
   const ext = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)} ↗</a>` : '';
   $('#swlist').innerHTML = list.map(x => { const t = TAG[x.state] || TAG.scheduled, who = '@' + esc(x.partner || '?'), whoL = x.partnerUrl ? `<a href="${esc(x.partnerUrl)}" target="_blank" rel="noopener">${who}</a>` : who;
     const gp = String(x.give || '').replace(/ \d{4}$/, ''), rp = String(x.get || '').replace(/ \d{4}$/, '');
-    return `<div class="sw1"><div class="top"><b>${when(x.due)}</b><span class="tag" style="color:${t[1]}">${t[0]}</span></div>`
+    return `<div class="sw1"><div class="top"><b>${x.hourUrl ? `<a href="${esc(x.hourUrl)}" target="_blank" rel="noopener" title="This time's page">${when(x.due)} ↗</a>` : when(x.due)}</b><span class="tag" style="color:${t[1]}">${t[0]}</span></div>`
       + `<div class="swwho">With <b>${whoL}</b>${x.comment ? ` · ${ext('their comment', x.comment)}` : ''}</div>`
       + `<div class="swgrid">`
       + `<div class="swk get">You receive</div><div><b>${lnk(x.get, x.getUrl)}</b><div class="note">${who} buys a ${esc(rp)} pack - you offer on his 3 new cards${x.getCard ? ` · ${ext('his card', x.getCard)}` : ''}</div></div>`

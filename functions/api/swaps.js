@@ -2813,6 +2813,22 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'resetstart' || op === 'resetcheck') return resetFlow(env, db, url, request, op, waitUntil);
   /* The page a member's DM links to: their swaps at one hour. No sign-in; the
      link's signature is the key. */
+  /* The hour page's time menu: every swap time this member had in the last
+     14 days and has coming up, each with its own signed page link. The page's
+     own signature is the key. */
+  if (op === 'hourlist') {
+    const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));
+    if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
+    const u = await db.prepare('SELECT key FROM swap_users WHERE LOWER(key)=?').bind(key.toLowerCase()).first();
+    if (!u) return json({ hours: [] });
+    await matchCols(db);
+    const rows = ((await db.prepare(`SELECT dueAt AS d, COUNT(*) AS n, SUM(CASE WHEN status IN ('cancelled','cancelling') THEN 1 ELSE 0 END) AS off FROM swap_matches
+      WHERE (a=? OR b=?) AND dueAt > ? AND status <> 'cleared' GROUP BY dueAt ORDER BY dueAt DESC LIMIT 200`).bind(u.key, u.key, Date.now() - 14 * 86400000).all()).results) || [];
+    const hours = [];
+    for (const r of rows) { const d = Number(r.d), live = Number(r.n) - Number(r.off || 0); if (live <= 0) continue;
+      hours.push({ due: d, swaps: live, url: `/hour?u=${encodeURIComponent(u.key)}&d=${d}&t=${await hourSig(env, u.key, d)}` }); }
+    return json({ hours, now: Date.now() });
+  }
   if (op === 'hourview') {
     const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));
     if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
@@ -2971,6 +2987,10 @@ async function handle({ request, env, waitUntil }) {
         upcoming: !off && !done && ['pending', 'sending', 'warned'].includes(m.status), note: off ? (m.note || 'called off') : null,
         byMe: off && String((String(m.note || '').match(/called off: @(\S+)/) || [])[1] || '').toLowerCase() === String(me).toLowerCase() });
     }
+    // Each swap time's own page (the one the DMs link to), signed for this member.
+    const hp = new Map();
+    for (const x of out) if (x.due && !hp.has(x.due)) hp.set(x.due, `/hour?u=${encodeURIComponent(me)}&d=${x.due}&t=${await hourSig(env, me, x.due)}`);
+    for (const x of out) x.hourUrl = hp.get(x.due) || null;
     return json({ swaps: out, now });
   }
 

@@ -29,6 +29,12 @@
   .gh a{color:var(--accent)}
   .gh + .row{border-top:0}
   .andr{margin-top:12px;border-style:dashed}
+  .tbtn{font:inherit;font-weight:800;color:var(--accent);background:none;border:0;padding:0;cursor:pointer;text-align:left}
+  .tbtn .car{font-size:.7em;vertical-align:middle}
+  .hmenu{margin-top:10px;background:var(--panel);border:1px solid var(--accent);border-radius:12px;padding:8px 12px;max-height:60vh;overflow:auto}
+  .hm-t{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--mute);margin:8px 0 2px}
+  .hm-i{display:flex;justify-content:space-between;gap:10px;padding:10px 4px;border-top:1px solid var(--line);color:var(--ink);text-decoration:none}
+  .hm-i.on{color:var(--accent);font-weight:700}
   .andr .ab{display:grid;grid-template-columns:1fr 1fr;gap:8px}
   .andr .ab .btn:disabled{opacity:.5;cursor:default}
   .andr .ab .btn{text-align:center;padding:11px 8px;cursor:pointer;font:inherit;font-weight:700;font-size:13.5px}
@@ -39,6 +45,7 @@
 <body>
 <div class="wrap">
   <h1 id="h">Your swaps</h1>
+  <div class="hmenu" id="hmenu" hidden><div class="hm-t"><span>Scheduled</span></div><div id="hm-up"></div><div class="hm-t"><span>Previous</span></div><div id="hm-past"></div></div>
   <p class="note" id="sub">Loading…</p>
   <section class="andr" id="andr" hidden>
     <b>On Android, request DM</b>
@@ -64,7 +71,8 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
   if(j.error){ $('#sub').textContent = j.error; return; }
   const when = new Date(Number(j.due)).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   const live = j.swaps.filter(x => !x.off);
-  $('#h').textContent = `@${j.user} · ${when}`;
+  $('#h').innerHTML = `@${esc(j.user)} · <button class="tbtn" id="tbtn" aria-expanded="false">${esc(when)} <span class="car">▾</span></button>`;
+  $('#tbtn').addEventListener('click', openMenu);
   $('#sub').textContent = `${live.length} swap${live.length === 1 ? '' : 's'} at this time` + (j.swaps.length > live.length ? ` (${j.swaps.length - live.length} called off)` : '') + '.';
   $('#buy').hidden = !j.swaps.length;
   $('#andr').hidden = !live.length;
@@ -94,6 +102,21 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
   $('#conlist').innerHTML = j.swaps.map((x, i) => `<div class="row${x.off ? ' off' : ''}"><span class="grp"><input type="checkbox" class="chk" data-k="c${i}" ${done['c' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}>
     <span><b>${x.partnerUrl ? `<a href="${esc(x.partnerUrl)}" target="_blank" rel="noopener">@${esc(x.partner || '?')}</a>` : '@' + esc(x.partner || '?')}</b><span class="sub">You receive <b class="rv">${lnk(x.receive, x.receiveUrl)}</b></span><span class="sub">(You're giving ${esc(x.give)})</span></span></span>${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : '<span class="note">no comment</span>'}</div>`).join('');
 })();
+/* Tap the time: every swap time you've had (14 days) and have coming up. */
+let menuDone = false;
+async function openMenu(){
+  const m = $('#hmenu'), open = m.hidden; m.hidden = !open; $('#tbtn').setAttribute('aria-expanded', String(open));
+  if(!open || menuDone) return;
+  $('#hm-up').innerHTML = '<p class="note" style="margin:6px 0">Loading…</p>'; $('#hm-past').innerHTML = '';
+  let j; try{ const r = await fetch(`/api/swaps?op=hourlist&u=${encodeURIComponent(q.get('u') || '')}&d=${encodeURIComponent(q.get('d') || '')}&t=${encodeURIComponent(q.get('t') || '')}`); j = await r.json(); }catch(e){ j = { error: 'Could not reach the board.' }; }
+  if(j.error){ $('#hm-up').innerHTML = `<p class="note">${esc(j.error)}</p>`; return; }
+  menuDone = true;
+  const cur = Number(q.get('d')), nowMs = j.now || Date.now();
+  const item = h => `<a class="hm-i${h.due === cur ? ' on' : ''}" href="${esc(h.url)}"><span>${esc(new Date(h.due).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</span><span class="note">${h.swaps} swap${h.swaps === 1 ? '' : 's'}</span></a>`;
+  const up = j.hours.filter(h => h.due > nowMs - 3600000).sort((a, b) => a.due - b.due), past = j.hours.filter(h => h.due <= nowMs - 3600000);
+  $('#hm-up').innerHTML = up.map(item).join('') || '<p class="note" style="margin:6px 0">Nothing scheduled.</p>';
+  $('#hm-past').innerHTML = past.map(item).join('') || '<p class="note" style="margin:6px 0">Nothing in the last 14 days.</p>';
+}
 document.addEventListener('click', async e => {
   const b = e.target.closest('[data-dm]'); if(!b) return;
   b.disabled = true; $('#andrmsg').textContent = 'Sending…';
