@@ -2812,13 +2812,14 @@ async function handle({ request, env, waitUntil }) {
     const u = await db.prepare('SELECT key FROM swap_users WHERE LOWER(key)=?').bind(key.toLowerCase()).first();
     if (!u) return json({ error: 'No swaps found.' }, 404);
     const ms = ((await db.prepare("SELECT * FROM swap_matches WHERE (a=? OR b=?) AND dueAt=? AND status NOT IN ('cancelled','cleared') ORDER BY id").bind(u.key, u.key, due).all()).results) || [];
-    const cache = new Map(), mem = async k => cache.has(k) ? cache.get(k) : (cache.set(k, await loadMember(db, k)), cache.get(k));
-    const me = await mem(u.key), out = [];
+    // Partners: only their name and comment (not their whole pass list).
+    const cache = new Map(), mem = async k => cache.has(k) ? cache.get(k) : (cache.set(k, await db.prepare('SELECT key, rsUser, comment FROM swap_users WHERE key=?').bind(k).first()), cache.get(k));
+    const me = await loadMember(db, u.key), out = [];
     for (const m of ms) {
       const side = m.a === u.key ? 'A' : 'B', o = await mem(side === 'A' ? m.b : m.a);
       const recv = side === 'A' ? m.aGets : m.bGets, give = side === 'A' ? m.bGets : m.aGets;
       out.push({ status: m.status, partner: o && o.rsUser, comment: (o && o.comment) || null,
-        receive: playerName(me, recv), receiveUrl: playerUrl(recv), theirCard: o ? passUrl(o, recv) : null,
+        receive: playerName(me, recv), receiveUrl: playerUrl(recv),
         give: playerName(me, give), giveUrl: playerUrl(give), yourCard: me ? passUrl(me, give) : null, off: m.status === 'cancelling' });
     }
     return json({ user: (me && me.rsUser) || u.key, due, swaps: out });

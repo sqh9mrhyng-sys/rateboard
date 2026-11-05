@@ -24,6 +24,7 @@
   .off{opacity:.5;text-decoration:line-through}
   .chk{width:22px;height:22px;accent-color:var(--ok);flex:none}
   .grp{display:flex;align-items:center;gap:10px;min-width:0}
+  .sub .rv a{color:var(--ink)}
   .wait{margin-top:14px;padding:10px 12px;border:1px dashed var(--line);border-radius:10px;text-align:center}
   #con.new{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 35%,transparent)}
 </style>
@@ -34,7 +35,7 @@
   <p class="note" id="sub">Loading…</p>
   <section id="buy" hidden><h2>Buy these packs <span class="n" id="nbuy"></span></h2><p class="note" style="margin:0 0 6px">One pack of each. Tick them off as you go.</p><div id="buylist"></div></section>
   <p class="note wait" id="wait" hidden></p>
-  <section id="con" hidden><h2>Offer on your partners' cards <span class="n" id="ncon"></span></h2><p class="note" style="margin:0 0 6px">At the swap time, send each partner a 12 hour offer on the 3 cards of the player you receive. Their comment is only to reach them if they didn't buy.</p><div id="conlist"></div></section>
+  <section id="con" hidden><h2>Offer on your partners' cards <span class="n" id="ncon"></span></h2><p class="note" style="margin:0 0 6px">Send each partner a 12 hour offer on the 3 cards they pulled of the player you receive. Use their comment only to reach them if they didn't buy.</p><div id="conlist"></div></section>
   <p class="note" style="margin-top:14px">Something wrong? Report it on <a href="/swaps">raxacademy.app/swaps</a>.</p>
 </div>
 <script>
@@ -68,8 +69,9 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
   $('#nbuy').textContent = live.length; $('#ncon').textContent = live.length;
   $('#buylist').innerHTML = j.swaps.map((x, i) => `<div class="row${x.off ? ' off' : ''}"><span class="grp"><input type="checkbox" class="chk" data-k="b${i}" ${done['b' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}>
     <span><b>${lnk(x.give, x.giveUrl)}</b><span class="sub">for @${esc(x.partner || '?')}${x.off ? ' · called off' : ''}</span></span></span>${x.yourCard ? `<a class="btn" href="${esc(x.yourCard)}" target="_blank" rel="noopener">Your card</a>` : ''}</div>`).join('');
+  // Each partner: who, what you receive, what you give - and their comment to reach them.
   $('#conlist').innerHTML = j.swaps.map((x, i) => `<div class="row${x.off ? ' off' : ''}"><span class="grp"><input type="checkbox" class="chk" data-k="c${i}" ${done['c' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}>
-    <span><b>@${esc(x.partner || '?')}</b> <span class="note">· you receive ${lnk(x.receive, x.receiveUrl)}</span>${x.comment ? `<span class="sub">${lnk('their comment', x.comment)}</span>` : ''}</span></span>${x.theirCard ? `<a class="btn go" href="${esc(x.theirCard)}" target="_blank" rel="noopener">Their card</a>` : ''}</div>`).join('');
+    <span><b>@${esc(x.partner || '?')}</b><span class="sub">You receive <b class="rv">${lnk(x.receive, x.receiveUrl)}</b></span><span class="sub">(You're giving ${esc(x.give)})</span></span></span>${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : '<span class="note">no comment</span>'}</div>`).join('');
 })();
 document.addEventListener('change', e => { const k = e.target.dataset.k; if(!k) return; done[k] = e.target.checked; try{ localStorage.setItem(key, JSON.stringify(done)); }catch(err){} });
 </script>
