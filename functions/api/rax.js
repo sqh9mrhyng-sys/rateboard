@@ -7819,12 +7819,20 @@ export async function onRequestGet(ctx) {
     // everyone else is handed the previous one instead of waiting.
     const shared = !csv && ttl >= 900 && env.RATEBOARD_DB;
     const k = keyUrl.search;
-    let row = null;
+    /* Third copy in KV (2026-11-05): when D1 is overloaded the D1 copy can't
+       be read and the rebuild fails too, so pack data showed nothing. KV
+       doesn't share D1's limits, so the last good answer is handed out instead. */
+    const kvKey = shared ? 'rc1:' + [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(k)))].slice(0, 16).map(b => b.toString(16).padStart(2, '0')).join('') : null;
+    const kvServe = async () => { if (!kvKey || !env.RATEBOARD_KV) return null;
+      try { const v = await env.RATEBOARD_KV.get(kvKey); if (!v) return null; const o = JSON.parse(v);
+        return new Response(o.body, { headers: { 'content-type': o.ctype || 'application/json', 'x-cache': 'KV' } }); } catch (e) { return null; } };
+    let row = null, d1Down = false;
     if (shared) {
       try {
         await env.RATEBOARD_DB.prepare(RESP_DDL).run();
         row = await env.RATEBOARD_DB.prepare('SELECT body, ts, ctype FROM resp_cache WHERE k=?').bind(k).first();
-      } catch (e) { row = null; }
+      } catch (e) { row = null; d1Down = true; }
+      if (d1Down) { const kv = await kvServe(); if (kv) return kv; }
       if (row) {
         const age = (Date.now() - Number(row.ts)) / 1000;
         let serveOld = age < ttl;
@@ -7852,10 +7860,18 @@ export async function onRequestGet(ctx) {
       return new Response(JSON.stringify({ error: 'Too many requests at once - try again in a minute.' }),
         { status: 429, headers: { 'content-type': 'application/json', 'retry-after': '60' } });
     }
-    const res = await handleGet(ctx);
+    let res;
+    try { res = await handleGet(ctx); } catch (e) { const kv = await kvServe(); if (kv) return kv; throw e; }
     const ctype = res.headers.get('content-type') || '';
+    if (shared && res.status !== 200) { const kv = await kvServe(); if (kv) return kv; }
     if (!csv && res.status === 200 && ctype.includes('json')) {
       const body = await res.text();
+      // A body that is an error message isn't kept as the good copy.
+      if (shared && /^\s*\{\s*"error"/.test(body)) { const kv = await kvServe(); if (kv) return kv; return new Response(body, { status: 200, headers: { 'content-type': ctype } }); }
+      if (kvKey && env.RATEBOARD_KV && body.length < 20000000) {
+        const put = env.RATEBOARD_KV.put(kvKey, JSON.stringify({ body, ctype, at: Date.now() }), { expirationTtl: 3 * 86400 }).catch(() => {});
+        if (ctx.waitUntil) ctx.waitUntil(put); else await put;
+      }
       try {
         await caches.default.put(keyReq, new Response(body, {
           headers: { 'content-type': ctype, 'cache-control': `max-age=${ttl}` }

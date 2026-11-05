@@ -24,6 +24,13 @@
   .off{opacity:.5;text-decoration:line-through}
   .chk{width:22px;height:22px;accent-color:var(--ok);flex:none}
   .grp{display:flex;align-items:center;gap:10px;min-width:0}
+  .acts{display:flex;flex-direction:column;align-items:stretch;gap:6px;flex:none}
+  .acts .btn{text-align:center}
+  .btn.rp{cursor:pointer;font:inherit;font-weight:600;font-size:13px;color:var(--mute)}
+  .rpbox{padding:0 0 12px 34px;display:flex;flex-direction:column;gap:8px}
+  .rpbox select,.rpbox textarea{width:100%;box-sizing:border-box;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:9px 10px;font:inherit;font-size:14px}
+  .rpbox textarea{min-height:60px;resize:vertical}
+  .rpbox .rprow{display:flex;gap:8px;justify-content:flex-end}
   .sub .rv a{color:var(--ink)}
   .gh{margin:12px 0 2px;font-size:13px;font-weight:700;color:var(--accent)} .gh:first-child{margin-top:4px}
   .gh a{color:var(--accent)}
@@ -117,7 +124,7 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
       <span><b>${lnk(x.give, x.giveUrl)}</b>${x.off ? '<span class="sub">called off</span>' : ''}</span></span>${x.yourCard ? `<a class="btn" href="${esc(x.yourCard)}" target="_blank" rel="noopener">Your card</a>` : ''}</div>`).join('')).join('');
   // Each partner: who, what you receive, what you give - and their comment to reach them.
   $('#conlist').innerHTML = ord.map(([x, i]) => `<div class="row${x.off ? ' off' : ''}"><span class="grp"><input type="checkbox" class="chk" data-k="c${i}" ${done['c' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}>
-    <span><b>${x.partnerUrl ? `<a href="${esc(x.partnerUrl)}" target="_blank" rel="noopener">@${esc(x.partner || '?')}</a>` : '@' + esc(x.partner || '?')}</b><span class="sub">You receive <b class="rv">${lnk(x.receive, x.receiveUrl)}</b></span><span class="sub">(You're giving ${esc(x.give)})</span></span></span>${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : '<span class="note">no comment</span>'}</div>`).join('');
+    <span><b>${x.partnerUrl ? `<a href="${esc(x.partnerUrl)}" target="_blank" rel="noopener">@${esc(x.partner || '?')}</a>` : '@' + esc(x.partner || '?')}</b><span class="sub">You receive <b class="rv">${lnk(x.receive, x.receiveUrl)}</b></span><span class="sub">(You're giving ${esc(x.give)})</span></span></span><span class="acts">${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : '<span class="note">no comment</span>'}${x.id && !x.off ? `<button class="btn rp" type="button" data-rp="${x.id}">Report</button>` : ''}</span></div><div class="rpbox" id="rp${x.id}" hidden></div>`).join('');
 })();
 /* Packs today: what the system counts as used, plus your own additions. */
 const pkUrl = () => `/api/swaps?op=hourpacks&u=${encodeURIComponent(q.get('u') || '')}&d=${encodeURIComponent(q.get('d') || '')}&t=${encodeURIComponent(q.get('t') || '')}`;
@@ -157,6 +164,23 @@ document.addEventListener('click', async e => {
   try{ const r = await fetch(`/api/swaps?op=hourdm&kind=${b.dataset.dm}&u=${encodeURIComponent(q.get('u') || '')}&d=${encodeURIComponent(q.get('d') || '')}&t=${encodeURIComponent(q.get('t') || '')}`, { method: 'POST' });
     const j = await r.json(); $('#andrmsg').textContent = j.error || `Sent - ${j.messages} message${j.messages === 1 ? '' : 's'} on the way to your DMs.`; if(j.error && !/already/i.test(j.error)) b.disabled = false; }
   catch(err){ $('#andrmsg').textContent = 'Could not reach the board - try again.'; b.disabled = false; }
+});
+// Report a partner right here: opens a short form under their row.
+document.addEventListener('click', async e => {
+  const op = e.target.closest('[data-rp]'), sd = e.target.closest('[data-rpsend]');
+  if(op){ const box = $('#rp' + op.dataset.rp); if(!box) return; box.hidden = !box.hidden; if(box.hidden || box.dataset.ready) return; box.dataset.ready = '1';
+    box.innerHTML = `<select data-rpwhy><option value="nooffer">Didn't send me an offer</option><option value="nobuy">Didn't buy my pack</option><option value="wrong">Sent the wrong offer</option><option value="other">Something else</option></select>
+      <textarea data-rpnote maxlength="800" placeholder="Anything else to add (optional)"></textarea>
+      <div class="rprow"><span class="note" data-rpmsg style="margin-right:auto;align-self:center"></span><button class="btn go" type="button" data-rpsend="${op.dataset.rp}" style="cursor:pointer;font:inherit;font-weight:700">Send report</button></div>`; return; }
+  if(!sd) return;
+  const box = $('#rp' + sd.dataset.rpsend), msg = box.querySelector('[data-rpmsg]');
+  sd.disabled = true; msg.textContent = 'Sending…';
+  try{ const r = await fetch(`/api/swaps?op=hourreport&u=${encodeURIComponent(q.get('u') || '')}&d=${encodeURIComponent(q.get('d') || '')}&t=${encodeURIComponent(q.get('t') || '')}`, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: Number(sd.dataset.rpsend), reason: box.querySelector('[data-rpwhy]').value, detail: box.querySelector('[data-rpnote]').value }) });
+    const j = await r.json();
+    if(j.error){ msg.textContent = j.error; sd.disabled = false; }
+    else { box.innerHTML = '<p class="note" style="margin:0">Reported - it\'s with the admins now.</p>'; const b = document.querySelector(`[data-rp="${sd.dataset.rpsend}"]`); if(b){ b.textContent = 'Reported'; b.disabled = true; } } }
+  catch(err){ msg.textContent = 'Could not reach the board - try again.'; sd.disabled = false; }
 });
 document.addEventListener('change', e => { const k = e.target.dataset.k; if(!k) return; done[k] = e.target.checked; try{ localStorage.setItem(key, JSON.stringify(done)); }catch(err){} });
 </script>

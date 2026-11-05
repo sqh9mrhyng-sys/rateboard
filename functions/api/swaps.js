@@ -2967,11 +2967,34 @@ async function handle({ request, env, waitUntil }) {
     for (const m of ms) {
       const side = m.a === u.key ? 'A' : 'B', o = await mem(side === 'A' ? m.b : m.a);
       const recv = side === 'A' ? m.aGets : m.bGets, give = side === 'A' ? m.bGets : m.aGets;
-      out.push({ status: m.status, partner: o && o.rsUser, partnerUrl: o ? profileUrl(o.rsUser, o.hashId) : null, comment: (o && o.comment) || null,
+      out.push({ id: m.id, status: m.status, partner: o && o.rsUser, partnerUrl: o ? profileUrl(o.rsUser, o.hashId) : null, comment: (o && o.comment) || null,
         receive: playerName(me, recv), receiveUrl: playerUrl(recv),
         give: playerName(me, give), giveUrl: playerUrl(give), yourCard: me ? passUrl(me, give) : null, off: m.status === 'cancelling' });
     }
     return json({ user: (me && me.rsUser) || u.key, due, swaps: out });
+  }
+  /* The hour page's Report button (Dennis, 2026-11-05): a report on one partner
+     of that hour, straight from the signed page - same list as REPORT on /swaps. */
+  if (op === 'hourreport' && request.method === 'POST') {
+    const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));
+    if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    const REASONS = { nooffer: "Didn't send me an offer", nobuy: "Didn't buy my pack", wrong: 'Sent the wrong offer', other: 'Other' };
+    const reason = REASONS[b.reason] || REASONS.other, note = String(b.detail || '').trim().slice(0, 800);
+    if (reason === REASONS.other && note.length < 5) return json({ error: 'Say what happened.' }, 400);
+    await matchCols(db);
+    const u = await db.prepare('SELECT key FROM swap_users WHERE LOWER(key)=?').bind(key.toLowerCase()).first();
+    const m = u && await db.prepare('SELECT * FROM swap_matches WHERE id=? AND (a=? OR b=?) AND dueAt=?').bind(Number(b.id), u.key, u.key, due).first();
+    if (!m) return json({ error: 'That swap was not found.' }, 404);
+    const side = m.a === u.key ? 'A' : 'B', o = await loadMember(db, side === 'A' ? m.b : m.a), me = await loadMember(db, u.key);
+    const target = (o && o.rsUser) || (side === 'A' ? m.b : m.a);
+    if (!(await allow(url.origin, 'swapreport:' + u.key, 10, 3600))) return json({ error: 'You have sent a lot of reports - try again later.' }, 429);
+    const detail = `${reason} - swap #${m.id} (${new Date(due).toISOString().slice(0, 16).replace('T', ' ')} UTC): they were to get ${me ? playerName(me, side === 'A' ? m.bGets : m.aGets) : '?'}, this member was to get ${me ? playerName(me, side === 'A' ? m.aGets : m.bGets) : '?'}. From the swap page.` + (note ? `\n${note}` : '');
+    await db.prepare(SREPORT_DDL).run();
+    try { await alterOnce(db, 'ALTER TABLE swap_reports ADD COLUMN matchId INTEGER'); } catch (e) {}
+    await db.prepare('INSERT INTO swap_reports (ts, by_user, kind, target, detail, status, matchId) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(Date.now(), u.key, 'user', target, detail, 'open', m.id).run();
+    await stat(db, 'report_user');
+    return json({ ok: true });
   }
   /* The hour page's "On Android, request DM" buttons: the full old-style
      warning or contact DM for that hour, sent once each. */
