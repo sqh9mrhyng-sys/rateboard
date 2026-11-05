@@ -1820,30 +1820,38 @@ async function realName(db, key) {
 const OTD_DDL = `CREATE TABLE IF NOT EXISTS otd_access (key TEXT PRIMARY KEY, grantedAt INTEGER)`;
 /* Who can use Swaps and who can use OTD optimization - two separate grants.
    ok means either; swaps and otd say which. */
+/* A member's access is remembered for a minute in this worker: every page
+   open made four trips to the database just to ask (2026-11-04, slow pages).
+   A grant only ever widens access, so a minute's delay on one is harmless;
+   a "no" isn't remembered, so a fresh Pro check counts at once. */
+const ACCESS_MEMO = new Map();
 export async function swapAccess(env, request) {
   const who = await sessionKey(env, request);
   if (!who) return { who: null, admin: false, ok: false, swaps: false, otd: false };
-  const admin = await isAdminRequest(env, request);
+  const admin = ADMINS.includes(String(who).toLowerCase());
   if (admin) return { who, admin, ok: true, swaps: true, otd: true };
+  const hit = ACCESS_MEMO.get(who);
+  if (hit && Date.now() - hit.at < 60000) return hit.v;
   const db = env.RATEBOARD_DB;
   const norm = x => String(x || '').trim().toLowerCase().replace(/^@/, '');
   let swaps = SWAP_MEMBERS.includes(norm(who)), otd = false;
   try {
-    if (!swaps) {
-      const u = await db.prepare('SELECT name FROM users WHERE key=?').bind(who).first();
-      swaps = !!u && SWAP_MEMBERS.includes(norm(u.name));
-    }
     await db.prepare(SACCESS_DDL).run();
     await db.prepare(OTD_DDL).run();
     await db.prepare(SPRO_DDL).run();
-    const [a, b, c] = await db.batch([
+    // All four questions in one trip.
+    const [a, b, c, d] = await db.batch([
       db.prepare('SELECT 1 AS x FROM swap_access WHERE key=?').bind(who),
       db.prepare('SELECT 1 AS x FROM otd_access WHERE key=?').bind(who),
-      db.prepare('SELECT 1 AS x FROM swap_pro WHERE key=? AND pro=1').bind(who)]);
-    swaps = swaps || !!(a.results && a.results.length) || (SWAPS_OPEN && !!(c.results && c.results.length));
+      db.prepare('SELECT 1 AS x FROM swap_pro WHERE key=? AND pro=1').bind(who),
+      db.prepare('SELECT name FROM users WHERE key=?').bind(who)]);
+    const nm = d && d.results && d.results[0];
+    swaps = swaps || (!!nm && SWAP_MEMBERS.includes(norm(nm.name))) || !!(a.results && a.results.length) || (SWAPS_OPEN && !!(c.results && c.results.length));
     otd = !!(b.results && b.results.length);
   } catch (e) {}
-  return { who, admin: false, ok: swaps || otd, swaps, otd };
+  const v = { who, admin: false, ok: swaps || otd, swaps, otd };
+  if (v.ok) { ACCESS_MEMO.set(who, { at: Date.now(), v }); if (ACCESS_MEMO.size > 5000) ACCESS_MEMO.clear(); }
+  return v;
 }
 // What a member (not an admin) may do: their own swap and nothing else, and
 // for OTD their own passes and games.
@@ -2923,7 +2931,21 @@ async function handle({ request, env, waitUntil }) {
 
   if (op === 'me') {
     touchSeen(env, me, waitUntil);
-    const u = await db.prepare('SELECT * FROM swap_users WHERE key=?').bind(me).first();
+    // The member's row, whether the bot has a chat with them, and their Real name: one trip.
+    try { await db.prepare(DM_DDL).run(); } catch (e) {}
+    try { await alterOnce(db, 'ALTER TABLE users ADD COLUMN rsName TEXT'); } catch (e) {}
+    let u = null, connected = false, realN = String(me);
+    try {
+      const [r1, r2, r3] = await db.batch([
+        db.prepare('SELECT * FROM swap_users WHERE key=?').bind(me),
+        db.prepare('SELECT 1 AS x FROM swap_dm WHERE hashId=(SELECT hashId FROM swap_users WHERE key=?) AND channelId IS NOT NULL').bind(me),
+        db.prepare('SELECT rsName FROM users WHERE key=?').bind(me)]);
+      u = (r1.results || [])[0] || null; connected = !!(r2.results || []).length;
+      const rn = (r3.results || [])[0]; if (rn && rn.rsName) realN = String(rn.rsName);
+    } catch (e) {
+      u = await db.prepare('SELECT * FROM swap_users WHERE key=?').bind(me).first();
+      realN = await realName(db, me);
+    }
     mark(request, 'row' + (u && u.passes ? '(' + Math.round(u.passes.length / 1024) + 'kb)' : ''));
     // Passes scanned before a name source existed get their names now.
     if (u && u.passes) {
@@ -2941,18 +2963,10 @@ async function handle({ request, env, waitUntil }) {
       }
     }
     mark(request, 'names');
-    let connected = false;
-    if (u && u.hashId) {
-      try { await db.prepare(DM_DDL).run();
-        connected = !!(await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=? AND channelId IS NOT NULL').bind(u.hashId).first()); } catch (e) {}
-    }
-    mark(request, 'dm');
     // Boosts only needs how many passes are on file, not the list (or the play counts).
     const lite = url.searchParams.get('page') === 'boosts';
     const lowP = u && !lite ? await (async () => { try { return [...await lowPlays(env, db, parse(u.passes, []).filter(p => p.kind !== 'team').map(p => p.key))]; } catch (e) { return []; } })() : [];
     mark(request, 'plays');
-    const realN = await realName(db, me);
-    mark(request, 'name');
     return json({ key: me, admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
       keep: parse(u.keep, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: lite ? [] : parse(u.passes, []), passCount: (() => { try { return parse(u.passes, []).length; } catch (e) { return 0; } })(), lowPlays: lowP, scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {} } : null, real: realN });
   }
