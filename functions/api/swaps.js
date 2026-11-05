@@ -3551,6 +3551,27 @@ async function handle({ request, env, waitUntil }) {
      this season's last game, the CBB list, last season's team. */
   /* Projections page: the saved list (rebuilt in the background when it's
      over 6 hours old), plus which of the players the member holds a pass for. */
+  /* Admin, one-off (2026-11-05): Real's raw pass records for the admin's own
+     account, one sport-season, to see which fields Real sends (looking for an
+     "untouchable" flag). Read-only; nothing saved. */
+  if (op === 'passraw') {
+    if (!acc.admin) return forbidden('Admin only.');
+    const sp = String(url.searchParams.get('sport') || 'nba').replace(/[^a-z]/g, ''), se = Number(url.searchParams.get('season')) || 2027;
+    const u = await db.prepare('SELECT hashId, rsUser FROM swap_users WHERE key=?').bind(me).first();
+    if (!u || !u.hashId) return json({ error: 'Scan your passes once first so the board knows your Real account.' }, 400);
+    const base = `https://web.realapp.com/userpasses/${encodeURIComponent(u.hashId)}/passes?entityType=player&season=${se}&sport=${sp}`;
+    let d;
+    try { d = await rsGetJson(base, scanTok(env)); } catch (e) { return json({ error: 'Real: ' + String(e.message || e).slice(0, 200) }, 502); }
+    const rows = rowsOf(d);
+    // Every field name used across the passes (nested ones as a.b), and which ones differ between passes.
+    const seen = new Map();
+    const walk = (o, pre, i) => { for (const [k, v] of Object.entries(o || {})) { const path = pre ? pre + '.' + k : k;
+      if (v && typeof v === 'object' && !Array.isArray(v)) walk(v, path, i);
+      else { const m = seen.get(path) || seen.set(path, new Set()).get(path); if (m.size < 6) m.add(JSON.stringify(v).slice(0, 60)); } } };
+    rows.forEach((r, i) => walk(r, '', i));
+    return json({ sport: sp, season: se, account: u.rsUser, passes: rows.length, topKeys: Object.keys(d || {}),
+      fields: Object.fromEntries([...seen].map(([k, v]) => [k, [...v]])), first3: rows.slice(0, 3) });
+  }
   if (op === 'projections') {
     // Dennis only for now (2026-11-05).
     if (!acc.admin) return json({ error: 'This page is not open yet.' }, 403);

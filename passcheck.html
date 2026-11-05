@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pass check</title>
+<style>
+  :root{--bg:#141925;--panel:#1d2433;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+  .wrap{max-width:900px;margin:0 auto;padding:16px}
+  h1{font-size:20px;margin:0 0 12px}
+  .bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+  select,button{font:inherit;padding:10px 12px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--ink);min-height:44px}
+  button.go{background:var(--accent);color:#141925;border-color:var(--accent);font-weight:800}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:70vh;overflow:auto}
+  .note{color:var(--mute);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Pass check (admin)</h1>
+  <p class="note">Reads your own passes for one sport-season straight from Real and shows every field Real sends. Nothing is saved.</p>
+  <div class="bar">
+    <select id="sp"><option value="nba">NBA 2026-27</option><option value="nfl">NFL 2026</option><option value="ncaaf">CFB 2026</option><option value="ncaam">CBB 2026-27</option></select>
+    <button class="go" id="go">Read my passes</button><button id="copy">Copy all</button>
+  </div>
+  <pre id="out">Tap "Read my passes".</pre>
+</div>
+<script>
+const SEASON = { nba: 2027, nfl: 2026, ncaaf: 2026, ncaam: 2027 };
+const $ = s => document.querySelector(s);
+$('#go').addEventListener('click', async () => {
+  $('#out').textContent = 'Reading…';
+  let t = ''; try{ t = localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){}
+  const sp = $('#sp').value;
+  try{
+    const r = await fetch(`/api/swaps?op=passraw&sport=${sp}&season=${SEASON[sp]}`, { headers: t ? { 'x-rb-token': t } : {} });
+    const j = await r.json();
+    $('#out').textContent = JSON.stringify(j, null, 1);
+  }catch(e){ $('#out').textContent = 'Could not reach the board: ' + e.message; }
+});
+$('#copy').addEventListener('click', async () => {
+  const txt = $('#out').textContent;
+  try{ await navigator.clipboard.writeText(txt); $('#copy').textContent = 'Copied'; }
+  catch(e){ const a = document.createElement('textarea'); a.value = txt; document.body.appendChild(a); a.select(); document.execCommand('copy'); a.remove(); $('#copy').textContent = 'Copied'; }
+  setTimeout(() => { $('#copy').textContent = 'Copy all'; }, 2000);
+});
+</script>
+</body>
+</html>
