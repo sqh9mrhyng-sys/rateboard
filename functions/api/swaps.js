@@ -378,9 +378,43 @@ async function usedSince(db, u, want) {
   return Number(r && r.n) || 0;
 }
 
-const MAX_WANTS = 5;     // players a member can swap for at once
+const MAX_WANTS = 10;    // players a member can swap for at once (was 5)
+/* When a member can swap (Dennis, 2026-11-04). Three ways:
+     daily   - the same hours every day (slots, UTC hours, as before)
+     weekly  - different hours for each day of the week, in their own time
+     date    - just one day, in their own time
+   sched = { mode, tz, week: { '0'..'6': [local hours] }, date: 'YYYY-MM-DD', hours: [local hours] }.
+   For weekly/date, slots also holds every UTC hour they use, for the counts
+   and quick filters. Each list is in tap order: the first is the primary. */
+const localAt = (ms, tz) => { try { const o = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz || 'UTC', hourCycle: 'h23', weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit' }).formatToParts(new Date(ms)).map(x => [x.type, x.value]));
+  return { wd: { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[o.weekday], hour: Number(o.hour) % 24, date: `${o.year}-${o.month}-${o.day}` }; } catch (e) { return null; } };
+// Their rank for a swap at this moment (0 = primary), or -1 if they don't swap then.
+function rankAt(u, due) {
+  const sc = u.sched && typeof u.sched === 'object' ? u.sched : null;
+  if (!sc || sc.mode === 'daily' || !sc.mode) return (u.slots || []).indexOf(new Date(due).getUTCHours());
+  const l = localAt(due, sc.tz); if (!l) return -1;
+  if (sc.mode === 'weekly') return ((sc.week || {})[l.wd] || []).indexOf(l.hour);
+  if (sc.mode === 'date') return l.date === sc.date ? (sc.hours || []).indexOf(l.hour) : -1;
+  return -1;
+}
+function cleanSched(b) {
+  const hrs = a => [...new Set((Array.isArray(a) ? a : []).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24))].slice(0, MAX_SLOTS);
+  const mode = ['daily', 'weekly', 'date'].includes(b && b.mode) ? b.mode : 'daily';
+  const tz = String((b && b.tz) || 'UTC').slice(0, 60);
+  try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); } catch (e) { return { mode: 'daily' }; }
+  if (mode === 'weekly') { const week = {}; for (let d = 0; d < 7; d++) week[d] = hrs(b.week && b.week[d]); return { mode, tz, week }; }
+  if (mode === 'date') return { mode, tz, date: /^\d{4}-\d{2}-\d{2}$/.test(String(b.date || '')) ? String(b.date) : null, hours: hrs(b.hours) };
+  return { mode: 'daily' };
+}
+// The UTC hours a weekly/date schedule touches (today's offset), for counts and filters.
+function schedUtc(sc) {
+  if (!sc || sc.mode === 'daily') return null;
+  const off = (() => { const l = localAt(Date.now(), sc.tz); return l ? ((l.hour - new Date().getUTCHours()) % 24 + 24) % 24 : 0; })();
+  const loc = sc.mode === 'weekly' ? Object.values(sc.week || {}).flat() : (sc.hours || []);
+  return [...new Set(loc.map(h => ((h - off) % 24 + 24) % 24))];
+}
 const MATCH_AHEAD_MS = 3 * 3600000 + 30 * 60000;   // a run fills the hours starting in the next 3.5 hours
-const MAX_SLOTS = 5;     // hours a member can pick
+const MAX_SLOTS = 10;    // hours a member can pick, per day (was 5)
 /* Members' saved passes are big (every sport and season), and D1 won't hand
    back more than 50 MB in one answer, so wide reads go a page at a time. */
 async function pagedRows(db, sql, binds = [], size = 25) {
@@ -515,7 +549,7 @@ async function runMatching(db, env) {
       AND wants IS NOT NULL AND wants <> '[]' AND slots IS NOT NULL AND slots <> '[]'
       AND key NOT IN (SELECT key FROM restricted)
       AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`))
-    .map(u => ({ ...u, wants: parse(u.wants, []), keep: new Set(parse(u.keep, [])), slots: parse(u.slots, []),
+    .map(u => ({ ...u, sched: parse(u.sched, null), wants: parse(u.wants, []), keep: new Set(parse(u.keep, [])), slots: parse(u.slots, []),
                  passes: parse(u.passes, []), caps: parse(u.caps, {}) || {} }));
   /* A member can be in any number of swaps a swap day, with anyone, the same
      partner again (even in the same hour) included. Each specific pass
@@ -577,20 +611,21 @@ async function runMatching(db, env) {
      before): the 11:30 run can't add anyone to 12:00, so everyone in an
      hour got the same warning. That hour's next turn is the following day. */
   const made = [], now = Date.now(), cands = [];
+  /* Only the next few hours are filled each run (Dennis, 2026-11-04), in time
+     order: the tops of the hour from just after the next warning out to
+     MATCH_AHEAD_MS. Each member's schedule says whether (and how high) they
+     swap at each one. */
+  const dues = [];
+  for (let t = Math.floor((now + 30 * 60000) / 3600000) * 3600000 + 3600000; t - now <= MATCH_AHEAD_MS; t += 3600000) dues.push(t);
+  const ranks = new Map(users.map(u => [u.key, dues.map(t => rankAt(u, t))]));
   for (let i = 0; i < users.length; i++) for (let j = i + 1; j < users.length; j++) {
     const A = users[i], B = users[j];
     if (!A.wants.length || !B.wants.length) continue;
-    for (const slot of A.slots) {
-      const rb = B.slots.indexOf(slot); if (rb < 0) continue;
-      const ra = A.slots.indexOf(slot);
-      const due = dueFor(slot, now + 30 * 60000);
-      /* Only the next few hours are filled each run (Dennis, 2026-11-04): a
-         run used to fill the whole day, primary hours first, so a 2pm hour
-         took everyone's passes before 9am came round. Hours now fill in time
-         order as they come up. */
-      if (due - now > MATCH_AHEAD_MS) continue;
-      cands.push({ A, B, slot, best: Math.min(ra, rb), sum: ra + rb, due, i, boss: ADMINS.includes(String(A.key).toLowerCase()) || ADMINS.includes(String(B.key).toLowerCase()) });
-    }
+    const RA = ranks.get(A.key), RB = ranks.get(B.key);
+    dues.forEach((due, k) => {
+      const ra = RA[k], rb = RB[k]; if (ra < 0 || rb < 0) return;
+      cands.push({ A, B, slot: new Date(due).getUTCHours(), best: Math.min(ra, rb), sum: ra + rb, due, i, boss: ADMINS.includes(String(A.key).toLowerCase()) || ADMINS.includes(String(B.key).toLowerCase()) });
+    });
   }
   // Dennis first, in every hour he picks; then the soonest hour; then primary hours.
   cands.sort((x, y) => (y.boss - x.boss) || x.due - y.due || x.best - y.best || x.sum - y.sum || x.i - y.i);
@@ -1102,6 +1137,7 @@ async function matchCols(db) {
   // Scale: dayCap = most swaps a swap day (all players); caps = { passKey: { n, at } }, most swaps for that player overall, counted from when it was set.
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN dayCap INTEGER'); } catch (e) {}
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN caps TEXT'); } catch (e) {}
+  try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN sched TEXT'); } catch (e) {}   // weekly / one-day schedules
   // Called-off swaps: when Dennis marked each side refunded (rax back) by hand.
   for (const c of ['refundA', 'refundB']) { try { await alterOnce(db, `ALTER TABLE swap_matches ADD COLUMN ${c} INTEGER`); } catch (e) {} }
 }
@@ -1304,13 +1340,14 @@ async function cancelKept(db, who, keep) {
 /* A swap still to come for a player they no longer pick, or at an hour they
    no longer pick, is called off when they save: both sides are told (if
    they'd been warned) by the next DM run, the same as a kept pass. */
-async function cancelDropped(db, who, wants, slots) {
+async function cancelDropped(db, who, wants, slots, sched) {
+  const me = { slots: [...slots], sched: sched || null };
   try { await matchCols(db); } catch (e) {}
   const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned') AND (a=? OR b=?)`).bind(who, who).all()).results) || [];
   const res = { n: 0, late: 0, soon: 0 };
   for (const m of rows) {
     const gets = m.a === who ? m.aGets : m.bGets;
-    const why = !wants.has(gets) ? 'no longer swapping for that player' : !slots.has(Number(m.slot)) ? 'no longer picks that hour' : null;
+    const why = !wants.has(gets) ? 'no longer swapping for that player' : rankAt(me, sideDue(m)) < 0 ? 'no longer picks that hour' : null;
     if (why) await callOff(db, m, `called off: @${who} ${why}`, res);
   }
   return res;
@@ -2266,12 +2303,13 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'dropwant' && request.method === 'POST') {
     let b = {}; try { b = await request.json(); } catch (e) {}
     const k = String(b.key || '');
-    const r = await db.prepare('SELECT wants, slots FROM swap_users WHERE key=?').bind(me).first();
+    await matchCols(db);
+    const r = await db.prepare('SELECT wants, slots, sched FROM swap_users WHERE key=?').bind(me).first();
     if (!r) return json({ ok: true, wants: [], calledOff: 0 });
     const wants = parse(r.wants, []).filter(w => w !== k);
     await db.prepare('UPDATE swap_users SET wants=?, updatedAt=? WHERE key=?').bind(JSON.stringify(wants), Date.now(), me).run();
     try { await env.RATEBOARD_KV.delete('swap_wantcounts_v1'); } catch (e) {}
-    let res = { n: 0, late: 0 }; try { res = await afterCallOff(env, db, auth, me, await cancelDropped(db, me, new Set(wants), new Set(parse(r.slots, [])))); } catch (e) {}
+    let res = { n: 0, late: 0 }; try { res = await afterCallOff(env, db, auth, me, await cancelDropped(db, me, new Set(wants), new Set(parse(r.slots, [])), parse(r.sched, null))); } catch (e) {}
     return json({ ok: true, wants, calledOff: res.n, late: res.late });
   }
   /* Hours save the moment they're ticked or unticked (Dennis, 2026-11-04: an
@@ -2279,13 +2317,15 @@ async function handle({ request, env, waitUntil }) {
      off its swaps still to come, under the same late-change rule. */
   if (op === 'saveslots' && request.method === 'POST') {
     let b = {}; try { b = await request.json(); } catch (e) {}
-    const slots = [...new Set((Array.isArray(b.slots) ? b.slots : []).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24))].slice(0, MAX_SLOTS);
+    const sched = cleanSched(b.sched);
+    const slots = schedUtc(sched) || [...new Set((Array.isArray(b.slots) ? b.slots : []).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24))].slice(0, MAX_SLOTS);
+    await matchCols(db);
     const r = await db.prepare('SELECT wants FROM swap_users WHERE key=?').bind(me).first();
     if (!r) return json({ ok: true, slots, calledOff: 0, late: 0 });
-    await db.prepare('UPDATE swap_users SET slots=?, updatedAt=? WHERE key=?').bind(JSON.stringify(slots), Date.now(), me).run();
+    await db.prepare('UPDATE swap_users SET slots=?, sched=?, updatedAt=? WHERE key=?').bind(JSON.stringify(slots), JSON.stringify(sched), Date.now(), me).run();
     try { await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); } catch (e) {}
-    let res = { n: 0, late: 0 }; try { res = await afterCallOff(env, db, auth, me, await cancelDropped(db, me, new Set(parse(r.wants, [])), new Set(slots))); } catch (e) {}
-    return json({ ok: true, slots, calledOff: res.n, late: res.late });
+    let res = { n: 0, late: 0 }; try { res = await afterCallOff(env, db, auth, me, await cancelDropped(db, me, new Set(parse(r.wants, [])), new Set(slots), sched)); } catch (e) {}
+    return json({ ok: true, slots, sched, calledOff: res.n, late: res.late });
   }
   /* Pause: no new matches until they save again; swaps already set keep going.
      End all: paused, and every swap still to come is called off too. */
@@ -2757,7 +2797,7 @@ async function handle({ request, env, waitUntil }) {
         connected = !!(await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=? AND channelId IS NOT NULL').bind(u.hashId).first()); } catch (e) {}
     }
     return json({ key: me, admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
-      keep: parse(u.keep, []), slots: parse(u.slots, []), passes: parse(u.passes, []), lowPlays: await (async () => { try { return [...await lowPlays(env, db, parse(u.passes, []).filter(p => p.kind !== 'team').map(p => p.key))]; } catch (e) { return []; } })(), scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {} } : null, real: await realName(db, me) });
+      keep: parse(u.keep, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: parse(u.passes, []), lowPlays: await (async () => { try { return [...await lowPlays(env, db, parse(u.passes, []).filter(p => p.kind !== 'team').map(p => p.key))]; } catch (e) { return []; } })(), scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {} } : null, real: await realName(db, me) });
   }
 
   // A tick in the passes list saves at once: the passes they won't give.
@@ -2776,7 +2816,8 @@ async function handle({ request, env, waitUntil }) {
     try { b = await request.json(); } catch (e) {}
     const wants = (Array.isArray(b.wants) ? b.wants : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, MAX_WANTS);
     const keep = (Array.isArray(b.keep) ? b.keep : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, 2000);
-    const slots = [...new Set((Array.isArray(b.slots) ? b.slots : []).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24))].slice(0, MAX_SLOTS);
+    const sched = cleanSched(b.sched);
+    const slots = schedUtc(sched) || [...new Set((Array.isArray(b.slots) ? b.slots : []).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24))].slice(0, MAX_SLOTS);
     const rsUser = await realName(db, me);   // their Real account: board username, or the one they linked
     const mine = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
     const owned = new Set(parse(mine && mine.passes, []).filter(p => p.kind !== 'team').map(p => p.key));
@@ -2810,10 +2851,10 @@ async function handle({ request, env, waitUntil }) {
       ON CONFLICT(key) DO UPDATE SET rsUser=excluded.rsUser, wants=excluded.wants, keep=excluded.keep,
         slots=excluded.slots, updatedAt=excluded.updatedAt, active=1, comment=excluded.comment, goal=excluded.goal`)
       .bind(me, rsUser, JSON.stringify(wants), JSON.stringify(keep), JSON.stringify(slots), Date.now(), comment.slice(0, 300), goal).run();
-    await db.prepare('UPDATE swap_users SET dayCap=?, caps=? WHERE key=?').bind(dayCap, JSON.stringify(caps), me).run();
+    await db.prepare('UPDATE swap_users SET dayCap=?, caps=?, sched=? WHERE key=?').bind(dayCap, JSON.stringify(caps), JSON.stringify(sched), me).run();
     try { await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); await env.RATEBOARD_KV.delete('swap_wantcounts_v1'); } catch (e) {}
     let calledOff = 0, late = 0;
-    try { const a = await cancelKept(db, me, new Set(keep)), d = await cancelDropped(db, me, new Set(wants), new Set(slots));
+    try { const a = await cancelKept(db, me, new Set(keep)), d = await cancelDropped(db, me, new Set(wants), new Set(slots), sched);
       const res = await afterCallOff(env, db, auth, me, { n: a.n + d.n, late: a.late + d.late, soon: a.soon + d.soon }); calledOff = res.n; late = res.late; } catch (e) {}
     return json({ ok: true, wants, keep: keep.length, slots, calledOff, late });
   }
