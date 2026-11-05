@@ -51,6 +51,16 @@
   .andr .ab .btn:disabled{opacity:.5;cursor:default}
   .andr .ab .btn{text-align:center;padding:11px 8px;cursor:pointer;font:inherit;font-weight:700;font-size:13.5px}
   .wait{margin-top:14px;padding:10px 12px;border:1px dashed var(--line);border-radius:10px;text-align:center}
+  .byctl{display:flex;gap:8px;margin-bottom:8px} .byctl select,.byctl input,.byq{flex:1;min-width:0;font:inherit;padding:9px 10px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);color-scheme:dark}
+  .byq{width:100%;box-sizing:border-box}
+  .byctl .btn{cursor:pointer;font:inherit;font-weight:800}
+  .bs{padding:10px 0;border-top:1px solid var(--line)} .bs:first-child{border-top:0}
+  .bs .hd{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--mute)}
+  .bs .sd{margin-top:6px}
+  .bs .sd b a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)}
+  .bs .fl{display:block;font-size:12px;color:var(--mute);margin-top:1px} .bs .fl .y{color:var(--ok)} .bs .fl .n0{color:#e8935a}
+  .bs.off .sd{opacity:.5;text-decoration:line-through}
+  .st{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
   #con.new{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 35%,transparent)}
 </style>
 </head>
@@ -66,6 +76,13 @@
       <p class="note" id="pkmsg" style="margin:6px 0 0"></p>
       <div id="pklist"></div></section>
   </div>
+  <div id="byview" hidden><section>
+    <h2>Swaps by hour <span class="n" id="byn"></span></h2>
+    <div class="byctl"><button class="btn" id="byprev" type="button" aria-label="Hour before">◀</button><select id="byhour"></select><button class="btn" id="bynext" type="button" aria-label="Hour after">▶</button></div>
+    <div class="byctl"><input type="datetime-local" id="byat" step="3600" title="Jump to any hour"><button class="btn go" id="bygo" type="button">Go</button></div>
+    <input id="byq" class="byq" placeholder="Filter by username (a few, with commas)" autocomplete="off" autocapitalize="none">
+    <p class="note" id="bysum" style="margin:8px 0 0"></p>
+    <div id="bylist"></div></section></div>
   <p class="note" id="sub">Loading…</p>
   <section class="andr" id="andr" hidden>
     <b>On Android, request DM</b>
@@ -93,6 +110,8 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
   const live = j.swaps.filter(x => !x.off);
   $('#h').innerHTML = `@${esc(j.user)} · <button class="tbtn" id="tbtn" aria-expanded="false">${esc(when)} <span class="car">▾</span></button>`;
   $('#tbtn').addEventListener('click', openMenu);
+  isAdm = !!j.admin;
+  if(q.get('v') === 'byhour' && isAdm){ $('#tbtn').firstChild.textContent = 'Swaps by hour '; ['#buy', '#con', '#andr', '#wait', '#sub'].forEach(id => { const el = $(id); if(el) el.hidden = true; }); $('#byview').hidden = false; byLoad(Number(q.get('at')) || 0); return; }
   // Packs today view: the page shows only that.
   if(q.get('v') === 'packs'){ $('#tbtn').firstChild.textContent = 'Packs today '; ['#buy', '#con', '#andr', '#wait', '#sub'].forEach(id => { const el = $(id); if(el) el.hidden = true; }); $('#pkview').hidden = false; loadPk(); return; }
   $('#sub').textContent = `${live.length} swap${live.length === 1 ? '' : 's'} at this time` + (j.swaps.length > live.length ? ` (${j.swaps.length - live.length} called off)` : '') + '.';
@@ -142,6 +161,41 @@ async function loadPk(){ $('#pklist').innerHTML = '<p class="note">Loading…</p
 const pkPost = async body => { try{ const j = await (await fetch(pkUrl(), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).json(); paintPk(j); return j; }catch(e){ return { error: 'Could not reach the board.' }; } };
 $('#pkaddbtn').addEventListener('click', async () => { const k = $('#pkadd').value; if(!k) return; const j = await pkPost({ key: k }); $('#pkmsg').textContent = j.error || 'Added - it won\'t be given in a swap again today.'; });
 $('#pklist').addEventListener('click', async e => { const b = e.target.closest('[data-unpk]'); if(!b) return; const j = await pkPost({ key: b.dataset.unpk, remove: true }); $('#pkmsg').textContent = j.error || 'Removed.'; });
+/* Admin: every swap at one hour. */
+let isAdm = false, byAt = 0, byData = null;
+const sig = () => `u=${encodeURIComponent(q.get('u') || '')}&d=${encodeURIComponent(q.get('d') || '')}&t=${encodeURIComponent(q.get('t') || '')}`;
+const fmtH = ms => new Date(ms).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const fmtT = ms => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+const localIso = ms => { const d = new Date(ms); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
+async function byLoad(at){
+  $('#bysum').textContent = 'Loading…'; $('#bylist').innerHTML = '';
+  let j; try{ j = await (await fetch(`/api/swaps?op=hourall&${sig()}${at ? '&at=' + at : ''}`)).json(); }catch(e){ $('#bysum').textContent = 'Could not reach the board.'; return; }
+  if(j.error){ $('#bysum').textContent = j.error; return; }
+  byData = j; byAt = j.at;
+  try{ const u = new URL(location.href); u.searchParams.set('at', j.at); history.replaceState(null, '', u); }catch(e){}
+  const hs = j.hours.slice(); if(!hs.some(h => h.due === j.at)) hs.push({ due: j.at, swaps: 0, off: 0 }); hs.sort((a, b) => a.due - b.due);
+  $('#byhour').innerHTML = hs.map(h => `<option value="${h.due}"${h.due === j.at ? ' selected' : ''}>${esc(fmtH(h.due))} · ${h.swaps} swap${h.swaps === 1 ? '' : 's'}${h.due <= j.now && j.now < h.due + 3600000 ? ' (now)' : ''}</option>`).join('');
+  $('#byat').value = localIso(j.at);
+  byPaint();
+}
+function byPaint(){
+  const j = byData; if(!j) return;
+  const terms = $('#byq').value.toLowerCase().split(/[\s,]+/).map(x => x.replace(/^@/, '')).filter(Boolean);
+  const hit = x => !terms.length || terms.some(t => String(x.a.user).toLowerCase().includes(t) || String(x.b.user).toLowerCase().includes(t));
+  const list = j.swaps.filter(hit), off = x => ['cancelled', 'cancelling'].includes(x.status);
+  const live = list.filter(x => !off(x)).length, past = j.at <= j.now;
+  $('#byn').textContent = live;
+  $('#bysum').textContent = `${fmtH(j.at)} - ${live} swap${live === 1 ? '' : 's'}${list.length > live ? `, ${list.length - live} called off` : ''}${terms.length ? ` matching "${terms.join(', ')}"` : ''}. ${past ? 'Already happened.' : 'Still to come.'}`;
+  const flag = (t, lbl) => t ? `<span class="y">${lbl} ✓ ${esc(fmtT(t))}</span>` : `<span class="n0">no ${lbl.toLowerCase()}</span>`;
+  const sd = s0 => `<div class="sd"><span><b>${s0.url ? `<a href="${esc(s0.url)}" target="_blank" rel="noopener">@${esc(s0.user)}</a>` : '@' + esc(s0.user)}</b> <span class="note">gets</span> ${esc(s0.gets)}</span><span class="fl">${flag(s0.warned, 'Warn')} · ${flag(s0.contacted, 'DM')} · <a href="${esc(s0.page)}" target="_blank" rel="noopener">page</a></span></div>`;
+  $('#bylist').innerHTML = list.map(x => `<div class="bs${off(x) ? ' off' : ''}"><div class="hd"><span>#${x.id}${x.made ? ' · made ' + esc(fmtH(x.made)) : ''}</span><span class="st">${off(x) ? 'called off' : esc(x.status)}</span></div>${sd(x.a)}${sd(x.b)}${x.note ? `<div class="note" style="font-size:12px;margin-top:3px">${esc(x.note)}</div>` : ''}</div>`).join('')
+    || `<p class="note">${terms.length ? 'No swaps for that username at this hour.' : 'No swaps at this hour.'}</p>`;
+}
+$('#byhour').addEventListener('change', e => byLoad(Number(e.target.value)));
+$('#byprev').addEventListener('click', () => byLoad(byAt - 3600000));
+$('#bynext').addEventListener('click', () => byLoad(byAt + 3600000));
+$('#bygo').addEventListener('click', () => { const v = $('#byat').value; if(v) byLoad(new Date(v).getTime()); });
+$('#byq').addEventListener('input', byPaint);
 /* Tap the time: every swap time you've had (14 days) and have coming up. */
 let menuDone = false;
 async function openMenu(){
@@ -154,8 +208,10 @@ async function openMenu(){
   const cur = Number(q.get('d')), nowMs = j.now || Date.now();
   const item = h => `<a class="hm-i${h.due === cur ? ' on' : ''}" href="${esc(h.url)}"><span>${esc(new Date(h.due).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</span><span class="note">${h.swaps} swap${h.swaps === 1 ? '' : 's'}</span></a>`;
   const up = j.hours.filter(h => h.due > nowMs - 3600000).sort((a, b) => a.due - b.due), past = j.hours.filter(h => h.due <= nowMs - 3600000);
-  const pq = new URLSearchParams(location.search); pq.set('v', 'packs');
-  $('#hm-up').innerHTML = `<a class="hm-i pk${q.get('v') === 'packs' ? ' on' : ''}" href="?${pq.toString()}"><span>📦 Packs today</span><span class="note">grinds and packs used</span></a>` + (up.map(item).join('') || '<p class="note" style="margin:6px 0">Nothing scheduled.</p>');
+  const pq = new URLSearchParams(location.search); pq.set('v', 'packs'); pq.delete('at');
+  const bq = new URLSearchParams(location.search); bq.set('v', 'byhour'); bq.delete('at');
+  const byItem = isAdm ? `<a class="hm-i pk${q.get('v') === 'byhour' ? ' on' : ''}" href="?${bq.toString()}"><span>🗂 Swaps by hour</span><span class="note">everyone, any hour</span></a>` : '';
+  $('#hm-up').innerHTML = `<a class="hm-i pk${q.get('v') === 'packs' ? ' on' : ''}" href="?${pq.toString()}"><span>📦 Packs today</span><span class="note">grinds and packs used</span></a>` + byItem + (up.map(item).join('') || '<p class="note" style="margin:6px 0">Nothing scheduled.</p>');
   $('#hm-past').innerHTML = past.map(item).join('') || '<p class="note" style="margin:6px 0">Nothing in the last 14 days.</p>';
 }
 document.addEventListener('click', async e => {

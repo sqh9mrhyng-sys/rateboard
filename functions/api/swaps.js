@@ -2941,6 +2941,31 @@ async function handle({ request, env, waitUntil }) {
     let b = null; if (request.method === 'POST') { try { b = await request.json(); } catch (e) { b = {}; } }
     return json(await packsToday(env, db, u.key, b));
   }
+  /* Admin only (Dennis, 2026-11-05): "Swaps by hour" on his own hour page -
+     every swap at one hour, past or coming, with who gets what and whether
+     each side was warned and messaged. His signed link is the pass. */
+  if (op === 'hourall') {
+    const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));
+    if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
+    if (!ADMINS.includes(key.toLowerCase())) return json({ error: 'Admins only.' }, 403);
+    await matchCols(db);
+    const now = Date.now();
+    const hrs = ((await db.prepare(`SELECT dueAt AS d, COUNT(*) AS n, SUM(CASE WHEN status IN ('cancelled','cancelling') THEN 1 ELSE 0 END) AS off FROM swap_matches
+      WHERE dueAt BETWEEN ? AND ? AND status <> 'cleared' GROUP BY dueAt ORDER BY dueAt`).bind(now - 7 * 86400000, now + 3 * 86400000).all()).results) || [];
+    const hours = hrs.map(r => ({ due: Number(r.d), swaps: Number(r.n) - Number(r.off || 0), off: Number(r.off || 0) }));
+    let at = Math.floor(Number(url.searchParams.get('at')) / 3600000) * 3600000;
+    if (!at) { const nx = hours.find(h => h.due >= now - 3600000); at = nx ? nx.due : Math.ceil(now / 3600000) * 3600000; }
+    const ms = ((await db.prepare("SELECT * FROM swap_matches WHERE dueAt=? AND status <> 'cleared' ORDER BY id").bind(at).all()).results) || [];
+    const ks = [...new Set(ms.flatMap(m => [m.a, m.b]))], users = new Map();
+    for (let i = 0; i < ks.length; i += 90) { const part = ks.slice(i, i + 90);
+      for (const r of (((await db.prepare(`SELECT key, rsUser, hashId FROM swap_users WHERE key IN (${part.map(() => '?').join(',')})`).bind(...part).all()).results) || [])) users.set(r.key, r); }
+    const nc = new Map(), side = async (m, s0) => { const k = s0 === 'A' ? m.a : m.b, u0 = users.get(k) || {};
+      return { user: u0.rsUser || k, url: profileUrl(u0.rsUser || k, u0.hashId), gets: await indexName(db, s0 === 'A' ? m.aGets : m.bGets, nc),
+        warned: m['warn' + s0] || null, contacted: m['done' + s0] || null, page: `/hour?u=${encodeURIComponent(k)}&d=${at}&t=${await hourSig(env, k, at)}` }; };
+    const swaps = [];
+    for (const m of ms) swaps.push({ id: m.id, status: m.status, note: m.note || null, made: Number(m.createdAt) || null, a: await side(m, 'A'), b: await side(m, 'B') });
+    return json({ at, now, hours, swaps });
+  }
   if (op === 'hourlist') {
     const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));
     if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
@@ -2971,7 +2996,7 @@ async function handle({ request, env, waitUntil }) {
         receive: playerName(me, recv), receiveUrl: playerUrl(recv),
         give: playerName(me, give), giveUrl: playerUrl(give), yourCard: me ? passUrl(me, give) : null, off: m.status === 'cancelling' });
     }
-    return json({ user: (me && me.rsUser) || u.key, due, swaps: out });
+    return json({ user: (me && me.rsUser) || u.key, due, swaps: out, admin: ADMINS.includes(u.key.toLowerCase()) || undefined });
   }
   /* The hour page's Report button (Dennis, 2026-11-05): a report on one partner
      of that hour, straight from the signed page - same list as REPORT on /swaps. */
