@@ -30,6 +30,7 @@
   .gh + .row{border-top:0}
   .andr{margin-top:12px;border-style:dashed}
   .andr .ab{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .andr .ab .btn:disabled{opacity:.5;cursor:default}
   .andr .ab .btn{text-align:center;padding:11px 8px;cursor:pointer;font:inherit;font-weight:700;font-size:13.5px}
   .wait{margin-top:14px;padding:10px 12px;border:1px dashed var(--line);border-radius:10px;text-align:center}
   #con.new{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 35%,transparent)}
@@ -45,7 +46,7 @@
     <div class="ab"><button class="btn" data-dm="warn">Send the warning DM</button><button class="btn" data-dm="contact">Send the swap DM</button></div>
     <p class="note" id="andrmsg" style="margin:6px 0 0"></p>
   </section>
-  <section id="buy" hidden><h2>Buy these packs <span class="n" id="nbuy"></span></h2><p class="note" style="margin:0 0 6px">One pack of each. Tick them off as you go.</p><div id="buylist"></div></section>
+  <section id="buy" hidden><h2>Buy these packs <span class="n" id="nbuy"></span></h2><div id="buylist"></div></section>
   <p class="note wait" id="wait" hidden></p>
   <section id="con" hidden><h2>Offer on your partners' cards <span class="n" id="ncon"></span></h2><p class="note" style="margin:0 0 6px">Send each partner a 12 hour offer on the 3 cards they pulled of the player you receive. Use their comment only to reach them if they didn't buy.</p><div id="conlist"></div></section>
   <p class="note" style="margin-top:14px">Something wrong? Report it on <a href="/swaps">raxacademy.app/swaps</a>.</p>
@@ -67,6 +68,9 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
   $('#sub').textContent = `${live.length} swap${live.length === 1 ? '' : 's'} at this time` + (j.swaps.length > live.length ? ` (${j.swaps.length - live.length} called off)` : '') + '.';
   $('#buy').hidden = !j.swaps.length;
   $('#andr').hidden = !live.length;
+  // The swap DM can only be asked for once it's swap time.
+  const sb = document.querySelector('[data-dm="contact"]'), lock = () => { const t = new Date(Number(j.due)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); sb.disabled = true; sb.textContent = `Swap DM at ${t}`; };
+  if(Date.now() < Number(j.due)){ lock(); setTimeout(() => { sb.disabled = false; sb.textContent = 'Send the swap DM'; }, Number(j.due) - Date.now() + 500); }
   /* The offers show from 5 minutes before the swap (:55): the warning's link
      opens on the packs to buy and the offers appear at the bottom then; the
      contact's link opens straight on them. */

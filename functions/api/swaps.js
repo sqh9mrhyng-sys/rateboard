@@ -2837,6 +2837,7 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'hourdm' && request.method === 'POST') {
     const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d')), kind = url.searchParams.get('kind') === 'contact' ? 'contact' : 'warn';
     if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
+    if (kind === 'contact' && Date.now() < due - 30000) return json({ error: 'The swap DM opens at swap time.' }, 400);
     const once = `hourdm_v1_${key.toLowerCase()}_${due}_${kind}`;
     if (await env.RATEBOARD_KV.get(once)) return json({ error: 'Already sent - check your DMs from @raxacademy.app.' }, 429);
     const auth = swapToken(env);
