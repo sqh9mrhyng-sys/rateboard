@@ -72,6 +72,8 @@
   .useg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
   .useg button{border:0;border-radius:0;padding:7px 10px;font-size:13px;background:var(--panel2)}
   .useg button[aria-pressed="true"]{background:var(--accent);color:#141925;font-weight:800}
+  .pk1{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;margin-top:8px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
+  .pk1 .sub{display:block;color:var(--mute);font-size:12.5px;margin-top:2px}
   .swper{margin:0 0 4px} .swper select{flex:1 1 160px} .swper input{flex:1 1 140px}
   .sw1{padding:10px 12px;margin-top:8px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
   .sw1 .top{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
@@ -256,7 +258,13 @@
   <div class="saved" id="saved" hidden role="dialog" aria-modal="true" aria-labelledby="savedh"><div class="card"><div class="tick">✓</div><div class="big1" id="savedh">SAVED</div><div class="big2">YOU WILL RECEIVE A DM LATER</div><p class="note extra" id="savedx" hidden></p><button class="primary" id="savedok">Got it</button></div></div>
   <section id="mysw">
     <h2>Your swaps</h2>
-    <div class="stabs"><button id="tabup" class="on">Scheduled</button><button id="tabpast">Previous</button></div>
+    <div class="stabs"><button id="tabup" class="on">Scheduled</button><button id="tabpast">Previous</button><button id="tabpacks">Packs today</button></div>
+    <div id="packsbox" hidden>
+      <p class="note" style="margin:0 0 8px">Passes you've used today - each one scheduled to go out in a swap, plus any you add yourself. A pass is only given once a swap day (7am to 7am ET).</p>
+      <div class="bar"><select id="packadd" style="flex:1 1 200px;min-width:0"></select><button class="primary" id="packaddbtn">Add</button></div>
+      <span class="note" id="packmsg"></span>
+      <div id="packlist"><p class="note">Loading…</p></div>
+    </div>
     <div class="bar swper"><select id="swper" aria-label="Time period"></select><input type="date" id="swday" hidden aria-label="Day"><span class="note" id="swcount"></span></div>
     <div id="swlist"><p class="note">Loading…</p></div>
   </section>
@@ -792,7 +800,9 @@ $('#save').addEventListener('click', async () => {
 let mySwaps = [], swTab = 'up';
 const TAG = { scheduled: ['Scheduled', 'var(--mute)'], warned: ['Warned - buy your pack', 'var(--accent)'], done: ['Contacted', 'var(--ok)'], off: ['Called off', 'var(--bad)'] };
 function drawSwaps(){
-  $('#tabup').classList.toggle('on', swTab === 'up'); $('#tabpast').classList.toggle('on', swTab === 'past');
+  $('#tabup').classList.toggle('on', swTab === 'up'); $('#tabpast').classList.toggle('on', swTab === 'past'); $('#tabpacks').classList.toggle('on', swTab === 'packs');
+  const pk = swTab === 'packs'; $('#packsbox').hidden = !pk; $('#swlist').hidden = pk; document.querySelector('.swper').hidden = pk;
+  if(pk){ loadPacks(); return; }
   // Time period (your own time): the choices depend on the tab.
   // Scheduled: each swap hour coming up gets its own choice.
   const hrs = [...new Set(mySwaps.filter(x => x.upcoming).map(x => x.due))].sort((a, b) => a - b);
@@ -834,6 +844,30 @@ $('#swper').addEventListener('change', () => { swPer[swTab] = $('#swper').value;
 $('#swday').addEventListener('change', drawSwaps);
 $('#tabup').addEventListener('click', () => { swTab = 'up'; drawSwaps(); });
 $('#tabpast').addEventListener('click', () => { swTab = 'past'; drawSwaps(); });
+$('#tabpacks').addEventListener('click', () => { swTab = 'packs'; drawSwaps(); });
+/* Packs today: what the system counts as used, plus your own additions. */
+function paintPacks(j){
+  if(j.error){ $('#packlist').innerHTML = `<p class="note">${esc(j.error)}</p>`; return; }
+  const tm = ms => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const used = new Set([...(j.system || []).map(x => x.key), ...(j.manual || []).map(x => x.key)]);
+  $('#packlist').innerHTML = ((j.system || []).map(x => `<div class="pk1"><span><b>${esc(x.name)}</b><span class="sub">swap at ${x.times.map(tm).join(', ')} · for ${x.partners.map(p => '@' + esc(p)).join(', ')}${x.off ? ` · ${x.off} called off (still counts)` : ''}</span></span><span class="tag" style="color:var(--accent)">used</span></div>`).join('')
+    + (j.manual || []).map(x => `<div class="pk1"><span><b>${esc(x.name)}</b><span class="sub">added by you</span></span><button class="sm" data-unpack="${esc(x.key)}">Remove</button></div>`).join(''))
+    || '<p class="note">No packs used yet today.</p>';
+  // The add list: your swappable passes not already used today.
+  const opts = prof.passes.filter(p => !isTeam(p) && !NO_SWAP.has(p.sport) && !offSeason(p) && !used.has(p.key)).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  $('#packadd').innerHTML = '<option value="">Add a pass you used today…</option>' + opts.map(p => `<option value="${esc(p.key)}">${esc(p.name || 'Player ' + p.id)} · ${esc(keyLbl(p.key))}</option>`).join('');
+}
+async function loadPacks(){ paintPacks(await api('/api/swaps?op=packstoday')); }
+$('#packaddbtn').addEventListener('click', async () => {
+  const k = $('#packadd').value; if(!k) return;
+  const j = await api('/api/swaps?op=packstoday', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: k }) });
+  $('#packmsg').textContent = j.error || 'Added - it won\'t be given in a swap again today.'; paintPacks(j);
+});
+$('#packlist').addEventListener('click', async e => {
+  const b = e.target.closest('[data-unpack]'); if(!b) return;
+  const j = await api('/api/swaps?op=packstoday', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: b.dataset.unpack, remove: true }) });
+  $('#packmsg').textContent = j.error || 'Removed.'; paintPacks(j);
+});
 
 // --- admin
 function paintPrio(j){

@@ -606,6 +606,8 @@ async function runMatching(db, env) {
     // Finished swaps are marked (followA/followB) but no longer close the swap day.
   }
   for (const m of offTold) { const d = swapDay(sideDue(m)); given.add(`${m.b}|${m.aGets}|${d}`); given.add(`${m.a}|${m.bGets}|${d}`); }
+  // Packs a member marked as used today themselves (Packs today tab): not given again this swap day.
+  for (const u of users) { const pu = parse(u.packsUsed, null); if (pu && pu.day && Array.isArray(pu.keys)) for (const k of pu.keys) given.add(`${u.key}|${k}|${pu.day}`); }
   // FC and UFC have no packs to swap, so neither is ever offered or matched.
   const swappable = k => !/^(soccer|ufc):/.test(k) && !seasonOff(k);
   // Up to 5 players each, in their order, and only passes they own: they buy cards for those.
@@ -1173,6 +1175,8 @@ async function matchCols(db) {
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN comment TEXT'); } catch (e) {}
   // Untouchable passes the member chose to swap anyway (step 3).
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN touch TEXT'); } catch (e) {}
+  // Packs today: passes the member marked as used this swap day ({ day, keys }).
+  try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN packsUsed TEXT'); } catch (e) {}
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN goal REAL'); } catch (e) {}
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN autoAt INTEGER'); } catch (e) {}
   // Scale: dayCap = most swaps a swap day (all players); caps = { passKey: { n, at } }, most swaps for that player overall, counted from when it was set.
@@ -2009,7 +2013,7 @@ export async function swapAccess(env, request) {
 }
 // What a member (not an admin) may do: their own swap and nothing else, and
 // for OTD their own passes and games.
-const MEMBER_OPS = new Set(['me', 'save', 'keep', 'touch', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
+const MEMBER_OPS = new Set(['me', 'save', 'keep', 'touch', 'packstoday', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
 const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan']);
 const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostdays', 'projections', 'boostinv', 'buys', 'legboosts', 'resell', 'nosell']);
 const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
@@ -2949,6 +2953,36 @@ async function handle({ request, env, waitUntil }) {
   }
 
   /* A member's own swaps: coming up, and the last two weeks of past ones. */
+  /* Packs today: every pass the system counts as used by them this swap day
+     (7am-7am ET) - each one scheduled to go out in a swap, whatever happened
+     to it - plus any they added themselves (used elsewhere). POST add/remove
+     changes their own additions. */
+  if (op === 'packstoday') {
+    await matchCols(db);
+    const day = swapDay(Date.now());
+    const r = await db.prepare('SELECT passes, packsUsed FROM swap_users WHERE key=?').bind(me).first();
+    let pu = parse(r && r.packsUsed, null); if (!pu || pu.day !== day) pu = { day, keys: [] };
+    if (request.method === 'POST') {
+      let b = {}; try { b = await request.json(); } catch (e) {}
+      const k = String(b.key || '');
+      if (!/^[a-z]+:\d{4}:t?\d+$/.test(k)) return json({ error: 'Pick a pass.' }, 400);
+      if (b.remove) pu.keys = pu.keys.filter(x => x !== k); else if (!pu.keys.includes(k)) pu.keys.push(k);
+      await db.prepare('UPDATE swap_users SET packsUsed=? WHERE key=?').bind(JSON.stringify(pu), me).run();
+    }
+    const mine = { key: me, passes: parse(r && r.passes, []) };
+    const ms = ((await db.prepare("SELECT a, b, aGets, bGets, dueAt, slot, createdAt, status FROM swap_matches WHERE (a=? OR b=?) AND dueAt > ? AND status <> 'cleared'").bind(me, me, Date.now() - 2 * 86400000).all()).results) || [];
+    const used = new Map();
+    for (const m of ms) { if (swapDay(sideDue(m)) !== day) continue;
+      const k = m.a === me ? m.bGets : m.aGets, partner = m.a === me ? m.b : m.a;
+      const x = used.get(k) || used.set(k, { key: k, name: playerName(mine, k), times: [], partners: [], off: 0, n: 0 }).get(k);
+      x.n++; x.times.push(sideDue(m)); x.partners.push(partner); if (['cancelled', 'cancelling'].includes(m.status)) x.off++; }
+    const pk = [...new Set([...used.values()].flatMap(x => x.partners))], rn = new Map();
+    for (let i = 0; i < pk.length; i += 90) { const part = pk.slice(i, i + 90);
+      for (const x of (((await db.prepare(`SELECT key, rsUser FROM swap_users WHERE key IN (${part.map(() => '?').join(',')})`).bind(...part).all()).results) || [])) rn.set(x.key, x.rsUser || x.key); }
+    const sys = [...used.values()].map(x => ({ ...x, times: [...new Set(x.times)].sort((a, b) => a - b), partners: [...new Set(x.partners)].map(k => rn.get(k) || k) }));
+    const manual = pu.keys.map(k => ({ key: k, name: playerName(mine, k), manual: true }));
+    return json({ day, resetsAt: '7am ET', system: sys.sort((a, b) => a.times[0] - b.times[0]), manual });
+  }
   if (op === 'myswaps') {
     if (!(await allow(url.origin, 'myswaps:' + me, 40, 600))) return json({ error: 'Wait a few minutes and try again.' }, 429);
     await matchCols(db);
