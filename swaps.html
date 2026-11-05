@@ -875,8 +875,9 @@ async function proGate(){
 
 (async () => {
   $('#tz').textContent = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  if(!(await proGate())) return;
+  // Straight to the member's data; the Pro wall only when that says no access (one fewer round trip to open).
   let j = await api('/api/swaps?op=me');
+  if(j.error && !/sign in/i.test(j.error)){ if(!(await proGate())) return; j = await api('/api/swaps?op=me'); }
   // Signed in here but the check came back empty: the database was busy. Ask again.
   for(let i = 0; i < 2 && j.error && /sign in/i.test(j.error) && (()=>{try{return !!localStorage.getItem('ratebrd_token_v1')}catch(e){return false}})(); i++){
     await new Promise(r => setTimeout(r, 1200 * (i + 1)));

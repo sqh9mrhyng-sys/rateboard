@@ -12,7 +12,7 @@
    market's), never the board's main key.
    ------------------------------------------------------------------------- */
 import { isAdminRequest, sessionKey, forbidden, allow, clientIp, touchSeen, ADMINS, etDay } from '../../lib/auth.js';
-import { watchEnv } from '../../lib/dbwatch.js';
+import { watchEnv, noteSlowRequest } from '../../lib/dbwatch.js';
 
 /* Adding a column that already exists just errors (and is ignored). Each
    ALTER is tried once per server instance, not on every request. */
@@ -351,11 +351,15 @@ async function playsMap(env, db, sp, se) {
   return m;
 }
 // The keys (sport:season:id) with fewer than MIN_PLAYS collectible plays, among those given.
+const playsMemo = new Map();   // this worker's copy, so a page open doesn't read KV once per season
 async function lowPlays(env, db, keys) {
   const bySeason = new Map(), low = new Set();
   for (const k of keys) { const [sp, se, id] = String(k).split(':'); if (/^t/.test(id)) continue; (bySeason.get(`${sp}:${se}`) || bySeason.set(`${sp}:${se}`, []).get(`${sp}:${se}`)).push([k, id]); }
-  for (const [ss, list] of bySeason) { const [sp, se] = ss.split(':'); const m = await playsMap(env, db, sp, se);
-    if (!m) continue; for (const [k, id] of list) if ((m[id] || 0) < MIN_PLAYS) low.add(k); }
+  // Every season at once rather than one after another.
+  await Promise.all([...bySeason].map(async ([ss, list]) => { const [sp, se] = ss.split(':');
+    let c = playsMemo.get(ss);
+    if (!c || Date.now() - c.at > 30 * 60000) { c = { at: Date.now(), m: await playsMap(env, db, sp, se) }; playsMemo.set(ss, c); }
+    const m = c.m; if (!m) return; for (const [k, id] of list) if ((m[id] || 0) < MIN_PLAYS) low.add(k); }));
   return low;
 }
 async function goalRoom(db, cache, u, usedFor, wantKey) {
@@ -1846,7 +1850,8 @@ export async function swapAccess(env, request) {
 const MEMBER_OPS = new Set(['me', 'save', 'keep', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
 const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan']);
 const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostinv', 'buys', 'legboosts', 'resell', 'nosell']);
-const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
+const BOOSTS_OPEN = true;
+const PAGE_OPS = new Set(['me', 'procheck', 'myswaps', 'hourcounts', 'wantcounts', 'boostplan', 'boostinv', 'buys', 'legboosts', 'resell']);   // opened to everyone signed in, 2026-11-02
 
 /* ---- OTD: saved game lists ------------------------------------------------
    Every player's [MM-DD, rax] list for a whole sport-season, built once from
@@ -2192,7 +2197,12 @@ async function scanEvery(env) {
 
 // Any error comes back as a readable message rather than a bare 500.
 export async function onRequest(ctx) {
-  try { return await handle(Object.assign({}, ctx, { env: watchEnv(ctx.env, ctx.request, ctx.waitUntil) })); }
+  const t0 = Date.now();
+  try { const r = await handle(Object.assign({}, ctx, { env: watchEnv(ctx.env, ctx.request, ctx.waitUntil) }));
+    // Page-opening calls that took long, so a slow page can be traced (shown on the health page, no names).
+    try { const op = new URL(ctx.request.url).searchParams.get('op') || ''; const ms = Date.now() - t0;
+      if (ms > 1500 && PAGE_OPS.has(op)) noteSlowRequest(ctx.env, ctx.waitUntil, { at: new Date().toISOString(), ms, sql: 'whole request', where: '/api/swaps?op=' + op }); } catch (e) {}
+    return r; }
   catch (e) { return json({ error: 'Swaps hit an error: ' + String((e && e.message) || e).slice(0, 300) }, 500); }
 }
 

@@ -7742,6 +7742,9 @@ async function collectorHealth(env, url) {
       return { today: Object.fromEntries(st.map(x => [x.k, x.n])), running: q && q.running, waiting: q && q.waiting, recent: await kvj('scan_perf_v1'), dmsToday: Object.fromEntries(dms.map(x => [x.k, x.n])), dmsYesterday: Object.fromEntries(dmsY.map(x => [x.k, x.n])), dmRetryQueue: dmq, swapHours: hours, dupes, dmFailures: dmFails.map(f => ({ at: new Date(f.at).toISOString().slice(11, 19), kind: f.kind, msg: String(f.msg || '').replace(/@[A-Za-z0-9._-]+/g, '@…').slice(0, 160) })),
         lastFailures: fails.map(f => ({ at: new Date(f.at).toISOString(), msg: String(f.msg || '').replace(/^[^:]{1,60}:\s*/, '') })) };
     } catch (e) { return { error: String(e.message || e).slice(0, 100) }; } })(),
+    // Slow database calls and slow page opens (path only - no query values, no names).
+    slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
+      where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
     oneOffsRun: await kvj(ONE_OFF_KEY), marketAccount: { busyWithMarket: await marketBusy(env), lastGapHelp: await kvj('gap_push_last') }, budget: await jobOverBudget(env) ? 'over' : 'ok' }, null, 1);
   const res = new Response(body, { headers: { 'content-type': 'application/json', 'cache-control': 'max-age=60' } });
   try { await caches.default.put(ck, res.clone()); } catch (e) {}
