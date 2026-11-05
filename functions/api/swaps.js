@@ -784,12 +784,14 @@ async function verifyDms(db, auth) {
 }
 async function retryDms(db, auth) {
   await db.prepare(DMQ_DDL).run();
-  const rows = ((await db.prepare('SELECT * FROM dm_retry ORDER BY id LIMIT 12').all()).results) || [];
+  const rows = ((await db.prepare('SELECT * FROM dm_retry ORDER BY id LIMIT 20').all()).results) || [];
   for (const r of rows) {
     let parts = parse(r.parts, []);
     parts = parts.flatMap(fitDm);   // queued before the length fix: cut down to size
-    while (parts.length) { try { await dmSendRetry(auth, r.channelId, parts[0]); parts.shift(); await stat(db, 'dm_retried'); await sleep(1500); }
-      catch (e) { if (Number(r.tries) % 5 === 0) await botFail(db, 'dm_retry', `${r.label} try ${r.tries}: ${String(e.message || e).slice(0, 120)}`); break; } }
+    // One part per chat per minute: two close together and Real can drop the second.
+    if (Number(r.at) > Date.now() - 50000 && Number(r.tries) === 0) continue;   // queued this minute: next tick
+    try { await dmSendRetry(auth, r.channelId, parts[0]); parts.shift(); await stat(db, 'dm_retried'); await sleep(400); }
+    catch (e) { if (Number(r.tries) % 5 === 0) await botFail(db, 'dm_retry', `${r.label} try ${r.tries}: ${String(e.message || e).slice(0, 120)}`); }
     if (!parts.length) await db.prepare('DELETE FROM dm_retry WHERE id=?').bind(r.id).run();
     else if (Number(r.tries) >= 60) { await db.prepare('DELETE FROM dm_retry WHERE id=?').bind(r.id).run(); await botFail(db, 'dm_retry', `${r.label}: gave up after an hour, ${parts.length} part(s) unsent`); }
     else await db.prepare('UPDATE dm_retry SET parts=?, tries=tries+1 WHERE id=?').bind(JSON.stringify(parts), r.id).run();
@@ -1255,11 +1257,11 @@ async function runDms(env, db, auth, rows, max, force) {
       /* Each part is tried a few times on the spot; a part after the heading
          that still won't go is queued and sent again every minute until it
          does (a busy Real was dropping the player lines after the heading). */
-      for (let i = 0; i < msgs.length; i++) {
-        try { await dmSendRetry(auth, ch, msgs[i]); }
-        catch (e) { if (i === 0) throw e; await queueDm(db, ch, msgs.slice(i), `${kind} @${me.rsUser}`); await botFail(db, 'dm_' + kind, `@${me.rsUser} part ${i + 1}/${msgs.length} queued for retry: ${e.message || e}`); break; }
-        sent++; await stat(db, 'dm_' + kind); await sleep(1500);   // Real has a per-chat slowmode
-      }
+      /* Only the first part goes now; the rest follow one a minute (2026-11-05:
+         a second part sent 1.5s after the first was taken by Real but never
+         showed up in the chat - a member got 3 of his 6 contacts). */
+      await dmSendRetry(auth, ch, msgs[0]); sent++; await stat(db, 'dm_' + kind);
+      if (msgs.length > 1) { await queueDm(db, ch, msgs.slice(1), `${kind} @${me.rsUser}`); await stat(db, 'dm_parts_queued', msgs.length - 1); }
       // A second look in a few minutes: read the chat back and re-send any part that isn't there.
       // (The read-back second look is off: Real stores links differently from what was sent, so it re-sent messages that had landed.)
       notes.push(`${kind} sent to @${me.rsUser} (${msgs.length} message${msgs.length === 1 ? '' : 's'})`); return true;
