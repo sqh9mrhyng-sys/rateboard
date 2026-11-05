@@ -200,6 +200,8 @@ function passOf(p, sport, season, kind = 'player') {
     levelLabel: b.rarityLabel ? String(b.rarityLabel) + (b.level && Number(b.baseRarity) >= 5 ? '' : '') : null,
     level: b.level != null ? Number(b.level) : null, rarity: b.baseRarity != null ? Number(b.baseRarity) : null,
     color: b.rarityColor || null, mult, earned: p.earned != null ? Number(p.earned) : null,
+    // Set "untouchable" on Real (2026-11-05): never given in a swap.
+    ...(p.untouchable === true ? { untouchable: 1 } : {}),
     passId: Number.isFinite(passId) ? passId : null } : null;
 }
 
@@ -561,6 +563,20 @@ async function runMatching(db, env) {
      pack of it. The swap day runs 7am to 7am ET, by the hour the swap
      happens, so a player can go out at 6am and again at 7am. Limited by their
      goal rating when they set one. */
+  /* A pass set untouchable on Real since its swap was made: that swap is
+     called off while it's still only scheduled (once warned, the late-change
+     rule keeps it). */
+  try {
+    const un = new Map(users.map(u => [u.key, new Set(u.passes.filter(p => p.untouchable).map(p => p.key))]).filter(([, v]) => v.size));
+    if (un.size) {
+      const pend = ((await db.prepare(`SELECT * FROM swap_matches WHERE status='pending' AND dueAt > ?`).bind(Date.now()).all()).results) || [];
+      const res = { n: 0, late: 0, soon: 0 };
+      for (const m of pend) {
+        const who = un.has(m.b) && un.get(m.b).has(m.aGets) ? m.b : un.has(m.a) && un.get(m.a).has(m.bGets) ? m.a : null;
+        if (who && !lateStage(m)) await callOff(db, m, `called off: @${who} set that pass untouchable`, res);
+      }
+    }
+  } catch (e) {}
   const open = ((await db.prepare(`SELECT a, b, aGets, bGets, slot, createdAt, dueAt, followA, followB FROM swap_matches WHERE createdAt > ? AND status IN ('pending','sending','warned','sent')`)
     .bind(Date.now() - 2 * 86400000).all()).results || []);
   /* A called-off swap still uses up a pass for the day on whichever side had
@@ -606,7 +622,7 @@ async function runMatching(db, env) {
   const capsOf = new Map(users.map(u => [u.key, u.caps]));
   // Receiving the same pass more than once a day is fine (Dennis, 2026-11-04); only their own Scale per-day limit applies.
   const perDayOk = (k, w, d) => { const c = (capsOf.get(k) || {})[w]; return !(c && Number(c.d) > 0) || (recv.get(`${k}|${w}|${d}`) || 0) < Number(c.d); };
-  const gives = (u, d) => new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !given.has(`${u.key}|${k}|${d}`)));
+  const gives = (u, d) => new Set(u.passes.filter(p => p.kind !== 'team' && !p.untouchable).map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !given.has(`${u.key}|${k}|${d}`)));
   /* Every possible pair and shared hour, best first: an hour someone picked
      first is their primary, so pairs on both members' earliest picks go
      ahead - when two people want the same player, the one whose primary
