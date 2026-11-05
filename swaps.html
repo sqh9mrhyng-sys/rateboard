@@ -372,6 +372,11 @@ $('#hours').addEventListener('change', e => {
     prof.slots.push(u);
   } else prof.slots = prof.slots.filter(x => x !== u);
   drawHours();
+  // Saved straight away, so the server never matches an hour that's unticked here.
+  api('/api/swaps?op=saveslots', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slots: prof.slots }) }).then(j => {
+    if(!j || j.error){ $('#savemsg').textContent = (j && j.error) || 'Could not save your hours - try again.'; return; }
+    $('#savemsg').textContent = 'Hours saved.' + (j.late ? ' Too late to change swaps already warned - please do them at :00.' : '') + (j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} at that hour called off.` : '');
+    loadHourCounts(); loadSwaps(); });
 });
 
 // --- passes

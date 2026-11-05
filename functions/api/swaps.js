@@ -1778,7 +1778,7 @@ export async function swapAccess(env, request) {
 }
 // What a member (not an admin) may do: their own swap and nothing else, and
 // for OTD their own passes and games.
-const MEMBER_OPS = new Set(['me', 'save', 'keep', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report', 'myswaps', 'dropwant', 'pause', 'endall']);
+const MEMBER_OPS = new Set(['me', 'save', 'keep', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
 const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan']);
 const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostinv', 'buys', 'legboosts', 'resell', 'nosell']);
 const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
@@ -2245,6 +2245,19 @@ async function handle({ request, env, waitUntil }) {
     try { await env.RATEBOARD_KV.delete('swap_wantcounts_v1'); } catch (e) {}
     let res = { n: 0, late: 0 }; try { res = await afterCallOff(env, db, auth, me, await cancelDropped(db, me, new Set(wants), new Set(parse(r.slots, [])))); } catch (e) {}
     return json({ ok: true, wants, calledOff: res.n, late: res.late });
+  }
+  /* Hours save the moment they're ticked or unticked (Dennis, 2026-11-04: an
+     unticked hour that was never saved still got swaps). Unticking one calls
+     off its swaps still to come, under the same late-change rule. */
+  if (op === 'saveslots' && request.method === 'POST') {
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    const slots = [...new Set((Array.isArray(b.slots) ? b.slots : []).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24))].slice(0, MAX_SLOTS);
+    const r = await db.prepare('SELECT wants FROM swap_users WHERE key=?').bind(me).first();
+    if (!r) return json({ ok: true, slots, calledOff: 0, late: 0 });
+    await db.prepare('UPDATE swap_users SET slots=?, updatedAt=? WHERE key=?').bind(JSON.stringify(slots), Date.now(), me).run();
+    try { await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); } catch (e) {}
+    let res = { n: 0, late: 0 }; try { res = await afterCallOff(env, db, auth, me, await cancelDropped(db, me, new Set(parse(r.wants, [])), new Set(slots))); } catch (e) {}
+    return json({ ok: true, slots, calledOff: res.n, late: res.late });
   }
   /* Pause: no new matches until they save again; swaps already set keep going.
      End all: paused, and every swap still to come is called off too. */
