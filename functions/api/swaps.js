@@ -571,13 +571,15 @@ async function runMatching(db, env) {
      called off while it's still only scheduled (once warned, the late-change
      rule keeps it). */
   try {
-    const un = new Map(users.map(u => [u.key, new Set(u.passes.filter(p => p.untouchable && !u.touch.has(p.key)).map(p => p.key))]).filter(([, v]) => v.size));
+    // ...and the same for a pass they're now swapping for themselves.
+    const un = new Map(users.map(u => [u.key, new Set([...u.passes.filter(p => p.untouchable && !u.touch.has(p.key)).map(p => p.key), ...u.wants])]).filter(([, v]) => v.size));
     if (un.size) {
       const pend = ((await db.prepare(`SELECT * FROM swap_matches WHERE status='pending' AND dueAt > ?`).bind(Date.now()).all()).results) || [];
       const res = { n: 0, late: 0, soon: 0 };
       for (const m of pend) {
         const who = un.has(m.b) && un.get(m.b).has(m.aGets) ? m.b : un.has(m.a) && un.get(m.a).has(m.bGets) ? m.a : null;
-        if (who && !lateStage(m)) await callOff(db, m, `called off: @${who} set that pass untouchable`, res);
+        if (who && !lateStage(m)) { const own = (users.find(u => u.key === who) || { wants: [] }).wants.includes(who === m.b ? m.aGets : m.bGets);
+          await callOff(db, m, own ? `called off: @${who} is swapping for that player themselves` : `called off: @${who} set that pass untouchable`, res); }
       }
     }
   } catch (e) {}
@@ -626,7 +628,8 @@ async function runMatching(db, env) {
   const capsOf = new Map(users.map(u => [u.key, u.caps]));
   // Receiving the same pass more than once a day is fine (Dennis, 2026-11-04); only their own Scale per-day limit applies.
   const perDayOk = (k, w, d) => { const c = (capsOf.get(k) || {})[w]; return !(c && Number(c.d) > 0) || (recv.get(`${k}|${w}|${d}`) || 0) < Number(c.d); };
-  const gives = (u, d) => new Set(u.passes.filter(p => p.kind !== 'team' && !(p.untouchable && !u.touch.has(p.key))).map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !given.has(`${u.key}|${k}|${d}`)));
+  // Never a pass they're swapping for themselves (2026-11-05: a member was receiving Caufield and giving Caufield in the same hour).
+  const gives = (u, d) => new Set(u.passes.filter(p => p.kind !== 'team' && !(p.untouchable && !u.touch.has(p.key))).map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !u.wants.includes(k) && !given.has(`${u.key}|${k}|${d}`)));
   /* Every possible pair and shared hour, best first: an hour someone picked
      first is their primary, so pairs on both members' earliest picks go
      ahead - when two people want the same player, the one whose primary
