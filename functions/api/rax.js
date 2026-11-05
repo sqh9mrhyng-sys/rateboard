@@ -7714,6 +7714,8 @@ async function collectorHealth(env, url) {
       // Pass scans today (Eastern): counts, the line, and the last few failures with no usernames in them.
       const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
       const st = ((await db.prepare("SELECT k, n FROM bot_stats WHERE day=? AND (k LIKE 'scan%' OR k LIKE 'rescan%')").bind(day).all()).results) || [];
+      const yday = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.now() - 86400000));
+      const dmsY = ((await db.prepare("SELECT k, n FROM bot_stats WHERE day=? AND k LIKE 'dm_%'").bind(yday).all()).results) || [];
       const q = await db.prepare('SELECT SUM(CASE WHEN startedAt IS NOT NULL THEN 1 ELSE 0 END) AS running, SUM(CASE WHEN startedAt IS NULL THEN 1 ELSE 0 END) AS waiting FROM scan_queue').first();
       const fails = ((await db.prepare("SELECT at, msg FROM bot_log WHERE kind IN ('scan','rescan','scan_bg') ORDER BY at DESC LIMIT 8").all()).results) || [];
       const dmFails = ((await db.prepare("SELECT at, kind, msg FROM bot_log WHERE kind LIKE 'dm_%' ORDER BY at DESC LIMIT 8").all()).results) || [];
@@ -7734,10 +7736,10 @@ async function collectorHealth(env, url) {
       let hours = []; try { hours = ((await db.prepare(`SELECT dueAt, COUNT(*) AS matches, SUM(CASE WHEN warnA IS NOT NULL THEN 1 ELSE 0 END) + SUM(CASE WHEN warnB IS NOT NULL THEN 1 ELSE 0 END) AS warnedSides,
           SUM(CASE WHEN doneA IS NOT NULL THEN 1 ELSE 0 END) + SUM(CASE WHEN doneB IS NOT NULL THEN 1 ELSE 0 END) AS contactedSides, COUNT(DISTINCT a) + COUNT(DISTINCT b) AS people,
           SUM(CASE WHEN status IN ('cancelled','cancelling') THEN 1 ELSE 0 END) AS calledOff
-          FROM swap_matches WHERE dueAt BETWEEN ? AND ? GROUP BY dueAt ORDER BY dueAt`).bind(Date.now() - 4 * 3600000, Date.now() + 6 * 3600000).all()).results || [])
+          FROM swap_matches WHERE dueAt BETWEEN ? AND ? GROUP BY dueAt ORDER BY dueAt`).bind(Date.now() - 12 * 3600000, Date.now() + 6 * 3600000).all()).results || [])
           .map(h => ({ ...h, dueAt: new Date(h.dueAt).toISOString().slice(0, 16) })); } catch (e) {}
       const dms = ((await db.prepare("SELECT k, n FROM bot_stats WHERE day=? AND (k LIKE 'dm_%' OR k = 'fail')").bind(day).all()).results) || [];
-      return { today: Object.fromEntries(st.map(x => [x.k, x.n])), running: q && q.running, waiting: q && q.waiting, recent: await kvj('scan_perf_v1'), dmsToday: Object.fromEntries(dms.map(x => [x.k, x.n])), dmRetryQueue: dmq, swapHours: hours, dupes, dmFailures: dmFails.map(f => ({ at: new Date(f.at).toISOString().slice(11, 19), kind: f.kind, msg: String(f.msg || '').replace(/@[A-Za-z0-9._-]+/g, '@…').slice(0, 160) })),
+      return { today: Object.fromEntries(st.map(x => [x.k, x.n])), running: q && q.running, waiting: q && q.waiting, recent: await kvj('scan_perf_v1'), dmsToday: Object.fromEntries(dms.map(x => [x.k, x.n])), dmsYesterday: Object.fromEntries(dmsY.map(x => [x.k, x.n])), dmRetryQueue: dmq, swapHours: hours, dupes, dmFailures: dmFails.map(f => ({ at: new Date(f.at).toISOString().slice(11, 19), kind: f.kind, msg: String(f.msg || '').replace(/@[A-Za-z0-9._-]+/g, '@…').slice(0, 160) })),
         lastFailures: fails.map(f => ({ at: new Date(f.at).toISOString(), msg: String(f.msg || '').replace(/^[^:]{1,60}:\s*/, '') })) };
     } catch (e) { return { error: String(e.message || e).slice(0, 100) }; } })(),
     oneOffsRun: await kvj(ONE_OFF_KEY), marketAccount: { busyWithMarket: await marketBusy(env), lastGapHelp: await kvj('gap_push_last') }, budget: await jobOverBudget(env) ? 'over' : 'ok' }, null, 1);
