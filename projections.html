@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Projections</title>
+<style>
+  :root{--bg:#141925;--panel:#1d2433;--panel2:#232b3d;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;--ok:#5fbf7a;--bad:#e5484d}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:16px}
+  header{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+  h1{font-size:20px;margin:0;font-weight:800}
+  .beta{background:var(--accent);color:#141925;font-weight:900;font-size:11px;letter-spacing:.08em;padding:2px 7px;border-radius:6px}
+  a{color:var(--accent)}
+  .note{color:var(--mute);font-size:13px}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+  select,button,input{font:inherit;padding:8px 10px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
+  button{cursor:pointer}
+  .seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .seg button{flex:1;border:0;border-radius:0;background:var(--panel2);padding:9px 14px}
+  .seg button[aria-pressed="true"]{background:var(--accent);color:#141925;font-weight:800}
+  .ctl{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px}
+  .ctl input{grid-column:1 / -1}
+  .ctl select,.ctl input{width:100%;min-width:0}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{padding:8px 6px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;vertical-align:top}
+  th{color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:700}
+  th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}
+  td a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)}
+  .sub{display:block;color:var(--mute);font-size:11.5px;font-weight:400}
+  .pr{font-weight:800;font-size:15px;color:var(--accent)}
+  .pc{font-weight:700}
+  .flag{display:block;color:var(--bad);font-size:11.5px;white-space:normal}
+  .mine td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
+  .rk{color:var(--mute);font-size:12px;width:34px}
+  .more{width:100%;margin-top:10px}
+  details.how{margin-top:10px}
+  details.how summary{cursor:pointer;color:var(--mute);font-size:13px;font-weight:600}
+  details.how p{margin:8px 0 0;line-height:1.5}
+  .lock{max-width:460px;margin:12vh auto;text-align:center}
+  [hidden]{display:none !important}
+  .up{color:var(--ok)} .dn{color:var(--bad)}
+  @media (max-width:680px){
+    .wrap{padding:12px 14px 28px}
+    select,button,input{min-height:44px}
+    .ctl{grid-template-columns:1fr 1fr}
+    thead{display:none}
+    table,tbody{display:block}
+    tr{display:grid;grid-template-columns:auto 1fr auto;gap:2px 10px;padding:12px 4px;border-bottom:1px solid var(--line)}
+    td{border:0;padding:0;text-align:left!important;white-space:normal}
+    td.rk{grid-row:1 / span 3;padding-top:2px}
+    td.nm{grid-column:2 / 3}
+    td.prc{grid-column:3;grid-row:1;text-align:right!important}
+    td.pcc{grid-column:3;grid-row:2;text-align:right!important}
+    td.now{grid-column:2 / 3}
+    td.left{grid-column:2 / -1}
+    td[data-l]::before{content:attr(data-l) " ";color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+    td.nm::before{content:none}
+  }
+</style>
+</head>
+<body>
+<div class="lock" id="lock" hidden><h1>Projections</h1><p class="note" id="lockmsg">Checking…</p><p id="signinbtn" hidden><a href="/" style="display:inline-block;padding:10px 14px;border-radius:9px;background:#E8A33D;color:#141925;font-weight:700;text-decoration:none">Sign in on the board</a></p><p><a href="/">Back to the board</a></p></div>
+<div class="wrap" id="main" hidden>
+  <header><h1>Projections <span class="beta">BETA</span></h1><a href="/" style="margin-left:auto">Back to the board</a></header>
+  <section>
+    <div class="seg" id="sportseg"><button data-s="ncaaf" aria-pressed="true">CFB</button><button data-s="nfl" aria-pressed="false">NFL</button><button data-s="ncaam" aria-pressed="false">CBB</button></div>
+    <div class="ctl">
+      <select id="who" aria-label="Players"><option value="all">All players</option><option value="mine">My passes</option></select>
+      <select id="sort" aria-label="Sort"><option value="pr">Projected</option><option value="pc">On pace</option><option value="r">Rax so far</option><option value="pg">Per game</option><option value="l">Games left</option></select>
+      <select id="pos" aria-label="Position"><option value="">Every position</option></select>
+      <input id="q" placeholder="Find a player or team" autocomplete="off">
+    </div>
+    <p class="note" id="head" style="margin:10px 0 0">Loading…</p>
+    <details class="how"><summary>Projected vs on pace</summary>
+      <p class="note"><b>Projected</b> = rax so far + his projected rax for each regular-season game his team has left. A game's projection is the Boosts formula (recent games weighted most, then this season, then last season's regular season), adjusted for how much that opponent gives up. Players on injured reserve, or who missed 2 of their team's last 3 games, get no more games counted; "Out" skips the next game.</p>
+      <p class="note"><b>On pace</b> = rax so far ÷ games he played × his team's regular-season games. No schedule, no injuries - just his rate.</p>
+      <p class="note">Rebuilt every 6 hours from the game log and ESPN's schedules.</p>
+    </details>
+  </section>
+  <section style="padding:6px 14px 14px">
+    <table><thead><tr><th>#</th><th>Player</th><th>Now</th><th>Left</th><th>Projected</th><th>On pace</th></tr></thead><tbody id="rows"></tbody></table>
+    <button class="more" id="more" hidden>Show more</button>
+  </section>
+</div>
+<script>
+(() => {
+  const real = window.fetch.bind(window);
+  window.fetch = (u, o = {}) => {
+    let t = ''; try{ t = localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){}
+    if(t && typeof u === 'string' && u.startsWith('/api/')) o = Object.assign({}, o, { headers: Object.assign({}, o.headers || {}, { 'x-rb-token': t }) });
+    return real(u, o);
+  };
+})();
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const api = async u => { try{ const r = await fetch(u); const j = await r.json().catch(() => ({})); if(!r.ok && !j.error) j.error = 'Error ' + r.status; return j; }catch(e){ return { error: 'Could not reach the board.' }; } };
+function hashidsEncode(salt, minLength, numbers){
+  const ALPHA0 = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890';
+  const SEPS0  = 'cfhistuCFHISTU';
+  const RATIO = 3.5, GUARD_DIV = 12;
+  const shuffle = (alpha, s) => {
+    if(!s.length) return alpha;
+    const t = alpha.slice();
+    for(let i = t.length - 1, v = 0, p = 0; i > 0; i--, v++){
+      v %= s.length;
+      const int = s[v].codePointAt(0);
+      p += int;
+      const j = (int + v + p) % i;
+      [t[i], t[j]] = [t[j], t[i]];
+    }
+    return t;
+  };
+  const toAlpha = (n, alpha) => {
+    const id = []; let v = n;
+    do { id.unshift(alpha[v % alpha.length]); v = Math.floor(v / alpha.length); } while(v > 0);
+    return id;
+  };
+  const saltC = Array.from(salt);
+  let alpha = [...new Set(Array.from(ALPHA0))];
+  let seps = Array.from(SEPS0).filter(c => alpha.includes(c));
+  alpha = alpha.filter(c => !seps.includes(c));
+  seps = shuffle(seps, saltC);
+  if(!seps.length || alpha.length / seps.length > RATIO){
+    let sl = Math.ceil(alpha.length / RATIO);
+    if(sl === 1) sl = 2;
+    if(sl > seps.length){
+      const diff = sl - seps.length;
+      seps = seps.concat(alpha.slice(0, diff));
+      alpha = alpha.slice(diff);
+    } else { seps = seps.slice(0, sl); }
+  }
+  alpha = shuffle(alpha, saltC);
+  const gc = Math.ceil(alpha.length / GUARD_DIV);
+  let guards;
+  if(alpha.length < 3){ guards = seps.slice(0, gc); seps = seps.slice(gc); }
+  else { guards = alpha.slice(0, gc); alpha = alpha.slice(gc); }
+  let hashInt = 0;
+  for(let i = 0; i < numbers.length; i++) hashInt += numbers[i] % (i + 100);
+  const lottery = alpha[hashInt % alpha.length];
+  let ret = [lottery];
+  for(let i = 0; i < numbers.length; i++){
+    let num = numbers[i];
+    const buf = [lottery].concat(saltC, alpha);
+    alpha = shuffle(alpha, buf.slice(0, alpha.length));
+    const last = toAlpha(num, alpha);
+    ret = ret.concat(last);
+    if(i + 1 < numbers.length){
+      num %= (last[0].codePointAt(0) + i);
+      ret.push(seps[num % seps.length]);
+    }
+  }
+  if(ret.length < minLength){
+    let gi = (hashInt + ret[0].codePointAt(0)) % guards.length;
+    ret.unshift(guards[gi]);
+    if(ret.length < minLength){
+      gi = (hashInt + ret[2].codePointAt(0)) % guards.length;
+      ret.push(guards[gi]);
+    }
+  }
+  const half = Math.floor(alpha.length / 2);
+  while(ret.length < minLength){
+    alpha = shuffle(alpha, alpha);
+    ret = alpha.slice(half).concat(ret, alpha.slice(0, half));
+    const ex = ret.length - minLength;
+    if(ex > 0) ret = ret.slice(ex / 2, ex / 2 + minLength);
+  }
+  return ret.join('');
+}
+/* [record type, sport code], each read out of a real link rather than
+   guessed. Fighters are type 3 where players are type 2 - the one place the
+   leading number is not the same. A sport with no entry here is left as
+   plain text: a wrong code can land on a real player of another sport, and a
+   link to the wrong person is worse than no link. */
+const REAL_SPORT = {
+  nba:    [2, 1],
+  nfl:    [2, 2],
+  ncaam:  [2, 3],
+  mlb:    [2, 4],
+  nhl:    [2, 7],
+  ufc:    [3, 10],
+  ncaaf:  [2, 11],
+  wnba:   [2, 12],
+  soccer: [2, 14],
+  golf:   [2, 15]
+};
+function realPlayerUrl(sport, playerId, season){
+  const kind = REAL_SPORT[String(sport || '').toLowerCase()];
+  const id = Number(playerId);
+  if(!kind || !Number.isFinite(id) || id <= 0) return null;
+  return 'https://www.realapp.com/' + hashidsEncode('routing', 11, [kind[0], kind[1], 0, id])
+         + (season ? '/' + season : '');
+}
+
+const SEASON_LBL = { ncaaf: 'CFB 2026', nfl: 'NFL 2026', ncaam: 'CBB 2026-27' };
+let sp = 'ncaaf', data = null, mine = new Set(), shown = 100;
+try{ const v = JSON.parse(localStorage.getItem('proj_pick_v1') || '{}'); if(v.sp && SEASON_LBL[v.sp]) sp = v.sp; if(v.who) $('#who').value = v.who; if(v.sort) $('#sort').value = v.sort; }catch(e){}
+const savePick = () => { try{ localStorage.setItem('proj_pick_v1', JSON.stringify({ sp, who: $('#who').value, sort: $('#sort').value })); }catch(e){} };
+function paintSeg(){ document.querySelectorAll('#sportseg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.s === sp))); }
+async function load(tries = 0){
+  paintSeg(); $('#head').textContent = 'Loading…'; $('#rows').innerHTML = ''; $('#more').hidden = true;
+  const want = sp;
+  const j = await api('/api/swaps?op=projections&page=boosts&sport=' + sp);
+  if(want !== sp) return;
+  if(j.error){
+    if(/sign in/i.test(j.error) && tries < 3){ setTimeout(() => load(tries + 1), 1200 * (tries + 1)); return; }
+    if(/sign in/i.test(j.error)){ $('#main').hidden = true; $('#lock').hidden = false; $('#lockmsg').textContent = 'Sign in on the board first, in this browser.'; $('#signinbtn').hidden = false; return; }
+    $('#head').textContent = j.error; return;
+  }
+  $('#main').hidden = false; $('#lock').hidden = true;
+  if(j.building){ $('#head').textContent = 'Building the projections for the first time - this takes up to a minute…'; setTimeout(() => load(tries), 15000); return; }
+  data = j; mine = new Set(j.mine || []);
+  const pos = [...new Set((j.rows || []).map(r => r.p).filter(Boolean))].sort();
+  const cur = $('#pos').value;
+  $('#pos').innerHTML = '<option value="">Every position</option>' + pos.map(p => `<option${p === cur ? ' selected' : ''}>${esc(p)}</option>`).join('');
+  shown = 100; draw();
+}
+function draw(){
+  if(!data) return;
+  const q = $('#q').value.trim().toLowerCase(), who = $('#who').value, pos = $('#pos').value, key = $('#sort').value;
+  let list = (data.rows || []).filter(r => (who !== 'mine' || mine.has(r.i)) && (!pos || r.p === pos)
+    && (!q || String(r.n).toLowerCase().includes(q) || String(r.t).toLowerCase().includes(q)));
+  list = list.slice().sort((a, b) => (b[key] ?? -1) - (a[key] ?? -1));
+  const when = new Date(data.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  $('#head').textContent = `${SEASON_LBL[data.sport] || ''} · ${list.length.toLocaleString()} player${list.length === 1 ? '' : 's'}${who === 'mine' ? ` of your ${mine.size} passes` : ''} · updated ${when}`;
+  $('#rows').innerHTML = list.slice(0, shown).map((r, i) => {
+    const u = realPlayerUrl(data.sport, r.i, data.season);
+    const nm = u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.n)}</a>` : esc(r.n);
+    const d = r.pc != null ? r.pr - r.pc : null;
+    return `<tr class="${mine.has(r.i) ? 'mine' : ''}"><td class="rk">${i + 1}</td>`
+      + `<td class="nm"><b>${nm}</b><span class="sub">${esc([r.p, r.t].filter(Boolean).join(' · '))}${mine.has(r.i) ? ' · <span style="color:var(--accent)">your pass</span>' : ''}</span>${(r.f || []).map(f => `<span class="flag">⚠ ${esc(f)}</span>`).join('')}</td>`
+      + `<td class="now" data-l="Now">${r.r.toLocaleString()}<span class="sub">${r.gp} gm · ${r.a}/gm</span></td>`
+      + `<td class="left" data-l="Left">${r.l} game${r.l === 1 ? '' : 's'}<span class="sub">${r.pg}/gm proj${r.nx ? ' · next ' + esc(r.nx) : ''}${r.tg ? ' · ' + r.tg + ' total' : ''}</span></td>`
+      + `<td class="prc" data-l="Projected"><span class="pr">${r.pr.toLocaleString()}</span></td>`
+      + `<td class="pcc" data-l="On pace"><span class="pc">${r.pc != null ? r.pc.toLocaleString() : '–'}</span>${d != null && d !== 0 ? `<span class="sub ${d > 0 ? 'up' : 'dn'}">proj ${d > 0 ? '+' : ''}${d.toLocaleString()}</span>` : ''}</td></tr>`;
+  }).join('') || `<tr><td colspan="6" class="note" style="text-align:left">${who === 'mine' ? 'None of your passes for this sport - re-read your passes on Boosts or Swaps.' : 'Nobody matches.'}</td></tr>`;
+  $('#more').hidden = list.length <= shown;
+  $('#more').textContent = `Show more (${(list.length - shown).toLocaleString()} left)`;
+}
+document.querySelectorAll('#sportseg button').forEach(b => b.addEventListener('click', () => { if(sp === b.dataset.s) return; sp = b.dataset.s; savePick(); data = null; load(); }));
+['#who', '#sort', '#pos'].forEach(id => $(id).addEventListener('change', () => { shown = 100; savePick(); draw(); }));
+let qt = null; $('#q').addEventListener('input', () => { clearTimeout(qt); qt = setTimeout(() => { shown = 100; draw(); }, 150); });
+$('#more').addEventListener('click', () => { shown += 200; draw(); });
+$('#main').hidden = false;
+load();
+</script>
+</body>
+</html>

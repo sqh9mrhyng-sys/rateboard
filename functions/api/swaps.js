@@ -1857,9 +1857,9 @@ export async function swapAccess(env, request) {
 // for OTD their own passes and games.
 const MEMBER_OPS = new Set(['me', 'save', 'keep', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
 const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan']);
-const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostdays', 'boostinv', 'buys', 'legboosts', 'resell', 'nosell']);
+const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostdays', 'projections', 'boostinv', 'buys', 'legboosts', 'resell', 'nosell']);
 const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
-const PAGE_OPS = new Set(['me', 'procheck', 'myswaps', 'hourcounts', 'wantcounts', 'boostplan', 'boostinv', 'buys', 'legboosts', 'resell', 'boostdays']);
+const PAGE_OPS = new Set(['projections', 'me', 'procheck', 'myswaps', 'hourcounts', 'wantcounts', 'boostplan', 'boostinv', 'buys', 'legboosts', 'resell', 'boostdays']);
 
 /* ---- OTD: saved game lists ------------------------------------------------
    Every player's [MM-DD, rax] list for a whole sport-season, built once from
@@ -2307,6 +2307,103 @@ async function golfRows(env, db, cards, day) {
   return { rows, idle, sched: { games: 1, event: ev.name, course: course || null, field: ev.field.length } };
 }
 const etDayOf = iso => iso ? new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso)) : '';
+
+
+/* ---- Projections (2026-11-05) ----------------------------------------------
+   Each player's rax by the end of his regular season: what he has, plus his
+   per-game projection (the Boosts formula) for each game his team has left,
+   adjusted for that opponent. "On pace" is plain: rax / games played x the
+   team's regular-season games. Rebuilt at most every 6 hours, kept in KV. */
+const PROJ_SEASON = { ncaaf: [2026, 2025], nfl: [2026, 2025], ncaam: [2027, 2026] };
+/* The whole regular season's schedule from ESPN: football a week at a time,
+   CBB a day at a time (November to the second week of March). */
+async function projSchedule(env, sp) {
+  const key = `projsched_v1_${sp}`;
+  try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c && Date.now() - c.at < 6 * 3600000) return c; } catch (e) {}
+  const base = `https://site.api.espn.com/apis/site/v2/sports/${ESPN_PATH[sp]}/scoreboard`;
+  const urls = sp === 'nfl' ? [...Array(18).keys()].map(w => `${base}?seasontype=2&week=${w + 1}&dates=2026&limit=100`)
+    : sp === 'ncaaf' ? [...Array(16).keys()].map(w => `${base}?seasontype=2&week=${w + 1}&dates=2026&groups=80&limit=400`)
+    : (() => { const out = []; for (let t = Date.parse('2026-11-01T12:00:00Z'); t <= Date.parse('2027-03-08T12:00:00Z'); t += 86400000)
+        out.push(`${base}?dates=${new Date(t).toISOString().slice(0, 10).replace(/-/g, '')}&groups=50&limit=500`); return out; })();
+  const teams = {}, ids = {}, seen = new Set();
+  let ok = 0;
+  for (let i = 0; i < urls.length; i += 16) {
+    const res = await Promise.all(urls.slice(i, i + 16).map(async u => { try { const r = await fetch(u); return r.ok ? await r.json() : null; } catch (e) { return null; } }));
+    for (const d of res) {
+      if (!d) continue; ok++;
+      for (const ev of (d.events || [])) {
+        if (seen.has(ev.id) || (ev.season && Number(ev.season.type) !== 2)) continue;
+        seen.add(ev.id);
+        const c = (ev.competitions || [])[0]; if (!c) continue;
+        const cs = c.competitors || []; if (cs.length !== 2) continue;
+        const done = !!(ev.status && ev.status.type && ev.status.type.completed);
+        cs.forEach((x, k) => { const t = x.team || {}, o = (cs[1 - k] || {}).team || {}; if (!t.abbreviation) return;
+          if (t.id) ids[t.abbreviation] = t.id;
+          (teams[t.abbreviation] = teams[t.abbreviation] || []).push([ev.date, o.abbreviation || '', done ? 1 : 0]); });
+      }
+    }
+  }
+  for (const k of Object.keys(teams)) teams[k].sort((a, b) => Date.parse(a[0]) - Date.parse(b[0]));
+  const out = { at: Date.now(), teams, ids, pages: ok, of: urls.length };
+  if (ok >= urls.length * 0.8) { try { await env.RATEBOARD_KV.put(key, JSON.stringify(out), { expirationTtl: 3 * 86400 }); } catch (e) {} }
+  else { try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c) return c; } catch (e) {} }
+  return out;
+}
+async function projBuild(env, db, sp) {
+  const [se, prev] = PROJ_SEASON[sp];
+  const sched = await projSchedule(env, sp);
+  let match = {}; try { match = (JSON.parse((await env.RATEBOARD_KV.get('boostmatch_v1_' + sp)) || 'null') || {}).f || {}; } catch (e) {}
+  const inj = { ...(await boostInjuries(env, sp).catch(() => ({}))) };
+  // NFL: each team's own injury list too (the league list misses some - Lamar, 2026-11-04).
+  if (sp === 'nfl') { try { Object.assign(inj, await boostTeamInj(env, sp, Object.values(sched.ids || {}))); } catch (e) {} }
+  const cur = ((await db.prepare(`SELECT playerId, player, team, position, day, rax FROM gamelog WHERE sport=? AND season=?
+      AND rax IS NOT NULL AND (seasonType IS NULL OR seasonType='regularseason')`).bind(sp, Number(se)).all()).results) || [];
+  const old = new Map();
+  try { const r = await db.prepare(`SELECT playerId, AVG(rax) AS a, COUNT(*) AS n FROM gamelog WHERE sport=? AND season=? AND rax IS NOT NULL AND seasonType='regularseason' GROUP BY playerId`).bind(sp, prev).all();
+    for (const x of (r.results || [])) old.set(Number(x.playerId), Number(x.a)); } catch (e) {}
+  const by = new Map();
+  for (const x of cur) (by.get(Number(x.playerId)) || by.set(Number(x.playerId), []).get(Number(x.playerId))).push(x);
+  const etd = iso => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
+  const near = (days, iso) => { const t = Date.parse(etd(iso) + 'T12:00:00Z'); return days.some(d => Math.abs(Date.parse(d + 'T12:00:00Z') - t) <= 86400000); };
+  const avg = a => a.length ? a.reduce((t, x) => t + Number(x.rax || 0), 0) / a.length : null;
+  const rows = [];
+  for (const [id, gs0] of by) {
+    const gs = gs0.slice().sort((a, b) => String(a.day).localeCompare(String(b.day)));
+    const last = gs[gs.length - 1], gp = gs.length;
+    const rax = gs.reduce((t, x) => t + Number(x.rax || 0), 0);
+    if (!(rax > 0)) continue;
+    const ab = last.team ? boostAlias(sp, last.team) : null, tg = ab ? sched.teams[ab] : null;
+    const ca = avg(gs), r4 = avg(gs.slice(-4)), oa = old.has(id) ? old.get(id) : null;
+    const per = gp >= 4 ? (oa != null ? 0.5 * r4 + 0.3 * ca + 0.2 * oa : 0.6 * r4 + 0.4 * ca) : oa != null ? 0.5 * ca + 0.5 * oa : ca;
+    const flags = [];
+    let total = null, left = 0, add = 0, nextOpp = null;
+    if (tg) {
+      total = tg.length;
+      const rest = tg.filter(g => !g[2] && Date.parse(g[0]) > Date.now() - 4 * 3600000);
+      left = rest.length; nextOpp = rest[0] ? rest[0][1] : null;
+      // Hasn't been playing: missed 2 of his team's last 3 finished games - nothing more counted.
+      const doneG = tg.filter(g => g[2]).slice(-3), days = gs.map(x => x.day);
+      const missed = doneG.filter(g => !near(days, g[0])).length;
+      let skipNext = false, none = false;
+      const ij = inj[boostName(last.player || '')];
+      // Injured reserve: no more games counted. Out: the next one isn't.
+      if (ij && /^injured reserve/i.test(ij.status)) { flags.push('Injured reserve - no more games counted'); none = true; }
+      else if (ij && /^(out|suspen)/i.test(ij.status)) { flags.push(ij.status + ' - next game not counted'); skipNext = true; }
+      else if (ij && /^(doubtful|questionable)/i.test(ij.status)) flags.push(ij.status);
+      if (none) left = 0;
+      else if (doneG.length >= 2 && missed >= 2) { flags.push(`Missed ${missed} of his team's last ${doneG.length} - no more games counted`); left = 0; }
+      else for (const [i, g] of rest.entries()) { if (i === 0 && skipNext) continue; add += per * (match[g[1]] || 1); }
+      if (skipNext && left) left -= 1;
+    } else flags.push('Team schedule not found');
+    rows.push({ i: id, n: last.player || ('Player ' + id), t: last.team || '', p: last.position || '', gp, r: Math.round(rax), a: Math.round(ca * 10) / 10,
+      pg: Math.round(per * 10) / 10, l: left, tg: total, nx: nextOpp,
+      pr: Math.round(rax + add), pc: total ? Math.round(rax / gp * total) : null, f: flags.length ? flags : undefined });
+  }
+  rows.sort((x, y) => y.pr - x.pr);
+  const out = { at: Date.now(), sport: sp, season: se, rows: rows.slice(0, 4000), players: rows.length, schedPages: sched.pages, schedOf: sched.of };
+  try { await env.RATEBOARD_KV.put(`proj_v1_${sp}`, JSON.stringify(out), { expirationTtl: 3 * 86400 }); } catch (e) {}
+  return out;
+}
 
 const SCAN_EVERY_KEY = 'swap_scan_every_v1';
 async function scanEvery(env) {
@@ -3311,6 +3408,29 @@ async function handle({ request, env, waitUntil }) {
   /* The next 4 days (up to 12 ahead) on which at least one of the member's
      passes plays, for the day picker. Teams the same way the plan finds them:
      this season's last game, the CBB list, last season's team. */
+  /* Projections page: the saved list (rebuilt in the background when it's
+     over 6 hours old), plus which of the players the member holds a pass for. */
+  if (op === 'projections') {
+    const sp = PROJ_SEASON[url.searchParams.get('sport')] ? url.searchParams.get('sport') : 'ncaaf';
+    let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(`proj_v1_${sp}`)) || 'null'); } catch (e) {}
+    const lockK = `proj_lock_v1_${sp}`;
+    const stale = !c || Date.now() - c.at > 6 * 3600000 || (acc.admin && url.searchParams.get('refresh') === '1');
+    if (stale) {
+      let locked = false; try { locked = !!(await env.RATEBOARD_KV.get(lockK)); } catch (e) {}
+      if (!locked) {
+        try { await env.RATEBOARD_KV.put(lockK, '1', { expirationTtl: 120 }); } catch (e) {}
+        const job = projBuild(env, db, sp).finally(() => env.RATEBOARD_KV.delete(lockK).catch(() => {}));
+        if (!c) c = await job.catch(e => ({ error: 'Could not build the projections: ' + String(e.message || e).slice(0, 100) }));
+        else { try { waitUntil(job.catch(() => {})); } catch (e) {} }
+      }
+    }
+    if (!c) return json({ building: true, note: 'Building the projections - try again in a minute.' });
+    if (c.error) return json({ error: c.error }, 500);
+    const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
+    const [se] = PROJ_SEASON[sp];
+    const mine = parse(u && u.passes, []).filter(p => p.sport === sp && Number(p.season) === se && p.kind !== 'team').map(p => Number(p.id));
+    return json({ ...c, mine });
+  }
   if (op === 'boostdays') {
     const sp = String(url.searchParams.get('sport') || '');
     if (sp === 'golf') {
