@@ -1,5 +1,5 @@
 import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS, touchSeen, userStats, sessionState } from '../../lib/auth.js';
-import { swapTick, boostRefresh, swapAccess } from './swaps.js';
+import { swapTick, dmTickKey, boostRefresh, swapAccess } from './swaps.js';
 import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, capNow } from '../../lib/dbwatch.js';
 
 /* Adding a column that already exists just errors (and is ignored). Each
@@ -7766,6 +7766,8 @@ export async function onRequestGet(ctx) {
   // Swap DMs ride the once-a-minute collector tick, on their own account.
   if (url.searchParams.get('queue') === 'next' && ctx.waitUntil) {
     ctx.waitUntil(swapTick(env).catch(() => {}));
+    // The swaps' warnings and contacts in a run of their own (its own 30 seconds).
+    ctx.waitUntil((async () => { const k = await dmTickKey(env); if (k) await fetch(`${origin}/api/swaps?op=dmtick&k=${k}`, { cf: { cacheTtl: 0 } }); })().catch(() => {}));
     ctx.waitUntil(boostRefresh(env).catch(() => {}));
     ctx.waitUntil(gapPush(ctx).catch(() => {}));
   }

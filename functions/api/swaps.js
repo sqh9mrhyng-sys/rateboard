@@ -754,7 +754,7 @@ async function dmSendRetry(auth, channelId, text) {
    50+ people). It sends up to 20 messages a minute, and pass scans stay off
    the bot from :25 to :40 and :55 to :10 so Real doesn't throttle it while
    the warnings and contacts go out. */
-const DM_PER_TICK = 10;
+const DM_PER_TICK = 40;   // a cap per run; time is the real limit
 const CANCEL_DM_ON = false;   // called-off notices (Dennis, 2026-11-04: too many extra DMs) - flip to bring them back   // Real's message slowmode: 10, then the rest of the minute off
 const dmWindow = (t = new Date()) => { const m = t.getUTCMinutes(); return (m >= 25 && m < 40) || m >= 55 || m < 10; };
 const DMQ_DDL = 'CREATE TABLE IF NOT EXISTS dm_retry (id INTEGER PRIMARY KEY AUTOINCREMENT, channelId INTEGER, parts TEXT, label TEXT, tries INTEGER, at INTEGER)';
@@ -1285,13 +1285,18 @@ async function runDms(env, db, auth, rows, max, force) {
       // (The read-back second look is off: Real stores links differently from what was sent, so it re-sent messages that had landed.)
       notes.push(`${kind} sent to @${me.rsUser} (${msgs.length} message${msgs.length === 1 ? '' : 's'})`); return true;
     }
-    catch (e) { notes.push(`${kind} to @${me.rsUser} failed: ${String(e.message || e).slice(0, 160)}`); await botFail(db, 'dm_' + kind, `@${me.rsUser}: ${e.message || e}`); return false; }
+    catch (e) { notes.push(`${kind} to @${me.rsUser} failed: ${String(e.message || e).slice(0, 160)}`); await botFail(db, 'dm_' + kind, `@${me.rsUser}: ${e.message || e}`);
+      if (/send 403/.test(String(e.message || e))) NO_MSG.set(who, Date.now() + 4 * 60000);   // try them again in a few minutes, not every tick
+      return false; }
   };
   // Soonest (or most overdue) first, so a busy hour can't leave earlier ones waiting.
   const order = [...per.values()].sort((x, y) => Math.min(...x.map(z => z.due)) - Math.min(...y.map(z => z.due)));
-  for (const list of order) {
-    if (sent >= max || Date.now() - now > 40000 || (TICK_T0 && !force && tickLeft() < 6000)) break;   // never past the tick's time
+  /* Three members at a time (each chat has its own slowmode; one at a time
+     couldn't get through a 200-swap hour - 2026-11-05). */
+  const doList = async list => {
+    if (sent >= max || Date.now() - now > 40000 || (TICK_T0 && !force && tickLeft() < 6000)) return;   // never past the tick's time
     const who = list[0].who;
+    if (!force && (NO_MSG.get(who) || 0) > Date.now()) return;   // Real refused them a minute ago: not every tick
     const first = Math.min(...list.map(x => x.due)), last = Math.max(...list.map(x => x.due));
     // 1. warn: every pack for the day, once.
     // 1. warn: 30 min before each swap hour, that hour's packs only.
@@ -1307,7 +1312,7 @@ async function runDms(env, db, auth, rows, max, force) {
       const items = []; for (const x of wh) { const l = await sideLines(member, x.m, x.side); if (l) items.push(l); }
       if (!(items.length && await send(who, warnGrouped(items), 'warn'))) { await unclaim(wh, 'warn'); warnFail = true; }
     }
-    if (warnFail) continue;
+    if (warnFail) return;
     // 2-4. contact: one per swap hour that has come.
     const byHour = new Map();
     // From :55 (5 minutes before the hour).
@@ -1327,7 +1332,9 @@ async function runDms(env, db, auth, rows, max, force) {
       // The follow-up DM is off (Dennis, 2026-11-04): the swaps are just marked finished, nothing is sent.
       await claim(list.filter(x => !x.m['follow' + x.side]), 'follow');
     }
-  }
+  };
+  let qi = 0;
+  await Promise.all([0, 1, 2].map(async () => { while (qi < order.length) { const l = order[qi++]; try { await doList(l); } catch (e) { notes.push('list failed: ' + String(e.message || e).slice(0, 80)); } } }));
   // Status: sent once both sides have had the follow-up.
   for (const m of rows) {
     const st = m.followA && m.followB ? 'sent' : (m.warnA || m.warnB || m.doneA || m.doneB) ? 'warned' : m.status;
@@ -1707,8 +1714,30 @@ async function feedbackDms(env, db, auth) {
    last). So the DMs go first, everything is timed from the tick's start, no
    new member is started after 16s, and a part that would go after 22s is
    queued for the next minute instead. Scans don't run in the DM windows. */
-let TICK_T0 = 0;
-const tickLeft = () => 22000 - (Date.now() - TICK_T0);
+let TICK_T0 = 0, TICK_BUDGET = 22000;
+const tickLeft = () => TICK_BUDGET - (Date.now() - TICK_T0);
+const NO_MSG = new Map();   // members Real just refused a DM for -> when to try again
+/* The DMs' own run (2026-11-05): the collector tick calls /api/swaps?op=dmtick
+   once a minute, so the warnings and contacts get a whole background slot to
+   themselves instead of sharing one with matching and scans. The key is
+   derived from the bot's token, so only the board can start it. */
+export async function dmTickKey(env) {
+  const t = swapToken(env); if (!t) return null;
+  const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('dmtick|' + t));
+  return [...new Uint8Array(h)].slice(0, 16).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+async function dmTick(env) {
+  TICK_T0 = Date.now(); TICK_BUDGET = 26000;
+  const db = env.RATEBOARD_DB, auth = swapToken(env);
+  if (!db || !auth || !DM_ON) return [];
+  try { await retryDms(db, auth); } catch (e) { await botFail(db, 'dm_retry', e.message); }   // unsent parts first
+  try {
+    const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned','cancelling') AND createdAt > ? ORDER BY COALESCE(dueAt, createdAt), id LIMIT 800`)
+      .bind(Date.now() - 2 * 86400000).all()).results) || [];
+    if (rows.length) return await runDms(env, db, auth, rows, DM_PER_TICK, false);
+  } catch (e) { await botFail(db, 'dm_run', e.message); }
+  return [];
+}
 export async function swapTick(env) {
   TICK_T0 = Date.now();
   if (!DM_ON) return null;
@@ -1828,15 +1857,20 @@ export async function swapTick(env) {
       if (live && (seen.has(ga) || seen.has(gb))) { await db.prepare("UPDATE swap_matches SET status='cancelled', note='called off: pass already scheduled to go out today' WHERE id=?").bind(m.id).run(); n++; continue; }
       seen.add(ga); seen.add(gb); }
     await stat(db, 'give_dupe_fixed', n); } } catch (e) { await botFail(db, 'dupefix', e.message); }
-  try { await retryDms(db, auth); } catch (e) { await botFail(db, 'dm_retry', e.message); }   // unsent parts first
-  // The swaps' DMs, while there's time.
+  // (The swaps' DMs have their own run now - dmTick.) If last minute had no
+  // such run, the call isn't getting through: send them from here instead.
   let notes = [];
   try {
-    const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned','cancelling') AND createdAt > ? ORDER BY COALESCE(dueAt, createdAt), id LIMIT 800`)
-      .bind(Date.now() - 2 * 86400000).all()).results) || [];
-    if (rows.length) notes = await runDms(env, db, auth, rows, DM_PER_TICK, false);
+    await db.prepare('CREATE TABLE IF NOT EXISTS dm_runs (minute TEXT PRIMARY KEY, at INTEGER)').run();
+    const prevMin = new Date(Date.now() - 60000).toISOString().slice(0, 16), curMin = new Date().toISOString().slice(0, 16);
+    const had = await db.prepare('SELECT 1 AS x FROM dm_runs WHERE minute=?').bind(prevMin).first();
+    if (!had) {
+      await sleep(3000);   // give this minute's own run a moment to claim first
+      const c = await db.prepare('INSERT OR IGNORE INTO dm_runs (minute, at) VALUES (?, ?)').bind(curMin, Date.now()).run();
+      if (c && c.meta && c.meta.changes) { await stat(db, 'dm_fallback'); notes = await dmTick(env); }
+    }
   } catch (e) { await botFail(db, 'dm_run', e.message); }
-  if (!inDmWindow && tickLeft() > 10000) {
+  if (!inDmWindow) {
     try { await feedbackDms(env, db, auth); } catch (e) { await botFail(db, 'dm_feedback', e.message); }
     try { await feedbackDms2(env, db, auth); } catch (e) { await botFail(db, 'dm_feedback', e.message); }
     try { await backgroundScans(env, db, auth); } catch (e) { await botFail(db, 'scan_bg', e.message); }
@@ -2714,6 +2748,18 @@ async function handle({ request, env, waitUntil }) {
   const op = url.searchParams.get('op') || '';
   // Password resets happen signed out, so they come before the access check.
   if (op === 'resetstart' || op === 'resetcheck') return resetFlow(env, db, url, request, op, waitUntil);
+  if (op === 'dmtick') {
+    const k = await dmTickKey(env);
+    if (!k || url.searchParams.get('k') !== k) return json({ error: 'no' }, 403);
+    // Only one run at a time across the site: a claim row per minute.
+    const minute = new Date().toISOString().slice(0, 16);
+    let go = false;
+    try { await db.prepare('CREATE TABLE IF NOT EXISTS dm_runs (minute TEXT PRIMARY KEY, at INTEGER)').run();
+      const c = await db.prepare('INSERT OR IGNORE INTO dm_runs (minute, at) VALUES (?, ?)').bind(minute, Date.now()).run(); go = !!(c && c.meta && c.meta.changes);
+      if (Math.random() < 0.02) await db.prepare('DELETE FROM dm_runs WHERE at < ?').bind(Date.now() - 86400000).run(); } catch (e) {}
+    if (go) { try { waitUntil(dmTick(env).catch(() => {})); } catch (e) {} }
+    return json({ ok: true, started: go });
+  }
   const acc = await swapAccess(env, request);
   mark(request, 'access');
   if (op === 'procheck') return proCheck(env, db, url, acc);
