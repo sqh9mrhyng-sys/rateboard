@@ -87,34 +87,55 @@
   .tot{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0}
   .tot div{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px 12px}
   .tot b{display:block;font-size:20px}
+  /* cleanup pass */
+  .tabsrow{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+  b.h{font-size:16px}
+  .ctl{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .ctl label{display:flex;flex-direction:column;gap:4px;font-weight:600}
+  .ctl select{width:100%;min-width:0}
+  .modenote{margin:8px 0 10px;font-size:12.5px}
+  .go.big{width:100%;padding:13px;font-size:16px;border-radius:11px}
+  .userbar{margin-top:10px;display:grid;grid-template-columns:1fr auto;gap:8px}
+  .userbar input{min-width:0}
+  #scanmsg{display:block;margin-top:6px}
+  details.how{margin-top:12px;border-top:1px solid var(--line);padding-top:8px}
+  details.how summary,details.tip summary{cursor:pointer;color:var(--mute);font-size:13px;font-weight:600}
+  details.how p{margin:8px 0 0;line-height:1.5}
+  details.tip{background:rgba(232,163,61,.08);border:1px solid color-mix(in srgb,var(--accent) 50%,var(--line));border-radius:10px;padding:9px 12px;margin-bottom:12px;font-size:13px}
+  details.tip summary{color:var(--accent)}
+  .note.sub{margin:10px 0 0;font-size:12.5px}
+  @media (max-width: 680px){
+    .tabsrow{flex-direction:column}
+    select,button,input{min-height:44px}
+    .seg button{min-height:44px}
+    .ctl label{flex:none}
+  }
 </style>
 </head>
 <body>
 <div class="lock" id="lock" hidden><h1>Boosts &amp; Buys <span class="beta">BETA</span></h1><p class="note" id="lockmsg">Checking…</p><p id="signinbtn" hidden><a class="btn" href="/" style="display:inline-block;padding:10px 14px;border-radius:9px;background:#E8A33D;color:#141925;font-weight:700;text-decoration:none">Sign in on the board</a></p><p class="note" id="signinhint" hidden>Signed in already? Open the board once - it will ask for your password one more time, then this page works. Opened this from inside Real? Use the browser you signed in with.</p><p><a href="/">Back to the board</a></p></div>
 <div class="wrap" id="main" hidden>
   <header><h1>Boosts &amp; Buys</h1><span class="beta">BETA</span><a href="/" style="margin-left:auto">Back to the board</a></header>
-  <div class="betabar"><b>BETA</b> - this page is still in development. Projections are estimates from averages.</div>
-
-  <div class="bar" style="margin-bottom:10px"><div class="seg" id="sportseg"><button data-s="ncaam" aria-pressed="true">CBB</button><button data-s="ncaaf" aria-pressed="false">CFB</button><button data-s="nfl" aria-pressed="false">NFL</button></div></div>
-  <div class="bar" style="margin-bottom:14px"><div class="seg" id="tab"><button data-t="boosts" aria-pressed="true">Boosts</button><button data-t="buys" aria-pressed="false" id="tab2">Buys</button></div></div>
+  <div class="tabsrow"><div class="seg" id="sportseg"><button data-s="ncaam" aria-pressed="true">CBB</button><button data-s="ncaaf" aria-pressed="false">CFB</button><button data-s="nfl" aria-pressed="false">NFL</button></div>
+  <div class="seg" id="tab"><button data-t="boosts" aria-pressed="true">Boosts</button><button data-t="buys" aria-pressed="false" id="tab2">Buys</button></div></div>
 
   <div id="t-boosts">
     <section>
-      <div class="bar">
+      <div class="ctl">
         <label class="note">Day <select id="day"></select></label>
         <select id="sport" hidden><option value="ncaam">CBB 2026-27</option><option value="ncaaf">CFB 2026</option><option value="nfl">NFL 2026</option></select>
         <label class="note">Setting <select id="mode"><option value="balanced" selected>Balanced</option></select></label>
-        <button class="go" id="run">Show my boosts</button>
       </div>
-      <div class="bar" style="margin-top:10px">
-        <input id="rsuser" placeholder="Real username" autocomplete="off" style="flex:0 1 170px">
-        <button id="scan">Re-read my passes</button>
-        <span class="note" id="scanmsg"></span>
+      <p class="note modenote" id="modenote"></p>
+      <button class="go big" id="run">Show my boosts</button>
+      <div class="bar userbar">
+        <input id="rsuser" placeholder="Real username" autocomplete="off">
+        <button id="scan">Re-read passes</button>
       </div>
-      <p class="note" id="modenote" style="margin:10px 0 0"></p>
+      <span class="note" id="scanmsg"></span>
     </section>
     <section id="inv">
-      <div class="bar"><b style="font-size:15px">Your boosters</b><button id="invgo">Load from Real</button><span class="note" id="invmsg">Reads your boosters for all three sports - once every 2 hours.</span></div>
+      <div class="bar"><b class="h">Your boosters</b><button id="invgo" style="margin-left:auto">Load from Real</button></div><p class="note" id="invmsg" style="margin:6px 0 0">Every 2 hours, all three sports.</p>
       <div id="invout" style="margin:10px 0 0" hidden></div>
     </section>
     <section id="out" hidden>
@@ -122,37 +143,37 @@
       <div class="tot" id="tot"></div>
       <div class="sum" id="sum"></div>
       <div class="scroll"><table class="cards"><thead><tr><th>Rarity</th><th>Player</th><th style="text-align:left">Boost</th><th style="text-align:left">Game</th><th>Avg rax</th><th>Proj rax</th><th>Proj w/ boost</th></tr></thead><tbody id="rows"></tbody></table></div>
-      <p class="note" id="foot"></p>
+      <details class="how"><summary>How this is worked out</summary><p class="note" id="foot"></p><p class="note">Beta - projections are estimates from averages.</p></details>
     </section>
   </div>
 
   <div id="t-buys" hidden>
     <div class="bar" style="margin-bottom:10px"><div class="seg" id="subseg"></div></div>
     <section id="resell" hidden>
-      <div class="bar"><b style="font-size:15px">Resell / replacements · CBB 2026-27</b></div>
-      <p class="note" id="rsmsg" style="margin:8px 0 0">Your worst cards by rax a game, who's out for the season, and who to replace them with.</p>
+      <div class="bar"><b class="h">Resell / replacements · CBB 2026-27</b></div>
+      <p class="note" id="rsmsg" style="margin:6px 0 0">Your weakest cards and who to replace them with.</p>
       <div id="rslist" style="margin-top:10px"><p class="note">Loading…</p></div>
-      <p class="note" style="margin:10px 0 0"><b>Steady rax/game</b> is his average with his best game left out, so one huge game can't carry him; buys rank on that and on how often he has a good game (CFB 20+, CBB 10+), and profits use it. Games left go by his <b>team's</b> games: a 31-game CBB / 12-game CFB regular season, less what the team has played. Postseason games (bowls, CFP) count in rax a game once played. <b>Swap</b> = new card's rax over his games left × the booster, minus 200 for the pack and the resell cost (everything your old card made past 100 rax). <b>Keep</b> = your card's rax over his games left × the booster (0 if he's out for the season). Replace only when swap beats keep.</p>
+      <details class="how"><summary>How this is worked out</summary><p class="note"><b>Steady rax/game</b> is his average with his best game left out, so one huge game can't carry him; buys rank on that and on how often he has a good game (CFB 20+, CBB 10+), and profits use it. Games left go by his <b>team's</b> games: a 31-game CBB / 12-game CFB regular season, less what the team has played. Postseason games (bowls, CFP) count in rax a game once played. <b>Swap</b> = new card's rax over his games left × the booster, minus 200 for the pack and the resell cost (everything your old card made past 100 rax). <b>Keep</b> = your card's rax over his games left × the booster (0 if he's out for the season). Replace only when swap beats keep.</p></details>
     </section>
     <section id="legs" hidden>
-      <div class="bar"><b style="font-size:15px">Legendary boosts · CFB</b><div class="seg" id="legseg" style="margin-left:auto"><button data-p="daily" aria-pressed="true">Daily packs</button><button data-p="weekly" aria-pressed="false">Weekly packs</button></div></div>
-      <p class="note" id="legmsg" style="margin:8px 0 0">Packs whose booster is nearly always legendary. Tap a player for profit by base rax.</p>
+      <div class="bar"><b class="h">Legendary boosts · CFB</b><div class="seg" id="legseg" style="margin-left:auto"><button data-p="daily" aria-pressed="true">Daily packs</button><button data-p="weekly" aria-pressed="false">Weekly packs</button></div></div>
+      <p class="note" id="legmsg" style="margin:6px 0 0">Packs that almost always give a Legendary booster. Tap one for profit.</p>
       <div id="leglist" style="margin-top:10px"><p class="note">Loading…</p></div>
-      <p class="note" style="margin:10px 0 0">Leg odds and avg boost come from pack data. <b>Base rax to profit</b> = 200 ÷ avg boost (a pack costs 200). Profit = base rax × avg boost − 200.</p>
+      <details class="how"><summary>How this is worked out</summary><p class="note">Leg odds and avg boost come from pack data. <b>Base rax to profit</b> = 200 ÷ avg boost (a pack costs 200). Profit = base rax × avg boost − 200.</p></details>
     </section>
     <section id="cbbbuys">
-      <div class="betabar" style="margin-bottom:12px"><b>TO ADD A PLAYER HEADSHOT TO YOUR CARD</b>
+      <details class="tip"><summary>📸 Add a player headshot to your card</summary>
         <ol style="margin:6px 0 0;padding-left:20px">
           <li>Click <b>Save photo</b> underneath a player</li>
           <li>On the bottom row with share options, click <b>“Save Image”</b></li>
           <li>Click the <b>My card</b> link, apply it from there, and go to the next one</li>
         </ol>
-        <div style="margin-top:8px;opacity:.85">Thank you to <b>@domo06</b> on Real for the headshots</div>
-      </div>
-      <div class="bar"><b style="font-size:15px">Buys · CBB 2026-27</b><span class="note" id="buymsg">Top 70 from the CBB list, checked against your passes.</span></div>
+        <div class="note" style="margin-top:6px">Thanks to <b>@domo06</b> on Real for the headshots.</div>
+      </details>
+      <div class="bar"><b class="h">Buys · CBB 2026-27</b></div><p class="note" id="buymsg" style="margin:6px 0 0">Top 70 from the CBB list, checked against your passes.</p>
       <div class="sum" id="buysum"></div>
       <div class="scroll"><table class="cards buys"><thead><tr><th>#</th><th>Player</th><th style="text-align:left">Team</th><th>You</th></tr></thead><tbody id="buyrows"><tr><td colspan="4" class="note">Loading…</td></tr></tbody></table></div>
-      <p class="note">Anyone you don't hold a pass for is a recommended buy. Re-read your passes on the Boosts tab after buying (once every 2 hours). NFL and CFB come later.</p>
+      <p class="note sub">No pass = recommended buy. After buying, re-read your passes on the Boosts tab.</p>
     </section>
   </div>
 </div>
@@ -273,9 +294,9 @@ const MODE_NOTE_STAT = {
   heavy: 'Earning heavy: anyone at or above a typical starter in the stat gets one. Burns boosters fast - not recommended.'
 };
 const MODE_NOTE = {
-  balanced: 'Balanced: Legendary for 14.5+ projected rax (never more than 15% of your Legendaries in a day), Epic for 10+, Rare for anyone at 5+.',
-  heavy: 'Heavy Legendary: Legendary for 11.5+ projected rax (up to 40% of your Legendaries in a day), Epic for 9+, Rare for anyone at 5+.',
-  saver: 'Boost saver: Legendary only for 18+ projected rax, Epic for 14.5+, and a Rare for everyone else at 5+.',
+  balanced: 'Legendary 14.5+ proj rax (max 15% a day) · Epic 10+ · Rare 5+',
+  heavy: 'Legendary 11.5+ proj rax (max 40% a day) · Epic 9+ · Rare 5+',
+  saver: 'Legendary 18+ proj rax · Epic 14.5+ · Rare 5+',
 };
 const LBL = { legendary: 'Legendary', epic: 'Epic', rare: 'Rare' };
 /* Today and the next three days, in Eastern time (when games are listed).
@@ -301,9 +322,9 @@ function drawDays(){
 $('#sport').addEventListener('change', drawDays);
 // CFB Balanced has its own bars (one slate a week).
 const drawMode = () => { const m = $('#mode').value;
-  const CFB_NOTE = { balanced: 'Balanced (CFB): Legendary for 22+ projected rax (up to 70% of your Legendaries in a week), Epic for 15+, Rare for anyone at 10+.',
-    heavy: 'Heavy Legendary (CFB): Legendary for 18+ projected rax (all of your Legendaries can go), Epic for 12+, Rare for anyone at 10+.',
-    saver: 'Boost saver (CFB): Legendary for 27.5+ projected rax (at most 20% of your Legendaries in a week), Epic for 20+, Rare for anyone at 10+.' };
+  const CFB_NOTE = { balanced: 'Legendary 22+ proj rax (max 70% a week) · Epic 15+ · Rare 10+',
+    heavy: 'Legendary 18+ proj rax (no cap) · Epic 12+ · Rare 10+',
+    saver: 'Legendary 27.5+ proj rax (max 20% a week) · Epic 20+ · Rare 10+' };
   $('#modenote').textContent = $('#sport').value === 'ncaaf' ? (CFB_NOTE[m] || MODE_NOTE[m]) : MODE_NOTE[m]; };
 $('#sport').addEventListener('change', () => drawMode());
 $('#mode').addEventListener('change', () => { drawMode(); if(!$('#out').hidden) run(); });
@@ -595,8 +616,8 @@ $('#scan').addEventListener('click', async () => {
   setTimeout(resumeScan, 300);
   const p = me.profile;
   $('#scanmsg').textContent = p && (p.passes || []).length
-    ? `${p.passes.length} passes on file` + (p.scannedAt ? ` (read ${new Date(p.scannedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` : '') + '. Passes can be re-read once every 2 hours.'
-    : 'Enter your Real username and tap Re-read my passes.';
+    ? `${p.passes.length} passes on file` + (p.scannedAt ? ` (read ${new Date(p.scannedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` : '') + '.'
+    : 'Enter your Real username, then Re-read passes.';
 })();
 </script>
 </body>
