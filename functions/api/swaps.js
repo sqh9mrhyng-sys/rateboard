@@ -441,6 +441,8 @@ async function pagedRows(db, sql, binds = [], size = 25) {
 const BOARD_KV = 'ratebrd_market_v1';
 const ADMIN_DM_DDL = `CREATE TABLE IF NOT EXISTS admin_dm (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT, rsUser TEXT, hashId TEXT, channelId INTEGER, text TEXT, ts INTEGER, ref TEXT)`;
 const RESTRICT_DDL = `CREATE TABLE IF NOT EXISTS restricted (key TEXT PRIMARY KEY, at INTEGER, why TEXT)`;
+// Swaps taken away by Dennis from the admin page (swaps only - posting offers is untouched).
+const SBLOCK_DDL = `CREATE TABLE IF NOT EXISTS swap_block (key TEXT PRIMARY KEY, at INTEGER)`;
 // Someone named by a board key or a Real username: their board key, Real name, comment and bot chat.
 async function whoIs(db, name) {
   const n = String(name || '').trim().replace(/^@/, '').toLowerCase();
@@ -552,9 +554,10 @@ async function runMatching(db, env) {
   // five a day, so a match with anyone else might never be delivered.
   await db.prepare(DM_DDL).run();
   try { await db.prepare(RESTRICT_DDL).run(); } catch (e) {}
+  try { await db.prepare(SBLOCK_DDL).run(); } catch (e) {}
   const users = (await pagedRows(db, `SELECT * FROM swap_users WHERE active=1 AND passes IS NOT NULL
       AND wants IS NOT NULL AND wants <> '[]' AND slots IS NOT NULL AND slots <> '[]'
-      AND key NOT IN (SELECT key FROM restricted)
+      AND key NOT IN (SELECT key FROM restricted) AND key NOT IN (SELECT key FROM swap_block)
       AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`))
     .map(u => ({ ...u, sched: parse(u.sched, null), wants: parse(u.wants, []), keep: new Set(parse(u.keep, [])), touch: new Set(parse(u.touch, [])), slots: parse(u.slots, []),
                  passes: parse(u.passes, []), caps: parse(u.caps, {}) || {} }));
@@ -1887,14 +1890,17 @@ export async function swapAccess(env, request) {
     await db.prepare(SACCESS_DDL).run();
     await db.prepare(OTD_DDL).run();
     await db.prepare(SPRO_DDL).run();
-    // All four questions in one trip.
-    const [a, b, c, d] = await db.batch([
+    await db.prepare(SBLOCK_DDL).run();
+    // All five questions in one trip.
+    const [a, b, c, d, e] = await db.batch([
       db.prepare('SELECT 1 AS x FROM swap_access WHERE key=?').bind(who),
       db.prepare('SELECT 1 AS x FROM otd_access WHERE key=?').bind(who),
       db.prepare('SELECT 1 AS x FROM swap_pro WHERE key=? AND pro=1').bind(who),
-      db.prepare('SELECT name FROM users WHERE key=?').bind(who)]);
+      db.prepare('SELECT name FROM users WHERE key=?').bind(who),
+      db.prepare('SELECT 1 AS x FROM swap_block WHERE key=?').bind(who)]);
     const nm = d && d.results && d.results[0];
     swaps = swaps || (!!nm && SWAP_MEMBERS.includes(norm(nm.name))) || !!(a.results && a.results.length) || (SWAPS_OPEN && !!(c.results && c.results.length));
+    if (e && e.results && e.results.length) swaps = false;   // Dennis took their swaps away
     otd = !!(b.results && b.results.length);
   } catch (e) {}
   const v = { who, admin: false, ok: swaps || otd, swaps, otd };
@@ -3618,6 +3624,31 @@ async function handle({ request, env, waitUntil }) {
   /* Admin, for tracing a member's DMs: their swaps from the last day, every
      column (times as ISO), partner names and the players as names. */
   /* Admin: priority swappers - read, add, remove (by board or Real username). */
+  /* Admin, Users & access: who has swaps taken away, who's restricted by a
+     report (no posts, no swaps), and turning either off or on. */
+  if (op === 'blocks') {
+    if (!acc.admin) return forbidden('Admin only.');
+    await db.prepare(SBLOCK_DDL).run(); await db.prepare(RESTRICT_DDL).run();
+    const key = String(url.searchParams.get('key') || '');
+    if (key && request.method === 'POST') {
+      const what = url.searchParams.get('what'), on = url.searchParams.get('on') === '1';
+      if (what === 'swaps') {
+        if (on) {
+          await db.prepare('INSERT OR REPLACE INTO swap_block (key, at) VALUES (?, ?)').bind(key, Date.now()).run();
+          await db.prepare('UPDATE swap_users SET active=0 WHERE key=?').bind(key).run();
+          // Their swaps still to come are called off (warned ones go ahead, as with any late change).
+          const ms = ((await db.prepare("SELECT * FROM swap_matches WHERE status IN ('pending','warned') AND (a=? OR b=?)").bind(key, key).all()).results) || [];
+          const res = { n: 0, late: 0, soon: 0 };
+          for (const m of ms) await callOff(db, m, `called off: @${key} can no longer swap`, res);
+          ACCESS_MEMO.delete(key);
+        } else await db.prepare('DELETE FROM swap_block WHERE key=?').bind(key).run();
+      } else if (what === 'restricted' && !on) await db.prepare('DELETE FROM restricted WHERE key=?').bind(key).run();
+      ACCESS_MEMO.delete(key);
+    }
+    const sb = ((await db.prepare('SELECT key FROM swap_block').all()).results || []).map(r => r.key);
+    const rs = ((await db.prepare('SELECT key FROM restricted').all()).results || []).map(r => r.key);
+    return json({ swapBlocked: sb, restricted: rs });
+  }
   if (op === 'priority') {
     if (!acc.admin) return forbidden('Admin only.');
     let list = []; try { list = JSON.parse((await env.RATEBOARD_KV.get(PRIO_KEY)) || '[]') || []; } catch (e) {}

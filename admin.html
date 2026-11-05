@@ -165,7 +165,7 @@
       <section>
         <div class="bar">
           <input type="search" id="us-q" placeholder="Search accounts" autocomplete="off">
-          <select id="us-f"><option value="">Everyone</option><option value="any">Has any access</option><option value="gamedata">Game data</option><option value="packdata">Pack data</option><option value="golfdata">Golf</option><option value="shiftdata">Rax shift / historical</option><option value="market">Market data</option><option value="swaps">Swaps</option><option value="otd">OTD</option><option value="banned">Removed</option><option value="nopass">Password reset</option></select>
+          <select id="us-f"><option value="">Everyone</option><option value="any">Has any access</option><option value="gamedata">Game data</option><option value="packdata">Pack data</option><option value="golfdata">Golf</option><option value="shiftdata">Rax shift / historical</option><option value="market">Market data</option><option value="swaps">Swaps</option><option value="otd">OTD</option><option value="banned">Removed (site ban)</option><option value="blocked">Swaps taken / restricted</option><option value="nopass">Password reset</option></select>
         </div>
         <p class="note" id="us-count">Loading…</p>
         <p class="note">Tap a pill to give or take that access. Lit pills are on. "Game data" covers by player and every game.</p>
@@ -521,7 +521,8 @@ $('#of-rows').addEventListener('click', async e => {
 });
 
 /* ---------- users ---------- */
-let usShown = 60, marketSet = new Set(), swapSet = new Set(), namedSwap = new Set(), otdSet = new Set();
+let usShown = 60, marketSet = new Set(), swapSet = new Set(), namedSwap = new Set(), otdSet = new Set(), blockSet = new Set(), restrictSet = new Set();
+const paintBlocks = j => { if(j && !j.error){ blockSet = new Set((j.swapBlocked || []).map(k => k.toLowerCase())); restrictSet = new Set((j.restricted || []).map(k => k.toLowerCase())); } };
 const ACCESS = [['gamedata', 'Game data'], ['packdata', 'Pack data'], ['golfdata', 'Golf'], ['shiftdata', 'Rax shift / historical'],
   ['market', 'Market data'], ['swaps', 'Swaps'], ['otd', 'OTD']];
 const has = (k, what) => {
@@ -533,7 +534,8 @@ const has = (k, what) => {
 };
 async function loadUsers(){
   $('#us-count').textContent = 'Loading…';
-  const [b, m, s] = await Promise.all([getBoard(true).catch(e => ({ error: e.message })), api('/api/rax?market=access'), api('/api/swaps?op=access')]);
+  const [b, m, s, bl] = await Promise.all([getBoard(true).catch(e => ({ error: e.message })), api('/api/rax?market=access'), api('/api/swaps?op=access'), api('/api/swaps?op=blocks')]);
+  paintBlocks(bl);
   if(b.error){ $('#us-count').textContent = 'Could not load accounts: ' + b.error; return; }
   marketSet = new Set(((m && m.granted) || []).map(g => g.key));
   swapSet = new Set(((s && s.granted) || []).map(g => g.key));
@@ -547,15 +549,15 @@ function drawUsers(){
   const counts = {}; for(const o of board.offers) counts[o.user] = (counts[o.user] || 0) + 1;
   let list = Object.entries(board.users).map(([k, u]) => ({ key: k, ...u, offers: counts[k] || 0 }))
     .filter(u => (!q || u.key.toLowerCase().includes(q) || String(u.name || '').toLowerCase().includes(q))
-      && (!f || (f === 'banned' && u.banned) || (f === 'nopass' && !u.hasPass)
+      && (!f || (f === 'banned' && u.banned) || (f === 'nopass' && !u.hasPass) || (f === 'blocked' && (blockSet.has(u.key.toLowerCase()) || restrictSet.has(u.key.toLowerCase())))
           || (f === 'any' && ACCESS.some(([w]) => has(u.key, w))) || has(u.key, f)));
   list.sort((a, b) => (b.created || 0) - (a.created || 0));
   $('#us-count').textContent = `${list.length.toLocaleString()} accounts`;
   $('#us-rows').innerHTML = list.slice(0, usShown).map(u => `<div class="ucard" data-k="${esc(u.key)}">
       <div class="top"><b>${esc(u.name || u.key)}</b>${u.name && u.name !== u.key ? ` <span class="note">${esc(u.key)}</span>` : ''}
-        ${u.banned ? '<span class="pill off">removed</span>' : ''}${!u.hasPass ? '<span class="pill">pw reset</span>' : ''}
+        ${u.banned ? '<span class="pill off">removed</span>' : ''}${blockSet.has(u.key.toLowerCase()) ? '<span class="pill off">no swaps</span>' : ''}${restrictSet.has(u.key.toLowerCase()) ? '<span class="pill off">no posts/swaps (report)</span>' : ''}${!u.hasPass ? '<span class="pill">pw reset</span>' : ''}
         <span class="note">joined ${u.created ? new Date(u.created).toLocaleDateString() : '—'} · ${u.offers} offers</span>
-        <span class="acts"><button class="sm" data-act="reset">Reset pw</button><button class="sm danger" data-act="${u.banned ? 'unban' : 'ban'}">${u.banned ? 'Restore' : 'Remove'}</button></span></div>
+        <span class="acts"><button class="sm" data-act="reset">Reset pw</button>${restrictSet.has(u.key.toLowerCase()) ? '<button class="sm" data-act="unrestrict">Lift report restriction</button>' : ''}<button class="sm${blockSet.has(u.key.toLowerCase()) ? '' : ' danger'}" data-act="${blockSet.has(u.key.toLowerCase()) ? 'swapon' : 'swapoff'}">${blockSet.has(u.key.toLowerCase()) ? 'Give swaps back' : 'Take swaps'}</button><button class="sm danger" data-act="${u.banned ? 'unban' : 'ban'}">${u.banned ? 'Unban from site' : 'Ban from site'}</button></span></div>
       <div class="acc">${ACCESS.map(([w, label]) => {
         const named = w === 'swaps' && namedSwap.has(u.key);
         return `<button data-acc="${w}" class="${has(u.key, w) ? 'on' : ''}${named ? ' fixed' : ''}" ${named ? 'title="On the named Swaps list"' : ''}>${has(u.key, w) ? '✓ ' : ''}${label}</button>`;
@@ -585,11 +587,14 @@ $('#us-rows').addEventListener('click', async e => {
     }
   } else {
     const act = b.dataset.act;
-    if(['ban', 'reset'].includes(act) && b.dataset.armed !== '1'){
+    if(['ban', 'reset', 'swapoff'].includes(act) && b.dataset.armed !== '1'){
       b.disabled = false; b.dataset.armed = '1'; const was = b.textContent; b.textContent = 'Sure?';
       setTimeout(() => { b.dataset.armed = ''; b.textContent = was; }, 3000); return;
     }
-    if(act === 'ban' || act === 'unban'){
+    if(act === 'swapoff' || act === 'swapon' || act === 'unrestrict'){
+      j = await api(`/api/swaps?op=blocks&key=${encodeURIComponent(k)}&what=${act === 'unrestrict' ? 'restricted' : 'swaps'}&on=${act === 'swapoff' ? 1 : 0}`, { method: 'POST' });
+      paintBlocks(j);
+    } else if(act === 'ban' || act === 'unban'){
       j = await post({ op: 'setBanned', key: k, banned: act === 'ban' });
       if(!j.error){ board.users[k].banned = act === 'ban'; if(act === 'ban') board.offers = board.offers.filter(o => o.user !== k); }
     } else if(act === 'reset'){
@@ -598,7 +603,7 @@ $('#us-rows').addEventListener('click', async e => {
     }
   }
   if(j && j.error){ toast(j.error); b.disabled = false; return; }
-  toast('Done.'); drawUsers();
+  toast({ swapoff: 'Swaps taken - their swaps still to come are called off.', swapon: 'Swaps given back - they can save a swap again.', unrestrict: 'Report restriction lifted.', unban: 'Unbanned from the site.', ban: 'Banned from the site.' }[b.dataset.act] || 'Done.'); drawUsers();
 });
 
 /* ---------- reports ---------- */
