@@ -1088,6 +1088,8 @@ const chunks = (lines, n = LINES_PER_DM) => { const out = []; let cur = [];
   if (cur.length) out.push(cur.join('\n')); return out; };
 // A message that's still too long, cut at line breaks into pieces Real will take.
 const fitDm = t => String(t).length <= DM_MAX_CHARS ? [t] : chunks(String(t).split('\n'), DM_MAX_CHARS);
+// One message no matter what: the summary line is cut short rather than splitting.
+const fitOne = t => { t = String(t); if (t.length <= DM_MAX_CHARS) return t; const cut = t.lastIndexOf('\n\nYou are receiving:'); return cut > 0 ? (t.slice(0, DM_MAX_CHARS - 4) + '...') : t.slice(0, DM_MAX_CHARS); };
 // Warn: heading plus the first 5 swaps in one message, then up to 8 a message.
 /* Warning, grouped by the player they receive (Dennis, 2026-11-04): the
    heading, then one message per player received - his link on top, the packs
@@ -1310,7 +1312,10 @@ async function runDms(env, db, auth, rows, max, force) {
       const wh = await claim(wh0, 'warn');
       if (!wh.length) continue;
       const items = []; for (const x of wh) { const l = await sideLines(member, x.m, x.side); if (l) items.push(l); }
-      if (!(items.length && await send(who, warnGrouped(items), 'warn'))) { await unclaim(wh, 'warn'); warnFail = true; }
+      let wmsg = warnGrouped(items);
+      if (wmsg.length > 1) { const me0 = await member(who);
+        wmsg = [fitOne(`Heads up - you swap in 30 min. You have ${items.length} swaps that hour - buy the ${items.length} packs listed here:\n${await hourLink(env, who, wh[0].due)}\n\nYou are receiving: ${recvSummary(me0, items)}`)]; }
+      if (!(items.length && await send(who, wmsg, 'warn'))) { await unclaim(wh, 'warn'); warnFail = true; }
     }
     if (warnFail) return;
     // 2-4. contact: one per swap hour that has come.
@@ -1324,7 +1329,10 @@ async function runDms(env, db, auth, rows, max, force) {
       if (!hr.length) continue;
       const items = [], buy = [];
       for (const x of hr) { const l = await sideLines(member, x.m, x.side); if (!l) continue; items.push(l); if (noWarn.includes(x)) buy.push(l); }
-      if (items.length && await send(who, contactGrouped(items, buy), 'contact')) await mark(hr.filter(x => noWarn.includes(x)), 'warn');
+      let cmsg = contactGrouped(items, buy);
+      if (cmsg.length > 1) { const me0 = await member(who);
+        cmsg = [fitOne(`Swap time - send 12 hour offers. You have ${items.length} swaps now - who to contact, their comments and your cards are here:\n${await hourLink(env, who, hr[0].due)}` + (buy.length ? `\n\nYou weren't warned earlier: buy the ${buy.length} pack${buy.length === 1 ? '' : 's'} on that page first.` : '') + `\n\nYou are receiving: ${recvSummary(me0, items)}\n\nReport anyone doing it wrong.`)]; }
+      if (items.length && await send(who, cmsg, 'contact')) await mark(hr.filter(x => noWarn.includes(x)), 'warn');
       else await unclaim(hr, 'done');
     }
     // 5. follow-up, 90 min after their last swap hour, once every contact is out.
@@ -1725,6 +1733,24 @@ export async function dmTickKey(env) {
   const t = swapToken(env); if (!t) return null;
   const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('dmtick|' + t));
   return [...new Uint8Array(h)].slice(0, 16).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+/* One DM per member per stage (2026-11-05, Dennis: "fix everything"). A
+   member with many swaps in an hour got 5-10 messages - Real drops some, the
+   bot falls behind, and it's unreadable. Now: if it all fits in one message
+   it's sent as before; if not, ONE message with a short summary and a link to
+   a page listing every swap that hour (packs to buy, who to contact, card
+   links). The link carries a signature, so it opens without signing in (Real's
+   in-app browser isn't signed in) and only for that member and hour. */
+async function hourSig(env, key, due) {
+  const t = swapToken(env) || 'x';
+  const k = await crypto.subtle.importKey('raw', new TextEncoder().encode('hour|' + t), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', k, new TextEncoder().encode(`${String(key).toLowerCase()}|${Number(due)}`));
+  return [...new Uint8Array(sig)].slice(0, 12).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+async function hourLink(env, key, due) { return `https://raxacademy.app/hour?u=${encodeURIComponent(key)}&d=${Number(due)}&t=${await hourSig(env, key, due)}`; }
+function recvSummary(me, items) {
+  const c = new Map(); for (const it of items) c.set(it.recvKey, (c.get(it.recvKey) || 0) + 1);
+  return [...c.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${playerName(me, k)}${n > 1 ? ' x' + n : ''}`).join(', ');
 }
 async function dmTick(env) {
   TICK_T0 = Date.now(); TICK_BUDGET = 26000;
@@ -2748,6 +2774,26 @@ async function handle({ request, env, waitUntil }) {
   const op = url.searchParams.get('op') || '';
   // Password resets happen signed out, so they come before the access check.
   if (op === 'resetstart' || op === 'resetcheck') return resetFlow(env, db, url, request, op, waitUntil);
+  /* The page a member's DM links to: their swaps at one hour. No sign-in; the
+     link's signature is the key. */
+  if (op === 'hourview') {
+    const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));
+    if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
+    await matchCols(db);
+    const u = await db.prepare('SELECT key FROM swap_users WHERE LOWER(key)=?').bind(key.toLowerCase()).first();
+    if (!u) return json({ error: 'No swaps found.' }, 404);
+    const ms = ((await db.prepare("SELECT * FROM swap_matches WHERE (a=? OR b=?) AND dueAt=? AND status NOT IN ('cancelled','cleared') ORDER BY id").bind(u.key, u.key, due).all()).results) || [];
+    const cache = new Map(), mem = async k => cache.has(k) ? cache.get(k) : (cache.set(k, await loadMember(db, k)), cache.get(k));
+    const me = await mem(u.key), out = [];
+    for (const m of ms) {
+      const side = m.a === u.key ? 'A' : 'B', o = await mem(side === 'A' ? m.b : m.a);
+      const recv = side === 'A' ? m.aGets : m.bGets, give = side === 'A' ? m.bGets : m.aGets;
+      out.push({ status: m.status, partner: o && o.rsUser, comment: (o && o.comment) || null,
+        receive: playerName(me, recv), receiveUrl: playerUrl(recv), theirCard: o ? passUrl(o, recv) : null,
+        give: playerName(me, give), giveUrl: playerUrl(give), yourCard: me ? passUrl(me, give) : null, off: m.status === 'cancelling' });
+    }
+    return json({ user: (me && me.rsUser) || u.key, due, swaps: out });
+  }
   if (op === 'dmtick') {
     const k = await dmTickKey(env);
     if (!k || url.searchParams.get('k') !== k) return json({ error: 'no' }, 403);
