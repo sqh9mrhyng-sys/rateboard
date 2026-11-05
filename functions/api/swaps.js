@@ -366,7 +366,9 @@ async function lowPlays(env, db, keys) {
 }
 async function goalRoom(db, cache, u, usedFor, wantKey) {
   const want = wantKey || (u.wants || [])[0];
-  const g = Number(u.goal);
+  // Each player has his own goal now (2026-11-05); the old single goal is the fallback.
+  const cp = typeof u.caps === 'string' ? (parse(u.caps, {}) || {}) : (u.caps || {});
+  const g = Number(cp[want] && cp[want].g) || Number(u.goal);
   if (!want || !(g > 0)) return { limited: false, left: Infinity };
   const p = (u.passes || []).find(x => x.key === want);
   const rating = p ? Number(p.rating) || 0 : 0;
@@ -3444,8 +3446,11 @@ async function handle({ request, env, waitUntil }) {
       const v = (b.caps && b.caps[w]) || {};
       const n = capNum(typeof v === 'object' ? v.n : v), d = capNum(typeof v === 'object' ? v.d : null);
       if (Number.isNaN(n) || Number.isNaN(d)) return json({ error: 'Swap limits have to be whole numbers, 1 or more.' }, 400);
-      if (n == null && d == null) continue;
+      const gv = typeof v === 'object' && v.g !== '' && v.g != null ? Number(v.g) : null;
+      if (gv != null && !(gv > 0 && gv < 100000)) return json({ error: 'Goal rating has to be a number.' }, 400);
+      if (n == null && d == null && gv == null) continue;
       const c = {};
+      if (gv != null) c.g = gv;   // goal rating for this player
       // The total counts from when it is set; saving it again unchanged keeps the count going.
       if (n != null) { c.n = n; c.at = oldCaps[w] && Number(oldCaps[w].n) === n && oldCaps[w].at ? oldCaps[w].at : Date.now(); }
       if (d != null) c.d = d;

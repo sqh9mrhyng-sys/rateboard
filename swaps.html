@@ -61,6 +61,8 @@
   .want1 .mv button{padding:2px 9px;font-size:12px;line-height:1.2}
   .want1 .mv button:disabled{opacity:.3}
   .want1 .acts{display:flex;align-items:center;gap:8px;flex:none}
+  .want1 .wg{display:inline-flex;align-items:center;gap:6px;margin-top:6px;font-size:12.5px;color:var(--mute);font-weight:600}
+  .want1 .wg input{width:86px;padding:5px 8px;min-height:32px;font-size:13px}
   .stabs{display:flex;gap:6px;margin:4px 0 10px}
   .stabs button{flex:1}
   .stabs button.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 18%,var(--panel2));font-weight:700}
@@ -215,9 +217,8 @@
     <div class="bar"><input id="wq" placeholder="Search your passes" autocomplete="off"></div>
     <div class="res" id="wres"></div>
     <div id="wants"></div>
-    <div class="field" style="margin-top:12px"><label for="goal">Goal rating <span class="opt">optional</span></label>
-      <div class="bar" style="margin:4px 0 0"><input id="goal" type="number" inputmode="decimal" min="0" step="0.1" placeholder="e.g. 45" style="flex:0 1 120px"><span class="note" id="goalmsg"></span></div>
-      <p class="note sub">Near the goal, swaps are limited to what it takes to get there.</p></div>
+    <input id="goal" type="hidden"><span id="goalmsg" hidden></span>
+    <p class="note sub">Goal rating (optional, per player): near it, that player's swaps are limited to what it takes to get there. Tap Save to keep changes.</p>
   </section>
 
   <section>
@@ -717,19 +718,24 @@ $('#capwho').addEventListener('change', () => { const c = caps[capKey()] || {}; 
 for(const [id, f] of [['#capn', 'n'], ['#capd', 'd']]) $(id).addEventListener('input', () => {
   const k = capKey(); if(!k) return; const v = $(id).value.trim(), c = caps[k] || {};
   if(v) c[f] = v; else delete c[f];
-  if(c.n || c.d) caps[k] = c; else delete caps[k];
+  if(c.n || c.d || c.g) caps[k] = c; else delete caps[k];
   const o = $('#capwho').selectedOptions[0]; if(o) o.textContent = capLbl(k, prof.wants.indexOf(k)); });
 function drawWants(){
   if(prof.wants.length > 10) prof.wants = prof.wants.slice(0, 10);
   $('#wants').innerHTML = prof.wants.map((k, i) => { const n = othersOn(k);
     const lo = (prof.lowPlays || []).includes(k);
     return `<div class="want1"${lo ? ' style="border-color:var(--bad)"' : ''}><span>${lo ? '<b style="color:var(--bad);font-size:12px">Under 27 plays - won\'t match</b><br>' : ''}<span class="note">${RANK[i]} pick · </span><b>${esc(wantNames[k] || 'Player ' + k.split(':')[2])}</b> <span class="note">· ${esc(keyLbl(k))}</span>`
-      + `<br><span style="font-size:13px;font-weight:700;color:${crowdCol(n)}">${crowdTxt(n)}</span></span>`
+      + `<br><span style="font-size:13px;font-weight:700;color:${crowdCol(n)}">${crowdTxt(n)}</span>`
+      + `<br><label class="wg">Goal rating <input data-goal="${k}" type="number" inputmode="decimal" min="0" step="0.1" placeholder="none" value="${esc((caps[k] && caps[k].g) || '')}"></label></span>`
       + `<span class="acts"><span class="mv"><button data-up="${i}" aria-label="Move up"${i === 0 ? ' disabled' : ''}>▲</button><button data-dn="${i}" aria-label="Move down"${i === prof.wants.length - 1 ? ' disabled' : ''}>▼</button></span>`
       + `<button data-x="${k}" aria-label="Remove">✕</button></span></div>`; }).join('')
     || '<p class="note" style="margin:8px 0 0">Nobody picked yet.</p>';
   drawCaps();
 }
+$('#wants').addEventListener('input', e => { const k = e.target.dataset.goal; if(!k) return;
+  const v = e.target.value.trim(), c = caps[k] || {}; if(v) c.g = v; else delete c.g;
+  if(c.n || c.d || c.g) caps[k] = c; else delete caps[k];
+  $('#savemsg').textContent = 'Goal changed - tap Save to keep it.'; });
 $('#wants').addEventListener('click', async e => { const b = e.target.closest('button'); if(!b) return;
   const x = b.dataset.x; if(x){
     prof.wants = prof.wants.filter(k => k !== x); drawWants();
@@ -774,7 +780,7 @@ $('#save').addEventListener('click', async () => {
     if(!any){ $('#savemsg').textContent = 'Pick at least one hour.'; return; } }
   if(!SWAP_COMMENT_RE.test($('#clink').value.trim())){ $('#savemsg').textContent = 'That link is not a comment under the swap post. Open the swap post, copy the link to your comment, and paste it in step 2.'; return; }
   const j = await api('/api/swaps?op=save', { method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 10), sched: schedOf().mode === 'daily' ? { mode: 'daily' } : { ...schedOf(), tz: TZ }, comment: $('#clink').value.trim(), goal: $('#goal').value.trim(), dayCap: $('#daycap').value.trim(), caps, keep: prof.keep, slots: prof.slots, names: wantNames }) });
+    body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 10), sched: schedOf().mode === 'daily' ? { mode: 'daily' } : { ...schedOf(), tz: TZ }, comment: $('#clink').value.trim(), goal: '', dayCap: $('#daycap').value.trim(), caps, keep: prof.keep, slots: prof.slots, names: wantNames }) });
   const extra = (j.late ? ' Too late to change swaps already warned - please do them at :00.' : '') + (j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} for a player or hour you removed ${j.calledOff === 1 ? 'is' : 'are'} called off - you'll both get a message.` : '');
   $('#savemsg').textContent = j.error ? j.error : '';
   if(!j.error) showSaved(extra.trim());
@@ -994,7 +1000,9 @@ async function proGate(){
   if(prof.slots.length > 10){ prof.slots = prof.slots.slice(0, 10); drawHours(); }
   $('#goal').value = (j.profile && j.profile.goal != null) ? j.profile.goal : '';
   $('#daycap').value = (j.profile && j.profile.dayCap != null) ? j.profile.dayCap : '';
-  caps = {}; for(const [k, v] of Object.entries((j.profile && j.profile.caps) || {})) if(v && (v.n || v.d)) caps[k] = { ...(v.n ? { n: String(v.n) } : {}), ...(v.d ? { d: String(v.d) } : {}) };
+  caps = {}; for(const [k, v] of Object.entries((j.profile && j.profile.caps) || {})) if(v && (v.n || v.d || v.g)) caps[k] = { ...(v.n ? { n: String(v.n) } : {}), ...(v.d ? { d: String(v.d) } : {}), ...(v.g ? { g: String(v.g) } : {}) };
+  // The old single goal fills in each player that has none of its own.
+  if(j.profile && j.profile.goal != null) for(const k of (j.profile.wants || [])) if(!(caps[k] && caps[k].g)) caps[k] = { ...(caps[k] || {}), g: String(j.profile.goal) };
   drawCaps();
   $('#clink').value = (j.profile && j.profile.comment) || '';
   if(prof.passes.length && prof.keep.length) collapsed = true;   // back again with picks made: start folded
