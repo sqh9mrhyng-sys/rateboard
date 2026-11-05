@@ -84,16 +84,16 @@
   <section>
     <div class="seg" id="sportseg"><button data-s="ncaaf" aria-pressed="true">CFB</button><button data-s="nfl" aria-pressed="false">NFL</button><button data-s="ncaam" aria-pressed="false">CBB</button><button data-s="nba" aria-pressed="false">NBA</button><button data-s="nhl" aria-pressed="false">NHL</button><button data-s="soccer" aria-pressed="false">FC</button></div>
     <div class="ctl">
-      <select id="who" aria-label="Players"><option value="all">All players</option><option value="mine">My passes</option></select>
-      <select id="sort" aria-label="Sort"><option value="pr">Projected</option><option value="pc">On pace</option><option value="r">Rax so far</option><option value="pg">Per game</option><option value="l">Games left</option></select>
+      <select id="who" aria-label="Players"><option value="all">All players</option><option value="mine">My passes</option><option value="notmine">Not my passes</option></select>
+      <select id="sort" aria-label="Sort"><option value="pr">Projected</option><option value="own">Owned first</option><option value="unown">Not owned first</option><option value="pc">On pace</option><option value="r">Rax so far</option><option value="pg">Per game</option><option value="l">Games left</option></select>
       <select id="pos" aria-label="Position"><option value="">Every position</option></select>
       <input id="q" placeholder="Find a player or team" autocomplete="off">
     </div>
     <p class="note" id="head" style="margin:10px 0 0">Loading…</p>
     <details class="how"><summary>Projected vs on pace</summary>
-      <p class="note"><b>Projected</b> = rax so far + his projected rax for each regular-season game his team has left. A game's projection is the Boosts formula (recent games weighted most, then this season, then last season's regular season), adjusted for how much that opponent gives up. Players on injured reserve, or who missed 2 of their team's last 3 games, get no more games counted; "Out" skips the next game.</p>
+      <p class="note"><b>Projected</b> = rax so far + each regular-season game his team has left × his rate a game × the chance he plays it × the opponent × home or away. His rate starts from last season (or the league average for a newcomer) and moves toward what he's doing this season the more games he plays, recent games counting most. The chance he plays comes from how many of his team's games he's played, pulled toward a typical regular (rest days, rotation, cup games). Injured reserve: no more games; "Out": the next one skipped. Every setting was tuned by replaying last season and checking against what players actually made.</p>
       <p class="note"><b>On pace</b> = rax so far ÷ games he played × his team's regular-season games. No schedule, no injuries - just his rate.</p>
-      <p class="note"><b>FC</b>: every game counts on Real (league, cups, Europe, internationals). Games left = his club's league games left plus cup games at the rate the club has played them; no opponent adjustment. NBA and NHL: a player who missed 4 of his team's last 5 gets no more games counted.</p>
+      <p class="note"><b>FC</b>: every game counts on Real (league, cups, Europe, internationals). Games left = how often his club has played so far × the days left to its league's last day (winter break taken out); no opponent adjustment, and future international games aren't counted.</p>
       <p class="note">Tap a player to see how his number was worked out. A name opens your own card when you hold his pass.</p>
       <p class="note">Rebuilt every 6 hours from the game log and ESPN's schedules.</p>
     </details>
@@ -241,9 +241,11 @@ async function load(tries = 0){
 function draw(){
   if(!data) return;
   const q = $('#q').value.trim().toLowerCase(), who = $('#who').value, pos = $('#pos').value, key = $('#sort').value;
-  let list = (data.rows || []).filter(r => (who !== 'mine' || mine.has(r.i)) && (!pos || r.p === pos)
+  let list = (data.rows || []).filter(r => (who !== 'mine' || mine.has(r.i)) && (who !== 'notmine' || !mine.has(r.i)) && (!pos || r.p === pos)
     && (!q || String(r.n).toLowerCase().includes(q) || String(r.t).toLowerCase().includes(q)));
-  list = list.slice().sort((a, b) => (b[key] ?? -1) - (a[key] ?? -1));
+  // Owned / not owned first, then by projection.
+  const own = r => mine.has(r.i) ? 1 : 0;
+  list = list.slice().sort(key === 'own' ? (a, b) => own(b) - own(a) || b.pr - a.pr : key === 'unown' ? (a, b) => own(a) - own(b) || b.pr - a.pr : (a, b) => (b[key] ?? -1) - (a[key] ?? -1));
   const when = new Date(data.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   $('#head').textContent = `${SEASON_LBL[data.sport] || ''} · ${list.length.toLocaleString()} player${list.length === 1 ? '' : 's'}${who === 'mine' ? ` of your ${mine.size} passes` : ''} · updated ${when}`;
   $('#rows').innerHTML = list.slice(0, shown).map((r, i) => {
@@ -268,24 +270,24 @@ let qt = null; $('#q').addEventListener('input', () => { clearTimeout(qt); qt = 
 $('#more').addEventListener('click', () => { shown += 200; draw(); });
 /* Tapping a line opens how his projection was put together. */
 const bdCache = new Map();
-const HOW = { l4ca_o: 'half his last 4 games, 30% his season, 20% last season', l4ca: '60% his last 4 games, 40% his season', ca_o: 'half his season so far, half last season', ca: 'his season so far' };
 function bdHtml(sp, j){
   const r = j.row; if(!r) return '<span class="note">No breakdown for him yet.</span>';
-  const x = r.x || {}, f1 = v => v == null ? '–' : (Math.round(v * 10) / 10).toLocaleString();
-  const parts = [['last 4 games', x.r4], ['season', r.a], ['last season', x.oa]].filter(([, v]) => v != null).map(([k, v]) => `${k} ${f1(v)}`).join(' · ');
-  const games = j.games || [], counted = games.filter(g => g.counted), add = r.pr - r.r;
-  const fc = x.fc;
+  const x = r.x || {}, f1 = v => v == null ? '–' : (Math.round(v * 10) / 10).toLocaleString(), pct = v => Math.round((v || 0) * 100) + '%';
+  const games = j.games || [], counted = games.filter(g => g.counted), add = r.pr - r.r, fc = x.fc;
+  const GW = sp === 'soccer' ? 'club' : 'team';
   const lines = [
-    `<div class="ln"><span>Rax so far <span class="note">(${r.gp} game${r.gp === 1 ? '' : 's'}, ${f1(r.a)} a game)</span></span><b>${r.r.toLocaleString()}</b></div>`,
-    `<div class="ln"><span>Per-game projection <span class="note">= ${HOW[x.h] || ''}${parts ? ' (' + parts + ')' : ''}</span></span><b>${f1(r.pg)}</b></div>`,
-    fc ? `<div class="ln"><span>Games left <span class="note">${fc.lgLeft} ${esc(fc.lg)} (${fc.lgDone} of ${fc.lgDone + fc.lgLeft} played) + ${fc.cupLeft} cup/Europe at his club's rate (${fc.otherDone} so far)</span></span><b>${r.l}</b></div>`
-       : `<div class="ln"><span>Games left counted <span class="note">${counted.length} of ${games.length} on his team's schedule${games.some(g => g.f !== 1) ? ', each adjusted for the opponent' : ''}</span></span><b>${counted.length}</b></div>`,
-    `<div class="ln"><span>Projected from the games left</span><b>+${add.toLocaleString()}</b></div>`,
+    `<div class="ln"><span>Rax so far <span class="note">(${r.gp} game${r.gp === 1 ? '' : 's'} played, ${f1(r.a)} a game)</span></span><b>${r.r.toLocaleString()}</b></div>`,
+    `<div class="ln"><span>1. Starting point <span class="note">${esc(x.ph || '')}, pulled toward the league average (${f1(j.lg)} a game)</span></span><b>${f1(x.prior)}</b></div>`,
+    `<div class="ln"><span>2. His rate a game played <span class="note">his ${r.gp} game${r.gp === 1 ? '' : 's'} (recent ones count more) weighed against the starting point - the more he plays, the more his own games count</span></span><b>${f1(x.rate)}</b></div>`,
+    `<div class="ln"><span>3. Chance he plays each game <span class="note">${r.gp} of his ${GW}'s ${x.since} games since his first, pulled toward a typical regular</span></span><b>${pct(x.av)}</b></div>`,
+    fc ? `<div class="ln"><span>4. Games left <span class="note">his club has played ${fc.played} games (${esc(fc.lg)}, cups and Europe) - ${fc.perWeek} a week - for the ${fc.daysLeft} days left to ${esc(fc.lg)}'s last day (${esc(fc.end)}), winter break taken out</span></span><b>${r.l}</b></div>`
+       : `<div class="ln"><span>4. Games left <span class="note">each one: rate × chance he plays × how much that opponent gives up × home/away</span></span><b>${games.length || r.l}</b></div>`,
+    `<div class="ln"><span>Projected from the games left <span class="note">about ${f1(r.pg)} a ${GW} game</span></span><b>+${add.toLocaleString()}</b></div>`,
     `<div class="ln tot"><span>Projected by the end of the regular season</span><b>${r.pr.toLocaleString()}</b></div>`,
-    r.pc != null ? `<div class="ln"><span>On pace <span class="note">${r.r} ÷ ${r.gp} games × ${r.tg} ${sp === 'soccer' ? 'club' : 'team'} games</span></span><b>${r.pc.toLocaleString()}</b></div>` : '',
+    r.pc != null ? `<div class="ln"><span>On pace <span class="note">${r.r} ÷ ${r.gp} games × ${r.tg} ${GW} games - no misses, no opponents</span></span><b>${r.pc.toLocaleString()}</b></div>` : '',
     (r.f || []).map(f => `<span class="flag">⚠ ${esc(f)}</span>`).join('')
   ];
-  const gl = games.length ? `<div class="gl">${games.map(g => `<span class="${g.counted ? '' : 'no'}">${new Date(g.at).toLocaleDateString([], { month: 'short', day: 'numeric' })} ${esc(g.opp)}${g.f !== 1 ? ` <span title="opponent factor">×${g.f}</span>` : ''} <b>${g.v}</b></span>`).join('')}</div>` : '';
+  const gl = games.length ? `<div class="gl">${games.map(g => `<span class="${g.counted ? '' : 'no'}">${new Date(g.at).toLocaleDateString([], { month: 'short', day: 'numeric' })} ${g.h === 'away' ? '@' : 'vs'} ${esc(g.opp)}${g.f !== 1 ? ` <span title="opponent and home/away">×${g.f}</span>` : ''} <b>${g.v}</b></span>`).join('')}</div>` : '';
   return lines.join('') + gl;
 }
 $('#rows').addEventListener('click', async e => {
