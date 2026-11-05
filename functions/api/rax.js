@@ -7719,6 +7719,10 @@ async function collectorHealth(env, url) {
       const q = await db.prepare('SELECT SUM(CASE WHEN startedAt IS NOT NULL THEN 1 ELSE 0 END) AS running, SUM(CASE WHEN startedAt IS NULL THEN 1 ELSE 0 END) AS waiting FROM scan_queue').first();
       const fails = ((await db.prepare("SELECT at, msg FROM bot_log WHERE kind IN ('scan','rescan','scan_bg') ORDER BY at DESC LIMIT 8").all()).results) || [];
       const dmFails = ((await db.prepare("SELECT at, kind, msg FROM bot_log WHERE kind LIKE 'dm_%' ORDER BY at DESC LIMIT 8").all()).results) || [];
+      // The last day's DM failures, grouped by what went wrong (no names).
+      let dmFailKinds = {}; try { for (const f of (((await db.prepare("SELECT kind, msg FROM bot_log WHERE kind LIKE 'dm_%' AND at > ?").bind(Date.now() - 86400000).all()).results) || [])) {
+        const k = f.kind + ': ' + String(f.msg || '').replace(/@\S+/g, '@…').replace(/\d{4,}/g, '#').replace(/try \d+/g, 'try n').replace(/part \d+\/\d+/g, m => m.replace(/\d+\//, 'n/')).slice(0, 140);
+        dmFailKinds[k] = (dmFailKinds[k] || 0) + 1; } } catch (e) {}
       let dmq = null; try { dmq = await db.prepare('SELECT COUNT(*) AS n, MAX(tries) AS t FROM dm_retry').first(); } catch (e) {}
       // Same pass given (or received) twice on one swap day, among swaps still on.
       let dupes = null; try {
@@ -7741,7 +7745,7 @@ async function collectorHealth(env, url) {
           .map(h => ({ ...h, dueAt: new Date(h.dueAt).toISOString().slice(0, 16), firstMade: h.firstMade ? new Date(h.firstMade).toISOString().slice(0, 16) : null })); } catch (e) {}
       const dms = ((await db.prepare("SELECT k, n FROM bot_stats WHERE day=? AND (k LIKE 'dm_%' OR k = 'fail')").bind(day).all()).results) || [];
       return { today: Object.fromEntries(st.map(x => [x.k, x.n])), running: q && q.running, waiting: q && q.waiting, recent: await kvj('scan_perf_v1'), dmsToday: Object.fromEntries(dms.map(x => [x.k, x.n])), dmsYesterday: Object.fromEntries(dmsY.map(x => [x.k, x.n])), dmRetryQueue: dmq, swapHours: hours, dupes, dmFailures: dmFails.map(f => ({ at: new Date(f.at).toISOString().slice(11, 19), kind: f.kind, msg: String(f.msg || '').replace(/@[A-Za-z0-9._-]+/g, '@…').slice(0, 160) })),
-        lastFailures: fails.map(f => ({ at: new Date(f.at).toISOString(), msg: String(f.msg || '').replace(/^[^:]{1,60}:\s*/, '') })) };
+        dmFailKinds, lastFailures: fails.map(f => ({ at: new Date(f.at).toISOString(), msg: String(f.msg || '').replace(/^[^:]{1,60}:\s*/, '') })) };
     } catch (e) { return { error: String(e.message || e).slice(0, 100) }; } })(),
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
