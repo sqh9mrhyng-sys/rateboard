@@ -3585,6 +3585,26 @@ async function handle({ request, env, waitUntil }) {
   /* Admin, one-off (2026-11-05): Real's raw pass records for the admin's own
      account, one sport-season, to see which fields Real sends (looking for an
      "untouchable" flag). Read-only; nothing saved. */
+  /* Admin, for tracing a member's DMs: their swaps from the last day, every
+     column (times as ISO), partner names and the players as names. */
+  if (op === 'matchraw') {
+    if (!acc.admin) return forbidden('Admin only.');
+    const who0 = String(url.searchParams.get('user') || '').trim().replace(/^@/, '').toLowerCase();
+    const u = await db.prepare('SELECT key FROM swap_users WHERE LOWER(key)=? OR LOWER(rsUser)=?').bind(who0, who0).first();
+    if (!u) return json({ error: 'No swapper by that name.' }, 404);
+    await matchCols(db);
+    const ms = ((await db.prepare('SELECT * FROM swap_matches WHERE (a=? OR b=?) AND COALESCE(dueAt, createdAt) > ? ORDER BY COALESCE(dueAt, createdAt), id').bind(u.key, u.key, Date.now() - 30 * 3600000).all()).results) || [];
+    const mem = new Map(), get = async k => mem.has(k) ? mem.get(k) : (mem.set(k, await loadMember(db, k)), mem.get(k));
+    const iso = v => v ? new Date(Number(v)).toISOString().slice(5, 19).replace('T', ' ') : null;
+    const me0 = await get(u.key), out = [];
+    for (const m of ms) { const side = m.a === u.key ? 'A' : 'B', o = await get(side === 'A' ? m.b : m.a);
+      out.push({ id: m.id, due: iso(sideDue(m)), made: iso(m.createdAt), status: m.status, note: m.note, partner: o && o.rsUser,
+        receives: me0 ? playerName(me0, side === 'A' ? m.aGets : m.bGets) : null, gives: me0 ? playerName(me0, side === 'A' ? m.bGets : m.aGets) : null,
+        myWarn: iso(m['warn' + side]), myContact: iso(m['done' + side]), theirWarn: iso(m['warn' + (side === 'A' ? 'B' : 'A')]), theirContact: iso(m['done' + (side === 'A' ? 'B' : 'A')]) }); }
+    let q = []; try { q = ((await db.prepare('SELECT label, tries, at, parts FROM dm_retry').all()).results || []).filter(r => String(r.label).toLowerCase().includes('@' + who0)).map(r => ({ label: r.label, tries: r.tries, at: iso(r.at), parts: parse(r.parts, []).length })); } catch (e) {}
+    let log = []; try { log = ((await db.prepare("SELECT at, kind, msg FROM bot_log WHERE at > ? AND LOWER(msg) LIKE ? ORDER BY at DESC LIMIT 40").bind(Date.now() - 30 * 3600000, '%' + who0 + '%').all()).results || []).map(r => ({ at: iso(r.at), kind: r.kind, msg: String(r.msg).slice(0, 200) })); } catch (e) {}
+    return json({ user: u.key, swaps: out, retryQueue: q, botLog: log });
+  }
   if (op === 'passraw') {
     if (!acc.admin) return forbidden('Admin only.');
     const sp = String(url.searchParams.get('sport') || 'nba').replace(/[^a-z]/g, ''), se = Number(url.searchParams.get('season')) || 2027;

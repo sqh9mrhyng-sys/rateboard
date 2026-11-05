@@ -25,6 +25,7 @@
     <select id="sp"><option value="nba">NBA 2026-27</option><option value="nfl">NFL 2026</option><option value="ncaaf">CFB 2026</option><option value="ncaam">CBB 2026-27</option></select>
     <button class="go" id="go">Read my passes</button><button id="copy">Copy all</button>
   </div>
+  <div class="bar" style="margin-top:4px"><input id="who" placeholder="Swapper's username" autocomplete="off" autocapitalize="off" style="font:inherit;padding:10px 12px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--ink);min-height:44px;flex:1"><button class="go" id="sw">Their swaps + DMs</button></div>
   <pre id="out">Tap "Read my passes".</pre>
 </div>
 <script>
@@ -39,6 +40,12 @@ $('#go').addEventListener('click', async () => {
     const j = await r.json();
     $('#out').textContent = JSON.stringify(j, null, 1);
   }catch(e){ $('#out').textContent = 'Could not reach the board: ' + e.message; }
+});
+$('#sw').addEventListener('click', async () => {
+  $('#out').textContent = 'Reading…';
+  let t = ''; try{ t = localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){}
+  try{ const r = await fetch('/api/swaps?op=matchraw&user=' + encodeURIComponent($('#who').value.trim()), { headers: t ? { 'x-rb-token': t } : {} });
+    $('#out').textContent = JSON.stringify(await r.json(), null, 1); }catch(e){ $('#out').textContent = 'Could not reach the board: ' + e.message; }
 });
 $('#copy').addEventListener('click', async () => {
   const txt = $('#out').textContent;
