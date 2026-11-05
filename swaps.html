@@ -788,14 +788,19 @@ const TAG = { scheduled: ['Scheduled', 'var(--mute)'], warned: ['Warned - buy yo
 function drawSwaps(){
   $('#tabup').classList.toggle('on', swTab === 'up'); $('#tabpast').classList.toggle('on', swTab === 'past');
   // Time period (your own time): the choices depend on the tab.
-  const opts = swTab === 'up' ? [['all', 'All scheduled'], ['3h', 'Next 3 hours'], ['today', 'Today'], ['tomorrow', 'Tomorrow'], ['day', 'Pick a day']]
+  // Scheduled: each swap hour coming up gets its own choice.
+  const hrs = [...new Set(mySwaps.filter(x => x.upcoming).map(x => x.due))].sort((a, b) => a - b);
+  const hLbl2 = ms => new Date(ms).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  const opts = swTab === 'up' ? [['all', 'All scheduled'], ...hrs.map(h => ['h' + h, hLbl2(h)]), ['today', 'Today'], ['tomorrow', 'Tomorrow'], ['day', 'Pick a day']]
     : [['all', 'Last 14 days'], ['today', 'Today'], ['yesterday', 'Yesterday'], ['7d', 'Last 7 days'], ['day', 'Pick a day']];
-  if($('#swper').dataset.tab !== swTab){ $('#swper').innerHTML = opts.map(([v, l]) => `<option value="${v}">${l}</option>`).join(''); $('#swper').dataset.tab = swTab; $('#swper').value = swPer[swTab] || 'all'; }
+  const sig = swTab + '|' + opts.map(o => o[0]).join(',');
+  if($('#swper').dataset.sig !== sig){ $('#swper').innerHTML = opts.map(([v, l]) => `<option value="${v}">${l}</option>`).join(''); $('#swper').dataset.sig = sig;
+    $('#swper').value = opts.some(o => o[0] === swPer[swTab]) ? swPer[swTab] : 'all'; }
   const per = $('#swper').value; $('#swday').hidden = per !== 'day';
   const dayOf = ms => { const d = new Date(ms); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); };
   const nowMs = Date.now(), today = dayOf(nowMs), shift = n => dayOf(nowMs + n * 86400000);
   const pick = $('#swday').value ? Number($('#swday').value.replace(/-/g, '')) : null;
-  const inPer = x => per === 'all' ? true : per === '3h' ? x.due - nowMs <= 3 * 3600000 : per === 'today' ? dayOf(x.due) === today
+  const inPer = x => per === 'all' ? true : per[0] === 'h' ? x.due === Number(per.slice(1)) : per === 'today' ? dayOf(x.due) === today
     : per === 'tomorrow' ? dayOf(x.due) === shift(1) : per === 'yesterday' ? dayOf(x.due) === shift(-1) : per === '7d' ? nowMs - x.due <= 7 * 86400000
     : per === 'day' ? (pick == null || dayOf(x.due) === pick) : true;
   const list = mySwaps.filter(x => (swTab === 'up' ? x.upcoming : !x.upcoming) && inPer(x));
