@@ -785,11 +785,14 @@ async function verifyDms(db, auth) {
 async function retryDms(db, auth) {
   await db.prepare(DMQ_DDL).run();
   const rows = ((await db.prepare('SELECT * FROM dm_retry ORDER BY id LIMIT 20').all()).results) || [];
+  const usedCh = new Set();
   for (const r of rows) {
+    if (usedCh.has(Number(r.channelId))) continue;   // that chat already got a message this minute
     let parts = parse(r.parts, []);
     parts = parts.flatMap(fitDm);   // queued before the length fix: cut down to size
     // One part per chat per minute: two close together and Real can drop the second.
     if (Number(r.at) > Date.now() - 50000 && Number(r.tries) === 0) continue;   // queued this minute: next tick
+    usedCh.add(Number(r.channelId));
     try { await dmSendRetry(auth, r.channelId, parts[0]); parts.shift(); await stat(db, 'dm_retried'); await sleep(400); }
     catch (e) { if (Number(r.tries) % 5 === 0) await botFail(db, 'dm_retry', `${r.label} try ${r.tries}: ${String(e.message || e).slice(0, 120)}`); }
     if (!parts.length) await db.prepare('DELETE FROM dm_retry WHERE id=?').bind(r.id).run();
