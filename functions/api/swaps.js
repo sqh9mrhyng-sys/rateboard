@@ -2038,18 +2038,18 @@ async function boostInventory(env, tok, hashId, sp, fresh) {
   if (all.error) return all;
   return { at: all.at, next: all.next, list: (all.sports || {})[sp] || [] };
 }
-/* All three sports' boosters in one read, at most once every 4 hours per
+/* All four sports' boosters (CBB, CFB, NFL, golf) in one read, at most once every 4 hours per
    member; inside that the saved copy is used. */
 const BOOSTINV_EVERY = 2 * 3600000;
 // Members whose pass and booster reads on Boosts are never held back.
 const BOOST_FAST = new Set(['quas23']);
 async function boostInventoryAll(env, tok, hashId, fresh, admin) {
-  const key = `boostinv_v5_${hashId}`;
+  const key = `boostinv_v6_${hashId}`;   // v6: golf added (2026-11-05)
   let c = null;
   try { c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); } catch (e) {}
   if (c && (!fresh || (!admin && Date.now() - c.at < BOOSTINV_EVERY))) return { ...c, next: admin ? Date.now() : c.at + BOOSTINV_EVERY, cached: !!fresh };
   const sports = {};
-  for (const sp of Object.keys(BOOST_SEASON)) {
+  for (const sp of [...Object.keys(BOOST_SEASON), 'golf']) {
     let d;
     try { d = await rsGetJson(`https://web.realapp.com/userpassboostercards/undefined/entity/player?displayType=collectionstats&sport=${sp}&userId=${encodeURIComponent(hashId)}&version=stat`, tok); }
     catch (e) { if (c) return { ...c, next: c.at + BOOSTINV_EVERY }; return { error: 'Could not read your boosters from Real: ' + String(e.message || e).slice(0, 120) }; }
@@ -3297,7 +3297,7 @@ async function handle({ request, env, waitUntil }) {
   }
 
   if (op === 'boostinv') {
-    const sp = BOOST_SEASON[url.searchParams.get('sport')] ? url.searchParams.get('sport') : 'nfl';
+    const sp = BOOST_SEASON[url.searchParams.get('sport')] || url.searchParams.get('sport') === 'golf' ? url.searchParams.get('sport') : 'nfl';
     const u = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(me).first();
     if (!u || !u.hashId) return json({ error: 'Re-read your passes first so the board knows your Real account.' }, 400);
     const want = url.searchParams.get('fresh') === '1';
@@ -3371,6 +3371,9 @@ async function handle({ request, env, waitUntil }) {
       const gr = await golfRows(env, db, cards, day);
       if (gr.error) return json({ error: gr.error }, 404);
       ({ sched, rows, idle } = gr);
+      // Their golf boosters, read with the other sports' (caps the plan at what they hold).
+      try { const uu = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(me).first();
+        if (uu && uu.hashId) { const r = await boostInventory(env, env.RS_AUTH_TOKEN || auth, uu.hashId, 'golf', false); if (!r.error && r.list && r.list.length) inv = r.list; } } catch (e) {}
     } else {
       sched = await boostSchedule(env, sp, day);
       if (sched.error) return json({ error: sched.error }, 502);
