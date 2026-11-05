@@ -67,6 +67,12 @@
   .sw1{padding:10px 12px;margin-top:8px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
   .sw1 .top{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
   .sw1 a{color:inherit}
+  .swwho{margin-top:6px;font-size:14px}
+  .swgrid{display:grid;grid-template-columns:84px 1fr;gap:8px 10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+  .swk{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;padding-top:2px}
+  .swk.get{color:var(--ok)} .swk.give{color:var(--accent)}
+  .swgrid .note{margin-top:2px;font-size:12.5px}
+  .swtl{margin-top:10px;font-size:12px}
   .sw1 .tag{font-size:12px;font-weight:700;padding:1px 8px;border-radius:999px;border:1px solid currentColor}
   .want1{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:10px 12px;margin-top:8px;border:1px solid var(--accent);border-radius:10px;background:color-mix(in srgb,var(--accent) 12%,var(--panel2))}
   @media (max-width:600px){
@@ -740,12 +746,19 @@ function drawSwaps(){
   if(swTab === 'up') list.sort((a, b) => a.due - b.due);
   const when = ms => new Date(ms).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)}</a>` : esc(t);
-  $('#swlist').innerHTML = list.map(x => { const t = TAG[x.state] || TAG.scheduled;
+  const tm = ms => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const ext = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)} ↗</a>` : '';
+  $('#swlist').innerHTML = list.map(x => { const t = TAG[x.state] || TAG.scheduled, who = '@' + esc(x.partner || '?');
+    const gp = String(x.give || '').replace(/ \d{4}$/, ''), rp = String(x.get || '').replace(/ \d{4}$/, '');
     return `<div class="sw1"><div class="top"><b>${when(x.due)}</b><span class="tag" style="color:${t[1]}">${t[0]}</span></div>`
-      + `<div style="margin-top:6px">With <b>@${esc(x.partner || '?')}</b>${x.comment ? ` · ${lnk('their comment', x.comment)}` : ''}</div>`
-      + `<div class="note" style="margin-top:4px">You buy: ${lnk(x.give, x.giveUrl)} · You get: ${lnk(x.get, x.getUrl)}</div>`
+      + `<div class="swwho">With <b>${who}</b>${x.comment ? ` · ${ext('their comment', x.comment)}` : ''}</div>`
+      + `<div class="swgrid">`
+      + `<div class="swk get">You receive</div><div><b>${lnk(x.get, x.getUrl)}</b><div class="note">${who} buys a ${esc(rp)} pack - you offer on his 3 new cards${x.getCard ? ` · ${ext('his card', x.getCard)}` : ''}</div></div>`
+      + `<div class="swk give">You give</div><div><b>${lnk(x.give, x.giveUrl)}</b><div class="note">You buy a ${esc(gp)} pack - ${who} offers on your 3 new cards${x.giveCard ? ` · ${ext('your card', x.giveCard)}` : ''}</div></div>`
+      + `</div>`
+      + `<div class="note swtl">${[x.made ? `Matched ${when(x.made)}` : '', x.warnedAt ? `warning sent ${tm(x.warnedAt)}` : x.upcoming ? `warning ~${tm(x.due - 35 * 60000)}` : '', x.contactedAt ? `contact sent ${tm(x.contactedAt)}` : x.upcoming ? `contact ~${tm(x.due - 5 * 60000)}` : ''].filter(Boolean).join(' · ')}</div>`
       + (x.note ? `<div class="note" style="margin-top:4px">${esc(x.note)}</div>` : '') + `</div>`; }).join('')
-    || `<p class="note">${swTab === 'up' ? 'No swaps scheduled yet. Matching runs every hour at :20.' : 'No swaps in the last 14 days.'}</p>`;
+    || `<p class="note">${swTab === 'up' ? 'No swaps scheduled yet. Matching runs every hour at :20 for the next 3 hours.' : 'No swaps in the last 14 days.'}</p>`;
 }
 async function loadSwaps(){ const j = await api('/api/swaps?op=myswaps'); if(j.error){ $('#swlist').innerHTML = `<p class="note">${esc(j.error)}</p>`; return; } mySwaps = j.swaps || []; drawSwaps(); }
 $('#tabup').addEventListener('click', () => { swTab = 'up'; drawSwaps(); });

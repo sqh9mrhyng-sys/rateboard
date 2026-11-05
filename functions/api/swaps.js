@@ -2356,16 +2356,37 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'myswaps') {
     if (!(await allow(url.origin, 'myswaps:' + me, 40, 600))) return json({ error: 'Wait a few minutes and try again.' }, 429);
     await matchCols(db);
-    const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE (a=? OR b=?) AND createdAt > ? AND status <> 'cleared' ORDER BY COALESCE(dueAt, createdAt) DESC LIMIT 150`)
+    const rows = ((await db.prepare(`SELECT id, a, b, aGets, bGets, slot, createdAt, dueAt, status, note, warnA, warnB, doneA, doneB FROM swap_matches
+      WHERE (a=? OR b=?) AND createdAt > ? AND status <> 'cleared' ORDER BY COALESCE(dueAt, createdAt) DESC LIMIT 150`)
       .bind(me, me, Date.now() - 14 * 86400000).all()).results) || [];
-    const cache = new Map(), member = async k => cache.has(k) ? cache.get(k) : (cache.set(k, await loadMember(db, k)), cache.get(k));
-    const mine = await member(me), now = Date.now(), out = [];
+    /* Partners: only their name and comment link (not their whole pass list -
+       that made this call take seconds). Their card links come straight out
+       of the saved list in the database, for the swaps still to come. */
+    const mine = await loadMember(db, me), now = Date.now(), out = [];
+    const pk = [...new Set(rows.map(m => (m.a === me ? m.b : m.a)))], who = new Map();
+    for (let i = 0; i < pk.length; i += 90) {
+      const part = pk.slice(i, i + 90);
+      const r = ((await db.prepare(`SELECT key, rsUser, comment FROM swap_users WHERE key IN (${part.map(() => '?').join(',')})`).bind(...part).all()).results) || [];
+      for (const x of r) who.set(x.key, x);
+    }
+    const isUp = m => !['cancelled', 'cancelling'].includes(m.status) && ['pending', 'sending', 'warned'].includes(m.status);
+    const want = [...new Set(rows.filter(m => isUp(m) || now - (sideDue(m) || 0) < 86400000).slice(0, 60)
+      .map(m => { const side = m.a === me ? 'A' : 'B'; return `${side === 'A' ? m.b : m.a}|${side === 'A' ? m.aGets : m.bGets}`; }))];
+    const cardOf = new Map();
+    try {
+      const res = want.length ? await db.batch(want.map(x => { const [k, key] = x.split('|');
+        return db.prepare(`SELECT json_extract(j.value, '$.passId') AS passId FROM swap_users u, json_each(u.passes) j
+          WHERE u.key=? AND json_extract(j.value, '$.key')=? LIMIT 1`).bind(k, key); })) : [];
+      res.forEach((r, i) => { const p = r && r.results && r.results[0]; if (p && p.passId) cardOf.set(want[i], `https://www.realapp.com/${routeId([18, 0, 0, Number(p.passId)])}`); });
+    } catch (e) {}
     for (const m of rows) {
-      const side = m.a === me ? 'A' : 'B', o = await member(side === 'A' ? m.b : m.a);
+      const side = m.a === me ? 'A' : 'B', ok = side === 'A' ? m.b : m.a, o = who.get(ok);
       const give = side === 'A' ? m.bGets : m.aGets, get = side === 'A' ? m.aGets : m.bGets, due = sideDue(m);
       const off = m.status === 'cancelled' || m.status === 'cancelling', done = !!m['done' + side];
-      out.push({ id: m.id, due, partner: (o && o.rsUser) || null, comment: done && o ? o.comment || null : null,
-        give: mine ? playerName(mine, give) : give, giveUrl: playerUrl(give), get: mine ? playerName(mine, get) : get, getUrl: playerUrl(get),
+      out.push({ id: m.id, due, made: m.createdAt, partner: (o && o.rsUser) || null, comment: (o && o.comment) || null,
+        give: mine ? playerName(mine, give) : give, giveUrl: playerUrl(give), giveCard: mine ? passUrl(mine, give) : null,
+        get: mine ? playerName(mine, get) : get, getUrl: playerUrl(get), getCard: cardOf.get(`${ok}|${get}`) || null,
+        warnedAt: m['warn' + side] || null, contactedAt: m['done' + side] || null,
         state: off ? 'off' : done ? 'done' : m['warn' + side] ? 'warned' : 'scheduled',
         upcoming: !off && !done && ['pending', 'sending', 'warned'].includes(m.status), note: off ? (m.note || 'called off') : null,
         byMe: off && String((String(m.note || '').match(/called off: @(\S+)/) || [])[1] || '').toLowerCase() === String(me).toLowerCase() });
