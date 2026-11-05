@@ -90,15 +90,61 @@
   table{width:100%;border-collapse:collapse;font-size:13.5px}
   td,th{padding:7px 6px;border-bottom:1px solid var(--line);text-align:left}
   .lock{max-width:460px;margin:12vh auto;text-align:center}
+  /* cleanup pass */
+  .beta{font-size:11px;font-weight:800;letter-spacing:.06em;padding:2px 7px;border-radius:6px;background:var(--accent);color:#141925;vertical-align:middle}
+  .topbtns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .tb{padding:11px 8px;border-radius:10px;font-weight:800;font-size:14px}
+  .tb.rep{background:color-mix(in srgb,var(--bad) 16%,var(--panel));border:1px solid var(--bad);color:#ff8a8d}
+  .tb.what{background:var(--panel2);border:1px solid var(--accent);color:var(--accent)}
+  .explain p{margin:0 0 8px} .explain p:last-child{margin:0}
+  .psa{margin-top:10px;padding:9px 12px;border-left:3px solid var(--bad);border-radius:8px;background:color-mix(in srgb,var(--bad) 10%,var(--panel));font-size:13px;line-height:1.4}
+  .acct{margin:10px 2px 12px}
+  section h2{display:flex;align-items:center;gap:9px;font-size:16.5px;margin:0 0 8px}
+  section h2 .n{flex:none;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--accent);color:#141925;font-size:13px;font-weight:800}
+  section.ok h2 .n{background:var(--ok)}
+  section > .note:first-of-type{margin:0 0 4px}
+  .note.sub{margin:10px 0 0;font-size:12.5px;line-height:1.45}
+  .opt{font-size:11px;font-weight:600;color:var(--mute);text-transform:uppercase;letter-spacing:.05em;margin-left:4px}
+  .field{margin-top:12px} .field label{display:block;font-size:13.5px;font-weight:700;margin-bottom:4px}
+  .field > input{width:100%;max-width:220px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .grid2 input{width:100%;min-width:0}
+  .bar.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .bar.two > *{text-align:center;width:100%}
+  button.wide,.wide{width:100%}
+  button.sm{padding:6px 10px;font-size:13px}
+  button.danger{border-color:var(--bad);color:#ff8a8d}
+  button.ghost{background:none;border-style:dashed}
+  .savebar{margin:6px 0 10px}
+  .savebar .big{width:100%;padding:15px;font-size:17px;font-weight:800;border-radius:12px;letter-spacing:.02em}
+  .savebar .note{display:block;margin-top:6px;text-align:center}
+  .saved{position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:20px;background:rgba(8,10,16,.78);backdrop-filter:blur(3px)}
+  .saved .card{width:100%;max-width:400px;text-align:center;padding:28px 20px 20px;border-radius:18px;background:var(--panel);border:2px solid var(--ok);box-shadow:0 20px 60px rgba(0,0,0,.5);animation:pop .22s ease-out}
+  .saved .tick{width:64px;height:64px;margin:0 auto 12px;border-radius:50%;display:grid;place-items:center;background:var(--ok);color:#0f1a12;font-size:36px;font-weight:900}
+  .saved .big1{font-size:30px;font-weight:900;letter-spacing:.04em;color:var(--ok)}
+  .saved .big2{font-size:17px;font-weight:800;letter-spacing:.03em;margin-top:6px}
+  .saved .extra{margin-top:10px}
+  .saved button{margin-top:18px;width:100%;padding:13px;font-weight:800}
+  @keyframes pop{from{transform:scale(.9);opacity:0}to{transform:none;opacity:1}}
+  @media (max-width:600px){
+    .wrap{padding:12px 14px 28px}
+    section{padding:14px 14px 16px;margin-bottom:12px}
+    input,select,button,a.btn{min-height:44px}
+    .hours label{min-height:44px}
+    .daypick{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+    .daypick button{min-width:0;padding:6px 0;font-size:12.5px}
+    .want1{padding:10px}
+    .want1 .mv button{min-height:30px;padding:2px 10px}
+  }
 </style>
 </head>
 <body>
 <div class="lock" id="lock" hidden><h1>Swaps <span style="font-size:11px;font-weight:800;padding:2px 7px;border-radius:6px;background:var(--accent);color:#141925;vertical-align:middle">BETA</span></h1><p class="note" id="lockmsg">Checking…</p><p id="probox" hidden><button class="primary" id="procheck">Pro check</button></p><p class="note" id="rnhint" hidden>Is your Real username different from your board username? <a href="/username">Link your Real account</a> first.</p><p id="signinbtn" hidden><a class="btn" href="/" style="display:inline-block;padding:10px 14px;border-radius:9px;background:#E8A33D;color:#141925;font-weight:700;text-decoration:none">Sign in on the board</a></p><p class="note" id="signinhint" hidden>Signed in already? Open the board once - it will ask for your password one more time, then this page works. Opened this from inside Real? Use the browser you signed in with.</p><p><a href="/">Back to the board</a></p></div>
 <div class="wrap" id="main" hidden>
-  <header><h1>Swaps <span style="font-size:11px;font-weight:800;letter-spacing:.06em;padding:2px 7px;border-radius:6px;background:var(--accent);color:#141925;vertical-align:middle">BETA</span></h1><a href="/" style="margin-left:auto">Back to the board</a></header>
-  <button class="bigbtn rep" id="repopen">REPORT</button>
+  <header><h1>Swaps <span class="beta">BETA</span></h1><a href="/" style="margin-left:auto">Back to the board</a></header>
+  <div class="topbtns"><button class="tb rep" id="repopen">Report</button><button class="tb what" id="whatopen">What are swaps?</button></div>
   <div class="repbox" id="repbox" hidden>
-    <div class="bar" style="margin-top:0"><button class="primary" id="rk-user">Report wrong usage</button><button id="rk-problem">Report a problem</button><button id="rk-refund">Called-off swap (rax back)</button></div>
+    <div class="bar" style="margin-top:0"><button class="primary" id="rk-user">Wrong usage</button><button id="rk-problem">A problem</button><button id="rk-refund">Called-off swap</button></div>
     <div id="repform" hidden>
       <div class="bar" id="reptarget"><input id="rept" placeholder="Their Real username" autocomplete="off" autocapitalize="off"></div>
       <div id="repoff" hidden>
@@ -109,43 +155,36 @@
       <div class="bar"><button class="primary" id="repsend">Send report</button><span class="note" id="repmsg"></span></div>
     </div>
   </div>
-  <button class="bigbtn what" id="whatopen">DO YOU KNOW WHAT SWAPS ARE?</button>
   <div class="explain" id="what" hidden>
-    <h3>What are swaps?</h3>
-    <p class="note">Swaps are the most efficient way on the app to grind a player.</p>
-    <h3>How it works</h3>
-    <p class="note">You select a player you want, for example JSN. You find someone who wants a different player, for example Jahmyr Gibbs.</p>
-    <p class="note">You buy a Jahmyr Gibbs pack, and the other user buys a JSN pack. You go to his profile and his collection and offer on the 3 JSN cards he just got. He goes to your profile and offers on the 3 Gibbs cards you just got.</p>
-    <h3>What it costs</h3>
-    <p class="note">You "swap" packs. A swap typically costs <b>241 rax</b>. For a legendary player pass you're paying <b>9,200 at the very most</b> - all top tier players will profit that 9,200, or you can resell for more.</p>
+    <p>You want JSN cards, someone else wants Gibbs cards. You buy a Gibbs pack, they buy a JSN pack, then you each offer on the 3 cards the other one pulled. The fastest way on the app to grind a player.</p>
+    <p class="note">A swap usually costs about <b>241 rax</b>. A legendary pass costs <b>9,200 at most</b> - top players make that back, or you resell.</p>
   </div>
-  <div style="margin-top:10px;padding:12px 14px;border:2px solid var(--bad);border-radius:12px;background:color-mix(in srgb,var(--bad) 14%,var(--panel))">
-    <div style="font-weight:800;color:var(--bad);letter-spacing:.04em">⚠️ WARNING PSA</div>
-    <div style="margin-top:4px;font-size:14px">If you use swaps in an auction group and in turn unintentionally scam someone through the website, you will be banned from the website and group. No warnings.</div>
-  </div>
-  <p class="note" style="margin:12px 0 12px">Swaps uses your Real account <b id="rstop"></b>. Real username different from your board name? <a href="/username">Change Real username</a></p>
+  <div class="psa">⚠️ Scam someone through swaps (auction groups included) and you're banned from the site and the group. No warnings.</div>
+  <p class="note acct">Real account <b id="rstop"></b> · <a href="/username">change</a></p>
 
-  <section>
-    <h2>1. Create a DM with @raxacademy.app on Real</h2>
-    <p class="note">Open Real, start a DM with <b>@raxacademy.app</b> and send <b>#packswap</b>. That's how the bot reaches you when you're matched. Then tap <b>Check verification</b> - the bot only looks when you tap it.</p>
-    <div class="bar"><a class="btn" href="https://www.realapp.com/" target="_blank" rel="noopener">Open Real</a><button type="button" id="copytag">Copy #packswap</button><button class="primary" id="connect">Check verification</button></div>
+  <section id="s1">
+    <h2><span class="n">1</span>Message the bot</h2>
+    <div id="s1how">
+      <p class="note">On Real, DM <b>@raxacademy.app</b> the word <b>#packswap</b>, then tap Check.</p>
+      <div class="bar two"><a class="btn" href="https://www.realapp.com/" target="_blank" rel="noopener">Open Real</a><button type="button" id="copytag">Copy #packswap</button></div>
+      <div class="bar"><button class="primary wide" id="connect">Check verification</button></div>
+    </div>
     <div class="note" id="connmsg"></div>
   </section>
 
   <section>
-    <h2>2. Comment on the swap post</h2>
-    <p class="note">Create a comment under the swap post so people can get ahold of you - ideally with the player you're swapping for.</p>
+    <h2><span class="n">2</span>Comment on the swap post</h2>
+    <p class="note">Comment the player you want, then paste your comment's link here. Partners get it in their DM.</p>
     <div class="bar"><a class="btn" href="https://www.realapp.com/9DHKtlFNQA4" target="_blank" rel="noopener">Open the swap post</a></div>
-    <p class="note" style="margin:6px 0 0">Then copy the link to your comment and paste it here - your swap partners get it in their DM.</p>
-    <div class="bar"><input id="clink" placeholder="https://www.realapp.com/…" autocomplete="off" inputmode="url"></div>
+    <div class="bar"><input id="clink" placeholder="Paste your comment link" autocomplete="off" inputmode="url"></div>
   </section>
 
   <section>
-    <h2>3. Your player passes</h2>
-    <p class="note">Checks your Real account for every pass you own. Select the empty box on the left if you do not want to swap that player to people. Everything else will be used to find compatible swaps.</p>
-    <div class="bar"><span class="note">Real account: <span class="who" id="rsuser"></span> · <a href="/username">not you?</a></span><button class="primary" id="scan" style="margin-left:auto">Scan my passes</button></div>
+    <h2><span class="n">3</span>Your passes</h2>
+    <p class="note">Tick a box to keep that player out of swaps.</p>
+    <div class="bar"><span class="note" hidden><span class="who" id="rsuser"></span></span><button class="primary wide" id="scan">Scan my passes</button></div>
     <div class="note" id="scanmsg"></div>
-    <div class="psum" id="psum" hidden style="margin-bottom:8px"><span id="psumtxt"></span><button id="ptoggle">Done - collapse</button></div>
+    <div class="psum" id="psum" hidden style="margin-bottom:8px"><span id="psumtxt"></span><button id="ptoggle" class="sm">Done - collapse</button></div>
     <div class="bar" id="pctl" hidden>
       <select id="pview" aria-label="View"><option value="all">All passes</option><option value="season">By season</option></select>
       <select id="psport" aria-label="Sport"><option value="">Every sport</option><option value="nba">NBA</option><option value="ncaam">CBB</option><option value="nfl">NFL</option><option value="ncaaf">CFB</option><option value="nhl">NHL</option><option value="mlb">MLB</option><option value="wnba">WNBA</option><option value="golf">Golf</option></select>
@@ -157,47 +196,49 @@
   </section>
 
   <section>
-    <h2>4. Who you want</h2>
-    <p class="note">Pick up to <b>10</b> passes you want cards bought for - each has to be one you own (scan in step 3 first). More picks means more people you can swap with; your first pick is tried first.</p>
+    <h2><span class="n">4</span>Who you want</h2>
+    <p class="note">Up to <b>10</b> of your passes. Top pick goes first.</p>
     <div class="bar"><input id="wq" placeholder="Search your passes" autocomplete="off"></div>
     <div class="res" id="wres"></div>
     <div id="wants"></div>
-    <div class="bar" style="margin-top:10px"><label class="note" for="goal" style="flex:1 1 100%">Goal rating (optional) - when your pass reaches this rating or gets close, swaps are limited to about what it takes to get there.</label>
-      <input id="goal" type="number" inputmode="decimal" min="0" step="0.1" placeholder="e.g. 45" style="flex:0 1 140px"><span class="note" id="goalmsg"></span></div>
+    <div class="field" style="margin-top:12px"><label for="goal">Goal rating <span class="opt">optional</span></label>
+      <div class="bar" style="margin:4px 0 0"><input id="goal" type="number" inputmode="decimal" min="0" step="0.1" placeholder="e.g. 45" style="flex:0 1 120px"><span class="note" id="goalmsg"></span></div>
+      <p class="note sub">Near the goal, swaps are limited to what it takes to get there.</p></div>
   </section>
 
   <section>
-    <h2>5. When you can be messaged</h2>
-    <div class="seg modeseg" id="hmode"><button data-m="daily">Every day</button><button data-m="weekly">By day of week</button><button data-m="date">One day only</button></div>
+    <h2><span class="n">5</span>When you can swap</h2>
+    <div class="seg modeseg" id="hmode"><button data-m="daily">Every day</button><button data-m="weekly">By weekday</button><button data-m="date">One day</button></div>
     <div class="daypick" id="daypick" hidden></div>
-    <p class="note" id="hnote" style="margin:8px 0 0"></p>
+    <p class="note" id="hnote" style="margin:10px 0 0"></p>
     <div class="hours" id="hours"></div>
     <div class="bar" id="hcopy" hidden style="margin-top:8px"><button id="copyall" class="sm">Copy this day to every day</button></div>
-    <p class="note" style="margin:8px 0 0">Up to 10 hours a day. The first one you tap is your <b>primary</b>, then 2nd, 3rd and so on - if two people want the same player, the one whose primary hour it is gets the swap. The number under each hour is how many people picked it. Shown in your time (<span id="tz"></span>). Changes save as you tap.</p>
+    <p class="note sub">Up to 10. First tap = <b>primary</b> (wins ties). Number = people on that hour. Your time (<span id="tz"></span>). Saves as you tap.</p>
   </section>
 
   <section>
-    <h2>6. Scale</h2>
-    <p class="note">Optional - leave a box empty for no limit. Saved with <b>Save my swap</b>.</p>
-    <div class="bar"><label class="note" for="daycap" style="flex:1 1 100%"><b>1. Total swaps per day</b> - all players, 7am-7am ET</label>
-      <input id="daycap" type="number" inputmode="numeric" min="1" step="1" placeholder="No limit" style="flex:0 1 140px"></div>
+    <h2><span class="n">6</span>Limits <span class="opt">optional</span></h2>
+    <div class="field"><label for="daycap">Swaps per day <span class="opt">all players</span></label>
+      <input id="daycap" type="number" inputmode="numeric" min="1" step="1" placeholder="No limit"></div>
     <div id="capbar">
-      <div class="bar"><label class="note" for="capwho" style="flex:1 1 100%" id="capfor">Player</label>
-        <select id="capwho" style="flex:1 1 200px"></select><b id="capone"></b></div>
-      <div class="bar"><label class="note" for="capn" style="flex:1 1 100%"><b>2. Total swaps for this player</b></label>
-        <input id="capn" type="number" inputmode="numeric" min="1" step="1" placeholder="No limit" style="flex:0 1 140px"></div>
-      <div class="bar"><label class="note" for="capd" style="flex:1 1 100%"><b>3. Swaps for this player per day</b> - 7am-7am ET</label>
-        <input id="capd" type="number" inputmode="numeric" min="1" step="1" placeholder="No limit" style="flex:0 1 140px"></div>
+      <div class="field"><label for="capwho" id="capfor">Player</label>
+        <div class="bar" style="margin:4px 0 0"><select id="capwho" style="flex:1 1 200px;min-width:0"></select><b id="capone"></b></div></div>
+      <div class="grid2">
+        <div class="field"><label for="capn">Total</label><input id="capn" type="number" inputmode="numeric" min="1" step="1" placeholder="No limit"></div>
+        <div class="field"><label for="capd">Per day</label><input id="capd" type="number" inputmode="numeric" min="1" step="1" placeholder="No limit"></div>
+      </div>
     </div>
-    <p class="note" id="capnote" style="margin:4px 0 0"></p>
+    <p class="note sub" id="capnote"></p>
+    <p class="note sub">Days run 7am-7am ET. Empty = no limit.</p>
   </section>
 
-  <div class="bar"><button class="primary" id="save">Save my swap</button><span class="note" id="savemsg"></span></div>
-  <div class="bar"><button id="pauseall">Pause all swaps</button><button id="endall" style="border-color:var(--bad);color:var(--bad)">End all swaps</button><span class="note" id="pausemsg"></span></div>
-  <p class="note" style="margin:4px 0 0"><b>Pause</b> stops new matches - swaps already set still happen. <b>End all</b> also calls off every swap still to come (you and your partners are told). Tap Save my swap to start again.</p>
-  <div class="bar"><button id="whynot">Why haven't I matched?</button></div>
+  <div class="savebar"><button class="primary big" id="save">Save my swap</button><span class="note" id="savemsg"></span></div>
+  <div class="bar two"><button id="pauseall">Pause all</button><button id="endall" class="danger">End all</button></div>
+  <span class="note" id="pausemsg"></span>
+  <p class="note sub"><b>Pause</b> = no new matches. <b>End all</b> = also calls off upcoming swaps. Save to start again.</p>
+  <div class="bar"><button id="whynot" class="ghost">Why haven't I matched?</button></div>
   <div class="note" id="whyout"></div>
-
+  <div class="saved" id="saved" hidden role="dialog" aria-modal="true" aria-labelledby="savedh"><div class="card"><div class="tick">✓</div><div class="big1" id="savedh">SAVED</div><div class="big2">YOU WILL RECEIVE A DM LATER</div><p class="note extra" id="savedx" hidden></p><button class="primary" id="savedok">Got it</button></div></div>
   <section id="mysw">
     <h2>Your swaps</h2>
     <div class="stabs"><button id="tabup" class="on">Scheduled</button><button id="tabpast">Previous</button></div>
@@ -396,12 +437,12 @@ function drawHours(){
   if(sc.mode === 'weekly'){
     dp.innerHTML = DAYS.map((d, i) => { const n = ((sc.week || {})[i] || []).length;
       return `<button data-day="${i}" aria-pressed="${i === hDay}">${d}${n ? `<span class="dn">${n}</span>` : ''}</button>`; }).join('');
-    $('#hnote').innerHTML = `Hours for <b>${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][hDay]}</b> - pick a day above to set each one.`;
+    $('#hnote').innerHTML = `Hours for <b>${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][hDay]}</b> - tap a day to set its hours.`;
   } else if(sc.mode === 'date'){
     if(!sc.date) sc.date = ymd(new Date());
     dp.innerHTML = Array.from({ length: 7 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() + i); const v = ymd(d);
       return `<button data-date="${v}" aria-pressed="${v === sc.date}">${i === 0 ? 'Today' : i === 1 ? 'Tmrw' : DAYS[d.getDay()]}<span class="dn">${d.getMonth() + 1}/${d.getDate()}</span></button>`; }).join('');
-    $('#hnote').innerHTML = `Only on <b>${new Date(sc.date + 'T12:00:00').toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })}</b> - no swaps on any other day.`;
+    $('#hnote').innerHTML = `Only on <b>${new Date(sc.date + 'T12:00:00').toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })}</b> only.`;
   } else $('#hnote').textContent = 'The same hours every day.';
   const local = curHours();
   $('#hours').innerHTML = Array.from({length: 24}, (_, h) => {
@@ -613,7 +654,7 @@ function drawCaps(){
   const w = prof.wants, sel = $('#capwho'), cur = sel.value;
   for(const k of Object.keys(caps)) if(!w.includes(k)) delete caps[k];
   $('#capbar').hidden = !w.length;
-  $('#capnote').textContent = w.length ? (w.length > 1 ? 'Choose a player, then set his limits. ' : '') + 'The total counts from when you set it; once he reaches it, no more swaps for him until you raise it.' : 'Pick players in step 4 to set limits per player.';
+  $('#capnote').textContent = w.length ? 'Total counts from when you set it.' : 'Pick players in step 4 to set per-player limits.';
   sel.innerHTML = w.map((k, i) => `<option value="${k}">${esc(capLbl(k, i))}</option>`).join('');
   sel.hidden = w.length < 2;   // one player: no drop-down, just his name
   $('#capfor').textContent = w.length > 1 ? 'Player' : 'For';
@@ -631,8 +672,8 @@ function drawWants(){
   if(prof.wants.length > 10) prof.wants = prof.wants.slice(0, 10);
   $('#wants').innerHTML = prof.wants.map((k, i) => { const n = othersOn(k);
     const lo = (prof.lowPlays || []).includes(k);
-    return `<div class="want1"${lo ? ' style="border-color:var(--bad)"' : ''}><span>${lo ? '<b style="color:var(--bad);font-size:12px">Under 27 plays - remove him, he won\'t be matched</b><br>' : ''}<span class="note">${RANK[i]} pick · </span><b>${esc(wantNames[k] || 'Player ' + k.split(':')[2])}</b> <span class="note">· ${esc(keyLbl(k))}</span>`
-      + `<br><span style="font-size:13px;font-weight:700;color:${crowdCol(n)}">${crowdTxt(n)}</span>${n >= 4 ? '<span class="note"> - a less popular player will match faster</span>' : ''}</span>`
+    return `<div class="want1"${lo ? ' style="border-color:var(--bad)"' : ''}><span>${lo ? '<b style="color:var(--bad);font-size:12px">Under 27 plays - won\'t match</b><br>' : ''}<span class="note">${RANK[i]} pick · </span><b>${esc(wantNames[k] || 'Player ' + k.split(':')[2])}</b> <span class="note">· ${esc(keyLbl(k))}</span>`
+      + `<br><span style="font-size:13px;font-weight:700;color:${crowdCol(n)}">${crowdTxt(n)}</span></span>`
       + `<span class="acts"><span class="mv"><button data-up="${i}" aria-label="Move up"${i === 0 ? ' disabled' : ''}>▲</button><button data-dn="${i}" aria-label="Move down"${i === prof.wants.length - 1 ? ' disabled' : ''}>▼</button></span>`
       + `<button data-x="${k}" aria-label="Remove">✕</button></span></div>`; }).join('')
     || '<p class="note" style="margin:8px 0 0">Nobody picked yet.</p>';
@@ -668,6 +709,14 @@ $('#endall').addEventListener('click', async e => {
   prof.active = false; savedWants = new Set(); paintPaused(); loadHourCounts(); loadWantCounts(); loadSwaps();
   $('#pausemsg').innerHTML += j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} called off.` : ' No upcoming swaps to call off.';
 });
+function showSaved(extra){
+  $('#savedx').textContent = extra || ''; $('#savedx').hidden = !extra;
+  $('#saved').hidden = false; $('#savedok').focus();
+}
+const hideSaved = () => { $('#saved').hidden = true; };
+$('#savedok').addEventListener('click', hideSaved);
+$('#saved').addEventListener('click', e => { if(e.target.id === 'saved') hideSaved(); });
+document.addEventListener('keydown', e => { if(e.key === 'Escape' && !$('#saved').hidden) hideSaved(); });
 $('#save').addEventListener('click', async () => {
   if(!connected){ $('#savemsg').textContent = 'Do step 1 first - the bot has to be able to DM you.'; return; }
   { const sc = schedOf(), any = sc.mode === 'weekly' ? Object.values(sc.week || {}).some(l => l.length) : sc.mode === 'date' ? (sc.hours || []).length : prof.slots.length;
@@ -675,7 +724,9 @@ $('#save').addEventListener('click', async () => {
   if(!SWAP_COMMENT_RE.test($('#clink').value.trim())){ $('#savemsg').textContent = 'That link is not a comment under the swap post. Open the swap post, copy the link to your comment, and paste it in step 2.'; return; }
   const j = await api('/api/swaps?op=save', { method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 10), sched: schedOf().mode === 'daily' ? { mode: 'daily' } : { ...schedOf(), tz: TZ }, comment: $('#clink').value.trim(), goal: $('#goal').value.trim(), dayCap: $('#daycap').value.trim(), caps, keep: prof.keep, slots: prof.slots, names: wantNames }) });
-  $('#savemsg').textContent = j.error ? j.error : 'Saved.' + (j.late ? ' Too late to change swaps already warned - please do them at :00.' : '') + (j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} for a player or hour you removed ${j.calledOff === 1 ? 'is' : 'are'} called off - you'll both get a message.` : '');
+  const extra = (j.late ? ' Too late to change swaps already warned - please do them at :00.' : '') + (j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} for a player or hour you removed ${j.calledOff === 1 ? 'is' : 'are'} called off - you'll both get a message.` : '');
+  $('#savemsg').textContent = j.error ? j.error : '';
+  if(!j.error) showSaved(extra.trim());
   if(!j.error){ savedWants = new Set(prof.wants); prof.active = true; paintPaused(); loadHourCounts(); loadWantCounts(); loadSwaps(); }
   try{ localStorage.setItem('ratebrd_swapnames', JSON.stringify(wantNames)); }catch(e){}
 });
@@ -758,8 +809,9 @@ $('#whynot').addEventListener('click', async () => {
 });
 function paintConn(ok){
   connected = !!ok;
-  $('#connmsg').innerHTML = ok ? '✅ Verified - match DMs will reach you from <b>@raxacademy.app</b>.' : 'Not verified yet.';
+  $('#connmsg').innerHTML = ok ? '✅ Verified - DMs come from <b>@raxacademy.app</b>.' : '';
   $('#connect').style.display = ok ? 'none' : '';
+  $('#s1how').hidden = !!ok; $('#s1').classList.toggle('ok', !!ok);
 }
 $('#copytag').addEventListener('click', async () => {
   let ok = false; try{ await navigator.clipboard.writeText('#packswap'); ok = true; }catch(e){}
