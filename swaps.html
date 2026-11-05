@@ -263,6 +263,7 @@
       <p class="note" style="margin:0 0 8px">Passes you've used today - each one scheduled to go out in a swap, plus any you add yourself. A pass is only given once a swap day (7am to 7am ET).</p>
       <div class="bar"><select id="packadd" style="flex:1 1 200px;min-width:0"></select><button class="primary" id="packaddbtn">Add</button></div>
       <span class="note" id="packmsg"></span>
+      <a class="btn" id="packsite" hidden target="_blank" rel="noopener" style="display:block;text-align:center;margin-top:8px">Open your swap page ↗</a>
       <div id="packlist"><p class="note">Loading…</p></div>
     </div>
     <div class="bar swper"><select id="swper" aria-label="Time period"></select><input type="date" id="swday" hidden aria-label="Day"><span class="note" id="swcount"></span></div>
@@ -854,8 +855,9 @@ function paintPacks(j){
     + (j.manual || []).map(x => `<div class="pk1"><span><b>${esc(x.name)}</b><span class="sub">added by you</span></span><button class="sm" data-unpack="${esc(x.key)}">Remove</button></div>`).join(''))
     || '<p class="note">No packs used yet today.</p>';
   // The add list: your swappable passes not already used today.
-  const opts = prof.passes.filter(p => !isTeam(p) && !NO_SWAP.has(p.sport) && !offSeason(p) && !used.has(p.key)).sort((a, b) => String(a.name).localeCompare(String(b.name)));
-  $('#packadd').innerHTML = '<option value="">Add a pass you used today…</option>' + opts.map(p => `<option value="${esc(p.key)}">${esc(p.name || 'Player ' + p.id)} · ${esc(keyLbl(p.key))}</option>`).join('');
+  const opts = j.options || prof.passes.filter(p => !isTeam(p) && !NO_SWAP.has(p.sport) && !offSeason(p) && !used.has(p.key)).map(p => ({ key: p.key, name: (p.name || 'Player ' + p.id) + ' ' + p.season }));
+  $('#packadd').innerHTML = '<option value="">Add a pass you used today…</option>' + opts.map(p => `<option value="${esc(p.key)}">${esc(p.name)} · ${esc(keyLbl(p.key))}</option>`).join('');
+  $('#packsite').hidden = !j.hourUrl; if(j.hourUrl) $('#packsite').href = j.hourUrl;
 }
 async function loadPacks(){ paintPacks(await api('/api/swaps?op=packstoday')); }
 $('#packaddbtn').addEventListener('click', async () => {

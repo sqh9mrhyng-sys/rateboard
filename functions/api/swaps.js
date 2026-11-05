@@ -1747,6 +1747,44 @@ export async function dmTickKey(env) {
    a page listing every swap that hour (packs to buy, who to contact, card
    links). The link carries a signature, so it opens without signing in (Real's
    in-app browser isn't signed in) and only for that member and hour. */
+/* Packs today: every pass the system counts as used by a member this swap day
+   (7am-7am ET) - each one scheduled to go out in a swap, whatever happened to
+   it - plus any they added themselves (used elsewhere; never given again that
+   day, though a swap already scheduled with it stays). Used on /swaps and on
+   the hour page. `change` = { key, remove } to add or take one off. */
+async function packsToday(env, db, me, change) {
+  await matchCols(db);
+  const day = swapDay(Date.now());
+  const r = await db.prepare('SELECT passes, packsUsed, keep FROM swap_users WHERE key=?').bind(me).first();
+  if (!r) return { error: 'Scan your passes first.' };
+  let pu = parse(r.packsUsed, null); if (!pu || pu.day !== day) pu = { day, keys: [] };
+  if (change) {
+    const k = String(change.key || '');
+    if (!/^[a-z]+:\d{4}:t?\d+$/.test(k)) return { error: 'Pick a pass.' };
+    if (change.remove) pu.keys = pu.keys.filter(x => x !== k); else if (!pu.keys.includes(k)) pu.keys.push(k);
+    await db.prepare('UPDATE swap_users SET packsUsed=? WHERE key=?').bind(JSON.stringify(pu), me).run();
+  }
+  const mine = { key: me, passes: parse(r.passes, []) };
+  const ms = ((await db.prepare("SELECT a, b, aGets, bGets, dueAt, slot, createdAt, status FROM swap_matches WHERE (a=? OR b=?) AND dueAt > ? AND status <> 'cleared'").bind(me, me, Date.now() - 2 * 86400000).all()).results) || [];
+  const used = new Map(); let next = null, latest = null;
+  for (const m of ms) { const due = sideDue(m);
+    if (!['cancelled', 'cancelling'].includes(m.status)) { if (due > Date.now() - 3600000 && (!next || due < next)) next = due; if (!latest || due > latest) latest = due; }
+    if (swapDay(due) !== day) continue;
+    const k = m.a === me ? m.bGets : m.aGets, partner = m.a === me ? m.b : m.a;
+    const x = used.get(k) || used.set(k, { key: k, name: playerName(mine, k), times: [], partners: [], off: 0, n: 0 }).get(k);
+    x.n++; x.times.push(due); x.partners.push(partner); if (['cancelled', 'cancelling'].includes(m.status)) x.off++; }
+  const pk = [...new Set([...used.values()].flatMap(x => x.partners))], rn = new Map();
+  for (let i = 0; i < pk.length; i += 90) { const part = pk.slice(i, i + 90);
+    for (const x of (((await db.prepare(`SELECT key, rsUser FROM swap_users WHERE key IN (${part.map(() => '?').join(',')})`).bind(...part).all()).results) || [])) rn.set(x.key, x.rsUser || x.key); }
+  const system = [...used.values()].map(x => ({ ...x, times: [...new Set(x.times)].sort((a, b) => a - b), partners: [...new Set(x.partners)].map(k => rn.get(k) || k) })).sort((a, b) => a.times[0] - b.times[0]);
+  const manual = pu.keys.map(k => ({ key: k, name: playerName(mine, k), manual: true }));
+  // What can still be added: their swappable passes not used yet today.
+  const taken = new Set([...used.keys(), ...pu.keys]), keep = new Set(parse(r.keep, []));
+  const options = mine.passes.filter(p => p.kind !== 'team' && !/^(soccer|ufc):/.test(p.key) && !seasonOff(p.key) && !taken.has(p.key) && !keep.has(p.key))
+    .map(p => ({ key: p.key, name: playerName(mine, p.key) })).sort((a, b) => a.name.localeCompare(b.name));
+  const at = next || latest;
+  return { day, system, manual, options, hourUrl: at ? `/hour?u=${encodeURIComponent(me)}&d=${at}&t=${await hourSig(env, me, at)}` : null };
+}
 async function hourSig(env, key, due) {
   const t = swapToken(env) || 'x';
   const k = await crypto.subtle.importKey('raw', new TextEncoder().encode('hour|' + t), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
@@ -2820,6 +2858,15 @@ async function handle({ request, env, waitUntil }) {
   /* The hour page's time menu: every swap time this member had in the last
      14 days and has coming up, each with its own signed page link. The page's
      own signature is the key. */
+  // The hour page's Packs today panel (signed like the page itself).
+  if (op === 'hourpacks') {
+    const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));
+    if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
+    const u = await db.prepare('SELECT key FROM swap_users WHERE LOWER(key)=?').bind(key.toLowerCase()).first();
+    if (!u) return json({ error: 'No swaps found.' }, 404);
+    let b = null; if (request.method === 'POST') { try { b = await request.json(); } catch (e) { b = {}; } }
+    return json(await packsToday(env, db, u.key, b));
+  }
   if (op === 'hourlist') {
     const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));
     if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
@@ -2953,35 +3000,10 @@ async function handle({ request, env, waitUntil }) {
   }
 
   /* A member's own swaps: coming up, and the last two weeks of past ones. */
-  /* Packs today: every pass the system counts as used by them this swap day
-     (7am-7am ET) - each one scheduled to go out in a swap, whatever happened
-     to it - plus any they added themselves (used elsewhere). POST add/remove
-     changes their own additions. */
+  /* Packs today (see packsToday): signed in on /swaps. */
   if (op === 'packstoday') {
-    await matchCols(db);
-    const day = swapDay(Date.now());
-    const r = await db.prepare('SELECT passes, packsUsed FROM swap_users WHERE key=?').bind(me).first();
-    let pu = parse(r && r.packsUsed, null); if (!pu || pu.day !== day) pu = { day, keys: [] };
-    if (request.method === 'POST') {
-      let b = {}; try { b = await request.json(); } catch (e) {}
-      const k = String(b.key || '');
-      if (!/^[a-z]+:\d{4}:t?\d+$/.test(k)) return json({ error: 'Pick a pass.' }, 400);
-      if (b.remove) pu.keys = pu.keys.filter(x => x !== k); else if (!pu.keys.includes(k)) pu.keys.push(k);
-      await db.prepare('UPDATE swap_users SET packsUsed=? WHERE key=?').bind(JSON.stringify(pu), me).run();
-    }
-    const mine = { key: me, passes: parse(r && r.passes, []) };
-    const ms = ((await db.prepare("SELECT a, b, aGets, bGets, dueAt, slot, createdAt, status FROM swap_matches WHERE (a=? OR b=?) AND dueAt > ? AND status <> 'cleared'").bind(me, me, Date.now() - 2 * 86400000).all()).results) || [];
-    const used = new Map();
-    for (const m of ms) { if (swapDay(sideDue(m)) !== day) continue;
-      const k = m.a === me ? m.bGets : m.aGets, partner = m.a === me ? m.b : m.a;
-      const x = used.get(k) || used.set(k, { key: k, name: playerName(mine, k), times: [], partners: [], off: 0, n: 0 }).get(k);
-      x.n++; x.times.push(sideDue(m)); x.partners.push(partner); if (['cancelled', 'cancelling'].includes(m.status)) x.off++; }
-    const pk = [...new Set([...used.values()].flatMap(x => x.partners))], rn = new Map();
-    for (let i = 0; i < pk.length; i += 90) { const part = pk.slice(i, i + 90);
-      for (const x of (((await db.prepare(`SELECT key, rsUser FROM swap_users WHERE key IN (${part.map(() => '?').join(',')})`).bind(...part).all()).results) || [])) rn.set(x.key, x.rsUser || x.key); }
-    const sys = [...used.values()].map(x => ({ ...x, times: [...new Set(x.times)].sort((a, b) => a - b), partners: [...new Set(x.partners)].map(k => rn.get(k) || k) }));
-    const manual = pu.keys.map(k => ({ key: k, name: playerName(mine, k), manual: true }));
-    return json({ day, resetsAt: '7am ET', system: sys.sort((a, b) => a.times[0] - b.times[0]), manual });
+    let b = {}; if (request.method === 'POST') { try { b = await request.json(); } catch (e) {} }
+    return json(await packsToday(env, db, me, request.method === 'POST' ? b : null));
   }
   if (op === 'myswaps') {
     if (!(await allow(url.origin, 'myswaps:' + me, 40, 600))) return json({ error: 'Wait a few minutes and try again.' }, 429);

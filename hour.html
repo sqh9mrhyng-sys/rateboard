@@ -29,6 +29,11 @@
   .gh a{color:var(--accent)}
   .gh + .row{border-top:0}
   .andr{margin-top:12px;border-style:dashed}
+  .topbtns{margin-top:10px;display:flex;gap:8px}
+  .topbtns .btn{cursor:pointer;font:inherit;font-weight:700;font-size:13.5px}
+  .pkadd{display:flex;gap:8px} .pkadd select{flex:1;min-width:0;font:inherit;padding:9px 10px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
+  .pkadd .btn{cursor:pointer;font:inherit;font-weight:800}
+  #pklist .hm-i{align-items:center}
   .tbtn{font:inherit;font-weight:800;color:var(--accent);background:none;border:0;padding:0;cursor:pointer;text-align:left}
   .tbtn .car{font-size:.7em;vertical-align:middle}
   .hmenu{margin-top:10px;background:var(--panel);border:1px solid var(--accent);border-radius:12px;padding:8px 12px;max-height:60vh;overflow:auto}
@@ -45,6 +50,13 @@
 <body>
 <div class="wrap">
   <h1 id="h">Your swaps</h1>
+  <div class="topbtns"><button class="btn" id="pkbtn" type="button">Packs today ▾</button></div>
+  <div class="hmenu" id="pkmenu" hidden>
+    <p class="note" style="margin:4px 0 8px">Passes you've used today (7am to 7am ET). Add one you used yourself and it won't be given in a swap again today - swaps already scheduled with it still go ahead.</p>
+    <div class="pkadd"><select id="pkadd"></select><button class="btn go" id="pkaddbtn" type="button">Add</button></div>
+    <p class="note" id="pkmsg" style="margin:6px 0 0"></p>
+    <div id="pklist"></div>
+  </div>
   <div class="hmenu" id="hmenu" hidden><div class="hm-t"><span>Scheduled</span></div><div id="hm-up"></div><div class="hm-t"><span>Previous</span></div><div id="hm-past"></div></div>
   <p class="note" id="sub">Loading…</p>
   <section class="andr" id="andr" hidden>
@@ -102,6 +114,20 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
   $('#conlist').innerHTML = j.swaps.map((x, i) => `<div class="row${x.off ? ' off' : ''}"><span class="grp"><input type="checkbox" class="chk" data-k="c${i}" ${done['c' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}>
     <span><b>${x.partnerUrl ? `<a href="${esc(x.partnerUrl)}" target="_blank" rel="noopener">@${esc(x.partner || '?')}</a>` : '@' + esc(x.partner || '?')}</b><span class="sub">You receive <b class="rv">${lnk(x.receive, x.receiveUrl)}</b></span><span class="sub">(You're giving ${esc(x.give)})</span></span></span>${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : '<span class="note">no comment</span>'}</div>`).join('');
 })();
+/* Packs today: what the system counts as used, plus your own additions. */
+const pkUrl = () => `/api/swaps?op=hourpacks&u=${encodeURIComponent(q.get('u') || '')}&d=${encodeURIComponent(q.get('d') || '')}&t=${encodeURIComponent(q.get('t') || '')}`;
+function paintPk(j){
+  if(j.error){ $('#pklist').innerHTML = `<p class="note">${esc(j.error)}</p>`; return; }
+  const tm = ms => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  $('#pklist').innerHTML = (j.system || []).map(x => `<div class="hm-i"><span><b>${esc(x.name)}</b><span class="sub">swap at ${x.times.map(tm).join(', ')}${x.off ? ` · ${x.off} called off (still counts)` : ''}</span></span><span class="note">used</span></div>`).join('')
+    + (j.manual || []).map(x => `<div class="hm-i"><span><b>${esc(x.name)}</b><span class="sub">added by you</span></span><button class="btn" data-unpk="${esc(x.key)}" type="button">Remove</button></div>`).join('')
+    || '<p class="note">No packs used yet today.</p>';
+  $('#pkadd').innerHTML = '<option value="">Add a pass you used today…</option>' + (j.options || []).map(p => `<option value="${esc(p.key)}">${esc(p.name)}</option>`).join('');
+}
+$('#pkbtn').addEventListener('click', async () => { const m = $('#pkmenu'); m.hidden = !m.hidden; if(!m.hidden){ $('#pklist').innerHTML = '<p class="note">Loading…</p>'; try{ paintPk(await (await fetch(pkUrl())).json()); }catch(e){ $('#pklist').innerHTML = '<p class="note">Could not reach the board.</p>'; } } });
+const pkPost = async body => { try{ const j = await (await fetch(pkUrl(), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).json(); paintPk(j); return j; }catch(e){ return { error: 'Could not reach the board.' }; } };
+$('#pkaddbtn').addEventListener('click', async () => { const k = $('#pkadd').value; if(!k) return; const j = await pkPost({ key: k }); $('#pkmsg').textContent = j.error || 'Added - it won\'t be given in a swap again today.'; });
+$('#pklist').addEventListener('click', async e => { const b = e.target.closest('[data-unpk]'); if(!b) return; const j = await pkPost({ key: b.dataset.unpk, remove: true }); $('#pkmsg').textContent = j.error || 'Removed.'; });
 /* Tap the time: every swap time you've had (14 days) and have coming up. */
 let menuDone = false;
 async function openMenu(){
