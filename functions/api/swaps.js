@@ -2307,12 +2307,16 @@ async function scanEvery(env) {
 }
 
 // Any error comes back as a readable message rather than a bare 500.
+/* Step times for one request, so a slow page open says where the time went. */
+const MARKS = new WeakMap();
+const mark = (req, what) => { const m = MARKS.get(req); if (m) m.push(`${what} ${Date.now() - m.t}`); };
 export async function onRequest(ctx) {
   const t0 = Date.now();
+  try { const m = []; m.t = t0; MARKS.set(ctx.request, m); } catch (e) {}
   try { const r = await handle(Object.assign({}, ctx, { env: watchEnv(ctx.env, ctx.request, ctx.waitUntil) }));
     // Page-opening calls that took long, so a slow page can be traced (shown on the health page, no names).
     try { const op = new URL(ctx.request.url).searchParams.get('op') || ''; const ms = Date.now() - t0;
-      if (ms > 1500 && PAGE_OPS.has(op)) noteSlowRequest(ctx.env, ctx.waitUntil, { at: new Date().toISOString(), ms, sql: 'whole request', where: '/api/swaps?op=' + op }); } catch (e) {}
+      if (ms > 1500 && PAGE_OPS.has(op)) noteSlowRequest(ctx.env, ctx.waitUntil, { at: new Date().toISOString(), ms, sql: 'whole request: ' + (MARKS.get(ctx.request) || []).join(' · '), where: '/api/swaps?op=' + op }); } catch (e) {}
     return r; }
   catch (e) { return json({ error: 'Swaps hit an error: ' + String((e && e.message) || e).slice(0, 300) }, 500); }
 }
@@ -2408,6 +2412,7 @@ async function handle({ request, env, waitUntil }) {
   // Password resets happen signed out, so they come before the access check.
   if (op === 'resetstart' || op === 'resetcheck') return resetFlow(env, db, url, request, op, waitUntil);
   const acc = await swapAccess(env, request);
+  mark(request, 'access');
   if (op === 'procheck') return proCheck(env, db, url, acc);
   if (op === 'rnstatus' || op === 'rnstart' || op === 'rncheck') return renameFlow(env, db, url, acc, op, waitUntil);
   // Boosts (BETA) is open to every signed-in member; its calls say page=boosts.
@@ -2417,6 +2422,7 @@ async function handle({ request, env, waitUntil }) {
   if (!acc.admin && !boostCall && !((acc.swaps && MEMBER_OPS.has(op)) || (acc.otd && OTD_OPS.has(op)))) return forbidden('Your account does not have this.');
   const me = acc.who;
   await ready(db);
+  mark(request, 'ready');
   const auth = swapToken(env);
 
   /* Why haven't I matched? Run when they tap the button, never on its own. */
@@ -2918,6 +2924,7 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'me') {
     touchSeen(env, me, waitUntil);
     const u = await db.prepare('SELECT * FROM swap_users WHERE key=?').bind(me).first();
+    mark(request, 'row' + (u && u.passes ? '(' + Math.round(u.passes.length / 1024) + 'kb)' : ''));
     // Passes scanned before a name source existed get their names now.
     if (u && u.passes) {
       const ps = parse(u.passes, []);
@@ -2933,13 +2940,19 @@ async function handle({ request, env, waitUntil }) {
         void before;
       }
     }
+    mark(request, 'names');
     let connected = false;
     if (u && u.hashId) {
       try { await db.prepare(DM_DDL).run();
         connected = !!(await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=? AND channelId IS NOT NULL').bind(u.hashId).first()); } catch (e) {}
     }
+    mark(request, 'dm');
+    const lowP = u ? await (async () => { try { return [...await lowPlays(env, db, parse(u.passes, []).filter(p => p.kind !== 'team').map(p => p.key))]; } catch (e) { return []; } })() : [];
+    mark(request, 'plays');
+    const realN = await realName(db, me);
+    mark(request, 'name');
     return json({ key: me, admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
-      keep: parse(u.keep, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: parse(u.passes, []), lowPlays: await (async () => { try { return [...await lowPlays(env, db, parse(u.passes, []).filter(p => p.kind !== 'team').map(p => p.key))]; } catch (e) { return []; } })(), scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {} } : null, real: await realName(db, me) });
+      keep: parse(u.keep, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: parse(u.passes, []), lowPlays: lowP, scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {} } : null, real: realN });
   }
 
   // A tick in the passes list saves at once: the passes they won't give.
