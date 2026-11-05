@@ -1316,7 +1316,7 @@ async function runDms(env, db, auth, rows, max, force) {
       const items = []; for (const x of wh) { const l = await sideLines(member, x.m, x.side); if (l) items.push(l); }
       let wmsg = warnGrouped(items);
       if (wmsg.length > 1) { const me0 = await member(who);
-        wmsg = [fitOne(`Heads up - you swap in 30 min. You have ${items.length} swaps that hour - buy the ${items.length} packs listed here:\n${await hourLink(env, who, wh[0].due)}\n\nYou are receiving: ${recvSummary(me0, items)}`)]; }
+        wmsg = [siteDm('Heads up - you swap in 30 min. Buy your packs now.', items.length, await hourLink(env, who, wh[0].due), recvSummary(me0, items))]; }
       if (!(items.length && await send(who, wmsg, 'warn'))) { await unclaim(wh, 'warn'); warnFail = true; }
     }
     if (warnFail) return;
@@ -1333,7 +1333,7 @@ async function runDms(env, db, auth, rows, max, force) {
       for (const x of hr) { const l = await sideLines(member, x.m, x.side); if (!l) continue; items.push(l); if (noWarn.includes(x)) buy.push(l); }
       let cmsg = contactGrouped(items, buy);
       if (cmsg.length > 1) { const me0 = await member(who);
-        cmsg = [fitOne(`Swap time - send 12 hour offers. You have ${items.length} swaps now - who to contact, their comments and your cards are here:\n${await hourLink(env, who, hr[0].due, 'offer')}` + (buy.length ? `\n\nYou weren't warned earlier: buy the ${buy.length} pack${buy.length === 1 ? '' : 's'} on that page first.` : '') + `\n\nYou are receiving: ${recvSummary(me0, items)}\n\nReport anyone doing it wrong.`)]; }
+        cmsg = [siteDm('', items.length, await hourLink(env, who, hr[0].due, 'offer'), recvSummary(me0, items), buy.length ? `You weren't warned earlier: buy the ${buy.length} pack${buy.length === 1 ? '' : 's'} on the site first.` : '')]; }
       if (items.length && await send(who, cmsg, 'contact')) await mark(hr.filter(x => noWarn.includes(x)), 'warn');
       else await unclaim(hr, 'done');
     }
@@ -1766,10 +1766,13 @@ async function hourLink(env, key, due, stage = 'buy') {
 /* A member's Real profile: Real's own route is /u/<username>/<user id> (from
    Real's web app, 2026-11-05). The id keeps working after a rename. */
 const profileUrl = (userName, hashId) => userName ? `https://www.realapp.com/u/${encodeURIComponent(userName)}${hashId ? '/' + encodeURIComponent(hashId) : ''}` : null;
+// "Player link x#" for each player received (Real shows a player link as his name).
 function recvSummary(me, items) {
   const c = new Map(); for (const it of items) c.set(it.recvKey, (c.get(it.recvKey) || 0) + 1);
-  return [...c.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${playerName(me, k)}${n > 1 ? ' x' + n : ''}`).join(', ');
+  return [...c.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${playerUrl(k) || playerName(me, k)} ${String(k).split(':')[1]} x${n}`).join(', ');
 }
+// Dennis's wording (2026-11-05) for the one-message DM.
+const siteDm = (pre, n, link, sum, extra) => fitOne(`${pre ? pre + '\n\n' : ''}You have ${n} swap${n === 1 ? '' : 's'}, all details on site below, we are using the site to avoid large quantity of dm issues\n${link}\n\nPlayers you're receiving this run: ${sum}${extra ? '\n\n' + extra : ''}`);
 async function dmTick(env) {
   TICK_T0 = Date.now(); TICK_BUDGET = 26000;
   const db = env.RATEBOARD_DB, auth = swapToken(env);
@@ -2828,6 +2831,35 @@ async function handle({ request, env, waitUntil }) {
         give: playerName(me, give), giveUrl: playerUrl(give), yourCard: me ? passUrl(me, give) : null, off: m.status === 'cancelling' });
     }
     return json({ user: (me && me.rsUser) || u.key, due, swaps: out });
+  }
+  /* The hour page's "On Android, request DM" buttons: the full old-style
+     warning or contact DM for that hour, sent once each. */
+  if (op === 'hourdm' && request.method === 'POST') {
+    const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d')), kind = url.searchParams.get('kind') === 'contact' ? 'contact' : 'warn';
+    if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
+    const once = `hourdm_v1_${key.toLowerCase()}_${due}_${kind}`;
+    if (await env.RATEBOARD_KV.get(once)) return json({ error: 'Already sent - check your DMs from @raxacademy.app.' }, 429);
+    const auth = swapToken(env);
+    const u = await db.prepare('SELECT key FROM swap_users WHERE LOWER(key)=?').bind(key.toLowerCase()).first();
+    if (!u || !auth) return json({ error: 'No swaps found.' }, 404);
+    await matchCols(db);
+    const ms = ((await db.prepare("SELECT * FROM swap_matches WHERE (a=? OR b=?) AND dueAt=? AND status NOT IN ('cancelled','cancelling','cleared') ORDER BY id").bind(u.key, u.key, due).all()).results) || [];
+    const cache = new Map(), member = async k => cache.has(k) ? cache.get(k) : (cache.set(k, await loadMember(db, k)), cache.get(k));
+    const items = []; for (const m of ms) { const l = await sideLines(member, m, m.a === u.key ? 'A' : 'B'); if (l) items.push(l); }
+    if (!items.length) return json({ error: 'No swaps left at that time.' }, 404);
+    const me = await member(u.key);
+    if (!me || !me.hashId) return json({ error: 'The bot can\'t reach you - do step 1 on the Swaps page.' }, 400);
+    await env.RATEBOARD_KV.put(once, '1', { expirationTtl: 2 * 86400 });
+    const msgs = kind === 'warn' ? warnGrouped(items) : contactGrouped(items, []);
+    try { waitUntil((async () => {
+      const ch = await dmChannel(db, auth, me.hashId, me.rsUser, env);
+      for (let i = 0; i < msgs.length; i++) {
+        if (i) await sleep(4500);
+        try { await dmSendRetry(auth, ch, msgs[i]); await stat(db, 'dm_requested'); }
+        catch (e) { await queueDm(db, ch, msgs.slice(i), `${kind} (asked) @${me.rsUser}`); await botFail(db, 'dm_' + kind, `@${me.rsUser} asked DM part ${i + 1}/${msgs.length}: ${e.message || e}`); break; }
+      }
+    })().catch(() => {})); } catch (e) {}
+    return json({ ok: true, messages: msgs.length });
   }
   if (op === 'dmtick') {
     const k = await dmTickKey(env);

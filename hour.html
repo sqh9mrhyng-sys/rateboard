@@ -28,6 +28,9 @@
   .gh{margin:12px 0 2px;font-size:13px;font-weight:700;color:var(--accent)} .gh:first-child{margin-top:4px}
   .gh a{color:var(--accent)}
   .gh + .row{border-top:0}
+  .andr{margin-top:12px;border-style:dashed}
+  .andr .ab{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .andr .ab .btn{text-align:center;padding:11px 8px;cursor:pointer;font:inherit;font-weight:700;font-size:13.5px}
   .wait{margin-top:14px;padding:10px 12px;border:1px dashed var(--line);border-radius:10px;text-align:center}
   #con.new{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 35%,transparent)}
 </style>
@@ -36,6 +39,12 @@
 <div class="wrap">
   <h1 id="h">Your swaps</h1>
   <p class="note" id="sub">Loading…</p>
+  <section class="andr" id="andr" hidden>
+    <b>On Android, request DM</b>
+    <p class="note" style="margin:4px 0 8px">Please only do this if you're not on iOS or PC. Sends the full list to your DMs from @raxacademy.app, once each.</p>
+    <div class="ab"><button class="btn" data-dm="warn">Send the warning DM</button><button class="btn" data-dm="contact">Send the swap DM</button></div>
+    <p class="note" id="andrmsg" style="margin:6px 0 0"></p>
+  </section>
   <section id="buy" hidden><h2>Buy these packs <span class="n" id="nbuy"></span></h2><p class="note" style="margin:0 0 6px">One pack of each. Tick them off as you go.</p><div id="buylist"></div></section>
   <p class="note wait" id="wait" hidden></p>
   <section id="con" hidden><h2>Offer on your partners' cards <span class="n" id="ncon"></span></h2><p class="note" style="margin:0 0 6px">Send each partner a 12 hour offer on the 3 cards they pulled of the player you receive. Use their comment only to reach them if they didn't buy.</p><div id="conlist"></div></section>
@@ -57,6 +66,7 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
   $('#h').textContent = `@${j.user} · ${when}`;
   $('#sub').textContent = `${live.length} swap${live.length === 1 ? '' : 's'} at this time` + (j.swaps.length > live.length ? ` (${j.swaps.length - live.length} called off)` : '') + '.';
   $('#buy').hidden = !j.swaps.length;
+  $('#andr').hidden = !live.length;
   /* The offers show from 5 minutes before the swap (:55): the warning's link
      opens on the packs to buy and the offers appear at the bottom then; the
      contact's link opens straight on them. */
@@ -80,6 +90,13 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
   $('#conlist').innerHTML = j.swaps.map((x, i) => `<div class="row${x.off ? ' off' : ''}"><span class="grp"><input type="checkbox" class="chk" data-k="c${i}" ${done['c' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}>
     <span><b>${x.partnerUrl ? `<a href="${esc(x.partnerUrl)}" target="_blank" rel="noopener">@${esc(x.partner || '?')}</a>` : '@' + esc(x.partner || '?')}</b><span class="sub">You receive <b class="rv">${lnk(x.receive, x.receiveUrl)}</b></span><span class="sub">(You're giving ${esc(x.give)})</span></span></span>${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : '<span class="note">no comment</span>'}</div>`).join('');
 })();
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-dm]'); if(!b) return;
+  b.disabled = true; $('#andrmsg').textContent = 'Sending…';
+  try{ const r = await fetch(`/api/swaps?op=hourdm&kind=${b.dataset.dm}&u=${encodeURIComponent(q.get('u') || '')}&d=${encodeURIComponent(q.get('d') || '')}&t=${encodeURIComponent(q.get('t') || '')}`, { method: 'POST' });
+    const j = await r.json(); $('#andrmsg').textContent = j.error || `Sent - ${j.messages} message${j.messages === 1 ? '' : 's'} on the way to your DMs.`; if(j.error && !/already/i.test(j.error)) b.disabled = false; }
+  catch(err){ $('#andrmsg').textContent = 'Could not reach the board - try again.'; b.disabled = false; }
+});
 document.addEventListener('change', e => { const k = e.target.dataset.k; if(!k) return; done[k] = e.target.checked; try{ localStorage.setItem(key, JSON.stringify(done)); }catch(err){} });
 </script>
 </body>
