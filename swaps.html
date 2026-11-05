@@ -70,6 +70,7 @@
   .useg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
   .useg button{border:0;border-radius:0;padding:7px 10px;font-size:13px;background:var(--panel2)}
   .useg button[aria-pressed="true"]{background:var(--accent);color:#141925;font-weight:800}
+  .swper{margin:0 0 4px} .swper select{flex:1 1 160px} .swper input{flex:1 1 140px}
   .sw1{padding:10px 12px;margin-top:8px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
   .sw1 .top{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
   .sw1 a{color:inherit}
@@ -255,6 +256,7 @@
   <section id="mysw">
     <h2>Your swaps</h2>
     <div class="stabs"><button id="tabup" class="on">Scheduled</button><button id="tabpast">Previous</button></div>
+    <div class="bar swper"><select id="swper" aria-label="Time period"></select><input type="date" id="swday" hidden aria-label="Day"><span class="note" id="swcount"></span></div>
     <div id="swlist"><p class="note">Loading…</p></div>
   </section>
 
@@ -785,7 +787,19 @@ let mySwaps = [], swTab = 'up';
 const TAG = { scheduled: ['Scheduled', 'var(--mute)'], warned: ['Warned - buy your pack', 'var(--accent)'], done: ['Contacted', 'var(--ok)'], off: ['Called off', 'var(--bad)'] };
 function drawSwaps(){
   $('#tabup').classList.toggle('on', swTab === 'up'); $('#tabpast').classList.toggle('on', swTab === 'past');
-  const list = mySwaps.filter(x => swTab === 'up' ? x.upcoming : !x.upcoming);
+  // Time period (your own time): the choices depend on the tab.
+  const opts = swTab === 'up' ? [['all', 'All scheduled'], ['3h', 'Next 3 hours'], ['today', 'Today'], ['tomorrow', 'Tomorrow'], ['day', 'Pick a day']]
+    : [['all', 'Last 14 days'], ['today', 'Today'], ['yesterday', 'Yesterday'], ['7d', 'Last 7 days'], ['day', 'Pick a day']];
+  if($('#swper').dataset.tab !== swTab){ $('#swper').innerHTML = opts.map(([v, l]) => `<option value="${v}">${l}</option>`).join(''); $('#swper').dataset.tab = swTab; $('#swper').value = swPer[swTab] || 'all'; }
+  const per = $('#swper').value; $('#swday').hidden = per !== 'day';
+  const dayOf = ms => { const d = new Date(ms); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); };
+  const nowMs = Date.now(), today = dayOf(nowMs), shift = n => dayOf(nowMs + n * 86400000);
+  const pick = $('#swday').value ? Number($('#swday').value.replace(/-/g, '')) : null;
+  const inPer = x => per === 'all' ? true : per === '3h' ? x.due - nowMs <= 3 * 3600000 : per === 'today' ? dayOf(x.due) === today
+    : per === 'tomorrow' ? dayOf(x.due) === shift(1) : per === 'yesterday' ? dayOf(x.due) === shift(-1) : per === '7d' ? nowMs - x.due <= 7 * 86400000
+    : per === 'day' ? (pick == null || dayOf(x.due) === pick) : true;
+  const list = mySwaps.filter(x => (swTab === 'up' ? x.upcoming : !x.upcoming) && inPer(x));
+  $('#swcount').textContent = `${list.length} swap${list.length === 1 ? '' : 's'}`;
   if(swTab === 'up') list.sort((a, b) => a.due - b.due);
   const when = ms => new Date(ms).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)}</a>` : esc(t);
@@ -801,9 +815,12 @@ function drawSwaps(){
       + `</div>`
       + `<div class="note swtl">${[x.made ? `Matched ${when(x.made)}` : '', x.warnedAt ? `warning sent ${tm(x.warnedAt)}` : x.upcoming ? `warning ~${tm(x.due - 35 * 60000)}` : '', x.contactedAt ? `contact sent ${tm(x.contactedAt)}` : x.upcoming ? `contact ~${tm(x.due - 5 * 60000)}` : ''].filter(Boolean).join(' · ')}</div>`
       + (x.note ? `<div class="note" style="margin-top:4px">${esc(x.note)}</div>` : '') + `</div>`; }).join('')
-    || `<p class="note">${swTab === 'up' ? 'No swaps scheduled yet. Matching runs every hour at :20 for the next 3 hours.' : 'No swaps in the last 14 days.'}</p>`;
+    || `<p class="note">${$('#swper').value !== 'all' ? 'No swaps in that time period.' : swTab === 'up' ? 'No swaps scheduled yet. Matching runs every hour at :20 for the next 3 hours.' : 'No swaps in the last 14 days.'}</p>`;
 }
 async function loadSwaps(){ const j = await api('/api/swaps?op=myswaps'); if(j.error){ $('#swlist').innerHTML = `<p class="note">${esc(j.error)}</p>`; return; } mySwaps = j.swaps || []; drawSwaps(); }
+const swPer = {};
+$('#swper').addEventListener('change', () => { swPer[swTab] = $('#swper').value; if($('#swper').value === 'day' && !$('#swday').value){ const d = new Date(); $('#swday').value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; } drawSwaps(); });
+$('#swday').addEventListener('change', drawSwaps);
 $('#tabup').addEventListener('click', () => { swTab = 'up'; drawSwaps(); });
 $('#tabpast').addEventListener('click', () => { swTab = 'past'; drawSwaps(); });
 
