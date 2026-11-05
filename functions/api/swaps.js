@@ -555,7 +555,7 @@ async function runMatching(db, env) {
       AND wants IS NOT NULL AND wants <> '[]' AND slots IS NOT NULL AND slots <> '[]'
       AND key NOT IN (SELECT key FROM restricted)
       AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`))
-    .map(u => ({ ...u, sched: parse(u.sched, null), wants: parse(u.wants, []), keep: new Set(parse(u.keep, [])), slots: parse(u.slots, []),
+    .map(u => ({ ...u, sched: parse(u.sched, null), wants: parse(u.wants, []), keep: new Set(parse(u.keep, [])), touch: new Set(parse(u.touch, [])), slots: parse(u.slots, []),
                  passes: parse(u.passes, []), caps: parse(u.caps, {}) || {} }));
   /* A member can be in any number of swaps a swap day, with anyone, the same
      partner again (even in the same hour) included. Each specific pass
@@ -567,7 +567,7 @@ async function runMatching(db, env) {
      called off while it's still only scheduled (once warned, the late-change
      rule keeps it). */
   try {
-    const un = new Map(users.map(u => [u.key, new Set(u.passes.filter(p => p.untouchable).map(p => p.key))]).filter(([, v]) => v.size));
+    const un = new Map(users.map(u => [u.key, new Set(u.passes.filter(p => p.untouchable && !u.touch.has(p.key)).map(p => p.key))]).filter(([, v]) => v.size));
     if (un.size) {
       const pend = ((await db.prepare(`SELECT * FROM swap_matches WHERE status='pending' AND dueAt > ?`).bind(Date.now()).all()).results) || [];
       const res = { n: 0, late: 0, soon: 0 };
@@ -622,7 +622,7 @@ async function runMatching(db, env) {
   const capsOf = new Map(users.map(u => [u.key, u.caps]));
   // Receiving the same pass more than once a day is fine (Dennis, 2026-11-04); only their own Scale per-day limit applies.
   const perDayOk = (k, w, d) => { const c = (capsOf.get(k) || {})[w]; return !(c && Number(c.d) > 0) || (recv.get(`${k}|${w}|${d}`) || 0) < Number(c.d); };
-  const gives = (u, d) => new Set(u.passes.filter(p => p.kind !== 'team' && !p.untouchable).map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !given.has(`${u.key}|${k}|${d}`)));
+  const gives = (u, d) => new Set(u.passes.filter(p => p.kind !== 'team' && !(p.untouchable && !u.touch.has(p.key))).map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !given.has(`${u.key}|${k}|${d}`)));
   /* Every possible pair and shared hour, best first: an hour someone picked
      first is their primary, so pairs on both members' earliest picks go
      ahead - when two people want the same player, the one whose primary
@@ -1152,6 +1152,8 @@ async function sideLines(member, m, side) {
 async function matchCols(db) {
   for (const c of ['warnA', 'warnB', 'doneA', 'doneB', 'followA', 'followB', 'dueAt']) { try { await alterOnce(db, `ALTER TABLE swap_matches ADD COLUMN ${c} INTEGER`); } catch (e) {} }
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN comment TEXT'); } catch (e) {}
+  // Untouchable passes the member chose to swap anyway (step 3).
+  try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN touch TEXT'); } catch (e) {}
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN goal REAL'); } catch (e) {}
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN autoAt INTEGER'); } catch (e) {}
   // Scale: dayCap = most swaps a swap day (all players); caps = { passKey: { n, at } }, most swaps for that player overall, counted from when it was set.
@@ -1871,7 +1873,7 @@ export async function swapAccess(env, request) {
 }
 // What a member (not an admin) may do: their own swap and nothing else, and
 // for OTD their own passes and games.
-const MEMBER_OPS = new Set(['me', 'save', 'keep', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
+const MEMBER_OPS = new Set(['me', 'save', 'keep', 'touch', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
 const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan']);
 const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostdays', 'projections', 'boostinv', 'buys', 'legboosts', 'resell', 'nosell']);
 const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
@@ -3222,10 +3224,23 @@ async function handle({ request, env, waitUntil }) {
     const lowP = u && !lite ? await (async () => { try { return [...await lowPlays(env, db, parse(u.passes, []).filter(p => p.kind !== 'team').map(p => p.key))]; } catch (e) { return []; } })() : [];
     mark(request, 'plays');
     return json({ key: me, admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
-      keep: parse(u.keep, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: lite ? [] : parse(u.passes, []), passCount: (() => { try { return parse(u.passes, []).length; } catch (e) { return 0; } })(), lowPlays: lowP, scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {} } : null, real: realN });
+      keep: parse(u.keep, []), touch: parse(u.touch, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: lite ? [] : parse(u.passes, []), passCount: (() => { try { return parse(u.passes, []).length; } catch (e) { return 0; } })(), lowPlays: lowP, scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {} } : null, real: realN });
   }
 
   // A tick in the passes list saves at once: the passes they won't give.
+  /* Step 3's untouchable list: the ones they'll swap anyway. Turning one back
+     to "never swap" calls off its swaps still to come, like a kept pass. */
+  if (op === 'touch' && request.method === 'POST') {
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    const touch = (Array.isArray(b.touch) ? b.touch : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, 2000);
+    await matchCols(db);
+    const r = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
+    if (!r) return json({ error: 'Scan your passes first.' }, 400);
+    await db.prepare('UPDATE swap_users SET touch=?, updatedAt=? WHERE key=?').bind(JSON.stringify(touch), Date.now(), me).run();
+    const t = new Set(touch), never = new Set(parse(r.passes, []).filter(p => p.untouchable && !t.has(p.key)).map(p => p.key));
+    const res = await afterCallOff(env, db, auth, me, await cancelKept(db, me, never));
+    return json({ ok: true, touch: touch.length, cancelled: res.n, late: res.late });
+  }
   if (op === 'keep' && request.method === 'POST') {
     let b = {}; try { b = await request.json(); } catch (e) {}
     const keep = (Array.isArray(b.keep) ? b.keep : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, 3000);

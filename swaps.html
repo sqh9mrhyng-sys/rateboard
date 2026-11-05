@@ -64,6 +64,12 @@
   .stabs{display:flex;gap:6px;margin:4px 0 10px}
   .stabs button{flex:1}
   .stabs button.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 18%,var(--panel2));font-weight:700}
+  .untouch{margin:8px 0 10px;padding:10px 12px;border:1px solid var(--accent);border-radius:10px;background:color-mix(in srgb,var(--accent) 8%,var(--panel2))}
+  .untouch .uh{margin-bottom:4px}
+  .u1{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line)}
+  .useg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .useg button{border:0;border-radius:0;padding:7px 10px;font-size:13px;background:var(--panel2)}
+  .useg button[aria-pressed="true"]{background:var(--accent);color:#141925;font-weight:800}
   .sw1{padding:10px 12px;margin-top:8px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
   .sw1 .top{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
   .sw1 a{color:inherit}
@@ -190,6 +196,7 @@
     <p class="note">Tick a box to keep that player out of swaps. Passes set untouchable on Real are kept automatically.</p>
     <div class="bar"><span class="note" hidden><span class="who" id="rsuser"></span></span><button class="primary wide" id="scan">Scan my passes</button></div>
     <div class="note" id="scanmsg"></div>
+    <div class="untouch" id="untouch" hidden></div>
     <div class="psum" id="psum" hidden style="margin-bottom:8px"><span id="psumtxt"></span><button id="ptoggle" class="sm">Done - collapse</button></div>
     <div class="bar" id="pctl" hidden>
       <select id="pview" aria-label="View"><option value="all">All passes</option><option value="season">By season</option></select>
@@ -401,7 +408,7 @@ const SEASONS = { nba:[2027,2026,2025,2024,2023], ncaam:[2027,2026,2025,2024], n
   nhl:[2026,2025,2024,2023], mlb:[2026,2025,2024,2023,2022], wnba:[2026,2025,2024], soccer:[2026,2025], golf:[2026,2025,2024,2023,2022,2021,2020,2019,2018,2017,2016,2015,2014], ufc:[2023] };
 const api = async (u, o) => { const r = await fetch(u, o); const j = await r.json().catch(() => ({})); if(!r.ok && !j.error) j.error = 'Error ' + r.status; return j; };
 
-let prof = { rsUser: '', passes: [], keep: [], wants: [], slots: [] };
+let prof = { rsUser: '', passes: [], keep: [], wants: [], slots: [], touch: [] };
 let wantNames = {};
 const keyLbl = k => { const [sp, se] = k.split(':'); return `${SPORT[sp] || sp} ${seasonLbl(sp, se)}`; };
 
@@ -508,15 +515,38 @@ function passRow(p, keep, showSeason){
   const nm = esc(p.name && !/^player$/i.test(p.name) ? p.name : 'Player ' + p.id);
   const prog = p.progress ? `<span class="note">${esc(p.progress)}${p.toward ? ' ' + esc(p.toward) : ''}</span>` : '';
   const earned = p.earned != null ? `<span class="note">· ${Number(p.earned).toLocaleString()} earned</span>` : '';
-  // Untouchable on Real: always kept, and the box can't be unticked here.
-  const un = !!p.untouchable, k = un || keep.has(p.key);
+  // Untouchable on Real: always kept, and the box can't be unticked here (unless they chose "Swap anyway" above).
+  const un = !!p.untouchable && !(prof.touch || []).includes(p.key), k = un || keep.has(p.key);
   return `<label class="pass${k ? ' keep' : ''}"${un ? ' title="Set untouchable on Real - never swapped. Change it in Real to swap it."' : ''}><input type="checkbox" data-keep="${p.key}" ${k ? 'checked' : ''}${un ? ' disabled' : ''} aria-label="Keep ${nm}">
     <span class="nm">${u ? `<a href="${u}" target="_blank" rel="noopener">${nm}</a>` : nm}</span><span class="k">${un ? 'untouchable' : k ? 'keeping' : 'swappable'}</span>
     <span class="meta">${passTag(p)} ${showSeason ? esc(keyLbl(p.key)) : ''}${prog ? ' · ' + prog : ''}${earned ? ' ' + earned : ''}</span></label>`;
 }
+/* Step 3's own list of passes set untouchable on Real, each with a switch, so
+   a wrong read (or a change of mind) can be fixed here. */
+function drawUntouch(){
+  const list = prof.passes.filter(p => p.untouchable && !NO_SWAP.has(p.sport) && !isTeam(p) && !offSeason(p));
+  $('#untouch').hidden = !list.length;
+  if(!list.length) return;
+  const tch = new Set(prof.touch || []);
+  $('#untouch').innerHTML = `<div class="uh"><b>Untouchable on Real</b> <span class="note">· ${list.length} pass${list.length === 1 ? '' : 'es'} - never swapped unless you switch one on</span></div>`
+    + list.sort((a, b) => String(a.name).localeCompare(String(b.name))).map(p => { const on = tch.has(p.key);
+      return `<div class="u1"><span><b>${esc(p.name || 'Player ' + p.id)}</b> <span class="note">${esc(keyLbl(p.key))}</span></span>`
+        + `<span class="seg useg"><button data-touch="${p.key}" data-v="0" aria-pressed="${!on}">Never swap</button><button data-touch="${p.key}" data-v="1" aria-pressed="${on}">Swap anyway</button></span></div>`; }).join('')
+    + `<div class="note" id="untouchmsg" style="margin-top:6px"></div>`;
+}
+$('#untouch').addEventListener('click', async e => {
+  const b = e.target.closest('[data-touch]'); if(!b) return;
+  const k = b.dataset.touch, on = b.dataset.v === '1';
+  const t = new Set(prof.touch || []); on ? t.add(k) : t.delete(k);
+  if([...t].sort().join() === [...(prof.touch || [])].sort().join()) return;
+  prof.touch = [...t]; drawSum(); drawPasses();
+  const j = await api('/api/swaps?op=touch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ touch: prof.touch }) });
+  const m = $('#untouchmsg'); if(m) m.textContent = j.error ? 'Could not save: ' + j.error : (on ? 'Saved - that pass can be swapped now.' : 'Saved - that pass won\'t be swapped.') + (j.cancelled ? ` ${j.cancelled} swap${j.cancelled === 1 ? '' : 's'} using it called off.` : '');
+});
 function drawSum(){
   const all = prof.passes.filter(p => !NO_SWAP.has(p.sport) && !isTeam(p) && !offSeason(p));
-  const keep = new Set(prof.keep), kept = all.filter(p => p.untouchable || keep.has(p.key)).length;
+  const keep = new Set(prof.keep), tch = new Set(prof.touch || []), kept = all.filter(p => (p.untouchable && !tch.has(p.key)) || keep.has(p.key)).length;
+  drawUntouch();
   $('#psum').hidden = !all.length;
   $('#psumtxt').innerHTML = `<b>${all.length - kept}</b> swappable · <b>${kept}</b> keeping`;
   $('#ptoggle').textContent = collapsed ? 'Show my passes' : 'Done - collapse';
