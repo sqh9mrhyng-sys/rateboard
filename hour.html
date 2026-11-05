@@ -25,6 +25,9 @@
   .chk{width:22px;height:22px;accent-color:var(--ok);flex:none}
   .grp{display:flex;align-items:center;gap:10px;min-width:0}
   .sub .rv a{color:var(--ink)}
+  .gh{margin:12px 0 2px;font-size:13px;font-weight:700;color:var(--accent)} .gh:first-child{margin-top:4px}
+  .gh a{color:var(--accent)}
+  .gh + .row{border-top:0}
   .wait{margin-top:14px;padding:10px 12px;border:1px dashed var(--line);border-radius:10px;text-align:center}
   #con.new{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 35%,transparent)}
 </style>
@@ -67,8 +70,12 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
     setTimeout(() => showOffers(false), Math.max(0, openAt - Date.now()) + 500);
   }
   $('#nbuy').textContent = live.length; $('#ncon').textContent = live.length;
-  $('#buylist').innerHTML = j.swaps.map((x, i) => `<div class="row${x.off ? ' off' : ''}"><span class="grp"><input type="checkbox" class="chk" data-k="b${i}" ${done['b' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}>
-    <span><b>${lnk(x.give, x.giveUrl)}</b><span class="sub">for @${esc(x.partner || '?')}${x.off ? ' · called off' : ''}</span></span></span>${x.yourCard ? `<a class="btn" href="${esc(x.yourCard)}" target="_blank" rel="noopener">Your card</a>` : ''}</div>`).join('');
+  // Grouped by the player they receive; each line is a pack to buy.
+  const groups = new Map();
+  j.swaps.forEach((x, i) => { const g = groups.get(x.receive) || groups.set(x.receive, { url: x.receiveUrl, rows: [] }).get(x.receive); g.rows.push([x, i]); });
+  $('#buylist').innerHTML = [...groups.entries()].map(([name, g]) => `<div class="gh">You're receiving ${lnk(name, g.url)}</div>`
+    + g.rows.map(([x, i]) => `<div class="row${x.off ? ' off' : ''}"><span class="grp"><input type="checkbox" class="chk" data-k="b${i}" ${done['b' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}>
+      <span><b>${lnk(x.give, x.giveUrl)}</b>${x.off ? '<span class="sub">called off</span>' : ''}</span></span>${x.yourCard ? `<a class="btn" href="${esc(x.yourCard)}" target="_blank" rel="noopener">Your card</a>` : ''}</div>`).join('')).join('');
   // Each partner: who, what you receive, what you give - and their comment to reach them.
   $('#conlist').innerHTML = j.swaps.map((x, i) => `<div class="row${x.off ? ' off' : ''}"><span class="grp"><input type="checkbox" class="chk" data-k="c${i}" ${done['c' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}>
     <span><b>@${esc(x.partner || '?')}</b><span class="sub">You receive <b class="rv">${lnk(x.receive, x.receiveUrl)}</b></span><span class="sub">(You're giving ${esc(x.give)})</span></span></span>${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : '<span class="note">no comment</span>'}</div>`).join('');
