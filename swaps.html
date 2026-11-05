@@ -258,6 +258,18 @@
     <div id="swlist"><p class="note">Loading…</p></div>
   </section>
 
+  <section id="adminprio" class="adm" hidden>
+    <h2>Priority swappers (admin)</h2>
+    <p class="note">Every hour they pick counts as their 1st, and they get a player ahead of anyone else who wants him (you still go first).</p>
+    <div class="bar"><input id="prioin" placeholder="Username" autocomplete="off" autocapitalize="off"><button class="primary" id="prioadd">Add</button></div>
+    <div id="priolist" class="chips"></div><span class="note" id="priomsg"></span>
+  </section>
+  <section id="adminund" class="adm" hidden>
+    <h2>Didn't get a DM (last 24h)</h2>
+    <p class="note">Members Real refused a warning or contact DM for. Real sometimes takes a message and still doesn't show it - those can't be seen from here.</p>
+    <div class="bar"><button id="undload">Refresh</button></div>
+    <div id="undlist" class="note">Loading…</div>
+  </section>
   <section id="admin">
     <h2>Matches (admin)</h2>
     <div class="bar"><button id="run">Run matching now</button><button id="reload">Refresh</button><span class="note" id="runmsg"></span></div>
@@ -796,6 +808,29 @@ $('#tabup').addEventListener('click', () => { swTab = 'up'; drawSwaps(); });
 $('#tabpast').addEventListener('click', () => { swTab = 'past'; drawSwaps(); });
 
 // --- admin
+function paintPrio(j){
+  $('#priolist').innerHTML = (j.list || []).map(x => `<span class="chip">@${esc(x.real || x.key)}<button data-prio="${esc(x.key)}" aria-label="Remove">✕</button></span>`).join('') || '<span class="note">Nobody yet.</span>';
+}
+async function loadPrio(){ const j = await api('/api/swaps?op=priority'); if(!j.error) paintPrio(j); }
+$('#prioadd').addEventListener('click', async () => {
+  const v = $('#prioin').value.trim(); if(!v) return;
+  const j = await api('/api/swaps?op=priority&add=' + encodeURIComponent(v), { method: 'POST' });
+  $('#priomsg').textContent = j.error || 'Added - counts from the next matching run.'; if(j.list) paintPrio(j); if(!j.error) $('#prioin').value = '';
+});
+$('#priolist').addEventListener('click', async e => {
+  const b = e.target.closest('[data-prio]'); if(!b) return;
+  const j = await api('/api/swaps?op=priority&remove=' + encodeURIComponent(b.dataset.prio), { method: 'POST' });
+  if(j.list) paintPrio(j); $('#priomsg').textContent = j.error || 'Removed.';
+});
+async function loadUnd(){
+  $('#undlist').textContent = 'Loading…';
+  const j = await api('/api/swaps?op=undelivered');
+  if(j.error){ $('#undlist').textContent = j.error; return; }
+  const when = iso => new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  $('#undlist').innerHTML = (j.users || []).length ? '<table><tr><th>Who</th><th>What</th><th>Why</th><th>Last</th></tr>' + j.users.map(x =>
+    `<tr><td><b>@${esc(x.user)}</b></td><td>${esc(x.what.join(', '))}</td><td>${esc(x.why.join('; '))}</td><td>${when(x.last)}</td></tr>`).join('') + '</table>' : 'Everyone got their DMs.';
+}
+$('#undload').addEventListener('click', loadUnd);
 async function loadMatches(){
   const j = await api('/api/swaps?op=matches');
   if(j.error){ $('#matches').textContent = j.error; return; }
@@ -945,7 +980,7 @@ async function proGate(){
   $('#admin').hidden = !j.admin;
   savedWants = new Set((j.profile && j.profile.active && j.profile.wants) || []);
   paintPaused();
-  drawPasses(); drawWants(); drawHours(); loadHourCounts(); loadWantCounts(); loadSwaps(); if(j.admin){ loadMatches(); }
+  drawPasses(); drawWants(); drawHours(); loadHourCounts(); loadWantCounts(); loadSwaps(); if(j.admin){ loadMatches(); $('#adminprio').hidden = false; $('#adminund').hidden = false; loadPrio(); loadUnd(); }
   resumeScan();
   api('/api/swaps?op=buildindex');   // adds one season to the search table, at most every 5 minutes
 })();

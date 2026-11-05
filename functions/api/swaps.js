@@ -546,6 +546,7 @@ async function chatState(auth, channelId, theirId, since) {
   return { messages: msgs.length, replied: !!(last && when(last) > since), lastTheirs: last ? { at: when(last), text: String(last.text).slice(0, 300) } : null };
 }
 
+const PRIO_KEY = 'swap_priority_v1';
 async function runMatching(db, env) {
   // Only members the bot already has a chat with: new chats are capped at
   // five a day, so a match with anyone else might never be delivered.
@@ -637,14 +638,19 @@ async function runMatching(db, env) {
      swap at each one. */
   const dues = [];
   for (let t = Math.floor((now + 30 * 60000) / 3600000) * 3600000 + 3600000; t - now <= MATCH_AHEAD_MS; t += 3600000) dues.push(t);
-  const ranks = new Map(users.map(u => [u.key, dues.map(t => rankAt(u, t))]));
+  /* Priority members (Dennis picks them on the Swaps page, 2026-11-05): every
+     hour they pick counts as their 1st, and their pairs go ahead of everyone
+     but Dennis's - so when two people want the same player, they get it. */
+  let prio = new Set(); try { prio = new Set((JSON.parse((env && await env.RATEBOARD_KV.get(PRIO_KEY)) || '[]') || []).map(k => String(k).toLowerCase())); } catch (e) {}
+  const isPrio = k => prio.has(String(k).toLowerCase()), bossOf = k => ADMINS.includes(String(k).toLowerCase()) ? 2 : isPrio(k) ? 1 : 0;
+  const ranks = new Map(users.map(u => [u.key, dues.map(t => { const r = rankAt(u, t); return r >= 0 && bossOf(u.key) ? 0 : r; })]));
   for (let i = 0; i < users.length; i++) for (let j = i + 1; j < users.length; j++) {
     const A = users[i], B = users[j];
     if (!A.wants.length || !B.wants.length) continue;
     const RA = ranks.get(A.key), RB = ranks.get(B.key);
     dues.forEach((due, k) => {
       const ra = RA[k], rb = RB[k]; if (ra < 0 || rb < 0) return;
-      cands.push({ A, B, slot: new Date(due).getUTCHours(), best: Math.min(ra, rb), sum: ra + rb, due, i, boss: ADMINS.includes(String(A.key).toLowerCase()) || ADMINS.includes(String(B.key).toLowerCase()) });
+      cands.push({ A, B, slot: new Date(due).getUTCHours(), best: Math.min(ra, rb), sum: ra + rb, due, i, boss: Math.max(bossOf(A.key), bossOf(B.key)) });
     });
   }
   // Dennis first, in every hour he picks; then the soonest hour; then primary hours.
@@ -790,8 +796,6 @@ async function retryDms(db, auth) {
     if (usedCh.has(Number(r.channelId))) continue;   // that chat already got a message this minute
     let parts = parse(r.parts, []);
     parts = parts.flatMap(fitDm);   // queued before the length fix: cut down to size
-    // One part per chat per minute: two close together and Real can drop the second.
-    if (Number(r.at) > Date.now() - 50000 && Number(r.tries) === 0) continue;   // queued this minute: next tick
     usedCh.add(Number(r.channelId));
     try { await dmSendRetry(auth, r.channelId, parts[0]); parts.shift(); await stat(db, 'dm_retried'); await sleep(400); }
     catch (e) { if (Number(r.tries) % 5 === 0) await botFail(db, 'dm_retry', `${r.label} try ${r.tries}: ${String(e.message || e).slice(0, 120)}`); }
@@ -1071,12 +1075,12 @@ const LINES_PER_DM = 6;   // 6 players a message (Dennis, 2026-11-04), easier on
 /* Up to 8 lines a message, and never more than DM_MAX_CHARS: Real refuses a
    long message ("Message is too long"), and 8 warning lines with three links
    each went over, so everything after the heading was being dropped. */
-const DM_MAX_CHARS = 900;
+const DM_MAX_CHARS = 750;   // 750 a message (Dennis, 2026-11-05; Real refused some 900s as too long)
 const chunks = (lines, n = LINES_PER_DM) => { const out = []; let cur = [];
   for (const l of lines) { if (cur.length && (cur.length >= n || [...cur, l].join('\n').length > DM_MAX_CHARS)) { out.push(cur.join('\n')); cur = []; } cur.push(l); }
   if (cur.length) out.push(cur.join('\n')); return out; };
 // A message that's still too long, cut at line breaks into pieces Real will take.
-const fitDm = t => String(t).length <= 1000 ? [t] : chunks(String(t).split('\n'), 999);
+const fitDm = t => String(t).length <= DM_MAX_CHARS ? [t] : chunks(String(t).split('\n'), DM_MAX_CHARS);
 // Warn: heading plus the first 5 swaps in one message, then up to 8 a message.
 /* Warning, grouped by the player they receive (Dennis, 2026-11-04): the
    heading, then one message per player received - his link on top, the packs
@@ -1107,7 +1111,7 @@ function groupsOf(items, field) {
   return [...groups.values()];
 }
 function warnGrouped(items) {
-  const head = "You are swapping the following players today, please buy the following packs within 30 mins. This is a heads up DM - the users you're swapping with in 30 mins:";
+  const head = "Heads up - you swap in 30 min. Buy these packs now:";
   const groups = new Map();
   for (const it of items) (groups.get(it.recvKey) || groups.set(it.recvKey, { recv: it.recv, lines: [] }).get(it.recvKey)).lines.push(it.buy);
   // Always labelled with the player received, even when it's just one (Dennis, 2026-11-04).
@@ -1116,8 +1120,7 @@ function warnGrouped(items) {
 /* Contact message, the same way: heading, then per player they receive his
    link on top and the partners to contact under it (6 a message). */
 function contactGrouped(items, buyItems) {
-  const head = "Here are comments to contact the following swaps, please send 12 hour offers and report anyone who's doing anything wrong.\n"
-    + "Comments are to get ahold of other users if they didn't buy the pack in the warning period, ideally this should be communication-less.";
+  const head = "Swap time - send 12 hour offers. Comments are only to reach someone who didn't buy; report anyone doing it wrong.";
   const groups = new Map();
   for (const it of items) (groups.get(it.recvKey) || groups.set(it.recvKey, { recv: it.recv, lines: [] }).get(it.recvKey)).lines.push(it.contact);
   const out = packDm(head, [...groups.values()]);
@@ -1260,11 +1263,15 @@ async function runDms(env, db, auth, rows, max, force) {
       /* Each part is tried a few times on the spot; a part after the heading
          that still won't go is queued and sent again every minute until it
          does (a busy Real was dropping the player lines after the heading). */
-      /* Only the first part goes now; the rest follow one a minute (2026-11-05:
-         a second part sent 1.5s after the first was taken by Real but never
-         showed up in the chat - a member got 3 of his 6 contacts). */
-      await dmSendRetry(auth, ch, msgs[0]); sent++; await stat(db, 'dm_' + kind);
-      if (msgs.length > 1) { await queueDm(db, ch, msgs.slice(1), `${kind} @${me.rsUser}`); await stat(db, 'dm_parts_queued', msgs.length - 1); }
+      /* Parts 4.5s apart (2026-11-05: at 1.5s Real took a second part but it
+         never showed in the chat - a member got 3 of his 6 contacts). A part
+         that still won't go is queued and tried again each minute. */
+      for (let i = 0; i < msgs.length; i++) {
+        if (i) await sleep(4500);
+        try { await dmSendRetry(auth, ch, msgs[i]); }
+        catch (e) { if (i === 0) throw e; await queueDm(db, ch, msgs.slice(i), `${kind} @${me.rsUser}`); await botFail(db, 'dm_' + kind, `@${me.rsUser} part ${i + 1}/${msgs.length} queued for retry: ${e.message || e}`); break; }
+        sent++; await stat(db, 'dm_' + kind);
+      }
       // A second look in a few minutes: read the chat back and re-send any part that isn't there.
       // (The read-back second look is off: Real stores links differently from what was sent, so it re-sent messages that had landed.)
       notes.push(`${kind} sent to @${me.rsUser} (${msgs.length} message${msgs.length === 1 ? '' : 's'})`); return true;
@@ -3592,6 +3599,37 @@ async function handle({ request, env, waitUntil }) {
      "untouchable" flag). Read-only; nothing saved. */
   /* Admin, for tracing a member's DMs: their swaps from the last day, every
      column (times as ISO), partner names and the players as names. */
+  /* Admin: priority swappers - read, add, remove (by board or Real username). */
+  if (op === 'priority') {
+    if (!acc.admin) return forbidden('Admin only.');
+    let list = []; try { list = JSON.parse((await env.RATEBOARD_KV.get(PRIO_KEY)) || '[]') || []; } catch (e) {}
+    const add = String(url.searchParams.get('add') || '').trim().replace(/^@/, '').toLowerCase(), del = String(url.searchParams.get('remove') || '').trim().toLowerCase();
+    if (add && request.method === 'POST') {
+      const u = await db.prepare('SELECT key, rsUser FROM swap_users WHERE LOWER(key)=? OR LOWER(rsUser)=?').bind(add, add).first();
+      if (!u) return json({ error: `No swapper called @${add}.`, list }, 404);
+      if (!list.map(x => x.toLowerCase()).includes(u.key.toLowerCase())) list.push(u.key);
+    }
+    if (del && request.method === 'POST') list = list.filter(x => x.toLowerCase() !== del);
+    if (request.method === 'POST') await env.RATEBOARD_KV.put(PRIO_KEY, JSON.stringify(list));
+    const names = {}; for (const k of list) { try { const r = await db.prepare('SELECT rsUser FROM swap_users WHERE key=?').bind(k).first(); names[k] = (r && r.rsUser) || k; } catch (e) {} }
+    return json({ list: list.map(k => ({ key: k, real: names[k] })) });
+  }
+  /* Admin: who didn't get a swap DM in the last day (Real refused it, or it
+     gave up retrying), newest first, one line per member. */
+  if (op === 'undelivered') {
+    if (!acc.admin) return forbidden('Admin only.');
+    const rows = ((await db.prepare("SELECT at, kind, msg FROM bot_log WHERE kind LIKE 'dm_%' AND at > ? ORDER BY at DESC LIMIT 3000").bind(Date.now() - 86400000).all()).results) || [];
+    const by = new Map();
+    for (const r of rows) {
+      const m = String(r.msg || '').match(/@([A-Za-z0-9._-]+)/) || String(r.msg || '').match(/^([A-Za-z0-9._-]{2,40}):/);
+      if (!m) continue;
+      const u = m[1].toLowerCase(), why = /403/.test(r.msg) ? 'Real won\'t let the bot message them ("Cannot message this channel")' : /too long/i.test(r.msg) ? 'message too long' : /429|slowmode/i.test(r.msg) ? 'Real slowmode' : /gave up/i.test(r.msg) ? 'gave up after an hour of retries' : /never verified/i.test(r.msg) ? 'never verified (step 1)' : String(r.msg).slice(0, 80);
+      const kind = String(r.kind).replace(/^dm_/, '');
+      const x = by.get(u) || by.set(u, { user: u, last: r.at, kinds: new Set(), whys: new Set(), n: 0 }).get(u);
+      x.n++; x.kinds.add(kind); x.whys.add(why);
+    }
+    return json({ users: [...by.values()].map(x => ({ user: x.user, last: new Date(x.last).toISOString(), tries: x.n, what: [...x.kinds], why: [...x.whys] })) });
+  }
   if (op === 'matchraw') {
     if (!acc.admin) return forbidden('Admin only.');
     const who0 = String(url.searchParams.get('user') || '').trim().replace(/^@/, '').toLowerCase();
