@@ -1291,7 +1291,7 @@ async function runDms(env, db, auth, rows, max, force) {
   };
   // Soonest (or most overdue) first, so a busy hour can't leave earlier ones waiting.
   const order = [...per.values()].sort((x, y) => Math.min(...x.map(z => z.due)) - Math.min(...y.map(z => z.due)));
-  /* Three members at a time (each chat has its own slowmode; one at a time
+  /* Six members at a time (each chat has its own slowmode; one at a time
      couldn't get through a 200-swap hour - 2026-11-05). */
   const doList = async list => {
     if (sent >= max || Date.now() - now > 40000 || (TICK_T0 && !force && tickLeft() < 6000)) return;   // never past the tick's time
@@ -1334,7 +1334,7 @@ async function runDms(env, db, auth, rows, max, force) {
     }
   };
   let qi = 0;
-  await Promise.all([0, 1, 2].map(async () => { while (qi < order.length) { const l = order[qi++]; try { await doList(l); } catch (e) { notes.push('list failed: ' + String(e.message || e).slice(0, 80)); } } }));
+  await Promise.all([0, 1, 2, 3, 4, 5].map(async () => { while (qi < order.length) { const l = order[qi++]; try { await doList(l); } catch (e) { notes.push('list failed: ' + String(e.message || e).slice(0, 80)); } } }));
   // Status: sent once both sides have had the follow-up.
   for (const m of rows) {
     const st = m.followA && m.followB ? 'sent' : (m.warnA || m.warnB || m.doneA || m.doneB) ? 'warned' : m.status;
