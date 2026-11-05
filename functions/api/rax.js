@@ -7340,7 +7340,7 @@ async function pass(){
    Everything else - rescoring, requeueing, wiping, crawling, probes - needs an
    admin session. These used to be open to anyone who knew the address. */
 const READS = {
-  gamelog: { query: 300, top: 900, seasons: 900 },
+  gamelog: { query: 300, top: 900, seasons: 900, facets: 900 },   // facets: the team, conference and position lists (members with game data were getting none)
   plays:   { board: 3600, player: 1800, seasons: 1800, tagboard: 3600, progress: 120 },   // pack data: rebuilt at most hourly
   golf:    { seasons: 1800, tournaments: 1800, allevents: 1800, board: 1800 },
   earn:    { shift: 900 },
