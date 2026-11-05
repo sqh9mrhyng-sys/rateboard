@@ -7721,7 +7721,7 @@ async function collectorHealth(env, url) {
       const dmFails = ((await db.prepare("SELECT at, kind, msg FROM bot_log WHERE kind LIKE 'dm_%' ORDER BY at DESC LIMIT 8").all()).results) || [];
       // The last day's DM failures, grouped by what went wrong (no names).
       let dmFailKinds = {}; try { for (const f of (((await db.prepare("SELECT kind, msg FROM bot_log WHERE kind LIKE 'dm_%' AND at > ?").bind(Date.now() - 86400000).all()).results) || [])) {
-        const k = f.kind + ': ' + String(f.msg || '').replace(/@\S+/g, '@…').replace(/\d{4,}/g, '#').replace(/try \d+/g, 'try n').replace(/part \d+\/\d+/g, m => m.replace(/\d+\//, 'n/')).slice(0, 140);
+        const k = f.kind + ': ' + String(f.msg || '').replace(/^[^:]{1,60}:\s*(?=(send|part|try|gave)\b)/i, '').replace(/^(contact|warn|resend|reset) @\S+/i, '$1').replace(/@\S+/g, '@…').replace(/\d{4,}/g, '#').replace(/try \d+/g, 'try n').replace(/part \d+\/\d+/g, m => m.replace(/\d+\//, 'n/')).slice(0, 140);
         dmFailKinds[k] = (dmFailKinds[k] || 0) + 1; } } catch (e) {}
       let dmq = null; try { dmq = await db.prepare('SELECT COUNT(*) AS n, MAX(tries) AS t FROM dm_retry').first(); } catch (e) {}
       // Same pass given (or received) twice on one swap day, among swaps still on.
