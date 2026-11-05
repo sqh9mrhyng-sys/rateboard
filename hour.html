@@ -24,14 +24,17 @@
   .off{opacity:.5;text-decoration:line-through}
   .chk{width:22px;height:22px;accent-color:var(--ok);flex:none}
   .grp{display:flex;align-items:center;gap:10px;min-width:0}
+  .wait{margin-top:14px;padding:10px 12px;border:1px dashed var(--line);border-radius:10px;text-align:center}
+  #con.new{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 35%,transparent)}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1 id="h">Your swaps</h1>
   <p class="note" id="sub">Loading…</p>
-  <section id="buy" hidden><h2>1. Buy these packs <span class="n" id="nbuy"></span></h2><p class="note" style="margin:0 0 6px">One pack of each. Tick them off as you go.</p><div id="buylist"></div></section>
-  <section id="con" hidden><h2>2. Offer on your partners' cards <span class="n" id="ncon"></span></h2><p class="note" style="margin:0 0 6px">At the swap time, send each partner a 12 hour offer on the 3 cards of the player you receive. Their comment is only to reach them if they didn't buy.</p><div id="conlist"></div></section>
+  <section id="buy" hidden><h2>Buy these packs <span class="n" id="nbuy"></span></h2><p class="note" style="margin:0 0 6px">One pack of each. Tick them off as you go.</p><div id="buylist"></div></section>
+  <p class="note wait" id="wait" hidden></p>
+  <section id="con" hidden><h2>Offer on your partners' cards <span class="n" id="ncon"></span></h2><p class="note" style="margin:0 0 6px">At the swap time, send each partner a 12 hour offer on the 3 cards of the player you receive. Their comment is only to reach them if they didn't buy.</p><div id="conlist"></div></section>
   <p class="note" style="margin-top:14px">Something wrong? Report it on <a href="/swaps">raxacademy.app/swaps</a>.</p>
 </div>
 <script>
@@ -49,7 +52,19 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
   const live = j.swaps.filter(x => !x.off);
   $('#h').textContent = `@${j.user} · ${when}`;
   $('#sub').textContent = `${live.length} swap${live.length === 1 ? '' : 's'} at this time` + (j.swaps.length > live.length ? ` (${j.swaps.length - live.length} called off)` : '') + '.';
-  $('#buy').hidden = $('#con').hidden = !j.swaps.length;
+  $('#buy').hidden = !j.swaps.length;
+  /* The offers show from 5 minutes before the swap (:55): the warning's link
+     opens on the packs to buy and the offers appear at the bottom then; the
+     contact's link opens straight on them. */
+  const openAt = Number(j.due) - 5 * 60000, stage = q.get('s') || 'buy';
+  const showOffers = first => { $('#con').hidden = !j.swaps.length; $('#wait').hidden = true;
+    if(!first){ $('#con').classList.add('new'); $('#con').scrollIntoView({ behavior: 'smooth', block: 'start' }); } };
+  if(stage === 'offer' || Date.now() >= openAt){ showOffers(true); if(stage === 'offer') setTimeout(() => $('#con').scrollIntoView({ block: 'start' }), 50); }
+  else if(j.swaps.length){
+    const at = new Date(openAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    $('#wait').hidden = false; $('#wait').textContent = `Who to offer on shows up here at ${at} - keep this page open or come back then.`;
+    setTimeout(() => showOffers(false), Math.max(0, openAt - Date.now()) + 500);
+  }
   $('#nbuy').textContent = live.length; $('#ncon').textContent = live.length;
   $('#buylist').innerHTML = j.swaps.map((x, i) => `<div class="row${x.off ? ' off' : ''}"><span class="grp"><input type="checkbox" class="chk" data-k="b${i}" ${done['b' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}>
     <span><b>${lnk(x.give, x.giveUrl)}</b><span class="sub">for @${esc(x.partner || '?')}${x.off ? ' · called off' : ''}</span></span></span>${x.yourCard ? `<a class="btn" href="${esc(x.yourCard)}" target="_blank" rel="noopener">Your card</a>` : ''}</div>`).join('');

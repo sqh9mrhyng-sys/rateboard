@@ -1331,7 +1331,7 @@ async function runDms(env, db, auth, rows, max, force) {
       for (const x of hr) { const l = await sideLines(member, x.m, x.side); if (!l) continue; items.push(l); if (noWarn.includes(x)) buy.push(l); }
       let cmsg = contactGrouped(items, buy);
       if (cmsg.length > 1) { const me0 = await member(who);
-        cmsg = [fitOne(`Swap time - send 12 hour offers. You have ${items.length} swaps now - who to contact, their comments and your cards are here:\n${await hourLink(env, who, hr[0].due)}` + (buy.length ? `\n\nYou weren't warned earlier: buy the ${buy.length} pack${buy.length === 1 ? '' : 's'} on that page first.` : '') + `\n\nYou are receiving: ${recvSummary(me0, items)}\n\nReport anyone doing it wrong.`)]; }
+        cmsg = [fitOne(`Swap time - send 12 hour offers. You have ${items.length} swaps now - who to contact, their comments and your cards are here:\n${await hourLink(env, who, hr[0].due, 'offer')}` + (buy.length ? `\n\nYou weren't warned earlier: buy the ${buy.length} pack${buy.length === 1 ? '' : 's'} on that page first.` : '') + `\n\nYou are receiving: ${recvSummary(me0, items)}\n\nReport anyone doing it wrong.`)]; }
       if (items.length && await send(who, cmsg, 'contact')) await mark(hr.filter(x => noWarn.includes(x)), 'warn');
       else await unclaim(hr, 'done');
     }
@@ -1748,14 +1748,18 @@ async function hourSig(env, key, due) {
   return [...new Uint8Array(sig)].slice(0, 12).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 /* A short link for the DM (raxacademy.app/h/<10 letters>), kept in a table and
-   turned into the full signed link by functions/h/[code].js. */
-async function hourLink(env, key, due) {
-  const t = await hourSig(env, key, due), code = t.slice(0, 10);
+   turned into the full signed link by functions/h/[code].js. The warning and
+   the contact each get their own: "buy" opens on the packs to buy (the
+   offers appear at :55), "offer" opens on the offers. */
+async function hourLink(env, key, due, stage = 'buy') {
+  const t = await hourSig(env, key, due);
+  const k = await crypto.subtle.importKey('raw', new TextEncoder().encode('hourcode|' + (swapToken(env) || 'x')), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const code = [...new Uint8Array(await crypto.subtle.sign('HMAC', k, new TextEncoder().encode(`${String(key).toLowerCase()}|${Number(due)}|${stage}`)))].slice(0, 5).map(b => b.toString(16).padStart(2, '0')).join('');
   try { const db = env.RATEBOARD_DB;
-    await db.prepare('CREATE TABLE IF NOT EXISTS hour_links (code TEXT PRIMARY KEY, u TEXT, d INTEGER, t TEXT, at INTEGER)').run();
-    await db.prepare('INSERT OR IGNORE INTO hour_links (code, u, d, t, at) VALUES (?, ?, ?, ?, ?)').bind(code, String(key), Number(due), t, Date.now()).run();
+    await db.prepare('CREATE TABLE IF NOT EXISTS hour_links2 (code TEXT PRIMARY KEY, u TEXT, d INTEGER, t TEXT, s TEXT, at INTEGER)').run();
+    await db.prepare('INSERT OR IGNORE INTO hour_links2 (code, u, d, t, s, at) VALUES (?, ?, ?, ?, ?, ?)').bind(code, String(key), Number(due), t, stage, Date.now()).run();
     return `https://raxacademy.app/h/${code}`;
-  } catch (e) { return `https://raxacademy.app/hour?u=${encodeURIComponent(key)}&d=${Number(due)}&t=${t}`; }
+  } catch (e) { return `https://raxacademy.app/hour?u=${encodeURIComponent(key)}&d=${Number(due)}&t=${t}&s=${stage}`; }
 }
 function recvSummary(me, items) {
   const c = new Map(); for (const it of items) c.set(it.recvKey, (c.get(it.recvKey) || 0) + 1);
@@ -1766,7 +1770,7 @@ async function dmTick(env) {
   const db = env.RATEBOARD_DB, auth = swapToken(env);
   if (!db || !auth || !DM_ON) return [];
   // One-off (2026-11-05, Dennis asked): the new one-message DMs sent to him exactly as members get them, from his own swaps.
-  try { if (!(await env.RATEBOARD_KV.get('example_dm_1105b'))) { await env.RATEBOARD_KV.put('example_dm_1105b', String(Date.now()));
+  try { if (!(await env.RATEBOARD_KV.get('example_dm_1105c'))) { await env.RATEBOARD_KV.put('example_dm_1105c', String(Date.now()));
     const me = await loadMember(db, 'dennis');
     if (me && me.hashId) {
       const m0 = await db.prepare("SELECT dueAt FROM swap_matches WHERE (a='dennis' OR b='dennis') AND status NOT IN ('cleared') AND dueAt IS NOT NULL ORDER BY ABS(dueAt - ?) LIMIT 1").bind(Date.now()).first();
@@ -1774,11 +1778,11 @@ async function dmTick(env) {
       const ms = ((await db.prepare("SELECT * FROM swap_matches WHERE (a='dennis' OR b='dennis') AND dueAt=? AND status NOT IN ('cancelled','cleared')").bind(due).all()).results) || [];
       const cache = new Map(), member = async k => cache.has(k) ? cache.get(k) : (cache.set(k, await loadMember(db, k)), cache.get(k));
       const items = []; for (const m of ms) { const l = await sideLines(member, m, m.a === 'dennis' ? 'A' : 'B'); if (l) items.push(l); }
-      const link = await hourLink(env, 'dennis', due), n = items.length || 0, sum = items.length ? recvSummary(me, items) : 'Jacob Misiorowski x9, A\'ja Wilson x6, Scottie Scheffler x5';
+      const link = await hourLink(env, 'dennis', due), link2 = await hourLink(env, 'dennis', due, 'offer'), n = items.length || 0, sum = items.length ? recvSummary(me, items) : 'Jacob Misiorowski x9, A\'ja Wilson x6, Scottie Scheffler x5';
       const ch = await dmChannel(db, auth, me.hashId, me.rsUser, env);
       await dmSend(auth, ch, fitOne(`Heads up - you swap in 30 min. You have ${n} swaps that hour - buy the ${n} packs listed here:\n${link}\n\nYou are receiving: ${sum}`));
       await sleep(4500);
-      await dmSend(auth, ch, fitOne(`Swap time - send 12 hour offers. You have ${n} swaps now - who to contact, their comments and your cards are here:\n${link}\n\nYou are receiving: ${sum}\n\nReport anyone doing it wrong.`));
+      await dmSend(auth, ch, fitOne(`Swap time - send 12 hour offers. You have ${n} swaps now - who to contact, their comments and your cards are here:\n${link2}\n\nYou are receiving: ${sum}\n\nReport anyone doing it wrong.`));
       await stat(db, 'dm_admin', 2);
     } } } catch (e) { await botFail(db, 'dm_admin', 'example: ' + (e.message || e)); }
   try { await retryDms(db, auth); } catch (e) { await botFail(db, 'dm_retry', e.message); }   // unsent parts first
