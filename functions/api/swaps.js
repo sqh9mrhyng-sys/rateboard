@@ -1755,7 +1755,7 @@ export async function dmTickKey(env) {
 async function packsToday(env, db, me, change) {
   await matchCols(db);
   const day = swapDay(Date.now());
-  const r = await db.prepare('SELECT passes, packsUsed, keep FROM swap_users WHERE key=?').bind(me).first();
+  const r = await db.prepare('SELECT passes, packsUsed, keep, wants FROM swap_users WHERE key=?').bind(me).first();
   if (!r) return { error: 'Scan your passes first.' };
   let pu = parse(r.packsUsed, null); if (!pu || pu.day !== day) pu = { day, keys: [] };
   if (change) {
@@ -1766,8 +1766,10 @@ async function packsToday(env, db, me, change) {
   }
   const mine = { key: me, passes: parse(r.passes, []) };
   const ms = ((await db.prepare("SELECT a, b, aGets, bGets, dueAt, slot, createdAt, status FROM swap_matches WHERE (a=? OR b=?) AND dueAt > ? AND status <> 'cleared'").bind(me, me, Date.now() - 2 * 86400000).all()).results) || [];
-  const used = new Map(); let next = null, latest = null;
+  const used = new Map(), recvToday = new Map(); let next = null, latest = null;
   for (const m of ms) { const due = sideDue(m);
+    // Packs coming to them today, per player they're grinding.
+    if (swapDay(due) === day && !['cancelled', 'cancelling'].includes(m.status)) { const rk = m.a === me ? m.aGets : m.bGets; const v = recvToday.get(rk) || recvToday.set(rk, { done: 0, left: 0 }).get(rk); if (due <= Date.now()) v.done++; else v.left++; }
     if (!['cancelled', 'cancelling'].includes(m.status)) { if (due > Date.now() - 3600000 && (!next || due < next)) next = due; if (!latest || due > latest) latest = due; }
     if (swapDay(due) !== day) continue;
     const k = m.a === me ? m.bGets : m.aGets, partner = m.a === me ? m.b : m.a;
@@ -1783,7 +1785,10 @@ async function packsToday(env, db, me, change) {
   const options = mine.passes.filter(p => p.kind !== 'team' && !/^(soccer|ufc):/.test(p.key) && !seasonOff(p.key) && !taken.has(p.key) && !keep.has(p.key))
     .map(p => ({ key: p.key, name: playerName(mine, p.key) })).sort((a, b) => a.name.localeCompare(b.name));
   const at = next || latest;
-  return { day, system, manual, options, hourUrl: at ? `/hour?u=${encodeURIComponent(me)}&d=${at}&t=${await hourSig(env, me, at)}` : null };
+  const wants = parse(r.wants, []);
+  const grinds = [...new Set([...wants, ...recvToday.keys()])].map(k => ({ key: k, name: playerName(mine, k), picked: wants.includes(k), done: (recvToday.get(k) || {}).done || 0, left: (recvToday.get(k) || {}).left || 0 }))
+    .filter(g => g.picked || g.done || g.left);
+  return { day, system, manual, options, grinds, hourUrl: at ? `/hour?u=${encodeURIComponent(me)}&d=${at}&t=${await hourSig(env, me, at)}` : null };
 }
 async function hourSig(env, key, due) {
   const t = swapToken(env) || 'x';

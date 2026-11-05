@@ -50,14 +50,15 @@
 <body>
 <div class="wrap">
   <h1 id="h">Your swaps</h1>
-  <div class="topbtns"><button class="btn" id="pkbtn" type="button">Packs today ▾</button></div>
-  <div class="hmenu" id="pkmenu" hidden>
-    <p class="note" style="margin:4px 0 8px">Passes you've used today (7am to 7am ET). Add one you used yourself and it won't be given in a swap again today - swaps already scheduled with it still go ahead.</p>
-    <div class="pkadd"><select id="pkadd"></select><button class="btn go" id="pkaddbtn" type="button">Add</button></div>
-    <p class="note" id="pkmsg" style="margin:6px 0 0"></p>
-    <div id="pklist"></div>
+  <div class="hmenu" id="hmenu" hidden><div class="hm-t"><span>Today</span></div><div id="hm-up"></div><div class="hm-t"><span>Previous</span></div><div id="hm-past"></div></div>
+  <div id="pkview" hidden>
+    <section><h2>Your grinds today</h2><p class="note" style="margin:0 0 6px">Packs coming to you today (7am to 7am ET) for each player you're swapping for.</p><div id="pkgrinds"></div></section>
+    <section><h2>Packs used today</h2>
+      <p class="note" style="margin:0 0 8px">Every pass that's gone out (or is scheduled to) in a swap today, plus any you add. Add one you used yourself and it won't be given in a swap again today - swaps already scheduled with it still go ahead.</p>
+      <div class="pkadd"><select id="pkadd"></select><button class="btn go" id="pkaddbtn" type="button">Add</button></div>
+      <p class="note" id="pkmsg" style="margin:6px 0 0"></p>
+      <div id="pklist"></div></section>
   </div>
-  <div class="hmenu" id="hmenu" hidden><div class="hm-t"><span>Scheduled</span></div><div id="hm-up"></div><div class="hm-t"><span>Previous</span></div><div id="hm-past"></div></div>
   <p class="note" id="sub">Loading…</p>
   <section class="andr" id="andr" hidden>
     <b>On Android, request DM</b>
@@ -85,6 +86,8 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
   const live = j.swaps.filter(x => !x.off);
   $('#h').innerHTML = `@${esc(j.user)} · <button class="tbtn" id="tbtn" aria-expanded="false">${esc(when)} <span class="car">▾</span></button>`;
   $('#tbtn').addEventListener('click', openMenu);
+  // Packs today view: the page shows only that.
+  if(q.get('v') === 'packs'){ $('#tbtn').firstChild.textContent = 'Packs today '; ['#buy', '#con', '#andr', '#wait', '#sub'].forEach(id => { const el = $(id); if(el) el.hidden = true; }); $('#pkview').hidden = false; loadPk(); return; }
   $('#sub').textContent = `${live.length} swap${live.length === 1 ? '' : 's'} at this time` + (j.swaps.length > live.length ? ` (${j.swaps.length - live.length} called off)` : '') + '.';
   $('#buy').hidden = !j.swaps.length;
   $('#andr').hidden = !live.length;
@@ -122,9 +125,11 @@ function paintPk(j){
   $('#pklist').innerHTML = (j.system || []).map(x => `<div class="hm-i"><span><b>${esc(x.name)}</b><span class="sub">swap at ${x.times.map(tm).join(', ')}${x.off ? ` · ${x.off} called off (still counts)` : ''}</span></span><span class="note">used</span></div>`).join('')
     + (j.manual || []).map(x => `<div class="hm-i"><span><b>${esc(x.name)}</b><span class="sub">added by you</span></span><button class="btn" data-unpk="${esc(x.key)}" type="button">Remove</button></div>`).join('')
     || '<p class="note">No packs used yet today.</p>';
+  $('#pkgrinds').innerHTML = (j.grinds || []).map(g => `<div class="hm-i"><span><b>${esc(g.name)}</b>${g.picked ? '' : '<span class="sub">no longer picked</span>'}</span><span><b class="gn">${g.done + g.left}</b> <span class="note">pack${g.done + g.left === 1 ? '' : 's'}${g.left ? ` (${g.left} still to come)` : ''}</span></span></div>`).join('')
+    || '<p class="note">No players picked.</p>';
   $('#pkadd').innerHTML = '<option value="">Add a pass you used today…</option>' + (j.options || []).map(p => `<option value="${esc(p.key)}">${esc(p.name)}</option>`).join('');
 }
-$('#pkbtn').addEventListener('click', async () => { const m = $('#pkmenu'); m.hidden = !m.hidden; if(!m.hidden){ $('#pklist').innerHTML = '<p class="note">Loading…</p>'; try{ paintPk(await (await fetch(pkUrl())).json()); }catch(e){ $('#pklist').innerHTML = '<p class="note">Could not reach the board.</p>'; } } });
+async function loadPk(){ $('#pklist').innerHTML = '<p class="note">Loading…</p>'; try{ paintPk(await (await fetch(pkUrl())).json()); }catch(e){ $('#pklist').innerHTML = '<p class="note">Could not reach the board.</p>'; } }
 const pkPost = async body => { try{ const j = await (await fetch(pkUrl(), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).json(); paintPk(j); return j; }catch(e){ return { error: 'Could not reach the board.' }; } };
 $('#pkaddbtn').addEventListener('click', async () => { const k = $('#pkadd').value; if(!k) return; const j = await pkPost({ key: k }); $('#pkmsg').textContent = j.error || 'Added - it won\'t be given in a swap again today.'; });
 $('#pklist').addEventListener('click', async e => { const b = e.target.closest('[data-unpk]'); if(!b) return; const j = await pkPost({ key: b.dataset.unpk, remove: true }); $('#pkmsg').textContent = j.error || 'Removed.'; });
@@ -140,7 +145,8 @@ async function openMenu(){
   const cur = Number(q.get('d')), nowMs = j.now || Date.now();
   const item = h => `<a class="hm-i${h.due === cur ? ' on' : ''}" href="${esc(h.url)}"><span>${esc(new Date(h.due).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</span><span class="note">${h.swaps} swap${h.swaps === 1 ? '' : 's'}</span></a>`;
   const up = j.hours.filter(h => h.due > nowMs - 3600000).sort((a, b) => a.due - b.due), past = j.hours.filter(h => h.due <= nowMs - 3600000);
-  $('#hm-up').innerHTML = up.map(item).join('') || '<p class="note" style="margin:6px 0">Nothing scheduled.</p>';
+  const pq = new URLSearchParams(location.search); pq.set('v', 'packs');
+  $('#hm-up').innerHTML = `<a class="hm-i pk${q.get('v') === 'packs' ? ' on' : ''}" href="?${pq.toString()}"><span>📦 Packs today</span><span class="note">grinds and packs used</span></a>` + (up.map(item).join('') || '<p class="note" style="margin:6px 0">Nothing scheduled.</p>');
   $('#hm-past').innerHTML = past.map(item).join('') || '<p class="note" style="margin:6px 0">Nothing in the last 14 days.</p>';
 }
 document.addEventListener('click', async e => {
