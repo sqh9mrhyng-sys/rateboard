@@ -1849,9 +1849,9 @@ export async function swapAccess(env, request) {
 // for OTD their own passes and games.
 const MEMBER_OPS = new Set(['me', 'save', 'keep', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
 const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan']);
-const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostinv', 'buys', 'legboosts', 'resell', 'nosell']);
-const BOOSTS_OPEN = true;
-const PAGE_OPS = new Set(['me', 'procheck', 'myswaps', 'hourcounts', 'wantcounts', 'boostplan', 'boostinv', 'buys', 'legboosts', 'resell']);   // opened to everyone signed in, 2026-11-02
+const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostdays', 'boostinv', 'buys', 'legboosts', 'resell', 'nosell']);
+const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
+const PAGE_OPS = new Set(['me', 'procheck', 'myswaps', 'hourcounts', 'wantcounts', 'boostplan', 'boostinv', 'buys', 'legboosts', 'resell', 'boostdays']);
 
 /* ---- OTD: saved game lists ------------------------------------------------
    Every player's [MM-DD, rax] list for a whole sport-season, built once from
@@ -1881,7 +1881,7 @@ const BOOST_SEASON = { ncaam: [2027, 2026], ncaaf: [2026, 2025], nfl: [2026, 202
    2-3% of games, Epic the top 10%, Rare the top 25%. Boost saver raises the
    bar 15%, earning heavy lowers it 15%. */
 const BOOST_BARS = { ncaam: [11.5, 10, 7.5], ncaaf: [25, 20, 12], nfl: [19, 15, 8.5] };   // Legendary ~top 1% game, Epic ~top 3-5%
-const BOOST_MODES = { balanced: 1, heavy: 1, saver: 1 };
+const BOOST_MODES = { balanced: 1, heavy: 1, saver: 1, custom: 1 };
 const ESPN_PATH = { ncaam: 'basketball/mens-college-basketball', ncaaf: 'football/college-football', nfl: 'football/nfl' };
 const ESPN_GROUP = { ncaam: '&groups=50', ncaaf: '&groups=80', nfl: '' };
 // Where Real's team code differs from ESPN's.
@@ -1943,7 +1943,7 @@ async function boostMatchups(env, sp) {
   try { await env.RATEBOARD_KV.put('boostmatch_v1_' + sp, JSON.stringify({ at: Date.now(), f }), { expirationTtl: 5 * 86400 }); } catch (e) {}
 }
 
-const BOOST_REFRESH_HOURS = [10, 17];
+const BOOST_REFRESH_HOURS = [10, 13, 17, 20];   // ET: injuries, slates, depth charts (13 and 20 added 2026-11-04)
 const BOOST_REFRESH_KEY = 'boostrefresh_v2';
 export async function boostRefresh(env) {
   const f = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false });
@@ -2160,32 +2160,64 @@ async function boostInjuries(env, sp, force) {
   try { await env.RATEBOARD_KV.put(key, JSON.stringify({ at: Date.now(), map }), { expirationTtl: 3 * 86400 }); } catch (e) {}
   return map;
 }
+/* Each team's own injury list, from its ESPN roster (2026-11-04: the league
+   list ESPN publishes missed Lamar Jackson, out for the season, so he was
+   still given a booster). Kept 2 hours per team, then read again the next
+   time someone loads their boosts. */
+async function boostTeamInj(env, sp, ids, force) {
+  const out = {};
+  await Promise.all([...new Set(ids.filter(Boolean).map(String))].slice(0, 40).map(async id => {
+    const key = `boostteaminj_v1_${sp}_${id}`;
+    let m = null;
+    if (!force) { try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c && Date.now() - c.at < 2 * 3600000) m = c.m; } catch (e) {} }
+    if (!m) {
+      try {
+        const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${ESPN_PATH[sp]}/teams/${id}/roster`);
+        const d = r.ok ? await r.json() : null;
+        if (d) {
+          m = {};
+          const items = (d.athletes || []).flatMap(g => Array.isArray(g.items) ? g.items : [g]);
+          for (const a of items) {
+            if (!a || !a.displayName) continue;
+            const ij = (a.injuries || []).slice().sort((x, y) => Date.parse(y.date || 0) - Date.parse(x.date || 0))[0];
+            if (ij && ij.status && !/^active$/i.test(ij.status)) m[boostName(a.displayName)] = { status: String(ij.status), note: '' };
+          }
+          try { await env.RATEBOARD_KV.put(key, JSON.stringify({ at: Date.now(), m }), { expirationTtl: 86400 }); } catch (e) {}
+        }
+      } catch (e) {}
+      if (!m) { try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c) m = c.m; } catch (e) {} }
+    }
+    if (m) Object.assign(out, m);
+  }));
+  return out;
+}
 /* NFL depth charts for the teams on the slate, by player name: slot 1 is the
    starter (top two at RB, three WRs). Kept 6 hours per team. */
 async function boostDepth(env, sched, force, only) {
   const out = {};
-  for (const id of (only || Object.values(sched.teams).map(t => t.id).filter(Boolean))) {
+  // Every team at once (one after another took seconds on a full Sunday).
+  const ms = await Promise.all([...new Set(only || Object.values(sched.teams).map(t => t.id).filter(Boolean))].map(async id => {
     const key = `boostdepth_v1_${id}`;
-    let m = null;
-    if (!force) { try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c) m = c.m; } catch (e) {} }
-    if (!m) {
-      m = {};
-      try {
-        const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/${id}/depthcharts`);
-        const d = r.ok ? await r.json() : {};
-        for (const g of (d.depthchart || [])) for (const [pos, v] of Object.entries(g.positions || {})) {
-          (v.athletes || []).forEach((a, i) => {
-            const nm = boostName(a.displayName), slot = i + 1;
-            const starter = slot === 1 || (pos === 'rb' && slot <= 2);
-            const cur = m[nm];
-            if (!cur || (starter && !cur.starter) || (!cur.starter && slot < cur.slot)) m[nm] = { pos, slot, starter };
-          });
-        }
-      } catch (e) {}
-      try { await env.RATEBOARD_KV.put(key, JSON.stringify({ at: Date.now(), m }), { expirationTtl: 3 * 86400 }); } catch (e) {}
-    }
-    Object.assign(out, m);
-  }
+    let m = null, old = null;
+    if (!force) { try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c) { old = c.m; if (Date.now() - (c.at || 0) < 6 * 3600000) m = c.m; } } catch (e) {} }
+    if (m) return m;
+    try {
+      const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/${id}/depthcharts`);
+      if (!r.ok) return old || {};
+      const d = await r.json(); m = {};
+      for (const g of (d.depthchart || [])) for (const [pos, v] of Object.entries(g.positions || {})) {
+        (v.athletes || []).forEach((a, i) => {
+          const nm = boostName(a.displayName), slot = i + 1;
+          const starter = slot === 1 || (pos === 'rb' && slot <= 2);
+          const cur = m[nm];
+          if (!cur || (starter && !cur.starter) || (!cur.starter && slot < cur.slot)) m[nm] = { pos, slot, starter };
+        });
+      }
+    } catch (e) { return old || {}; }
+    try { await env.RATEBOARD_KV.put(key, JSON.stringify({ at: Date.now(), m }), { expirationTtl: 3 * 86400 }); } catch (e) {}
+    return m;
+  }));
+  for (const m of ms) Object.assign(out, m);
   return out;
 }
 
@@ -3168,14 +3200,47 @@ async function handle({ request, env, waitUntil }) {
     return json({ sport: sp, at: all.at, next: all.next, cached: !!all.cached, boosters: (all.sports || {})[sp] || [], sports: all.sports });
   }
 
+  /* The next 4 days (up to 12 ahead) on which at least one of the member's
+     passes plays, for the day picker. Teams the same way the plan finds them:
+     this season's last game, the CBB list, last season's team. */
+  if (op === 'boostdays') {
+    const sp = String(url.searchParams.get('sport') || '');
+    if (!BOOST_SEASON[sp]) return json({ error: 'Pick CBB, CFB or NFL.' }, 400);
+    const [se, prev] = BOOST_SEASON[sp];
+    const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
+    const ps = parse(u && u.passes, []).filter(p => p.sport === sp && Number(p.season) === se && p.kind !== 'team');
+    const ids = [...new Set(ps.map(p => Number(p.id)).filter(Number.isFinite))];
+    const cur = new Map(), old = new Map();
+    for (let i = 0; i < ids.length; i += 90) {
+      const part = ids.slice(i, i + 90);
+      try { const r = await db.prepare(`SELECT playerId, season, team, MAX(day) AS d FROM gamelog WHERE sport=? AND season IN (?, ?) AND playerId IN (${part.map(() => '?').join(',')}) AND team IS NOT NULL GROUP BY playerId, season`)
+          .bind(sp, se, prev, ...part).all();
+        for (const x of (r.results || [])) (Number(x.season) === se ? cur : old).set(Number(x.playerId), x.team); } catch (e) {}
+    }
+    // One team per player: this season's, else the CBB list's, else last season's.
+    const teamOf = ids.map(id => { const t = cur.get(id) || (sp === 'ncaam' && CBB_TOP175[id] ? CBB_TOP175[id][1] : null) || old.get(id); return t ? boostAlias(sp, t) : null; }).filter(Boolean);
+    const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
+    const cand = [...Array(12).keys()].map(i => fmt.format(new Date(Date.now() + i * 86400000)));
+    const scheds = await Promise.all(cand.map(d => boostSchedule(env, sp, d).catch(() => ({ error: 1 }))));
+    const days = [];
+    cand.forEach((d, i) => { const sc = scheds[i]; if (!sc || sc.error || days.length >= 4) return;
+      const n = teamOf.filter(t => sc.teams && sc.teams[t]).length; if (n) days.push({ day: d, players: n }); });
+    return json({ days, passes: ids.length });
+  }
   if (op === 'boostplan') {
     const sp = String(url.searchParams.get('sport') || '');
     if (!BOOST_SEASON[sp]) return json({ error: 'Pick CBB, CFB or NFL.' }, 400);
     const day = String(url.searchParams.get('date') || '');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return json({ error: 'Pick a date.' }, 400);
     let mode = BOOST_MODES[url.searchParams.get('mode')] ? url.searchParams.get('mode') : 'balanced';
-    // Heavy Legendary and Boost saver are only for Dennis and quas23 for now.
-    if (mode !== 'balanced' && !acc.admin && !BOOST_FAST.has(String(me || '').toLowerCase())) mode = 'balanced';
+    // Heavy Legendary and Boost saver are only for Dennis and quas23 for now; Custom is for everyone.
+    if (mode !== 'balanced' && mode !== 'custom' && !acc.admin && !BOOST_FAST.has(String(me || '').toLowerCase())) mode = 'balanced';
+    /* Custom (2026-11-04): the member's own projected-rax bar for each rarity
+       and the most of each they'll use on the day. Empty = that rarity off
+       (bar) or no limit (max). */
+    const cnum = (k, lo, hi) => { const v = url.searchParams.get(k); if (v == null || v === '') return null; const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : null; };
+    const CUS = mode === 'custom' ? { leg: cnum('cl', 0, 500), epic: cnum('ce', 0, 500), rare: cnum('cr', 0, 500),
+      max: { 5: cnum('ml', 0, 999), 4: cnum('me', 0, 999), 3: cnum('mr', 0, 999) } } : null;
     const [se, prev] = BOOST_SEASON[sp];
     // What they own: the passes from their last scan (the same read Swaps
     // uses). Rarity and pass level are not counted.
@@ -3304,10 +3369,24 @@ async function handle({ request, env, waitUntil }) {
         }
         if (e != null) exp[st] = Math.round(e * k * mf * 100) / 100;
       }
-      rows.push({ id: p.id, passId: p.passId, name, team, pos, opp: g.opp, home: g.home, at: g.at, exp,
+      rows.push({ id: p.id, passId: p.passId, name, team, tid: g.id, pos, opp: g.opp, home: g.home, at: g.at, exp,
         avg: ca == null ? null : Math.round(ca * 10) / 10, games: cg, avgLast: oa == null ? null : Math.round(oa * 10) / 10,
         proj: proj == null ? null : Math.round(proj * k * mf * 10) / 10, basis, flags, skip, fresh, noData });
     }
+    /* Each team's own injury list too (the league list misses some, like a
+       star placed on IR mid-week): out, IR, doubtful or suspended - no booster. */
+    try {
+      const tinj = await boostTeamInj(env, sp, rows.map(r => r.tid));
+      for (const r of rows) {
+        const ij = tinj[boostName(r.name)]; if (!ij || r.skip) continue;
+        if (/^(out|injured reserve|doubtful|suspen)/i.test(ij.status)) { r.skip = true; r.flags.push(ij.status); }
+        else if (/questionable/i.test(ij.status) && !r.flags.some(f => /^questionable/i.test(f))) {
+          r.flags.push('Questionable');
+          if (r.proj != null) r.proj = Math.round(r.proj * 0.75 * 10) / 10;
+          for (const st of Object.keys(r.exp)) r.exp[st] = Math.round(r.exp[st] * 0.75 * 100) / 100;
+        }
+      }
+    } catch (e) {}
     const pinOf = r => sp === 'ncaam' && CBB_PIN[r.id] && !r.skip ? CBB_PIN[r.id] : null;
     rows.sort((a, b) => (a.skip - b.skip) || (((pinOf(a) || [99])[0]) - ((pinOf(b) || [99])[0]))
       || ((a.noData ? 1 : 0) - (b.noData ? 1 : 0)) || ((b.proj ?? -1) - (a.proj ?? -1)));
@@ -3338,12 +3417,16 @@ async function handle({ request, env, waitUntil }) {
     const CFB_RULES = { balanced: { leg: 22, epic: 15, cap: 0.7 }, heavy: { leg: 18, epic: 12, cap: 1 }, saver: { leg: 27.5, epic: 20, cap: 0.2 } };
     const cfb = sp === 'ncaaf' ? CFB_RULES[mode] || CFB_RULES.balanced : null;
     if (cfb) R.cap = cfb.cap;
-    const legBar = cfb ? cfb.leg : R.leg * scale, epicBar = cfb ? cfb.epic : R.epic * scale, rareFloor = sp === 'ncaaf' ? 10 : 5, cutAt = null;
+    let legBar = cfb ? cfb.leg : R.leg * scale, epicBar = cfb ? cfb.epic : R.epic * scale, rareFloor = sp === 'ncaaf' ? 10 : 5;
+    const cutAt = null;
+    if (CUS) { legBar = CUS.leg ?? Infinity; epicBar = CUS.epic ?? Infinity; rareFloor = CUS.rare ?? Infinity; }
     bars.splice(0, 3, Math.round(legBar * 10) / 10, Math.round(epicBar * 10) / 10, rareFloor);
     const held = r => inv ? inv.filter(b => b.rarity === r).reduce((t, b) => t + b.count, 0) : 0;
-    const dayCap = { 5: held(5) ? Math.max(1, Math.floor(held(5) * R.cap)) : 0, 4: Infinity, 3: Infinity };
+    const dayCap = CUS ? { 5: CUS.max[5] ?? Infinity, 4: CUS.max[4] ?? Infinity, 3: CUS.max[3] ?? Infinity }
+      : { 5: held(5) ? Math.max(1, Math.floor(held(5) * R.cap)) : 0, 4: Infinity, 3: Infinity };
     const usedR = { 5: 0, 4: 0, 3: 0 };
-    const own = r => left ? Math.min(held(r), dayCap[r]) - usedR[r] : Infinity;
+    // Custom maxes hold even when Real won't say what boosters they have.
+    const own = r => left ? Math.min(held(r), dayCap[r]) - usedR[r] : CUS ? dayCap[r] - usedR[r] : Infinity;
     const NR = { 5: 'legendary', 4: 'epic', 3: 'rare' };
     const gainOf = (r, b) => {
       // A two-attribute booster counts whichever side the player produces on.
@@ -3357,12 +3440,12 @@ async function handle({ request, env, waitUntil }) {
       if (!r.skip && r.proj != null) {
         want = r.proj >= legBar ? 5 : r.proj >= epicBar ? 4 : r.proj >= rareFloor ? 3 : null;
         // Pinned players keep their spot in line, and outside Boost saver their minimum rarity too.
-        const pin = pinOf(r); if (pin && mode !== 'saver' && (!want || want < pin[1])) want = pin[1];
+        const pin = pinOf(r); if (pin && mode !== 'saver' && !CUS && (!want || want < pin[1])) want = pin[1];
       }
-      while (want && left && own(want) <= 0) want = want > 3 ? want - 1 : null;
+      while (want && (left || CUS) && own(want) <= 0) want = want > 3 ? want - 1 : null;
       r.boost = want ? NR[want] : null;
       r._r = want;
-      if (want && left) usedR[want]++;
+      if (want && (left || CUS)) usedR[want]++;
       r.belowCut = false;
     }
     /* 2. Attributes, per rarity, for the most rax across everyone rather
@@ -3421,7 +3504,7 @@ async function handle({ request, env, waitUntil }) {
     for (const k of Object.keys(totals)) totals[k] = Math.round(totals[k]);
     if (inv) used = inv.map((b, i) => ({ ...b, used: b.count - left[i].count }));
 
-    return json({ sport: sp, season: se, date: day, mode, bars, cutAt, totals, legCap: inv ? dayCap[5] : null, inv: used, statMode: !!used, rsUser: u.rsUser, cardsAt: cards.at, games: sched.games, depth: !!depth,
+    return json({ sport: sp, season: se, date: day, mode, bars: bars.map(x => Number.isFinite(x) ? x : null), cutAt, totals, legCap: inv && Number.isFinite(dayCap[5]) ? dayCap[5] : null, inv: used, statMode: !!used, rsUser: u.rsUser, cardsAt: cards.at, games: sched.games, depth: !!depth,
       rows, notPlaying: idle.length, players: cards.players.length });
   }
 

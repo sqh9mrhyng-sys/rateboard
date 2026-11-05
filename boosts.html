@@ -87,6 +87,16 @@
   .tot{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0}
   .tot div{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px 12px}
   .tot b{display:block;font-size:20px}
+  .invhd{display:flex;align-items:center;gap:8px}
+  .invhd #invgo{margin-left:auto;flex:none}
+  button.fold{display:flex;align-items:center;gap:8px;background:none;border:0;padding:4px 0;color:var(--ink);flex:1;text-align:left;min-width:0}
+  button.fold .chev{display:inline-block;transition:transform .15s;color:var(--mute)}
+  button.fold[aria-expanded="false"] .chev{transform:rotate(-90deg)}
+  button.sm{padding:6px 10px;font-size:13px}
+  .custom{display:grid;grid-template-columns:auto 1fr 1fr;gap:6px 8px;align-items:center;margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
+  .custom .ch{font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em}
+  .custom input{width:100%;min-width:0}
+  .custom .b{min-width:0}
   /* cleanup pass */
   .tabsrow{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
   b.h{font-size:16px}
@@ -126,6 +136,13 @@
         <select id="sport" hidden><option value="ncaam">CBB 2026-27</option><option value="ncaaf">CFB 2026</option><option value="nfl">NFL 2026</option></select>
         <label class="note">Setting <select id="mode"><option value="balanced" selected>Balanced</option></select></label>
       </div>
+      <div class="custom" id="custom" hidden>
+        <div class="ch"></div><div class="ch">Min proj rax</div><div class="ch">Max to use</div>
+        <span class="b legendary">Legendary</span><input id="c-l" type="number" inputmode="decimal" min="0" step="0.5" placeholder="off"><input id="m-l" type="number" inputmode="numeric" min="0" step="1" placeholder="no limit">
+        <span class="b epic">Epic</span><input id="c-e" type="number" inputmode="decimal" min="0" step="0.5" placeholder="off"><input id="m-e" type="number" inputmode="numeric" min="0" step="1" placeholder="no limit">
+        <span class="b rare">Rare</span><input id="c-r" type="number" inputmode="decimal" min="0" step="0.5" placeholder="off"><input id="m-r" type="number" inputmode="numeric" min="0" step="1" placeholder="no limit">
+        <button class="sm" id="c-reset" type="button" style="grid-column:1 / -1;justify-self:start">Reset to Balanced</button>
+      </div>
       <p class="note modenote" id="modenote"></p>
       <button class="go big" id="run">Show my boosts</button>
       <div class="bar userbar">
@@ -135,8 +152,9 @@
       <span class="note" id="scanmsg"></span>
     </section>
     <section id="inv">
-      <div class="bar"><b class="h">Your boosters</b><button id="invgo" style="margin-left:auto">Load from Real</button></div><p class="note" id="invmsg" style="margin:6px 0 0">Every 2 hours, all three sports.</p>
-      <div id="invout" style="margin:10px 0 0" hidden></div>
+      <div class="invhd"><button class="fold" id="invfold" type="button" aria-expanded="true"><span class="chev">▾</span><b class="h">Your boosters</b></button><button id="invgo" class="sm">Load from Real</button></div>
+      <div id="invbody"><p class="note" id="invmsg" style="margin:6px 0 0">Every 2 hours, all three sports.</p>
+      <div id="invout" style="margin:10px 0 0" hidden></div></div>
     </section>
     <section id="out" hidden>
       <div class="note" id="outhead"></div>
@@ -314,19 +332,53 @@ function days(sp){
   }
   return out;
 }
-function drawDays(){
+/* The day picker: the next 4 days one of your passes plays (asked of the
+   server, which knows your teams); the plain next 4 days until it answers. */
+const daysCache = {};
+let daysAsk = 0;
+async function drawDays(){
   const sp = $('#sport').value, prev = $('#day').value, list = days(sp);
-  $('#day').innerHTML = list.length ? list.map(([v, l]) => `<option value="${v}"${v === prev ? ' selected' : ''}>${esc(l)}</option>`).join('')
-    : '<option value="">No NFL games in the next 4 days</option>';
+  const fill = (opts, empty) => { $('#day').innerHTML = opts.length ? opts.map(([v, l]) => `<option value="${v}"${v === prev ? ' selected' : ''}>${esc(l)}</option>`).join('') : `<option value="">${esc(empty)}</option>`; };
+  if(!daysCache[sp]) fill(list, 'No games in the next 4 days');
+  const ask = ++daysAsk;
+  const j = daysCache[sp] || await api('/api/swaps?op=boostdays&page=boosts&sport=' + sp);
+  if(ask !== daysAsk || j.error || !Array.isArray(j.days)) return;
+  daysCache[sp] = j;
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const tmw = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.now() + 86400000));
+  fill(j.days.map(d => { const lbl = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(d.day + 'T12:00:00Z'));
+    return [d.day, (d.day === today ? 'Today' : d.day === tmw ? 'Tomorrow' : lbl) + ` · ${d.players} playing`]; }),
+    j.passes ? 'None of your passes play in the next 12 days' : 'Read your passes first');
 }
 $('#sport').addEventListener('change', drawDays);
 // CFB Balanced has its own bars (one slate a week).
+/* Your boosters folds away; remembered in this browser. */
+const invFold = open => { $('#invbody').hidden = !open; $('#invfold').setAttribute('aria-expanded', String(open)); try{ localStorage.setItem('boosts_invopen_v1', open ? '1' : '0'); }catch(e){} };
+$('#invfold').addEventListener('click', () => invFold($('#invbody').hidden));
+try{ if(localStorage.getItem('boosts_invopen_v1') === '0') invFold(false); }catch(e){}
+/* Custom: your own bars and maxes, per sport, kept in this browser. */
+const CUS_DEF = { ncaam: { l: 14.5, e: 10, r: 5 }, ncaaf: { l: 22, e: 15, r: 10 }, nfl: { l: 24, e: 16.5, r: 5 } };
+const CUS_IDS = { l: 'c-l', e: 'c-e', r: 'c-r', ml: 'm-l', me: 'm-e', mr: 'm-r' };
+function cusLoad(sp){ let all = {}; try{ all = JSON.parse(localStorage.getItem('boosts_custom_v1') || '{}') || {}; }catch(e){}
+  const v = all[sp] || { ...CUS_DEF[sp], ml: '', me: '', mr: '' };
+  for(const [k, id] of Object.entries(CUS_IDS)) $('#' + id).value = v[k] ?? ''; }
+function cusSave(){ const sp = $('#sport').value; let all = {}; try{ all = JSON.parse(localStorage.getItem('boosts_custom_v1') || '{}') || {}; }catch(e){}
+  all[sp] = Object.fromEntries(Object.entries(CUS_IDS).map(([k, id]) => [k, $('#' + id).value.trim()]));
+  try{ localStorage.setItem('boosts_custom_v1', JSON.stringify(all)); }catch(e){} }
+const cusQuery = () => Object.entries({ cl: 'c-l', ce: 'c-e', cr: 'c-r', ml: 'm-l', me: 'm-e', mr: 'm-r' }).map(([q, id]) => `&${q}=${encodeURIComponent($('#' + id).value.trim())}`).join('');
+const cusNote = () => { const v = id => $('#' + id).value.trim(), part = (n, c, m) => `${n} ${v(c) === '' ? 'off' : v(c) + '+'}${v(m) !== '' ? ` (max ${v(m)})` : ''}`;
+  return [part('Legendary', 'c-l', 'm-l'), part('Epic', 'c-e', 'm-e'), part('Rare', 'c-r', 'm-r')].join(' · '); };
+let cusT = null;
+Object.values(CUS_IDS).forEach(id => $('#' + id).addEventListener('input', () => { cusSave(); drawMode(); clearTimeout(cusT); cusT = setTimeout(() => { if(!$('#out').hidden) run(); }, 700); }));
+$('#c-reset').addEventListener('click', () => { const d = CUS_DEF[$('#sport').value]; $('#c-l').value = d.l; $('#c-e').value = d.e; $('#c-r').value = d.r; $('#m-l').value = $('#m-e').value = $('#m-r').value = ''; cusSave(); drawMode(); if(!$('#out').hidden) run(); });
 const drawMode = () => { const m = $('#mode').value;
+  $('#custom').hidden = m !== 'custom';
+  if(m === 'custom'){ $('#modenote').textContent = cusNote(); return; }
   const CFB_NOTE = { balanced: 'Legendary 22+ proj rax (max 70% a week) · Epic 15+ · Rare 10+',
     heavy: 'Legendary 18+ proj rax (no cap) · Epic 12+ · Rare 10+',
     saver: 'Legendary 27.5+ proj rax (max 20% a week) · Epic 20+ · Rare 10+' };
   $('#modenote').textContent = $('#sport').value === 'ncaaf' ? (CFB_NOTE[m] || MODE_NOTE[m]) : MODE_NOTE[m]; };
-$('#sport').addEventListener('change', () => drawMode());
+$('#sport').addEventListener('change', () => { cusLoad($('#sport').value); drawMode(); });
 $('#mode').addEventListener('change', () => { drawMode(); if(!$('#out').hidden) run(); });
 drawMode();
 try{ const s = JSON.parse(localStorage.getItem('boosts_pick_v1') || '{}'); if(s.sport) $('#sport').value = s.sport; if(s.mode){ $('#mode').value = s.mode; drawMode(); } }catch(e){}
@@ -500,7 +552,7 @@ async function run(){
   try{ localStorage.setItem('boosts_pick_v1', JSON.stringify({ sport: sp, mode })); }catch(e){}
   $('#run').disabled = true; $('#out').hidden = false; $('#rows').innerHTML = ''; $('#sum').innerHTML = ''; $('#foot').textContent = '';
   $('#outhead').textContent = 'Working it out…';
-  const j = await api(`/api/swaps?op=boostplan&page=boosts&sport=${sp}&date=${day}&mode=${mode}`);
+  const j = await api(`/api/swaps?op=boostplan&page=boosts&sport=${sp}&date=${day}&mode=${mode}` + (mode === 'custom' ? cusQuery() : ''));
   $('#run').disabled = false;
   if(j.error){ $('#outhead').textContent = j.error; return; }
   const rows = j.rows || [];
@@ -517,7 +569,7 @@ async function run(){
     $('#sum').innerHTML = [[5,'legendary'],[4,'epic'],[3,'rare']].map(([r, k]) => `<span><span class="b ${k}">${LBL[k]}</span> use ${c[k]} of ${own(r)}${j.dayCap ? ` <span class="note">(max ${j.dayCap[r]} today)</span>` : ''}</span>`).join('');
     $('#invout').hidden = false; $('#invout').innerHTML = invHtml(j.inv); $('#invmsg').textContent = 'What you hold, and what today\'s plan uses.';
   } else {
-    $('#sum').innerHTML = ['legendary','epic','rare'].map((k, i) => `<span><span class="b ${k}">${LBL[k]}</span> × ${c[k]} <span class="note">(${j.bars ? j.bars[i] + '+ proj' : ''})</span></span>`).join('');
+    $('#sum').innerHTML = ['legendary','epic','rare'].map((k, i) => `<span><span class="b ${k}">${LBL[k]}</span> × ${c[k]} <span class="note">(${j.bars ? (j.bars[i] == null ? 'off' : j.bars[i] + '+ proj') : ''})</span></span>`).join('');
   }
   if(!rows.length){ $('#rows').innerHTML = `<tr><td colspan="7" class="note" style="text-align:left">None of your players for this sport play that day.</td></tr>`; return; }
   let cutDone = false;
@@ -535,7 +587,7 @@ async function run(){
       <td data-l="Proj rax">${r.proj == null ? 'no data' : r.proj}</td>
       <td data-l="Proj w/ boost"><b>${r.boost && r.withBoost != null ? Math.round(r.withBoost).toLocaleString() : (r.proj ?? '–')}</b>${r.boost && r.withBoost != null ? `<span class="sub">${r.proj} × ${r.mult} + ${(r.best && r.best.gain) || 0}</span>` : ''}</td></tr>`;
   }).join('');
-  $('#foot').textContent = (j.statMode ? 'Rarity comes from projected rax (capped by what you hold); Boost is the attribute from your boosters of that rarity that adds the most for that player, shown as his average of that stat / the rax it adds, with a second option. ' : '') + `Projected rax: recent games weighted most, then this season, then last season's regular season only, adjusted for how much the opponent gives up. Freshmen on the CBB top 175 get a projection from their rank; others show *not enough data*. CBB teams come from the top 175 and ESPN's current rosters, so transfers show with their new team. Pass rarity and level aren't counted. Injuries and depth charts are refreshed at 10am and 5pm ET. Players out, doubtful, suspended`
+  $('#foot').textContent = (j.statMode ? 'Rarity comes from projected rax (capped by what you hold); Boost is the attribute from your boosters of that rarity that adds the most for that player, shown as his average of that stat / the rax it adds, with a second option. ' : '') + `Projected rax: recent games weighted most, then this season, then last season's regular season only, adjusted for how much the opponent gives up. Freshmen on the CBB top 175 get a projection from their rank; others show *not enough data*. CBB teams come from the top 175 and ESPN's current rosters, so transfers show with their new team. Pass rarity and level aren't counted. Injuries and depth charts: ESPN's injury list at 10am, 1pm, 5pm and 8pm ET, plus each team's own injury list every 2 hours. Players out, doubtful, suspended`
     + (j.depth ? ', backups on the depth chart' : '') + ` or not playing lately get no booster; questionable players are marked down.`
     + (j.notPlaying ? ` ${j.notPlaying} of your players don't play that day.` : '');
 }
@@ -595,6 +647,7 @@ $('#scan').addEventListener('click', async () => {
   $('#scan').disabled = false;
   if(j.error){ $('#scanmsg').textContent = j.error; return; }
   $('#scanmsg').textContent = j.cached ? j.note : `${(j.passes || []).length} passes read just now.` + (j.note ? ' ' + j.note : '');
+  for(const k of Object.keys(daysCache)) delete daysCache[k]; drawDays();
   if(!$('#out').hidden) run();
 });
 
@@ -608,9 +661,10 @@ $('#scan').addEventListener('click', async () => {
   $('#main').hidden = false;
   // The extra settings are only offered to the accounts that have them.
   if(me.boostModes){
-    $('#mode').innerHTML = '<option value="balanced">Balanced</option><option value="heavy">Heavy Legendary</option><option value="saver">Boost saver</option>';
-    try{ const sv = JSON.parse(localStorage.getItem('boosts_pick_v1') || '{}'); if(sv.mode) $('#mode').value = sv.mode; }catch(e){}
-  } else $('#mode').value = 'balanced';
+    $('#mode').innerHTML = '<option value="balanced">Balanced</option><option value="heavy">Heavy Legendary</option><option value="saver">Boost saver</option><option value="custom">Custom</option>';
+  } else $('#mode').innerHTML = '<option value="balanced">Balanced</option><option value="custom">Custom</option>';
+  try{ const sv = JSON.parse(localStorage.getItem('boosts_pick_v1') || '{}'); if(sv.mode && [...$('#mode').options].some(o => o.value === sv.mode)) $('#mode').value = sv.mode; }catch(e){}
+  cusLoad($('#sport').value);
   drawMode();
   $('#rsuser').value = (me.profile && me.profile.rsUser) || '';
   setTimeout(resumeScan, 300);
