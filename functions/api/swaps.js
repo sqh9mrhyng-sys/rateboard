@@ -818,7 +818,7 @@ async function retryDms(db, auth) {
 /* One gap between every DM the bot sends (Dennis, 2026-11-05): sends that
    bunched up got "Message slowmode" and "Cannot message this channel right
    now" from Real. Each send takes the next free slot, DM_GAP_MS after the last. */
-const DM_GAP_MS = 2500;
+const DM_GAP_MS = 3000;   // 1 message every 3 seconds, everything combined (Dennis, 2026-11-05)
 let dmNextAt = 0;
 const dmWaitAhead = () => Math.max(0, dmNextAt - Date.now());
 async function dmPace() { const t = Date.now(), at = Math.max(t, dmNextAt); dmNextAt = at + DM_GAP_MS; if (at > t) await sleep(at - t); }
@@ -1829,6 +1829,63 @@ function recvSummary(me, items) {
 }
 // Dennis's wording (2026-11-05) for the one-message DM.
 const siteDm = (pre, n, link, sum, extra) => fitOne(`${pre ? pre + '\n\n' : ''}You have ${n} swap${n === 1 ? '' : 's'}, all details on site below, we are using the site to avoid large quantity of dm issues\n${link}\n\nPlayers you're receiving this run: ${sum}${extra ? '\n\n' + extra : ''}`);
+/* One-off check (Dennis, 2026-11-05): everyone in the 8:00 AKST run (17:00
+   UTC). Each member's chat is read back and looked for their swap link (its
+   short code); anyone without it gets the swap DM again. A few chats each
+   tick, after the regular DMs. Dennis gets a DM with who was resent. If the
+   first few all come back "missing", the read-back can't see links and the
+   check stops instead of sending everyone a repeat. */
+const AUDIT_DUE = Date.UTC(2026, 10, 5, 17, 0, 0);
+async function auditHour(env, db, auth) {
+  const K = 'dm_audit_' + AUDIT_DUE;
+  let st = null; try { st = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
+  if (st && st.finished) return;
+  st = st || { done: [], ok: [], resent: [], failed: [], pending: [], startedAt: Date.now() };
+  st.pending = st.pending || [];
+  const save = () => env.RATEBOARD_KV.put(K, JSON.stringify(st), { expirationTtl: 7 * 86400 });
+  const ms = ((await db.prepare("SELECT * FROM swap_matches WHERE dueAt BETWEEN ? AND ? AND status NOT IN ('cancelled','cancelling','cleared')").bind(AUDIT_DUE - 3600000, AUDIT_DUE + 3600000).all()).results) || [];
+  const per = new Map();
+  for (const m of ms) for (const side of ['A', 'B']) if (sideDue(m) === AUDIT_DUE) { const who = side === 'A' ? m.a : m.b; (per.get(who) || per.set(who, []).get(who)).push({ m, side }); }
+  const cache = new Map(), member = async k => cache.has(k) ? cache.get(k) : (cache.set(k, await loadMember(db, k)), cache.get(k));
+  const resend = async (who, list, ch, link) => {
+    const me = await member(who), items = []; for (const x of list) { const l = await sideLines(member, x.m, x.side); if (l) items.push(l); }
+    if (items.length) { await dmSendRetry(auth, ch, siteDm('', items.length, link, recvSummary(me, items), '')); await stat(db, 'dm_audit_resend'); st.resent.push('@' + ((me && me.rsUser) || who)); }
+  };
+  for (const [who, list] of [...per.entries()].sort()) {
+    if (st.finished) break;
+    if (TICK_T0 && tickLeft() - dmWaitAhead() < 9000) break;
+    // Missing ones held back until the read-back has seen at least one link; then they're sent.
+    if (st.ok.length && st.pending.length) { const p0 = st.pending.shift();
+      try { await resend(p0.who, per.get(p0.who) || [], p0.ch, p0.link); } catch (e) { st.failed.push(`@${p0.who} (${String(e.message || e).slice(0, 60)})`); }
+      await save(); continue; }
+    if (st.done.includes(who)) continue;
+    const me = await member(who), name = '@' + ((me && me.rsUser) || who);
+    try {
+      if (!me || !me.hashId) throw new Error('never verified');
+      const had = await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=?').bind(me.hashId).first();
+      if (!had || !had.channelId) throw new Error('no chat with the bot');
+      const link = await hourLink(env, who, AUDIT_DUE, 'offer'), code = link.split('/').pop();
+      const d = await rsGetJson(`https://web.realapp.com/messages/channels/${had.channelId}/messages`, auth);
+      const blob = JSON.stringify(d || '');
+      if (blob.includes(code)) st.ok.push(name);
+      else if (!st.ok.length) {
+        st.pending.push({ who, ch: had.channelId, link });
+        // Six missing and none found: the read-back can't see links - stop, send nobody a repeat.
+        if (st.pending.length >= 6) { st.finished = true; st.aborted = `first ${st.pending.length} chats showed no link, so the read-back can't see links - nothing resent`; }
+      } else await resend(who, list, had.channelId, link);
+    } catch (e) { st.failed.push(`${name} (${String(e.message || e).slice(0, 60)})`); }
+    st.done.push(who); await save(); await sleep(300);
+  }
+  if (!st.finished && per.size && [...per.keys()].every(k => st.done.includes(k)) && (!st.pending.length || !st.ok.length)) { st.finished = true; if (st.pending.length) st.aborted = 'no chat showed a link - nothing resent'; }
+  if (st.finished && !st.told) {
+    st.told = Date.now();
+    try { const dn = await loadMember(db, 'dennis');
+      if (dn && dn.hashId) { const ch = await dmChannel(db, auth, dn.hashId, dn.rsUser, env);
+        await dmSend(auth, ch, fitOne(st.aborted ? `8:00 run check stopped: ${st.aborted}. Resent to ${st.resent.join(', ') || 'nobody'}.`
+          : `8:00 run check: ${per.size} people. ${st.ok.length} had their swap DM. Resent to ${st.resent.length}: ${st.resent.join(', ') || 'nobody'}.${st.failed.length ? ` Couldn't check: ${st.failed.join(', ')}.` : ''}`)); } } catch (e) {}
+  }
+  await save();
+}
 async function dmTick(env) {
   TICK_T0 = Date.now(); TICK_BUDGET = 26000;
   const db = env.RATEBOARD_DB, auth = swapToken(env);
@@ -1853,8 +1910,11 @@ async function dmTick(env) {
   try {
     const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned','cancelling') AND createdAt > ? ORDER BY COALESCE(dueAt, createdAt), id LIMIT 800`)
       .bind(Date.now() - 2 * 86400000).all()).results) || [];
-    if (rows.length) return await runDms(env, db, auth, rows, DM_PER_TICK, false);
+    if (rows.length) { const out = await runDms(env, db, auth, rows, DM_PER_TICK, false);
+      try { await auditHour(env, db, auth); } catch (e) { await botFail(db, 'dm_audit', e.message); }
+      return out; }
   } catch (e) { await botFail(db, 'dm_run', e.message); }
+  try { await auditHour(env, db, auth); } catch (e) { await botFail(db, 'dm_audit', e.message); }
   return [];
 }
 export async function swapTick(env) {
