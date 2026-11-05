@@ -3552,6 +3552,8 @@ async function handle({ request, env, waitUntil }) {
   /* Projections page: the saved list (rebuilt in the background when it's
      over 6 hours old), plus which of the players the member holds a pass for. */
   if (op === 'projections') {
+    // Dennis only for now (2026-11-05).
+    if (!acc.admin) return json({ error: 'This page is not open yet.' }, 403);
     const sp = PROJ_SEASON[url.searchParams.get('sport')] ? url.searchParams.get('sport') : 'ncaaf';
     let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(`proj_v3_${sp}`)) || 'null'); } catch (e) {}
     // One player's breakdown (tapping his line).

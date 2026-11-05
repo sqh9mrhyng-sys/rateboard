@@ -226,6 +226,7 @@ async function load(tries = 0){
   if(j.error){
     if(/sign in/i.test(j.error) && tries < 3){ setTimeout(() => load(tries + 1), 1200 * (tries + 1)); return; }
     if(/sign in/i.test(j.error)){ $('#main').hidden = true; $('#lock').hidden = false; $('#lockmsg').textContent = 'Sign in on the board first, in this browser.'; $('#signinbtn').hidden = false; return; }
+    if(/not open yet/i.test(j.error)){ $('#main').hidden = true; $('#lock').hidden = false; $('#lockmsg').textContent = 'This page is not open yet.'; return; }
     $('#head').textContent = j.error; return;
   }
   $('#main').hidden = false; $('#lock').hidden = true;
@@ -300,7 +301,7 @@ $('#rows').addEventListener('click', async e => {
   bdCache.set(sp0 + ':' + id, j.error ? `<span class="note">${esc(j.error)}</span>` : bdHtml(sp0, j));
   const el = document.getElementById('bd-' + id); if(el) el.innerHTML = bdCache.get(sp0 + ':' + id);
 });
-$('#main').hidden = false;
+$('#lock').hidden = false;   // "Checking…" until the server says who they are
 load();
 </script>
 </body>
