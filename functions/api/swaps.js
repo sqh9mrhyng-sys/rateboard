@@ -1022,14 +1022,36 @@ const fitDm = t => String(t).length <= 1000 ? [t] : chunks(String(t).split('\n')
    heading, then one message per player received - his link on top, the packs
    to buy for him under it - so "you are receiving" isn't on every line. Big
    groups run on into more messages, each kept under Real's length limit. */
+/* Fewer messages (Dennis, 2026-11-04): the heading and the groups are packed
+   together - up to 6 swap lines a message and under Real's length limit - with
+   "You are receiving X:" starting each group inside the message, instead of a
+   message per group. */
+function packDm(head, groups) {
+  const out = []; let cur = head ? [head] : [], n = 0;
+  const flush = () => { if (cur.length) out.push(cur.join('\n')); cur = []; n = 0; };
+  for (const g of groups) {
+    let first = true;
+    for (const l of g.lines) {
+      const hdr = first ? `You are receiving ${g.recv}:` : null;
+      const add = (n === 0 && !first ? [`${g.recv} (cont.):`] : []).concat(hdr ? [hdr] : [], [l]);
+      if (n >= LINES_PER_DM || [...cur, ...add].join('\n').length > DM_MAX_CHARS) { flush(); if (!first) add.unshift(`${g.recv} (cont.):`); }
+      cur.push(...(n === 0 && !first && cur.length === 0 ? add : add)); n++; first = false;
+    }
+  }
+  flush();
+  return out.map(x => x.replace(/^(.*\(cont\.\):)\n\1/, '$1'));
+}
+function groupsOf(items, field) {
+  const groups = new Map();
+  for (const it of items) (groups.get(it.recvKey) || groups.set(it.recvKey, { recv: it.recv, lines: [] }).get(it.recvKey)).lines.push(it[field]);
+  return [...groups.values()];
+}
 function warnGrouped(items) {
   const head = "You are swapping the following players today, please buy the following packs within 30 mins. This is a heads up DM - the users you're swapping with in 30 mins:";
   const groups = new Map();
   for (const it of items) (groups.get(it.recvKey) || groups.set(it.recvKey, { recv: it.recv, lines: [] }).get(it.recvKey)).lines.push(it.buy);
   // Always labelled with the player received, even when it's just one (Dennis, 2026-11-04).
-  const out = [head];
-  for (const g of groups.values()) { const parts = chunks(g.lines); parts.forEach((c, i) => out.push((i ? `${g.recv} (cont.)` : `You are receiving ${g.recv}:`) + '\n' + c)); }
-  return out;
+  return packDm(head, [...groups.values()]);
 }
 /* Contact message, the same way: heading, then per player they receive his
    link on top and the partners to contact under it (6 a message). */
@@ -1038,9 +1060,8 @@ function contactGrouped(items, buyItems) {
     + "Comments are to get ahold of other users if they didn't buy the pack in the warning period, ideally this should be communication-less.";
   const groups = new Map();
   for (const it of items) (groups.get(it.recvKey) || groups.set(it.recvKey, { recv: it.recv, lines: [] }).get(it.recvKey)).lines.push(it.contact);
-  const out = [head];
-  for (const g of groups.values()) chunks(g.lines).forEach((c, i) => out.push((i ? `${g.recv} (cont.)` : `You are receiving ${g.recv}:`) + '\n' + c));
-  if (buyItems.length) chunks(buyItems.map(x => x.buy)).forEach((c, i) => out.push((i ? '' : 'Also buy these packs now:\n') + c));
+  const out = packDm(head, [...groups.values()]);
+  if (buyItems.length) out.push(...packDm('Also buy these packs now:', groupsOf(buyItems, 'buy')));
   return out;
 }
 function warnText(lines) {
@@ -1187,7 +1208,9 @@ async function runDms(env, db, auth, rows, max, force) {
     }
     catch (e) { notes.push(`${kind} to @${me.rsUser} failed: ${String(e.message || e).slice(0, 160)}`); await botFail(db, 'dm_' + kind, `@${me.rsUser}: ${e.message || e}`); return false; }
   };
-  for (const [, list] of per) {
+  // Soonest (or most overdue) first, so a busy hour can't leave earlier ones waiting.
+  const order = [...per.values()].sort((x, y) => Math.min(...x.map(z => z.due)) - Math.min(...y.map(z => z.due)));
+  for (const list of order) {
     if (sent >= max || Date.now() - now > 40000) break;   // and never past 40s of the minute
     const who = list[0].who;
     const first = Math.min(...list.map(x => x.due)), last = Math.max(...list.map(x => x.due));
@@ -1195,7 +1218,8 @@ async function runDms(env, db, auth, rows, max, force) {
     // 1. warn: 30 min before each swap hour, that hour's packs only.
     const warnHours = new Map();
     // From :25 (35 minutes before the hour).
-    for (const x of list) if (!x.m['warn' + x.side] && (force || now >= x.due - 35 * 60000)) { const k = force ? 'now' : x.due; (warnHours.get(k) || warnHours.set(k, []).get(k)).push(x); }
+    // Past :55 the contact message carries it instead.
+    for (const x of list) if (!x.m['warn' + x.side] && (force || (now >= x.due - 35 * 60000 && now < x.due - 5 * 60000))) { const k = force ? 'now' : x.due; (warnHours.get(k) || warnHours.set(k, []).get(k)).push(x); }
     let warnFail = false;
     for (const [, wh0] of warnHours) {
       if (sent >= max || Date.now() - now > 40000) break;   // and never past 40s of the minute
