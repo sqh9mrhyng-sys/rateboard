@@ -815,7 +815,15 @@ async function retryDms(db, auth) {
     else await db.prepare('UPDATE dm_retry SET parts=?, tries=tries+1 WHERE id=?').bind(JSON.stringify(parts), r.id).run();
   }
 }
+/* One gap between every DM the bot sends (Dennis, 2026-11-05): sends that
+   bunched up got "Message slowmode" and "Cannot message this channel right
+   now" from Real. Each send takes the next free slot, DM_GAP_MS after the last. */
+const DM_GAP_MS = 2500;
+let dmNextAt = 0;
+const dmWaitAhead = () => Math.max(0, dmNextAt - Date.now());
+async function dmPace() { const t = Date.now(), at = Math.max(t, dmNextAt); dmNextAt = at + DM_GAP_MS; if (at > t) await sleep(at - t); }
 async function dmSend(auth, channelId, text) {
+  await dmPace();
   const res = await fetch(`https://web.realapp.com/messages/channels/${channelId}/messages`, {
     method: 'POST', headers: { ...rsHeaders(auth), 'content-type': 'application/json' },
     body: JSON.stringify({ text, parentMessageId: null }) });
@@ -1299,10 +1307,10 @@ async function runDms(env, db, auth, rows, max, force) {
   };
   // Soonest (or most overdue) first, so a busy hour can't leave earlier ones waiting.
   const order = [...per.values()].sort((x, y) => Math.min(...x.map(z => z.due)) - Math.min(...y.map(z => z.due)));
-  /* Six members at a time (each chat has its own slowmode; one at a time
-     couldn't get through a 200-swap hour - 2026-11-05). */
+  /* Members are worked two at a time; every send waits its turn in dmPace,
+     DM_GAP_MS apart, so Real never gets a burst. */
   const doList = async list => {
-    if (sent >= max || Date.now() - now > 40000 || (TICK_T0 && !force && tickLeft() < 6000)) return;   // never past the tick's time
+    if (sent >= max || Date.now() - now > 40000 || (TICK_T0 && !force && tickLeft() - dmWaitAhead() < 6000)) return;   // never past the tick's time
     const who = list[0].who;
     if (!force && (NO_MSG.get(who) || 0) > Date.now()) return;   // Real refused them a minute ago: not every tick
     const first = Math.min(...list.map(x => x.due)), last = Math.max(...list.map(x => x.due));
@@ -1314,7 +1322,7 @@ async function runDms(env, db, auth, rows, max, force) {
     for (const x of list) if (!x.m['warn' + x.side] && (force || (now >= x.due - 35 * 60000 && now < x.due - 5 * 60000))) { const k = force ? 'now' : x.due; (warnHours.get(k) || warnHours.set(k, []).get(k)).push(x); }
     let warnFail = false;
     for (const [, wh0] of warnHours) {
-      if (sent >= max || Date.now() - now > 40000 || (TICK_T0 && !force && tickLeft() < 6000)) break;   // never past the tick's time
+      if (sent >= max || Date.now() - now > 40000 || (TICK_T0 && !force && tickLeft() - dmWaitAhead() < 6000)) break;   // never past the tick's time
       const wh = await claim(wh0, 'warn');
       if (!wh.length) continue;
       const items = []; for (const x of wh) { const l = await sideLines(member, x.m, x.side); if (l) items.push(l); }
@@ -1329,7 +1337,7 @@ async function runDms(env, db, auth, rows, max, force) {
     // From :55 (5 minutes before the hour).
     for (const x of list) if (!x.m['done' + x.side] && now >= x.due - 5 * 60000) { const k = force ? 'now' : x.due; (byHour.get(k) || byHour.set(k, []).get(k)).push(x); }
     for (const [, hr0] of byHour) {
-      if (sent >= max || Date.now() - now > 40000 || (TICK_T0 && !force && tickLeft() < 6000)) break;   // never past the tick's time
+      if (sent >= max || Date.now() - now > 40000 || (TICK_T0 && !force && tickLeft() - dmWaitAhead() < 6000)) break;   // never past the tick's time
       const noWarn = hr0.filter(x => !x.m['warn' + x.side]);
       const hr = await claim(hr0, 'done');
       if (!hr.length) continue;
@@ -1348,7 +1356,8 @@ async function runDms(env, db, auth, rows, max, force) {
     }
   };
   let qi = 0;
-  await Promise.all([0, 1, 2, 3, 4, 5].map(async () => { while (qi < order.length) { const l = order[qi++]; try { await doList(l); } catch (e) { notes.push('list failed: ' + String(e.message || e).slice(0, 80)); } } }));
+  // Two at a time: sends are spaced by dmPace anyway, this just overlaps the lookups.
+  await Promise.all([0, 1].map(async () => { while (qi < order.length) { const l = order[qi++]; try { await doList(l); } catch (e) { notes.push('list failed: ' + String(e.message || e).slice(0, 80)); } } }));
   // Status: sent once both sides have had the follow-up.
   for (const m of rows) {
     const st = m.followA && m.followB ? 'sent' : (m.warnA || m.warnB || m.doneA || m.doneB) ? 'warned' : m.status;
