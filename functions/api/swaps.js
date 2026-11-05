@@ -687,7 +687,8 @@ async function dmSendRetry(auth, channelId, text) {
    50+ people). It sends up to 20 messages a minute, and pass scans stay off
    the bot from :25 to :40 and :55 to :10 so Real doesn't throttle it while
    the warnings and contacts go out. */
-const DM_PER_TICK = 10;   // Real's message slowmode: 10, then the rest of the minute off
+const DM_PER_TICK = 10;
+const CANCEL_DM_ON = false;   // called-off notices (Dennis, 2026-11-04: too many extra DMs) - flip to bring them back   // Real's message slowmode: 10, then the rest of the minute off
 const dmWindow = (t = new Date()) => { const m = t.getUTCMinutes(); return (m >= 25 && m < 40) || m >= 55 || m < 10; };
 const DMQ_DDL = 'CREATE TABLE IF NOT EXISTS dm_retry (id INTEGER PRIMARY KEY AUTOINCREMENT, channelId INTEGER, parts TEXT, label TEXT, tries INTEGER, at INTEGER)';
 async function queueDm(db, channelId, parts, label) {
@@ -1068,8 +1069,8 @@ async function sideLines(member, m, side) {
     buy: `${playerUrl(gets) || playerName(me, gets)} ${String(gets).split(':')[1]} - ${passUrl(me, gets) || '(pass link not found)'}`,
     recvKey: side === 'A' ? m.aGets : m.bGets,
     recv: (() => { const k = side === 'A' ? m.aGets : m.bGets; return `${playerUrl(k) || playerName(me, k)} ${String(k).split(':')[1]}`; })(),
-    // With the season, so three Scottie Schefflers can be told apart.
-    contact: `@${o.rsUser} - ${o.comment || '(no comment link)'} - ${playerUrl(gets) || playerName(me, gets)} ${String(gets).split(':')[1]}`
+    // @partner - their comment | the player you give (with season) / your card of him (Dennis, 2026-11-04).
+    contact: `@${o.rsUser} - ${o.comment || '(no comment link)'} | ${playerUrl(gets) || playerName(me, gets)} ${String(gets).split(':')[1]} / ${passUrl(me, gets) || '(card link not found)'}`
   };
 }
 async function matchCols(db) {
@@ -1128,6 +1129,7 @@ async function runDms(env, db, auth, rows, max, force) {
         // Only a swap they've actually been warned about: its warning went out and its hour is
         // under 35 minutes away (or here). One scheduled hours ahead gets no message at all.
         // Only in the half hour between its warning and its swap (:30 to :00), and only if warned.
+        if (!CANCEL_DM_ON) continue;          // called-off notices are off: only the DMs for what they matched for
         if (!m['warn' + side]) continue;
         { const left = sideDue(m) - now; if (!(left > 0 && left <= 36 * 60000)) continue; }
         const r = await db.prepare(`UPDATE swap_matches SET ${'follow' + side}=? WHERE id=? AND ${'follow' + side} IS NULL`).bind(now, m.id).run();
@@ -1238,6 +1240,8 @@ async function runDms(env, db, auth, rows, max, force) {
      - otherwise it's called off; if that happens between :20 and :25 (the
        hour was matched at :20 but nobody warned yet) the matching runs again
        straight away so partners get a new swap for the hour. */
+// Off (Dennis, 2026-11-04): during the warning period a member only gets the DMs for what they matched for.
+const LATE_DM_ON = false;
 const LATE_TEXT = 'Sorry you requested a late change/removal, please do the swaps at :00';
 const lateStage = m => !!(m.warnA || m.warnB || m.doneA || m.doneB) || sideDue(m) - Date.now() <= 35 * 60000;
 async function callOff(db, m, note, res) {
@@ -1255,7 +1259,7 @@ async function afterCallOff(env, db, auth, who, res) {
       for (const h of (res.lateHours || [])) { const c = await db.prepare('INSERT OR IGNORE INTO bot_once (campaign, key, at, ok) VALUES (?, ?, ?, 1)').bind('late_' + h, String(who).toLowerCase(), Date.now()).run();
         if (c && c.meta && c.meta.changes) fresh = true; } } catch (e) { fresh = false; }
   }
-  if (res.late && fresh) {
+  if (res.late && fresh && LATE_DM_ON) {
     try { const u = await loadMember(db, who); if (u && u.hashId && auth) { const ch = await dmChannel(db, auth, u.hashId, u.rsUser, env); await dmSendRetry(auth, ch, LATE_TEXT); await stat(db, 'dm_late'); } }
     catch (e) { await botFail(db, 'dm_late', `${who}: ${e.message || e}`); }
   }
