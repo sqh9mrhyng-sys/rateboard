@@ -679,8 +679,9 @@ $('#scan').addEventListener('click', async () => {
   $('#rsuser').value = (me.profile && me.profile.rsUser) || '';
   setTimeout(resumeScan, 300);
   const p = me.profile;
-  $('#scanmsg').textContent = p && (p.passes || []).length
-    ? `${p.passes.length} passes on file` + (p.scannedAt ? ` (read ${new Date(p.scannedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` : '') + '.'
+  const pn = p ? (p.passCount ?? (p.passes || []).length) : 0;
+  $('#scanmsg').textContent = pn
+    ? `${pn} passes on file` + (p.scannedAt ? ` (read ${new Date(p.scannedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` : '') + '.'
     : 'Enter your Real username, then Re-read passes.';
 })();
 </script>
