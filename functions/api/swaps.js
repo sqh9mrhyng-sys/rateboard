@@ -1761,6 +1761,9 @@ async function hourLink(env, key, due, stage = 'buy') {
     return `https://raxacademy.app/h/${code}`;
   } catch (e) { return `https://raxacademy.app/hour?u=${encodeURIComponent(key)}&d=${Number(due)}&t=${t}&s=${stage}`; }
 }
+/* A member's Real profile: Real's own route is /u/<username>/<user id> (from
+   Real's web app, 2026-11-05). The id keeps working after a rename. */
+const profileUrl = (userName, hashId) => userName ? `https://www.realapp.com/u/${encodeURIComponent(userName)}${hashId ? '/' + encodeURIComponent(hashId) : ''}` : null;
 function recvSummary(me, items) {
   const c = new Map(); for (const it of items) c.set(it.recvKey, (c.get(it.recvKey) || 0) + 1);
   return [...c.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${playerName(me, k)}${n > 1 ? ' x' + n : ''}`).join(', ');
@@ -2813,12 +2816,12 @@ async function handle({ request, env, waitUntil }) {
     if (!u) return json({ error: 'No swaps found.' }, 404);
     const ms = ((await db.prepare("SELECT * FROM swap_matches WHERE (a=? OR b=?) AND dueAt=? AND status NOT IN ('cancelled','cleared') ORDER BY id").bind(u.key, u.key, due).all()).results) || [];
     // Partners: only their name and comment (not their whole pass list).
-    const cache = new Map(), mem = async k => cache.has(k) ? cache.get(k) : (cache.set(k, await db.prepare('SELECT key, rsUser, comment FROM swap_users WHERE key=?').bind(k).first()), cache.get(k));
+    const cache = new Map(), mem = async k => cache.has(k) ? cache.get(k) : (cache.set(k, await db.prepare('SELECT key, rsUser, hashId, comment FROM swap_users WHERE key=?').bind(k).first()), cache.get(k));
     const me = await loadMember(db, u.key), out = [];
     for (const m of ms) {
       const side = m.a === u.key ? 'A' : 'B', o = await mem(side === 'A' ? m.b : m.a);
       const recv = side === 'A' ? m.aGets : m.bGets, give = side === 'A' ? m.bGets : m.aGets;
-      out.push({ status: m.status, partner: o && o.rsUser, comment: (o && o.comment) || null,
+      out.push({ status: m.status, partner: o && o.rsUser, partnerUrl: o ? profileUrl(o.rsUser, o.hashId) : null, comment: (o && o.comment) || null,
         receive: playerName(me, recv), receiveUrl: playerUrl(recv),
         give: playerName(me, give), giveUrl: playerUrl(give), yourCard: me ? passUrl(me, give) : null, off: m.status === 'cancelling' });
     }
@@ -2908,7 +2911,7 @@ async function handle({ request, env, waitUntil }) {
     const pk = [...new Set(rows.map(m => (m.a === me ? m.b : m.a)))], who = new Map();
     for (let i = 0; i < pk.length; i += 90) {
       const part = pk.slice(i, i + 90);
-      const r = ((await db.prepare(`SELECT key, rsUser, comment FROM swap_users WHERE key IN (${part.map(() => '?').join(',')})`).bind(...part).all()).results) || [];
+      const r = ((await db.prepare(`SELECT key, rsUser, hashId, comment FROM swap_users WHERE key IN (${part.map(() => '?').join(',')})`).bind(...part).all()).results) || [];
       for (const x of r) who.set(x.key, x);
     }
     const isUp = m => !['cancelled', 'cancelling'].includes(m.status) && ['pending', 'sending', 'warned'].includes(m.status);
@@ -2925,7 +2928,7 @@ async function handle({ request, env, waitUntil }) {
       const side = m.a === me ? 'A' : 'B', ok = side === 'A' ? m.b : m.a, o = who.get(ok);
       const give = side === 'A' ? m.bGets : m.aGets, get = side === 'A' ? m.aGets : m.bGets, due = sideDue(m);
       const off = m.status === 'cancelled' || m.status === 'cancelling', done = !!m['done' + side];
-      out.push({ id: m.id, due, made: m.createdAt, partner: (o && o.rsUser) || null, comment: (o && o.comment) || null,
+      out.push({ id: m.id, due, made: m.createdAt, partner: (o && o.rsUser) || null, partnerUrl: o ? profileUrl(o.rsUser, o.hashId) : null, comment: (o && o.comment) || null,
         give: mine ? playerName(mine, give) : give, giveUrl: playerUrl(give), giveCard: mine ? passUrl(mine, give) : null,
         get: mine ? playerName(mine, get) : get, getUrl: playerUrl(get), getCard: cardOf.get(`${ok}|${get}`) || null,
         warnedAt: m['warn' + side] || null, contactedAt: m['done' + side] || null,

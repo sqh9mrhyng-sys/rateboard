@@ -78,7 +78,7 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
       <span><b>${lnk(x.give, x.giveUrl)}</b>${x.off ? '<span class="sub">called off</span>' : ''}</span></span>${x.yourCard ? `<a class="btn" href="${esc(x.yourCard)}" target="_blank" rel="noopener">Your card</a>` : ''}</div>`).join('')).join('');
   // Each partner: who, what you receive, what you give - and their comment to reach them.
   $('#conlist').innerHTML = j.swaps.map((x, i) => `<div class="row${x.off ? ' off' : ''}"><span class="grp"><input type="checkbox" class="chk" data-k="c${i}" ${done['c' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}>
-    <span><b>@${esc(x.partner || '?')}</b><span class="sub">You receive <b class="rv">${lnk(x.receive, x.receiveUrl)}</b></span><span class="sub">(You're giving ${esc(x.give)})</span></span></span>${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : '<span class="note">no comment</span>'}</div>`).join('');
+    <span><b>${x.partnerUrl ? `<a href="${esc(x.partnerUrl)}" target="_blank" rel="noopener">@${esc(x.partner || '?')}</a>` : '@' + esc(x.partner || '?')}</b><span class="sub">You receive <b class="rv">${lnk(x.receive, x.receiveUrl)}</b></span><span class="sub">(You're giving ${esc(x.give)})</span></span></span>${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : '<span class="note">no comment</span>'}</div>`).join('');
 })();
 document.addEventListener('change', e => { const k = e.target.dataset.k; if(!k) return; done[k] = e.target.checked; try{ localStorage.setItem(key, JSON.stringify(done)); }catch(err){} });
 </script>
