@@ -1315,7 +1315,7 @@ async function runDms(env, db, auth, rows, max, force) {
       if (!wh.length) continue;
       const items = []; for (const x of wh) { const l = await sideLines(member, x.m, x.side); if (l) items.push(l); }
       let wmsg = warnGrouped(items);
-      if (wmsg.length > 1) { const me0 = await member(who);
+      { const me0 = await member(who);   // always the site message now (Dennis, 2026-11-05), whatever the size
         wmsg = [siteDm('Heads up - you swap in 30 min. Buy your packs now.', items.length, await hourLink(env, who, wh[0].due), recvSummary(me0, items))]; }
       if (!(items.length && await send(who, wmsg, 'warn'))) { await unclaim(wh, 'warn'); warnFail = true; }
     }
@@ -1332,7 +1332,7 @@ async function runDms(env, db, auth, rows, max, force) {
       const items = [], buy = [];
       for (const x of hr) { const l = await sideLines(member, x.m, x.side); if (!l) continue; items.push(l); if (noWarn.includes(x)) buy.push(l); }
       let cmsg = contactGrouped(items, buy);
-      if (cmsg.length > 1) { const me0 = await member(who);
+      { const me0 = await member(who);   // always the site message now
         cmsg = [siteDm('', items.length, await hourLink(env, who, hr[0].due, 'offer'), recvSummary(me0, items), buy.length ? `You weren't warned earlier: buy the ${buy.length} pack${buy.length === 1 ? '' : 's'} on the site first.` : '')]; }
       if (items.length && await send(who, cmsg, 'contact')) await mark(hr.filter(x => noWarn.includes(x)), 'warn');
       else await unclaim(hr, 'done');
