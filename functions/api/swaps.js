@@ -1880,7 +1880,7 @@ const BOOST_SEASON = { ncaam: [2027, 2026], ncaaf: [2026, 2025], nfl: [2026, 202
    last season's rax per game among regulars: Legendary is roughly the top
    2-3% of games, Epic the top 10%, Rare the top 25%. Boost saver raises the
    bar 15%, earning heavy lowers it 15%. */
-const BOOST_BARS = { ncaam: [11.5, 10, 7.5], ncaaf: [25, 20, 12], nfl: [19, 15, 8.5] };   // Legendary ~top 1% game, Epic ~top 3-5%
+const BOOST_BARS = { ncaam: [11.5, 10, 7.5], ncaaf: [25, 20, 12], nfl: [19, 15, 8.5], golf: [19, 15, 10] };   // Legendary ~top 1% game, Epic ~top 3-5%
 const BOOST_MODES = { balanced: 1, heavy: 1, saver: 1, custom: 1 };
 const ESPN_PATH = { ncaam: 'basketball/mens-college-basketball', ncaaf: 'football/college-football', nfl: 'football/nfl' };
 const ESPN_GROUP = { ncaam: '&groups=50', ncaaf: '&groups=80', nfl: '' };
@@ -2220,6 +2220,85 @@ async function boostDepth(env, sched, force, only) {
   for (const m of ms) Object.assign(out, m);
   return out;
 }
+
+
+/* ---- Golf boosts (2026-11-04) ----------------------------------------------
+   Upcoming PGA Tour events from ESPN's calendar, each with its field once
+   ESPN has it (usually the Tuesday before). A tournament is the "game". */
+const GOLF_SEASON = [2026, 2025];
+async function golfEvents(env, force) {
+  const key = 'boostgolf_v1';
+  if (!force) { try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c && Date.now() - c.at < 2 * 3600000) return c.events; } catch (e) {} }
+  const etDate = iso => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
+  let d;
+  try { const r = await fetch('https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard'); if (!r.ok) throw new Error(String(r.status)); d = await r.json(); }
+  catch (e) { try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c) return c.events; } catch (e2) {} return []; }
+  const now = Date.now();
+  const cal = (((d.leagues || [])[0] || {}).calendar || []).filter(c => c && c.startDate && Date.parse(c.endDate || c.startDate) > now - 12 * 3600000 && Date.parse(c.startDate) < now + 13 * 86400000);
+  const fieldOf = ev => ((((ev.competitions || [])[0] || {}).competitors) || []).map(x => x.athlete && x.athlete.displayName).filter(Boolean);
+  const events = [];
+  for (const c of cal.slice(0, 3)) {
+    let ev = (d.events || []).find(e => String(e.id) === String(c.id));
+    if (!ev) { try { const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard?dates=${etDate(c.startDate).replace(/-/g, '')}`);
+      if (r.ok) { const x = await r.json(); ev = (x.events || []).find(e => String(e.id) === String(c.id)) || (x.events || [])[0]; } } catch (e) {} }
+    events.push({ id: String(c.id), name: c.label, start: c.startDate, end: c.endDate, day: etDate(c.startDate), field: ev ? fieldOf(ev) : [] });
+  }
+  try { await env.RATEBOARD_KV.put(key, JSON.stringify({ at: Date.now(), events }), { expirationTtl: 3 * 86400 }); } catch (e) {}
+  return events;
+}
+const golfNorm = s => String(s || '').toLowerCase().replace(/\s+(pres\.?|presented)\s+by\s+.*$/, '').replace(/[^a-z0-9]+/g, ' ').trim();
+/* One row per golf pass the member holds: form (last 8 events this season and
+   last), and history at this event / this course from every season stored,
+   weighed in by how many times he's played it (up to half the projection). */
+async function golfRows(env, db, cards, day) {
+  const events = await golfEvents(env);
+  const ev = events.find(e => e.day === day) || events.find(e => e.day <= day && etDayOf(e.end) >= day);
+  if (!ev) return { error: 'No PGA Tour event that week.' };
+  const field = new Set(ev.field.map(boostName));
+  let tours = [];
+  try { tours = ((await db.prepare("SELECT season, gameId, name, course FROM tournament WHERE sport='golf'").all()).results) || []; } catch (e) {}
+  const target = golfNorm(ev.name), tw = target.split(' ').filter(w => w.length > 3);
+  let same = tours.filter(t => golfNorm(t.name) === target);
+  if (!same.length && tw.length) same = tours.filter(t => { const w = new Set(golfNorm(t.name).split(' ')); return tw.filter(x => w.has(x)).length / tw.length >= 0.6; });
+  const latest = same.slice().sort((a, b) => b.season - a.season)[0];
+  const course = latest && latest.course;
+  const histIds = [...new Set([...same.map(t => Number(t.gameId)), ...(course ? tours.filter(t => t.course === course).map(t => Number(t.gameId)) : [])])];
+  const ids = [...new Set(cards.players.map(p => Number(p.id)).filter(Number.isFinite))];
+  const recent = new Map(), hist = new Map();
+  for (let i = 0; i < ids.length; i += 90) {
+    const part = ids.slice(i, i + 90), ph = part.map(() => '?').join(',');
+    try { const r = await db.prepare(`SELECT playerId, player, team, day, rax, position FROM gamelog WHERE sport='golf' AND season IN (?, ?) AND rax IS NOT NULL AND day < ? AND playerId IN (${ph}) ORDER BY day DESC`)
+        .bind(GOLF_SEASON[0], GOLF_SEASON[1], day, ...part).all();
+      for (const x of (r.results || [])) { const a = recent.get(Number(x.playerId)) || recent.set(Number(x.playerId), []).get(Number(x.playerId)); if (a.length < 8) a.push(x); } } catch (e) {}
+    if (histIds.length) {
+      try { const r = await db.prepare(`SELECT playerId, player, season, rax, position FROM gamelog WHERE sport='golf' AND rax IS NOT NULL AND day < ? AND gameId IN (${histIds.map(() => '?').join(',')}) AND playerId IN (${ph})`)
+          .bind(day, ...histIds, ...part).all();
+        for (const x of (r.results || [])) (hist.get(Number(x.playerId)) || hist.set(Number(x.playerId), []).get(Number(x.playerId))).push(x); } catch (e) {}
+    }
+  }
+  const rows = [], idle = [];
+  const avg = a => a.length ? a.reduce((t, x) => t + Number(x.rax || 0), 0) / a.length : null;
+  const posN = p => { const n = parseInt(String(p || '').replace(/^T/, ''), 10); return Number.isFinite(n) ? n : null; };
+  for (const p of cards.players) {
+    const rc = recent.get(Number(p.id)) || [], hs = hist.get(Number(p.id)) || [];
+    const name = p.name || (rc[0] && rc[0].player) || (hs[0] && hs[0].player) || 'Player ' + p.id;
+    if (ev.field.length && !field.has(boostName(name))) { idle.push(name); continue; }
+    const form = avg(rc), cuts = rc.filter(x => String(x.position).toUpperCase() === 'CUT').length;
+    const ha = avg(hs), hn = hs.length, best = hs.map(x => posN(x.position)).filter(x => x != null).sort((a, b) => a - b)[0];
+    const w = hn ? Math.min(0.5, hn / (hn + 3)) : 0;
+    let proj = form != null ? form * (1 - w) + (hn ? ha * w : 0) : hn ? ha : null;
+    const flags = [];
+    if (!ev.field.length) flags.push('Field not out yet');
+    if (rc.length >= 4 && cuts >= Math.ceil(rc.length / 2)) flags.push(`Missed ${cuts} of his last ${rc.length} cuts`);
+    const basis = [form != null ? `form ${Math.round(form * 10) / 10} over ${rc.length} event${rc.length === 1 ? '' : 's'}` : 'no recent events',
+      hn ? `here ${Math.round(ha * 10) / 10} over ${hn} (best ${best != null ? (best === 1 ? 'win' : '#' + best) : '-'})` : 'no history here'].join(' · ');
+    rows.push({ id: p.id, passId: p.passId, name, team: (rc[0] && rc[0].team) || null, tid: null, pos: '', opp: ev.name, home: true, at: ev.start, exp: {},
+      avg: form == null ? null : Math.round(form * 10) / 10, games: rc.length, avgLast: hn ? Math.round(ha * 10) / 10 : null, course: hn ? { n: hn, avg: Math.round(ha * 10) / 10, best } : null,
+      proj: proj == null ? null : Math.round(proj * 10) / 10, basis, flags, skip: false, fresh: false, noData: proj == null });
+  }
+  return { rows, idle, sched: { games: 1, event: ev.name, course: course || null, field: ev.field.length } };
+}
+const etDayOf = iso => iso ? new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso)) : '';
 
 const SCAN_EVERY_KEY = 'swap_scan_every_v1';
 async function scanEvery(env) {
@@ -3205,6 +3284,14 @@ async function handle({ request, env, waitUntil }) {
      this season's last game, the CBB list, last season's team. */
   if (op === 'boostdays') {
     const sp = String(url.searchParams.get('sport') || '');
+    if (sp === 'golf') {
+      // Golf: the next tournaments, and how many of the member's golfers are in each field.
+      const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
+      const names = new Set(parse(u && u.passes, []).filter(p => p.sport === 'golf' && Number(p.season) === GOLF_SEASON[0] && p.kind !== 'team').map(p => boostName(p.name)));
+      const evs = await golfEvents(env);
+      return json({ passes: names.size, days: evs.map(e => ({ day: e.day, event: e.name, fieldOut: e.field.length > 0,
+        players: e.field.length ? e.field.filter(n => names.has(boostName(n))).length : names.size })) });
+    }
     if (!BOOST_SEASON[sp]) return json({ error: 'Pick CBB, CFB or NFL.' }, 400);
     const [se, prev] = BOOST_SEASON[sp];
     const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
@@ -3229,7 +3316,7 @@ async function handle({ request, env, waitUntil }) {
   }
   if (op === 'boostplan') {
     const sp = String(url.searchParams.get('sport') || '');
-    if (!BOOST_SEASON[sp]) return json({ error: 'Pick CBB, CFB or NFL.' }, 400);
+    if (!BOOST_SEASON[sp] && sp !== 'golf') return json({ error: 'Pick CBB, CFB, NFL or Golf.' }, 400);
     const day = String(url.searchParams.get('date') || '');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return json({ error: 'Pick a date.' }, 400);
     let mode = BOOST_MODES[url.searchParams.get('mode')] ? url.searchParams.get('mode') : 'balanced';
@@ -3241,7 +3328,7 @@ async function handle({ request, env, waitUntil }) {
     const cnum = (k, lo, hi) => { const v = url.searchParams.get(k); if (v == null || v === '') return null; const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : null; };
     const CUS = mode === 'custom' ? { leg: cnum('cl', 0, 500), epic: cnum('ce', 0, 500), rare: cnum('cr', 0, 500),
       max: { 5: cnum('ml', 0, 999), 4: cnum('me', 0, 999), 3: cnum('mr', 0, 999) } } : null;
-    const [se, prev] = BOOST_SEASON[sp];
+    const [se, prev] = sp === 'golf' ? GOLF_SEASON : BOOST_SEASON[sp];
     // What they own: the passes from their last scan (the same read Swaps
     // uses). Rarity and pass level are not counted.
     const u = await db.prepare('SELECT passes, scannedAt, rsUser FROM swap_users WHERE key=?').bind(me).first();
@@ -3249,129 +3336,136 @@ async function handle({ request, env, waitUntil }) {
     const cards = { at: u.scannedAt || null, players: parse(u.passes, [])
       .filter(p => p.sport === sp && Number(p.season) === se && p.kind !== 'team')
       .map(p => ({ id: Number(p.id), name: p.name || '', passId: p.passId || null })) };
-    const sched = await boostSchedule(env, sp, day);
-    if (sched.error) return json({ error: sched.error }, 502);
-    const inj = await boostInjuries(env, sp);
-    // Game-by-game for this season and averages for last, from the game log.
-    const ids = [...new Set(cards.players.map(p => Number(p.id)).filter(Number.isFinite))];
-    const games = new Map(), old = new Map();
-    for (let i = 0; i < ids.length; i += 90) {
-      const part = ids.slice(i, i + 90), ph = part.map(() => '?').join(',');
-      try {
-        const r = await db.prepare(`SELECT playerId, day, rax, min, team, position, player, pts, reb, ast, stl, blk, fg3${sp === 'ncaam' ? '' : ', stats'} FROM gamelog
-          WHERE sport=? AND season=? AND rax IS NOT NULL AND playerId IN (${ph}) ORDER BY day`).bind(sp, se, ...part).all();
-        for (const x of (r.results || [])) (games.get(Number(x.playerId)) || games.set(Number(x.playerId), []).get(Number(x.playerId))).push(x);
-      } catch (e) {}
-      try {
-        const r = await db.prepare(`SELECT playerId, team, position, day, rax, min, player, pts, reb, ast, stl, blk, fg3${sp === 'ncaam' ? '' : ', stats'} FROM gamelog
-          WHERE sport=? AND season=? AND rax IS NOT NULL AND seasonType='regularseason' AND playerId IN (${ph}) ORDER BY day`).bind(sp, prev, ...part).all();
-        for (const x of (r.results || [])) { const k = Number(x.playerId); const o = old.get(k) || { rows: [] }; o.rows.push(x); old.set(k, o); }
-      } catch (e) {}
-    }
-    // NFL starters from ESPN's depth charts, for the teams playing that day.
-    for (const [k, o] of old) {
-      const rs = o.rows, l = rs[rs.length - 1];
-      Object.assign(o, { team: l.team, position: l.position, last: l.day, g: rs.length, player: l.player,
-        avg: rs.reduce((t, x) => t + Number(x.rax || 0), 0) / rs.length,
-        min: rs.some(x => x.min != null) ? rs.reduce((t, x) => t + Number(x.min || 0), 0) / rs.length : null });
-    }
-    const depth = sp === 'nfl' ? await boostDepth(env, sched) : null;
-    // The member's boosters, if Real will give them.
-    let inv = null;
-    try { const uu = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(me).first();
-      if (uu && uu.hashId) { const r = await boostInventory(env, env.RS_AUTH_TOKEN || auth, uu.hashId, sp, false); if (!r.error) inv = r.list; } } catch (e) {}
-    // Current teams from ESPN's rosters (CBB: transfers and freshmen), and
-    // how much each opponent gave up last season and this one.
-    let roster = {}, match = {};
-    if (sp === 'ncaam') { try { roster = (JSON.parse((await env.RATEBOARD_KV.get('boostrostermap_v1_ncaam')) || 'null') || {}).m || {}; } catch (e) {} }
-    try { match = (JSON.parse((await env.RATEBOARD_KV.get('boostmatch_v1_' + sp)) || 'null') || {}).f || {}; } catch (e) {}
-    // Freshmen and anyone new: Real's owner counts stand in for hype.
-    const ownersBy = new Map();
-    const noGames = ids.filter(id => !games.has(id) && !old.has(id));
-    for (let i = 0; i < noGames.length; i += 90) {
-      const part = noGames.slice(i, i + 90);
-      try { const r = await db.prepare(`SELECT playerId, MAX(owners) AS o FROM owners WHERE sport=? AND season=? AND playerId IN (${part.map(() => '?').join(',')}) GROUP BY playerId`).bind(sp, se, ...part).all();
-        for (const x of (r.results || [])) ownersBy.set(Number(x.playerId), Number(x.o) || 0); } catch (e) {}
-    }
-    const avg = a => a.length ? a.reduce((t, x) => t + Number(x.rax || 0), 0) / a.length : null;
-    const dayMs = Date.parse(day + 'T12:00:00Z');
-    const rows = [], idle = [];
-    for (const p of cards.players) {
-      const gs = games.get(Number(p.id)) || [], o = old.get(Number(p.id));
-      const lastG = gs[gs.length - 1];
-      const name = p.name || (sp === 'ncaam' && CBB_TOP175[p.id] && CBB_TOP175[p.id][3]) || (lastG && lastG.player) || (o && o.player) || 'Player ' + p.id;
-      const ros = sp === 'ncaam' ? roster[boostName(name)] : null;
-      // A game this season wins; then ESPN's current roster; then last season's team.
-      // The CBB list carries each player's current team too (transfers, freshmen).
-      const listTeam = sp === 'ncaam' && CBB_TOP175[p.id] ? CBB_TOP175[p.id][1] : null;
-      const teamAb = lastG && lastG.team ? boostAlias(sp, lastG.team) : listTeam ? boostAlias(sp, listTeam)
-        : ros ? ros.ab : o && o.team ? boostAlias(sp, o.team) : null;
-      const team = (lastG && lastG.team) || listTeam || (ros && ros.ab) || (o && o.team) || null;
-      const g = teamAb ? sched.teams[teamAb] : null;
-      if (!g) { idle.push(name); continue; }
-      const pos = (lastG && lastG.position) || (o && o.position) || (ros && ros.pos) || '';
-      const mf = g.oppAb && match[g.oppAb] ? match[g.oppAb] : 1;
-      const ca = avg(gs), r4 = avg(gs.slice(-4)), oa = o ? Number(o.avg) : null, cg = gs.length;
-      let proj = null, basis = '';
-      if (cg >= 4) { proj = oa != null ? 0.5 * r4 + 0.3 * ca + 0.2 * oa : 0.6 * r4 + 0.4 * ca; basis = `last 4 games weighted, ${cg} this season`; }
-      else if (cg && oa != null) { proj = 0.5 * ca + 0.5 * oa; basis = `${cg} game${cg === 1 ? '' : 's'} this season + last season`; }
-      else if (cg) { proj = ca; basis = `${cg} game${cg === 1 ? '' : 's'} this season`; }
-      else if (oa != null) { proj = oa; basis = 'last season (regular season)'; }
-      // No college games at all: a freshman (or new arrival) estimate from how
-      // many people own him on Real.
-      let fresh = false, noData = false;
-      if (proj == null) {
-        const rk = sp === 'ncaam' && CBB_TOP175[p.id] ? CBB_TOP175[p.id][0] : null;
-        if (rk) {
-          // Rank 1 is about 12.5 rax a game, falling to about 6.5 at 175 (freshmen run a little under returners).
-          proj = Math.round(Math.max(6.5, 12.5 - 0.035 * (rk - 1)) * 10) / 10; fresh = true;
-          basis = `freshman · #${rk} on the top 175`;
-        } else { noData = true; basis = 'not enough data'; }
+    let sched = null, depth = null, inv = null, rows = [], idle = [];
+    if (sp === 'golf') {
+      // Golf: the tournament is the game; form plus course history (see golfRows).
+      const gr = await golfRows(env, db, cards, day);
+      if (gr.error) return json({ error: gr.error }, 404);
+      ({ sched, rows, idle } = gr);
+    } else {
+      sched = await boostSchedule(env, sp, day);
+      if (sched.error) return json({ error: sched.error }, 502);
+      const inj = await boostInjuries(env, sp);
+      // Game-by-game for this season and averages for last, from the game log.
+      const ids = [...new Set(cards.players.map(p => Number(p.id)).filter(Number.isFinite))];
+      const games = new Map(), old = new Map();
+      for (let i = 0; i < ids.length; i += 90) {
+        const part = ids.slice(i, i + 90), ph = part.map(() => '?').join(',');
+        try {
+          const r = await db.prepare(`SELECT playerId, day, rax, min, team, position, player, pts, reb, ast, stl, blk, fg3${sp === 'ncaam' ? '' : ', stats'} FROM gamelog
+            WHERE sport=? AND season=? AND rax IS NOT NULL AND playerId IN (${ph}) ORDER BY day`).bind(sp, se, ...part).all();
+          for (const x of (r.results || [])) (games.get(Number(x.playerId)) || games.set(Number(x.playerId), []).get(Number(x.playerId))).push(x);
+        } catch (e) {}
+        try {
+          const r = await db.prepare(`SELECT playerId, team, position, day, rax, min, player, pts, reb, ast, stl, blk, fg3${sp === 'ncaam' ? '' : ', stats'} FROM gamelog
+            WHERE sport=? AND season=? AND rax IS NOT NULL AND seasonType='regularseason' AND playerId IN (${ph}) ORDER BY day`).bind(sp, prev, ...part).all();
+          for (const x of (r.results || [])) { const k = Number(x.playerId); const o = old.get(k) || { rows: [] }; o.rows.push(x); old.set(k, o); }
+        } catch (e) {}
       }
-      if (proj != null && mf !== 1) basis += ` · matchup x${mf}`;
-      const flags = [];
-      let skip = false, k = 1;
-      // Injury report.
-      const ij = inj[boostName(name)];
-      if (ij) {
-        if (/^(out|injured reserve|doubtful|suspension)/i.test(ij.status)) { skip = true; flags.push(`${ij.status}${ij.note ? ': ' + ij.note : ''}`); }
-        else if (/questionable/i.test(ij.status)) { k *= 0.75; flags.push(`Questionable${ij.note ? ': ' + ij.note : ''}`); }
+      // NFL starters from ESPN's depth charts, for the teams playing that day.
+      for (const [k, o] of old) {
+        const rs = o.rows, l = rs[rs.length - 1];
+        Object.assign(o, { team: l.team, position: l.position, last: l.day, g: rs.length, player: l.player,
+          avg: rs.reduce((t, x) => t + Number(x.rax || 0), 0) / rs.length,
+          min: rs.some(x => x.min != null) ? rs.reduce((t, x) => t + Number(x.min || 0), 0) / rs.length : null });
       }
-      // Starter or not.
-      if (depth) {
-        const d = depth[boostName(name)];
-        if (d && !d.starter) { skip = true; flags.push(`Backup (${d.pos.toUpperCase()}${d.slot})`); }
+      depth = sp === 'nfl' ? await boostDepth(env, sched) : null;
+      // The member's boosters, if Real will give them.
+      try { const uu = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(me).first();
+        if (uu && uu.hashId) { const r = await boostInventory(env, env.RS_AUTH_TOKEN || auth, uu.hashId, sp, false); if (!r.error) inv = r.list; } } catch (e) {}
+      // Current teams from ESPN's rosters (CBB: transfers and freshmen), and
+      // how much each opponent gave up last season and this one.
+      let roster = {}, match = {};
+      if (sp === 'ncaam') { try { roster = (JSON.parse((await env.RATEBOARD_KV.get('boostrostermap_v1_ncaam')) || 'null') || {}).m || {}; } catch (e) {} }
+      try { match = (JSON.parse((await env.RATEBOARD_KV.get('boostmatch_v1_' + sp)) || 'null') || {}).f || {}; } catch (e) {}
+      // Freshmen and anyone new: Real's owner counts stand in for hype.
+      const ownersBy = new Map();
+      const noGames = ids.filter(id => !games.has(id) && !old.has(id));
+      for (let i = 0; i < noGames.length; i += 90) {
+        const part = noGames.slice(i, i + 90);
+        try { const r = await db.prepare(`SELECT playerId, MAX(owners) AS o FROM owners WHERE sport=? AND season=? AND playerId IN (${part.map(() => '?').join(',')}) GROUP BY playerId`).bind(sp, se, ...part).all();
+          for (const x of (r.results || [])) ownersBy.set(Number(x.playerId), Number(x.o) || 0); } catch (e) {}
       }
-      // Hasn't been playing: no game in the last 15 days of a season under way (football).
-      if (sp !== 'ncaam' && cg && lastG && dayMs - Date.parse(lastG.day + 'T12:00:00Z') > 15 * 86400000) { skip = true; flags.push(`No game since ${lastG.day}`); }
-      if (sp !== 'ncaam' && !cg && o) { k *= 0.6; flags.push('No games this season yet'); }
-      // Basketball minutes: recent ones if there are any, else last season's.
-      if (sp === 'ncaam') {
-        const m3 = gs.slice(-3).map(x => Number(x.min)).filter(Number.isFinite);
-        const mAvg = m3.length ? m3.reduce((a, b) => a + b, 0) / m3.length : (o && o.min != null ? Number(o.min) : null);
-        if (m3.length >= 2 && mAvg < 12) { skip = true; flags.push(`${Math.round(mAvg)} min a game lately`); }
-        else if (!m3.length && mAvg != null && mAvg < 15) { k *= 0.7; flags.push(`${Math.round(mAvg)} min a game last season`); }
-      }
-      // Expected count of each boostable stat: recent games most, then this season, then last.
-      const exp = {};
-      const want = inv ? [...new Set(inv.flatMap(b => (b.attrs || []).map(a => a.stat)))] : Object.keys(STAT_BARS);
-      for (const st of want) {
-        const m = a => { const v = a.map(x => statOf(x, st)).filter(x => x != null); return v.length ? v.reduce((t, x) => t + x, 0) / v.length : null; };
-        const c4 = m(gs.slice(-4)), cA = m(gs), oA = o ? m(o.rows) : null;
-        let e = null;
-        if (cg >= 4) e = oA != null ? 0.5 * c4 + 0.3 * cA + 0.2 * oA : 0.6 * c4 + 0.4 * cA;
-        else if (cA != null && oA != null) e = 0.5 * cA + 0.5 * oA;
-        else e = cA ?? oA;
-        if (e == null && fresh && sp === 'ncaam' && FRESH_LINE[st] != null) {
-          // A starter's line scaled to his estimate, guards toward assists and threes, bigs toward boards and blocks.
-          const big = /^(F|C|PF|C-F|F-C)$/i.test(pos), sc = proj / 8;
-          e = FRESH_LINE[st] * sc * (big ? ({ REB: 1.35, BLK: 1.8, AST: 0.6, '3PM': 0.5 }[st] || 1) : ({ AST: 1.3, '3PM': 1.3, REB: 0.8, BLK: 0.5 }[st] || 1));
+      const avg = a => a.length ? a.reduce((t, x) => t + Number(x.rax || 0), 0) / a.length : null;
+      const dayMs = Date.parse(day + 'T12:00:00Z');
+      rows = []; idle = [];
+      for (const p of cards.players) {
+        const gs = games.get(Number(p.id)) || [], o = old.get(Number(p.id));
+        const lastG = gs[gs.length - 1];
+        const name = p.name || (sp === 'ncaam' && CBB_TOP175[p.id] && CBB_TOP175[p.id][3]) || (lastG && lastG.player) || (o && o.player) || 'Player ' + p.id;
+        const ros = sp === 'ncaam' ? roster[boostName(name)] : null;
+        // A game this season wins; then ESPN's current roster; then last season's team.
+        // The CBB list carries each player's current team too (transfers, freshmen).
+        const listTeam = sp === 'ncaam' && CBB_TOP175[p.id] ? CBB_TOP175[p.id][1] : null;
+        const teamAb = lastG && lastG.team ? boostAlias(sp, lastG.team) : listTeam ? boostAlias(sp, listTeam)
+          : ros ? ros.ab : o && o.team ? boostAlias(sp, o.team) : null;
+        const team = (lastG && lastG.team) || listTeam || (ros && ros.ab) || (o && o.team) || null;
+        const g = teamAb ? sched.teams[teamAb] : null;
+        if (!g) { idle.push(name); continue; }
+        const pos = (lastG && lastG.position) || (o && o.position) || (ros && ros.pos) || '';
+        const mf = g.oppAb && match[g.oppAb] ? match[g.oppAb] : 1;
+        const ca = avg(gs), r4 = avg(gs.slice(-4)), oa = o ? Number(o.avg) : null, cg = gs.length;
+        let proj = null, basis = '';
+        if (cg >= 4) { proj = oa != null ? 0.5 * r4 + 0.3 * ca + 0.2 * oa : 0.6 * r4 + 0.4 * ca; basis = `last 4 games weighted, ${cg} this season`; }
+        else if (cg && oa != null) { proj = 0.5 * ca + 0.5 * oa; basis = `${cg} game${cg === 1 ? '' : 's'} this season + last season`; }
+        else if (cg) { proj = ca; basis = `${cg} game${cg === 1 ? '' : 's'} this season`; }
+        else if (oa != null) { proj = oa; basis = 'last season (regular season)'; }
+        // No college games at all: a freshman (or new arrival) estimate from how
+        // many people own him on Real.
+        let fresh = false, noData = false;
+        if (proj == null) {
+          const rk = sp === 'ncaam' && CBB_TOP175[p.id] ? CBB_TOP175[p.id][0] : null;
+          if (rk) {
+            // Rank 1 is about 12.5 rax a game, falling to about 6.5 at 175 (freshmen run a little under returners).
+            proj = Math.round(Math.max(6.5, 12.5 - 0.035 * (rk - 1)) * 10) / 10; fresh = true;
+            basis = `freshman · #${rk} on the top 175`;
+          } else { noData = true; basis = 'not enough data'; }
         }
-        if (e != null) exp[st] = Math.round(e * k * mf * 100) / 100;
+        if (proj != null && mf !== 1) basis += ` · matchup x${mf}`;
+        const flags = [];
+        let skip = false, k = 1;
+        // Injury report.
+        const ij = inj[boostName(name)];
+        if (ij) {
+          if (/^(out|injured reserve|doubtful|suspension)/i.test(ij.status)) { skip = true; flags.push(`${ij.status}${ij.note ? ': ' + ij.note : ''}`); }
+          else if (/questionable/i.test(ij.status)) { k *= 0.75; flags.push(`Questionable${ij.note ? ': ' + ij.note : ''}`); }
+        }
+        // Starter or not.
+        if (depth) {
+          const d = depth[boostName(name)];
+          if (d && !d.starter) { skip = true; flags.push(`Backup (${d.pos.toUpperCase()}${d.slot})`); }
+        }
+        // Hasn't been playing: no game in the last 15 days of a season under way (football).
+        if (sp !== 'ncaam' && cg && lastG && dayMs - Date.parse(lastG.day + 'T12:00:00Z') > 15 * 86400000) { skip = true; flags.push(`No game since ${lastG.day}`); }
+        if (sp !== 'ncaam' && !cg && o) { k *= 0.6; flags.push('No games this season yet'); }
+        // Basketball minutes: recent ones if there are any, else last season's.
+        if (sp === 'ncaam') {
+          const m3 = gs.slice(-3).map(x => Number(x.min)).filter(Number.isFinite);
+          const mAvg = m3.length ? m3.reduce((a, b) => a + b, 0) / m3.length : (o && o.min != null ? Number(o.min) : null);
+          if (m3.length >= 2 && mAvg < 12) { skip = true; flags.push(`${Math.round(mAvg)} min a game lately`); }
+          else if (!m3.length && mAvg != null && mAvg < 15) { k *= 0.7; flags.push(`${Math.round(mAvg)} min a game last season`); }
+        }
+        // Expected count of each boostable stat: recent games most, then this season, then last.
+        const exp = {};
+        const want = inv ? [...new Set(inv.flatMap(b => (b.attrs || []).map(a => a.stat)))] : Object.keys(STAT_BARS);
+        for (const st of want) {
+          const m = a => { const v = a.map(x => statOf(x, st)).filter(x => x != null); return v.length ? v.reduce((t, x) => t + x, 0) / v.length : null; };
+          const c4 = m(gs.slice(-4)), cA = m(gs), oA = o ? m(o.rows) : null;
+          let e = null;
+          if (cg >= 4) e = oA != null ? 0.5 * c4 + 0.3 * cA + 0.2 * oA : 0.6 * c4 + 0.4 * cA;
+          else if (cA != null && oA != null) e = 0.5 * cA + 0.5 * oA;
+          else e = cA ?? oA;
+          if (e == null && fresh && sp === 'ncaam' && FRESH_LINE[st] != null) {
+            // A starter's line scaled to his estimate, guards toward assists and threes, bigs toward boards and blocks.
+            const big = /^(F|C|PF|C-F|F-C)$/i.test(pos), sc = proj / 8;
+            e = FRESH_LINE[st] * sc * (big ? ({ REB: 1.35, BLK: 1.8, AST: 0.6, '3PM': 0.5 }[st] || 1) : ({ AST: 1.3, '3PM': 1.3, REB: 0.8, BLK: 0.5 }[st] || 1));
+          }
+          if (e != null) exp[st] = Math.round(e * k * mf * 100) / 100;
+        }
+        rows.push({ id: p.id, passId: p.passId, name, team, tid: g.id, pos, opp: g.opp, home: g.home, at: g.at, exp,
+          avg: ca == null ? null : Math.round(ca * 10) / 10, games: cg, avgLast: oa == null ? null : Math.round(oa * 10) / 10,
+          proj: proj == null ? null : Math.round(proj * k * mf * 10) / 10, basis, flags, skip, fresh, noData });
       }
-      rows.push({ id: p.id, passId: p.passId, name, team, tid: g.id, pos, opp: g.opp, home: g.home, at: g.at, exp,
-        avg: ca == null ? null : Math.round(ca * 10) / 10, games: cg, avgLast: oa == null ? null : Math.round(oa * 10) / 10,
-        proj: proj == null ? null : Math.round(proj * k * mf * 10) / 10, basis, flags, skip, fresh, noData });
     }
     /* Each team's own injury list too (the league list misses some, like a
        star placed on IR mid-week): out, IR, doubtful or suspended - no booster. */
@@ -3415,9 +3509,13 @@ async function handle({ request, env, waitUntil }) {
          saver     Legendary 27.5+ (at most 20%), Epic 20+
        and no Rare under 10 projected on any of them. */
     const CFB_RULES = { balanced: { leg: 22, epic: 15, cap: 0.7 }, heavy: { leg: 18, epic: 12, cap: 1 }, saver: { leg: 27.5, epic: 20, cap: 0.2 } };
-    const cfb = sp === 'ncaaf' ? CFB_RULES[mode] || CFB_RULES.balanced : null;
+    /* Golf (2026-11-04): a whole tournament's rax, 0 to about 36 a player; the
+       top 3% of finishes make 26+, the top 10% 22+, the median about 11. As
+       projections (form and course averages): Legendary 19+, Epic 15+, Rare 10+. */
+    const GOLF_RULES = { balanced: { leg: 19, epic: 15, cap: 0.5 }, heavy: { leg: 17, epic: 13.5, cap: 1 }, saver: { leg: 22, epic: 18, cap: 0.25 } };
+    const cfb = sp === 'ncaaf' ? CFB_RULES[mode] || CFB_RULES.balanced : sp === 'golf' ? GOLF_RULES[mode] || GOLF_RULES.balanced : null;
     if (cfb) R.cap = cfb.cap;
-    let legBar = cfb ? cfb.leg : R.leg * scale, epicBar = cfb ? cfb.epic : R.epic * scale, rareFloor = sp === 'ncaaf' ? 10 : 5;
+    let legBar = cfb ? cfb.leg : R.leg * scale, epicBar = cfb ? cfb.epic : R.epic * scale, rareFloor = sp === 'ncaaf' || sp === 'golf' ? 10 : 5;
     const cutAt = null;
     if (CUS) { legBar = CUS.leg ?? Infinity; epicBar = CUS.epic ?? Infinity; rareFloor = CUS.rare ?? Infinity; }
     bars.splice(0, 3, Math.round(legBar * 10) / 10, Math.round(epicBar * 10) / 10, rareFloor);
@@ -3504,7 +3602,7 @@ async function handle({ request, env, waitUntil }) {
     for (const k of Object.keys(totals)) totals[k] = Math.round(totals[k]);
     if (inv) used = inv.map((b, i) => ({ ...b, used: b.count - left[i].count }));
 
-    return json({ sport: sp, season: se, date: day, mode, bars: bars.map(x => Number.isFinite(x) ? x : null), cutAt, totals, legCap: inv && Number.isFinite(dayCap[5]) ? dayCap[5] : null, inv: used, statMode: !!used, rsUser: u.rsUser, cardsAt: cards.at, games: sched.games, depth: !!depth,
+    return json({ sport: sp, season: se, date: day, mode, bars: bars.map(x => Number.isFinite(x) ? x : null), cutAt, totals, legCap: inv && Number.isFinite(dayCap[5]) ? dayCap[5] : null, inv: used, statMode: !!used, rsUser: u.rsUser, cardsAt: cards.at, games: sched.games, event: sched.event || null, course: sched.course || null, field: sched.field ?? null, depth: !!depth,
       rows, notPlaying: idle.length, players: cards.players.length });
   }
 
