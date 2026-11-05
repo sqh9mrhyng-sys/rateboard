@@ -18,7 +18,20 @@
   select,button,input{font:inherit;padding:8px 10px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
   button{cursor:pointer}
   .seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
-  .seg button{flex:1;border:0;border-radius:0;background:var(--panel2);padding:9px 14px}
+  .seg{flex-wrap:wrap}
+  .seg button{flex:1 1 0;min-width:0;border:0;border-radius:0;background:var(--panel2);padding:9px 6px}
+  tr.row{cursor:pointer}
+  tr.row:hover td{background:color-mix(in srgb,var(--panel2) 60%,transparent)}
+  tr.open td{background:var(--panel2)}
+  tr.bd td{background:var(--panel2);text-align:left;white-space:normal;padding:4px 12px 14px}
+  .bdx{display:grid;gap:10px;font-size:13px}
+  .bdx .ln{display:flex;justify-content:space-between;gap:10px;border-bottom:1px dashed var(--line);padding:4px 0}
+  .bdx .ln b{font-variant-numeric:tabular-nums}
+  .bdx .tot{font-weight:800;color:var(--accent);border-bottom:0}
+  .gl{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px 12px;font-size:12px;color:var(--mute)}
+  .gl span b{color:var(--ink);font-weight:600}
+  .gl .no{text-decoration:line-through;opacity:.6}
+  .chev{color:var(--mute);font-size:11px;margin-left:4px}
   .seg button[aria-pressed="true"]{background:var(--accent);color:#141925;font-weight:800}
   .ctl{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px}
   .ctl input{grid-column:1 / -1}
@@ -57,6 +70,10 @@
     td.left{grid-column:2 / -1}
     td[data-l]::before{content:attr(data-l) " ";color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
     td.nm::before{content:none}
+    tr.open{background:var(--panel2);border-radius:10px 10px 0 0;border-bottom:0}
+    tr.open td{background:none}
+    tr.bd{display:block;background:var(--panel2);border-radius:0 0 10px 10px;padding:0 4px 12px}
+    tr.bd td{display:block;padding:0 8px}
   }
 </style>
 </head>
@@ -65,7 +82,7 @@
 <div class="wrap" id="main" hidden>
   <header><h1>Projections <span class="beta">BETA</span></h1><a href="/" style="margin-left:auto">Back to the board</a></header>
   <section>
-    <div class="seg" id="sportseg"><button data-s="ncaaf" aria-pressed="true">CFB</button><button data-s="nfl" aria-pressed="false">NFL</button><button data-s="ncaam" aria-pressed="false">CBB</button></div>
+    <div class="seg" id="sportseg"><button data-s="ncaaf" aria-pressed="true">CFB</button><button data-s="nfl" aria-pressed="false">NFL</button><button data-s="ncaam" aria-pressed="false">CBB</button><button data-s="nba" aria-pressed="false">NBA</button><button data-s="nhl" aria-pressed="false">NHL</button><button data-s="soccer" aria-pressed="false">FC</button></div>
     <div class="ctl">
       <select id="who" aria-label="Players"><option value="all">All players</option><option value="mine">My passes</option></select>
       <select id="sort" aria-label="Sort"><option value="pr">Projected</option><option value="pc">On pace</option><option value="r">Rax so far</option><option value="pg">Per game</option><option value="l">Games left</option></select>
@@ -76,6 +93,8 @@
     <details class="how"><summary>Projected vs on pace</summary>
       <p class="note"><b>Projected</b> = rax so far + his projected rax for each regular-season game his team has left. A game's projection is the Boosts formula (recent games weighted most, then this season, then last season's regular season), adjusted for how much that opponent gives up. Players on injured reserve, or who missed 2 of their team's last 3 games, get no more games counted; "Out" skips the next game.</p>
       <p class="note"><b>On pace</b> = rax so far ÷ games he played × his team's regular-season games. No schedule, no injuries - just his rate.</p>
+      <p class="note"><b>FC</b>: every game counts on Real (league, cups, Europe, internationals). Games left = his club's league games left plus cup games at the rate the club has played them; no opponent adjustment. NBA and NHL: a player who missed 4 of his team's last 5 gets no more games counted.</p>
+      <p class="note">Tap a player to see how his number was worked out. A name opens your own card when you hold his pass.</p>
       <p class="note">Rebuilt every 6 hours from the game log and ESPN's schedules.</p>
     </details>
   </section>
@@ -193,7 +212,8 @@ function realPlayerUrl(sport, playerId, season){
          + (season ? '/' + season : '');
 }
 
-const SEASON_LBL = { ncaaf: 'CFB 2026', nfl: 'NFL 2026', ncaam: 'CBB 2026-27' };
+const SEASON_LBL = { ncaaf: 'CFB 2026', nfl: 'NFL 2026', ncaam: 'CBB 2026-27', nba: 'NBA 2026-27', nhl: 'NHL 2026-27', soccer: 'FC 2026-27' };
+let cardOf = new Map(), openId = null;
 let sp = 'ncaaf', data = null, mine = new Set(), shown = 100;
 try{ const v = JSON.parse(localStorage.getItem('proj_pick_v1') || '{}'); if(v.sp && SEASON_LBL[v.sp]) sp = v.sp; if(v.who) $('#who').value = v.who; if(v.sort) $('#sort').value = v.sort; }catch(e){}
 const savePick = () => { try{ localStorage.setItem('proj_pick_v1', JSON.stringify({ sp, who: $('#who').value, sort: $('#sort').value })); }catch(e){} };
@@ -210,7 +230,9 @@ async function load(tries = 0){
   }
   $('#main').hidden = false; $('#lock').hidden = true;
   if(j.building){ $('#head').textContent = 'Building the projections for the first time - this takes up to a minute…'; setTimeout(() => load(tries), 15000); return; }
-  data = j; mine = new Set(j.mine || []);
+  data = j; openId = null;
+  // Older answers sent bare ids; now [player id, card id].
+  cardOf = new Map((j.mine || []).map(m => Array.isArray(m) ? m : [m, null])); mine = new Set(cardOf.keys());
   const pos = [...new Set((j.rows || []).map(r => r.p).filter(Boolean))].sort();
   const cur = $('#pos').value;
   $('#pos').innerHTML = '<option value="">Every position</option>' + pos.map(p => `<option${p === cur ? ' selected' : ''}>${esc(p)}</option>`).join('');
@@ -225,15 +247,17 @@ function draw(){
   const when = new Date(data.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   $('#head').textContent = `${SEASON_LBL[data.sport] || ''} · ${list.length.toLocaleString()} player${list.length === 1 ? '' : 's'}${who === 'mine' ? ` of your ${mine.size} passes` : ''} · updated ${when}`;
   $('#rows').innerHTML = list.slice(0, shown).map((r, i) => {
-    const u = realPlayerUrl(data.sport, r.i, data.season);
-    const nm = u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.n)}</a>` : esc(r.n);
+    // Their own card when they hold one, else the player's page.
+    const card = cardOf.get(r.i), u = card ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, card]) : realPlayerUrl(data.sport, r.i, data.season);
+    const nm = u ? `<a href="${u}" target="_blank" rel="noopener" title="${card ? 'Your card' : 'Player page'}">${esc(r.n)}</a>` : esc(r.n);
     const d = r.pc != null ? r.pr - r.pc : null;
-    return `<tr class="${mine.has(r.i) ? 'mine' : ''}"><td class="rk">${i + 1}</td>`
-      + `<td class="nm"><b>${nm}</b><span class="sub">${esc([r.p, r.t].filter(Boolean).join(' · '))}${mine.has(r.i) ? ' · <span style="color:var(--accent)">your pass</span>' : ''}</span>${(r.f || []).map(f => `<span class="flag">⚠ ${esc(f)}</span>`).join('')}</td>`
+    return `<tr class="row${mine.has(r.i) ? ' mine' : ''}${openId === r.i ? ' open' : ''}" data-i="${r.i}"><td class="rk">${i + 1}</td>`
+      + `<td class="nm"><b>${nm}</b><span class="sub">${esc([r.p, r.t].filter(Boolean).join(' · '))}${mine.has(r.i) ? ' · <span style="color:var(--accent)">your pass</span>' : ''}<span class="chev">${openId === r.i ? '▴ hide' : '▾ how'}</span></span>${(r.f || []).map(f => `<span class="flag">⚠ ${esc(f)}</span>`).join('')}</td>`
       + `<td class="now" data-l="Now">${r.r.toLocaleString()}<span class="sub">${r.gp} gm · ${r.a}/gm</span></td>`
       + `<td class="left" data-l="Left">${r.l} game${r.l === 1 ? '' : 's'}<span class="sub">${r.pg}/gm proj${r.nx ? ' · next ' + esc(r.nx) : ''}${r.tg ? ' · ' + r.tg + ' total' : ''}</span></td>`
       + `<td class="prc" data-l="Projected"><span class="pr">${r.pr.toLocaleString()}</span></td>`
-      + `<td class="pcc" data-l="On pace"><span class="pc">${r.pc != null ? r.pc.toLocaleString() : '–'}</span>${d != null && d !== 0 ? `<span class="sub ${d > 0 ? 'up' : 'dn'}">proj ${d > 0 ? '+' : ''}${d.toLocaleString()}</span>` : ''}</td></tr>`;
+      + `<td class="pcc" data-l="On pace"><span class="pc">${r.pc != null ? r.pc.toLocaleString() : '–'}</span>${d != null && d !== 0 ? `<span class="sub ${d > 0 ? 'up' : 'dn'}">proj ${d > 0 ? '+' : ''}${d.toLocaleString()}</span>` : ''}</td></tr>`
+      + (openId === r.i ? `<tr class="bd"><td colspan="6"><div class="bdx" id="bd-${r.i}">${bdCache.get(data.sport + ':' + r.i) || '<span class="note">Working it out…</span>'}</div></td></tr>` : '');
   }).join('') || `<tr><td colspan="6" class="note" style="text-align:left">${who === 'mine' ? 'None of your passes for this sport - re-read your passes on Boosts or Swaps.' : 'Nobody matches.'}</td></tr>`;
   $('#more').hidden = list.length <= shown;
   $('#more').textContent = `Show more (${(list.length - shown).toLocaleString()} left)`;
@@ -242,6 +266,38 @@ document.querySelectorAll('#sportseg button').forEach(b => b.addEventListener('c
 ['#who', '#sort', '#pos'].forEach(id => $(id).addEventListener('change', () => { shown = 100; savePick(); draw(); }));
 let qt = null; $('#q').addEventListener('input', () => { clearTimeout(qt); qt = setTimeout(() => { shown = 100; draw(); }, 150); });
 $('#more').addEventListener('click', () => { shown += 200; draw(); });
+/* Tapping a line opens how his projection was put together. */
+const bdCache = new Map();
+const HOW = { l4ca_o: 'half his last 4 games, 30% his season, 20% last season', l4ca: '60% his last 4 games, 40% his season', ca_o: 'half his season so far, half last season', ca: 'his season so far' };
+function bdHtml(sp, j){
+  const r = j.row; if(!r) return '<span class="note">No breakdown for him yet.</span>';
+  const x = r.x || {}, f1 = v => v == null ? '–' : (Math.round(v * 10) / 10).toLocaleString();
+  const parts = [['last 4 games', x.r4], ['season', r.a], ['last season', x.oa]].filter(([, v]) => v != null).map(([k, v]) => `${k} ${f1(v)}`).join(' · ');
+  const games = j.games || [], counted = games.filter(g => g.counted), add = r.pr - r.r;
+  const fc = x.fc;
+  const lines = [
+    `<div class="ln"><span>Rax so far <span class="note">(${r.gp} game${r.gp === 1 ? '' : 's'}, ${f1(r.a)} a game)</span></span><b>${r.r.toLocaleString()}</b></div>`,
+    `<div class="ln"><span>Per-game projection <span class="note">= ${HOW[x.h] || ''}${parts ? ' (' + parts + ')' : ''}</span></span><b>${f1(r.pg)}</b></div>`,
+    fc ? `<div class="ln"><span>Games left <span class="note">${fc.lgLeft} ${esc(fc.lg)} (${fc.lgDone} of ${fc.lgDone + fc.lgLeft} played) + ${fc.cupLeft} cup/Europe at his club's rate (${fc.otherDone} so far)</span></span><b>${r.l}</b></div>`
+       : `<div class="ln"><span>Games left counted <span class="note">${counted.length} of ${games.length} on his team's schedule${games.some(g => g.f !== 1) ? ', each adjusted for the opponent' : ''}</span></span><b>${counted.length}</b></div>`,
+    `<div class="ln"><span>Projected from the games left</span><b>+${add.toLocaleString()}</b></div>`,
+    `<div class="ln tot"><span>Projected by the end of the regular season</span><b>${r.pr.toLocaleString()}</b></div>`,
+    r.pc != null ? `<div class="ln"><span>On pace <span class="note">${r.r} ÷ ${r.gp} games × ${r.tg} ${sp === 'soccer' ? 'club' : 'team'} games</span></span><b>${r.pc.toLocaleString()}</b></div>` : '',
+    (r.f || []).map(f => `<span class="flag">⚠ ${esc(f)}</span>`).join('')
+  ];
+  const gl = games.length ? `<div class="gl">${games.map(g => `<span class="${g.counted ? '' : 'no'}">${new Date(g.at).toLocaleDateString([], { month: 'short', day: 'numeric' })} ${esc(g.opp)}${g.f !== 1 ? ` <span title="opponent factor">×${g.f}</span>` : ''} <b>${g.v}</b></span>`).join('')}</div>` : '';
+  return lines.join('') + gl;
+}
+$('#rows').addEventListener('click', async e => {
+  if(e.target.closest('a')) return;
+  const tr = e.target.closest('tr.row'); if(!tr) return;
+  const id = Number(tr.dataset.i), sp0 = data && data.sport;
+  openId = openId === id ? null : id; draw();
+  if(openId == null || bdCache.has(sp0 + ':' + id)) return;
+  const j = await api(`/api/swaps?op=projections&page=boosts&sport=${sp0}&pid=${id}`);
+  bdCache.set(sp0 + ':' + id, j.error ? `<span class="note">${esc(j.error)}</span>` : bdHtml(sp0, j));
+  const el = document.getElementById('bd-' + id); if(el) el.innerHTML = bdCache.get(sp0 + ':' + id);
+});
 $('#main').hidden = false;
 load();
 </script>

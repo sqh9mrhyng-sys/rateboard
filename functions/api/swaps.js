@@ -2314,17 +2314,28 @@ const etDayOf = iso => iso ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Ameri
    per-game projection (the Boosts formula) for each game his team has left,
    adjusted for that opponent. "On pace" is plain: rax / games played x the
    team's regular-season games. Rebuilt at most every 6 hours, kept in KV. */
-const PROJ_SEASON = { ncaaf: [2026, 2025], nfl: [2026, 2025], ncaam: [2027, 2026] };
+const PROJ_SEASON = { ncaaf: [2026, 2025], nfl: [2026, 2025], ncaam: [2027, 2026], nba: [2027, 2026], nhl: [2026, 2025], soccer: [2026, 2025] };
+const PROJ_PATH = { ...ESPN_PATH, nba: 'basketball/nba', nhl: 'hockey/nhl' };
+// Real's team codes that ESPN writes differently.
+const PROJ_ALIAS = { nba: { GSW: 'GS', NOP: 'NO', NYK: 'NY', SAS: 'SA', UTA: 'UTAH', WAS: 'WSH' }, nhl: { LAK: 'LA', NJD: 'NJ', SJS: 'SJ', TBL: 'TB', UTA: 'UTAH' } };
+const projAlias = (sp, t) => (PROJ_ALIAS[sp] && PROJ_ALIAS[sp][t]) || boostAlias(sp, t);
+// Daily schedules: [first day, last regular-season day, ESPN extra].
+const PROJ_DAYS = { ncaam: ['2026-11-01', '2027-03-08', '&groups=50&limit=500'], nba: ['2026-10-15', '2027-04-20', '&limit=100'], nhl: ['2026-10-01', '2027-04-22', '&limit=100'] };
+/* FC: every game counts on Real (league, cups, Champions League, internationals),
+   and the club schedule isn't one ESPN feed, so the games left are the club's
+   league games left (by league length) plus cup games at the rate the club has
+   played them so far. No opponent adjustment. */
+const FC_LEAGUE = { EPL: 38, LIGA: 38, SERA: 38, BUN: 34, LIG1: 34, MLS: 34 };
 /* The whole regular season's schedule from ESPN: football a week at a time,
-   CBB a day at a time (November to the second week of March). */
+   CBB, NBA and NHL a day at a time. */
 async function projSchedule(env, sp) {
   const key = `projsched_v1_${sp}`;
   try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c && Date.now() - c.at < 6 * 3600000) return c; } catch (e) {}
-  const base = `https://site.api.espn.com/apis/site/v2/sports/${ESPN_PATH[sp]}/scoreboard`;
+  const base = `https://site.api.espn.com/apis/site/v2/sports/${PROJ_PATH[sp]}/scoreboard`;
   const urls = sp === 'nfl' ? [...Array(18).keys()].map(w => `${base}?seasontype=2&week=${w + 1}&dates=2026&limit=100`)
     : sp === 'ncaaf' ? [...Array(16).keys()].map(w => `${base}?seasontype=2&week=${w + 1}&dates=2026&groups=80&limit=400`)
-    : (() => { const out = []; for (let t = Date.parse('2026-11-01T12:00:00Z'); t <= Date.parse('2027-03-08T12:00:00Z'); t += 86400000)
-        out.push(`${base}?dates=${new Date(t).toISOString().slice(0, 10).replace(/-/g, '')}&groups=50&limit=500`); return out; })();
+    : (() => { const [d0, d1, ex] = PROJ_DAYS[sp], out = []; for (let t = Date.parse(d0 + 'T12:00:00Z'); t <= Date.parse(d1 + 'T12:00:00Z'); t += 86400000)
+        out.push(`${base}?dates=${new Date(t).toISOString().slice(0, 10).replace(/-/g, '')}${ex}`); return out; })();
   const teams = {}, ids = {}, seen = new Set();
   let ok = 0;
   for (let i = 0; i < urls.length; i += 16) {
@@ -2349,59 +2360,111 @@ async function projSchedule(env, sp) {
   else { try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c) return c; } catch (e) {} }
   return out;
 }
+const projAvg = a => a.length ? a.reduce((t, x) => t + Number(x.rax || 0), 0) / a.length : null;
+// The Boosts per-game formula, with its parts for the breakdown.
+function projPer(gs, oa) {
+  const gp = gs.length, ca = projAvg(gs), r4 = projAvg(gs.slice(-4));
+  if (gp >= 4) return oa != null ? { v: 0.5 * r4 + 0.3 * ca + 0.2 * oa, how: 'l4ca_o', r4, ca, oa } : { v: 0.6 * r4 + 0.4 * ca, how: 'l4ca', r4, ca, oa: null };
+  if (oa != null) return { v: 0.5 * ca + 0.5 * oa, how: 'ca_o', r4, ca, oa };
+  return { v: ca, how: 'ca', r4, ca, oa: null };
+}
 async function projBuild(env, db, sp) {
   const [se, prev] = PROJ_SEASON[sp];
-  const sched = await projSchedule(env, sp);
+  const fc = sp === 'soccer';
+  const sched = fc ? { teams: {}, ids: {} } : await projSchedule(env, sp);
   let match = {}; try { match = (JSON.parse((await env.RATEBOARD_KV.get('boostmatch_v1_' + sp)) || 'null') || {}).f || {}; } catch (e) {}
-  const inj = { ...(await boostInjuries(env, sp).catch(() => ({}))) };
+  const inj = {};
+  if (ESPN_PATH[sp] || sp === 'nba' || sp === 'nhl') {
+    try { const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${PROJ_PATH[sp]}/injuries`); const d = r.ok ? await r.json() : {};
+      for (const t of (d.injuries || [])) for (const x of (t.injuries || [])) if (x.athlete && x.status && !/^active$/i.test(x.status)) inj[boostName(x.athlete.displayName)] = { status: x.status }; } catch (e) {}
+  }
   // NFL: each team's own injury list too (the league list misses some - Lamar, 2026-11-04).
   if (sp === 'nfl') { try { Object.assign(inj, await boostTeamInj(env, sp, Object.values(sched.ids || {}))); } catch (e) {} }
-  const cur = ((await db.prepare(`SELECT playerId, player, team, position, day, rax FROM gamelog WHERE sport=? AND season=?
+  const cur = ((await db.prepare(`SELECT playerId, player, team, position, day, rax${fc ? ', conference' : ''} FROM gamelog WHERE sport=? AND season=?
       AND rax IS NOT NULL AND (seasonType IS NULL OR seasonType='regularseason')`).bind(sp, Number(se)).all()).results) || [];
   const old = new Map();
-  try { const r = await db.prepare(`SELECT playerId, AVG(rax) AS a, COUNT(*) AS n FROM gamelog WHERE sport=? AND season=? AND rax IS NOT NULL AND seasonType='regularseason' GROUP BY playerId`).bind(sp, prev).all();
+  try { const r = await db.prepare(`SELECT playerId, AVG(rax) AS a, COUNT(*) AS n FROM gamelog WHERE sport=? AND season=? AND rax IS NOT NULL AND (seasonType IS NULL OR seasonType='regularseason') GROUP BY playerId`).bind(sp, prev).all();
     for (const x of (r.results || [])) old.set(Number(x.playerId), Number(x.a)); } catch (e) {}
   const by = new Map();
   for (const x of cur) (by.get(Number(x.playerId)) || by.set(Number(x.playerId), []).get(Number(x.playerId))).push(x);
+  // FC: each club's game days so far, league and the rest, from everyone's rows.
+  const club = new Map();
+  if (fc) for (const x of cur) {
+    if (!x.team || x.conference === 'WC') continue;
+    const c = club.get(x.team) || club.set(x.team, { lg: new Map(), all: new Set() }).get(x.team);
+    c.all.add(x.day); if (FC_LEAGUE[x.conference]) (c.lg.get(x.conference) || c.lg.set(x.conference, new Set()).get(x.conference)).add(x.day);
+  }
   const etd = iso => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
   const near = (days, iso) => { const t = Date.parse(etd(iso) + 'T12:00:00Z'); return days.some(d => Math.abs(Date.parse(d + 'T12:00:00Z') - t) <= 86400000); };
-  const avg = a => a.length ? a.reduce((t, x) => t + Number(x.rax || 0), 0) / a.length : null;
+  // Hasn't been playing: football and CBB, 2 of his team's last 3; the rest, 4 of the last 5.
+  const [look, miss] = ['nfl', 'ncaaf', 'ncaam'].includes(sp) ? [3, 2] : [5, 4];
   const rows = [];
   for (const [id, gs0] of by) {
     const gs = gs0.slice().sort((a, b) => String(a.day).localeCompare(String(b.day)));
     const last = gs[gs.length - 1], gp = gs.length;
     const rax = gs.reduce((t, x) => t + Number(x.rax || 0), 0);
     if (!(rax > 0)) continue;
-    const ab = last.team ? boostAlias(sp, last.team) : null, tg = ab ? sched.teams[ab] : null;
-    const ca = avg(gs), r4 = avg(gs.slice(-4)), oa = old.has(id) ? old.get(id) : null;
-    const per = gp >= 4 ? (oa != null ? 0.5 * r4 + 0.3 * ca + 0.2 * oa : 0.6 * r4 + 0.4 * ca) : oa != null ? 0.5 * ca + 0.5 * oa : ca;
+    const oa = old.has(id) ? old.get(id) : null, P = projPer(gs, oa), per = P.v;
     const flags = [];
-    let total = null, left = 0, add = 0, nextOpp = null;
-    if (tg) {
-      total = tg.length;
-      const rest = tg.filter(g => !g[2] && Date.parse(g[0]) > Date.now() - 4 * 3600000);
-      left = rest.length; nextOpp = rest[0] ? rest[0][1] : null;
-      // Hasn't been playing: missed 2 of his team's last 3 finished games - nothing more counted.
-      const doneG = tg.filter(g => g[2]).slice(-3), days = gs.map(x => x.day);
-      const missed = doneG.filter(g => !near(days, g[0])).length;
-      let skipNext = false, none = false;
-      const ij = inj[boostName(last.player || '')];
-      // Injured reserve: no more games counted. Out: the next one isn't.
-      if (ij && /^injured reserve/i.test(ij.status)) { flags.push('Injured reserve - no more games counted'); none = true; }
-      else if (ij && /^(out|suspen)/i.test(ij.status)) { flags.push(ij.status + ' - next game not counted'); skipNext = true; }
-      else if (ij && /^(doubtful|questionable)/i.test(ij.status)) flags.push(ij.status);
-      if (none) left = 0;
-      else if (doneG.length >= 2 && missed >= 2) { flags.push(`Missed ${missed} of his team's last ${doneG.length} - no more games counted`); left = 0; }
-      else for (const [i, g] of rest.entries()) { if (i === 0 && skipNext) continue; add += per * (match[g[1]] || 1); }
-      if (skipNext && left) left -= 1;
-    } else flags.push('Team schedule not found');
-    rows.push({ i: id, n: last.player || ('Player ' + id), t: last.team || '', p: last.position || '', gp, r: Math.round(rax), a: Math.round(ca * 10) / 10,
-      pg: Math.round(per * 10) / 10, l: left, tg: total, nx: nextOpp,
-      pr: Math.round(rax + add), pc: total ? Math.round(rax / gp * total) : null, f: flags.length ? flags : undefined });
+    let total = null, left = 0, add = 0, nextOpp = null, ab = null, skipNext = false, none = false, fcx = null;
+    const ij = inj[boostName(last.player || '')];
+    if (ij && /^injured reserve/i.test(ij.status)) { flags.push('Injured reserve - no more games counted'); none = true; }
+    else if (ij && /^(out|suspen)/i.test(ij.status)) { flags.push(ij.status + ' - next game not counted'); skipNext = true; }
+    else if (ij && /^(doubtful|questionable|day-to-day)/i.test(ij.status)) flags.push(ij.status);
+    if (fc) {
+      const cl = gs.slice().reverse().find(x => x.conference !== 'WC' && club.has(x.team));
+      const c = cl ? club.get(cl.team) : null;
+      const lgName = c ? [...c.lg.entries()].sort((a, b) => b[1].size - a[1].size).map(e => e[0])[0] : null;
+      if (c && lgName) {
+        ab = cl.team;
+        const lgDone = c.lg.get(lgName).size, otherDone = c.all.size - lgDone;
+        const lgLeft = Math.max(0, FC_LEAGUE[lgName] - lgDone), rate = lgDone ? otherDone / lgDone : 0, cupLeft = Math.round(lgLeft * rate);
+        total = c.all.size + lgLeft + cupLeft; left = lgLeft + cupLeft;
+        fcx = { lg: lgName, lgDone, lgLeft, otherDone, cupLeft };
+        const days = [...c.all].sort().slice(-look), mine = new Set(gs.map(x => x.day));
+        const missed = days.filter(d => !mine.has(d)).length;
+        if (none) left = 0;
+        else if (days.length >= look && missed >= miss) { flags.push(`Missed ${missed} of his club's last ${days.length} - no more games counted`); left = 0; }
+        else { if (skipNext && left) left -= 1; add = per * left; }
+      } else flags.push('Club not found');
+    } else {
+      ab = last.team ? projAlias(sp, last.team) : null;
+      const tg = ab ? sched.teams[ab] : null;
+      if (tg) {
+        total = tg.length;
+        const rest = tg.filter(g => !g[2] && Date.parse(g[0]) > Date.now() - 4 * 3600000);
+        left = rest.length; nextOpp = rest[0] ? rest[0][1] : null;
+        const doneG = tg.filter(g => g[2]).slice(-look), days = gs.map(x => x.day);
+        const missed = doneG.filter(g => !near(days, g[0])).length;
+        if (none) left = 0;
+        else if (doneG.length >= Math.min(look, 2) && missed >= miss) { flags.push(`Missed ${missed} of his team's last ${doneG.length} - no more games counted`); left = 0; }
+        else { for (const [i, g] of rest.entries()) { if (i === 0 && skipNext) continue; add += per * (match[g[1]] || 1); } if (skipNext && left) left -= 1; }
+      } else flags.push('Team schedule not found');
+    }
+    const r1 = x => x == null ? null : Math.round(x * 10) / 10;
+    rows.push({ i: id, n: last.player || ('Player ' + id), t: last.team || '', p: last.position || '', gp, r: Math.round(rax), a: r1(P.ca),
+      pg: r1(per), l: left, tg: total, nx: nextOpp,
+      pr: Math.round(rax + add), pc: total ? Math.round(rax / gp * total) : null, f: flags.length ? flags : undefined,
+      // For the breakdown.
+      x: { h: P.how, r4: r1(P.r4), oa: r1(P.oa), ab, sk: skipNext ? 1 : 0, no: left === 0 && (none || flags.some(f => /no more games/.test(f))) ? 1 : 0, fc: fcx || undefined } });
   }
   rows.sort((x, y) => y.pr - x.pr);
   const out = { at: Date.now(), sport: sp, season: se, rows: rows.slice(0, 4000), players: rows.length, schedPages: sched.pages, schedOf: sched.of };
-  try { await env.RATEBOARD_KV.put(`proj_v1_${sp}`, JSON.stringify(out), { expirationTtl: 3 * 86400 }); } catch (e) {}
+  try { await env.RATEBOARD_KV.put(`proj_v2_${sp}`, JSON.stringify(out), { expirationTtl: 3 * 86400 }); } catch (e) {}
+  return out;
+}
+/* One player's breakdown: his part of the saved list, and his team's games
+   left with each one's projection. */
+async function projDetail(env, sp, row) {
+  const out = { games: [] };
+  if (!row || !row.x || sp === 'soccer' || !row.x.ab) return out;
+  let sched = null; try { sched = JSON.parse((await env.RATEBOARD_KV.get(`projsched_v1_${sp}`)) || 'null'); } catch (e) {}
+  let match = {}; try { match = (JSON.parse((await env.RATEBOARD_KV.get('boostmatch_v1_' + sp)) || 'null') || {}).f || {}; } catch (e) {}
+  const tg = sched && sched.teams && sched.teams[row.x.ab]; if (!tg) return out;
+  const rest = tg.filter(g => !g[2] && Date.parse(g[0]) > Date.now() - 4 * 3600000);
+  out.games = rest.map(([at, opp], i) => { const f = match[opp] || 1, counted = !row.x.no && !(i === 0 && row.x.sk);
+    return { at, opp, f: Math.round(f * 100) / 100, v: counted ? Math.round(row.pg * f * 10) / 10 : 0, counted }; });
+  out.played = tg.filter(g => g[2]).length;
   return out;
 }
 
@@ -3412,7 +3475,10 @@ async function handle({ request, env, waitUntil }) {
      over 6 hours old), plus which of the players the member holds a pass for. */
   if (op === 'projections') {
     const sp = PROJ_SEASON[url.searchParams.get('sport')] ? url.searchParams.get('sport') : 'ncaaf';
-    let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(`proj_v1_${sp}`)) || 'null'); } catch (e) {}
+    let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(`proj_v2_${sp}`)) || 'null'); } catch (e) {}
+    // One player's breakdown (tapping his line).
+    const pid = Number(url.searchParams.get('pid'));
+    if (pid) { const row = c && (c.rows || []).find(r => r.i === pid); return json({ row: row || null, ...(await projDetail(env, sp, row)) }); }
     const lockK = `proj_lock_v1_${sp}`;
     const stale = !c || Date.now() - c.at > 6 * 3600000 || (acc.admin && url.searchParams.get('refresh') === '1');
     if (stale) {
@@ -3428,8 +3494,9 @@ async function handle({ request, env, waitUntil }) {
     if (c.error) return json({ error: c.error }, 500);
     const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
     const [se] = PROJ_SEASON[sp];
-    const mine = parse(u && u.passes, []).filter(p => p.sport === sp && Number(p.season) === se && p.kind !== 'team').map(p => Number(p.id));
-    return json({ ...c, mine });
+    // Their passes for this season, with the card's id so a name can open their own card.
+    const mine = parse(u && u.passes, []).filter(p => p.sport === sp && Number(p.season) === se && p.kind !== 'team').map(p => [Number(p.id), p.passId ? Number(p.passId) : null]);
+    return json({ ...c, rows: (c.rows || []).map(({ x, ...r }) => r), mine });
   }
   if (op === 'boostdays') {
     const sp = String(url.searchParams.get('sport') || '');
