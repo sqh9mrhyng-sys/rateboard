@@ -5314,7 +5314,8 @@ async function cbbPanel(){
   }
   async function staticQuery(){
     if(st.mode !== 'players') return null;
-    if(st.seasonType || st.homeAway || st.result || st.playedOnly || st.from || st.to) return null;
+    // Position is game by game (SP only on the days he starts), so the saved per-season totals can't answer it.
+    if(st.seasonType || st.homeAway || st.result || st.playedOnly || st.from || st.to || st.position) return null;
     const set = await glStaticSet();
     if(!st.pairs.length || !st.pairs.every(p => set.has(p))) return null;
     let all = [];
