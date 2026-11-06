@@ -3050,6 +3050,23 @@ async function handle({ request, env, waitUntil }) {
     const mine = new Set(parse(r && r.wants, []));
     return json({ at: c.at, members: c.members, rows: c.rows.map(x => ({ ...x, mine: mine.has(x.key) || undefined })) });
   }
+  /* Admin only for now (Dennis, 2026-11-05): the top 50 rax earners in game
+     data - every sport and season but FC - under Most picked. Kept an hour. */
+  if (op === 'hourrax') {
+    const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));
+    if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
+    if (!ADMINS.includes(key.toLowerCase())) return json({ error: 'Admins only.' }, 403);
+    let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get('swap_raxtop_v1')) || 'null'); } catch (e) {}
+    if (!c || Date.now() - c.at > 3600000) {
+      const ss = ((await (await fetch(`${url.origin}/api/rax?gamelog=seasons`)).json()).seasons || []).filter(x => x.sport !== 'soccer').map(x => `${x.sport}:${x.season}`);
+      const j = await (await fetch(`${url.origin}/api/rax?gamelog=query&mode=players&seasons=${encodeURIComponent(ss.join(','))}&sort=rax&dir=desc&limit=50`)).json();
+      if (!j || !Array.isArray(j.rows)) return json({ error: (j && j.error) || 'Game data did not answer - try again.' }, 502);
+      const SP = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf' };
+      c = { at: Date.now(), seasons: ss.length, rows: j.rows.filter(r => r.sport !== 'soccer').slice(0, 50).map(r => ({ name: r.player, sport: SP[r.sport] || r.sport, season: r.season, rax: Number(r.rax) || 0, url: playerUrl(`${r.sport}:${r.season}:${r.playerId}`) })) };
+      try { await env.RATEBOARD_KV.put('swap_raxtop_v1', JSON.stringify(c)); } catch (e) {}
+    }
+    return json(c);
+  }
   /* Your players and hours, from the hour page (Dennis, 2026-11-05): see them,
      remove or add a player, and change daily hours - the same saves (and the
      same calling-off of swaps still to come) as on /swaps. */
@@ -4641,7 +4658,20 @@ async function handle({ request, env, waitUntil }) {
     try { await syncChats(db, auth); } catch (e) { return json({ error: String(e.message || e) }, 502); }
     const c = await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=? AND channelId IS NOT NULL').bind(u.hashId).first();
     await stat(db, 'verify_try'); if (c) await stat(db, 'verify_ok');
-    return json({ connected: !!c });
+    /* A "Confirmed" reply in their chat once they're verified (Dennis, 2026-11-05), sent once.
+       If Real won't let the bot message them, the page says why. */
+    let confirmFailed = false;
+    if (c) {
+      try { await db.prepare('CREATE TABLE IF NOT EXISTS bot_once (campaign TEXT, key TEXT, at INTEGER, ok INTEGER, PRIMARY KEY (campaign, key))').run();
+        const done = await db.prepare("SELECT 1 AS x FROM bot_once WHERE campaign='confirm' AND key=?").bind(String(me).toLowerCase()).first();
+        if (!done) {
+          try { await dmSendRetry(auth, c.channelId, 'Confirmed');
+            await db.prepare("INSERT OR IGNORE INTO bot_once (campaign, key, at, ok) VALUES ('confirm', ?, ?, 1)").bind(String(me).toLowerCase(), Date.now()).run(); await stat(db, 'dm_confirm'); }
+          catch (e) { const m = String(e.message || e); if (/send 403|cannot message/i.test(m)) { confirmFailed = true; await stat(db, 'dm_confirm_failed'); } else await botFail(db, 'dm_confirm', `${me}: ${m}`); }
+        }
+      } catch (e) {}
+    }
+    return json({ connected: !!c, confirmFailed: confirmFailed || undefined });
   }
 
   /* Who has Swaps: the named list (and whether each name matches a board

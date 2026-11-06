@@ -969,7 +969,7 @@ $('#connect').addEventListener('click', async () => {
   const j = await api('/api/swaps?op=connect');
   $('#connect').disabled = false;
   if(j.error){ $('#connmsg').textContent = j.error; return; }
-  if(j.connected) paintConn(true);
+  if(j.connected){ paintConn(true); if(j.confirmFailed){ $('#connmsg').innerHTML = '<span style="color:var(--bad)">Confirmation failed, your Real account is likely on friends only DMs.</span>'; $('#connect').style.display = ''; } }
   else $('#connmsg').innerHTML = 'No DM from you yet. Send <b>#packswap</b> to <b>@raxacademy.app</b> on Real, wait a few seconds, then tap again.';
 });
 $('#chatsync').addEventListener('click', async () => {
