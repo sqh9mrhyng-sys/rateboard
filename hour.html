@@ -26,6 +26,9 @@
   .grp{display:flex;align-items:center;gap:10px;min-width:0}
   #conlist .row.both{opacity:.22;transition:opacity .15s}
   #conlist .row.both:hover,#conlist .row.both:focus-within{opacity:.5}
+  .showrate{display:inline-flex;align-items:center;gap:7px;margin:2px 0 6px;padding:5px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;font-weight:600;color:var(--mute);cursor:pointer}
+  .showrate input{width:16px;height:16px;margin:0;accent-color:var(--accent)}
+  #con.norate .ratebox,#con.norate .ratenote{display:none}
   .ratebox{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:0 0 12px 46px}
   .stars{display:inline-flex;gap:2px}
   .stars .st{background:none;border:0;padding:2px 3px;font-size:26px;line-height:1;color:var(--mute);opacity:.45;cursor:pointer}
@@ -161,7 +164,7 @@
   </section>
   <section id="buy" hidden><h2>Buy these packs <span class="n" id="nbuy"></span></h2><div id="buylist"></div></section>
   <p class="note wait" id="wait" hidden></p>
-  <section id="con" hidden><h2>Offer on your partners' cards <span class="n" id="ncon"></span></h2><p class="note" style="margin:0 0 6px">Use their comment only to reach them if they didn't buy.</p><div id="conlist"></div><p class="note ratenote" id="ratenote" hidden>Vote fairly or your perms to vote are gone. A 1 star is something like no pack on time + no communication; a 5 star is they had the pack on time and offered on your cards extremely fast. You rate each person once - you can change it later.</p></section>
+  <section id="con" hidden><h2>Offer on your partners' cards <span class="n" id="ncon"></span></h2><p class="note" style="margin:0 0 6px">Use their comment only to reach them if they didn't buy.</p><label class="showrate"><input type="checkbox" id="showrate" checked> Show rankings</label><div id="conlist"></div><p class="note ratenote" id="ratenote" hidden>Vote fairly or your perms to vote are gone. A 1 star is something like no pack on time + no communication; a 5 star is they had the pack on time and offered on your cards extremely fast. You rate each person once - you can change it later.</p></section>
   <p class="note" style="margin-top:14px">Something wrong? Report it on <a href="/swaps">raxacademy.app/swaps</a>.</p>
 </div>
 <script>
@@ -389,6 +392,10 @@ document.addEventListener('click', async e => {
     const j = await r.json(); $('#andrmsg').textContent = j.error || `Sent - ${j.messages} message${j.messages === 1 ? '' : 's'} on the way to your DMs.`; if(j.error && !/already/i.test(j.error)) b.disabled = false; }
   catch(err){ $('#andrmsg').textContent = 'Could not reach the board - try again.'; b.disabled = false; }
 });
+// "Show rankings" (on unless they turned it off on this phone): hides the stars and the rating note.
+{ let on = true; try{ on = localStorage.getItem('hour_showrate') !== '0'; }catch(e){}
+  $('#showrate').checked = on; $('#con').classList.toggle('norate', !on);
+  $('#showrate').addEventListener('change', e => { $('#con').classList.toggle('norate', !e.target.checked); try{ localStorage.setItem('hour_showrate', e.target.checked ? '1' : '0'); }catch(err){} }); }
 /* Stars for each partner (Dennis, 2026-11-06): open once the swap time comes.
    One rating per person, changeable; ratings decide who goes first when two want the same player. */
 function rateRow(x, j){
