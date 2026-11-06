@@ -26,6 +26,15 @@
   .grp{display:flex;align-items:center;gap:10px;min-width:0}
   #conlist .row.both{opacity:.22;transition:opacity .15s}
   #conlist .row.both:hover,#conlist .row.both:focus-within{opacity:.5}
+  .ratebox{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:0 0 12px 46px}
+  .stars{display:inline-flex;gap:2px}
+  .stars .st{background:none;border:0;padding:2px 3px;font-size:26px;line-height:1;color:var(--mute);opacity:.45;cursor:pointer}
+  .stars .st.on{opacity:1}
+  .stars .st.on{color:#F5B83D}
+  .rsub{cursor:pointer;font:inherit;font-weight:700;font-size:14px;padding:7px 14px}
+  .rsub:disabled{opacity:.5;cursor:default}
+  .ratenote{margin:10px 0 0;padding:10px 12px;border:1px dashed var(--line);border-radius:10px}
+  #conlist .row.both + .rpbox + .ratebox{opacity:.5}
   .chk2{display:flex;flex-direction:column;gap:8px;flex:none}
   .chk2 label{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:10.5px;font-weight:700;color:var(--mute);text-transform:uppercase;letter-spacing:.03em;cursor:pointer}
   .acts{display:flex;flex-direction:column;align-items:stretch;gap:6px;flex:none}
@@ -117,7 +126,7 @@
       <div id="pwlist"></div>
       <div class="pkadd" style="margin-top:10px"><select id="pwadd"></select><button class="btn go" id="pwaddbtn" type="button">Add</button></div></section>
     <section><h2>Your hours <span class="n" id="phn"></span></h2>
-      <p class="note" id="phnote" style="margin:0 0 8px">Tap to turn an hour on or off - it saves straight away. Your first pick is your main hour. Times are your phone's time.</p>
+      <p class="note" id="phnote" style="margin:0 0 8px">Tap to turn an hour on or off - it saves straight away. Times are your phone's time.</p>
       <div id="phgrid" class="phgrid"></div></section>
   </div>
   <div id="byview" hidden><section>
@@ -136,7 +145,7 @@
   </section>
   <section id="buy" hidden><h2>Buy these packs <span class="n" id="nbuy"></span></h2><div id="buylist"></div></section>
   <p class="note wait" id="wait" hidden></p>
-  <section id="con" hidden><h2>Offer on your partners' cards <span class="n" id="ncon"></span></h2><p class="note" style="margin:0 0 6px">Use their comment only to reach them if they didn't buy.</p><div id="conlist"></div></section>
+  <section id="con" hidden><h2>Offer on your partners' cards <span class="n" id="ncon"></span></h2><p class="note" style="margin:0 0 6px">Use their comment only to reach them if they didn't buy.</p><div id="conlist"></div><p class="note ratenote" id="ratenote" hidden>Vote fairly or your perms to vote are gone. A 1 star is something like no pack on time + no communication; a 5 star is they had the pack on time and offered on your cards extremely fast. You rate each person once - you can change it later.</p></section>
   <p class="note" style="margin-top:14px">Something wrong? Report it on <a href="/swaps">raxacademy.app/swaps</a>.</p>
 </div>
 <script>
@@ -188,9 +197,10 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
     + g.rows.map(([x, i]) => `<div class="row${x.off ? ' off' : ''}"><span class="grp"><input type="checkbox" class="chk" data-k="b${i}" ${done['b' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}>
       <span><b>${lnk(x.give, x.giveUrl)}</b>${x.off ? '<span class="sub">called off</span>' : ''}</span></span>${x.yourCard ? `<a class="btn" href="${esc(x.yourCard)}" target="_blank" rel="noopener">Your card</a>` : ''}</div>`).join('')).join('');
   // Each partner: who, what you receive, what you give - and their comment to reach them.
+  $('#ratenote').hidden = !j.swaps.some(x => !x.off);
   // Two ticks per partner here (Dennis, 2026-11-06): offer sent, then swap done.
   $('#conlist').innerHTML = ord.map(([x, i]) => `<div class="row${x.off ? ' off' : ''}${done['c' + i] && done['d' + i] ? ' both' : ''}" data-row="${i}"><span class="grp"><span class="chk2"><label><input type="checkbox" class="chk" data-k="c${i}" ${done['c' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}><span>Offered</span></label><label><input type="checkbox" class="chk" data-k="d${i}" ${done['d' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}><span>Done</span></label></span>
-    <span><b>${x.partnerUrl ? `<a href="${esc(x.partnerUrl)}" target="_blank" rel="noopener">@${esc(x.partner || '?')}</a>` : '@' + esc(x.partner || '?')}</b><span class="sub">You receive <b class="rv">${lnk(x.receive, x.receiveUrl)}</b></span><span class="sub">(You're giving ${esc(x.give)})</span></span></span><span class="acts">${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : '<span class="note">no comment</span>'}${x.id && !x.off ? `<button class="btn rp" type="button" data-rp="${x.id}">Report</button>` : ''}</span></div><div class="rpbox" id="rp${x.id}" hidden></div>`).join('');
+    <span><b>${x.partnerUrl ? `<a href="${esc(x.partnerUrl)}" target="_blank" rel="noopener">@${esc(x.partner || '?')}</a>` : '@' + esc(x.partner || '?')}</b><span class="sub">You receive <b class="rv">${lnk(x.receive, x.receiveUrl)}</b></span><span class="sub">(You're giving ${esc(x.give)})</span></span></span><span class="acts">${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : '<span class="note">no comment</span>'}${x.id && !x.off ? `<button class="btn rp" type="button" data-rp="${x.id}">Report</button>` : ''}</span></div><div class="rpbox" id="rp${x.id}" hidden></div>${x.off ? '' : rateRow(x, j)}`).join('');
 })();
 /* Packs today: what the system counts as used, plus your own additions. */
 const pkUrl = () => `/api/swaps?op=hourpacks&u=${encodeURIComponent(q.get('u') || '')}&d=${encodeURIComponent(q.get('d') || '')}&t=${encodeURIComponent(q.get('t') || '')}`;
@@ -247,10 +257,10 @@ async function loadPicks(body){
   if(daily){
     const ord = j.slots.map(toLocal);
     $('#phn').textContent = `${j.slots.length}/${j.maxSlots}`;
-    $('#phnote').textContent = "Tap to turn an hour on or off - it saves straight away. Your first pick is your main hour. Times are your phone's time.";
+    $('#phnote').textContent = "Tap to turn an hour on or off - it saves straight away. Times are your phone's time.";
     $('#phgrid').innerHTML = Array.from({ length: 24 }, (_, h) => { const i = ord.indexOf(h);
       if(h === RESET_LOCAL && i < 0) return `<button type="button" disabled title="Packs reset - no swaps at this hour" style="opacity:.45;border-style:dashed;cursor:not-allowed">${hLbl(h)}<span class="ord">reset</span></button>`;
-      return `<button type="button" data-ph="${h}" class="${i >= 0 ? 'on' : ''}">${hLbl(h)}${i >= 0 ? `<span class="ord">${i + 1}</span>` : ''}</button>`; }).join('');
+      return `<button type="button" data-ph="${h}" class="${i >= 0 ? 'on' : ''}">${hLbl(h)}</button>`; }).join('');
   } else {
     $('#phn').textContent = '';
     $('#phnote').innerHTML = `Your hours are set ${j.sched.mode === 'weekly' ? 'by day of the week' : 'for one date'} - change them on <a href="/swaps">/swaps</a>.`;
@@ -328,6 +338,30 @@ document.addEventListener('click', async e => {
   try{ const r = await fetch(`/api/swaps?op=hourdm&kind=${b.dataset.dm}&u=${encodeURIComponent(q.get('u') || '')}&d=${encodeURIComponent(q.get('d') || '')}&t=${encodeURIComponent(q.get('t') || '')}`, { method: 'POST' });
     const j = await r.json(); $('#andrmsg').textContent = j.error || `Sent - ${j.messages} message${j.messages === 1 ? '' : 's'} on the way to your DMs.`; if(j.error && !/already/i.test(j.error)) b.disabled = false; }
   catch(err){ $('#andrmsg').textContent = 'Could not reach the board - try again.'; b.disabled = false; }
+});
+/* Stars for each partner (Dennis, 2026-11-06): open once the swap time comes.
+   One rating per person, changeable; ratings decide who goes first when two want the same player. */
+function rateRow(x, j){
+  if(Date.now() < j.due) return `<div class="ratebox"><span class="note">Rate @${esc(x.partner || '?')} after the swap - from ${new Date(j.due).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span></div>`;
+  if(j.canRate === false) return `<div class="ratebox"><span class="note">Your rating is turned off for rating unfairly.</span></div>`;
+  const v = x.myStars || 0;
+  return `<div class="ratebox" data-rate="${x.id}" data-v="${v}"><span class="stars">${[1, 2, 3, 4, 5].map(n => `<button type="button" class="st${n <= v ? ' on' : ''}" data-star="${n}" aria-label="${n} star${n === 1 ? '' : 's'}">★</button>`).join('')}</span><button type="button" class="btn go rsub" data-ratesend="${x.id}"${v ? '' : ' disabled'}>${v ? 'Update' : 'Submit'}</button><span class="note rmsg">${v ? `You gave ${v} ★` : ''}</span></div>`;
+}
+document.addEventListener('click', async e => {
+  const st = e.target.closest('[data-star]'), sd = e.target.closest('[data-ratesend]');
+  if(st){ const box = st.closest('[data-rate]'), v = Number(st.dataset.star); box.dataset.v = v;
+    box.querySelectorAll('[data-star]').forEach(b => b.classList.toggle('on', Number(b.dataset.star) <= v));
+    const sb = box.querySelector('[data-ratesend]'); sb.disabled = false; return; }
+  if(!sd) return;
+  const box = sd.closest('[data-rate]'), msg = box.querySelector('.rmsg'), v = Number(box.dataset.v);
+  if(!v){ msg.textContent = 'Pick the stars first.'; return; }
+  sd.disabled = true; msg.textContent = 'Sending…';
+  try{ const r = await fetch(`/api/swaps?op=hourrate&u=${encodeURIComponent(q.get('u') || '')}&d=${encodeURIComponent(q.get('d') || '')}&t=${encodeURIComponent(q.get('t') || '')}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: Number(sd.dataset.ratesend), stars: v }) });
+    const j = await r.json();
+    if(j.error){ msg.textContent = j.error; sd.disabled = false; return; }
+    if(j.blocked){ msg.textContent = 'Your rating has been turned off for rating unfairly.'; document.querySelectorAll('[data-ratesend],[data-star]').forEach(b => b.disabled = true); return; }
+    msg.textContent = `Rated ${v} ★`; sd.textContent = 'Update'; sd.disabled = false;
+  }catch(err){ msg.textContent = 'Could not reach the board - try again.'; sd.disabled = false; }
 });
 // Report a partner right here: opens a short form under their row.
 document.addEventListener('click', async e => {

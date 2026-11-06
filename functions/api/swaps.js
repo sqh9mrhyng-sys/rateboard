@@ -570,6 +570,33 @@ async function chatState(auth, channelId, theirId, since) {
 }
 
 const PRIO_KEY = 'swap_priority_v1';
+/* Ratings (Dennis, 2026-11-06). After a swap each side can rate the other
+   1-5 stars on the swap page - once per person (they can change it). A
+   member's score is their average, pulled toward RATE_PRIOR until they have a
+   few ratings. Anyone spamming 1 stars loses rating, and none of their
+   ratings count. */
+const RATE_PRIOR = 3.5, RATE_PRIOR_N = 3;
+const RATE_DDL = 'CREATE TABLE IF NOT EXISTS swap_ratings (rater TEXT, ratee TEXT, stars INTEGER, at INTEGER, matchId INTEGER, PRIMARY KEY (rater, ratee))';
+const RATE_BLOCK_DDL = 'CREATE TABLE IF NOT EXISTS swap_rate_block (key TEXT PRIMARY KEY, at INTEGER, why TEXT)';
+async function ratingScores(db) {
+  const out = new Map();
+  try {
+    await db.prepare(RATE_DDL).run(); await db.prepare(RATE_BLOCK_DDL).run();
+    const rows = ((await db.prepare('SELECT ratee, SUM(stars) AS s, COUNT(*) AS n FROM swap_ratings WHERE rater NOT IN (SELECT key FROM swap_rate_block) GROUP BY ratee').all()).results) || [];
+    for (const r of rows) out.set(r.ratee, (Number(r.s) + RATE_PRIOR * RATE_PRIOR_N) / (Number(r.n) + RATE_PRIOR_N));
+  } catch (e) {}
+  return out;
+}
+// Spamming 1 stars: 5+ ratings given with 80%+ of them 1 star, or 5+ one-stars in a day.
+async function rateModerate(db, rater) {
+  const g = await db.prepare('SELECT COUNT(*) AS n, SUM(CASE WHEN stars=1 THEN 1 ELSE 0 END) AS ones, SUM(CASE WHEN stars=1 AND at > ? THEN 1 ELSE 0 END) AS ones24 FROM swap_ratings WHERE rater=?').bind(Date.now() - 86400000, rater).first();
+  const n = Number(g && g.n) || 0, ones = Number(g && g.ones) || 0, ones24 = Number(g && g.ones24) || 0;
+  if ((n >= 5 && ones / n >= 0.8) || ones24 >= 5) {
+    await db.prepare('INSERT OR IGNORE INTO swap_rate_block (key, at, why) VALUES (?, ?, ?)').bind(rater, Date.now(), `${ones} of ${n} ratings were 1 star${ones24 >= 5 ? `, ${ones24} in a day` : ''}`).run();
+    await stat(db, 'rate_blocked'); return true;
+  }
+  return false;
+}
 /* One matching run at a time (2026-11-06): two runs 10 seconds apart (a
    member's save refresh) each made the same swap - Dennis got Pete
    Crow-Armstrong to give twice to one partner. A lock row in D1; the hourly
@@ -709,18 +736,24 @@ async function runMatchingInner(db, env) {
      but Dennis's - so when two people want the same player, they get it. */
   let prio = new Set(); try { prio = new Set((JSON.parse((env && await env.RATEBOARD_KV.get(PRIO_KEY)) || '[]') || []).map(k => String(k).toLowerCase())); } catch (e) {}
   const isPrio = k => prio.has(String(k).toLowerCase()), bossOf = k => ADMINS.includes(String(k).toLowerCase()) ? 2 : isPrio(k) ? 1 : 0;
-  const ranks = new Map(users.map(u => [u.key, dues.map(t => { const r = rankAt(u, t); return r >= 0 && bossOf(u.key) ? 0 : r; })]));
+  // Every hour a member picks counts the same (Dennis, 2026-11-06: "primary" was too easy to game).
+  const ranks = new Map(users.map(u => [u.key, dues.map(t => rankAt(u, t) >= 0 ? 0 : -1)]));
+  /* Ratings decide toss-ups (Dennis, 2026-11-06): when two people want the same
+     player, the pair with the better ratings goes first. A small random nudge
+     each run lets a lower-rated member win some, so they can build a rating. */
+  const score = await ratingScores(db);
+  const rs = k => score.get(k) ?? RATE_PRIOR;
   for (let i = 0; i < users.length; i++) for (let j = i + 1; j < users.length; j++) {
     const A = users[i], B = users[j];
     if (!A.wants.length || !B.wants.length) continue;
     const RA = ranks.get(A.key), RB = ranks.get(B.key);
     dues.forEach((due, k) => {
       const ra = RA[k], rb = RB[k]; if (ra < 0 || rb < 0) return;
-      cands.push({ A, B, slot: new Date(due).getUTCHours(), best: Math.min(ra, rb), sum: ra + rb, due, i, boss: Math.max(bossOf(A.key), bossOf(B.key)) });
+      cands.push({ A, B, slot: new Date(due).getUTCHours(), due, i, boss: Math.max(bossOf(A.key), bossOf(B.key)), rate: rs(A.key) + rs(B.key) + Math.random() * 1.2 });
     });
   }
-  // Dennis first, in every hour he picks; then the soonest hour; then primary hours.
-  cands.sort((x, y) => (y.boss - x.boss) || x.due - y.due || x.best - y.best || x.sum - y.sum || x.i - y.i);
+  // Dennis (and priority members) first; then the soonest hour; then the better-rated pair.
+  cands.sort((x, y) => (y.boss - x.boss) || x.due - y.due || (y.rate - x.rate) || x.i - y.i);
   for (const { A, B, slot, due } of cands) {
     const d = swapDay(due);
     if (!roomFor(A.key, d) || !roomFor(B.key, d)) continue;
@@ -3155,11 +3188,17 @@ async function handle({ request, env, waitUntil }) {
     for (const m of ms) {
       const side = m.a === u.key ? 'A' : 'B', o = await mem(side === 'A' ? m.b : m.a);
       const recv = side === 'A' ? m.aGets : m.bGets, give = side === 'A' ? m.bGets : m.aGets;
-      out.push({ id: m.id, status: m.status, partner: o && o.rsUser, partnerUrl: o ? profileUrl(o.rsUser, o.hashId) : null, comment: (o && o.comment) || null,
+      out.push({ id: m.id, partnerKey: side === 'A' ? m.b : m.a, status: m.status, partner: o && o.rsUser, partnerUrl: o ? profileUrl(o.rsUser, o.hashId) : null, comment: (o && o.comment) || null,
         receive: playerName(me, recv), receiveUrl: playerUrl(recv),
         give: playerName(me, give), giveUrl: playerUrl(give), yourCard: me ? passUrl(me, give) : null, off: m.status === 'cancelling' });
     }
-    return json({ user: (me && me.rsUser) || u.key, due, swaps: out, admin: ADMINS.includes(u.key.toLowerCase()) || undefined });
+    // Their ratings of these partners (the swap page shows the stars they gave).
+    let rated = {}, canRate = true;
+    try { await db.prepare(RATE_DDL).run(); await db.prepare(RATE_BLOCK_DDL).run();
+      for (const r of ((await db.prepare('SELECT ratee, stars FROM swap_ratings WHERE rater=?').bind(u.key).all()).results || [])) rated[r.ratee] = Number(r.stars);
+      canRate = !(await db.prepare('SELECT 1 AS x FROM swap_rate_block WHERE key=?').bind(u.key).first()); } catch (e) {}
+    for (const x of out) if (x.partnerKey) { x.myStars = rated[x.partnerKey] || null; delete x.partnerKey; }
+    return json({ user: (me && me.rsUser) || u.key, due, swaps: out, canRate, admin: ADMINS.includes(u.key.toLowerCase()) || undefined });
   }
   /* Most picked players, for everyone on the hour page (Dennis, 2026-11-05):
      how many active members are swapping for each player, most first. */
@@ -3243,6 +3282,25 @@ async function handle({ request, env, waitUntil }) {
       .map(p => ({ key: p.key, name: playerName(mine, p.key) })).sort((a, b) => a.name.localeCompare(b.name));
     return json({ ok: true, msg, calledOff, late, active: !!Number(r.active), wants: wants.map(k => ({ key: k, name: playerName(mine, k), url: playerUrl(k) })),
       slots: parse(r.slots, []), sched: parse(r.sched, null) || { mode: 'daily' }, options, maxWants: MAX_WANTS, maxSlots: MAX_SLOTS });
+  }
+  if (op === 'hourrate' && request.method === 'POST') {
+    const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));
+    if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    const stars = Math.round(Number(b.stars));
+    if (!(stars >= 1 && stars <= 5)) return json({ error: 'Pick 1 to 5 stars.' }, 400);
+    await matchCols(db); await db.prepare(RATE_DDL).run(); await db.prepare(RATE_BLOCK_DDL).run();
+    const u = await db.prepare('SELECT key FROM swap_users WHERE LOWER(key)=?').bind(key.toLowerCase()).first();
+    const m = u && await db.prepare("SELECT * FROM swap_matches WHERE id=? AND (a=? OR b=?) AND dueAt=? AND status NOT IN ('cancelled','cancelling','cleared')").bind(Number(b.id), u.key, u.key, due).first();
+    if (!m) return json({ error: 'That swap was not found.' }, 404);
+    if (Date.now() < sideDue(m)) return json({ error: 'You can rate once the swap time has come.' }, 400);
+    if (await db.prepare('SELECT 1 AS x FROM swap_rate_block WHERE key=?').bind(u.key).first()) return json({ error: 'Your rating was turned off for rating unfairly.' }, 403);
+    if (!(await allow(url.origin, 'rate:' + u.key, 60, 3600))) return json({ error: 'Too many ratings at once - try again later.' }, 429);
+    const ratee = m.a === u.key ? m.b : m.a;
+    await db.prepare('INSERT INTO swap_ratings (rater, ratee, stars, at, matchId) VALUES (?, ?, ?, ?, ?) ON CONFLICT(rater, ratee) DO UPDATE SET stars=excluded.stars, at=excluded.at, matchId=excluded.matchId').bind(u.key, ratee, stars, Date.now(), m.id).run();
+    await stat(db, 'rate_' + stars);
+    if (stars === 1 && await rateModerate(db, u.key)) return json({ ok: true, blocked: true });
+    return json({ ok: true, stars });
   }
   /* The hour page's Report button (Dennis, 2026-11-05): a report on one partner
      of that hour, straight from the signed page - same list as REPORT on /swaps. */

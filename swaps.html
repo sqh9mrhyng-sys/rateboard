@@ -249,7 +249,7 @@
     <p class="note" id="hnote" style="margin:10px 0 0"></p>
     <div class="hours" id="hours"></div>
     <div class="bar" id="hcopy" hidden style="margin-top:8px"><button id="copyall" class="sm">Copy this day to every day</button></div>
-    <p class="note sub">First tap = <b>primary</b> (wins ties). Number = people on that hour. Your time (<span id="tz"></span>). Saves as you tap.</p>
+    <p class="note sub">Every hour you pick counts the same. Number = people on that hour. Your time (<span id="tz"></span>). Saves as you tap.</p>
   </section>
 
   <section>
@@ -534,8 +534,8 @@ function drawHours(){
   const local = curHours();
   $('#hours').innerHTML = Array.from({length: 24}, (_, h) => {
     const r = local.indexOf(h), n = hourCounts ? hourCounts[Math.round(toUtc(h))] || 0 : null;
-    if(h === RESET_LOCAL) return `<label class="${r >= 0 ? 'on ' : ''}rst" title="Packs reset at this hour - no swaps from Saturday Nov 7"><input type="checkbox" value="${h}" ${r >= 0 ? 'checked' : 'disabled'}>${r >= 0 ? `<span class="rk">${RANK[r]}</span>` : ''}${hLbl(h)}<span class="cnt">${r >= 0 ? 'no swaps · untick' : 'packs reset'}</span></label>`;
-    return `<label class="${r >= 0 ? 'on' : ''}"><input type="checkbox" value="${h}" ${r >= 0 ? 'checked' : ''}>${r >= 0 ? `<span class="rk">${RANK[r]}</span>` : ''}${hLbl(h)}`
+    if(h === RESET_LOCAL) return `<label class="${r >= 0 ? 'on ' : ''}rst" title="Packs reset at this hour - no swaps from Saturday Nov 7"><input type="checkbox" value="${h}" ${r >= 0 ? 'checked' : 'disabled'}>${hLbl(h)}<span class="cnt">${r >= 0 ? 'no swaps · untick' : 'packs reset'}</span></label>`;
+    return `<label class="${r >= 0 ? 'on' : ''}"><input type="checkbox" value="${h}" ${r >= 0 ? 'checked' : ''}>${hLbl(h)}`
       + (n != null ? `<span class="cnt">${n} ${n === 1 ? 'user' : 'users'}</span>` : '') + '</label>';
   }).join('');
 }
