@@ -614,14 +614,22 @@ async function runMatching(db, env) {
   for (const u of users) { const own = new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key)); u.wants = u.wants.filter(k => swappable(k) && own.has(k)).slice(0, MAX_WANTS); }
   // Players with fewer than 27 collectible plays are never matched, even if picked before the rule.
   if (env) { try { const low = await lowPlays(env, db, [...new Set(users.flatMap(u => u.wants))]); if (low.size) for (const u of users) u.wants = u.wants.filter(k => !low.has(k)); } catch (e) {} }
-  // Goal rating, per player they want: how many more swaps that pass can take.
+  /* Goal rating, per player they want: how many more swaps that pass can take.
+     The counts come from one read of the live swaps, done here in memory
+     (2026-11-05: a count query per member per player - hundreds once goals
+     went per player - ran matching past its time limit and no swaps were
+     made from 22:20 UTC). */
+  const recvAt = new Map();
+  for (const m of (((await db.prepare("SELECT a, b, aGets, bGets, createdAt FROM swap_matches WHERE status IN ('pending','sending','warned','sent')").all()).results) || []))
+    for (const [k, w] of [[m.a, m.aGets], [m.b, m.bGets]]) { const kk = k + '|' + w; (recvAt.get(kk) || recvAt.set(kk, []).get(kk)).push(Number(m.createdAt) || 0); }
+  const countSince = (k, w, since) => { const t0 = Number(since) || 0; let n = 0; for (const t of (recvAt.get(k + '|' + w) || [])) if (t > t0) n++; return n; };
   const cache = new Map(), goalLeft = new Map();
   for (const u of users) for (const w of u.wants) {
     let left = Infinity;
-    try { const g = await goalRoom(db, cache, u, (x, ww) => usedSince(db, x, ww), w); if (g.limited) left = g.left; } catch (e) {}
+    try { const g = await goalRoom(db, cache, u, (x, ww) => countSince(x.key, ww, x.scannedAt), w); if (g.limited) left = g.left; } catch (e) {}
     // Scale: their own cap for this player, overall since they set it.
     const c = u.caps[w];
-    if (c && Number(c.n) > 0 && c.at) { try { left = Math.min(left, Math.max(0, Number(c.n) - await usedFor(db, u.key, w, c.at))); } catch (e) {} }
+    if (c && Number(c.n) > 0 && c.at) left = Math.min(left, Math.max(0, Number(c.n) - countSince(u.key, w, c.at)));
     goalLeft.set(`${u.key}|${w}`, left);
   }
   // No daily cap and no limit per partner: two members swap as often as they have compatible picks.
@@ -688,16 +696,15 @@ async function runMatching(db, env) {
     goalLeft.set(`${B.key}|${bGets}`, (goalLeft.get(`${B.key}|${bGets}`) ?? Infinity) - 1);
     }
   }
-  for (const m of made) {
-    try { await alterOnce(db, 'ALTER TABLE swap_matches ADD COLUMN dueAt INTEGER'); } catch (e) {}
-    // Never the same swap twice on one swap day, even if two runs overlap.
-    const d = swapDay(m.due), dayStart = m.due - 30 * 3600000;
-    const dupes = ((await db.prepare(`SELECT dueAt, slot, createdAt FROM swap_matches WHERE ((a=? AND b=? AND aGets=? AND bGets=?) OR (a=? AND b=? AND aGets=? AND bGets=?)) AND dueAt > ? AND status IN ('pending','sending','warned','sent')`)
-      .bind(m.a, m.b, m.aGets, m.bGets, m.b, m.a, m.bGets, m.aGets, dayStart).all()).results) || [];
-    if (dupes.some(x => swapDay(sideDue(x)) === d)) continue;
-    await db.prepare(`INSERT INTO swap_matches (a, b, aGets, bGets, slot, createdAt, status, dueAt) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`)
-      .bind(m.a, m.b, m.aGets, m.bGets, m.slot, now, m.due).run();
-  }
+  // Never the same swap twice on one swap day, even if two runs overlap: checked against the
+  // live swaps read at the start (in memory), then saved 50 at a time.
+  try { await alterOnce(db, 'ALTER TABLE swap_matches ADD COLUMN dueAt INTEGER'); } catch (e) {}
+  const sig = (a, b, ag, bg, d) => a < b ? `${a}|${b}|${ag}|${bg}|${d}` : `${b}|${a}|${bg}|${ag}|${d}`;
+  const seen = new Set(open.map(x => sig(x.a, x.b, x.aGets, x.bGets, swapDay(sideDue(x)))));
+  const ins = [];
+  for (const m of made) { const k = sig(m.a, m.b, m.aGets, m.bGets, swapDay(m.due)); if (seen.has(k)) continue; seen.add(k);
+    ins.push(db.prepare(`INSERT INTO swap_matches (a, b, aGets, bGets, slot, createdAt, status, dueAt) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`).bind(m.a, m.b, m.aGets, m.bGets, m.slot, now, m.due)); }
+  for (let i = 0; i < ins.length; i += 50) await db.batch(ins.slice(i, i + 50));
   return made;
 }
 
@@ -1934,7 +1941,11 @@ export async function swapTick(env) {
   }
   if (mine) {
     try { await matchCols(db); } catch (e) {}
-    try { const made = await runMatching(db, env); await stat(db, 'matches', made.length); await stat(db, 'match_runs'); } catch (e) { await botFail(db, 'matching', e.message); }
+    const t0 = Date.now();
+    try { await db.prepare("INSERT INTO bot_log (at, kind, msg) VALUES (?, 'match', ?)").bind(t0, 'run started').run(); } catch (e) {}
+    try { const made = await runMatching(db, env); await stat(db, 'matches', made.length); await stat(db, 'match_runs');
+      try { await db.prepare("INSERT INTO bot_log (at, kind, msg) VALUES (?, 'match', ?)").bind(Date.now(), `run done: ${made.length} swaps in ${((Date.now() - t0) / 1000).toFixed(1)}s`).run(); } catch (e) {} }
+    catch (e) { await botFail(db, 'matching', `after ${((Date.now() - t0) / 1000).toFixed(1)}s: ${e.message}`); }
   }
   // One-time (2026-11-03): a match sent early by hand goes back on schedule.
   try {
