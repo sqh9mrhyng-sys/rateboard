@@ -426,7 +426,7 @@ function schedUtc(sc) {
   return [...new Set(loc.map(h => ((h - off) % 24 + 24) % 24))];
 }
 const MATCH_AHEAD_MS = 3 * 3600000 + 30 * 60000;   // a run fills the hours starting in the next 3.5 hours
-const MAX_SLOTS = 10;    // hours a member can pick, per day (was 5)
+const MAX_SLOTS = 24;    // hours a member can pick, per day: no limit (Dennis, 2026-11-06; was 10)
 /* Members' saved passes are big (every sport and season), and D1 won't hand
    back more than 50 MB in one answer, so wide reads go a page at a time. */
 async function pagedRows(db, sql, binds = [], size = 25) {

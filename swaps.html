@@ -463,7 +463,7 @@ const hLbl = h => `${(h % 12) || 12}${h < 12 ? 'am' : 'pm'}`;
 // when two people want the same player. Under each hour: how many have picked it.
 let hourCounts = null;
 const RANK = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th', '9th', '10th'];
-const MAX_H = 10;
+const MAX_H = 24;   // no limit on hours (2026-11-06)
 const TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch(e){ return 'UTC'; } })();
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -1062,7 +1062,7 @@ async function proGate(){
   if(!j.tokenFound) $('#scanmsg').innerHTML = '<span style="color:var(--bad)">No swap token found in Cloudflare yet.</span>';
   $('#rsuser').textContent = '@' + (j.real || j.key || '');
   $('#rstop').textContent = '@' + (j.real || j.key || '');
-  if(prof.slots.length > 10){ prof.slots = prof.slots.slice(0, 10); drawHours(); }
+  if(prof.slots.length > MAX_H){ prof.slots = prof.slots.slice(0, MAX_H); drawHours(); }
   $('#goal').value = (j.profile && j.profile.goal != null) ? j.profile.goal : '';
   $('#daycap').value = (j.profile && j.profile.dayCap != null) ? j.profile.dayCap : '';
   caps = {}; for(const [k, v] of Object.entries((j.profile && j.profile.caps) || {})) if(v && (v.n || v.d || v.g)) caps[k] = { ...(v.n ? { n: String(v.n) } : {}), ...(v.d ? { d: String(v.d) } : {}), ...(v.g ? { g: String(v.g) } : {}) };
