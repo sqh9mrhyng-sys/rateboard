@@ -3292,7 +3292,29 @@ async function handle({ request, env, waitUntil }) {
     await db.prepare(RATE_DDL).run(); await db.prepare(RATE_BLOCK_DDL).run();
     const rows = ((await db.prepare(`SELECT r.ratee AS k, AVG(r.stars) AS avg, COUNT(*) AS n, u.rsUser AS rsUser, u.hashId AS hashId FROM swap_ratings r LEFT JOIN swap_users u ON u.key = r.ratee
       WHERE r.rater NOT IN (SELECT key FROM swap_rate_block) GROUP BY r.ratee ORDER BY avg DESC, n DESC LIMIT 500`).all()).results) || [];
-    return json({ me: key.toLowerCase(), rows: rows.map(r => ({ user: r.rsUser || r.k, url: profileUrl(r.rsUser || r.k, r.hashId), avg: Math.round(Number(r.avg) * 100) / 100, votes: Number(r.n), mine: String(r.k).toLowerCase() === key.toLowerCase() || undefined })) });
+    return json({ me: key.toLowerCase(), admin: ADMINS.includes(key.toLowerCase()) || undefined, rows: rows.map(r => ({ k: r.k, user: r.rsUser || r.k, url: profileUrl(r.rsUser || r.k, r.hashId), avg: Math.round(Number(r.avg) * 100) / 100, votes: Number(r.n), mine: String(r.k).toLowerCase() === key.toLowerCase() || undefined })) });
+  }
+  /* Admin (Dennis, 2026-11-06): every rating one member was given, who gave
+     it, and changing or removing any of them by hand. */
+  if (op === 'hourratingsof' || op === 'hourrateset') {
+    const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));
+    if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
+    if (!ADMINS.includes(key.toLowerCase())) return json({ error: 'Admins only.' }, 403);
+    await db.prepare(RATE_DDL).run(); await db.prepare(RATE_BLOCK_DDL).run();
+    let ratee = String(url.searchParams.get('who') || '');
+    if (op === 'hourrateset' && request.method === 'POST') {
+      let b = {}; try { b = await request.json(); } catch (e) {}
+      ratee = String(b.ratee || ''); const rater = String(b.rater || ''), stars = Math.round(Number(b.stars));
+      if (!ratee || !rater) return json({ error: 'Missing member.' }, 400);
+      if (stars === 0) await db.prepare('DELETE FROM swap_ratings WHERE rater=? AND ratee=?').bind(rater, ratee).run();
+      else if (stars >= 1 && stars <= 5) await db.prepare('UPDATE swap_ratings SET stars=?, at=? WHERE rater=? AND ratee=?').bind(stars, Date.now(), rater, ratee).run();
+      else return json({ error: 'Pick 1 to 5 stars, or 0 to remove.' }, 400);
+      await stat(db, 'rate_admin_edit');
+    }
+    if (!ratee) return json({ error: 'Pick a member.' }, 400);
+    const rows = ((await db.prepare(`SELECT r.rater, r.stars, r.at, r.matchId, u.rsUser, u.hashId, (SELECT 1 FROM swap_rate_block b WHERE b.key = r.rater) AS blocked
+      FROM swap_ratings r LEFT JOIN swap_users u ON u.key = r.rater WHERE r.ratee=? ORDER BY r.at DESC`).bind(ratee).all()).results) || [];
+    return json({ ratee, rows: rows.map(r => ({ rater: r.rater, user: r.rsUser || r.rater, url: profileUrl(r.rsUser || r.rater, r.hashId), stars: Number(r.stars), at: Number(r.at), matchId: r.matchId, blocked: !!r.blocked })) });
   }
   if (op === 'hourrate' && request.method === 'POST') {
     const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));

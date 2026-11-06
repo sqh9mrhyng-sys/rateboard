@@ -93,6 +93,11 @@
   .rl{padding:8px 0;border-top:1px solid var(--line);font-size:14.5px} .rl .rk{color:var(--mute);font-weight:800;font-size:13px;text-align:right}
   .rl a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)} .rl .you{color:var(--accent);font-size:11px;font-weight:800;margin-left:6px}
   .rl .av{font-weight:800;text-align:right} .rl .sx{color:#F5B83D} .rl .vt{text-align:right;color:var(--mute)}
+  .rl.tap{cursor:pointer} .rl.tap:hover{background:rgba(127,127,127,.06)}
+  .rlbd{margin:0 0 8px 36px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
+  .rlr{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 0;border-top:1px solid var(--line)} .rlr:first-child{border-top:0}
+  .rlr a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)} .rlr .blk{color:var(--bad);font-size:11px;font-weight:700}
+  .rlr select{font:inherit;font-size:13px;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);color-scheme:dark}
   .rl.me{background:linear-gradient(90deg,transparent,rgba(232,163,61,.08))}
   .pw{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--line)} .pw:first-child{border-top:0}
   .pw b a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)} .pw .o{color:var(--mute);font-weight:800;margin-right:8px}
@@ -236,8 +241,32 @@ async function loadRatings(){
   let j; try{ j = await (await fetch(`/api/swaps?op=hourratings&${sig()}`)).json(); }catch(e){ $('#rlsum').textContent = 'Could not reach the board.'; return; }
   if(j.error){ $('#rlsum').textContent = j.error; return; }
   $('#rlsum').textContent = j.rows.length ? `${j.rows.length} rated member${j.rows.length === 1 ? '' : 's'}, best average first (more votes first on a tie). Members rate each other after a swap, from the swap page.` : 'Nobody has been rated yet - rate your partners after a swap, under "Offer on your partners\' cards".';
-  $('#rllist').innerHTML = j.rows.map((x, i) => `<div class="rl${x.mine ? ' me' : ''}"><span class="rk">${i + 1}</span><span>${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">@${esc(x.user)}</a>` : '@' + esc(x.user)}${x.mine ? '<span class="you">YOU</span>' : ''}</span><span class="av">${x.avg.toFixed(2)} <span class="sx">★</span></span><span class="vt">${x.votes}</span></div>`).join('');
+  rlAdmin = !!j.admin;
+  $('#rllist').innerHTML = j.rows.map((x, i) => `<div class="rl${x.mine ? ' me' : ''}${j.admin ? ' tap' : ''}"${j.admin ? ` data-rlk="${esc(x.k)}"` : ''}><span class="rk">${i + 1}</span><span>${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">@${esc(x.user)}</a>` : '@' + esc(x.user)}${x.mine ? '<span class="you">YOU</span>' : ''}</span><span class="av">${x.avg.toFixed(2)} <span class="sx">★</span></span><span class="vt">${x.votes}</span></div>${j.admin ? `<div class="rlbd" id="rlbd-${esc(x.k)}" hidden></div>` : ''}`).join('');
+  if(j.admin) $('#rlsum').textContent += ' Tap a member to see who rated them and change a rating.';
 }
+let rlAdmin = false;
+async function rlOpen(k, body){
+  const box = document.getElementById('rlbd-' + k); if(!box) return;
+  box.hidden = false; if(!body) box.innerHTML = '<p class="note">Loading…</p>';
+  let j; try{ j = await (await fetch(`/api/swaps?op=${body ? 'hourrateset' : 'hourratingsof'}&${sig()}&who=${encodeURIComponent(k)}`, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {})).json(); }
+  catch(e){ box.innerHTML = '<p class="note">Could not reach the board.</p>'; return; }
+  if(j.error){ box.innerHTML = `<p class="note">${esc(j.error)}</p>`; return; }
+  const when = t => new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  box.innerHTML = (j.rows.map(r => `<div class="rlr"><span>${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">@${esc(r.user)}</a>` : '@' + esc(r.user)}${r.blocked ? ' <span class="blk">rating off - doesn\'t count</span>' : ''}<span class="note" style="display:block;font-size:12px">${esc(when(r.at))}${r.matchId ? ' · swap #' + r.matchId : ''}</span></span>
+      <select data-rlset="${esc(r.rater)}" data-rlee="${esc(j.ratee)}">${[5, 4, 3, 2, 1].map(n => `<option value="${n}"${n === r.stars ? ' selected' : ''}>${'★'.repeat(n)} ${n}</option>`).join('')}<option value="0">Remove</option></select></div>`).join('')
+    || '<p class="note">No ratings left for this member.</p>') + (body ? '<p class="note" style="margin:6px 0 0;color:var(--ok)">Saved - refresh the page to see the new order.</p>' : '');
+}
+document.addEventListener('click', e => {
+  const r = rlAdmin && e.target.closest('[data-rlk]'); if(!r || e.target.closest('a')) return;
+  const box = document.getElementById('rlbd-' + r.dataset.rlk);
+  if(box && !box.hidden){ box.hidden = true; return; }
+  rlOpen(r.dataset.rlk);
+});
+document.addEventListener('change', e => {
+  const s = e.target.closest('[data-rlset]'); if(!s) return;
+  rlOpen(s.dataset.rlee, { rater: s.dataset.rlset, ratee: s.dataset.rlee, stars: Number(s.value) });
+});
 /* Most picked players: everyone's picks, most first. */
 async function loadTop(){
   let j; try{ j = await (await fetch(`/api/swaps?op=hourtop&${sig()}`)).json(); }catch(e){ $('#topsum').textContent = 'Could not reach the board.'; return; }
