@@ -68,12 +68,13 @@
   .tl .ct{font-weight:800;font-size:13px}
   .tl .bar{grid-column:2/4;height:6px;border-radius:99px;background:var(--panel2);overflow:hidden} .tl .bar i{display:block;height:100%;background:var(--accent);border-radius:99px}
   .tl.me .bar i{background:var(--ok)}
-  .rxh,.rx{display:grid;grid-template-columns:26px 1fr auto 56px;gap:8px;align-items:center}
+  .rxh,.rx{display:grid;grid-template-columns:24px 1fr 44px 56px 38px;gap:6px;align-items:center}
+  .rx .ow{text-align:right;font-size:13px} .rxh span:nth-child(n+3){text-align:right} .rx .se{display:block;font-size:12px}
   .rxh{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--mute);padding:0 0 4px}
   .rx{padding:7px 0;border-top:1px solid var(--line);font-size:14px}
   .rx .rk{color:var(--mute);font-weight:800;font-size:13px;text-align:right} .rxh span:first-child{text-align:right}
   .rx a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)} .rx .se{color:var(--mute);font-size:13px;white-space:nowrap}
-  .rx .rv{font-weight:800;text-align:right} .rxh span:last-child{text-align:right}
+  .rx .rv{font-weight:800;text-align:right}
   .pw{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--line)} .pw:first-child{border-top:0}
   .pw b a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)} .pw .o{color:var(--mute);font-weight:800;margin-right:8px}
   .pw button,.phgrid button{cursor:pointer;font:inherit}
@@ -103,7 +104,7 @@
     <div id="toplist"></div></section>
     <section id="raxbox" hidden><h2>Top 50 rax earners</h2>
       <p class="note" id="raxsum" style="margin:0 0 8px">Loading…</p>
-      <div class="rxh"><span>#</span><span>Player</span><span>Season</span><span>Rax</span></div>
+      <div class="rxh"><span>#</span><span>Player</span><span>Rax</span><span>Owners</span><span>Here</span></div>
       <div id="raxlist"></div></section></div>
   <div id="pickview" hidden>
     <p class="note" id="pkmsg2" style="margin:10px 0 0"></p>
@@ -218,8 +219,8 @@ async function loadRax(){
   $('#raxbox').hidden = false;
   let j; try{ j = await (await fetch(`/api/swaps?op=hourrax&${sig()}`)).json(); }catch(e){ $('#raxsum').textContent = 'Could not reach the board.'; return; }
   if(j.error){ $('#raxsum').textContent = j.error; return; }
-  $('#raxsum').textContent = `Every sport and season in game data except FC (${j.seasons} seasons). Only you can see this. Updated every hour.`;
-  $('#raxlist').innerHTML = j.rows.map((x, i) => `<div class="rx"><span class="rk">${i + 1}.</span><span>${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.name)}</a>` : esc(x.name)}</span><span class="se">${esc(x.sport)} ${esc(x.season)}</span><span class="rv">${Number(x.rax).toLocaleString()}</span></div>`).join('');
+  $('#raxsum').textContent = `Snapshot of every sport and season in game data except FC (${j.seasons} seasons), taken ${new Date(j.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}. Owners: on Real. Here: members on the site who have that pass. Only you can see this.`;
+  $('#raxlist').innerHTML = j.rows.map((x, i) => `<div class="rx"><span class="rk">${i + 1}.</span><span>${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.name)}</a>` : esc(x.name)}<span class="se">${esc(x.sport)} ${esc(x.season)}</span></span><span class="rv">${Number(x.rax).toLocaleString()}</span><span class="ow">${x.owners == null ? '-' : Number(x.owners).toLocaleString()}</span><span class="ow">${x.onSite ?? 0}</span></div>`).join('');
 }
 /* Your players & hours: see and change them here. */
 const tzOff = -new Date().getTimezoneOffset() / 60, toUtc = h => ((h - tzOff) % 24 + 24) % 24, toLocal = h => ((h + tzOff) % 24 + 24) % 24;

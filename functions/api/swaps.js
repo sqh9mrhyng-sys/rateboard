@@ -3051,19 +3051,25 @@ async function handle({ request, env, waitUntil }) {
     return json({ at: c.at, members: c.members, rows: c.rows.map(x => ({ ...x, mine: mine.has(x.key) || undefined })) });
   }
   /* Admin only for now (Dennis, 2026-11-05): the top 50 rax earners in game
-     data - every sport and season but FC - under Most picked. Kept an hour. */
+     data - every sport and season but FC - under Most picked. A snapshot:
+     taken once and kept (the numbers are set), retaken only with rebuild=1.
+     With each: Real owners, and how many members here have that pass. */
   if (op === 'hourrax') {
     const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));
     if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
     if (!ADMINS.includes(key.toLowerCase())) return json({ error: 'Admins only.' }, 403);
-    let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get('swap_raxtop_v1')) || 'null'); } catch (e) {}
-    if (!c || Date.now() - c.at > 3600000) {
+    let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get('swap_raxtop_snap_v1')) || 'null'); } catch (e) {}
+    if (!c || url.searchParams.get('rebuild') === '1') {
       const ss = ((await (await fetch(`${url.origin}/api/rax?gamelog=seasons`)).json()).seasons || []).filter(x => x.sport !== 'soccer').map(x => `${x.sport}:${x.season}`);
       const j = await (await fetch(`${url.origin}/api/rax?gamelog=query&mode=players&seasons=${encodeURIComponent(ss.join(','))}&sort=rax&dir=desc&limit=50`)).json();
       if (!j || !Array.isArray(j.rows)) return json({ error: (j && j.error) || 'Game data did not answer - try again.' }, 502);
       const SP = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf' };
-      c = { at: Date.now(), seasons: ss.length, rows: j.rows.filter(r => r.sport !== 'soccer').slice(0, 50).map(r => ({ name: r.player, sport: SP[r.sport] || r.sport, season: r.season, rax: Number(r.rax) || 0, url: playerUrl(`${r.sport}:${r.season}:${r.playerId}`) })) };
-      try { await env.RATEBOARD_KV.put('swap_raxtop_v1', JSON.stringify(c)); } catch (e) {}
+      const top = j.rows.filter(r => r.sport !== 'soccer').slice(0, 50).map(r => ({ k: `${r.sport}:${r.season}:${r.playerId}`, r }));
+      const want = new Set(top.map(x => x.k)), have = new Map();
+      for (const u of await pagedRows(db, 'SELECT passes FROM swap_users WHERE passes IS NOT NULL'))
+        for (const k of new Set(parse(u.passes, []).filter(p => p.kind !== 'team').map(p => p.key))) if (want.has(k)) have.set(k, (have.get(k) || 0) + 1);
+      c = { at: Date.now(), seasons: ss.length, rows: top.map(({ k, r }) => ({ name: r.player, sport: SP[r.sport] || r.sport, season: r.season, rax: Number(r.rax) || 0, owners: r.owners == null ? null : Number(r.owners), onSite: have.get(k) || 0, url: playerUrl(k) })) };
+      try { await env.RATEBOARD_KV.put('swap_raxtop_snap_v1', JSON.stringify(c)); } catch (e) {}
     }
     return json(c);
   }
