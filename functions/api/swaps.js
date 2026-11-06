@@ -570,7 +570,23 @@ async function chatState(auth, channelId, theirId, since) {
 }
 
 const PRIO_KEY = 'swap_priority_v1';
-async function runMatching(db, env) {
+/* One matching run at a time (2026-11-06): two runs 10 seconds apart (a
+   member's save refresh) each made the same swap - Dennis got Pete
+   Crow-Armstrong to give twice to one partner. A lock row in D1; the hourly
+   run waits for it, a save refresh just skips. */
+async function runMatching(db, env, wait = false) {
+  await db.prepare('CREATE TABLE IF NOT EXISTS run_lock (k TEXT PRIMARY KEY, until INTEGER)').run();
+  for (let i = 0; ; i++) {
+    const now = Date.now();
+    const c = await db.prepare("INSERT INTO run_lock (k, until) VALUES ('match', ?) ON CONFLICT(k) DO UPDATE SET until=excluded.until WHERE run_lock.until < ?").bind(now + 90000, now).run();
+    if (c.meta && c.meta.changes) break;
+    if (!wait || i >= 20) { const e = []; e.skipped = true; return e; }
+    await sleep(1000);
+  }
+  try { return await runMatchingInner(db, env); }
+  finally { try { await db.prepare("UPDATE run_lock SET until=0 WHERE k='match'").run(); } catch (e) {} }
+}
+async function runMatchingInner(db, env) {
   const T = [Date.now()], lap = () => T.push(Date.now());
   // Only members the bot already has a chat with: new chats are capped at
   // five a day, so a match with anyone else might never be delivered.
@@ -733,7 +749,9 @@ async function runMatching(db, env) {
   // live swaps read at the start (in memory), then saved 50 at a time.
   try { await alterOnce(db, 'ALTER TABLE swap_matches ADD COLUMN dueAt INTEGER'); } catch (e) {}
   const sig = (a, b, ag, bg, d) => a < b ? `${a}|${b}|${ag}|${bg}|${d}` : `${b}|${a}|${bg}|${ag}|${d}`;
-  const seen = new Set(open.map(x => sig(x.a, x.b, x.aGets, x.bGets, swapDay(sideDue(x)))));
+  // Read again right before saving (not the copy from the start of the run).
+  const fresh = ((await db.prepare(`SELECT a, b, aGets, bGets, slot, createdAt, dueAt FROM swap_matches WHERE createdAt > ? AND status IN ('pending','sending','warned','sent')`).bind(Date.now() - 2 * 86400000).all()).results) || [];
+  const seen = new Set(fresh.map(x => sig(x.a, x.b, x.aGets, x.bGets, swapDay(sideDue(x)))));
   const ins = [];
   for (const m of made) { const k = sig(m.a, m.b, m.aGets, m.bGets, swapDay(m.due)); if (seen.has(k)) continue; seen.add(k);
     ins.push(db.prepare(`INSERT INTO swap_matches (a, b, aGets, bGets, slot, createdAt, status, dueAt) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`).bind(m.a, m.b, m.aGets, m.bGets, m.slot, now, m.due)); }
@@ -1981,6 +1999,18 @@ async function confirmPrompts(env, db, auth) {
     catch (e) { await botFail(db, 'dm_confirm_prompt', `${u.key}: ${e.message || e}`); }
   }
 }
+/* Safety net: the same swap twice (same two members, same cards, same swap
+   day) - the later copies are called off, every minute, before warnings. */
+async function dedupeSweep(db) {
+  const ms = ((await db.prepare(`SELECT id, a, b, aGets, bGets, slot, createdAt, dueAt FROM swap_matches WHERE status IN ('pending','warned') AND dueAt > ? AND createdAt > ? ORDER BY id`).bind(Date.now(), Date.now() - 2 * 86400000).all()).results) || [];
+  const first = new Map();
+  for (const m of ms) {
+    const k = (m.a < m.b ? [m.a, m.b, m.aGets, m.bGets] : [m.b, m.a, m.bGets, m.aGets]).join('|') + '|' + swapDay(sideDue(m));
+    if (!first.has(k)) { first.set(k, m.id); continue; }
+    await db.prepare(`UPDATE swap_matches SET status='cancelled', note=? WHERE id=? AND status IN ('pending','warned')`).bind(`called off: same swap as #${first.get(k)}`, m.id).run();
+    await stat(db, 'dupe_calledoff');
+  }
+}
 async function confirmGate(env, db, auth) {
   const now = Date.now();
   await matchCols(db);
@@ -2027,6 +2057,7 @@ async function dmTick(env) {
       await stat(db, 'dm_admin', 2);
     } } } catch (e) { await botFail(db, 'dm_admin', 'example: ' + (e.message || e)); }
   // Unconfirmed members' swaps come off before any warning goes out; the day's confirm DMs at its start.
+  try { await dedupeSweep(db); } catch (e) { await botFail(db, 'dedupe', e.message); }
   try { await confirmGate(env, db, auth); } catch (e) { await botFail(db, 'confirm_gate', e.message); }
   try { await retryDms(db, auth); } catch (e) { await botFail(db, 'dm_retry', e.message); }   // unsent parts first
   try { await confirmPrompts(env, db, auth); } catch (e) { await botFail(db, 'dm_confirm_prompt', e.message); }
@@ -2059,7 +2090,7 @@ export async function swapTick(env) {
     try { await matchCols(db); } catch (e) {}
     const t0 = Date.now();
     try { await db.prepare("INSERT INTO bot_log (at, kind, msg) VALUES (?, 'match', ?)").bind(t0, 'run started').run(); } catch (e) {}
-    try { const made = await runMatching(db, env); await stat(db, 'matches', made.length); await stat(db, 'match_runs');
+    try { const made = await runMatching(db, env, true); await stat(db, 'matches', made.length); await stat(db, 'match_runs');
       try { await db.prepare("INSERT INTO bot_log (at, kind, msg) VALUES (?, 'match', ?)").bind(Date.now(), `run done: ${made.length} swaps in ${((Date.now() - t0) / 1000).toFixed(1)}s (${made.timing || ''})`).run(); } catch (e) {} }
     catch (e) { await botFail(db, 'matching', `after ${((Date.now() - t0) / 1000).toFixed(1)}s: ${e.message}`); }
   }
