@@ -182,7 +182,8 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
   const live = j.swaps.filter(x => !x.off);
   $('#h').innerHTML = `@${esc(j.user)} · <button class="tbtn" id="tbtn" aria-expanded="false">${esc(when)} <span class="car">▾</span></button>`;
   $('#tbtn').addEventListener('click', openMenu);
-  isAdm = !!j.admin;
+  isAdm = !!j.admin; rateOff = !!j.ratingsOff;
+  if(rateOff){ $('#con').classList.add('norate'); const sr = document.querySelector('.showrate'); if(sr) sr.hidden = true; }
   const views = { ratings: ['#rateview', 'Rating leaderboard ', loadRatings], top: ['#topview', 'Most picked ', loadTop], picks: ['#pickview', 'Your players & hours ', loadPicks] };
   if(views[q.get('v')]){ const [id, lbl, fn] = views[q.get('v')]; $('#tbtn').firstChild.textContent = lbl; ['#buy', '#con', '#andr', '#wait', '#sub'].forEach(x => { const el = $(x); if(el) el.hidden = true; }); $(id).hidden = false; fn(); return; }
   if(q.get('v') === 'byhour' && isAdm){ $('#tbtn').firstChild.textContent = 'Swaps by hour '; ['#buy', '#con', '#andr', '#wait', '#sub'].forEach(id => { const el = $(id); if(el) el.hidden = true; }); $('#byview').hidden = false; byLoad(Number(q.get('at')) || 0); return; }
@@ -380,7 +381,7 @@ async function openMenu(){
   const tq = new URLSearchParams(location.search); tq.set('v', 'top'); tq.delete('at');
   const topItem = `<a class="hm-i pk${q.get('v') === 'top' ? ' on' : ''}" href="?${tq.toString()}"><span>🏆 Most picked players</span><span class="note">everyone's picks</span></a>`;
   const rq = new URLSearchParams(location.search); rq.set('v', 'ratings'); rq.delete('at');
-  const rateItem = `<a class="hm-i pk${q.get('v') === 'ratings' ? ' on' : ''}" href="?${rq.toString()}"><span>⭐ Rating leaderboard</span><span class="note">everyone's stars</span></a>`;
+  const rateItem = rateOff ? '' : `<a class="hm-i pk${q.get('v') === 'ratings' ? ' on' : ''}" href="?${rq.toString()}"><span>⭐ Rating leaderboard</span><span class="note">everyone's stars</span></a>`;
   const byItem = isAdm ? `<a class="hm-i pk${q.get('v') === 'byhour' ? ' on' : ''}" href="?${bq.toString()}"><span>🗂 Swaps by hour</span><span class="note">everyone, any hour</span></a>` : '';
   $('#hm-up').innerHTML = `<a class="hm-i pk${q.get('v') === 'packs' ? ' on' : ''}" href="?${pq.toString()}"><span>📦 Packs today</span><span class="note">grinds and packs used</span></a>` + topItem + rateItem + byItem + (up.map(item).join('') || '<p class="note" style="margin:6px 0">Nothing scheduled.</p>');
   $('#hm-past').innerHTML = past.map(item).join('') || '<p class="note" style="margin:6px 0">Nothing in the last 14 days.</p>';
@@ -395,7 +396,8 @@ document.addEventListener('click', async e => {
 // "Show rankings" (on unless they turned it off on this phone): hides the stars and the rating note.
 { let on = true; try{ on = localStorage.getItem('hour_showrate') !== '0'; }catch(e){}
   $('#showrate').checked = on; $('#con').classList.toggle('norate', !on);
-  $('#showrate').addEventListener('change', e => { $('#con').classList.toggle('norate', !e.target.checked); try{ localStorage.setItem('hour_showrate', e.target.checked ? '1' : '0'); }catch(err){} }); }
+  $('#showrate').addEventListener('change', e => { $('#con').classList.toggle('norate', !e.target.checked || rateOff); try{ localStorage.setItem('hour_showrate', e.target.checked ? '1' : '0'); }catch(err){} }); }
+let rateOff = false;   // ratings switched off for the day: no stars, note, box or leaderboard
 /* Stars for each partner (Dennis, 2026-11-06): open once the swap time comes.
    One rating per person, changeable; ratings decide who goes first when two want the same player. */
 function rateRow(x, j){

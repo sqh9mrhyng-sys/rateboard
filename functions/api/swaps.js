@@ -576,7 +576,10 @@ const PRIO_KEY = 'swap_priority_v1';
    few ratings. Anyone spamming 1 stars loses rating, and none of their
    ratings count. */
 const RATE_PRIOR = 3.5, RATE_PRIOR_N = 3;
-const RATE_ON_MEMBERS = 10, RATE_ON_VOTES = 20;   // ratings count in matching once 10 members have 20+ ratings each
+const RATE_ON_MEMBERS = 10, RATE_ON_VOTES = 20;
+// Ratings off entirely until the next swap day starts, 3am Alaska Sat Nov 7 (Dennis, 2026-11-06).
+const RATE_OFF_UNTIL = Date.UTC(2026, 10, 7, 12);
+const ratingsOff = () => Date.now() < RATE_OFF_UNTIL;   // ratings count in matching once 10 members have 20+ ratings each
 const RATE_DDL = 'CREATE TABLE IF NOT EXISTS swap_ratings (rater TEXT, ratee TEXT, stars INTEGER, at INTEGER, matchId INTEGER, PRIMARY KEY (rater, ratee))';
 const RATE_BLOCK_DDL = 'CREATE TABLE IF NOT EXISTS swap_rate_block (key TEXT PRIMARY KEY, at INTEGER, why TEXT)';
 async function ratingScores(db) {
@@ -585,7 +588,7 @@ async function ratingScores(db) {
     await db.prepare(RATE_DDL).run(); await db.prepare(RATE_BLOCK_DDL).run();
     const rows = ((await db.prepare('SELECT ratee, SUM(stars) AS s, COUNT(*) AS n FROM swap_ratings WHERE rater NOT IN (SELECT key FROM swap_rate_block) GROUP BY ratee').all()).results) || [];
     // Ratings only count once enough people have been rated a lot (Dennis, 2026-11-06).
-    if (rows.filter(r => Number(r.n) >= RATE_ON_VOTES).length < RATE_ON_MEMBERS) return out;
+    if (ratingsOff() || rows.filter(r => Number(r.n) >= RATE_ON_VOTES).length < RATE_ON_MEMBERS) return out;
     for (const r of rows) out.set(r.ratee, (Number(r.s) + RATE_PRIOR * RATE_PRIOR_N) / (Number(r.n) + RATE_PRIOR_N));
   } catch (e) {}
   return out;
@@ -3204,7 +3207,7 @@ async function handle({ request, env, waitUntil }) {
       for (const r of ((await db.prepare('SELECT ratee, stars FROM swap_ratings WHERE rater=?').bind(u.key).all()).results || [])) rated[r.ratee] = Number(r.stars);
       canRate = !(await db.prepare('SELECT 1 AS x FROM swap_rate_block WHERE key=?').bind(u.key).first()); } catch (e) {}
     for (const x of out) if (x.partnerKey) { x.myStars = rated[x.partnerKey] || null; delete x.partnerKey; }
-    return json({ user: (me && me.rsUser) || u.key, due, swaps: out, canRate, admin: ADMINS.includes(u.key.toLowerCase()) || undefined });
+    return json({ user: (me && me.rsUser) || u.key, due, swaps: out, canRate, ratingsOff: ratingsOff() || undefined, admin: ADMINS.includes(u.key.toLowerCase()) || undefined });
   }
   /* Most picked players, for everyone on the hour page (Dennis, 2026-11-05):
      how many active members are swapping for each player, most first. */
@@ -3328,6 +3331,7 @@ async function handle({ request, env, waitUntil }) {
     if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
     let b = {}; try { b = await request.json(); } catch (e) {}
     const stars = Math.round(Number(b.stars));
+    if (ratingsOff()) return json({ error: 'Ratings are off today.' }, 400);
     if (!(stars >= 1 && stars <= 5)) return json({ error: 'Pick 1 to 5 stars.' }, 400);
     await matchCols(db); await db.prepare(RATE_DDL).run(); await db.prepare(RATE_BLOCK_DDL).run();
     const u = await db.prepare('SELECT key FROM swap_users WHERE LOWER(key)=?').bind(key.toLowerCase()).first();
