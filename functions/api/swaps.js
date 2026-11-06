@@ -1319,10 +1319,12 @@ const sideDue = m => Number(m.dueAt) || dueFor(m.slot, Number(m.createdAt) || Da
 async function runDms(env, db, auth, rows, max, force) {
   const now = Date.now(), notes = [];
   // Drop any swap where a giver now keeps the pass they'd give.
-  const keeps = new Map();
-  for (const k of new Set(rows.flatMap(m => [m.a, m.b]))) {
-    try { const r = await db.prepare('SELECT keep FROM swap_users WHERE key=?').bind(k).first(); keeps.set(k, new Set(parse(r && r.keep, []))); } catch (e) { keeps.set(k, new Set()); }
-  }
+  // Everyone's keeps in one read (2026-11-06: one read per member, for every swap two days out,
+  // took most of each run's 26 seconds - warnings were trickling out at 3 a minute).
+  const keeps = new Map(), ks0 = [...new Set(rows.flatMap(m => [m.a, m.b]))];
+  for (const k of ks0) keeps.set(k, new Set());
+  for (let i = 0; i < ks0.length; i += 90) { const part = ks0.slice(i, i + 90);
+    try { for (const r of (((await db.prepare(`SELECT key, keep FROM swap_users WHERE key IN (${part.map(() => '?').join(',')})`).bind(...part).all()).results) || [])) keeps.set(r.key, new Set(parse(r.keep, []))); } catch (e) {} }
   const live = [];
   for (const m of rows) {
     if (m.aGets === m.bGets) {         // the exact same pass both ways
@@ -1460,7 +1462,7 @@ async function runDms(env, db, auth, rows, max, force) {
   };
   let qi = 0;
   // Two at a time: sends are spaced by dmPace anyway, this just overlaps the lookups.
-  await Promise.all([0, 1].map(async () => { while (qi < order.length) { const l = order[qi++]; try { await doList(l); } catch (e) { notes.push('list failed: ' + String(e.message || e).slice(0, 80)); } } }));
+  await Promise.all([0, 1, 2, 3].map(async () => { while (qi < order.length) { const l = order[qi++]; try { await doList(l); } catch (e) { notes.push('list failed: ' + String(e.message || e).slice(0, 80)); } } }));
   // Status: sent once both sides have had the follow-up.
   for (const m of rows) {
     const st = m.followA && m.followB ? 'sent' : (m.warnA || m.warnB || m.doneA || m.doneB) ? 'warned' : m.status;
@@ -2103,8 +2105,9 @@ async function dmTick(env) {
   try { await retryDms(db, auth); } catch (e) { await botFail(db, 'dm_retry', e.message); }   // unsent parts first
   try { await confirmPrompts(env, db, auth); } catch (e) { await botFail(db, 'dm_confirm_prompt', e.message); }
   try {
-    const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned','cancelling') AND createdAt > ? ORDER BY COALESCE(dueAt, createdAt), id LIMIT 800`)
-      .bind(Date.now() - 2 * 86400000).all()).results) || [];
+    // Only what's due soon (warnings from 30 minutes out, swap DMs at the hour) plus call-offs.
+    const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned','cancelling') AND createdAt > ? AND (status='cancelling' OR (dueAt <= ? AND dueAt > ?)) ORDER BY COALESCE(dueAt, createdAt), id LIMIT 800`)
+      .bind(Date.now() - 2 * 86400000, Date.now() + 45 * 60000, Date.now() - 3 * 3600000).all()).results) || [];
     if (rows.length) { const out = await runDms(env, db, auth, rows, DM_PER_TICK, false);
       try { await auditHour(env, db, auth); } catch (e) { await botFail(db, 'dm_audit', e.message); }
       return out; }
