@@ -70,6 +70,7 @@
   .stabs button.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 18%,var(--panel2));font-weight:700}
   .untouch{margin:8px 0 10px;padding:10px 12px;border:1px solid var(--accent);border-radius:10px;background:color-mix(in srgb,var(--accent) 8%,var(--panel2))}
   .untouch .uh{margin-bottom:4px}
+  .swapnote{margin:-2px 0 12px;padding:10px 12px;border-radius:10px;border:1px solid var(--accent);background:var(--panel2);font-size:14.5px;line-height:1.45}
   #hours label.rst{opacity:.5;cursor:not-allowed;border-style:dashed}
   .linkbtn{background:none;border:0;padding:0;color:var(--accent);font:inherit;font-weight:700;text-decoration:underline;cursor:pointer}
   .utog{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;background:none;border:0;padding:0;color:var(--ink);font:inherit;text-align:left;cursor:pointer}
@@ -238,12 +239,13 @@
 
   <section>
     <h2><span class="n">5</span>When you can swap</h2>
+    <p class="swapnote">You will get a DM 30 mins before this time with the players you're swapping. You're expected to have the packs by the time you selected - the idea is to speed swaps up for everyone and not need communication.</p>
     <div class="seg modeseg" id="hmode"><button data-m="daily">Every day</button><button data-m="weekly">By weekday</button><button data-m="date">One day</button></div>
     <div class="daypick" id="daypick" hidden></div>
     <p class="note" id="hnote" style="margin:10px 0 0"></p>
     <div class="hours" id="hours"></div>
     <div class="bar" id="hcopy" hidden style="margin-top:8px"><button id="copyall" class="sm">Copy this day to every day</button></div>
-    <p class="note sub">Up to 10. First tap = <b>primary</b> (wins ties). Number = people on that hour. Your time (<span id="tz"></span>). Saves as you tap.</p>
+    <p class="note sub">First tap = <b>primary</b> (wins ties). Number = people on that hour. Your time (<span id="tz"></span>). Saves as you tap.</p>
   </section>
 
   <section>
