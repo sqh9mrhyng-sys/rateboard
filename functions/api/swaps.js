@@ -552,6 +552,7 @@ async function chatState(auth, channelId, theirId, since) {
 
 const PRIO_KEY = 'swap_priority_v1';
 async function runMatching(db, env) {
+  const T = [Date.now()], lap = () => T.push(Date.now());
   // Only members the bot already has a chat with: new chats are capped at
   // five a day, so a match with anyone else might never be delivered.
   await db.prepare(DM_DDL).run();
@@ -608,6 +609,7 @@ async function runMatching(db, env) {
   for (const m of offTold) { const d = swapDay(sideDue(m)); given.add(`${m.b}|${m.aGets}|${d}`); given.add(`${m.a}|${m.bGets}|${d}`); }
   // Packs a member marked as used today themselves (Packs today tab): not given again this swap day.
   for (const u of users) { const pu = parse(u.packsUsed, null); if (pu && pu.day && Array.isArray(pu.keys)) for (const k of pu.keys) given.add(`${u.key}|${k}|${pu.day}`); }
+  lap();   // 1: members + swaps read
   // FC and UFC have no packs to swap, so neither is ever offered or matched.
   const swappable = k => !/^(soccer|ufc):/.test(k) && !seasonOff(k);
   // Up to 5 players each, in their order, and only passes they own: they buy cards for those.
@@ -623,6 +625,7 @@ async function runMatching(db, env) {
   for (const m of (((await db.prepare("SELECT a, b, aGets, bGets, createdAt FROM swap_matches WHERE status IN ('pending','sending','warned','sent')").all()).results) || []))
     for (const [k, w] of [[m.a, m.aGets], [m.b, m.bGets]]) { const kk = k + '|' + w; (recvAt.get(kk) || recvAt.set(kk, []).get(kk)).push(Number(m.createdAt) || 0); }
   const countSince = (k, w, since) => { const t0 = Number(since) || 0; let n = 0; for (const t of (recvAt.get(k + '|' + w) || [])) if (t > t0) n++; return n; };
+  lap();   // 2: low plays + live swaps read
   const cache = new Map(), goalLeft = new Map();
   for (const u of users) for (const w of u.wants) {
     let left = Infinity;
@@ -649,6 +652,7 @@ async function runMatching(db, env) {
   /* An hour closes to new matches once its warning has gone out (30 min
      before): the 11:30 run can't add anyone to 12:00, so everyone in an
      hour got the same warning. That hour's next turn is the following day. */
+  lap();   // 3: goals
   const made = [], now = Date.now(), cands = [];
   /* Only the next few hours are filled each run (Dennis, 2026-11-04), in time
      order: the tops of the hour from just after the next warning out to
@@ -696,6 +700,7 @@ async function runMatching(db, env) {
     goalLeft.set(`${B.key}|${bGets}`, (goalLeft.get(`${B.key}|${bGets}`) ?? Infinity) - 1);
     }
   }
+  lap();   // 4: pairing
   // Never the same swap twice on one swap day, even if two runs overlap: checked against the
   // live swaps read at the start (in memory), then saved 50 at a time.
   try { await alterOnce(db, 'ALTER TABLE swap_matches ADD COLUMN dueAt INTEGER'); } catch (e) {}
@@ -705,6 +710,8 @@ async function runMatching(db, env) {
   for (const m of made) { const k = sig(m.a, m.b, m.aGets, m.bGets, swapDay(m.due)); if (seen.has(k)) continue; seen.add(k);
     ins.push(db.prepare(`INSERT INTO swap_matches (a, b, aGets, bGets, slot, createdAt, status, dueAt) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`).bind(m.a, m.b, m.aGets, m.bGets, m.slot, now, m.due)); }
   for (let i = 0; i < ins.length; i += 50) await db.batch(ins.slice(i, i + 50));
+  lap();   // 5: saved
+  made.timing = `members ${users.length}, read ${T[1] - T[0]}ms, plays ${T[2] - T[1]}ms, goals ${T[3] - T[2]}ms, pairing ${T[4] - T[3]}ms, save ${T[5] - T[4]}ms`;
   return made;
 }
 
@@ -1944,7 +1951,7 @@ export async function swapTick(env) {
     const t0 = Date.now();
     try { await db.prepare("INSERT INTO bot_log (at, kind, msg) VALUES (?, 'match', ?)").bind(t0, 'run started').run(); } catch (e) {}
     try { const made = await runMatching(db, env); await stat(db, 'matches', made.length); await stat(db, 'match_runs');
-      try { await db.prepare("INSERT INTO bot_log (at, kind, msg) VALUES (?, 'match', ?)").bind(Date.now(), `run done: ${made.length} swaps in ${((Date.now() - t0) / 1000).toFixed(1)}s`).run(); } catch (e) {} }
+      try { await db.prepare("INSERT INTO bot_log (at, kind, msg) VALUES (?, 'match', ?)").bind(Date.now(), `run done: ${made.length} swaps in ${((Date.now() - t0) / 1000).toFixed(1)}s (${made.timing || ''})`).run(); } catch (e) {} }
     catch (e) { await botFail(db, 'matching', `after ${((Date.now() - t0) / 1000).toFixed(1)}s: ${e.message}`); }
   }
   // One-time (2026-11-03): a match sent early by hand goes back on schedule.
