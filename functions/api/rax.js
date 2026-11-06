@@ -7832,6 +7832,16 @@ export async function onRequestGet(ctx) {
       try { const v = await env.RATEBOARD_KV.get(kvKey); if (!v) return null; const o = JSON.parse(v);
         return new Response(o.body, { headers: { 'content-type': o.ctype || 'application/json', 'x-cache': 'KV' } }); } catch (e) { return null; } };
     let row = null, d1Down = false;
+    /* KV first (2026-11-06): a fresh KV copy is served without touching D1 at
+       all - D1 overloads for a few seconds around the busy minutes and then
+       even the cached copy couldn't be read, so pack data failed to load. */
+    if (shared && env.RATEBOARD_KV) {
+      try { const v = await env.RATEBOARD_KV.get(kvKey); if (v) { const o = JSON.parse(v);
+        if (o && o.body && Date.now() - Number(o.at) < ttl * 1000) {
+          const left = Math.max(60, Math.round(ttl - (Date.now() - Number(o.at)) / 1000));
+          try { await caches.default.put(keyReq, new Response(o.body, { headers: { 'content-type': o.ctype || 'application/json', 'cache-control': `max-age=${left}` } })); } catch (e) {}
+          return new Response(o.body, { headers: { 'content-type': o.ctype || 'application/json', 'x-cache': 'KV' } }); } } } catch (e) {}
+    }
     if (shared) {
       try {
         await env.RATEBOARD_DB.prepare(RESP_DDL).run();
@@ -7857,6 +7867,10 @@ export async function onRequestGet(ctx) {
             await caches.default.put(keyReq, new Response(row.body, { headers: {
               'content-type': row.ctype || 'application/json', 'cache-control': `max-age=${age < ttl ? left : 60}` } }));
           } catch (e) {}
+          if (age < ttl && env.RATEBOARD_KV && row.body.length < 20000000) {
+            const put = env.RATEBOARD_KV.put(kvKey, JSON.stringify({ body: row.body, ctype: row.ctype, at: Number(row.ts) }), { expirationTtl: 3 * 86400 }).catch(() => {});
+            if (ctx.waitUntil) ctx.waitUntil(put);
+          }
           return resp;
         }
       }

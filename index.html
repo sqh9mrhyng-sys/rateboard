@@ -5872,7 +5872,7 @@ async function cbbPanel(){
   async function pkInit(){
     if(!pkSeasons){
       try {
-        const d = await (await fetch('/api/rax?plays=seasons')).json();
+        const d = await pkFetch('/api/rax?plays=seasons');
         pkSeasons = (d.seasons || []).filter(x => Number(x.plays) > 0);
       } catch(e){ pkSeasons = []; }
       // Newest first, and whatever holds the most is the sensible default.
@@ -5938,6 +5938,19 @@ async function cbbPanel(){
      so a big selection shows its first rows immediately instead of waiting
      on the slowest one. */
   let pkLoadToken = 0;
+  /* Pack data reads, tried up to 3 times (2026-11-06): the database can be
+     busy for a few seconds around the busy minutes, and one failed request
+     left the whole table empty. */
+  async function pkFetch(url){
+    let last = null;
+    for(let t = 0; t < 3; t++){
+      try{ const r = await fetch(url); const j = await r.json().catch(() => ({ error: 'bad answer' }));
+        if(r.ok && !j.error && !(j.errors && j.errors.length)) return j;
+        last = j; }catch(e){ last = { error: String(e.message || e) }; }
+      if(t < 2) await new Promise(res => setTimeout(res, 2500 * (t + 1)));
+    }
+    return last || { error: 'Could not load pack data' };
+  }
   async function pkLoad(){
     pkPairKey = pkPicks.join(',');
     const mine = ++pkLoadToken;
@@ -5953,8 +5966,7 @@ async function cbbPanel(){
       $b('#pk-note').textContent = picks.length > 1
         ? `Loading season ${i + 1} of ${picks.length}…` : 'Loading…';
       try {
-        const d = await (await fetch(
-          `/api/rax?plays=board&seasons=${encodeURIComponent(pair)}&min=${pkMin}`)).json();
+        const d = await pkFetch(`/api/rax?plays=board&seasons=${encodeURIComponent(pair)}&min=${pkMin}`);
         if(mine !== pkLoadToken) return;
         if(d.error) throw new Error(d.error);
         if(d.errors && d.errors.length) throw new Error(d.errors[0].error || 'query failed');
