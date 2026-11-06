@@ -864,12 +864,12 @@ $('#su-list').addEventListener('click', async e => {
 ['#su-q', '#su-sort', '#su-act'].forEach(id => $(id).addEventListener(id === '#su-q' ? 'input' : 'change', drawSwappers));
 $('#su-load').addEventListener('click', loadSwappers);
 function loadSwaps(){ loadSwappers(); loadMatches(); loadNamed(); loadEvery(); loadBot(); loadSwapReports(); loadHourUsers(); }
-const everyLbl = m => m === 15 ? 'every 15 minutes' : 'every 3 hours';
+const everyLbl = m => m === 15 ? 'every 15 minutes' : 'every hour';
 function drawEvery(m){ const b = $('#sw-every'); b.dataset.m = m;
-  b.textContent = m === 15 ? 'Members: every 15 min · switch to 3 hours' : 'Members: every 3 hours · switch to 15 min'; }
+  b.textContent = m === 15 ? 'Members: every 15 min · switch to every hour' : 'Members: every hour · switch to 15 min'; }
 async function loadEvery(){ const j = await api('/api/swaps?op=scanevery'); if(j && j.every) drawEvery(j.every); }
 $('#sw-every').addEventListener('click', async () => {
-  const to = Number($('#sw-every').dataset.m) === 15 ? 180 : 15;
+  const to = Number($('#sw-every').dataset.m) === 15 ? 60 : 15;
   const j = await api('/api/swaps?op=scanevery&set=' + to);
   if(j && j.every){ drawEvery(j.every); $('#sw-everymsg').textContent = `Members can now scan ${everyLbl(j.every)}.`; }
   else $('#sw-everymsg').textContent = (j && j.error) || 'Could not change it.';

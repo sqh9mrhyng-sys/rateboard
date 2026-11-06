@@ -2867,7 +2867,7 @@ async function projDetail(env, sp, row, c) {
 const SCAN_EVERY_KEY = 'swap_scan_every_v1';
 async function scanEvery(env) {
   let v = null; try { v = Number(await env.RATEBOARD_KV.get(SCAN_EVERY_KEY)); } catch (e) {}
-  return v === 15 ? 15 : 180;
+  return v === 15 ? 15 : 60;    // members rescan every hour (Dennis, 2026-11-05; was 3 hours), or every 15 minutes
 }
 
 // Any error comes back as a readable message rather than a bare 500.
@@ -3899,10 +3899,10 @@ async function handle({ request, env, waitUntil }) {
     return json(await scanWork(env, db, me, job, auth));
   }
 
-  // Admin: how often members may scan - 180 (every 3 hours) or 15 minutes.
+  // Admin: how often members may scan - 60 (every hour) or 15 minutes.
   if (op === 'scanevery') {
     const v = Number(url.searchParams.get('set'));
-    if (v === 15 || v === 180) { try { await env.RATEBOARD_KV.put(SCAN_EVERY_KEY, String(v)); } catch (e) {} }
+    if (v === 15 || v === 60) { try { await env.RATEBOARD_KV.put(SCAN_EVERY_KEY, String(v)); } catch (e) {} }
     return json({ every: await scanEvery(env) });
   }
 

@@ -70,6 +70,9 @@
   .stabs button.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 18%,var(--panel2));font-weight:700}
   .untouch{margin:8px 0 10px;padding:10px 12px;border:1px solid var(--accent);border-radius:10px;background:color-mix(in srgb,var(--accent) 8%,var(--panel2))}
   .untouch .uh{margin-bottom:4px}
+  .utog{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;background:none;border:0;padding:0;color:var(--ink);font:inherit;text-align:left;cursor:pointer}
+  .utog .car{flex:none;color:var(--accent);font-weight:700;font-size:13px}
+  .untouch .u1 b a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)}
   .recb{margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
   .recb .rb{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-top:1px solid var(--line)} .recb .rb:first-child{border-top:0}
   .recb .rb a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)} .recb .rb .o{color:var(--mute);font-weight:800;margin-right:8px}
@@ -566,12 +569,20 @@ function drawUntouch(){
   $('#untouch').hidden = !list.length;
   if(!list.length) return;
   const tch = new Set(prof.touch || []);
-  $('#untouch').innerHTML = `<div class="uh"><b>Untouchable on Real</b> <span class="note">· ${list.length} pass${list.length === 1 ? '' : 'es'} - never swapped unless you switch one on</span></div>`
-    + list.sort((a, b) => String(a.name).localeCompare(String(b.name))).map(p => { const on = tch.has(p.key);
-      return `<div class="u1"><span><b>${esc(p.name || 'Player ' + p.id)}</b> <span class="note">${esc(keyLbl(p.key))}</span></span>`
+  // Folded by default once looked at; remembered on this phone.
+  let open = true; try{ open = localStorage.getItem('swaps_untouch_open') !== '0'; }catch(e){}
+  const pu = p => p.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(p.passId)]) : realPlayerUrl(p.sport, p.id, p.season);
+  $('#untouch').innerHTML = `<button type="button" class="uh utog" id="utog" aria-expanded="${open}"><span><b>Untouchable on Real</b> <span class="note">· ${list.length} pass${list.length === 1 ? '' : 'es'} - never swapped unless you switch one on</span></span><span class="car">${open ? 'Hide ▴' : 'Show ▾'}</span></button><div id="ubody"${open ? '' : ' hidden'}>`
+    + list.sort((a, b) => String(a.name).localeCompare(String(b.name))).map(p => { const on = tch.has(p.key), u = pu(p), nm = esc(p.name || 'Player ' + p.id);
+      return `<div class="u1"><span><b>${u ? `<a href="${u}" target="_blank" rel="noopener">${nm}</a>` : nm}</b> <span class="note">${esc(keyLbl(p.key))}</span></span>`
         + `<span class="seg useg"><button data-touch="${p.key}" data-v="0" aria-pressed="${!on}">Never swap</button><button data-touch="${p.key}" data-v="1" aria-pressed="${on}">Swap anyway</button></span></div>`; }).join('')
-    + `<div class="note" id="untouchmsg" style="margin-top:6px"></div>`;
+    + `<div class="note" id="untouchmsg" style="margin-top:6px"></div></div>`;
 }
+$('#untouch').addEventListener('click', e => {
+  const t = e.target.closest('#utog'); if(!t) return;
+  const b = $('#ubody'), open = b.hidden; b.hidden = !open; t.setAttribute('aria-expanded', open); t.querySelector('.car').textContent = open ? 'Hide ▴' : 'Show ▾';
+  try{ localStorage.setItem('swaps_untouch_open', open ? '1' : '0'); }catch(e){}
+});
 $('#untouch').addEventListener('click', async e => {
   const b = e.target.closest('[data-touch]'); if(!b) return;
   const k = b.dataset.touch, on = b.dataset.v === '1';
