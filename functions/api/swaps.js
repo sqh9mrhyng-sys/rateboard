@@ -3065,9 +3065,11 @@ async function handle({ request, env, waitUntil }) {
       if (!j || !Array.isArray(j.rows)) return json({ error: (j && j.error) || 'Game data did not answer - try again.' }, 502);
       const SP = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf' };
       const top = j.rows.filter(r => r.sport !== 'soccer').slice(0, 50).map(r => ({ k: `${r.sport}:${r.season}:${r.playerId}`, r }));
-      const want = new Set(top.map(x => x.k)), have = new Map();
-      for (const u of await pagedRows(db, 'SELECT passes FROM swap_users WHERE passes IS NOT NULL'))
-        for (const k of new Set(parse(u.passes, []).filter(p => p.kind !== 'team').map(p => p.key))) if (want.has(k)) have.set(k, (have.get(k) || 0) + 1);
+      // Counted in the database (reading every member's passes here ran out of memory).
+      const have = new Map(), ks = top.map(x => x.k);
+      try { for (const r of (((await db.prepare(`SELECT json_extract(j.value, '$.key') AS k, COUNT(DISTINCT u.key) AS n FROM swap_users u, json_each(u.passes) j
+          WHERE u.passes IS NOT NULL AND json_extract(j.value, '$.key') IN (${ks.map(() => '?').join(',')}) AND COALESCE(json_extract(j.value, '$.kind'), '') <> 'team' GROUP BY k`).bind(...ks).all()).results) || []))
+        have.set(r.k, Number(r.n) || 0); } catch (e) {}
       c = { at: Date.now(), seasons: ss.length, rows: top.map(({ k, r }) => ({ name: r.player, sport: SP[r.sport] || r.sport, season: r.season, rax: Number(r.rax) || 0, owners: r.owners == null ? null : Number(r.owners), onSite: have.get(k) || 0, url: playerUrl(k) })) };
       try { await env.RATEBOARD_KV.put('swap_raxtop_snap_v1', JSON.stringify(c)); } catch (e) {}
     }
