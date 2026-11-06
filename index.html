@@ -5941,6 +5941,21 @@ async function cbbPanel(){
   /* Pack data reads, tried up to 3 times (2026-11-06): the database can be
      busy for a few seconds around the busy minutes, and one failed request
      left the whole table empty. */
+  /* Finished seasons ship as site files (data/pk, 2026-11-06), like game data:
+     no database, so they open at once. Filtered here by the minimum plays. */
+  let pkIdx = null; const pkFiles = new Map();
+  async function pkStatic(pair){
+    try{
+      if(!pkIdx) pkIdx = fetch('/data/pk/index.json').then(r => r.ok ? r.json() : { seasons: [] }).catch(() => ({ seasons: [] }));
+      const idx = await pkIdx;
+      if(!(idx.seasons || []).includes(pair)) return null;
+      if(!pkFiles.has(pair)) pkFiles.set(pair, fetch(`/data/pk/${pair.replace(':', '-')}.json`).then(r => r.ok ? r.json() : null).catch(() => null));
+      const f = await pkFiles.get(pair);
+      if(!f || !Array.isArray(f.rows)){ pkFiles.delete(pair); return null; }
+      const min = Number(pkMin) || 0;
+      return { rows: f.rows.filter(r => Number(r.plays || 0) >= min), saved: f.at };
+    }catch(e){ return null; }
+  }
   async function pkFetch(url){
     let last = null;
     for(let t = 0; t < 3; t++){
@@ -5966,7 +5981,7 @@ async function cbbPanel(){
       $b('#pk-note').textContent = picks.length > 1
         ? `Loading season ${i + 1} of ${picks.length}…` : 'Loading…';
       try {
-        const d = await pkFetch(`/api/rax?plays=board&seasons=${encodeURIComponent(pair)}&min=${pkMin}`);
+        const d = (await pkStatic(pair)) || await pkFetch(`/api/rax?plays=board&seasons=${encodeURIComponent(pair)}&min=${pkMin}`);
         if(mine !== pkLoadToken) return;
         if(d.error) throw new Error(d.error);
         if(d.errors && d.errors.length) throw new Error(d.errors[0].error || 'query failed');
