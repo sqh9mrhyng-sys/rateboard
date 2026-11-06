@@ -321,15 +321,19 @@ const parse = (s, d) => { try { return JSON.parse(s || ''); } catch (e) { return
    are swapping for, they only get as many swaps as it should take to get
    there - each swap counted as one pack's average card rating for that
    player (pack data), or the season's average when the player has none. */
+// Each season's pack averages, kept 30 minutes per isolate (matching re-read every season's snapshot each run: ~8s).
+const PACK_MEMO = new Map();
 async function packAvg(db, cache, key) {
   const [sp, se, id] = String(key).split(':');
   const sk = sp + ':' + se;
+  if (!cache.has(sk)) { const pm = PACK_MEMO.get(sk); if (pm && Date.now() - pm.at < 30 * 60000) cache.set(sk, pm.v); }
   if (!cache.has(sk)) {
     let rows = [];
     try { const r = await db.prepare('SELECT body FROM pack_snap WHERE sport=? AND season=?').bind(sp, Number(se)).first(); rows = parse(r && r.body, []) || []; } catch (e) {}
     const by = new Map(), vals = [];
     for (const x of rows) { const v = Number(x.avgRating); if (v > 0) { by.set(Number(x.playerId), v); vals.push(v); } }
     cache.set(sk, { by, all: vals.length ? vals.reduce((a, v) => a + v, 0) / vals.length : null });
+    if (rows.length) PACK_MEMO.set(sk, { at: Date.now(), v: cache.get(sk) });
   }
   const c = cache.get(sk);
   // A swap is one pack, and a pack is three cards (floor of 10, as on the pack data tab).
@@ -586,8 +590,10 @@ async function runMatching(db, env) {
       }
     }
   } catch (e) {}
-  const open = ((await db.prepare(`SELECT a, b, aGets, bGets, slot, createdAt, dueAt, followA, followB FROM swap_matches WHERE createdAt > ? AND status IN ('pending','sending','warned','sent')`)
-    .bind(Date.now() - 2 * 86400000).all()).results || []);
+  // One read of the last two days' swaps, split here into live ones and the rest.
+  const recent2d = ((await db.prepare(`SELECT a, b, aGets, bGets, slot, createdAt, dueAt, followA, followB, status FROM swap_matches WHERE createdAt > ?`).bind(Date.now() - 2 * 86400000).all()).results || []);
+  const LIVE_ST = new Set(['pending', 'sending', 'warned', 'sent']);
+  const open = recent2d.filter(m => LIVE_ST.has(m.status));
   /* A called-off swap still uses up a pass for the day on whichever side had
      already been told to buy it - they may well have bought the pack - so it
      isn't handed to them to give again (people were told to give the same
@@ -595,8 +601,7 @@ async function runMatching(db, env) {
   /* Once a pass has been scheduled to go out from someone, it's theirs for the
      swap day (to 7am ET) whatever happens to that swap - called off, cleared,
      anything (Dennis, 2026-11-04). So every swap made, in any state, counts. */
-  const offTold = ((await db.prepare(`SELECT a, b, aGets, bGets, slot, createdAt, dueAt FROM swap_matches WHERE createdAt > ? AND status NOT IN ('pending','sending','warned','sent')`)
-      .bind(Date.now() - 2 * 86400000).all()).results || []);
+  const offTold = recent2d.filter(m => !LIVE_ST.has(m.status));
   const paired = new Set(), given = new Set(), count = new Map(), recv = new Map(), closed = new Set(), goalUsed = new Map();
   const bump = (m, k) => m.set(k, (m.get(k) || 0) + 1);
   for (const m of open) {
@@ -627,6 +632,9 @@ async function runMatching(db, env) {
   const countSince = (k, w, since) => { const t0 = Number(since) || 0; let n = 0; for (const t of (recvAt.get(k + '|' + w) || [])) if (t > t0) n++; return n; };
   lap();   // 2: low plays + live swaps read
   const cache = new Map(), goalLeft = new Map();
+  // Every season that has a goal set, read at once rather than one after another.
+  { const need = new Map(); for (const u of users) for (const w of u.wants) { const g = Number(u.caps[w] && u.caps[w].g) || Number(u.goal); if (g > 0) need.set(String(w).split(':').slice(0, 2).join(':'), w); }
+    await Promise.all([...need.values()].map(w => packAvg(db, cache, w).catch(() => null))); }
   for (const u of users) for (const w of u.wants) {
     let left = Infinity;
     try { const g = await goalRoom(db, cache, u, (x, ww) => countSince(x.key, ww, x.scannedAt), w); if (g.limited) left = g.left; } catch (e) {}
