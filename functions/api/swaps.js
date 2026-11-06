@@ -1967,6 +1967,10 @@ async function auditHour(env, db, auth) {
      warned, so both passes are free again) and that member is told to
      confirm for their next time - again at each hour until they do. */
 const CONFIRM_FROM_DAY = '2026-11-07';
+// Nothing of it shows or counts before 2:30am Alaska, Sat Nov 7 (Dennis). From then a confirm
+// counts for the swap day starting at 3am - confirming is open from 30 minutes before the day turns.
+const CONFIRM_SHOW_AT = Date.UTC(2026, 10, 7, 11, 30);
+const confirmDayNow = (ms = Date.now()) => swapDay(ms + 30 * 60000);
 const confirmOn = day => day >= CONFIRM_FROM_DAY;
 const isConfirmed = (u, day) => !!u && String(u.confirmDay || '') === day;
 const swapDayStart = ms => { let t = Math.floor(ms / 3600000) * 3600000; for (let i = 0; i < 26 && swapDay(t - 3600000) === swapDay(ms); i++) t -= 3600000; return t; };
@@ -1984,7 +1988,7 @@ async function onceFor(db, campaign, key) {
 }
 async function confirmPrompts(env, db, auth) {
   const now = Date.now(), day = swapDay(now), start = swapDayStart(now);
-  if (!confirmOn(day) || now - start > 45 * 60000) return;   // the first 45 minutes of the swap day
+  if (now < CONFIRM_SHOW_AT || !confirmOn(day) || now - start > 45 * 60000) return;   // the first 45 minutes of the swap day
   await matchCols(db);
   const us = ((await db.prepare(`SELECT key, rsUser, hashId, slots, sched, confirmDay FROM swap_users WHERE active=1 AND hashId IS NOT NULL AND wants IS NOT NULL AND wants <> '[]'`).all()).results) || [];
   const todo = us.filter(u => !isConfirmed(u, day)).map(u => ({ u, hrs: hoursToday(u, start) })).filter(x => x.hrs.length).sort((a, b) => a.hrs[0] - b.hrs[0]);
@@ -2013,6 +2017,7 @@ async function dedupeSweep(db) {
 }
 async function confirmGate(env, db, auth) {
   const now = Date.now();
+  if (now < CONFIRM_SHOW_AT) return;
   await matchCols(db);
   const ms = ((await db.prepare(`SELECT * FROM swap_matches WHERE status='pending' AND warnA IS NULL AND warnB IS NULL AND dueAt > ? AND dueAt <= ?`).bind(now, now + 31 * 60000).all()).results) || [];
   if (!ms.length) return;
@@ -3377,7 +3382,9 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'confirm' && request.method === 'POST') {
     await matchCols(db);
     let b = {}; try { b = await request.json(); } catch (e) {}
-    const now = Date.now(), day = swapDay(now), start = swapDayStart(now);
+    const now = Date.now();
+    if (now < CONFIRM_SHOW_AT) return json({ error: 'Confirming opens at 2:30am Alaska time on Saturday.' }, 400);
+    const day = confirmDayNow(now), start = swapDayStart(now + 30 * 60000);
     const u = await db.prepare('SELECT key, slots, sched FROM swap_users WHERE key=?').bind(me).first();
     if (!u) return json({ error: 'Scan your passes first.' }, 400);
     // Keep their time zone (daily hours had none saved) so the 3am DM shows their own times.
@@ -3896,8 +3903,8 @@ async function handle({ request, env, waitUntil }) {
     const lite = url.searchParams.get('page') === 'boosts';
     const lowP = u && !lite ? await (async () => { try { return [...await lowPlays(env, db, parse(u.passes, []).filter(p => p.kind !== 'team').map(p => p.key))]; } catch (e) { return []; } })() : [];
     mark(request, 'plays');
-    const cDay = swapDay(Date.now());
-    return json({ confirmedToday: !!(u && u.confirmDay === cDay), confirmStarts: CONFIRM_FROM_DAY, swapToday: cDay, key: me, admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
+    const cDay = confirmDayNow();
+    return json({ confirmShow: Date.now() >= CONFIRM_SHOW_AT, confirmedToday: !!(u && u.confirmDay === cDay), confirmStarts: CONFIRM_FROM_DAY, swapToday: cDay, key: me, admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
       keep: parse(u.keep, []), touch: parse(u.touch, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: lite ? [] : parse(u.passes, []), passCount: (() => { try { return parse(u.passes, []).length; } catch (e) { return 0; } })(), lowPlays: lowP, scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {} } : null, real: realN });
   }
 

@@ -452,6 +452,7 @@ const SEASONS = { nba:[2027,2026,2025,2024,2023], ncaam:[2027,2026,2025,2024], n
 /* Confirm times for today (from Sat Nov 7): tapped once each swap day (it starts 3am Alaska / 7am ET),
    or that day's swaps are called off 30 minutes before each time. */
 function paintConfirm(j, times){
+  if(!j.confirmShow && !times){ $('#confbox').hidden = true; return; }   // not shown before 2:30am Alaska, Sat Nov 7
   $('#confbox').hidden = false;
   const b = $('#confbtn'), m = $('#confmsg'), starts = j.confirmStarts || '2026-11-07', early = (j.swapToday || '') < starts;
   const fmt = t => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(':00', '');
@@ -467,7 +468,7 @@ $('#confbtn').addEventListener('click', async () => {
   const r = await api('/api/swaps?op=confirm', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tz: TZ }) }).catch(() => null);
   b.disabled = false;
   if(!r || r.error){ b.textContent = 'CONFIRM TIMES FOR TODAY'; $('#confmsg').textContent = (r && r.error) || 'Could not reach the board - try again.'; return; }
-  paintConfirm({ confirmedToday: true, swapToday: r.day }, r.times);
+  paintConfirm({ confirmShow: true, confirmedToday: true, swapToday: r.day }, r.times);
 });
 async function loadRecBuys(){
   const j = await api('/api/swaps?op=recbuys').catch(() => null);
