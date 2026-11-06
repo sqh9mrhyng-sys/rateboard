@@ -210,7 +210,7 @@
     <h2><span class="n">3</span>Your passes</h2>
     <p class="note">Tick a box to keep that player out of swaps. Passes set untouchable on Real are kept automatically.</p>
     <div class="bar"><span class="note" hidden><span class="who" id="rsuser"></span></span><button class="primary wide" id="scan">Scan my passes</button></div>
-    <p class="note" style="margin:4px 0 0">Bought a pass in an older season you had nothing in? <button type="button" class="linkbtn" id="scanfull">Do a full scan</button> - it reads every season (takes a little longer).</p>
+    <p class="note" style="margin:4px 0 0">Scans read every season. In a hurry? <button type="button" class="linkbtn" id="scanfull">Rescan current seasons only</button> (plus old seasons you already hold passes in).</p>
     <div class="note" id="scanmsg"></div>
     <div class="untouch" id="untouch" hidden></div>
     <div class="psum" id="psum" hidden style="margin-bottom:8px"><span id="psumtxt"></span><button id="ptoggle" class="sm">Done - collapse</button></div>
@@ -675,13 +675,13 @@ async function fullScan(extra, onPart){
 async function resumeScan(){
   try{ const st = await api('/api/swaps?op=scanstatus' + ''); if(st && (st.state === 'queued' || st.state === 'running')) $('#scan').click(); }catch(e){}
 }
-let scanFullNext = false;
-$('#scanfull').addEventListener('click', () => { scanFullNext = true; $('#scan').click(); });
+let scanQuickNext = false;
+$('#scanfull').addEventListener('click', () => { scanQuickNext = true; $('#scan').click(); });
 $('#scan').addEventListener('click', async () => {
-  const u = $('#rsuser').textContent.trim().replace(/^@/, ''), full = scanFullNext; scanFullNext = false;
+  const u = $('#rsuser').textContent.trim().replace(/^@/, ''), quick = scanQuickNext; scanQuickNext = false;
   $('#scan').disabled = true;
   $('#scanmsg').textContent = 'Scans typically take 25 seconds, longer at high website volume';
-  const j = await fullScan('&page=swaps' + (full ? '&full=1' : ''), p => { if(p.queued){ $('#scanmsg').textContent = `You're #${p.position} in the scan line - about ${p.wait}. You can leave - it runs on its own and your scan will be ready when you come back.`; return; } $('#scanmsg').textContent = 'Scans typically take 25 seconds, longer at high website volume' + ((p.retrying || Date.now() - scanStart > 25000) ? ' • Scan taking longer than expected, please be patient' : ''); });
+  const j = await fullScan('&page=swaps' + (quick ? '&quick=1' : ''), p => { if(p.queued){ $('#scanmsg').textContent = `You're #${p.position} in the scan line - about ${p.wait}. You can leave - it runs on its own and your scan will be ready when you come back.`; return; } $('#scanmsg').textContent = 'Scans typically take 25 seconds, longer at high website volume' + ((p.retrying || Date.now() - scanStart > 25000) ? ' • Scan taking longer than expected, please be patient' : ''); });
   $('#scan').disabled = false;
   if(j.error){ $('#scanmsg').textContent = j.error; return; }
   prof.rsUser = u; collapsed = false; prof.passes = j.passes || []; prof.scannedAt = j.scannedAt || Date.now(); loadRecBuys();

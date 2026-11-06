@@ -1583,7 +1583,7 @@ async function newScanJob(env, db, me, over, u, opts) {
   try {
     const pr = await db.prepare('SELECT passes, fullScanAt FROM swap_users WHERE key=?').bind(me).first();
     const prev = parse(pr && pr.passes, []);
-    // A full scan when they ask for one (bought into an old season - 2026-11-05: new golf passes went unseen).
+    // Full by default; the quick one only when asked for (bought into an old season - 2026-11-05: new golf passes went unseen).
     if (pr && prev.length && !(opts && opts.full) && Date.now() - (Number(pr.fullScanAt) || 0) < 7 * 86400000) {
       const had = new Set(prev.map(p => `${p.sport}:${p.season}`));
       // ...and every season a recommended buy is in, so buying one shows up on the next scan.
@@ -3897,7 +3897,7 @@ async function handle({ request, env, waitUntil }) {
     }
     // Members scan their own Real account; an admin may name another (OTD).
     const over = acc.admin && url.searchParams.get('rsUser') ? String(url.searchParams.get('rsUser')).trim().replace(/^@/, '') : null;
-    job = await newScanJob(env, db, me, over, u, { full: url.searchParams.get('full') === '1' });
+    job = await newScanJob(env, db, me, over, u, { full: url.searchParams.get('quick') !== '1' }   // every season by default (Dennis, 2026-11-05); quick=1 for current seasons + ones they hold);
     if (job.error) { try { await db.prepare('DELETE FROM scan_queue WHERE key=?').bind(me).run(); } catch (e) {} return json({ error: job.error }, job.status || 400); }
     return json(await scanWork(env, db, me, job, auth));
   }
