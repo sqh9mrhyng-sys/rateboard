@@ -576,6 +576,7 @@ const PRIO_KEY = 'swap_priority_v1';
    few ratings. Anyone spamming 1 stars loses rating, and none of their
    ratings count. */
 const RATE_PRIOR = 3.5, RATE_PRIOR_N = 3;
+const RATE_ON_MEMBERS = 10, RATE_ON_VOTES = 20;   // ratings count in matching once 10 members have 20+ ratings each
 const RATE_DDL = 'CREATE TABLE IF NOT EXISTS swap_ratings (rater TEXT, ratee TEXT, stars INTEGER, at INTEGER, matchId INTEGER, PRIMARY KEY (rater, ratee))';
 const RATE_BLOCK_DDL = 'CREATE TABLE IF NOT EXISTS swap_rate_block (key TEXT PRIMARY KEY, at INTEGER, why TEXT)';
 async function ratingScores(db) {
@@ -583,6 +584,8 @@ async function ratingScores(db) {
   try {
     await db.prepare(RATE_DDL).run(); await db.prepare(RATE_BLOCK_DDL).run();
     const rows = ((await db.prepare('SELECT ratee, SUM(stars) AS s, COUNT(*) AS n FROM swap_ratings WHERE rater NOT IN (SELECT key FROM swap_rate_block) GROUP BY ratee').all()).results) || [];
+    // Ratings only count once enough people have been rated a lot (Dennis, 2026-11-06).
+    if (rows.filter(r => Number(r.n) >= RATE_ON_VOTES).length < RATE_ON_MEMBERS) return out;
     for (const r of rows) out.set(r.ratee, (Number(r.s) + RATE_PRIOR * RATE_PRIOR_N) / (Number(r.n) + RATE_PRIOR_N));
   } catch (e) {}
   return out;
@@ -3292,7 +3295,8 @@ async function handle({ request, env, waitUntil }) {
     await db.prepare(RATE_DDL).run(); await db.prepare(RATE_BLOCK_DDL).run();
     const rows = ((await db.prepare(`SELECT r.ratee AS k, AVG(r.stars) AS avg, COUNT(*) AS n, u.rsUser AS rsUser, u.hashId AS hashId FROM swap_ratings r LEFT JOIN swap_users u ON u.key = r.ratee
       WHERE r.rater NOT IN (SELECT key FROM swap_rate_block) GROUP BY r.ratee ORDER BY avg DESC, n DESC LIMIT 500`).all()).results) || [];
-    return json({ me: key.toLowerCase(), admin: ADMINS.includes(key.toLowerCase()) || undefined, rows: rows.map(r => ({ k: r.k, user: r.rsUser || r.k, url: profileUrl(r.rsUser || r.k, r.hashId), avg: Math.round(Number(r.avg) * 100) / 100, votes: Number(r.n), mine: String(r.k).toLowerCase() === key.toLowerCase() || undefined })) });
+    const ready = rows.filter(r => Number(r.n) >= RATE_ON_VOTES).length;
+    return json({ me: key.toLowerCase(), live: ready >= RATE_ON_MEMBERS, ready, needMembers: RATE_ON_MEMBERS, needVotes: RATE_ON_VOTES, admin: ADMINS.includes(key.toLowerCase()) || undefined, rows: rows.map(r => ({ k: r.k, user: r.rsUser || r.k, url: profileUrl(r.rsUser || r.k, r.hashId), avg: Math.round(Number(r.avg) * 100) / 100, votes: Number(r.n), mine: String(r.k).toLowerCase() === key.toLowerCase() || undefined })) });
   }
   /* Admin (Dennis, 2026-11-06): every rating one member was given, who gave
      it, and changing or removing any of them by hand. */

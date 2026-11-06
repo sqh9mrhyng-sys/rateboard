@@ -242,6 +242,7 @@ async function loadRatings(){
   if(j.error){ $('#rlsum').textContent = j.error; return; }
   $('#rlsum').textContent = j.rows.length ? `${j.rows.length} rated member${j.rows.length === 1 ? '' : 's'}, best average first (more votes first on a tie). Members rate each other after a swap, from the swap page.` : 'Nobody has been rated yet - rate your partners after a swap, under "Offer on your partners\' cards".';
   rlAdmin = !!j.admin;
+  $('#rlsum').textContent += j.live ? ' Ratings now count when two people want the same player.' : ` Ratings start counting in matching once ${j.needMembers} members have ${j.needVotes}+ ratings each (${j.ready} so far).`;
   $('#rllist').innerHTML = j.rows.map((x, i) => `<div class="rl${x.mine ? ' me' : ''}${j.admin ? ' tap' : ''}"${j.admin ? ` data-rlk="${esc(x.k)}"` : ''}><span class="rk">${i + 1}</span><span>${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">@${esc(x.user)}</a>` : '@' + esc(x.user)}${x.mine ? '<span class="you">YOU</span>' : ''}</span><span class="av">${x.avg.toFixed(2)} <span class="sx">★</span></span><span class="vt">${x.votes}</span></div>${j.admin ? `<div class="rlbd" id="rlbd-${esc(x.k)}" hidden></div>` : ''}`).join('');
   if(j.admin) $('#rlsum').textContent += ' Tap a member to see who rated them and change a rating.';
 }
