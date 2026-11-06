@@ -7802,7 +7802,11 @@ export async function onRequestGet(ctx) {
     const csv = url.searchParams.get('format') === 'csv';
     // One cache entry per distinct question, whatever order its parameters
     // came in.
-    const keyUrl = new URL(origin + '/__cache/rax/v1');
+    // v2 (2026-11-06): every edge copy from before is dropped - some were error answers.
+    const keyUrl = new URL(origin + '/__cache/rax/v2');
+    /* An answer that is an error - {"error": ...} or a board whose seasons
+       failed ({"errors": [{...}]}) - is never kept or handed out as a saved copy. */
+    const isErr = b => /^\s*\{\s*"error"/.test(b) || /"errors"\s*:\s*\[\s*\{/.test(b);
     [...url.searchParams.entries()].sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)
       .forEach(([k, v]) => keyUrl.searchParams.append(k, v));
     const keyReq = new Request(keyUrl.toString(), { method: 'GET' });
@@ -7827,9 +7831,10 @@ export async function onRequestGet(ctx) {
     /* Third copy in KV (2026-11-05): when D1 is overloaded the D1 copy can't
        be read and the rebuild fails too, so pack data showed nothing. KV
        doesn't share D1's limits, so the last good answer is handed out instead. */
-    const kvKey = shared ? 'rc1:' + [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(k)))].slice(0, 16).map(b => b.toString(16).padStart(2, '0')).join('') : null;
+    const kvKey = shared ? 'rc2:' + [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(k)))].slice(0, 16).map(b => b.toString(16).padStart(2, '0')).join('') : null;
     const kvServe = async () => { if (!kvKey || !env.RATEBOARD_KV) return null;
       try { const v = await env.RATEBOARD_KV.get(kvKey); if (!v) return null; const o = JSON.parse(v);
+        if (!o || !o.body || isErr(o.body)) return null;
         return new Response(o.body, { headers: { 'content-type': o.ctype || 'application/json', 'x-cache': 'KV' } }); } catch (e) { return null; } };
     let row = null, d1Down = false;
     /* KV first (2026-11-06): a fresh KV copy is served without touching D1 at
@@ -7837,7 +7842,7 @@ export async function onRequestGet(ctx) {
        even the cached copy couldn't be read, so pack data failed to load. */
     if (shared && env.RATEBOARD_KV) {
       try { const v = await env.RATEBOARD_KV.get(kvKey); if (v) { const o = JSON.parse(v);
-        if (o && o.body && Date.now() - Number(o.at) < ttl * 1000) {
+        if (o && o.body && !isErr(o.body) && Date.now() - Number(o.at) < ttl * 1000) {
           const left = Math.max(60, Math.round(ttl - (Date.now() - Number(o.at)) / 1000));
           try { await caches.default.put(keyReq, new Response(o.body, { headers: { 'content-type': o.ctype || 'application/json', 'cache-control': `max-age=${left}` } })); } catch (e) {}
           return new Response(o.body, { headers: { 'content-type': o.ctype || 'application/json', 'x-cache': 'KV' } }); } } } catch (e) {}
@@ -7848,6 +7853,7 @@ export async function onRequestGet(ctx) {
         row = await env.RATEBOARD_DB.prepare('SELECT body, ts, ctype FROM resp_cache WHERE k=?').bind(k).first();
       } catch (e) { row = null; d1Down = true; }
       if (d1Down) { const kv = await kvServe(); if (kv) return kv; }
+      if (row && isErr(String(row.body || ''))) row = null;   // an error saved by an older version: rebuild
       if (row) {
         const age = (Date.now() - Number(row.ts)) / 1000;
         let serveOld = age < ttl;
@@ -7886,7 +7892,7 @@ export async function onRequestGet(ctx) {
     if (!csv && res.status === 200 && ctype.includes('json')) {
       const body = await res.text();
       // A body that is an error message isn't kept as the good copy.
-      if (shared && /^\s*\{\s*"error"/.test(body)) { const kv = await kvServe(); if (kv) return kv; return new Response(body, { status: 200, headers: { 'content-type': ctype } }); }
+      if (isErr(body)) { const kv = shared ? await kvServe() : null; if (kv) return kv; return new Response(body, { status: 200, headers: { 'content-type': ctype, 'x-cache': 'NONE' } }); }
       if (kvKey && env.RATEBOARD_KV && body.length < 20000000) {
         const put = env.RATEBOARD_KV.put(kvKey, JSON.stringify({ body, ctype, at: Date.now() }), { expirationTtl: 3 * 86400 }).catch(() => {});
         if (ctx.waitUntil) ctx.waitUntil(put); else await put;
