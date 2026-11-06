@@ -1386,7 +1386,7 @@ async function runDms(env, db, auth, rows, max, force) {
     const warnHours = new Map();
     // From :25 (35 minutes before the hour).
     // Past :55 the contact message carries it instead.
-    for (const x of list) if (!x.m['warn' + x.side] && (force || (now >= x.due - 35 * 60000 && now < x.due - 5 * 60000))) { const k = force ? 'now' : x.due; (warnHours.get(k) || warnHours.set(k, []).get(k)).push(x); }
+    for (const x of list) if (!x.m['warn' + x.side] && (force || (now >= x.due - 30 * 60000 && now < x.due - 5 * 60000))) { const k = force ? 'now' : x.due; (warnHours.get(k) || warnHours.set(k, []).get(k)).push(x); }
     let warnFail = false;
     for (const [, wh0] of warnHours) {
       if (sent >= max || Date.now() - now > 40000 || (TICK_T0 && !force && tickLeft() - dmWaitAhead() < 6000)) break;   // never past the tick's time
@@ -2014,7 +2014,7 @@ async function dedupeSweep(db) {
 async function confirmGate(env, db, auth) {
   const now = Date.now();
   await matchCols(db);
-  const ms = ((await db.prepare(`SELECT * FROM swap_matches WHERE status='pending' AND warnA IS NULL AND warnB IS NULL AND dueAt > ? AND dueAt <= ?`).bind(now, now + 32 * 60000).all()).results) || [];
+  const ms = ((await db.prepare(`SELECT * FROM swap_matches WHERE status='pending' AND warnA IS NULL AND warnB IS NULL AND dueAt > ? AND dueAt <= ?`).bind(now, now + 31 * 60000).all()).results) || [];
   if (!ms.length) return;
   const cache = new Map(), get = async k => { if (!cache.has(k)) cache.set(k, await db.prepare('SELECT key, rsUser, hashId, confirmDay FROM swap_users WHERE key=?').bind(k).first()); return cache.get(k); };
   const told = new Map();
@@ -3296,7 +3296,7 @@ async function handle({ request, env, waitUntil }) {
     const k = await dmTickKey(env);
     if (!k || url.searchParams.get('k') !== k) return json({ error: 'no' }, 403);
     // Only one run at a time across the site: a claim row per minute.
-    const minute = new Date().toISOString().slice(0, 16);
+    const minute = new Date().toISOString().slice(0, 16) + (url.searchParams.get('half') === '2' ? ':b' : '');
     let go = false;
     try { await db.prepare('CREATE TABLE IF NOT EXISTS dm_runs (minute TEXT PRIMARY KEY, at INTEGER)').run();
       const c = await db.prepare('INSERT OR IGNORE INTO dm_runs (minute, at) VALUES (?, ?)').bind(minute, Date.now()).run(); go = !!(c && c.meta && c.meta.changes);

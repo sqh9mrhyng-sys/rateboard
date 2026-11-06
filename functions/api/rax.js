@@ -7772,7 +7772,12 @@ export async function onRequestGet(ctx) {
   if (url.searchParams.get('queue') === 'next' && ctx.waitUntil) {
     ctx.waitUntil(swapTick(env).catch(() => {}));
     // The swaps' warnings and contacts in a run of their own (its own 30 seconds).
-    ctx.waitUntil((async () => { const k = await dmTickKey(env); if (k) await fetch(`${origin}/api/swaps?op=dmtick&k=${k}`, { cf: { cacheTtl: 0 } }); })().catch(() => {}));
+    /* Two DM runs a minute (2026-11-06): one now and one 27s later, each with its own
+       ~26s of sending, so a big hour's warnings go out about twice as fast (still 3s apart). */
+    ctx.waitUntil((async () => { const k = await dmTickKey(env); if (!k) return;
+      await fetch(`${origin}/api/swaps?op=dmtick&k=${k}`, { cf: { cacheTtl: 0 } }).catch(() => {});
+      await new Promise(r => setTimeout(r, 27000));
+      await fetch(`${origin}/api/swaps?op=dmtick&k=${k}&half=2`, { cf: { cacheTtl: 0 } }).catch(() => {}); })().catch(() => {}));
     ctx.waitUntil(boostRefresh(env).catch(() => {}));
     ctx.waitUntil(gapPush(ctx).catch(() => {}));
   }
