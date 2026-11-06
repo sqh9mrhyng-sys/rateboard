@@ -1568,7 +1568,7 @@ async function scanQueueTurn(db, me, now) {
   const pos = (Number(ahead && ahead.n) || 0) + 1, secs = Math.ceil(pos / SCAN_AT_ONCE) * 25;
   return { go: false, position: pos, wait: secs < 60 ? `${secs} seconds` : `${Math.ceil(secs / 60)} minute${secs > 60 ? 's' : ''}` };
 }
-async function newScanJob(env, db, me, over, u) {
+async function newScanJob(env, db, me, over, u, opts) {
   const own = await realName(db, me), rsUser = over || own;
   let hashId = u && String(u.rsUser || '').toLowerCase() === rsUser.toLowerCase() ? u.hashId : null;
   if (!hashId && rsUser.toLowerCase() === String(own).toLowerCase()) { try { await db.prepare(SPRO_DDL).run(); const pr = await db.prepare('SELECT rsId FROM swap_pro WHERE key=?').bind(me).first(); if (pr && pr.rsId) hashId = pr.rsId; } catch (e) {} }
@@ -1583,8 +1583,11 @@ async function newScanJob(env, db, me, over, u) {
   try {
     const pr = await db.prepare('SELECT passes, fullScanAt FROM swap_users WHERE key=?').bind(me).first();
     const prev = parse(pr && pr.passes, []);
-    if (pr && prev.length && Date.now() - (Number(pr.fullScanAt) || 0) < 7 * 86400000) {
+    // A full scan when they ask for one (bought into an old season - 2026-11-05: new golf passes went unseen).
+    if (pr && prev.length && !(opts && opts.full) && Date.now() - (Number(pr.fullScanAt) || 0) < 7 * 86400000) {
       const had = new Set(prev.map(p => `${p.sport}:${p.season}`));
+      // ...and every season a recommended buy is in, so buying one shows up on the next scan.
+      try { for (const x of (await wantTop(env, db)).rows) if (x.n >= 3) had.add(String(x.key).split(':').slice(0, 2).join(':')); } catch (e) {}
       const current = new Set(Object.entries(SWAP_SEASONS).flatMap(([sp, v]) => v.slice(0, 2).map(se => `${sp}:${se}`)));   // this season and last, every sport
       steps = SCAN_STEPS.filter(([sp, se]) => had.has(`${sp}:${se}`) || current.has(`${sp}:${se}`)); full = false;
     }
@@ -3884,7 +3887,7 @@ async function handle({ request, env, waitUntil }) {
       if (left > 0 && u && u.passes) {
         const m = Math.ceil(left / 60000);
         return json({ done: true, hashId: u.hashId, passes: parse(u.passes, []), errors: [], cached: true, scannedAt: lastAt,
-          note: `From your last scan. A fresh scan is allowed once every ${every >= 60 ? every / 60 + ' hours' : every + ' minutes'} - next in ${m >= 60 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : m + ' min'}.` });
+          note: `From your last scan. A fresh scan is allowed once every ${every >= 60 ? (every === 60 ? 'hour' : every / 60 + ' hours') : every + ' minutes'} - next in ${m >= 60 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : m + ' min'}.` });
       }
     } else if (!(await allow(url.origin, 'swapscan:' + me, 20, 600))) return json({ error: 'Twenty scans per ten minutes.' }, 429);
     // The line. Admins skip it.
@@ -3894,7 +3897,7 @@ async function handle({ request, env, waitUntil }) {
     }
     // Members scan their own Real account; an admin may name another (OTD).
     const over = acc.admin && url.searchParams.get('rsUser') ? String(url.searchParams.get('rsUser')).trim().replace(/^@/, '') : null;
-    job = await newScanJob(env, db, me, over, u);
+    job = await newScanJob(env, db, me, over, u, { full: url.searchParams.get('full') === '1' });
     if (job.error) { try { await db.prepare('DELETE FROM scan_queue WHERE key=?').bind(me).run(); } catch (e) {} return json({ error: job.error }, job.status || 400); }
     return json(await scanWork(env, db, me, job, auth));
   }
