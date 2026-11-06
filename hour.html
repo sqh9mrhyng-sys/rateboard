@@ -24,6 +24,8 @@
   .off{opacity:.5;text-decoration:line-through}
   .chk{width:22px;height:22px;accent-color:var(--ok);flex:none}
   .grp{display:flex;align-items:center;gap:10px;min-width:0}
+  #conlist .row.both{opacity:.45;transition:opacity .15s}
+  #conlist .row.both:hover,#conlist .row.both:focus-within{opacity:.75}
   .chk2{display:flex;flex-direction:column;gap:8px;flex:none}
   .chk2 label{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:10.5px;font-weight:700;color:var(--mute);text-transform:uppercase;letter-spacing:.03em;cursor:pointer}
   .acts{display:flex;flex-direction:column;align-items:stretch;gap:6px;flex:none}
@@ -187,7 +189,7 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
       <span><b>${lnk(x.give, x.giveUrl)}</b>${x.off ? '<span class="sub">called off</span>' : ''}</span></span>${x.yourCard ? `<a class="btn" href="${esc(x.yourCard)}" target="_blank" rel="noopener">Your card</a>` : ''}</div>`).join('')).join('');
   // Each partner: who, what you receive, what you give - and their comment to reach them.
   // Two ticks per partner here (Dennis, 2026-11-06): offer sent, then swap done.
-  $('#conlist').innerHTML = ord.map(([x, i]) => `<div class="row${x.off ? ' off' : ''}"><span class="grp"><span class="chk2"><label><input type="checkbox" class="chk" data-k="c${i}" ${done['c' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}><span>Offered</span></label><label><input type="checkbox" class="chk" data-k="d${i}" ${done['d' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}><span>Done</span></label></span>
+  $('#conlist').innerHTML = ord.map(([x, i]) => `<div class="row${x.off ? ' off' : ''}${done['c' + i] && done['d' + i] ? ' both' : ''}" data-row="${i}"><span class="grp"><span class="chk2"><label><input type="checkbox" class="chk" data-k="c${i}" ${done['c' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}><span>Offered</span></label><label><input type="checkbox" class="chk" data-k="d${i}" ${done['d' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}><span>Done</span></label></span>
     <span><b>${x.partnerUrl ? `<a href="${esc(x.partnerUrl)}" target="_blank" rel="noopener">@${esc(x.partner || '?')}</a>` : '@' + esc(x.partner || '?')}</b><span class="sub">You receive <b class="rv">${lnk(x.receive, x.receiveUrl)}</b></span><span class="sub">(You're giving ${esc(x.give)})</span></span></span><span class="acts">${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : '<span class="note">no comment</span>'}${x.id && !x.off ? `<button class="btn rp" type="button" data-rp="${x.id}">Report</button>` : ''}</span></div><div class="rpbox" id="rp${x.id}" hidden></div>`).join('');
 })();
 /* Packs today: what the system counts as used, plus your own additions. */
@@ -344,7 +346,9 @@ document.addEventListener('click', async e => {
     else { box.innerHTML = '<p class="note" style="margin:0">Reported - it\'s with the admins now.</p>'; const b = document.querySelector(`[data-rp="${sd.dataset.rpsend}"]`); if(b){ b.textContent = 'Reported'; b.disabled = true; } } }
   catch(err){ msg.textContent = 'Could not reach the board - try again.'; sd.disabled = false; }
 });
-document.addEventListener('change', e => { const k = e.target.dataset.k; if(!k) return; done[k] = e.target.checked; try{ localStorage.setItem(key, JSON.stringify(done)); }catch(err){} });
+document.addEventListener('change', e => { const k = e.target.dataset.k; if(!k) return; done[k] = e.target.checked; try{ localStorage.setItem(key, JSON.stringify(done)); }catch(err){}
+  // Offered and Done both ticked: that partner's row greys out (still usable).
+  const row = e.target.closest('[data-row]'); if(row){ const i = row.dataset.row; row.classList.toggle('both', !!(done['c' + i] && done['d' + i])); } });
 </script>
 </body>
 </html>
