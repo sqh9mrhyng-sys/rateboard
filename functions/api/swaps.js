@@ -476,6 +476,21 @@ async function adminDm(db, auth, who, text, ref) {
   } catch (e) { await botFail(db, 'dm_admin', `${who.name}: ${e.message || e}`); return { sent: false, why: String(e.message || e).slice(0, 160) }; }
 }
 // A player's name for a pass key, from the search index (no member passes loaded).
+/* Most picked players: how many active members swap for each, most first,
+   with names and card links. Kept 5 minutes; the hour page's leaderboard and
+   step 3's recommended buys both read it. */
+async function wantTop(env, db) {
+  let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get('swap_wanttop_v1')) || 'null'); } catch (e) {}
+  if (c && Date.now() - c.at <= 300000) return c;
+  const n = {}; let members = 0;
+  for (const r of ((await db.prepare(`SELECT wants FROM swap_users WHERE active=1 AND wants IS NOT NULL AND wants <> '[]'`).all()).results || [])) {
+    members++; for (const w of parse(r.wants, []).slice(0, MAX_WANTS)) n[w] = (n[w] || 0) + 1; }
+  const nc = new Map(), top = Object.entries(n).sort((a, b) => b[1] - a[1]).slice(0, 80);
+  const rows = []; for (const [k, v] of top) rows.push({ key: k, name: await indexName(db, k, nc), n: v, url: playerUrl(k) });
+  c = { at: Date.now(), members, rows };
+  try { await env.RATEBOARD_KV.put('swap_wanttop_v1', JSON.stringify(c)); } catch (e) {}
+  return c;
+}
 async function indexName(db, k, cache) {
   if (cache && cache.has(k)) return cache.get(k);
   const [sp, se, id] = String(k).split(':'); let n = null;
@@ -2158,7 +2173,7 @@ export async function swapAccess(env, request) {
 }
 // What a member (not an admin) may do: their own swap and nothing else, and
 // for OTD their own passes and games.
-const MEMBER_OPS = new Set(['myhour', 'me', 'save', 'keep', 'touch', 'packstoday', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
+const MEMBER_OPS = new Set(['recbuys', 'myhour', 'me', 'save', 'keep', 'touch', 'packstoday', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
 const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan']);
 const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostdays', 'projections', 'boostinv', 'buys', 'legboosts', 'resell', 'nosell']);
 const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
@@ -3036,16 +3051,7 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'hourtop') {
     const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));
     if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
-    let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get('swap_wanttop_v1')) || 'null'); } catch (e) {}
-    if (!c || Date.now() - c.at > 300000) {
-      const n = {}; let members = 0;
-      for (const r of ((await db.prepare(`SELECT wants FROM swap_users WHERE active=1 AND wants IS NOT NULL AND wants <> '[]'`).all()).results || [])) {
-        members++; for (const w of parse(r.wants, []).slice(0, MAX_WANTS)) n[w] = (n[w] || 0) + 1; }
-      const nc = new Map(), top = Object.entries(n).sort((a, b) => b[1] - a[1]).slice(0, 60);
-      const rows = []; for (const [k, v] of top) rows.push({ key: k, name: await indexName(db, k, nc), n: v, url: playerUrl(k) });
-      c = { at: Date.now(), members, rows };
-      try { await env.RATEBOARD_KV.put('swap_wanttop_v1', JSON.stringify(c)); } catch (e) {}
-    }
+    const c = await wantTop(env, db);
     const r = await db.prepare('SELECT wants FROM swap_users WHERE LOWER(key)=?').bind(key.toLowerCase()).first();
     const mine = new Set(parse(r && r.wants, []));
     return json({ at: c.at, members: c.members, rows: c.rows.map(x => ({ ...x, mine: mine.has(x.key) || undefined })) });
@@ -3248,6 +3254,16 @@ async function handle({ request, env, waitUntil }) {
 
   /* A member's own swaps: coming up, and the last two weeks of past ones. */
   /* Packs today (see packsToday): signed in on /swaps. */
+  /* Step 3: recommended buys for swaps (Dennis, 2026-11-05) - the most picked
+     players this member doesn't hold, with at least 3 people swapping for
+     each, top 10: buy one and you can be matched with all of them. */
+  if (op === 'recbuys') {
+    const c = await wantTop(env, db);
+    const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
+    const own = new Set(parse(u && u.passes, []).filter(p => p.kind !== 'team').map(p => p.key));
+    const rows = c.rows.filter(x => x.n >= 3 && !own.has(x.key) && !/^(soccer|ufc):/.test(x.key) && !seasonOff(x.key)).slice(0, 10);
+    return json({ members: c.members, rows, scanned: !!(u && u.passes) });
+  }
   if (op === 'myhour') {
     await matchCols(db);
     const now = Date.now();

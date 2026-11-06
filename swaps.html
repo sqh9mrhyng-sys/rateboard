@@ -70,6 +70,9 @@
   .stabs button.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 18%,var(--panel2));font-weight:700}
   .untouch{margin:8px 0 10px;padding:10px 12px;border:1px solid var(--accent);border-radius:10px;background:color-mix(in srgb,var(--accent) 8%,var(--panel2))}
   .untouch .uh{margin-bottom:4px}
+  .recb{margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
+  .recb .rb{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-top:1px solid var(--line)} .recb .rb:first-child{border-top:0}
+  .recb .rb a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)} .recb .rb .o{color:var(--mute);font-weight:800;margin-right:8px}
   .u1{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line)}
   .useg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
   .useg button{border:0;border-radius:0;padding:7px 10px;font-size:13px;background:var(--panel2)}
@@ -214,6 +217,7 @@
       <input id="pq" placeholder="Find a player" autocomplete="off">
     </div>
     <div id="passes"></div>
+    <div class="recb" id="recb" hidden><b>Recommended buys for swaps</b><p class="note" id="recbnote" style="margin:2px 0 6px"></p><div id="recblist"></div></div>
   </section>
 
   <section>
@@ -433,6 +437,13 @@ const seasonLbl = (sp, se) => { se = Number(se);
   return START[sp] ? `${se}-${String(se + 1).slice(2)}` : (sp === 'nba' || sp === 'ncaam') ? `${se - 1}-${String(se).slice(2)}` : String(se); };
 const SEASONS = { nba:[2027,2026,2025,2024,2023], ncaam:[2027,2026,2025,2024], nfl:[2026,2025,2024,2023], ncaaf:[2026,2025,2024,2023],
   nhl:[2026,2025,2024,2023], mlb:[2026,2025,2024,2023,2022], wnba:[2026,2025,2024], soccer:[2026,2025], golf:[2026,2025,2024,2023,2022,2021,2020,2019,2018,2017,2016,2015,2014], ufc:[2023] };
+async function loadRecBuys(){
+  const j = await api('/api/swaps?op=recbuys').catch(() => null);
+  if(!j || j.error || !j.scanned){ $('#recb').hidden = true; return; }
+  $('#recb').hidden = false;
+  $('#recbnote').textContent = j.rows.length ? "Players you don't hold that at least 3 people are swapping for, most first. Buy one and you can be matched with all of them." : "Nothing to suggest right now - you already hold everyone 3 or more people are swapping for.";
+  $('#recblist').innerHTML = j.rows.map((x, i) => `<div class="rb"><span><span class="o">${i + 1}</span>${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.name)}</a>` : esc(x.name)}</span><span class="note" style="white-space:nowrap">${x.n} swapping</span></div>`).join('');
+}
 const api = async (u, o) => { const r = await fetch(u, o); const j = await r.json().catch(() => ({})); if(!r.ok && !j.error) j.error = 'Error ' + r.status; return j; };
 
 let prof = { rsUser: '', passes: [], keep: [], wants: [], slots: [], touch: [] };
@@ -658,7 +669,7 @@ $('#scan').addEventListener('click', async () => {
   const j = await fullScan('&page=swaps', p => { if(p.queued){ $('#scanmsg').textContent = `You're #${p.position} in the scan line - about ${p.wait}. You can leave - it runs on its own and your scan will be ready when you come back.`; return; } $('#scanmsg').textContent = 'Scans typically take 25 seconds, longer at high website volume' + ((p.retrying || Date.now() - scanStart > 25000) ? ' • Scan taking longer than expected, please be patient' : ''); });
   $('#scan').disabled = false;
   if(j.error){ $('#scanmsg').textContent = j.error; return; }
-  prof.rsUser = u; collapsed = false; prof.passes = j.passes || []; prof.scannedAt = j.scannedAt || Date.now();
+  prof.rsUser = u; collapsed = false; prof.passes = j.passes || []; prof.scannedAt = j.scannedAt || Date.now(); loadRecBuys();
   // Not shown on Swaps, counted per sport and season so it can be checked against Real.
   const hid = new Map(); let shown = 0;
   for(const p of prof.passes){
@@ -1052,6 +1063,7 @@ async function proGate(){
   drawPasses(); drawWants(); drawHours(); loadHourCounts(); loadWantCounts(); loadSwaps(); if(j.admin){ loadMatches(); $('#adminprio').hidden = false; $('#adminund').hidden = false; loadPrio(); loadUnd(); }
   resumeScan();
   // The big button to their swap page (next swap time, or the last one).
+  loadRecBuys();
   api('/api/swaps?op=myhour').then(h => { if(h && h.url){ $('#hourgo').href = h.url; $('#hourgo').hidden = false; } }).catch(() => {});
   api('/api/swaps?op=buildindex');   // adds one season to the search table, at most every 5 minutes
 })();
