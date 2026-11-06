@@ -851,7 +851,7 @@ function paintPacks(j){
   if(j.error){ $('#packlist').innerHTML = `<p class="note">${esc(j.error)}</p>`; return; }
   const tm = ms => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const used = new Set([...(j.system || []).map(x => x.key), ...(j.manual || []).map(x => x.key)]);
-  $('#packlist').innerHTML = ((j.system || []).map(x => `<div class="pk1"><span><b>${esc(x.name)}</b><span class="sub">swap at ${x.times.map(tm).join(', ')} · for ${x.partners.map(p => '@' + esc(p)).join(', ')}${x.off ? ` · ${x.off} called off (still counts)` : ''}</span></span><span class="tag" style="color:var(--accent)">used</span></div>`).join('')
+  $('#packlist').innerHTML = ((j.system || []).map(x => `<div class="pk1"><span><b>${esc(x.name)}</b><span class="sub">swap at ${x.times.map(tm).join(', ')} · for ${x.partners.map(p => '@' + esc(p)).join(', ')}${x.off ? ` · ${x.off} called off after the warning (still counts)` : ''}</span></span><span class="tag" style="color:var(--accent)">used</span></div>`).join('')
     + (j.manual || []).map(x => `<div class="pk1"><span><b>${esc(x.name)}</b><span class="sub">added by you</span></span><button class="sm" data-unpack="${esc(x.key)}">Remove</button></div>`).join(''))
     || '<p class="note">No packs used yet today.</p>';
   // The add list: your swappable passes not already used today.
