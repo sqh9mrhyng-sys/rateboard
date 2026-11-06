@@ -76,6 +76,14 @@
     <div id="plan" style="margin-top:10px"></div>
   </section>
 
+  <section id="tgtbox">
+    <h2>MLB targets</h2>
+    <p class="note">Dennis's 15 MLB pitcher passes, weighed against your calendar. For each: the level that makes the most <b>profit</b> over the window and pack price above (a new pass starts at 0 rating), what it adds after the 2-per-sport (+1 spare) claim limit, and which of your passes it <b>pushes off</b> - the ones it would replace on the days they clash. <b>Clashes</b> is how many of its dates already have two MLB claims of yours. <b>Best order</b> picks them one at a time, each worked out after the ones before, while they still make a profit.</p>
+    <div class="scroll"><table><thead><tr><th>Target pass</th><th>Best level</th><th>Est. packs</th><th>Price</th><th>Extra a year</th><th>Profit</th><th>Clashes</th><th>Pushes off (rax a year)</th></tr></thead><tbody id="tgts"><tr><td colspan="8" class="note">Loading…</td></tr></tbody></table></div>
+    <h3 style="margin:14px 0 6px;font-size:14px">Best order</h3>
+    <div id="tgtplan"></div>
+  </section>
+
   <section>
     <h2>Best upgrades</h2>
     <p class="note">For each pass, the level that adds the most for what it costs. <b>Extra a year</b> is what your whole calendar gains after the 2-per-sport (+1 spare) claim limit, and after each pass's all-time cap on old seasons. <b>Extra all-time</b> is how much more cap room the upgrade opens (∞ at Iconic or on a live season). Packs come from pack data (average rating ×3 a pack, never under 10) at the price above; FC has no packs, so it's priced from the Rate Board: the best standing offer per rating for that player, or the median FC offer. <b>Profit</b> is what the upgrade earns over the window you pick, from today, minus its price; each pass shows its most profitable target. Tap a row for its calendar.</p>
@@ -242,6 +250,11 @@ const tag = (i, p) => { const L = ladderOf(p);
   return i < 0 ? '<span class="tag" style="background:#8a93a6">General · 1x</span>' : `<span class="tag" style="background:${RC[L[i][3]]}">${L[i][0]} · ${L[i][1]}x</span>`; };
 
 let MKT = {}, upOpen = null, lastUps = [];
+/* Dennis's MLB OTD targets (2026-11-05): [name, season, Real player id]. */
+const MLB_TARGETS = [['Yoshinobu Yamamoto', 2025, 808967], ['Jacob Misiorowski', 2026, 694819], ['Tarik Skubal', 2024, 669373], ['Drew Rasmussen', 2026, 656876],
+  ['Cam Schlittler', 2026, 693645], ['Zack Wheeler', 2023, 554430], ['Tarik Skubal', 2025, 669373], ['Framber Valdez', 2022, 664285], ['Zac Gallen', 2023, 668678],
+  ['Zack Wheeler', 2024, 554430], ['Gavin Williams', 2026, 668909], ['Cristopher Sánchez', 2026, 650911], ['Sandy Alcantara', 2022, 645261], ['Aaron Nola', 2022, 605400],
+  ['Yoshinobu Yamamoto', 2026, 808967]].map(([name, season, id]) => ({ name, season, id, sport: 'mlb', key: `mlb:${season}:${id}` }));
 const normName = n => String(n || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z]/g, '');
 let P = [], G = {}, PACK = {}, PLAYS = {}, byDay = new Map(), upSort = 'rank', upDir = -1, selDay = null;
 
@@ -456,6 +469,79 @@ function compute(){
   $('#byp').innerHTML = rows.slice(0, 300).map(r => `<tr><td>${nm(r.p)}</td><td>${tag(r.p.lv, r.p)}</td><td>${fmt(r.p.games.length)}</td><td>${fmt(r.won)}</td><td>${fmt(r.lost)}</td></tr>`).join('')
     || '<tr><td colspan="5" class="note">None of your passes has a claiming level and games yet.</td></tr>';
   drawCal(dayRes);
+  drawTargets();
+}
+
+/* MLB targets. A target you don't hold goes onto the calendar as a new pass
+   at 0 rating (General: nothing on an old season) just while it's weighed,
+   then comes off again. */
+function addTemp(t){ P.push({ sport: t.sport, season: t.season, id: t.id, key: t.key, name: t.name, kind: 'player', rating: 0, earned: 0, mult: 0, temp: true }); build(); return P.length - 1; }
+function dropTemps(){ P = P.filter(p => !p.temp); build(); }
+function weigh(i, claims){
+  const sc = scanAll(claims), ctx = makeCtx(sc.dayRes, sc.per);
+  const opts = passOptions(i, ctx).filter(o => o.profit != null);
+  if(!opts.length) return null;
+  const o = opts.reduce((a, b) => b.profit > a.profit ? b : a);
+  // Who loses claims to it, and how many of its dates already hold two MLB claims.
+  const p = P[i], lost = new Map(); let clash = 0;
+  const days = [...new Set(p.games.map(g => g[0]))];
+  for(const d of days){
+    const before = scoreDay(dayList(d), claims), after = scoreDay(dayList(d, [i, o.m]), claims);
+    if(before.won.filter(r => r.sport === 'mlb' && r.i !== i).length >= 2) clash++;
+    const wb = new Map(before.won.map(r => [r.i, r.rax])), wa = new Map(after.won.map(r => [r.i, r.rax]));
+    for(const [j, v] of wb) if(j !== i){ const l = v - (wa.get(j) || 0); if(l > 0) lost.set(j, (lost.get(j) || 0) + l); }
+  }
+  return { ...o, clash, dates: days.length, pushed: [...lost].sort((a, b) => b[1] - a[1]).map(([j, v]) => ({ p: P[j], v })) };
+}
+function drawTargets(){
+  const el = $('#tgts'); if(!el || !P.length) return;
+  const claims = Number($('#claims').value), nm = window.__nm || (p => esc(p.name));
+  const pushTxt = w => w.pushed.length ? w.pushed.slice(0, 3).map(x => `${esc(x.p.name)} <span class="note">${esc(seasonLbl(x.p.sport, x.p.season))} −${fmt(x.v)}</span>`).join('<br>') : '<span class="note">nobody - free dates</span>';
+  const rows = [];
+  for(const t of MLB_TARGETS){
+    let i = P.findIndex(p => p.key === t.key && !isTeam(p)), held = i >= 0;
+    if(!held){ if(!(G[t.key] || []).length){ rows.push({ t, none: 'no games in game data' }); continue; } i = addTemp(t); }
+    const w = weigh(i, claims);
+    rows.push({ t, held, w, p: P[i] });
+    if(!held) dropTemps();
+  }
+  rows.sort((a, b) => ((b.w && b.w.profit) ?? -Infinity) - ((a.w && a.w.profit) ?? -Infinity));
+  el.innerHTML = rows.map(r => {
+    const name = `${esc(r.t.name)} <span class="note">MLB ${r.t.season}${r.held ? ' · you hold it (' + tag(r.p.lv, r.p).replace(/<[^>]+>/g, '') + ')' : ''}</span>`;
+    if(!r.w) return `<tr><td>${name}</td><td colspan="7" class="note">${r.none || 'No profitable level (not enough plays for packs, or capped).'}</td></tr>`;
+    const w = r.w;
+    return `<tr><td>${name}</td><td>${tag(w.k, r.p)}</td><td>${w.packs == null ? '–' : fmt(w.packs)}</td><td>${fmt(w.cost)}</td><td>+${fmt(w.gain)}</td>
+      <td style="color:${w.profit >= 0 ? 'var(--ok)' : 'var(--bad)'}">${(w.profit >= 0 ? '+' : '') + fmt(w.profit)}</td><td>${w.clash} of ${w.dates}</td><td>${pushTxt(w)}</td></tr>`;
+  }).join('');
+  // Best order: take the most profitable, put it on the calendar at that level, weigh the rest again.
+  const saved = P.map(p => ({ lv: p.lv, mult: p.mult, rating: p.rating, capLeft: p.capLeft }));
+  const start = scanAll(claims).total, picks = [], left = MLB_TARGETS.filter(t => (G[t.key] || []).length);
+  for(let step = 0; step < left.length; step++){
+    let best = null;
+    for(const t of left){
+      if(picks.some(x => x.t === t)) continue;
+      let i = P.findIndex(p => p.key === t.key && !isTeam(p)); const held = i >= 0 && !P[i].temp;
+      const was = P.length; if(i < 0) i = addTemp(t);
+      const w = weigh(i, claims);
+      if(w && w.profit > 0 && (!best || w.profit > best.w.profit)) best = { t, w, held };
+      if(P.length > was){ P.pop(); build(); }
+    }
+    if(!best) break;
+    // Keep it on the calendar at the chosen level for the next round.
+    let i = P.findIndex(p => p.key === best.t.key && !isTeam(p));
+    if(i < 0) i = addTemp(best.t);
+    const p = P[i], L = ladderOf(p);
+    p.rating = Math.max(Number(p.rating) || 0, L[best.w.k][2]); p.mult = L[best.w.k][1]; build();
+    picks.push(best);
+  }
+  const after = scanAll(claims).total;
+  dropTemps(); P.forEach((p, i) => Object.assign(p, saved[i])); build();
+  const spend = picks.reduce((a, x) => a + (x.w.cost || 0), 0), prof = picks.reduce((a, x) => a + x.w.profit, 0);
+  $('#tgtplan').innerHTML = !picks.length ? '<p class="note">None of them makes a profit in this window at this pack price.</p>'
+    : `<div class="tiles"><div class="tile"><div class="k">Spend</div><div class="v">${fmt(spend)}</div></div><div class="tile"><div class="k">Profit</div><div class="v" style="color:var(--ok)">+${fmt(prof)}</div></div><div class="tile"><div class="k">Rax a year</div><div class="v">${fmt(start)} → ${fmt(after)}</div></div></div>
+      <div class="scroll"><table><thead><tr><th>#</th><th>Target pass</th><th>To</th><th>Price</th><th>Profit</th><th>Replaces</th></tr></thead><tbody>`
+      + picks.map((x, n) => `<tr><td>${n + 1}</td><td>${esc(x.t.name)} <span class="note">MLB ${x.t.season}</span></td><td>${tag(x.w.k, { sport: 'mlb', season: x.t.season })}</td><td>${fmt(x.w.cost)}</td><td style="color:var(--ok)">+${fmt(x.w.profit)}</td><td>${pushTxt(x.w)}</td></tr>`).join('')
+      + '</tbody></table></div><p class="note">Bought in this order; each later pick already sees the ones above it on the calendar.</p>';
 }
 
 // One upgrade's own calendar: what it adds each day, month and year.
@@ -613,15 +699,16 @@ $('#scan').addEventListener('click', async () => {
 
 async function loadAll(){
   $('#status').textContent = 'Loading every game for your passes…';
-  const g = await api('/api/swaps?op=games');
+  const g = await api('/api/swaps?op=games&extra=' + encodeURIComponent(MLB_TARGETS.map(t => t.key).join(',')));
   if(g.error){ $('#status').textContent = g.error; return; }
   // UFC is left off this page: its prices and data aren't reliable enough yet.
   P = (g.passes || []).filter(p => p.sport !== 'ufc'); G = g.games || {};
+  for(const p of P) if(!p.key) p.key = `${p.sport}:${p.season}:${p.id}`;
   build(); compute();
   /* Pack data and market prices, kept in this browser for 12 hours so the
      page opens straight away after the first visit; fetched three seasons
      at a time when they aren't. Only the seasons your passes are in. */
-  const pairs = [...new Set(P.map(p => `${p.sport}:${p.season}`))];
+  const pairs = [...new Set([...P.map(p => `${p.sport}:${p.season}`), ...MLB_TARGETS.map(t => `mlb:${t.season}`)])];
   const CK = 'otd_pack_cache_v2', TTL = 12 * 3600000;
   let cache = {};
   try{ cache = JSON.parse(localStorage.getItem(CK) || '{}') || {}; }catch(e){ cache = {}; }

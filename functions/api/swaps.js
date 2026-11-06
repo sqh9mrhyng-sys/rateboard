@@ -3667,6 +3667,9 @@ async function handle({ request, env, waitUntil }) {
     const passes = parse(u && u.passes, []);
     const groups = {};
     for (const p of passes) if (p.kind !== 'team') (groups[`${p.sport}|${p.season}`] = groups[`${p.sport}|${p.season}`] || []).push(p.id);
+    // Extra passes to weigh up (the OTD page's target lists): their games too, even if not held. Up to 60.
+    for (const k of String(url.searchParams.get('extra') || '').split(',').filter(x => /^[a-z]+:\d{4}:\d+$/.test(x)).slice(0, 60)) {
+      const [sp, se, id] = k.split(':'); (groups[`${sp}|${se}`] = groups[`${sp}|${se}`] || []).push(Number(id)); }
     const out = {};
     /* Team passes: there's no team game log, so each team's per-day rax comes
        from Real's earnings screen for that team (the same one the player rax
