@@ -3059,6 +3059,7 @@ async function handle({ request, env, waitUntil }) {
     if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
     if (!ADMINS.includes(key.toLowerCase())) return json({ error: 'Admins only.' }, 403);
     let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get('swap_raxtop_snap_v2')) || 'null'); } catch (e) {}
+    let c0err = null;
     if (!c || url.searchParams.get('rebuild') === '1') {
       const ss = ((await (await fetch(`${url.origin}/api/rax?gamelog=seasons`)).json()).seasons || []).filter(x => x.sport !== 'soccer').map(x => `${x.sport}:${x.season}`);
       const j = await (await fetch(`${url.origin}/api/rax?gamelog=query&mode=players&seasons=${encodeURIComponent(ss.join(','))}&sort=rax&dir=desc&limit=250`)).json();
@@ -3068,12 +3069,13 @@ async function handle({ request, env, waitUntil }) {
       const top = j.rows.filter(r => r.sport !== 'soccer').slice(0, 250).map(r => ({ k: `${r.sport}:${r.season}:${r.playerId}`, r }));
       // Counted in the database (reading every member's passes here ran out of memory).
       const have = new Map(), ks = top.map(x => x.k);
-      for (let i = 0; i < ks.length; i += 90) { const part = ks.slice(i, i + 90);
-        try { for (const r of (((await db.prepare(`SELECT json_extract(j.value, '$.key') AS k, COUNT(DISTINCT u.key) AS n FROM swap_users u, json_each(u.passes) j
-            WHERE u.passes IS NOT NULL AND json_extract(j.value, '$.key') IN (${part.map(() => '?').join(',')}) AND COALESCE(json_extract(j.value, '$.kind'), '') <> 'team' GROUP BY k`).bind(...part).all()).results) || []))
-          have.set(r.k, Number(r.n) || 0); } catch (e) {} }
+      // One pass over everyone's passes, the 250 keys handed in as one JSON list.
+      try { for (const r of (((await db.prepare(`SELECT json_extract(j.value, '$.key') AS k, COUNT(DISTINCT u.key) AS n FROM swap_users u, json_each(u.passes) j
+          WHERE u.passes IS NOT NULL AND json_extract(j.value, '$.key') IN (SELECT value FROM json_each(?)) AND COALESCE(json_extract(j.value, '$.kind'), '') <> 'team' GROUP BY k`).bind(JSON.stringify(ks)).all()).results) || []))
+        have.set(r.k, Number(r.n) || 0); } catch (e) { c0err = String(e.message || e); }
       c = { at: Date.now(), seasons: ss.length, rows: top.map(({ k, r }) => ({ key: k, name: r.player, sport: SP[r.sport] || r.sport, season: r.season, rax: Number(r.rax) || 0, owners: r.owners == null ? null : Number(r.owners), onSite: have.get(k) || 0, url: playerUrl(k) })) };
-      try { await env.RATEBOARD_KV.put('swap_raxtop_snap_v2', JSON.stringify(c)); } catch (e) {}
+      // Not kept if the on-site count failed (so the next open tries again).
+      if (!c0err) { try { await env.RATEBOARD_KV.put('swap_raxtop_snap_v2', JSON.stringify(c)); } catch (e) {} }
     }
     // Only passes nobody is swapping for right now (checked live; the numbers are the snapshot's).
     const swapped = new Set();
