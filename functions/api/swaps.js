@@ -3058,22 +3058,28 @@ async function handle({ request, env, waitUntil }) {
     const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));
     if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
     if (!ADMINS.includes(key.toLowerCase())) return json({ error: 'Admins only.' }, 403);
-    let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get('swap_raxtop_snap_v1')) || 'null'); } catch (e) {}
+    let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get('swap_raxtop_snap_v2')) || 'null'); } catch (e) {}
     if (!c || url.searchParams.get('rebuild') === '1') {
       const ss = ((await (await fetch(`${url.origin}/api/rax?gamelog=seasons`)).json()).seasons || []).filter(x => x.sport !== 'soccer').map(x => `${x.sport}:${x.season}`);
-      const j = await (await fetch(`${url.origin}/api/rax?gamelog=query&mode=players&seasons=${encodeURIComponent(ss.join(','))}&sort=rax&dir=desc&limit=50`)).json();
+      const j = await (await fetch(`${url.origin}/api/rax?gamelog=query&mode=players&seasons=${encodeURIComponent(ss.join(','))}&sort=rax&dir=desc&limit=250`)).json();
       if (!j || !Array.isArray(j.rows)) return json({ error: (j && j.error) || 'Game data did not answer - try again.' }, 502);
       const SP = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf' };
-      const top = j.rows.filter(r => r.sport !== 'soccer').slice(0, 50).map(r => ({ k: `${r.sport}:${r.season}:${r.playerId}`, r }));
+      // 250 kept: the list shown leaves out passes someone is swapping for, so it needs spares.
+      const top = j.rows.filter(r => r.sport !== 'soccer').slice(0, 250).map(r => ({ k: `${r.sport}:${r.season}:${r.playerId}`, r }));
       // Counted in the database (reading every member's passes here ran out of memory).
       const have = new Map(), ks = top.map(x => x.k);
-      try { for (const r of (((await db.prepare(`SELECT json_extract(j.value, '$.key') AS k, COUNT(DISTINCT u.key) AS n FROM swap_users u, json_each(u.passes) j
-          WHERE u.passes IS NOT NULL AND json_extract(j.value, '$.key') IN (${ks.map(() => '?').join(',')}) AND COALESCE(json_extract(j.value, '$.kind'), '') <> 'team' GROUP BY k`).bind(...ks).all()).results) || []))
-        have.set(r.k, Number(r.n) || 0); } catch (e) {}
-      c = { at: Date.now(), seasons: ss.length, rows: top.map(({ k, r }) => ({ name: r.player, sport: SP[r.sport] || r.sport, season: r.season, rax: Number(r.rax) || 0, owners: r.owners == null ? null : Number(r.owners), onSite: have.get(k) || 0, url: playerUrl(k) })) };
-      try { await env.RATEBOARD_KV.put('swap_raxtop_snap_v1', JSON.stringify(c)); } catch (e) {}
+      for (let i = 0; i < ks.length; i += 90) { const part = ks.slice(i, i + 90);
+        try { for (const r of (((await db.prepare(`SELECT json_extract(j.value, '$.key') AS k, COUNT(DISTINCT u.key) AS n FROM swap_users u, json_each(u.passes) j
+            WHERE u.passes IS NOT NULL AND json_extract(j.value, '$.key') IN (${part.map(() => '?').join(',')}) AND COALESCE(json_extract(j.value, '$.kind'), '') <> 'team' GROUP BY k`).bind(...part).all()).results) || []))
+          have.set(r.k, Number(r.n) || 0); } catch (e) {} }
+      c = { at: Date.now(), seasons: ss.length, rows: top.map(({ k, r }) => ({ key: k, name: r.player, sport: SP[r.sport] || r.sport, season: r.season, rax: Number(r.rax) || 0, owners: r.owners == null ? null : Number(r.owners), onSite: have.get(k) || 0, url: playerUrl(k) })) };
+      try { await env.RATEBOARD_KV.put('swap_raxtop_snap_v2', JSON.stringify(c)); } catch (e) {}
     }
-    return json(c);
+    // Only passes nobody is swapping for right now (checked live; the numbers are the snapshot's).
+    const swapped = new Set();
+    for (const r of ((await db.prepare(`SELECT wants FROM swap_users WHERE active=1 AND wants IS NOT NULL AND wants <> '[]'`).all()).results || [])) for (const w of parse(r.wants, []).slice(0, MAX_WANTS)) swapped.add(w);
+    const free = c.rows.filter(x => !swapped.has(x.key));
+    return json({ at: c.at, seasons: c.seasons, left: free.length < 50 ? free.length : undefined, skipped: c.rows.slice(0, c.rows.indexOf(free[49]) + 1 || c.rows.length).length - Math.min(50, free.length), rows: free.slice(0, 50) });
   }
   /* Your players and hours, from the hour page (Dennis, 2026-11-05): see them,
      remove or add a player, and change daily hours - the same saves (and the

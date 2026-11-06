@@ -219,7 +219,7 @@ async function loadRax(){
   $('#raxbox').hidden = false;
   let j; try{ j = await (await fetch(`/api/swaps?op=hourrax&${sig()}`)).json(); }catch(e){ $('#raxsum').textContent = 'Could not reach the board.'; return; }
   if(j.error){ $('#raxsum').textContent = j.error; return; }
-  $('#raxsum').textContent = `Snapshot of every sport and season in game data except FC (${j.seasons} seasons), taken ${new Date(j.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}. Owners: on Real. Here: people who have scanned their passes on the site and own it. Only you can see this.`;
+  $('#raxsum').textContent = `Passes nobody is swapping for right now (${j.skipped} higher earners left out because someone is). Snapshot of every sport and season in game data except FC (${j.seasons} seasons), taken ${new Date(j.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}. Owners: on Real. Here: people who have scanned their passes on the site and own it. Only you can see this.`;
   $('#raxlist').innerHTML = j.rows.map((x, i) => `<div class="rx"><span class="rk">${i + 1}.</span><span>${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.name)}</a>` : esc(x.name)}<span class="se">${esc(x.sport)} ${esc(x.season)}</span></span><span class="rv">${Number(x.rax).toLocaleString()}</span><span class="ow">${x.owners == null ? '-' : Number(x.owners).toLocaleString()}</span><span class="ow">${x.onSite ?? 0}</span></div>`).join('');
 }
 /* Your players & hours: see and change them here. */
