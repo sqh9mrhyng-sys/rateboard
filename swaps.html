@@ -10,6 +10,9 @@
   body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
   .wrap{max-width:900px;margin:0 auto;padding:16px}
   header{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+  .confbtn{display:block;width:100%;padding:16px 14px;border-radius:12px;border:0;background:#2FA36B;color:#fff;font:inherit;font-weight:900;font-size:18px;letter-spacing:.03em;cursor:pointer}
+  .confbtn.done{background:var(--panel2);color:var(--ok);border:1px solid var(--ok);font-size:15px;letter-spacing:0}
+  .confbox{margin:0 0 12px}
   .hourgo{display:block;margin:0 0 12px;padding:13px 14px;border-radius:12px;background:#E8A33D;color:#141925;font-weight:800;font-size:16px;text-decoration:none}
   .hourgo span{display:block;font-weight:600;font-size:12.5px;opacity:.8;margin-top:2px}
   h1{font-size:20px;margin:0;font-weight:800}
@@ -170,6 +173,7 @@
 <div class="lock" id="lock" hidden><h1>Swaps <span style="font-size:11px;font-weight:800;padding:2px 7px;border-radius:6px;background:var(--accent);color:#141925;vertical-align:middle">BETA</span></h1><p class="note" id="lockmsg">Checking…</p><p id="probox" hidden><button class="primary" id="procheck">Pro check</button></p><p class="note" id="rnhint" hidden>Is your Real username different from your board username? <a href="/username">Link your Real account</a> first.</p><p id="signinbtn" hidden><a class="btn" href="/" style="display:inline-block;padding:10px 14px;border-radius:9px;background:#E8A33D;color:#141925;font-weight:700;text-decoration:none">Sign in on the board</a></p><p class="note" id="signinhint" hidden>Signed in already? Open the board once - it will ask for your password one more time, then this page works. Opened this from inside Real? Use the browser you signed in with.</p><p><a href="/">Back to the board</a></p></div>
 <div class="wrap" id="main" hidden>
   <header><h1>Swaps <span class="beta">BETA</span></h1><a href="/" style="margin-left:auto">Back to the board</a></header>
+  <div class="confbox" id="confbox" hidden><button type="button" class="confbtn" id="confbtn">CONFIRM TIMES FOR TODAY</button><p class="note" id="confmsg" style="margin:6px 2px 0"></p></div>
   <a class="hourgo" id="hourgo" href="#" hidden>Open your swap page <span>buy list, offers, packs today, players &amp; hours →</span></a>
   <div class="topbtns"><button class="tb rep" id="repopen">Report</button><button class="tb what" id="whatopen">What are swaps?</button></div>
   <div class="repbox" id="repbox" hidden>
@@ -445,6 +449,26 @@ const seasonLbl = (sp, se) => { se = Number(se);
   return START[sp] ? `${se}-${String(se + 1).slice(2)}` : (sp === 'nba' || sp === 'ncaam') ? `${se - 1}-${String(se).slice(2)}` : String(se); };
 const SEASONS = { nba:[2027,2026,2025,2024,2023], ncaam:[2027,2026,2025,2024], nfl:[2026,2025,2024,2023], ncaaf:[2026,2025,2024,2023],
   nhl:[2026,2025,2024,2023], mlb:[2026,2025,2024,2023,2022], wnba:[2026,2025,2024], soccer:[2026,2025], golf:[2026,2025,2024,2023,2022,2021,2020,2019,2018,2017,2016,2015,2014], ufc:[2023] };
+/* Confirm times for today (from Sat Nov 7): tapped once each swap day (it starts 3am Alaska / 7am ET),
+   or that day's swaps are called off 30 minutes before each time. */
+function paintConfirm(j, times){
+  $('#confbox').hidden = false;
+  const b = $('#confbtn'), m = $('#confmsg'), starts = j.confirmStarts || '2026-11-07', early = (j.swapToday || '') < starts;
+  const fmt = t => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(':00', '');
+  if(j.confirmedToday){ b.textContent = '✓ Times confirmed for today'; b.classList.add('done');
+    m.textContent = times && times.length ? `Today: ${times.map(fmt).join(', ')}. Confirm again tomorrow after 3am Alaska (7am ET).` : 'Confirm again tomorrow after 3am Alaska (7am ET).'; }
+  else { b.textContent = 'CONFIRM TIMES FOR TODAY'; b.classList.remove('done');
+    m.textContent = early ? 'Starts Saturday Nov 7: confirm every day (after 3am Alaska / 7am ET), at least 30 minutes before your first time, or that day\'s swaps are called off until you do.'
+      : 'Confirm at least 30 minutes before your first time today - until you do, your swaps are called off one time at a time.'; }
+}
+$('#confbtn').addEventListener('click', async () => {
+  const b = $('#confbtn'); if(b.classList.contains('done')) return;
+  b.disabled = true; b.textContent = 'Confirming…';
+  const r = await api('/api/swaps?op=confirm', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tz: TZ }) }).catch(() => null);
+  b.disabled = false;
+  if(!r || r.error){ b.textContent = 'CONFIRM TIMES FOR TODAY'; $('#confmsg').textContent = (r && r.error) || 'Could not reach the board - try again.'; return; }
+  paintConfirm({ confirmedToday: true, swapToday: r.day }, r.times);
+});
 async function loadRecBuys(){
   const j = await api('/api/swaps?op=recbuys').catch(() => null);
   if(!j || j.error || !j.scanned){ $('#recb').hidden = true; return; }
@@ -517,7 +541,7 @@ function drawHours(){
 async function loadHourCounts(){ const j = await api('/api/swaps?op=hourcounts'); if(j && Array.isArray(j.n)){ hourCounts = j.n; drawHours(); } }
 // Saved straight away, so the server never matches an hour that's unticked here.
 function saveHours(){
-  const sc = schedOf(), body = { slots: prof.slots, sched: sc.mode === 'daily' ? { mode: 'daily' } : { ...sc, tz: TZ } };
+  const sc = schedOf(), body = { slots: prof.slots, sched: sc.mode === 'daily' ? { mode: 'daily', tz: TZ } : { ...sc, tz: TZ } };
   api('/api/swaps?op=saveslots', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(j => {
     if(!j || j.error){ $('#savemsg').textContent = (j && j.error) || 'Could not save your hours - try again.'; return; }
     if(Array.isArray(j.slots)) prof.slots = j.slots;
@@ -825,7 +849,7 @@ $('#save').addEventListener('click', async () => {
     if(!any){ $('#savemsg').textContent = 'Pick at least one hour.'; return; } }
   if(!SWAP_COMMENT_RE.test($('#clink').value.trim())){ $('#savemsg').textContent = 'That link is not a comment under the swap post. Open the swap post, copy the link to your comment, and paste it in step 2.'; return; }
   const j = await api('/api/swaps?op=save', { method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 10), sched: schedOf().mode === 'daily' ? { mode: 'daily' } : { ...schedOf(), tz: TZ }, comment: $('#clink').value.trim(), goal: '', dayCap: $('#daycap').value.trim(), caps, keep: prof.keep, slots: prof.slots, names: wantNames }) });
+    body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 10), sched: schedOf().mode === 'daily' ? { mode: 'daily', tz: TZ } : { ...schedOf(), tz: TZ }, comment: $('#clink').value.trim(), goal: '', dayCap: $('#daycap').value.trim(), caps, keep: prof.keep, slots: prof.slots, names: wantNames }) });
   const extra = (j.late ? ' Too late to change swaps already warned - please do them at :00.' : '') + (j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} for a player or hour you removed ${j.calledOff === 1 ? 'is' : 'are'} called off - you'll both get a message.` : '');
   $('#savemsg').textContent = j.error ? j.error : '';
   if(!j.error) showSaved(extra.trim());
@@ -1086,6 +1110,7 @@ async function proGate(){
   resumeScan();
   // The big button to their swap page (next swap time, or the last one).
   loadRecBuys();
+  paintConfirm(j);
   api('/api/swaps?op=myhour').then(h => { if(h && h.url){ $('#hourgo').href = h.url; $('#hourgo').hidden = false; } }).catch(() => {});
   api('/api/swaps?op=buildindex');   // adds one season to the search table, at most every 5 minutes
 })();

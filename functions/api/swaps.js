@@ -416,7 +416,7 @@ function cleanSched(b) {
   try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); } catch (e) { return { mode: 'daily' }; }
   if (mode === 'weekly') { const week = {}; for (let d = 0; d < 7; d++) week[d] = hrs(b.week && b.week[d]); return { mode, tz, week }; }
   if (mode === 'date') return { mode, tz, date: /^\d{4}-\d{2}-\d{2}$/.test(String(b.date || '')) ? String(b.date) : null, hours: hrs(b.hours) };
-  return { mode: 'daily' };
+  return { mode: 'daily', tz };   // tz kept for the 3am confirm DM's times
 }
 // The UTC hours a weekly/date schedule touches (today's offset), for counts and filters.
 function schedUtc(sc) {
@@ -1233,6 +1233,7 @@ async function matchCols(db) {
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN dayCap INTEGER'); } catch (e) {}
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN caps TEXT'); } catch (e) {}
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN sched TEXT'); } catch (e) {}   // weekly / one-day schedules
+  try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN confirmDay TEXT'); } catch (e) {}   // the swap day they confirmed their times for
   // Called-off swaps: when Dennis marked each side refunded (rax back) by hand.
   for (const c of ['refundA', 'refundB']) { try { await alterOnce(db, `ALTER TABLE swap_matches ADD COLUMN ${c} INTEGER`); } catch (e) {} }
 }
@@ -1939,6 +1940,72 @@ async function auditHour(env, db, auth) {
   }
   await save();
 }
+/* Daily confirm (Dennis, 2026-11-06), from Saturday Nov 7's swap day.
+   - At the start of each swap day (7am ET = 3am Alaska, no swaps that hour)
+     everyone with hours that day gets a DM: their times, in their own time,
+     and a deadline 30 minutes before the first; confirm on /swaps.
+   - 30 minutes before each hour, before any warning goes out, the swaps of
+     anyone who hasn't confirmed for that swap day are called off (nobody
+     warned, so both passes are free again) and that member is told to
+     confirm for their next time - again at each hour until they do. */
+const CONFIRM_FROM_DAY = '2026-11-07';
+const confirmOn = day => day >= CONFIRM_FROM_DAY;
+const isConfirmed = (u, day) => !!u && String(u.confirmDay || '') === day;
+const swapDayStart = ms => { let t = Math.floor(ms / 3600000) * 3600000; for (let i = 0; i < 26 && swapDay(t - 3600000) === swapDay(ms); i++) t -= 3600000; return t; };
+const hLabel = (ms, tz) => { try { return new Intl.DateTimeFormat('en-US', { timeZone: tz || 'America/New_York', hour: 'numeric', minute: '2-digit' }).format(new Date(ms)).replace(':00', '').replace(' AM', 'am').replace(' PM', 'pm'); } catch (e) { return new Date(ms).toISOString().slice(11, 16) + ' UTC'; } };
+const tzOf = u => { const sc = u && (typeof u.sched === 'string' ? parse(u.sched, null) : u.sched); return (sc && sc.tz && sc.tz !== 'UTC') ? sc.tz : null; };
+function hoursToday(u, start) {   // the swap times (UTC ms) this member has picked in the swap day starting at `start`
+  const uu = { ...u, sched: typeof u.sched === 'string' ? parse(u.sched, null) : u.sched, slots: Array.isArray(u.slots) ? u.slots : parse(u.slots, []) };
+  const out = []; for (let i = 0; i < 24; i++) { const t = start + i * 3600000; if (!noSwapHour(t) && rankAt(uu, t) >= 0) out.push(t); }
+  return out;
+}
+async function onceFor(db, campaign, key) {
+  await db.prepare('CREATE TABLE IF NOT EXISTS bot_once (campaign TEXT, key TEXT, at INTEGER, ok INTEGER, PRIMARY KEY (campaign, key))').run();
+  const c = await db.prepare('INSERT OR IGNORE INTO bot_once (campaign, key, at, ok) VALUES (?, ?, ?, 1)').bind(campaign, String(key).toLowerCase(), Date.now()).run();
+  return !!(c.meta && c.meta.changes);
+}
+async function confirmPrompts(env, db, auth) {
+  const now = Date.now(), day = swapDay(now), start = swapDayStart(now);
+  if (!confirmOn(day) || now - start > 45 * 60000) return;   // the first 45 minutes of the swap day
+  await matchCols(db);
+  const us = ((await db.prepare(`SELECT key, rsUser, hashId, slots, sched, confirmDay FROM swap_users WHERE active=1 AND hashId IS NOT NULL AND wants IS NOT NULL AND wants <> '[]'`).all()).results) || [];
+  const todo = us.filter(u => !isConfirmed(u, day)).map(u => ({ u, hrs: hoursToday(u, start) })).filter(x => x.hrs.length).sort((a, b) => a.hrs[0] - b.hrs[0]);
+  for (const { u, hrs } of todo) {
+    if (TICK_T0 && tickLeft() - dmWaitAhead() < 6000) break;
+    if (!(await onceFor(db, 'cprompt_' + day, u.key))) continue;
+    const tz = tzOf(u), z = tz ? '' : ' ET';
+    const times = hrs.map(t => hLabel(t, tz)).join(', ') + z, by = hLabel(hrs[0] - 30 * 60000, tz) + z;
+    try { const ch = await dmChannel(db, auth, u.hashId, u.rsUser, env);
+      await dmSendRetry(auth, ch, fitOne(`You have the selected times ${times} - you have until ${by} to confirm, go on https://raxacademy.app/swaps and click "Confirm set times" on the top of the page`));
+      await stat(db, 'dm_confirm_prompt'); }
+    catch (e) { await botFail(db, 'dm_confirm_prompt', `${u.key}: ${e.message || e}`); }
+  }
+}
+async function confirmGate(env, db, auth) {
+  const now = Date.now();
+  await matchCols(db);
+  const ms = ((await db.prepare(`SELECT * FROM swap_matches WHERE status='pending' AND warnA IS NULL AND warnB IS NULL AND dueAt > ? AND dueAt <= ?`).bind(now, now + 32 * 60000).all()).results) || [];
+  if (!ms.length) return;
+  const cache = new Map(), get = async k => { if (!cache.has(k)) cache.set(k, await db.prepare('SELECT key, rsUser, hashId, confirmDay FROM swap_users WHERE key=?').bind(k).first()); return cache.get(k); };
+  const told = new Map();
+  for (const m of ms) {
+    const due = sideDue(m), day = swapDay(due); if (!confirmOn(day)) continue;
+    const ua = await get(m.a), ub = await get(m.b), noA = !isConfirmed(ua, day), noB = !isConfirmed(ub, day);
+    if (!noA && !noB) continue;
+    const who = [noA && m.a, noB && m.b].filter(Boolean);
+    const c = await db.prepare(`UPDATE swap_matches SET status='cancelled', note=? WHERE id=? AND status='pending' AND warnA IS NULL AND warnB IS NULL`).bind(`called off: ${who.map(k => '@' + ((cache.get(k) || {}).rsUser || k)).join(', ')} didn't confirm today`, m.id).run();
+    if (c.meta && c.meta.changes) { await stat(db, 'confirm_calledoff'); for (const k of who) told.set(k, due); }
+  }
+  for (const [k, due] of told) {
+    if (TICK_T0 && tickLeft() - dmWaitAhead() < 5000) break;
+    const u = cache.get(k); if (!u || !u.hashId) continue;
+    if (!(await onceFor(db, 'noconf_' + due, k))) continue;
+    try { const ch = await dmChannel(db, auth, u.hashId, u.rsUser, env);
+      await dmSendRetry(auth, ch, `You didn't confirm your swaps, go to https://raxacademy.app/swaps to confirm it for your next set time`);
+      await stat(db, 'dm_noconfirm'); }
+    catch (e) { await botFail(db, 'dm_noconfirm', `${k}: ${e.message || e}`); }
+  }
+}
 async function dmTick(env) {
   TICK_T0 = Date.now(); TICK_BUDGET = 26000;
   const db = env.RATEBOARD_DB, auth = swapToken(env);
@@ -1959,7 +2026,10 @@ async function dmTick(env) {
       await dmSend(auth, ch, fitOne(`Swap time - send 12 hour offers. You have ${n} swaps now - who to contact, their comments and your cards are here:\n${link2}\n\nYou are receiving: ${sum}\n\nReport anyone doing it wrong.`));
       await stat(db, 'dm_admin', 2);
     } } } catch (e) { await botFail(db, 'dm_admin', 'example: ' + (e.message || e)); }
+  // Unconfirmed members' swaps come off before any warning goes out; the day's confirm DMs at its start.
+  try { await confirmGate(env, db, auth); } catch (e) { await botFail(db, 'confirm_gate', e.message); }
   try { await retryDms(db, auth); } catch (e) { await botFail(db, 'dm_retry', e.message); }   // unsent parts first
+  try { await confirmPrompts(env, db, auth); } catch (e) { await botFail(db, 'dm_confirm_prompt', e.message); }
   try {
     const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned','cancelling') AND createdAt > ? ORDER BY COALESCE(dueAt, createdAt), id LIMIT 800`)
       .bind(Date.now() - 2 * 86400000).all()).results) || [];
@@ -2182,7 +2252,7 @@ export async function swapAccess(env, request) {
 }
 // What a member (not an admin) may do: their own swap and nothing else, and
 // for OTD their own passes and games.
-const MEMBER_OPS = new Set(['recbuys', 'myhour', 'me', 'save', 'keep', 'touch', 'packstoday', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
+const MEMBER_OPS = new Set(['confirm', 'recbuys', 'myhour', 'me', 'save', 'keep', 'touch', 'packstoday', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
 const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan']);
 const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostdays', 'projections', 'boostinv', 'buys', 'legboosts', 'resell', 'nosell']);
 const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
@@ -3124,7 +3194,7 @@ async function handle({ request, env, waitUntil }) {
       } else if (b.act === 'slots') {
         if (sched && sched.mode && sched.mode !== 'daily') return json({ error: 'Your hours are set by day of the week or for one date - change those on /swaps.' }, 400);
         slots = [...new Set((Array.isArray(b.slots) ? b.slots : []).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24))].slice(0, MAX_SLOTS);
-        sched = { mode: 'daily' };
+        sched = { mode: 'daily', ...(sched && sched.tz ? { tz: sched.tz } : {}) };
       } else return json({ error: 'Nothing to change.' }, 400);
       await db.prepare('UPDATE swap_users SET wants=?, slots=?, sched=?, updatedAt=? WHERE key=?').bind(JSON.stringify(wants), JSON.stringify(slots), JSON.stringify(sched || { mode: 'daily' }), Date.now(), me).run();
       try { await env.RATEBOARD_KV.delete('swap_wantcounts_v1'); await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); } catch (e) {}
@@ -3272,6 +3342,20 @@ async function handle({ request, env, waitUntil }) {
     const own = new Set(parse(u && u.passes, []).filter(p => p.kind !== 'team').map(p => p.key));
     const rows = c.rows.filter(x => x.n >= 3 && !own.has(x.key) && !/^(soccer|ufc):/.test(x.key) && !seasonOff(x.key)).slice(0, 10);
     return json({ members: c.members, rows, scanned: !!(u && u.passes) });
+  }
+  if (op === 'confirm' && request.method === 'POST') {
+    await matchCols(db);
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    const now = Date.now(), day = swapDay(now), start = swapDayStart(now);
+    const u = await db.prepare('SELECT key, slots, sched FROM swap_users WHERE key=?').bind(me).first();
+    if (!u) return json({ error: 'Scan your passes first.' }, 400);
+    // Keep their time zone (daily hours had none saved) so the 3am DM shows their own times.
+    let sc = parse(u.sched, null) || { mode: 'daily' };
+    if (b.tz && !sc.tz) { try { new Intl.DateTimeFormat('en-US', { timeZone: String(b.tz) }); sc = { ...sc, tz: String(b.tz).slice(0, 60) }; } catch (e) {} }
+    await db.prepare('UPDATE swap_users SET confirmDay=?, sched=? WHERE key=?').bind(day, JSON.stringify(sc), me).run();
+    await stat(db, 'confirm_tap');
+    const hrs = hoursToday({ ...u, sched: sc }, start);
+    return json({ ok: true, day, times: hrs, active: confirmOn(day) });
   }
   if (op === 'myhour') {
     await matchCols(db);
@@ -3781,7 +3865,8 @@ async function handle({ request, env, waitUntil }) {
     const lite = url.searchParams.get('page') === 'boosts';
     const lowP = u && !lite ? await (async () => { try { return [...await lowPlays(env, db, parse(u.passes, []).filter(p => p.kind !== 'team').map(p => p.key))]; } catch (e) { return []; } })() : [];
     mark(request, 'plays');
-    return json({ key: me, admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
+    const cDay = swapDay(Date.now());
+    return json({ confirmedToday: !!(u && u.confirmDay === cDay), confirmStarts: CONFIRM_FROM_DAY, swapToday: cDay, key: me, admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
       keep: parse(u.keep, []), touch: parse(u.touch, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: lite ? [] : parse(u.passes, []), passCount: (() => { try { return parse(u.passes, []).length; } catch (e) { return 0; } })(), lowPlays: lowP, scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {} } : null, real: realN });
   }
 
