@@ -2158,7 +2158,7 @@ export async function swapAccess(env, request) {
 }
 // What a member (not an admin) may do: their own swap and nothing else, and
 // for OTD their own passes and games.
-const MEMBER_OPS = new Set(['me', 'save', 'keep', 'touch', 'packstoday', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
+const MEMBER_OPS = new Set(['myhour', 'me', 'save', 'keep', 'touch', 'packstoday', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
 const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan']);
 const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostdays', 'projections', 'boostinv', 'buys', 'legboosts', 'resell', 'nosell']);
 const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
@@ -3031,6 +3031,65 @@ async function handle({ request, env, waitUntil }) {
     }
     return json({ user: (me && me.rsUser) || u.key, due, swaps: out, admin: ADMINS.includes(u.key.toLowerCase()) || undefined });
   }
+  /* Most picked players, for everyone on the hour page (Dennis, 2026-11-05):
+     how many active members are swapping for each player, most first. */
+  if (op === 'hourtop') {
+    const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));
+    if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
+    let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get('swap_wanttop_v1')) || 'null'); } catch (e) {}
+    if (!c || Date.now() - c.at > 300000) {
+      const n = {}; let members = 0;
+      for (const r of ((await db.prepare(`SELECT wants FROM swap_users WHERE active=1 AND wants IS NOT NULL AND wants <> '[]'`).all()).results || [])) {
+        members++; for (const w of parse(r.wants, []).slice(0, MAX_WANTS)) n[w] = (n[w] || 0) + 1; }
+      const nc = new Map(), top = Object.entries(n).sort((a, b) => b[1] - a[1]).slice(0, 60);
+      const rows = []; for (const [k, v] of top) rows.push({ key: k, name: await indexName(db, k, nc), n: v, url: playerUrl(k) });
+      c = { at: Date.now(), members, rows };
+      try { await env.RATEBOARD_KV.put('swap_wanttop_v1', JSON.stringify(c)); } catch (e) {}
+    }
+    const r = await db.prepare('SELECT wants FROM swap_users WHERE LOWER(key)=?').bind(key.toLowerCase()).first();
+    const mine = new Set(parse(r && r.wants, []));
+    return json({ at: c.at, members: c.members, rows: c.rows.map(x => ({ ...x, mine: mine.has(x.key) || undefined })) });
+  }
+  /* Your players and hours, from the hour page (Dennis, 2026-11-05): see them,
+     remove or add a player, and change daily hours - the same saves (and the
+     same calling-off of swaps still to come) as on /swaps. */
+  if (op === 'hourpicks') {
+    const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));
+    if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
+    await matchCols(db);
+    const u = await db.prepare('SELECT key FROM swap_users WHERE LOWER(key)=?').bind(key.toLowerCase()).first();
+    if (!u) return json({ error: 'Scan your passes on /swaps first.' }, 404);
+    const me = u.key, auth = swapToken(env);
+    let calledOff = 0, late = 0, msg = null;
+    if (request.method === 'POST') {
+      let b = {}; try { b = await request.json(); } catch (e) {}
+      if (!(await allow(url.origin, 'hourpicks:' + me, 40, 600))) return json({ error: 'Slow down a little - try again in a few minutes.' }, 429);
+      const r = await db.prepare('SELECT wants, slots, sched, passes, keep FROM swap_users WHERE key=?').bind(me).first();
+      let wants = parse(r.wants, []), slots = parse(r.slots, []), sched = parse(r.sched, null);
+      if (b.act === 'drop') wants = wants.filter(w => w !== String(b.key || ''));
+      else if (b.act === 'add') {
+        const k = String(b.key || ''), own = parse(r.passes, []).find(p => p.key === k && p.kind !== 'team');
+        if (!own || /^(soccer|ufc):/.test(k) || seasonOff(k)) return json({ error: "You can only add a pass you own that can be swapped." }, 400);
+        if (parse(r.keep, []).includes(k)) return json({ error: "That's one of your keeps - take it off your keeps on /swaps first." }, 400);
+        if (wants.length >= MAX_WANTS) return json({ error: `You can swap for up to ${MAX_WANTS} players at once - remove one first.` }, 400);
+        if (!wants.includes(k)) wants.push(k);
+      } else if (b.act === 'slots') {
+        if (sched && sched.mode && sched.mode !== 'daily') return json({ error: 'Your hours are set by day of the week or for one date - change those on /swaps.' }, 400);
+        slots = [...new Set((Array.isArray(b.slots) ? b.slots : []).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24))].slice(0, MAX_SLOTS);
+        sched = { mode: 'daily' };
+      } else return json({ error: 'Nothing to change.' }, 400);
+      await db.prepare('UPDATE swap_users SET wants=?, slots=?, sched=?, updatedAt=? WHERE key=?').bind(JSON.stringify(wants), JSON.stringify(slots), JSON.stringify(sched || { mode: 'daily' }), Date.now(), me).run();
+      try { await env.RATEBOARD_KV.delete('swap_wantcounts_v1'); await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); } catch (e) {}
+      try { const res = await afterCallOff(env, db, auth, me, await cancelDropped(db, me, new Set(wants), new Set(slots), sched)); calledOff = res.n; late = res.late; } catch (e) {}
+      msg = 'Saved.';
+    }
+    const r = await db.prepare('SELECT wants, slots, sched, passes, keep, active FROM swap_users WHERE key=?').bind(me).first();
+    const mine = { key: me, passes: parse(r.passes, []) }, wants = parse(r.wants, []), keep = new Set(parse(r.keep, []));
+    const options = mine.passes.filter(p => p.kind !== 'team' && !/^(soccer|ufc):/.test(p.key) && !seasonOff(p.key) && !wants.includes(p.key) && !keep.has(p.key))
+      .map(p => ({ key: p.key, name: playerName(mine, p.key) })).sort((a, b) => a.name.localeCompare(b.name));
+    return json({ ok: true, msg, calledOff, late, active: !!Number(r.active), wants: wants.map(k => ({ key: k, name: playerName(mine, k), url: playerUrl(k) })),
+      slots: parse(r.slots, []), sched: parse(r.sched, null) || { mode: 'daily' }, options, maxWants: MAX_WANTS, maxSlots: MAX_SLOTS });
+  }
   /* The hour page's Report button (Dennis, 2026-11-05): a report on one partner
      of that hour, straight from the signed page - same list as REPORT on /swaps. */
   if (op === 'hourreport' && request.method === 'POST') {
@@ -3156,6 +3215,14 @@ async function handle({ request, env, waitUntil }) {
 
   /* A member's own swaps: coming up, and the last two weeks of past ones. */
   /* Packs today (see packsToday): signed in on /swaps. */
+  if (op === 'myhour') {
+    await matchCols(db);
+    const now = Date.now();
+    const n = await db.prepare("SELECT MIN(dueAt) AS d FROM swap_matches WHERE (a=? OR b=?) AND dueAt > ? AND status IN ('pending','sending','warned','sent')").bind(me, me, now - 3600000).first();
+    const l = n && n.d ? null : await db.prepare("SELECT MAX(dueAt) AS d FROM swap_matches WHERE (a=? OR b=?) AND status <> 'cleared'").bind(me, me).first();
+    const at = Number((n && n.d) || (l && l.d)) || Math.ceil(now / 3600000) * 3600000;
+    return json({ url: `/hour?u=${encodeURIComponent(me)}&d=${at}&t=${await hourSig(env, me, at)}`, next: !!(n && n.d) });
+  }
   if (op === 'packstoday') {
     let b = {}; if (request.method === 'POST') { try { b = await request.json(); } catch (e) {} }
     return json(await packsToday(env, db, me, request.method === 'POST' ? b : null));
