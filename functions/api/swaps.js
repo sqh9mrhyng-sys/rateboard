@@ -687,7 +687,7 @@ async function runMatching(db, env) {
      MATCH_AHEAD_MS. Each member's schedule says whether (and how high) they
      swap at each one. */
   const dues = [];
-  for (let t = Math.floor((now + 30 * 60000) / 3600000) * 3600000 + 3600000; t - now <= MATCH_AHEAD_MS; t += 3600000) dues.push(t);
+  for (let t = Math.floor((now + 30 * 60000) / 3600000) * 3600000 + 3600000; t - now <= MATCH_AHEAD_MS; t += 3600000) if (!noSwapHour(t)) dues.push(t);
   /* Priority members (Dennis picks them on the Swaps page, 2026-11-05): every
      hour they pick counts as their 1st, and their pairs go ahead of everyone
      but Dennis's - so when two people want the same player, they get it. */
@@ -1251,6 +1251,12 @@ function dueFor(slot, from) {
 }
 // The swap day a moment belongs to: it starts at 7am ET.
 const swapDay = ms => etDay(ms - 7 * 3600000);
+/* No swaps at 7am ET (3am Alaska), from Saturday Nov 7 (Dennis, 2026-11-06):
+   packs reset then and the swap day turns over, so a swap at that hour
+   could land before the new pack. Checked in ET so it follows the clocks. */
+const NO_SWAP_FROM = Date.UTC(2026, 10, 7, 9);   // Sat Nov 7, 00:00 Alaska
+const etHour = ms => Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hourCycle: 'h23' }).format(new Date(ms)));
+const noSwapHour = ms => ms >= NO_SWAP_FROM && etHour(ms) === 7;
 const sideDue = m => Number(m.dueAt) || dueFor(m.slot, Number(m.createdAt) || Date.now());
 
 /* Runs every minute. Groups the open matches by member and sends whatever

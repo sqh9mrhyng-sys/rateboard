@@ -225,6 +225,9 @@ async function loadRax(){
 /* Your players & hours: see and change them here. */
 const tzOff = -new Date().getTimezoneOffset() / 60, toUtc = h => ((h - tzOff) % 24 + 24) % 24, toLocal = h => ((h + tzOff) % 24 + 24) % 24;
 const hLbl = h => `${h % 12 || 12}${h < 12 ? 'am' : 'pm'}`;
+// Packs reset at 7am ET: no swaps at that hour from Sat Nov 7. This phone's hour for it.
+const RESET_LOCAL = (() => { const f = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hourCycle: 'h23' });
+  for(let h = 0; h < 24; h++){ const d = new Date(); d.setHours(h, 0, 0, 0); if(Number(f.format(d)) === 7) return h; } return -1; })();
 let picks = null;
 async function loadPicks(body){
   let j; try{ j = await (await fetch(`/api/swaps?op=hourpicks&${sig()}`, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {})).json(); }
@@ -240,7 +243,9 @@ async function loadPicks(body){
     const ord = j.slots.map(toLocal);
     $('#phn').textContent = `${j.slots.length}/${j.maxSlots}`;
     $('#phnote').textContent = "Tap to turn an hour on or off - it saves straight away. Your first pick is your main hour. Times are your phone's time.";
-    $('#phgrid').innerHTML = Array.from({ length: 24 }, (_, h) => { const i = ord.indexOf(h); return `<button type="button" data-ph="${h}" class="${i >= 0 ? 'on' : ''}">${hLbl(h)}${i >= 0 ? `<span class="ord">${i + 1}</span>` : ''}</button>`; }).join('');
+    $('#phgrid').innerHTML = Array.from({ length: 24 }, (_, h) => { const i = ord.indexOf(h);
+      if(h === RESET_LOCAL && i < 0) return `<button type="button" disabled title="Packs reset - no swaps at this hour" style="opacity:.45;border-style:dashed;cursor:not-allowed">${hLbl(h)}<span class="ord">reset</span></button>`;
+      return `<button type="button" data-ph="${h}" class="${i >= 0 ? 'on' : ''}">${hLbl(h)}${i >= 0 ? `<span class="ord">${i + 1}</span>` : ''}</button>`; }).join('');
   } else {
     $('#phn').textContent = '';
     $('#phnote').innerHTML = `Your hours are set ${j.sched.mode === 'weekly' ? 'by day of the week' : 'for one date'} - change them on <a href="/swaps">/swaps</a>.`;

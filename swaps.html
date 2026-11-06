@@ -70,6 +70,7 @@
   .stabs button.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 18%,var(--panel2));font-weight:700}
   .untouch{margin:8px 0 10px;padding:10px 12px;border:1px solid var(--accent);border-radius:10px;background:color-mix(in srgb,var(--accent) 8%,var(--panel2))}
   .untouch .uh{margin-bottom:4px}
+  #hours label.rst{opacity:.5;cursor:not-allowed;border-style:dashed}
   .linkbtn{background:none;border:0;padding:0;color:var(--accent);font:inherit;font-weight:700;text-decoration:underline;cursor:pointer}
   .utog{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;background:none;border:0;padding:0;color:var(--ink);font:inherit;text-align:left;cursor:pointer}
   .utog .car{flex:none;color:var(--accent);font-weight:700;font-size:13px}
@@ -485,6 +486,9 @@ function setHours(list){
   else if(sc.mode === 'date') sc.hours = list;
   else prof.slots = list.map(h => Math.round(toUtc(h)));
 }
+// The hour packs reset (7am ET) in this phone's time: no swaps then, from Sat Nov 7.
+const RESET_LOCAL = (() => { const f = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hourCycle: 'h23' });
+  for(let h = 0; h < 24; h++){ const d = new Date(); d.setHours(h, 0, 0, 0); if(Number(f.format(d)) === 7) return h; } return -1; })();
 function drawHours(){
   const sc = schedOf();
   document.querySelectorAll('#hmode button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.m === sc.mode)));
@@ -503,6 +507,7 @@ function drawHours(){
   const local = curHours();
   $('#hours').innerHTML = Array.from({length: 24}, (_, h) => {
     const r = local.indexOf(h), n = hourCounts ? hourCounts[Math.round(toUtc(h))] || 0 : null;
+    if(h === RESET_LOCAL) return `<label class="${r >= 0 ? 'on ' : ''}rst" title="Packs reset at this hour - no swaps from Saturday Nov 7"><input type="checkbox" value="${h}" ${r >= 0 ? 'checked' : 'disabled'}>${r >= 0 ? `<span class="rk">${RANK[r]}</span>` : ''}${hLbl(h)}<span class="cnt">${r >= 0 ? 'no swaps · untick' : 'packs reset'}</span></label>`;
     return `<label class="${r >= 0 ? 'on' : ''}"><input type="checkbox" value="${h}" ${r >= 0 ? 'checked' : ''}>${r >= 0 ? `<span class="rk">${RANK[r]}</span>` : ''}${hLbl(h)}`
       + (n != null ? `<span class="cnt">${n} ${n === 1 ? 'user' : 'users'}</span>` : '') + '</label>';
   }).join('');
