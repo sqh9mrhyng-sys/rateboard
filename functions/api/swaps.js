@@ -591,7 +591,7 @@ async function runMatching(db, env) {
     }
   } catch (e) {}
   // One read of the last two days' swaps, split here into live ones and the rest.
-  const recent2d = ((await db.prepare(`SELECT a, b, aGets, bGets, slot, createdAt, dueAt, followA, followB, status FROM swap_matches WHERE createdAt > ?`).bind(Date.now() - 2 * 86400000).all()).results || []);
+  const recent2d = ((await db.prepare(`SELECT a, b, aGets, bGets, slot, createdAt, dueAt, followA, followB, warnA, warnB, doneA, doneB, status FROM swap_matches WHERE createdAt > ?`).bind(Date.now() - 2 * 86400000).all()).results || []);
   const LIVE_ST = new Set(['pending', 'sending', 'warned', 'sent']);
   const open = recent2d.filter(m => LIVE_ST.has(m.status));
   /* A called-off swap still uses up a pass for the day on whichever side had
@@ -611,7 +611,12 @@ async function runMatching(db, env) {
     bump(recv, `${m.a}|${m.aGets}|${d}`); bump(recv, `${m.b}|${m.bGets}|${d}`);
     // Finished swaps are marked (followA/followB) but no longer close the swap day.
   }
-  for (const m of offTold) { const d = swapDay(sideDue(m)); given.add(`${m.b}|${m.aGets}|${d}`); given.add(`${m.a}|${m.bGets}|${d}`); }
+  /* A called-off swap only uses up the pass of a side that had already been
+     warned (told to buy - they may have bought it). Called off before any
+     warning, both passes are free again the same swap day (Dennis, 2026-11-05). */
+  for (const m of offTold) { const d = swapDay(sideDue(m));
+    if (m.warnB || m.doneB) given.add(`${m.b}|${m.aGets}|${d}`);
+    if (m.warnA || m.doneA) given.add(`${m.a}|${m.bGets}|${d}`); }
   // Packs a member marked as used today themselves (Packs today tab): not given again this swap day.
   for (const u of users) { const pu = parse(u.packsUsed, null); if (pu && pu.day && Array.isArray(pu.keys)) for (const k of pu.keys) given.add(`${u.key}|${k}|${pu.day}`); }
   lap();   // 1: members + swaps read
@@ -1796,13 +1801,15 @@ async function packsToday(env, db, me, change) {
     await db.prepare('UPDATE swap_users SET packsUsed=? WHERE key=?').bind(JSON.stringify(pu), me).run();
   }
   const mine = { key: me, passes: parse(r.passes, []) };
-  const ms = ((await db.prepare("SELECT a, b, aGets, bGets, dueAt, slot, createdAt, status FROM swap_matches WHERE (a=? OR b=?) AND dueAt > ? AND status <> 'cleared'").bind(me, me, Date.now() - 2 * 86400000).all()).results) || [];
+  const ms = ((await db.prepare("SELECT a, b, aGets, bGets, dueAt, slot, createdAt, status, warnA, warnB, doneA, doneB FROM swap_matches WHERE (a=? OR b=?) AND dueAt > ? AND status <> 'cleared'").bind(me, me, Date.now() - 2 * 86400000).all()).results) || [];
   const used = new Map(), recvToday = new Map(); let next = null, latest = null;
   for (const m of ms) { const due = sideDue(m);
     // Packs coming to them today, per player they're grinding.
     if (swapDay(due) === day && !['cancelled', 'cancelling'].includes(m.status)) { const rk = m.a === me ? m.aGets : m.bGets; const v = recvToday.get(rk) || recvToday.set(rk, { done: 0, left: 0 }).get(rk); if (due <= Date.now()) v.done++; else v.left++; }
     if (!['cancelled', 'cancelling'].includes(m.status)) { if (due > Date.now() - 3600000 && (!next || due < next)) next = due; if (!latest || due > latest) latest = due; }
     if (swapDay(due) !== day) continue;
+    const isOff = ['cancelled', 'cancelling'].includes(m.status), toldMe = m.a === me ? (m.warnA || m.doneA) : (m.warnB || m.doneB);
+    if (isOff && !toldMe) continue;      // called off before they were warned: that pass is free again
     const k = m.a === me ? m.bGets : m.aGets, partner = m.a === me ? m.b : m.a;
     const x = used.get(k) || used.set(k, { key: k, name: playerName(mine, k), times: [], partners: [], off: 0, n: 0 }).get(k);
     x.n++; x.times.push(due); x.partners.push(partner); if (['cancelled', 'cancelling'].includes(m.status)) x.off++; }

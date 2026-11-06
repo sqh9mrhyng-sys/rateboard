@@ -150,7 +150,7 @@ const pkUrl = () => `/api/swaps?op=hourpacks&u=${encodeURIComponent(q.get('u') |
 function paintPk(j){
   if(j.error){ $('#pklist').innerHTML = `<p class="note">${esc(j.error)}</p>`; return; }
   const tm = ms => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  $('#pklist').innerHTML = (j.system || []).map(x => `<div class="hm-i"><span><b>${esc(x.name)}</b><span class="sub">swap at ${x.times.map(tm).join(', ')}${x.off ? ` · ${x.off} called off (still counts)` : ''}</span></span><span class="note">used</span></div>`).join('')
+  $('#pklist').innerHTML = (j.system || []).map(x => `<div class="hm-i"><span><b>${esc(x.name)}</b><span class="sub">swap at ${x.times.map(tm).join(', ')}${x.off ? ` · ${x.off} called off after the warning (still counts)` : ''}</span></span><span class="note">used</span></div>`).join('')
     + (j.manual || []).map(x => `<div class="hm-i"><span><b>${esc(x.name)}</b><span class="sub">added by you</span></span><button class="btn" data-unpk="${esc(x.key)}" type="button">Remove</button></div>`).join('')
     || '<p class="note">No packs used yet today.</p>';
   $('#pkgrinds').innerHTML = (j.grinds || []).map(g => `<div class="hm-i"><span><b>${esc(g.name)}</b>${g.picked ? '' : '<span class="sub">no longer picked</span>'}</span><span><b class="gn">${g.done + g.left}</b> <span class="note">pack${g.done + g.left === 1 ? '' : 's'}${g.left ? ` (${g.left} still to come)` : ''}</span></span></div>`).join('')
