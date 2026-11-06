@@ -3283,6 +3283,17 @@ async function handle({ request, env, waitUntil }) {
     return json({ ok: true, msg, calledOff, late, active: !!Number(r.active), wants: wants.map(k => ({ key: k, name: playerName(mine, k), url: playerUrl(k) })),
       slots: parse(r.slots, []), sched: parse(r.sched, null) || { mode: 'daily' }, options, maxWants: MAX_WANTS, maxSlots: MAX_SLOTS });
   }
+  /* Rating leaderboard for everyone on the swap page (Dennis, 2026-11-06):
+     every rated member by average stars, with how many votes. Ratings from
+     members whose rating was turned off don't count. */
+  if (op === 'hourratings') {
+    const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));
+    if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
+    await db.prepare(RATE_DDL).run(); await db.prepare(RATE_BLOCK_DDL).run();
+    const rows = ((await db.prepare(`SELECT r.ratee AS k, AVG(r.stars) AS avg, COUNT(*) AS n, u.rsUser AS rsUser, u.hashId AS hashId FROM swap_ratings r LEFT JOIN swap_users u ON u.key = r.ratee
+      WHERE r.rater NOT IN (SELECT key FROM swap_rate_block) GROUP BY r.ratee ORDER BY avg DESC, n DESC LIMIT 500`).all()).results) || [];
+    return json({ me: key.toLowerCase(), rows: rows.map(r => ({ user: r.rsUser || r.k, url: profileUrl(r.rsUser || r.k, r.hashId), avg: Math.round(Number(r.avg) * 100) / 100, votes: Number(r.n), mine: String(r.k).toLowerCase() === key.toLowerCase() || undefined })) });
+  }
   if (op === 'hourrate' && request.method === 'POST') {
     const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));
     if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);

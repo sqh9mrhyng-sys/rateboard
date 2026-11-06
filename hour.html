@@ -88,6 +88,12 @@
   .rx .rk{color:var(--mute);font-weight:800;font-size:13px;text-align:right} .rxh span:first-child{text-align:right}
   .rx a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)} .rx .se{color:var(--mute);font-size:13px;white-space:nowrap}
   .rx .rv{font-weight:800;text-align:right}
+  .rlh,.rl{display:grid;grid-template-columns:28px 1fr 70px 50px;gap:8px;align-items:center}
+  .rlh{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--mute);padding:0 0 4px} .rlh span:nth-child(n+3){text-align:right}
+  .rl{padding:8px 0;border-top:1px solid var(--line);font-size:14.5px} .rl .rk{color:var(--mute);font-weight:800;font-size:13px;text-align:right}
+  .rl a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)} .rl .you{color:var(--accent);font-size:11px;font-weight:800;margin-left:6px}
+  .rl .av{font-weight:800;text-align:right} .rl .sx{color:#F5B83D} .rl .vt{text-align:right;color:var(--mute)}
+  .rl.me{background:linear-gradient(90deg,transparent,rgba(232,163,61,.08))}
   .pw{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--line)} .pw:first-child{border-top:0}
   .pw b a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)} .pw .o{color:var(--mute);font-weight:800;margin-right:8px}
   .pw button,.phgrid button{cursor:pointer;font:inherit}
@@ -119,6 +125,11 @@
       <p class="note" id="raxsum" style="margin:0 0 8px">Loading…</p>
       <div class="rxh"><span>#</span><span>Player</span><span>Rax</span><span>Owners</span><span>Here</span></div>
       <div id="raxlist"></div></section></div>
+  <div id="rateview" hidden><section>
+    <h2>Rating leaderboard</h2>
+    <p class="note" id="rlsum" style="margin:0 0 8px">Loading…</p>
+    <div class="rlh"><span>#</span><span>Member</span><span>Avg</span><span>Votes</span></div>
+    <div id="rllist"></div></section></div>
   <div id="pickview" hidden>
     <p class="note" id="pkmsg2" style="margin:10px 0 0"></p>
     <section><h2>Your players <span class="n" id="pwn"></span></h2>
@@ -164,7 +175,7 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
   $('#h').innerHTML = `@${esc(j.user)} · <button class="tbtn" id="tbtn" aria-expanded="false">${esc(when)} <span class="car">▾</span></button>`;
   $('#tbtn').addEventListener('click', openMenu);
   isAdm = !!j.admin;
-  const views = { top: ['#topview', 'Most picked ', loadTop], picks: ['#pickview', 'Your players & hours ', loadPicks] };
+  const views = { ratings: ['#rateview', 'Rating leaderboard ', loadRatings], top: ['#topview', 'Most picked ', loadTop], picks: ['#pickview', 'Your players & hours ', loadPicks] };
   if(views[q.get('v')]){ const [id, lbl, fn] = views[q.get('v')]; $('#tbtn').firstChild.textContent = lbl; ['#buy', '#con', '#andr', '#wait', '#sub'].forEach(x => { const el = $(x); if(el) el.hidden = true; }); $(id).hidden = false; fn(); return; }
   if(q.get('v') === 'byhour' && isAdm){ $('#tbtn').firstChild.textContent = 'Swaps by hour '; ['#buy', '#con', '#andr', '#wait', '#sub'].forEach(id => { const el = $(id); if(el) el.hidden = true; }); $('#byview').hidden = false; byLoad(Number(q.get('at')) || 0); return; }
   // Packs today view: the page shows only that.
@@ -220,6 +231,13 @@ $('#pkaddbtn').addEventListener('click', async () => { const k = $('#pkadd').val
 $('#pklist').addEventListener('click', async e => { const b = e.target.closest('[data-unpk]'); if(!b) return; const j = await pkPost({ key: b.dataset.unpk, remove: true }); $('#pkmsg').textContent = j.error || 'Removed.'; });
 /* The top buttons: back to /swaps, and your players & hours. */
 { const pq2 = new URLSearchParams(location.search); pq2.set('v', 'picks'); pq2.delete('at'); $('#picksbtn').href = '?' + pq2.toString(); if(q.get('v') === 'picks') $('#picksbtn').classList.add('go'); }
+/* Rating leaderboard: every rated member by average stars. */
+async function loadRatings(){
+  let j; try{ j = await (await fetch(`/api/swaps?op=hourratings&${sig()}`)).json(); }catch(e){ $('#rlsum').textContent = 'Could not reach the board.'; return; }
+  if(j.error){ $('#rlsum').textContent = j.error; return; }
+  $('#rlsum').textContent = j.rows.length ? `${j.rows.length} rated member${j.rows.length === 1 ? '' : 's'}, best average first (more votes first on a tie). Members rate each other after a swap, from the swap page.` : 'Nobody has been rated yet - rate your partners after a swap, under "Offer on your partners\' cards".';
+  $('#rllist').innerHTML = j.rows.map((x, i) => `<div class="rl${x.mine ? ' me' : ''}"><span class="rk">${i + 1}</span><span>${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">@${esc(x.user)}</a>` : '@' + esc(x.user)}${x.mine ? '<span class="you">YOU</span>' : ''}</span><span class="av">${x.avg.toFixed(2)} <span class="sx">★</span></span><span class="vt">${x.votes}</span></div>`).join('');
+}
 /* Most picked players: everyone's picks, most first. */
 async function loadTop(){
   let j; try{ j = await (await fetch(`/api/swaps?op=hourtop&${sig()}`)).json(); }catch(e){ $('#topsum').textContent = 'Could not reach the board.'; return; }
@@ -328,8 +346,10 @@ async function openMenu(){
   const bq = new URLSearchParams(location.search); bq.set('v', 'byhour'); bq.delete('at');
   const tq = new URLSearchParams(location.search); tq.set('v', 'top'); tq.delete('at');
   const topItem = `<a class="hm-i pk${q.get('v') === 'top' ? ' on' : ''}" href="?${tq.toString()}"><span>🏆 Most picked players</span><span class="note">everyone's picks</span></a>`;
+  const rq = new URLSearchParams(location.search); rq.set('v', 'ratings'); rq.delete('at');
+  const rateItem = `<a class="hm-i pk${q.get('v') === 'ratings' ? ' on' : ''}" href="?${rq.toString()}"><span>⭐ Rating leaderboard</span><span class="note">everyone's stars</span></a>`;
   const byItem = isAdm ? `<a class="hm-i pk${q.get('v') === 'byhour' ? ' on' : ''}" href="?${bq.toString()}"><span>🗂 Swaps by hour</span><span class="note">everyone, any hour</span></a>` : '';
-  $('#hm-up').innerHTML = `<a class="hm-i pk${q.get('v') === 'packs' ? ' on' : ''}" href="?${pq.toString()}"><span>📦 Packs today</span><span class="note">grinds and packs used</span></a>` + topItem + byItem + (up.map(item).join('') || '<p class="note" style="margin:6px 0">Nothing scheduled.</p>');
+  $('#hm-up').innerHTML = `<a class="hm-i pk${q.get('v') === 'packs' ? ' on' : ''}" href="?${pq.toString()}"><span>📦 Packs today</span><span class="note">grinds and packs used</span></a>` + topItem + rateItem + byItem + (up.map(item).join('') || '<p class="note" style="margin:6px 0">Nothing scheduled.</p>');
   $('#hm-past').innerHTML = past.map(item).join('') || '<p class="note" style="margin:6px 0">Nothing in the last 14 days.</p>';
 }
 document.addEventListener('click', async e => {
