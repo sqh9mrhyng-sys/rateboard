@@ -2945,7 +2945,7 @@ export async function fcSchedule(env, day, force) {
   const key = `boostsched_v2_soccer_${day}`;
   let old = null;
   try { old = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); } catch (e) {}
-  if (old && !force) return old;
+  if (old && !force && (old.lgs || []).length === FC_LEAGUES.length) return old;   // a copy from before a competition was added is read again
   const ymd = day.replace(/-/g, '');
   const got = await Promise.all(FC_LEAGUES.map(async lg => {
     try { const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/${lg}/scoreboard?dates=${ymd}`); return r.ok ? { lg, d: await r.json() } : { lg, err: r.status }; }
@@ -2968,7 +2968,7 @@ export async function fcSchedule(env, day, force) {
   const teams = {};
   for (const e of events) for (const [me, op, home] of [[e.h, e.a, true], [e.a, e.h, false]])
     teams[me.id] = { id: me.id, ab: me.ab, nm: me.nm, opp: op.nm, oppAb: op.ab, oppId: op.id, home, at: e.at, ev: e.id, lg: e.lg };
-  const out = { at: Date.now(), games: events.length, events, teams };
+  const out = { at: Date.now(), games: events.length, events, teams, lgs: FC_LEAGUES };
   try { await env.RATEBOARD_KV.put(key, JSON.stringify(out), { expirationTtl: 5 * 86400 }); } catch (e) {}
   return out;
 }
