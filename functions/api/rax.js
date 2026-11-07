@@ -1,5 +1,5 @@
 import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS, touchSeen, userStats, sessionState } from '../../lib/auth.js';
-import { swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick } from './swaps.js';
+import { swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick, fcSchedule } from './swaps.js';
 import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, capNow } from '../../lib/dbwatch.js';
 
 /* Adding a column that already exists just errors (and is ignored). Each
@@ -7696,7 +7696,7 @@ async function gapPush(ctx) {
    The FC season's full sweep is weekly (Monday) - too big to walk daily. So
    after every FC game on the Boosts slate (ESPN, saved by swaps.js), the
    players of both teams are read again straight from Real: their season feed
-   (the box score) and their earnings (the rax), 6 players a minute. Each game
+   (the box score) and their earnings (the rax), 8 players a minute. Each game
    is done twice - 2.5 hours after kickoff, and again 6 hours later for any
    rax Real posted late. A game no earnings line ever shows up for (an unused
    sub) goes to 0 after 30 hours, like the sweep does. */
@@ -7710,6 +7710,25 @@ export async function fcGameRefresh(env) {
   try { st = JSON.parse((await env.RATEBOARD_KV.get(FC_GL_KEY)) || 'null'); } catch (e) {}
   if (!st) st = { q: [], done: {}, built: 0, runs: 0, players: 0, rows: 0, raxSet: 0, last: null, snapAt: 0, day: null, today: 0 };
   if (st.day !== fcEtDay(now)) { st.day = fcEtDay(now); st.today = 0; }
+  /* One-off (2026-11-07, FC Boosts' first day): the game log stopped at Nov 3
+     (Monday sweep), so Nov 4-6's games (Champions League, Europa League) are
+     read now - players whose team plays this weekend first. */
+  if (!st.backfill1) {
+    st.backfill1 = now;
+    const soon = new Set();
+    for (const d of ['2026-11-07', '2026-11-08']) { try { const sc = await fcSchedule(env, d); for (const id of Object.keys((sc && sc.teams) || {})) soon.add(id); } catch (e) {} }
+    const first = [], rest = [], have = new Set(st.q.map(Number));
+    for (const d of ['2026-11-04', '2026-11-05', '2026-11-06']) {
+      let sc = null; try { sc = await fcSchedule(env, d); } catch (e) {}
+      for (const e of ((sc && sc.events) || [])) for (const t of [e.h, e.a]) {
+        const keys = fcKeysOf(t.id); if (!keys.length) continue;
+        const club = keys.filter(x => !x.nat).map(x => x.key); if (!club.length) continue;
+        try { const r = await db.prepare(`SELECT DISTINCT playerId AS p FROM gamelog WHERE sport='soccer' AND season=2026 AND day >= '2026-09-15' AND team IN (${club.map(() => '?').join(',')}) AND COALESCE(conference, '') NOT IN ('WC', 'UNL')`).bind(...club).all();
+          for (const x of (r.results || [])) { const id = Number(x.p); if (!Number.isFinite(id) || have.has(id)) continue; have.add(id); (soon.has(t.id) ? first : rest).push(id); } } catch (err) {}
+      }
+    }
+    st.q = first.concat(rest, st.q);
+  }
   // Which games have finished since the last look, and who played in them.
   if (now - st.built > 15 * 60000) {
     st.built = now;
@@ -7740,7 +7759,7 @@ export async function fcGameRefresh(env) {
     for (const k of Object.keys(st.done)) if (now - st.done[k] > 5 * 86400000) delete st.done[k];
   }
   // A few players a minute, straight from Real.
-  const take = st.q.splice(0, 6);
+  const take = st.q.splice(0, 8);
   if (take.length) {
     const place = '(' + GAMELOG_FEED_COLS.map(() => '?').join(',') + ')';
     const keyCols = ['sport', 'season', 'playerId', 'gameId'];
