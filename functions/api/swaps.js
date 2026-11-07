@@ -2643,6 +2643,67 @@ async function boostInjuries(env, sp, force) {
   try { await env.RATEBOARD_KV.put(key, JSON.stringify({ at: Date.now(), map }), { expirationTtl: 3 * 86400 }); } catch (e) {}
   return map;
 }
+/* Injuries set by hand (Dennis, 2026-11-06: Malachi Toney was out for Miami
+   at Notre Dame but Boosts still gave him a booster). ESPN's college lists
+   carry almost nobody - its CFB injury list had 3 teams and Miami's roster
+   showed Toney with no injury - so for college the hand list is the real one.
+   Kept in KV per sport: { key: { name, status, note, until } }; an entry with
+   `until` (an ET day) drops off after that day, one without stays until it's
+   removed. The seed below is SI's Week 10 report (Nov 5) for Saturday 11/7. */
+const BOOST_OUT_KEY = 'boostout_v1';
+const BOOST_OUT_SEED = { ncaaf: [
+  ['Malachi Toney', 'Out', 'High ankle sprain (surgery)', '2026-11-08'],
+  ['Kewan Lacy', 'Out', 'Left shoulder', '2026-11-08'],
+  ['Hollywood Smothers', 'Out', '', '2026-11-08'],
+  ['Drayk Bowen', 'Out', 'Right ankle', '2026-11-08'],
+  ['Whit Weeks', 'Doubtful', 'Fibula', '2026-11-08'],
+  ['LJ Martin', 'Doubtful', 'Lower body', '2026-11-08'],
+  ['Duce Robinson', 'Out', 'Torn ACL - out for the season', ''],
+  ['Julian Sayin', 'Out', 'Throwing arm', '2026-11-08'],
+  ['Dante Moore', 'Out', 'Concussion - out for the season', ''],
+  ['Nico Iamaleava', 'Out', 'Torn ACL - out for the season', ''],
+  ['Jordon Davison', 'Out', 'Lower extremity', '2026-11-08'],
+  ['Ja\'Kobi Jackson', 'Out', '', '2026-11-08'],
+  ['Matt Fuller', 'Out', 'Foot - out for the regular season', ''],
+  ['Terry Bussey', 'Out', 'Out for the season', ''],
+  ['Sire Gaines', 'Out', '', '2026-11-08'],
+  ['Jett Thomalla', 'Doubtful', '', '2026-11-08'],
+  ['Michael Merdinger', 'Out', '', '2026-11-08'],
+  ['Ryan Estrada', 'Out', '', '2026-11-08'],
+  ['Andre Devine', 'Out', '', '2026-11-08'],
+  ['Malae Fonoti', 'Out', '', '2026-11-08'],
+  ['Phillip Wright III', 'Out', '', '2026-11-08'],
+  ['Dashawn Spears', 'Out', '', '2026-11-08'],
+  ['Desmond Umeozulu', 'Out', 'Turf toe', '2026-11-08'],
+  ['Cayden Jones', 'Out', 'Out for the season', ''],
+  ['Charles Ross II', 'Out', '', '2026-11-08'],
+  ['Amaris Williams', 'Out', 'Knee', '2026-11-08'],
+  ['Pierson Watson', 'Out', '', '2026-11-08'],
+  ['Ant Davis Jr.', 'Out', '', '2026-11-08'],
+  ['Brayden Platt', 'Out', '', '2026-11-08'],
+  ['Taylor Heim', 'Out', '', '2026-11-08'],
+  ['Cole Sullivan', 'Out', '', '2026-11-08'],
+  ['Jaden Robinson', 'Out', '', '2026-11-08'],
+  ['Antwan Smith', 'Out', '', '2026-11-08'],
+  ['Justyn Hartley', 'Out', '', '2026-11-08'],
+  ['Jaedon Harmon', 'Out', 'ACL - out for the season', ''],
+  ['Jalen Jones', 'Out', '', '2026-11-08'],
+  ['Malcolm Simmons', 'Doubtful', '', '2026-11-08'],
+  ['Jon Denman', 'Out', '', '2026-11-08'],
+  ['Terry Shelton', 'Out', '', '2026-11-08'],
+  ['R.J. Mosley', 'Out', 'Knee - out for the season', ''],
+] };
+async function boostOutList(env) {
+  let kv = null; try { kv = JSON.parse((await env.RATEBOARD_KV.get(BOOST_OUT_KEY)) || 'null'); } catch (e) {}
+  if (!kv) { kv = {}; for (const [sp, rows] of Object.entries(BOOST_OUT_SEED)) { kv[sp] = {}; for (const [name, status, note, until] of rows) kv[sp][boostName(name)] = { name, status, note, until, at: Date.parse('2026-11-07T06:00:00Z') }; } }
+  return kv;
+}
+// The hand list for one sport as an injury map, today's entries only.
+async function boostManualOut(env, sp, day) {
+  const all = await boostOutList(env), today = day || etDay(Date.now()), m = {};
+  for (const [k, v] of Object.entries(all[sp] || {})) if (!v.until || v.until >= today) m[k] = { status: v.status, note: v.note || '', manual: true };
+  return m;
+}
 /* Each team's own injury list, from its ESPN roster (2026-11-04: the league
    list ESPN publishes missed Lamar Jackson, out for the season, so he was
    still given a booster). Kept 2 hours per team, then read again the next
@@ -2900,6 +2961,8 @@ async function projBuild(env, db, sp) {
   }
   // NFL: each team's own injury list too (the league list misses some - Lamar, 2026-11-04).
   if (sp === 'nfl') { try { Object.assign(inj, await boostTeamInj(env, sp, Object.values(sched.ids || {}))); } catch (e) {} }
+  // The hand-set list (Boosts' admin injury list) too.
+  if (!fc && ['ncaaf', 'ncaam', 'nfl'].includes(sp)) { try { Object.assign(inj, await boostManualOut(env, sp)); } catch (e) {} }
   const cur = ((await db.prepare(`SELECT playerId, player, team, position, day, rax, min, opponent, homeAway${fc ? ', conference' : ''} FROM gamelog WHERE sport=? AND season=?
       AND rax IS NOT NULL AND (seasonType IS NULL OR seasonType='regularseason')`).bind(sp, Number(se)).all()).results) || [];
   const played = x => !useMin || x.min == null || Number(x.min) > 0;
@@ -4277,6 +4340,8 @@ async function handle({ request, env, waitUntil }) {
         } } catch (e2) {}
       try { await env.RATEBOARD_KV.put('resell_out_v1_' + SP, JSON.stringify({ at: Date.now(), m: out }), { expirationTtl: 86400 }); } catch (e) {}
     }
+    // Out-for-the-season entries on the hand list too.
+    try { const mo = await boostManualOut(env, SP); for (const [k, v] of Object.entries(mo)) if (/season|indefinite/i.test(`${v.status} ${v.note}`)) out[k] = v.note || v.status; } catch (e) {}
     const MULTS = [['none', 1], ['rare', 10], ['epic', 15], ['legendary', 25]];
     const rate = id => { const c = cur.get(id), o = prev.get(id);
       if (c && c.g >= MIN_G) return { rpg: c.r / c.g, games: c.g, basis: 'this season' };
@@ -4398,6 +4463,31 @@ async function handle({ request, env, waitUntil }) {
     const sb = ((await db.prepare('SELECT key FROM swap_block').all()).results || []).map(r => r.key);
     const rs = ((await db.prepare('SELECT key FROM restricted').all()).results || []).map(r => r.key);
     return json({ swapBlocked: sb, restricted: rs });
+  }
+  /* Admin: the hand injury list Boosts uses (see BOOST_OUT_SEED). GET lists
+     it; POST { sport, name, status, note, until } adds or changes one, POST
+     { sport, remove: key } takes one off. */
+  if (op === 'boostout') {
+    if (!acc.admin) return forbidden('Admin only.');
+    const all = await boostOutList(env);
+    if (request.method === 'POST') {
+      let b = {}; try { b = await request.json(); } catch (e) {}
+      const sp = ['ncaaf', 'ncaam', 'nfl'].includes(b.sport) ? b.sport : null;
+      if (!sp) return json({ error: 'Pick a sport.' }, 400);
+      all[sp] = all[sp] || {};
+      if (b.remove) delete all[sp][String(b.remove)];
+      else {
+        const name = String(b.name || '').trim().slice(0, 60), k = boostName(name);
+        const status = ['Out', 'Doubtful', 'Questionable', 'Suspension'].includes(b.status) ? b.status : 'Out';
+        const until = /^\d{4}-\d{2}-\d{2}$/.test(String(b.until || '')) ? b.until : '';
+        if (!k) return json({ error: 'Type a player name.' }, 400);
+        all[sp][k] = { name, status, note: String(b.note || '').trim().slice(0, 140), until, at: Date.now() };
+      }
+      await env.RATEBOARD_KV.put(BOOST_OUT_KEY, JSON.stringify(all));
+    }
+    const today = etDay(Date.now());
+    return json({ today, sports: Object.fromEntries(['ncaaf', 'ncaam', 'nfl'].map(sp => [sp, Object.entries(all[sp] || {})
+      .map(([key, v]) => ({ key, ...v, expired: !!(v.until && v.until < today) })).sort((a, b) => a.name.localeCompare(b.name))])) });
   }
   if (op === 'priority') {
     if (!acc.admin) return forbidden('Admin only.');
@@ -4559,6 +4649,8 @@ async function handle({ request, env, waitUntil }) {
       sched = await boostSchedule(env, sp, day);
       if (sched.error) return json({ error: sched.error }, 502);
       const inj = await boostInjuries(env, sp);
+      // The hand list wins over ESPN's (college lists are nearly empty).
+      try { Object.assign(inj, await boostManualOut(env, sp, day)); } catch (e) {}
       // Game-by-game for this season and averages for last, from the game log.
       const ids = [...new Set(cards.players.map(p => Number(p.id)).filter(Number.isFinite))];
       const games = new Map(), old = new Map();

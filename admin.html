@@ -231,6 +231,12 @@
         <details style="margin-top:8px"><summary class="note">Failures (last 30)</summary><div id="bs-fails" class="note"></div></details>
       </section>
       <section>
+        <h2>Boosts injury list <span class="note">players who get no booster</span></h2>
+        <p class="note">ESPN's college injury lists are nearly empty, so Boosts reads this list too. Out, Doubtful or Suspension = no booster; Questionable = projection cut by a quarter. "Through" is the last day it counts (leave it empty to keep it until you remove it). A note with "season" in it also marks his card out for the season on Resell.</p>
+        <div class="bar"><select id="bo-sp"><option value="ncaaf">CFB</option><option value="nfl">NFL</option><option value="ncaam">CBB</option></select><input id="bo-name" placeholder="Player name" autocomplete="off" style="flex:0 1 170px"><select id="bo-st"><option>Out</option><option>Doubtful</option><option>Questionable</option><option>Suspension</option></select><input id="bo-note" placeholder="Note (optional)" style="flex:0 1 170px"><input id="bo-until" type="date" title="Last day it counts"><button id="bo-add">Add</button><span class="note" id="bo-msg"></span></div>
+        <div id="bo-list" class="note">Loading…</div>
+      </section>
+      <section>
         <h2>Real Pro check</h2>
         <div class="bar"><input id="pp-user" placeholder="Real username" autocomplete="off" style="flex:0 1 180px"><button id="pp-go">Check profile</button><button id="pp-clear" title="Lets them run the Swaps Pro check again">Clear their Swaps Pro check</button><button id="pp-passes">Their saved passes</button><button id="pp-scan">Let them scan now</button><span class="note" id="pp-msg">Reads one profile on the bot account and shows what Real sends back.</span></div>
         <div id="pp-hits" class="note"></div>
@@ -934,6 +940,23 @@ $('#sw-dm').addEventListener('click', async () => {
   let tab = 'status'; try{ tab = localStorage.getItem('rb_admin_tab') || 'status'; }catch(e){}
   show(['status','offers','users','swaps','reports'].includes(tab) ? tab : 'status');
 })();
+
+// Boosts injury list (hand-set; ESPN's college lists are nearly empty).
+let boData = null;
+function drawBoostOut(){
+  const sp = $('#bo-sp').value, rows = (boData && boData.sports[sp]) || [];
+  $('#bo-list').innerHTML = rows.length ? rows.map(r => `<div class="bar" style="margin-top:4px${r.expired ? ';opacity:.5' : ''}"><span><b>${esc(r.name)}</b> · ${esc(r.status)}${r.note ? ' · ' + esc(r.note) : ''} · ${r.until ? (r.expired ? 'ended ' : 'through ') + esc(r.until) : 'until removed'}</span><button data-borm="${esc(r.key)}" style="margin-left:auto">Remove</button></div>`).join('') : 'Nobody on the list for this sport.';
+}
+async function boostOut(body){
+  const j = body ? await api('/api/swaps?op=boostout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }) : await api('/api/swaps?op=boostout');
+  if(j.error){ $('#bo-msg').textContent = j.error; return; }
+  boData = j; $('#bo-msg').textContent = ''; drawBoostOut();
+}
+$('#bo-sp').addEventListener('change', drawBoostOut);
+$('#bo-add').addEventListener('click', () => { const name = $('#bo-name').value.trim(); if(!name){ $('#bo-msg').textContent = 'Type a player name.'; return; }
+  boostOut({ sport: $('#bo-sp').value, name, status: $('#bo-st').value, note: $('#bo-note').value.trim(), until: $('#bo-until').value }).then(() => { $('#bo-name').value = ''; $('#bo-note').value = ''; }); });
+$('#bo-list').addEventListener('click', e => { const b = e.target.closest('[data-borm]'); if(b) boostOut({ sport: $('#bo-sp').value, remove: b.dataset.borm }); });
+boostOut();
 </script>
 </body>
 </html>
