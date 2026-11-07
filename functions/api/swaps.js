@@ -2907,7 +2907,14 @@ const etDayOf = iso => iso ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Ameri
    lineups come from ESPN's match pages (out about an hour before kickoff),
    read every few minutes from 85 minutes before each kickoff. */
 const FC_SEASON = [2026, 2025];
-const FC_LEAGUES = ['eng.1', 'eng.2', 'esp.1', 'ita.1', 'ger.1', 'fra.1', 'mex.1', 'uefa.champions', 'uefa.europa', 'uefa.nations', 'fifa.worldq.uefa', 'fifa.world'];
+const FC_LEAGUES = ['eng.1', 'eng.2', 'esp.1', 'ita.1', 'ger.1', 'fra.1', 'mex.1', 'uefa.champions', 'uefa.europa', 'uefa.nations', 'fifa.worldq.uefa', 'fifa.world', 'usa.1'];
+/* MLS (2026-11-07, Dennis): Real files the 2026 MLS season under FC 2025
+   (2025-26), and those cards still earn. Codes -> ESPN ids, lined up the same
+   way against all 450 MLS games of 2026 (every one matched). A 2025 FC card
+   earns on MLS games only; a 2026 card on everything else. */
+const FC_MLS_SEASON = 2025;
+const FC_MLS = { ATL: 18418, ATX: 20906, CHI: 182, CIN: 18267, CLB: 183, CLT: 21300, COL: 184, DAL: 185, DC: 193, HOU: 6077, LAF: 18966, LAG: 187, MIA: 20232, MIN: 17362, MTL: 9720,
+  NE: 189, NSH: 18986, NYC: 17606, NYR: 190, ORL: 12011, PHI: 10739, POR: 9723, RSL: 4771, SDG: 22529, SEA: 9726, SJ: 191, SKC: 186, STL: 21812, TOR: 7318, VAN: 9727 };
 const FC_NAT_LG = new Set(['uefa.nations', 'fifa.worldq.uefa', 'fifa.world']);
 const FC_NAT_CONF = new Set(['WC', 'UNL']);   // Real files national-team games under these
 /* Real's team code -> ESPN team id. Worked out by lining up every game in
@@ -2928,6 +2935,7 @@ export function fcKeysOf(espnId) {
   const id = Number(espnId), out = [];
   for (const [k, v] of Object.entries(FC_CLUBS)) if (v.includes(id)) out.push({ key: k, nat: false });
   for (const [k, v] of Object.entries(FC_NATS)) if (v === id) out.push({ key: k, nat: true });
+  for (const [k, v] of Object.entries(FC_MLS)) if (v === id) out.push({ key: k, nat: false, mls: true });
   return out;
 }
 /* The day's FC games (Eastern date). ESPN lists a date's games by US time, so
@@ -3099,11 +3107,12 @@ async function fcMatchups(env) {
   try { await env.RATEBOARD_KV.put('boostmatch_v1_soccer', JSON.stringify({ at: Date.now(), f }), { expirationTtl: 5 * 86400 }); } catch (e) {}
 }
 // Each player's games (this season and last) from the game log, oldest first.
-async function fcGames(db, ids, before) {
-  const cur = new Map(), old = new Map();
+async function fcGames(db, ids, before, seasons) {
+  const cur = new Map(), old = new Map(), [s0, s1] = seasons || FC_SEASON;
   for (let i = 0; i < ids.length; i += 90) {
     const part = ids.slice(i, i + 90), ph = part.map(() => '?').join(',');
-    for (const [se, m] of [[FC_SEASON[0], cur], [FC_SEASON[1], old]]) {
+    for (const [se, m] of [[s0, cur], [s1, old]]) {
+      if (se == null) continue;
       try { const r = await db.prepare(`SELECT playerId, day, rax, min, team, conference, position, player, jersey, stats, opponent, homeAway, oppScore FROM gamelog
           WHERE sport='soccer' AND season=? AND rax IS NOT NULL AND day < ? AND playerId IN (${ph}) ORDER BY day`).bind(se, before, ...part).all();
         for (const x of (r.results || [])) (m.get(Number(x.playerId)) || m.set(Number(x.playerId), []).get(Number(x.playerId))).push(x); } catch (e) {}
@@ -3143,12 +3152,17 @@ function fcClubIds(row) {
    squad list - otherwise he isn't counted as playing. */
 async function fcTeamOn(env, sched, sides, name, jersey, lineups) {
   const cand = [];
+  if (sides.mls) {   // an MLS card: his MLS club's game, nothing else
+    const x = sides.club; if (!x) return null;
+    const id = FC_MLS[String(x.team).toUpperCase()] ? String(FC_MLS[String(x.team).toUpperCase()]) : (Object.values(sched.teams).find(t => t.lg === 'usa.1' && t.ab === x.team) || {}).id;
+    return id && sched.teams[id] && sched.teams[id].lg === 'usa.1' ? { id, nat: false, mls: true } : null;
+  }
   for (const [x, nat] of [[sides.club, false], [sides.nat, true]]) {
     if (!x) continue;
     const all = nat ? fcTeamIds(x.team, true) : fcClubIds(x);
-    let ids = all.filter(id => sched.teams[id]);
+    let ids = all.filter(id => sched.teams[id] && sched.teams[id].lg !== 'usa.1');
     if (!ids.length && !(nat ? FC_NATS : FC_CLUBS)[String(x.team).toUpperCase()])   // a code we don't know yet: ESPN's abbreviation
-      ids = Object.values(sched.teams).filter(t => t.ab === x.team && FC_NAT_LG.has(t.lg) === nat).map(t => t.id);
+      ids = Object.values(sched.teams).filter(t => t.ab === x.team && t.lg !== 'usa.1' && FC_NAT_LG.has(t.lg) === nat).map(t => t.id);
     for (const id of ids) cand.push({ id, nat, check: nat || all.length > 1 });
   }
   const ok = [];
@@ -3171,8 +3185,12 @@ async function fcTeamOn(env, sched, sides, name, jersey, lineups) {
 async function fcRows(env, db, cards, day, inv) {
   const sched = await fcSchedule(env, day);
   if (sched.error) return sched;
-  const ids = [...new Set(cards.players.map(p => Number(p.id)).filter(Number.isFinite))];
+  const isM = p => Number(p.season) === FC_MLS_SEASON;
+  const ids = [...new Set(cards.players.filter(p => !isM(p)).map(p => Number(p.id)).filter(Number.isFinite))];
+  const idsM = [...new Set(cards.players.filter(isM).map(p => Number(p.id)).filter(Number.isFinite))];
   const { cur, old } = await fcGames(db, ids, day);
+  const { cur: curM } = idsM.length ? await fcGames(db, idsM, day, [FC_MLS_SEASON, null]) : { cur: new Map() };
+  const mlsOnly = a => a.filter(x => String(x.conference || '').toUpperCase() === 'MLS');
   let match = {}; try { match = (JSON.parse((await env.RATEBOARD_KV.get('boostmatch_v1_soccer')) || 'null') || {}).f || {}; } catch (e) {}
   let hand = {}; try { hand = await boostManualOut(env, 'soccer', day); } catch (e) {}
   // Lineups for every game on the slate that has one (read again if it could still change).
@@ -3186,10 +3204,13 @@ async function fcRows(env, db, cards, day, inv) {
   const dayMs = Date.parse(day + 'T12:00:00Z');
   const rows = [], idle = [];
   for (const p of cards.players) {
-    const gs = (cur.get(Number(p.id)) || []).filter(fcPlayed), os = (old.get(Number(p.id)) || []).filter(fcPlayed);
+    const M = isM(p);
+    const gs = (M ? mlsOnly(curM.get(Number(p.id)) || []) : (cur.get(Number(p.id)) || [])).filter(fcPlayed), os = M ? [] : (old.get(Number(p.id)) || []).filter(x => String(x.conference || '').toUpperCase() !== 'MLS').filter(fcPlayed);
     const lastG = gs[gs.length - 1] || os[os.length - 1];
     const name = p.name || (lastG && lastG.player) || 'Player ' + p.id;
-    const sides = fcSides(gs, os);
+    // A 2025 card that isn't an MLS player's (last season's European cards) has no games left.
+    if (M && !gs.length) { idle.push(name); continue; }
+    const sides = M ? { club: lastG, nat: null, mls: true } : fcSides(gs, os);
     if (!sides.club && !sides.nat) { idle.push(name); continue; }
     const jersey = (lastG && lastG.jersey != null) ? lastG.jersey : null;
     const side = await fcTeamOn(env, sched, sides, name, jersey, lineups);
@@ -3242,7 +3263,7 @@ async function fcRows(env, db, cards, day, inv) {
     // Hasn't played in three weeks while his club has: injured or dropped (a starting lineup overrides it).
     if (lu !== 'start' && lastG && cg.length && dayMs - Date.parse(lastG.day + 'T12:00:00Z') > 21 * 86400000) { skip = true; flags.push(`No game since ${lastG.day}`); }
     if (!cg.length && og.length && lu !== 'start') { k *= 0.7; flags.push('No games this season yet'); }
-    const oppKeys = fcKeysOf(g.oppId).filter(x => x.nat === side.nat);
+    const oppKeys = fcKeysOf(g.oppId).filter(x => x.nat === side.nat && !!x.mls === !!side.mls && !(side.mls && FC_CLUBS[x.key]));
     const mf = oppKeys.length === 1 && match[oppKeys[0].key] ? match[oppKeys[0].key] : 1;
     const hf = g.home ? 1.05 : 0.95;
     if (proj != null && mf !== 1) basis += ` · matchup x${mf}`;
@@ -3253,7 +3274,7 @@ async function fcRows(env, db, cards, day, inv) {
       if (e != null) exp[st] = Math.round(e * k * (lu === 'tbd' && rate < 0.8 && last5.length >= 3 ? rate : 1) * 100) / 100;
     }
     const pos = (lastG && lastG.position) || '';
-    rows.push({ id: p.id, passId: p.passId, name, team: g.nm, tid: null, pos, opp: g.opp, home: g.home, at: g.at, exp, lu, form: LT ? LT.f : null, lg: g.lg, nat: side.nat,
+    rows.push({ id: p.id, passId: p.passId, season: M ? FC_MLS_SEASON : FC_SEASON[0], name, team: g.nm, tid: null, pos, opp: g.opp, home: g.home, at: g.at, exp, lu, form: LT ? LT.f : null, lg: g.lg, nat: side.nat,
       avg: avg(cg) == null ? null : Math.round(avg(cg) * 10) / 10, games: cg.length, avgLast: avg(og) == null ? null : Math.round(avg(og) * 10) / 10,
       proj: proj == null ? null : Math.round(proj * k * mf * hf * 10) / 10, basis, flags, skip, fresh: false, noData: startProj == null });
   }
@@ -5014,12 +5035,18 @@ async function handle({ request, env, waitUntil }) {
     if (sp === 'soccer') {
       // FC: the next days (up to 8 ahead) on which one of the member's clubs or countries plays.
       const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
-      const ids = [...new Set(parse(u && u.passes, []).filter(p => p.sport === 'soccer' && Number(p.season) === FC_SEASON[0] && p.kind !== 'team').map(p => Number(p.id)).filter(Number.isFinite))];
+      const mine = parse(u && u.passes, []).filter(p => p.sport === 'soccer' && p.kind !== 'team');
+      const ids = [...new Set(mine.filter(p => Number(p.season) === FC_SEASON[0]).map(p => Number(p.id)).filter(Number.isFinite))];
+      const idsM = [...new Set(mine.filter(p => Number(p.season) === FC_MLS_SEASON).map(p => Number(p.id)).filter(Number.isFinite))];
       const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
       const today = fmt.format(new Date());
       const { cur, old } = await fcGames(db, ids, '9999-12-31');
-      const teamSets = ids.map(id => { const sd = fcSides((cur.get(id) || []).filter(fcPlayed), (old.get(id) || []).filter(fcPlayed));
+      const teamSets = ids.map(id => { const sd = fcSides((cur.get(id) || []).filter(fcPlayed), (old.get(id) || []).filter(x => String(x.conference || '').toUpperCase() !== 'MLS').filter(fcPlayed));
         return { club: sd.club ? fcClubIds(sd.club) : [], clubAb: sd.club && sd.club.team, nat: sd.nat ? fcTeamIds(sd.nat.team, true) : [] }; });
+      // MLS cards (FC 2025): his MLS club.
+      if (idsM.length) { const { cur: cm } = await fcGames(db, idsM, '9999-12-31', [FC_MLS_SEASON, null]);
+        for (const id of idsM) { const ms = (cm.get(id) || []).filter(x => String(x.conference || '').toUpperCase() === 'MLS'); const l = ms[ms.length - 1];
+          if (l && FC_MLS[String(l.team).toUpperCase()]) teamSets.push({ club: [String(FC_MLS[String(l.team).toUpperCase()])], clubAb: null, nat: [] }); } }
       const days = [];
       for (let i = 0; i < 8 && days.length < 4; i++) {
         const d = fmt.format(new Date(Date.now() + i * 86400000));
@@ -5028,7 +5055,7 @@ async function handle({ request, env, waitUntil }) {
         const n = teamSets.filter(t => t.club.some(id => sc.teams[id]) || t.nat.some(id => sc.teams[id]) || (!t.club.length && t.clubAb && Object.values(sc.teams).some(x => x.ab === t.clubAb))).length;
         if (n) days.push({ day: d, players: n, games: sc.games });
       }
-      return json({ days, passes: ids.length, today });
+      return json({ days, passes: ids.length + idsM.length, today });
     }
     if (!BOOST_SEASON[sp]) return json({ error: 'Pick CBB, CFB or NFL.' }, 400);
     const [se, prev] = BOOST_SEASON[sp];
@@ -5072,8 +5099,8 @@ async function handle({ request, env, waitUntil }) {
     const u = await db.prepare('SELECT passes, scannedAt, rsUser FROM swap_users WHERE key=?').bind(me).first();
     if (!u || !u.passes) return json({ error: 'Scan your passes first.' }, 400);
     const cards = { at: u.scannedAt || null, players: parse(u.passes, [])
-      .filter(p => p.sport === sp && Number(p.season) === se && p.kind !== 'team')
-      .map(p => ({ id: Number(p.id), name: p.name || '', passId: p.passId || null })) };
+      .filter(p => p.sport === sp && (Number(p.season) === se || (sp === 'soccer' && Number(p.season) === FC_MLS_SEASON)) && p.kind !== 'team')   // FC: 2025 cards for MLS
+      .map(p => ({ id: Number(p.id), name: p.name || '', passId: p.passId || null, season: Number(p.season) })) };
     let sched = null, depth = null, inv = null, rows = [], idle = [];
     if (sp === 'golf') {
       // Golf: the tournament is the game; form plus course history (see golfRows).

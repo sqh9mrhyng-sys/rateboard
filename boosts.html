@@ -601,7 +601,7 @@ async function run(){
   $('#rows').innerHTML = rows.map(r => {
     const cutRow = (!cutDone && r.belowCut) ? (cutDone = true, `<tr class="cut"><td colspan="7">Recommended cutoff - Rares below this line only if you have spares (projection under ${j.cutAt})</td></tr>`) : '';
     // The member's own pass, like on Swaps; the player's page if the pass id isn't known.
-    const u = r.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(r.passId)]) : realPlayerUrl(sp, r.id, j.season);
+    const u = r.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(r.passId)]) : realPlayerUrl(sp, r.id, r.season || j.season);
     const nm = u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.name)}</a>` : esc(r.name);
     const one = o => esc(o.label) + (o.avg != null ? ` <span class="note">${o.avg}/${o.gain}</span>` : '');
     return cutRow + `<tr class="${r.skip ? 'skip' : ''}${r.belowCut ? ' below' : ''}${r.boost && r.best && doneSet.has(doneKey(r)) ? ' boosted' : ''}"><td data-l="Rarity">${r.boost ? `<span class="b ${r.boost}">${LBL[r.boost]}</span>` : '<span class="b none">None</span>'}</td>

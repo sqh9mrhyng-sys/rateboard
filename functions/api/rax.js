@@ -7729,10 +7729,19 @@ export async function fcGameRefresh(env) {
     }
     st.q = first.concat(rest, st.q);
   }
+  /* One-off (2026-11-07): MLS (FC 2025 cards) wasn't being read at all after
+     Oct 21, and its rax from Sep 30 on reads 0. Every MLS player is read again
+     (box scores since Sep 20 and his earnings), ahead of the rest. */
+  if (!st.backfillMls) {
+    st.backfillMls = now;
+    try { const r = await db.prepare(`SELECT DISTINCT playerId AS p FROM gamelog WHERE sport='soccer' AND season=2025 AND conference='MLS' AND day >= '2026-08-01'`).all();
+      const ids = (r.results || []).map(x => `${Number(x.p)}@2025@bf`).filter(x => !/^NaN/.test(x));
+      st.q = ids.concat(st.q); } catch (e) {}
+  }
   // Which games have finished since the last look, and who played in them.
   if (now - st.built > 15 * 60000) {
     st.built = now;
-    const have = new Set(st.q.map(Number));
+    const have = new Set(st.q.map(String));
     for (const day of [fcEtDay(now - 2 * 86400000), fcEtDay(now - 86400000), fcEtDay(now)]) {
       let sc = null; try { sc = JSON.parse((await env.RATEBOARD_KV.get(`boostsched_v2_soccer_${day}`)) || 'null'); } catch (e) {}
       for (const e of ((sc && sc.events) || [])) {
@@ -7744,14 +7753,21 @@ export async function fcGameRefresh(env) {
           if (now > end + 48 * 3600000) continue;
           const keys = [...fcKeysOf(e.h.id), ...fcKeysOf(e.a.id)];
           if (!keys.length) continue;
-          const club = keys.filter(x => !x.nat).map(x => x.key), nat = keys.filter(x => x.nat).map(x => x.key);
+          if (e.lg === 'usa.1') {   // MLS: FC 2025 cards
+            const mk = keys.filter(x => x.mls).map(x => x.key); if (!mk.length) continue;
+            try { const r = await db.prepare(`SELECT DISTINCT playerId AS p FROM gamelog WHERE sport='soccer' AND season=2025 AND conference='MLS' AND day >= ? AND team IN (${mk.map(() => '?').join(',')})`).bind(fcEtDay(now - 90 * 86400000), ...mk).all();
+              for (const x of (r.results || [])) { const id = `${Number(x.p)}@2025`; if (!have.has(id)) { have.add(id); st.q.push(id); } } } catch (err) { delete st.done[k]; }
+            continue;
+          }
+          const club = keys.filter(x => !x.nat && !x.mls).map(x => x.key), nat = keys.filter(x => x.nat).map(x => x.key);
+          if (!club.length && !nat.length) continue;
           const cond = [], args = [];
           if (club.length) { cond.push(`(team IN (${club.map(() => '?').join(',')}) AND COALESCE(conference, '') NOT IN ('WC', 'UNL'))`); args.push(...club); }
           if (nat.length) { cond.push(`(team IN (${nat.map(() => '?').join(',')}) AND conference IN ('WC', 'UNL'))`); args.push(...nat); }
           try {
             const r = await db.prepare(`SELECT DISTINCT playerId AS p FROM gamelog WHERE sport='soccer' AND season=2026 AND day >= ? AND (${cond.join(' OR ')})`)
               .bind(fcEtDay(now - (nat.length && !club.length ? 400 : 60) * 86400000), ...args).all();
-            for (const x of (r.results || [])) { const id = Number(x.p); if (Number.isFinite(id) && !have.has(id)) { have.add(id); st.q.push(id); } }
+            for (const x of (r.results || [])) { const id = Number(x.p); if (Number.isFinite(id) && !have.has(String(id))) { have.add(String(id)); st.q.push(id); } }
           } catch (err) { delete st.done[k]; }
         }
       }
@@ -7765,24 +7781,28 @@ export async function fcGameRefresh(env) {
     const keyCols = ['sport', 'season', 'playerId', 'gameId'];
     const sets = GAMELOG_FEED_COLS.filter(c => !keyCols.includes(c)).map(c => `${c}=excluded.${c}`).join(', ');
     const sql = `INSERT INTO gamelog (${GAMELOG_FEED_COLS.join(',')}) VALUES ${place} ON CONFLICT(${keyCols.join(',')}) DO UPDATE SET ${sets} WHERE ${glChanged(keyCols)}`;
-    const since = fcEtDay(now - 10 * 86400000), zeroBefore = fcEtDay(now - 30 * 3600000);
-    for (const id of take) {
+    const zeroBefore = fcEtDay(now - 30 * 3600000);
+    for (const ent of take) {
+      // An entry is a player id (FC 2026), "id@2025" (an MLS card) or "id@2025@bf" (the MLS catch-up, from Sep 20).
+      const [idS, seS, bf] = String(ent).split('@'), id = Number(idS), se = Number(seS) || 2026;
+      const since = bf ? '2026-09-20' : fcEtDay(now - 10 * 86400000);
       try {
-        const d = await rsGet(`https://web.realapp.com/players/${id}/sport/soccer/seasonfeed?limit=8&season=2026&view=recent&viewFrame=default`, auth);
-        const rows = ((d && d.playerBoxScores) || []).filter(b => b && b.gameId != null).map(b => gamelogRow('soccer', 2026, b));
+        const d = await rsGet(`https://web.realapp.com/players/${id}/sport/soccer/seasonfeed?limit=${bf ? 20 : 8}&season=${se}&view=recent&viewFrame=default`, auth);
+        const rows = ((d && d.playerBoxScores) || []).filter(b => b && b.gameId != null).map(b => gamelogRow('soccer', se, b));
         if (rows.length) await db.batch(rows.map(r => db.prepare(sql).bind(...GAMELOG_FEED_COLS.map(c => r[c] === undefined ? null : r[c]))));
         st.rows += rows.length;
         const days = [...new Set(rows.map(r => r.day).filter(x => x && x >= since))];
         if (days.length) {
-          const e = await rsGet(`https://web.realapp.com/userpassearnings/soccer/season/2026/entity/player/${id}`, auth);
+          const e = await rsGet(`https://web.realapp.com/userpassearnings/soccer/season/${se}/entity/player/${id}`, auth);
           const list = ((e && e.earnings) || []).filter(x => x && x.day && x.earnings != null && days.includes(x.day));
           const stmts = [];
           for (const x of list) {
             if (Array.isArray(x.playerBoxScoreIds) && x.playerBoxScoreIds.length > 1) continue;   // two games one day: left to the sweep
-            stmts.push(db.prepare('UPDATE gamelog SET rax = ? WHERE sport = ? AND season = ? AND playerId = ? AND day = ? AND rax IS NOT ?').bind(Number(x.earnings), 'soccer', 2026, id, x.day, Number(x.earnings)));
+            stmts.push(db.prepare('UPDATE gamelog SET rax = ? WHERE sport = ? AND season = ? AND playerId = ? AND day = ? AND rax IS NOT ?').bind(Number(x.earnings), 'soccer', se, id, x.day, Number(x.earnings)));
           }
           const listed = new Set(list.map(x => x.day));
-          for (const dd of days) if (!listed.has(dd) && dd <= zeroBefore) stmts.push(db.prepare('UPDATE gamelog SET rax = 0 WHERE sport = ? AND season = ? AND playerId = ? AND day = ? AND rax IS NULL').bind('soccer', 2026, id, dd));
+          for (const dd of days) if (!listed.has(dd) && dd <= zeroBefore) stmts.push(db.prepare('UPDATE gamelog SET rax = 0 WHERE sport = ? AND season = ? AND playerId = ? AND day = ? AND rax IS NULL').bind('soccer', se, id, dd));
+          st.mlsFixed = (st.mlsFixed || 0) + (se === 2025 ? list.filter(x => Number(x.earnings) > 0).length : 0);
           if (stmts.length) await db.batch(stmts);
           st.raxSet += list.length;
         }
@@ -7790,13 +7810,13 @@ export async function fcGameRefresh(env) {
       } catch (err) {
         // Throttled or down: back on the end of the line, up to a day of tries.
         st.fails = (st.fails || 0) + 1; st.lastErr = String((err && err.message) || err).slice(0, 120);
-        if (!/404/.test(st.lastErr)) st.q.push(id);
+        if (!/404/.test(st.lastErr)) st.q.push(ent);
         break;
       }
     }
     st.runs++; st.last = now;
     // The saved by-player table (Game data page) is rebuilt once the line is empty, at most hourly.
-    if (!st.q.length && now - (st.snapAt || 0) > 3600000) { st.snapAt = now; try { await env.RATEBOARD_KV.delete('glsnap_v1_soccer:2026'); } catch (e) {} }
+    if (!st.q.length && now - (st.snapAt || 0) > 3600000) { st.snapAt = now; try { await env.RATEBOARD_KV.delete('glsnap_v1_soccer:2026'); await env.RATEBOARD_KV.delete('glsnap_v1_soccer:2025'); } catch (e) {} }
   }
   if (st.q.length > 6000) st.q = st.q.slice(-6000);
   try { await env.RATEBOARD_KV.put(FC_GL_KEY, JSON.stringify(st), { expirationTtl: 7 * 86400 }); } catch (e) {}
@@ -7857,7 +7877,7 @@ async function collectorHealth(env, url) {
       const dms = ((await db.prepare("SELECT k, n FROM bot_stats WHERE day=? AND (k LIKE 'dm_%' OR k LIKE 'confirm_%' OR k = 'dupe_calledoff' OR k = 'fail')").bind(day).all()).results) || [];
       return { today: Object.fromEntries(st.map(x => [x.k, x.n])), running: q && q.running, waiting: q && q.waiting, recent: await kvj('scan_perf_v1'), dmsToday: Object.fromEntries(dms.map(x => [x.k, x.n])), dmsYesterday: Object.fromEntries(dmsY.map(x => [x.k, x.n])), dmRetryQueue: dmq, dmAudit: await (async () => { try { const a = JSON.parse((await env.RATEBOARD_KV.get('dm_audit_' + Date.UTC(2026, 10, 5, 17))) || 'null'); return a && { checked: a.done.length, ok: a.ok.length, resent: a.resent.length, held: (a.pending || []).length, couldntCheck: a.failed.length, finished: !!a.finished, stopped: a.aborted || null }; } catch (e) { return null; } })(), swapHours: hours, dupes, fc: await (async () => { try { const g = await kvj(FC_GL_KEY) || {}; const d = fcEtDay(Date.now()), sc = await kvj(`boostsched_v2_soccer_${d}`);
         let lineups = 0; for (const e of ((sc && sc.events) || [])) { const l = await kvj(`fclineup_v1_${e.id}`); if (l && l.out) lineups++; }
-        return { gamelog: { queue: (g.q || []).length, playersToday: g.today || 0, playersAll: g.players || 0, rows: g.rows || 0, raxSet: g.raxSet || 0, lastRun: g.last ? new Date(g.last).toISOString() : null, fails: g.fails || 0, lastErr: g.lastErr || null },
+        return { gamelog: { queue: (g.q || []).length, mlsQueue: (g.q || []).filter(x => /@2025/.test(String(x))).length, mlsRaxFixed: g.mlsFixed || 0, playersToday: g.today || 0, playersAll: g.players || 0, rows: g.rows || 0, raxSet: g.raxSet || 0, lastRun: g.last ? new Date(g.last).toISOString() : null, fails: g.fails || 0, lastErr: g.lastErr || null },
           today: { day: d, games: sc ? sc.games : null, scheduleAt: sc ? new Date(sc.at).toISOString() : null, lineupsOut: lineups },
           boosterLabels: await kvj('fc_booster_labels') }; } catch (e) { return { error: String(e.message || e).slice(0, 120) }; } })(), confirmRun: await (async () => { try { const d = new Date(Date.now() + 30 * 60000 - 7 * 3600000); const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d); return { day, ...(JSON.parse((await env.RATEBOARD_KV.get('confirm_run_' + day)) || 'null') || {}) }; } catch (e) { return null; } })(), matchLog: await (async () => { try {
         const f = ((await db.prepare("SELECT at, kind, msg FROM bot_log WHERE kind IN ('matching','swap_tick','match') ORDER BY at DESC LIMIT 10").all()).results) || [];
