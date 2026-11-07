@@ -7759,7 +7759,7 @@ export async function fcGameRefresh(env) {
     for (const k of Object.keys(st.done)) if (now - st.done[k] > 5 * 86400000) delete st.done[k];
   }
   // A few players a minute, straight from Real.
-  const take = st.q.splice(0, 8);
+  const take = st.q.splice(0, st.q.length > 200 ? 14 : 8);   // a long line (the catch-up) goes a little faster
   if (take.length) {
     const place = '(' + GAMELOG_FEED_COLS.map(() => '?').join(',') + ')';
     const keyCols = ['sport', 'season', 'playerId', 'gameId'];
