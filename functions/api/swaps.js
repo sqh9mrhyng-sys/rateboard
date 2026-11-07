@@ -2078,7 +2078,6 @@ async function confirmGate(env, db, auth) {
   if (now < CONFIRM_SHOW_AT) return;
   await matchCols(db);
   const ms = ((await db.prepare(`SELECT * FROM swap_matches WHERE status='pending' AND warnA IS NULL AND warnB IS NULL AND dueAt > ? AND dueAt <= ?`).bind(now, now + 31 * 60000).all()).results) || [];
-  if (!ms.length) return;
   const cache = new Map(), get = async k => { if (!cache.has(k)) cache.set(k, await db.prepare('SELECT key, rsUser, hashId, confirmDay FROM swap_users WHERE key=?').bind(k).first()); return cache.get(k); };
   const told = new Map();
   for (const m of ms) {
@@ -2089,6 +2088,13 @@ async function confirmGate(env, db, auth) {
     const c = await db.prepare(`UPDATE swap_matches SET status='cancelled', note=? WHERE id=? AND status='pending' AND warnA IS NULL AND warnB IS NULL`).bind(`called off: ${who.map(k => '@' + ((cache.get(k) || {}).rsUser || k)).join(', ')} didn't confirm today`, m.id).run();
     if (c.meta && c.meta.changes) { await stat(db, 'confirm_calledoff'); for (const k of who) told.set(k, due); }
   }
+  /* Everyone whose swaps were called off for this (2026-11-07: 36 swaps came
+     off at 4am Alaska but only 2 people were told - a tick that ran out of
+     time lost the rest). Rebuilt from the called-off swaps each minute, so a
+     DM missed one minute goes the next; onceFor keeps it to one per hour. */
+  const off = ((await db.prepare(`SELECT a, b, slot, createdAt, dueAt FROM swap_matches WHERE status='cancelled' AND note LIKE '%didn''t confirm today%' AND dueAt > ? AND dueAt <= ?`).bind(now, now + 31 * 60000).all()).results) || [];
+  for (const m of off) { const due = sideDue(m), day = swapDay(due);
+    for (const k of [m.a, m.b]) if (!told.has(k) && !isConfirmed(await get(k), day)) told.set(k, due); }
   for (const [k, due] of told) {
     if (TICK_T0 && tickLeft() - dmWaitAhead() < 5000) break;
     const u = cache.get(k); if (!u || !u.hashId) continue;
