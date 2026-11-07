@@ -2406,7 +2406,7 @@ const BOOST_SEASON = { ncaam: [2027, 2026], ncaaf: [2026, 2025], nfl: [2026, 202
    last season's rax per game among regulars: Legendary is roughly the top
    2-3% of games, Epic the top 10%, Rare the top 25%. Boost saver raises the
    bar 15%, earning heavy lowers it 15%. */
-const BOOST_BARS = { ncaam: [11.5, 10, 7.5], ncaaf: [25, 20, 12], nfl: [19, 15, 8.5], golf: [19, 15, 10] };   // Legendary ~top 1% game, Epic ~top 3-5%
+const BOOST_BARS = { ncaam: [11.5, 10, 7.5], ncaaf: [25, 20, 12], nfl: [19, 15, 8.5], golf: [19, 15, 10], soccer: [13, 10, 6] };   // Legendary ~top 1% game, Epic ~top 3-5%
 const BOOST_MODES = { balanced: 1, heavy: 1, saver: 1, custom: 1 };
 const ESPN_PATH = { ncaam: 'basketball/mens-college-basketball', ncaaf: 'football/college-football', nfl: 'football/nfl' };
 const ESPN_GROUP = { ncaam: '&groups=50', ncaaf: '&groups=80', nfl: '' };
@@ -2486,8 +2486,10 @@ export async function boostRefresh(env) {
       .format(new Date(Date.now() + i * 86400000)));
     const steps = [];
     for (const sp of Object.keys(BOOST_SEASON)) { steps.push(['inj', sp]); for (const d of days) steps.push(['sched', sp, d]); }
+    for (const d of days) steps.push(['fcsched', d]);   // FC: 12 competitions a day, one day per tick
     steps.push(['depthlist']);
     for (const sp of Object.keys(BOOST_SEASON)) steps.push(['match', sp]);
+    steps.push(['fcmatch']);
     steps.push(['rosterlist']);
     st = { run, steps, i: 0, done: false };
   }
@@ -2497,6 +2499,8 @@ export async function boostRefresh(env) {
     try {
       if (k === 'inj') await boostInjuries(env, a, true);
       else if (k === 'sched') await boostSchedule(env, a, b, true);
+      else if (k === 'fcsched') { await fcSchedule(env, a, true); n += 5; }
+      else if (k === 'fcmatch') await fcMatchups(env);
       else if (k === 'depthlist') {
         // Every NFL team on the saved slates, one depth chart per step.
         const ids = new Set();
@@ -2562,15 +2566,18 @@ const BOOSTINV_EVERY = 2 * 3600000;
 // Members whose pass and booster reads on Boosts are never held back.
 const BOOST_FAST = new Set(['quas23']);
 async function boostInventoryAll(env, tok, hashId, fresh, admin) {
-  const key = `boostinv_v6_${hashId}`;   // v6: golf added (2026-11-05)
+  const key = `boostinv_v7_${hashId}`;   // v6: golf added (2026-11-05); v7: FC (2026-11-07)
   let c = null;
   try { c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); } catch (e) {}
   if (c && (!fresh || (!admin && Date.now() - c.at < BOOSTINV_EVERY))) return { ...c, next: admin ? Date.now() : c.at + BOOSTINV_EVERY, cached: !!fresh };
   const sports = {};
-  for (const sp of [...Object.keys(BOOST_SEASON), 'golf']) {
+  for (const sp of [...Object.keys(BOOST_SEASON), 'golf', 'soccer']) {
     let d;
     try { d = await rsGetJson(`https://web.realapp.com/userpassboostercards/undefined/entity/player?displayType=collectionstats&sport=${sp}&userId=${encodeURIComponent(hashId)}&version=stat`, tok); }
-    catch (e) { if (c) return { ...c, next: c.at + BOOSTINV_EVERY }; return { error: 'Could not read your boosters from Real: ' + String(e.message || e).slice(0, 120) }; }
+    catch (e) {
+      // FC is new: if Real won't give its boosters, the other sports still load.
+      if (sp === 'soccer') { sports[sp] = (c && c.sports && c.sports.soccer) || []; continue; }
+      if (c) return { ...c, next: c.at + BOOSTINV_EVERY }; return { error: 'Could not read your boosters from Real: ' + String(e.message || e).slice(0, 120) }; }
     const list = [];
     for (const g of (((d && d.boosterCardInfo) || {}).rarityGroups || [])) {
       const mult = parseFloat(String(g.multiplierDisplay || '').replace(/x$/i, '')) || null;
@@ -2582,6 +2589,10 @@ async function boostInventoryAll(env, tok, hashId, fresh, admin) {
       }
     }
     sports[sp] = list;
+    // FC's booster attributes, as Real names them (no accounts), for the health page while the FC stat names are checked.
+    if (sp === 'soccer' && list.length) { try { const seen = JSON.parse((await env.RATEBOARD_KV.get('fc_booster_labels')) || '[]') || [];
+      const add = list.flatMap(b => (b.attrs || []).map(a => `${b.label} ${a.stat} +${a.boost}`)).filter(x => !seen.includes(x));
+      if (add.length) await env.RATEBOARD_KV.put('fc_booster_labels', JSON.stringify(seen.concat(add).slice(-60))); } catch (e) {} }
     await sleep(700);
   }
   const out = { at: Date.now(), sports };
@@ -2886,6 +2897,350 @@ async function golfRows(env, db, cards, day) {
   return { rows, idle, sched: { games: 1, event: ev.name, course: course || null, field: ev.field.length } };
 }
 const etDayOf = iso => iso ? new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso)) : '';
+
+/* ---- FC boosts (2026-11-07) ------------------------------------------------
+   Real scores every league game in the Premier League, Championship, La Liga,
+   Serie A, Bundesliga, Ligue 1 and Liga MX, plus the Champions League, Europa
+   League and Nations League - checked game by game against Real's own log
+   from July to November 2026 (every one of those games is there; no domestic
+   cup or friendly is). The slate is ESPN's for those competitions; starting
+   lineups come from ESPN's match pages (out about an hour before kickoff),
+   read every few minutes from 85 minutes before each kickoff. */
+const FC_SEASON = [2026, 2025];
+const FC_LEAGUES = ['eng.1', 'eng.2', 'esp.1', 'ita.1', 'ger.1', 'fra.1', 'mex.1', 'uefa.champions', 'uefa.europa', 'uefa.nations', 'fifa.worldq.uefa', 'fifa.world'];
+const FC_NAT_LG = new Set(['uefa.nations', 'fifa.worldq.uefa', 'fifa.world']);
+const FC_NAT_CONF = new Set(['WC', 'UNL']);   // Real files national-team games under these
+/* Real's team code -> ESPN team id. Worked out by lining up every game in
+   Real's 2026 log with ESPN's results on the same day. Real reuses some codes
+   for two or three clubs (LEV is Levante, Leverkusen and Levski; ATL is Atlas
+   and Atlante; BOL Bolton and Bologna...), so those list each one and the
+   player's own club is found from the lineup or the club's squad list. */
+const FC_CLUBS = {"ACS": [433], "AEK": [887], "AJA": [172], "ALA": [96], "AME": [227], "ARM": [20024], "ARS": [359], "ASL": [15720], "ASM": [174], "ATA": [105], "ATH": [93], "ATL": [226,216], "ATM": [1068], "AVL": [362], "AZA": [140], "BAR": [83], "BES": [1895], "BET": [244], "BHA": [331], "BIR": [392], "BLA": [365], "BMG": [268], "BOD": [2980], "BOL": [358,107], "BOU": [349], "BRC": [333], "BRE": [337,6997], "BUR": [379], "BVB": [124], "CAG": [2925], "CAR": [347], "CDG": [219], "CEL": [85,256], "CHA": [372], "CHE": [363], "CLU": [570], "COM": [2572], "COV": [388], "CRA": [218], "CRY": [384], "DEP": [90], "DER": [374], "DIN": [597], "ELC": [3751], "ELV": [10388], "ESP": [88], "EVE": [368], "FB": [436], "FCA": [3841], "FCB": [132], "FCL": [273], "FCU": [598], "FEY": [142], "FIO": [109], "FRO": [4057], "FTC": [622], "FUL": [370], "GEN": [3263], "GET": [2922], "GS": [432], "HAC": [3236], "HBS": [13083], "HSV": [127], "HUL": [306], "INT": [110], "IPS": [373], "JAG": [11505], "JUA": [17851], "JUV": [111], "KOE": [122], "LAS": [4411], "LAZ": [112], "LEC": [113], "LEE": [357], "LEM": [2697], "LEO": [228], "LEV": [1538,131,490], "LIL": [166], "LIN": [314], "LIV": [364], "LPO": [2990], "LSK": [987], "M05": [2950], "MAL": [99], "MCI": [382], "MID": [369], "MIL": [391,103], "MON": [220,4007], "MUN": [360], "NAP": [114], "NCX": [229], "NEC": [147], "NIJ": [147], "NEW": [361], "NFO": [393], "NIC": [2502], "NOR": [381], "OFI": [1010], "OL": [167], "OLY": [435], "OM": [176], "OMO": [617], "OSA": [97], "PAC": [234], "PAD": [3307], "PAR": [115,6851], "PLZ": [11706], "PNE": [394], "POR": [385,437], "PSG": [160], "PSV": [148], "PUE": [231], "PUM": [233], "QPR": [334], "QUE": [222], "RAC": [87], "RAY": [101], "RBL": [11420], "RBS": [2790], "RCL": [175], "REN": [169], "RMA": [86], "ROM": [104], "RSC": [441], "RSO": [89], "S04": [133], "SAB": [21922], "SAS": [3997], "SCF": [126], "SCO": [7868], "SCP": [2250], "SEV": [243], "SGE": [125], "SHK": [493], "SHU": [398], "SLA": [225,494], "SLB": [1929], "SLO": [521], "SPA": [433], "SOU": [376], "STG": [5807], "STO": [336], "STR": [180], "STU": [3746], "SUN": [366], "SVW": [137], "SWA": [318], "TFC": [179], "TIG": [232], "TIJ": [10125], "TOL": [223], "TOR": [239,21615], "TOT": [367], "TRO": [170], "TSG": [7911], "UDI": [118], "VAL": [94], "VEN": [17530], "VFB": [134], "VIK": [510], "VIL": [102], "WAT": [395], "WBA": [383], "WHU": [371], "WOL": [380], "WRE": [352]};
+const FC_NATS = {"NED":449,"GER":481,"SRB":6757,"GRE":455,"NOR":464,"DEN":479,"POR":482,"WAL":578,"ITA":162,"BEL":459,"TUR":465,"FRA":478,"CZE":450,"CRO":477,"ENG":448,"ESP":164};
+// A code missing above (a club new to Real) falls back to ESPN's abbreviation for the day.
+const fcTeamIds = (key, nat) => {
+  const k = String(key || '').toUpperCase(); if (!k) return [];
+  if (nat) return FC_NATS[k] ? [String(FC_NATS[k])] : [];
+  return (FC_CLUBS[k] || []).map(String);
+};
+// ESPN team id -> Real codes (used by the game-data refresh to find who played).
+export function fcKeysOf(espnId) {
+  const id = Number(espnId), out = [];
+  for (const [k, v] of Object.entries(FC_CLUBS)) if (v.includes(id)) out.push({ key: k, nat: false });
+  for (const [k, v] of Object.entries(FC_NATS)) if (v === id) out.push({ key: k, nat: true });
+  return out;
+}
+/* The day's FC games (Eastern date). ESPN lists a date's games by US time, so
+   one call per competition. Kept 5 days; refreshed by the boost refresh and,
+   for today, every 2 hours by the lineup tick (kickoff moves, postponements). */
+export async function fcSchedule(env, day, force) {
+  const key = `boostsched_v2_soccer_${day}`;
+  let old = null;
+  try { old = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); } catch (e) {}
+  if (old && !force) return old;
+  const ymd = day.replace(/-/g, '');
+  const got = await Promise.all(FC_LEAGUES.map(async lg => {
+    try { const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/${lg}/scoreboard?dates=${ymd}`); return r.ok ? { lg, d: await r.json() } : { lg, err: r.status }; }
+    catch (e) { return { lg, err: 'net' }; }
+  }));
+  const failed = new Set(got.filter(x => x.err).map(x => x.lg));
+  if (failed.size > FC_LEAGUES.length / 2) return old || { error: 'Could not load the FC schedule from ESPN - try again in a minute.' };
+  const events = [];
+  for (const { lg, d } of got) if (d) for (const ev of (d.events || [])) {
+    if (etDayOf(ev.date) !== day) continue;
+    const c = (ev.competitions || [])[0]; if (!c) continue;
+    const st = ((ev.status || {}).type) || {};
+    if (/CANCEL|POSTPON|ABANDON/i.test(st.name || '')) continue;
+    const side = w => { const x = (c.competitors || []).find(y => y.homeAway === w); const t = (x && x.team) || {}; return { id: String(t.id || ''), ab: t.abbreviation || '', nm: t.shortDisplayName || t.displayName || t.abbreviation || '' }; };
+    const h = side('home'), a = side('away'); if (!h.id || !a.id) continue;
+    events.push({ id: String(ev.id), lg, at: ev.date, state: st.state || '', h, a });
+  }
+  // A competition ESPN didn't answer for keeps its games from the last copy.
+  if (old && failed.size) for (const e of (old.events || [])) if (failed.has(e.lg) && !events.some(x => x.id === e.id)) events.push(e);
+  const teams = {};
+  for (const e of events) for (const [me, op, home] of [[e.h, e.a, true], [e.a, e.h, false]])
+    teams[me.id] = { id: me.id, ab: me.ab, nm: me.nm, opp: op.nm, oppAb: op.ab, oppId: op.id, home, at: e.at, ev: e.id, lg: e.lg };
+  const out = { at: Date.now(), games: events.length, events, teams };
+  try { await env.RATEBOARD_KV.put(key, JSON.stringify(out), { expirationTtl: 5 * 86400 }); } catch (e) {}
+  return out;
+}
+/* Starting lineups: { out, teams: { espnTeamId: { f: formation, p: [{ n, j, s (1 = starting), pos }] } } }.
+   ESPN's match page has no players at all until the teams are announced. */
+const fcLineupKey = id => `fclineup_v1_${id}`;
+async function fcLineupFetch(env, ev) {
+  let d;
+  try { const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/${ev.lg}/summary?event=${ev.id}`); if (!r.ok) return null; d = await r.json(); } catch (e) { return null; }
+  const teams = {};
+  for (const t of (d.rosters || [])) {
+    const ro = (t.roster || []).filter(x => x && x.athlete); if (!ro.length || !t.team) continue;
+    teams[String(t.team.id)] = { f: t.formation || null, p: ro.map(x => ({ n: x.athlete.displayName || x.athlete.fullName || '', j: x.jersey != null ? String(x.jersey) : null, s: x.starter ? 1 : 0, pos: (x.position || {}).abbreviation || '' })) };
+  }
+  const out = { at: Date.now(), ev: ev.id, out: Object.keys(teams).length > 0, teams, kick: ev.at, final: Date.now() > Date.parse(ev.at) + 5 * 60000 };
+  try { await env.RATEBOARD_KV.put(fcLineupKey(ev.id), JSON.stringify(out), { expirationTtl: 4 * 86400 }); } catch (e) {}
+  return out;
+}
+async function fcLineup(env, ev, fresh) {
+  let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(fcLineupKey(ev.id))) || 'null'); } catch (e) {}
+  const k = Date.parse(ev.at), now = Date.now();
+  // Asked for on the page: a copy over 3 minutes old is read again while the lineup could still be coming or changing.
+  if (fresh && now > k - 90 * 60000 && ((!c || !c.out) ? (now < k + 3 * 3600000 && (!c || now - c.at > 3 * 60000)) : (!c.final && now - c.at > 3 * 60000))) c = (await fcLineupFetch(env, ev)) || c;
+  return c;
+}
+/* Every minute (collector tick): today's games from 85 minutes before
+   kickoff to 20 after - every 3 minutes until the lineups are out, then every
+   10 until kickoff, and once after it. Today's slate is re-read every 2 hours. */
+export async function fcLineupTick(env) {
+  const now = Date.now(), day = etDayOf(new Date(now).toISOString());
+  // Once: Dennis's FC boosters, so the names Real gives FC booster stats show on the health page.
+  try { if (!(await env.RATEBOARD_KV.get('fc_inv_probe_1')) && env.RATEBOARD_DB) { await env.RATEBOARD_KV.put('fc_inv_probe_1', String(now));
+    const dn = await env.RATEBOARD_DB.prepare("SELECT hashId FROM swap_users WHERE key='dennis'").first();
+    if (dn && dn.hashId) await boostInventoryAll(env, env.RS_AUTH_TOKEN, dn.hashId, true, true); } } catch (e) {}
+  let sc = null; try { sc = JSON.parse((await env.RATEBOARD_KV.get(`boostsched_v2_soccer_${day}`)) || 'null'); } catch (e) {}
+  if (!sc || now - sc.at > 2 * 3600000) {
+    let tried = 0; try { tried = Number(await env.RATEBOARD_KV.get('fcsched_try_' + day)) || 0; } catch (e) {}
+    if (now - tried > 10 * 60000) { try { await env.RATEBOARD_KV.put('fcsched_try_' + day, String(now), { expirationTtl: 86400 }); } catch (e) {}
+      const s2 = await fcSchedule(env, day, true); if (s2 && !s2.error) sc = s2; }
+  }
+  if (!sc || !sc.events) return null;
+  let poll = {}; try { poll = JSON.parse((await env.RATEBOARD_KV.get('fclineup_poll_v1')) || '{}') || {}; } catch (e) {}
+  const due = sc.events.filter(e => { const k = Date.parse(e.at); return now > k - 85 * 60000 && now < k + 20 * 60000; }).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  let n = 0, got = 0;
+  for (const e of due) {
+    if (n >= 8) break;
+    const k = Date.parse(e.at), last = Number(poll[e.id]) || 0;
+    let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(fcLineupKey(e.id))) || 'null'); } catch (e2) {}
+    if (c && c.final) continue;
+    const every = c && c.out ? (now > k ? 0 : 10 * 60000) : 3 * 60000;
+    if (now - last < every) continue;
+    poll[e.id] = now; n++;
+    const r = await fcLineupFetch(env, e); if (r && r.out) got++;
+  }
+  for (const id of Object.keys(poll)) if (now - poll[id] > 2 * 86400000) delete poll[id];
+  if (n) { try { await env.RATEBOARD_KV.put('fclineup_poll_v1', JSON.stringify(poll), { expirationTtl: 3 * 86400 }); } catch (e) {} }
+  return n ? `fc lineups ${got}/${n}` : null;
+}
+// A club's squad from ESPN (only needed when a shared Real code has two of its clubs playing the same day). Kept 2 days.
+async function fcSquad(env, lg, id) {
+  const key = `fcsquad_v1_${id}`;
+  try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c && Date.now() - c.at < 2 * 86400000) return c.p; } catch (e) {}
+  try { const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/${lg}/teams/${id}/roster`); if (!r.ok) return [];
+    const d = await r.json(); const p = (d.athletes || []).map(a => ({ n: a.displayName || '', j: a.jersey != null ? String(a.jersey) : null }));
+    try { await env.RATEBOARD_KV.put(key, JSON.stringify({ at: Date.now(), p }), { expirationTtl: 3 * 86400 }); } catch (e) {}
+    return p; } catch (e) { return []; }
+}
+/* Names: Real's and ESPN's differ for about one player in ten (middle names,
+   a dropped first name, Kike for Enrique, ø spelled o). Scored 0-100; a shirt
+   number that agrees settles a close call. Checked on 4,700 appearances:
+   every exact or near match was the same man. */
+const FC_CHARS = { 'ø': 'o', 'Ø': 'o', 'æ': 'ae', 'Æ': 'ae', 'ß': 'ss', 'đ': 'd', 'Đ': 'd', 'ł': 'l', 'Ł': 'l', 'ı': 'i', 'œ': 'oe', 'þ': 'th', 'ð': 'd' };
+const fcTokens = n => String(n || '').replace(/[øØæÆßđĐłŁıœþð]/g, c => FC_CHARS[c]).normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
+  .replace(/\b(jr|sr|ii|iii|iv)\b\.?/g, ' ').split(/[^a-z]+/).filter(Boolean);
+function fcLev(a, b) { if (a === b) return 0; const m = a.length, n = b.length; if (!m || !n) return m || n; let p = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) { const c = [i]; for (let j = 1; j <= n; j++) c[j] = Math.min(p[j] + 1, c[j - 1] + 1, p[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); p = c; } return p[n]; }
+const fcNear = (a, b) => a === b || (a.length >= 5 && b.length >= 5 && fcLev(a, b) <= (Math.min(a.length, b.length) >= 8 ? 2 : 1));
+function fcScore(a, b) {
+  const A = fcTokens(a), B = fcTokens(b); if (!A.length || !B.length) return 0;
+  const ka = A.join(''), kb = B.join('');
+  if (ka === kb) return 100;
+  if (fcNear(ka, kb)) return 92;
+  const [S, L] = A.length <= B.length ? [A, B] : [B, A];
+  const hit = S.filter(t => L.some(u => fcNear(t, u))).length;
+  const lastA = A[A.length - 1], lastB = B[B.length - 1];
+  if (hit === S.length) return S.length >= 2 ? 88 : (S[0].length >= 4 ? 75 : 0);
+  if (fcNear(lastA, lastB) && A[0][0] === B[0][0]) return 80;
+  if (fcNear(lastA, lastB)) return 60;
+  if (S.length >= 2 && hit >= 2) return 70;
+  return hit ? 30 : 0;
+}
+// { p, s, sure } for the best match in a list of { n, j }, or null. sure = clearly him.
+function fcFind(name, list, jersey) {
+  let best = null, second = 0;
+  for (const p of (list || [])) {
+    let s = fcScore(name, p.n);
+    if (jersey != null && p.j != null && String(jersey) === String(p.j) && s >= 30) s = Math.max(s, 85) + 10;
+    if (!best || s > best.s) { second = best ? best.s : 0; best = { p, s }; } else if (s > second) second = s;
+  }
+  if (!best || best.s < 60 || best.s - second < 10) return null;
+  return { p: best.p, s: best.s, sure: best.s >= 70 };
+}
+/* Real's FC booster attributes, read off the stored stat line. The labels
+   Real uses are matched loosely (the first boosters read are logged for the
+   health page), so "Shots on target", "SOT" and "Shots On Goal" all land on
+   the same count; anything not recognised adds nothing rather than a guess. */
+const FC_STAT_KEY = { goal: 'goal', goals: 'goal', g: 'goal', gls: 'goal', gl: 'goal', assist: 'ast', assists: 'ast', a: 'ast', ast: 'ast', as: 'ast',
+  shotsontarget: 'sot', sot: 'sot', shotsongoal: 'sot', shotontarget: 'sot', ontarget: 'sot', shots: 'chance', shot: 'chance', sh: 'chance', totalshots: 'chance',
+  keypasses: 'cc', keypass: 'cc', kp: 'cc', chancescreated: 'cc', chancecreated: 'cc', cc: 'cc', bigchancescreated: 'bcc', bcc: 'bcc',
+  tackles: 'tkl', tackle: 'tkl', tkl: 'tkl', tk: 'tkl', saves: 'save', save: 'save', sv: 'save', svs: 'save',
+  passes: 'pass', pass: 'pass', passescompleted: 'pass', accuratepasses: 'pass', completedpasses: 'pass', pc: 'pass',
+  touches: 'touch', touch: 'touch', touchesinoppbox: 'tOppBox', touchesinbox: 'tOppBox', duelswon: 'duel', duels: 'duel',
+  xg: 'xG', expectedgoals: 'xG', xa: 'xA', expectedassists: 'xA', xgot: 'xGOT', goalsconceded: 'ga', conceded: 'ga' };
+function fcStat(row, label) {
+  let o = row._s; if (o === undefined) { try { o = JSON.parse(row.stats || '{}') || {}; } catch (e) { o = {}; } row._s = o; }
+  const n = v => { const m = String(v == null ? '' : v).match(/^-?\d+(\.\d+)?/); return m ? Number(m[0]) : 0; };
+  const raw = String(label || '');
+  if (/\+/.test(raw)) return raw.split('+').reduce((t, part) => { const v = fcStat(row, part.trim()); return v == null ? t : (t || 0) + v; }, null);   // "G+A"
+  const k = raw.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (k === 'cleansheet' || k === 'cleansheets' || k === 'cs') return row.oppScore === 0 && (fcMin(row) >= 60) ? 1 : 0;
+  const col = FC_STAT_KEY[k] || Object.keys(o).find(x => x.toLowerCase() === k);
+  return col ? n(o[col]) : null;
+}
+// Minutes: Real leaves them off goalkeepers almost always (they play the 90).
+const fcMin = x => Number(x.min) > 0 ? Number(x.min) : String(x.position || '').toUpperCase() === 'G' ? 90 : (Number(x.rax) !== 0 ? 30 : 0);
+const fcPlayed = x => fcMin(x) > 0;
+/* How much each opponent gives up, by Real code (codes shared by two clubs
+   are left at 1). Starters only, this season and last; kept 0.9 to 1.1. */
+async function fcMatchups(env) {
+  const db = env.RATEBOARD_DB; if (!db) return;
+  let rows = [];
+  try { rows = (await db.prepare(`SELECT opponent AS o, AVG(rax) AS a, COUNT(*) AS n FROM gamelog WHERE sport='soccer' AND season IN (?, ?) AND rax IS NOT NULL AND (min >= 60 OR position = 'G') AND opponent IS NOT NULL GROUP BY opponent`).bind(FC_SEASON[0], FC_SEASON[1]).all()).results || []; } catch (e) { return; }
+  const tot = rows.reduce((t, r) => t + r.a * r.n, 0), n = rows.reduce((t, r) => t + r.n, 0); if (!n) return;
+  const mean = tot / n, f = {};
+  for (const r of rows) { if ((FC_CLUBS[r.o] || []).length > 1) continue; const w = r.n / (r.n + 250); f[r.o] = Math.round(Math.min(1.1, Math.max(0.9, 1 + (r.a / mean - 1) * w)) * 100) / 100; }
+  try { await env.RATEBOARD_KV.put('boostmatch_v1_soccer', JSON.stringify({ at: Date.now(), f }), { expirationTtl: 5 * 86400 }); } catch (e) {}
+}
+// Each player's games (this season and last) from the game log, oldest first.
+async function fcGames(db, ids, before) {
+  const cur = new Map(), old = new Map();
+  for (let i = 0; i < ids.length; i += 90) {
+    const part = ids.slice(i, i + 90), ph = part.map(() => '?').join(',');
+    for (const [se, m] of [[FC_SEASON[0], cur], [FC_SEASON[1], old]]) {
+      try { const r = await db.prepare(`SELECT playerId, day, rax, min, team, conference, position, player, jersey, stats, opponent, homeAway, oppScore FROM gamelog
+          WHERE sport='soccer' AND season=? AND rax IS NOT NULL AND day < ? AND playerId IN (${ph}) ORDER BY day`).bind(se, before, ...part).all();
+        for (const x of (r.results || [])) (m.get(Number(x.playerId)) || m.set(Number(x.playerId), []).get(Number(x.playerId))).push(x); } catch (e) {}
+    }
+  }
+  return { cur, old };
+}
+// His club (latest club game) and national team (latest national game, within a year).
+function fcSides(gs, os) {
+  const all = os.concat(gs);
+  let club = null, nat = null;
+  for (let i = all.length - 1; i >= 0 && (!club || !nat); i--) { const x = all[i];
+    if (FC_NAT_CONF.has(String(x.conference || '').toUpperCase())) { if (!nat) nat = x; } else if (!club) club = x; }
+  if (nat && Date.now() - Date.parse(nat.day + 'T12:00:00Z') > 400 * 86400000) nat = null;   // no cap in over a year
+  return { club, nat };
+}
+/* The team a player turns out for on a day's slate: his club's (or his
+   country's) ESPN id among the teams playing. A Real code shared by two clubs
+   that both play is settled by the lineups, then the club's squad list. */
+async function fcTeamOn(env, sched, sides, name, jersey, lineups) {
+  const cand = [];
+  for (const [x, nat] of [[sides.club, false], [sides.nat, true]]) {
+    if (!x) continue;
+    let ids = fcTeamIds(x.team, nat).filter(id => sched.teams[id]);
+    if (!ids.length && !(nat ? FC_NATS : FC_CLUBS)[String(x.team).toUpperCase()])   // a code we don't know yet: ESPN's abbreviation
+      ids = Object.values(sched.teams).filter(t => t.ab === x.team && FC_NAT_LG.has(t.lg) === nat).map(t => t.id);
+    for (const id of ids) cand.push({ id, nat });
+  }
+  // A country's game: only if he's in its current squad (ESPN's call-up list), when ESPN has one.
+  for (const c of cand.filter(c => c.nat)) {
+    const sq = await fcSquad(env, sched.teams[c.id].lg, c.id);
+    if (sq.length >= 15 && !(fcFind(name, sq, null) || {}).sure) cand.splice(cand.indexOf(c), 1);
+  }
+  if (cand.length <= 1) return cand[0] || null;
+  // Two clubs on one code playing the same day: whichever lineup or squad has him.
+  for (const c of cand) { const lu = lineups.get(sched.teams[c.id].ev); const t = lu && lu.out && lu.teams[c.id]; if (t && fcFind(name, t.p, jersey)) return c; }
+  for (const c of cand) { const sq = await fcSquad(env, sched.teams[c.id].lg, c.id); const f = fcFind(name, sq, jersey); if (f && f.sure) return c; }
+  return cand.find(c => !c.nat) || cand[0];
+}
+/* One row per FC pass the member holds whose team plays that day.
+   Projection: what he earns when he starts (min 55+; last 5 starts 50%, this
+   season's 30%, last season's 20%), x home 1.05 / away 0.95, x how much the
+   opponent gives up. Lineups decide: on the bench or out of the squad = no
+   booster. Before the lineups, a regular starter keeps his starting number;
+   a rotation player's is mixed with what he gets off the bench. */
+async function fcRows(env, db, cards, day, inv) {
+  const sched = await fcSchedule(env, day);
+  if (sched.error) return sched;
+  const ids = [...new Set(cards.players.map(p => Number(p.id)).filter(Number.isFinite))];
+  const { cur, old } = await fcGames(db, ids, day);
+  let match = {}; try { match = (JSON.parse((await env.RATEBOARD_KV.get('boostmatch_v1_soccer')) || 'null') || {}).f || {}; } catch (e) {}
+  let hand = {}; try { hand = await boostManualOut(env, 'soccer', day); } catch (e) {}
+  // Lineups for every game on the slate that has one (read again if it could still change).
+  const lineups = new Map();
+  await Promise.all((sched.events || []).map(async e => { const l = await fcLineup(env, e, true); if (l) lineups.set(e.id, l); }));
+  const want = inv ? [...new Set(inv.flatMap(b => (b.attrs || []).map(a => a.stat)))] : [];
+  const avg = a => a.length ? a.reduce((t, x) => t + Number(x.rax || 0), 0) / a.length : null;
+  const mean = (a, f) => { const v = a.map(f).filter(x => x != null); return v.length ? v.reduce((t, x) => t + x, 0) / v.length : null; };
+  const blend = (r5, all, last) => r5 == null ? last : last != null ? 0.5 * r5 + 0.3 * all + 0.2 * last : 0.6 * r5 + 0.4 * all;
+  const tm = iso => new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }) + ' ET';
+  const dayMs = Date.parse(day + 'T12:00:00Z');
+  const rows = [], idle = [];
+  for (const p of cards.players) {
+    const gs = (cur.get(Number(p.id)) || []).filter(fcPlayed), os = (old.get(Number(p.id)) || []).filter(fcPlayed);
+    const lastG = gs[gs.length - 1] || os[os.length - 1];
+    const name = p.name || (lastG && lastG.player) || 'Player ' + p.id;
+    const sides = fcSides(gs, os);
+    if (!sides.club && !sides.nat) { idle.push(name); continue; }
+    const jersey = (lastG && lastG.jersey != null) ? lastG.jersey : null;
+    const side = await fcTeamOn(env, sched, sides, name, jersey, lineups);
+    if (!side) { idle.push(name); continue; }
+    const g = sched.teams[side.id];
+    // Club numbers for a club game, his national-team games for a country's.
+    const pick = a => a.filter(x => FC_NAT_CONF.has(String(x.conference || '').toUpperCase()) === side.nat);
+    const cg = pick(gs), og = pick(os);
+    const useC = cg.length >= 3 || !side.nat ? cg : gs, useO = og.length >= 3 || !side.nat ? og : os;   // too few caps: his club form stands in
+    const starts = useC.filter(x => fcMin(x) >= 55), ostarts = useO.filter(x => fcMin(x) >= 55), subs = useC.filter(x => fcMin(x) < 55);
+    const s5 = avg(starts.slice(-5)), sA = avg(starts), oS = avg(ostarts);
+    let startProj = null, basis = '';
+    if (starts.length >= 4) { startProj = blend(s5, sA, oS); basis = `last 5 starts weighted, ${starts.length} starts this season`; }
+    else if (starts.length && oS != null) { startProj = (starts.length * sA + 3 * oS) / (starts.length + 3); basis = `${starts.length} start${starts.length === 1 ? '' : 's'} this season + last season`; }
+    else if (starts.length) { startProj = sA; basis = `${starts.length} start${starts.length === 1 ? '' : 's'} this season`; }
+    else if (oS != null) { startProj = oS; basis = 'last season\'s starts'; }
+    else if (useC.length) { startProj = Math.min(9, avg(useC) * 1.6); basis = 'off the bench only so far'; }
+    const subProj = subs.length >= 2 ? avg(subs) : startProj != null ? startProj * 0.3 : null;
+    const last5 = useC.slice(-5), startN = last5.filter(x => fcMin(x) >= 55).length, rate = last5.length ? startN / last5.length : 0;
+    const flags = [];
+    let skip = false, k = 1, lu = 'tbd', proj;
+    // The lineup, if it's out.
+    const L = lineups.get(g.ev), LT = L && L.out ? L.teams[side.id] : null;
+    if (LT) {
+      const f = fcFind(name, LT.p, jersey);
+      if (!f) { lu = 'out'; skip = true; flags.push('Not in the matchday squad'); }
+      else {
+        lu = f.p.s ? 'start' : 'bench';
+        if (!f.sure) flags.push(`Lineup name check: listed as ${f.p.n}`);
+        if (!f.p.s) { skip = true; flags.push('On the bench' + (rate >= 0.8 ? ' (rested - he usually starts)' : '')); }
+      }
+    } else {
+      const k0 = Date.parse(g.at);
+      flags.push(Date.now() > k0 ? 'No lineup from ESPN for this game' : `Lineup not out yet - due about ${tm(new Date(k0 - 60 * 60000).toISOString())}`);
+      if (last5.length >= 3 && rate < 0.6) flags.push(`Started ${startN} of his last ${last5.length}`);
+      // Played a full game in the last 3 days: rotation risk.
+      const prev = useC[useC.length - 1];
+      if (prev && fcMin(prev) >= 80 && dayMs - Date.parse(prev.day + 'T12:00:00Z') <= 3 * 86400000) flags.push(`Played ${fcMin(prev)} min ${Math.round((dayMs - Date.parse(prev.day + 'T12:00:00Z')) / 86400000)} day(s) ago - rest risk`);
+    }
+    if (startProj == null) { proj = null; basis = 'not enough data'; }
+    else if (lu === 'start' || (lu === 'tbd' && rate >= 0.8) || (lu === 'tbd' && last5.length < 3)) proj = startProj;
+    else if (lu === 'tbd') proj = startProj * rate + (subProj ?? 0) * (1 - rate);
+    else proj = lu === 'bench' ? subProj : 0;
+    // Hand-set injuries (Boosts' admin list).
+    const ij = hand[boostName(name)];
+    if (ij && lu !== 'start') {
+      if (/^(out|injured reserve|doubtful|suspen)/i.test(ij.status)) { skip = true; flags.push(`${ij.status}${ij.note ? ': ' + ij.note : ''}`); }
+      else if (/questionable/i.test(ij.status)) { k *= 0.75; flags.push(`Questionable${ij.note ? ': ' + ij.note : ''}`); }
+    }
+    // Hasn't played in three weeks while his club has: injured or dropped (a starting lineup overrides it).
+    if (lu !== 'start' && lastG && cg.length && dayMs - Date.parse(lastG.day + 'T12:00:00Z') > 21 * 86400000) { skip = true; flags.push(`No game since ${lastG.day}`); }
+    if (!cg.length && og.length && lu !== 'start') { k *= 0.7; flags.push('No games this season yet'); }
+    const oppKeys = fcKeysOf(g.oppId).filter(x => x.nat === side.nat);
+    const mf = oppKeys.length === 1 && match[oppKeys[0].key] ? match[oppKeys[0].key] : 1;
+    const hf = g.home ? 1.05 : 0.95;
+    if (proj != null && mf !== 1) basis += ` · matchup x${mf}`;
+    // Expected count of each booster stat in a start.
+    const exp = {};
+    for (const st of want) {
+      const e = blend(mean(starts.slice(-5), x => fcStat(x, st)), mean(starts, x => fcStat(x, st)), mean(ostarts, x => fcStat(x, st))) ?? mean(useC, x => fcStat(x, st));
+      if (e != null) exp[st] = Math.round(e * k * (lu === 'tbd' && rate < 0.8 && last5.length >= 3 ? rate : 1) * 100) / 100;
+    }
+    const pos = (lastG && lastG.position) || '';
+    rows.push({ id: p.id, passId: p.passId, name, team: g.nm, tid: null, pos, opp: g.opp, home: g.home, at: g.at, exp, lu, form: LT ? LT.f : null, lg: g.lg, nat: side.nat,
+      avg: avg(cg) == null ? null : Math.round(avg(cg) * 10) / 10, games: cg.length, avgLast: avg(og) == null ? null : Math.round(avg(og) * 10) / 10,
+      proj: proj == null ? null : Math.round(proj * k * mf * hf * 10) / 10, basis, flags, skip, fresh: false, noData: startProj == null });
+  }
+  const outN = [...lineups.values()].filter(l => l.out).length;
+  return { rows, idle, sched: { games: sched.games, lineups: outN, lineupsAt: Math.max(0, ...[...lineups.values()].map(l => l.at || 0)) || null } };
+}
 
 
 /* ---- Projections (2026-11-05) ----------------------------------------------
@@ -4462,7 +4817,7 @@ async function handle({ request, env, waitUntil }) {
   }
 
   if (op === 'boostinv') {
-    const sp = BOOST_SEASON[url.searchParams.get('sport')] || url.searchParams.get('sport') === 'golf' ? url.searchParams.get('sport') : 'nfl';
+    const sp = BOOST_SEASON[url.searchParams.get('sport')] || ['golf', 'soccer'].includes(url.searchParams.get('sport')) ? url.searchParams.get('sport') : 'nfl';
     const u = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(me).first();
     if (!u || !u.hashId) return json({ error: 'Re-read your passes first so the board knows your Real account.' }, 400);
     const want = url.searchParams.get('fresh') === '1';
@@ -4517,7 +4872,7 @@ async function handle({ request, env, waitUntil }) {
     const all = await boostOutList(env);
     if (request.method === 'POST') {
       let b = {}; try { b = await request.json(); } catch (e) {}
-      const sp = ['ncaaf', 'ncaam', 'nfl'].includes(b.sport) ? b.sport : null;
+      const sp = ['ncaaf', 'ncaam', 'nfl', 'soccer'].includes(b.sport) ? b.sport : null;
       if (!sp) return json({ error: 'Pick a sport.' }, 400);
       all[sp] = all[sp] || {};
       if (b.remove) delete all[sp][String(b.remove)];
@@ -4531,7 +4886,7 @@ async function handle({ request, env, waitUntil }) {
       await env.RATEBOARD_KV.put(BOOST_OUT_KEY, JSON.stringify(all));
     }
     const today = etDay(Date.now());
-    return json({ today, sports: Object.fromEntries(['ncaaf', 'ncaam', 'nfl'].map(sp => [sp, Object.entries(all[sp] || {})
+    return json({ today, sports: Object.fromEntries(['ncaaf', 'ncaam', 'nfl', 'soccer'].map(sp => [sp, Object.entries(all[sp] || {})
       .map(([key, v]) => ({ key, ...v, expired: !!(v.until && v.until < today) })).sort((a, b) => a.name.localeCompare(b.name))])) });
   }
   if (op === 'priority') {
@@ -4637,6 +4992,25 @@ async function handle({ request, env, waitUntil }) {
       return json({ passes: names.size, days: evs.map(e => ({ day: e.day, event: e.name, fieldOut: e.field.length > 0,
         players: e.field.length ? e.field.filter(n => names.has(boostName(n))).length : names.size })) });
     }
+    if (sp === 'soccer') {
+      // FC: the next days (up to 8 ahead) on which one of the member's clubs or countries plays.
+      const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
+      const ids = [...new Set(parse(u && u.passes, []).filter(p => p.sport === 'soccer' && Number(p.season) === FC_SEASON[0] && p.kind !== 'team').map(p => Number(p.id)).filter(Number.isFinite))];
+      const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
+      const today = fmt.format(new Date());
+      const { cur, old } = await fcGames(db, ids, '9999-12-31');
+      const teamSets = ids.map(id => { const sd = fcSides((cur.get(id) || []).filter(fcPlayed), (old.get(id) || []).filter(fcPlayed));
+        return { club: sd.club ? fcTeamIds(sd.club.team, false) : [], clubAb: sd.club && sd.club.team, nat: sd.nat ? fcTeamIds(sd.nat.team, true) : [] }; });
+      const days = [];
+      for (let i = 0; i < 8 && days.length < 4; i++) {
+        const d = fmt.format(new Date(Date.now() + i * 86400000));
+        // Saved copies only past the 4 days the refresh keeps (a missing one is fetched once and saved for everyone).
+        const sc = await fcSchedule(env, d).catch(() => null); if (!sc || sc.error) continue;
+        const n = teamSets.filter(t => t.club.some(id => sc.teams[id]) || t.nat.some(id => sc.teams[id]) || (!t.club.length && t.clubAb && Object.values(sc.teams).some(x => x.ab === t.clubAb))).length;
+        if (n) days.push({ day: d, players: n, games: sc.games });
+      }
+      return json({ days, passes: ids.length, today });
+    }
     if (!BOOST_SEASON[sp]) return json({ error: 'Pick CBB, CFB or NFL.' }, 400);
     const [se, prev] = BOOST_SEASON[sp];
     const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
@@ -4661,7 +5035,7 @@ async function handle({ request, env, waitUntil }) {
   }
   if (op === 'boostplan') {
     const sp = String(url.searchParams.get('sport') || '');
-    if (!BOOST_SEASON[sp] && sp !== 'golf') return json({ error: 'Pick CBB, CFB, NFL or Golf.' }, 400);
+    if (!BOOST_SEASON[sp] && sp !== 'golf' && sp !== 'soccer') return json({ error: 'Pick CBB, CFB, NFL, Golf or FC.' }, 400);
     const day = String(url.searchParams.get('date') || '');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return json({ error: 'Pick a date.' }, 400);
     let mode = BOOST_MODES[url.searchParams.get('mode')] ? url.searchParams.get('mode') : 'balanced';
@@ -4673,7 +5047,7 @@ async function handle({ request, env, waitUntil }) {
     const cnum = (k, lo, hi) => { const v = url.searchParams.get(k); if (v == null || v === '') return null; const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : null; };
     const CUS = mode === 'custom' ? { leg: cnum('cl', 0, 500), epic: cnum('ce', 0, 500), rare: cnum('cr', 0, 500),
       max: { 5: cnum('ml', 0, 999), 4: cnum('me', 0, 999), 3: cnum('mr', 0, 999) } } : null;
-    const [se, prev] = sp === 'golf' ? GOLF_SEASON : BOOST_SEASON[sp];
+    const [se, prev] = sp === 'golf' ? GOLF_SEASON : sp === 'soccer' ? FC_SEASON : BOOST_SEASON[sp];
     // What they own: the passes from their last scan (the same read Swaps
     // uses). Rarity and pass level are not counted.
     const u = await db.prepare('SELECT passes, scannedAt, rsUser FROM swap_users WHERE key=?').bind(me).first();
@@ -4690,6 +5064,13 @@ async function handle({ request, env, waitUntil }) {
       // Their golf boosters, read with the other sports' (caps the plan at what they hold).
       try { const uu = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(me).first();
         if (uu && uu.hashId) { const r = await boostInventory(env, env.RS_AUTH_TOKEN || auth, uu.hashId, 'golf', false); if (!r.error && r.list && r.list.length) inv = r.list; } } catch (e) {}
+    } else if (sp === 'soccer') {
+      // FC: ESPN's slate and lineups, the game log's starts (see fcRows). Boosters first - the stat counts follow them.
+      try { const uu = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(me).first();
+        if (uu && uu.hashId) { const r = await boostInventory(env, env.RS_AUTH_TOKEN || auth, uu.hashId, 'soccer', false); if (!r.error && r.list && r.list.length) inv = r.list; } } catch (e) {}
+      const fr = await fcRows(env, db, cards, day, inv);
+      if (fr.error) return json({ error: fr.error }, 502);
+      ({ sched, rows, idle } = fr);
     } else {
       sched = await boostSchedule(env, sp, day);
       if (sched.error) return json({ error: sched.error }, 502);
@@ -4863,9 +5244,13 @@ async function handle({ request, env, waitUntil }) {
        top 3% of finishes make 26+, the top 10% 22+, the median about 11. As
        projections (form and course averages): Legendary 19+, Epic 15+, Rare 10+. */
     const GOLF_RULES = { balanced: { leg: 19, epic: 15, cap: 0.5 }, heavy: { leg: 17, epic: 13.5, cap: 1 }, saver: { leg: 22, epic: 18, cap: 0.25 } };
-    const cfb = sp === 'ncaaf' ? CFB_RULES[mode] || CFB_RULES.balanced : sp === 'golf' ? GOLF_RULES[mode] || GOLF_RULES.balanced : null;
+    /* FC (2026-11-07): rax in a start, this season - half of starters make 6+,
+       the top 10% 10.7+, the top 3% 13+, the very best (Yamal, Raphinha, Olise)
+       17-19. Games most days, so Legendaries are held back a little. */
+    const FC_RULES = { balanced: { leg: 13, epic: 10, cap: 0.5 }, heavy: { leg: 11, epic: 8.5, cap: 1 }, saver: { leg: 15.5, epic: 12.5, cap: 0.25 } };
+    const cfb = sp === 'ncaaf' ? CFB_RULES[mode] || CFB_RULES.balanced : sp === 'golf' ? GOLF_RULES[mode] || GOLF_RULES.balanced : sp === 'soccer' ? FC_RULES[mode] || FC_RULES.balanced : null;
     if (cfb) R.cap = cfb.cap;
-    let legBar = cfb ? cfb.leg : R.leg * scale, epicBar = cfb ? cfb.epic : R.epic * scale, rareFloor = sp === 'ncaaf' || sp === 'golf' ? 10 : 5;
+    let legBar = cfb ? cfb.leg : R.leg * scale, epicBar = cfb ? cfb.epic : R.epic * scale, rareFloor = sp === 'ncaaf' || sp === 'golf' ? 10 : sp === 'soccer' ? 6 : 5;
     const cutAt = null;
     if (CUS) { legBar = CUS.leg ?? Infinity; epicBar = CUS.epic ?? Infinity; rareFloor = CUS.rare ?? Infinity; }
     bars.splice(0, 3, Math.round(legBar * 10) / 10, Math.round(epicBar * 10) / 10, rareFloor);
@@ -4952,7 +5337,7 @@ async function handle({ request, env, waitUntil }) {
     for (const k of Object.keys(totals)) totals[k] = Math.round(totals[k]);
     if (inv) used = inv.map((b, i) => ({ ...b, used: b.count - left[i].count }));
 
-    return json({ sport: sp, season: se, date: day, mode, bars: bars.map(x => Number.isFinite(x) ? x : null), cutAt, totals, legCap: inv && Number.isFinite(dayCap[5]) ? dayCap[5] : null, inv: used, statMode: !!used, rsUser: u.rsUser, cardsAt: cards.at, games: sched.games, event: sched.event || null, course: sched.course || null, field: sched.field ?? null, depth: !!depth,
+    return json({ sport: sp, season: se, date: day, mode, bars: bars.map(x => Number.isFinite(x) ? x : null), cutAt, totals, lineups: sched.lineups ?? null, lineupsAt: sched.lineupsAt || null, legCap: inv && Number.isFinite(dayCap[5]) ? dayCap[5] : null, inv: used, statMode: !!used, rsUser: u.rsUser, cardsAt: cards.at, games: sched.games, event: sched.event || null, course: sched.course || null, field: sched.field ?? null, depth: !!depth,
       rows, notPlaying: idle.length, players: cards.players.length });
   }
 

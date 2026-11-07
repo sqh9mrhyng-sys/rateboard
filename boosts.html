@@ -52,6 +52,10 @@
   .rs1 table{margin-top:8px} .rs1 td,.rs1 th{padding:4px 6px}
   @media (max-width: 680px){ .rs1 .two{grid-template-columns:1fr} }
   .lock{max-width:460px;margin:12vh auto;text-align:center}
+  .lu{display:inline-block;margin-top:4px;padding:2px 7px;border-radius:999px;font-size:11.5px;font-weight:700;border:1px solid var(--line)}
+  .lu-ok{background:color-mix(in srgb,var(--ok) 22%,transparent);border-color:var(--ok);color:var(--ok)}
+  .lu-bad{background:color-mix(in srgb,var(--bad) 18%,transparent);border-color:var(--bad);color:#ff8a8d}
+  .lu-mute{color:var(--mute)}
   /* Tick off each boost as it's put on (Dennis, 2026-11-07). */
   td.bcell{position:relative;padding-right:64px!important}
   .bdone{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:48px;height:48px;border-radius:12px;border:2px solid var(--line);background:var(--panel);color:transparent;font-size:30px;line-height:1;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
@@ -137,14 +141,14 @@
 <div class="lock" id="lock" hidden><h1>Boosts &amp; Buys <span class="beta">BETA</span></h1><p class="note" id="lockmsg">Checking…</p><p id="signinbtn" hidden><a class="btn" href="/" style="display:inline-block;padding:10px 14px;border-radius:9px;background:#E8A33D;color:#141925;font-weight:700;text-decoration:none">Sign in on the board</a></p><p class="note" id="signinhint" hidden>Signed in already? Open the board once - it will ask for your password one more time, then this page works. Opened this from inside Real? Use the browser you signed in with.</p><p><a href="/">Back to the board</a></p></div>
 <div class="wrap" id="main" hidden>
   <header><h1>Boosts &amp; Buys</h1><span class="beta">BETA</span><a href="/" style="margin-left:auto">Back to the board</a></header>
-  <div class="tabsrow"><div class="seg" id="sportseg"><button data-s="ncaam" aria-pressed="true">CBB</button><button data-s="ncaaf" aria-pressed="false">CFB</button><button data-s="nfl" aria-pressed="false">NFL</button><button data-s="golf" aria-pressed="false">Golf</button></div>
+  <div class="tabsrow"><div class="seg" id="sportseg"><button data-s="ncaam" aria-pressed="true">CBB</button><button data-s="ncaaf" aria-pressed="false">CFB</button><button data-s="nfl" aria-pressed="false">NFL</button><button data-s="golf" aria-pressed="false">Golf</button><button data-s="soccer" aria-pressed="false">FC</button></div>
   <div class="seg" id="tab"><button data-t="boosts" aria-pressed="true">Boosts</button><button data-t="buys" aria-pressed="false" id="tab2">Buys</button></div></div>
 
   <div id="t-boosts">
     <section>
       <div class="ctl">
         <label class="note"><span id="daylbl">Day</span> <select id="day"></select></label>
-        <select id="sport" hidden><option value="ncaam">CBB 2026-27</option><option value="ncaaf">CFB 2026</option><option value="nfl">NFL 2026</option><option value="golf">Golf 2026</option></select>
+        <select id="sport" hidden><option value="ncaam">CBB 2026-27</option><option value="ncaaf">CFB 2026</option><option value="nfl">NFL 2026</option><option value="golf">Golf 2026</option><option value="soccer">FC 2026-27</option></select>
         <label class="note">Setting <select id="mode"><option value="balanced" selected>Balanced</option></select></label>
       </div>
       <div class="custom" id="custom" hidden>
@@ -164,7 +168,7 @@
     </section>
     <section id="inv">
       <div class="invhd"><button class="fold" id="invfold" type="button" aria-expanded="true"><span class="chev">▾</span><b class="h">Your boosters</b></button><button id="invgo" class="sm">Load from Real</button></div>
-      <div id="invbody"><p class="note" id="invmsg" style="margin:6px 0 0">Every 2 hours, all four sports (CBB, CFB, NFL, golf).</p>
+      <div id="invbody"><p class="note" id="invmsg" style="margin:6px 0 0">Every 2 hours, all five sports (CBB, CFB, NFL, golf, FC).</p>
       <div id="invout" style="margin:10px 0 0" hidden></div></div>
     </section>
     <section id="out" hidden>
@@ -372,7 +376,7 @@ const invFold = open => { $('#invbody').hidden = !open; $('#invfold').setAttribu
 $('#invfold').addEventListener('click', () => invFold($('#invbody').hidden));
 try{ if(localStorage.getItem('boosts_invopen_v1') === '0') invFold(false); }catch(e){}
 /* Custom: your own bars and maxes, per sport, kept in this browser. */
-const CUS_DEF = { ncaam: { l: 14.5, e: 10, r: 5 }, ncaaf: { l: 22, e: 15, r: 10 }, nfl: { l: 24, e: 16.5, r: 5 }, golf: { l: 19, e: 15, r: 10 } };
+const CUS_DEF = { ncaam: { l: 14.5, e: 10, r: 5 }, ncaaf: { l: 22, e: 15, r: 10 }, nfl: { l: 24, e: 16.5, r: 5 }, golf: { l: 19, e: 15, r: 10 }, soccer: { l: 13, e: 10, r: 6 } };
 const CUS_IDS = { l: 'c-l', e: 'c-e', r: 'c-r', ml: 'm-l', me: 'm-e', mr: 'm-r' };
 function cusLoad(sp){ let all = {}; try{ all = JSON.parse(localStorage.getItem('boosts_custom_v1') || '{}') || {}; }catch(e){}
   const v = all[sp] || { ...CUS_DEF[sp], ml: '', me: '', mr: '' };
@@ -393,8 +397,9 @@ const drawMode = () => { const m = $('#mode').value;
     heavy: 'Legendary 18+ proj rax (no cap) · Epic 12+ · Rare 10+',
     saver: 'Legendary 27.5+ proj rax (max 20% a week) · Epic 20+ · Rare 10+' };
   const GOLF_NOTE = { balanced: 'Legendary 19+ proj rax · Epic 15+ · Rare 10+ (a whole tournament)', heavy: 'Legendary 17+ proj rax · Epic 13.5+ · Rare 10+', saver: 'Legendary 22+ proj rax · Epic 18+ · Rare 10+' };
+  const FC_NOTE = { balanced: 'Legendary 13+ proj rax (max 50% a day) · Epic 10+ · Rare 6+ (rax in a start)', heavy: 'Legendary 11+ proj rax (no cap) · Epic 8.5+ · Rare 6+', saver: 'Legendary 15.5+ proj rax (max 25% a day) · Epic 12.5+ · Rare 6+' };
   const sp0 = $('#sport').value;
-  $('#modenote').textContent = sp0 === 'ncaaf' ? (CFB_NOTE[m] || MODE_NOTE[m]) : sp0 === 'golf' ? (GOLF_NOTE[m] || GOLF_NOTE.balanced) : MODE_NOTE[m]; };
+  $('#modenote').textContent = sp0 === 'ncaaf' ? (CFB_NOTE[m] || MODE_NOTE[m]) : sp0 === 'golf' ? (GOLF_NOTE[m] || GOLF_NOTE.balanced) : sp0 === 'soccer' ? (FC_NOTE[m] || FC_NOTE.balanced) : MODE_NOTE[m]; };
 $('#sport').addEventListener('change', () => { cusLoad($('#sport').value); drawMode(); });
 $('#mode').addEventListener('change', () => { drawMode(); if(!$('#out').hidden) run(); });
 drawMode();
@@ -469,8 +474,9 @@ document.querySelectorAll('#tab button').forEach(b => b.addEventListener('click'
 function paintSport(){
   const sp = $('#sport').value;
   document.querySelectorAll('#sportseg button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.s === sp)));
-  $('#tab2').hidden = sp === 'nfl' || sp === 'golf'; $('#tab2').textContent = 'Buys';
-  showTab(sp === 'nfl' || sp === 'golf' ? 'boosts' : curTab);
+  const noBuys = sp === 'nfl' || sp === 'golf' || sp === 'soccer';
+  $('#tab2').hidden = noBuys; $('#tab2').textContent = 'Buys';
+  showTab(noBuys ? 'boosts' : curTab);
 }
 document.querySelectorAll('#sportseg button').forEach(b => b.addEventListener('click', () => {
   if($('#sport').value === b.dataset.s) return;
@@ -579,7 +585,7 @@ async function run(){
   $('#tot').innerHTML = `<div><span class="note">Projected rax, no boosts</span><b>${(t.base || 0).toLocaleString()}</b></div>`
     + `<div><span class="note">With recommended boosts</span><b style="color:var(--accent)">${(t.recBoosted || 0).toLocaleString()}</b></div>`
     + (j.cutAt != null ? `<div><span class="note">With every Rare above the floor</span><b>${(t.boosted || 0).toLocaleString()}</b></div>` : '');
-  $('#outhead').textContent = `${$('#sport').selectedOptions[0].textContent} · ${$('#day').selectedOptions[0].textContent} · ${rows.length} of your ${j.players} passes play` + (sp === 'golf' ? ` (${j.event || 'this week'}${j.course ? ' · ' + j.course : ''}${j.field === 0 ? ' · field not out yet - showing all your golfers' : ''})` : ` (${j.games} games on the slate)`)
+  $('#outhead').textContent = `${$('#sport').selectedOptions[0].textContent} · ${$('#day').selectedOptions[0].textContent} · ${rows.length} of your ${j.players} passes play` + (sp === 'golf' ? ` (${j.event || 'this week'}${j.course ? ' · ' + j.course : ''}${j.field === 0 ? ' · field not out yet - showing all your golfers' : ''})` : sp === 'soccer' ? ` (${j.games} games on the slate · lineups out for ${j.lineups || 0}${j.lineupsAt ? ', checked ' + new Date(j.lineupsAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''})` : ` (${j.games} games on the slate)`)
     + (j.cardsAt ? ` · passes read ${new Date(j.cardsAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : '');
   if(j.statMode){
     const own = r => (j.inv || []).filter(b => b.rarity === r).reduce((t, b) => t + b.count, 0);
@@ -590,7 +596,7 @@ async function run(){
   }
   if(!rows.length){ $('#rows').innerHTML = `<tr><td colspan="7" class="note" style="text-align:left">None of your players for this sport play that day.</td></tr>`; return; }
   let cutDone = false;
-  const golf = sp === 'golf';
+  const golf = sp === 'golf', fc = sp === 'soccer';
   doneDay = sp + ':' + day; doneSet = loadDone(doneDay);
   $('#rows').innerHTML = rows.map(r => {
     const cutRow = (!cutDone && r.belowCut) ? (cutDone = true, `<tr class="cut"><td colspan="7">Recommended cutoff - Rares below this line only if you have spares (projection under ${j.cutAt})</td></tr>`) : '';
@@ -601,17 +607,32 @@ async function run(){
     return cutRow + `<tr class="${r.skip ? 'skip' : ''}${r.belowCut ? ' below' : ''}${r.boost && r.best && doneSet.has(doneKey(r)) ? ' boosted' : ''}"><td data-l="Rarity">${r.boost ? `<span class="b ${r.boost}">${LBL[r.boost]}</span>` : '<span class="b none">None</span>'}</td>
       <td data-l="Player" class="pc">${nm}${r.noData ? ' <span class="note">*not enough data*</span>' : ''}<span class="sub">${esc([r.pos, r.team].filter(Boolean).join(' · '))}${r.basis ? ' · ' + esc(r.basis) : ''}</span>${(r.flags || []).map(f => `<span class="flag">⚠ ${esc(f)}</span>`).join('')}</td>
       <td data-l="Boost" class="${r.boost && r.best ? 'bcell' : ''}" style="text-align:left;white-space:normal">${r.boost && r.best ? `<b>${one(r.best)}</b>${r.alt ? `<span class="sub">or ${one(r.alt)}</span>` : ''}<button class="bdone${doneSet.has(doneKey(r)) ? ' on' : ''}" data-done="${esc(doneKey(r))}" aria-label="Boosted" title="Mark as boosted"></button>` : '<span class="note">–</span>'}</td>
-      <td data-l="${golf ? 'Event' : 'Game'}" style="text-align:left">${golf ? esc(r.opp) : `${r.home ? 'vs' : '@'} ${esc(r.opp)}`}<span class="sub">${golf && r.at ? 'Starts ' + new Date(r.at).toLocaleDateString('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' }) : tm(r.at)}</span></td>
+      <td data-l="${golf ? 'Event' : 'Game'}" style="text-align:left">${golf ? esc(r.opp) : `${r.home ? 'vs' : '@'} ${esc(r.opp)}`}<span class="sub">${golf && r.at ? 'Starts ' + new Date(r.at).toLocaleDateString('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' }) : tm(r.at)}${fc && FC_LG[r.lg] ? ' · ' + FC_LG[r.lg] : ''}</span>${fc ? luChip(r) : ''}</td>
       <td data-l="${golf ? 'Form' : 'Avg rax'}">${r.avg != null ? r.avg + `<span class="sub">${r.games} ${golf ? 'event' : 'game'}${r.games === 1 ? '' : 's'}${r.avgLast != null ? (golf ? ' · here ' : ' · last yr ') + r.avgLast : ''}</span>` : r.avgLast != null ? `–<span class="sub">${golf ? 'here' : 'last yr'} ${r.avgLast}</span>` : '–'}</td>
       <td data-l="Proj rax">${r.proj == null ? 'no data' : r.proj}</td>
       <td data-l="Proj w/ boost"><b>${r.boost && r.withBoost != null ? Math.round(r.withBoost).toLocaleString() : (r.proj ?? '–')}</b>${r.boost && r.withBoost != null ? `<span class="sub">${r.proj} × ${r.mult} + ${(r.best && r.best.gain) || 0}</span>` : ''}</td></tr>`;
   }).join('');
+  if(fc){ $('#foot').textContent = 'FC: the slate is every game Real scores - the Premier League, Championship, La Liga, Serie A, Bundesliga, Ligue 1, Liga MX, Champions League, Europa League and Nations League (no cups or friendlies). Projected rax is what he makes in a start (55+ minutes): his last 5 starts count half, this season\'s starts 30%, last season\'s 20%, then home x1.05 / away x0.95 and how much the opponent gives up. Starting lineups come from ESPN, read every few minutes from about 85 minutes before kickoff (they are usually out an hour before): starting = boost, on the bench or not in the squad = no booster. Before the lineup is out, a regular starter keeps his starting number and anyone rotated in and out is marked down; check back once the lineup is in. The game log is updated from Real after every game. Players out (Boosts\' injury list) or with no game in three weeks get no booster.' + (j.notPlaying ? ` ${j.notPlaying} of your players don't play that day.` : ''); scheduleFcRefresh(rows); return; }
   if(sp === 'golf'){ $('#foot').textContent = 'Golf: a tournament counts as one game. Projected rax is his average over his last 8 events (this season and last), mixed with his average at this event and course from every season on the site - the more times he has played it, the more it counts (up to half). Only golfers in ESPN\'s field for the event are shown once the field is out.' + (j.notPlaying ? ` ${j.notPlaying} of your golfers aren't in the field.` : ''); return; }
   $('#foot').textContent = (j.statMode ? 'Rarity comes from projected rax (capped by what you hold); Boost is the attribute from your boosters of that rarity that adds the most for that player, shown as his average of that stat / the rax it adds, with a second option. ' : '') + `Projected rax: recent games weighted most, then this season, then last season's regular season only, adjusted for how much the opponent gives up. Freshmen on the CBB top 175 get a projection from their rank; others show *not enough data*. CBB teams come from the top 175 and ESPN's current rosters, so transfers show with their new team. Pass rarity and level aren't counted. Injuries and depth charts: ESPN's injury list at 10am, 1pm, 5pm and 8pm ET, plus each team's own injury list every 2 hours, plus a list kept by hand (ESPN's college lists miss most injuries). Players out, doubtful, suspended`
     + (j.depth ? ', backups on the depth chart' : '') + ` or not playing lately get no booster; questionable players are marked down.`
     + (j.notPlaying ? ` ${j.notPlaying} of your players don't play that day.` : '');
 }
 $('#run').addEventListener('click', run);
+// FC: competition names and the lineup chip on each row.
+const FC_LG = { 'eng.1': 'Premier League', 'eng.2': 'Championship', 'esp.1': 'La Liga', 'ita.1': 'Serie A', 'ger.1': 'Bundesliga', 'fra.1': 'Ligue 1', 'mex.1': 'Liga MX', 'uefa.champions': 'Champions League', 'uefa.europa': 'Europa League', 'uefa.nations': 'Nations League', 'fifa.worldq.uefa': 'WC qualifier', 'fifa.world': 'World Cup' };
+function luChip(r){
+  const k = { start: ['ok', 'Starting' + (r.form ? ' · ' + r.form : '')], bench: ['bad', 'On the bench'], out: ['bad', 'Not in squad'], tbd: ['mute', 'Lineup not out yet'] }[r.lu] || ['mute', ''];
+  return k[1] ? `<span class="lu lu-${k[0]}">${esc(k[1])}</span>` : '';
+}
+/* While the page is open on an FC day with a lineup still to come in the next 90 minutes,
+   the plan is worked out again every 4 minutes (ticks are kept). */
+let fcTimer = null;
+function scheduleFcRefresh(rows){
+  clearTimeout(fcTimer);
+  const soon = rows.some(r => r.lu === 'tbd' && r.at && Date.parse(r.at) - Date.now() < 90 * 60000 && Date.parse(r.at) > Date.now() - 15 * 60000);
+  if(soon) fcTimer = setTimeout(() => { if($('#sport').value === 'soccer' && !$('#out').hidden && document.visibilityState === 'visible') run(); else scheduleFcRefresh(rows); }, 4 * 60000);
+}
 // Boost ticks: kept in this browser for that sport and day.
 let doneDay = '', doneSet = new Set();
 const doneKey = r => `${r.id || r.name}|${r.boost}`;

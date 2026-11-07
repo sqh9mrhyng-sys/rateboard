@@ -1,5 +1,5 @@
 import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS, touchSeen, userStats, sessionState } from '../../lib/auth.js';
-import { swapTick, dmTickKey, boostRefresh, swapAccess } from './swaps.js';
+import { swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick } from './swaps.js';
 import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, capNow } from '../../lib/dbwatch.js';
 
 /* Adding a column that already exists just errors (and is ignored). Each
@@ -7692,6 +7692,98 @@ async function gapPush(ctx) {
   try { await env0.RATEBOARD_KV.put('gap_push_last', JSON.stringify({ at: Date.now(), job: job.join(':'), phase })); } catch (e) {}
 }
 
+/* ---- FC game data, kept up to date for Boosts (2026-11-07) -----------------
+   The FC season's full sweep is weekly (Monday) - too big to walk daily. So
+   after every FC game on the Boosts slate (ESPN, saved by swaps.js), the
+   players of both teams are read again straight from Real: their season feed
+   (the box score) and their earnings (the rax), 6 players a minute. Each game
+   is done twice - 2.5 hours after kickoff, and again 6 hours later for any
+   rax Real posted late. A game no earnings line ever shows up for (an unused
+   sub) goes to 0 after 30 hours, like the sweep does. */
+const FC_GL_KEY = 'fc_glrefresh_v1';
+const fcEtDay = ms => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
+export async function fcGameRefresh(env) {
+  const db = env.RATEBOARD_DB, auth = env.RS_AUTH_TOKEN;
+  if (!db || !auth) return null;
+  const now = Date.now();
+  let st = null;
+  try { st = JSON.parse((await env.RATEBOARD_KV.get(FC_GL_KEY)) || 'null'); } catch (e) {}
+  if (!st) st = { q: [], done: {}, built: 0, runs: 0, players: 0, rows: 0, raxSet: 0, last: null, snapAt: 0, day: null, today: 0 };
+  if (st.day !== fcEtDay(now)) { st.day = fcEtDay(now); st.today = 0; }
+  // Which games have finished since the last look, and who played in them.
+  if (now - st.built > 15 * 60000) {
+    st.built = now;
+    const have = new Set(st.q.map(Number));
+    for (const day of [fcEtDay(now - 2 * 86400000), fcEtDay(now - 86400000), fcEtDay(now)]) {
+      let sc = null; try { sc = JSON.parse((await env.RATEBOARD_KV.get(`boostsched_v2_soccer_${day}`)) || 'null'); } catch (e) {}
+      for (const e of ((sc && sc.events) || [])) {
+        const end = Date.parse(e.at) + 150 * 60000;
+        for (const pass of [1, 2]) {
+          const k = `${e.id}:${pass}`;
+          if (st.done[k] || now < end + (pass === 2 ? 6 * 3600000 : 0)) continue;
+          st.done[k] = now;
+          if (now > end + 48 * 3600000) continue;
+          const keys = [...fcKeysOf(e.h.id), ...fcKeysOf(e.a.id)];
+          if (!keys.length) continue;
+          const club = keys.filter(x => !x.nat).map(x => x.key), nat = keys.filter(x => x.nat).map(x => x.key);
+          const cond = [], args = [];
+          if (club.length) { cond.push(`(team IN (${club.map(() => '?').join(',')}) AND COALESCE(conference, '') NOT IN ('WC', 'UNL'))`); args.push(...club); }
+          if (nat.length) { cond.push(`(team IN (${nat.map(() => '?').join(',')}) AND conference IN ('WC', 'UNL'))`); args.push(...nat); }
+          try {
+            const r = await db.prepare(`SELECT DISTINCT playerId AS p FROM gamelog WHERE sport='soccer' AND season=2026 AND day >= ? AND (${cond.join(' OR ')})`)
+              .bind(fcEtDay(now - (nat.length && !club.length ? 400 : 60) * 86400000), ...args).all();
+            for (const x of (r.results || [])) { const id = Number(x.p); if (Number.isFinite(id) && !have.has(id)) { have.add(id); st.q.push(id); } }
+          } catch (err) { delete st.done[k]; }
+        }
+      }
+    }
+    for (const k of Object.keys(st.done)) if (now - st.done[k] > 5 * 86400000) delete st.done[k];
+  }
+  // A few players a minute, straight from Real.
+  const take = st.q.splice(0, 6);
+  if (take.length) {
+    const place = '(' + GAMELOG_FEED_COLS.map(() => '?').join(',') + ')';
+    const keyCols = ['sport', 'season', 'playerId', 'gameId'];
+    const sets = GAMELOG_FEED_COLS.filter(c => !keyCols.includes(c)).map(c => `${c}=excluded.${c}`).join(', ');
+    const sql = `INSERT INTO gamelog (${GAMELOG_FEED_COLS.join(',')}) VALUES ${place} ON CONFLICT(${keyCols.join(',')}) DO UPDATE SET ${sets} WHERE ${glChanged(keyCols)}`;
+    const since = fcEtDay(now - 10 * 86400000), zeroBefore = fcEtDay(now - 30 * 3600000);
+    for (const id of take) {
+      try {
+        const d = await rsGet(`https://web.realapp.com/players/${id}/sport/soccer/seasonfeed?limit=8&season=2026&view=recent&viewFrame=default`, auth);
+        const rows = ((d && d.playerBoxScores) || []).filter(b => b && b.gameId != null).map(b => gamelogRow('soccer', 2026, b));
+        if (rows.length) await db.batch(rows.map(r => db.prepare(sql).bind(...GAMELOG_FEED_COLS.map(c => r[c] === undefined ? null : r[c]))));
+        st.rows += rows.length;
+        const days = [...new Set(rows.map(r => r.day).filter(x => x && x >= since))];
+        if (days.length) {
+          const e = await rsGet(`https://web.realapp.com/userpassearnings/soccer/season/2026/entity/player/${id}`, auth);
+          const list = ((e && e.earnings) || []).filter(x => x && x.day && x.earnings != null && days.includes(x.day));
+          const stmts = [];
+          for (const x of list) {
+            if (Array.isArray(x.playerBoxScoreIds) && x.playerBoxScoreIds.length > 1) continue;   // two games one day: left to the sweep
+            stmts.push(db.prepare('UPDATE gamelog SET rax = ? WHERE sport = ? AND season = ? AND playerId = ? AND day = ? AND rax IS NOT ?').bind(Number(x.earnings), 'soccer', 2026, id, x.day, Number(x.earnings)));
+          }
+          const listed = new Set(list.map(x => x.day));
+          for (const dd of days) if (!listed.has(dd) && dd <= zeroBefore) stmts.push(db.prepare('UPDATE gamelog SET rax = 0 WHERE sport = ? AND season = ? AND playerId = ? AND day = ? AND rax IS NULL').bind('soccer', 2026, id, dd));
+          if (stmts.length) await db.batch(stmts);
+          st.raxSet += list.length;
+        }
+        st.players++; st.today++;
+      } catch (err) {
+        // Throttled or down: back on the end of the line, up to a day of tries.
+        st.fails = (st.fails || 0) + 1; st.lastErr = String((err && err.message) || err).slice(0, 120);
+        if (!/404/.test(st.lastErr)) st.q.push(id);
+        break;
+      }
+    }
+    st.runs++; st.last = now;
+    // The saved by-player table (Game data page) is rebuilt once the line is empty, at most hourly.
+    if (!st.q.length && now - (st.snapAt || 0) > 3600000) { st.snapAt = now; try { await env.RATEBOARD_KV.delete('glsnap_v1_soccer:2026'); } catch (e) {} }
+  }
+  if (st.q.length > 6000) st.q = st.q.slice(-6000);
+  try { await env.RATEBOARD_KV.put(FC_GL_KEY, JSON.stringify(st), { expirationTtl: 7 * 86400 }); } catch (e) {}
+  return take.length ? `fc gamelog ${take.length}` : null;
+}
+
 async function collectorHealth(env, url) {
   const ck = new Request(url.origin + '/__cache/collector-health');
   try { const hit = await caches.default.match(ck); if (hit) return hit; } catch (e) {}
@@ -7744,7 +7836,11 @@ async function collectorHealth(env, url) {
           FROM swap_matches WHERE dueAt BETWEEN ? AND ? GROUP BY dueAt ORDER BY dueAt`).bind(Date.now() - 12 * 3600000, Date.now() + 6 * 3600000).all()).results || [])
           .map(h => ({ ...h, dueAt: new Date(h.dueAt).toISOString().slice(0, 16), firstMade: h.firstMade ? new Date(h.firstMade).toISOString().slice(0, 16) : null })); } catch (e) {}
       const dms = ((await db.prepare("SELECT k, n FROM bot_stats WHERE day=? AND (k LIKE 'dm_%' OR k LIKE 'confirm_%' OR k = 'dupe_calledoff' OR k = 'fail')").bind(day).all()).results) || [];
-      return { today: Object.fromEntries(st.map(x => [x.k, x.n])), running: q && q.running, waiting: q && q.waiting, recent: await kvj('scan_perf_v1'), dmsToday: Object.fromEntries(dms.map(x => [x.k, x.n])), dmsYesterday: Object.fromEntries(dmsY.map(x => [x.k, x.n])), dmRetryQueue: dmq, dmAudit: await (async () => { try { const a = JSON.parse((await env.RATEBOARD_KV.get('dm_audit_' + Date.UTC(2026, 10, 5, 17))) || 'null'); return a && { checked: a.done.length, ok: a.ok.length, resent: a.resent.length, held: (a.pending || []).length, couldntCheck: a.failed.length, finished: !!a.finished, stopped: a.aborted || null }; } catch (e) { return null; } })(), swapHours: hours, dupes, confirmRun: await (async () => { try { const d = new Date(Date.now() + 30 * 60000 - 7 * 3600000); const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d); return { day, ...(JSON.parse((await env.RATEBOARD_KV.get('confirm_run_' + day)) || 'null') || {}) }; } catch (e) { return null; } })(), matchLog: await (async () => { try {
+      return { today: Object.fromEntries(st.map(x => [x.k, x.n])), running: q && q.running, waiting: q && q.waiting, recent: await kvj('scan_perf_v1'), dmsToday: Object.fromEntries(dms.map(x => [x.k, x.n])), dmsYesterday: Object.fromEntries(dmsY.map(x => [x.k, x.n])), dmRetryQueue: dmq, dmAudit: await (async () => { try { const a = JSON.parse((await env.RATEBOARD_KV.get('dm_audit_' + Date.UTC(2026, 10, 5, 17))) || 'null'); return a && { checked: a.done.length, ok: a.ok.length, resent: a.resent.length, held: (a.pending || []).length, couldntCheck: a.failed.length, finished: !!a.finished, stopped: a.aborted || null }; } catch (e) { return null; } })(), swapHours: hours, dupes, fc: await (async () => { try { const g = await kvj(FC_GL_KEY) || {}; const d = fcEtDay(Date.now()), sc = await kvj(`boostsched_v2_soccer_${d}`);
+        let lineups = 0; for (const e of ((sc && sc.events) || [])) { const l = await kvj(`fclineup_v1_${e.id}`); if (l && l.out) lineups++; }
+        return { gamelog: { queue: (g.q || []).length, playersToday: g.today || 0, playersAll: g.players || 0, rows: g.rows || 0, raxSet: g.raxSet || 0, lastRun: g.last ? new Date(g.last).toISOString() : null, fails: g.fails || 0, lastErr: g.lastErr || null },
+          today: { day: d, games: sc ? sc.games : null, scheduleAt: sc ? new Date(sc.at).toISOString() : null, lineupsOut: lineups },
+          boosterLabels: await kvj('fc_booster_labels') }; } catch (e) { return { error: String(e.message || e).slice(0, 120) }; } })(), confirmRun: await (async () => { try { const d = new Date(Date.now() + 30 * 60000 - 7 * 3600000); const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d); return { day, ...(JSON.parse((await env.RATEBOARD_KV.get('confirm_run_' + day)) || 'null') || {}) }; } catch (e) { return null; } })(), matchLog: await (async () => { try {
         const f = ((await db.prepare("SELECT at, kind, msg FROM bot_log WHERE kind IN ('matching','swap_tick','match') ORDER BY at DESC LIMIT 10").all()).results) || [];
         const runs = ((await db.prepare('SELECT hour, at FROM swap_runs ORDER BY hour DESC LIMIT 12').all()).results) || [];
         const st2 = ((await db.prepare("SELECT day, k, n FROM bot_stats WHERE k IN ('matches','match_runs','match_refresh') ORDER BY day DESC LIMIT 12").all()).results) || [];
@@ -7779,6 +7875,9 @@ export async function onRequestGet(ctx) {
       await new Promise(r => setTimeout(r, 27000));
       await fetch(`${origin}/api/swaps?op=dmtick&k=${k}&half=2`, { cf: { cacheTtl: 0 } }).catch(() => {}); })().catch(() => {}));
     ctx.waitUntil(boostRefresh(env).catch(() => {}));
+    // FC Boosts: lineups near kickoff, and the game log after each game.
+    ctx.waitUntil(fcLineupTick(env).catch(() => {}));
+    ctx.waitUntil(fcGameRefresh(env).catch(() => {}));
     ctx.waitUntil(gapPush(ctx).catch(() => {}));
   }
   // Read-only collector progress, no sign-in: counts and dates only, nothing from the market or any account.
