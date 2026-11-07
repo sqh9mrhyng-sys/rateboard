@@ -3123,25 +3123,44 @@ function fcSides(gs, os) {
 /* The team a player turns out for on a day's slate: his club's (or his
    country's) ESPN id among the teams playing. A Real code shared by two clubs
    that both play is settled by the lineups, then the club's squad list. */
+/* Clubs behind a shared Real code, by ESPN league: Real's "conference" on
+   his rows (EFL, SERA, ...) says which of them is his - BOL in the
+   Championship is Bolton, in Serie A Bologna (2026-11-07: Josh Sheehan was
+   put in Bologna's game). Codes Real files under UCL/UEL (LEV, CEL) don't
+   say, so for those he has to be found in that club's lineup or squad. */
+const FC_CLUB_LG = { 226: 'mex.1', 216: 'mex.1', 358: 'eng.2', 107: 'ita.1', 337: 'eng.1', 6997: 'fra.1', 85: 'esp.1', 256: 'sco.1', 1538: 'esp.1', 131: 'ger.1', 490: 'bul.1',
+  391: 'eng.2', 103: 'ita.1', 220: 'mex.1', 4007: 'ita.1', 115: 'ita.1', 6851: 'fra.1', 385: 'eng.2', 437: 'por.1', 225: 'mex.1', 494: 'cze.1', 239: 'ita.1', 21615: 'por.1' };
+const FC_CONF_LG = { EPL: 'eng.1', EFL: 'eng.2', LIGA: 'esp.1', SERA: 'ita.1', BUN: 'ger.1', LIG1: 'fra.1', LIGAMX: 'mex.1' };
+function fcClubIds(row) {
+  let ids = fcTeamIds(row.team, false);
+  if (ids.length > 1) { const lg = FC_CONF_LG[String(row.conference || '').toUpperCase()]; const f = lg ? ids.filter(id => FC_CLUB_LG[id] === lg) : [];
+    if (f.length) ids = f; }
+  return ids;
+}
+/* The team a player turns out for on a day's slate: his club's (or his
+   country's) ESPN id among the teams playing. When his code could still be
+   more than one club, he has to be in that club's lineup (once out) or its
+   squad list - otherwise he isn't counted as playing. */
 async function fcTeamOn(env, sched, sides, name, jersey, lineups) {
   const cand = [];
   for (const [x, nat] of [[sides.club, false], [sides.nat, true]]) {
     if (!x) continue;
-    let ids = fcTeamIds(x.team, nat).filter(id => sched.teams[id]);
+    const all = nat ? fcTeamIds(x.team, true) : fcClubIds(x);
+    let ids = all.filter(id => sched.teams[id]);
     if (!ids.length && !(nat ? FC_NATS : FC_CLUBS)[String(x.team).toUpperCase()])   // a code we don't know yet: ESPN's abbreviation
       ids = Object.values(sched.teams).filter(t => t.ab === x.team && FC_NAT_LG.has(t.lg) === nat).map(t => t.id);
-    for (const id of ids) cand.push({ id, nat });
+    for (const id of ids) cand.push({ id, nat, check: nat || all.length > 1 });
   }
-  // A country's game: only if he's in its current squad (ESPN's call-up list), when ESPN has one.
-  for (const c of cand.filter(c => c.nat)) {
-    const sq = await fcSquad(env, sched.teams[c.id].lg, c.id);
-    if (sq.length >= 15 && !(fcFind(name, sq, null) || {}).sure) cand.splice(cand.indexOf(c), 1);
+  const ok = [];
+  for (const c of cand) {
+    if (!c.check) { ok.push(c); continue; }
+    const t = sched.teams[c.id], lu = lineups.get(t.ev), LT = lu && lu.out && lu.teams[c.id];
+    if (LT) { if (fcFind(name, LT.p, jersey)) ok.push(c); continue; }
+    const sq = await fcSquad(env, t.lg, c.id);
+    if (sq.length >= 15) { const f = fcFind(name, sq, jersey); if (f && f.sure) ok.push(c); }
+    else if (c.nat) ok.push(c);   // no call-up list from ESPN yet: his country's game counts
   }
-  if (cand.length <= 1) return cand[0] || null;
-  // Two clubs on one code playing the same day: whichever lineup or squad has him.
-  for (const c of cand) { const lu = lineups.get(sched.teams[c.id].ev); const t = lu && lu.out && lu.teams[c.id]; if (t && fcFind(name, t.p, jersey)) return c; }
-  for (const c of cand) { const sq = await fcSquad(env, sched.teams[c.id].lg, c.id); const f = fcFind(name, sq, jersey); if (f && f.sure) return c; }
-  return cand.find(c => !c.nat) || cand[0];
+  return ok.find(c => !c.nat) || ok[0] || null;
 }
 /* One row per FC pass the member holds whose team plays that day.
    Projection: what he earns when he starts (min 55+; last 5 starts 50%, this
@@ -5000,7 +5019,7 @@ async function handle({ request, env, waitUntil }) {
       const today = fmt.format(new Date());
       const { cur, old } = await fcGames(db, ids, '9999-12-31');
       const teamSets = ids.map(id => { const sd = fcSides((cur.get(id) || []).filter(fcPlayed), (old.get(id) || []).filter(fcPlayed));
-        return { club: sd.club ? fcTeamIds(sd.club.team, false) : [], clubAb: sd.club && sd.club.team, nat: sd.nat ? fcTeamIds(sd.nat.team, true) : [] }; });
+        return { club: sd.club ? fcClubIds(sd.club) : [], clubAb: sd.club && sd.club.team, nat: sd.nat ? fcTeamIds(sd.nat.team, true) : [] }; });
       const days = [];
       for (let i = 0; i < 8 && days.length < 4; i++) {
         const d = fmt.format(new Date(Date.now() + i * 86400000));
