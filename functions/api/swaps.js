@@ -5149,6 +5149,8 @@ async function handle({ request, env, waitUntil }) {
       const fr = await fcRows(env, db, cards, day, inv);
       if (fr.error) return json({ error: fr.error }, 502);
       ({ sched, rows, idle } = fr);
+      // "Hide games that already started" (Dennis, 2026-11-07): those players come off before boosters are handed out, so they go to games still to come.
+      if (url.searchParams.get('upcoming') === '1') { const now = Date.now(), gone = rows.filter(r => r.at && Date.parse(r.at) <= now); rows = rows.filter(r => !gone.includes(r)); sched.started = gone.length; }
     } else {
       sched = await boostSchedule(env, sp, day);
       if (sched.error) return json({ error: sched.error }, 502);
@@ -5416,7 +5418,7 @@ async function handle({ request, env, waitUntil }) {
     for (const k of Object.keys(totals)) totals[k] = Math.round(totals[k]);
     if (inv) used = inv.map((b, i) => ({ ...b, used: b.count - left[i].count }));
 
-    return json({ sport: sp, season: se, date: day, mode, bars: bars.map(x => Number.isFinite(x) ? x : null), cutAt, totals, lineups: sched.lineups ?? null, lineupsAt: sched.lineupsAt || null, legCap: inv && Number.isFinite(dayCap[5]) ? dayCap[5] : null, inv: used, statMode: !!used, rsUser: u.rsUser, cardsAt: cards.at, games: sched.games, event: sched.event || null, course: sched.course || null, field: sched.field ?? null, depth: !!depth,
+    return json({ sport: sp, season: se, date: day, mode, bars: bars.map(x => Number.isFinite(x) ? x : null), cutAt, totals, lineups: sched.lineups ?? null, lineupsAt: sched.lineupsAt || null, started: sched.started ?? null, legCap: inv && Number.isFinite(dayCap[5]) ? dayCap[5] : null, inv: used, statMode: !!used, rsUser: u.rsUser, cardsAt: cards.at, games: sched.games, event: sched.event || null, course: sched.course || null, field: sched.field ?? null, depth: !!depth,
       rows, notPlaying: idle.length, players: cards.players.length });
   }
 

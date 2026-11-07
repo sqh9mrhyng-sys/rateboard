@@ -56,6 +56,8 @@
   .lu-ok{background:color-mix(in srgb,var(--ok) 22%,transparent);border-color:var(--ok);color:var(--ok)}
   .lu-bad{background:color-mix(in srgb,var(--bad) 18%,transparent);border-color:var(--bad);color:#ff8a8d}
   .lu-mute{color:var(--mute)}
+  .hidestart{margin:8px 0 2px}
+  .hidestart[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
   /* Tick off each boost as it's put on (Dennis, 2026-11-07). */
   td.bcell{position:relative;padding-right:64px!important}
   .bdone{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:48px;height:48px;border-radius:12px;border:2px solid var(--line);background:var(--panel);color:transparent;font-size:30px;line-height:1;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
@@ -173,6 +175,7 @@
     </section>
     <section id="out" hidden>
       <div class="note" id="outhead"></div>
+      <button class="sm hidestart" id="hidestart" type="button" hidden aria-pressed="false">Hide games that already started</button>
       <div class="tot" id="tot"></div>
       <div class="sum" id="sum"></div>
       <div class="scroll"><table class="cards"><thead><tr><th>Rarity</th><th>Player</th><th style="text-align:left">Boost</th><th style="text-align:left">Game</th><th>Avg rax</th><th>Proj rax</th><th>Proj w/ boost</th></tr></thead><tbody id="rows"></tbody></table></div>
@@ -575,7 +578,9 @@ async function run(){
   try{ localStorage.setItem('boosts_pick_v1', JSON.stringify({ sport: sp, mode })); }catch(e){}
   $('#run').disabled = true; $('#out').hidden = false; $('#rows').innerHTML = ''; $('#sum').innerHTML = ''; $('#foot').textContent = '';
   $('#outhead').textContent = 'Working it out…';
-  const j = await api(`/api/swaps?op=boostplan&page=boosts&sport=${sp}&date=${day}&mode=${mode}` + (mode === 'custom' ? cusQuery() : ''));
+  const j = await api(`/api/swaps?op=boostplan&page=boosts&sport=${sp}&date=${day}&mode=${mode}` + (mode === 'custom' ? cusQuery() : '') + (sp === 'soccer' && hideStarted() ? '&upcoming=1' : ''));
+  $('#hidestart').hidden = sp !== 'soccer'; $('#hidestart').setAttribute('aria-pressed', String(hideStarted()));
+  $('#hidestart').textContent = hideStarted() ? `✓ Hiding games that started${j.started ? ` (${j.started})` : ''}` : 'Hide games that already started';
   $('#run').disabled = false;
   if(j.error){ $('#outhead').textContent = j.error; return; }
   const rows = j.rows || [];
@@ -619,6 +624,9 @@ async function run(){
     + (j.notPlaying ? ` ${j.notPlaying} of your players don't play that day.` : '');
 }
 $('#run').addEventListener('click', run);
+// FC: leave out games that have kicked off (their boosters go to games still to come). Remembered in this browser.
+const hideStarted = () => { try{ return localStorage.getItem('boosts_fc_hidestart_v1') === '1'; }catch(e){ return false; } };
+$('#hidestart').addEventListener('click', () => { try{ localStorage.setItem('boosts_fc_hidestart_v1', hideStarted() ? '0' : '1'); }catch(e){} run(); });
 // FC: competition names and the lineup chip on each row.
 const FC_LG = { 'eng.1': 'Premier League', 'eng.2': 'Championship', 'esp.1': 'La Liga', 'ita.1': 'Serie A', 'ger.1': 'Bundesliga', 'fra.1': 'Ligue 1', 'mex.1': 'Liga MX', 'uefa.champions': 'Champions League', 'uefa.europa': 'Europa League', 'uefa.nations': 'Nations League', 'fifa.worldq.uefa': 'WC qualifier', 'fifa.world': 'World Cup' };
 function luChip(r){
