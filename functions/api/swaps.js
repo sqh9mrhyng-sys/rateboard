@@ -2048,18 +2048,35 @@ async function confirmPrompts(env, db, auth) {
   const now = Date.now(), day = confirmDayNow(now), start = swapDayStart(now + 30 * 60000);
   if (now < CONFIRM_SHOW_AT || !confirmOn(day) || now < start - 30 * 60000 || now - start > 45 * 60000) return;
   await matchCols(db);
+  /* Who gets it (2026-11-07: some members had their swaps called off without
+     ever getting this DM - only active members with players and hours were
+     asked, but paused members' swaps already set still go ahead and still
+     needed confirming). Now: everyone with hours today, plus everyone with a
+     swap set for today, and the times listed are both together. */
   const us = ((await db.prepare(`SELECT key, rsUser, hashId, slots, sched, confirmDay FROM swap_users WHERE active=1 AND hashId IS NOT NULL AND wants IS NOT NULL AND wants <> '[]'`).all()).results) || [];
-  const todo = us.filter(u => !isConfirmed(u, day)).map(u => ({ u, hrs: hoursToday(u, start) })).filter(x => x.hrs.length).sort((a, b) => a.hrs[0] - b.hrs[0]);
+  const byKey = new Map(us.map(u => [u.key, u])), dues = new Map();
+  const pend = ((await db.prepare(`SELECT a, b, slot, createdAt, dueAt FROM swap_matches WHERE status IN ('pending','warned') AND dueAt >= ? AND dueAt < ?`).bind(start, start + 24 * 3600000).all()).results) || [];
+  for (const m of pend) { const t = sideDue(m); if (swapDay(t) !== day) continue; for (const k of [m.a, m.b]) { if (!dues.has(k)) dues.set(k, new Set()); dues.get(k).add(t); } }
+  for (const k of dues.keys()) if (!byKey.has(k)) { const u = await db.prepare('SELECT key, rsUser, hashId, slots, sched, confirmDay FROM swap_users WHERE key=?').bind(k).first(); if (u && u.hashId) byKey.set(k, u); }
+  const todo = [...byKey.values()].filter(u => !isConfirmed(u, day)).map(u => {
+    const hrs = [...new Set([...hoursToday(u, start), ...(dues.get(u.key) || [])])].filter(t => t > now).sort((x, y) => x - y);
+    return { u, hrs };
+  }).filter(x => x.hrs.length).sort((a, b) => a.hrs[0] - b.hrs[0]);
+  let sent = 0, failed = 0, waiting = 0;
   for (const { u, hrs } of todo) {
-    if (TICK_T0 && tickLeft() - dmWaitAhead() < 6000) break;
+    if (TICK_T0 && tickLeft() - dmWaitAhead() < 6000) { waiting++; continue; }
     if (!(await onceFor(db, 'cprompt_' + day, u.key))) continue;
     const tz = tzOf(u), z = tz ? '' : ' ET';
     const times = hrs.map(t => hLabel(t, tz)).join(', ') + z, by = hLabel(hrs[0] - 30 * 60000, tz) + z;
     try { const ch = await dmChannel(db, auth, u.hashId, u.rsUser, env);
       await dmSendRetry(auth, ch, fitOne(`You have the selected times ${times} - you have until ${by} to confirm, go on https://raxacademy.app/swaps and click "Confirm set times" on the top of the page`));
-      await stat(db, 'dm_confirm_prompt'); }
-    catch (e) { await botFail(db, 'dm_confirm_prompt', `${u.key}: ${e.message || e}`); }
+      await stat(db, 'dm_confirm_prompt'); sent++;
+      try { await db.prepare('UPDATE bot_once SET ok=2 WHERE campaign=? AND key=?').bind('cprompt_' + day, String(u.key).toLowerCase()).run(); } catch (e) {} }   // 2 = the DM went
+    catch (e) { failed++; await botFail(db, 'dm_confirm_prompt', `${u.key}: ${e.message || e}`);
+      // Tried again next minute - there's an hour to get them all out - unless Real won't let the bot message them at all.
+      if (!/send 403/.test(String(e.message || e))) { try { await db.prepare('DELETE FROM bot_once WHERE campaign=? AND key=?').bind('cprompt_' + day, String(u.key).toLowerCase()).run(); } catch (e2) {} } }
   }
+  try { await env.RATEBOARD_KV.put('confirm_run_' + day, JSON.stringify({ at: now, toAsk: todo.length, sentNow: sent, failedNow: failed, waiting }), { expirationTtl: 3 * 86400 }); } catch (e) {}
 }
 /* Safety net: the same swap twice (same two members, same cards, same swap
    day) - the later copies are called off, every minute, before warnings. */
@@ -2079,10 +2096,13 @@ async function confirmGate(env, db, auth) {
   await matchCols(db);
   const ms = ((await db.prepare(`SELECT * FROM swap_matches WHERE status='pending' AND warnA IS NULL AND warnB IS NULL AND dueAt > ? AND dueAt <= ?`).bind(now, now + 31 * 60000).all()).results) || [];
   const cache = new Map(), get = async k => { if (!cache.has(k)) cache.set(k, await db.prepare('SELECT key, rsUser, hashId, confirmDay FROM swap_users WHERE key=?').bind(k).first()); return cache.get(k); };
-  const told = new Map();
+  const told = new Map(), asked = new Map();
   for (const m of ms) {
     const due = sideDue(m), day = swapDay(due); if (!confirmOn(day)) continue;
-    const ua = await get(m.a), ub = await get(m.b), noA = !isConfirmed(ua, day), noB = !isConfirmed(ub, day);
+    // Only someone the confirm DM actually reached can lose swaps for not confirming.
+    if (!asked.has(day)) { const rs = ((await db.prepare(`SELECT key FROM bot_once WHERE campaign=? AND ok ${day === '2026-11-07' ? 'IN (1,2)' : '= 2'}`).bind('cprompt_' + day).all()).results) || [];   /* Nov 7's were sent before ok=2 was kept */ asked.set(day, new Set(rs.map(r => r.key))); }
+    const was = k => asked.get(day).has(String(k).toLowerCase());
+    const ua = await get(m.a), ub = await get(m.b), noA = !isConfirmed(ua, day) && was(m.a), noB = !isConfirmed(ub, day) && was(m.b);
     if (!noA && !noB) continue;
     const who = [noA && m.a, noB && m.b].filter(Boolean);
     const c = await db.prepare(`UPDATE swap_matches SET status='cancelled', note=? WHERE id=? AND status='pending' AND warnA IS NULL AND warnB IS NULL`).bind(`called off: ${who.map(k => '@' + ((cache.get(k) || {}).rsUser || k)).join(', ')} didn't confirm today`, m.id).run();
