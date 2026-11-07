@@ -2406,7 +2406,7 @@ const BOOST_SEASON = { ncaam: [2027, 2026], ncaaf: [2026, 2025], nfl: [2026, 202
    last season's rax per game among regulars: Legendary is roughly the top
    2-3% of games, Epic the top 10%, Rare the top 25%. Boost saver raises the
    bar 15%, earning heavy lowers it 15%. */
-const BOOST_BARS = { ncaam: [11.5, 10, 7.5], ncaaf: [25, 20, 12], nfl: [19, 15, 8.5], golf: [19, 15, 10], soccer: [13, 10, 6] };   // Legendary ~top 1% game, Epic ~top 3-5%
+const BOOST_BARS = { ncaam: [11.5, 10, 7.5], ncaaf: [25, 20, 12], nfl: [19, 15, 8.5], golf: [19, 15, 10], soccer: [11.2, 9, 6] };   // Legendary ~top 1% game, Epic ~top 3-5%
 const BOOST_MODES = { balanced: 1, heavy: 1, saver: 1, custom: 1 };
 const ESPN_PATH = { ncaam: 'basketball/mens-college-basketball', ncaaf: 'football/college-football', nfl: 'football/nfl' };
 const ESPN_GROUP = { ncaam: '&groups=50', ncaaf: '&groups=80', nfl: '' };
@@ -3095,16 +3095,31 @@ function fcStat(row, label) {
 // Minutes: Real leaves them off goalkeepers almost always (they play the 90).
 const fcMin = x => Number(x.min) > 0 ? Number(x.min) : String(x.position || '').toUpperCase() === 'G' ? 90 : (Number(x.rax) !== 0 ? 30 : 0);
 const fcPlayed = x => fcMin(x) > 0;
-/* How much each opponent gives up, by Real code (codes shared by two clubs
-   are left at 1). Starters only, this season and last; kept 0.9 to 1.1. */
+// A typical start's rax by position (this season's starts, Nov 2026).
+const FC_POS_START = { G: 6.6, D: 6.05, M: 7.65, F: 7.2 };
+/* Opponents, by Real code (codes shared by two clubs are left out; MLS on
+   its own, since its codes overlap Europe's and Mexico's): how much rax his
+   starters give up (f, pulled to 1 on a small sample, kept 0.85-1.2), and the
+   goals he concedes a game over his last 10 (ga). Built daily by the refresh. */
 async function fcMatchups(env) {
   const db = env.RATEBOARD_DB; if (!db) return;
-  let rows = [];
-  try { rows = (await db.prepare(`SELECT opponent AS o, AVG(rax) AS a, COUNT(*) AS n FROM gamelog WHERE sport='soccer' AND season IN (?, ?) AND rax IS NOT NULL AND (min >= 60 OR position = 'G') AND opponent IS NOT NULL GROUP BY opponent`).bind(FC_SEASON[0], FC_SEASON[1]).all()).results || []; } catch (e) { return; }
-  const tot = rows.reduce((t, r) => t + r.a * r.n, 0), n = rows.reduce((t, r) => t + r.n, 0); if (!n) return;
-  const mean = tot / n, f = {};
-  for (const r of rows) { if ((FC_CLUBS[r.o] || []).length > 1) continue; const w = r.n / (r.n + 250); f[r.o] = Math.round(Math.min(1.1, Math.max(0.9, 1 + (r.a / mean - 1) * w)) * 100) / 100; }
-  try { await env.RATEBOARD_KV.put('boostmatch_v1_soccer', JSON.stringify({ at: Date.now(), f }), { expirationTtl: 5 * 86400 }); } catch (e) {}
+  let rows = [], gms = [];
+  try { rows = (await db.prepare(`SELECT opponent AS o, (conference = 'MLS') AS m, AVG(rax) AS a, COUNT(*) AS n FROM gamelog WHERE sport='soccer' AND season IN (?, ?) AND rax IS NOT NULL AND (min >= 55 OR position = 'G') AND opponent IS NOT NULL GROUP BY opponent, (conference = 'MLS')`).bind(FC_SEASON[0], FC_SEASON[1]).all()).results || []; } catch (e) { return; }
+  try { gms = (await db.prepare(`SELECT team AS t, (conference = 'MLS') AS m, gameId AS g, MAX(day) AS d, MAX(oppScore) AS ga FROM gamelog WHERE sport='soccer' AND season IN (?, ?) AND day >= ? GROUP BY team, (conference = 'MLS'), gameId`).bind(FC_SEASON[0], FC_SEASON[1], etDayOf(new Date(Date.now() - 200 * 86400000).toISOString())).all()).results || []; } catch (e) {}
+  const out = { at: Date.now(), f: {}, fm: {}, ga: {}, gam: {}, lg: 1.35 };
+  for (const m of [0, 1]) {
+    const rs = rows.filter(r => Number(r.m) === m), tot = rs.reduce((t, r) => t + r.a * r.n, 0), n = rs.reduce((t, r) => t + r.n, 0); if (!n) continue;
+    const mean = tot / n, f = m ? out.fm : out.f;
+    for (const r of rs) { if (!m && (FC_CLUBS[r.o] || []).length > 1) continue; const w = r.n / (r.n + 40); f[r.o] = Math.round(Math.min(1.2, Math.max(0.85, 1 + (r.a / mean - 1) * w)) * 100) / 100; }
+  }
+  const by = new Map();
+  for (const g of gms) { if (!Number(g.m) && (FC_CLUBS[g.t] || []).length > 1) continue; const k = (Number(g.m) ? 'M|' : '') + g.t; (by.get(k) || by.set(k, []).get(k)).push(g); }
+  let gsum = 0, gn = 0;
+  for (const [k, list] of by) { list.sort((a, b) => a.d < b.d ? -1 : 1); const l = list.slice(-10).map(x => Number(x.ga) || 0); if (l.length < 3) continue;
+    const a = l.reduce((t, x) => t + x, 0) / l.length; gsum += a; gn++;
+    if (k.startsWith('M|')) out.gam[k.slice(2)] = Math.round(a * 100) / 100; else out.ga[k] = Math.round(a * 100) / 100; }
+  if (gn) out.lg = Math.round(gsum / gn * 100) / 100;
+  try { await env.RATEBOARD_KV.put('boostmatch_v2_soccer', JSON.stringify(out), { expirationTtl: 5 * 86400 }); } catch (e) {}
 }
 // Each player's games (this season and last) from the game log, oldest first.
 async function fcGames(db, ids, before, seasons) {
@@ -3191,7 +3206,9 @@ async function fcRows(env, db, cards, day, inv) {
   const { cur, old } = await fcGames(db, ids, day);
   const { cur: curM } = idsM.length ? await fcGames(db, idsM, day, [FC_MLS_SEASON, null]) : { cur: new Map() };
   const mlsOnly = a => a.filter(x => String(x.conference || '').toUpperCase() === 'MLS');
-  let match = {}; try { match = (JSON.parse((await env.RATEBOARD_KV.get('boostmatch_v1_soccer')) || 'null') || {}).f || {}; } catch (e) {}
+  let MT = null; try { MT = JSON.parse((await env.RATEBOARD_KV.get('boostmatch_v2_soccer')) || 'null'); } catch (e) {}
+  if (!MT) { try { await fcMatchups(env); MT = JSON.parse((await env.RATEBOARD_KV.get('boostmatch_v2_soccer')) || 'null'); } catch (e) {} }
+  MT = MT || { f: {}, fm: {}, ga: {}, gam: {}, lg: 1.35 };
   let hand = {}; try { hand = await boostManualOut(env, 'soccer', day); } catch (e) {}
   // Lineups for every game on the slate that has one (read again if it could still change).
   const lineups = new Map();
@@ -3221,13 +3238,23 @@ async function fcRows(env, db, cards, day, inv) {
     const cg = pick(gs), og = pick(os);
     const useC = cg.length >= 3 || !side.nat ? cg : gs, useO = og.length >= 3 || !side.nat ? og : os;   // too few caps: his club form stands in
     const starts = useC.filter(x => fcMin(x) >= 55), ostarts = useO.filter(x => fcMin(x) >= 55), subs = useC.filter(x => fcMin(x) < 55);
-    const s5 = avg(starts.slice(-5)), sA = avg(starts), oS = avg(ostarts);
+    /* In a start (2026-11-07, backtested on 14,000 starts this season): every
+       start he's made (last season's, then this one's), the most recent
+       counting most (weight halves every 5 starts back), half of it mixed with
+       his plain average pulled toward a typical starter at his position by 8
+       starts' worth - so a hot or cold run of 4-5 games doesn't swing him as
+       hard. Then the opponent (rax given up, goals conceded) and home/away.
+       Against "last 5 starts weighted" it picked better: the top 10% of
+       projections averaged 10.4 rax against 9.8, the top 3% 11.9 against 10.9. */
+    const hist = ostarts.concat(starts).map(x => Number(x.rax) || 0);
     let startProj = null, basis = '';
-    if (starts.length >= 4) { startProj = blend(s5, sA, oS); basis = `last 5 starts weighted, ${starts.length} starts this season`; }
-    else if (starts.length && oS != null) { startProj = (starts.length * sA + 3 * oS) / (starts.length + 3); basis = `${starts.length} start${starts.length === 1 ? '' : 's'} this season + last season`; }
-    else if (starts.length) { startProj = sA; basis = `${starts.length} start${starts.length === 1 ? '' : 's'} this season`; }
-    else if (oS != null) { startProj = oS; basis = 'last season\'s starts'; }
-    else if (useC.length) { startProj = Math.min(9, avg(useC) * 1.6); basis = 'off the bench only so far'; }
+    if (hist.length) {
+      let ws = 0, wv = 0; hist.forEach((v, i) => { const w = Math.pow(0.5, (hist.length - 1 - i) / 5); ws += w; wv += w * v; });
+      const pm = FC_POS_START[String((lastG && lastG.position) || '').toUpperCase()] || 7;
+      const shr = (hist.reduce((t, v) => t + v, 0) + 8 * pm) / (hist.length + 8);
+      startProj = 0.5 * (wv / ws) + 0.5 * shr;
+      basis = `${starts.length} start${starts.length === 1 ? '' : 's'} this season` + (ostarts.length ? ` + ${ostarts.length} last season` : '') + ', recent ones weighted most';
+    } else if (useC.length) { startProj = Math.min(9, avg(useC) * 1.6); basis = 'off the bench only so far'; }
     const subProj = subs.length >= 2 ? avg(subs) : startProj != null ? startProj * 0.3 : null;
     const last5 = useC.slice(-5), startN = last5.filter(x => fcMin(x) >= 55).length, rate = last5.length ? startN / last5.length : 0;
     const flags = [];
@@ -3264,14 +3291,19 @@ async function fcRows(env, db, cards, day, inv) {
     if (lu !== 'start' && lastG && cg.length && dayMs - Date.parse(lastG.day + 'T12:00:00Z') > 21 * 86400000) { skip = true; flags.push(`No game since ${lastG.day}`); }
     if (!cg.length && og.length && lu !== 'start') { k *= 0.7; flags.push('No games this season yet'); }
     const oppKeys = fcKeysOf(g.oppId).filter(x => x.nat === side.nat && !!x.mls === !!side.mls && !(side.mls && FC_CLUBS[x.key]));
-    const mf = oppKeys.length === 1 && match[oppKeys[0].key] ? match[oppKeys[0].key] : 1;
+    const ok1 = oppKeys.length === 1 ? oppKeys[0].key : null;
+    const of = ok1 ? (side.mls ? MT.fm : MT.f)[ok1] : null, oga = ok1 ? (side.mls ? MT.gam : MT.ga)[ok1] : null;
+    // Opponent: 70% of the rax he gives up; his goals conceded against the average, to the 0.35 (kept 0.8-1.25).
+    const gfac = oga != null && MT.lg ? Math.min(1.25, Math.max(0.8, Math.pow(Math.max(0.2, oga) / MT.lg, 0.35))) : 1;
+    const mf = Math.round((of ? 1 + (of - 1) * 0.7 : 1) * gfac * 100) / 100;
     const hf = g.home ? 1.05 : 0.95;
-    if (proj != null && mf !== 1) basis += ` · matchup x${mf}`;
+    if (proj != null && mf !== 1) basis += ` · matchup x${mf}${oga != null ? ` (they concede ${oga} a game)` : ''}`;
     // Expected count of each booster stat in a start.
     const exp = {};
     for (const st of want) {
       const e = blend(mean(starts.slice(-5), x => fcStat(x, st)), mean(starts, x => fcStat(x, st)), mean(ostarts, x => fcStat(x, st))) ?? mean(useC, x => fcStat(x, st));
-      if (e != null) exp[st] = Math.round(e * k * (lu === 'tbd' && rate < 0.8 && last5.length >= 3 ? rate : 1) * 100) / 100;
+      const att = /^(goals?|g|gls|assists?|a|ast)$/i.test(String(st).replace(/[^a-z]/gi, ''));
+      if (e != null) exp[st] = Math.round(e * k * (att ? gfac : 1) * (lu === 'tbd' && rate < 0.8 && last5.length >= 3 ? rate : 1) * 100) / 100;
     }
     const pos = (lastG && lastG.position) || '';
     rows.push({ id: p.id, passId: p.passId, season: M ? FC_MLS_SEASON : FC_SEASON[0], name, team: g.nm, tid: null, pos, opp: g.opp, home: g.home, at: g.at, exp, lu, form: LT ? LT.f : null, lg: g.lg, nat: side.nat,
@@ -5293,7 +5325,8 @@ async function handle({ request, env, waitUntil }) {
     /* FC (2026-11-07): rax in a start, this season - half of starters make 6+,
        the top 10% 10.7+, the top 3% 13+, the very best (Yamal, Raphinha, Olise)
        17-19. Games most days, so Legendaries are held back a little. */
-    const FC_RULES = { balanced: { leg: 13, epic: 10, cap: 0.5 }, heavy: { leg: 11, epic: 8.5, cap: 1 }, saver: { leg: 15.5, epic: 12.5, cap: 0.25 } };
+    // Bars moved with the steadier projection (2026-11-07) so the same share of starters clears each: Legendary ~top 4%, Epic ~top 15%.
+    const FC_RULES = { balanced: { leg: 11.2, epic: 9, cap: 0.5 }, heavy: { leg: 9.8, epic: 7.8, cap: 1 }, saver: { leg: 13, epic: 10.5, cap: 0.25 } };
     const cfb = sp === 'ncaaf' ? CFB_RULES[mode] || CFB_RULES.balanced : sp === 'golf' ? GOLF_RULES[mode] || GOLF_RULES.balanced : sp === 'soccer' ? FC_RULES[mode] || FC_RULES.balanced : null;
     if (cfb) R.cap = cfb.cap;
     let legBar = cfb ? cfb.leg : R.leg * scale, epicBar = cfb ? cfb.epic : R.epic * scale, rareFloor = sp === 'ncaaf' || sp === 'golf' ? 10 : sp === 'soccer' ? 6 : 5;
