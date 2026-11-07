@@ -2022,14 +2022,31 @@ function hoursToday(u, start) {   // the swap times (UTC ms) this member has pic
   const out = []; for (let i = 0; i < 24; i++) { const t = start + i * 3600000; if (!noSwapHour(t) && rankAt(uu, t) >= 0) out.push(t); }
   return out;
 }
+/* Adding a time once the day's confirm DMs have started (2:30am Alaska)
+   counts as confirming for that swap day (Dennis, 2026-11-07): they just
+   chose it, so there's nothing to confirm. */
+async function autoConfirm(db, key, before, after) {
+  const now = Date.now(), day = confirmDayNow(now);
+  if (now < CONFIRM_SHOW_AT || !confirmOn(day)) return false;
+  const start = swapDayStart(now + 30 * 60000);
+  const was = new Set(before ? hoursToday({ slots: before.slots, sched: before.sched }, start) : []);
+  const now2 = hoursToday({ slots: after.slots, sched: after.sched }, start);
+  if (!now2.some(t => !was.has(t) && t > now)) return false;
+  await db.prepare('UPDATE swap_users SET confirmDay=? WHERE key=?').bind(day, key).run();
+  return true;
+}
 async function onceFor(db, campaign, key) {
   await db.prepare('CREATE TABLE IF NOT EXISTS bot_once (campaign TEXT, key TEXT, at INTEGER, ok INTEGER, PRIMARY KEY (campaign, key))').run();
   const c = await db.prepare('INSERT OR IGNORE INTO bot_once (campaign, key, at, ok) VALUES (?, ?, ?, 1)').bind(campaign, String(key).toLowerCase(), Date.now()).run();
   return !!(c.meta && c.meta.changes);
 }
+/* Sent from 30 minutes before the swap day turns (2:30am Alaska, Dennis
+   2026-11-07: so the set is done before the first hour's warnings at 3:30),
+   people whose first time is the day's first hour (8am ET) first, then by
+   first time. Runs until 45 minutes into the day for anyone not reached. */
 async function confirmPrompts(env, db, auth) {
-  const now = Date.now(), day = swapDay(now), start = swapDayStart(now);
-  if (now < CONFIRM_SHOW_AT || !confirmOn(day) || now - start > 45 * 60000) return;   // the first 45 minutes of the swap day
+  const now = Date.now(), day = confirmDayNow(now), start = swapDayStart(now + 30 * 60000);
+  if (now < CONFIRM_SHOW_AT || !confirmOn(day) || now < start - 30 * 60000 || now - start > 45 * 60000) return;
   await matchCols(db);
   const us = ((await db.prepare(`SELECT key, rsUser, hashId, slots, sched, confirmDay FROM swap_users WHERE active=1 AND hashId IS NOT NULL AND wants IS NOT NULL AND wants <> '[]'`).all()).results) || [];
   const todo = us.filter(u => !isConfirmed(u, day)).map(u => ({ u, hrs: hoursToday(u, start) })).filter(x => x.hrs.length).sort((a, b) => a.hrs[0] - b.hrs[0]);
@@ -3510,12 +3527,13 @@ async function handle({ request, env, waitUntil }) {
     const sched = cleanSched(b.sched);
     const slots = schedUtc(sched) || [...new Set((Array.isArray(b.slots) ? b.slots : []).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24))].slice(0, MAX_SLOTS);
     await matchCols(db);
-    const r = await db.prepare('SELECT wants FROM swap_users WHERE key=?').bind(me).first();
+    const r = await db.prepare('SELECT wants, slots, sched FROM swap_users WHERE key=?').bind(me).first();
     if (!r) return json({ ok: true, slots, calledOff: 0, late: 0 });
     await db.prepare('UPDATE swap_users SET slots=?, sched=?, updatedAt=? WHERE key=?').bind(JSON.stringify(slots), JSON.stringify(sched), Date.now(), me).run();
+    let confirmed = false; try { confirmed = await autoConfirm(db, me, r, { slots, sched }); } catch (e) {}
     try { await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); } catch (e) {}
     let res = { n: 0, late: 0 }; try { res = await afterCallOff(env, db, auth, me, await cancelDropped(db, me, new Set(parse(r.wants, [])), new Set(slots), sched)); } catch (e) {}
-    return json({ ok: true, slots, sched, calledOff: res.n, late: res.late });
+    return json({ ok: true, slots, sched, calledOff: res.n, late: res.late, confirmed: confirmed || undefined, day: confirmed ? confirmDayNow() : undefined });
   }
   /* Pause: no new matches until they save again; swaps already set keep going.
      End all: paused, and every swap still to come is called off too. */
@@ -4105,7 +4123,7 @@ async function handle({ request, env, waitUntil }) {
     const sched = cleanSched(b.sched);
     const slots = schedUtc(sched) || [...new Set((Array.isArray(b.slots) ? b.slots : []).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24))].slice(0, MAX_SLOTS);
     const rsUser = await realName(db, me);   // their Real account: board username, or the one they linked
-    const mine = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
+    const mine = await db.prepare('SELECT passes, slots, sched FROM swap_users WHERE key=?').bind(me).first();
     const owned = new Set(parse(mine && mine.passes, []).filter(p => p.kind !== 'team').map(p => p.key));
     if (wants.some(w => !owned.has(w))) return json({ error: 'You can only swap for passes you own - scan your passes, then pick from them.' }, 400);
     if (wants.some(w => seasonOff(w))) return json({ error: '2026-27 CBB and NBA passes can\'t be swapped yet.' }, 400);
@@ -4141,6 +4159,7 @@ async function handle({ request, env, waitUntil }) {
         slots=excluded.slots, updatedAt=excluded.updatedAt, active=1, comment=excluded.comment, goal=excluded.goal`)
       .bind(me, rsUser, JSON.stringify(wants), JSON.stringify(keep), JSON.stringify(slots), Date.now(), comment.slice(0, 300), goal).run();
     await db.prepare('UPDATE swap_users SET dayCap=?, caps=?, sched=? WHERE key=?').bind(dayCap, JSON.stringify(caps), JSON.stringify(sched), me).run();
+    try { await autoConfirm(db, me, mine, { slots, sched }); } catch (e) {}
     try { await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); await env.RATEBOARD_KV.delete('swap_wantcounts_v1'); } catch (e) {}
     let calledOff = 0, late = 0;
     try { const a = await cancelKept(db, me, new Set(keep)), d = await cancelDropped(db, me, new Set(wants), new Set(slots), sched);

@@ -546,6 +546,7 @@ function saveHours(){
   api('/api/swaps?op=saveslots', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(j => {
     if(!j || j.error){ $('#savemsg').textContent = (j && j.error) || 'Could not save your hours - try again.'; return; }
     if(Array.isArray(j.slots)) prof.slots = j.slots;
+    if(j.confirmed) paintConfirm({ confirmShow: true, confirmedToday: true, swapToday: j.day });   // a time added after the 2:30am DMs needs no confirm
     $('#savemsg').textContent = 'Hours saved.' + (j.late ? ' Too late to change swaps already warned - please do them at :00.' : '') + (j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} at that hour called off.` : '');
     loadHourCounts(); loadSwaps(); });
 }
