@@ -52,6 +52,15 @@
   .rs1 table{margin-top:8px} .rs1 td,.rs1 th{padding:4px 6px}
   @media (max-width: 680px){ .rs1 .two{grid-template-columns:1fr} }
   .lock{max-width:460px;margin:12vh auto;text-align:center}
+  /* Tick off each boost as it's put on (Dennis, 2026-11-07). */
+  td.bcell{position:relative;padding-right:64px!important}
+  .bdone{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:48px;height:48px;border-radius:12px;border:2px solid var(--line);background:var(--panel);color:transparent;font-size:30px;line-height:1;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+  .bdone::after{content:'✓';color:var(--mute);opacity:.35}
+  .bdone.on{background:var(--ok);border-color:var(--ok)}
+  .bdone.on::after{color:#0d1a12;opacity:1}
+  table.cards tr.boosted td{opacity:.4}
+  table.cards tr.boosted td.bcell{opacity:1}
+  table.cards tr.boosted td.bcell > :not(.bdone){opacity:.4}
   /* Phones: each player becomes a card instead of a wide table row. */
   @media (max-width: 680px){
     .wrap{padding:12px}
@@ -582,15 +591,16 @@ async function run(){
   if(!rows.length){ $('#rows').innerHTML = `<tr><td colspan="7" class="note" style="text-align:left">None of your players for this sport play that day.</td></tr>`; return; }
   let cutDone = false;
   const golf = sp === 'golf';
+  doneDay = sp + ':' + day; doneSet = loadDone(doneDay);
   $('#rows').innerHTML = rows.map(r => {
     const cutRow = (!cutDone && r.belowCut) ? (cutDone = true, `<tr class="cut"><td colspan="7">Recommended cutoff - Rares below this line only if you have spares (projection under ${j.cutAt})</td></tr>`) : '';
     // The member's own pass, like on Swaps; the player's page if the pass id isn't known.
     const u = r.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(r.passId)]) : realPlayerUrl(sp, r.id, j.season);
     const nm = u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.name)}</a>` : esc(r.name);
     const one = o => esc(o.label) + (o.avg != null ? ` <span class="note">${o.avg}/${o.gain}</span>` : '');
-    return cutRow + `<tr class="${r.skip ? 'skip' : ''}${r.belowCut ? ' below' : ''}"><td data-l="Rarity">${r.boost ? `<span class="b ${r.boost}">${LBL[r.boost]}</span>` : '<span class="b none">None</span>'}</td>
+    return cutRow + `<tr class="${r.skip ? 'skip' : ''}${r.belowCut ? ' below' : ''}${r.boost && r.best && doneSet.has(doneKey(r)) ? ' boosted' : ''}"><td data-l="Rarity">${r.boost ? `<span class="b ${r.boost}">${LBL[r.boost]}</span>` : '<span class="b none">None</span>'}</td>
       <td data-l="Player" class="pc">${nm}${r.noData ? ' <span class="note">*not enough data*</span>' : ''}<span class="sub">${esc([r.pos, r.team].filter(Boolean).join(' · '))}${r.basis ? ' · ' + esc(r.basis) : ''}</span>${(r.flags || []).map(f => `<span class="flag">⚠ ${esc(f)}</span>`).join('')}</td>
-      <td data-l="Boost" style="text-align:left;white-space:normal">${r.boost && r.best ? `<b>${one(r.best)}</b>${r.alt ? `<span class="sub">or ${one(r.alt)}</span>` : ''}` : '<span class="note">–</span>'}</td>
+      <td data-l="Boost" class="${r.boost && r.best ? 'bcell' : ''}" style="text-align:left;white-space:normal">${r.boost && r.best ? `<b>${one(r.best)}</b>${r.alt ? `<span class="sub">or ${one(r.alt)}</span>` : ''}<button class="bdone${doneSet.has(doneKey(r)) ? ' on' : ''}" data-done="${esc(doneKey(r))}" aria-label="Boosted" title="Mark as boosted"></button>` : '<span class="note">–</span>'}</td>
       <td data-l="${golf ? 'Event' : 'Game'}" style="text-align:left">${golf ? esc(r.opp) : `${r.home ? 'vs' : '@'} ${esc(r.opp)}`}<span class="sub">${golf && r.at ? 'Starts ' + new Date(r.at).toLocaleDateString('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' }) : tm(r.at)}</span></td>
       <td data-l="${golf ? 'Form' : 'Avg rax'}">${r.avg != null ? r.avg + `<span class="sub">${r.games} ${golf ? 'event' : 'game'}${r.games === 1 ? '' : 's'}${r.avgLast != null ? (golf ? ' · here ' : ' · last yr ') + r.avgLast : ''}</span>` : r.avgLast != null ? `–<span class="sub">${golf ? 'here' : 'last yr'} ${r.avgLast}</span>` : '–'}</td>
       <td data-l="Proj rax">${r.proj == null ? 'no data' : r.proj}</td>
@@ -602,6 +612,17 @@ async function run(){
     + (j.notPlaying ? ` ${j.notPlaying} of your players don't play that day.` : '');
 }
 $('#run').addEventListener('click', run);
+// Boost ticks: kept in this browser for that sport and day.
+let doneDay = '', doneSet = new Set();
+const doneKey = r => `${r.id || r.name}|${r.boost}`;
+function loadDone(k){ try{ return new Set(JSON.parse(localStorage.getItem('boost_done_' + k) || '[]')); }catch(e){ return new Set(); } }
+function saveDone(){ try{ localStorage.setItem('boost_done_' + doneDay, JSON.stringify([...doneSet])); }catch(e){} }
+$('#rows').addEventListener('click', e => {
+  const b = e.target.closest('.bdone'); if(!b) return;
+  const k = b.dataset.done, on = !doneSet.has(k);
+  if(on) doneSet.add(k); else doneSet.delete(k);
+  b.classList.toggle('on', on); b.closest('tr').classList.toggle('boosted', on); saveDone();
+});
 
 const RN = { 5: 'legendary', 4: 'epic', 3: 'rare' };
 function invHtml(list){
