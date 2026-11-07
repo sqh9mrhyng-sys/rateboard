@@ -203,7 +203,7 @@
         </ol>
         <div class="note" style="margin-top:6px">Thanks to <b>@domo06</b> on Real for the headshots.</div>
       </details>
-      <div class="bar"><b class="h">Buys · CBB 2026-27</b></div><p class="note" id="buymsg" style="margin:6px 0 0">Top 70 from the CBB list, checked against your passes.</p>
+      <div class="bar"><b class="h">Buys · CBB 2026-27</b></div><p class="note" id="buymsg" style="margin:6px 0 0">Top 78 from the CBB list, checked against your passes.</p>
       <div class="sum" id="buysum"></div>
       <div class="scroll"><table class="cards buys"><thead><tr><th>#</th><th>Player</th><th style="text-align:left">Team</th><th>You</th></tr></thead><tbody id="buyrows"><tr><td colspan="4" class="note">Loading…</td></tr></tbody></table></div>
       <p class="note sub">No pass = recommended buy. After buying, re-read your passes on the Boosts tab.</p>
@@ -413,8 +413,8 @@ function showTab(t){
   $('#t-boosts').hidden = t !== 'boosts'; $('#t-buys').hidden = t !== 'buys';
   const sp = $('#sport').value;
   // The second tab's sub-pick: what each sport has.
-  // CBB resell is hidden for now (Dennis, 2026-11-04): just the top 70.
-  const subs = sp === 'ncaam' ? [['top', 'Top 70 buys']] : sp === 'ncaaf' ? [['legs', 'Legendary boosts'], ['resell', 'Resell / buys']] : [];
+  // CBB resell is hidden for now (Dennis, 2026-11-04): just the top 78.
+  const subs = sp === 'ncaam' ? [['top', 'Top 78 buys']] : sp === 'ncaaf' ? [['legs', 'Legendary boosts'], ['resell', 'Resell / buys']] : [];
   if(!subs.some(([v]) => v === subPick)) subPick = subs.length ? subs[0][0] : '';
   $('#subseg').hidden = subs.length < 2;
   $('#subseg').innerHTML = subs.map(([v, l]) => `<button data-sub="${v}" aria-pressed="${v === subPick}">${l}</button>`).join('');
@@ -557,7 +557,7 @@ async function loadBuys(){
   const j = await api('/api/swaps?op=buys&page=boosts');
   if(j.error){ $('#buyrows').innerHTML = `<tr><td colspan="4" class="note">${esc(j.error)}</td></tr>`; return; }
   if(!j.scanned) $('#buymsg').textContent = 'Read your passes on the Boosts tab first - until then everyone shows as a buy.';
-  else $('#buymsg').textContent = 'Top 70 from the CBB list, checked against your passes' + (j.scannedAt ? ` (read ${new Date(j.scannedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` : '') + '.';
+  else $('#buymsg').textContent = 'Top 78 from the CBB list, checked against your passes' + (j.scannedAt ? ` (read ${new Date(j.scannedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` : '') + '.';
   const rows = (j.list || []).filter(x => !buysOnly || !x.owned);
   $('#buysum').innerHTML = `<span><b>${j.missing}</b> to buy</span><span><b>${(j.list || []).length - j.missing}</b> owned</span>`
     + `<span><label class="note"><input type="checkbox" id="buyonly"${buysOnly ? ' checked' : ''}> Only show buys</label></span>`;
