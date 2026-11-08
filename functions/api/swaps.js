@@ -5329,9 +5329,12 @@ async function handle({ request, env, waitUntil }) {
        17-19. Games most days, so Legendaries are held back a little. */
     // Bars moved with the steadier projection (2026-11-07) so the same share of starters clears each: Legendary ~top 4%, Epic ~top 15%.
     const FC_RULES = { balanced: { leg: 11.2, epic: 9, cap: 0.5 }, heavy: { leg: 9.8, epic: 7.8, cap: 1 }, saver: { leg: 13, epic: 10.5, cap: 0.25 } };
-    const cfb = sp === 'ncaaf' ? CFB_RULES[mode] || CFB_RULES.balanced : sp === 'golf' ? GOLF_RULES[mode] || GOLF_RULES.balanced : sp === 'soccer' ? FC_RULES[mode] || FC_RULES.balanced : null;
+    /* NFL (Dennis, 2026-11-08): Balanced is Legendary 22.5+ (up to 35% of the
+       Legendaries held), Epic 17+, Rare 7+. Heavy and Saver keep the scaled CBB bars. */
+    const NFL_RULES = { balanced: { leg: 22.5, epic: 17, cap: 0.35 }, heavy: { leg: 11.5 * 1.65, epic: 9 * 1.65, cap: 0.4 }, saver: { leg: 18 * 1.65, epic: 14.5 * 1.65, cap: 1 } };
+    const cfb = sp === 'ncaaf' ? CFB_RULES[mode] || CFB_RULES.balanced : sp === 'golf' ? GOLF_RULES[mode] || GOLF_RULES.balanced : sp === 'soccer' ? FC_RULES[mode] || FC_RULES.balanced : sp === 'nfl' ? NFL_RULES[mode] || NFL_RULES.balanced : null;
     if (cfb) R.cap = cfb.cap;
-    let legBar = cfb ? cfb.leg : R.leg * scale, epicBar = cfb ? cfb.epic : R.epic * scale, rareFloor = sp === 'ncaaf' || sp === 'golf' ? 10 : sp === 'soccer' ? 6 : 5;
+    let legBar = cfb ? cfb.leg : R.leg * scale, epicBar = cfb ? cfb.epic : R.epic * scale, rareFloor = sp === 'ncaaf' || sp === 'golf' ? 10 : sp === 'soccer' ? 6 : sp === 'nfl' && mode === 'balanced' ? 7 : 5;
     const cutAt = null;
     if (CUS) { legBar = CUS.leg ?? Infinity; epicBar = CUS.epic ?? Infinity; rareFloor = CUS.rare ?? Infinity; }
     bars.splice(0, 3, Math.round(legBar * 10) / 10, Math.round(epicBar * 10) / 10, rareFloor);
