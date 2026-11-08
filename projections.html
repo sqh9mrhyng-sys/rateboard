@@ -44,6 +44,10 @@
   .sub{display:block;color:var(--mute);font-size:11.5px;font-weight:400}
   .pr{font-weight:800;font-size:15px;color:var(--accent)}
   .pc{font-weight:700}
+  .fresh{margin:4px 0 0;font-size:13.5px;color:var(--mute)} .fresh b{color:var(--ink)}
+  .key{margin:6px 0 4px} .key summary{cursor:pointer;font-weight:700;font-size:14px} .key p{margin:4px 0}
+  .bdx .ln b{white-space:nowrap}
+  .bdx .u{font-weight:500;color:var(--mute);font-size:.85em;margin-left:3px}
   .rso{margin:8px 0 0;font-weight:800;font-size:15px;letter-spacing:.04em;color:var(--accent)}
   .flag{display:block;color:var(--bad);font-size:11.5px;white-space:normal}
   .mine td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
@@ -82,6 +86,7 @@
 <div class="lock" id="lock" hidden><h1>Projections</h1><p class="note" id="lockmsg">Checking…</p><p id="signinbtn" hidden><a href="/" style="display:inline-block;padding:10px 14px;border-radius:9px;background:#E8A33D;color:#141925;font-weight:700;text-decoration:none">Sign in on the board</a></p><p><a href="/">Back to the board</a></p></div>
 <div class="wrap" id="main" hidden>
   <header><h1>Projections <span class="beta">BETA</span></h1><a href="/" style="margin-left:auto">Back to the board</a></header>
+  <p class="fresh" id="fresh"></p>
   <section>
     <div class="seg" id="sportseg"><button data-s="ncaaf" aria-pressed="true">CFB</button><button data-s="nfl" aria-pressed="false">NFL</button><button data-s="ncaam" aria-pressed="false">CBB</button><button data-s="nba" aria-pressed="false">NBA</button><button data-s="nhl" aria-pressed="false">NHL</button><button data-s="soccer" aria-pressed="false">FC</button></div>
     <div class="ctl">
@@ -101,6 +106,14 @@
     </details>
   </section>
   <section style="padding:6px 14px 14px">
+    <details class="key" open><summary>What the numbers mean</summary>
+      <p class="note"><b>Now</b> - rax he has so far this regular season · games he's played · rax a game.</p>
+      <p class="note"><b>Left</b> - his team's regular-season games left · projected rax a game · next opponent · team's games in all.</p>
+      <p class="note"><b>Projected</b> - rax by the end of the regular season: what he has now plus the games left, counting the chance he misses games and who he plays.</p>
+      <p class="note"><b>On pace</b> - rax by the end of the regular season if he keeps his rax a game for every game left, never missing one.</p>
+      <p class="note"><b>proj −125</b> - Projected minus On pace: the projection is 125 lower (missed games, tougher opponents, a hot start cooling off). <b>+</b> means higher.</p>
+      <p class="note">Tap a player for his step-by-step working.</p>
+    </details>
     <table><thead><tr><th>#</th><th>Player</th><th>Now</th><th>Left</th><th>Projected</th><th>On pace</th></tr></thead><tbody id="rows"></tbody></table>
     <button class="more" id="more" hidden>Show more</button>
   </section>
@@ -234,6 +247,9 @@ async function load(tries = 0){
   $('#main').hidden = false; $('#lock').hidden = true;
   if(j.building){ $('#head').textContent = 'Building the projections for the first time - this takes up to a minute…'; setTimeout(() => load(tries), 15000); return; }
   data = j; openId = null;
+  { const t = new Date(j.at).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    const g = j.gd ? new Date(j.gd + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) : null;
+    $('#fresh').innerHTML = `Projections updated <b>${esc(t)}</b>` + (g ? ` · game data through <b>${esc(g)}</b>` : '') + ' · rebuilt every 6 hours'; }
   // On pace = so far + his rate a game played × games left (older saved copies used all the team's games).
   for(const r of (data.rows || [])) if(r.gp > 0) r.pc = Math.round(r.r + r.r / r.gp * r.l);
   // Older answers sent bare ids; now [player id, card id].
@@ -277,22 +293,23 @@ $('#more').addEventListener('click', () => { shown += 200; draw(); });
 const bdCache = new Map();
 function bdHtml(sp, j){
   const r = j.row; if(!r) return '<span class="note">No breakdown for him yet.</span>';
+  if(r.gp > 0) r.pc = Math.round(r.r + r.r / r.gp * r.l);   // on pace from the games left (older saved copies)
   const x = r.x || {}, f1 = v => v == null ? '–' : (Math.round(v * 10) / 10).toLocaleString(), pct = v => Math.round((v || 0) * 100) + '%';
   const games = j.games || [], counted = games.filter(g => g.counted), add = r.pr - r.r, fc = x.fc;
   const GW = sp === 'soccer' ? 'club' : 'team';
   const lines = [
-    `<div class="ln"><span>Rax so far <span class="note">(${r.gp} game${r.gp === 1 ? '' : 's'} played, ${f1(r.a)} a game)</span></span><b>${r.r.toLocaleString()}</b></div>`,
-    `<div class="ln"><span>1. Starting point <span class="note">${esc(x.ph || '')}, pulled toward the league average (${f1(j.lg)} a game)</span></span><b>${f1(x.prior)}</b></div>`,
-    `<div class="ln"><span>2. His rate a game played <span class="note">his ${r.gp} game${r.gp === 1 ? '' : 's'} (recent ones count more) weighed against the starting point - the more he plays, the more his own games count</span></span><b>${f1(x.rate)}</b></div>`,
-    `<div class="ln"><span>3. Chance he plays each game <span class="note">${r.gp} of his ${GW}'s ${x.since} games since his first, pulled toward a typical regular</span></span><b>${pct(x.av)}</b></div>`,
-    fc ? `<div class="ln"><span>4. Games left <span class="note">his club has played ${fc.played} games (${esc(fc.lg)}, cups and Europe) - ${fc.perWeek} a week - for the ${fc.daysLeft} days left to ${esc(fc.lg)}'s last day (${esc(fc.end)}), winter break taken out</span></span><b>${r.l}</b></div>`
-       : `<div class="ln"><span>4. Games left <span class="note">each one: rate × chance he plays × how much that opponent gives up × home/away</span></span><b>${games.length || r.l}</b></div>`,
-    `<div class="ln"><span>Projected from the games left <span class="note">about ${f1(r.pg)} a ${GW} game</span></span><b>+${add.toLocaleString()}</b></div>`,
-    `<div class="ln tot"><span>Projected by the end of the regular season</span><b>${r.pr.toLocaleString()}</b></div>`,
-    r.pc != null ? `<div class="ln"><span>On pace <span class="note">${r.r} so far + ${f1(r.a)} a game × ${r.l} ${GW} game${r.l === 1 ? '' : 's'} left - no misses, no opponents</span></span><b>${r.pc.toLocaleString()}</b></div>` : '',
+    `<div class="ln"><span>Rax so far <span class="note">(${r.gp} game${r.gp === 1 ? '' : 's'} played, ${f1(r.a)} a game)</span></span><b>${r.r.toLocaleString()}<span class="u">rax</span></b></div>`,
+    `<div class="ln"><span>1. Starting point <span class="note">${esc(x.ph || '')}, pulled toward the league average (${f1(j.lg)} a game)</span></span><b>${f1(x.prior)}<span class="u">/gm</span></b></div>`,
+    `<div class="ln"><span>2. His rate a game played <span class="note">his ${r.gp} game${r.gp === 1 ? '' : 's'} (recent ones count more) weighed against the starting point - the more he plays, the more his own games count</span></span><b>${f1(x.rate)}<span class="u">/gm</span></b></div>`,
+    `<div class="ln"><span>3. Chance he plays each game <span class="note">${r.gp} of his ${GW}'s ${x.since} games since his first, pulled toward a typical regular</span></span><b>${pct(x.av)}<span class="u">chance</span></b></div>`,
+    fc ? `<div class="ln"><span>4. Games left <span class="note">his club has played ${fc.played} games (${esc(fc.lg)}, cups and Europe) - ${fc.perWeek} a week - for the ${fc.daysLeft} days left to ${esc(fc.lg)}'s last day (${esc(fc.end)}), winter break taken out</span></span><b>${r.l}<span class="u">games</span></b></div>`
+       : `<div class="ln"><span>4. Games left <span class="note">each one: rate × chance he plays × how much that opponent gives up × home/away</span></span><b>${games.length || r.l}<span class="u">games</span></b></div>`,
+    `<div class="ln"><span>Projected from the games left <span class="note">about ${f1(r.pg)} a ${GW} game</span></span><b>+${add.toLocaleString()}<span class="u">rax</span></b></div>`,
+    `<div class="ln tot"><span>Projected by the end of the regular season</span><b>${r.pr.toLocaleString()}<span class="u">rax</span></b></div>`,
+    r.pc != null ? `<div class="ln"><span>On pace <span class="note">${r.r} so far + ${f1(r.a)} a game × ${r.l} ${GW} game${r.l === 1 ? '' : 's'} left - no misses, no opponents</span></span><b>${r.pc.toLocaleString()}<span class="u">rax</span></b></div>` : '',
     (r.f || []).map(f => `<span class="flag">⚠ ${esc(f)}</span>`).join('')
   ];
-  const gl = games.length ? `<div class="gl">${games.map(g => `<span class="${g.counted ? '' : 'no'}">${new Date(g.at).toLocaleDateString([], { month: 'short', day: 'numeric' })} ${g.h === 'away' ? '@' : 'vs'} ${esc(g.opp)}${g.f !== 1 ? ` <span title="opponent and home/away">×${g.f}</span>` : ''} <b>${g.v}</b></span>`).join('')}</div>` : '';
+  const gl = games.length ? `<p class="note" style="margin:10px 0 2px">Each game left: date · opponent (@ = away) · ×how that opponent and home/away change his rate · <b>projected rax that game</b>. Greyed = not counted (he's out).</p><div class="gl">${games.map(g => `<span class="${g.counted ? '' : 'no'}">${new Date(g.at).toLocaleDateString([], { month: 'short', day: 'numeric' })} ${g.h === 'away' ? '@' : 'vs'} ${esc(g.opp)}${g.f !== 1 ? ` <span title="opponent and home/away">×${g.f}</span>` : ''} <b>${g.v}</b></span>`).join('')}</div>` : '';
   return lines.join('') + gl;
 }
 $('#rows').addEventListener('click', async e => {

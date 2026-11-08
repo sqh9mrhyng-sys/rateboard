@@ -3789,7 +3789,9 @@ async function projBuild(env, db, sp) {
       x: { rate: r2(rate), prior: r2(prior), ph: priorHow, av: r2(avail), since, ab, sk: skipNext ? 1 : 0, w: r1(wsum), fc: fcx || undefined } });
   }
   rows.sort((x, y) => y.pr - x.pr);
-  const out = { at: Date.now(), sport: sp, season: se, model: 2, lg: r2(lg), of, hf, rows: rows.slice(0, 4000), players: rows.length, schedPages: sched.pages, schedOf: sched.of };
+  // The latest game in the game data it was built from (shown at the top of the page).
+  const gd = cur.reduce((m, x) => String(x.day || '') > m ? String(x.day) : m, '');
+  const out = { at: Date.now(), gd: gd || null, sport: sp, season: se, model: 2, lg: r2(lg), of, hf, rows: rows.slice(0, 4000), players: rows.length, schedPages: sched.pages, schedOf: sched.of };
   try { await env.RATEBOARD_KV.put(`proj_v3_${sp}`, JSON.stringify(out), { expirationTtl: 3 * 86400 }); } catch (e) {}
   return out;
 }
@@ -5354,6 +5356,9 @@ async function handle({ request, env, waitUntil }) {
     }
     if (!c) return json({ building: true, note: 'Building the projections - try again in a minute.' });
     if (c.error) return json({ error: c.error }, 500);
+    if (!c.gd) { try { const k = `proj_gd_v1_${sp}`; let g = await env.RATEBOARD_KV.get(k);
+      if (!g) { const r = await db.prepare('SELECT MAX(day) AS d FROM gamelog WHERE sport=? AND season=? AND rax IS NOT NULL').bind(sp, Number(PROJ_SEASON[sp][0])).first(); g = (r && r.d) || ''; if (g) await env.RATEBOARD_KV.put(k, g, { expirationTtl: 1800 }); }
+      if (g) c.gd = g; } catch (e) {} }
     const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
     const [se] = PROJ_SEASON[sp];
     // Their passes for this season, with the card's id so a name can open their own card.
