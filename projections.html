@@ -48,6 +48,7 @@
   .key{margin:6px 0 4px} .key summary{cursor:pointer;font-weight:700;font-size:14px} .key p{margin:4px 0}
   .bdx .ln b{white-space:nowrap}
   .bdx .u{font-weight:500;color:var(--mute);font-size:.85em;margin-left:3px}
+  .rso.early{color:var(--bad);margin-top:4px}
   .rso{margin:8px 0 0;font-weight:800;font-size:15px;letter-spacing:.04em;color:var(--accent)}
   .flag{display:block;color:var(--bad);font-size:11.5px;white-space:normal}
   .mine td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
@@ -97,6 +98,7 @@
     </div>
     <p class="note" id="head" style="margin:10px 0 0">Loading…</p>
     <p class="rso">PROJECTIONS REGULAR SEASON ONLY</p>
+    <p class="rso early" id="early" hidden>TOO EARLY IN THE SEASON FOR PROJECTIONS TO HAVE ACCURATE NUMBERS</p>
     <details class="how"><summary>Projected vs on pace</summary>
       <p class="note"><b>Projected</b> = rax so far + each regular-season game his team has left × his rate a game × the chance he plays it × the opponent × home or away. His rate starts from last season (or the league average for a newcomer) and moves toward what he's doing this season the more games he plays, recent games counting most. The chance he plays comes from how many of his team's games he's played, pulled toward a typical regular (rest days, rotation, cup games). Injured reserve: no more games; "Out": the next one skipped. Every setting was tuned by replaying last season and checking against what players actually made.</p>
       <p class="note"><b>On pace</b> = rax so far + his rax a game played × his team's regular-season games left. No missed games, no opponents - just his rate.</p>
@@ -247,6 +249,7 @@ async function load(tries = 0){
   $('#main').hidden = false; $('#lock').hidden = true;
   if(j.building){ $('#head').textContent = 'Building the projections for the first time - this takes up to a minute…'; setTimeout(() => load(tries), 15000); return; }
   data = j; openId = null;
+  $('#early').hidden = j.sport !== 'ncaam';   // CBB has only just started (Dennis, 2026-11-08)
   // Dated by the games in it, not by when it was worked out: "through Thu, Nov 5's games".
   { const g = j.gd ? new Date(j.gd + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) : null;
     $('#fresh').innerHTML = (g ? `Projections updated through <b>${esc(g)}</b>'s games` : 'Projections') + ' · updated when new games are added'; }
