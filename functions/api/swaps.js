@@ -701,13 +701,14 @@ async function runMatchingInner(db, env) {
   try { await db.prepare(SBLOCK_DDL).run(); } catch (e) {}
   try { await matchCols(db); } catch (e) {}
   const users = (await pagedRows(db, `SELECT * FROM swap_users WHERE active=1 AND passes IS NOT NULL
-      AND ((wants IS NOT NULL AND wants <> '[]') OR s160=1 OR only160=1) AND slots IS NOT NULL AND slots <> '[]'
+      AND ((wants IS NOT NULL AND wants <> '[]') OR s160=1 OR only160=1) AND ((slots IS NOT NULL AND slots <> '[]') OR s160=1 OR only160=1)
       AND key NOT IN (SELECT key FROM restricted) AND key NOT IN (SELECT key FROM swap_block)
       AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`))
     .map(u => ({ ...u, sched: parse(u.sched, null), wants: parse(u.wants, []), keep: new Set(parse(u.keep, [])), touch: new Set(parse(u.touch, [])), slots: parse(u.slots, []),
                  passes: parse(u.passes, []), caps: parse(u.caps, {}) || {} }))
     // Only here for 160s: no swaps for them (their picks are ignored), and they sell.
-    .map(u => u.only160 ? { ...u, wants: [], s160: 1, b160: 0 } : u);
+    .map(u => u.only160 ? { ...u, wants: [], s160: 1, b160: 0 } : u)
+    .map(u => ({ ...u, sellHours: new Set(parse(u.sell160h, []).map(Number)) }));
   /* A member can be in any number of swaps a swap day, with anyone, the same
      partner again (even in the same hour) included. Each specific pass
      (player + season) a member gives goes out once a swap day: they hold one
@@ -885,7 +886,8 @@ async function runMatchingInner(db, env) {
   { const sellers = users.filter(u => u.s160), buyers = users.filter(u => u.b160 && u.wants.length);
     if (sellers.length && buyers.length) dues.forEach((due, k) => {
       const d = swapDay(due), slot = new Date(due).getUTCHours();
-      const S = sellers.filter(u => ranks.get(u.key)[k] >= 0); if (!S.length) return;
+      // A seller sells at their swap hours, or at the hour(s) they picked for 160s.
+      const S = sellers.filter(u => (u.sell160m === 'one' || u.sell160m === 'multi') ? u.sellHours.has(slot) : ranks.get(u.key)[k] >= 0); if (!S.length) return;
       const B = buyers.filter(u => ranks.get(u.key)[k] >= 0).map(u => [u, rs(u.key) + Math.random() * 1.2]).sort((x, y) => (bossOf(y[0].key) - bossOf(x[0].key)) || (y[1] - x[1])).map(x => x[0]);
       const got = new Map(), sold = new Map();
       for (let round = 0; round < MAX_160_HOUR; round++) {
@@ -1425,6 +1427,8 @@ async function matchCols(db) {
   for (const c of ['refundA', 'refundB']) { try { await alterOnce(db, `ALTER TABLE swap_matches ADD COLUMN ${c} INTEGER`); } catch (e) {} }
   // 160s (2026-11-08): opted in to buy, to sell, or only here to sell 160s (no swaps).
   for (const c of ['b160', 's160', 'only160']) { try { await alterOnce(db, `ALTER TABLE swap_users ADD COLUMN ${c} INTEGER`); } catch (e) {} }
+  // When a seller sells 160s: 'one' (one hour a day), 'swaps' (their swap hours), 'multi' (hours they pick); sell160h = those UTC hours.
+  for (const c of ['sell160m', 'sell160h']) { try { await alterOnce(db, `ALTER TABLE swap_users ADD COLUMN ${c} TEXT`); } catch (e) {} }
   try { await alterOnce(db, T160_DDL); } catch (e) {}
 }
 // Swaps a member has had for one player since a moment (made, not called off).
@@ -4821,7 +4825,7 @@ async function handle({ request, env, waitUntil }) {
     mark(request, 'plays');
     const cDay = confirmDayNow();
     return json({ confirmShow: Date.now() >= CONFIRM_SHOW_AT, confirmedToday: !!(u && u.confirmDay === cDay), confirmStarts: CONFIRM_FROM_DAY, swapToday: cDay, key: me, admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
-      keep: parse(u.keep, []), touch: parse(u.touch, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: lite ? [] : parse(u.passes, []), passCount: (() => { try { return parse(u.passes, []).length; } catch (e) { return 0; } })(), lowPlays: lowP, scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {}, b160: !!u.b160, s160: !!u.s160, only160: !!u.only160 } : null, real: realN });
+      keep: parse(u.keep, []), touch: parse(u.touch, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: lite ? [] : parse(u.passes, []), passCount: (() => { try { return parse(u.passes, []).length; } catch (e) { return 0; } })(), lowPlays: lowP, scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {}, b160: !!u.b160, s160: !!u.s160, only160: !!u.only160, sell160m: u.sell160m || null, sell160h: parse(u.sell160h, []) } : null, real: realN });
   }
 
   // A tick in the passes list saves at once: the passes they won't give.
@@ -4894,7 +4898,17 @@ async function handle({ request, env, waitUntil }) {
     await db.prepare('UPDATE swap_users SET dayCap=?, caps=?, sched=? WHERE key=?').bind(dayCap, JSON.stringify(caps), JSON.stringify(sched), me).run();
     // 160s: buy / sell / only here to sell 160s (then no swaps, so no picks needed).
     { const only = b.only160 ? 1 : 0, sell = only || b.s160 ? 1 : 0, buy = !only && b.b160 ? 1 : 0;
-      await db.prepare('UPDATE swap_users SET b160=?, s160=?, only160=? WHERE key=?').bind(buy, sell, only, me).run();
+      // Selling: one hour a day, the swap hours (only with players picked), or several hours.
+      let sm = ['one', 'swaps', 'multi'].includes(b.sell160m) ? b.sell160m : 'one';
+      if (sm === 'swaps' && (only || !wants.length)) sm = 'one';
+      let sh = [...new Set((Array.isArray(b.sell160h) ? b.sell160h : []).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24))];
+      if (sm === 'one') sh = sh.slice(0, 1);
+      if (sell && sm !== 'swaps' && !sh.length) return json({ error: sm === 'one' ? 'Pick the time to sell your 160s (step 6).' : 'Pick at least one time to sell your 160s (step 6).' }, 400);
+      await db.prepare('UPDATE swap_users SET b160=?, s160=?, only160=?, sell160m=?, sell160h=? WHERE key=?').bind(buy, sell, only, sell ? sm : null, sell && sm !== 'swaps' ? JSON.stringify(sh) : null, me).run();
+      // 160s not yet warned at an hour they no longer sell at come off.
+      if (sell && sm !== 'swaps') { const keepH = new Set(sh);
+        for (const r of (((await db.prepare(`SELECT id, dueAt FROM swap_160 WHERE seller=? AND status='pending' AND warnS IS NULL AND warnB IS NULL`).bind(me).all()).results) || []))
+          if (!keepH.has(new Date(Number(r.dueAt)).getUTCHours())) await db.prepare(`UPDATE swap_160 SET status='cancelled', note='called off: seller changed their 160 times' WHERE id=?`).bind(r.id).run(); }
       // Stopped buying or selling: their 160s not yet warned come off.
       if (!sell) await db.prepare(`UPDATE swap_160 SET status='cancelled', note='called off: seller stopped selling 160s' WHERE seller=? AND status='pending' AND warnS IS NULL AND warnB IS NULL`).bind(me).run().catch(() => {});
       if (!buy) await db.prepare(`UPDATE swap_160 SET status='cancelled', note='called off: buyer stopped buying 160s' WHERE buyer=? AND status='pending' AND warnS IS NULL AND warnB IS NULL`).bind(me).run().catch(() => {}); }

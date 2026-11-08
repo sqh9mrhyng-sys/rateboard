@@ -139,6 +139,8 @@
   .o160 input{margin-top:3px;width:20px;height:20px;flex:none}
   .o160 .sub{display:block;font-size:13px;color:var(--mute);margin-top:2px;line-height:1.4}
   .o160.dis{opacity:.5;cursor:default}
+  #s160opts{margin:6px 0 0 18px}
+  .o160.sm{padding:8px 10px;margin-top:6px} .o160.sm input{width:18px;height:18px}
   .opt{font-size:11px;font-weight:600;color:var(--mute);text-transform:uppercase;letter-spacing:.05em;margin-left:4px}
   .field{margin-top:12px} .field label{display:block;font-size:13.5px;font-weight:700;margin-bottom:4px}
   .field > input{width:100%;max-width:220px}
@@ -267,6 +269,13 @@
     <h2><span class="n">6</span>160s <span class="opt">optional</span></h2>
     <p class="note">For packs that couldn't be matched in a swap. Both sides opt in.</p>
     <label class="o160"><input type="checkbox" id="s160"><span><b>Sell 160s</b><span class="sub">At your hours, passes of yours that weren't used in a swap go to buyers. 30 min before, you get the packs to open. Each buyer offers 160 on a card from your pack - send them the 160 back.</span></span></label>
+    <div id="s160opts" hidden>
+      <label class="o160 sm"><input type="radio" name="s160m" value="one"><span><b>Single time</b><span class="sub">One time a day to sell them (fewer offers).</span></span></label>
+      <label class="o160 sm" id="s160sw"><input type="radio" name="s160m" value="swaps"><span><b>All the same times as my swaps</b><span class="sub">May mean fewer swaps over the course of a day - packs sold at an earlier hour can't go in a later swap.</span></span></label>
+      <label class="o160 sm"><input type="radio" name="s160m" value="multi"><span><b>Multiple times</b><span class="sub">For people not doing swaps.</span></span></label>
+      <p class="note" id="s160hnote" style="margin:10px 0 0" hidden></p>
+      <div class="hours" id="s160hours" hidden></div>
+    </div>
     <label class="o160"><input type="checkbox" id="b160"><span><b>Buy 160s</b><span class="sub">Extra packs of the players you picked in step 4, from sellers' leftover packs at your hours. Offer 160 on a card from their pack - they send the 160 back.</span></span></label>
     <p class="note sub" id="n160">Tap Save to keep changes. 160s use the same hours and limits as your swaps.</p>
   </section>
@@ -815,6 +824,7 @@ for(const [id, f] of [['#capn', 'n'], ['#capd', 'd']]) $(id).addEventListener('i
   const o = $('#capwho').selectedOptions[0]; if(o) o.textContent = capLbl(k, prof.wants.indexOf(k)); });
 function drawWants(){
   if(prof.wants.length > 10) prof.wants = prof.wants.slice(0, 10);
+  try{ drawSell(); }catch(e){}   // "same times as my swaps" shows only with players picked
   $('#wants').innerHTML = prof.wants.map((k, i) => { const n = othersOn(k);
     const lo = (prof.lowPlays || []).includes(k);
     return `<div class="want1"${lo ? ' style="border-color:var(--bad)"' : ''}><span>${lo ? '<b style="color:var(--bad);font-size:12px">Under 27 plays - won\'t match</b><br>' : ''}<span class="note">${RANK[i]} pick · </span><b>${esc(wantNames[k] || 'Player ' + k.split(':')[2])}</b> <span class="note">· ${esc(keyLbl(k))}</span>`
@@ -871,11 +881,33 @@ function draw160(){
   $('#s160').checked = only || !!prof.s160; $('#s160').disabled = only;
   $('#b160').checked = !only && !!prof.b160; $('#b160').disabled = only;
   $('#s160').closest('.o160').classList.toggle('dis', only); $('#b160').closest('.o160').classList.toggle('dis', only);
-  $('#n160').textContent = only ? 'Only here for 160s: you sell 160s at your hours. Buying needs players picked, so it\'s off.' : 'Tap Save to keep changes. 160s use the same hours and limits as your swaps.';
+  drawSell();
+  $('#n160').textContent = only ? 'Only here for 160s: you sell 160s at the time(s) you pick above. Buying needs players picked, so it\'s off.' : 'Tap Save to keep changes. 160s use the same hours and limits as your swaps.';
 }
 $('#only160on').addEventListener('click', () => { prof.only160 = true; prof.s160 = true; draw160(); $('#savemsg').textContent = 'Tap Save to keep it.'; });
 $('#only160off').addEventListener('click', () => { prof.only160 = false; draw160(); $('#wq').focus(); });
-$('#s160').addEventListener('change', e => { prof.s160 = e.target.checked; });
+$('#s160').addEventListener('change', e => { prof.s160 = e.target.checked; drawSell(); });
+/* Selling 160s (2026-11-08): one time a day, the same times as their swaps
+   (only offered with players picked in step 4), or several times. */
+const canSwapTimes = () => !prof.only160 && (prof.wants || []).length > 0;
+function sellMode(){ let m = prof.sell160m || (canSwapTimes() ? 'swaps' : 'one'); if(m === 'swaps' && !canSwapTimes()) m = 'one'; return m; }
+function drawSell(){
+  const on = !!prof.only160 || $('#s160').checked, m = sellMode();
+  $('#s160opts').hidden = !on; if(!on) return;
+  $('#s160sw').hidden = !canSwapTimes();
+  document.querySelectorAll('[name="s160m"]').forEach(r => { r.checked = r.value === m; });
+  const pick = m !== 'swaps', hs = new Set((prof.sell160h || []).map(h => Math.round(toLocal(h))));
+  $('#s160hours').hidden = !pick; $('#s160hnote').hidden = !pick;
+  $('#s160hnote').textContent = m === 'one' ? 'Your time to sell (every day):' : 'Your times to sell (every day) - tap as many as you like:';
+  if(pick) $('#s160hours').innerHTML = Array.from({ length: 24 }, (_, h) => h === RESET_LOCAL ? `<label class="rst"><input type="checkbox" disabled>${hLbl(h)}<span class="cnt">packs reset</span></label>`
+    : `<label class="${hs.has(h) ? 'on' : ''}"><input type="checkbox" data-sh="${h}" ${hs.has(h) ? 'checked' : ''}>${hLbl(h)}</label>`).join('');
+}
+document.querySelectorAll('[name="s160m"]').forEach(r => r.addEventListener('change', () => { prof.sell160m = r.value; if(r.value === 'one') prof.sell160h = (prof.sell160h || []).slice(0, 1); drawSell(); }));
+$('#s160hours').addEventListener('change', e => { const h = Number(e.target.dataset.sh); if(e.target.dataset.sh == null) return;
+  const u = Math.round(toUtc(h)), cur = new Set(prof.sell160h || []);
+  if(sellMode() === 'one') prof.sell160h = e.target.checked ? [u] : [];
+  else { if(e.target.checked) cur.add(u); else cur.delete(u); prof.sell160h = [...cur]; }
+  drawSell(); $('#savemsg').textContent = 'Tap Save to keep changes.'; });
 $('#b160').addEventListener('change', e => { prof.b160 = e.target.checked; });
 const hideSaved = () => { $('#saved').hidden = true; };
 $('#savedok').addEventListener('click', hideSaved);
@@ -883,12 +915,14 @@ $('#saved').addEventListener('click', e => { if(e.target.id === 'saved') hideSav
 document.addEventListener('keydown', e => { if(e.key === 'Escape' && !$('#saved').hidden) hideSaved(); });
 $('#save').addEventListener('click', async () => {
   if(!connected){ $('#savemsg').textContent = 'Do step 1 first - the bot has to be able to DM you.'; return; }
+  const selling = !!prof.only160 || $('#s160').checked;
+  if(selling && sellMode() !== 'swaps' && !(prof.sell160h || []).length){ $('#savemsg').textContent = sellMode() === 'one' ? 'Pick the time to sell your 160s (step 6).' : 'Pick at least one time to sell your 160s (step 6).'; return; }
   { const sc = schedOf(), any = sc.mode === 'weekly' ? Object.values(sc.week || {}).some(l => l.length) : sc.mode === 'date' ? (sc.hours || []).length : prof.slots.length;
-    if(!any){ $('#savemsg').textContent = 'Pick at least one hour.'; return; } }
+    if(!any && !prof.only160){ $('#savemsg').textContent = 'Pick at least one hour.'; return; } }
   if(!SWAP_COMMENT_RE.test($('#clink').value.trim())){ $('#savemsg').textContent = 'That link is not a comment under the swap post. Open the swap post, copy the link to your comment, and paste it in step 2.'; return; }
   const j = await api('/api/swaps?op=save', { method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 10), sched: schedOf().mode === 'daily' ? { mode: 'daily', tz: TZ } : { ...schedOf(), tz: TZ }, comment: $('#clink').value.trim(), goal: '', dayCap: $('#daycap').value.trim(), caps, keep: prof.keep, slots: prof.slots, names: wantNames,
-      only160: !!prof.only160, s160: !!prof.only160 || $('#s160').checked, b160: !prof.only160 && $('#b160').checked }) });
+      only160: !!prof.only160, s160: !!prof.only160 || $('#s160').checked, b160: !prof.only160 && $('#b160').checked, sell160m: sellMode(), sell160h: prof.sell160h || [] }) });
   const extra = (j.late ? ' Too late to change swaps already warned - please do them at :00.' : '') + (j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} for a player or hour you removed ${j.calledOff === 1 ? 'is' : 'are'} called off - you'll both get a message.` : '');
   $('#savemsg').textContent = j.error ? j.error : '';
   if(!j.error) showSaved(extra.trim());
