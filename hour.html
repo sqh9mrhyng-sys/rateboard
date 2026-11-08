@@ -24,7 +24,7 @@
   .off{opacity:.5;text-decoration:line-through}
   .chk{width:22px;height:22px;accent-color:var(--ok);flex:none}
   .grp{display:flex;align-items:center;gap:10px;min-width:0}
-  #conlist .row.both{opacity:.22;transition:opacity .15s}
+  #conlist .row.both,#s160list .row.both{opacity:.22;transition:opacity .15s}
   #conlist .row.both:hover,#conlist .row.both:focus-within{opacity:.5}
   .showrate{display:inline-flex;align-items:center;gap:7px;margin:2px 0 6px;padding:5px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;font-weight:600;color:var(--mute);cursor:pointer}
   .showrate input{width:16px;height:16px;margin:0;accent-color:var(--accent)}
@@ -165,6 +165,7 @@
   <section id="buy" hidden><h2>Buy these packs <span class="n" id="nbuy"></span></h2><div id="buylist"></div></section>
   <p class="note wait" id="wait" hidden></p>
   <section id="con" hidden><h2>Offer on your partners' cards <span class="n" id="ncon"></span></h2><p class="note" style="margin:0 0 6px">Use their comment only to reach them if they didn't buy.</p><label class="showrate"><input type="checkbox" id="showrate" checked> Show rankings</label><div id="conlist"></div><p class="note ratenote" id="ratenote" hidden>Vote fairly or your perms to vote are gone. A 1 star is something like no pack on time + no communication; a 5 star is they had the pack on time and offered on your cards extremely fast. You rate each person once - you can change it later.</p></section>
+  <section id="s160" hidden><h2>160s <span class="n" id="n160"></span></h2><p class="note" style="margin:0 0 6px" id="s160note"></p><div id="s160list"></div></section>
   <p class="note" style="margin-top:14px">Something wrong? Report it on <a href="/swaps">raxacademy.app/swaps</a>.</p>
 </div>
 <script>
@@ -179,18 +180,18 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
   catch(e){ $('#sub').textContent = 'Could not reach the board - try again.'; return; }
   if(j.error){ $('#sub').textContent = j.error; return; }
   const when = new Date(Number(j.due)).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-  const live = j.swaps.filter(x => !x.off);
+  const live = j.swaps.filter(x => !x.off), sell160 = j.sell160 || [], buy160 = j.buy160 || [], n160 = sell160.length + buy160.length;
   $('#h').innerHTML = `@${esc(j.user)} · <button class="tbtn" id="tbtn" aria-expanded="false">${esc(when)} <span class="car">▾</span></button>`;
   $('#tbtn').addEventListener('click', openMenu);
   isAdm = !!j.admin; rateOff = !!j.ratingsOff;
   if(rateOff){ $('#con').classList.add('norate'); const sr = document.querySelector('.showrate'); if(sr) sr.hidden = true; }
   const views = { ratings: ['#rateview', 'Rating leaderboard ', loadRatings], top: ['#topview', 'Most picked ', loadTop], picks: ['#pickview', 'Your players & hours ', loadPicks] };
-  if(views[q.get('v')]){ const [id, lbl, fn] = views[q.get('v')]; $('#tbtn').firstChild.textContent = lbl; ['#buy', '#con', '#andr', '#wait', '#sub'].forEach(x => { const el = $(x); if(el) el.hidden = true; }); $(id).hidden = false; fn(); return; }
-  if(q.get('v') === 'byhour' && isAdm){ $('#tbtn').firstChild.textContent = 'Swaps by hour '; ['#buy', '#con', '#andr', '#wait', '#sub'].forEach(id => { const el = $(id); if(el) el.hidden = true; }); $('#byview').hidden = false; byLoad(Number(q.get('at')) || 0); return; }
+  if(views[q.get('v')]){ const [id, lbl, fn] = views[q.get('v')]; $('#tbtn').firstChild.textContent = lbl; ['#buy', '#con', '#s160', '#andr', '#wait', '#sub'].forEach(x => { const el = $(x); if(el) el.hidden = true; }); $(id).hidden = false; fn(); return; }
+  if(q.get('v') === 'byhour' && isAdm){ $('#tbtn').firstChild.textContent = 'Swaps by hour '; ['#buy', '#con', '#s160', '#andr', '#wait', '#sub'].forEach(id => { const el = $(id); if(el) el.hidden = true; }); $('#byview').hidden = false; byLoad(Number(q.get('at')) || 0); return; }
   // Packs today view: the page shows only that.
-  if(q.get('v') === 'packs'){ $('#tbtn').firstChild.textContent = 'Packs today '; ['#buy', '#con', '#andr', '#wait', '#sub'].forEach(id => { const el = $(id); if(el) el.hidden = true; }); $('#pkview').hidden = false; loadPk(); return; }
-  $('#sub').textContent = `${live.length} swap${live.length === 1 ? '' : 's'} at this time` + (j.swaps.length > live.length ? ` (${j.swaps.length - live.length} called off)` : '') + '.';
-  $('#buy').hidden = !j.swaps.length;
+  if(q.get('v') === 'packs'){ $('#tbtn').firstChild.textContent = 'Packs today '; ['#buy', '#con', '#s160', '#andr', '#wait', '#sub'].forEach(id => { const el = $(id); if(el) el.hidden = true; }); $('#pkview').hidden = false; loadPk(); return; }
+  $('#sub').textContent = `${live.length} swap${live.length === 1 ? '' : 's'} at this time` + (j.swaps.length > live.length ? ` (${j.swaps.length - live.length} called off)` : '') + (n160 ? ` · ${n160} 160${n160 === 1 ? '' : 's'}` : '') + '.';
+  $('#buy').hidden = !j.swaps.length && !n160;
   $('#andr').hidden = !live.length;
   // The swap DM can only be asked for once it's swap time.
   const sb = document.querySelector('[data-dm="contact"]'), lock = () => { const t = new Date(Number(j.due)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); sb.disabled = true; sb.textContent = `Swap DM at ${t}`; };
@@ -199,15 +200,15 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
      opens on the packs to buy and the offers appear at the bottom then; the
      contact's link opens straight on them. */
   const openAt = Number(j.due) - 5 * 60000, stage = q.get('s') || 'buy';
-  const showOffers = first => { $('#con').hidden = !j.swaps.length; $('#wait').hidden = true;
+  const showOffers = first => { $('#con').hidden = !j.swaps.length; $('#s160').hidden = !n160; $('#wait').hidden = true;
     if(!first){ $('#con').classList.add('new'); $('#con').scrollIntoView({ behavior: 'smooth', block: 'start' }); } };
   if(stage === 'offer' || Date.now() >= openAt){ showOffers(true); if(stage === 'offer') setTimeout(() => $('#con').scrollIntoView({ block: 'start' }), 50); }
-  else if(j.swaps.length){
+  else if(j.swaps.length || n160){
     const at = new Date(openAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     $('#wait').hidden = false; $('#wait').textContent = `Who to offer on shows up here at ${at} - keep this page open or come back then.`;
     setTimeout(() => showOffers(false), Math.max(0, openAt - Date.now()) + 500);
   }
-  $('#nbuy').textContent = live.length; $('#ncon').textContent = live.length;
+  $('#nbuy').textContent = live.length + sell160.length; $('#ncon').textContent = live.length;
   // Grouped by the player they receive; each line is a pack to buy.
   // Both lists in order of the player you receive (then partner); each keeps its own index for its tick box.
   const ord = j.swaps.map((x, i) => [x, i]).sort(([a], [b]) => String(a.receive || '').localeCompare(String(b.receive || '')) || String(a.partner || '').localeCompare(String(b.partner || '')));
@@ -216,6 +217,27 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
   $('#buylist').innerHTML = [...groups.entries()].map(([name, g]) => `<div class="gh">You're receiving ${lnk(name, g.url)}</div>`
     + g.rows.map(([x, i]) => `<div class="row${x.off ? ' off' : ''}"><span class="grp"><input type="checkbox" class="chk" data-k="b${i}" ${done['b' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}>
       <span><b>${lnk(x.give, x.giveUrl)}</b>${x.off ? '<span class="sub">called off</span>' : ''}</span></span>${x.yourCard ? `<a class="btn" href="${esc(x.yourCard)}" target="_blank" rel="noopener">Your card</a>` : ''}</div>`).join('')).join('');
+  /* 160s (2026-11-08). Warning: sellers get the packs to open (one tick each),
+     buyers how many 160s for which player. From :55 the 160s list: sellers
+     tick "Received offer" and "Sent 160 back", buyers "Offered" and "160 back". */
+  const pl = x => lnk(x.player, x.playerUrl), who = x => x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">@${esc(x.user || '?')}</a>` : '@' + esc(x.user || '?');
+  const chk = (k, lbl) => `<label><input type="checkbox" class="chk" data-k="${k}" ${done[k] ? 'checked' : ''}><span>${lbl}</span></label>`;
+  if(sell160.length){
+    const byP = new Map(); for(const x of sell160){ const g = byP.get(x.player) || byP.set(x.player, []).get(x.player); g.push(x); }
+    $('#buylist').innerHTML += `<div class="gh">160s - open these packs</div>` + [...byP.values()].map(g => g.map(x => `<div class="row"><span class="grp"><input type="checkbox" class="chk" data-k="sb${x.id}" ${done['sb' + x.id] ? 'checked' : ''} title="Bought pack">
+      <span><b>${pl(x)}</b><span class="sub">Bought pack - for ${who(x)}</span></span></span>${x.yourCard ? `<a class="btn" href="${esc(x.yourCard)}" target="_blank" rel="noopener">Your card</a>` : ''}</div>`).join('')).join('');
+  }
+  if(buy160.length){
+    const byP = new Map(); for(const x of buy160){ const g = byP.get(x.player) || byP.set(x.player, { url: x.playerUrl, n: 0 }).get(x.player); g.n++; }
+    $('#buylist').innerHTML += [...byP.entries()].map(([nm, g]) => `<div class="gh">You have ${g.n} 160${g.n === 1 ? '' : 's'} for ${lnk(nm, g.url)}</div>`).join('');
+  }
+  $('#n160').textContent = n160;
+  $('#s160note').textContent = sell160.length && buy160.length ? 'Selling: your buyer offers 160 on a card from your pack - send the 160 back. Buying: offer 160 on a card from their pack - they send the 160 back.'
+    : sell160.length ? 'Each buyer offers 160 on a card from your pack - once their offer is in, send the 160 back.' : 'Offer 160 on a card from each seller\'s pack - they send the 160 back.';
+  $('#s160list').innerHTML = sell160.map(x => `<div class="row${done['sq' + x.id] && done['sr' + x.id] ? ' both' : ''}" data-r160="s${x.id}"><span class="grp"><span class="chk2">${chk('sq' + x.id, 'Received offer')}${chk('sr' + x.id, 'Sent 160 back')}</span>
+      <span><b>${who(x)}</b><span class="sub">Receiving <b class="rv">${pl(x)}</b> from your pack</span></span></span></div>`).join('')
+    + buy160.map(x => `<div class="row${done['bo' + x.id] && done['bk' + x.id] ? ' both' : ''}" data-r160="b${x.id}"><span class="grp"><span class="chk2">${chk('bo' + x.id, 'Offered')}${chk('bk' + x.id, '160 back')}</span>
+      <span><b>${who(x)}</b><span class="sub">You receive <b class="rv">${pl(x)}</b></span></span></span><span class="acts">${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : ''}</span></div>`).join('');
   // Each partner: who, what you receive, what you give - and their comment to reach them.
   $('#ratenote').hidden = !j.swaps.some(x => !x.off);
   // Two ticks per partner here (Dennis, 2026-11-06): offer sent, then swap done.
@@ -374,7 +396,7 @@ async function openMenu(){
   if(j.error){ $('#hm-up').innerHTML = `<p class="note">${esc(j.error)}</p>`; return; }
   menuDone = true;
   const cur = Number(q.get('d')), nowMs = j.now || Date.now();
-  const item = h => `<a class="hm-i${h.due === cur ? ' on' : ''}" href="${esc(h.url)}"><span>${esc(new Date(h.due).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</span><span class="note">${h.swaps} swap${h.swaps === 1 ? '' : 's'}</span></a>`;
+  const item = h => `<a class="hm-i${h.due === cur ? ' on' : ''}" href="${esc(h.url)}"><span>${esc(new Date(h.due).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</span><span class="note">${[h.swaps ? `${h.swaps} swap${h.swaps === 1 ? '' : 's'}` : '', h.s160 ? `${h.s160} 160${h.s160 === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ') || '0 swaps'}</span></a>`;
   const up = j.hours.filter(h => h.due > nowMs - 3600000).sort((a, b) => a.due - b.due), past = j.hours.filter(h => h.due <= nowMs - 3600000);
   const pq = new URLSearchParams(location.search); pq.set('v', 'packs'); pq.delete('at');
   const bq = new URLSearchParams(location.search); bq.set('v', 'byhour'); bq.delete('at');
@@ -441,7 +463,8 @@ document.addEventListener('click', async e => {
 });
 document.addEventListener('change', e => { const k = e.target.dataset.k; if(!k) return; done[k] = e.target.checked; try{ localStorage.setItem(key, JSON.stringify(done)); }catch(err){}
   // Offered and Done both ticked: that partner's row greys out (still usable).
-  const row = e.target.closest('[data-row]'); if(row){ const i = row.dataset.row; row.classList.toggle('both', !!(done['c' + i] && done['d' + i])); } });
+  const row = e.target.closest('[data-row]'); if(row){ const i = row.dataset.row; row.classList.toggle('both', !!(done['c' + i] && done['d' + i])); }
+  const r1 = e.target.closest('[data-r160]'); if(r1){ const v = r1.dataset.r160, id = v.slice(1); r1.classList.toggle('both', v[0] === 's' ? !!(done['sq' + id] && done['sr' + id]) : !!(done['bo' + id] && done['bk' + id])); } });
 </script>
 <script src="/sponsor.js" data-page="hour" defer></script>
 </body>

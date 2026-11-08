@@ -395,6 +395,15 @@ const MAX_WANTS = 10;    // players a member can swap for at once (was 5)
    GIVES in at most 25 swaps a swap day per sport + season (5 spare as a
    safety net). Receiving isn't limited (Dennis, 2026-11-08). */
 const SEASON_GIVE_MAX = 25;
+/* 160s (Dennis, 2026-11-08). A seller with a pass whose pack wasn't used in a
+   swap opens it at their hour; a buyer who wants that player offers 160 rax
+   on a card from it, and the seller sends the 160 back. One-way: the seller
+   gives, the buyer receives. Made after the swaps in each matching run, so
+   swaps come first; the seller's pack counts as given (once a swap day, and
+   toward the 25 per sport + season), the buyer's as received (their goal and
+   per-day limits). warnS / warnB = seller / buyer told (30 min before). */
+const T160_DDL = `CREATE TABLE IF NOT EXISTS swap_160 (id INTEGER PRIMARY KEY AUTOINCREMENT, buyer TEXT, seller TEXT, pass TEXT, slot INTEGER, dueAt INTEGER, createdAt INTEGER, status TEXT, warnS INTEGER, warnB INTEGER, note TEXT)`;
+const MAX_160_HOUR = 15;   // most 160s one buyer gets in one hour
 const seasonOf = k => String(k || '').split(':').slice(0, 2).join(':');
 /* When a member can swap (Dennis, 2026-11-04). Three ways:
      daily   - the same hours every day (slots, UTC hours, as before)
@@ -690,12 +699,15 @@ async function runMatchingInner(db, env) {
   await db.prepare(DM_DDL).run();
   try { await db.prepare(RESTRICT_DDL).run(); } catch (e) {}
   try { await db.prepare(SBLOCK_DDL).run(); } catch (e) {}
+  try { await matchCols(db); } catch (e) {}
   const users = (await pagedRows(db, `SELECT * FROM swap_users WHERE active=1 AND passes IS NOT NULL
-      AND wants IS NOT NULL AND wants <> '[]' AND slots IS NOT NULL AND slots <> '[]'
+      AND ((wants IS NOT NULL AND wants <> '[]') OR s160=1 OR only160=1) AND slots IS NOT NULL AND slots <> '[]'
       AND key NOT IN (SELECT key FROM restricted) AND key NOT IN (SELECT key FROM swap_block)
       AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`))
     .map(u => ({ ...u, sched: parse(u.sched, null), wants: parse(u.wants, []), keep: new Set(parse(u.keep, [])), touch: new Set(parse(u.touch, [])), slots: parse(u.slots, []),
-                 passes: parse(u.passes, []), caps: parse(u.caps, {}) || {} }));
+                 passes: parse(u.passes, []), caps: parse(u.caps, {}) || {} }))
+    // Only here for 160s: no swaps for them (their picks are ignored), and they sell.
+    .map(u => u.only160 ? { ...u, wants: [], s160: 1, b160: 0 } : u);
   /* A member can be in any number of swaps a swap day, with anyone, the same
      partner again (even in the same hour) included. Each specific pass
      (player + season) a member gives goes out once a swap day: they hold one
@@ -752,6 +764,13 @@ async function runMatchingInner(db, env) {
   // Packs a member marked as used today themselves (Packs today tab): not given again this swap day.
   // Those packs were opened too, so they count toward the day's 25 for that sport + season.
   for (const u of users) { const pu = parse(u.packsUsed, null); if (pu && pu.day && Array.isArray(pu.keys)) for (const k of pu.keys) { if (!given.has(`${u.key}|${k}|${pu.day}`)) giveSeason(u.key, k, pu.day); given.add(`${u.key}|${k}|${pu.day}`); } }
+  // 160s already made: the seller's pack is given, the buyer's received.
+  let live160 = [];
+  try { live160 = ((await db.prepare(`SELECT buyer, seller, pass, dueAt, createdAt, status, warnS FROM swap_160 WHERE createdAt > ? AND (status <> 'cancelled' OR warnS IS NOT NULL)`).bind(Date.now() - 2 * 86400000).all()).results) || []; } catch (e) {}
+  for (const r of live160) { const d = swapDay(Number(r.dueAt));
+    if (!given.has(`${r.seller}|${r.pass}|${d}`)) giveSeason(r.seller, r.pass, d);
+    given.add(`${r.seller}|${r.pass}|${d}`);
+    if (r.status !== 'cancelled') bump(recv, `${r.buyer}|${r.pass}|${d}`); }
   await lap();   // 1: members + swaps read
   // FC and UFC have no packs to swap, so neither is ever offered or matched.
   const swappable = k => !/^(soccer|ufc):/.test(k) && !seasonOff(k);
@@ -767,6 +786,7 @@ async function runMatchingInner(db, env) {
   const recvAt = new Map();
   for (const m of (((await db.prepare("SELECT a, b, aGets, bGets, createdAt FROM swap_matches WHERE status IN ('pending','sending','warned','sent')").all()).results) || []))
     for (const [k, w] of [[m.a, m.aGets], [m.b, m.bGets]]) { const kk = k + '|' + w; (recvAt.get(kk) || recvAt.set(kk, []).get(kk)).push(Number(m.createdAt) || 0); }
+  for (const r of live160) if (r.status !== 'cancelled') { const kk = r.buyer + '|' + r.pass; (recvAt.get(kk) || recvAt.set(kk, []).get(kk)).push(Number(r.createdAt) || 0); }
   const countSince = (k, w, since) => { const t0 = Number(since) || 0; let n = 0; for (const t of (recvAt.get(k + '|' + w) || [])) if (t > t0) n++; return n; };
   await lap();   // 2: low plays + live swaps read
   const cache = new Map(), goalLeft = new Map();
@@ -857,6 +877,35 @@ async function runMatchingInner(db, env) {
     goalLeft.set(`${B.key}|${bGets}`, (goalLeft.get(`${B.key}|${bGets}`) ?? Infinity) - 1);
     }
   }
+  /* 160s: what's left after the swaps. Each hour, buyers take turns (one 160
+     a turn, Dennis and priority members first, then better ratings) so one
+     buyer can't take every seller's pack; each pack goes to the seller with
+     the fewest 160s so far that hour. */
+  const made160 = [];
+  { const sellers = users.filter(u => u.s160), buyers = users.filter(u => u.b160 && u.wants.length);
+    if (sellers.length && buyers.length) dues.forEach((due, k) => {
+      const d = swapDay(due), slot = new Date(due).getUTCHours();
+      const S = sellers.filter(u => ranks.get(u.key)[k] >= 0); if (!S.length) return;
+      const B = buyers.filter(u => ranks.get(u.key)[k] >= 0).map(u => [u, rs(u.key) + Math.random() * 1.2]).sort((x, y) => (bossOf(y[0].key) - bossOf(x[0].key)) || (y[1] - x[1])).map(x => x[0]);
+      const got = new Map(), sold = new Map();
+      for (let round = 0; round < MAX_160_HOUR; round++) {
+        let any = false;
+        for (const b of B) {
+          if ((got.get(b.key) || 0) >= MAX_160_HOUR) continue;
+          for (const w of b.wants) {
+            if (!goalOk(b.key, w) || !perDayOk(b.key, w, d)) continue;
+            const can = S.filter(x => x.key !== b.key && givesOne(x, w, d));
+            if (!can.length) continue;
+            const sl = can.reduce((m, x) => (sold.get(x.key) || 0) < (sold.get(m.key) || 0) ? x : m, can[0]);
+            made160.push({ buyer: b.key, seller: sl.key, pass: w, slot, due });
+            given.add(`${sl.key}|${w}|${d}`); giveSeason(sl.key, w, d);
+            bump(recv, `${b.key}|${w}|${d}`); goalLeft.set(`${b.key}|${w}`, (goalLeft.get(`${b.key}|${w}`) ?? Infinity) - 1);
+            bump(got, b.key); bump(sold, sl.key); any = true; break;
+          }
+        }
+        if (!any) break;
+      }
+    }); }
   await lap();   // 4: pairing
   // Never the same swap twice on one swap day, even if two runs overlap: checked against the
   // live swaps read at the start (in memory), then saved 50 at a time.
@@ -869,8 +918,15 @@ async function runMatchingInner(db, env) {
   for (const m of made) { const k = sig(m.a, m.b, m.aGets, m.bGets, swapDay(m.due)); if (seen.has(k)) continue; seen.add(k);
     ins.push(db.prepare(`INSERT INTO swap_matches (a, b, aGets, bGets, slot, createdAt, status, dueAt) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`).bind(m.a, m.b, m.aGets, m.bGets, m.slot, now, m.due)); }
   for (let i = 0; i < ins.length; i += 50) await db.batch(ins.slice(i, i + 50));
+  // The 160s: never the same buyer, seller and pass twice on one swap day.
+  { const sig1 = (b, s0, p, d) => `${b}|${s0}|${p}|${d}`, seen1 = new Set(live160.filter(r => r.status !== 'cancelled').map(r => sig1(r.buyer, r.seller, r.pass, swapDay(Number(r.dueAt)))));
+    const ins1 = [];
+    for (const m of made160) { const k = sig1(m.buyer, m.seller, m.pass, swapDay(m.due)); if (seen1.has(k)) continue; seen1.add(k);
+      ins1.push(db.prepare(`INSERT INTO swap_160 (buyer, seller, pass, slot, dueAt, createdAt, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')`).bind(m.buyer, m.seller, m.pass, m.slot, m.due, now)); }
+    try { for (let i = 0; i < ins1.length; i += 50) await db.batch(ins1.slice(i, i + 50)); } catch (e) { await botFail(db, 'matching', `160s not saved: ${e.message}`); }
+    made.n160 = ins1.length; }
   await lap();   // 5: saved
-  made.timing = `members ${users.length}, read ${T[1] - T[0]}ms, plays ${T[2] - T[1]}ms, goals ${T[3] - T[2]}ms, pairing ${T[4] - T[3]}ms, save ${T[5] - T[4]}ms`;
+  made.timing = `${made.n160 || 0} 160s, members ${users.length}, read ${T[1] - T[0]}ms, plays ${T[2] - T[1]}ms, goals ${T[3] - T[2]}ms, pairing ${T[4] - T[3]}ms, save ${T[5] - T[4]}ms`;
   return made;
 }
 
@@ -1367,6 +1423,9 @@ async function matchCols(db) {
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN confirmDay TEXT'); } catch (e) {}   // the swap day they confirmed their times for
   // Called-off swaps: when Dennis marked each side refunded (rax back) by hand.
   for (const c of ['refundA', 'refundB']) { try { await alterOnce(db, `ALTER TABLE swap_matches ADD COLUMN ${c} INTEGER`); } catch (e) {} }
+  // 160s (2026-11-08): opted in to buy, to sell, or only here to sell 160s (no swaps).
+  for (const c of ['b160', 's160', 'only160']) { try { await alterOnce(db, `ALTER TABLE swap_users ADD COLUMN ${c} INTEGER`); } catch (e) {} }
+  try { await alterOnce(db, T160_DDL); } catch (e) {}
 }
 // Swaps a member has had for one player since a moment (made, not called off).
 async function usedFor(db, key, want, since) {
@@ -2200,6 +2259,40 @@ async function dedupeSweep(db) {
     await stat(db, 'dupe_calledoff');
   }
 }
+/* 160s warnings, 30 min before (:30 to :55). Someone who also has swaps that
+   hour gets no extra DM - their swap warning's link opens the same page, with
+   the 160s on it. Everyone else gets one: sellers how many packs to open,
+   buyers how many 160s for which player, and the page link. */
+async function dm160(env, db, auth) {
+  const now = Date.now();
+  await matchCols(db);
+  const rows = ((await db.prepare(`SELECT * FROM swap_160 WHERE status='pending' AND dueAt > ? AND dueAt <= ? AND (warnS IS NULL OR warnB IS NULL) ORDER BY dueAt, id LIMIT 400`)
+    .bind(now + 5 * 60000, now + 30 * 60000).all()).results) || [];
+  if (!rows.length) return;
+  const per = new Map();
+  for (const r of rows) for (const [who, col] of [[r.seller, 'warnS'], [r.buyer, 'warnB']]) {
+    if (r[col]) continue; const k = who + '|' + r.dueAt;
+    (per.get(k) || per.set(k, { who, due: Number(r.dueAt), list: [] }).get(k)).list.push([r, col]); }
+  for (const g of per.values()) {
+    if (TICK_T0 && tickLeft() - dmWaitAhead() < 6000) break;
+    const got = [];
+    for (const [r, col] of g.list) { const c = await db.prepare(`UPDATE swap_160 SET ${col}=? WHERE id=? AND ${col} IS NULL`).bind(now, r.id).run(); if (c && c.meta && c.meta.changes) got.push([r, col]); }
+    if (!got.length) continue;
+    const sw = await db.prepare("SELECT 1 AS x FROM swap_matches WHERE (a=? OR b=?) AND dueAt=? AND status NOT IN ('cancelled','cleared','cancelling') LIMIT 1").bind(g.who, g.who, g.due).first();
+    if (sw) { await stat(db, 'dm_160_withswaps'); continue; }
+    const me = await loadMember(db, g.who);
+    if (!me || !me.hashId) continue;
+    const sells = got.filter(x => x[1] === 'warnS').length, buys = new Map();
+    for (const [r, col] of got) if (col === 'warnB') buys.set(r.pass, (buys.get(r.pass) || 0) + 1);
+    const lines = [];
+    if (sells) lines.push(`Heads up - your 160s are in 30 min. Open ${sells === 1 ? '1 pack' : sells + ' packs'} now (the list is on your page).`);
+    for (const [k, n] of buys) lines.push(`You have ${n} 160${n === 1 ? '' : 's'} for ${playerName(me, k)} in 30 min.`);
+    const text = lines.join('\n') + '\n\n' + await hourLink(env, g.who, g.due);
+    try { const ch = await dmChannel(db, auth, me.hashId, me.rsUser, env); await dmSendRetry(auth, ch, text); await stat(db, 'dm_160'); }
+    catch (e) { for (const [r, col] of got) await db.prepare(`UPDATE swap_160 SET ${col}=NULL WHERE id=? AND ${col}=?`).bind(r.id, now).run();
+      await botFail(db, 'dm_160', `${g.who}: ${e.message || e}`); }
+  }
+}
 async function confirmGate(env, db, auth) {
   const now = Date.now();
   if (now < CONFIRM_SHOW_AT) return;
@@ -2218,6 +2311,16 @@ async function confirmGate(env, db, auth) {
     const c = await db.prepare(`UPDATE swap_matches SET status='cancelled', note=? WHERE id=? AND status='pending' AND warnA IS NULL AND warnB IS NULL`).bind(`called off: ${who.map(k => '@' + ((cache.get(k) || {}).rsUser || k)).join(', ')} didn't confirm today`, m.id).run();
     if (c.meta && c.meta.changes) { await stat(db, 'confirm_calledoff'); for (const k of who) told.set(k, due); }
   }
+  // 160s the same way: off before their warning if the buyer or seller didn't confirm.
+  try { await matchCols(db);
+    for (const r of (((await db.prepare(`SELECT * FROM swap_160 WHERE status='pending' AND warnS IS NULL AND warnB IS NULL AND dueAt > ? AND dueAt <= ?`).bind(now, now + 31 * 60000).all()).results) || [])) {
+      const day = swapDay(Number(r.dueAt)); if (!confirmOn(day)) continue;
+      if (!asked.has(day)) { const rs = ((await db.prepare('SELECT key FROM bot_once WHERE campaign=? AND ok = 2').bind('cprompt_' + day).all()).results) || []; asked.set(day, new Set(rs.map(x => x.key))); }
+      const was = k => asked.get(day).has(String(k).toLowerCase());
+      const no = [r.buyer, r.seller].filter(k => was(k));
+      const off = []; for (const k of no) if (!isConfirmed(await get(k), day)) off.push(k);
+      if (off.length) { await db.prepare(`UPDATE swap_160 SET status='cancelled', note=? WHERE id=? AND status='pending'`).bind(`called off: ${off.map(k => '@' + k).join(', ')} didn't confirm today`, r.id).run(); await stat(db, 'confirm_calledoff_160'); }
+    } } catch (e) {}
   /* Everyone whose swaps were called off for this (2026-11-07: 36 swaps came
      off at 4am Alaska but only 2 people were told - a tick that ran out of
      time lost the rest). Rebuilt from the called-off swaps each minute, so a
@@ -2269,6 +2372,7 @@ async function dmTick(env) {
       .bind(Date.now() - 2 * 86400000, Date.now() + 45 * 60000, Date.now() - 3 * 3600000).all()).results) || [];
     if (rows.length) out = await runDms(env, db, auth, rows, DM_PER_TICK, false);
   } catch (e) { await botFail(db, 'dm_run', e.message); }
+  try { await dm160(env, db, auth); } catch (e) { await botFail(db, 'dm_160', e.message); }
   try { await confirmPrompts(env, db, auth); } catch (e) { await botFail(db, 'dm_confirm_prompt', e.message); }
   try { await auditHour(env, db, auth); } catch (e) { await botFail(db, 'dm_audit', e.message); }
   return out;
@@ -3858,9 +3962,12 @@ async function handle({ request, env, waitUntil }) {
     await matchCols(db);
     const rows = ((await db.prepare(`SELECT dueAt AS d, COUNT(*) AS n, SUM(CASE WHEN status IN ('cancelled','cancelling') THEN 1 ELSE 0 END) AS off FROM swap_matches
       WHERE (a=? OR b=?) AND dueAt > ? AND status <> 'cleared' GROUP BY dueAt ORDER BY dueAt DESC LIMIT 200`).bind(u.key, u.key, Date.now() - 14 * 86400000).all()).results) || [];
-    const hours = [];
-    for (const r of rows) { const d = Number(r.d), live = Number(r.n) - Number(r.off || 0); if (live <= 0) continue;
-      hours.push({ due: d, swaps: live, url: `/hour?u=${encodeURIComponent(u.key)}&d=${d}&t=${await hourSig(env, u.key, d)}` }); }
+    const hours = [], n160 = new Map();
+    try { for (const r of (((await db.prepare("SELECT dueAt AS d, COUNT(*) AS n FROM swap_160 WHERE (buyer=? OR seller=?) AND dueAt > ? AND status <> 'cancelled' GROUP BY dueAt").bind(u.key, u.key, Date.now() - 14 * 86400000).all()).results) || [])) n160.set(Number(r.d), Number(r.n)); } catch (e) {}
+    for (const r of rows) { const d = Number(r.d), live = Number(r.n) - Number(r.off || 0); if (live <= 0 && !n160.has(d)) continue;
+      hours.push({ due: d, swaps: live, s160: n160.get(d) || 0, url: `/hour?u=${encodeURIComponent(u.key)}&d=${d}&t=${await hourSig(env, u.key, d)}` }); n160.delete(d); }
+    for (const [d, n] of n160) hours.push({ due: d, swaps: 0, s160: n, url: `/hour?u=${encodeURIComponent(u.key)}&d=${d}&t=${await hourSig(env, u.key, d)}` });
+    hours.sort((a, b) => b.due - a.due);
     return json({ hours, now: Date.now() });
   }
   if (op === 'hourview') {
@@ -3886,7 +3993,14 @@ async function handle({ request, env, waitUntil }) {
       for (const r of ((await db.prepare('SELECT ratee, stars FROM swap_ratings WHERE rater=?').bind(u.key).all()).results || [])) rated[r.ratee] = Number(r.stars);
       canRate = !(await db.prepare('SELECT 1 AS x FROM swap_rate_block WHERE key=?').bind(u.key).first()); } catch (e) {}
     for (const x of out) if (x.partnerKey) { x.myStars = rated[x.partnerKey] || null; delete x.partnerKey; }
-    return json({ user: (me && me.rsUser) || u.key, due, swaps: out, canRate, ratingsOff: ratingsOff() || undefined, admin: ADMINS.includes(u.key.toLowerCase()) || undefined });
+    // 160s this hour: packs they open for buyers (sell), and 160s they offer on (buy).
+    const sell160 = [], buy160 = [];
+    try { for (const r of (((await db.prepare("SELECT * FROM swap_160 WHERE (buyer=? OR seller=?) AND dueAt=? AND status <> 'cancelled' ORDER BY id").bind(u.key, u.key, due).all()).results) || [])) {
+        const o = await mem(r.seller === u.key ? r.buyer : r.seller), x = { id: r.id, user: o && o.rsUser, url: o ? profileUrl(o.rsUser, o.hashId) : null, player: playerName(me, r.pass), playerUrl: playerUrl(r.pass) };
+        if (r.seller === u.key) sell160.push({ ...x, yourCard: me ? passUrl(me, r.pass) : null });
+        else buy160.push({ ...x, comment: (o && o.comment) || null });
+      } } catch (e) {}
+    return json({ user: (me && me.rsUser) || u.key, due, swaps: out, sell160, buy160, canRate, ratingsOff: ratingsOff() || undefined, admin: ADMINS.includes(u.key.toLowerCase()) || undefined });
   }
   /* Most picked players, for everyone on the hour page (Dennis, 2026-11-05):
      how many active members are swapping for each player, most first. */
@@ -4163,6 +4277,7 @@ async function handle({ request, env, waitUntil }) {
     if (op === 'endall') {
       const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned') AND (a=? OR b=?)`).bind(me, me).all()).results) || [];
       for (const m of rows) await callOff(db, m, `called off: @${me} ended their swaps`, res);
+      try { await db.prepare(`UPDATE swap_160 SET status='cancelled', note=? WHERE status='pending' AND warnS IS NULL AND warnB IS NULL AND (buyer=? OR seller=?)`).bind(`called off: @${me} ended their swaps`, me, me).run(); } catch (e) {}
       try { await afterCallOff(env, db, auth, me, res); } catch (e) {}
     }
     return json({ ok: true, paused: true, calledOff: res.n, late: res.late });
@@ -4706,7 +4821,7 @@ async function handle({ request, env, waitUntil }) {
     mark(request, 'plays');
     const cDay = confirmDayNow();
     return json({ confirmShow: Date.now() >= CONFIRM_SHOW_AT, confirmedToday: !!(u && u.confirmDay === cDay), confirmStarts: CONFIRM_FROM_DAY, swapToday: cDay, key: me, admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
-      keep: parse(u.keep, []), touch: parse(u.touch, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: lite ? [] : parse(u.passes, []), passCount: (() => { try { return parse(u.passes, []).length; } catch (e) { return 0; } })(), lowPlays: lowP, scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {} } : null, real: realN });
+      keep: parse(u.keep, []), touch: parse(u.touch, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: lite ? [] : parse(u.passes, []), passCount: (() => { try { return parse(u.passes, []).length; } catch (e) { return 0; } })(), lowPlays: lowP, scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {}, b160: !!u.b160, s160: !!u.s160, only160: !!u.only160 } : null, real: realN });
   }
 
   // A tick in the passes list saves at once: the passes they won't give.
@@ -4777,6 +4892,12 @@ async function handle({ request, env, waitUntil }) {
         slots=excluded.slots, updatedAt=excluded.updatedAt, active=1, comment=excluded.comment, goal=excluded.goal`)
       .bind(me, rsUser, JSON.stringify(wants), JSON.stringify(keep), JSON.stringify(slots), Date.now(), comment.slice(0, 300), goal).run();
     await db.prepare('UPDATE swap_users SET dayCap=?, caps=?, sched=? WHERE key=?').bind(dayCap, JSON.stringify(caps), JSON.stringify(sched), me).run();
+    // 160s: buy / sell / only here to sell 160s (then no swaps, so no picks needed).
+    { const only = b.only160 ? 1 : 0, sell = only || b.s160 ? 1 : 0, buy = !only && b.b160 ? 1 : 0;
+      await db.prepare('UPDATE swap_users SET b160=?, s160=?, only160=? WHERE key=?').bind(buy, sell, only, me).run();
+      // Stopped buying or selling: their 160s not yet warned come off.
+      if (!sell) await db.prepare(`UPDATE swap_160 SET status='cancelled', note='called off: seller stopped selling 160s' WHERE seller=? AND status='pending' AND warnS IS NULL AND warnB IS NULL`).bind(me).run().catch(() => {});
+      if (!buy) await db.prepare(`UPDATE swap_160 SET status='cancelled', note='called off: buyer stopped buying 160s' WHERE buyer=? AND status='pending' AND warnS IS NULL AND warnB IS NULL`).bind(me).run().catch(() => {}); }
     try { await autoConfirm(db, me, mine, { slots, sched }); } catch (e) {}
     try { await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); await env.RATEBOARD_KV.delete('swap_wantcounts_v1'); } catch (e) {}
     let calledOff = 0, late = 0;

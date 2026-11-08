@@ -135,6 +135,10 @@
   section.ok h2 .n{background:var(--ok)}
   section > .note:first-of-type{margin:0 0 4px}
   .note.sub{margin:10px 0 0;font-size:12.5px;line-height:1.45}
+  .o160{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;margin:8px 0 0;border:1px solid var(--line);border-radius:10px;background:var(--panel2);cursor:pointer}
+  .o160 input{margin-top:3px;width:20px;height:20px;flex:none}
+  .o160 .sub{display:block;font-size:13px;color:var(--mute);margin-top:2px;line-height:1.4}
+  .o160.dis{opacity:.5;cursor:default}
   .opt{font-size:11px;font-weight:600;color:var(--mute);text-transform:uppercase;letter-spacing:.05em;margin-left:4px}
   .field{margin-top:12px} .field label{display:block;font-size:13.5px;font-weight:700;margin-bottom:4px}
   .field > input{width:100%;max-width:220px}
@@ -233,12 +237,19 @@
 
   <section>
     <h2><span class="n">4</span>Who you want</h2>
+    <div id="wbody">
     <p class="note">Up to <b>10</b> of your passes. Top pick goes first.</p>
     <div class="bar"><input id="wq" placeholder="Search your passes" autocomplete="off"></div>
     <div class="res" id="wres"></div>
     <div id="wants"></div>
     <input id="goal" type="hidden"><span id="goalmsg" hidden></span>
     <p class="note sub">Goal rating (optional, per player): near it, that player's swaps are limited to what it takes to get there. Tap Save to keep changes.</p>
+    <div class="bar"><button type="button" class="ghost wide" id="only160on">Only here to do 160s</button></div>
+    </div>
+    <div id="w160" hidden>
+      <p class="note">You're only here to sell 160s - no swaps, so no players to pick. Tap Save to keep it.</p>
+      <div class="bar"><button type="button" class="primary wide" id="only160off">Click to select players for swaps</button></div>
+    </div>
   </section>
 
   <section>
@@ -253,7 +264,15 @@
   </section>
 
   <section>
-    <h2><span class="n">6</span>Limits <span class="opt">optional</span></h2>
+    <h2><span class="n">6</span>160s <span class="opt">optional</span></h2>
+    <p class="note">For packs that couldn't be matched in a swap. Both sides opt in.</p>
+    <label class="o160"><input type="checkbox" id="s160"><span><b>Sell 160s</b><span class="sub">At your hours, passes of yours that weren't used in a swap go to buyers. 30 min before, you get the packs to open. Each buyer offers 160 on a card from your pack - send them the 160 back.</span></span></label>
+    <label class="o160"><input type="checkbox" id="b160"><span><b>Buy 160s</b><span class="sub">Extra packs of the players you picked in step 4, from sellers' leftover packs at your hours. Offer 160 on a card from their pack - they send the 160 back.</span></span></label>
+    <p class="note sub" id="n160">Tap Save to keep changes. 160s use the same hours and limits as your swaps.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">7</span>Limits <span class="opt">optional</span></h2>
     <div class="field"><label for="daycap">Swaps per day <span class="opt">all players</span></label>
       <input id="daycap" type="number" inputmode="numeric" min="1" step="1" placeholder="No limit"></div>
     <div id="capbar">
@@ -844,6 +863,20 @@ function showSaved(extra){
   $('#savedx').textContent = extra || ''; $('#savedx').hidden = !extra;
   $('#saved').hidden = false; $('#savedok').focus();
 }
+/* 160s (2026-11-08): sell / buy opt-ins, and step 4's "only here to do 160s"
+   (no swaps, no picks - step 4 folds to one button to go back to swaps). */
+function draw160(){
+  const only = !!prof.only160;
+  $('#wbody').hidden = only; $('#w160').hidden = !only;
+  $('#s160').checked = only || !!prof.s160; $('#s160').disabled = only;
+  $('#b160').checked = !only && !!prof.b160; $('#b160').disabled = only;
+  $('#s160').closest('.o160').classList.toggle('dis', only); $('#b160').closest('.o160').classList.toggle('dis', only);
+  $('#n160').textContent = only ? 'Only here for 160s: you sell 160s at your hours. Buying needs players picked, so it\'s off.' : 'Tap Save to keep changes. 160s use the same hours and limits as your swaps.';
+}
+$('#only160on').addEventListener('click', () => { prof.only160 = true; prof.s160 = true; draw160(); $('#savemsg').textContent = 'Tap Save to keep it.'; });
+$('#only160off').addEventListener('click', () => { prof.only160 = false; draw160(); $('#wq').focus(); });
+$('#s160').addEventListener('change', e => { prof.s160 = e.target.checked; });
+$('#b160').addEventListener('change', e => { prof.b160 = e.target.checked; });
 const hideSaved = () => { $('#saved').hidden = true; };
 $('#savedok').addEventListener('click', hideSaved);
 $('#saved').addEventListener('click', e => { if(e.target.id === 'saved') hideSaved(); });
@@ -854,7 +887,8 @@ $('#save').addEventListener('click', async () => {
     if(!any){ $('#savemsg').textContent = 'Pick at least one hour.'; return; } }
   if(!SWAP_COMMENT_RE.test($('#clink').value.trim())){ $('#savemsg').textContent = 'That link is not a comment under the swap post. Open the swap post, copy the link to your comment, and paste it in step 2.'; return; }
   const j = await api('/api/swaps?op=save', { method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 10), sched: schedOf().mode === 'daily' ? { mode: 'daily', tz: TZ } : { ...schedOf(), tz: TZ }, comment: $('#clink').value.trim(), goal: '', dayCap: $('#daycap').value.trim(), caps, keep: prof.keep, slots: prof.slots, names: wantNames }) });
+    body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 10), sched: schedOf().mode === 'daily' ? { mode: 'daily', tz: TZ } : { ...schedOf(), tz: TZ }, comment: $('#clink').value.trim(), goal: '', dayCap: $('#daycap').value.trim(), caps, keep: prof.keep, slots: prof.slots, names: wantNames,
+      only160: !!prof.only160, s160: !!prof.only160 || $('#s160').checked, b160: !prof.only160 && $('#b160').checked }) });
   const extra = (j.late ? ' Too late to change swaps already warned - please do them at :00.' : '') + (j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} for a player or hour you removed ${j.calledOff === 1 ? 'is' : 'are'} called off - you'll both get a message.` : '');
   $('#savemsg').textContent = j.error ? j.error : '';
   if(!j.error) showSaved(extra.trim());
@@ -1105,6 +1139,7 @@ async function proGate(){
   // The old single goal fills in each player that has none of its own.
   if(j.profile && j.profile.goal != null) for(const k of (j.profile.wants || [])) if(!(caps[k] && caps[k].g)) caps[k] = { ...(caps[k] || {}), g: String(j.profile.goal) };
   drawCaps();
+  draw160();
   $('#clink').value = (j.profile && j.profile.comment) || '';
   if(prof.passes.length && prof.keep.length) collapsed = true;   // back again with picks made: start folded
   paintConn(!!j.connected);
