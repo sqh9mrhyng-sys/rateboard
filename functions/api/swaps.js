@@ -391,6 +391,11 @@ async function usedSince(db, u, want) {
 }
 
 const MAX_WANTS = 10;    // players a member can swap for at once (was 5)
+/* Real lets a member open 30 packs a day per sport + season, so a member
+   GIVES in at most 25 swaps a swap day per sport + season (5 spare as a
+   safety net). Receiving isn't limited (Dennis, 2026-11-08). */
+const SEASON_GIVE_MAX = 25;
+const seasonOf = k => String(k || '').split(':').slice(0, 2).join(':');
 /* When a member can swap (Dennis, 2026-11-04). Three ways:
      daily   - the same hours every day (slots, UTC hours, as before)
      weekly  - different hours for each day of the week, in their own time
@@ -727,9 +732,13 @@ async function runMatchingInner(db, env) {
   const offTold = recent2d.filter(m => !LIVE_ST.has(m.status));
   const paired = new Set(), given = new Set(), count = new Map(), recv = new Map(), closed = new Set(), goalUsed = new Map();
   const bump = (m, k) => m.set(k, (m.get(k) || 0) + 1);
+  // Swaps each member gives in, per sport + season and swap day (the 25-a-day limit).
+  const gaveSeason = new Map(), giveSeason = (k, w, d) => bump(gaveSeason, `${k}|${seasonOf(w)}|${d}`);
+  const seasonRoom = (k, w, d) => (gaveSeason.get(`${k}|${seasonOf(w)}|${d}`) || 0) < SEASON_GIVE_MAX;
   for (const m of open) {
     const d = swapDay(sideDue(m));
     given.add(`${m.b}|${m.aGets}|${d}`); given.add(`${m.a}|${m.bGets}|${d}`);     // B gave aGets, A gave bGets: each pass goes out once a swap day
+    giveSeason(m.b, m.aGets, d); giveSeason(m.a, m.bGets, d);
     bump(count, `${m.a}|${d}`); bump(count, `${m.b}|${d}`);
     bump(recv, `${m.a}|${m.aGets}|${d}`); bump(recv, `${m.b}|${m.bGets}|${d}`);
     // Finished swaps are marked (followA/followB) but no longer close the swap day.
@@ -738,10 +747,11 @@ async function runMatchingInner(db, env) {
      warned (told to buy - they may have bought it). Called off before any
      warning, both passes are free again the same swap day (Dennis, 2026-11-05). */
   for (const m of offTold) { const d = swapDay(sideDue(m));
-    if (m.warnB || m.doneB) given.add(`${m.b}|${m.aGets}|${d}`);
-    if (m.warnA || m.doneA) given.add(`${m.a}|${m.bGets}|${d}`); }
+    if (m.warnB || m.doneB) { given.add(`${m.b}|${m.aGets}|${d}`); giveSeason(m.b, m.aGets, d); }
+    if (m.warnA || m.doneA) { given.add(`${m.a}|${m.bGets}|${d}`); giveSeason(m.a, m.bGets, d); } }
   // Packs a member marked as used today themselves (Packs today tab): not given again this swap day.
-  for (const u of users) { const pu = parse(u.packsUsed, null); if (pu && pu.day && Array.isArray(pu.keys)) for (const k of pu.keys) given.add(`${u.key}|${k}|${pu.day}`); }
+  // Those packs were opened too, so they count toward the day's 25 for that sport + season.
+  for (const u of users) { const pu = parse(u.packsUsed, null); if (pu && pu.day && Array.isArray(pu.keys)) for (const k of pu.keys) { if (!given.has(`${u.key}|${k}|${pu.day}`)) giveSeason(u.key, k, pu.day); given.add(`${u.key}|${k}|${pu.day}`); } }
   await lap();   // 1: members + swaps read
   // FC and UFC have no packs to swap, so neither is ever offered or matched.
   const swappable = k => !/^(soccer|ufc):/.test(k) && !seasonOff(k);
@@ -780,7 +790,7 @@ async function runMatchingInner(db, env) {
   // Receiving the same pass more than once a day is fine (Dennis, 2026-11-04); only their own Scale per-day limit applies.
   const perDayOk = (k, w, d) => { const c = (capsOf.get(k) || {})[w]; return !(c && Number(c.d) > 0) || (recv.get(`${k}|${w}|${d}`) || 0) < Number(c.d); };
   // Never a pass they're swapping for themselves (2026-11-05: a member was receiving Caufield and giving Caufield in the same hour).
-  const gives = (u, d) => new Set(u.passes.filter(p => p.kind !== 'team' && !(p.untouchable && !u.touch.has(p.key))).map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !u.wants.includes(k) && !given.has(`${u.key}|${k}|${d}`)));
+  const gives = (u, d) => new Set(u.passes.filter(p => p.kind !== 'team' && !(p.untouchable && !u.touch.has(p.key))).map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !u.wants.includes(k) && !given.has(`${u.key}|${k}|${d}`) && seasonRoom(u.key, k, d)));
   /* Every possible pair and shared hour, best first: an hour someone picked
      first is their primary, so pairs on both members' earliest picks go
      ahead - when two people want the same player, the one whose primary
@@ -836,6 +846,7 @@ async function runMatchingInner(db, env) {
     const [aGets, bGets] = pick;
     made.push({ a: A.key, b: B.key, aGets, bGets, slot, due });
     given.add(`${B.key}|${aGets}|${d}`); given.add(`${A.key}|${bGets}|${d}`);
+    giveSeason(B.key, aGets, d); giveSeason(A.key, bGets, d);
     bump(count, `${A.key}|${d}`); bump(count, `${B.key}|${d}`);
     bump(recv, `${A.key}|${aGets}|${d}`); bump(recv, `${B.key}|${bGets}|${d}`);
     goalLeft.set(`${A.key}|${aGets}`, (goalLeft.get(`${A.key}|${aGets}`) ?? Infinity) - 1);
