@@ -2063,8 +2063,11 @@ async function confirmPrompts(env, db, auth) {
     return { u, hrs };
   }).filter(x => x.hrs.length).sort((a, b) => a.hrs[0] - b.hrs[0]);
   let sent = 0, failed = 0, waiting = 0;
+  // Who already has it - one read, not a write per member every minute.
+  let had = new Set(); try { had = new Set((((await db.prepare('SELECT key FROM bot_once WHERE campaign=?').bind('cprompt_' + day).all()).results) || []).map(r => String(r.key))); } catch (e) {}
   for (const { u, hrs } of todo) {
-    if (TICK_T0 && tickLeft() - dmWaitAhead() < 6000) { waiting++; continue; }
+    if (had.has(String(u.key).toLowerCase())) continue;
+    if (TICK_T0 && tickLeft() - dmWaitAhead() < 6000) { waiting = todo.length; break; }
     if (!(await onceFor(db, 'cprompt_' + day, u.key))) continue;
     const tz = tzOf(u), z = tz ? '' : ' ET';
     const times = hrs.map(t => hLabel(t, tz)).join(', ') + z, by = hLabel(hrs[0] - 30 * 60000, tz) + z;
@@ -2149,17 +2152,19 @@ async function dmTick(env) {
   try { await dedupeSweep(db); } catch (e) { await botFail(db, 'dedupe', e.message); }
   try { await confirmGate(env, db, auth); } catch (e) { await botFail(db, 'confirm_gate', e.message); }
   try { await retryDms(db, auth); } catch (e) { await botFail(db, 'dm_retry', e.message); }   // unsent parts first
-  try { await confirmPrompts(env, db, auth); } catch (e) { await botFail(db, 'dm_confirm_prompt', e.message); }
+  /* Swap warnings and swap DMs first, the day's confirm DMs after (2026-11-08:
+     the confirm run ate the whole minute from 3:30 to 3:45am Alaska and no
+     4am warning went out). */
+  let out = [];
   try {
     // Only what's due soon (warnings from 30 minutes out, swap DMs at the hour) plus call-offs.
     const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned','cancelling') AND createdAt > ? AND (status='cancelling' OR (dueAt <= ? AND dueAt > ?)) ORDER BY COALESCE(dueAt, createdAt), id LIMIT 800`)
       .bind(Date.now() - 2 * 86400000, Date.now() + 45 * 60000, Date.now() - 3 * 3600000).all()).results) || [];
-    if (rows.length) { const out = await runDms(env, db, auth, rows, DM_PER_TICK, false);
-      try { await auditHour(env, db, auth); } catch (e) { await botFail(db, 'dm_audit', e.message); }
-      return out; }
+    if (rows.length) out = await runDms(env, db, auth, rows, DM_PER_TICK, false);
   } catch (e) { await botFail(db, 'dm_run', e.message); }
+  try { await confirmPrompts(env, db, auth); } catch (e) { await botFail(db, 'dm_confirm_prompt', e.message); }
   try { await auditHour(env, db, auth); } catch (e) { await botFail(db, 'dm_audit', e.message); }
-  return [];
+  return out;
 }
 export async function swapTick(env) {
   TICK_T0 = Date.now();
