@@ -498,8 +498,56 @@ async function indexName(db, k, cache) {
   const v = `${n || 'Player ' + id} ${({ nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf' })[sp] || sp} ${se}`;
   if (cache) cache.set(k, v); return v;
 }
-async function inboxItems(env, db) {
-  const out = [];
+/* Everyone named in the inbox, looked up together (2026-11-08: the inbox
+   stopped loading - it looked each person up one at a time, ~6 queries a
+   name plus ~40 per Swaps report, thousands in all once the reports piled
+   up). Same answer as whoIs, a handful of queries for the lot. */
+async function whoMany(db, names) {
+  const ns = [...new Set(names.map(n => String(n || '').trim().replace(/^@/, '').toLowerCase()).filter(Boolean))];
+  const out = new Map(); if (!ns.length) return out;
+  await db.prepare(DM_DDL).run(); await db.prepare(RESTRICT_DDL).run();
+  const chunks = (a, n) => { const r = []; for (let i = 0; i < a.length; i += n) r.push(a.slice(i, i + n)); return r; };
+  const qs = a => a.map(() => '?').join(',');
+  const all = async (sql, b) => ((await db.prepare(sql).bind(...b).all()).results) || [];
+  const su = [];
+  for (const c of chunks(ns, 45)) su.push(...await all(`SELECT key, rsUser, hashId, comment, active FROM swap_users WHERE LOWER(key) IN (${qs(c)}) OR LOWER(rsUser) IN (${qs(c)})`, [...c, ...c]));
+  const uOf = new Map();
+  for (const r of su) { const k = String(r.key || '').toLowerCase(), n = String(r.rsUser || '').toLowerCase(); if (k && !uOf.has(k)) uOf.set(k, r); }
+  for (const r of su) { const n = String(r.rsUser || '').toLowerCase(); if (n && !uOf.has(n)) uOf.set(n, r); }
+  const bKeys = [...new Set(ns.map(n => { const u = uOf.get(n); return u ? String(u.key).toLowerCase() : n; }))];
+  const bOf = new Map();
+  for (const c of chunks(bKeys, 90)) { try { for (const r of await all(`SELECT key, banned FROM users WHERE LOWER(key) IN (${qs(c)})`, c)) bOf.set(String(r.key).toLowerCase(), r); } catch (e) {} }
+  const hashes = [...new Set(su.map(r => r.hashId).filter(Boolean))], chByHash = new Map(), chByName = new Map();
+  for (const c of chunks(hashes, 90)) for (const r of await all(`SELECT hashId, channelId FROM swap_dm WHERE channelId IS NOT NULL AND hashId IN (${qs(c)})`, c)) chByHash.set(r.hashId, r);
+  const dmNames = [...new Set(ns.map(n => { const u = uOf.get(n); return u && u.rsUser ? String(u.rsUser).toLowerCase() : n; }))];
+  for (const c of chunks(dmNames, 90)) for (const r of await all(`SELECT LOWER(userName) AS nm, hashId, channelId FROM swap_dm WHERE channelId IS NOT NULL AND LOWER(userName) IN (${qs(c)})`, c)) if (!chByName.has(r.nm)) chByName.set(r.nm, r);
+  const rKeys = ns.map(n => { const u = uOf.get(n), b = bOf.get(u ? String(u.key).toLowerCase() : n); return b ? b.key : (u ? u.key : n); });
+  const restr = new Set();
+  for (const c of chunks([...new Set(rKeys)], 90)) for (const r of await all(`SELECT key FROM restricted WHERE key IN (${qs(c)})`, c)) restr.add(r.key);
+  ns.forEach((n, i) => {
+    const u = uOf.get(n) || null, b = bOf.get(u ? String(u.key).toLowerCase() : n) || null;
+    const ch = (u && u.hashId && chByHash.get(u.hashId)) || chByName.get(u && u.rsUser ? String(u.rsUser).toLowerCase() : n) || null;
+    out.set(n, { name: n, key: b ? b.key : (u ? u.key : null), rsUser: (u && u.rsUser) || null, hashId: (u && u.hashId) || (ch && ch.hashId) || null,
+      comment: (u && u.comment) || null, channelId: ch ? Number(ch.channelId) : null, banned: !!(b && b.banned), restricted: restr.has(rKeys[i]), swapper: !!(u && u.active) });
+  });
+  return out;
+}
+// Player names for pass keys ("sport:season:id"), in batches.
+async function indexNames(db, keys) {
+  const ks = [...new Set(keys.filter(Boolean).map(String))], out = new Map(), raw = new Map();
+  const parts = ks.map(k => { const [sp, se, id] = k.split(':'); return [k, sp, Number(se), Number(String(id).replace(/^t/, ''))]; }).filter(x => x[1] && x[2] && x[3]);
+  for (let i = 0; i < parts.length; i += 30) {
+    const c = parts.slice(i, i + 30);
+    try { for (const r of (((await db.prepare(`SELECT sport, season, playerId, player FROM swap_index WHERE ${c.map(() => '(sport=? AND season=? AND playerId=?)').join(' OR ')}`)
+        .bind(...c.flatMap(x => [x[1], x[2], x[3]])).all()).results) || [])) { const k = `${r.sport}:${r.season}:${r.playerId}`; if (!raw.has(k)) raw.set(k, r.player); } } catch (e) {}
+  }
+  const LG = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf' };
+  for (const k of ks) { const [sp, se, id] = k.split(':'); const n = raw.get(`${sp}:${se}:${Number(String(id).replace(/^t/, ''))}`);
+    out.set(k, `${n || 'Player ' + id} ${LG[sp] || sp} ${se}`); }
+  return out;
+}
+async function inboxItems(env, db, only) {
+  let out = [];
   await db.prepare(SREPORT_DDL).run();
   try { await alterOnce(db, 'ALTER TABLE swap_reports ADD COLUMN matchId INTEGER'); } catch (e) {}
   for (const r of ((await db.prepare("SELECT rowid AS id, ts, by_user, kind, target, detail, matchId FROM swap_reports WHERE status='open' ORDER BY ts DESC LIMIT 200").all()).results || []))
@@ -511,25 +559,34 @@ async function inboxItems(env, db) {
     for (const r of ((await db.prepare("SELECT id, ts, by_user, kind, title, detail FROM features WHERE status='open' ORDER BY ts DESC LIMIT 300").all()).results || []))
       out.push({ src: 'feature', id: String(r.id), ts: r.ts, by: r.by_user, target: null, kind: 'Feature request' + (r.kind ? ' · ' + r.kind : ''), title: r.title, detail: r.detail || '' }); } catch (e) {}
   out.sort((a, b) => b.ts - a.ts);
-  const cache = new Map(), look = async n => { const k = String(n || '').toLowerCase(); if (!k) return null; if (!cache.has(k)) cache.set(k, await whoIs(db, k)); return cache.get(k); };
-  for (const x of out) { x.from = await look(x.by); x.about = x.target ? await look(x.target) : null; }
+  if (only) out = out.filter(x => x.src === only.src && x.id === String(only.id));
+  const who = await whoMany(db, out.flatMap(x => [x.by, x.target]));
+  const look = n => who.get(String(n || '').trim().replace(/^@/, '').toLowerCase()) || null;
+  for (const x of out) { x.from = x.by ? look(x.by) : null; x.about = x.target ? look(x.target) : null; }
   // Swaps reports: the called-off swaps (last 30 days) the reporter was in, and whether they were refunded.
   try { await matchCols(db); } catch (e) {}
+  const repKeys = [...new Set(out.filter(x => x.src === 'swap' && x.from && x.from.key).map(x => x.from.key))];
+  const byKey = new Map(repKeys.map(k => [k, []]));
+  for (let i = 0; i < repKeys.length; i += 45) {
+    const c = repKeys.slice(i, i + 45), q = c.map(() => '?').join(',');
+    const ms = ((await db.prepare(`SELECT * FROM swap_matches WHERE status='cancelled' AND createdAt > ? AND (a IN (${q}) OR b IN (${q})) ORDER BY id DESC`).bind(Date.now() - 30 * 86400000, ...c, ...c).all()).results) || [];
+    for (const m of ms) for (const k of [m.a, m.b]) { const l = byKey.get(k); if (l && l.length < 20 && !l.includes(m)) l.push(m); }
+  }
+  const names = await indexNames(db, [...byKey.values()].flat().flatMap(m => [m.aGets, m.bGets]));
   for (const x of out) if (x.src === 'swap' && x.from && x.from.key) {
     const k = x.from.key;
-    const ms = ((await db.prepare(`SELECT * FROM swap_matches WHERE status='cancelled' AND (a=? OR b=?) AND createdAt > ? ORDER BY id DESC LIMIT 20`).bind(k, k, Date.now() - 30 * 86400000).all()).results) || [];
-    const nc = new Map();
-    x.offs = [];
-    for (const m of ms) { const side = m.a === k ? 'A' : 'B';
+    x.offs = (byKey.get(k) || []).map(m => { const side = m.a === k ? 'A' : 'B';
       // The players in it: what the reporter was to buy (give) and what they were to get.
       const gives = side === 'A' ? m.bGets : m.aGets, gets = side === 'A' ? m.aGets : m.bGets;
-      x.offs.push({ id: m.id, due: sideDue(m), partner: side === 'A' ? m.b : m.a, side, told: !!(m['warn' + side] || m['done' + side]), refunded: m['refund' + side] || null,
-        note: m.note || null, reported: x.matchId === m.id, buys: await indexName(db, gives, nc), gets: await indexName(db, gets, nc) }); }
+      return { id: m.id, due: sideDue(m), partner: side === 'A' ? m.b : m.a, side, told: !!(m['warn' + side] || m['done' + side]), refunded: m['refund' + side] || null,
+        note: m.note || null, reported: x.matchId === m.id, buys: names.get(String(gives)) || null, gets: names.get(String(gets)) || null }; });
   }
-  // Board reports: every board listing (with its comment link) of the person reported.
+  // Board reports: every board listing (with its comment link) of the person reported, once per person.
+  const offersOf = new Map();
   for (const x of out) if (x.src === 'board' && x.about) {
-    try { x.about = { ...x.about, offers: ((await db.prepare('SELECT id, sport, player, rate, link, ts FROM offers WHERE LOWER(user)=? ORDER BY ts DESC LIMIT 100')
-      .bind(String(x.about.key || x.target).toLowerCase()).all()).results) || [] }; } catch (e) {}
+    const t = String(x.about.key || x.target).toLowerCase();
+    if (!offersOf.has(t)) { let l = []; try { l = ((await db.prepare('SELECT id, sport, player, rate, link, ts FROM offers WHERE LOWER(user)=? ORDER BY ts DESC LIMIT 100').bind(t).all()).results) || []; } catch (e) {} offersOf.set(t, l); }
+    x.about = { ...x.about, offers: offersOf.get(t) };
   }
   return out;
 }
@@ -4380,7 +4437,7 @@ async function handle({ request, env, waitUntil }) {
     let b = {}; try { b = await request.json(); } catch (e) {}
     const action = ['done', 'declined', 'delete', 'reply', 'replyabout', 'restrict', 'ban', 'refunded'].includes(b.action) ? b.action : null;
     if (!action) return json({ error: 'bad action' }, 400);
-    const item = (await inboxItems(env, db)).find(x => x.src === b.src && x.id === String(b.id));
+    const item = (await inboxItems(env, db, { src: b.src, id: b.id })).find(x => x.src === b.src && x.id === String(b.id));
     if (!item) return json({ error: 'That one is already closed.' }, 404);
     const out = { ok: true };
     // A custom message to the person who was reported (outcome notes only ever go to whoever reported).
