@@ -3785,7 +3785,7 @@ async function projBuild(env, db, sp) {
     const gp = pg.length;
     rows.push({ i: id, n: last.player || ('Player ' + id), t: last.team || '', p: last.position || '', gp, r: Math.round(rax), a: r1(rax / gp),
       pg: r1(rate * avail), l: rest.length, tg: total, nx: rest[0] && rest[0][1] ? rest[0][1] : null,
-      pr: Math.round(rax + add), pc: total ? Math.round(rax / gp * total) : null, f: flags.length ? flags : undefined,
+      pr: Math.round(rax + add), pc: Math.round(rax + rax / gp * rest.length),   // on pace: his rate a game played over the games left (2026-11-08: was rate x all the team's games, so one 54-rax game showed 648) f: flags.length ? flags : undefined,
       x: { rate: r2(rate), prior: r2(prior), ph: priorHow, av: r2(avail), since, ab, sk: skipNext ? 1 : 0, w: r1(wsum), fc: fcx || undefined } });
   }
   rows.sort((x, y) => y.pr - x.pr);

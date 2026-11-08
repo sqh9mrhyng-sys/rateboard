@@ -44,6 +44,7 @@
   .sub{display:block;color:var(--mute);font-size:11.5px;font-weight:400}
   .pr{font-weight:800;font-size:15px;color:var(--accent)}
   .pc{font-weight:700}
+  .rso{margin:8px 0 0;font-weight:800;font-size:15px;letter-spacing:.04em;color:var(--accent)}
   .flag{display:block;color:var(--bad);font-size:11.5px;white-space:normal}
   .mine td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
   .rk{color:var(--mute);font-size:12px;width:34px}
@@ -90,9 +91,10 @@
       <input id="q" placeholder="Find a player or team" autocomplete="off">
     </div>
     <p class="note" id="head" style="margin:10px 0 0">Loading…</p>
+    <p class="rso">PROJECTIONS REGULAR SEASON ONLY</p>
     <details class="how"><summary>Projected vs on pace</summary>
       <p class="note"><b>Projected</b> = rax so far + each regular-season game his team has left × his rate a game × the chance he plays it × the opponent × home or away. His rate starts from last season (or the league average for a newcomer) and moves toward what he's doing this season the more games he plays, recent games counting most. The chance he plays comes from how many of his team's games he's played, pulled toward a typical regular (rest days, rotation, cup games). Injured reserve: no more games; "Out": the next one skipped. Every setting was tuned by replaying last season and checking against what players actually made.</p>
-      <p class="note"><b>On pace</b> = rax so far ÷ games he played × his team's regular-season games. No schedule, no injuries - just his rate.</p>
+      <p class="note"><b>On pace</b> = rax so far + his rax a game played × his team's regular-season games left. No missed games, no opponents - just his rate.</p>
       <p class="note"><b>FC</b>: every game counts on Real (league, cups, Europe, internationals). Games left = how often his club has played so far × the days left to its league's last day (winter break taken out); no opponent adjustment, and future international games aren't counted.</p>
       <p class="note">Tap a player to see how his number was worked out. A name opens your own card when you hold his pass.</p>
       <p class="note">Rebuilt every 6 hours from the game log and ESPN's schedules.</p>
@@ -232,6 +234,8 @@ async function load(tries = 0){
   $('#main').hidden = false; $('#lock').hidden = true;
   if(j.building){ $('#head').textContent = 'Building the projections for the first time - this takes up to a minute…'; setTimeout(() => load(tries), 15000); return; }
   data = j; openId = null;
+  // On pace = so far + his rate a game played × games left (older saved copies used all the team's games).
+  for(const r of (data.rows || [])) if(r.gp > 0) r.pc = Math.round(r.r + r.r / r.gp * r.l);
   // Older answers sent bare ids; now [player id, card id].
   cardOf = new Map((j.mine || []).map(m => Array.isArray(m) ? m : [m, null])); mine = new Set(cardOf.keys());
   const pos = [...new Set((j.rows || []).map(r => r.p).filter(Boolean))].sort();
@@ -285,7 +289,7 @@ function bdHtml(sp, j){
        : `<div class="ln"><span>4. Games left <span class="note">each one: rate × chance he plays × how much that opponent gives up × home/away</span></span><b>${games.length || r.l}</b></div>`,
     `<div class="ln"><span>Projected from the games left <span class="note">about ${f1(r.pg)} a ${GW} game</span></span><b>+${add.toLocaleString()}</b></div>`,
     `<div class="ln tot"><span>Projected by the end of the regular season</span><b>${r.pr.toLocaleString()}</b></div>`,
-    r.pc != null ? `<div class="ln"><span>On pace <span class="note">${r.r} ÷ ${r.gp} games × ${r.tg} ${GW} games - no misses, no opponents</span></span><b>${r.pc.toLocaleString()}</b></div>` : '',
+    r.pc != null ? `<div class="ln"><span>On pace <span class="note">${r.r} so far + ${f1(r.a)} a game × ${r.l} ${GW} game${r.l === 1 ? '' : 's'} left - no misses, no opponents</span></span><b>${r.pc.toLocaleString()}</b></div>` : '',
     (r.f || []).map(f => `<span class="flag">⚠ ${esc(f)}</span>`).join('')
   ];
   const gl = games.length ? `<div class="gl">${games.map(g => `<span class="${g.counted ? '' : 'no'}">${new Date(g.at).toLocaleDateString([], { month: 'short', day: 'numeric' })} ${g.h === 'away' ? '@' : 'vs'} ${esc(g.opp)}${g.f !== 1 ? ` <span title="opponent and home/away">×${g.f}</span>` : ''} <b>${g.v}</b></span>`).join('')}</div>` : '';
