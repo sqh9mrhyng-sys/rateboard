@@ -45,8 +45,27 @@ const MOVE_PAGE = `<!doctype html><meta charset="utf-8">
 })();
 </script>`;
 
-export async function onRequest({ request, next }) {
+import { countPageView } from './api/sponsor.js';
+
+/* Page views (2026-11-08): every page a person opens, counted per page per
+   day - link previews, crawlers and prefetches left out. */
+const PV_PAGES = { '/': 'board', '/index.html': 'board', '/market': 'market', '/market.html': 'market', '/swaps': 'swaps', '/swaps.html': 'swaps',
+  '/hour': 'hour', '/hour.html': 'hour', '/otd': 'otd', '/otd.html': 'otd', '/boosts': 'boosts', '/boosts.html': 'boosts', '/projections': 'projections', '/projections.html': 'projections' };
+const BOT_UA = /bot|crawl|spider|slurp|preview|facebookexternalhit|embedly|quora|whatsapp|telegram|discord|slack|twitter|headless|lighthouse|curl|wget|python|node-fetch|go-http/i;
+function pageOf(request, url) {
+  if (request.method !== 'GET') return null;
+  const pg = PV_PAGES[url.pathname] || (url.pathname.startsWith('/h/') ? 'hour' : null);
+  if (!pg) return null;
+  const h = request.headers;
+  if (BOT_UA.test(h.get('user-agent') || '')) return null;
+  if (/prefetch|prerender/i.test((h.get('sec-purpose') || '') + (h.get('purpose') || ''))) return null;
+  if (!(h.get('accept') || '').includes('text/html')) return null;
+  return pg;
+}
+
+export async function onRequest({ request, next, env, waitUntil }) {
   const url = new URL(request.url);
+  if (url.hostname !== OLD_HOST) { const pg = pageOf(request, url); if (pg && waitUntil) waitUntil(countPageView(env, pg)); }
   if (url.hostname === OLD_HOST) {
     if (url.pathname === '/__move') {
       return new Response(MOVE_PAGE, {

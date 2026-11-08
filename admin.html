@@ -109,6 +109,27 @@
         <p class="note" id="us-note" style="margin-top:6px"></p>
       </section>
       <section style="margin-top:12px">
+        <h2>Traffic &amp; sponsor</h2>
+        <p class="note">Page views are every page opened (crawlers and link previews left out), counted from Nov 8. The sponsor banner shows at the top of the pages ticked below, marked "Sponsored"; views and clicks are counted so you can show a sponsor real numbers.</p>
+        <div class="grid" id="tr-grid" style="grid-template-columns:repeat(auto-fill,minmax(160px,1fr))"><span class="note">Loading…</span></div>
+        <div class="scroll" id="tr-days" style="margin-top:10px"></div>
+        <h3 style="margin-top:14px">Sponsor banner</h3>
+        <div class="bar" style="flex-wrap:wrap;gap:8px">
+          <label><input type="checkbox" id="sp-on"> Live</label>
+          <input id="sp-name" placeholder="Sponsor name" style="flex:1 1 160px">
+          <input id="sp-text" placeholder="One line (optional)" style="flex:2 1 220px">
+          <input id="sp-cta" placeholder="Button (Learn more)" style="flex:0 1 140px">
+        </div>
+        <div class="bar" style="flex-wrap:wrap;gap:8px;margin-top:6px">
+          <input id="sp-url" placeholder="Link (https://...)" style="flex:2 1 220px">
+          <input id="sp-img" placeholder="Logo image link (https://..., optional)" style="flex:2 1 220px">
+          <label class="note">From <input type="date" id="sp-from"></label><label class="note">Through <input type="date" id="sp-until"></label>
+        </div>
+        <div class="bar" id="sp-pages" style="flex-wrap:wrap;gap:10px;margin-top:6px"></div>
+        <div class="bar" style="margin-top:6px"><button id="sp-save">Save</button><span class="note" id="sp-msg"></span></div>
+        <div class="scroll" id="sp-stats" style="margin-top:10px"></div>
+      </section>
+      <section style="margin-top:12px">
         <h2>Backup</h2>
         <p class="note">Downloads everything that can't be pulled from Real again: accounts, offers, reports, feature requests, minimums and keep lists, and every access grant and Swaps record. It includes password fingerprints, so keep the file somewhere private.</p>
         <div class="bar"><button id="bk-go">Download backup</button><span class="note" id="bk-msg"></span></div>
@@ -338,6 +359,7 @@ function loadMembers(){
 function loadStatus(){
   $('#st-at').textContent = 'Checked ' + new Date().toLocaleTimeString();
   loadMembers();
+  loadTraffic();
   $('#st-grid').innerHTML = card('c-db', 'Database') + card('c-market', 'Market pull') + card('c-collect', 'Game data collector')
     + card('c-sweeps', 'Game data sweeps') + card('c-bot', 'Swap bot');
   // All at once; each card fills in as its own answer lands.
@@ -970,6 +992,40 @@ $('#bo-add').addEventListener('click', () => { const name = $('#bo-name').value.
   boostOut({ sport: $('#bo-sp').value, name, status: $('#bo-st').value, note: $('#bo-note').value.trim(), until: $('#bo-until').value }).then(() => { $('#bo-name').value = ''; $('#bo-note').value = ''; }); });
 $('#bo-list').addEventListener('click', e => { const b = e.target.closest('[data-borm]'); if(b) boostOut({ sport: $('#bo-sp').value, remove: b.dataset.borm }); });
 boostOut();
+
+// Traffic & sponsor (2026-11-08).
+const SP_LBL = { board: 'Board', market: 'Market', swaps: 'Swaps', hour: 'Swap pages', otd: 'OTD', boosts: 'Boosts', projections: 'Projections' };
+function loadTraffic(){
+  api('/api/sponsor?admin=1&t=' + Date.now()).then(j => {
+    if(j.error){ $('#tr-grid').innerHTML = `<span class="note">${esc(j.error)}</span>`; return; }
+    const n = v => v == null ? '–' : Number(v).toLocaleString();
+    const tile = (k, v, sub) => `<div class="card ok"><div class="note" style="text-transform:uppercase;letter-spacing:.04em;font-size:11.5px">${k}</div><div style="font-size:24px;font-weight:800">${v}</div>${sub ? `<div class="note">${sub}</div>` : ''}</div>`;
+    const byDay = {}, byPage = {};
+    for (const r of j.pageViews) { byDay[r.day] = (byDay[r.day] || 0) + r.n; if (r.day > new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10)) byPage[r.page] = (byPage[r.page] || 0) + r.n; }
+    const days = Object.keys(byDay).sort(), full = days.filter(d => d !== j.today);
+    const last7 = full.slice(-7), avg = last7.length ? last7.reduce((t, d) => t + byDay[d], 0) / last7.length : null;
+    const spv = j.sponsor.filter(x => x.kind === 'view').reduce((t, x) => t + x.n, 0), spc = j.sponsor.filter(x => x.kind === 'click').reduce((t, x) => t + x.n, 0);
+    $('#tr-grid').innerHTML = tile('Page views today', n(byDay[j.today] || 0), 'since midnight ET')
+      + tile('Page views a day', avg == null ? 'counting…' : n(Math.round(avg)), last7.length ? `average of ${last7.length} full day${last7.length === 1 ? '' : 's'} · about ${n(Math.round(avg * 30))} a month` : 'first full day tomorrow')
+      + tile('Top pages (7 days)', Object.entries(byPage).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([p, v]) => `${SP_LBL[p] || p} ${n(v)}`).join('<br>') || '–', '')
+      + tile('Sponsor', n(spv) + ' views', `${n(spc)} clicks${spv ? ' · ' + (Math.round(spc / spv * 1000) / 10) + '% click rate' : ''} (30 days)`);
+    $('#tr-days').innerHTML = days.length ? '<table><thead><tr><th>Day</th><th>Page views</th>' + j.pages.map(p => `<th>${SP_LBL[p]}</th>`).join('') + '</tr></thead><tbody>'
+      + days.slice().reverse().map(d => `<tr><td>${esc(d)}</td><td><b>${n(byDay[d])}</b></td>` + j.pages.map(p => `<td>${n((j.pageViews.find(r => r.day === d && r.page === p) || {}).n || 0)}</td>`).join('') + '</tr>').join('') + '</tbody></table>' : '';
+    const s = j.settings || {};
+    $('#sp-on').checked = !!s.on; $('#sp-name').value = s.name || ''; $('#sp-text').value = s.text || ''; $('#sp-cta').value = s.cta || ''; $('#sp-url').value = s.url || ''; $('#sp-img').value = s.img || '';
+    $('#sp-from').value = s.from || ''; $('#sp-until').value = s.until || '';
+    $('#sp-pages').innerHTML = '<span class="note">Pages:</span>' + j.pages.map(p => `<label><input type="checkbox" data-spp="${p}"${!(s.pages && s.pages.length) || s.pages.includes(p) ? ' checked' : ''}> ${SP_LBL[p]}</label>`).join('');
+    const sd = {}; for (const x of j.sponsor) { const k = x.day; sd[k] = sd[k] || { view: 0, click: 0 }; sd[k][x.kind] += x.n; }
+    const sdays = Object.keys(sd).sort().reverse();
+    $('#sp-stats').innerHTML = sdays.length ? '<table><thead><tr><th>Day</th><th>Banner views</th><th>Clicks</th><th>Click rate</th></tr></thead><tbody>' + sdays.map(d => `<tr><td>${esc(d)}</td><td>${n(sd[d].view)}</td><td>${n(sd[d].click)}</td><td>${sd[d].view ? (Math.round(sd[d].click / sd[d].view * 1000) / 10) + '%' : '–'}</td></tr>`).join('') + '</tbody></table>' : '<p class="note">No sponsor has run yet.</p>';
+  });
+}
+$('#sp-save').addEventListener('click', () => {
+  const body = { on: $('#sp-on').checked, name: $('#sp-name').value, text: $('#sp-text').value, cta: $('#sp-cta').value, url: $('#sp-url').value, img: $('#sp-img').value,
+    from: $('#sp-from').value, until: $('#sp-until').value, pages: [...document.querySelectorAll('[data-spp]')].filter(x => x.checked).map(x => x.dataset.spp) };
+  api('/api/sponsor', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(j => {
+    $('#sp-msg').textContent = j.error ? j.error : (j.settings.on ? 'Saved - the banner is live (pages pick it up within a minute).' : 'Saved - the banner is off.'); if(!j.error) loadTraffic(); });
+});
 </script>
 </body>
 </html>
