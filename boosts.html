@@ -57,6 +57,7 @@
   .lu-bad{background:color-mix(in srgb,var(--bad) 18%,transparent);border-color:var(--bad);color:#ff8a8d}
   .lu-mute{color:var(--mute)}
   .hidestart{margin:8px 0 2px}
+  .copybtn{margin:10px 0 4px;display:block;width:100%;padding:14px 16px!important;font-size:17px!important;font-weight:700;border-radius:12px;border-color:var(--accent)!important;color:var(--accent)}
   .simplebtn{margin:10px 0 4px;display:block;width:100%;padding:14px 16px!important;font-size:17px!important;font-weight:700;border-radius:12px}
   .simplebtn[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
   .simple-list{display:none}
@@ -186,6 +187,7 @@
     </section>
     <section id="out" hidden>
       <div class="note" id="outhead"></div>
+      <button class="sm copybtn" id="copybtn" type="button" hidden>Copy boosts</button>
       <button class="sm hidestart" id="hidestart" type="button" hidden aria-pressed="false">Hide games that already started</button>
       <button class="sm simplebtn" id="simplebtn" type="button" aria-pressed="false">View simple layout</button>
       <div id="simple" class="simple-list"></div>
@@ -419,6 +421,8 @@ const drawMode = () => { const m = $('#mode').value;
   $('#modenote').textContent = sp0 === 'ncaaf' ? (CFB_NOTE[m] || MODE_NOTE[m]) : sp0 === 'golf' ? (GOLF_NOTE[m] || GOLF_NOTE.balanced) : sp0 === 'soccer' ? (FC_NOTE[m] || FC_NOTE.balanced) : sp0 === 'nfl' ? (NFL_NOTE[m] || MODE_NOTE[m]) : MODE_NOTE[m]; };
 $('#sport').addEventListener('change', () => { cusLoad($('#sport').value); drawMode(); });
 $('#mode').addEventListener('change', () => { drawMode(); if(!$('#out').hidden) run(); });
+// A new day re-runs the plan, so what's shown (and copied) is always that day's.
+$('#day').addEventListener('change', () => { if(!$('#out').hidden) run(); });
 drawMode();
 try{ const s = JSON.parse(localStorage.getItem('boosts_pick_v1') || '{}'); if(s.sport) $('#sport').value = s.sport; if(s.mode){ $('#mode').value = s.mode; drawMode(); } }catch(e){}
 drawDays(); golfLook();
@@ -590,7 +594,7 @@ async function run(){
   const sp = $('#sport').value, day = $('#day').value, mode = $('#mode').value;
   if(!day){ $('#out').hidden = false; $('#outhead').textContent = 'No NFL games in the next 4 days - NFL plays Thursday, Sunday and Monday.'; return; }
   try{ localStorage.setItem('boosts_pick_v1', JSON.stringify({ sport: sp, mode })); }catch(e){}
-  $('#run').disabled = true; $('#out').hidden = false; $('#rows').innerHTML = ''; $('#simple').innerHTML = ''; $('#sum').innerHTML = ''; $('#foot').textContent = '';
+  $('#run').disabled = true; $('#out').hidden = false; $('#copybtn').hidden = true; copyText = ''; $('#rows').innerHTML = ''; $('#simple').innerHTML = ''; $('#sum').innerHTML = ''; $('#foot').textContent = '';
   $('#outhead').textContent = 'Working it out…';
   const j = await api(`/api/swaps?op=boostplan&page=boosts&sport=${sp}&date=${day}&mode=${mode}` + (mode === 'custom' ? cusQuery() : '') + (sp === 'soccer' && hideStarted() ? '&upcoming=1' : ''));
   $('#hidestart').hidden = sp !== 'soccer'; $('#hidestart').setAttribute('aria-pressed', String(hideStarted()));
@@ -632,6 +636,16 @@ async function run(){
       <td data-l="Proj w/ boost"><b>${r.boost && r.withBoost != null ? Math.round(r.withBoost).toLocaleString() : (r.proj ?? '–')}</b>${r.boost && r.withBoost != null ? `<span class="sub">${r.proj} × ${r.mult} + ${(r.best && r.best.gain) || 0}</span>` : ''}</td></tr>`;
   }).join('');
   const boosted = rows.filter(r => r.boost && r.best);
+  // Copy (Dennis, 2026-11-08): the recommended boosts for this sport and day as a
+  // post - "JOIN RAX ACADEMY..." then "1. card link 💜 attribute", one per paragraph.
+  const HEART = { legendary: '💜', epic: '❤️', rare: '🧡' }, RANK = { legendary: 0, epic: 1, rare: 2 };
+  const rec = boosted.filter(r => !r.belowCut).map((r, i) => [r, i]).sort((a, b) => RANK[a[0].boost] - RANK[b[0].boost] || a[1] - b[1]).map(x => x[0]);
+  copyText = rec.length ? 'JOIN RAX ACADEMY ON REAL https://www.realapp.com/ngWcxFRF4E8\n\n' + rec.map((r, i) => {
+    const u = r.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(r.passId)]) : realPlayerUrl(sp, r.id, r.season || j.season);
+    return `${i + 1}. ${u || r.name} ${HEART[r.boost]} ${r.best.label}`;
+  }).join('\n\n') : '';
+  copyLabel = `${$('#sportseg [aria-pressed="true"]')?.textContent || sp.toUpperCase()} · ${$('#day').selectedOptions[0].textContent}`;
+  $('#copybtn').hidden = !rec.length; $('#copybtn').textContent = `Copy boosts (${copyLabel} · ${rec.length})`;
   $('#simple').innerHTML = boosted.length ? boosted.map(r => {
     const u = r.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(r.passId)]) : realPlayerUrl(sp, r.id, r.season || j.season);
     const on = doneSet.has(doneKey(r));
@@ -644,6 +658,17 @@ async function run(){
     + (j.notPlaying ? ` ${j.notPlaying} of your players don't play that day.` : '');
 }
 $('#run').addEventListener('click', run);
+let copyText = '', copyLabel = '';
+async function copyOut(t){
+  try{ await navigator.clipboard.writeText(t); return true; }catch(e){}
+  try{ const a = document.createElement('textarea'); a.value = t; a.setAttribute('readonly', ''); a.style.position = 'fixed'; a.style.opacity = '0'; document.body.appendChild(a); a.select(); const ok = document.execCommand('copy'); a.remove(); return ok; }catch(e){ return false; }
+}
+$('#copybtn').addEventListener('click', async () => {
+  if(!copyText) return;
+  const b = $('#copybtn'), was = b.textContent;
+  b.textContent = (await copyOut(copyText)) ? '✓ Copied' : 'Copy failed - long-press to select instead';
+  setTimeout(() => { b.textContent = was; }, 1800);
+});
 // FC: leave out games that have kicked off (their boosters go to games still to come). Remembered in this browser.
 const hideStarted = () => { try{ return localStorage.getItem('boosts_fc_hidestart_v1') === '1'; }catch(e){ return false; } };
 $('#hidestart').addEventListener('click', () => { try{ localStorage.setItem('boosts_fc_hidestart_v1', hideStarted() ? '0' : '1'); }catch(e){} run(); });
