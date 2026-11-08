@@ -7913,6 +7913,9 @@ export async function onRequestGet(ctx) {
       await fetch(`${origin}/api/swaps?op=dmtick&k=${k}`, { cf: { cacheTtl: 0 } }).catch(() => {});
       await new Promise(r => setTimeout(r, 27000));
       await fetch(`${origin}/api/swaps?op=dmtick&k=${k}&half=2`, { cf: { cacheTtl: 0 } }).catch(() => {}); })().catch(() => {}));
+    // Pass scans whose page went away, carried on by the server in a run of their own (2026-11-08).
+    ctx.waitUntil((async () => { const k = await dmTickKey(env); if (!k) return;
+      await fetch(`${origin}/api/swaps?op=scantick&k=${k}`, { cf: { cacheTtl: 0 } }).catch(() => {}); })().catch(() => {}));
     ctx.waitUntil(boostRefresh(env).catch(() => {}));
     // FC Boosts: lineups near kickoff, and the game log after each game.
     ctx.waitUntil(fcLineupTick(env).catch(() => {}));

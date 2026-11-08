@@ -714,7 +714,10 @@ $('#scan').addEventListener('click', async () => {
   const u = $('#rsuser').textContent.trim().replace(/^@/, ''), quick = scanQuickNext; scanQuickNext = false;
   $('#scan').disabled = true;
   $('#scanmsg').textContent = 'Scans typically take 25 seconds, longer at high website volume';
-  const j = await fullScan('&page=swaps' + (quick ? '&quick=1' : ''), p => { if(p.queued){ $('#scanmsg').textContent = `You're #${p.position} in the scan line - about ${p.wait}. You can leave - it runs on its own and your scan will be ready when you come back.`; return; } $('#scanmsg').textContent = 'Scans typically take 25 seconds, longer at high website volume' + ((p.retrying || Date.now() - scanStart > 25000) ? ' • Scan taking longer than expected, please be patient' : ''); });
+  // Leaving is fine (2026-11-08): the server finishes the scan and the bot DMs them when it's done (if it has a chat with them).
+  let canDm = null;
+  const leave = () => canDm ? ' You can leave this page - we\'ll DM you on Real when your scan is complete.' : canDm === false ? ' You can leave this page - your scan keeps running and will be ready when you come back.' : '';
+  const j = await fullScan('&page=swaps' + (quick ? '&quick=1' : ''), p => { if(p.dm != null) canDm = p.dm; if(p.queued){ $('#scanmsg').textContent = `You're #${p.position} in the scan line - about ${p.wait}.` + leave(); return; } $('#scanmsg').textContent = 'Scans typically take 25 seconds, longer at high website volume.' + leave() + ((p.retrying || Date.now() - scanStart > 25000) ? ' • Scan taking longer than expected, please be patient' : ''); });
   $('#scan').disabled = false;
   if(j.error){ $('#scanmsg').textContent = j.error; return; }
   prof.rsUser = u; collapsed = false; prof.passes = j.passes || []; prof.scannedAt = j.scannedAt || Date.now(); loadRecBuys();

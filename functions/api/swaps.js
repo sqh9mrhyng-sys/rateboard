@@ -1601,7 +1601,7 @@ const FEEDBACK_TEXT = 'After day 1 of this project, rate your experience 1-10 wi
 
 /* ---- Pass scans: the line, the saved progress, and the work itself ------ */
 const SCAN_AT_ONCE = 3;            // scans running at the same time; the rest wait in line
-const SCAN_HOLD_MS = 5 * 60000;    // a place in line is kept this long after the page stops asking
+const SCAN_HOLD_MS = 45 * 60000;   // a place in line is kept this long after the page stops asking (2026-11-08: tap scan and leave - the server runs it)
 const SCAN_PAGE_GONE_MS = 25000;   // a running scan nobody's page has asked about for this long is carried on by the server
 async function scanTables(db) {
   await db.prepare('CREATE TABLE IF NOT EXISTS scan_queue (key TEXT PRIMARY KEY, joinedAt INTEGER, startedAt INTEGER, lastSeen INTEGER)').run();
@@ -1658,7 +1658,7 @@ async function newScanJob(env, db, me, over, u, opts) {
       steps = SCAN_STEPS.filter(([sp, se]) => had.has(`${sp}:${se}`) || current.has(`${sp}:${se}`)); full = false;
     }
   } catch (e) {}
-  const job = { rsUser, hashId, passes: [], errors: [], at: Date.now(), idx: 0, failed: [], ri: 0, still: [], steps, full };
+  const job = { rsUser, hashId, passes: [], errors: [], at: Date.now(), idx: 0, failed: [], ri: 0, still: [], steps, full, self: !over };
   await db.prepare('INSERT INTO scan_jobs (key, body, at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET body=excluded.body, at=excluded.at, busy=NULL').bind(me, JSON.stringify(job), Date.now()).run();
   return job;
 }
@@ -1751,35 +1751,68 @@ async function scanWork(env, db, me, job, auth) {
     await env.RATEBOARD_KV.put(k, JSON.stringify(l.slice(0, 15))); } catch (e) {}
   if (job.kept) { await stat(db, 'scan_partial'); await botFail(db, 'scan', `${me}: ${job.kept} season(s) kept from last scan - ${job.errors.slice(0, 3).join(' | ')}`); }
   else await stat(db, 'scan_ok');
-  return { done: true, hashId: job.hashId, passes: job.passes, errors: job.errors, scannedAt: Date.now(),
+  return { done: true, job: { self: job.self, hashId: job.hashId, rsUser: job.rsUser }, hashId: job.hashId, passes: job.passes, errors: job.errors, scannedAt: Date.now(),
     note: job.kept ? `${job.kept} season${job.kept === 1 ? '' : 's'} couldn't be read from Real just now, so ${job.kept === 1 ? 'it keeps' : 'they keep'} your passes from your last scan. Scan again in 5 minutes to refresh ${job.kept === 1 ? 'it' : 'them'}.` : null };
 }
-/* The server's share, once a minute: carry on scans whose page went away,
-   and start the next person in line if they've left the page. */
+/* "Scan done" DMs (Dennis, 2026-11-08): tap scan, leave, and the bot tells
+   you when it's finished. Sent when the server finished the scan (the page
+   was gone - someone watching sees it finish). Only in a chat the bot
+   already has with them (Real allows 5 new chats a day; those stay for
+   swaps), and kept until outside the :25-:40 / :55-:10 swap-DM rush. */
+const SCAN_DONE_TEXT = 'Your profile scan is complete, swaps should now be updated for you on https://raxacademy.app/swaps';
+const SCANDM_DDL = 'CREATE TABLE IF NOT EXISTS scan_dm (key TEXT PRIMARY KEY, hashId TEXT, rsUser TEXT, at INTEGER)';
+async function scanChat(db, hashId) {
+  if (!hashId) return null;
+  try { await db.prepare(DM_DDL).run(); const r = await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=?').bind(hashId).first(); return r && r.channelId ? Number(r.channelId) : null; } catch (e) { return null; }
+}
+async function scanDoneLater(db, key, job) {
+  if (!job || job.self === false || !job.hashId) return;
+  try { await db.prepare(SCANDM_DDL).run();
+    await db.prepare('INSERT OR REPLACE INTO scan_dm (key, hashId, rsUser, at) VALUES (?, ?, ?, ?)').bind(key, job.hashId, job.rsUser || null, Date.now()).run(); } catch (e) {}
+}
+async function scanDoneDms(db, auth, t0) {
+  if (dmWindow()) return;
+  await db.prepare(SCANDM_DDL).run();
+  await db.prepare('DELETE FROM scan_dm WHERE at < ?').bind(Date.now() - 3 * 3600000).run();
+  const rows = ((await db.prepare('SELECT * FROM scan_dm ORDER BY at LIMIT 6').all()).results) || [];
+  for (const r of rows) {
+    if (Date.now() - t0 > 24000) break;
+    await db.prepare('DELETE FROM scan_dm WHERE key=?').bind(r.key).run();
+    const ch = await scanChat(db, r.hashId);
+    if (!ch) { await stat(db, 'scan_dm_nochat'); continue; }
+    try { await dmSendRetry(auth, ch, SCAN_DONE_TEXT); await stat(db, 'scan_dm'); }
+    catch (e) { await queueDm(db, ch, [SCAN_DONE_TEXT], `scan done ${r.key}`); await stat(db, 'scan_dm_retry'); }
+  }
+}
+/* The server's share, once a minute (its own run - op=scantick - so it goes
+   on through the swap-DM rush too, on the non-bot accounts then): carry on
+   scans whose page went away, start whoever is next in line if they've left
+   the page, and send the "scan done" DMs. */
 async function backgroundScans(env, db, auth) {
   await scanTables(db);
   const now = Date.now(), t0 = now;
-  const gone = ((await db.prepare(`SELECT q.key FROM scan_queue q JOIN scan_jobs j ON j.key = q.key WHERE q.startedAt IS NOT NULL AND q.lastSeen < ? ORDER BY q.startedAt LIMIT 2`)
+  const done = async (key, r) => { if (r && r.done) { await stat(db, 'scan_background'); await scanDoneLater(db, key, r.job); } };
+  const gone = ((await db.prepare(`SELECT q.key FROM scan_queue q JOIN scan_jobs j ON j.key = q.key WHERE q.startedAt IS NOT NULL AND q.lastSeen < ? ORDER BY q.startedAt LIMIT 3`)
     .bind(now - SCAN_PAGE_GONE_MS).all()).results) || [];
   for (const { key } of gone) {
-    if (Date.now() - t0 > 25000) break;
+    if (Date.now() - t0 > 24000) break;
     const job = await loadJob(db, key);
-    if (job) { const r = await scanWork(env, db, key, job, auth); if (r.done) await stat(db, 'scan_background'); }
+    if (job) await done(key, await scanWork(env, db, key, job, auth));
   }
-  // Next in line but not on the page: start it here.
-  const running = await db.prepare('SELECT COUNT(*) AS n FROM scan_queue WHERE startedAt IS NOT NULL').first();
-  if ((Number(running && running.n) || 0) < SCAN_AT_ONCE && Date.now() - t0 < 15000) {
+  // Next in line but not on the page: start them here, as many as there's room and time for.
+  for (let i = 0; i < SCAN_AT_ONCE && Date.now() - t0 < 20000; i++) {
+    const running = await db.prepare('SELECT COUNT(*) AS n FROM scan_queue WHERE startedAt IS NOT NULL').first();
+    if ((Number(running && running.n) || 0) >= SCAN_AT_ONCE) break;
     const first = await db.prepare('SELECT key, lastSeen FROM scan_queue WHERE startedAt IS NULL ORDER BY joinedAt LIMIT 1').first();
-    if (first && Number(first.lastSeen) < now - 20000) {
-      const c = await db.prepare('UPDATE scan_queue SET startedAt=?, lastSeen=? WHERE key=? AND startedAt IS NULL').bind(Date.now(), now - SCAN_PAGE_GONE_MS, first.key).run();
-      if (c && c.meta && c.meta.changes) {
-        const u = await db.prepare('SELECT rsUser, hashId, scannedAt, passes FROM swap_users WHERE key=?').bind(first.key).first();
-        const job = await newScanJob(env, db, first.key, null, u);
-        if (job.error) await db.prepare('DELETE FROM scan_queue WHERE key=?').bind(first.key).run();
-        else await scanWork(env, db, first.key, job, auth);
-      }
-    }
+    if (!first || Number(first.lastSeen) >= Date.now() - 20000) break;   // the next one is still on the page: their page starts it
+    const c = await db.prepare('UPDATE scan_queue SET startedAt=?, lastSeen=? WHERE key=? AND startedAt IS NULL').bind(Date.now(), Date.now() - SCAN_PAGE_GONE_MS, first.key).run();
+    if (!(c && c.meta && c.meta.changes)) continue;
+    const u = await db.prepare('SELECT rsUser, hashId, scannedAt, passes FROM swap_users WHERE key=?').bind(first.key).first();
+    const job = await newScanJob(env, db, first.key, null, u, { full: true });
+    if (job.error) await db.prepare('DELETE FROM scan_queue WHERE key=?').bind(first.key).run();
+    else await done(first.key, await scanWork(env, db, first.key, job, auth));
   }
+  try { await scanDoneDms(db, auth, t0); } catch (e) { await botFail(db, 'scan_dm', e.message); }
 }
 
 /* Second feedback round (Dennis, 2026-11-04): from 5:10pm ET, everyone the
@@ -2305,7 +2338,6 @@ export async function swapTick(env) {
   if (!inDmWindow) {
     try { await feedbackDms(env, db, auth); } catch (e) { await botFail(db, 'dm_feedback', e.message); }
     try { await feedbackDms2(env, db, auth); } catch (e) { await botFail(db, 'dm_feedback', e.message); }
-    try { await backgroundScans(env, db, auth); } catch (e) { await botFail(db, 'scan_bg', e.message); }
   }
   return notes;
 }
@@ -3959,6 +3991,18 @@ async function handle({ request, env, waitUntil }) {
     })().catch(() => {})); } catch (e) {}
     return json({ ok: true, messages: msgs.length });
   }
+  // Background scans in a run of their own each minute (2026-11-08).
+  if (op === 'scantick') {
+    const k = await dmTickKey(env);
+    if (!k || url.searchParams.get('k') !== k) return json({ error: 'no' }, 403);
+    const minute = 'scan|' + new Date().toISOString().slice(0, 16);
+    let go = false;
+    try { await db.prepare('CREATE TABLE IF NOT EXISTS dm_runs (minute TEXT PRIMARY KEY, at INTEGER)').run();
+      const c = await db.prepare('INSERT OR IGNORE INTO dm_runs (minute, at) VALUES (?, ?)').bind(minute, Date.now()).run(); go = !!(c && c.meta && c.meta.changes); } catch (e) {}
+    const auth0 = swapToken(env);
+    if (go && auth0) { try { waitUntil(backgroundScans(env, db, auth0).catch(e => botFail(db, 'scan_bg', e.message))); } catch (e) {} }
+    return json({ ok: true, started: go });
+  }
   if (op === 'dmtick') {
     const k = await dmTickKey(env);
     if (!k || url.searchParams.get('k') !== k) return json({ error: 'no' }, 403);
@@ -4668,9 +4712,11 @@ async function handle({ request, env, waitUntil }) {
     const now = Date.now();
     // A scan already under way (started here, or carried on by the server) just continues.
     let job = await loadJob(db, me);
+    // dm: whether the bot can tell them it's done if they leave (it has a chat with them).
     if (job) {
       try { await db.prepare('UPDATE scan_queue SET lastSeen=? WHERE key=?').bind(now, me).run(); } catch (e) {}
-      return json(await scanWork(env, db, me, job, auth));
+      const r = await scanWork(env, db, me, job, auth); delete r.job;
+      return json({ ...r, dm: job.self !== false && !!(await scanChat(db, job.hashId)) });
     }
     const u = await db.prepare('SELECT rsUser, hashId, scannedAt, passes FROM swap_users WHERE key=?').bind(me).first();
     const fast = acc.admin || BOOST_FAST.has(String(me || '').toLowerCase());
@@ -4684,15 +4730,19 @@ async function handle({ request, env, waitUntil }) {
       }
     } else if (!(await allow(url.origin, 'swapscan:' + me, 20, 600))) return json({ error: 'Twenty scans per ten minutes.' }, 429);
     // The line. Admins skip it.
-    if (!acc.admin) {
-      const q = await scanQueueTurn(db, me, now);
-      if (!q.go) return json({ queued: true, position: q.position, wait: q.wait });
-    }
     // Members scan their own Real account; an admin may name another (OTD).
     const over = acc.admin && url.searchParams.get('rsUser') ? String(url.searchParams.get('rsUser')).trim().replace(/^@/, '') : null;
+    if (!acc.admin) {
+      const q = await scanQueueTurn(db, me, now);
+      if (!q.go) return json({ queued: true, position: q.position, wait: q.wait, dm: !!(await scanChat(db, u && u.hashId)) });
+    } else if (!over) {
+      // An admin's own scan skips the line but is still on the server's list, so it carries on if they leave.
+      try { await db.prepare('INSERT INTO scan_queue (key, joinedAt, startedAt, lastSeen) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET startedAt=excluded.startedAt, lastSeen=excluded.lastSeen').bind(me, now, now, now).run(); } catch (e) {}
+    }
     job = await newScanJob(env, db, me, over, u, { full: url.searchParams.get('quick') !== '1' });   // every season by default (Dennis, 2026-11-05); quick=1 for current seasons + ones they hold
     if (job.error) { try { await db.prepare('DELETE FROM scan_queue WHERE key=?').bind(me).run(); } catch (e) {} return json({ error: job.error }, job.status || 400); }
-    return json(await scanWork(env, db, me, job, auth));
+    const r = await scanWork(env, db, me, job, auth); delete r.job;
+    return json({ ...r, dm: job.self !== false && !!(await scanChat(db, job.hashId)) });
   }
 
   // Admin: how often members may scan - 60 (every hour) or 15 minutes.
