@@ -5274,8 +5274,10 @@ async function handle({ request, env, waitUntil }) {
         }
         if (proj != null && mf !== 1) basis += ` · matchup x${mf}`;
         const flags = [];
-        if (moved) flags.push(`Now with ${moved.to} (his last game was for ${moved.from})`);
         let skip = false, k = 1;
+        if (moved) flags.push(`Now with ${moved.to} (his last game was for ${moved.from})`);
+        // On no NFL roster at all (released, or on a practice squad): no booster.
+        if (sp === 'nfl' && nflRos && nflRos.m && Object.keys(nflRos.m).length > 1500 && !(nflRos.m[boostName(name)] || []).length) { skip = true; flags.push('Not on an NFL roster (released or practice squad)'); }
         // Injury report.
         const ij = inj[boostName(name)];
         if (ij) {
