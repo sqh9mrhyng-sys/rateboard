@@ -790,7 +790,12 @@ async function runMatchingInner(db, env) {
   // Receiving the same pass more than once a day is fine (Dennis, 2026-11-04); only their own Scale per-day limit applies.
   const perDayOk = (k, w, d) => { const c = (capsOf.get(k) || {})[w]; return !(c && Number(c.d) > 0) || (recv.get(`${k}|${w}|${d}`) || 0) < Number(c.d); };
   // Never a pass they're swapping for themselves (2026-11-05: a member was receiving Caufield and giving Caufield in the same hour).
-  const gives = (u, d) => new Set(u.passes.filter(p => p.kind !== 'team' && !(p.untouchable && !u.touch.has(p.key))).map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !u.wants.includes(k) && !given.has(`${u.key}|${k}|${d}`) && seasonRoom(u.key, k, d)));
+  /* What each member could give, worked out once (2026-11-08: it was rebuilt
+     from every pass they hold for every pair and hour - millions of steps
+     with members' full pass lists - and matching ran out of time). The
+     day-by-day checks are made only for the few players the partner wants. */
+  const canGive = new Map(users.map(u => [u.key, new Set(u.passes.filter(p => p.kind !== 'team' && !(p.untouchable && !u.touch.has(p.key))).map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !u.wants.includes(k)))]));
+  const givesOne = (u, k, d) => canGive.get(u.key).has(k) && !given.has(`${u.key}|${k}|${d}`) && seasonRoom(u.key, k, d);
   /* Every possible pair and shared hour, best first: an hour someone picked
      first is their primary, so pairs on both members' earliest picks go
      ahead - when two people want the same player, the one whose primary
@@ -837,8 +842,7 @@ async function runMatchingInner(db, env) {
     if (!roomFor(A.key, d) || !roomFor(B.key, d)) break;
     // The best pair of picks that works both ways (earlier picks first). The
     // exact same pass both ways is no swap; the same player in two seasons is fine.
-    const gB = gives(B, d), gA = gives(A, d);
-    const aOk = A.wants.filter(w => gB.has(w) && goalOk(A.key, w) && perDayOk(A.key, w, d)), bOk = B.wants.filter(w => gA.has(w) && goalOk(B.key, w) && perDayOk(B.key, w, d));
+    const aOk = A.wants.filter(w => givesOne(B, w, d) && goalOk(A.key, w) && perDayOk(A.key, w, d)), bOk = B.wants.filter(w => givesOne(A, w, d) && goalOk(B.key, w) && perDayOk(B.key, w, d));
     let pick = null;
     for (let s = 0; s < aOk.length + bOk.length && !pick; s++)
       for (let x = 0; x <= s && !pick; x++) { const aw = aOk[x], bw = bOk[s - x]; if (aw && bw && aw !== bw) pick = [aw, bw]; }
