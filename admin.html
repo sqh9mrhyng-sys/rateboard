@@ -316,7 +316,7 @@ function loadMembers(){
       + tile('Signed in', n(j.signinWeek) + ' this week', n(j.signinMonth) + ' this month (new sign-ins)');
     // Only days since tracking began count toward averages; today is partial, so it's left out of them.
     const all = (j.days || []).filter(x => !j.trackingSince || x.day >= j.trackingSince);
-    const full = all.slice(0, -1);
+    const full = all.slice(0, -1).filter(x => x.day !== j.trackingSince);   // the first day was tracked from partway through
     const avg = a => a.length ? a.reduce((t, x) => t + x.active, 0) / a.length : null;
     const sumN = a => a.reduce((t, x) => t + x.new, 0);
     const pct = (a, b) => a != null && b ? `${a >= b ? '+' : ''}${Math.round((a / b - 1) * 100)}%` : '–';
