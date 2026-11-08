@@ -102,7 +102,7 @@
       <p class="note"><b>On pace</b> = rax so far + his rax a game played × his team's regular-season games left. No missed games, no opponents - just his rate.</p>
       <p class="note"><b>FC</b>: every game counts on Real (league, cups, Europe, internationals). Games left = how often his club has played so far × the days left to its league's last day (winter break taken out); no opponent adjustment, and future international games aren't counted.</p>
       <p class="note">Tap a player to see how his number was worked out. A name opens your own card when you hold his pass.</p>
-      <p class="note">Rebuilt every 6 hours from the game log and ESPN's schedules.</p>
+      <p class="note">Worked out again whenever new games land in the game log (checked every 15 minutes), with ESPN's schedules and injury lists at that time.</p>
     </details>
   </section>
   <section style="padding:6px 14px 14px">
@@ -247,9 +247,9 @@ async function load(tries = 0){
   $('#main').hidden = false; $('#lock').hidden = true;
   if(j.building){ $('#head').textContent = 'Building the projections for the first time - this takes up to a minute…'; setTimeout(() => load(tries), 15000); return; }
   data = j; openId = null;
-  { const t = new Date(j.at).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-    const g = j.gd ? new Date(j.gd + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) : null;
-    $('#fresh').innerHTML = `Projections updated <b>${esc(t)}</b>` + (g ? ` · game data through <b>${esc(g)}</b>` : '') + ' · rebuilt every 6 hours'; }
+  // Dated by the games in it, not by when it was worked out: "through Thu, Nov 5's games".
+  { const g = j.gd ? new Date(j.gd + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) : null;
+    $('#fresh').innerHTML = (g ? `Projections updated through <b>${esc(g)}</b>'s games` : 'Projections') + ' · updated when new games are added'; }
   // On pace = so far + his rate a game played × games left (older saved copies used all the team's games).
   for(const r of (data.rows || [])) if(r.gp > 0) r.pc = Math.round(r.r + r.r / r.gp * r.l);
   // Older answers sent bare ids; now [player id, card id].
@@ -267,8 +267,8 @@ function draw(){
   // Owned / not owned first, then by projection.
   const own = r => mine.has(r.i) ? 1 : 0;
   list = list.slice().sort(key === 'own' ? (a, b) => own(b) - own(a) || b.pr - a.pr : key === 'unown' ? (a, b) => own(a) - own(b) || b.pr - a.pr : (a, b) => (b[key] ?? -1) - (a[key] ?? -1));
-  const when = new Date(data.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-  $('#head').textContent = `${SEASON_LBL[data.sport] || ''} · ${list.length.toLocaleString()} player${list.length === 1 ? '' : 's'}${who === 'mine' ? ` of your ${mine.size} passes` : ''} · updated ${when}`;
+  const when = data.gd ? new Date(data.gd + 'T12:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' games' : new Date(data.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  $('#head').textContent = `${SEASON_LBL[data.sport] || ''} · ${list.length.toLocaleString()} player${list.length === 1 ? '' : 's'}${who === 'mine' ? ` of your ${mine.size} passes` : ''} · through ${when}`;
   $('#rows').innerHTML = list.slice(0, shown).map((r, i) => {
     // Their own card when they hold one, else the player's page.
     const card = cardOf.get(r.i), u = card ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, card]) : realPlayerUrl(data.sport, r.i, data.season);

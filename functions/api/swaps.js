@@ -3674,6 +3674,19 @@ function projLearnAlias(sp, cur, sched) {
   return c => c == null ? null : map[c] || projAlias(sp, c);
 }
 const PROJ_MIN = new Set(['nba', 'soccer', 'ncaam']);   // DNP rows (0 minutes) don't count as games played (NHL has no minutes)
+/* Projections are rebuilt only when the game data changes (Dennis,
+   2026-11-08 - was every 6 hours whatever happened): a fingerprint of the
+   season's regular-season game log (games, latest day, total rax), checked at
+   most every 15 minutes per sport. */
+const projSigOf = (n, d, s) => `${n}|${d || ''}|${Math.round(Number(s) || 0)}`;
+async function projSig(env, db, sp) {
+  const k = `proj_sig_v1_${sp}`;
+  try { const c = await env.RATEBOARD_KV.get(k); if (c) return c; } catch (e) {}
+  const r = await db.prepare(`SELECT COUNT(*) AS n, MAX(day) AS d, SUM(rax) AS s FROM gamelog WHERE sport=? AND season=? AND rax IS NOT NULL AND (seasonType IS NULL OR seasonType='regularseason')`).bind(sp, Number(PROJ_SEASON[sp][0])).first();
+  const v = projSigOf(r && r.n, r && r.d, r && r.s);
+  try { await env.RATEBOARD_KV.put(k, v, { expirationTtl: 900 }); } catch (e) {}
+  return v;
+}
 async function projBuild(env, db, sp) {
   const [se, prev] = PROJ_SEASON[sp], P = PROJ_P[sp];
   const fc = sp === 'soccer', useMin = PROJ_MIN.has(sp);
@@ -3791,7 +3804,7 @@ async function projBuild(env, db, sp) {
   rows.sort((x, y) => y.pr - x.pr);
   // The latest game in the game data it was built from (shown at the top of the page).
   const gd = cur.reduce((m, x) => String(x.day || '') > m ? String(x.day) : m, '');
-  const out = { at: Date.now(), gd: gd || null, sport: sp, season: se, model: 2, lg: r2(lg), of, hf, rows: rows.slice(0, 4000), players: rows.length, schedPages: sched.pages, schedOf: sched.of };
+  const out = { at: Date.now(), gd: gd || null, sig: projSigOf(cur.length, gd, cur.reduce((t, x) => t + Number(x.rax || 0), 0)), sport: sp, season: se, model: 2, lg: r2(lg), of, hf, rows: rows.slice(0, 4000), players: rows.length, schedPages: sched.pages, schedOf: sched.of };
   try { await env.RATEBOARD_KV.put(`proj_v3_${sp}`, JSON.stringify(out), { expirationTtl: 3 * 86400 }); } catch (e) {}
   return out;
 }
@@ -5344,7 +5357,8 @@ async function handle({ request, env, waitUntil }) {
     const pid = Number(url.searchParams.get('pid'));
     if (pid) { const row = c && (c.rows || []).find(r => r.i === pid); return json({ row: row || null, ...(await projDetail(env, sp, row, c)) }); }
     const lockK = `proj_lock_v1_${sp}`;
-    const stale = !c || Date.now() - c.at > 6 * 3600000 || (acc.admin && url.searchParams.get('refresh') === '1');
+    let stale = !c || (acc.admin && url.searchParams.get('refresh') === '1');
+    if (!stale) { try { stale = (await projSig(env, db, sp)) !== c.sig; } catch (e) { stale = Date.now() - c.at > 24 * 3600000; } }
     if (stale) {
       let locked = false; try { locked = !!(await env.RATEBOARD_KV.get(lockK)); } catch (e) {}
       if (!locked) {
