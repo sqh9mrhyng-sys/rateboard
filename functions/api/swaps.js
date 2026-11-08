@@ -677,7 +677,9 @@ async function runMatching(db, env, wait = false) {
   finally { try { await db.prepare("UPDATE run_lock SET until=0 WHERE k='match'").run(); } catch (e) {} }
 }
 async function runMatchingInner(db, env) {
-  const T = [Date.now()], lap = () => T.push(Date.now());
+  // Each step's time is logged as it finishes, so a run that's cut off shows where (2026-11-08).
+  const T = [Date.now()], lap = () => { T.push(Date.now()); const n = T.length - 1;
+    return db.prepare("INSERT INTO bot_log (at, kind, msg) VALUES (?, 'match', ?)").bind(Date.now(), `step ${n} at ${((T[n] - T[0]) / 1000).toFixed(1)}s`).run().catch(() => {}); };
   // Only members the bot already has a chat with: new chats are capped at
   // five a day, so a match with anyone else might never be delivered.
   await db.prepare(DM_DDL).run();
@@ -740,7 +742,7 @@ async function runMatchingInner(db, env) {
     if (m.warnA || m.doneA) given.add(`${m.a}|${m.bGets}|${d}`); }
   // Packs a member marked as used today themselves (Packs today tab): not given again this swap day.
   for (const u of users) { const pu = parse(u.packsUsed, null); if (pu && pu.day && Array.isArray(pu.keys)) for (const k of pu.keys) given.add(`${u.key}|${k}|${pu.day}`); }
-  lap();   // 1: members + swaps read
+  await lap();   // 1: members + swaps read
   // FC and UFC have no packs to swap, so neither is ever offered or matched.
   const swappable = k => !/^(soccer|ufc):/.test(k) && !seasonOff(k);
   // Up to 5 players each, in their order, and only passes they own: they buy cards for those.
@@ -756,7 +758,7 @@ async function runMatchingInner(db, env) {
   for (const m of (((await db.prepare("SELECT a, b, aGets, bGets, createdAt FROM swap_matches WHERE status IN ('pending','sending','warned','sent')").all()).results) || []))
     for (const [k, w] of [[m.a, m.aGets], [m.b, m.bGets]]) { const kk = k + '|' + w; (recvAt.get(kk) || recvAt.set(kk, []).get(kk)).push(Number(m.createdAt) || 0); }
   const countSince = (k, w, since) => { const t0 = Number(since) || 0; let n = 0; for (const t of (recvAt.get(k + '|' + w) || [])) if (t > t0) n++; return n; };
-  lap();   // 2: low plays + live swaps read
+  await lap();   // 2: low plays + live swaps read
   const cache = new Map(), goalLeft = new Map();
   // Every season that has a goal set, read at once rather than one after another.
   { const need = new Map(); for (const u of users) for (const w of u.wants) { const g = Number(u.caps[w] && u.caps[w].g) || Number(u.goal); if (g > 0) need.set(String(w).split(':').slice(0, 2).join(':'), w); }
@@ -786,7 +788,7 @@ async function runMatchingInner(db, env) {
   /* An hour closes to new matches once its warning has gone out (30 min
      before): the 11:30 run can't add anyone to 12:00, so everyone in an
      hour got the same warning. That hour's next turn is the following day. */
-  lap();   // 3: goals
+  await lap();   // 3: goals
   const made = [], now = Date.now(), cands = [];
   /* Only the next few hours are filled each run (Dennis, 2026-11-04), in time
      order: the tops of the hour from just after the next warning out to
@@ -840,7 +842,7 @@ async function runMatchingInner(db, env) {
     goalLeft.set(`${B.key}|${bGets}`, (goalLeft.get(`${B.key}|${bGets}`) ?? Infinity) - 1);
     }
   }
-  lap();   // 4: pairing
+  await lap();   // 4: pairing
   // Never the same swap twice on one swap day, even if two runs overlap: checked against the
   // live swaps read at the start (in memory), then saved 50 at a time.
   try { await alterOnce(db, 'ALTER TABLE swap_matches ADD COLUMN dueAt INTEGER'); } catch (e) {}
@@ -852,7 +854,7 @@ async function runMatchingInner(db, env) {
   for (const m of made) { const k = sig(m.a, m.b, m.aGets, m.bGets, swapDay(m.due)); if (seen.has(k)) continue; seen.add(k);
     ins.push(db.prepare(`INSERT INTO swap_matches (a, b, aGets, bGets, slot, createdAt, status, dueAt) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`).bind(m.a, m.b, m.aGets, m.bGets, m.slot, now, m.due)); }
   for (let i = 0; i < ins.length; i += 50) await db.batch(ins.slice(i, i + 50));
-  lap();   // 5: saved
+  await lap();   // 5: saved
   made.timing = `members ${users.length}, read ${T[1] - T[0]}ms, plays ${T[2] - T[1]}ms, goals ${T[3] - T[2]}ms, pairing ${T[4] - T[3]}ms, save ${T[5] - T[4]}ms`;
   return made;
 }
@@ -2269,13 +2271,26 @@ export async function swapTick(env) {
   if (new Date().getUTCMinutes() >= 20) {
     try { await db.prepare('CREATE TABLE IF NOT EXISTS swap_runs (hour TEXT PRIMARY KEY, at INTEGER)').run();
       const c = await db.prepare('INSERT OR IGNORE INTO swap_runs (hour, at) VALUES (?, ?)').bind(hour, Date.now()).run();
-      mine = !!(c && c.meta && c.meta.changes); } catch (e) {}
+      mine = !!(c && c.meta && c.meta.changes);
+      /* A run that was cut off (no "done" row 3 minutes on) gets another go, up
+         to :27 - the next hour's warnings go at :30 (2026-11-08). */
+      if (!mine && new Date().getUTCMinutes() <= 27) {
+        const r = await db.prepare('SELECT at FROM swap_runs WHERE hour=?').bind(hour).first();
+        const done = await db.prepare('SELECT 1 AS x FROM swap_runs WHERE hour=?').bind(hour + ':done').first();
+        if (r && !done && Number(r.at) < Date.now() - 180000) {
+          const u = await db.prepare('UPDATE swap_runs SET at=? WHERE hour=? AND at=?').bind(Date.now(), hour, r.at).run();
+          mine = !!(u && u.meta && u.meta.changes);
+          if (mine) { try { await db.prepare("UPDATE run_lock SET until=0 WHERE k='match'").run(); } catch (e) {}
+            try { await db.prepare("INSERT INTO bot_log (at, kind, msg) VALUES (?, 'match', ?)").bind(Date.now(), 'retrying: the last run was cut off').run(); } catch (e) {} }
+        }
+      } } catch (e) {}
   }
   if (mine) {
     try { await matchCols(db); } catch (e) {}
     const t0 = Date.now();
     try { await db.prepare("INSERT INTO bot_log (at, kind, msg) VALUES (?, 'match', ?)").bind(t0, 'run started').run(); } catch (e) {}
     try { const made = await runMatching(db, env, true); await stat(db, 'matches', made.length); await stat(db, 'match_runs');
+      if (!made.skipped) { try { await db.prepare('INSERT OR IGNORE INTO swap_runs (hour, at) VALUES (?, ?)').bind(hour + ':done', Date.now()).run(); } catch (e) {} }
       try { await db.prepare("INSERT INTO bot_log (at, kind, msg) VALUES (?, 'match', ?)").bind(Date.now(), `run done: ${made.length} swaps in ${((Date.now() - t0) / 1000).toFixed(1)}s (${made.timing || ''})`).run(); } catch (e) {} }
     catch (e) { await botFail(db, 'matching', `after ${((Date.now() - t0) / 1000).toFixed(1)}s: ${e.message}`); }
   }
@@ -4053,6 +4068,13 @@ async function handle({ request, env, waitUntil }) {
     const k = await dmTickKey(env);
     if (!k || url.searchParams.get('k') !== k) return json({ error: 'no' }, 403);
     const minute = 'scan|' + new Date().toISOString().slice(0, 16);
+    /* Never alongside the hourly matching (2026-11-08: from 17:20 UTC, the first
+       run after background scans got their own minute run, matching never
+       finished - scans saving big rows at the same time held the database up).
+       Off from :18 to :29, and while the matching lock is held. */
+    const mm = new Date().getUTCMinutes();
+    if (mm >= 18 && mm <= 29) return json({ ok: true, started: false, why: 'matching' });
+    try { const l = await db.prepare("SELECT until FROM run_lock WHERE k='match'").first(); if (l && Number(l.until) > Date.now()) return json({ ok: true, started: false, why: 'matching' }); } catch (e) {}
     let go = false;
     try { await db.prepare('CREATE TABLE IF NOT EXISTS dm_runs (minute TEXT PRIMARY KEY, at INTEGER)').run();
       const c = await db.prepare('INSERT OR IGNORE INTO dm_runs (minute, at) VALUES (?, ?)').bind(minute, Date.now()).run(); go = !!(c && c.meta && c.meta.changes); } catch (e) {}
