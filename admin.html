@@ -314,7 +314,20 @@ function loadMembers(){
       + tile('Total members', n(j.total), n(j.banned) + ' removed')
       + tile('New members', n(j.newToday) + ' today', n(j.newWeek) + ' this week · ' + n(j.newMonth) + ' this month')
       + tile('Signed in', n(j.signinWeek) + ' this week', n(j.signinMonth) + ' this month (new sign-ins)');
-    const d = j.days || [];
+    // Only days since tracking began count toward averages; today is partial, so it's left out of them.
+    const all = (j.days || []).filter(x => !j.trackingSince || x.day >= j.trackingSince);
+    const full = all.slice(0, -1);
+    const avg = a => a.length ? a.reduce((t, x) => t + x.active, 0) / a.length : null;
+    const sumN = a => a.reduce((t, x) => t + x.new, 0);
+    const pct = (a, b) => a != null && b ? `${a >= b ? '+' : ''}${Math.round((a / b - 1) * 100)}%` : '–';
+    const w1 = full.slice(-7), w0 = full.slice(-14, -7), m1 = full.slice(-30), m0 = full.slice(-60, -30);
+    const a1 = avg(w1), a0 = w0.length === 7 ? avg(w0) : null, b1 = avg(m1), b0 = m0.length >= 20 ? avg(m0) : null;
+    const nw1 = sumN(w1), nw0 = w0.length === 7 ? sumN(w0) : null;
+    $('#us-grid').innerHTML += tile('Daily average', a1 == null ? '–' : (Math.round(a1 * 10) / 10).toLocaleString(), 'last 7 full days · ' + (a0 == null ? 'no week before yet' : pct(a1, a0) + ' vs the week before (' + (Math.round(a0 * 10) / 10) + ')'))
+      + tile('30-day daily average', b1 == null ? '–' : (Math.round(b1 * 10) / 10).toLocaleString(), m1.length + ' days' + (b0 == null ? '' : ' · ' + pct(b1, b0) + ' vs the 30 before'))
+      + tile('New members a week', n(nw1), nw0 == null ? 'last 7 full days' : pct(nw1, nw0) + ' vs the week before (' + n(nw0) + ')')
+      + tile('Growth', j.total ? '+' + (Math.round(nw1 / Math.max(1, j.total - nw1) * 1000) / 10) + '%' : '–', 'members added in the last 7 days');
+    const d = all.slice(-30);
     const max = Math.max(1, ...d.map(x => x.active));
     $('#us-days').innerHTML = d.length ? '<table><thead><tr><th>Day</th><th>Active</th><th>New</th><th style="width:50%"></th></tr></thead><tbody>'
       + d.slice().reverse().map(x => `<tr><td>${esc(x.day)}</td><td>${n(x.active)}</td><td>${n(x.new)}</td><td style="text-align:left"><div style="height:8px;border-radius:4px;background:var(--accent);width:${Math.round(x.active / max * 100)}%"></div></td></tr>`).join('')
