@@ -3678,6 +3678,8 @@ const PROJ_MIN = new Set(['nba', 'soccer', 'ncaam']);   // DNP rows (0 minutes) 
    2026-11-08 - was every 6 hours whatever happened): a fingerprint of the
    season's regular-season game log (games, latest day, total rax), checked at
    most every 15 minutes per sport. */
+const PROJ_MEM = new Map();
+const projMem = c => ({ c, read: 0, byId: new Map((c.rows || []).map(r => [r.i, r])), rowsText: JSON.stringify((c.rows || []).map(({ x, ...r }) => r)) });
 const projSigOf = (n, d, s) => `${n}|${d || ''}|${Math.round(Number(s) || 0)}`;
 async function projSig(env, db, sp) {
   const k = `proj_sig_v1_${sp}`;
@@ -5349,16 +5351,27 @@ async function handle({ request, env, waitUntil }) {
       fields: Object.fromEntries([...seen].map(([k, v]) => [k, [...v]])), first3: rows.slice(0, 3) });
   }
   if (op === 'projections') {
-    // Dennis only for now (2026-11-05).
-    if (!acc.admin) return json({ error: 'This page is not open yet.' }, 403);
+    // Open to everyone signed in (Dennis, 2026-11-08; was Dennis only).
+    if (!acc.who) return json({ error: 'Sign in on the board first.' }, 403);
     const sp = PROJ_SEASON[url.searchParams.get('sport')] ? url.searchParams.get('sport') : 'ncaaf';
-    let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(`proj_v3_${sp}`)) || 'null'); } catch (e) {}
+    /* Kept in memory per worker, with the list already turned into text, and
+       the saved copy re-read from KV at most once a minute: a crowd opening the
+       page costs one KV read a minute, not a full parse and rebuild of
+       thousands of rows per open. */
+    let m = PROJ_MEM.get(sp);
+    if (!m || Date.now() - m.read > 60000) {
+      let c0 = null; try { c0 = JSON.parse((await env.RATEBOARD_KV.get(`proj_v3_${sp}`)) || 'null'); } catch (e) {}
+      if (c0 && !c0.error) { if (!m || m.c.at !== c0.at) m = projMem(c0); m.read = Date.now(); PROJ_MEM.set(sp, m); }
+      else if (m) m.read = Date.now();
+    }
+    let c = m ? m.c : null;
     // One player's breakdown (tapping his line).
     const pid = Number(url.searchParams.get('pid'));
-    if (pid) { const row = c && (c.rows || []).find(r => r.i === pid); return json({ row: row || null, ...(await projDetail(env, sp, row, c)) }); }
+    if (pid) { const row = m ? m.byId.get(pid) : null; return json({ row: row || null, ...(await projDetail(env, sp, row, c)) }); }
     const lockK = `proj_lock_v1_${sp}`;
     let stale = !c || (acc.admin && url.searchParams.get('refresh') === '1');
-    if (!stale) { try { stale = (await projSig(env, db, sp)) !== c.sig; } catch (e) { stale = Date.now() - c.at > 24 * 3600000; } }
+    // Rebuilt when the game data has changed - and at most every 30 minutes while games are coming in.
+    if (!stale && Date.now() - c.at > 30 * 60000) { try { stale = (await projSig(env, db, sp)) !== c.sig; } catch (e) { stale = Date.now() - c.at > 24 * 3600000; } }
     if (stale) {
       let locked = false; try { locked = !!(await env.RATEBOARD_KV.get(lockK)); } catch (e) {}
       if (!locked) {
@@ -5370,6 +5383,7 @@ async function handle({ request, env, waitUntil }) {
     }
     if (!c) return json({ building: true, note: 'Building the projections - try again in a minute.' });
     if (c.error) return json({ error: c.error }, 500);
+    if (!m || m.c !== c) { m = projMem(c); m.read = Date.now(); PROJ_MEM.set(sp, m); }
     if (!c.gd) { try { const k = `proj_gd_v1_${sp}`; let g = await env.RATEBOARD_KV.get(k);
       if (!g) { const r = await db.prepare('SELECT MAX(day) AS d FROM gamelog WHERE sport=? AND season=? AND rax IS NOT NULL').bind(sp, Number(PROJ_SEASON[sp][0])).first(); g = (r && r.d) || ''; if (g) await env.RATEBOARD_KV.put(k, g, { expirationTtl: 1800 }); }
       if (g) c.gd = g; } catch (e) {} }
@@ -5377,7 +5391,9 @@ async function handle({ request, env, waitUntil }) {
     const [se] = PROJ_SEASON[sp];
     // Their passes for this season, with the card's id so a name can open their own card.
     const mine = parse(u && u.passes, []).filter(p => p.sport === sp && Number(p.season) === se && p.kind !== 'team').map(p => [Number(p.id), p.passId ? Number(p.passId) : null]);
-    return json({ ...c, of: undefined, hf: undefined, rows: (c.rows || []).map(({ x, ...r }) => r), mine });
+    // The list goes out as the text made once per build; only their own passes are added.
+    return new Response(`{"at":${c.at},"gd":${JSON.stringify(c.gd || null)},"sport":${JSON.stringify(c.sport)},"season":${c.season},"players":${c.players || 0},"rows":${m.rowsText},"mine":${JSON.stringify(mine)}}`,
+      { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
   }
   if (op === 'boostdays') {
     const sp = String(url.searchParams.get('sport') || '');
