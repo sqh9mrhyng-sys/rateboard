@@ -2493,6 +2493,7 @@ export async function boostRefresh(env) {
     for (const sp of Object.keys(BOOST_SEASON)) { steps.push(['inj', sp]); for (const d of days) steps.push(['sched', sp, d]); }
     for (const d of days) steps.push(['fcsched', d]);   // FC: 12 competitions a day, one day per tick
     steps.push(['depthlist']);
+    steps.push(['nflrosters']);
     for (const sp of Object.keys(BOOST_SEASON)) steps.push(['match', sp]);
     steps.push(['fcmatch']);
     steps.push(['rosterlist']);
@@ -2515,6 +2516,7 @@ export async function boostRefresh(env) {
         for (const id of ids) st.steps.push(['depth', id]);
       }
       else if (k === 'depth') await boostDepth(env, null, true, [a]);
+      else if (k === 'nflrosters') await nflRosters(env);
       else if (k === 'match') await boostMatchups(env, a);
       else if (k === 'rosterlist') {
         // CBB rosters for every team on the saved slates, refreshed weekly.
@@ -2555,6 +2557,26 @@ export async function boostRefresh(env) {
   st.done = st.i >= st.steps.length;
   try { await env.RATEBOARD_KV.put(BOOST_REFRESH_KEY, JSON.stringify(st), { expirationTtl: 3 * 86400 }); } catch (e) {}
   return st.done ? 'boosts refreshed' : `boosts refresh ${st.i}/${st.steps.length}`;
+}
+
+/* NFL: every team's current roster from ESPN (2026-11-08: Jacoby Brissett was
+   traded from Arizona to Baltimore on a Friday, and Boosts put him in
+   Arizona's Sunday game off his last game). name -> [{ ab, pos }] (a name can
+   be two players). Refreshed with the boost refresh; a team ESPN doesn't
+   answer for keeps its last list. */
+async function nflRosters(env) {
+  let old = null; try { old = JSON.parse((await env.RATEBOARD_KV.get('boostrostermap_v1_nfl')) || 'null'); } catch (e) {}
+  let ids = [];
+  try { const r = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams'); const d = r.ok ? await r.json() : null;
+    ids = ((((d || {}).sports || [])[0] || {}).leagues || [{}])[0].teams.map(t => t.team.id); } catch (e) { return; }
+  const got = await Promise.all(ids.map(async id => { try { const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/${id}/roster`); if (!r.ok) return null; const d = await r.json();
+    const ab = (d.team || {}).abbreviation; if (!ab) return null;
+    return { ab, list: (d.athletes || []).flatMap(g => g.items || []).map(a => ({ n: boostName(a.displayName), pos: (a.position || {}).abbreviation || '' })) }; } catch (e) { return null; } }));
+  const byTeam = { ...((old && old.byTeam) || {}) };
+  for (const g of got) if (g && g.list.length) byTeam[g.ab] = g.list;
+  const m = {};
+  for (const [ab, list] of Object.entries(byTeam)) for (const x of list) (m[x.n] = m[x.n] || []).push({ ab, pos: x.pos });
+  try { await env.RATEBOARD_KV.put('boostrostermap_v1_nfl', JSON.stringify({ at: Date.now(), m, byTeam }), { expirationTtl: 30 * 86400 }); } catch (e) {}
 }
 
 /* A member's boosters from Real (userpassboostercards, collectionstats):
@@ -5193,6 +5215,10 @@ async function handle({ request, env, waitUntil }) {
       // how much each opponent gave up last season and this one.
       let roster = {}, match = {};
       if (sp === 'ncaam') { try { roster = (JSON.parse((await env.RATEBOARD_KV.get('boostrostermap_v1_ncaam')) || 'null') || {}).m || {}; } catch (e) {} }
+      // NFL: today's rosters, so a trade counts before he plays for his new team.
+      let nflRos = null;
+      if (sp === 'nfl') { try { nflRos = JSON.parse((await env.RATEBOARD_KV.get('boostrostermap_v1_nfl')) || 'null'); } catch (e) {}
+        if (!nflRos || Date.now() - nflRos.at > 12 * 3600000) { try { await nflRosters(env); nflRos = JSON.parse((await env.RATEBOARD_KV.get('boostrostermap_v1_nfl')) || 'null'); } catch (e) {} } }
       try { match = (JSON.parse((await env.RATEBOARD_KV.get('boostmatch_v1_' + sp)) || 'null') || {}).f || {}; } catch (e) {}
       // Freshmen and anyone new: Real's owner counts stand in for hype.
       const ownersBy = new Map();
@@ -5215,8 +5241,17 @@ async function handle({ request, env, waitUntil }) {
         const listTeam = sp === 'ncaam' && CBB_TOP175[p.id] ? CBB_TOP175[p.id][1] : null;
         const teamAb = lastG && lastG.team ? boostAlias(sp, lastG.team) : listTeam ? boostAlias(sp, listTeam)
           : ros ? ros.ab : o && o.team ? boostAlias(sp, o.team) : null;
-        const team = (lastG && lastG.team) || listTeam || (ros && ros.ab) || (o && o.team) || null;
-        const g = teamAb ? sched.teams[teamAb] : null;
+        let team = (lastG && lastG.team) || listTeam || (ros && ros.ab) || (o && o.team) || null;
+        // NFL: on a different team's roster now (traded or signed) - that team's game, not his old one.
+        let tAb = teamAb, moved = null;
+        if (nflRos && nflRos.m) {
+          const opts = nflRos.m[boostName(name)] || [], pos0 = String((lastG && lastG.position) || (o && o.position) || '').toUpperCase();
+          const same = opts.some(x => boostAlias(sp, x.ab) === tAb);
+          const pick = opts.filter(x => !pos0 || String(x.pos).toUpperCase() === pos0);
+          const cand = pick.length ? pick : opts;   // Real and ESPN name defensive spots differently
+          if (!same && cand.length === 1) { const nx = cand[0]; moved = { from: team, to: nx.ab }; tAb = boostAlias(sp, nx.ab); team = nx.ab; }
+        }
+        const g = tAb ? sched.teams[tAb] : null;
         if (!g) { idle.push(name); continue; }
         const pos = (lastG && lastG.position) || (o && o.position) || (ros && ros.pos) || '';
         const mf = g.oppAb && match[g.oppAb] ? match[g.oppAb] : 1;
@@ -5239,6 +5274,7 @@ async function handle({ request, env, waitUntil }) {
         }
         if (proj != null && mf !== 1) basis += ` · matchup x${mf}`;
         const flags = [];
+        if (moved) flags.push(`Now with ${moved.to} (his last game was for ${moved.from})`);
         let skip = false, k = 1;
         // Injury report.
         const ij = inj[boostName(name)];
