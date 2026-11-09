@@ -254,7 +254,7 @@ async function load(tries = 0){
   { const g = j.gd ? new Date(j.gd + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) : null;
     $('#fresh').innerHTML = (g ? `Projections updated through <b>${esc(g)}</b>'s games` : 'Projections') + ' · updated when new games are added'; }
   // On pace = so far + his rate a game played × games left (older saved copies used all the team's games).
-  for(const r of (data.rows || [])) if(r.gp > 0) r.pc = Math.round(r.r + r.r / r.gp * r.l);
+  for(const r of (data.rows || [])) if(r.gp > 0) r.pc = Math.round(r.r + r.r / r.gp * (r.l + ((r.x && r.x.wt) || 0)));   // + games played that have no rax yet
   // Older answers sent bare ids; now [player id, card id].
   cardOf = new Map((j.mine || []).map(m => Array.isArray(m) ? m : [m, null])); mine = new Set(cardOf.keys());
   const pos = [...new Set((j.rows || []).map(r => r.p).filter(Boolean))].sort();
@@ -296,7 +296,7 @@ $('#more').addEventListener('click', () => { shown += 200; draw(); });
 const bdCache = new Map();
 function bdHtml(sp, j){
   const r = j.row; if(!r) return '<span class="note">No breakdown for him yet.</span>';
-  if(r.gp > 0) r.pc = Math.round(r.r + r.r / r.gp * r.l);   // on pace from the games left (older saved copies)
+  if(r.gp > 0) r.pc = Math.round(r.r + r.r / r.gp * (r.l + ((r.x && r.x.wt) || 0)));   // on pace from the games left (older saved copies)
   const x = r.x || {}, f1 = v => v == null ? '–' : (Math.round(v * 10) / 10).toLocaleString(), pct = v => Math.round((v || 0) * 100) + '%';
   const games = j.games || [], counted = games.filter(g => g.counted), add = r.pr - r.r, fc = x.fc;
   const GW = sp === 'soccer' ? 'club' : 'team';

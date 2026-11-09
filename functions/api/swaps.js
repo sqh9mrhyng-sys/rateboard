@@ -3916,8 +3916,18 @@ async function projBuild(env, db, sp) {
   // The hand-set list (Boosts' admin injury list) too.
   // FC too (2026-11-08): no injury list for soccer anywhere we read, so the hand list is the only one.
   if (['ncaaf', 'ncaam', 'nfl', 'soccer'].includes(sp)) { try { Object.assign(inj, await boostManualOut(env, sp)); } catch (e) {} }
-  const cur = ((await db.prepare(`SELECT playerId, player, team, position, day, rax, min, opponent, homeAway${fc ? ', conference' : ''} FROM gamelog WHERE sport=? AND season=?
-      AND rax IS NOT NULL AND (seasonType IS NULL OR seasonType='regularseason')`).bind(sp, Number(se)).all()).results) || [];
+  /* Games still waiting for Real's rax come too (2026-11-09: McDavid had 3
+     of them, plus 2 games not in the log yet, and was taken for a player who
+     had missed his team's last 5 - projected 224 at 151 in 18 games). They
+     count as games he played, at his rate, but not in his rate. */
+  const all = ((await db.prepare(`SELECT playerId, player, team, position, day, rax, min, opponent, homeAway${fc ? ', conference' : ''} FROM gamelog WHERE sport=? AND season=?
+      AND (seasonType IS NULL OR seasonType='regularseason')`).bind(sp, Number(se)).all()).results) || [];
+  const cur = all.filter(x => x.rax != null);
+  // How far the game log reaches: a team's games after this day aren't in it yet, so they aren't missed games.
+  const cover = all.reduce((m, x) => String(x.day || '') > m ? String(x.day) : m, '');
+  const pendBy = new Map();
+  const pendFrom = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);   // older blanks are games Real never paid out on
+  for (const x of all) if (x.rax == null && String(x.day) >= pendFrom) (pendBy.get(Number(x.playerId)) || pendBy.set(Number(x.playerId), []).get(Number(x.playerId))).push(x);
   const played = x => !useMin || x.min == null || Number(x.min) > 0;
   const alias = fc ? (c => c) : projLearnAlias(sp, cur, sched);
   // Last season, per game actually played.
@@ -3953,7 +3963,9 @@ async function projBuild(env, db, sp) {
   const rows = [];
   for (const [id, gs0] of by) {
     const gs = gs0.slice().sort((a, b) => String(a.day).localeCompare(String(b.day)));
-    const pg = gs.filter(played), last = gs[gs.length - 1];
+    const pg = gs.filter(played);
+    const pend = (pendBy.get(id) || []).filter(played).filter(x => !gs.some(g => g.day === x.day));
+    const last = [...gs, ...pend].sort((a, b) => String(a.day).localeCompare(String(b.day))).pop();
     const rax = gs.reduce((t, x) => t + Number(x.rax || 0), 0);
     if (!(rax > 0) || !pg.length) continue;
     // 1. His rate a game played: his games (recent ones count more) against his prior.
@@ -3967,7 +3979,7 @@ async function projBuild(env, db, sp) {
     const rate = (wx + P.k * prior) / (wsum + P.k);
     // 2. Games left and how many of them he'll play.
     const flags = [];
-    let total = null, rest = [], ab = null, tgDone = 0, fcx = null, teamDays = [], myClub = null;
+    let total = null, rest = [], ab = null, tgDone = 0, fcx = null, teamDays = [], myClub = null, unlogged = [];
     if (fc) {
       const cl = gs.slice().reverse().find(x => club.has(clubKey(x)));
       const c = cl ? club.get(clubKey(cl)) : null;
@@ -3990,14 +4002,17 @@ async function projBuild(env, db, sp) {
         total = tg.length;
         rest = tg.filter(g => !g[2] && Date.parse(g[0]) > Date.now() - 4 * 3600000);
         teamDays = tg.filter(g => g[2]).map(g => etd(g[0])); tgDone = teamDays.length;
+        // Finished games the log doesn't reach yet: still to be counted, at his rate.
+        if (cover) { unlogged = tg.filter(g => g[2] && etd(g[0]) > cover); teamDays = teamDays.filter(d => d <= cover); }
       } else flags.push('Team schedule not found');
     }
     // Share of his team's games (since his first) he has played, pulled toward a regular's.
     // (FC: his club games only - internationals aren't on the club's schedule.)
     const mine = myClub ? pg.filter(x => clubKey(x) === myClub) : pg;
-    const first = (mine[0] || gs[0]).day, days = mine.map(x => x.day);
-    const since = teamDays.filter(d => d >= first || near([first], d)).length || mine.length;
-    let avail = (mine.length + P.ka * P.a0) / (Math.max(since, mine.length) + P.ka);
+    const mineAll = [...mine, ...(myClub ? pend.filter(x => clubKey(x) === myClub) : pend)];
+    const first = mineAll.reduce((m, x) => String(x.day) < m ? String(x.day) : m, String((mine[0] || gs[0]).day)), days = mineAll.map(x => x.day);
+    const since = teamDays.filter(d => d >= first || near([first], d)).length || mineAll.length;
+    let avail = (mineAll.length + P.ka * P.a0) / (Math.max(since, mineAll.length) + P.ka);
     const recent = teamDays.slice(-P.look), missed = recent.filter(d => !near(days, d)).length;
     const ij = inj[boostName(last.player || '')];
     let skipNext = false, skipN = 0;
@@ -4023,11 +4038,17 @@ async function projBuild(env, db, sp) {
     // 3. Each game left: his rate x the chance he plays x opponent x home/away.
     let add = 0;
     rest.forEach((g, i) => { if ((i === 0 && skipNext) || i < skipN) return; add += rate * avail * (g[1] && of[g[1]] ? of[g[1]] : 1) * (g[3] && hf[g[3]] ? hf[g[3]] : 1); });
-    const gp = pg.length;
+    // Games he played that Real hasn't posted rax for yet, and his team's games past the end of the log.
+    const pendF = x => (x.opponent && of[alias(x.opponent)] ? of[alias(x.opponent)] : 1) * (x.homeAway && hf[x.homeAway] ? hf[x.homeAway] : 1);
+    for (const x of pend) add += rate * pendF(x);
+    const unl = avail > 0 ? unlogged.filter(g => !near(days, etd(g[0]))) : [];
+    for (const g of unl) add += rate * avail * (g[1] && of[g[1]] ? of[g[1]] : 1) * (g[3] && hf[g[3]] ? hf[g[3]] : 1);
+    if (pend.length || unl.length) flags.push(`${pend.length + unl.length} game${pend.length + unl.length === 1 ? '' : 's'} played but not in the rax yet - counted at his rate`);
+    const gp = pg.length, waitN = pend.length + unl.length;
     rows.push({ i: id, n: last.player || ('Player ' + id), t: last.team || '', p: last.position || '', gp, r: Math.round(rax), a: r1(rax / gp),
       pg: r1(rate * avail), l: rest.length, tg: total, nx: rest[0] && rest[0][1] ? rest[0][1] : null,
-      pr: Math.round(rax + add), pc: Math.round(rax + rax / gp * rest.length),   // on pace: his rate a game played over the games left (2026-11-08: was rate x all the team's games, so one 54-rax game showed 648) f: flags.length ? flags : undefined,
-      x: { rate: r2(rate), prior: r2(prior), ph: priorHow, av: r2(avail), since, ab, sk: skipNext ? 1 : 0, sn: skipN || undefined, w: r1(wsum), fc: fcx || undefined } });
+      pr: Math.round(rax + add), pc: Math.round(rax + rax / gp * (rest.length + waitN)), f: flags.length ? flags : undefined,   // pc = on pace: his rate a game played over the games left (2026-11-08: was rate x all the team's games, so one 54-rax game showed 648)
+      x: { rate: r2(rate), prior: r2(prior), ph: priorHow, av: r2(avail), since, ab, sk: skipNext ? 1 : 0, sn: skipN || undefined, w: r1(wsum), fc: fcx || undefined, wt: waitN || undefined } });
   }
   rows.sort((x, y) => y.pr - x.pr);
   // The latest game in the game data it was built from (shown at the top of the page).

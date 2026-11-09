@@ -7881,6 +7881,23 @@ async function nhlZeroFix(env) {
   try { await env.RATEBOARD_DB.prepare(`UPDATE gamelog SET rax = NULL WHERE sport='nhl' AND season=2026 AND rax = 0 AND day >= '2026-10-29' AND COALESCE(seasonType,'regularseason') <> 'preseason'`).run();
     await env.RATEBOARD_KV.delete('gamelog_rax_nhl_2026'); } catch (e) {}
 }
+/* One-off (2026-11-09, McDavid projected 224): NHL's game log stopped at
+   Nov 4 - the season was marked finished for the day and its rax walk only
+   reached back to Nov 5, so the blank games (Oct 29 on) were never asked
+   about again. Walk it again now (the window reaches back to the earliest
+   blank), take it off the finished/set-aside lists and end any rest. */
+async function nhlCatchup(env) {
+  const k = 'fix_nhl_catchup_1109b';
+  try { if (await env.RATEBOARD_KV.get(k)) return; await env.RATEBOARD_KV.put(k, '1', { expirationTtl: 30 * 86400 }); } catch (e) { return; }
+  try { await forgetWalk(env, 'nhl', 2026); } catch (e) {}
+  try { const c = JSON.parse((await env.RATEBOARD_KV.get('queue_clear_v1')) || '{}') || {}; delete c['nhl:2026']; await env.RATEBOARD_KV.put('queue_clear_v1', JSON.stringify(c)); } catch (e) {}
+  try { const st = JSON.parse((await env.RATEBOARD_KV.get('queue_stuck_v1')) || '{}') || {}; st.skip = st.skip || {};
+    for (const t of Object.keys(st.skip)) if (t.startsWith('nhl:2026:')) delete st.skip[t];
+    if (String(st.tag || '').startsWith('nhl:2026:')) { st.tag = ''; st.n = 0; st.progress = null; }
+    await env.RATEBOARD_KV.put('queue_stuck_v1', JSON.stringify(st)); } catch (e) {}
+  try { await env.RATEBOARD_KV.put('queue_pace_v1', JSON.stringify({ lastJob: 'nhl:2026', holdUntil: 0 })); } catch (e) {}
+  try { await env.RATEBOARD_KV.put('proj_force_v1_nhl', String(Date.now()), { expirationTtl: 7 * 86400 }); } catch (e) {}
+}
 async function collectorHealth(env, url) {
   const ck = new Request(url.origin + '/__cache/collector-health');
   try { const hit = await caches.default.match(ck); if (hit) return hit; } catch (e) {}
@@ -7987,6 +8004,7 @@ export async function onRequestGet(ctx) {
       await fetch(`${origin}/api/swaps?op=scantick&k=${k}`, { cf: { cacheTtl: 0 } }).catch(() => {}); })().catch(() => {}));
     ctx.waitUntil(boostRefresh(env).catch(() => {}));
     ctx.waitUntil(nhlZeroFix(env).catch(() => {}));
+    ctx.waitUntil(nhlCatchup(env).catch(() => {}));
     ctx.waitUntil(perfMarketTick(ctx).catch(() => {}));
     // FC Boosts: lineups near kickoff, and the game log after each game.
     ctx.waitUntil(fcLineupTick(env).catch(() => {}));
