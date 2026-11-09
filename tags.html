@@ -182,16 +182,24 @@ function draw(){
   // Most games first (Dennis, 2026-11-09), then by name.
   const tags = data.tags.filter(t => t.rarity === rar).slice().sort((a, b) => b.hits.length - a.hits.length || a.tag.localeCompare(b.tag));
   $('#list').innerHTML = tags.map(t => {
-    const hits = q ? t.hits.filter(h => `${h.p} ${h.tm} ${h.op}`.toLowerCase().includes(q)) : t.hits;
-    const body = hits.length ? hits.map(h => { const u = h.b ? realPerfUrl(sport, h.b) : realPlayerUrl(sport, h.i, h.s);
-      return `<div class="hit"><span>${u ? `<a href="${esc(u)}" target="_blank" rel="noopener"><b>${esc(h.p)}</b></a>` : `<b>${esc(h.p)}</b>`}${h.po ? '<span class="po">PLAYOFFS</span>' : ''}
-        <span class="w"> · ${esc(h.pos || '')} ${esc(h.tm || '')}${h.op ? ' vs ' + esc(h.op) : ''} · ${esc(fmtDay(h.d))}</span></span><span class="l">${esc(h.line)}</span></div>`; }).join('')
-      : `<div class="none">${q ? 'No games for that search.' : 'No game has earned this one yet.'}</div>`;
-    return `<details class="tag r-${esc(t.rarity)}${t.hits.length ? ' has' : ''}" data-t="${esc(t.tag)}" ${open.has(t.tag) || (q && hits.length) ? 'open' : ''}><summary><span class="rar">${esc(t.rarity)}</span>
+    const hits = hitsOf(t, q), show = open.has(t.tag) || (q && hits.length);
+    // Only open tags get their games drawn (some have hundreds) - the rest fill in when tapped.
+    const body = !show ? '' : bodyOf(hits, q);
+    return `<details class="tag r-${esc(t.rarity)}${t.hits.length ? ' has' : ''}" data-t="${esc(t.tag)}" ${show ? 'open' : ''}><summary><span class="rar">${esc(t.rarity)}</span>
       <span><span class="h">${esc(t.tag)}</span>${t.rid ? `<a class="tlink" href="${esc(realTagUrl(sport, t.rid))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">open on Real ↗</a>` : ''}<br><span class="d">${esc(t.desc)}</span></span><span class="n">${hits.length}</span></summary><div class="hits">${body}</div></details>`;
   }).join('');
 }
-$('#list').addEventListener('toggle', e => { const d = e.target; if(d.dataset && d.dataset.t){ if(d.open) open.add(d.dataset.t); else open.delete(d.dataset.t); } }, true);
+const hitsOf = (t, q) => q ? t.hits.filter(h => `${h.p} ${h.tm} ${h.op}`.toLowerCase().includes(q)) : t.hits;
+function bodyOf(hits, q){
+    return hits.length ? hits.map(h => { const u = h.b ? realPerfUrl(sport, h.b) : realPlayerUrl(sport, h.i, h.s);
+      return `<div class="hit"><span>${u ? `<a href="${esc(u)}" target="_blank" rel="noopener"><b>${esc(h.p)}</b></a>` : `<b>${esc(h.p)}</b>`}${h.po ? '<span class="po">PLAYOFFS</span>' : ''}
+        <span class="w"> · ${esc(h.pos || '')} ${esc(h.tm || '')}${h.op ? ' vs ' + esc(h.op) : ''} · ${esc(fmtDay(h.d))}</span></span><span class="l">${esc(h.line)}</span></div>`; }).join('')
+      : `<div class="none">${q ? 'No games for that search.' : 'No game has earned this one yet.'}</div>`;
+}
+$('#list').addEventListener('toggle', e => { const d = e.target; if(!(d.dataset && d.dataset.t)) return;
+  if(d.open){ open.add(d.dataset.t); const box = d.querySelector('.hits');
+    if(box && !box.children.length){ const t = data.tags.find(x => x.tag === d.dataset.t); if(t) box.innerHTML = bodyOf(hitsOf(t, $('#q').value.trim().toLowerCase()), $('#q').value.trim()); } }
+  else open.delete(d.dataset.t); }, true);
 $('#q').addEventListener('input', draw);
 $('#rarseg').addEventListener('click', e => { const b = e.target.closest('button'); if(!b) return; rar = b.dataset.r;
   document.querySelectorAll('#rarseg button').forEach(x => x.setAttribute('aria-pressed', String(x === b))); headLine(); draw(); });

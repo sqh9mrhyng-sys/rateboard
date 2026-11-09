@@ -3792,64 +3792,89 @@ const TAG_DEFS = {
     { tag: '#2centuryboot', rarity: 'legendary', desc: '200+ yards of field goals made', sql: `${tagJ('fgyds')} >= 200`, test: o => tn(o.fgyds) >= 200, line: o => `${tn(o.fgyds)} FG yds (${o['fg%'] || ''})` }
   ]
 };
-async function tagSig(env, db, sp) {
-  const k = `tagview_sig_${sp}`;
+/* Built one season at a time (2026-11-09: the page took ages - every load after
+   a change rescanned every season's stat lines and pulled whole careers).
+   Finished seasons are kept until something in them changes; only the
+   season under way is redone as games come in. Each season's fingerprint:
+   its game-log rows and latest day, and its performances. */
+const TAG_SEASONS = { nfl: [2026, 2025, 2024, 2023] };
+async function tagSeasonSig(env, db, sp, se) {
+  const k = `tagview_sig_v2_${sp}_${se}`;
   try { const c = await env.RATEBOARD_KV.get(k); if (c) return c; } catch (e) {}
-  const r = await db.prepare(`SELECT COUNT(*) AS n, MAX(day) AS d FROM gamelog WHERE sport=? AND stats IS NOT NULL`).bind(sp).first();
-  let p = null; try { p = await db.prepare(`SELECT COUNT(*) AS n FROM performances WHERE sport=?`).bind(sp).first(); } catch (e) {}
+  const r = await db.prepare(`SELECT COUNT(*) AS n, MAX(day) AS d FROM gamelog WHERE sport=? AND season=? AND stats IS NOT NULL`).bind(sp, se).first();
+  let p = null; try { p = await db.prepare(`SELECT COUNT(*) AS n FROM performances WHERE sport=? AND season=?`).bind(sp, se).first(); } catch (e) {}
   const v = `${r && r.n}|${r && r.d}|${p && p.n}`;
-  try { await env.RATEBOARD_KV.put(k, v, { expirationTtl: 900 }); } catch (e) {}
+  // A finished season barely moves: its fingerprint is kept 6 hours, the current one 15 minutes.
+  try { await env.RATEBOARD_KV.put(k, v, { expirationTtl: se === TAG_SEASONS[sp][0] ? 900 : 6 * 3600 }); } catch (e) {}
   return v;
 }
-/* The games for each tag: those whose stat line meets it, plus every game Real
-   itself tagged with it (its performance tags, collected box score by box
-   score - the stat line misses some, e.g. a quarterback's catch). Real's tag
-   id gives the tag's own link, and a box-score id the game's performance card. */
-async function tagBuild(env, db, sp) {
+async function tagSig(env, db, sp) { const out = []; for (const se of TAG_SEASONS[sp]) out.push(await tagSeasonSig(env, db, sp, se)); return out.join('/'); }
+const tagNt = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+async function tagSeasonBuild(env, db, sp, se, rids) {
   const defs = TAG_DEFS[sp];
-  const nt = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  let dict = []; try { dict = ((await db.prepare(`SELECT id, hash, label FROM tags WHERE sport=? AND kind='playerboxscore'`).bind(sp).all()).results) || []; } catch (e) {}
-  const idOf = d => { const ws = [nt(d.tag), ...(d.alias || []).map(nt)];
-    const t = dict.find(x => ws.includes(nt(x.hash))) || dict.find(x => ws.includes(nt(x.label)));
-    return t ? Number(t.id) : null; };
-  const out = defs.map(d => ({ tag: d.tag, rarity: d.rarity, desc: d.desc, rid: idOf(d), hits: [] }));
-  const byKey = out.map(() => new Map());
+  const byKey = defs.map(() => new Map());
   const add = (i, h) => { const k = `${h.i}|${h.d}`, o = byKey[i].get(k); if (o) { Object.assign(o, Object.fromEntries(Object.entries(h).filter(([, v]) => v != null && v !== ''))); return; } byKey[i].set(k, h); };
   // 1. Stat lines.
-  const rows = ((await db.prepare(`SELECT season, playerId, player, team, opponent, day, position, seasonType, stats FROM gamelog
-      WHERE sport=? AND stats IS NOT NULL AND COALESCE(seasonType, 'regularseason') <> 'preseason' AND (${defs.map(d => `(${d.sql})`).join(' OR ')})
-      ORDER BY day DESC LIMIT 3000`).bind(sp).all()).results) || [];
+  const rows = ((await db.prepare(`SELECT playerId, player, team, opponent, day, position, seasonType, stats FROM gamelog
+      WHERE sport=? AND season=? AND stats IS NOT NULL AND COALESCE(seasonType, 'regularseason') <> 'preseason' AND (${defs.map(d => `(${d.sql})`).join(' OR ')})
+      LIMIT 3000`).bind(sp, se).all()).results) || [];
+  const statOf = new Map();
   for (const r of rows) {
     let o = {}; try { o = JSON.parse(r.stats || '{}') || {}; } catch (e) {}
     const pos = String(r.position || '').toUpperCase();
-    defs.forEach((d, i) => { if (d.test(o, pos)) add(i, { p: r.player, i: Number(r.playerId), s: Number(r.season), d: r.day, tm: r.team, op: r.opponent, pos,
+    statOf.set(`${r.playerId}|${r.day}`, { o, pos });
+    defs.forEach((d, i) => { if (d.test(o, pos)) add(i, { p: r.player, i: Number(r.playerId), s: se, d: r.day, tm: r.team, op: r.opponent, pos,
       po: r.seasonType && r.seasonType !== 'regularseason' ? 1 : undefined, line: d.line(o) }); });
   }
   // 2. Real's own tags.
-  const rids = out.map(t => t.rid).filter(Boolean);
-  if (rids.length) {
+  const ids = rids.filter(Boolean);
+  if (ids.length) {
     let pr = [];
-    try { pr = ((await db.prepare(`SELECT id, season, playerId, player, day, team, opponent, seasonType, tags FROM performances WHERE sport=? AND tags IS NOT NULL
-        AND (${rids.map(() => `instr(',' || tags || ',', ?) > 0`).join(' OR ')}) LIMIT 3000`).bind(sp, ...rids.map(x => `,${x},`)).all()).results) || []; } catch (e) {}
+    try { pr = ((await db.prepare(`SELECT id, playerId, player, day, team, opponent, seasonType, tags FROM performances WHERE sport=? AND season=? AND tags IS NOT NULL
+        AND (${ids.map(() => `instr(',' || tags || ',', ?) > 0`).join(' OR ')}) LIMIT 3000`).bind(sp, se, ...ids.map(x => `,${x},`)).all()).results) || []; } catch (e) {}
     for (const r of pr) { const tg = String(r.tags).split(',').map(Number);
-      out.forEach((t, i) => { if (t.rid && tg.includes(t.rid)) add(i, { p: r.player, i: Number(r.playerId), s: Number(r.season), d: r.day, tm: r.team, op: r.opponent, b: Number(r.id), real: 1,
+      rids.forEach((rid, i) => { if (rid && tg.includes(rid)) add(i, { p: r.player, i: Number(r.playerId), s: se, d: r.day, tm: r.team, op: r.opponent, b: Number(r.id), real: 1,
         po: r.seasonType && r.seasonType !== 'regularseason' ? 1 : undefined }); }); }
   }
-  // 3. Box-score ids (the game's card) for stat-line games, and stat lines for Real-only ones.
-  const all = byKey.flatMap(m => [...m.values()]), pids = [...new Set(all.map(h => h.i))];
-  for (let k = 0; k < pids.length; k += 90) { const part = pids.slice(k, k + 90), ph = part.map(() => '?').join(',');
-    let bx = [], gl = [];
-    try { bx = ((await db.prepare(`SELECT id, playerId, day FROM performances WHERE sport=? AND playerId IN (${ph})`).bind(sp, ...part).all()).results) || []; } catch (e) {}
-    try { gl = ((await db.prepare(`SELECT playerId, day, position, stats FROM gamelog WHERE sport=? AND playerId IN (${ph}) AND stats IS NOT NULL`).bind(sp, ...part).all()).results) || []; } catch (e) {}
-    const bm = new Map(bx.map(x => [`${x.playerId}|${x.day}`, Number(x.id)])), gm = new Map(gl.map(x => [`${x.playerId}|${x.day}`, x]));
-    out.forEach((t, i) => { const d = defs[i];
-      for (const h of byKey[i].values()) { const kk = `${h.i}|${h.d}`;
-        if (!h.b && bm.has(kk)) h.b = bm.get(kk);
-        if (!h.line && gm.has(kk)) { let o = {}; try { o = JSON.parse(gm.get(kk).stats || '{}') || {}; } catch (e) {} h.pos = h.pos || String(gm.get(kk).position || '').toUpperCase(); h.line = d.test(o, h.pos) ? d.line(o) : 'tagged by Real'; } } });
+  // 3. Only for the games found: the box-score id (the game's card) and, for Real-only ones, the stat line.
+  const all = byKey.flatMap(m => [...m.values()]);
+  const pairs = [...new Map(all.map(h => [`${h.i}|${h.d}`, h])).values()];
+  const bm = new Map(), gm = new Map();
+  for (let k = 0; k < pairs.length; k += 40) {
+    const part = pairs.slice(k, k + 40), w = part.map(() => '(playerId=? AND day=?)').join(' OR '), b = part.flatMap(h => [h.i, h.d]);
+    try { for (const x of (((await db.prepare(`SELECT id, playerId, day FROM performances WHERE sport=? AND season=? AND (${w})`).bind(sp, se, ...b).all()).results) || [])) bm.set(`${x.playerId}|${x.day}`, Number(x.id)); } catch (e) {}
+    const need = part.filter(h => !statOf.has(`${h.i}|${h.d}`));
+    if (need.length) { const w2 = need.map(() => '(playerId=? AND day=?)').join(' OR ');
+      try { for (const x of (((await db.prepare(`SELECT playerId, day, position, stats FROM gamelog WHERE sport=? AND season=? AND (${w2})`).bind(sp, se, ...need.flatMap(h => [h.i, h.d])).all()).results) || [])) {
+        let o = {}; try { o = JSON.parse(x.stats || '{}') || {}; } catch (e) {} gm.set(`${x.playerId}|${x.day}`, { o, pos: String(x.position || '').toUpperCase() }); } } catch (e) {} }
   }
-  out.forEach((t, i) => { t.hits = [...byKey[i].values()].sort((a, b) => String(b.d).localeCompare(String(a.d))); });
-  out.forEach(t => { for (const h of t.hits) if (!h.line) h.line = 'tagged by Real'; });
-  const c = { at: Date.now(), v: TAG_DEFS_V, sig: await tagSig(env, db, sp).catch(() => ''), sport: sp, tags: out };
+  defs.forEach((d, i) => { for (const h of byKey[i].values()) { const kk = `${h.i}|${h.d}`;
+    if (!h.b && bm.has(kk)) h.b = bm.get(kk);
+    if (!h.line) { const g = statOf.get(kk) || gm.get(kk); if (g) { h.pos = h.pos || g.pos; h.line = d.test(g.o, h.pos) ? d.line(g.o) : ''; } }
+    if (!h.line) h.line = 'tagged by Real'; } });
+  return defs.map((d, i) => [...byKey[i].values()]);
+}
+async function tagBuild(env, db, sp) {
+  const defs = TAG_DEFS[sp];
+  let dict = []; try { dict = ((await db.prepare(`SELECT id, hash, label FROM tags WHERE sport=? AND kind='playerboxscore'`).bind(sp).all()).results) || []; } catch (e) {}
+  const idOf = d => { const ws = [tagNt(d.tag), ...(d.alias || []).map(tagNt)];
+    const t = dict.find(x => ws.includes(tagNt(x.hash))) || dict.find(x => ws.includes(tagNt(x.label)));
+    return t ? Number(t.id) : null; };
+  const rids = defs.map(idOf);
+  const out = defs.map((d, i) => ({ tag: d.tag, rarity: d.rarity, desc: d.desc, rid: rids[i], hits: [] }));
+  const sigs = [];
+  for (const se of TAG_SEASONS[sp]) {
+    const sig = await tagSeasonSig(env, db, sp, se); sigs.push(sig);
+    const k = `tagview_s_v${TAG_DEFS_V}_${sp}_${se}`;
+    let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(k)) || 'null'); } catch (e) {}
+    if (!c || c.sig !== sig || String(c.rids) !== String(rids)) {
+      c = { sig, rids, hits: await tagSeasonBuild(env, db, sp, se, rids) };
+      try { await env.RATEBOARD_KV.put(k, JSON.stringify(c), { expirationTtl: 30 * 86400 }); } catch (e) {}
+    }
+    c.hits.forEach((h, i) => { if (out[i]) out[i].hits.push(...h); });
+  }
+  out.forEach(t => t.hits.sort((a, b) => String(b.d).localeCompare(String(a.d))));
+  const c = { at: Date.now(), v: TAG_DEFS_V, sig: sigs.join('/'), sport: sp, tags: out };
   try { await env.RATEBOARD_KV.put(`tagview_v1_${sp}`, JSON.stringify(c)); } catch (e) {}
   return c;
 }
@@ -5549,9 +5574,9 @@ async function handle({ request, env, waitUntil }) {
     const sp = TAG_DEFS[url.searchParams.get('sport')] ? url.searchParams.get('sport') : 'nfl';
     const k = `tagview_v1_${sp}`;
     let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(k)) || 'null'); } catch (e) {}
-    if (c && c.v !== TAG_DEFS_V) c = null;   // the tag list changed: build again
     const lockK = `tagview_lock_${sp}`;
-    let stale = !c;
+    // A changed tag list or new games: the last list is shown while the new one is built.
+    let stale = !c || c.v !== TAG_DEFS_V;
     if (c && Date.now() - c.at > 30 * 60000) { try { stale = (await tagSig(env, db, sp)) !== c.sig; } catch (e) {} }
     if (stale) {
       let locked = false; try { locked = !!(await env.RATEBOARD_KV.get(lockK)); } catch (e) {}
