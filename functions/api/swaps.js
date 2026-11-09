@@ -247,10 +247,20 @@ async function rsGetJson(url, auth) {
 
 /* The bot account (RS_SWAP_TOKEN) only handles DMs. Reading passes and
    looking people up goes through the board's and the market's accounts. */
+/* The market account does nothing but collect performances until they're all
+   in (Dennis, 2026-11-09) - the flag perf_all_done_v1 ends that. Until then
+   scans and lookups that used it go through the board account instead. */
+let PERF_ONLY = true, PERF_ONLY_AT = 0;
+async function perfOnlyRefresh(env) {
+  if (Date.now() - PERF_ONLY_AT < 120000) return PERF_ONLY;
+  try { PERF_ONLY = !(await env.RATEBOARD_KV.get('perf_all_done_v1')); PERF_ONLY_AT = Date.now(); } catch (e) {}
+  return PERF_ONLY;
+}
+const marketTok = env => PERF_ONLY ? null : env.RS_MARKET_TOKEN;
 function scanToks(env) {
   // The market account first: it sits idle unless a market pull is queued,
   // while the board account is busy with the game-data collectors all day.
-  const t = [env.RS_MARKET_TOKEN, env.RS_AUTH_TOKEN].filter(x => typeof x === 'string' && x.length > 20);
+  const t = [marketTok(env), env.RS_AUTH_TOKEN].filter(x => typeof x === 'string' && x.length > 20);
   return t.length ? [...new Set(t)] : [swapToken(env)].filter(Boolean);
 }
 const scanTok = env => scanToks(env)[Math.floor(Math.random() * scanToks(env).length)];
@@ -1821,7 +1831,7 @@ async function scanWork(env, db, me, job, auth) {
      minutes a scan. Calls now go round the three accounts in turn, and an
      account that gets a 429 is rested for 3 minutes (across scans). */
   // Not the collector's account: scans on it got it 429'd and stalled game data (2026-11-04).
-  const toks0 = [...new Set([auth, env.RS_MARKET_TOKEN].filter(x => typeof x === 'string' && x.length > 20))];
+  const toks0 = [...new Set([auth, marketTok(env) || env.RS_AUTH_TOKEN].filter(x => typeof x === 'string' && x.length > 20))];
   const toks = dmWindow() && toks0.length > 1 ? toks0.filter(t => t !== auth) : toks0;   // the bot is busy with DMs at :30 / :00
   let rr = Math.floor(Math.random() * toks.length);
   const pickTok = () => { for (let i = 0; i < toks.length; i++) { const t = toks[(rr + i) % toks.length]; if (!(TOK_COOL.get(t) > Date.now())) { rr = (rr + i + 1) % toks.length; return t; } }
@@ -1933,6 +1943,7 @@ async function scanDoneDms(db, auth, t0) {
    scans whose page went away, start whoever is next in line if they've left
    the page, and send the "scan done" DMs. */
 async function backgroundScans(env, db, auth) {
+  try { await perfOnlyRefresh(env); } catch (e) {}
   await scanTables(db);
   const now = Date.now(), t0 = now;
   const done = async (key, r) => { if (r && r.done) { await stat(db, 'scan_background'); await scanDoneLater(db, key, r.job); } };
@@ -3984,6 +3995,7 @@ const MARKS = new WeakMap();
 const mark = (req, what) => { const m = MARKS.get(req); if (m) m.push(`${what} ${Date.now() - m.t}`); };
 export async function onRequest(ctx) {
   const t0 = Date.now();
+  try { await perfOnlyRefresh(ctx.env); } catch (e) {}
   try { const m = []; m.t = t0; MARKS.set(ctx.request, m); } catch (e) {}
   try { const r = await handle(Object.assign({}, ctx, { env: watchEnv(ctx.env, ctx.request, ctx.waitUntil) }));
     // Page-opening calls that took long, so a slow page can be traced (shown on the health page, no names).
@@ -5501,7 +5513,8 @@ async function handle({ request, env, waitUntil }) {
   }
   // Tag finder (2026-11-09): which games earned each performance tag.
   if (op === 'tagview') {
-    if (!acc.who) return json({ error: 'Sign in on the board first.' }, 403);
+    // Dennis only until it's finished (2026-11-09).
+    if (!acc.admin) return json({ error: 'This page is not open yet.' }, 403);
     const sp = TAG_DEFS[url.searchParams.get('sport')] ? url.searchParams.get('sport') : 'nfl';
     const k = `tagview_v1_${sp}`;
     let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(k)) || 'null'); } catch (e) {}

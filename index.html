@@ -611,7 +611,6 @@
           <option value="board">Board</option>
           <option value="boosts">Boosts/Buys (beta)</option>
           <option value="projections">Projections</option>
-          <option value="tags">Tag finder</option>
         </select>
         <button type="button" id="pagebtn" aria-haspopup="menu" aria-expanded="false"><span id="pagebtn-t">Board</span><span class="caret">&#9662;</span></button>
 
@@ -944,7 +943,7 @@ function applyGameDataVisibility(){
     // still shows in Safari's picker.
     const want = [['board', 'Board'], ...(canSeePackData() ? [['cbb', 'Game data']] : []),
                   ...(marketAccess ? [['market', 'Market data']] : []),
-                  ...(boostsOn ? [['boosts', 'Boosts/Buys (beta)']] : []), ['projections', 'Projections'], ['tags', 'Tag finder'],   // everyone (2026-11-08; tags 2026-11-09)
+                  ...(boostsOn ? [['boosts', 'Boosts/Buys (beta)']] : []), ['projections', 'Projections'], ...(otdOn ? [['tags', 'Tag finder']] : []),   // projections everyone (2026-11-08); tag finder Dennis only for now
                   ...(swapsOn ? [['swaps', 'Swaps (beta)']] : []), ...(otdOn ? [['otd', 'OTD optimization'], ['admin', 'Admin']] : [])];
     const have = [...sel.options].map(o => o.value).join(',');
     if(have !== want.map(w => w[0]).join(',')){

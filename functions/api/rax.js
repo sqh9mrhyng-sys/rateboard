@@ -7682,23 +7682,27 @@ async function marketBusy(env) {
   try { const r = await env.RATEBOARD_DB.prepare('SELECT 1 AS x FROM market_seasons WHERE front IS NOT NULL LIMIT 1').first(); if (r) return true; } catch (e) {}
   return false;
 }
-/* Real's own performance tags for the Tag finder (2026-11-09): NFL box scores,
-   newest season first, 25 players a minute, until each season is done. */
-const PERF_TAG_SEASONS = [['nfl', 2026], ['nfl', 2025], ['nfl', 2024], ['nfl', 2023]];
-async function perfTagTick(ctx) {
-  const env = ctx.env;
-  if (await jobOverBudget(env)) return;
-  for (const [sp, se] of PERF_TAG_SEASONS) {
-    let fin = null; try { fin = await env.RATEBOARD_KV.get(perfDoneKey(sp, se)); } catch (e) {}
-    if (fin) continue;
-    const u = `${new URL(ctx.request.url).origin}/api/rax?perf=collect&sport=${sp}&season=${se}&limit=25`;
-    try { await handleGet({ request: new Request(u), env, waitUntil: ctx.waitUntil }); } catch (e) {}
-    return;
+/* The market account on performances only (Dennis, 2026-11-09): every season in
+   PERF_QUEUE (NFL first, for the Tag finder), 40 players a call, twice a
+   minute. No marketplace pulls and no game-log help until it's all in; then
+   perf_all_done_v1 is set and the account goes back to its usual work. */
+async function perfOnly(env) { try { return !(await env.RATEBOARD_KV.get('perf_all_done_v1')); } catch (e) { return true; } }
+async function perfMarketTick(ctx) {
+  const env0 = ctx.env, alt = env0.RS_MARKET_TOKEN;
+  if (!alt || !(await perfOnly(env0)) || await jobOverBudget(env0)) return;
+  const env = new Proxy(env0, { get: (t, k) => k === 'RS_AUTH_TOKEN' ? alt : t[k] });
+  const origin = new URL(ctx.request.url).origin;
+  for (let round = 0; round < 2; round++) {
+    let job = null;
+    for (const x of PERF_QUEUE) { let fin = null; try { fin = await env0.RATEBOARD_KV.get(perfDoneKey(x.sport, x.season)); } catch (e) {} if (!fin) { job = x; break; } }
+    if (!job) { try { await env0.RATEBOARD_KV.put('perf_all_done_v1', String(Date.now())); } catch (e) {} return; }
+    try { await handleGet({ request: new Request(`${origin}/api/rax?perf=collect&sport=${job.sport}&season=${job.season}&limit=40`), env, waitUntil: ctx.waitUntil }); } catch (e) {}
+    if (round === 0) await new Promise(r => setTimeout(r, 2000));
   }
 }
 async function gapPush(ctx) {
   const env0 = ctx.env, alt = env0.RS_MARKET_TOKEN;
-  if (!alt || await marketBusy(env0)) return;
+  if (!alt || await marketBusy(env0) || await perfOnly(env0)) return;   // on performances only for now
   const kvj = async k => { try { return JSON.parse((await env0.RATEBOARD_KV.get(k)) || 'null'); } catch (e) { return null; } };
   let job = null, phase = null;
   for (const [sp, se] of EXTRA_JOBS) {
@@ -7958,7 +7962,7 @@ export async function onRequestGet(ctx) {
       await fetch(`${origin}/api/swaps?op=scantick&k=${k}`, { cf: { cacheTtl: 0 } }).catch(() => {}); })().catch(() => {}));
     ctx.waitUntil(boostRefresh(env).catch(() => {}));
     ctx.waitUntil(nhlZeroFix(env).catch(() => {}));
-    ctx.waitUntil(perfTagTick(ctx).catch(() => {}));
+    ctx.waitUntil(perfMarketTick(ctx).catch(() => {}));
     // FC Boosts: lineups near kickoff, and the game log after each game.
     ctx.waitUntil(fcLineupTick(env).catch(() => {}));
     ctx.waitUntil(fcGameRefresh(env).catch(() => {}));
@@ -8115,7 +8119,7 @@ export async function onRequestGet(ctx) {
     const tally = env.RATEBOARD_DB && env.RATEBOARD_DB.__tally;
     const label = url.searchParams.get('queue') === 'next' ? 'tick' : ([...url.searchParams.entries()].find(([k]) => !['sport', 'season', 'jobs', 't'].includes(k)) || ['other'])[0];
     const record = () => { try { ctx.waitUntil(addJobUse(env, tally, label).catch(() => {})); } catch (e) {} };
-    if (!(MARKET_ON && env.RS_MARKET_TOKEN)) { const r0 = await handleGet(ctx); record(); return r0; }
+    if (!(MARKET_ON && env.RS_MARKET_TOKEN) || await perfOnly(env)) { const r0 = await handleGet(ctx); record(); return r0; }   // market account on performances only for now
     /* The marketplace pull rides alongside the collector call rather than
        ahead of it: it is a different Real account, one request at a time,
        and it stops when the collector's own work is done, so the tick is no
