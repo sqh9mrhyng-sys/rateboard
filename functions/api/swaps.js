@@ -3735,7 +3735,7 @@ const tagFrac = (k, part) => { const v = `json_extract(stats, '$."${k}"')`;
 const tn = v => { const m = String(v == null ? '' : v).match(/^-?\d+(\.\d+)?/); return m ? Number(m[0]) : 0; };
 const tfrac = (v, i) => { const m = String(v || '').match(/^(\d+)\/(\d+)$/); return m ? Number(m[i + 1]) : 0; };
 const tTds = o => Math.max(tn(o.td), tn(o.rutd) + tn(o.retd));
-const TAG_DEFS_V = 2;   // 2: Real's own tags and box-score links (2026-11-09)
+const TAG_DEFS_V = 3;   // 3: Mystic NFL (2026-11-09)   // 2: Real's own tags and box-score links (2026-11-09)
 const TAG_DEFS = {
   nfl: [
     { tag: '#3hundo', rarity: 'iconic', desc: '300+ rushing + receiving yards', sql: `COALESCE(${tagJ('ruyds')}, 0) + COALESCE(${tagJ('reyds')}, 0) >= 300`,
@@ -3758,7 +3758,22 @@ const TAG_DEFS = {
     { tag: '#magnet', rarity: 'iconic', desc: '4+ interceptions (defense)', sql: `${tagJ('int')} >= 4 AND COALESCE(position, '') <> 'QB'`,
       test: (o, pos) => pos !== 'QB' && tn(o.int) >= 4, line: o => `${tn(o.int)} INTs` },
     { tag: '#diamondboot', rarity: 'iconic', desc: '7+ field goals', sql: `json_extract(stats, '$."fg%"') LIKE '%/%' AND ${tagFrac('fg%', 0)} >= 7`,
-      test: o => tfrac(o['fg%'], 0) >= 7, line: o => `${o['fg%']} FG` }
+      test: o => tfrac(o['fg%'], 0) >= 7, line: o => `${o['fg%']} FG` },
+    /* Mystic (Dennis, 2026-11-09). Where an Iconic tag covers the next step up
+       (300+ yards, 600+ passing, 7+ TDs, 6+ sacks, 4+ INTs, 7+ FGs), the
+       Mystic one stops below it - a game gets its highest tag. */
+    { tag: '#2fitty', rarity: 'mystic', desc: '250+ rushing + receiving yards', sql: `COALESCE(${tagJ('ruyds')}, 0) + COALESCE(${tagJ('reyds')}, 0) BETWEEN 250 AND 299`,
+      test: o => { const y = tn(o.ruyds) + tn(o.reyds); return y >= 250 && y < 300; }, line: o => `${tn(o.ruyds)} rush + ${tn(o.reyds)} rec yds` },
+    { tag: '#air5hundo', rarity: 'mystic', desc: '500+ passing yards', sql: `${tagJ('pyds')} BETWEEN 500 AND 599`, test: o => tn(o.pyds) >= 500 && tn(o.pyds) < 600, line: o => `${tn(o.pyds)} pass yds` },
+    { tag: '#goldenarm', rarity: 'mystic', desc: '6 passing TDs', sql: `${tagJ('ptd')} = 6`, test: o => tn(o.ptd) === 6, line: o => `${tn(o.ptd)} pass TDs` },
+    { tag: '#nightmare', rarity: 'mystic', desc: '5 sacks', sql: `${tagJ('sack')} >= 5 AND ${tagJ('sack')} < 6 AND COALESCE(position, '') <> 'QB'`,
+      test: (o, pos) => pos !== 'QB' && tn(o.sack) >= 5 && tn(o.sack) < 6, line: o => `${tn(o.sack)} sacks` },
+    { tag: '#enforcer', rarity: 'mystic', desc: '3+ forced fumbles', sql: `${tagJ('ff')} >= 3 AND COALESCE(position, '') <> 'QB'`,
+      test: (o, pos) => pos !== 'QB' && tn(o.ff) >= 3, line: o => `${tn(o.ff)} forced fumbles` },
+    { tag: '#triplepick', rarity: 'mystic', desc: '3 interceptions (defense)', sql: `${tagJ('int')} = 3 AND COALESCE(position, '') <> 'QB'`,
+      test: (o, pos) => pos !== 'QB' && tn(o.int) === 3, line: o => `${tn(o.int)} INTs` },
+    { tag: '#platniumboot', alias: ['platinumboot'], rarity: 'mystic', desc: '6 field goals', sql: `json_extract(stats, '$."fg%"') LIKE '%/%' AND ${tagFrac('fg%', 0)} = 6`,
+      test: o => tfrac(o['fg%'], 0) === 6, line: o => `${o['fg%']} FG` }
   ]
 };
 async function tagSig(env, db, sp) {

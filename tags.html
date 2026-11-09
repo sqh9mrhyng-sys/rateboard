@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Tag finder</title>
 <style>
-  :root{--bg:#141925;--panel:#1d2433;--panel2:#232b3d;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;--ok:#5fbf7a;--bad:#e5484d;--iconic:#ff5fb3}
+  :root{--bg:#141925;--panel:#1d2433;--panel2:#232b3d;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;--ok:#5fbf7a;--bad:#e5484d;--iconic:#ff5fb3;--mystic:#f2c94c}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
   .wrap{max-width:860px;margin:0 auto;padding:16px}
@@ -31,7 +31,10 @@
   .tag.has .n{background:var(--iconic);color:#141925;border-color:var(--iconic)}
   .rar{font-size:10.5px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;border-radius:6px;background:var(--iconic);color:#141925}
   .tag.has{border-color:color-mix(in srgb,var(--iconic) 55%,var(--line))}
-  .seg#rarseg button[aria-pressed="true"]{background:var(--iconic);color:#141925}
+  .seg#rarseg button[data-r="iconic"][aria-pressed="true"]{background:var(--iconic);color:#141925}
+  .seg#rarseg button[data-r="mystic"][aria-pressed="true"]{background:var(--mystic);color:#141925}
+  .tag.r-mystic .rar,.tag.r-mystic.has .n{background:var(--mystic);border-color:var(--mystic)}
+  .tag.r-mystic.has{border-color:color-mix(in srgb,var(--mystic) 55%,var(--line))}
   .tlink{font-size:12px;margin-left:6px}
   .hits{border-top:1px solid var(--line)}
   .hit{display:flex;gap:10px;align-items:baseline;justify-content:space-between;padding:9px 12px;border-bottom:1px solid var(--line);font-size:14px}
@@ -48,7 +51,7 @@
   <section>
     <div class="seg" id="sportseg"><button data-s="nfl" aria-pressed="true">NFL</button></div>
     <div class="row2">
-      <div class="seg" id="rarseg"><button data-r="iconic" aria-pressed="true">Iconic</button></div>
+      <div class="seg" id="rarseg"><button data-r="iconic" aria-pressed="true">Iconic</button><button data-r="mystic" aria-pressed="false">Mystic</button></div>
       <input id="q" placeholder="Find a player or team" autocomplete="off">
     </div>
     <p class="note">Performance tags - the whole game's line. Tap a tag to see every game that earned it (newest first); a name opens that game's performance card (or his season card until the game's card is in). From Real's own tags and each game's stat line, regular season and playoffs.</p>
@@ -181,12 +184,17 @@ function draw(){
       return `<div class="hit"><span>${u ? `<a href="${esc(u)}" target="_blank" rel="noopener"><b>${esc(h.p)}</b></a>` : `<b>${esc(h.p)}</b>`}${h.po ? '<span class="po">PLAYOFFS</span>' : ''}
         <span class="w"> · ${esc(h.pos || '')} ${esc(h.tm || '')}${h.op ? ' vs ' + esc(h.op) : ''} · ${esc(fmtDay(h.d))}</span></span><span class="l">${esc(h.line)}</span></div>`; }).join('')
       : `<div class="none">${q ? 'No games for that search.' : 'No game has earned this one yet.'}</div>`;
-    return `<details class="tag${t.hits.length ? ' has' : ''}" data-t="${esc(t.tag)}" ${open.has(t.tag) || (q && hits.length) ? 'open' : ''}><summary><span class="rar">${esc(t.rarity)}</span>
+    return `<details class="tag r-${esc(t.rarity)}${t.hits.length ? ' has' : ''}" data-t="${esc(t.tag)}" ${open.has(t.tag) || (q && hits.length) ? 'open' : ''}><summary><span class="rar">${esc(t.rarity)}</span>
       <span><span class="h">${esc(t.tag)}</span>${t.rid ? `<a class="tlink" href="${esc(realTagUrl(sport, t.rid))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">open on Real ↗</a>` : ''}<br><span class="d">${esc(t.desc)}</span></span><span class="n">${hits.length}</span></summary><div class="hits">${body}</div></details>`;
   }).join('');
 }
 $('#list').addEventListener('toggle', e => { const d = e.target; if(d.dataset && d.dataset.t){ if(d.open) open.add(d.dataset.t); else open.delete(d.dataset.t); } }, true);
 $('#q').addEventListener('input', draw);
+$('#rarseg').addEventListener('click', e => { const b = e.target.closest('button'); if(!b) return; rar = b.dataset.r;
+  document.querySelectorAll('#rarseg button').forEach(x => x.setAttribute('aria-pressed', String(x === b))); headLine(); draw(); });
+const RAR_LBL = { iconic: 'Iconic', mystic: 'Mystic' };
+function headLine(){ if(!data) return; const n = data.tags.filter(t => t.rarity === rar).reduce((t, x) => t + x.hits.length, 0);
+  $('#head').textContent = `${n} game${n === 1 ? '' : 's'} with a${rar === 'iconic' ? 'n' : ''} ${RAR_LBL[rar]} performance tag · checked ${new Date(data.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`; }
 async function load(){
   $('#head').textContent = 'Loading…';
   let j = null;
@@ -195,9 +203,7 @@ async function load(){
   if(j.building){ $('#head').textContent = j.note; setTimeout(load, 20000); return; }
   if(j.error){ $('#head').innerHTML = /sign in/i.test(j.error) ? 'Sign in on <a href="/">the board</a> first.' : esc(j.error); return; }
   data = j;
-  const n = j.tags.reduce((t, x) => t + x.hits.length, 0);
-  $('#head').textContent = `${n} game${n === 1 ? '' : 's'} with an Iconic performance tag · checked ${new Date(j.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`;
-  draw();
+  headLine(); draw();
 }
 load();
 </script>
