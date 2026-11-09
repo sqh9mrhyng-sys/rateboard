@@ -1573,7 +1573,12 @@ async function runDms(env, db, auth, rows, max, force) {
       const items = []; for (const x of wh) { const l = await sideLines(member, x.m, x.side); if (l) items.push(l); }
       let wmsg = warnGrouped(items);
       { const me0 = await member(who);   // always the site message now (Dennis, 2026-11-05), whatever the size
-        wmsg = [siteDm('Heads up - you swap in 30 min. Buy your packs now.', items.length, await hourLink(env, who, wh[0].due), recvSummary(me0, items))]; }
+        // 160s at the same hour ride along (2026-11-08, Dennis's wording).
+        let x160 = '';
+        try { const c = await db.prepare(`SELECT SUM(CASE WHEN seller=? THEN 1 ELSE 0 END) AS s, SUM(CASE WHEN buyer=? THEN 1 ELSE 0 END) AS b FROM swap_160 WHERE dueAt=? AND status <> 'cancelled' AND (seller=? OR buyer=?)`).bind(who, who, wh[0].due, who, who).first();
+          const sN = Number(c && c.s) || 0, bN = Number(c && c.b) || 0;
+          x160 = [sN ? `You're also selling ${sN} player${sN === 1 ? '' : 's'} through 160s` : '', bN ? `You're also receiving ${bN} player${bN === 1 ? '' : 's'} through 160s` : ''].filter(Boolean).join('\n'); } catch (e) {}
+        wmsg = [siteDm('Heads up - you swap in 30 min. Buy your packs now.', items.length, await hourLink(env, who, wh[0].due), recvSummary(me0, items), x160 || undefined)]; }
       if (!(items.length && await send(who, wmsg, 'warn'))) { await unclaim(wh, 'warn'); warnFail = true; }
     }
     if (warnFail) return;
@@ -2271,14 +2276,16 @@ async function dm160(env, db, auth) {
   const now = Date.now();
   await matchCols(db);
   const rows = ((await db.prepare(`SELECT * FROM swap_160 WHERE status='pending' AND dueAt > ? AND dueAt <= ? AND (warnS IS NULL OR warnB IS NULL) ORDER BY dueAt, id LIMIT 400`)
-    .bind(now + 5 * 60000, now + 30 * 60000).all()).results) || [];
+    .bind(now, now + 30 * 60000).all()).results) || [];
   if (!rows.length) return;
   const per = new Map();
   for (const r of rows) for (const [who, col] of [[r.seller, 'warnS'], [r.buyer, 'warnB']]) {
     if (r[col]) continue; const k = who + '|' + r.dueAt;
     (per.get(k) || per.set(k, { who, due: Number(r.dueAt), list: [] }).get(k)).list.push([r, col]); }
+  let sentN = 0;
   for (const g of per.values()) {
-    if (TICK_T0 && tickLeft() - dmWaitAhead() < 6000) break;
+    // A few a minute: this runs ahead of the swap warnings, which mustn't wait on it.
+    if (sentN >= 4 || (TICK_T0 && tickLeft() - dmWaitAhead() < 6000)) break;
     const got = [];
     for (const [r, col] of g.list) { const c = await db.prepare(`UPDATE swap_160 SET ${col}=? WHERE id=? AND ${col} IS NULL`).bind(now, r.id).run(); if (c && c.meta && c.meta.changes) got.push([r, col]); }
     if (!got.length) continue;
@@ -2286,13 +2293,15 @@ async function dm160(env, db, auth) {
     if (sw) { await stat(db, 'dm_160_withswaps'); continue; }
     const me = await loadMember(db, g.who);
     if (!me || !me.hashId) continue;
-    const sells = got.filter(x => x[1] === 'warnS').length, buys = new Map();
-    for (const [r, col] of got) if (col === 'warnB') buys.set(r.pass, (buys.get(r.pass) || 0) + 1);
-    const lines = [];
-    if (sells) lines.push(`Heads up - your 160s are in 30 min. Open ${sells === 1 ? '1 pack' : sells + ' packs'} now (the list is on your page).`);
-    for (const [k, n] of buys) lines.push(`You have ${n} 160${n === 1 ? '' : 's'} for ${playerName(me, k)} in 30 min.`);
-    const text = lines.join('\n') + '\n\n' + await hourLink(env, g.who, g.due);
-    try { const ch = await dmChannel(db, auth, me.hashId, me.rsUser, env); await dmSendRetry(auth, ch, text); await stat(db, 'dm_160'); }
+    // Dennis's wording (2026-11-08). Counted from every 160 they have that hour.
+    const all1 = ((await db.prepare("SELECT seller, buyer FROM swap_160 WHERE dueAt=? AND status <> 'cancelled' AND (seller=? OR buyer=?)").bind(g.due, g.who, g.who).all()).results) || [];
+    const sells = all1.filter(r => r.seller === g.who).length, buys = all1.filter(r => r.buyer === g.who).length;
+    const pl = n => `${n} player${n === 1 ? '' : 's'}`, link = await hourLink(env, g.who, g.due);
+    const text = sells
+      ? `You're selling ${pl(sells)}\nGo to ${link} to see them all\nPlease buy within 30 mins` + (buys ? `\n\nYou're also receiving ${pl(buys)} through 160s` : '')
+      : `You're receiving ${pl(buys)} through 160s\nGo to ${link} to see them all`;
+    if (!sells && !buys) continue;
+    try { const ch = await dmChannel(db, auth, me.hashId, me.rsUser, env); await dmSendRetry(auth, ch, text); await stat(db, 'dm_160'); sentN++; }
     catch (e) { for (const [r, col] of got) await db.prepare(`UPDATE swap_160 SET ${col}=NULL WHERE id=? AND ${col}=?`).bind(r.id, now).run();
       await botFail(db, 'dm_160', `${g.who}: ${e.message || e}`); }
   }
@@ -2374,9 +2383,9 @@ async function dmTick(env) {
     // Only what's due soon (warnings from 30 minutes out, swap DMs at the hour) plus call-offs.
     const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned','cancelling') AND createdAt > ? AND (status='cancelling' OR (dueAt <= ? AND dueAt > ?)) ORDER BY COALESCE(dueAt, createdAt), id LIMIT 800`)
       .bind(Date.now() - 2 * 86400000, Date.now() + 45 * 60000, Date.now() - 3 * 3600000).all()).results) || [];
+    try { await dm160(env, db, auth); } catch (e) { await botFail(db, 'dm_160', e.message); }   // first, a few a minute: it was starved by the swap DMs
     if (rows.length) out = await runDms(env, db, auth, rows, DM_PER_TICK, false);
   } catch (e) { await botFail(db, 'dm_run', e.message); }
-  try { await dm160(env, db, auth); } catch (e) { await botFail(db, 'dm_160', e.message); }
   try { await confirmPrompts(env, db, auth); } catch (e) { await botFail(db, 'dm_confirm_prompt', e.message); }
   try { await auditHour(env, db, auth); } catch (e) { await botFail(db, 'dm_audit', e.message); }
   return out;
