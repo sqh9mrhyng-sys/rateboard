@@ -3735,7 +3735,7 @@ const tagFrac = (k, part) => { const v = `json_extract(stats, '$."${k}"')`;
 const tn = v => { const m = String(v == null ? '' : v).match(/^-?\d+(\.\d+)?/); return m ? Number(m[0]) : 0; };
 const tfrac = (v, i) => { const m = String(v || '').match(/^(\d+)\/(\d+)$/); return m ? Number(m[i + 1]) : 0; };
 const tTds = o => Math.max(tn(o.td), tn(o.rutd) + tn(o.retd));
-const TAG_DEFS_V = 3;   // 3: Mystic NFL (2026-11-09)   // 2: Real's own tags and box-score links (2026-11-09)
+const TAG_DEFS_V = 4;   // 3: Mystic NFL; 4: Legendary NFL (2026-11-09)   // 2: Real's own tags and box-score links (2026-11-09)
 const TAG_DEFS = {
   nfl: [
     { tag: '#3hundo', rarity: 'iconic', desc: '300+ rushing + receiving yards', sql: `COALESCE(${tagJ('ruyds')}, 0) + COALESCE(${tagJ('reyds')}, 0) >= 300`,
@@ -3773,7 +3773,23 @@ const TAG_DEFS = {
     { tag: '#triplepick', rarity: 'mystic', desc: '3 interceptions (defense)', sql: `${tagJ('int')} = 3 AND COALESCE(position, '') <> 'QB'`,
       test: (o, pos) => pos !== 'QB' && tn(o.int) === 3, line: o => `${tn(o.int)} INTs` },
     { tag: '#platniumboot', alias: ['platinumboot'], rarity: 'mystic', desc: '6 field goals', sql: `json_extract(stats, '$."fg%"') LIKE '%/%' AND ${tagFrac('fg%', 0)} = 6`,
-      test: o => tfrac(o['fg%'], 0) === 6, line: o => `${o['fg%']} FG` }
+      test: o => tfrac(o['fg%'], 0) === 6, line: o => `${o['fg%']} FG` },
+    // Legendary (Dennis, 2026-11-09), stopping below the Mystic / Iconic ones above it the same way.
+    { tag: '#2hundo', rarity: 'legendary', desc: '200+ rushing + receiving yards', sql: `COALESCE(${tagJ('ruyds')}, 0) + COALESCE(${tagJ('reyds')}, 0) BETWEEN 200 AND 249`,
+      test: o => { const y = tn(o.ruyds) + tn(o.reyds); return y >= 200 && y < 250; }, line: o => `${tn(o.ruyds)} rush + ${tn(o.reyds)} rec yds` },
+    { tag: '#nickeldime', rarity: 'legendary', desc: '15+ receptions', sql: `${tagJ('rec')} BETWEEN 15 AND 19`, test: o => tn(o.rec) >= 15 && tn(o.rec) < 20, line: o => `${tn(o.rec)} rec, ${tn(o.reyds)} yds` },
+    { tag: '#bull', rarity: 'legendary', desc: '30+ carries', sql: `${tagJ('car')} >= 30`, test: o => tn(o.car) >= 30, line: o => `${tn(o.car)} carries, ${tn(o.ruyds)} yds` },
+    { tag: '#machine', rarity: 'legendary', desc: '4 TDs (not passing)', sql: `MAX(COALESCE(${tagJ('td')}, 0), COALESCE(${tagJ('rutd')}, 0) + COALESCE(${tagJ('retd')}, 0)) = 4`,
+      test: o => tTds(o) === 4, line: o => `${tTds(o)} TDs` },
+    { tag: '#perfectrating', rarity: 'legendary', desc: 'Perfect passer rating (158.3)', sql: `${tagJ('rtg')} >= 158.3`, test: o => tn(o.rtg) >= 158.3, line: o => `${o['c/att'] || ''} · ${tn(o.pyds)} yds · ${tn(o.ptd)} TD · 158.3` },
+    { tag: '#air4hundo', rarity: 'legendary', desc: '400+ passing yards', sql: `${tagJ('pyds')} BETWEEN 400 AND 499`, test: o => tn(o.pyds) >= 400 && tn(o.pyds) < 500, line: o => `${tn(o.pyds)} pass yds` },
+    { tag: '#slapped', rarity: 'legendary', desc: '5 passing TDs', sql: `${tagJ('ptd')} = 5`, test: o => tn(o.ptd) === 5, line: o => `${tn(o.ptd)} pass TDs` },
+    { tag: '#airforce', rarity: 'legendary', desc: '5+ passes defended', sql: `${tagJ('pd')} >= 5`, test: o => tn(o.pd) >= 5, line: o => `${tn(o.pd)} passes defended` },
+    { tag: '#puntcity', rarity: 'legendary', desc: '10+ punts', sql: `${tagJ('punt')} >= 10`, test: o => tn(o.punt) >= 10, line: o => `${tn(o.punt)} punts, ${tn(o.puyds)} yds` },
+    { tag: '#punt5hundo', rarity: 'legendary', desc: '500+ punt yards', sql: `${tagJ('puyds')} >= 500`, test: o => tn(o.puyds) >= 500, line: o => `${tn(o.puyds)} punt yds (${tn(o.punt)} punts)` },
+    // No description yet - only the games Real itself tagged show.
+    { tag: '#marksman', rarity: 'legendary', desc: '(description to come)', sql: `0`, test: () => false, line: () => '' },
+    { tag: '#2centuryboot', rarity: 'legendary', desc: '200+ yards of field goals made', sql: `${tagJ('fgyds')} >= 200`, test: o => tn(o.fgyds) >= 200, line: o => `${tn(o.fgyds)} FG yds (${o['fg%'] || ''})` }
   ]
 };
 async function tagSig(env, db, sp) {
