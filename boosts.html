@@ -599,7 +599,14 @@ async function loadBuys(){
 const tm = iso => iso ? new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }) + ' ET' : '';
 async function run(){
   const sp = $('#sport').value, day = $('#day').value, mode = $('#mode').value;
-  if(!day){ $('#out').hidden = false; $('#outhead').textContent = 'No NFL games in the next 4 days - NFL plays Thursday, Sunday and Monday.'; return; }
+  /* No day to pick: say why, for the sport picked (2026-11-09: it always said NFL). */
+  if(!day){ const why = ($('#day').selectedOptions[0] || {}).textContent || '', nm = ($('#sport').selectedOptions[0] || {}).textContent || 'this sport';
+    $('#out').hidden = false;
+    $('#outhead').textContent = /read your passes/i.test(why) ? 'Read your passes first - once your scan is done, pick a day and tap Show my boosts again.'
+      : /none of your passes/i.test(why) ? `None of your ${nm} passes play in the next 12 days.`
+      : sp === 'nfl' ? 'No NFL games in the next 4 days - NFL plays Thursday, Sunday and Monday.'
+      : `No ${nm} games in the next 4 days.`;
+    return; }
   try{ localStorage.setItem('boosts_pick_v1', JSON.stringify({ sport: sp, mode })); }catch(e){}
   $('#run').disabled = true; $('#out').hidden = false; $('#copybtn').hidden = true; copyText = ''; $('#rows').innerHTML = ''; $('#simple').innerHTML = ''; $('#sum').innerHTML = ''; $('#foot').textContent = '';
   $('#outhead').textContent = 'Working it out…';
@@ -769,7 +776,7 @@ $('#scan').addEventListener('click', async () => {
   $('#scan').disabled = false;
   if(j.error){ $('#scanmsg').textContent = j.error; return; }
   $('#scanmsg').textContent = j.cached ? j.note : `${(j.passes || []).length} passes read just now.` + (j.note ? ' ' + j.note : '');
-  for(const k of Object.keys(daysCache)) delete daysCache[k]; drawDays();
+  for(const k of Object.keys(daysCache)) delete daysCache[k]; await drawDays();   // the days first, so the plan has one to use
   if(!$('#out').hidden) run();
 });
 
