@@ -2459,7 +2459,7 @@ async function handleGet({ request, env, waitUntil }) {
     try {
       const r = await db.prepare(
         `SELECT DISTINCT playerId AS n FROM gamelog WHERE sport=? AND season=? AND playerId > ?
-           ORDER BY playerId LIMIT ?`).bind(sport, Number(season), after, PERF_PER_TICK).all();
+           ORDER BY playerId LIMIT ?`).bind(sport, Number(season), after, Math.min(PERF_PER_TICK, Number(url.searchParams.get('limit')) || PERF_PER_TICK)).all();
       ids = (r.results || []).map(x => Number(x.n)).filter(Boolean);
     } catch (e) { return json({ error: 'could not read the game log' }, 503); }
     if (!ids.length) {
@@ -7682,6 +7682,20 @@ async function marketBusy(env) {
   try { const r = await env.RATEBOARD_DB.prepare('SELECT 1 AS x FROM market_seasons WHERE front IS NOT NULL LIMIT 1').first(); if (r) return true; } catch (e) {}
   return false;
 }
+/* Real's own performance tags for the Tag finder (2026-11-09): NFL box scores,
+   newest season first, 25 players a minute, until each season is done. */
+const PERF_TAG_SEASONS = [['nfl', 2026], ['nfl', 2025], ['nfl', 2024], ['nfl', 2023]];
+async function perfTagTick(ctx) {
+  const env = ctx.env;
+  if (await jobOverBudget(env)) return;
+  for (const [sp, se] of PERF_TAG_SEASONS) {
+    let fin = null; try { fin = await env.RATEBOARD_KV.get(perfDoneKey(sp, se)); } catch (e) {}
+    if (fin) continue;
+    const u = `${new URL(ctx.request.url).origin}/api/rax?perf=collect&sport=${sp}&season=${se}&limit=25`;
+    try { await handleGet({ request: new Request(u), env, waitUntil: ctx.waitUntil }); } catch (e) {}
+    return;
+  }
+}
 async function gapPush(ctx) {
   const env0 = ctx.env, alt = env0.RS_MARKET_TOKEN;
   if (!alt || await marketBusy(env0)) return;
@@ -7858,9 +7872,6 @@ async function collectorHealth(env, url) {
       window: await kvj(`gl_window_${sp}_${se}`), through: await env.RATEBOARD_KV.get(`gl_through_${sp}_${se}`) });
   }
   // Seasons the main queue keeps (NHL): how far the game log and its rax reach (2026-11-09).
-  try { const r = ((await db.prepare(`SELECT id, hash, label, kind, rarity FROM tags WHERE sport='nfl' AND (kind LIKE '%perf%' OR id IN (1647))`).all()).results) || [];
-    const pc = await db.prepare(`SELECT COUNT(*) AS n, SUM(CASE WHEN tags IS NOT NULL THEN 1 ELSE 0 END) AS t FROM performances WHERE sport='nfl'`).first();
-    seasons.push({ season: 'tmp', tags: r, perf: pc }); } catch (e) { seasons.push({ season: 'tmp', err: e.message }); }
   for (const [sp, se] of [['nhl', 2026], ['nba', 2027]]) {
     try { const last = await db.prepare(`SELECT MAX(day) AS day, MAX(CASE WHEN rax IS NOT NULL THEN day END) AS raxDay, COUNT(*) AS rows, SUM(CASE WHEN rax IS NULL THEN 1 ELSE 0 END) AS noRax FROM gamelog WHERE sport=? AND season=?`).bind(sp, se).first();
       const top = ((await db.prepare(`SELECT player, COUNT(*) AS g, ROUND(AVG(rax), 2) AS a, MAX(day) AS last, GROUP_CONCAT(substr(day,6) || '=' || rax || COALESCE(substr(seasonType,1,3),'')) AS rs FROM (SELECT player, playerId, rax, day, seasonType FROM gamelog WHERE sport=? AND season=? AND rax IS NOT NULL ORDER BY day) GROUP BY playerId HAVING g >= 5 ORDER BY a DESC LIMIT 8`).bind(sp, se).all()).results) || [];
@@ -7947,6 +7958,7 @@ export async function onRequestGet(ctx) {
       await fetch(`${origin}/api/swaps?op=scantick&k=${k}`, { cf: { cacheTtl: 0 } }).catch(() => {}); })().catch(() => {}));
     ctx.waitUntil(boostRefresh(env).catch(() => {}));
     ctx.waitUntil(nhlZeroFix(env).catch(() => {}));
+    ctx.waitUntil(perfTagTick(ctx).catch(() => {}));
     // FC Boosts: lineups near kickoff, and the game log after each game.
     ctx.waitUntil(fcLineupTick(env).catch(() => {}));
     ctx.waitUntil(fcGameRefresh(env).catch(() => {}));

@@ -3724,7 +3724,7 @@ const tagFrac = (k, part) => { const v = `json_extract(stats, '$."${k}"')`;
 const tn = v => { const m = String(v == null ? '' : v).match(/^-?\d+(\.\d+)?/); return m ? Number(m[0]) : 0; };
 const tfrac = (v, i) => { const m = String(v || '').match(/^(\d+)\/(\d+)$/); return m ? Number(m[i + 1]) : 0; };
 const tTds = o => Math.max(tn(o.td), tn(o.rutd) + tn(o.retd));
-const TAG_DEFS_V = 1;
+const TAG_DEFS_V = 2;   // 2: Real's own tags and box-score links (2026-11-09)
 const TAG_DEFS = {
   nfl: [
     { tag: '#3hundo', rarity: 'iconic', desc: '300+ rushing + receiving yards', sql: `COALESCE(${tagJ('ruyds')}, 0) + COALESCE(${tagJ('reyds')}, 0) >= 300`,
@@ -3738,8 +3738,8 @@ const TAG_DEFS = {
       sql: `json_extract(stats, '$."c/att"') LIKE '%/%' AND ${tagFrac('c/att', 0)} = ${tagFrac('c/att', 1)} AND ${tagFrac('c/att', 1)} >= 15`,
       test: o => tfrac(o['c/att'], 1) >= 15 && tfrac(o['c/att'], 0) === tfrac(o['c/att'], 1), line: o => `${o['c/att']}, ${tn(o.pyds)} yds` },
     { tag: '#air6hundo', rarity: 'iconic', desc: '600+ passing yards', sql: `${tagJ('pyds')} >= 600`, test: o => tn(o.pyds) >= 600, line: o => `${tn(o.pyds)} pass yds` },
-    { tag: '#platniumarm', rarity: 'iconic', desc: '7+ passing TDs', sql: `${tagJ('ptd')} >= 7`, test: o => tn(o.ptd) >= 7, line: o => `${tn(o.ptd)} pass TDs` },
-    { tag: '#eightball', rarity: 'iconic', desc: '8+ total TDs (passing included)', sql: `COALESCE(${tagJ('ptd')}, 0) + MAX(COALESCE(${tagJ('td')}, 0), COALESCE(${tagJ('rutd')}, 0) + COALESCE(${tagJ('retd')}, 0)) >= 8`,
+    { tag: '#platniumarm', alias: ['platinumarm'], rarity: 'iconic', desc: '7+ passing TDs', sql: `${tagJ('ptd')} >= 7`, test: o => tn(o.ptd) >= 7, line: o => `${tn(o.ptd)} pass TDs` },
+    { tag: '#eightball', alias: ['8ball'], rarity: 'iconic', desc: '8+ total TDs (passing included)', sql: `COALESCE(${tagJ('ptd')}, 0) + MAX(COALESCE(${tagJ('td')}, 0), COALESCE(${tagJ('rutd')}, 0) + COALESCE(${tagJ('retd')}, 0)) >= 8`,
       test: o => tn(o.ptd) + tTds(o) >= 8, line: o => `${tn(o.ptd) + tTds(o)} total TDs` },
     // A quarterback's "sack" and "int" are ones he took and threw, so they don't count.
     { tag: '#boogeyman', rarity: 'iconic', desc: '6+ sacks', sql: `${tagJ('sack')} >= 6 AND COALESCE(position, '') <> 'QB'`,
@@ -3754,22 +3754,59 @@ async function tagSig(env, db, sp) {
   const k = `tagview_sig_${sp}`;
   try { const c = await env.RATEBOARD_KV.get(k); if (c) return c; } catch (e) {}
   const r = await db.prepare(`SELECT COUNT(*) AS n, MAX(day) AS d FROM gamelog WHERE sport=? AND stats IS NOT NULL`).bind(sp).first();
-  const v = `${r && r.n}|${r && r.d}`;
+  let p = null; try { p = await db.prepare(`SELECT COUNT(*) AS n FROM performances WHERE sport=?`).bind(sp).first(); } catch (e) {}
+  const v = `${r && r.n}|${r && r.d}|${p && p.n}`;
   try { await env.RATEBOARD_KV.put(k, v, { expirationTtl: 900 }); } catch (e) {}
   return v;
 }
+/* The games for each tag: those whose stat line meets it, plus every game Real
+   itself tagged with it (its performance tags, collected box score by box
+   score - the stat line misses some, e.g. a quarterback's catch). Real's tag
+   id gives the tag's own link, and a box-score id the game's performance card. */
 async function tagBuild(env, db, sp) {
   const defs = TAG_DEFS[sp];
+  const nt = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  let dict = []; try { dict = ((await db.prepare(`SELECT id, hash, label FROM tags WHERE sport=? AND kind='playerboxscore'`).bind(sp).all()).results) || []; } catch (e) {}
+  const idOf = d => { const ws = [nt(d.tag), ...(d.alias || []).map(nt)];
+    const t = dict.find(x => ws.includes(nt(x.hash))) || dict.find(x => ws.includes(nt(x.label)));
+    return t ? Number(t.id) : null; };
+  const out = defs.map(d => ({ tag: d.tag, rarity: d.rarity, desc: d.desc, rid: idOf(d), hits: [] }));
+  const byKey = out.map(() => new Map());
+  const add = (i, h) => { const k = `${h.i}|${h.d}`, o = byKey[i].get(k); if (o) { Object.assign(o, Object.fromEntries(Object.entries(h).filter(([, v]) => v != null && v !== ''))); return; } byKey[i].set(k, h); };
+  // 1. Stat lines.
   const rows = ((await db.prepare(`SELECT season, playerId, player, team, opponent, day, position, seasonType, stats FROM gamelog
       WHERE sport=? AND stats IS NOT NULL AND COALESCE(seasonType, 'regularseason') <> 'preseason' AND (${defs.map(d => `(${d.sql})`).join(' OR ')})
       ORDER BY day DESC LIMIT 3000`).bind(sp).all()).results) || [];
-  const out = defs.map(d => ({ tag: d.tag, rarity: d.rarity, desc: d.desc, hits: [] }));
   for (const r of rows) {
     let o = {}; try { o = JSON.parse(r.stats || '{}') || {}; } catch (e) {}
     const pos = String(r.position || '').toUpperCase();
-    defs.forEach((d, i) => { if (d.test(o, pos)) out[i].hits.push({ p: r.player, i: Number(r.playerId), s: Number(r.season), d: r.day, tm: r.team, op: r.opponent, pos,
+    defs.forEach((d, i) => { if (d.test(o, pos)) add(i, { p: r.player, i: Number(r.playerId), s: Number(r.season), d: r.day, tm: r.team, op: r.opponent, pos,
       po: r.seasonType && r.seasonType !== 'regularseason' ? 1 : undefined, line: d.line(o) }); });
   }
+  // 2. Real's own tags.
+  const rids = out.map(t => t.rid).filter(Boolean);
+  if (rids.length) {
+    let pr = [];
+    try { pr = ((await db.prepare(`SELECT id, season, playerId, player, day, team, opponent, seasonType, tags FROM performances WHERE sport=? AND tags IS NOT NULL
+        AND (${rids.map(() => `instr(',' || tags || ',', ?) > 0`).join(' OR ')}) LIMIT 3000`).bind(sp, ...rids.map(x => `,${x},`)).all()).results) || []; } catch (e) {}
+    for (const r of pr) { const tg = String(r.tags).split(',').map(Number);
+      out.forEach((t, i) => { if (t.rid && tg.includes(t.rid)) add(i, { p: r.player, i: Number(r.playerId), s: Number(r.season), d: r.day, tm: r.team, op: r.opponent, b: Number(r.id), real: 1,
+        po: r.seasonType && r.seasonType !== 'regularseason' ? 1 : undefined }); }); }
+  }
+  // 3. Box-score ids (the game's card) for stat-line games, and stat lines for Real-only ones.
+  const all = byKey.flatMap(m => [...m.values()]), pids = [...new Set(all.map(h => h.i))];
+  for (let k = 0; k < pids.length; k += 90) { const part = pids.slice(k, k + 90), ph = part.map(() => '?').join(',');
+    let bx = [], gl = [];
+    try { bx = ((await db.prepare(`SELECT id, playerId, day FROM performances WHERE sport=? AND playerId IN (${ph})`).bind(sp, ...part).all()).results) || []; } catch (e) {}
+    try { gl = ((await db.prepare(`SELECT playerId, day, position, stats FROM gamelog WHERE sport=? AND playerId IN (${ph}) AND stats IS NOT NULL`).bind(sp, ...part).all()).results) || []; } catch (e) {}
+    const bm = new Map(bx.map(x => [`${x.playerId}|${x.day}`, Number(x.id)])), gm = new Map(gl.map(x => [`${x.playerId}|${x.day}`, x]));
+    out.forEach((t, i) => { const d = defs[i];
+      for (const h of byKey[i].values()) { const kk = `${h.i}|${h.d}`;
+        if (!h.b && bm.has(kk)) h.b = bm.get(kk);
+        if (!h.line && gm.has(kk)) { let o = {}; try { o = JSON.parse(gm.get(kk).stats || '{}') || {}; } catch (e) {} h.pos = h.pos || String(gm.get(kk).position || '').toUpperCase(); h.line = d.test(o, h.pos) ? d.line(o) : 'tagged by Real'; } } });
+  }
+  out.forEach((t, i) => { t.hits = [...byKey[i].values()].sort((a, b) => String(b.d).localeCompare(String(a.d))); });
+  out.forEach(t => { for (const h of t.hits) if (!h.line) h.line = 'tagged by Real'; });
   const c = { at: Date.now(), v: TAG_DEFS_V, sig: await tagSig(env, db, sp).catch(() => ''), sport: sp, tags: out };
   try { await env.RATEBOARD_KV.put(`tagview_v1_${sp}`, JSON.stringify(c)); } catch (e) {}
   return c;
