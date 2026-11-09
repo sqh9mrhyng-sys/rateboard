@@ -2667,7 +2667,7 @@ const BOOST_SEASON = { ncaam: [2027, 2026], ncaaf: [2026, 2025], nfl: [2026, 202
    last season's rax per game among regulars: Legendary is roughly the top
    2-3% of games, Epic the top 10%, Rare the top 25%. Boost saver raises the
    bar 15%, earning heavy lowers it 15%. */
-const BOOST_BARS = { ncaam: [11.5, 10, 7.5], ncaaf: [25, 20, 12], nfl: [19, 15, 8.5], golf: [19, 15, 10], soccer: [11.2, 9, 6], nba: [7, 5, 3.5], nhl: [7, 5, 3.5] };   // Legendary ~top 1% game, Epic ~top 3-5%
+const BOOST_BARS = { ncaam: [11.5, 10, 7.5], ncaaf: [25, 20, 12], nfl: [19, 15, 8.5], golf: [19, 15, 10], soccer: [11.2, 9, 6], nba: [7, 5, 3.5], nhl: [8, 6, 4] };   // Legendary ~top 1% game, Epic ~top 3-5%
 const BOOST_MODES = { balanced: 1, heavy: 1, saver: 1, custom: 1 };
 const ESPN_PATH = { ncaam: 'basketball/mens-college-basketball', ncaaf: 'football/college-football', nfl: 'football/nfl', nba: 'basketball/nba', nhl: 'hockey/nhl' };
 const ESPN_GROUP = { ncaam: '&groups=50', ncaaf: '&groups=80', nfl: '', nba: '', nhl: '' };
@@ -5558,7 +5558,7 @@ async function handle({ request, env, waitUntil }) {
         const part = ids.slice(i, i + 90), ph = part.map(() => '?').join(',');
         try {
           const r = await db.prepare(`SELECT playerId, day, rax, min, team, position, player, pts, reb, ast, stl, blk, fg3${sp === 'ncaam' ? '' : ', stats'} FROM gamelog
-            WHERE sport=? AND season=? AND rax IS NOT NULL AND playerId IN (${ph}) ORDER BY day`).bind(sp, se, ...part).all();
+            WHERE sport=? AND season=? AND rax IS NOT NULL AND COALESCE(seasonType, 'regularseason') <> 'preseason' AND playerId IN (${ph}) ORDER BY day`).bind(sp, se, ...part).all();   // no preseason (2026-11-09: five 0s each pulled NBA stars down)
           for (const x of (r.results || [])) (games.get(Number(x.playerId)) || games.set(Number(x.playerId), []).get(Number(x.playerId))).push(x);
         } catch (e) {}
         try {
@@ -5624,7 +5624,9 @@ async function handle({ request, env, waitUntil }) {
         const mf = g.oppAb && match[g.oppAb] ? match[g.oppAb] : 1;
         const ca = avg(gs), r4 = avg(gs.slice(-4)), oa = o ? Number(o.avg) : null, cg = gs.length;
         let proj = null, basis = '';
-        if (cg >= 4) { proj = oa != null ? 0.5 * r4 + 0.3 * ca + 0.2 * oa : 0.6 * r4 + 0.4 * ca; basis = `last 4 games weighted, ${cg} this season`; }
+        // NBA / NHL: rax runs far higher this season than last, so once he has 8 games last season is left out (2026-11-09).
+        if (cg >= 8 && (sp === 'nba' || sp === 'nhl')) { proj = 0.45 * r4 + 0.55 * ca; basis = `last 4 games weighted, ${cg} this season`; }
+        else if (cg >= 4) { proj = oa != null ? 0.5 * r4 + 0.3 * ca + 0.2 * oa : 0.6 * r4 + 0.4 * ca; basis = `last 4 games weighted, ${cg} this season`; }
         else if (cg && oa != null) { proj = 0.5 * ca + 0.5 * oa; basis = `${cg} game${cg === 1 ? '' : 's'} this season + last season`; }
         else if (cg) { proj = ca; basis = `${cg} game${cg === 1 ? '' : 's'} this season`; }
         else if (oa != null) { proj = oa; basis = 'last season (regular season)'; }
@@ -5750,11 +5752,15 @@ async function handle({ request, env, waitUntil }) {
        NBA top 1% ~4.0, top 5% ~3.1, top 25% ~1.7; NHL top 1% ~5.5, top 5% ~4.2,
        top 25% ~2.5. */
     // Dennis (2026-11-09, same morning): too low - Legendary 7+ (1 a day), Epic 5+ (2 a day), Rare 3.5+ (20% of Rares held a day), both leagues, every setting.
-    const NBA_RULES = { balanced: { leg: 7, epic: 5, cap: 1 } }, NHL_RULES = NBA_RULES;
+    const NBA_RULES = { balanced: { leg: 7, epic: 5, cap: 1 } };
+    /* NHL, set from this season's regulars (2026-11-09): McDavid ~9 a game, then
+       Draisaitl, Matthews, MacKinnon, Celebrini 6-7, Kaprizov ~5. Legendary 8+
+       (McDavid-level nights, 1 a day), Epic 6+ (2 a day), Rare 4+ (20% a day). */
+    const NHL_RULES = { balanced: { leg: 8, epic: 6, cap: 1 } };
     const cfb = sp === 'ncaaf' ? CFB_RULES[mode] || CFB_RULES.balanced : sp === 'golf' ? GOLF_RULES[mode] || GOLF_RULES.balanced : sp === 'soccer' ? FC_RULES[mode] || FC_RULES.balanced : sp === 'nfl' ? NFL_RULES[mode] || NFL_RULES.balanced
       : sp === 'nba' ? NBA_RULES[mode] || NBA_RULES.balanced : sp === 'nhl' ? NHL_RULES[mode] || NHL_RULES.balanced : null;
     if (cfb) R.cap = cfb.cap;
-    let legBar = cfb ? cfb.leg : R.leg * scale, epicBar = cfb ? cfb.epic : R.epic * scale, rareFloor = sp === 'ncaaf' || sp === 'golf' ? 10 : sp === 'soccer' ? 6 : sp === 'nfl' && mode === 'balanced' ? 7 : sp === 'nba' || sp === 'nhl' ? 3.5 : 5;
+    let legBar = cfb ? cfb.leg : R.leg * scale, epicBar = cfb ? cfb.epic : R.epic * scale, rareFloor = sp === 'ncaaf' || sp === 'golf' ? 10 : sp === 'soccer' ? 6 : sp === 'nfl' && mode === 'balanced' ? 7 : sp === 'nba' ? 3.5 : sp === 'nhl' ? 4 : 5;
     const cutAt = null;
     if (CUS) { legBar = CUS.leg ?? Infinity; epicBar = CUS.epic ?? Infinity; rareFloor = CUS.rare ?? Infinity; }
     bars.splice(0, 3, Math.round(legBar * 10) / 10, Math.round(epicBar * 10) / 10, rareFloor);

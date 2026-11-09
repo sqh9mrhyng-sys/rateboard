@@ -1094,7 +1094,11 @@ async function forgetWalk(env, sport, season) {
   try {
     const through = await env.RATEBOARD_KV.get(`gl_through_${sport}_${season}`);
     const to = etYesterday();
-    await env.RATEBOARD_KV.put(`gl_window_${sport}_${season}`, JSON.stringify({ from: through ? nextDay(through) : null, to, at: Date.now() }));
+    let from = through ? nextDay(through) : null;
+    // Games still without rax (posted late) are taken again, from the earliest of the last 3 weeks.
+    try { if (from && env.RATEBOARD_DB) { const r = await env.RATEBOARD_DB.prepare(`SELECT MIN(day) AS d FROM gamelog WHERE sport=? AND season=? AND rax IS NULL AND day >= ?`).bind(sport, Number(season), new Date(Date.parse(from + 'T12:00:00Z') - 21 * 86400000).toISOString().slice(0, 10)).first();
+      if (r && r.d && r.d < from) from = r.d; } } catch (e) {}
+    await env.RATEBOARD_KV.put(`gl_window_${sport}_${season}`, JSON.stringify({ from, to, at: Date.now() }));
   } catch (e) {}
   const keys = [`games_${sport}_${season}`,
                 `gamelog_done_${sport}_${season}`,
@@ -1877,7 +1881,7 @@ const COLLECT_PAUSE_UNTIL = 0;   // back on 2026-11-02: change-only writes, held
 // NFL 2026 first: a week of NFL is small, and behind CBB's daily sweep (a
 // whole Division I season) it was never reached - Sunday's games were missed
 // and NFL Boosts had nothing to go on (2026-11-03).
-const EXTRA_JOBS = [['ncaaf', 2026], ['nfl', 2026], ['ncaam', 2027], ['nba', 2027], ['ufc', 2023]];   // CFB first (2026-11-04): stuck at Oct 24   // CBB second (2026-11-03): it was never reached at the back
+const EXTRA_JOBS = [['ncaaf', 2026], ['nfl', 2026], ['ncaam', 2027], ['nba', 2027], ['nhl', 2026], ['ufc', 2023]];   // NHL (2026-11-09): Boosts use it now - its log stopped at Nov 4 at the back of the line   // CFB first (2026-11-04): stuck at Oct 24   // CBB second (2026-11-03): it was never reached at the back
 
 /* Game-data sweeps, on a set schedule at 9am Eastern. On a sweep day the
    season's walk is forgotten, so the queue re-walks it and picks up every game
@@ -6817,7 +6821,14 @@ async function handleGet({ request, env, waitUntil }) {
               // Only the sweep's window: older games keep what they have, today's wait.
               const win = raxWin;
               const listed = list.filter(e => e && e.day && e.earnings != null && inWindow(win, e.day)).map(e => String(e.day).replace(/'/g, ''));
-              const winSql = (win && win.from ? ` AND day >= '${win.from}'` : '') + (win && win.to ? ` AND day <= '${win.to}'` : '');
+              /* A game is only zeroed once Real has posted later ones, or it's
+                 4+ days old (2026-11-09: every NHL star's last three games read 0
+                 - their earnings weren't up yet - and stayed 0). Until then it
+                 stays blank and is asked about again. */
+              const lastListed = list.reduce((m, e) => e && e.day && String(e.day) > m ? String(e.day) : m, '');
+              const old4 = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.now() - 4 * 86400000));
+              const zeroTo = (lastListed > old4 ? lastListed : old4).replace(/'/g, '');
+              const winSql = (win && win.from ? ` AND day >= '${win.from}'` : '') + (win && win.to ? ` AND day <= '${win.to}'` : '') + ` AND day <= '${zeroTo}'`;
               const stmts = [db.prepare(
                 `UPDATE gamelog SET rax = 0 WHERE sport = ? AND season = ? AND playerId = ? AND (rax IS NULL OR rax <> 0)${winSql}`
                 + (listed.length ? ` AND day NOT IN (${listed.map(d => `'${d}'`).join(',')})` : ''))
@@ -7823,6 +7834,15 @@ export async function fcGameRefresh(env) {
   return take.length ? `fc gamelog ${take.length}` : null;
 }
 
+/* One-off (2026-11-09): NHL games from Oct 29 on that were zeroed before
+   Real posted their earnings go back to blank, and the season's rax pass
+   starts over, so they're asked about again (real zeros come back as 0). */
+async function nhlZeroFix(env) {
+  const k = 'fix_nhl_zero_1109';
+  try { if (await env.RATEBOARD_KV.get(k)) return; await env.RATEBOARD_KV.put(k, '1', { expirationTtl: 30 * 86400 }); } catch (e) { return; }
+  try { await env.RATEBOARD_DB.prepare(`UPDATE gamelog SET rax = NULL WHERE sport='nhl' AND season=2026 AND rax = 0 AND day >= '2026-10-29' AND COALESCE(seasonType,'regularseason') <> 'preseason'`).run();
+    await env.RATEBOARD_KV.delete('gamelog_rax_nhl_2026'); } catch (e) {}
+}
 async function collectorHealth(env, url) {
   const ck = new Request(url.origin + '/__cache/collector-health');
   try { const hit = await caches.default.match(ck); if (hit) return hit; } catch (e) {}
@@ -7923,6 +7943,7 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil((async () => { const k = await dmTickKey(env); if (!k) return;
       await fetch(`${origin}/api/swaps?op=scantick&k=${k}`, { cf: { cacheTtl: 0 } }).catch(() => {}); })().catch(() => {}));
     ctx.waitUntil(boostRefresh(env).catch(() => {}));
+    ctx.waitUntil(nhlZeroFix(env).catch(() => {}));
     // FC Boosts: lineups near kickoff, and the game log after each game.
     ctx.waitUntil(fcLineupTick(env).catch(() => {}));
     ctx.waitUntil(fcGameRefresh(env).catch(() => {}));
