@@ -104,6 +104,11 @@
   .sportpick .caret{position:absolute;right:16px;top:50%;transform:translateY(-50%);pointer-events:none;color:var(--mute)}
   .whoami{justify-self:end;display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--mute)}
   .idbit{display:flex;align-items:center;gap:10px;white-space:nowrap}
+  .acctwrap{position:relative}
+  .acctmenu{position:absolute;right:0;top:calc(100% + 6px);z-index:50;min-width:220px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px;box-shadow:0 10px 30px rgba(0,0,0,.35);display:flex;flex-direction:column;gap:6px;white-space:normal}
+  .acctmenu .row1{display:flex;gap:6px;align-items:center} .acctmenu .row1 .btn{flex:1;text-align:left}
+  .acctmenu .x{color:var(--mute);font-size:12px;padding:4px 6px}
+  #g-saved{display:flex;flex-direction:column;gap:6px} #g-saved .btn{text-align:left}
   /* On a wide screen this stays the single line it has always been; the
      wrapping chip treatment is a phone thing and lives in the media query. */
   .navrow{display:flex;align-items:center;gap:10px;flex-wrap:nowrap;justify-content:flex-end}
@@ -566,6 +571,7 @@
   <p class="sub">Standing buy offers for CFB, FC, NFL, UFC and NHL cards. Post what you'll pay, or scan your stats and see who's paying most.</p>
   <div class="panel">
     <div class="panel-bd stack">
+      <div id="g-saved" class="hide"></div>
       <div>
         <label for="g-user">Your in-game username</label>
         <input id="g-user" class="field" autocomplete="off" spellcheck="false" placeholder="Exactly as it appears in the app">
@@ -624,6 +630,8 @@
     <div class="whoami">
       <div class="idbit">
         <span><span class="sm-hide">Signed in as </span><b id="me"></b></span>
+        <span class="acctwrap"><button class="linkbtn" id="switchacct">Add account</button>
+          <div class="acctmenu hide" id="acctmenu"></div></span>
         <button class="linkbtn" id="signout">Sign out</button>
       </div>
       <nav class="navrow" aria-label="Board sections">
@@ -2658,6 +2666,7 @@ async function doSignIn(){
   await pull();
   me = market.users[key]?.name || d.name || u;
   saveDevice(key, me);
+  rememberAcct(key, me);
   enter();
 }
 
@@ -2696,6 +2705,7 @@ async function resume(){
     }catch(e){}
   }
   if(!live){
+    forgetAcct(d.key);
     setToken(''); clearDevice(); me = null;
     setTimeout(() => { try{ const f = $('#g-user'); if(f && !f.value) f.value = u.name || d.key; }catch(e){}
       gateMsg('Please sign in once more with your password - it keeps you signed in on Swaps, Boosts and Market data too.'); }, 50);
@@ -2704,6 +2714,7 @@ async function resume(){
 
   me = u.name;
   saveDevice(d.key, me);             // refresh the stamp on every visit
+  rememberAcct(d.key, me);
   return true;
 }
 
@@ -2729,12 +2740,72 @@ function enter(){
 $('#signout').addEventListener('click', async () => {
   try{ if(getToken()) await fetch('/api/kv', { method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ op:'signout' }) }); }catch(e){}
+  { const d = loadDevice(); if(d && d.key) forgetAcct(d.key); }
   setToken('');
   clearDevice();
   me = null;
   $('#app').classList.add('hide'); $('#gate').classList.remove('hide');
-  $('#g-pass').value=''; gateMsg('');
+  $('#g-pass').value=''; gateMsg(''); drawSaved();
 });
+
+/* =========================================================
+   More than one account (Dennis, 2026-11-09). Some members have two Real
+   accounts. Each board account signed in on this browser is kept here (its
+   name and sign-in token, like the one already kept for the account in use),
+   and switching is one tap: the kept token becomes the live one and the page
+   reloads - Swaps, Boosts and the rest follow, since they all read it.
+   "Add account" leaves this one kept and shows the sign-in for the other.
+   Sign out forgets only the account in use.
+   ========================================================= */
+const ACCTS = 'ratebrd_accounts_v1';
+function loadAccts(){ try{ const a = JSON.parse(localStorage.getItem(ACCTS) || '[]'); return Array.isArray(a) ? a.filter(x => x && x.key && x.token) : []; }catch(e){ return []; } }
+function saveAccts(a){ try{ localStorage.setItem(ACCTS, JSON.stringify(a.slice(0, 8))); }catch(e){} }
+function rememberAcct(key, name){ const t = getToken(); if(!key || !t) return; const a = loadAccts().filter(x => x.key !== key); a.unshift({ key, name: name || key, token: t }); saveAccts(a); drawAcct(); }
+function forgetAcct(key){ saveAccts(loadAccts().filter(x => x.key !== key)); drawAcct(); }
+function useAcct(key){ const x = loadAccts().find(a => a.key === key); if(!x) return; setToken(x.token); saveDevice(x.key, x.name); location.reload(); }
+const othersAcct = () => { const d = loadDevice(), cur = d && d.key; return loadAccts().filter(x => x.key !== cur); };
+// One other account: the button switches straight to it. More: a short menu.
+function drawAcct(){
+  const b = $('#switchacct'); if(!b) return;
+  const o = othersAcct();
+  b.textContent = o.length === 1 ? `Switch to ${o[0].name}` : o.length ? 'Switch account ▾' : 'Add account';
+}
+function addAcct(){
+  const d = loadDevice(); if(d && d.key && me) rememberAcct(d.key, me);
+  setToken(''); clearDevice(); me = null;
+  $('#acctmenu').classList.add('hide');
+  $('#app').classList.add('hide'); $('#gate').classList.remove('hide');
+  $('#g-user').value = ''; $('#g-pass').value = ''; drawSaved();
+  const m = $('#g-msg'); m.textContent = 'Sign in to your other account. The one you were on stays saved - switch back any time with one tap.'; m.classList.remove('hide'); m.style.color = 'var(--mute)';
+  setTimeout(() => { try{ $('#g-user').focus(); }catch(e){} }, 50);
+}
+$('#switchacct').addEventListener('click', e => {
+  e.stopPropagation();
+  const o = othersAcct();
+  if(!o.length){ addAcct(); return; }
+  if(o.length === 1){ useAcct(o[0].key); return; }
+  const m = $('#acctmenu');
+  m.innerHTML = o.map(x => `<div class="row1"><button class="btn sm" data-use="${esc(x.key)}">Switch to ${esc(x.name)}</button><button class="linkbtn x" data-forget="${esc(x.key)}" title="Remove from this browser">remove</button></div>`).join('')
+    + `<button class="linkbtn" data-add="1">+ Add another account</button>`;
+  m.classList.toggle('hide');
+});
+$('#acctmenu').addEventListener('click', e => {
+  e.stopPropagation();
+  const t = e.target.closest('button'); if(!t) return;
+  if(t.dataset.use) useAcct(t.dataset.use);
+  else if(t.dataset.forget){ forgetAcct(t.dataset.forget); t.closest('.row1').remove(); if(!othersAcct().length) $('#acctmenu').classList.add('hide'); }
+  else if(t.dataset.add) addAcct();
+});
+document.addEventListener('click', () => { const m = $('#acctmenu'); if(m) m.classList.add('hide'); });
+// The sign-in screen lists the saved accounts: one tap to go back to one.
+function drawSaved(){
+  const box = $('#g-saved'); if(!box) return;
+  const a = loadAccts();
+  box.classList.toggle('hide', !a.length);
+  box.innerHTML = a.length ? `<label>Saved accounts</label>` + a.map(x => `<button class="btn ghost" data-use="${esc(x.key)}">Continue as ${esc(x.name)}</button>`).join('') + `<p class="note" style="margin:2px 0 6px">Or sign in to another account below.</p>` : '';
+}
+$('#g-saved').addEventListener('click', e => { const t = e.target.closest('[data-use]'); if(t) useAcct(t.dataset.use); });
+drawSaved(); drawAcct();
 
 /* =========================================================
    Floor prices — the least someone is allowed to offer for a
