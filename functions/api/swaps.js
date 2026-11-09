@@ -3758,7 +3758,7 @@ const tagFrac = (k, part) => { const v = `json_extract(stats, '$."${k}"')`;
 const tn = v => { const m = String(v == null ? '' : v).match(/^-?\d+(\.\d+)?/); return m ? Number(m[0]) : 0; };
 const tfrac = (v, i) => { const m = String(v || '').match(/^(\d+)\/(\d+)$/); return m ? Number(m[i + 1]) : 0; };
 const tTds = o => Math.max(tn(o.td), tn(o.rutd) + tn(o.retd));
-const TAG_DEFS_V = 8;   // 8: NBA   // 7: MLB   // 6: CFB   // 5: #marksman defined   // 3: Mystic NFL; 4: Legendary NFL (2026-11-09)   // 2: Real's own tags and box-score links (2026-11-09)
+const TAG_DEFS_V = 9;   // 9: NBA Legendary   // 8: NBA   // 7: MLB   // 6: CFB   // 5: #marksman defined   // 3: Mystic NFL; 4: Legendary NFL (2026-11-09)   // 2: Real's own tags and box-score links (2026-11-09)
 const TAG_DEFS = {
   nfl: [
     { tag: '#3hundo', rarity: 'iconic', desc: '300+ rushing + receiving yards', sql: `COALESCE(${tagJ('ruyds')}, 0) + COALESCE(${tagJ('reyds')}, 0) >= 300`,
@@ -3882,6 +3882,8 @@ TAG_DEFS.mlb = [
 ];
 TAG_SEASONS.mlb = [2026, 2025, 2024, 2023];
 /* NBA (Dennis, 2026-11-09): pts, reb, ast, stl, blk from the stat line. */
+// "15/18/83.3%" -> [made, attempts]; nothing there = none taken.
+const bShot = v => { const m = String(v || '').match(/^(\d+)\/(\d+)/); return m ? [Number(m[1]), Number(m[2])] : [0, 0]; };
 const bLine = o => ['pts', 'reb', 'ast', 'stl', 'blk'].filter(k => tn(o[k])).map(k => `${tn(o[k])} ${k}`).join(', ');
 TAG_DEFS.nba = [
   { tag: '#80bomb', rarity: 'iconic', desc: '80+ points', sql: `${tagJ('pts')} >= 80`, test: o => tn(o.pts) >= 80, line: bLine },
@@ -3892,7 +3894,26 @@ TAG_DEFS.nba = [
   { tag: '#5x5', rarity: 'mystic', desc: '5+ points, rebounds, assists, steals and blocks', sql: ['pts', 'reb', 'ast', 'stl', 'blk'].map(k => `${tagJ(k)} >= 5`).join(' AND '),
     test: o => ['pts', 'reb', 'ast', 'stl', 'blk'].every(k => tn(o[k]) >= 5), line: bLine },
   { tag: '#rodman', rarity: 'mystic', desc: '30+ rebounds', sql: `${tagJ('reb')} >= 30`, test: o => tn(o.reb) >= 30, line: bLine },
-  { tag: '#blockbuster', rarity: 'mystic', desc: '10+ blocks', sql: `${tagJ('blk')} >= 10`, test: o => tn(o.blk) >= 10, line: bLine }
+  { tag: '#blockbuster', rarity: 'mystic', desc: '10+ blocks', sql: `${tagJ('blk')} >= 10`, test: o => tn(o.blk) >= 10, line: bLine },
+  // Legendary, each stopping below the Mystic / Iconic one above it.
+  { tag: '#60bomb', rarity: 'legendary', desc: '60+ points', sql: `${tagJ('pts')} BETWEEN 60 AND 69`, test: o => tn(o.pts) >= 60 && tn(o.pts) < 70, line: bLine },
+  { tag: '#50bomb', rarity: 'legendary', desc: '50+ points', sql: `${tagJ('pts')} BETWEEN 50 AND 59`, test: o => tn(o.pts) >= 50 && tn(o.pts) < 60, line: bLine },
+  { tag: '#20/20', alias: ['2020'], rarity: 'legendary', desc: '20+ in two of points, rebounds and assists',
+    sql: `(${tagJ('pts')} >= 20) + (${tagJ('reb')} >= 20) + (${tagJ('ast')} >= 20) >= 2`,
+    test: o => ['pts', 'reb', 'ast'].filter(k => tn(o[k]) >= 20).length >= 2, line: bLine },
+  { tag: '#4x5', rarity: 'legendary', desc: '5+ in four of points, rebounds, assists, steals and blocks',
+    sql: ['pts', 'reb', 'ast', 'stl', 'blk'].map(k => `(COALESCE(${tagJ(k)}, 0) >= 5)`).join(' + ') + ' = 4',
+    test: o => ['pts', 'reb', 'ast', 'stl', 'blk'].filter(k => tn(o[k]) >= 5).length === 4, line: bLine },
+  { tag: '#ultrapure', rarity: 'legendary', desc: '25+ points with no free throws taken',
+    sql: `${tagJ('pts')} >= 25 AND (json_extract(stats, '$."fts"') IS NULL OR json_extract(stats, '$."fts"') LIKE '0/0%')`,
+    test: o => tn(o.pts) >= 25 && bShot(o.fts)[1] === 0, line: o => `${bLine(o)} · ${bShot(o.fg).slice(0, 2).join('/')} FG, 0 FTA` },
+  // Every shot made, 5+ attempts; no free throws taken counts as none missed.
+  { tag: '#perfect', rarity: 'legendary', desc: '100% from the field (5+ attempts) and the line', sql: `${tagJ('fg%')} >= 100`,
+    test: o => { const f = bShot(o.fg), t = bShot(o.fts); return f[1] >= 5 && f[0] === f[1] && t[0] === t[1]; },
+    line: o => `${bLine(o)} · ${bShot(o.fg).slice(0, 2).join('/')} FG, ${bShot(o.fts).slice(0, 2).join('/')} FT` },
+  { tag: '#stockton', rarity: 'legendary', desc: '20+ assists', sql: `${tagJ('ast')} >= 20`, test: o => tn(o.ast) >= 20, line: bLine },
+  { tag: '#glasscleaner', rarity: 'legendary', desc: '20+ rebounds', sql: `${tagJ('reb')} BETWEEN 20 AND 29`, test: o => tn(o.reb) >= 20 && tn(o.reb) < 30, line: bLine },
+  { tag: '#blockparty', rarity: 'legendary', desc: '5+ blocks', sql: `${tagJ('blk')} BETWEEN 5 AND 9`, test: o => tn(o.blk) >= 5 && tn(o.blk) < 10, line: bLine }
 ];
 TAG_SEASONS.nba = [2027, 2026, 2025, 2024, 2023];
 async function tagSeasonSig(env, db, sp, se) {
