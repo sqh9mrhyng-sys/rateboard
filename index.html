@@ -630,7 +630,7 @@
     <div class="whoami">
       <div class="idbit">
         <span><span class="sm-hide">Signed in as </span><b id="me"></b></span>
-        <span class="acctwrap"><button class="linkbtn" id="switchacct">Add account</button>
+        <span class="acctwrap"><button class="linkbtn" id="switchacct">Add account</button> <button class="linkbtn hide" id="addacct">+ Add account</button>
           <div class="acctmenu hide" id="acctmenu"></div></span>
         <button class="linkbtn" id="signout">Sign out</button>
       </div>
@@ -2769,7 +2769,10 @@ function drawAcct(){
   const b = $('#switchacct'); if(!b) return;
   const o = othersAcct();
   b.textContent = o.length === 1 ? `Switch to ${o[0].name}` : o.length ? 'Switch account ▾' : 'Add account';
+  // With one other saved the main button switches, so adding a third gets its own link (2026-11-09).
+  const a = $('#addacct'); if(a) a.classList.toggle('hide', o.length !== 1);
 }
+$('#addacct').addEventListener('click', e => { e.stopPropagation(); addAcct(); });
 function addAcct(){
   const d = loadDevice(); if(d && d.key && me) rememberAcct(d.key, me);
   setToken(''); clearDevice(); me = null;
