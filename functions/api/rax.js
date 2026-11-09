@@ -7858,7 +7858,7 @@ async function collectorHealth(env, url) {
       window: await kvj(`gl_window_${sp}_${se}`), through: await env.RATEBOARD_KV.get(`gl_through_${sp}_${se}`) });
   }
   // Seasons the main queue keeps (NHL): how far the game log and its rax reach (2026-11-09).
-  try { const r = ((await db.prepare(`SELECT season, day, seasonType, stats FROM gamelog WHERE sport='nfl' AND player='Josh Allen' AND (stats LIKE '%retd%' OR stats LIKE '%"rec"%' OR stats LIKE '%reyds%')`).all()).results) || [];
+  try { const r = ((await db.prepare(`SELECT season, day, seasonType, stats FROM gamelog WHERE sport='nfl' AND player='Josh Allen' AND season=2024 AND stats LIKE '%rutd%'`).all()).results) || [];
     seasons.push({ season: 'tmp', allen: r }); } catch (e) {}
   for (const [sp, se] of [['nhl', 2026], ['nba', 2027]]) {
     try { const last = await db.prepare(`SELECT MAX(day) AS day, MAX(CASE WHEN rax IS NOT NULL THEN day END) AS raxDay, COUNT(*) AS rows, SUM(CASE WHEN rax IS NULL THEN 1 ELSE 0 END) AS noRax FROM gamelog WHERE sport=? AND season=?`).bind(sp, se).first();
