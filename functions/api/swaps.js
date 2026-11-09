@@ -707,7 +707,8 @@ async function runMatchingInner(db, env) {
     .map(u => ({ ...u, sched: parse(u.sched, null), wants: parse(u.wants, []), keep: new Set(parse(u.keep, [])), touch: new Set(parse(u.touch, [])), slots: parse(u.slots, []),
                  passes: parse(u.passes, []), caps: parse(u.caps, {}) || {} }))
     // Only here for 160s: no swaps for them (their picks are ignored), and they sell.
-    .map(u => u.only160 ? { ...u, wants: [], s160: 1, b160: 0 } : u)
+    // ...but the players they had picked stay theirs: never sold in a 160 (Dennis, 2026-11-08).
+    .map(u => u.only160 ? { ...u, wants: [], hold: new Set(u.wants), s160: 1, b160: 0 } : u)
     .map(u => ({ ...u, sellHours: new Set(parse(u.sell160h, []).map(Number)) }));
   /* A member can be in any number of swaps a swap day, with anyone, the same
      partner again (even in the same hour) included. Each specific pass
@@ -766,6 +767,7 @@ async function runMatchingInner(db, env) {
   // Those packs were opened too, so they count toward the day's 25 for that sport + season.
   for (const u of users) { const pu = parse(u.packsUsed, null); if (pu && pu.day && Array.isArray(pu.keys)) for (const k of pu.keys) { if (!given.has(`${u.key}|${k}|${pu.day}`)) giveSeason(u.key, k, pu.day); given.add(`${u.key}|${k}|${pu.day}`); } }
   // 160s already made: the seller's pack is given, the buyer's received.
+  try { await drop160Held(db, ((await db.prepare(`SELECT * FROM swap_160 WHERE status='pending' AND warnS IS NULL AND dueAt > ?`).bind(Date.now()).all()).results) || []); } catch (e) {}
   let live160 = [];
   try { live160 = ((await db.prepare(`SELECT buyer, seller, pass, dueAt, createdAt, status, warnS FROM swap_160 WHERE createdAt > ? AND (status <> 'cancelled' OR warnS IS NOT NULL)`).bind(Date.now() - 2 * 86400000).all()).results) || []; } catch (e) {}
   for (const r of live160) { const d = swapDay(Number(r.dueAt));
@@ -815,7 +817,7 @@ async function runMatchingInner(db, env) {
      from every pass they hold for every pair and hour - millions of steps
      with members' full pass lists - and matching ran out of time). The
      day-by-day checks are made only for the few players the partner wants. */
-  const canGive = new Map(users.map(u => [u.key, new Set(u.passes.filter(p => p.kind !== 'team' && !(p.untouchable && !u.touch.has(p.key))).map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !u.wants.includes(k)))]));
+  const canGive = new Map(users.map(u => [u.key, new Set(u.passes.filter(p => p.kind !== 'team' && !(p.untouchable && !u.touch.has(p.key))).map(p => p.key).filter(k => swappable(k) && !u.keep.has(k) && !u.wants.includes(k) && !(u.hold && u.hold.has(k))))]));
   const givesOne = (u, k, d) => canGive.get(u.key).has(k) && !given.has(`${u.key}|${k}|${d}`) && seasonRoom(u.key, k, d);
   /* Every possible pair and shared hour, best first: an hour someone picked
      first is their primary, so pairs on both members' earliest picks go
@@ -2272,12 +2274,30 @@ async function dedupeSweep(db) {
    hour gets no extra DM - their swap warning's link opens the same page, with
    the 160s on it. Everyone else gets one: sellers how many packs to open,
    buyers how many 160s for which player, and the page link. */
+/* A 160 whose seller now has that player picked (even with swaps off - "only
+   here for 160s" keeps the picks) or kept is called off before its warning
+   (Dennis, 2026-11-08: told to sell K9 and Sheppard, both still picked). */
+async function drop160Held(db, rows) {
+  const live = rows.filter(r => r.status === 'pending' && !r.warnS); if (!live.length) return rows;
+  const ks = [...new Set(live.map(r => r.seller))], held = new Map();
+  for (let i = 0; i < ks.length; i += 90) { const part = ks.slice(i, i + 90);
+    for (const u of (((await db.prepare(`SELECT key, wants, keep FROM swap_users WHERE key IN (${part.map(() => '?').join(',')})`).bind(...part).all()).results) || []))
+      held.set(u.key, new Set([...parse(u.wants, []), ...parse(u.keep, [])])); }
+  const out = [];
+  for (const r of rows) {
+    if (r.status === 'pending' && !r.warnS && (held.get(r.seller) || new Set()).has(r.pass)) {
+      await db.prepare(`UPDATE swap_160 SET status='cancelled', note='called off: the seller has that player picked or kept' WHERE id=? AND status='pending' AND warnS IS NULL`).bind(r.id).run(); continue; }
+    out.push(r);
+  }
+  return out;
+}
 async function dm160(env, db, auth) {
   const now = Date.now();
   await matchCols(db);
-  const rows = ((await db.prepare(`SELECT * FROM swap_160 WHERE status='pending' AND dueAt > ? AND dueAt <= ? AND (warnS IS NULL OR warnB IS NULL) ORDER BY dueAt, id LIMIT 400`)
+  let rows = ((await db.prepare(`SELECT * FROM swap_160 WHERE status='pending' AND dueAt > ? AND dueAt <= ? AND (warnS IS NULL OR warnB IS NULL) ORDER BY dueAt, id LIMIT 400`)
     .bind(now, now + 30 * 60000).all()).results) || [];
   if (!rows.length) return;
+  rows = await drop160Held(db, rows);
   const per = new Map();
   for (const r of rows) for (const [who, col] of [[r.seller, 'warnS'], [r.buyer, 'warnB']]) {
     if (r[col]) continue; const k = who + '|' + r.dueAt;
