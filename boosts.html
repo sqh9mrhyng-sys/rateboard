@@ -128,6 +128,8 @@
   .custom .b{min-width:0}
   /* cleanup pass */
   .tabsrow{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+  /* Seven sports (NBA, NHL added 2026-11-09): narrower buttons so all fit on a phone. */
+  #sportseg button{padding:8px 10px;min-width:0} @media (max-width:520px){ #sportseg button{padding:8px 2px;font-size:14px} }
   b.h{font-size:16px}
   .ctl{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .ctl label{display:flex;flex-direction:column;gap:4px;font-weight:600}
@@ -155,14 +157,14 @@
 <div class="lock" id="lock" hidden><h1>Boosts &amp; Buys <span class="beta">BETA</span></h1><p class="note" id="lockmsg">Checking…</p><p id="signinbtn" hidden><a class="btn" href="/" style="display:inline-block;padding:10px 14px;border-radius:9px;background:#E8A33D;color:#141925;font-weight:700;text-decoration:none">Sign in on the board</a></p><p class="note" id="signinhint" hidden>Signed in already? Open the board once - it will ask for your password one more time, then this page works. Opened this from inside Real? Use the browser you signed in with.</p><p><a href="/">Back to the board</a></p></div>
 <div class="wrap" id="main" hidden>
   <header><h1>Boosts &amp; Buys</h1><span class="beta">BETA</span><a href="/" style="margin-left:auto">Back to the board</a></header>
-  <div class="tabsrow"><div class="seg" id="sportseg"><button data-s="ncaam" aria-pressed="true">CBB</button><button data-s="ncaaf" aria-pressed="false">CFB</button><button data-s="nfl" aria-pressed="false">NFL</button><button data-s="golf" aria-pressed="false">Golf</button><button data-s="soccer" aria-pressed="false">FC</button></div>
+  <div class="tabsrow"><div class="seg" id="sportseg"><button data-s="ncaam" aria-pressed="true">CBB</button><button data-s="ncaaf" aria-pressed="false">CFB</button><button data-s="nfl" aria-pressed="false">NFL</button><button data-s="nba" aria-pressed="false">NBA</button><button data-s="nhl" aria-pressed="false">NHL</button><button data-s="golf" aria-pressed="false">Golf</button><button data-s="soccer" aria-pressed="false">FC</button></div>
   <div class="seg" id="tab"><button data-t="boosts" aria-pressed="true">Boosts</button><button data-t="buys" aria-pressed="false" id="tab2">Buys</button></div></div>
 
   <div id="t-boosts">
     <section>
       <div class="ctl">
         <label class="note"><span id="daylbl">Day</span> <select id="day"></select></label>
-        <select id="sport" hidden><option value="ncaam">CBB 2026-27</option><option value="ncaaf">CFB 2026</option><option value="nfl">NFL 2026</option><option value="golf">Golf 2026</option><option value="soccer">FC 2026-27</option></select>
+        <select id="sport" hidden><option value="ncaam">CBB 2026-27</option><option value="ncaaf">CFB 2026</option><option value="nfl">NFL 2026</option><option value="nba">NBA 2026-27</option><option value="nhl">NHL 2026-27</option><option value="golf">Golf 2026</option><option value="soccer">FC 2026-27</option></select>
         <label class="note">Setting <select id="mode"><option value="balanced" selected>Balanced</option></select></label>
       </div>
       <div class="custom" id="custom" hidden>
@@ -394,7 +396,7 @@ const invFold = open => { $('#invbody').hidden = !open; $('#invfold').setAttribu
 $('#invfold').addEventListener('click', () => invFold($('#invbody').hidden));
 try{ if(localStorage.getItem('boosts_invopen_v1') === '0') invFold(false); }catch(e){}
 /* Custom: your own bars and maxes, per sport, kept in this browser. */
-const CUS_DEF = { ncaam: { l: 14.5, e: 10, r: 5 }, ncaaf: { l: 22, e: 15, r: 10 }, nfl: { l: 22.5, e: 17, r: 7 }, golf: { l: 19, e: 15, r: 10 }, soccer: { l: 11.2, e: 9, r: 6 } };
+const CUS_DEF = { ncaam: { l: 14.5, e: 10, r: 5 }, ncaaf: { l: 22, e: 15, r: 10 }, nfl: { l: 22.5, e: 17, r: 7 }, nba: { l: 4.5, e: 3, r: 1.7 }, nhl: { l: 5.6, e: 4.2, r: 2.5 }, golf: { l: 19, e: 15, r: 10 }, soccer: { l: 11.2, e: 9, r: 6 } };
 const CUS_IDS = { l: 'c-l', e: 'c-e', r: 'c-r', ml: 'm-l', me: 'm-e', mr: 'm-r' };
 function cusLoad(sp){ let all = {}; try{ all = JSON.parse(localStorage.getItem('boosts_custom_v1') || '{}') || {}; }catch(e){}
   const v = all[sp] || { ...CUS_DEF[sp], ml: '', me: '', mr: '' };
@@ -417,8 +419,11 @@ const drawMode = () => { const m = $('#mode').value;
   const GOLF_NOTE = { balanced: 'Legendary 19+ proj rax · Epic 15+ · Rare 10+ (a whole tournament)', heavy: 'Legendary 17+ proj rax · Epic 13.5+ · Rare 10+', saver: 'Legendary 22+ proj rax · Epic 18+ · Rare 10+' };
   const FC_NOTE = { balanced: 'Legendary 11.2+ proj rax (max 50% a day) · Epic 9+ · Rare 6+ (rax in a start)', heavy: 'Legendary 9.8+ proj rax (no cap) · Epic 7.8+ · Rare 6+', saver: 'Legendary 13+ proj rax (max 25% a day) · Epic 10.5+ · Rare 6+' };
   const sp0 = $('#sport').value;
+  // NBA / NHL (2026-11-09): rationed - at most 1 Legendary, 2 Epics and 10% of your Rares (up to 6) a day.
+  const NBA_NOTE = { balanced: 'Legendary 4.5+ proj rax (max 1 a day - very rare) · Epic 3+ (max 2 a day) · Rare 1.7+ (max 10% of your Rares a day, up to 6)', heavy: 'Legendary 4.2+ (max 1 a day) · Epic 2.7+ (max 2) · Rare 1.7+ (max 10% a day)', saver: 'Legendary 5+ (max 1 a day) · Epic 3.4+ (max 2) · Rare 1.7+ (max 10% a day)' };
+  const NHL_NOTE = { balanced: 'Legendary 5.6+ proj rax (max 1 a day - very rare) · Epic 4.2+ (max 2 a day) · Rare 2.5+ (max 10% of your Rares a day, up to 6)', heavy: 'Legendary 5.2+ (max 1 a day) · Epic 3.9+ (max 2) · Rare 2.5+ (max 10% a day)', saver: 'Legendary 6+ (max 1 a day) · Epic 4.6+ (max 2) · Rare 2.5+ (max 10% a day)' };
   const NFL_NOTE = { balanced: 'Legendary 22.5+ proj rax (max 35% a day) · Epic 17+ · Rare 7+', heavy: 'Legendary 19+ proj rax (max 40% a day) · Epic 14.9+ · Rare 5+', saver: 'Legendary 29.7+ proj rax · Epic 23.9+ · Rare 5+' };
-  $('#modenote').textContent = sp0 === 'ncaaf' ? (CFB_NOTE[m] || MODE_NOTE[m]) : sp0 === 'golf' ? (GOLF_NOTE[m] || GOLF_NOTE.balanced) : sp0 === 'soccer' ? (FC_NOTE[m] || FC_NOTE.balanced) : sp0 === 'nfl' ? (NFL_NOTE[m] || MODE_NOTE[m]) : MODE_NOTE[m]; };
+  $('#modenote').textContent = sp0 === 'ncaaf' ? (CFB_NOTE[m] || MODE_NOTE[m]) : sp0 === 'golf' ? (GOLF_NOTE[m] || GOLF_NOTE.balanced) : sp0 === 'soccer' ? (FC_NOTE[m] || FC_NOTE.balanced) : sp0 === 'nfl' ? (NFL_NOTE[m] || MODE_NOTE[m]) : sp0 === 'nba' ? (NBA_NOTE[m] || NBA_NOTE.balanced) : sp0 === 'nhl' ? (NHL_NOTE[m] || NHL_NOTE.balanced) : MODE_NOTE[m]; };
 $('#sport').addEventListener('change', () => { cusLoad($('#sport').value); drawMode(); });
 $('#mode').addEventListener('change', () => { drawMode(); if(!$('#out').hidden) run(); });
 // A new day re-runs the plan, so what's shown (and copied) is always that day's.
@@ -495,7 +500,7 @@ document.querySelectorAll('#tab button').forEach(b => b.addEventListener('click'
 function paintSport(){
   const sp = $('#sport').value;
   document.querySelectorAll('#sportseg button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.s === sp)));
-  const noBuys = sp === 'nfl' || sp === 'golf' || sp === 'soccer';
+  const noBuys = sp === 'nfl' || sp === 'golf' || sp === 'soccer' || sp === 'nba' || sp === 'nhl';
   $('#tab2').hidden = noBuys; $('#tab2').textContent = 'Buys';
   showTab(noBuys ? 'boosts' : curTab);
 }

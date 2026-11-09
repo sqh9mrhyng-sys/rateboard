@@ -2662,20 +2662,25 @@ export async function otdSeason(env, db, sp, se, force) {
 }
 
 /* Boosts: current season and the one before, per sport (Real's numbering). */
-const BOOST_SEASON = { ncaam: [2027, 2026], ncaaf: [2026, 2025], nfl: [2026, 2025] };
+const BOOST_SEASON = { ncaam: [2027, 2026], ncaaf: [2026, 2025], nfl: [2026, 2025], nba: [2027, 2026], nhl: [2026, 2025] };   // NBA and NHL added 2026-11-09
 /* Booster thresholds on projected rax for the game, per sport, set from
    last season's rax per game among regulars: Legendary is roughly the top
    2-3% of games, Epic the top 10%, Rare the top 25%. Boost saver raises the
    bar 15%, earning heavy lowers it 15%. */
-const BOOST_BARS = { ncaam: [11.5, 10, 7.5], ncaaf: [25, 20, 12], nfl: [19, 15, 8.5], golf: [19, 15, 10], soccer: [11.2, 9, 6] };   // Legendary ~top 1% game, Epic ~top 3-5%
+const BOOST_BARS = { ncaam: [11.5, 10, 7.5], ncaaf: [25, 20, 12], nfl: [19, 15, 8.5], golf: [19, 15, 10], soccer: [11.2, 9, 6], nba: [4.5, 3, 1.7], nhl: [5.6, 4.2, 2.5] };   // Legendary ~top 1% game, Epic ~top 3-5%
 const BOOST_MODES = { balanced: 1, heavy: 1, saver: 1, custom: 1 };
-const ESPN_PATH = { ncaam: 'basketball/mens-college-basketball', ncaaf: 'football/college-football', nfl: 'football/nfl' };
-const ESPN_GROUP = { ncaam: '&groups=50', ncaaf: '&groups=80', nfl: '' };
+const ESPN_PATH = { ncaam: 'basketball/mens-college-basketball', ncaaf: 'football/college-football', nfl: 'football/nfl', nba: 'basketball/nba', nhl: 'hockey/nhl' };
+const ESPN_GROUP = { ncaam: '&groups=50', ncaaf: '&groups=80', nfl: '', nba: '', nhl: '' };
 // Where Real's team code differs from ESPN's.
 const BOOST_ALIAS = { WISC: 'WIS', NCST: 'NCSU', BUT: 'BTLR', BSU: 'BOIS', AFA: 'AF', BUFF: 'BUF', HP: 'HPU', CHIC: 'CHST',
   CAMP: 'CAM', CLEV: 'CLE', ALB: 'UALB', IUPU: 'IUIN', ULL: 'UL', PRE: 'PRES', UALR: 'LR', SCUP: 'UPST', TAMC: 'AMCC',
   HBU: 'HCU', NIAG: 'NIA', DXST: 'UTU', IND: 'IU', JVST: 'JXST', WAS: 'WSH' };
-const boostAlias = (sp, t) => BOOST_ALIAS[t] || t;
+/* Per sport (2026-11-09): the college list sent the NFL's IND (Colts) to IU,
+   so Colts players never found their game. Pro leagues get their own. */
+const BOOST_ALIAS_BY = { ncaam: BOOST_ALIAS, ncaaf: BOOST_ALIAS, nfl: { WAS: 'WSH' },
+  nba: { GSW: 'GS', NOP: 'NO', NYK: 'NY', SAS: 'SA', UTA: 'UTAH', WAS: 'WSH' },
+  nhl: { LAK: 'LA', NJD: 'NJ', SJS: 'SJ', TBL: 'TB', UTA: 'UTAH' } };
+const boostAlias = (sp, t) => (BOOST_ALIAS_BY[sp] || BOOST_ALIAS)[t] || t;
 /* Schedules, injury reports and depth charts are fetched by the daily
    refresh (boostRefresh, on the collector tick) and saved; a member's request
    only reads the saved copies. Only if a copy is missing altogether is it
@@ -2716,7 +2721,7 @@ async function boostSchedule(env, sp, day, force) {
 async function boostMatchups(env, sp) {
   const db = env.RATEBOARD_DB; if (!db) return;
   const [se, prev] = BOOST_SEASON[sp];
-  const minSql = sp === 'ncaam' ? ' AND min >= 10' : '';
+  const minSql = sp === 'ncaam' || sp === 'nba' ? ' AND min >= 10' : '';
   let rows = [];
   try { rows = (await db.prepare(`SELECT opponent AS o, AVG(rax) AS a, COUNT(*) AS n FROM gamelog
       WHERE sport=? AND season IN (?, ?) AND seasonType='regularseason' AND rax > 0${minSql} AND opponent IS NOT NULL GROUP BY opponent`).bind(sp, se, prev).all()).results || []; } catch (e) { return; }
@@ -2849,7 +2854,7 @@ const BOOSTINV_EVERY = 2 * 3600000;
 // Members whose pass and booster reads on Boosts are never held back.
 const BOOST_FAST = new Set(['quas23']);
 async function boostInventoryAll(env, tok, hashId, fresh, admin) {
-  const key = `boostinv_v7_${hashId}`;   // v6: golf added (2026-11-05); v7: FC (2026-11-07)
+  const key = `boostinv_v8_${hashId}`;   // v6: golf added (2026-11-05); v7: FC (2026-11-07); v8: NBA, NHL (2026-11-09)
   let c = null;
   try { c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); } catch (e) {}
   if (c && (!fresh || (!admin && Date.now() - c.at < BOOSTINV_EVERY))) return { ...c, next: admin ? Date.now() : c.at + BOOSTINV_EVERY, cached: !!fresh };
@@ -2859,7 +2864,7 @@ async function boostInventoryAll(env, tok, hashId, fresh, admin) {
     try { d = await rsGetJson(`https://web.realapp.com/userpassboostercards/undefined/entity/player?displayType=collectionstats&sport=${sp}&userId=${encodeURIComponent(hashId)}&version=stat`, tok); }
     catch (e) {
       // FC is new: if Real won't give its boosters, the other sports still load.
-      if (sp === 'soccer') { sports[sp] = (c && c.sports && c.sports.soccer) || []; continue; }
+      if (sp === 'soccer' || sp === 'nba' || sp === 'nhl') { sports[sp] = (c && c.sports && c.sports[sp]) || []; continue; }
       if (c) return { ...c, next: c.at + BOOSTINV_EVERY }; return { error: 'Could not read your boosters from Real: ' + String(e.message || e).slice(0, 120) }; }
     const list = [];
     for (const g of (((d && d.boosterCardInfo) || {}).rarityGroups || [])) {
@@ -2873,9 +2878,10 @@ async function boostInventoryAll(env, tok, hashId, fresh, admin) {
     }
     sports[sp] = list;
     // FC's booster attributes, as Real names them (no accounts), for the health page while the FC stat names are checked.
-    if (sp === 'soccer' && list.length) { try { const seen = JSON.parse((await env.RATEBOARD_KV.get('fc_booster_labels')) || '[]') || [];
+    if ((sp === 'soccer' || sp === 'nba' || sp === 'nhl') && list.length) { const lk = sp === 'soccer' ? 'fc_booster_labels' : `booster_labels_${sp}`;
+      try { const seen = JSON.parse((await env.RATEBOARD_KV.get(lk)) || '[]') || [];
       const add = list.flatMap(b => (b.attrs || []).map(a => `${b.label} ${a.stat} +${a.boost}`)).filter(x => !seen.includes(x));
-      if (add.length) await env.RATEBOARD_KV.put('fc_booster_labels', JSON.stringify(seen.concat(add).slice(-60))); } catch (e) {} }
+      if (add.length) await env.RATEBOARD_KV.put(lk, JSON.stringify(seen.concat(add).slice(-60))); } catch (e) {} }
     await sleep(700);
   }
   const out = { at: Date.now(), sports };
@@ -5501,7 +5507,7 @@ async function handle({ request, env, waitUntil }) {
   }
   if (op === 'boostplan') {
     const sp = String(url.searchParams.get('sport') || '');
-    if (!BOOST_SEASON[sp] && sp !== 'golf' && sp !== 'soccer') return json({ error: 'Pick CBB, CFB, NFL, Golf or FC.' }, 400);
+    if (!BOOST_SEASON[sp] && sp !== 'golf' && sp !== 'soccer') return json({ error: 'Pick CBB, CFB, NFL, NBA, NHL, Golf or FC.' }, 400);
     const day = String(url.searchParams.get('date') || '');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return json({ error: 'Pick a date.' }, 400);
     let mode = BOOST_MODES[url.searchParams.get('mode')] ? url.searchParams.get('mode') : 'balanced';
@@ -5654,7 +5660,7 @@ async function handle({ request, env, waitUntil }) {
         if (sp !== 'ncaam' && cg && lastG && dayMs - Date.parse(lastG.day + 'T12:00:00Z') > 15 * 86400000) { skip = true; flags.push(`No game since ${lastG.day}`); }
         if (sp !== 'ncaam' && !cg && o) { k *= 0.6; flags.push('No games this season yet'); }
         // Basketball minutes: recent ones if there are any, else last season's.
-        if (sp === 'ncaam') {
+        if (sp === 'ncaam' || sp === 'nba') {
           const m3 = gs.slice(-3).map(x => Number(x.min)).filter(Number.isFinite);
           const mAvg = m3.length ? m3.reduce((a, b) => a + b, 0) / m3.length : (o && o.min != null ? Number(o.min) : null);
           if (m3.length >= 2 && mAvg < 12) { skip = true; flags.push(`${Math.round(mAvg)} min a game lately`); }
@@ -5736,18 +5742,32 @@ async function handle({ request, env, waitUntil }) {
     /* NFL (Dennis, 2026-11-08): Balanced is Legendary 22.5+ (up to 35% of the
        Legendaries held), Epic 17+, Rare 7+. Heavy and Saver keep the scaled CBB bars. */
     const NFL_RULES = { balanced: { leg: 22.5, epic: 17, cap: 0.35 }, heavy: { leg: 11.5 * 1.65, epic: 9 * 1.65, cap: 0.4 }, saver: { leg: 18 * 1.65, epic: 14.5 * 1.65, cap: 1 } };
-    const cfb = sp === 'ncaaf' ? CFB_RULES[mode] || CFB_RULES.balanced : sp === 'golf' ? GOLF_RULES[mode] || GOLF_RULES.balanced : sp === 'soccer' ? FC_RULES[mode] || FC_RULES.balanced : sp === 'nfl' ? NFL_RULES[mode] || NFL_RULES.balanced : null;
+    /* NBA and NHL (Dennis, 2026-11-09): games almost every day all season, so
+       boosters are rationed - Legendary very hard to get (only the very top
+       projections, at most 1 a day), Epic at most 2 a day, and Rares at most
+       10% of those held a day (1 to 6), so they can't all go at once. Bars on
+       projected rax in the game, from last season's averages among regulars:
+       NBA top 1% ~4.0, top 5% ~3.1, top 25% ~1.7; NHL top 1% ~5.5, top 5% ~4.2,
+       top 25% ~2.5. */
+    const NBA_RULES = { balanced: { leg: 4.5, epic: 3, cap: 1 }, heavy: { leg: 4.2, epic: 2.7, cap: 1 }, saver: { leg: 5, epic: 3.4, cap: 1 } };
+    const NHL_RULES = { balanced: { leg: 5.6, epic: 4.2, cap: 1 }, heavy: { leg: 5.2, epic: 3.9, cap: 1 }, saver: { leg: 6, epic: 4.6, cap: 1 } };
+    const cfb = sp === 'ncaaf' ? CFB_RULES[mode] || CFB_RULES.balanced : sp === 'golf' ? GOLF_RULES[mode] || GOLF_RULES.balanced : sp === 'soccer' ? FC_RULES[mode] || FC_RULES.balanced : sp === 'nfl' ? NFL_RULES[mode] || NFL_RULES.balanced
+      : sp === 'nba' ? NBA_RULES[mode] || NBA_RULES.balanced : sp === 'nhl' ? NHL_RULES[mode] || NHL_RULES.balanced : null;
     if (cfb) R.cap = cfb.cap;
-    let legBar = cfb ? cfb.leg : R.leg * scale, epicBar = cfb ? cfb.epic : R.epic * scale, rareFloor = sp === 'ncaaf' || sp === 'golf' ? 10 : sp === 'soccer' ? 6 : sp === 'nfl' && mode === 'balanced' ? 7 : 5;
+    let legBar = cfb ? cfb.leg : R.leg * scale, epicBar = cfb ? cfb.epic : R.epic * scale, rareFloor = sp === 'ncaaf' || sp === 'golf' ? 10 : sp === 'soccer' ? 6 : sp === 'nfl' && mode === 'balanced' ? 7 : sp === 'nba' ? 1.7 : sp === 'nhl' ? 2.5 : 5;
     const cutAt = null;
     if (CUS) { legBar = CUS.leg ?? Infinity; epicBar = CUS.epic ?? Infinity; rareFloor = CUS.rare ?? Infinity; }
     bars.splice(0, 3, Math.round(legBar * 10) / 10, Math.round(epicBar * 10) / 10, rareFloor);
     const held = r => inv ? inv.filter(b => b.rarity === r).reduce((t, b) => t + b.count, 0) : 0;
     const dayCap = CUS ? { 5: CUS.max[5] ?? Infinity, 4: CUS.max[4] ?? Infinity, 3: CUS.max[3] ?? Infinity }
       : { 5: held(5) ? Math.max(1, Math.floor(held(5) * R.cap)) : 0, 4: Infinity, 3: Infinity };
+    // NBA / NHL daily most, whatever the setting (Custom can only go lower).
+    if (sp === 'nba' || sp === 'nhl') { dayCap[5] = Math.min(dayCap[5], 1); dayCap[4] = Math.min(dayCap[4], 2);
+      dayCap[3] = Math.min(dayCap[3], inv ? Math.min(6, Math.max(1, Math.round(held(3) * 0.1))) : 6); }
     const usedR = { 5: 0, 4: 0, 3: 0 };
     // Custom maxes hold even when Real won't say what boosters they have.
-    const own = r => left ? Math.min(held(r), dayCap[r]) - usedR[r] : CUS ? dayCap[r] - usedR[r] : Infinity;
+    const capped = !!CUS || sp === 'nba' || sp === 'nhl';
+    const own = r => left ? Math.min(held(r), dayCap[r]) - usedR[r] : capped ? dayCap[r] - usedR[r] : Infinity;
     const NR = { 5: 'legendary', 4: 'epic', 3: 'rare' };
     const gainOf = (r, b) => {
       // A two-attribute booster counts whichever side the player produces on.
@@ -5763,10 +5783,10 @@ async function handle({ request, env, waitUntil }) {
         // Pinned players keep their spot in line, and outside Boost saver their minimum rarity too.
         const pin = pinOf(r); if (pin && mode !== 'saver' && !CUS && (!want || want < pin[1])) want = pin[1];
       }
-      while (want && (left || CUS) && own(want) <= 0) want = want > 3 ? want - 1 : null;
+      while (want && (left || capped) && own(want) <= 0) want = want > 3 ? want - 1 : null;
       r.boost = want ? NR[want] : null;
       r._r = want;
-      if (want && (left || CUS)) usedR[want]++;
+      if (want && (left || capped)) usedR[want]++;
       r.belowCut = false;
     }
     /* 2. Attributes, per rarity, for the most rax across everyone rather
