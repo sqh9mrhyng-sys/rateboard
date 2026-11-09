@@ -7881,6 +7881,10 @@ async function collectorHealth(env, url) {
       const top = ((await db.prepare(`SELECT player, COUNT(*) AS g, ROUND(AVG(rax), 2) AS a, MAX(day) AS last, GROUP_CONCAT(substr(day,6) || '=' || rax || COALESCE(substr(seasonType,1,3),'')) AS rs FROM (SELECT player, playerId, rax, day, seasonType FROM gamelog WHERE sport=? AND season=? AND rax IS NOT NULL ORDER BY day) GROUP BY playerId HAVING g >= 5 ORDER BY a DESC LIMIT 8`).bind(sp, se).all()).results) || [];
       seasons.push({ season: `${sp}:${se}`, queue: true, lastGameDay: last && last.day, lastRaxDay: last && last.raxDay, rows: last && last.rows, noRax: last && last.noRax, top }); } catch (e) {}
   }
+  // The market account's performance pull: each season's place (last player id asked) and whether it's done.
+  const perfPull = { allDone: !!(await env.RATEBOARD_KV.get('perf_all_done_v1')), seasons: [] };
+  for (const x of PERF_QUEUE) perfPull.seasons.push({ s: `${x.sport}:${x.season}`, done: !!(await env.RATEBOARD_KV.get(perfDoneKey(x.sport, x.season))), after: Number(await env.RATEBOARD_KV.get(`${PERF_CURSOR}:${x.sport}:${x.season}`)) || 0 });
+  seasons.push({ season: 'perfPull', perfPull });
   const pace = await kvj('queue_pace_v1'), stuck = await kvj('queue_stuck_v1');
   const body = JSON.stringify({ at: new Date().toISOString(), seasons,
     queue: { lastJob: pace && pace.lastJob, restingUntil: pace && pace.holdUntil > Date.now() ? new Date(pace.holdUntil).toISOString() : null,
