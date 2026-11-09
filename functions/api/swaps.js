@@ -3735,7 +3735,7 @@ const tagFrac = (k, part) => { const v = `json_extract(stats, '$."${k}"')`;
 const tn = v => { const m = String(v == null ? '' : v).match(/^-?\d+(\.\d+)?/); return m ? Number(m[0]) : 0; };
 const tfrac = (v, i) => { const m = String(v || '').match(/^(\d+)\/(\d+)$/); return m ? Number(m[i + 1]) : 0; };
 const tTds = o => Math.max(tn(o.td), tn(o.rutd) + tn(o.retd));
-const TAG_DEFS_V = 5;   // 5: #marksman defined   // 3: Mystic NFL; 4: Legendary NFL (2026-11-09)   // 2: Real's own tags and box-score links (2026-11-09)
+const TAG_DEFS_V = 6;   // 6: CFB   // 5: #marksman defined   // 3: Mystic NFL; 4: Legendary NFL (2026-11-09)   // 2: Real's own tags and box-score links (2026-11-09)
 const TAG_DEFS = {
   nfl: [
     { tag: '#3hundo', rarity: 'iconic', desc: '300+ rushing + receiving yards', sql: `COALESCE(${tagJ('ruyds')}, 0) + COALESCE(${tagJ('reyds')}, 0) >= 300`,
@@ -3797,6 +3797,19 @@ const TAG_DEFS = {
    season under way is redone as games come in. Each season's fingerprint:
    its game-log rows and latest day, and its performances. */
 const TAG_SEASONS = { nfl: [2026, 2025, 2024, 2023] };
+/* CFB (Dennis, 2026-11-09): the same tags as the NFL's (same definitions - their
+   ranges already stop below the next one up), on CFB's own rarities. */
+const CFB_TAG_RARITY = {
+  iconic: ['#jackson', '#air6hundo', '#boogeyman', '#magnet', '#diamondboot'],
+  mystic: ['#3hundo', '#5tuddy', '#tdtrick', '#perfectcompletion', '#air5hundo', '#platniumarm', '#eightball', '#nightmare', '#enforcer', '#triplepick', '#punt5hundo', '#platniumboot'],
+  legendary: ['#2fitty', '#nickledime', '#perfectrating', '#slapped', '#goldenarm', '#airforce', '#puntcity', '#marksman']
+};
+// Dennis's CFB spellings for two of the NFL's.
+const CFB_TAG_SAME = { '#perfectcompletion': '#perfectcompletions', '#nickledime': '#nickeldime' };
+TAG_DEFS.ncaaf = Object.entries(CFB_TAG_RARITY).flatMap(([rarity, tags]) => tags.map(tag => {
+  const base = TAG_DEFS.nfl.find(d => d.tag === (CFB_TAG_SAME[tag] || tag));
+  return base ? { ...base, tag, rarity, alias: [...(base.alias || []), base.tag.slice(1)] } : null; }).filter(Boolean));
+TAG_SEASONS.ncaaf = [2026, 2025, 2024, 2023];
 async function tagSeasonSig(env, db, sp, se) {
   const k = `tagview_sig_v2_${sp}_${se}`;
   try { const c = await env.RATEBOARD_KV.get(k); if (c) return c; } catch (e) {}
@@ -5582,8 +5595,9 @@ async function handle({ request, env, waitUntil }) {
       if (!locked) {
         try { await env.RATEBOARD_KV.put(lockK, '1', { expirationTtl: 120 }); } catch (e) {}
         const job = tagBuild(env, db, sp).finally(() => env.RATEBOARD_KV.delete(lockK).catch(() => {}));
-        if (!c) { try { c = await job; } catch (e) { return json({ error: 'Could not build the tag list: ' + e.message }, 500); } }
-        else { try { waitUntil(job.catch(() => {})); } catch (e) {} }
+        // Built in the background; the page checks back (a first build of a big sport - CFB - takes a while).
+        try { waitUntil(job.catch(() => {})); } catch (e) {}
+        if (!c) return json({ building: true, note: 'Building the tag list for the first time - this page checks again in 20 seconds.' });
       } else if (!c) return json({ building: true, note: 'Building the tag list - try again in a minute.' });
     }
     return json(c);
