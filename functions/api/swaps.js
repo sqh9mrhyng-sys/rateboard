@@ -2981,8 +2981,18 @@ const boostName = n => String(n || '').normalize('NFKD').replace(/[̀-ͯ]/g, '')
   .replace(/\b(jr|sr|ii|iii|iv)\b\.?/g, '').replace(/[^a-z]/g, '');
 // ESPN's injury report for the sport, by player name. Kept 2 hours. Entries
 // older than 30 days are dropped (the college lists carry years-old ones).
+/* An injury-map entry for this player: his own team's when we know it. A
+   same-name player on another team (two Justin Jeffersons) doesn't count;
+   the hand list (no team) always does. */
+function injOf(map, name, tid) {
+  const k = boostName(name || ''), e = map[k];
+  if (e && e.manual) return e;
+  if (tid != null && tid !== '' && map[k + '|' + tid]) return map[k + '|' + tid];
+  if (e && e.tid && tid != null && tid !== '' && String(e.tid) !== String(tid)) return null;
+  return e || null;
+}
 async function boostInjuries(env, sp, force) {
-  const key = `boostinj_v1_${sp}`;
+  const key = `boostinj_v2_${sp}`;
   if (!force) { try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c) return c.map; } catch (e) {} }
   const map = {};
   try {
@@ -2991,7 +3001,11 @@ async function boostInjuries(env, sp, force) {
     for (const t of (d.injuries || [])) for (const x of (t.injuries || [])) {
       if (!x.athlete || !x.status || /^active$/i.test(x.status)) continue;
       if (x.date && Date.now() - Date.parse(x.date) > 30 * 86400000) continue;
-      map[boostName(x.athlete.displayName)] = { status: x.status, note: String(x.shortComment || '').slice(0, 140) };
+      /* With his team (2026-11-09: a Browns Justin Jefferson, out, benched
+         the Vikings' Justin Jefferson - the list was by name only). */
+      const tid = String((x.athlete.team && x.athlete.team.id) || t.id || ''), e = { status: x.status, note: String(x.shortComment || '').slice(0, 140), tid };
+      map[boostName(x.athlete.displayName) + '|' + tid] = e;
+      if (!map[boostName(x.athlete.displayName)]) map[boostName(x.athlete.displayName)] = e;
     }
   } catch (e) {}
   try { await env.RATEBOARD_KV.put(key, JSON.stringify({ at: Date.now(), map }), { expirationTtl: 3 * 86400 }); } catch (e) {}
@@ -3078,14 +3092,14 @@ async function boostTeamInj(env, sp, ids, force) {
           for (const a of items) {
             if (!a || !a.displayName) continue;
             const ij = (a.injuries || []).slice().sort((x, y) => Date.parse(y.date || 0) - Date.parse(x.date || 0))[0];
-            if (ij && ij.status && !/^active$/i.test(ij.status)) m[boostName(a.displayName)] = { status: String(ij.status), note: '' };
+            if (ij && ij.status && !/^active$/i.test(ij.status)) m[boostName(a.displayName)] = { status: String(ij.status), note: '', tid: String(id) };
           }
           try { await env.RATEBOARD_KV.put(key, JSON.stringify({ at: Date.now(), m }), { expirationTtl: 86400 }); } catch (e) {}
         }
       } catch (e) {}
       if (!m) { try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c) m = c.m; } catch (e) {} }
     }
-    if (m) Object.assign(out, m);
+    if (m) for (const [k, v] of Object.entries(m)) { const e = { ...v, tid: String(id) }; out[k + '|' + id] = e; if (!out[k]) out[k] = e; }
   }));
   return out;
 }
@@ -3909,7 +3923,7 @@ async function projBuild(env, db, sp) {
   const inj = {};
   if (!fc) {
     try { const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${PROJ_PATH[sp]}/injuries`); const d = r.ok ? await r.json() : {};
-      for (const t of (d.injuries || [])) for (const x of (t.injuries || [])) if (x.athlete && x.status && !/^active$/i.test(x.status)) inj[boostName(x.athlete.displayName)] = { status: x.status }; } catch (e) {}
+      for (const t of (d.injuries || [])) for (const x of (t.injuries || [])) if (x.athlete && x.status && !/^active$/i.test(x.status)) { const tid = String((x.athlete.team && x.athlete.team.id) || t.id || ''), e = { status: x.status, tid }; inj[boostName(x.athlete.displayName) + '|' + tid] = e; if (!inj[boostName(x.athlete.displayName)]) inj[boostName(x.athlete.displayName)] = e; } } catch (e) {}
   }
   // NFL: each team's own injury list too (the league list misses some - Lamar, 2026-11-04).
   if (sp === 'nfl') { try { Object.assign(inj, await boostTeamInj(env, sp, Object.values(sched.ids || {}))); } catch (e) {} }
@@ -4014,7 +4028,7 @@ async function projBuild(env, db, sp) {
     const since = teamDays.filter(d => d >= first || near([first], d)).length || mineAll.length;
     let avail = (mineAll.length + P.ka * P.a0) / (Math.max(since, mineAll.length) + P.ka);
     const recent = teamDays.slice(-P.look), missed = recent.filter(d => !near(days, d)).length;
-    const ij = inj[boostName(last.player || '')];
+    const ij = injOf(inj, last.player, ab && sched.ids ? sched.ids[ab] : null);
     let skipNext = false, skipN = 0;
     /* The hand-kept injury list (Admin -> Boosts injury list): a note with
        "season" in it = no more games; Out / Suspension through a day = the
@@ -5871,7 +5885,7 @@ async function handle({ request, env, waitUntil }) {
         // On no NFL roster at all (released, or on a practice squad): no booster.
         if (sp === 'nfl' && nflRos && nflRos.m && Object.keys(nflRos.m).length > 1500 && !(nflRos.m[boostName(name)] || []).length) { skip = true; flags.push('Not on an NFL roster (released or practice squad)'); }
         // Injury report.
-        const ij = inj[boostName(name)];
+        const ij = injOf(inj, name, g && g.id);
         if (ij) {
           if (/^(out|injured reserve|doubtful|suspension)/i.test(ij.status)) { skip = true; flags.push(`${ij.status}${ij.note ? ': ' + ij.note : ''}`); }
           else if (/questionable/i.test(ij.status)) { k *= 0.75; flags.push(`Questionable${ij.note ? ': ' + ij.note : ''}`); }
@@ -5918,7 +5932,7 @@ async function handle({ request, env, waitUntil }) {
     try {
       const tinj = await boostTeamInj(env, sp, rows.map(r => r.tid));
       for (const r of rows) {
-        const ij = tinj[boostName(r.name)]; if (!ij || r.skip) continue;
+        const ij = injOf(tinj, r.name, r.tid); if (!ij || r.skip) continue;
         if (/^(out|injured reserve|doubtful|suspen)/i.test(ij.status)) { r.skip = true; r.flags.push(ij.status); }
         else if (/questionable/i.test(ij.status) && !r.flags.some(f => /^questionable/i.test(f))) {
           r.flags.push('Questionable');
