@@ -7837,6 +7837,12 @@ async function collectorHealth(env, url) {
       lastGameDay: last && last.day, lastRaxDay: last && last.raxDay, rows: last && last.rows,
       window: await kvj(`gl_window_${sp}_${se}`), through: await env.RATEBOARD_KV.get(`gl_through_${sp}_${se}`) });
   }
+  // Seasons the main queue keeps (NHL): how far the game log and its rax reach (2026-11-09).
+  for (const [sp, se] of [['nhl', 2026]]) {
+    try { const last = await db.prepare(`SELECT MAX(day) AS day, MAX(CASE WHEN rax IS NOT NULL THEN day END) AS raxDay, COUNT(*) AS rows, SUM(CASE WHEN rax IS NULL THEN 1 ELSE 0 END) AS noRax FROM gamelog WHERE sport=? AND season=?`).bind(sp, se).first();
+      const top = ((await db.prepare(`SELECT player, COUNT(*) AS g, ROUND(AVG(rax), 2) AS a, MAX(day) AS last, GROUP_CONCAT(rax) AS rs FROM (SELECT player, playerId, rax, day FROM gamelog WHERE sport=? AND season=? AND rax IS NOT NULL ORDER BY day) GROUP BY playerId HAVING g >= 5 ORDER BY a DESC LIMIT 8`).bind(sp, se).all()).results) || [];
+      seasons.push({ season: `${sp}:${se}`, queue: true, lastGameDay: last && last.day, lastRaxDay: last && last.raxDay, rows: last && last.rows, noRax: last && last.noRax, top }); } catch (e) {}
+  }
   const pace = await kvj('queue_pace_v1'), stuck = await kvj('queue_stuck_v1');
   const body = JSON.stringify({ at: new Date().toISOString(), seasons,
     queue: { lastJob: pace && pace.lastJob, restingUntil: pace && pace.holdUntil > Date.now() ? new Date(pace.holdUntil).toISOString() : null,
