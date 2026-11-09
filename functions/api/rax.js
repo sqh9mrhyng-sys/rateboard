@@ -1,5 +1,5 @@
 import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS, touchSeen, userStats, sessionState } from '../../lib/auth.js';
-import { swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick, fcSchedule } from './swaps.js';
+import { swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick, fcSchedule, whyNotFull } from './swaps.js';
 import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, capNow } from '../../lib/dbwatch.js';
 
 /* Adding a column that already exists just errors (and is ignored). Each
@@ -7898,6 +7898,24 @@ async function nhlCatchup(env) {
   try { await env.RATEBOARD_KV.put('queue_pace_v1', JSON.stringify({ lastJob: 'nhl:2026', holdUntil: 0 })); } catch (e) {}
   try { await env.RATEBOARD_KV.put('proj_force_v1_nhl', String(Date.now()), { expirationTtl: 7 * 86400 }); } catch (e) {}
 }
+/* One-off (2026-11-09): a member said he got no swap warnings with "59
+   matches" showing. The matcher's own check for him, counts only (no names
+   in health), kept for a day. Remove once looked at. */
+async function swapDiag(env) {
+  const k = 'diag_swap_1109';
+  try { if (await env.RATEBOARD_KV.get(k)) return; await env.RATEBOARD_KV.put(k, JSON.stringify({ at: Date.now(), running: true }), { expirationTtl: 86400 }); } catch (e) { return; }
+  const db = env.RATEBOARD_DB;
+  try {
+    const r = await db.prepare("SELECT key FROM swap_users WHERE lower(key)='lbj'").first();
+    const w = r ? await whyNotFull(db, env, r.key) : { why: ['no swap row'] };
+    let ms = null;
+    if (r) { try { ms = ((await db.prepare(`SELECT status, COUNT(*) AS n, MAX(createdAt) AS last FROM swap_matches WHERE (a=? OR b=?) AND createdAt > ? GROUP BY status`).bind(r.key, r.key, Date.now() - 7 * 86400000).all()).results) || []; } catch (e) { ms = String(e).slice(0, 120); } }
+    let u = null;
+    if (r) { try { const x = await db.prepare('SELECT active, slots, sched, wants, dayCap, only160, s160, b160, scannedAt, updatedAt FROM swap_users WHERE key=?').bind(r.key).first();
+      u = { active: x.active, slots: x.slots, sched: String(x.sched || '').slice(0, 200), wantsN: (JSON.parse(x.wants || '[]') || []).length, wants: String(x.wants || '').slice(0, 300), dayCap: x.dayCap, only160: x.only160, s160: x.s160, b160: x.b160, scannedAt: x.scannedAt }; } catch (e) { u = String(e).slice(0, 120); } }
+    await env.RATEBOARD_KV.put(k, JSON.stringify({ at: Date.now(), w, swaps7d: ms, u }), { expirationTtl: 86400 });
+  } catch (e) { try { await env.RATEBOARD_KV.put(k, JSON.stringify({ at: Date.now(), err: String(e && e.message || e).slice(0, 200) }), { expirationTtl: 86400 }); } catch (e2) {} }
+}
 async function collectorHealth(env, url) {
   const ck = new Request(url.origin + '/__cache/collector-health');
   try { const hit = await caches.default.match(ck); if (hit) return hit; } catch (e) {}
@@ -7976,7 +7994,7 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), marketAccount: { busyWithMarket: await marketBusy(env), lastGapHelp: await kvj('gap_push_last') }, budget: await jobOverBudget(env) ? 'over' : 'ok' }, null, 1);
+    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109'), marketAccount: { busyWithMarket: await marketBusy(env), lastGapHelp: await kvj('gap_push_last') }, budget: await jobOverBudget(env) ? 'over' : 'ok' }, null, 1);
   const res = new Response(body, { headers: { 'content-type': 'application/json', 'cache-control': 'max-age=60' } });
   try { await caches.default.put(ck, res.clone()); } catch (e) {}
   return res;
@@ -8005,6 +8023,7 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil(boostRefresh(env).catch(() => {}));
     ctx.waitUntil(nhlZeroFix(env).catch(() => {}));
     ctx.waitUntil(nhlCatchup(env).catch(() => {}));
+    ctx.waitUntil(swapDiag(env).catch(() => {}));
     ctx.waitUntil(perfMarketTick(ctx).catch(() => {}));
     // FC Boosts: lineups near kickoff, and the game log after each game.
     ctx.waitUntil(fcLineupTick(env).catch(() => {}));

@@ -4105,6 +4105,101 @@ async function scanEvery(env) {
 /* Step times for one request, so a slow page open says where the time went. */
 const MARKS = new WeakMap();
 const mark = (req, what) => { const m = MARKS.get(req); if (m) m.push(`${what} ${Date.now() - m.t}`); };
+/* Who could actually be matched with a member, by the matcher's own rules
+   (2026-11-09: "Why haven't I matched?" said 59 matches for a member who got
+   none - it skipped the rules for untouchable passes, under-27-play players,
+   weekly/one-day schedules, restricted members and passes already given out
+   that swap day). Counts only: no names. */
+export async function whyNotFull(db, env, key) {
+  await matchCols(db); await db.prepare(DM_DDL).run();
+  try { await db.prepare(RESTRICT_DDL).run(); await db.prepare(SBLOCK_DDL).run(); } catch (e) {}
+  const r = await db.prepare('SELECT * FROM swap_users WHERE key=?').bind(key).first();
+  const out = { why: [], can: 0, hour: 0, both: 0, free: 0 };
+  if (!r) { out.why.push('You have no swap saved.'); return out; }
+  const prep = x => ({ ...x, sched: parse(x.sched, null), wants: parse(x.wants, []), keep: new Set(parse(x.keep, [])), touch: new Set(parse(x.touch, [])),
+    slots: parse(x.slots, []), passes: parse(x.passes, []), caps: parse(x.caps, {}) || {} });
+  const u = prep(r), now = Date.now();
+  const one = async (sql, ...b) => { try { return await db.prepare(sql).bind(...b).first(); } catch (e) { return null; } };
+  if (!(await one('SELECT 1 AS x FROM swap_dm WHERE hashId=? AND channelId IS NOT NULL', u.hashId || ''))) out.why.push('Step 1 is not verified - the bot cannot DM you, so you are never matched.');
+  if (await one('SELECT 1 AS x FROM restricted WHERE key=?', key)) out.why.push('Your swaps are on hold - message Dennis.');
+  if (await one('SELECT 1 AS x FROM swap_block WHERE key=?', key)) out.why.push('Your swaps are on hold - message Dennis.');
+  if (!u.comment) out.why.push('No comment link saved (step 2).');
+  if (!u.passes.length) out.why.push('Your passes have not been scanned (step 3).');
+  if (!u.active) out.why.push('Your swap is not saved, or is paused - tap Save my swap.');
+  if (u.only160) out.why.push('You chose "Only here to do 160s", so you are never put in swaps.');
+  // Their picks as the matcher sees them.
+  const swappable = k => !/^(soccer|ufc):/.test(k) && !seasonOff(k);
+  const owned = new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key));
+  const picked = u.wants.slice(0, MAX_WANTS);
+  let low = new Set(); try { low = await lowPlays(env, db, picked); } catch (e) {}
+  const wants = picked.filter(k => swappable(k) && owned.has(k) && !low.has(k));
+  out.picks = picked.length; out.usable = wants.length;
+  out.dropped = { notOwned: picked.filter(k => !owned.has(k)).length, lowPlays: picked.filter(k => low.has(k)).length, seasonOff: picked.filter(k => seasonOff(k)).length };
+  if (!picked.length) out.why.push('You have not picked a player to swap for (step 4).');
+  else if (!wants.length) out.why.push(out.dropped.lowPlays ? 'Every player you picked has under 27 plays, so none can be matched - pick others.'
+    : out.dropped.notOwned ? 'The players you picked are not in your last scan - scan again.' : 'None of the players you picked can be swapped yet.');
+  // The hours the next 24 really give them (a weekly or one-day schedule can leave none).
+  const dues = [];
+  for (let t = Math.floor(now / 3600000) * 3600000 + 3600000; t - now <= 24 * 3600000; t += 3600000) if (!noSwapHour(t)) dues.push(t);
+  const myHours = dues.filter(t => rankAt(u, t) >= 0);
+  out.sched = (u.sched && u.sched.mode) || 'daily'; out.hours24 = myHours.length;
+  if (!myHours.length) out.why.push(out.sched === 'date' ? 'Your schedule is set to one day only, and it has no hours in the next 24 - change it in step 5.'
+    : out.sched === 'weekly' ? 'Your weekly schedule has no hours in the next 24 - change it in step 5.' : 'No hours picked (step 5).');
+  // What they could give: the matcher's rule.
+  const giveSet = x => new Set(x.passes.filter(p => p.kind !== 'team' && !(p.untouchable && !x.touch.has(p.key))).map(p => p.key)
+    .filter(k => swappable(k) && !x.keep.has(k) && !x.wants.includes(k)));
+  const mine = giveSet(u);
+  out.giveable = mine.size;
+  if (wants.length && !mine.size) out.why.push('You have no passes free to give - untick some keeps or untouchables.');
+  // Goals and Scale limits (step 6).
+  if (wants.length) {
+    let full = 0, reached = null;
+    for (const w of wants) {
+      const g = await goalRoom(db, new Map(), u, (x, ww) => usedSince(db, x, ww), w).catch(() => ({}));
+      const c = u.caps[w];
+      const capped = c && ((Number(c.n) > 0 && c.at && await usedFor(db, key, w, c.at) >= Number(c.n)) || (Number(c.d) > 0 && await usedFor(db, key, w, now - 86400000) >= Number(c.d)));
+      if (g.reached && !reached) reached = g;
+      if (g.reached || (g.limited && g.left <= 0) || capped) full++;
+    }
+    if (full === wants.length) out.why.push(reached && wants.length === 1 ? `Your pass is at ${reached.rating}, which already meets your goal of ${reached.goal}.`
+      : 'Every player you picked has reached his goal or your Scale limit (step 6). Raise a limit or pick another player.');
+    const open = await one(`SELECT COUNT(*) AS n FROM swap_matches WHERE (a=? OR b=?) AND (status IN ('pending','sending','warned') OR (status='sent' AND sentAt > ?))`, key, key, now - 86400000);
+    if (Number(u.dayCap) > 0 && Number(open && open.n) >= Number(u.dayCap)) out.why.push(`You have ${open.n} swap${open.n == 1 ? '' : 's'} going - your Scale limit is ${u.dayCap} a day (step 6). Raise it for more.`);
+  }
+  if (out.why.length) return out;
+  // Passes already going out this swap day.
+  const d = swapDay(myHours[0]);
+  const given = new Set();
+  for (const m of ((await db.prepare(`SELECT a, b, aGets, bGets, slot, createdAt, dueAt, warnA, warnB, doneA, doneB, status FROM swap_matches WHERE createdAt > ?`).bind(now - 2 * 86400000).all()).results || [])) {
+    if (swapDay(sideDue(m)) !== d) continue;
+    const live = ['pending', 'sending', 'warned', 'sent'].includes(m.status);
+    if (live || m.warnB || m.doneB) given.add(`${m.b}|${m.aGets}`);
+    if (live || m.warnA || m.doneA) given.add(`${m.a}|${m.bGets}`);
+  }
+  const others = (await pagedRows(db, `SELECT * FROM swap_users WHERE active=1 AND passes IS NOT NULL AND key<>? AND (only160 IS NULL OR only160=0)
+      AND wants IS NOT NULL AND wants <> '[]' AND key NOT IN (SELECT key FROM restricted) AND key NOT IN (SELECT key FROM swap_block)
+      AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`, [key])).map(prep);
+  let lowO = new Set(); try { lowO = await lowPlays(env, db, [...new Set(others.flatMap(o => o.wants.slice(0, MAX_WANTS)))]); } catch (e) {}
+  for (const o of others) {
+    const og = giveSet(o);
+    if (!wants.some(w => og.has(w))) continue;
+    out.can++;
+    if (!myHours.some(t => rankAt(o, t) >= 0)) continue;
+    out.hour++;
+    const oOwn = new Set(o.passes.filter(p => p.kind !== 'team').map(p => p.key));
+    const ow = o.wants.slice(0, MAX_WANTS).filter(k => swappable(k) && oOwn.has(k) && !lowO.has(k));
+    if (!ow.some(w => mine.has(w))) continue;
+    out.both++;
+    if (wants.some(w => og.has(w) && !given.has(`${o.key}|${w}`)) && ow.some(w => mine.has(w) && !given.has(`${key}|${w}`))) out.free++;
+  }
+  if (!out.can) out.why.push('Nobody signed up has a player you picked free to swap yet.');
+  else if (!out.hour) out.why.push(`${out.can} member${out.can === 1 ? ' has' : 's have'} a player you picked free, but none share your hours in the next day - try adding hours.`);
+  else if (!out.both) out.why.push(`${out.hour} member${out.hour === 1 ? '' : 's'} with a player you picked share your hours, but none of them want a pass you have free. Untick some keeps or untouchables to give them more options.`);
+  else if (!out.free) out.why.push(`${out.both} member${out.both === 1 ? ' is a match' : 's are matches'}, but they've already given out the players you picked today (each pass goes out once a swap day). New ones open at 3am Alaska time.`);
+  else out.why.push(`${out.free} member${out.free === 1 ? ' is' : 's are'} a match right now. Matching runs every hour at :20 for the next 3 hours - when several people want the same pass, it goes to the better-rated pair first.`);
+  return out;
+}
+
 export async function onRequest(ctx) {
   const t0 = Date.now();
   try { await perfOnlyRefresh(ctx.env); } catch (e) {}
@@ -4663,54 +4758,8 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'whynot') {
     if (!(await allow(url.origin, 'whynot:' + me, 6, 600))) return json({ error: 'Wait a few minutes and try again.' }, 429);
     if (!(await allow(url.origin, 'whynot-all', 30, 60))) return json({ error: HIGH_VOL }, 429);
-    await matchCols(db);
-    const r = await db.prepare('SELECT * FROM swap_users WHERE key=?').bind(me).first();
-    const u = r ? { ...r, wants: parse(r.wants, []), keep: new Set(parse(r.keep, [])), slots: parse(r.slots, []), passes: parse(r.passes, []) } : null;
-    const why = [];
-    let dm = false;
-    if (u && u.hashId) { try { await db.prepare(DM_DDL).run(); dm = !!(await db.prepare('SELECT 1 AS x FROM swap_dm WHERE hashId=? AND channelId IS NOT NULL').bind(u.hashId).first()); } catch (e) {} }
-    if (!dm) why.push('Step 1 is not verified - the bot cannot DM you, so you are never matched.');
-    if (!u || !u.comment) why.push('No comment link saved (step 2).');
-    if (!u || !u.passes.length) why.push('Your passes have not been scanned (step 3).');
-    const wantsAll = u ? u.wants.slice(0, MAX_WANTS) : [], want = wantsAll[0];
-    if (!want) why.push('You have not picked a pass to swap for (step 4).');
-    else if (wantsAll.some(w => !u.passes.some(p => p.key === w))) why.push('A pass you picked is not in your last scan - scan again or pick another.');
-    if (!u || !u.slots.length) why.push('No hours picked (step 5).');
-    if (u && !u.active) why.push('Your swap is not saved.');
-    if (u && want) {
-      const g = await goalRoom(db, new Map(), u, (x, w) => usedSince(db, x, w));
-      if (g.reached) why.push(`Your pass is at ${g.rating}, which already meets your goal of ${g.goal}.`);
-      else if (g.limited && g.left <= 0) why.push(`You already have the ${g.need} swap${g.need === 1 ? '' : 's'} it should take to reach your goal (about ${g.avg} rating a pack of 3 cards). New ones start after your next daily scan.`);
-    }
-    const open = await db.prepare(`SELECT COUNT(*) AS n FROM swap_matches WHERE (a=? OR b=?) AND (status IN ('pending','sending','warned') OR (status='sent' AND sentAt > ?))`).bind(me, me, Date.now() - 86400000).first();
-    if (u && Number(u.dayCap) > 0 && Number(open && open.n) >= Number(u.dayCap)) why.push(`You have ${open.n} swap${open.n == 1 ? '' : 's'} going - your Scale limit is ${u.dayCap} a day (step 6). Raise it for more.`);
-    if (u && wantsAll.length) {
-      const caps = parse(u.caps, {}) || {}, full = [];
-      for (const w of wantsAll) { const c = caps[w]; if (!c) continue;
-        if (Number(c.n) > 0 && c.at && await usedFor(db, me, w, c.at) >= Number(c.n)) { full.push(w); continue; }
-        if (Number(c.d) > 0 && await usedFor(db, me, w, Date.now() - 86400000) >= Number(c.d)) full.push(w); }
-      if (full.length && full.length === wantsAll.length) why.push(`Every player you picked has reached your Scale limit for him (step 6). Raise a limit or pick another player.`);
-    }
-    // Who could swap with them.
-    let can = 0, hour = 0, both = 0;
-    if (u && want && !why.length) {
-      const others = await pagedRows(db, `SELECT key, wants, keep, slots, passes FROM swap_users WHERE active=1 AND passes IS NOT NULL AND key<>?
-          AND wants IS NOT NULL AND wants <> '[]' AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`, [me]);
-      const mine = new Set(u.passes.filter(p => p.kind !== 'team' && !u.keep.has(p.key)).map(p => p.key));
-      for (const o of others) {
-        const op_ = parse(o.passes, []), ok = new Set(parse(o.keep, []));
-        if (!op_.some(p => wantsAll.includes(p.key) && p.kind !== 'team' && !ok.has(p.key))) continue;
-        can++;
-        if (!parse(o.slots, []).some(h => u.slots.includes(h))) continue;
-        hour++;
-        if (parse(o.wants, []).slice(0, MAX_WANTS).some(w => mine.has(w))) both++;
-      }
-      if (!can) why.push('Nobody signed up has your pass free to swap yet.');
-      else if (!hour) why.push(`${can} member${can === 1 ? ' has' : 's have'} your pass free, but none share your hours - try adding hours.`);
-      else if (!both) why.push(`${hour} member${hour === 1 ? '' : 's'} with your pass share your hours, but none of them want a pass you have free. Untick some keeps to give them more options.`);
-      else why.push(`${both} member${both === 1 ? ' is' : 's are'} a match. Matching runs every hour at :30 - you should be matched in the next run.`);
-    }
-    return json({ why, ready: !!(u && want && dm), can, hour, both });
+    const w = await whyNotFull(db, env, me);
+    return json({ why: w.why, ready: !w.why.length || w.free > 0, can: w.can, hour: w.hour, both: w.free });
   }
 
   // Admin: what the bot has done today and the last week, and what failed.
