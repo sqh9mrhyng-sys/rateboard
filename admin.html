@@ -109,6 +109,11 @@
         <p class="note" id="us-note" style="margin-top:6px"></p>
       </section>
       <section style="margin-top:12px">
+        <h2>Performance pull <span class="note" id="pp-sum"></span></h2>
+        <p class="note">The market account is pulling every season's performances (each game's card and Real's tags - the Tag finder uses them), NFL first, about 80 players a minute. Market data and board rates wait until it's all done, then it goes back to the market on its own.</p>
+        <div id="pp-list"><span class="note">Loading…</span></div>
+      </section>
+      <section style="margin-top:12px">
         <h2>Traffic &amp; sponsor</h2>
         <p class="note">Page views are every page opened (crawlers and link previews left out), counted from Nov 8. The sponsor banner shows at the top of the pages ticked below, marked "Sponsored"; views and clicks are counted so you can show a sponsor real numbers.</p>
         <div class="grid" id="tr-grid" style="grid-template-columns:repeat(auto-fill,minmax(160px,1fr))"><span class="note">Loading…</span></div>
@@ -356,10 +361,25 @@ function loadMembers(){
     $('#us-note').textContent = 'Active counts started being kept ' + (j.trackingSince || 'today') + ' - a member counts when they open the board, Market, Swaps, OTD or Boosts. Earlier days only show sign-ins.';
   });
 }
+// The market account's performance pull (2026-11-09): one bar a season.
+async function loadPerfPull(){
+  let j = null; try{ const r = await fetch('/api/rax?collector=health&t=' + Date.now()); j = await r.json(); }catch(e){}
+  const p = j && (j.seasons || []).find(x => x.season === 'perfPull');
+  if(!p){ $('#pp-list').innerHTML = '<span class="note">Could not read it just now.</span>'; return; }
+  const L = { nfl: 'NFL', ncaaf: 'CFB', mlb: 'MLB', nba: 'NBA', wnba: 'WNBA', nhl: 'NHL' };
+  const ss = p.perfPull.seasons, done = ss.filter(x => x.done).length;
+  const cur = ss.find(x => !x.done);
+  $('#pp-sum').textContent = p.perfPull.allDone ? '· all done - the market account is back on the market' : `· ${done} of ${ss.length} seasons done` + (cur ? ` · now on ${L[cur.s.split(':')[0]] || cur.s} ${cur.s.split(':')[1]}` : '');
+  $('#pp-list').innerHTML = ss.map(x => { const [sp, se] = x.s.split(':'), pct = x.done ? 100 : x.total ? Math.min(99, Math.round(x.players / x.total * 100)) : 0;
+    return `<div style="display:grid;grid-template-columns:90px 1fr 130px;gap:8px;align-items:center;margin:4px 0;font-size:13px"><span>${esc(L[sp] || sp)} ${esc(se)}</span>
+      <span style="height:8px;border-radius:5px;background:var(--line);overflow:hidden"><span style="display:block;height:100%;width:${pct}%;background:${x.done ? '#5fbf7a' : '#E8A33D'}"></span></span>
+      <span class="note" style="text-align:right">${x.done ? 'done ✓' : x.total ? `${x.players.toLocaleString()} / ${x.total.toLocaleString()} · ${pct}%` : x === cur ? 'starting' : 'waiting'}</span></div>`; }).join('');
+}
 function loadStatus(){
   $('#st-at').textContent = 'Checked ' + new Date().toLocaleTimeString();
   loadMembers();
   loadTraffic();
+  loadPerfPull();
   $('#st-grid').innerHTML = card('c-db', 'Database') + card('c-market', 'Market pull') + card('c-collect', 'Game data collector')
     + card('c-sweeps', 'Game data sweeps') + card('c-bot', 'Swap bot');
   // All at once; each card fills in as its own answer lands.

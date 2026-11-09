@@ -2467,6 +2467,7 @@ async function handleGet({ request, env, waitUntil }) {
       // Lapped: every player in the game log has been asked for this season.
       // The flag retires it from the cron so the next season gets the ticks.
       try { await env.RATEBOARD_KV.put(perfDoneKey(sport, season), '1'); } catch (e) {}
+      try { const pk = `perf_prog_v1_${sport}_${season}`, pg = JSON.parse((await env.RATEBOARD_KV.get(pk)) || 'null') || {}; pg.done = pg.total || pg.done; pg.at = Date.now(); await env.RATEBOARD_KV.put(pk, JSON.stringify(pg)); } catch (e) {}
       return json({ sport, season, lap: true, stored: 0 });
     }
     const stmt = db.prepare(
@@ -2515,6 +2516,13 @@ async function handleGet({ request, env, waitUntil }) {
     }
     after = ids[ids.length - 1];
     try { await env.RATEBOARD_KV.put(key, String(after)); } catch (e) {}
+    // Progress for the admin page (2026-11-09): players asked so far, and the season's total.
+    try { const pk = `perf_prog_v1_${sport}_${season}`; let pg = JSON.parse((await env.RATEBOARD_KV.get(pk)) || 'null');
+      if (!pg) { const t = await db.prepare('SELECT COUNT(DISTINCT playerId) AS n FROM gamelog WHERE sport=? AND season=?').bind(sport, Number(season)).first();
+        const d = await db.prepare('SELECT COUNT(DISTINCT playerId) AS n FROM gamelog WHERE sport=? AND season=? AND playerId <= ?').bind(sport, Number(season), after).first();
+        pg = { total: Number(t && t.n) || 0, done: Number(d && d.n) || 0 }; }
+      else pg.done += ids.length;
+      pg.at = Date.now(); await env.RATEBOARD_KV.put(pk, JSON.stringify(pg)); } catch (e) {}
     let held = 0;
     try {
       const h = await db.prepare('SELECT COUNT(*) AS n FROM performances WHERE sport=? AND season=?')
@@ -7883,7 +7891,8 @@ async function collectorHealth(env, url) {
   }
   // The market account's performance pull: each season's place (last player id asked) and whether it's done.
   const perfPull = { allDone: !!(await env.RATEBOARD_KV.get('perf_all_done_v1')), seasons: [] };
-  for (const x of PERF_QUEUE) perfPull.seasons.push({ s: `${x.sport}:${x.season}`, done: !!(await env.RATEBOARD_KV.get(perfDoneKey(x.sport, x.season))), after: Number(await env.RATEBOARD_KV.get(`${PERF_CURSOR}:${x.sport}:${x.season}`)) || 0 });
+  for (const x of PERF_QUEUE) { const pg = await kvj(`perf_prog_v1_${x.sport}_${x.season}`) || {};
+    perfPull.seasons.push({ s: `${x.sport}:${x.season}`, done: !!(await env.RATEBOARD_KV.get(perfDoneKey(x.sport, x.season))), players: pg.done || 0, total: pg.total || null, at: pg.at || null }); }
   seasons.push({ season: 'perfPull', perfPull });
   const pace = await kvj('queue_pace_v1'), stuck = await kvj('queue_stuck_v1');
   const body = JSON.stringify({ at: new Date().toISOString(), seasons,
