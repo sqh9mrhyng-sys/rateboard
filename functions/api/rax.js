@@ -7859,7 +7859,7 @@ async function collectorHealth(env, url) {
   }
   // Seasons the main queue keeps (NHL): how far the game log and its rax reach (2026-11-09).
   // NFL stat lines by position, for the tag view (2026-11-09, temporary).
-  try { const r = ((await db.prepare(`SELECT position, MAX(stats) AS stats FROM gamelog WHERE sport='nfl' AND season=2026 AND stats IS NOT NULL AND length(stats) > 20 GROUP BY position`).all()).results) || [];
+  try { const r = ((await db.prepare(`SELECT position, stats FROM gamelog WHERE sport='nfl' AND season=2026 AND position IN ('QB','RB','WR','K') AND stats LIKE '%td%' AND rax > 15 ORDER BY rax DESC LIMIT 6`).all()).results) || [];
     seasons.push({ season: 'nfl:2026', statSample: r.map(x => ({ pos: x.position, stats: String(x.stats).slice(0, 400) })) }); } catch (e) {}
   for (const [sp, se] of [['nhl', 2026], ['nba', 2027]]) {
     try { const last = await db.prepare(`SELECT MAX(day) AS day, MAX(CASE WHEN rax IS NOT NULL THEN day END) AS raxDay, COUNT(*) AS rows, SUM(CASE WHEN rax IS NULL THEN 1 ELSE 0 END) AS noRax FROM gamelog WHERE sport=? AND season=?`).bind(sp, se).first();
