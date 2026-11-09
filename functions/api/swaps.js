@@ -2991,6 +2991,9 @@ function injOf(map, name, tid) {
   if (e && e.tid && tid != null && tid !== '' && String(e.tid) !== String(tid)) return null;
   return e || null;
 }
+/* Questionable / day-to-day: only a small mark-down (Dennis, 2026-11-09:
+   was 25% - a booster on a player who sits out is kept, so the risk is small). */
+const Q_CUT = 0.95;
 async function boostInjuries(env, sp, force) {
   const key = `boostinj_v2_${sp}`;
   /* Read again when 20 minutes old (2026-11-09: it was only read 4 times a
@@ -3605,7 +3608,7 @@ async function fcRows(env, db, cards, day, inv) {
     const ij = hand[boostName(name)];
     if (ij && lu !== 'start') {
       if (/^(out|injured reserve|doubtful|suspen)/i.test(ij.status)) { skip = true; flags.push(`${ij.status}${ij.note ? ': ' + ij.note : ''}`); }
-      else if (/questionable/i.test(ij.status)) { k *= 0.75; flags.push(`Questionable${ij.note ? ': ' + ij.note : ''}`); }
+      else if (/questionable/i.test(ij.status)) { k *= Q_CUT; flags.push(`Questionable${ij.note ? ': ' + ij.note : ''}`); }
     }
     // Hasn't played in three weeks while his club has: injured or dropped (a starting lineup overrides it).
     if (lu !== 'start' && lastG && cg.length && dayMs - Date.parse(lastG.day + 'T12:00:00Z') > 21 * 86400000) { skip = true; flags.push(`No game since ${lastG.day}`); }
@@ -5894,7 +5897,7 @@ async function handle({ request, env, waitUntil }) {
         const ij = injOf(inj, name, g && g.id);
         if (ij) {
           if (/^(out|injured reserve|doubtful|suspension)/i.test(ij.status)) { skip = true; flags.push(`${ij.status}${ij.note ? ': ' + ij.note : ''}`); }
-          else if (/questionable|day-to-day/i.test(ij.status)) { k *= 0.75; flags.push(`${/day/i.test(ij.status) ? 'Day-to-day' : 'Questionable'}${ij.note ? ': ' + ij.note : ''}`); }
+          else if (/questionable|day-to-day/i.test(ij.status)) { k *= Q_CUT; flags.push(`${/day/i.test(ij.status) ? 'Day-to-day' : 'Questionable'}${ij.note ? ': ' + ij.note : ''}`); }
         }
         // Starter or not.
         if (depth) {
@@ -5942,8 +5945,8 @@ async function handle({ request, env, waitUntil }) {
         if (/^(out|injured reserve|doubtful|suspen)/i.test(ij.status)) { r.skip = true; r.flags.push(ij.status); }
         else if (/questionable|day-to-day/i.test(ij.status) && !r.flags.some(f => /^(questionable|day-to-day)/i.test(f))) {
           r.flags.push(/day/i.test(ij.status) ? 'Day-to-day' : 'Questionable');
-          if (r.proj != null) r.proj = Math.round(r.proj * 0.75 * 10) / 10;
-          for (const st of Object.keys(r.exp)) r.exp[st] = Math.round(r.exp[st] * 0.75 * 100) / 100;
+          if (r.proj != null) r.proj = Math.round(r.proj * Q_CUT * 10) / 10;
+          for (const st of Object.keys(r.exp)) r.exp[st] = Math.round(r.exp[st] * Q_CUT * 100) / 100;
         }
       }
     } catch (e) {}
