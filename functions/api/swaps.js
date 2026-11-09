@@ -3009,7 +3009,7 @@ async function boostOutList(env) {
 // The hand list for one sport as an injury map, today's entries only.
 async function boostManualOut(env, sp, day) {
   const all = await boostOutList(env), today = day || etDay(Date.now()), m = {};
-  for (const [k, v] of Object.entries(all[sp] || {})) if (!v.until || v.until >= today) m[k] = { status: v.status, note: v.note || '', manual: true };
+  for (const [k, v] of Object.entries(all[sp] || {})) if (!v.until || v.until >= today) m[k] = { status: v.status, note: v.note || '', until: v.until || '', manual: true };
   return m;
 }
 /* Each team's own injury list, from its ESPN roster (2026-11-04: the league
@@ -3701,7 +3701,8 @@ async function projBuild(env, db, sp) {
   // NFL: each team's own injury list too (the league list misses some - Lamar, 2026-11-04).
   if (sp === 'nfl') { try { Object.assign(inj, await boostTeamInj(env, sp, Object.values(sched.ids || {}))); } catch (e) {} }
   // The hand-set list (Boosts' admin injury list) too.
-  if (!fc && ['ncaaf', 'ncaam', 'nfl'].includes(sp)) { try { Object.assign(inj, await boostManualOut(env, sp)); } catch (e) {} }
+  // FC too (2026-11-08): no injury list for soccer anywhere we read, so the hand list is the only one.
+  if (['ncaaf', 'ncaam', 'nfl', 'soccer'].includes(sp)) { try { Object.assign(inj, await boostManualOut(env, sp)); } catch (e) {} }
   const cur = ((await db.prepare(`SELECT playerId, player, team, position, day, rax, min, opponent, homeAway${fc ? ', conference' : ''} FROM gamelog WHERE sport=? AND season=?
       AND rax IS NOT NULL AND (seasonType IS NULL OR seasonType='regularseason')`).bind(sp, Number(se)).all()).results) || [];
   const played = x => !useMin || x.min == null || Number(x.min) > 0;
@@ -3786,8 +3787,20 @@ async function projBuild(env, db, sp) {
     let avail = (mine.length + P.ka * P.a0) / (Math.max(since, mine.length) + P.ka);
     const recent = teamDays.slice(-P.look), missed = recent.filter(d => !near(days, d)).length;
     const ij = inj[boostName(last.player || '')];
-    let skipNext = false;
-    if (ij && /^injured reserve/i.test(ij.status)) { flags.push('Injured reserve - no more games counted'); avail = 0; }
+    let skipNext = false, skipN = 0;
+    /* The hand-kept injury list (Admin -> Boosts injury list): a note with
+       "season" in it = no more games; Out / Suspension through a day = the
+       games up to that day; Out with no day = out until taken off the list.
+       (2026-11-08: a torn ACL was still projected 93 - FC had no injury source.) */
+    if (ij && ij.manual && (/season/i.test(ij.note || '') || (/^(out|suspen)/i.test(ij.status) && !ij.until))) {
+      flags.push(/season/i.test(ij.note || '') ? `Out for the season${ij.note ? ' - ' + ij.note : ''} - no more games counted` : `${ij.status}${ij.note ? ' - ' + ij.note : ''} - no games counted until he's off the injury list`); avail = 0;
+    } else if (ij && ij.manual && /^(out|suspen)/i.test(ij.status) && ij.until) {
+      skipN = fc ? Math.ceil((fcx ? fcx.perWeek / 7 : 0.5) * Math.max(0, (Date.parse(ij.until + 'T23:00:00Z') - Date.now()) / 86400000)) : rest.filter(g => g[0] && etd(g[0]) <= ij.until).length;
+      skipN = Math.min(skipN, rest.length);
+      flags.push(`${ij.status} through ${ij.until}${ij.note ? ' - ' + ij.note : ''} - ${skipN} game${skipN === 1 ? '' : 's'} not counted`);
+      if (recent.length >= P.look && missed >= P.miss) avail *= 0.3;
+    }
+    else if (ij && /^injured reserve/i.test(ij.status)) { flags.push('Injured reserve - no more games counted'); avail = 0; }
     else {
       if (ij && /^(out|suspen)/i.test(ij.status)) { flags.push(ij.status + ' - next game not counted'); skipNext = true; }
       else if (ij && /^(doubtful|questionable|day-to-day)/i.test(ij.status)) flags.push(ij.status);
@@ -3796,12 +3809,12 @@ async function projBuild(env, db, sp) {
     avail = Math.min(1, avail);
     // 3. Each game left: his rate x the chance he plays x opponent x home/away.
     let add = 0;
-    rest.forEach((g, i) => { if (i === 0 && skipNext) return; add += rate * avail * (g[1] && of[g[1]] ? of[g[1]] : 1) * (g[3] && hf[g[3]] ? hf[g[3]] : 1); });
+    rest.forEach((g, i) => { if ((i === 0 && skipNext) || i < skipN) return; add += rate * avail * (g[1] && of[g[1]] ? of[g[1]] : 1) * (g[3] && hf[g[3]] ? hf[g[3]] : 1); });
     const gp = pg.length;
     rows.push({ i: id, n: last.player || ('Player ' + id), t: last.team || '', p: last.position || '', gp, r: Math.round(rax), a: r1(rax / gp),
       pg: r1(rate * avail), l: rest.length, tg: total, nx: rest[0] && rest[0][1] ? rest[0][1] : null,
       pr: Math.round(rax + add), pc: Math.round(rax + rax / gp * rest.length),   // on pace: his rate a game played over the games left (2026-11-08: was rate x all the team's games, so one 54-rax game showed 648) f: flags.length ? flags : undefined,
-      x: { rate: r2(rate), prior: r2(prior), ph: priorHow, av: r2(avail), since, ab, sk: skipNext ? 1 : 0, w: r1(wsum), fc: fcx || undefined } });
+      x: { rate: r2(rate), prior: r2(prior), ph: priorHow, av: r2(avail), since, ab, sk: skipNext ? 1 : 0, sn: skipN || undefined, w: r1(wsum), fc: fcx || undefined } });
   }
   rows.sort((x, y) => y.pr - x.pr);
   // The latest game in the game data it was built from (shown at the top of the page).
@@ -3819,7 +3832,7 @@ async function projDetail(env, sp, row, c) {
   const tg = sched && sched.teams && sched.teams[row.x.ab]; if (!tg) return out;
   const of = (c && c.of) || {}, hf = (c && c.hf) || {};
   const rest = tg.filter(g => !g[2] && Date.parse(g[0]) > Date.now() - 4 * 3600000);
-  out.games = rest.map(([at, opp, , h], i) => { const f = (of[opp] || 1) * (hf[h] || 1), counted = !(i === 0 && row.x.sk);
+  out.games = rest.map(([at, opp, , h], i) => { const f = (of[opp] || 1) * (hf[h] || 1), counted = !(i === 0 && row.x.sk) && i >= (row.x.sn || 0);
     return { at, opp, h, f: Math.round(f * 100) / 100, v: counted ? Math.round(row.x.rate * row.x.av * f * 10) / 10 : 0, counted }; });
   out.played = tg.filter(g => g[2]).length;
   return out;
@@ -5279,6 +5292,8 @@ async function handle({ request, env, waitUntil }) {
         all[sp][k] = { name, status, note: String(b.note || '').trim().slice(0, 140), until, at: Date.now() };
       }
       await env.RATEBOARD_KV.put(BOOST_OUT_KEY, JSON.stringify(all));
+      // Projections read this list too: rebuild that sport's on the next open.
+      try { await env.RATEBOARD_KV.put(`proj_force_v1_${sp}`, String(Date.now()), { expirationTtl: 7 * 86400 }); } catch (e) {}
     }
     const today = etDay(Date.now());
     return json({ today, sports: Object.fromEntries(['ncaaf', 'ncaam', 'nfl', 'soccer'].map(sp => [sp, Object.entries(all[sp] || {})
@@ -5363,16 +5378,19 @@ async function handle({ request, env, waitUntil }) {
       let c0 = null; try { c0 = JSON.parse((await env.RATEBOARD_KV.get(`proj_v3_${sp}`)) || 'null'); } catch (e) {}
       if (c0 && !c0.error) { if (!m || m.c.at !== c0.at) m = projMem(c0); m.read = Date.now(); PROJ_MEM.set(sp, m); }
       else if (m) m.read = Date.now();
+      // An injury-list change since the last build: build again (the list isn't in the game data).
+      if (m) { try { m.force = Number(await env.RATEBOARD_KV.get(`proj_force_v1_${sp}`)) || 0; } catch (e) {} }
     }
     let c = m ? m.c : null;
     // One player's breakdown (tapping his line).
     const pid = Number(url.searchParams.get('pid'));
     if (pid) { const row = m ? m.byId.get(pid) : null; return json({ row: row || null, ...(await projDetail(env, sp, row, c)) }); }
     const lockK = `proj_lock_v1_${sp}`;
-    let stale = !c || (acc.admin && url.searchParams.get('refresh') === '1');
+    let stale = !c || (acc.admin && url.searchParams.get('refresh') === '1') || (m && m.force > c.at);
     // Rebuilt when the game data has changed - and at most every 30 minutes while games are coming in.
     if (!stale && Date.now() - c.at > 30 * 60000) { try { stale = (await projSig(env, db, sp)) !== c.sig; } catch (e) { stale = Date.now() - c.at > 24 * 3600000; } }
     if (stale) {
+      if (m) m.force = 0;   // this worker asks for the rebuild once
       let locked = false; try { locked = !!(await env.RATEBOARD_KV.get(lockK)); } catch (e) {}
       if (!locked) {
         try { await env.RATEBOARD_KV.put(lockK, '1', { expirationTtl: 120 }); } catch (e) {}
