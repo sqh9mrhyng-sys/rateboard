@@ -557,7 +557,12 @@ function drawHours(){
     if(!sc.date) sc.date = ymd(new Date());
     dp.innerHTML = Array.from({ length: 7 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() + i); const v = ymd(d);
       return `<button data-date="${v}" aria-pressed="${v === sc.date}">${i === 0 ? 'Today' : i === 1 ? 'Tmrw' : DAYS[d.getDay()]}<span class="dn">${d.getMonth() + 1}/${d.getDate()}</span></button>`; }).join('');
-    $('#hnote').innerHTML = `Only on <b>${new Date(sc.date + 'T12:00:00').toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })}</b> only.`;
+    const dLbl = new Date(sc.date + 'T12:00:00').toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+    /* A one-day schedule whose day has gone never matches again (2026-11-09: a
+       member with every hour ticked got nothing - his one day was Nov 6). */
+    $('#hnote').innerHTML = sc.date < ymd(new Date())
+      ? `<b style="color:var(--bad)">Your one day (${dLbl}) has passed, so you aren't being matched.</b> Pick a day below, or tap <b>Every day</b>.`
+      : `Only on <b>${dLbl}</b>.`;
   } else $('#hnote').textContent = 'The same hours every day.';
   const local = curHours();
   $('#hours').innerHTML = Array.from({length: 24}, (_, h) => {
@@ -574,6 +579,7 @@ function saveHours(){
   api('/api/swaps?op=saveslots', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(j => {
     if(!j || j.error){ $('#savemsg').textContent = (j && j.error) || 'Could not save your hours - try again.'; return; }
     if(Array.isArray(j.slots)) prof.slots = j.slots;
+    paintPaused();
     if(j.confirmed) paintConfirm({ confirmShow: true, confirmedToday: true, swapToday: j.day });   // a time added after the 2:30am DMs needs no confirm
     $('#savemsg').textContent = 'Hours saved.' + (j.late ? ' Too late to change swaps already warned - please do them at :00.' : '') + (j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} at that hour called off.` : '');
     loadHourCounts(); loadSwaps(); });
@@ -854,7 +860,9 @@ $('#wants').addEventListener('click', async e => { const b = e.target.closest('b
   [prof.wants[i], prof.wants[j]] = [prof.wants[j], prof.wants[i]]; drawWants();
   $('#savemsg').textContent = 'Order changed - tap Save to keep it.'; });
 
-function paintPaused(){ $('#pausemsg').innerHTML = prof.active === false && prof.wants.length ? '<b style="color:var(--bad)">Your swaps are paused</b> - no new matches until you tap Save my swap.' : ''; }
+function paintPaused(){ const sc = prof.sched || {};
+  $('#pausemsg').innerHTML = prof.active === false && prof.wants.length ? '<b style="color:var(--bad)">Your swaps are paused</b> - no new matches until you tap Save my swap.'
+    : sc.mode === 'date' && sc.date && sc.date < ymd(new Date()) && prof.wants.length ? '<b style="color:var(--bad)">Your hours were for one day only, and that day has passed</b> - you won\'t be matched until you change your hours (step 5).' : ''; }
 $('#pauseall').addEventListener('click', async () => {
   const j = await api('/api/swaps?op=pause', { method: 'POST' });
   if(j.error){ $('#pausemsg').textContent = j.error; return; }

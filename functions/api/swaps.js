@@ -3758,7 +3758,7 @@ const tagFrac = (k, part) => { const v = `json_extract(stats, '$."${k}"')`;
 const tn = v => { const m = String(v == null ? '' : v).match(/^-?\d+(\.\d+)?/); return m ? Number(m[0]) : 0; };
 const tfrac = (v, i) => { const m = String(v || '').match(/^(\d+)\/(\d+)$/); return m ? Number(m[i + 1]) : 0; };
 const tTds = o => Math.max(tn(o.td), tn(o.rutd) + tn(o.retd));
-const TAG_DEFS_V = 6;   // 6: CFB   // 5: #marksman defined   // 3: Mystic NFL; 4: Legendary NFL (2026-11-09)   // 2: Real's own tags and box-score links (2026-11-09)
+const TAG_DEFS_V = 7;   // 7: MLB   // 6: CFB   // 5: #marksman defined   // 3: Mystic NFL; 4: Legendary NFL (2026-11-09)   // 2: Real's own tags and box-score links (2026-11-09)
 const TAG_DEFS = {
   nfl: [
     { tag: '#3hundo', rarity: 'iconic', desc: '300+ rushing + receiving yards', sql: `COALESCE(${tagJ('ruyds')}, 0) + COALESCE(${tagJ('reyds')}, 0) >= 300`,
@@ -3833,6 +3833,54 @@ TAG_DEFS.ncaaf = Object.entries(CFB_TAG_RARITY).flatMap(([rarity, tags]) => tags
   const base = TAG_DEFS.nfl.find(d => d.tag === (CFB_TAG_SAME[tag] || tag));
   return base ? { ...base, tag, rarity, alias: [...(base.alias || []), base.tag.slice(1)] } : null; }).filter(Boolean));
 TAG_SEASONS.ncaaf = [2026, 2025, 2024, 2023];
+/* MLB (Dennis, 2026-11-09). A batter's line: h/ab, r, rbi, hr, xbh, tb, sb;
+   a pitcher's: ip, h, r, er, k, bb, hr (allowed), p-st (pitches-strikes),
+   strk%. A two-way game (Ohtani) has both in one line, so his "h", "r" and
+   "hr" can be the pitching ones: hits come from h/ab, runs scored only count
+   without a pitching line, and his homers only when he had that many hits.
+   Tags no box line can show (2 homers in an inning, an immaculate inning, 4
+   strikeouts in an inning) come from Real's own tags only. */
+const mHits = o => tfrac(o['h/ab'], 0);
+const mPitch = o => o.ip != null && o.ip !== '';
+const mHr = o => { const h = tn(o.hr); return !mPitch(o) ? h : (o['h/ab'] != null && h <= mHits(o) ? h : 0); };
+const mRuns = o => mPitch(o) ? 0 : tn(o.r);
+const mPitches = o => { const m = String(o['p-st'] || '').match(/^(\d+)-(\d+)$/); return m ? Number(m[1]) : 0; };
+// Singles, doubles, triples from hits, extra-base hits and total bases.
+const mCycle = o => { const h = mHits(o), hr = mHr(o), x = tn(o.xbh), tb = tn(o.tb), s1 = h - x, t3 = (tb - s1 - 4 * hr) - 2 * (x - hr), d2 = (x - hr) - t3;
+  return { s1, d2, t3, hr, ok: s1 >= 1 && d2 >= 1 && t3 >= 1 && hr >= 1 }; };
+const NEVER = '1 = 0';   // Real's tag only
+const mHitsSql = tagFrac('h/ab', 0), mIp = `CAST(json_extract(stats, '$."ip"') AS REAL)`;
+const mPitchSql = `CAST(substr(json_extract(stats, '$."p-st"'), 1, instr(json_extract(stats, '$."p-st"'), '-') - 1) AS INTEGER)`;
+const mLine = o => `${o['h/ab'] || '0/0'}${tn(o.hr) ? `, ${mHr(o)} HR` : ''}${tn(o.rbi) ? `, ${tn(o.rbi)} RBI` : ''}${mRuns(o) ? `, ${mRuns(o)} R` : ''}${tn(o.sb) ? `, ${tn(o.sb)} SB` : ''}`;
+const pLine = o => `${o.ip} IP, ${tn(o.h)} H, ${tn(o.r)} R, ${tn(o.bb)} BB, ${tn(o.k)} K${o['p-st'] ? `, ${o['p-st']} pitches-strikes` : ''}`;
+TAG_DEFS.mlb = [
+  { tag: '#runbeast', rarity: 'iconic', desc: '10+ RBIs', sql: `${tagJ('rbi')} >= 10`, test: o => tn(o.rbi) >= 10, line: mLine },
+  { tag: '#quadhomer', rarity: 'iconic', desc: '4+ home runs', sql: `${tagJ('hr')} >= 4`, test: o => mHr(o) >= 4, line: mLine },
+  { tag: '#shohei', rarity: 'iconic', desc: '3+ home runs and 10+ strikeouts', sql: `${tagJ('hr')} >= 3 AND ${tagJ('k')} >= 10 AND json_extract(stats, '$."h/ab"') IS NOT NULL`,
+    test: o => mPitch(o) && mHr(o) >= 3 && tn(o.k) >= 10, line: o => `${mLine(o)} · ${pLine(o)}` },
+  { tag: '#perfectgame', rarity: 'iconic', desc: 'Perfect game', sql: `${mIp} >= 9 AND COALESCE(${tagJ('h')}, 0) = 0 AND COALESCE(${tagJ('bb')}, 0) = 0 AND COALESCE(${tagJ('r')}, 0) = 0`,
+    test: o => mPitch(o) && tn(o.ip) >= 9 && !tn(o.h) && !tn(o.bb) && !tn(o.r), line: pLine },
+  { tag: '#6hits', rarity: 'mystic', desc: '6+ hits', sql: `json_extract(stats, '$."h/ab"') LIKE '%/%' AND ${mHitsSql} >= 6`, test: o => mHits(o) >= 6, line: mLine },
+  { tag: '#runwave', rarity: 'mystic', desc: '9 RBIs', sql: `${tagJ('rbi')} = 9`, test: o => tn(o.rbi) === 9, line: mLine },
+  { tag: '#5runs', rarity: 'mystic', desc: '5+ runs scored', sql: `${tagJ('r')} >= 5 AND json_extract(stats, '$."ip"') IS NULL`, test: o => mRuns(o) >= 5, line: mLine },
+  { tag: '#2in1', rarity: 'mystic', desc: '2 home runs in 1 inning', sql: NEVER, test: () => false, line: mLine },
+  // A no-hitter with no walks reads like a perfect game in the box line, so it's left to the higher tag (Real's own tag still shows it).
+  { tag: '#nohitter', rarity: 'mystic', desc: 'No-hitter', sql: `${mIp} >= 9 AND COALESCE(${tagJ('h')}, 0) = 0`,
+    test: o => mPitch(o) && tn(o.ip) >= 9 && !tn(o.h) && (tn(o.bb) > 0 || tn(o.r) > 0), line: pLine },
+  { tag: '#immaculateinning', rarity: 'mystic', desc: '9 pitches, 9 strikes, 3 strikeouts in an inning', sql: NEVER, test: () => false, line: pLine },
+  { tag: '#4kinning', rarity: 'mystic', desc: '4 strikeouts in 1 inning', sql: NEVER, test: () => false, line: pLine },
+  { tag: '#5hits', rarity: 'legendary', desc: '5 hits', sql: `json_extract(stats, '$."h/ab"') LIKE '%/%' AND ${mHitsSql} = 5`, test: o => mHits(o) === 5, line: mLine },
+  { tag: '#runfactory', rarity: 'legendary', desc: '8 RBIs', sql: `${tagJ('rbi')} = 8`, test: o => tn(o.rbi) === 8, line: mLine },
+  { tag: '#triplehomer', rarity: 'legendary', desc: '3 home runs', sql: `${tagJ('hr')} = 3`, test: o => mHr(o) === 3, line: mLine },
+  { tag: '#cycle', rarity: 'legendary', desc: 'Hit for the cycle', sql: `json_extract(stats, '$."h/ab"') LIKE '%/%' AND ${mHitsSql} >= 4 AND ${tagJ('hr')} >= 1 AND ${tagJ('xbh')} >= 3`,
+    test: o => mCycle(o).ok, line: o => { const c = mCycle(o); return `${o['h/ab']}: ${c.s1} 1B, ${c.d2} 2B, ${c.t3} 3B, ${c.hr} HR`; } },
+  { tag: '#ninja', rarity: 'legendary', desc: '4+ stolen bases', sql: `${tagJ('sb')} >= 4`, test: o => tn(o.sb) >= 4, line: mLine },
+  { tag: '#maddux', rarity: 'legendary', desc: 'Complete-game shutout in under 100 pitches', sql: `${mIp} >= 9 AND COALESCE(${tagJ('r')}, 0) = 0 AND ${mPitchSql} BETWEEN 1 AND 99`,
+    test: o => mPitch(o) && tn(o.ip) >= 9 && !tn(o.r) && mPitches(o) > 0 && mPitches(o) < 100, line: pLine },
+  { tag: '#surgeon', rarity: 'legendary', desc: '80%+ strikes with 5+ innings pitched', sql: `${tagJ('strk%')} >= 80 AND ${mIp} >= 5`,
+    test: o => mPitch(o) && tn(o['strk%']) >= 80 && tn(o.ip) >= 5, line: o => `${pLine(o)} · ${tn(o['strk%'])}% strikes` }
+];
+TAG_SEASONS.mlb = [2026, 2025, 2024, 2023];
 async function tagSeasonSig(env, db, sp, se) {
   const k = `tagview_sig_v2_${sp}_${se}`;
   try { const c = await env.RATEBOARD_KV.get(k); if (c) return c; } catch (e) {}

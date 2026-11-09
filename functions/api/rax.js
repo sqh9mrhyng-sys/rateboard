@@ -7902,7 +7902,7 @@ async function nhlCatchup(env) {
    matches" showing. The matcher's own check for him, counts only (no names
    in health), kept for a day. Remove once looked at. */
 async function swapDiag(env) {
-  const k = 'diag_swap_1109';
+  const k = 'diag_swap_1109b';
   try { if (await env.RATEBOARD_KV.get(k)) return; await env.RATEBOARD_KV.put(k, JSON.stringify({ at: Date.now(), running: true }), { expirationTtl: 86400 }); } catch (e) { return; }
   const db = env.RATEBOARD_DB;
   try {
@@ -7913,7 +7913,12 @@ async function swapDiag(env) {
     let u = null;
     if (r) { try { const x = await db.prepare('SELECT active, slots, sched, wants, dayCap, only160, s160, b160, scannedAt, updatedAt FROM swap_users WHERE key=?').bind(r.key).first();
       u = { active: x.active, slots: x.slots, sched: String(x.sched || '').slice(0, 200), wantsN: (JSON.parse(x.wants || '[]') || []).length, wants: String(x.wants || '').slice(0, 300), dayCap: x.dayCap, only160: x.only160, s160: x.s160, b160: x.b160, scannedAt: x.scannedAt }; } catch (e) { u = String(e).slice(0, 120); } }
-    await env.RATEBOARD_KV.put(k, JSON.stringify({ at: Date.now(), w, swaps7d: ms, u }), { expirationTtl: 86400 });
+    // Everyone stuck the same way: a one-day schedule whose day has gone.
+    let pastDay = null;
+    try { const today = new Date(Date.now() - 9 * 3600000).toISOString().slice(0, 10);
+      const rows = ((await db.prepare("SELECT sched FROM swap_users WHERE active=1 AND sched LIKE '%\"date\"%' AND wants IS NOT NULL AND wants <> '[]'").all()).results) || [];
+      pastDay = rows.filter(x => { try { const sc = JSON.parse(x.sched); return sc.mode === 'date' && sc.date && sc.date < today; } catch (e) { return false; } }).length; } catch (e) { pastDay = String(e).slice(0, 100); }
+    await env.RATEBOARD_KV.put(k, JSON.stringify({ at: Date.now(), w, swaps7d: ms, u, pastDay }), { expirationTtl: 86400 });
   } catch (e) { try { await env.RATEBOARD_KV.put(k, JSON.stringify({ at: Date.now(), err: String(e && e.message || e).slice(0, 200) }), { expirationTtl: 86400 }); } catch (e2) {} }
 }
 async function collectorHealth(env, url) {
@@ -7994,7 +7999,7 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109'), marketAccount: { busyWithMarket: await marketBusy(env), lastGapHelp: await kvj('gap_push_last') }, budget: await jobOverBudget(env) ? 'over' : 'ok' }, null, 1);
+    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), marketAccount: { busyWithMarket: await marketBusy(env), lastGapHelp: await kvj('gap_push_last') }, budget: await jobOverBudget(env) ? 'over' : 'ok' }, null, 1);
   const res = new Response(body, { headers: { 'content-type': 'application/json', 'cache-control': 'max-age=60' } });
   try { await caches.default.put(ck, res.clone()); } catch (e) {}
   return res;
