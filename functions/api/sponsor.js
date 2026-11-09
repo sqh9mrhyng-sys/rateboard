@@ -13,7 +13,7 @@
 import { isAdminRequest, etDay } from '../../lib/auth.js';
 
 const KEY = 'sponsor_v1';
-export const SP_PAGES = ['board', 'market', 'swaps', 'hour', 'otd', 'boosts', 'projections'];
+export const SP_PAGES = ['board', 'market', 'swaps', 'hour', 'otd', 'boosts', 'projections', 'tags'];
 const DDL = [
   'CREATE TABLE IF NOT EXISTS page_views (day TEXT, page TEXT, n INTEGER, PRIMARY KEY (day, page))',
   'CREATE TABLE IF NOT EXISTS sponsor_stats (day TEXT, sponsor TEXT, page TEXT, kind TEXT, n INTEGER, PRIMARY KEY (day, sponsor, page, kind))'

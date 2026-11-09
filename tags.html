@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tag finder</title>
+<style>
+  :root{--bg:#141925;--panel:#1d2433;--panel2:#232b3d;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;--ok:#5fbf7a;--bad:#e5484d;--iconic:#f2c94c}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+  .wrap{max-width:860px;margin:0 auto;padding:16px}
+  header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+  h1{font-size:20px;margin:0;font-weight:800}
+  a{color:var(--accent)}
+  .note{color:var(--mute);font-size:13px;margin:6px 0}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+  select,button,input{font:inherit;padding:8px 10px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
+  button{cursor:pointer}
+  .seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .seg button{flex:1 1 0;min-width:0;border:0;border-radius:0;background:var(--panel2);padding:9px 6px}
+  .seg button[aria-pressed="true"]{background:var(--accent);color:#141925;font-weight:800}
+  .seg button:disabled{opacity:.45;cursor:default}
+  .row2{display:grid;grid-template-columns:1fr;gap:8px;margin-top:10px}
+  input{width:100%}
+  .tag{border:1px solid var(--line);border-radius:12px;margin:10px 0;background:var(--panel2);overflow:hidden}
+  .tag summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;padding:12px}
+  .tag summary::-webkit-details-marker{display:none}
+  .tag .h{font-weight:800;font-size:16px}
+  .tag .d{color:var(--mute);font-size:13px}
+  .tag .n{margin-left:auto;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-weight:800;font-variant-numeric:tabular-nums}
+  .tag.has .n{background:var(--iconic);color:#141925;border-color:var(--iconic)}
+  .rar{font-size:10.5px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;border-radius:6px;background:var(--iconic);color:#141925}
+  .hits{border-top:1px solid var(--line)}
+  .hit{display:flex;gap:10px;align-items:baseline;justify-content:space-between;padding:9px 12px;border-bottom:1px solid var(--line);font-size:14px}
+  .hit:last-child{border-bottom:0}
+  .hit .w{color:var(--mute);font-size:12.5px}
+  .hit .l{font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .po{font-size:10.5px;font-weight:800;color:var(--accent);margin-left:6px}
+  .none{padding:10px 12px;color:var(--mute);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><h1>Tag finder</h1><a href="/">Back to the board</a></header>
+  <section>
+    <div class="seg" id="sportseg"><button data-s="nfl" aria-pressed="true">NFL</button></div>
+    <div class="row2">
+      <div class="seg" id="rarseg"><button data-r="iconic" aria-pressed="true">Iconic</button></div>
+      <input id="q" placeholder="Find a player or team" autocomplete="off">
+    </div>
+    <p class="note">Performance tags - the whole game's line. Tap a tag to see every game that earned it (newest first); a name opens that player's card for the season. Worked out from each game's stat line, regular season and playoffs.</p>
+    <p class="note" id="head">Loading…</p>
+  </section>
+  <div id="list"></div>
+</div>
+<script>
+(() => {
+  const real = window.fetch.bind(window);
+  window.fetch = (u, o = {}) => {
+    let t = ''; try{ t = localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){}
+    if(t && typeof u === 'string' && u.startsWith('/api/')) o = Object.assign({}, o, { headers: Object.assign({}, o.headers || {}, { 'x-rb-token': t }) });
+    return real(u, o);
+  };
+})();
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function hashidsEncode(salt, minLength, numbers){
+  const ALPHA0 = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890';
+  const SEPS0  = 'cfhistuCFHISTU';
+  const RATIO = 3.5, GUARD_DIV = 12;
+  const shuffle = (alpha, s) => {
+    if(!s.length) return alpha;
+    const t = alpha.slice();
+    for(let i = t.length - 1, v = 0, p = 0; i > 0; i--, v++){
+      v %= s.length;
+      const int = s[v].codePointAt(0);
+      p += int;
+      const j = (int + v + p) % i;
+      [t[i], t[j]] = [t[j], t[i]];
+    }
+    return t;
+  };
+  const toAlpha = (n, alpha) => {
+    const id = []; let v = n;
+    do { id.unshift(alpha[v % alpha.length]); v = Math.floor(v / alpha.length); } while(v > 0);
+    return id;
+  };
+  const saltC = Array.from(salt);
+  let alpha = [...new Set(Array.from(ALPHA0))];
+  let seps = Array.from(SEPS0).filter(c => alpha.includes(c));
+  alpha = alpha.filter(c => !seps.includes(c));
+  seps = shuffle(seps, saltC);
+  if(!seps.length || alpha.length / seps.length > RATIO){
+    let sl = Math.ceil(alpha.length / RATIO);
+    if(sl === 1) sl = 2;
+    if(sl > seps.length){
+      const diff = sl - seps.length;
+      seps = seps.concat(alpha.slice(0, diff));
+      alpha = alpha.slice(diff);
+    } else { seps = seps.slice(0, sl); }
+  }
+  alpha = shuffle(alpha, saltC);
+  const gc = Math.ceil(alpha.length / GUARD_DIV);
+  let guards;
+  if(alpha.length < 3){ guards = seps.slice(0, gc); seps = seps.slice(gc); }
+  else { guards = alpha.slice(0, gc); alpha = alpha.slice(gc); }
+  let hashInt = 0;
+  for(let i = 0; i < numbers.length; i++) hashInt += numbers[i] % (i + 100);
+  const lottery = alpha[hashInt % alpha.length];
+  let ret = [lottery];
+  for(let i = 0; i < numbers.length; i++){
+    let num = numbers[i];
+    const buf = [lottery].concat(saltC, alpha);
+    alpha = shuffle(alpha, buf.slice(0, alpha.length));
+    const last = toAlpha(num, alpha);
+    ret = ret.concat(last);
+    if(i + 1 < numbers.length){
+      num %= (last[0].codePointAt(0) + i);
+      ret.push(seps[num % seps.length]);
+    }
+  }
+  if(ret.length < minLength){
+    let gi = (hashInt + ret[0].codePointAt(0)) % guards.length;
+    ret.unshift(guards[gi]);
+    if(ret.length < minLength){
+      gi = (hashInt + ret[2].codePointAt(0)) % guards.length;
+      ret.push(guards[gi]);
+    }
+  }
+  const half = Math.floor(alpha.length / 2);
+  while(ret.length < minLength){
+    alpha = shuffle(alpha, alpha);
+    ret = alpha.slice(half).concat(ret, alpha.slice(0, half));
+    const ex = ret.length - minLength;
+    if(ex > 0) ret = ret.slice(ex / 2, ex / 2 + minLength);
+  }
+  return ret.join('');
+}
+/* [record type, sport code], each read out of a real link rather than
+   guessed. Fighters are type 3 where players are type 2 - the one place the
+   leading number is not the same. A sport with no entry here is left as
+   plain text: a wrong code can land on a real player of another sport, and a
+   link to the wrong person is worse than no link. */
+const REAL_SPORT = {
+  nba:    [2, 1],
+  nfl:    [2, 2],
+  ncaam:  [2, 3],
+  mlb:    [2, 4],
+  nhl:    [2, 7],
+  ufc:    [3, 10],
+  ncaaf:  [2, 11],
+  wnba:   [2, 12],
+  soccer: [2, 14],
+  golf:   [2, 15]
+};
+function realPlayerUrl(sport, playerId, season){
+  const kind = REAL_SPORT[String(sport || '').toLowerCase()];
+  const id = Number(playerId);
+  if(!kind || !Number.isFinite(id) || id <= 0) return null;
+  return 'https://www.realapp.com/' + hashidsEncode('routing', 11, [kind[0], kind[1], 0, id])
+         + (season ? '/' + season : '');
+}
+
+let data = null, sport = 'nfl', rar = 'iconic';
+const open = new Set();
+const fmtDay = d => { try{ return new Date(d + 'T12:00:00').toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }); }catch(e){ return d; } };
+function draw(){
+  if(!data || !data.tags){ $('#list').innerHTML = ''; return; }
+  const q = $('#q').value.trim().toLowerCase();
+  const tags = data.tags.filter(t => t.rarity === rar);
+  $('#list').innerHTML = tags.map(t => {
+    const hits = q ? t.hits.filter(h => `${h.p} ${h.tm} ${h.op}`.toLowerCase().includes(q)) : t.hits;
+    const body = hits.length ? hits.map(h => { const u = realPlayerUrl(sport, h.i, h.s);
+      return `<div class="hit"><span>${u ? `<a href="${esc(u)}" target="_blank" rel="noopener"><b>${esc(h.p)}</b></a>` : `<b>${esc(h.p)}</b>`}${h.po ? '<span class="po">PLAYOFFS</span>' : ''}
+        <span class="w"> · ${esc(h.pos || '')} ${esc(h.tm || '')}${h.op ? ' vs ' + esc(h.op) : ''} · ${esc(fmtDay(h.d))}</span></span><span class="l">${esc(h.line)}</span></div>`; }).join('')
+      : `<div class="none">${q ? 'No games for that search.' : 'No game has earned this one yet.'}</div>`;
+    return `<details class="tag${t.hits.length ? ' has' : ''}" data-t="${esc(t.tag)}" ${open.has(t.tag) || (q && hits.length) ? 'open' : ''}><summary><span class="rar">${esc(t.rarity)}</span>
+      <span><span class="h">${esc(t.tag)}</span><br><span class="d">${esc(t.desc)}</span></span><span class="n">${hits.length}</span></summary><div class="hits">${body}</div></details>`;
+  }).join('');
+}
+$('#list').addEventListener('toggle', e => { const d = e.target; if(d.dataset && d.dataset.t){ if(d.open) open.add(d.dataset.t); else open.delete(d.dataset.t); } }, true);
+$('#q').addEventListener('input', draw);
+async function load(){
+  $('#head').textContent = 'Loading…';
+  let j = null;
+  try{ const r = await fetch(`/api/swaps?op=tagview&page=boosts&sport=${sport}`); j = await r.json().catch(() => null); }catch(e){}
+  if(!j){ $('#head').textContent = 'Could not reach the board.'; return; }
+  if(j.building){ $('#head').textContent = j.note; setTimeout(load, 20000); return; }
+  if(j.error){ $('#head').innerHTML = /sign in/i.test(j.error) ? 'Sign in on <a href="/">the board</a> first.' : esc(j.error); return; }
+  data = j;
+  const n = j.tags.reduce((t, x) => t + x.hits.length, 0);
+  $('#head').textContent = `${n} game${n === 1 ? '' : 's'} with an Iconic performance tag · checked ${new Date(j.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`;
+  draw();
+}
+load();
+</script>
+<script src="/sponsor.js" data-page="tags" defer></script>
+</body>
+</html>

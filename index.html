@@ -611,6 +611,7 @@
           <option value="board">Board</option>
           <option value="boosts">Boosts/Buys (beta)</option>
           <option value="projections">Projections</option>
+          <option value="tags">Tag finder</option>
         </select>
         <button type="button" id="pagebtn" aria-haspopup="menu" aria-expanded="false"><span id="pagebtn-t">Board</span><span class="caret">&#9662;</span></button>
 
@@ -943,7 +944,7 @@ function applyGameDataVisibility(){
     // still shows in Safari's picker.
     const want = [['board', 'Board'], ...(canSeePackData() ? [['cbb', 'Game data']] : []),
                   ...(marketAccess ? [['market', 'Market data']] : []),
-                  ...(boostsOn ? [['boosts', 'Boosts/Buys (beta)']] : []), ['projections', 'Projections'],   // everyone (2026-11-08)
+                  ...(boostsOn ? [['boosts', 'Boosts/Buys (beta)']] : []), ['projections', 'Projections'], ['tags', 'Tag finder'],   // everyone (2026-11-08; tags 2026-11-09)
                   ...(swapsOn ? [['swaps', 'Swaps (beta)']] : []), ...(otdOn ? [['otd', 'OTD optimization'], ['admin', 'Admin']] : [])];
     const have = [...sel.options].map(o => o.value).join(',');
     if(have !== want.map(w => w[0]).join(',')){
@@ -1001,6 +1002,7 @@ function pageGo(){
   if(sel && sel.value === 'otd'){ location.href = '/otd'; return; }
   if(sel && sel.value === 'boosts'){ location.href = '/boosts'; return; }
   if(sel && sel.value === 'projections'){ location.href = '/projections'; return; }
+  if(sel && sel.value === 'tags'){ location.href = '/tags'; return; }
   if(sel && sel.value === 'admin'){ location.href = '/admin'; return; }
   if(sel) goPage(sel.value);
 }

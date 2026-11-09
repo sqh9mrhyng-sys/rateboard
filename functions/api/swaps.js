@@ -2636,7 +2636,7 @@ export async function swapAccess(env, request) {
 // for OTD their own passes and games.
 const MEMBER_OPS = new Set(['confirm', 'recbuys', 'myhour', 'me', 'save', 'keep', 'touch', 'packstoday', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
 const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan']);
-const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostdays', 'projections', 'boostinv', 'buys', 'legboosts', 'resell', 'nosell']);
+const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostdays', 'projections', 'tagview', 'boostinv', 'buys', 'legboosts', 'resell', 'nosell']);
 const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
 const PAGE_OPS = new Set(['projections', 'me', 'procheck', 'myswaps', 'hourcounts', 'wantcounts', 'boostplan', 'boostinv', 'buys', 'legboosts', 'resell', 'boostdays']);
 
@@ -3713,6 +3713,68 @@ const PROJ_MIN = new Set(['nba', 'soccer', 'ncaam']);   // DNP rows (0 minutes) 
    2026-11-08 - was every 6 hours whatever happened): a fingerprint of the
    season's regular-season game log (games, latest day, total rax), checked at
    most every 15 minutes per sport. */
+/* ---- Tag finder (Dennis, 2026-11-09) ---------------------------------
+   Performance tags (the whole game's line) and the games that earned them,
+   worked out from each game's stat line in the game log. Starting with the
+   NFL's Iconic ones; a tag is one entry here. sql narrows the scan (the
+   database checks it), test() decides, line() is what the page shows. */
+const tagJ = k => `CAST(json_extract(stats, '$."${k}"') AS REAL)`;
+const tagFrac = (k, part) => { const v = `json_extract(stats, '$."${k}"')`;
+  return `CAST(${part === 0 ? `substr(${v}, 1, instr(${v}, '/') - 1)` : `substr(${v}, instr(${v}, '/') + 1)`} AS INTEGER)`; };
+const tn = v => { const m = String(v == null ? '' : v).match(/^-?\d+(\.\d+)?/); return m ? Number(m[0]) : 0; };
+const tfrac = (v, i) => { const m = String(v || '').match(/^(\d+)\/(\d+)$/); return m ? Number(m[i + 1]) : 0; };
+const tTds = o => Math.max(tn(o.td), tn(o.rutd) + tn(o.retd));
+const TAG_DEFS_V = 1;
+const TAG_DEFS = {
+  nfl: [
+    { tag: '#3hundo', rarity: 'iconic', desc: '300+ rushing + receiving yards', sql: `COALESCE(${tagJ('ruyds')}, 0) + COALESCE(${tagJ('reyds')}, 0) >= 300`,
+      test: o => tn(o.ruyds) + tn(o.reyds) >= 300, line: o => `${tn(o.ruyds)} rush + ${tn(o.reyds)} rec yds` },
+    { tag: '#jackson', rarity: 'iconic', desc: '20+ receptions', sql: `${tagJ('rec')} >= 20`, test: o => tn(o.rec) >= 20, line: o => `${tn(o.rec)} rec, ${tn(o.reyds)} yds` },
+    { tag: '#5tuddy', rarity: 'iconic', desc: '5+ TDs (not passing)', sql: `MAX(COALESCE(${tagJ('td')}, 0), COALESCE(${tagJ('rutd')}, 0) + COALESCE(${tagJ('retd')}, 0)) >= 5`,
+      test: o => tTds(o) >= 5, line: o => `${tTds(o)} TDs` },
+    { tag: '#tdtrick', rarity: 'iconic', desc: 'Passing, rushing and receiving touchdown in the same game', sql: `${tagJ('ptd')} >= 1 AND ${tagJ('rutd')} >= 1 AND ${tagJ('retd')} >= 1`,
+      test: o => tn(o.ptd) >= 1 && tn(o.rutd) >= 1 && tn(o.retd) >= 1, line: o => `${tn(o.ptd)} pass, ${tn(o.rutd)} rush, ${tn(o.retd)} rec TD` },
+    { tag: '#perfectcompletions', rarity: 'iconic', desc: '100% completions with 15+ attempts',
+      sql: `json_extract(stats, '$."c/att"') LIKE '%/%' AND ${tagFrac('c/att', 0)} = ${tagFrac('c/att', 1)} AND ${tagFrac('c/att', 1)} >= 15`,
+      test: o => tfrac(o['c/att'], 1) >= 15 && tfrac(o['c/att'], 0) === tfrac(o['c/att'], 1), line: o => `${o['c/att']}, ${tn(o.pyds)} yds` },
+    { tag: '#air6hundo', rarity: 'iconic', desc: '600+ passing yards', sql: `${tagJ('pyds')} >= 600`, test: o => tn(o.pyds) >= 600, line: o => `${tn(o.pyds)} pass yds` },
+    { tag: '#platniumarm', rarity: 'iconic', desc: '7+ passing TDs', sql: `${tagJ('ptd')} >= 7`, test: o => tn(o.ptd) >= 7, line: o => `${tn(o.ptd)} pass TDs` },
+    { tag: '#eightball', rarity: 'iconic', desc: '8+ total TDs (passing included)', sql: `COALESCE(${tagJ('ptd')}, 0) + MAX(COALESCE(${tagJ('td')}, 0), COALESCE(${tagJ('rutd')}, 0) + COALESCE(${tagJ('retd')}, 0)) >= 8`,
+      test: o => tn(o.ptd) + tTds(o) >= 8, line: o => `${tn(o.ptd) + tTds(o)} total TDs` },
+    // A quarterback's "sack" and "int" are ones he took and threw, so they don't count.
+    { tag: '#boogeyman', rarity: 'iconic', desc: '6+ sacks', sql: `${tagJ('sack')} >= 6 AND COALESCE(position, '') <> 'QB'`,
+      test: (o, pos) => pos !== 'QB' && tn(o.sack) >= 6, line: o => `${tn(o.sack)} sacks` },
+    { tag: '#magnet', rarity: 'iconic', desc: '4+ interceptions (defense)', sql: `${tagJ('int')} >= 4 AND COALESCE(position, '') <> 'QB'`,
+      test: (o, pos) => pos !== 'QB' && tn(o.int) >= 4, line: o => `${tn(o.int)} INTs` },
+    { tag: '#diamondboot', rarity: 'iconic', desc: '7+ field goals', sql: `json_extract(stats, '$."fg%"') LIKE '%/%' AND ${tagFrac('fg%', 0)} >= 7`,
+      test: o => tfrac(o['fg%'], 0) >= 7, line: o => `${o['fg%']} FG` }
+  ]
+};
+async function tagSig(env, db, sp) {
+  const k = `tagview_sig_${sp}`;
+  try { const c = await env.RATEBOARD_KV.get(k); if (c) return c; } catch (e) {}
+  const r = await db.prepare(`SELECT COUNT(*) AS n, MAX(day) AS d FROM gamelog WHERE sport=? AND stats IS NOT NULL`).bind(sp).first();
+  const v = `${r && r.n}|${r && r.d}`;
+  try { await env.RATEBOARD_KV.put(k, v, { expirationTtl: 900 }); } catch (e) {}
+  return v;
+}
+async function tagBuild(env, db, sp) {
+  const defs = TAG_DEFS[sp];
+  const rows = ((await db.prepare(`SELECT season, playerId, player, team, opponent, day, position, seasonType, stats FROM gamelog
+      WHERE sport=? AND stats IS NOT NULL AND COALESCE(seasonType, 'regularseason') <> 'preseason' AND (${defs.map(d => `(${d.sql})`).join(' OR ')})
+      ORDER BY day DESC LIMIT 3000`).bind(sp).all()).results) || [];
+  const out = defs.map(d => ({ tag: d.tag, rarity: d.rarity, desc: d.desc, hits: [] }));
+  for (const r of rows) {
+    let o = {}; try { o = JSON.parse(r.stats || '{}') || {}; } catch (e) {}
+    const pos = String(r.position || '').toUpperCase();
+    defs.forEach((d, i) => { if (d.test(o, pos)) out[i].hits.push({ p: r.player, i: Number(r.playerId), s: Number(r.season), d: r.day, tm: r.team, op: r.opponent, pos,
+      po: r.seasonType && r.seasonType !== 'regularseason' ? 1 : undefined, line: d.line(o) }); });
+  }
+  const c = { at: Date.now(), v: TAG_DEFS_V, sig: await tagSig(env, db, sp).catch(() => ''), sport: sp, tags: out };
+  try { await env.RATEBOARD_KV.put(`tagview_v1_${sp}`, JSON.stringify(c)); } catch (e) {}
+  return c;
+}
+
 const PROJ_MEM = new Map();
 const projMem = c => ({ c, read: 0, byId: new Map((c.rows || []).map(r => [r.i, r])), rowsText: JSON.stringify((c.rows || []).map(({ x, ...r }) => r)) });
 const projSigOf = (n, d, s) => `${n}|${d || ''}|${Math.round(Number(s) || 0)}`;
@@ -5399,6 +5461,27 @@ async function handle({ request, env, waitUntil }) {
     rows.forEach((r, i) => walk(r, '', i));
     return json({ sport: sp, season: se, account: u.rsUser, passes: rows.length, topKeys: Object.keys(d || {}),
       fields: Object.fromEntries([...seen].map(([k, v]) => [k, [...v]])), first3: rows.slice(0, 3) });
+  }
+  // Tag finder (2026-11-09): which games earned each performance tag.
+  if (op === 'tagview') {
+    if (!acc.who) return json({ error: 'Sign in on the board first.' }, 403);
+    const sp = TAG_DEFS[url.searchParams.get('sport')] ? url.searchParams.get('sport') : 'nfl';
+    const k = `tagview_v1_${sp}`;
+    let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(k)) || 'null'); } catch (e) {}
+    if (c && c.v !== TAG_DEFS_V) c = null;   // the tag list changed: build again
+    const lockK = `tagview_lock_${sp}`;
+    let stale = !c;
+    if (c && Date.now() - c.at > 30 * 60000) { try { stale = (await tagSig(env, db, sp)) !== c.sig; } catch (e) {} }
+    if (stale) {
+      let locked = false; try { locked = !!(await env.RATEBOARD_KV.get(lockK)); } catch (e) {}
+      if (!locked) {
+        try { await env.RATEBOARD_KV.put(lockK, '1', { expirationTtl: 120 }); } catch (e) {}
+        const job = tagBuild(env, db, sp).finally(() => env.RATEBOARD_KV.delete(lockK).catch(() => {}));
+        if (!c) { try { c = await job; } catch (e) { return json({ error: 'Could not build the tag list: ' + e.message }, 500); } }
+        else { try { waitUntil(job.catch(() => {})); } catch (e) {} }
+      } else if (!c) return json({ building: true, note: 'Building the tag list - try again in a minute.' });
+    }
+    return json(c);
   }
   if (op === 'projections') {
     // Open to everyone signed in (Dennis, 2026-11-08; was Dennis only).
