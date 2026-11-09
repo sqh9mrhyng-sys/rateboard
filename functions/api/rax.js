@@ -7858,6 +7858,8 @@ async function collectorHealth(env, url) {
       window: await kvj(`gl_window_${sp}_${se}`), through: await env.RATEBOARD_KV.get(`gl_through_${sp}_${se}`) });
   }
   // Seasons the main queue keeps (NHL): how far the game log and its rax reach (2026-11-09).
+  try { const r = ((await db.prepare(`SELECT season, day, seasonType, stats FROM gamelog WHERE sport='nfl' AND player='Josh Allen' AND (stats LIKE '%retd%' OR stats LIKE '%"rec"%' OR stats LIKE '%reyds%')`).all()).results) || [];
+    seasons.push({ season: 'tmp', allen: r }); } catch (e) {}
   for (const [sp, se] of [['nhl', 2026], ['nba', 2027]]) {
     try { const last = await db.prepare(`SELECT MAX(day) AS day, MAX(CASE WHEN rax IS NOT NULL THEN day END) AS raxDay, COUNT(*) AS rows, SUM(CASE WHEN rax IS NULL THEN 1 ELSE 0 END) AS noRax FROM gamelog WHERE sport=? AND season=?`).bind(sp, se).first();
       const top = ((await db.prepare(`SELECT player, COUNT(*) AS g, ROUND(AVG(rax), 2) AS a, MAX(day) AS last, GROUP_CONCAT(substr(day,6) || '=' || rax || COALESCE(substr(seasonType,1,3),'')) AS rs FROM (SELECT player, playerId, rax, day, seasonType FROM gamelog WHERE sport=? AND season=? AND rax IS NOT NULL ORDER BY day) GROUP BY playerId HAVING g >= 5 ORDER BY a DESC LIMIT 8`).bind(sp, se).all()).results) || [];
