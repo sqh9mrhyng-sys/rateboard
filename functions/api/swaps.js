@@ -3758,7 +3758,7 @@ const tagFrac = (k, part) => { const v = `json_extract(stats, '$."${k}"')`;
 const tn = v => { const m = String(v == null ? '' : v).match(/^-?\d+(\.\d+)?/); return m ? Number(m[0]) : 0; };
 const tfrac = (v, i) => { const m = String(v || '').match(/^(\d+)\/(\d+)$/); return m ? Number(m[i + 1]) : 0; };
 const tTds = o => Math.max(tn(o.td), tn(o.rutd) + tn(o.retd));
-const TAG_DEFS_V = 7;   // 7: MLB   // 6: CFB   // 5: #marksman defined   // 3: Mystic NFL; 4: Legendary NFL (2026-11-09)   // 2: Real's own tags and box-score links (2026-11-09)
+const TAG_DEFS_V = 8;   // 8: NBA   // 7: MLB   // 6: CFB   // 5: #marksman defined   // 3: Mystic NFL; 4: Legendary NFL (2026-11-09)   // 2: Real's own tags and box-score links (2026-11-09)
 const TAG_DEFS = {
   nfl: [
     { tag: '#3hundo', rarity: 'iconic', desc: '300+ rushing + receiving yards', sql: `COALESCE(${tagJ('ruyds')}, 0) + COALESCE(${tagJ('reyds')}, 0) >= 300`,
@@ -3881,6 +3881,20 @@ TAG_DEFS.mlb = [
     test: o => mPitch(o) && tn(o['strk%']) >= 80 && tn(o.ip) >= 5, line: o => `${pLine(o)} · ${tn(o['strk%'])}% strikes` }
 ];
 TAG_SEASONS.mlb = [2026, 2025, 2024, 2023];
+/* NBA (Dennis, 2026-11-09): pts, reb, ast, stl, blk from the stat line. */
+const bLine = o => ['pts', 'reb', 'ast', 'stl', 'blk'].filter(k => tn(o[k])).map(k => `${tn(o[k])} ${k}`).join(', ');
+TAG_DEFS.nba = [
+  { tag: '#80bomb', rarity: 'iconic', desc: '80+ points', sql: `${tagJ('pts')} >= 80`, test: o => tn(o.pts) >= 80, line: bLine },
+  { tag: '#jokic', rarity: 'iconic', desc: '30+ points, 20+ rebounds, 20+ assists', sql: `${tagJ('pts')} >= 30 AND ${tagJ('reb')} >= 20 AND ${tagJ('ast')} >= 20`,
+    test: o => tn(o.pts) >= 30 && tn(o.reb) >= 20 && tn(o.ast) >= 20, line: bLine },
+  { tag: '#grandtheft', rarity: 'iconic', desc: '10+ steals', sql: `${tagJ('stl')} >= 10`, test: o => tn(o.stl) >= 10, line: bLine },
+  { tag: '#70bomb', rarity: 'mystic', desc: '70+ points', sql: `${tagJ('pts')} BETWEEN 70 AND 79`, test: o => tn(o.pts) >= 70 && tn(o.pts) < 80, line: bLine },
+  { tag: '#5x5', rarity: 'mystic', desc: '5+ points, rebounds, assists, steals and blocks', sql: ['pts', 'reb', 'ast', 'stl', 'blk'].map(k => `${tagJ(k)} >= 5`).join(' AND '),
+    test: o => ['pts', 'reb', 'ast', 'stl', 'blk'].every(k => tn(o[k]) >= 5), line: bLine },
+  { tag: '#rodman', rarity: 'mystic', desc: '30+ rebounds', sql: `${tagJ('reb')} >= 30`, test: o => tn(o.reb) >= 30, line: bLine },
+  { tag: '#blockbuster', rarity: 'mystic', desc: '10+ blocks', sql: `${tagJ('blk')} >= 10`, test: o => tn(o.blk) >= 10, line: bLine }
+];
+TAG_SEASONS.nba = [2027, 2026, 2025, 2024, 2023];
 async function tagSeasonSig(env, db, sp, se) {
   const k = `tagview_sig_v2_${sp}_${se}`;
   try { const c = await env.RATEBOARD_KV.get(k); if (c) return c; } catch (e) {}
