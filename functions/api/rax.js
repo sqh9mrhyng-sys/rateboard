@@ -6576,6 +6576,18 @@ async function handleGet({ request, env, waitUntil }) {
           : `SELECT COUNT(*) AS n FROM gamelog WHERE ${W}`;
         const c = await db.prepare(countSql)
           .bind(...(mode === 'players' ? binds.concat([minGames]).concat(outerBinds) : binds)).first();
+        /* Each game's performance card on Real (its box-score id), where the
+           performance pull has it (2026-11-09) - only for the page shown. */
+        if (mode === 'games' && !asCsv && r && r.results && r.results.length) {
+          const groups = new Map();
+          for (const x of r.results) { const k = `${x.sport}|${x.season}`; (groups.get(k) || groups.set(k, new Set()).get(k)).add(Number(x.gameId)); }
+          const box = new Map();
+          for (const [k, set] of groups) { const [sp0, se0] = k.split('|'), g = [...set];
+            for (let i = 0; i < g.length; i += 90) { const part = g.slice(i, i + 90);
+              try { for (const y of (((await db.prepare(`SELECT id, playerId, gameId FROM performances WHERE sport=? AND season=? AND gameId IN (${part.map(() => '?').join(',')})`).bind(sp0, Number(se0), ...part).all()).results) || []))
+                box.set(`${sp0}|${y.playerId}|${y.gameId}`, Number(y.id)); } catch (e) {} } }
+          for (const x of r.results) { const b = box.get(`${x.sport}|${x.playerId}|${x.gameId}`); if (b) x.boxId = b; }
+        }
 
         return json({ mode, sort, dir: dir.toLowerCase(), limit, offset,
                       pairs: pairs.map(([sp, se]) => `${sp}:${se}`),

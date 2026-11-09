@@ -55,9 +55,10 @@
     <div class="seg" id="sportseg"><button data-s="nfl" aria-pressed="true">NFL</button></div>
     <div class="row2">
       <div class="seg" id="rarseg"><button data-r="iconic" aria-pressed="true">Iconic</button><button data-r="mystic" aria-pressed="false">Mystic</button><button data-r="legendary" aria-pressed="false">Legendary</button></div>
+      <input id="tq" placeholder="Find a tag or kind of play (e.g. punt, sacks, #2hundo)" autocomplete="off">
       <input id="q" placeholder="Find a player or team" autocomplete="off">
     </div>
-    <p class="note">Performance tags - the whole game's line. Tap a tag to see every game that earned it (newest first); a name opens that game's performance card (or his season card until the game's card is in). From Real's own tags and each game's stat line, regular season and playoffs.</p>
+    <p class="note">Tap sports and rarities to pick as many as you like. Performance tags - the whole game's line. Tap a tag to see every game that earned it (newest first); a name opens that game's performance card (or his season card until the game's card is in). From Real's own tags and each game's stat line, regular season and playoffs.</p>
     <p class="note" id="head">Loading…</p>
   </section>
   <div id="list"></div>
@@ -173,24 +174,32 @@ function realPlayerUrl(sport, playerId, season){
 // Real's links: a tag is [5, sport, 0, tag id], a game's performance card [14, sport, 0, box-score id] (read off Dennis's links).
 const realTagUrl = (sp, id) => 'https://www.realapp.com/' + hashidsEncode('routing', 11, [5, REAL_SPORT[sp][1], 0, Number(id)]);
 const realPerfUrl = (sp, id) => 'https://www.realapp.com/' + hashidsEncode('routing', 11, [14, REAL_SPORT[sp][1], 0, Number(id)]);
-let data = null, sport = 'nfl', rar = 'iconic';
+let data = null;
+// Several at once (2026-11-09): every sport and rarity picked is shown together.
+const sports = new Set(['nfl']), rars = new Set(['iconic']);
+const RAR_ORDER = { iconic: 0, mystic: 1, legendary: 2, epic: 3, rare: 4 };
+const SPORT_LBL = { nfl: 'NFL', ncaaf: 'CFB', nba: 'NBA', nhl: 'NHL', mlb: 'MLB', ncaam: 'CBB', soccer: 'FC' };
 const open = new Set();
 const fmtDay = d => { try{ return new Date(d + 'T12:00:00').toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }); }catch(e){ return d; } };
 function draw(){
   if(!data || !data.tags){ $('#list').innerHTML = ''; return; }
   const q = $('#q').value.trim().toLowerCase();
-  // Most games first (Dennis, 2026-11-09), then by name.
-  const tags = data.tags.filter(t => t.rarity === rar).slice().sort((a, b) => b.hits.length - a.hits.length || a.tag.localeCompare(b.tag));
+  const tq = $('#tq').value.trim().toLowerCase().replace(/^#/, '');
+  // Rarest first, then most games (Dennis, 2026-11-09), then by name.
+  const tags = data.tags.filter(t => rars.has(t.rarity) && sports.has(t.sport) && (!tq || `${t.tag} ${t.desc}`.toLowerCase().includes(tq)))
+    .sort((a, b) => (RAR_ORDER[a.rarity] - RAR_ORDER[b.rarity]) || b.hits.length - a.hits.length || a.tag.localeCompare(b.tag));
+  if(!tags.length){ $('#list').innerHTML = `<p class="note">No tags match${tq ? ' "' + esc(tq) + '"' : ''}.</p>`; headLine(); return; }
+  headLine();
   $('#list').innerHTML = tags.map(t => {
-    const hits = hitsOf(t, q), show = open.has(t.tag) || (q && hits.length);
+    const hits = hitsOf(t, q), show = open.has(t.key) || (q && hits.length);
     // Only open tags get their games drawn (some have hundreds) - the rest fill in when tapped.
-    const body = !show ? '' : bodyOf(hits, q);
-    return `<details class="tag r-${esc(t.rarity)}${t.hits.length ? ' has' : ''}" data-t="${esc(t.tag)}" ${show ? 'open' : ''}><summary><span class="rar">${esc(t.rarity)}</span>
-      <span><span class="h">${esc(t.tag)}</span>${t.rid ? `<a class="tlink" href="${esc(realTagUrl(sport, t.rid))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">open on Real ↗</a>` : ''}<br><span class="d">${esc(t.desc)}</span></span><span class="n">${hits.length}</span></summary><div class="hits">${body}</div></details>`;
+    const body = !show ? '' : bodyOf(hits, q, t.sport);
+    return `<details class="tag r-${esc(t.rarity)}${t.hits.length ? ' has' : ''}" data-t="${esc(t.key)}" ${show ? 'open' : ''}><summary><span class="rar">${esc(t.rarity)}</span>${sports.size > 1 ? `<span class="note">${esc(SPORT_LBL[t.sport] || t.sport)}</span>` : ''}
+      <span><span class="h">${esc(t.tag)}</span>${t.rid ? `<a class="tlink" href="${esc(realTagUrl(t.sport, t.rid))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">open on Real ↗</a>` : ''}<br><span class="d">${esc(t.desc)}</span></span><span class="n">${hits.length}</span></summary><div class="hits">${body}</div></details>`;
   }).join('');
 }
 const hitsOf = (t, q) => q ? t.hits.filter(h => `${h.p} ${h.tm} ${h.op}`.toLowerCase().includes(q)) : t.hits;
-function bodyOf(hits, q){
+function bodyOf(hits, q, sport){
     return hits.length ? hits.map(h => { const u = h.b ? realPerfUrl(sport, h.b) : realPlayerUrl(sport, h.i, h.s);
       return `<div class="hit"><span>${u ? `<a href="${esc(u)}" target="_blank" rel="noopener"><b>${esc(h.p)}</b></a>` : `<b>${esc(h.p)}</b>`}${h.po ? '<span class="po">PLAYOFFS</span>' : ''}
         <span class="w"> · ${esc(h.pos || '')} ${esc(h.tm || '')}${h.op ? ' vs ' + esc(h.op) : ''} · ${esc(fmtDay(h.d))}</span></span><span class="l">${esc(h.line)}</span></div>`; }).join('')
@@ -198,22 +207,34 @@ function bodyOf(hits, q){
 }
 $('#list').addEventListener('toggle', e => { const d = e.target; if(!(d.dataset && d.dataset.t)) return;
   if(d.open){ open.add(d.dataset.t); const box = d.querySelector('.hits');
-    if(box && !box.children.length){ const t = data.tags.find(x => x.tag === d.dataset.t); if(t) box.innerHTML = bodyOf(hitsOf(t, $('#q').value.trim().toLowerCase()), $('#q').value.trim()); } }
+    if(box && !box.children.length){ const t = data.tags.find(x => x.key === d.dataset.t); if(t) box.innerHTML = bodyOf(hitsOf(t, $('#q').value.trim().toLowerCase()), $('#q').value.trim(), t.sport); } }
   else open.delete(d.dataset.t); }, true);
 $('#q').addEventListener('input', draw);
-$('#rarseg').addEventListener('click', e => { const b = e.target.closest('button'); if(!b) return; rar = b.dataset.r;
-  document.querySelectorAll('#rarseg button').forEach(x => x.setAttribute('aria-pressed', String(x === b))); headLine(); draw(); });
+$('#tq').addEventListener('input', draw);
+// Tap to add or take away; at least one stays picked.
+function toggle(set, v, seg, attr){ if(set.has(v)){ if(set.size > 1) set.delete(v); } else set.add(v);
+  document.querySelectorAll(`#${seg} button`).forEach(x => x.setAttribute('aria-pressed', String(set.has(x.dataset[attr])))); }
+$('#rarseg').addEventListener('click', e => { const b = e.target.closest('button'); if(!b) return; toggle(rars, b.dataset.r, 'rarseg', 'r'); draw(); });
+$('#sportseg').addEventListener('click', e => { const b = e.target.closest('button'); if(!b) return; toggle(sports, b.dataset.s, 'sportseg', 's'); load(); });
 const RAR_LBL = { iconic: 'Iconic', mystic: 'Mystic', legendary: 'Legendary' };
-function headLine(){ if(!data) return; const n = data.tags.filter(t => t.rarity === rar).reduce((t, x) => t + x.hits.length, 0);
-  $('#head').textContent = `${n} game${n === 1 ? '' : 's'} with a${rar === 'iconic' ? 'n' : ''} ${RAR_LBL[rar]} performance tag · checked ${new Date(data.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`; }
+function headLine(){ if(!data) return; const tq = $('#tq').value.trim().toLowerCase().replace(/^#/, '');
+  const n = data.tags.filter(t => rars.has(t.rarity) && sports.has(t.sport) && (!tq || `${t.tag} ${t.desc}`.toLowerCase().includes(tq))).reduce((t, x) => t + x.hits.length, 0);
+  const rl = [...rars].sort((a, b) => RAR_ORDER[a] - RAR_ORDER[b]).map(r => RAR_LBL[r]).join(' / ');
+  $('#head').textContent = `${n.toLocaleString()} game${n === 1 ? '' : 's'} with ${rl} performance tags · checked ${new Date(data.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`; }
 async function load(){
   $('#head').textContent = 'Loading…';
-  let j = null;
-  try{ const r = await fetch(`/api/swaps?op=tagview&page=boosts&sport=${sport}`); j = await r.json().catch(() => null); }catch(e){}
-  if(!j){ $('#head').textContent = 'Could not reach the board.'; return; }
-  if(j.building){ $('#head').textContent = j.note; setTimeout(load, 20000); return; }
-  if(j.error){ $('#head').innerHTML = /sign in/i.test(j.error) ? 'Sign in on <a href="/">the board</a> first.' : esc(j.error); return; }
-  data = j;
+  const all = [];
+  let at = 0;
+  for(const sp of sports){
+    let j = null;
+    try{ const r = await fetch(`/api/swaps?op=tagview&page=boosts&sport=${sp}`); j = await r.json().catch(() => null); }catch(e){}
+    if(!j){ $('#head').textContent = 'Could not reach the board.'; return; }
+    if(j.building){ $('#head').textContent = j.note; setTimeout(load, 20000); return; }
+    if(j.error){ $('#head').innerHTML = /sign in/i.test(j.error) ? 'Sign in on <a href="/">the board</a> first.' : esc(j.error); return; }
+    at = Math.max(at, j.at || 0);
+    for(const t of (j.tags || [])) all.push(Object.assign(t, { sport: sp, key: sp + t.tag }));
+  }
+  data = { at, tags: all };
   headLine(); draw();
 }
 load();

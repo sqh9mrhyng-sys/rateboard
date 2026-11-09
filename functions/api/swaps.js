@@ -3735,7 +3735,7 @@ const tagFrac = (k, part) => { const v = `json_extract(stats, '$."${k}"')`;
 const tn = v => { const m = String(v == null ? '' : v).match(/^-?\d+(\.\d+)?/); return m ? Number(m[0]) : 0; };
 const tfrac = (v, i) => { const m = String(v || '').match(/^(\d+)\/(\d+)$/); return m ? Number(m[i + 1]) : 0; };
 const tTds = o => Math.max(tn(o.td), tn(o.rutd) + tn(o.retd));
-const TAG_DEFS_V = 4;   // 3: Mystic NFL; 4: Legendary NFL (2026-11-09)   // 2: Real's own tags and box-score links (2026-11-09)
+const TAG_DEFS_V = 5;   // 5: #marksman defined   // 3: Mystic NFL; 4: Legendary NFL (2026-11-09)   // 2: Real's own tags and box-score links (2026-11-09)
 const TAG_DEFS = {
   nfl: [
     { tag: '#3hundo', rarity: 'iconic', desc: '300+ rushing + receiving yards', sql: `COALESCE(${tagJ('ruyds')}, 0) + COALESCE(${tagJ('reyds')}, 0) >= 300`,
@@ -3787,8 +3787,7 @@ const TAG_DEFS = {
     { tag: '#airforce', rarity: 'legendary', desc: '5+ passes defended', sql: `${tagJ('pd')} >= 5`, test: o => tn(o.pd) >= 5, line: o => `${tn(o.pd)} passes defended` },
     { tag: '#puntcity', rarity: 'legendary', desc: '10+ punts', sql: `${tagJ('punt')} >= 10`, test: o => tn(o.punt) >= 10, line: o => `${tn(o.punt)} punts, ${tn(o.puyds)} yds` },
     { tag: '#punt5hundo', rarity: 'legendary', desc: '500+ punt yards', sql: `${tagJ('puyds')} >= 500`, test: o => tn(o.puyds) >= 500, line: o => `${tn(o.puyds)} punt yds (${tn(o.punt)} punts)` },
-    // No description yet - only the games Real itself tagged show.
-    { tag: '#marksman', rarity: 'legendary', desc: '(description to come)', sql: `0`, test: () => false, line: () => '' },
+    { tag: '#marksman', rarity: 'legendary', desc: '5+ punts inside the 20', sql: `${tagJ('p20')} >= 5`, test: o => tn(o.p20) >= 5, line: o => `${tn(o.p20)} inside the 20 (${tn(o.punt)} punts)` },
     { tag: '#2centuryboot', rarity: 'legendary', desc: '200+ yards of field goals made', sql: `${tagJ('fgyds')} >= 200`, test: o => tn(o.fgyds) >= 200, line: o => `${tn(o.fgyds)} FG yds (${o['fg%'] || ''})` }
   ]
 };

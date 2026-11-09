@@ -5333,6 +5333,8 @@ async function cbbPanel(){
             // Games view: a second link, to that game on Real.
             const gurl = st.mode === 'games' && r.gameId ? realGameUrl(r.sport, r.gameId) : null;
             if(gurl) v += ` <a class="plink glink" href="${esc(gurl)}" target="_blank" rel="noopener" title="Open this game on Real">Game ↗</a>`;
+            // And his performance card from that game, once the performance pull has it (2026-11-09).
+            if(st.mode === 'games' && r.boxId && REAL_SPORT[r.sport]) v += ` <a class="plink glink" href="${esc('https://www.realapp.com/' + hashidsEncode('routing', 11, [14, REAL_SPORT[r.sport][1], 0, Number(r.boxId)]))}" target="_blank" rel="noopener" title="His performance card from this game">Perf ↗</a>`;
           }
           if(k === 'sport' && v) v = CB_SPORT_LABEL[v] || String(v).toUpperCase();
           if(k === 'rating' && v != null && v !== '') v = Number(v).toFixed(2);
