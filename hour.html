@@ -232,8 +232,8 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
     $('#buylist').innerHTML += [...byP.entries()].map(([nm, g]) => `<div class="gh">You have ${g.n} 160${g.n === 1 ? '' : 's'} for ${lnk(nm, g.url)}</div>`).join('');
   }
   $('#n160').textContent = n160;
-  $('#s160note').textContent = sell160.length && buy160.length ? 'Selling: your buyer offers 160 on a card from your pack - send the 160 back. Buying: offer 160 on a card from their pack - they send the 160 back.'
-    : sell160.length ? 'Each buyer offers 160 on a card from your pack - once their offer is in, send the 160 back.' : 'Offer 160 on a card from each seller\'s pack - they send the 160 back.';
+  $('#s160note').textContent = sell160.length && buy160.length ? 'Selling: the buyer takes all cards for minimum - send 160 back on a random unowned card. Buying: offer min on the cards from their pack - they send you 160 back.'
+    : sell160.length ? 'The buyer takes all cards for minimum - send them 160 back on a random unowned card.' : 'Offer min on the cards from each seller\'s pack - they send you 160 back.';
   $('#s160list').innerHTML = sell160.map(x => `<div class="row${done['sq' + x.id] && done['sr' + x.id] ? ' both' : ''}" data-r160="s${x.id}"><span class="grp"><span class="chk2">${chk('sq' + x.id, 'Received offer')}${chk('sr' + x.id, 'Sent 160 back')}</span>
       <span><b>${who(x)}</b><span class="sub">Receiving <b class="rv">${pl(x)}</b> from your pack</span></span></span></div>`).join('')
     + buy160.map(x => `<div class="row${done['bo' + x.id] && done['bk' + x.id] ? ' both' : ''}" data-r160="b${x.id}"><span class="grp"><span class="chk2">${chk('bo' + x.id, 'Offered')}${chk('bk' + x.id, '160 back')}</span>
