@@ -396,7 +396,7 @@ const invFold = open => { $('#invbody').hidden = !open; $('#invfold').setAttribu
 $('#invfold').addEventListener('click', () => invFold($('#invbody').hidden));
 try{ if(localStorage.getItem('boosts_invopen_v1') === '0') invFold(false); }catch(e){}
 /* Custom: your own bars and maxes, per sport, kept in this browser. */
-const CUS_DEF = { ncaam: { l: 14.5, e: 10, r: 5 }, ncaaf: { l: 22, e: 15, r: 10 }, nfl: { l: 22.5, e: 17, r: 7 }, nba: { l: 7, e: 5, r: 3.5 }, nhl: { l: 8, e: 6, r: 4 }, golf: { l: 19, e: 15, r: 10 }, soccer: { l: 11.2, e: 9, r: 6 } };
+const CUS_DEF = { ncaam: { l: 14.5, e: 10, r: 5 }, ncaaf: { l: 22, e: 15, r: 10 }, nfl: { l: 22.5, e: 17, r: 7 }, nba: { l: 99, e: 7.5, r: 4 }, nhl: { l: 99, e: 7.5, r: 4 }, golf: { l: 19, e: 15, r: 10 }, soccer: { l: 11.2, e: 9, r: 6 } };
 const CUS_IDS = { l: 'c-l', e: 'c-e', r: 'c-r', ml: 'm-l', me: 'm-e', mr: 'm-r' };
 function cusLoad(sp){ let all = {}; try{ all = JSON.parse(localStorage.getItem('boosts_custom_v1') || '{}') || {}; }catch(e){}
   const v = all[sp] || { ...CUS_DEF[sp], ml: '', me: '', mr: '' };
@@ -420,9 +420,9 @@ const drawMode = () => { const m = $('#mode').value;
   const FC_NOTE = { balanced: 'Legendary 11.2+ proj rax (max 50% a day) · Epic 9+ · Rare 6+ (rax in a start)', heavy: 'Legendary 9.8+ proj rax (no cap) · Epic 7.8+ · Rare 6+', saver: 'Legendary 13+ proj rax (max 25% a day) · Epic 10.5+ · Rare 6+' };
   const sp0 = $('#sport').value;
     // NBA / NHL (Dennis, 2026-11-09): the same on every setting.
-  const PRO_NOTE = 'Legendary 7+ proj rax (max 1 a day) · Epic 5+ (max 2 a day) · Rare 3.5+ (max 20% of your Rares a day)';
+  const PRO_NOTE = 'No Legendary · Epic 7.5+ proj rax (max 2 a day) · Rare 4+ (max 20% of your Rares a day)';
   const NBA_NOTE = { balanced: PRO_NOTE, heavy: PRO_NOTE, saver: PRO_NOTE };
-  const NHL_P = 'Legendary 8+ proj rax (max 1 a day) · Epic 6+ (max 2 a day) · Rare 4+ (max 20% of your Rares a day)';
+  const NHL_P = PRO_NOTE;
   const NHL_NOTE = { balanced: NHL_P, heavy: NHL_P, saver: NHL_P };
   const NFL_NOTE = { balanced: 'Legendary 22.5+ proj rax (max 35% a day) · Epic 17+ · Rare 7+', heavy: 'Legendary 19+ proj rax (max 40% a day) · Epic 14.9+ · Rare 5+', saver: 'Legendary 29.7+ proj rax · Epic 23.9+ · Rare 5+' };
   $('#modenote').textContent = sp0 === 'ncaaf' ? (CFB_NOTE[m] || MODE_NOTE[m]) : sp0 === 'golf' ? (GOLF_NOTE[m] || GOLF_NOTE.balanced) : sp0 === 'soccer' ? (FC_NOTE[m] || FC_NOTE.balanced) : sp0 === 'nfl' ? (NFL_NOTE[m] || MODE_NOTE[m]) : sp0 === 'nba' ? (NBA_NOTE[m] || NBA_NOTE.balanced) : sp0 === 'nhl' ? (NHL_NOTE[m] || NHL_NOTE.balanced) : MODE_NOTE[m]; };

@@ -2667,7 +2667,7 @@ const BOOST_SEASON = { ncaam: [2027, 2026], ncaaf: [2026, 2025], nfl: [2026, 202
    last season's rax per game among regulars: Legendary is roughly the top
    2-3% of games, Epic the top 10%, Rare the top 25%. Boost saver raises the
    bar 15%, earning heavy lowers it 15%. */
-const BOOST_BARS = { ncaam: [11.5, 10, 7.5], ncaaf: [25, 20, 12], nfl: [19, 15, 8.5], golf: [19, 15, 10], soccer: [11.2, 9, 6], nba: [7, 5, 3.5], nhl: [8, 6, 4] };   // Legendary ~top 1% game, Epic ~top 3-5%
+const BOOST_BARS = { ncaam: [11.5, 10, 7.5], ncaaf: [25, 20, 12], nfl: [19, 15, 8.5], golf: [19, 15, 10], soccer: [11.2, 9, 6], nba: [99, 7.5, 4], nhl: [99, 7.5, 4] };   // Legendary ~top 1% game, Epic ~top 3-5%
 const BOOST_MODES = { balanced: 1, heavy: 1, saver: 1, custom: 1 };
 const ESPN_PATH = { ncaam: 'basketball/mens-college-basketball', ncaaf: 'football/college-football', nfl: 'football/nfl', nba: 'basketball/nba', nhl: 'hockey/nhl' };
 const ESPN_GROUP = { ncaam: '&groups=50', ncaaf: '&groups=80', nfl: '', nba: '', nhl: '' };
@@ -5752,15 +5752,13 @@ async function handle({ request, env, waitUntil }) {
        NBA top 1% ~4.0, top 5% ~3.1, top 25% ~1.7; NHL top 1% ~5.5, top 5% ~4.2,
        top 25% ~2.5. */
     // Dennis (2026-11-09, same morning): too low - Legendary 7+ (1 a day), Epic 5+ (2 a day), Rare 3.5+ (20% of Rares held a day), both leagues, every setting.
-    const NBA_RULES = { balanced: { leg: 7, epic: 5, cap: 1 } };
-    /* NHL, set from this season's regulars (2026-11-09): McDavid ~9 a game, then
-       Draisaitl, Matthews, MacKinnon, Celebrini 6-7, Kaprizov ~5. Legendary 8+
-       (McDavid-level nights, 1 a day), Epic 6+ (2 a day), Rare 4+ (20% a day). */
-    const NHL_RULES = { balanced: { leg: 8, epic: 6, cap: 1 } };
+    // Dennis (2026-11-09 5:18am): both leagues - Balanced never uses a Legendary, Epic 7.5+ (2 a day), Rare 4+ (20% a day).
+    const NBA_RULES = { balanced: { leg: Infinity, epic: 7.5, cap: 0 } };
+    const NHL_RULES = NBA_RULES;
     const cfb = sp === 'ncaaf' ? CFB_RULES[mode] || CFB_RULES.balanced : sp === 'golf' ? GOLF_RULES[mode] || GOLF_RULES.balanced : sp === 'soccer' ? FC_RULES[mode] || FC_RULES.balanced : sp === 'nfl' ? NFL_RULES[mode] || NFL_RULES.balanced
       : sp === 'nba' ? NBA_RULES[mode] || NBA_RULES.balanced : sp === 'nhl' ? NHL_RULES[mode] || NHL_RULES.balanced : null;
     if (cfb) R.cap = cfb.cap;
-    let legBar = cfb ? cfb.leg : R.leg * scale, epicBar = cfb ? cfb.epic : R.epic * scale, rareFloor = sp === 'ncaaf' || sp === 'golf' ? 10 : sp === 'soccer' ? 6 : sp === 'nfl' && mode === 'balanced' ? 7 : sp === 'nba' ? 3.5 : sp === 'nhl' ? 4 : 5;
+    let legBar = cfb ? cfb.leg : R.leg * scale, epicBar = cfb ? cfb.epic : R.epic * scale, rareFloor = sp === 'ncaaf' || sp === 'golf' ? 10 : sp === 'soccer' ? 6 : sp === 'nfl' && mode === 'balanced' ? 7 : sp === 'nba' || sp === 'nhl' ? 4 : 5;
     const cutAt = null;
     if (CUS) { legBar = CUS.leg ?? Infinity; epicBar = CUS.epic ?? Infinity; rareFloor = CUS.rare ?? Infinity; }
     bars.splice(0, 3, Math.round(legBar * 10) / 10, Math.round(epicBar * 10) / 10, rareFloor);
@@ -5768,7 +5766,7 @@ async function handle({ request, env, waitUntil }) {
     const dayCap = CUS ? { 5: CUS.max[5] ?? Infinity, 4: CUS.max[4] ?? Infinity, 3: CUS.max[3] ?? Infinity }
       : { 5: held(5) ? Math.max(1, Math.floor(held(5) * R.cap)) : 0, 4: Infinity, 3: Infinity };
     // NBA / NHL daily most, whatever the setting (Custom can only go lower).
-    if (sp === 'nba' || sp === 'nhl') { dayCap[5] = Math.min(dayCap[5], 1); dayCap[4] = Math.min(dayCap[4], 2);
+    if (sp === 'nba' || sp === 'nhl') { dayCap[5] = CUS ? Math.min(dayCap[5], 1) : 0; dayCap[4] = Math.min(dayCap[4], 2);   // no Legendary on the set modes
       dayCap[3] = Math.min(dayCap[3], inv ? Math.max(1, Math.floor(held(3) * 0.2)) : 6); }
     const usedR = { 5: 0, 4: 0, 3: 0 };
     // Custom maxes hold even when Real won't say what boosters they have.
