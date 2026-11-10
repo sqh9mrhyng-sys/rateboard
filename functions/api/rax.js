@@ -4255,6 +4255,58 @@ async function handleGet({ request, env, waitUntil }) {
                   playsWithAnUnknownTag: unknown, families: fam, missingRuleTags });
   }
 
+  /* Team packs (Dennis, 2026-11-09): MLB, NBA, NFL and CFB team packs are 1
+     performance card and 3 play cards, drawn only from cards made while the
+     player was on that team (Ohtani's WBC cards are Japan's, not the
+     Dodgers'). Per team: its play cards and how many of each top rarity. A
+     card is the team of the player it's credited to - a strikeout is the
+     pitcher's, so it goes to the fielding team. Built once per season (a full
+     read of the season's plays), saved in KV - finished seasons for 30 days,
+     the season being played for a day - and built in the background. */
+  if (url.searchParams.get('plays') === 'teams') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    if (!['mlb', 'nba', 'nfl', 'ncaaf'].includes(sport)) return json({ error: 'Team packs are MLB, NBA, NFL and CFB.' }, 400);
+    const se = Number(season), K = `pkteams_v1_${sport}_${se}`, L = `pkteams_lock_${sport}_${se}`;
+    const live = OTD_LIVE_SEASONS.has(`${sport}:${se}`);
+    let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
+    const fresh = c && Date.now() - c.at < (live ? 86400000 : 30 * 86400000);
+    if (c && fresh) return json({ sport, season: se, at: c.at, rows: c.rows });
+    let locked = null; try { locked = await env.RATEBOARD_KV.get(L); } catch (e) {}
+    if (!locked) {
+      try { await env.RATEBOARD_KV.put(L, '1', { expirationTtl: 300 }); } catch (e) {}
+      const build = (async () => {
+        await playsReady(db);
+        const r = await db.prepare(`
+          WITH c AS (
+            SELECT teamId AS t, rarity FROM plays WHERE sport=?1 AND season=?2 AND ${CARD_SQL} AND NOT ${STRIKEOUT}
+            UNION ALL
+            SELECT CASE WHEN ${STRIKEOUT} THEN oppTeamId ELSE teamId END AS t, COALESCE(rarity2, rarity) AS rarity
+              FROM plays WHERE sport=?1 AND season=?2 AND ${CARD_SQL}
+               AND player2Id IS NOT NULL AND player2Id <> COALESCE(playerId, -1)
+               AND (${PASS_CREDIT} OR ${STRIKEOUT} OR ${HOCKEY_SECOND}))
+          SELECT t AS teamId, COUNT(*) AS plays,
+                 SUM(CASE WHEN rarity = 7 THEN 1 ELSE 0 END) AS iconic,
+                 SUM(CASE WHEN rarity = 6 THEN 1 ELSE 0 END) AS mystic,
+                 SUM(CASE WHEN rarity = 5 THEN 1 ELSE 0 END) AS legendary,
+                 SUM(CASE WHEN rarity = 4 THEN 1 ELSE 0 END) AS epic
+            FROM c WHERE t IS NOT NULL GROUP BY t`).bind(sport, se).all();
+        const rows = r.results || [];
+        // Each team's code: one of its plays, and that player's game in the game log.
+        for (const x of rows) {
+          try {
+            const p = await db.prepare('SELECT playerId, gameId FROM plays WHERE sport=? AND season=? AND teamId=? AND playerId IS NOT NULL LIMIT 1').bind(sport, se, x.teamId).first();
+            if (p) { const g = await db.prepare('SELECT team FROM gamelog WHERE sport=? AND season=? AND playerId=? AND gameId=? LIMIT 1').bind(sport, se, p.playerId, p.gameId).first(); x.team = g ? g.team : null; }
+          } catch (e) {}
+        }
+        await env.RATEBOARD_KV.put(K, JSON.stringify({ at: Date.now(), rows }), { expirationTtl: 60 * 86400 });
+      })().catch(() => {}).finally(() => env.RATEBOARD_KV.delete(L).catch(() => {}));
+      try { waitUntil(build); } catch (e) {}
+    }
+    if (c) return json({ sport, season: se, at: c.at, rows: c.rows, stale: true });
+    return json({ building: true });
+  }
+
   // One row per player: how many card plays they have and how many are the
   // top tier. Everything else is in the table behind it.
   if (url.searchParams.get('plays') === 'board') {

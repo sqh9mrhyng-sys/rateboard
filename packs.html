@@ -104,7 +104,7 @@
   <header><h1>Pack data</h1><span data-acct></span><a href="/">Back to home</a></header>
   <div class="warnbox">Opening player packs for Legendary boosters is not profitable outside of football.</div>
   <div class="upd">Pack data updates <b>every day from 11am ET (7am Alaska)</b>, after the morning game-data sweep - <span class="note">NBA, CBB and NHL daily · NFL Fri, Mon, Tue · CFB Sun. Finished seasons don't change.</span></div>
-  <div class="seg" id="tabs"><button data-t="all" aria-pressed="true">All players</button><button data-t="fav" aria-pressed="false">★ Favorites <span id="favn"></span></button></div>
+  <div class="seg" id="tabs"><button data-t="all" aria-pressed="true">All players</button><button data-t="team" aria-pressed="false">Team packs</button><button data-t="fav" aria-pressed="false">★ Favorites <span id="favn"></span></button></div>
   <section>
     <div id="pickrow">
       <div class="note pk-h">Sports - pick any number</div>
@@ -280,6 +280,10 @@ async function seasonRows(sp, se){
 
 function cols(){
   const multi = tab === 'fav' || picks.length > 1;
+  // Team packs: plays, Leg and Epic with their odds, and the avg booster (Dennis, 2026-11-09).
+  if(tab === 'team') return [['player', 'Team', 'l'], ...(multi ? [['seasonLbl', 'Season', 'l', 'hm']] : []), ['plays', 'Plays'],
+    ...(showTop ? [['iconic', 'Iconic', '', 'hm'], ['iconOdds', 'Icon %'], ['mystic', 'Mystic', '', 'hm'], ['mysOdds', 'Myst %']] : []),
+    ['legendary', 'Leg'], ['legOdds', 'Leg %'], ['epic', 'Epic'], ['epicOdds', 'Epic %'], ['boost', 'Avg booster']];
   return [['fav', '', 'l'], ['player', 'Player', 'l'], ...(multi ? [['seasonLbl', 'Season', 'l', 'hm']] : []), ['plays', 'Plays'],
     ...(showTop ? [['iconic', 'Iconic', '', 'hm'], ['iconOdds', 'Icon %'], ['mystic', 'Mystic', '', 'hm'], ['mysOdds', 'Myst %']] : []),
     ['legendary', 'Leg', '', 'hm'], ['legOdds', 'Leg %'], ['epic', 'Epic', '', 'hm'], ['epicOdds', 'Epic %'], ['avg3', 'Per pack'], ['boost', 'Avg booster', '', 'hm'],
@@ -290,6 +294,7 @@ function enrich(r){ const n = Number(r.plays) || 0;
     avg3: r.avgRating == null ? null : packRating(r.avgRating), boost: avgBooster(r), seasonLbl: `${SP_LBL[r.sport] || r.sport} ${seasonLabel(r.sport, r.season)}` }; }
 function cell(r, k){
   if(k === 'fav') return `<button class="star${isFav(r) ? ' on' : ''}" data-star="${esc(keyOf(r))}" aria-label="Favorite">★</button>`;
+  if(k === 'player' && tab === 'team') return `<b>${esc(r.player)}</b><span class="sub">${(picks.length > 1) ? `<span class="ms">${esc(r.seasonLbl)}</span>` : ''}</span>`;
   if(k === 'player'){ const u = realPlayerUrl(r.sport, r.playerId, r.season);
     return `${u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.player || 'Player')}</a>` : esc(r.player || 'Player')}<span class="sub">${esc(r.team || '')}${(tab === 'fav' || picks.length > 1) ? `<span class="ms">${r.team ? ' · ' : ''}${esc(r.seasonLbl)}</span>` : ''}</span>`; }
   if(/Odds$/.test(k)) return `<span class="${{ legOdds: 'lg', epicOdds: 'ep', mysOdds: 'my', iconOdds: 'ic' }[k]}">${pct(r[k])}</span>`;
@@ -360,14 +365,38 @@ function paint(){
   $('#body').innerHTML = show.map(r => { const k = keyOf(r), open = openK === k;
     return `<tr class="row${open ? ' open' : ''}" data-k="${esc(k)}">` + cs.map(([c, , al, hm]) => `<td class="${al === 'l' ? 'l ' : ''}${c === 'player' ? 'pl ' : ''}${hm || ''}">${cell(r, c)}</td>`).join('') + '</tr>'
       + (open ? `<tr class="det"><td colspan="${cs.length}">${detail(r)}</td></tr>` : ''); }).join('')
-    || `<tr><td colspan="${cs.length}" class="empty">${tab === 'fav' ? (favs.length ? 'No favorites match.' : 'Tap ★ next to a player to add him here.') : q ? `No player matching "${esc(q)}".` : 'No players with that many plays.'}</td></tr>`;
+    || `<tr><td colspan="${cs.length}" class="empty">${tab === 'team' ? (teamMsg || 'No teams.') : tab === 'fav' ? (favs.length ? 'No favorites match.' : 'Tap ★ next to a player to add him here.') : q ? `No player matching "${esc(q)}".` : 'No players with that many plays.'}</td></tr>`;
   $('#pager').innerHTML = pages > 1 ? `<button data-pg="-1"${page ? '' : ' disabled'}>Previous</button><span class="note">Page ${page + 1} of ${pages}</span><button data-pg="1"${page < pages - 1 ? '' : ' disabled'}>Next</button>` : '';
+  if(tab === 'team' && rows.length) $('#status').textContent = `${list.length} teams. A team pack is 1 performance card and 3 play cards from that team only (a player's cards for another team - Ohtani's for Japan - aren't in it). Odds are for the 3 play cards.`;
   if(tab === 'all' && rows.length) $('#status').textContent = `${list.length.toLocaleString()} players · ${picks.map(pr => { const [sp, se] = pr.split(':'); return `${SP_LBL[sp] || sp} ${seasonLabel(sp, se)}`; }).join(', ')}. Tap a player for packs to each rarity, ★ to favorite.`;
 }
 /* Sports and seasons, any number of each (like the board's picker): the
    seasons of every sport ticked, each season its own button. */
 let closedSp = ls.get('packs_closed_v1', []);
 let selSp = ls.get('packs_sports_v1', []), picks = ls.get('packs_picks_v1', []), loadTok = 0;
+/* Team packs: each picked MLB, NBA, NFL or CFB season's teams. A season not
+   built yet is built on the server (once) and asked for again shortly. */
+const TEAM_SP = ['mlb', 'nba', 'nfl', 'ncaaf'], teamCache = new Map();
+let teamMsg = '', teamT = null;
+async function loadTeams(){
+  ls.set('packs_sports_v1', selSp); ls.set('packs_picks_v1', picks);
+  openK = null; page = 0; clearTimeout(teamT);
+  const mine = ++loadTok, want = picks.filter(k => TEAM_SP.includes(k.split(':')[0]));
+  if(!want.length){ rows = []; teamMsg = 'Team packs are MLB, NBA, NFL and CFB - pick one of their seasons above.'; $('#status').textContent = teamMsg; paint(); return; }
+  let out = [], building = 0;
+  for(const k of want){
+    const [sp, se] = k.split(':');
+    let d = teamCache.get(k);
+    if(!d){ $('#status').textContent = 'Loading teams…'; d = await api(`/api/rax?plays=teams&sport=${sp}&season=${se}`); if(d.rows) teamCache.set(k, d); }
+    if(mine !== loadTok || tab !== 'team') return;
+    if(d.building){ building++; continue; }
+    out = out.concat((d.rows || []).map(x => ({ ...x, sport: sp, season: Number(se), playerId: 't' + x.teamId, player: x.team || ('Team ' + x.teamId) })));
+  }
+  rows = out; teamMsg = building ? `Working out team packs for ${building} season${building === 1 ? '' : 's'} - this takes a minute the first time.` : 'No teams with that many plays.';
+  paint();
+  if(building){ $('#status').textContent = teamMsg; teamT = setTimeout(() => { if(tab === 'team') loadTeams(); }, 20000); }
+}
+const reload = () => tab === 'team' ? loadTeams() : loadSeason();
 async function loadSeason(){
   ls.set('packs_sports_v1', selSp); ls.set('packs_picks_v1', picks);
   openK = null; page = 0;
@@ -407,12 +436,12 @@ function drawSeasons(){
 }
 $('#sports').addEventListener('click', e => { const b = e.target.closest('[data-sp]'); if(!b) return; const sp = b.dataset.sp;
   if(selSp.includes(sp)){ selSp = selSp.filter(x => x !== sp); picks = picks.filter(k => !k.startsWith(sp + ':')); } else selSp.push(sp);
-  drawSports(); drawSeasons(); loadSeason(); });
+  drawSports(); drawSeasons(); reload(); });
 // Each sport's seasons fold away; remembered in this browser.
 $('#seasons').addEventListener('toggle', e => { const d = e.target.closest('details[data-g]'); if(!d) return; const sp = d.dataset.g;
   closedSp = d.open ? closedSp.filter(x => x !== sp) : [...new Set(closedSp.concat(sp))]; ls.set('packs_closed_v1', closedSp); }, true);
 $('#seasons').addEventListener('click', e => { const b = e.target.closest('[data-pk]'); if(!b) return; const k = b.dataset.pk;
-  picks = picks.includes(k) ? picks.filter(x => x !== k) : picks.concat(k); drawSeasons(); loadSeason(); });
+  picks = picks.includes(k) ? picks.filter(x => x !== k) : picks.concat(k); drawSeasons(); reload(); });
 let qT = null; $('#q').addEventListener('input', () => { clearTimeout(qT); qT = setTimeout(() => { page = 0; paint(); }, 200); });
 $('#min').addEventListener('input', () => { clearTimeout(qT); qT = setTimeout(() => { page = 0; ls.set('packs_min_v1', $('#min').value); paint(); }, 250); });
 $('#top').addEventListener('click', () => { showTop = !showTop; $('#top').setAttribute('aria-pressed', String(showTop)); paint(); });
@@ -437,14 +466,14 @@ $('#body').addEventListener('click', e => {
   const ps = e.target.closest('[data-pls]');
   if(ps){ if(plSort === ps.dataset.pls) plDir = -plDir; else { plSort = ps.dataset.pls; plDir = -1; } paint(); return; }
   if(e.target.closest('a, select, .det')) return;
-  const tr = e.target.closest('tr.row'); if(!tr) return;
+  const tr = e.target.closest('tr.row'); if(!tr || tab === 'team') return;
   openK = openK === tr.dataset.k ? null : tr.dataset.k; paint();
 });
 $('#body').addEventListener('change', e => { if(e.target.id === 'price'){ price = e.target.value; ls.set('packs_price_v1', price); paint(); } });
 function showTab(t){
   tab = t; document.querySelectorAll('#tabs button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.t === t)));
   $('#pickrow').hidden = t === 'fav';
-  if(t === 'fav') loadFavs(); else loadSeason();
+  if(t === 'fav') loadFavs(); else reload();
 }
 $('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if(b) showTab(b.dataset.t); });
 
