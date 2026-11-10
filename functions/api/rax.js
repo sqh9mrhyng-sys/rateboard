@@ -4267,7 +4267,7 @@ async function handleGet({ request, env, waitUntil }) {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
     if (!['mlb', 'nba', 'nfl', 'ncaaf'].includes(sport)) return json({ error: 'Team packs are MLB, NBA, NFL and CFB.' }, 400);
-    const se = Number(season), K = `pkteams_v4_${sport}_${se}`, L = `pkteams_lock_${sport}_${se}`;
+    const se = Number(season), K = `pkteams_v5_${sport}_${se}`, L = `pkteams_lock_${sport}_${se}`;
     const live = OTD_LIVE_SEASONS.has(`${sport}:${se}`);
     let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
     const fresh = c && Date.now() - c.at < (live ? 86400000 : 30 * 86400000);
@@ -4296,16 +4296,6 @@ async function handleGet({ request, env, waitUntil }) {
            games in the game log, most common code wins (one play could miss -
            a player with no game log row, a trade). A side with no code at all
            is a WBC, All-Star or exhibition side: not a team pack, left out. */
-        const byTeam = (x) => db.prepare(`SELECT g.team AS c, COUNT(*) AS n FROM
-            (SELECT playerId, gameId FROM plays WHERE sport=?1 AND season=?2 AND teamId=?3 AND playerId IS NOT NULL LIMIT 60) p
-            JOIN gamelog g ON g.sport=?1 AND g.season=?2 AND g.playerId=p.playerId AND g.gameId=p.gameId
-           WHERE g.team IS NOT NULL AND g.team <> '' GROUP BY g.team ORDER BY n DESC LIMIT 1`).bind(sport, se, x.teamId).first().catch(() => null);
-        // The other way round: plays made AGAINST this side, by players whose
-        // game log row names it as the opponent.
-        const byOpp = (x) => db.prepare(`SELECT g.opponent AS c, COUNT(*) AS n FROM
-            (SELECT playerId, gameId FROM plays WHERE sport=?1 AND season=?2 AND oppTeamId=?3 AND playerId IS NOT NULL LIMIT 60) p
-            JOIN gamelog g ON g.sport=?1 AND g.season=?2 AND g.playerId=p.playerId AND g.gameId=p.gameId
-           WHERE g.opponent IS NOT NULL AND g.opponent <> '' GROUP BY g.opponent ORDER BY n DESC LIMIT 1`).bind(sport, se, x.teamId).first().catch(() => null);
         /* Real's own team ids and codes, from the performances table: one
            read for the whole season. The per-team lookups above only fill the
            few it doesn't name (they cost a query each, and a build has a cap
@@ -4319,13 +4309,31 @@ async function handleGet({ request, env, waitUntil }) {
           for (const q of pr.results || []) { const o = best.get(q.teamId); if (!o || q.n > o.n) best.set(q.teamId, q); }
           for (const x of rows) { const q = best.get(x.teamId); if (q) x.team = q.team; }
         } catch (e) {}
-        const miss = rows.filter(x => !x.team).slice(0, 30);
-        for (let i = 0; i < miss.length; i += 6) {
-          await Promise.all(miss.slice(i, i + 6).map(async (x) => {
-            const g = (await byTeam(x)) || (await byOpp(x));
-            x.team = g && g.c ? String(g.c) : null;
-          }));
-        }
+        // MLB's clubs are ids 108-158; the WBC nations and All-Star sides aren't team packs.
+        if (sport === 'mlb') rows = rows.filter(x => x.teamId >= 108 && x.teamId <= 158);
+        /* Any it doesn't name: one query over the season's plays, each side's
+           players matched to their game log rows (then the same from the
+           other side - plays made against it). One query, not one a team: a
+           build may only make so many, and per-team lookups ran out of them
+           part way (CFB came back with 30 teams, then none). */
+        const fill = async (sql) => {
+          const miss = new Set(rows.filter(x => !x.team).map(x => x.teamId));
+          if (!miss.size) return;
+          try {
+            const q = await db.prepare(sql).bind(sport, se).all();
+            const best = new Map();
+            for (const z of q.results || []) { if (!miss.has(z.t) || !z.c) continue; const o = best.get(z.t); if (!o || z.n > o.n) best.set(z.t, z); }
+            for (const x of rows) if (!x.team && best.has(x.teamId)) x.team = String(best.get(x.teamId).c);
+          } catch (e) {}
+        };
+        await fill(`SELECT p.teamId AS t, g.team AS c, COUNT(*) AS n FROM plays p
+            JOIN gamelog g ON g.sport=p.sport AND g.season=p.season AND g.playerId=p.playerId AND g.gameId=p.gameId
+           WHERE p.sport=?1 AND p.season=?2 AND p.playerId IS NOT NULL AND p.teamId IS NOT NULL AND g.team IS NOT NULL AND g.team <> ''
+           GROUP BY p.teamId, g.team`);
+        await fill(`SELECT p.oppTeamId AS t, g.opponent AS c, COUNT(*) AS n FROM plays p
+            JOIN gamelog g ON g.sport=p.sport AND g.season=p.season AND g.playerId=p.playerId AND g.gameId=p.gameId
+           WHERE p.sport=?1 AND p.season=?2 AND p.playerId IS NOT NULL AND p.oppTeamId IS NOT NULL AND g.opponent IS NOT NULL AND g.opponent <> ''
+           GROUP BY p.oppTeamId, g.opponent`);
         /* Only real teams: MLB's are ids 108-158 (the WBC nations, the
            All-Star sides and exhibition opponents are not team packs), and a
            side nobody can name isn't one either. */
