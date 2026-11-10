@@ -791,7 +791,8 @@ async function loadWantCounts(){ const j = await api('/api/swaps?op=wantcounts')
 const othersOn = k => Math.max(0, (wantCounts[k] || 0) - (savedWants.has(k) ? 1 : 0));
 // Niche (2026-11-09): how many active swappers (in a swap in the last 7 days) own each of my passes.
 let ownCounts = null, nicheUnder = 20, nicheReq = {};
-async function loadOwnCounts(){ const j = await api('/api/swaps?op=ownercounts'); if(j && j.n){ ownCounts = j.n; nicheUnder = j.under || 20; drawWants(); } }
+// Until the counts exist (just after a change), nobody is shown as niche rather than everybody.
+async function loadOwnCounts(){ const j = await api('/api/swaps?op=ownercounts'); if(j && j.n && j.ready){ ownCounts = j.n; nicheUnder = j.under || 20; drawWants(); drawPasses && drawPasses(); } }
 const ownersOf = k => ownCounts ? (ownCounts[k] || 0) : null;
 const isNiche = k => { const n = ownersOf(k); return n != null && n < nicheUnder; };
 const ownTxt = k => { const n = ownersOf(k); return n == null ? '' : `${n} active swapper${n === 1 ? '' : 's'} own${n === 1 ? 's' : ''} him`; };

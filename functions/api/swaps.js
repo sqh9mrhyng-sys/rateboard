@@ -429,7 +429,7 @@ const MAX_160_HOUR = 15;
    asked while they hold fewer than 85 players of a season being played, or
    fewer than 100 of an old one. One niche buy an hour, two a swap day each. */
 const NICHE_UNDER = 20, NICHE_MAX_ASK = 40, NICHE_DAY_MAX = 2, NICHE_HOUR_MAX = 1, NICHE_LIVE_CAP = 85, NICHE_OLD_CAP = 100;
-const NICHE_KEY = 'swap_ownercounts_v2';
+const NICHE_KEY = 'swap_ownercounts_v3';
 const NICHE_OVER = new Set(['mlb:2026', 'wnba:2026']);   // newest season, but finished: counts as an old one (under 100)
 const nicheLiveSeason = k => { const [sp, se] = String(k).split(':'); return Number(se) === (SWAP_SEASONS[sp] || [])[0] && !NICHE_OVER.has(`${sp}:${se}`); };
 // A member's own limits on niche buys (step 6): { h: an hour, d: a swap day }.
@@ -442,33 +442,25 @@ async function ownerCounts(env) {
   try { const c = JSON.parse((await env.RATEBOARD_KV.get(NICHE_KEY)) || 'null'); if (c && c.n) return c; } catch (e) {}
   return { at: 0, active: 0, n: {} };
 }
-async function saveOwnerCounts(env, db, users) {
+/* Everyone in a swap in the last 7 days, their passes read a few rows at a
+   time in the worker (not unpacked in the database, which overloaded it), and
+   counted. Once an hour, from the minute run, outside the matching window. */
+async function saveOwnerCounts(env, db) {
+  const LOCK = 'swap_ownercounts_lock';
+  try { if (await env.RATEBOARD_KV.get(LOCK)) return; await env.RATEBOARD_KV.put(LOCK, '1', { expirationTtl: 600 }); } catch (e) { return; }
   try {
-    const act = new Set((((await db.prepare(`SELECT DISTINCT a AS k FROM swap_matches WHERE createdAt > ?1 AND status NOT IN ('cancelled','cancelling')
-        UNION SELECT DISTINCT b FROM swap_matches WHERE createdAt > ?1 AND status NOT IN ('cancelled','cancelling')`).bind(Date.now() - 7 * 86400000).all()).results) || []).map(r => r.k));
-    const n = {};
-    for (const u of users) { if (!act.has(u.key)) continue; const seen = new Set(); for (const p of u.passes || []) if (p.kind !== 'team' && !seen.has(p.key)) { seen.add(p.key); n[p.key] = (n[p.key] || 0) + 1; } }
-    await env.RATEBOARD_KV.put(NICHE_KEY, JSON.stringify({ at: Date.now(), active: act.size, n }), { expirationTtl: 3 * 86400 });
-  } catch (e) {}
-}   // most 160s one buyer gets in one hour
-const seasonOf = k => String(k || '').split(':').slice(0, 2).join(':');
-/* When a member can swap (Dennis, 2026-11-04). Three ways:
-     daily   - the same hours every day (slots, UTC hours, as before)
-     weekly  - different hours for each day of the week, in their own time
-     date    - just one day, in their own time
-   sched = { mode, tz, week: { '0'..'6': [local hours] }, date: 'YYYY-MM-DD', hours: [local hours] }.
-   For weekly/date, slots also holds every UTC hour they use, for the counts
-   and quick filters. Each list is in tap order: the first is the primary. */
-const localAt = (ms, tz) => { try { const o = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz || 'UTC', hourCycle: 'h23', weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit' }).formatToParts(new Date(ms)).map(x => [x.type, x.value]));
-  return { wd: { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[o.weekday], hour: Number(o.hour) % 24, date: `${o.year}-${o.month}-${o.day}` }; } catch (e) { return null; } };
-// Their rank for a swap at this moment (0 = primary), or -1 if they don't swap then.
-function rankAt(u, due) {
-  const sc = u.sched && typeof u.sched === 'object' ? u.sched : null;
-  if (!sc || sc.mode === 'daily' || !sc.mode) return (u.slots || []).indexOf(new Date(due).getUTCHours());
-  const l = localAt(due, sc.tz); if (!l) return -1;
-  if (sc.mode === 'weekly') return ((sc.week || {})[l.wd] || []).indexOf(l.hour);
-  if (sc.mode === 'date') return l.date === sc.date ? (sc.hours || []).indexOf(l.hour) : -1;
-  return -1;
+    const act = [...new Set((((await db.prepare(`SELECT DISTINCT a AS k FROM swap_matches WHERE createdAt > ?1 AND status NOT IN ('cancelled','cancelling')
+        UNION SELECT DISTINCT b FROM swap_matches WHERE createdAt > ?1 AND status NOT IN ('cancelled','cancelling')`).bind(Date.now() - 7 * 86400000).all()).results) || []).map(r => r.k))];
+    const n = {}; let read = 0;
+    for (let i = 0; i < act.length; i += 8) {
+      const part = act.slice(i, i + 8);
+      const rows = ((await db.prepare(`SELECT key, passes FROM swap_users WHERE key IN (${part.map(() => '?').join(',')})`).bind(...part).all()).results) || [];
+      for (const r of rows) { read++; const seen = new Set(); for (const p of parse(r.passes, [])) if (p && p.kind !== 'team' && p.key && !seen.has(p.key)) { seen.add(p.key); n[p.key] = (n[p.key] || 0) + 1; } }
+      await sleep(150);
+    }
+    if (read) await env.RATEBOARD_KV.put(NICHE_KEY, JSON.stringify({ at: Date.now(), active: act.length, read, n }), { expirationTtl: 3 * 86400 });
+  } catch (e) { try { await botFail(db, 'scan_bg', 'owner counts: ' + String(e.message || e).slice(0, 120)); } catch (e2) {} }
+  try { await env.RATEBOARD_KV.delete(LOCK); } catch (e) {}
 }
 function cleanSched(b) {
   const hrs = a => [...new Set((Array.isArray(a) ? a : []).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24))].slice(0, MAX_SLOTS);
@@ -999,7 +991,6 @@ async function runMatchingInner(db, env) {
       });
     }
   } catch (e) { await botFail(db, 'matching', `niche: ${e.message}`); }
-  if (env) await saveOwnerCounts(env, db, users);
   await lap();   // 4: pairing
   // Never the same swap twice on one swap day, even if two runs overlap: checked against the
   // live swaps read at the start (in memory), then saved 50 at a time.
@@ -4860,6 +4851,8 @@ async function handle({ request, env, waitUntil }) {
       const c = await db.prepare('INSERT OR IGNORE INTO dm_runs (minute, at) VALUES (?, ?)').bind(minute, Date.now()).run(); go = !!(c && c.meta && c.meta.changes); } catch (e) {}
     const auth0 = swapToken(env);
     if (go && auth0) { try { waitUntil(backgroundScans(env, db, auth0).catch(e => botFail(db, 'scan_bg', e.message))); } catch (e) {} }
+    // Niche owner counts, refreshed once an hour.
+    if (go) { try { const oc = await ownerCounts(env); if (Date.now() - (oc.at || 0) > 60 * 60000) waitUntil(saveOwnerCounts(env, db).catch(() => {})); } catch (e) {} }
     return json({ ok: true, started: go });
   }
   if (op === 'dmtick') {
@@ -5054,7 +5047,7 @@ async function handle({ request, env, waitUntil }) {
     const c = await ownerCounts(env), out = {};
     const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
     for (const p of parse(u && u.passes, [])) if (p.kind !== 'team') out[p.key] = c.n[p.key] || 0;
-    return json({ at: c.at, active: c.active, under: NICHE_UNDER, n: out });
+    return json({ at: c.at, active: c.active, under: NICHE_UNDER, n: c.at ? out : {}, ready: !!c.at });
   }
   if (op === 'wantcounts') {
     let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get('swap_wantcounts_v1')) || 'null'); } catch (e) {}
