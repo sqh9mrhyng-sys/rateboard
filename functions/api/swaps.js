@@ -428,9 +428,12 @@ const MAX_160_HOUR = 15;
    they share; the requester pays full price for the cards. Someone is only
    asked while they hold fewer than 85 players of a season being played, or
    fewer than 100 of an old one. One niche buy an hour, two a swap day each. */
-const NICHE_UNDER = 20, NICHE_MAX_ASK = 20, NICHE_DAY_MAX = 2, NICHE_LIVE_CAP = 85, NICHE_OLD_CAP = 100;
+const NICHE_UNDER = 20, NICHE_MAX_ASK = 40, NICHE_DAY_MAX = 2, NICHE_HOUR_MAX = 1, NICHE_LIVE_CAP = 85, NICHE_OLD_CAP = 100;
 const NICHE_KEY = 'swap_ownercounts_v1';
-const nicheLiveSeason = k => { const [sp, se] = String(k).split(':'); return Number(se) === (SWAP_SEASONS[sp] || [])[0]; };
+const NICHE_OVER = new Set(['mlb:2026', 'wnba:2026']);   // newest season, but finished: counts as an old one (under 100)
+const nicheLiveSeason = k => { const [sp, se] = String(k).split(':'); return Number(se) === (SWAP_SEASONS[sp] || [])[0] && !NICHE_OVER.has(`${sp}:${se}`); };
+// A member's own limits on niche buys (step 6): { h: an hour, d: a swap day }.
+const nicheLim = u => { const l = parse(u.nicheLim, {}) || {}; return { h: Math.max(1, Math.min(10, Math.floor(Number(l.h)) || NICHE_HOUR_MAX)), d: Math.max(1, Math.min(40, Math.floor(Number(l.d)) || NICHE_DAY_MAX)) }; };
 // How many active swappers own each pass: one read, kept 30 minutes.
 async function ownerCounts(env, db) {
   let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(NICHE_KEY)) || 'null'); } catch (e) {}
@@ -961,10 +964,11 @@ async function runMatchingInner(db, env) {
     const helpers = users.filter(u => u.nicheIn && !u.only160), askers = users.filter(u => u.wants.some(w => u.nicheReq[w] && Number(u.nicheReq[w].n) > 0));
     if (helpers.length && askers.length) {
       const past = ((await db.prepare("SELECT buyer, seller, pass, dueAt, createdAt FROM swap_160 WHERE kind='niche' AND status <> 'cancelled'").all()).results) || [];
-      const asked = new Map(), usedBy = new Set(), hourOf = new Set(), dayOf = new Map(), pend = new Map();
+      const asked = new Map(), usedBy = new Set(), hourOf = new Map(), dayOf = new Map(), pend = new Map();
+      const lim = new Map(helpers.map(h => [h.key, nicheLim(h)]));
       const seas = k => String(k).split(':').slice(0, 2).join(':');
       const note = (b, sl, w, due, at) => { (asked.get(b + '|' + w) || asked.set(b + '|' + w, []).get(b + '|' + w)).push(Number(at) || 0);
-        usedBy.add(`${b}|${w}|${sl}`); usedBy.add(`*|${w}|${sl}`); hourOf.add(`${sl}|${due}`); bump(dayOf, `${sl}|${swapDay(due)}`); };
+        usedBy.add(`${b}|${w}|${sl}`); usedBy.add(`*|${w}|${sl}`); bump(hourOf, `${sl}|${due}`); bump(dayOf, `${sl}|${swapDay(due)}`); };
       for (const r of past) { note(r.buyer, r.seller, r.pass, Number(r.dueAt), r.createdAt); if (Number(r.dueAt) > now - 86400000) bump(pend, `${r.seller}|${seas(r.pass)}`); }
       const owns = new Map(helpers.map(h => [h.key, new Set(h.passes.map(p => p.key))]));
       const held = new Map(helpers.map(h => { const m = new Map(); for (const p of h.passes) if (p.kind !== 'team') bump(m, `${p.sport}:${p.season}`); return [h.key, m]; }));
@@ -979,8 +983,8 @@ async function runMatchingInner(db, env) {
             let left = Math.min(NICHE_MAX_ASK, Number(q.n)) - (asked.get(b.key + '|' + w) || []).filter(t => t >= (Number(q.at) || 0)).length;
             while (left > 0) {
               if (!goalOk(b.key, w) || !perDayOk(b.key, w, d)) break;
-              const can = H.filter(h => h.key !== b.key && !owns.get(h.key).has(w) && !usedBy.has(`*|${w}|${h.key}`) && !hourOf.has(`${h.key}|${due}`)
-                && (dayOf.get(`${h.key}|${d}`) || 0) < NICHE_DAY_MAX && room(h, w) && seasonRoom(h.key, w, d));
+              const can = H.filter(h => h.key !== b.key && !owns.get(h.key).has(w) && !usedBy.has(`*|${w}|${h.key}`) && (hourOf.get(`${h.key}|${due}`) || 0) < lim.get(h.key).h
+                && (dayOf.get(`${h.key}|${d}`) || 0) < lim.get(h.key).d && room(h, w) && seasonRoom(h.key, w, d));
               if (!can.length) break;
               const h = can.reduce((m, x) => (dayOf.get(`${x.key}|${d}`) || 0) < (dayOf.get(`${m.key}|${d}`) || 0) ? x : m, can[Math.floor(Math.random() * can.length)]);
               madeNiche.push({ buyer: b.key, seller: h.key, pass: w, slot, due });
@@ -1504,6 +1508,7 @@ async function matchCols(db) {
      opted in to be asked. The requests made live in swap_160 with kind='niche'. */
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN niche TEXT'); } catch (e) {}
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN nicheIn INTEGER'); } catch (e) {}
+  try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN nicheLim TEXT'); } catch (e) {}
   try { await alterOnce(db, T160_DDL); await alterOnce(db, 'ALTER TABLE swap_160 ADD COLUMN kind TEXT'); } catch (e) {}
   // Untouchable passes the member chose to swap anyway (step 3).
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN touch TEXT'); } catch (e) {}
@@ -5419,7 +5424,7 @@ async function handle({ request, env, waitUntil }) {
     mark(request, 'plays');
     const cDay = confirmDayNow();
     return json({ confirmShow: Date.now() >= CONFIRM_SHOW_AT, confirmedToday: !!(u && u.confirmDay === cDay), confirmStarts: CONFIRM_FROM_DAY, swapToday: cDay, key: me, admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
-      keep: parse(u.keep, []), touch: parse(u.touch, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: lite ? [] : parse(u.passes, []), passCount: (() => { try { return parse(u.passes, []).length; } catch (e) { return 0; } })(), passSummary: lite ? passSummary(parse(u.passes, [])) : undefined, lowPlays: lowP, scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {}, b160: !!u.b160, s160: !!u.s160, only160: !!u.only160, nicheIn: !!u.nicheIn, niche: parse(u.niche, {}) || {}, sell160m: u.sell160m || null, sell160h: parse(u.sell160h, []) } : null, real: realN });
+      keep: parse(u.keep, []), touch: parse(u.touch, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: lite ? [] : parse(u.passes, []), passCount: (() => { try { return parse(u.passes, []).length; } catch (e) { return 0; } })(), passSummary: lite ? passSummary(parse(u.passes, [])) : undefined, lowPlays: lowP, scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {}, b160: !!u.b160, s160: !!u.s160, only160: !!u.only160, nicheIn: !!u.nicheIn, niche: parse(u.niche, {}) || {}, nicheLim: nicheLim(u), sell160m: u.sell160m || null, sell160h: parse(u.sell160h, []) } : null, real: realN });
   }
 
   // A tick in the passes list saves at once: the passes they won't give.
@@ -5504,9 +5509,10 @@ async function handle({ request, env, waitUntil }) {
         let oc = null; try { oc = await ownerCounts(env, db); } catch (e) {}
         for (const [w, v] of Object.entries((b.niche && typeof b.niche === 'object') ? b.niche : {})) {
           const n = Math.floor(Number(v && v.n != null ? v.n : v)); if (!wants.includes(w) || !(n > 0)) continue;
-          if (oc && (oc.n[w] || 0) >= NICHE_UNDER) continue;   // only players under 20 active owners
+          if (!old[w] && oc && (oc.n[w] || 0) >= NICHE_UNDER) continue;   // a new ask needs a niche player; one already made stays until cancelled or filled
           const m = Math.min(NICHE_MAX_ASK, n); nq[w] = { n: m, at: old[w] && Number(old[w].n) === m && old[w].at ? old[w].at : Date.now() }; }
-        await db.prepare('UPDATE swap_users SET nicheIn=?, niche=? WHERE key=?').bind(nIn, JSON.stringify(nq), me).run();
+        const nl = { h: Math.max(1, Math.min(10, Math.floor(Number(b.nicheLim && b.nicheLim.h)) || NICHE_HOUR_MAX)), d: Math.max(1, Math.min(40, Math.floor(Number(b.nicheLim && b.nicheLim.d)) || NICHE_DAY_MAX)) };
+        await db.prepare('UPDATE swap_users SET nicheIn=?, niche=?, nicheLim=? WHERE key=?').bind(nIn, JSON.stringify(nq), JSON.stringify(nl), me).run();
         // Requests not yet warned come off when they opt out, or drop the request.
         if (!nIn) await db.prepare(`UPDATE swap_160 SET status='cancelled', note='called off: they stopped buying niche players' WHERE seller=? AND kind='niche' AND status='pending' AND warnS IS NULL AND warnB IS NULL`).bind(me).run().catch(() => {});
         for (const r of (((await db.prepare(`SELECT id, pass FROM swap_160 WHERE buyer=? AND kind='niche' AND status='pending' AND warnS IS NULL AND warnB IS NULL`).bind(me).all().catch(() => ({}))).results) || []))

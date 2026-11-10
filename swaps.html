@@ -280,7 +280,11 @@
       <div class="hours" id="s160hours" hidden></div>
     </div>
     <label class="o160"><input type="checkbox" id="b160"><span><b>Buy 160s</b><span class="sub">People that have packs they couldn't find swaps for or that are only looking for 160s match with you to sell packs, they open pack, you offer min, they send you 160 back.</span></span></label>
-    <label class="o160"><input type="checkbox" id="nichein"><span><b>Buy niche players</b><span class="sub">Niche players are ones under 20 active swappers own. Opt in and, at some of your swap times, you'll be asked to buy a player you don't own and a pack of him for the member who requested it - they pay you full price for the cards. You're only asked while you hold under 85 players in a season being played (under 100 in an old season), at most one an hour and two a day.</span></span></label>
+    <label class="o160"><input type="checkbox" id="nichein"><span><b>Buy niche players</b><span class="sub">Niche players are ones under 20 active swappers own. Opt in and, at some of your swap times, you'll be asked to buy a player you don't own and a pack of him for the member who requested it - they pay you full price for the cards. You're only asked while you hold under 85 players in a season being played (under 100 in an old season), never the same player twice, and no more than the limits you set here.</span></span></label>
+    <div id="nicheopts" hidden style="margin:6px 0 0 18px"><div style="display:flex;gap:12px;flex-wrap:wrap">
+      <label class="note">Most per hour <input id="nicheh" type="number" inputmode="numeric" min="1" max="10" step="1" value="1" style="width:70px"></label>
+      <label class="note">Most per day <input id="niched" type="number" inputmode="numeric" min="1" max="40" step="1" value="2" style="width:70px"></label>
+    </div></div>
     <p class="note sub" id="n160">Tap Save to keep changes. 160s use the same hours and limits as your swaps.</p>
   </section>
 
@@ -846,7 +850,7 @@ function drawWants(){
     const lo = (prof.lowPlays || []).includes(k);
     return `<div class="want1"${lo ? ' style="border-color:var(--bad)"' : ''}><span>${lo ? '<b style="color:var(--bad);font-size:12px">Under 27 plays - won\'t match</b><br>' : ''}<span class="note">${RANK[i]} pick · </span><b>${esc(wantNames[k] || 'Player ' + k.split(':')[2])}</b>${isNiche(k) ? NICHE_TAG : ''} <span class="note">· ${esc(keyLbl(k))}</span>`
       + `<br><span style="font-size:13px;font-weight:700;color:${crowdCol(n)}">${crowdTxt(n)}</span>${ownTxt(k) ? `<span class="note"> · ${ownTxt(k)}</span>` : ''}`
-      + (isNiche(k) ? `<br><label class="wg">Request <input data-niche="${k}" type="number" inputmode="numeric" min="0" max="20" step="1" placeholder="0" value="${esc(nicheReq[k] || '')}" style="width:64px"> people to buy <span class="note">(you pay full price)</span></label>` : '')
+      + (isNiche(k) || nicheReq[k] ? `<br><label class="wg">Request <input data-niche="${k}" type="number" inputmode="numeric" min="0" max="40" step="1" placeholder="0" value="${esc(nicheReq[k] || '')}" style="width:64px"> people to buy <span class="note">(you pay full price)</span></label>` : '')
       + `<br><label class="wg">Goal rating <input data-goal="${k}" type="number" inputmode="decimal" min="0" step="0.1" placeholder="none" value="${esc((caps[k] && caps[k].g) || '')}"></label></span>`
       + `<span class="acts"><span class="mv"><button data-up="${i}" aria-label="Move up"${i === 0 ? ' disabled' : ''}>▲</button><button data-dn="${i}" aria-label="Move down"${i === prof.wants.length - 1 ? ' disabled' : ''}>▼</button></span>`
       + `<button data-x="${k}" aria-label="Remove">✕</button></span></div>`; }).join('')
@@ -854,7 +858,7 @@ function drawWants(){
   drawCaps();
 }
 $('#wants').addEventListener('input', e => { const nk = e.target.dataset.niche;
-  if(nk){ const v = Math.max(0, Math.min(20, Math.floor(Number(e.target.value) || 0))); if(v) nicheReq[nk] = v; else delete nicheReq[nk]; $('#savemsg').textContent = 'Niche request changed - tap Save to keep it.'; return; }
+  if(nk){ const v = Math.max(0, Math.min(40, Math.floor(Number(e.target.value) || 0))); if(v) nicheReq[nk] = v; else delete nicheReq[nk]; $('#savemsg').textContent = 'Niche request changed - tap Save to keep it.'; return; }
   const k = e.target.dataset.goal; if(!k) return;
   const v = e.target.value.trim(), c = caps[k] || {}; if(v) c.g = v; else delete c.g;
   if(c.n || c.d || c.g) caps[k] = c; else delete caps[k];
@@ -903,6 +907,7 @@ function draw160(){
   $('#s160').checked = only || !!prof.s160; $('#s160').disabled = only;
   $('#b160').checked = !only && !!prof.b160; $('#b160').disabled = only;
   $('#nichein').checked = !only && !!prof.nicheIn; $('#nichein').disabled = only; $('#nichein').closest('.o160').classList.toggle('dis', only);
+  $('#nicheopts').hidden = !$('#nichein').checked; { const l = prof.nicheLim || {}; $('#nicheh').value = l.h || 1; $('#niched').value = l.d || 2; }
   $('#s160').closest('.o160').classList.toggle('dis', only); $('#b160').closest('.o160').classList.toggle('dis', only);
   drawSell();
   $('#n160').textContent = only ? 'Only here for 160s: you sell 160s at the time(s) you pick above. Buying needs players picked, so it\'s off.' : 'Tap Save to keep changes. 160s use the same hours and limits as your swaps.';
@@ -932,7 +937,8 @@ $('#s160hours').addEventListener('change', e => { const h = Number(e.target.data
   else { if(e.target.checked) cur.add(u); else cur.delete(u); prof.sell160h = [...cur]; }
   drawSell(); $('#savemsg').textContent = 'Tap Save to keep changes.'; });
 $('#b160').addEventListener('change', e => { prof.b160 = e.target.checked; });
-$('#nichein').addEventListener('change', e => { prof.nicheIn = e.target.checked; });
+$('#nichein').addEventListener('change', e => { prof.nicheIn = e.target.checked; $('#nicheopts').hidden = !e.target.checked; });
+for(const [id, f] of [['#nicheh', 'h'], ['#niched', 'd']]) $(id).addEventListener('input', () => { prof.nicheLim = { ...(prof.nicheLim || {}), [f]: $(id).value }; });
 const hideSaved = () => { $('#saved').hidden = true; };
 $('#savedok').addEventListener('click', hideSaved);
 $('#saved').addEventListener('click', e => { if(e.target.id === 'saved') hideSaved(); });
@@ -946,7 +952,7 @@ $('#save').addEventListener('click', async () => {
   if(!SWAP_COMMENT_RE.test($('#clink').value.trim())){ $('#savemsg').textContent = 'That link is not a comment under the swap post. Open the swap post, copy the link to your comment, and paste it in step 2.'; return; }
   const j = await api('/api/swaps?op=save', { method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 10), sched: schedOf().mode === 'daily' ? { mode: 'daily', tz: TZ } : { ...schedOf(), tz: TZ }, comment: $('#clink').value.trim(), goal: '', dayCap: $('#daycap').value.trim(), caps, keep: prof.keep, slots: prof.slots, names: wantNames,
-      nicheIn: !prof.only160 && $('#nichein').checked, niche: Object.fromEntries(Object.entries(nicheReq).filter(([k, v]) => prof.wants.includes(k) && v > 0)),
+      nicheIn: !prof.only160 && $('#nichein').checked, nicheLim: { h: $('#nicheh').value, d: $('#niched').value }, niche: Object.fromEntries(Object.entries(nicheReq).filter(([k, v]) => prof.wants.includes(k) && v > 0)),
       only160: !!prof.only160, s160: !!prof.only160 || $('#s160').checked, b160: !prof.only160 && $('#b160').checked, sell160m: sellMode(), sell160h: prof.sell160h || [] }) });
   const extra = (j.late ? ' Too late to change swaps already warned - please do them at :00.' : '') + (j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} for a player or hour you removed ${j.calledOff === 1 ? 'is' : 'are'} called off - you'll both get a message.` : '');
   $('#savemsg').textContent = j.error ? j.error : '';
