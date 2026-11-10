@@ -6698,7 +6698,7 @@ export async function scanProbe(env, db) {
 
 // One-off (2026-11-10): do booster reads take a season? (cdeck24's CBB showed 4, Real's 2026-27 page 1.)
 export async function boostProbe(env, db) {
-  const K = 'diag_boostprobe_1110b';
+  const K = 'diag_boostprobe_1110c';
   try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1 }), { expirationTtl: 3 * 86400 }); } catch (e) { return; }
   const out = { at: Date.now(), tries: [] };
   try {
