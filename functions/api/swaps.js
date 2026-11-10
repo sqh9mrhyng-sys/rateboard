@@ -6724,7 +6724,7 @@ export async function boostProbe(env, db) {
    his game feed (ratings) and what a pass earned (rax). Tries again every 10
    minutes until Real answers (its 429s). */
 export async function wiltProbe(env) {
-  const K = 'diag_wilt_1962';
+  const K = 'diag_wilt_1962b';
   try { const o = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (o && (o.ok || Date.now() - (o.at || 0) < 10 * 60000)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ at: Date.now(), running: 1 }), { expirationTtl: 7 * 86400 }); } catch (e) { return; }
   const tok = env.RS_AUTH_TOKEN || scanTok(env), id = 300002552, out = { at: Date.now() };
   const get = async u => { const r = await fetch(u, { headers: rsHeaders(tok) }); const t = await r.text(); let d = null; try { d = JSON.parse(t); } catch (e) {} return { st: r.status, d, t: t.slice(0, 120) }; };
@@ -6732,10 +6732,9 @@ export async function wiltProbe(env) {
     const f = await get(`https://web.realapp.com/players/${id}/sport/nba/seasonfeed?limit=200&season=1962&view=recent&viewFrame=default`);
     out.feedSt = f.st;
     const bs = (f.d && f.d.playerBoxScores) || [];
-    out.games = bs.map(b => ({ day: b.day || b.date || (b.game && b.game.day) || null, gameId: b.gameId, rating: b.rating ?? b.score ?? b.playerRating ?? null,
-      line: b.statsDisplay || b.stats || null })).slice(0, 120);
+    out.games = bs.map(b => ({ day: b.day, t: b.seasonType === 'postseason' ? 'P' : 'R', v: b.value != null ? Math.round(Number(b.value) * 100) / 100 : null, min: b.minutes, tags: b.performanceTags || b.tags || null })).slice(0, 120);
     out.feedKeys = bs[0] ? Object.keys(bs[0]).slice(0, 40) : (f.d ? Object.keys(f.d).slice(0, 20) : f.t);
-    out.sample = bs[0] ? JSON.stringify(bs[0]).slice(0, 900) : null;
+    out.sample = null;
     await sleep(3000);
     const e = await get(`https://web.realapp.com/userpassearnings/nba/season/1962/entity/player/${id}`);
     out.earnSt = e.st;
