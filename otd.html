@@ -76,7 +76,7 @@
     </section>
     <section>
       <h2>Best players to add</h2>
-      <p class="note">Every player of a sport-season (the top 300 by rax), weighed against the players above: how much each would add to what's claimed a year at the level picked, after overlaps.</p>
+      <p class="note">Every player of a sport-season, or of every season with All seasons (the top 300 of each by rax), weighed against the players above: how much each would add to what's claimed a year at the level picked, after overlaps.</p>
       <div class="bar"><select id="bsport"></select><select id="bseason"></select><label class="note">at <select id="blevel"></select></label><button id="bgo" style="background:var(--accent);color:#141925;border-color:var(--accent);font-weight:700">Find best adds</button></div>
       <div class="scroll" style="margin-top:10px"><table><thead><tr><th>#</th><th>Player</th><th>Games</th><th>Rax at level / yr</th><th>Adds / yr</th><th>Overlap days</th><th></th></tr></thead><tbody id="bout"><tr><td colspan="7" class="note">Pick a sport and season.</td></tr></tbody></table></div>
     </section>
@@ -819,7 +819,7 @@ $('#vdef').addEventListener('change', () => { vDefK = Number($('#vdef').value); 
 const VSEAS = { mlb: [2026, 2025, 2024, 2023, 2022], nfl: [2026, 2025, 2024, 2023, 2022], ncaaf: [2026, 2025, 2024, 2023, 2022], nba: [2027, 2026, 2025, 2024, 2023],
   ncaam: [2027, 2026, 2025, 2024, 2023], nhl: [2026, 2025, 2024, 2023, 2022], wnba: [2026, 2025, 2024, 2023], soccer: [2026, 2025, 2024] };
 $('#bsport').innerHTML = Object.keys(VSEAS).map(sp => `<option value="${sp}">${SPORT[sp]}</option>`).join('');
-const drawSeas = () => { const sp = $('#bsport').value; $('#bseason').innerHTML = VSEAS[sp].map(se => `<option value="${se}">${seasonLbl(sp, se)}</option>`).join(''); };
+const drawSeas = () => { const sp = $('#bsport').value; $('#bseason').innerHTML = '<option value="all">All seasons</option>' + VSEAS[sp].map(se => `<option value="${se}">${seasonLbl(sp, se)}</option>`).join(''); };
 $('#bsport').addEventListener('change', drawSeas); drawSeas();
 
 // Games for players not loaded yet, a sport-season at a time.
@@ -912,14 +912,21 @@ try{ $('#vmine').checked = localStorage.getItem('otd_view_mine_v1') === '1'; }ca
    on his own dates against what's claimed there now (so it counts the claims he'd push off). */
 let bPool = null;
 $('#bgo').addEventListener('click', async () => {
-  const sp = $('#bsport').value, se = Number($('#bseason').value), k = Number($('#blevel').value), m = multOf(k), claims = Number($('#vclaims').value);
-  $('#bout').innerHTML = '<tr><td colspan="7" class="note">Loading the season…</td></tr>'; $('#bgo').disabled = true;
-  const j = await api(`/api/swaps?op=otdpool&sport=${sp}&season=${se}`);
+  const sp = $('#bsport').value, k = Number($('#blevel').value), m = multOf(k), claims = Number($('#vclaims').value);
+  // All seasons (2026-11-09): every season of the sport, each season's top 300, ranked together.
+  const seasons = $('#bseason').value === 'all' ? VSEAS[sp] : [Number($('#bseason').value)];
+  $('#bgo').disabled = true;
+  const pools = [];
+  for(const se of seasons){
+    $('#bout').innerHTML = `<tr><td colspan="7" class="note">Loading ${esc(seasonLbl(sp, se))}${seasons.length > 1 ? ` (${pools.length + 1} of ${seasons.length})` : ''}…</td></tr>`;
+    const j = await api(`/api/swaps?op=otdpool&sport=${sp}&season=${se}`);
+    if(j.error){ $('#bgo').disabled = false; $('#bout').innerHTML = `<tr><td colspan="7" class="note">${esc(j.error)}</td></tr>`; return; }
+    pools.push([se, j]);
+  }
   $('#bgo').disabled = false;
-  if(j.error){ $('#bout').innerHTML = `<tr><td colspan="7" class="note">${esc(j.error)}</td></tr>`; return; }
   const E = vEntries(), base = vScore(E, claims), have = new Set(E.map(e => e.key));
   const rows = [];
-  for(const [id, games] of Object.entries(j.games || {})){
+  for(const [se, j] of pools) for(const [id, games] of Object.entries(j.games || {})){
     const key = `${sp}:${se}:${id}`; if(have.has(key)) continue;
     VG[key] = games;
     const dates = new Map(); for(const [d, r] of games) dates.set(d, (dates.get(d) || []).concat(r));
@@ -930,15 +937,15 @@ $('#bgo').addEventListener('click', async () => {
       add += after.earned - before; if(after.total > after.earned) ov++;
     }
     const nm = (j.names || {})[id] || [];
-    rows.push({ key, id: Number(id), name: nm[0] || 'Player ' + id, team: nm[1] || '', games: games.length, raw: games.reduce((a, g) => a + g[1], 0) * m, add, ov });
+    rows.push({ key, id: Number(id), se, name: nm[0] || 'Player ' + id, team: nm[1] || '', games: games.length, raw: games.reduce((a, g) => a + g[1], 0) * m, add, ov });
   }
-  rows.sort((a, b) => b.add - a.add); bPool = { sp, se, rows };
-  $('#bout').innerHTML = rows.slice(0, 40).map((r, n) => `<tr><td>${n + 1}</td><td>${esc(r.name)} <span class="note">${esc(r.team)}</span></td><td>${fmt(r.games)}</td><td>${fmt(r.raw)}</td>
+  rows.sort((a, b) => b.add - a.add); bPool = { sp, rows };
+  $('#bout').innerHTML = rows.slice(0, 40).map((r, n) => `<tr><td>${n + 1}</td><td>${esc(r.name)} <span class="note">${esc(r.team)}${seasons.length > 1 ? ' · ' + esc(seasonLbl(sp, r.se)) : ''}</span></td><td>${fmt(r.games)}</td><td>${fmt(r.raw)}</td>
     <td style="color:var(--ok)"><b>+${fmt(r.add)}</b></td><td>${r.ov || '–'}</td><td><button class="x" data-badd="${esc(r.key)}">Add</button></td></tr>`).join('')
     || '<tr><td colspan="7" class="note">No games saved for that season.</td></tr>';
 });
 $('#bout').addEventListener('click', e => { const b = e.target.closest('[data-badd]'); if(!b || !bPool) return; const r = bPool.rows.find(x => x.key === b.dataset.badd); if(!r) return;
-  V.push({ key: r.key, sport: bPool.sp, season: bPool.se, id: r.id, name: r.name, k: Number($('#blevel').value) }); vSave(); vDraw();
+  V.push({ key: r.key, sport: bPool.sp, season: r.se, id: r.id, name: r.name, k: Number($('#blevel').value) }); vSave(); vDraw();
   b.textContent = 'Added'; b.disabled = true; });
 // The two tabs; the one open is remembered.
 function showV(v){ document.querySelectorAll('#otdtabs button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === v)));
