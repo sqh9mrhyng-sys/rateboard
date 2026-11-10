@@ -85,6 +85,8 @@
   .go{background:var(--accent);border-color:var(--accent);color:#141925;font-weight:800}
   .go:disabled{opacity:.6}
   .cqw{position:relative}
+  .cqx{position:absolute;right:4px;bottom:4px;height:36px;width:36px;padding:0;border:0;background:none;color:var(--mute);font-size:22px;line-height:1}
+  .cdd{overscroll-behavior:contain;touch-action:pan-y}
   #calc .ctl{grid-template-columns:minmax(0,1fr) minmax(0,1fr)} #calc .ctl label{min-width:0}
   #calc .ctl select,#calc .ctl input{height:44px;box-sizing:border-box}
   #cstart{-webkit-appearance:none;appearance:none;display:block;max-width:100%;text-align:left;line-height:1.2}
@@ -159,7 +161,7 @@
     <section>
       <div class="scanbar"><button type="button" class="go" id="cscan">Scan account</button><span class="note" id="cscanmsg"></span></div>
       <div class="ctl" style="margin-top:12px">
-        <label class="wide cqw">Player you own <input id="cq" placeholder="Start typing a player" autocomplete="off"><div id="cdd" class="cdd" hidden></div></label>
+        <label class="wide cqw">Player you own <input id="cq" placeholder="Start typing a player" autocomplete="off" style="padding-right:44px"><button type="button" id="cqx" class="cqx" aria-label="Clear player" hidden>×</button><div id="cdd" class="cdd" hidden></div></label>
         <label>Target rarity <select id="ctgt"></select></label>
         <label>Starting <input id="cstart" type="date"></label>
       </div>
@@ -562,7 +564,6 @@ function scanLine(){
 // The list under the box as they type: their passes whose name matches, best levels first.
 function drawPassList(){
   const q = $('#cq').value.trim().toLowerCase(), dd = $('#cdd');
-  if(document.activeElement !== $('#cq')){ dd.hidden = true; return; }
   const all = myPasses();
   if(!all.length){ dd.innerHTML = '<div class="none">No passes on file - tap Scan account.</div>'; dd.hidden = false; return; }
   const list = all.filter(p => !q || String(p.name || '').toLowerCase().includes(q) || passLbl(p).toLowerCase().includes(q))
@@ -611,13 +612,16 @@ async function drawCalc(){
     + waysHtml(need, per, $('#cstart').value || dayStr(Date.now()))
     + `<div style="margin-top:10px"><button type="button" class="go" id="csave">Save entry</button></div>`;
 }
-$('#cq').addEventListener('input', () => { if(!$('#cq').value.trim() && cPass){ cPass = null; drawCalc(); } drawPassList(); });
+const cqX = () => { $('#cqx').hidden = !$('#cq').value; };
+$('#cq').addEventListener('input', () => { if(!$('#cq').value.trim() && cPass){ cPass = null; drawCalc(); } cqX(); drawPassList(); });
 $('#cq').addEventListener('focus', drawPassList);
-$('#cq').addEventListener('blur', () => setTimeout(() => { $('#cdd').hidden = true; }, 200));
-// mousedown/touch picks before the box loses focus.
-$('#cdd').addEventListener('pointerdown', e => { const b = e.target.closest('[data-ck]'); if(!b) return; e.preventDefault();
+// The list stays open while they scroll it; it closes on a pick or a tap elsewhere.
+document.addEventListener('click', e => { if(!e.target.closest('.cqw')) $('#cdd').hidden = true; });
+// A tap picks (a click, so dragging the list to scroll doesn't).
+$('#cdd').addEventListener('click', e => { const b = e.target.closest('[data-ck]'); if(!b) return; e.preventDefault();
   const p = myPasses().find(x => x.key === b.dataset.ck); if(!p) return;
-  cPass = p; $('#cq').value = passLbl(p); $('#cdd').hidden = true; $('#cq').blur(); $('#ctgt').innerHTML = ''; drawCalc(); });
+  cPass = p; $('#cq').value = passLbl(p); cqX(); $('#cdd').hidden = true; $('#cq').blur(); $('#ctgt').innerHTML = ''; drawCalc(); });
+$('#cqx').addEventListener('click', e => { e.preventDefault(); $('#cq').value = ''; cPass = null; cqX(); drawCalc(); $('#cq').focus(); drawPassList(); });
 $('#ctgt').addEventListener('change', drawCalc);
 $('#cstart').addEventListener('change', () => { if(cPass) drawCalc(); });
 $('#cres').addEventListener('click', e => { if(e.target.id !== 'csave' || !cPass) return; const p = cPass;
