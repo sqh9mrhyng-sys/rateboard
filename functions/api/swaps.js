@@ -3018,18 +3018,14 @@ const BOOSTINV_EVERY = 2 * 3600000;
 // Members whose pass and booster reads on Boosts are never held back.
 const BOOST_FAST = new Set(['quas23']);
 async function boostInventoryAll(env, tok, hashId, fresh, admin) {
-  const key = `boostinv_v9_${hashId}`;   // v6: golf added (2026-11-05); v7: FC (2026-11-07); v8: NBA, NHL (2026-11-09); v9: current season only (2026-11-10)
+  const key = `boostinv_v8_${hashId}`;   // v6: golf added (2026-11-05); v7: FC (2026-11-07); v8: NBA, NHL (2026-11-09)
   let c = null;
   try { c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); } catch (e) {}
   if (c && (!fresh || (!admin && Date.now() - c.at < BOOSTINV_EVERY))) return { ...c, next: admin ? Date.now() : c.at + BOOSTINV_EVERY, cached: !!fresh };
   const sports = {};
   for (const sp of [...Object.keys(BOOST_SEASON), 'golf', 'soccer']) {
     let d;
-    /* Only this season's boosters (2026-11-10: cdeck24's CBB showed 4 Rare -
-       last season's PTS x2 and BLK x1 with this season's 3PM - where Real's
-       2026-27 page shows the one). Boosters only go on cards of their season. */
-    const bse = (BOOST_SEASON[sp] || [])[0];
-    try { d = await rsGetJson(`https://web.realapp.com/userpassboostercards/undefined/entity/player?displayType=collectionstats&sport=${sp}&userId=${encodeURIComponent(hashId)}&version=stat${bse ? '&season=' + bse : ''}`, tok); }
+    try { d = await rsGetJson(`https://web.realapp.com/userpassboostercards/undefined/entity/player?displayType=collectionstats&sport=${sp}&userId=${encodeURIComponent(hashId)}&version=stat`, tok); }
     catch (e) {
       // FC is new: if Real won't give its boosters, the other sports still load.
       if (sp === 'soccer' || sp === 'nba' || sp === 'nhl') { sports[sp] = (c && c.sports && c.sports[sp]) || []; continue; }
