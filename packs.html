@@ -87,6 +87,7 @@
   .cqw{position:relative}
   .cqx{position:absolute;right:4px;bottom:4px;height:36px;width:36px;padding:0;border:0;background:none;color:var(--mute);font-size:22px;line-height:1}
   .cdd{overscroll-behavior:contain;touch-action:pan-y}
+  .cqx{right:40px} .cqv{right:4px;font-size:17px} .cqv[aria-expanded="true"]{transform:rotate(180deg);color:var(--accent)}
   #calc .ctl{grid-template-columns:minmax(0,1fr) minmax(0,1fr)} #calc .ctl label{min-width:0}
   #calc .ctl select,#calc .ctl input{height:44px;box-sizing:border-box}
   #cstart{-webkit-appearance:none;appearance:none;display:block;max-width:100%;text-align:left;line-height:1.2}
@@ -161,7 +162,7 @@
     <section>
       <div class="scanbar"><button type="button" class="go" id="cscan">Scan account</button><span class="note" id="cscanmsg"></span></div>
       <div class="ctl" style="margin-top:12px">
-        <label class="wide cqw">Player you own <input id="cq" placeholder="Start typing a player" autocomplete="off" style="padding-right:44px"><button type="button" id="cqx" class="cqx" aria-label="Clear player" hidden>×</button><div id="cdd" class="cdd" hidden></div></label>
+        <label class="wide cqw">Player you own <input id="cq" placeholder="Start typing a player" autocomplete="off" style="padding-right:80px"><button type="button" id="cqx" class="cqx" aria-label="Clear player" hidden>×</button><button type="button" id="cqv" class="cqx cqv" aria-label="Show or hide your players" aria-expanded="false">▾</button><div id="cdd" class="cdd" hidden></div></label>
         <label>Target rarity <select id="ctgt"></select></label>
         <label>Starting <input id="cstart" type="date"></label>
       </div>
@@ -613,6 +614,9 @@ async function drawCalc(){
     + `<div style="margin-top:10px"><button type="button" class="go" id="csave">Save entry</button></div>`;
 }
 const cqX = () => { $('#cqx').hidden = !$('#cq').value; };
+// The arrow folds the list of players away and brings it back (2026-11-09).
+new MutationObserver(() => $('#cqv').setAttribute('aria-expanded', String(!$('#cdd').hidden))).observe($('#cdd'), { attributes: true, attributeFilter: ['hidden'] });
+$('#cqv').addEventListener('click', e => { e.preventDefault(); if($('#cdd').hidden) drawPassList(); else $('#cdd').hidden = true; });
 $('#cq').addEventListener('input', () => { if(!$('#cq').value.trim() && cPass){ cPass = null; drawCalc(); } cqX(); drawPassList(); });
 $('#cq').addEventListener('focus', drawPassList);
 // The list stays open while they scroll it; it closes on a pick or a tap elsewhere.
