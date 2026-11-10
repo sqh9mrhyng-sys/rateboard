@@ -6698,21 +6698,25 @@ export async function scanProbe(env, db) {
 
 // One-off (2026-11-10): do booster reads take a season? (cdeck24's CBB showed 4, Real's 2026-27 page 1.)
 export async function boostProbe(env, db) {
-  const K = 'diag_boostprobe_1110c';
-  try { const o = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (o && (o.ok || (o.running && Date.now() - (o.at || 0) < 5 * 60000) || Date.now() - (o.at || 0) < 10 * 60000)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1, at: Date.now() }), { expirationTtl: 3 * 86400 }); } catch (e) { return; }
-  const out = { at: Date.now(), tries: [] };
+  /* Boosters are shared by every season (Dennis), so a season filter isn't it.
+     What each booster entry carries, raw, for Dennis's CBB: is a booster that's
+     already on a card for today still in "count"? (Real's card page shows 22
+     Rare to apply; Boosts recommended 24.) */
+  const K = 'diag_boostprobe_1110d';
+  try { const o = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (o && (o.ok || Date.now() - (o.at || 0) < 10 * 60000)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1, at: Date.now() }), { expirationTtl: 3 * 86400 }); } catch (e) { return; }
+  const out = { at: Date.now() };
   try {
-    const u = await db.prepare("SELECT hashId FROM swap_users WHERE lower(key)='cdeck24'").first();
+    const u = await db.prepare("SELECT hashId FROM swap_users WHERE key='dennis'").first();
     const tok = env.RS_AUTH_TOKEN || scanTok(env);
-    for (const q of ['', '&season=2027', '&season=2026', '&seasons=2027']) {
-      let st = 0, groups = null, err = null;
-      try { const r = await fetch(`https://web.realapp.com/userpassboostercards/undefined/entity/player?displayType=collectionstats&sport=ncaam&userId=${encodeURIComponent(u.hashId)}&version=stat${q}`, { headers: rsHeaders(tok) });
-        st = r.status; const d = JSON.parse(await r.text());
-        groups = (((d && d.boosterCardInfo) || {}).rarityGroups || []).map(g => `${g.label}: ` + (g.statBoostKeyInfo || []).map(k => `${(k.info || []).map(i => i.label).join('/')}x${k.count}`).join(', ')); } catch (e) { err = String(e.message || e).slice(0, 100); }
-      out.tries.push({ q: q || '(none)', st, groups, err }); await sleep(5000);
-    }
+    const r = await fetch(`https://web.realapp.com/userpassboostercards/undefined/entity/player?displayType=collectionstats&sport=ncaam&userId=${encodeURIComponent(u.hashId)}&version=stat`, { headers: rsHeaders(tok) });
+    out.st = r.status; const t = await r.text(); let d = null; try { d = JSON.parse(t); } catch (e) {}
+    const info = (d && d.boosterCardInfo) || {};
+    out.topKeys = d ? Object.keys(d) : t.slice(0, 100);
+    out.infoKeys = Object.keys(info);
+    out.groups = (info.rarityGroups || []).map(g => ({ g: Object.fromEntries(Object.entries(g).filter(([k]) => k !== 'statBoostKeyInfo')), items: (g.statBoostKeyInfo || []).slice(0, 6) }));
+    out.raw = JSON.stringify(info).slice(0, 3500);
+    out.ok = r.status === 200;
   } catch (e) { out.err = String(e.message || e).slice(0, 150); }
-  out.ok = out.tries.length > 0 && out.tries.every(x => x.st === 200);
   try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 3 * 86400 }); } catch (e) {}
 }
 
