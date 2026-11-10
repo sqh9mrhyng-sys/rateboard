@@ -61,7 +61,11 @@
   .ra{color:#f0913a;font-weight:700}
   .lg{color:var(--purple);font-weight:700} .ep{color:var(--red);font-weight:700} .my{color:var(--gold);font-weight:700} .ic{color:var(--pink);font-weight:700}
   tr.det td{background:var(--panel2);text-align:left;white-space:normal;padding:10px 12px 14px}
-  .lad{width:100%;max-width:640px;font-size:13px}
+  .lad{width:100%;max-width:720px;font-size:13px}
+  .dtabs{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+  .dtabs b{font-size:15px}
+  .seg.sm{margin:0;display:inline-flex} .seg.sm button{padding:7px 12px;font-size:13px;flex:none}
+  .sub2{display:none;color:var(--mute);font-size:11px}
   .lad td,.lad th{padding:6px 6px}
   .ladbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px}
   .pager{display:flex;gap:8px;align-items:center;justify-content:center;margin-top:10px}
@@ -75,6 +79,8 @@
     td.pl{white-space:normal;min-width:110px} td.pl a{font-size:13px}
     .star{font-size:17px;padding:0 2px}
     .lad th.hm2,.lad td.hm2{display:none}
+    .sub2{display:block}
+    .dtabs .seg.sm{width:100%} .dtabs .seg.sm button{flex:1}
     tr.det td{padding:8px 6px 12px}
     .ladbar{gap:6px} .ladbar select{width:100%}
   }
@@ -278,12 +284,43 @@ function cell(r, k){
   if(k === 'seasonLbl') return esc(r.seasonLbl);
   return num(r[k]);
 }
+/* A player's two tabs (2026-11-09): price per rarity (worked out from his row,
+   nothing read) and best plays (his plays, read once and kept - in KV on the
+   server and here for the visit), sortable by rating or rarity to check them. */
+let detTab = ls.get('packs_dettab_v1', 'price'), plSort = 'rating', plDir = -1;
+const plCache = new Map();
+const RAR = { 0: ['–', ''], 1: ['Common', ''], 2: ['Uncommon', ''], 3: ['Rare', 'ra'], 4: ['Epic', 'ep'], 5: ['Legendary', 'lg'], 6: ['Mystic', 'my'], 7: ['Iconic', 'ic'] };
+function detail(r){
+  const k = keyOf(r);
+  return `<div class="dtabs"><b>${esc(r.player)}</b><div class="seg sm" role="tablist"><button data-dt="price" aria-pressed="${detTab === 'price'}">Price per rarity</button><button data-dt="plays" aria-pressed="${detTab === 'plays'}">Best plays</button></div></div>`
+    + (detTab === 'price' ? ladder(r) : plays(r, k));
+}
+function plays(r, k){
+  const c = plCache.get(k);
+  if(!c){ plCache.set(k, 'loading');
+    api(`/api/rax?plays=player&sport=${r.sport}&season=${r.season}&playerId=${r.playerId}`).then(d => { plCache.set(k, d.error ? { error: d.error } : d); if(openK === k) paint(); });
+    return '<p class="note">Loading his plays…</p>'; }
+  if(c === 'loading') return '<p class="note">Loading his plays…</p>';
+  if(c.error){ plCache.delete(k); return `<p class="note">Could not load his plays (${esc(c.error)}). Tap the tab again.</p>`; }
+  const names = c.tagNames || {}, by = c.byRarity || {};
+  // plDir -1 = highest first.
+  const list = (c.top || []).slice().sort((a, b) => plSort === 'rarity'
+    ? ((Number(b.rarity) || 0) - (Number(a.rarity) || 0)) * -plDir || (Number(b.value) || 0) - (Number(a.value) || 0)
+    : ((Number(b.value) || 0) - (Number(a.value) || 0)) * -plDir);
+  const sums = [7, 6, 5, 4, 3, 2, 1].filter(t => by[t]).map(t => `<span class="${RAR[t][1]}">${RAR[t][0]} ${by[t]}</span>`).join(' · ');
+  return `<p class="note" style="margin:0 0 6px">${num(c.plays)} plays over ${num(c.games)} games${c.gamesPlayed ? ` (plays collected for ${num(c.gamesCollected || 0)} of his ${num(c.gamesPlayed)} games)` : ''} · avg ${c.avgRating ?? '–'} · best ${c.bestRating ?? '–'}${sums ? '<br>' + sums : ''}</p>`
+    + `<div class="ladbar"><span class="note">Sort by</span><div class="seg sm"><button data-pls="rating" aria-pressed="${plSort === 'rating'}">Rating${plSort === 'rating' ? (plDir < 0 ? ' ▾' : ' ▴') : ''}</button><button data-pls="rarity" aria-pressed="${plSort === 'rarity'}">Rarity${plSort === 'rarity' ? (plDir < 0 ? ' ▾' : ' ▴') : ''}</button></div>${(c.top || []).length < (c.plays || 0) ? `<span class="note">top ${c.top.length} by rating</span>` : ''}</div>`
+    + `<div class="scroll"><table class="lad"><thead><tr><th class="l">Date</th><th class="l">Play</th><th>Rating</th><th class="l">Rarity</th><th class="l hm2">Tags</th></tr></thead><tbody>`
+    + list.map(x => { const tg = String(x.tags || '').split(',').map(t => names[Number(t)]).filter(Boolean).map(t => '#' + String(t).replace(/\s+/g, '')).join(' ');
+      return `<tr><td class="l">${esc(String(x.day || '–').slice(5))}</td><td class="l" style="white-space:normal">${esc(x.label || '–')}<span class="sub2">${esc(tg)}</span></td><td><b>${x.value ?? '–'}</b></td><td class="l"><span class="${RAR[Number(x.rarity) || 0][1]}">${RAR[Number(x.rarity) || 0][0]}</span></td><td class="l hm2" style="white-space:normal">${esc(tg)}</td></tr>`; }).join('')
+    + '</tbody></table></div>';
+}
 // Packs to each rarity for one player, from his own row (nothing is read).
 function ladder(r){
   if(r.avgRating == null) return '<p class="note">No rating yet for this player.</p>';
   const per = packRating(r.avgRating), cost = (PACK_PRICES.find(p => p[0] === price) || PACK_PRICES[0])[2];
   let prev = 0;
-  return `<div class="ladbar"><b>${esc(r.player)}</b><span class="note">${Number(r.avgRating).toFixed(2)} avg × 3 = ${(r.avgRating * 3).toFixed(2)}${r.avgRating * 3 < PACK_FLOOR ? `, floored to ${PACK_FLOOR}` : ''} rating a pack</span>
+  return `<div class="ladbar"><span class="note">${Number(r.avgRating).toFixed(2)} avg × 3 = ${(r.avgRating * 3).toFixed(2)}${r.avgRating * 3 < PACK_FLOOR ? `, floored to ${PACK_FLOOR}` : ''} rating a pack</span>
     <select id="price">${PACK_PRICES.map(([k, l, c]) => `<option value="${k}"${k === price ? ' selected' : ''}>${l} · ${c}</option>`).join('')}</select></div>
     <div class="scroll"><table class="lad"><thead><tr><th class="l">Rarity</th><th>Mult</th><th class="hm2">Rating</th><th>Packs</th><th>Cost</th><th class="hm2">From prev</th></tr></thead><tbody>`
     + PACK_LADDER.map(([nm, m, need]) => { const packs = Math.ceil(need / per), step = packs - prev; prev = packs;
@@ -301,7 +338,7 @@ function paint(){
   $('#head').innerHTML = '<tr>' + cs.map(([k, l, al, hm]) => `<th data-k="${k}" class="${al === 'l' ? 'l ' : ''}${hm || ''}${sortK === k ? ' on' : ''}">${l}${sortK === k ? (sortD < 0 ? ' ▾' : ' ▴') : ''}</th>`).join('') + '</tr>';
   $('#body').innerHTML = show.map(r => { const k = keyOf(r), open = openK === k;
     return `<tr class="row${open ? ' open' : ''}" data-k="${esc(k)}">` + cs.map(([c, , al, hm]) => `<td class="${al === 'l' ? 'l ' : ''}${c === 'player' ? 'pl ' : ''}${hm || ''}">${cell(r, c)}</td>`).join('') + '</tr>'
-      + (open ? `<tr class="det"><td colspan="${cs.length}">${ladder(r)}</td></tr>` : ''); }).join('')
+      + (open ? `<tr class="det"><td colspan="${cs.length}">${detail(r)}</td></tr>` : ''); }).join('')
     || `<tr><td colspan="${cs.length}" class="empty">${tab === 'fav' ? (favs.length ? 'No favorites match.' : 'Tap ★ next to a player to add him here.') : q ? `No player matching "${esc(q)}".` : 'No players with that many plays.'}</td></tr>`;
   $('#pager').innerHTML = pages > 1 ? `<button data-pg="-1"${page ? '' : ' disabled'}>Previous</button><span class="note">Page ${page + 1} of ${pages}</span><button data-pg="1"${page < pages - 1 ? '' : ' disabled'}>Next</button>` : '';
   if(tab === 'all' && rows.length) $('#status').textContent = `${list.length.toLocaleString()} players · ${picks.map(pr => { const [sp, se] = pr.split(':'); return `${SP_LBL[sp] || sp} ${seasonLabel(sp, se)}`; }).join(', ')}. Tap a player for packs to each rarity, ★ to favorite.`;
@@ -369,6 +406,10 @@ $('#body').addEventListener('click', e => {
     ls.set('packs_favs_v1', favs); paintFavN();
     if(tab === 'fav') rows = rows.filter(x => favs.some(f => f.k === keyOf(x)));
     paint(); return; }
+  const dt = e.target.closest('[data-dt]');
+  if(dt){ detTab = dt.dataset.dt; ls.set('packs_dettab_v1', detTab); paint(); return; }
+  const ps = e.target.closest('[data-pls]');
+  if(ps){ if(plSort === ps.dataset.pls) plDir = -plDir; else { plSort = ps.dataset.pls; plDir = -1; } paint(); return; }
   if(e.target.closest('a, select, .det')) return;
   const tr = e.target.closest('tr.row'); if(!tr) return;
   openK = openK === tr.dataset.k ? null : tr.dataset.k; paint();

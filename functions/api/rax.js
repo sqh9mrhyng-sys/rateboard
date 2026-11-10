@@ -1617,6 +1617,7 @@ async function perfReady(db) {
 const PLAYS_CURSOR = 'plays_cursor_v1';
 // Which seasons the tick walks. Add a line here and the cron picks it up; the
 // worker itself holds nothing and never needs redeploying.
+const OTD_LIVE_SEASONS = new Set(['nba:2027', 'ncaam:2027', 'nfl:2026', 'ncaaf:2026', 'nhl:2026', 'soccer:2026', 'golf:2026']);   // seasons still being played
 const PLAYS_SPORTS = [
   // Lowest pri collects first. The whole backlog is worked in this order and
   // nothing below a tier gets a game tick while anything in it is unfinished.
@@ -3985,6 +3986,12 @@ async function handleGet({ request, env, waitUntil }) {
     await playsReady(db);
     const pid = parseInt(url.searchParams.get('playerId') || '0', 10);
     if (!pid) return json({ error: 'playerId required' }, 400);
+    /* Kept in KV per player (2026-11-09, Pack data's "Best plays"): a crowd
+       opening the same players reads the database once. A finished season's
+       copy is kept a week, the season being played half a day. */
+    const PKP = `pkp_v1_${sport}_${season}_${pid}`;
+    const pkpLive = OTD_LIVE_SEASONS.has(`${sport}:${season}`);
+    try { const c = JSON.parse((await env.RATEBOARD_KV.get(PKP)) || 'null'); if (c && c.out && Date.now() - c.at < (pkpLive ? 12 : 168) * 3600000) return json(c.out); } catch (e) {}
     const out = { sport, season, playerId: pid };
     let n = 0;
     const CREDITED_P = CREDITED.replace(/FROM plays WHERE sport=\?1 AND season=\?2 AND/g,
@@ -4012,7 +4019,7 @@ async function handleGet({ request, env, waitUntil }) {
       out.kinds = [...fam.values()].sort((a, b) => b.n - a.n).map(f => ({ cat: f.cat, type: f.type, subType: f.subType, n: f.n,
         avgRating: r2(f.sum / f.n), bestRating: r1(f.max),
         family: playFamily(f.cat == null ? null : Number(f.cat), f.type, f.subType) }));
-      const top = rows.slice().sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0)).slice(0, 250);
+      const top = rows.slice().sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0)).slice(0, 600);   // 600 (was 250): enough to check a player's rarities
       // Labels for the top plays, and a date from the game log where the
       // feed carried none.
       const ids = top.map(r => Number(r.id)).filter(Number.isFinite);
@@ -4062,6 +4069,7 @@ async function handleGet({ request, env, waitUntil }) {
         for (const x of (t.results || [])) out.tagNames[x.id] = x.label;
       }
     } catch (e) {}
+    try { await env.RATEBOARD_KV.put(PKP, JSON.stringify({ at: Date.now(), out }), { expirationTtl: (pkpLive ? 12 : 168) * 3600 }); } catch (e) {}
     return json(out);
   }
 
