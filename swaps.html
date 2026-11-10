@@ -280,7 +280,7 @@
       <div class="hours" id="s160hours" hidden></div>
     </div>
     <label class="o160"><input type="checkbox" id="b160"><span><b>Buy 160s</b><span class="sub">People that have packs they couldn't find swaps for or that are only looking for 160s match with you to sell packs, they open pack, you offer min, they send you 160 back.</span></span></label>
-    <label class="o160"><input type="checkbox" id="nichein"><span><b>Buy niche players</b><span class="sub">Niche players are ones under 20 active swappers own. Opt in and, at some of your swap times, you'll be asked to buy a player you don't own and a pack of him for the member who requested it - they pay you full price for the cards. You're only asked while you hold under 85 players in a season being played (under 100 in an old season), never the same player twice, and no more than the limits you set here.</span></span></label>
+    <label class="o160"><input type="checkbox" id="nichein"><span><b>Buy niche players</b><span class="sub">Niche players are ones fewer than 30 other active swappers own. Opt in and, at some of your swap times, you'll be asked to buy a player you don't own and a pack of him for the member who requested it - they pay you full price for the cards. You're only asked while you hold under 85 players in a season being played (under 100 in an old season), never the same player twice, and no more than the limits you set here.</span></span></label>
     <div id="nicheopts" hidden style="margin:6px 0 0 18px"><div style="display:flex;gap:12px;flex-wrap:wrap">
       <label class="note">Most per hour <input id="nicheh" type="number" inputmode="numeric" min="1" max="10" step="1" value="1" style="width:70px"></label>
       <label class="note">Most per day <input id="niched" type="number" inputmode="numeric" min="1" max="40" step="1" value="2" style="width:70px"></label>
@@ -790,12 +790,12 @@ let wantCounts = {}, savedWants = new Set();
 async function loadWantCounts(){ const j = await api('/api/swaps?op=wantcounts'); if(j && j.n){ wantCounts = j.n; drawWants(); } }
 const othersOn = k => Math.max(0, (wantCounts[k] || 0) - (savedWants.has(k) ? 1 : 0));
 // Niche (2026-11-09): how many active swappers (in a swap in the last 7 days) own each of my passes.
-let ownCounts = null, nicheUnder = 20, nicheReq = {};
+let ownCounts = null, nicheUnder = 30, nicheReq = {};
 // Until the counts exist (just after a change), nobody is shown as niche rather than everybody.
-async function loadOwnCounts(){ const j = await api('/api/swaps?op=ownercounts'); if(j && j.n && j.ready){ ownCounts = j.n; nicheUnder = j.under || 20; drawWants(); drawPasses && drawPasses(); } }
+async function loadOwnCounts(){ const j = await api('/api/swaps?op=ownercounts'); if(j && j.n && j.ready){ ownCounts = j.n; nicheUnder = j.under || 30; drawWants(); drawPasses && drawPasses(); } }
 const ownersOf = k => ownCounts ? (ownCounts[k] || 0) : null;
 const isNiche = k => { const n = ownersOf(k); return n != null && n < nicheUnder; };
-const ownTxt = k => { const n = ownersOf(k); return n == null ? '' : `${n} active swapper${n === 1 ? '' : 's'} own${n === 1 ? 's' : ''} him`; };
+const ownTxt = k => { const n = ownersOf(k); return n == null ? '' : `${n} other active swapper${n === 1 ? '' : 's'} own${n === 1 ? 's' : ''} him`; };
 const NICHE_TAG = '<span style="font-size:11px;font-weight:800;color:#141925;background:var(--accent);border-radius:999px;padding:2px 8px;margin-left:6px;white-space:nowrap">niche eligible</span>';
 const crowdTxt = n => n === 0 ? 'nobody else yet' : `${n} other${n === 1 ? '' : 's'} picked this`;
 const crowdCol = n => n >= 10 ? 'var(--bad)' : n >= 4 ? 'var(--accent)' : 'var(--ok)';

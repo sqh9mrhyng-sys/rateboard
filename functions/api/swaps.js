@@ -428,8 +428,9 @@ const MAX_160_HOUR = 15;
    they share; the requester pays full price for the cards. Someone is only
    asked while they hold fewer than 85 players of a season being played, or
    fewer than 100 of an old one. One niche buy an hour, two a swap day each. */
-const NICHE_UNDER = 20, NICHE_MAX_ASK = 40, NICHE_DAY_MAX = 2, NICHE_HOUR_MAX = 1, NICHE_LIVE_CAP = 85, NICHE_OLD_CAP = 100;
-const NICHE_KEY = 'swap_ownercounts_v3';
+const NICHE_UNDER = 30,   // fewer than 30 OTHER active swappers own him (Dennis, 2026-11-10; was 20 counting everyone)
+      NICHE_MAX_ASK = 40, NICHE_DAY_MAX = 2, NICHE_HOUR_MAX = 1, NICHE_LIVE_CAP = 85, NICHE_OLD_CAP = 100;
+const NICHE_KEY = 'swap_ownercounts_v4';
 const NICHE_OVER = new Set(['mlb:2026', 'wnba:2026']);   // newest season, but finished: counts as an old one (under 100)
 const nicheLiveSeason = k => { const [sp, se] = String(k).split(':'); return Number(se) === (SWAP_SEASONS[sp] || [])[0] && !NICHE_OVER.has(`${sp}:${se}`); };
 // A member's own limits on niche buys (step 6): { h: an hour, d: a swap day }.
@@ -458,7 +459,7 @@ async function saveOwnerCounts(env, db) {
       for (const r of rows) { read++; const seen = new Set(); for (const p of parse(r.passes, [])) if (p && p.kind !== 'team' && p.key && !seen.has(p.key)) { seen.add(p.key); n[p.key] = (n[p.key] || 0) + 1; } }
       await sleep(150);
     }
-    if (read) await env.RATEBOARD_KV.put(NICHE_KEY, JSON.stringify({ at: Date.now(), active: act.length, read, n }), { expirationTtl: 3 * 86400 });
+    if (read) await env.RATEBOARD_KV.put(NICHE_KEY, JSON.stringify({ at: Date.now(), active: act.length, read, n, act }), { expirationTtl: 3 * 86400 });
   } catch (e) { try { await botFail(db, 'scan_bg', 'owner counts: ' + String(e.message || e).slice(0, 120)); } catch (e2) {} }
   try { await env.RATEBOARD_KV.delete(LOCK); } catch (e) {}
 }
@@ -5066,12 +5067,13 @@ async function handle({ request, env, waitUntil }) {
   }
 
   // How many saved swappers picked each player, kept 5 minutes.
-  // Step 4: how many active swappers own each of the caller's passes (niche under 20).
+  // Step 4: how many OTHER active swappers own each of the caller's passes (niche under 30).
   if (op === 'ownercounts') {
     if (!acc.admin && !(await allow(url.origin, 'ownercounts:' + me, 20, 600))) return json({ error: 'Wait a few minutes and try again.' }, 429);
     const c = await ownerCounts(env), out = {};
     const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
-    for (const p of parse(u && u.passes, [])) if (p.kind !== 'team') out[p.key] = c.n[p.key] || 0;
+    const selfIn = (c.act || []).includes(me) ? 1 : 0;   // they're one of the owners counted when they've swapped this week
+    for (const p of parse(u && u.passes, [])) if (p.kind !== 'team') out[p.key] = Math.max(0, (c.n[p.key] || 0) - selfIn);
     return json({ at: c.at, active: c.active, under: NICHE_UNDER, n: c.at ? out : {}, ready: !!c.at });
   }
   if (op === 'wantcounts') {
@@ -5564,7 +5566,7 @@ async function handle({ request, env, waitUntil }) {
         let oc = null; try { oc = await ownerCounts(env); if (!oc.at) oc = null; } catch (e) {}
         for (const [w, v] of Object.entries((b.niche && typeof b.niche === 'object') ? b.niche : {})) {
           const n = Math.floor(Number(v && v.n != null ? v.n : v)); if (!wants.includes(w) || !(n > 0)) continue;
-          if (!old[w] && oc && (oc.n[w] || 0) >= NICHE_UNDER) continue;   // a new ask needs a niche player; one already made stays until cancelled or filled
+          if (!old[w] && oc && (oc.n[w] || 0) - ((oc.act || []).includes(me) ? 1 : 0) >= NICHE_UNDER) continue;   // a new ask needs a niche player; one already made stays until cancelled or filled
           const m = Math.min(NICHE_MAX_ASK, n); nq[w] = { n: m, at: old[w] && Number(old[w].n) === m && old[w].at ? old[w].at : Date.now() }; }
         const nl = { h: Math.max(1, Math.min(10, Math.floor(Number(b.nicheLim && b.nicheLim.h)) || NICHE_HOUR_MAX)), d: Math.max(1, Math.min(40, Math.floor(Number(b.nicheLim && b.nicheLim.d)) || NICHE_DAY_MAX)) };
         await db.prepare('UPDATE swap_users SET nicheIn=?, niche=?, nicheLim=? WHERE key=?').bind(nIn, JSON.stringify(nq), JSON.stringify(nl), me).run();
