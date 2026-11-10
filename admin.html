@@ -618,7 +618,7 @@ function drawUsers(){
       <div class="top"><b>${esc(u.name || u.key)}</b>${u.name && u.name !== u.key ? ` <span class="note">${esc(u.key)}</span>` : ''}
         ${u.banned ? '<span class="pill off">removed</span>' : ''}${blockSet.has(u.key.toLowerCase()) ? '<span class="pill off">no swaps</span>' : ''}${restrictSet.has(u.key.toLowerCase()) ? '<span class="pill off">no posts/swaps (report)</span>' : ''}${!u.hasPass ? '<span class="pill">pw reset</span>' : ''}
         <span class="note">joined ${u.created ? new Date(u.created).toLocaleDateString() : '—'} · ${u.offers} offers</span>
-        <span class="acts"><button class="sm" data-act="reset">Reset pw</button>${restrictSet.has(u.key.toLowerCase()) ? '<button class="sm" data-act="unrestrict">Lift report restriction</button>' : ''}<button class="sm${blockSet.has(u.key.toLowerCase()) ? '' : ' danger'}" data-act="${blockSet.has(u.key.toLowerCase()) ? 'swapon' : 'swapoff'}">${blockSet.has(u.key.toLowerCase()) ? 'Give swaps back' : 'Take swaps'}</button><button class="sm danger" data-act="${u.banned ? 'unban' : 'ban'}">${u.banned ? 'Unban from site' : 'Ban from site'}</button></span></div>
+        <span class="acts"><button class="sm" data-act="viewas">View as</button><button class="sm" data-act="reset">Reset pw</button>${restrictSet.has(u.key.toLowerCase()) ? '<button class="sm" data-act="unrestrict">Lift report restriction</button>' : ''}<button class="sm${blockSet.has(u.key.toLowerCase()) ? '' : ' danger'}" data-act="${blockSet.has(u.key.toLowerCase()) ? 'swapon' : 'swapoff'}">${blockSet.has(u.key.toLowerCase()) ? 'Give swaps back' : 'Take swaps'}</button><button class="sm danger" data-act="${u.banned ? 'unban' : 'ban'}">${u.banned ? 'Unban from site' : 'Ban from site'}</button></span></div>
       <div class="acc">${ACCESS.map(([w, label]) => {
         const named = w === 'swaps' && namedSwap.has(u.key);
         return `<button data-acc="${w}" class="${has(u.key, w) ? 'on' : ''}${named ? ' fixed' : ''}" ${named ? 'title="On the named Swaps list"' : ''}>${has(u.key, w) ? '✓ ' : ''}${label}</button>`;
@@ -648,6 +648,17 @@ $('#us-rows').addEventListener('click', async e => {
     }
   } else {
     const act = b.dataset.act;
+    /* View as (2026-11-10): open their account look-only. My own sign-in waits
+       in rb_viewas_back and the bar at the top of every page brings me back. */
+    if(act === 'viewas'){
+      const v = await post({ op: 'viewAs', key: k });
+      if(v.error){ toast(v.error); b.disabled = false; return; }
+      try{ const cur = JSON.parse(localStorage.getItem('ratebrd_device_v1') || 'null'), tok = localStorage.getItem('ratebrd_token_v1');
+        if(tok && !tok.startsWith('feedface0b5e')) localStorage.setItem('rb_viewas_back', JSON.stringify({ key: cur && cur.key, name: (cur && cur.name) || (cur && cur.key), token: tok }));
+        localStorage.setItem('ratebrd_token_v1', v.token); localStorage.setItem('ratebrd_device_v1', JSON.stringify({ key: v.key, name: v.name, ts: Date.now(), viewAs: 1 })); localStorage.setItem('ratebrd_session', v.key);
+      }catch(e2){ toast('Could not switch on this browser.'); b.disabled = false; return; }
+      location.href = '/'; return;
+    }
     if(['ban', 'reset', 'swapoff'].includes(act) && b.dataset.armed !== '1'){
       b.disabled = false; b.dataset.armed = '1'; const was = b.textContent; b.textContent = 'Sure?';
       setTimeout(() => { b.dataset.armed = ''; b.textContent = was; }, 3000); return;

@@ -26,7 +26,7 @@
    hundreds, and any write clears the cache so nobody sees their own listing
    missing right after posting it. ------------------------------------- */
 import { ADMINS, newSession, endSession, isAdminRequest, sameHash, allow, clientIp,
-         forbidden } from '../../lib/auth.js';
+         forbidden, newViewSession, sessionKey } from '../../lib/auth.js';
 import { watchEnv } from '../../lib/dbwatch.js';
 
 /* ---- the weekend pack data window ------------------------------------
@@ -678,6 +678,20 @@ export async function onRequestPost({ request, env, waitUntil }) {
     } catch (e) {
       return json({ error: 'could not sign in: ' + (e && e.message || e) }, 503);
     }
+  }
+
+  // Admin: open a member's account to see it as they do, look-only (2026-11-10).
+  if (body && body.op === 'viewAs') {
+    if (!(await isAdminRequest(env, request))) return forbidden();
+    const key = str(body.key, 60).toLowerCase();
+    if (!key) return json({ error: 'Which account?' }, 400);
+    if (ADMINS.includes(key)) return json({ error: "That's an admin account." }, 400);
+    const u = await env.RATEBOARD_DB.prepare('SELECT key, name, banned FROM users WHERE lower(key)=?').bind(key).first();
+    if (!u) return json({ error: 'No account by that name.' }, 404);
+    if (u.banned) return json({ error: 'That account is removed from the site - unban it to look.' }, 400);
+    const admin = await sessionKey(env, request);
+    const token = await newViewSession(env, u.key, admin);
+    return json({ ok: true, token, key: u.key, name: u.name || u.key });
   }
 
   if (body && body.op === 'signout') {

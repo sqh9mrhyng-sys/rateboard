@@ -46,6 +46,7 @@ const MOVE_PAGE = `<!doctype html><meta charset="utf-8">
 </script>`;
 
 import { countPageView } from './api/sponsor.js';
+import { isViewToken } from '../lib/auth.js';
 
 /* Page views (2026-11-08): every page a person opens, counted per page per
    day - link previews, crawlers and prefetches left out. */
@@ -68,6 +69,16 @@ export async function onRequest({ request, next, env, waitUntil }) {
   /* Home is the front page and the board lives at /board (Dennis, 2026-11-09):
      the old /home address goes to the front page. */
   if (url.pathname === '/home' || url.pathname === '/home.html') return Response.redirect(url.origin + '/' + url.search + url.hash, 301);
+  /* View-as sessions are look-only (2026-11-10): no writes of any kind, and
+     no scans started. Signing out of one is the only thing it may post. */
+  if (url.pathname.startsWith('/api/') && isViewToken(request.headers.get('x-rb-token') || '')) {
+    const m = request.method, op = url.searchParams.get('op') || '';
+    let ok = m === 'GET' || m === 'HEAD';
+    if (ok && ['scan', 'scantick', 'save', 'saveslots', 'pause', 'endall', 'confirm', 'dropwant', 'touch', 'keep', 'report', 'dmsend', 'dmopen', 'connect', 'inboxact'].includes(op)) ok = false;
+    if (ok && /^(grant|revoke|reset|pullplayer)$/.test(url.searchParams.get('market') || '')) ok = false;
+    if (!ok && m === 'POST' && url.pathname === '/api/kv') { try { const b = await request.clone().json(); if (b && b.op === 'signout') ok = true; } catch (e) {} }
+    if (!ok) return new Response(JSON.stringify({ error: "You're viewing this account - look only, nothing is saved." }), { status: 403, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
+  }
   if (url.hostname !== OLD_HOST) { const pg = pageOf(request, url); if (pg && waitUntil) waitUntil(countPageView(env, pg)); }
   if (url.hostname === OLD_HOST) {
     if (url.pathname === '/__move') {
@@ -79,5 +90,9 @@ export async function onRequest({ request, next, env, waitUntil }) {
       return Response.redirect(NEW_ORIGIN + url.pathname + url.search, 302);
     }
   }
-  return next();
+  const res = await next();
+  // Every page carries the view-as bar (it shows only while viewing an account).
+  if (request.method === 'GET' && (res.headers.get('content-type') || '').includes('text/html') && !url.pathname.startsWith('/api/'))
+    return new HTMLRewriter().on('head', { element(el) { el.append('<script src="/viewas.js" defer></script>', { html: true }); } }).transform(res);
+  return res;
 }
