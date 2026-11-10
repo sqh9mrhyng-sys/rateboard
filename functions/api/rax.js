@@ -4267,7 +4267,7 @@ async function handleGet({ request, env, waitUntil }) {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
     if (!['mlb', 'nba', 'nfl', 'ncaaf'].includes(sport)) return json({ error: 'Team packs are MLB, NBA, NFL and CFB.' }, 400);
-    const se = Number(season), K = `pkteams_v5_${sport}_${se}`, L = `pkteams_lock_${sport}_${se}`;
+    const se = Number(season), K = `pkteams_v6_${sport}_${se}`, L = `pkteams_lock_${sport}_${se}`;
     const live = OTD_LIVE_SEASONS.has(`${sport}:${se}`);
     let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
     const fresh = c && Date.now() - c.at < (live ? 86400000 : 30 * 86400000);
@@ -4326,19 +4326,23 @@ async function handleGet({ request, env, waitUntil }) {
             for (const x of rows) if (!x.team && best.has(x.teamId)) x.team = String(best.get(x.teamId).c);
           } catch (e) {}
         };
-        await fill(`SELECT p.teamId AS t, g.team AS c, COUNT(*) AS n FROM plays p
-            JOIN gamelog g ON g.sport=p.sport AND g.season=p.season AND g.playerId=p.playerId AND g.gameId=p.gameId
-           WHERE p.sport=?1 AND p.season=?2 AND p.playerId IS NOT NULL AND p.teamId IS NOT NULL AND g.team IS NOT NULL AND g.team <> ''
-           GROUP BY p.teamId, g.team`);
-        await fill(`SELECT p.oppTeamId AS t, g.opponent AS c, COUNT(*) AS n FROM plays p
-            JOIN gamelog g ON g.sport=p.sport AND g.season=p.season AND g.playerId=p.playerId AND g.gameId=p.gameId
-           WHERE p.sport=?1 AND p.season=?2 AND p.playerId IS NOT NULL AND p.oppTeamId IS NOT NULL AND g.opponent IS NOT NULL AND g.opponent <> ''
-           GROUP BY p.oppTeamId, g.opponent`);
+        // One look-up per player and side (his first game for it), not per play.
+        await fill(`WITH tp AS (SELECT teamId AS t, playerId, MIN(gameId) AS gid FROM plays
+              WHERE sport=?1 AND season=?2 AND playerId IS NOT NULL AND teamId IS NOT NULL GROUP BY teamId, playerId)
+            SELECT tp.t AS t, g.team AS c, COUNT(*) AS n FROM tp
+              JOIN gamelog g ON g.sport=?1 AND g.season=?2 AND g.playerId=tp.playerId AND g.gameId=tp.gid
+             WHERE g.team IS NOT NULL AND g.team <> '' GROUP BY tp.t, g.team`);
+        await fill(`WITH tp AS (SELECT oppTeamId AS t, playerId, MIN(gameId) AS gid FROM plays
+              WHERE sport=?1 AND season=?2 AND playerId IS NOT NULL AND oppTeamId IS NOT NULL GROUP BY oppTeamId, playerId)
+            SELECT tp.t AS t, g.opponent AS c, COUNT(*) AS n FROM tp
+              JOIN gamelog g ON g.sport=?1 AND g.season=?2 AND g.playerId=tp.playerId AND g.gameId=tp.gid
+             WHERE g.opponent IS NOT NULL AND g.opponent <> '' GROUP BY tp.t, g.opponent`);
         /* Only real teams: MLB's are ids 108-158 (the WBC nations, the
            All-Star sides and exhibition opponents are not team packs), and a
            side nobody can name isn't one either. */
         rows = rows.filter(x => x.team && (sport !== 'mlb' || (x.teamId >= 108 && x.teamId <= 158)));
-        await env.RATEBOARD_KV.put(K, JSON.stringify({ at: Date.now(), rows }), { expirationTtl: 60 * 86400 });
+        // Nothing named: keep the empty answer an hour, not a month.
+        await env.RATEBOARD_KV.put(K, JSON.stringify({ at: Date.now(), rows }), { expirationTtl: rows.length ? 60 * 86400 : 3600 });
       })().catch(() => {}).finally(() => env.RATEBOARD_KV.delete(L).catch(() => {}));
       try { waitUntil(build); } catch (e) {}
     }
