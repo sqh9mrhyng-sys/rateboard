@@ -438,8 +438,7 @@ $('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]
   if(!tk) return lock('Sign in on <a href="/board">the board</a> first.');
   const me = await api('/api/rax?market=me');
   if(!me.signedIn) return lock('Sign in on <a href="/board">the board</a> first.');
-  // Dennis only for now (2026-11-09).
-  if(!me.admin) return lock('This page isn\'t open yet.');
+  // Open to everyone signed in (Dennis, 2026-11-09).
   $('#main').hidden = false; paintFavN();
   try{ const m = ls.get('packs_min_v1', null); if(m != null) $('#min').value = m; }catch(e){}
   const s = await api('/api/rax?plays=seasons');

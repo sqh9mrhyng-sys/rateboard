@@ -3992,6 +3992,8 @@ async function handleGet({ request, env, waitUntil }) {
     const PKP = `pkp_v1_${sport}_${season}_${pid}`;
     const pkpLive = OTD_LIVE_SEASONS.has(`${sport}:${season}`);
     try { const c = JSON.parse((await env.RATEBOARD_KV.get(PKP)) || 'null'); if (c && c.out && Date.now() - c.at < (pkpLive ? 12 : 168) * 3600000) return json(c.out); } catch (e) {}
+    // Only a player nobody has opened lately reads the database: at most 40 of those per person every 10 minutes.
+    if (!(await allow(url.origin, 'pkp:' + clientIp(request), 40, 600))) return json({ error: 'Too many players opened - wait a few minutes.' }, 429);
     const out = { sport, season, playerId: pid };
     let n = 0;
     const CREDITED_P = CREDITED.replace(/FROM plays WHERE sport=\?1 AND season=\?2 AND/g,
@@ -7694,7 +7696,17 @@ async function buildPackSeason(db, sport, season) {
 
   return rows;
 }
+/* Kept in memory per worker for 2 minutes (2026-11-09, Pack data opened to
+   everyone): a crowd loading the same season reads its saved copy once. */
+const PACK_MEM = new Map();
 async function packSeasonRows(db, sport, season, waitUntil) {
+  const mk = `${sport}:${season}`, m = PACK_MEM.get(mk);
+  if (m && Date.now() - m.at < 120000) return m.rows;
+  const rows = await packSeasonRows0(db, sport, season, waitUntil);
+  if (Array.isArray(rows) && rows.length) { PACK_MEM.set(mk, { at: Date.now(), rows }); if (PACK_MEM.size > 40) PACK_MEM.delete(PACK_MEM.keys().next().value); }
+  return rows;
+}
+async function packSeasonRows0(db, sport, season, waitUntil) {
   await db.prepare(PACKSNAP_DDL).run();
   const row = await db.prepare('SELECT body, at, building FROM pack_snap WHERE sport=? AND season=?').bind(sport, Number(season)).first();
   const now = Date.now();
