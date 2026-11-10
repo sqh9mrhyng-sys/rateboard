@@ -38,23 +38,24 @@
 
   /* The page body - a first pass to adjust from. */
   h1{font-size:24px;margin:2px 0 12px;font-weight:800;text-align:center}
-  h1 a{color:var(--ink);text-decoration:none}
+  h1 a{color:var(--ink);text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:5px}
   h1 a:hover{color:var(--accent)}
   .acts{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
   .act{display:flex;align-items:center;justify-content:center;text-align:center;min-height:52px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px 6px;color:var(--ink);text-decoration:none;font-weight:700;font-size:13.5px;line-height:1.25}
   .act:hover{border-color:var(--accent)}
   .tiles{display:grid;grid-template-columns:1fr;gap:10px;margin-top:16px}
-  .trow{display:flex;gap:8px;align-items:stretch}
-  .trow .tile{flex:1;min-width:0}
-  .mv{display:flex;flex-direction:column;gap:6px}
-  .mv button{flex:1;width:40px;background:var(--panel);border:1px solid var(--line);border-radius:9px;color:var(--mute);font-size:13px;padding:0}
-  .mv button:hover:not(:disabled){color:var(--accent);border-color:var(--accent)}
-  .mv button:disabled{opacity:.3;cursor:default}
-  .tile{display:block;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;text-decoration:none;color:var(--ink)}
+  /* Each box: the link, and grip lines on the right that drag it up or down. */
+  .tile{display:flex;align-items:stretch;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+  .tile .tl{flex:1;min-width:0;padding:14px;color:var(--ink);text-decoration:none}
+  .tile .grip{flex:none;width:46px;display:flex;align-items:center;justify-content:center;cursor:grab;touch-action:none;color:var(--mute)}
+  .tile .grip i{display:block;width:18px;height:2px;background:currentColor;border-radius:2px;box-shadow:0 -6px 0 currentColor,0 6px 0 currentColor}
+  .tile .grip:hover{color:var(--accent)}
+  .tile.drag{position:relative;z-index:5;border-color:var(--accent);box-shadow:0 10px 28px rgba(0,0,0,.5);cursor:grabbing}
+  .tiles.dragging .tile:not(.drag){transition:transform .12s}
+  body.dragging{user-select:none;-webkit-user-select:none}
   .tile:hover{border-color:var(--accent)}
-  .tile b{display:block;font-size:16px;margin-bottom:3px}
-  .tile span{color:var(--mute);font-size:13px}
-  .tile.main{border-color:var(--accent)}
+  .tl b{display:block;font-size:16px;margin-bottom:3px}
+  .tl span{color:var(--mute);font-size:13px}
   .lock{max-width:460px;margin:14vh auto;text-align:center;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}
   .acct .who .lbl{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
 </style>
@@ -122,16 +123,43 @@ function tileList(){
 }
 function drawNav(){
   const list = tileList();
-  $('#tiles').innerHTML = list.map(([h, t, d, main], i) => `<div class="trow"><a class="tile${main ? ' main' : ''}" href="${h}"><b>${esc(t)}</b><span>${esc(d)}</span></a>`
-    + `<div class="mv"><button data-mv="${h}" data-d="-1" aria-label="Move ${esc(t)} up" ${i === 0 ? 'disabled' : ''}>&#9650;</button>`
-    + `<button data-mv="${h}" data-d="1" aria-label="Move ${esc(t)} down" ${i === list.length - 1 ? 'disabled' : ''}>&#9660;</button></div></div>`).join('');
+  $('#tiles').innerHTML = list.map(([h, t, d]) => `<div class="tile" data-h="${h}"><a class="tl" href="${h}"><b>${esc(t)}</b><span>${esc(d)}</span></a>`
+    + `<span class="grip" aria-label="Drag to move ${esc(t)}" title="Drag to move"><i></i></span></div>`).join('');
 }
-$('#tiles').addEventListener('click', e => {
-  const b = e.target.closest('[data-mv]'); if(!b) return;
-  const o = tileList().map(p => p[0]), i = o.indexOf(b.dataset.mv), j = i + Number(b.dataset.d);
-  if(i < 0 || j < 0 || j >= o.length) return;
-  [o[i], o[j]] = [o[j], o[i]]; ls.set(ORDER, JSON.stringify(o)); drawNav();
+/* Dragging by the grip lines (mouse or finger): the box follows the pointer,
+   the others slide past it, and the new order is kept on release. */
+let drag = null;
+$('#tiles').addEventListener('pointerdown', e => {
+  const g = e.target.closest('.grip'); if(!g) return;
+  e.preventDefault();
+  const el = g.closest('.tile'), box = $('#tiles');
+  drag = { el, id: e.pointerId, y0: e.clientY + window.scrollY, top0: el.getBoundingClientRect().top + window.scrollY, t: 0 };
+  el.classList.add('drag'); box.classList.add('dragging'); document.body.classList.add('dragging');
+  try{ g.setPointerCapture(e.pointerId); }catch(e2){}
 });
+$('#tiles').addEventListener('pointermove', e => {
+  if(!drag || e.pointerId !== drag.id) return;
+  e.preventDefault();
+  const box = $('#tiles'), el = drag.el;
+  // Swap with a neighbour once the pointer passes its middle.
+  const sibs = [...box.children].filter(x => x !== el);
+  const before = sibs.find(x => { const r = x.getBoundingClientRect(); return e.clientY < r.top + r.height / 2; });
+  if(before ? el.nextElementSibling !== before : box.lastElementChild !== el) box.insertBefore(el, before || null);
+  // Keep the box under the finger: where it should be, less where the list puts it.
+  const want = drag.top0 + (e.clientY + window.scrollY - drag.y0), at = el.getBoundingClientRect().top + window.scrollY - drag.t;
+  drag.t = want - at; el.style.transform = `translateY(${drag.t}px)`;
+  // Near the top or bottom of the screen: scroll along.
+  if(e.clientY < 60) window.scrollBy(0, -12); else if(e.clientY > window.innerHeight - 60) window.scrollBy(0, 12);
+});
+function endDrag(e){
+  if(!drag || (e && e.pointerId !== drag.id)) return;
+  const el = drag.el; drag = null;
+  el.style.transform = ''; el.classList.remove('drag');
+  $('#tiles').classList.remove('dragging'); document.body.classList.remove('dragging');
+  ls.set(ORDER, JSON.stringify([...$('#tiles').children].map(x => x.dataset.h)));
+}
+$('#tiles').addEventListener('pointerup', endDrag);
+$('#tiles').addEventListener('pointercancel', endDrag);
 function drawAcctMenu(){
   const d = loadDevice(), cur = d && d.key;
   let a = loadAccts();
