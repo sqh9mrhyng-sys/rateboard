@@ -3018,14 +3018,18 @@ const BOOSTINV_EVERY = 2 * 3600000;
 // Members whose pass and booster reads on Boosts are never held back.
 const BOOST_FAST = new Set(['quas23']);
 async function boostInventoryAll(env, tok, hashId, fresh, admin) {
-  const key = `boostinv_v8_${hashId}`;   // v6: golf added (2026-11-05); v7: FC (2026-11-07); v8: NBA, NHL (2026-11-09)
+  const key = `boostinv_v9_${hashId}`;   // v6: golf added (2026-11-05); v7: FC (2026-11-07); v8: NBA, NHL (2026-11-09); v9: current season only (2026-11-10)
   let c = null;
   try { c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); } catch (e) {}
   if (c && (!fresh || (!admin && Date.now() - c.at < BOOSTINV_EVERY))) return { ...c, next: admin ? Date.now() : c.at + BOOSTINV_EVERY, cached: !!fresh };
   const sports = {};
   for (const sp of [...Object.keys(BOOST_SEASON), 'golf', 'soccer']) {
     let d;
-    try { d = await rsGetJson(`https://web.realapp.com/userpassboostercards/undefined/entity/player?displayType=collectionstats&sport=${sp}&userId=${encodeURIComponent(hashId)}&version=stat`, tok); }
+    /* Only this season's boosters (2026-11-10: cdeck24's CBB showed 4 Rare -
+       last season's PTS x2 and BLK x1 with this season's 3PM - where Real's
+       2026-27 page shows the one). Boosters only go on cards of their season. */
+    const bse = (BOOST_SEASON[sp] || [])[0];
+    try { d = await rsGetJson(`https://web.realapp.com/userpassboostercards/undefined/entity/player?displayType=collectionstats&sport=${sp}&userId=${encodeURIComponent(hashId)}&version=stat${bse ? '&season=' + bse : ''}`, tok); }
     catch (e) {
       // FC is new: if Real won't give its boosters, the other sports still load.
       if (sp === 'soccer' || sp === 'nba' || sp === 'nhl') { sports[sp] = (c && c.sports && c.sports[sp]) || []; continue; }
@@ -6699,7 +6703,7 @@ export async function scanProbe(env, db) {
 // One-off (2026-11-10): do booster reads take a season? (cdeck24's CBB showed 4, Real's 2026-27 page 1.)
 export async function boostProbe(env, db) {
   const K = 'diag_boostprobe_1110c';
-  try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1 }), { expirationTtl: 3 * 86400 }); } catch (e) { return; }
+  try { const o = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (o && (o.ok || (o.running && Date.now() - (o.at || 0) < 5 * 60000) || Date.now() - (o.at || 0) < 10 * 60000)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1, at: Date.now() }), { expirationTtl: 3 * 86400 }); } catch (e) { return; }
   const out = { at: Date.now(), tries: [] };
   try {
     const u = await db.prepare("SELECT hashId FROM swap_users WHERE lower(key)='cdeck24'").first();
@@ -6712,6 +6716,7 @@ export async function boostProbe(env, db) {
       out.tries.push({ q: q || '(none)', st, groups, err }); await sleep(5000);
     }
   } catch (e) { out.err = String(e.message || e).slice(0, 150); }
+  out.ok = out.tries.length > 0 && out.tries.every(x => x.st === 200);
   try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 3 * 86400 }); } catch (e) {}
 }
 
