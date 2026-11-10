@@ -1844,7 +1844,7 @@ async function autoRescan(env, db, auth) {
 const FEEDBACK_TEXT = 'After day 1 of this project, rate your experience 1-10 with any feedback or change requests.';
 
 /* ---- Pass scans: the line, the saved progress, and the work itself ------ */
-const SCAN_AT_ONCE = 3;            // scans running at the same time; the rest wait in line
+const SCAN_AT_ONCE = 6;            // scans running at the same time; the rest wait in line (3 until 2026-11-10, when a scan became one call)
 const SCAN_HOLD_MS = 45 * 60000;   // a place in line is kept this long after the page stops asking (2026-11-08: tap scan and leave - the server runs it)
 const SCAN_PAGE_GONE_MS = 25000;   // a running scan nobody's page has asked about for this long is carried on by the server
 async function scanTables(db) {
@@ -1871,8 +1871,8 @@ async function scanQueueTurn(db, me, now) {
   // Start only if fewer than SCAN_AT_ONCE are running and nobody waiting joined earlier.
   const c = await db.prepare(`UPDATE scan_queue SET startedAt=? WHERE key=? AND startedAt IS NULL
       AND (SELECT COUNT(*) FROM scan_queue WHERE startedAt IS NOT NULL) < ?
-      AND NOT EXISTS (SELECT 1 FROM scan_queue q WHERE q.startedAt IS NULL AND q.joinedAt < ? AND q.key <> ?)`)
-    .bind(now, me, SCAN_AT_ONCE, joined, me).run();
+      AND NOT EXISTS (SELECT 1 FROM scan_queue q WHERE q.startedAt IS NULL AND q.joinedAt < ? AND q.key <> ? AND q.lastSeen > ?)`)
+    .bind(now, me, SCAN_AT_ONCE, joined, me, now - 20000).run();   // only those ahead still on the page hold you up; the server runs the rest
   if (c && c.meta && c.meta.changes) return { go: true };
   const ahead = await db.prepare('SELECT COUNT(*) AS n FROM scan_queue WHERE startedAt IS NULL AND joinedAt < ?').bind(joined).first();
   const pos = (Number(ahead && ahead.n) || 0) + 1, secs = Math.ceil(pos / SCAN_AT_ONCE) * 25;
@@ -2084,11 +2084,16 @@ async function backgroundScans(env, db, auth) {
     if (job) await done(key, await scanWork(env, db, key, job, auth));
   }
   // Next in line but not on the page: start them here, as many as there's room and time for.
-  for (let i = 0; i < SCAN_AT_ONCE && Date.now() - t0 < 20000; i++) {
+  /* A scan is one call now (2026-11-10), a few seconds each, so the line is
+     worked through while the minute lasts rather than three at a time - and
+     someone still on the page doesn't hold up those behind who left. */
+  const skip = new Set();
+  for (let i = 0; i < 15 && Date.now() - t0 < 20000; i++) {
     const running = await db.prepare('SELECT COUNT(*) AS n FROM scan_queue WHERE startedAt IS NOT NULL').first();
     if ((Number(running && running.n) || 0) >= SCAN_AT_ONCE) break;
-    const first = await db.prepare('SELECT key, lastSeen FROM scan_queue WHERE startedAt IS NULL ORDER BY joinedAt LIMIT 1').first();
-    if (!first || Number(first.lastSeen) >= Date.now() - 20000) break;   // the next one is still on the page: their page starts it
+    const first = await db.prepare(`SELECT key, lastSeen FROM scan_queue WHERE startedAt IS NULL AND lastSeen < ? ${skip.size ? `AND key NOT IN (${[...skip].map(() => '?').join(',')})` : ''} ORDER BY joinedAt LIMIT 1`).bind(Date.now() - 20000, ...skip).first();
+    if (!first) break;   // everyone left in line is on the page: their page starts them
+    skip.add(first.key);
     const c = await db.prepare('UPDATE scan_queue SET startedAt=?, lastSeen=? WHERE key=? AND startedAt IS NULL').bind(Date.now(), Date.now() - SCAN_PAGE_GONE_MS, first.key).run();
     if (!(c && c.meta && c.meta.changes)) continue;
     const u = await db.prepare('SELECT rsUser, hashId, scannedAt, passes FROM swap_users WHERE key=?').bind(first.key).first();
