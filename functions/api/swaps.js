@@ -4743,8 +4743,10 @@ async function handle({ request, env, waitUntil }) {
   // Boosts (BETA) is open to every signed-in member; its calls say page=boosts.
   // Limited to Dennis (admins) while in beta: set BOOSTS_OPEN to open it to everyone signed in.
   const boostCall = BOOSTS_OPEN && url.searchParams.get('page') === 'boosts' && BOOST_OPS.has(op) && !!acc.who;
-  if (!acc.ok && !boostCall) return forbidden(acc.who ? 'Your account does not have this page yet.' : 'Sign in on the board first.');
-  if (!acc.admin && !boostCall && !((acc.swaps && MEMBER_OPS.has(op)) || (acc.otd && OTD_OPS.has(op)))) return forbidden('Your account does not have this.');
+  // Pack data's rating calculator (open to everyone signed in): their passes and the site's one scan.
+  const packCall = url.searchParams.get('page') === 'packs' && ['me', 'scan', 'scanstatus'].includes(op) && !!acc.who;
+  if (!acc.ok && !boostCall && !packCall) return forbidden(acc.who ? 'Your account does not have this page yet.' : 'Sign in on the board first.');
+  if (!acc.admin && !boostCall && !packCall && !((acc.swaps && MEMBER_OPS.has(op)) || (acc.otd && OTD_OPS.has(op)))) return forbidden('Your account does not have this.');
   const me = acc.who;
   if (op === 'tagview') return tagViewOp(env, db, url, acc, waitUntil);
   await ready(db);
@@ -5309,7 +5311,7 @@ async function handle({ request, env, waitUntil }) {
     mark(request, 'names');
     // Boosts only needs how many passes are on file, not the list (or the play counts).
     const lite = url.searchParams.get('page') === 'boosts';
-    const lowP = u && !lite ? await (async () => { try { return [...await lowPlays(env, db, parse(u.passes, []).filter(p => p.kind !== 'team').map(p => p.key))]; } catch (e) { return []; } })() : [];
+    const lowP = u && !lite && url.searchParams.get('page') !== 'packs' ? await (async () => { try { return [...await lowPlays(env, db, parse(u.passes, []).filter(p => p.kind !== 'team').map(p => p.key))]; } catch (e) { return []; } })() : [];
     mark(request, 'plays');
     const cDay = confirmDayNow();
     return json({ confirmShow: Date.now() >= CONFIRM_SHOW_AT, confirmedToday: !!(u && u.confirmDay === cDay), confirmStarts: CONFIRM_FROM_DAY, swapToday: cDay, key: me, admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),

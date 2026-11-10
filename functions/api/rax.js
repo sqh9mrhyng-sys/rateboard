@@ -4267,7 +4267,7 @@ async function handleGet({ request, env, waitUntil }) {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
     if (!['mlb', 'nba', 'nfl', 'ncaaf'].includes(sport)) return json({ error: 'Team packs are MLB, NBA, NFL and CFB.' }, 400);
-    const se = Number(season), K = `pkteams_v3_${sport}_${se}`, L = `pkteams_lock_${sport}_${se}`;
+    const se = Number(season), K = `pkteams_v4_${sport}_${se}`, L = `pkteams_lock_${sport}_${se}`;
     const live = OTD_LIVE_SEASONS.has(`${sport}:${se}`);
     let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
     const fresh = c && Date.now() - c.at < (live ? 86400000 : 30 * 86400000);
@@ -4306,10 +4306,24 @@ async function handleGet({ request, env, waitUntil }) {
             (SELECT playerId, gameId FROM plays WHERE sport=?1 AND season=?2 AND oppTeamId=?3 AND playerId IS NOT NULL LIMIT 60) p
             JOIN gamelog g ON g.sport=?1 AND g.season=?2 AND g.playerId=p.playerId AND g.gameId=p.gameId
            WHERE g.opponent IS NOT NULL AND g.opponent <> '' GROUP BY g.opponent ORDER BY n DESC LIMIT 1`).bind(sport, se, x.teamId).first().catch(() => null);
-        for (let i = 0; i < rows.length; i += 8) {
-          await Promise.all(rows.slice(i, i + 8).map(async (x) => {
+        /* Real's own team ids and codes, from the performances table: one
+           read for the whole season. The per-team lookups above only fill the
+           few it doesn't name (they cost a query each, and a build has a cap
+           on queries - the last teams came back nameless before). */
+        try {
+          await perfReady(db);
+          const pr = await db.prepare(`SELECT teamId, team, COUNT(*) AS n FROM performances
+              WHERE sport=? AND season=? AND teamId IS NOT NULL AND team IS NOT NULL AND team <> ''
+              GROUP BY teamId, team`).bind(sport, se).all();
+          const best = new Map();
+          for (const q of pr.results || []) { const o = best.get(q.teamId); if (!o || q.n > o.n) best.set(q.teamId, q); }
+          for (const x of rows) { const q = best.get(x.teamId); if (q) x.team = q.team; }
+        } catch (e) {}
+        const miss = rows.filter(x => !x.team).slice(0, 30);
+        for (let i = 0; i < miss.length; i += 6) {
+          await Promise.all(miss.slice(i, i + 6).map(async (x) => {
             const g = (await byTeam(x)) || (await byOpp(x));
-            x.team = g && g.c ? String(g.c).replace(/^@\s*|^vs\.?\s*/i, '') : null;
+            x.team = g && g.c ? String(g.c) : null;
           }));
         }
         /* Only real teams: MLB's are ids 108-158 (the WBC nations, the

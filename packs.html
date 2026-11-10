@@ -81,6 +81,22 @@
   .lad td,.lad th{padding:6px 6px}
   .ladbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px}
   .pager{display:flex;gap:8px;align-items:center;justify-content:center;margin-top:10px}
+  .scanbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  .go{background:var(--accent);border-color:var(--accent);color:#141925;font-weight:800}
+  .go:disabled{opacity:.6}
+  .cnow{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline;margin-bottom:10px}
+  .cneed{font-size:22px;font-weight:800;color:var(--accent)}
+  .cways{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+  .cway{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px}
+  .cway b{display:block;font-size:12px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em}
+  .cway .v{font-size:18px;font-weight:800;margin:2px 0}
+  .cway .s{font-size:12.5px;color:var(--mute)}
+  .cent{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--panel2)}
+  .cent .h{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:8px}
+  .cent .h .x{margin-left:auto;padding:3px 9px;font-size:12px}
+  .cent .cways{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .cent .cway{background:var(--panel)}
+  td.pl a.tm{font-weight:800}
   .lock{max-width:460px;margin:12vh auto;text-align:center}
   .empty{padding:18px 6px;text-align:center;color:var(--mute)}
   td.pl .ms{display:none}
@@ -95,6 +111,7 @@
     .dtabs .seg.sm{width:100%} .dtabs .seg.sm button{flex:1}
     tr.det td{padding:8px 6px 12px}
     .ladbar{gap:6px} .ladbar select{width:100%}
+    .cways,.cent .cways{grid-template-columns:1fr 1fr}
   }
 </style>
 </head>
@@ -104,8 +121,8 @@
   <header><h1>Pack data</h1><span data-acct></span><a href="/">Back to home</a></header>
   <div class="warnbox">Opening player packs for Legendary boosters is not profitable outside of football.</div>
   <div class="upd">Pack data updates <b>every day from 11am ET (7am Alaska)</b>, after the morning game-data sweep - <span class="note">NBA, CBB and NHL daily · NFL Fri, Mon, Tue · CFB Sun. Finished seasons don't change.</span></div>
-  <div class="seg" id="tabs"><button data-t="all" aria-pressed="true">All players</button><button data-t="team" aria-pressed="false">Team packs</button><button data-t="fav" aria-pressed="false">★ Favorites <span id="favn"></span></button></div>
-  <section>
+  <div class="seg" id="tabs"><button data-t="all" aria-pressed="true">All players</button><button data-t="team" aria-pressed="false">Team packs</button><button data-t="fav" aria-pressed="false">★ Favorites <span id="favn"></span></button><button data-t="calc" aria-pressed="false">Rating calculator</button></div>
+  <section id="filters">
     <div id="pickrow">
       <div class="note pk-h">Sports - pick any number</div>
       <div class="chips" id="sports"></div>
@@ -120,11 +137,30 @@
       <span class="tgls"><button type="button" id="top" aria-pressed="false">Mystic &amp; Iconic</button><button type="button" id="showrax" aria-pressed="false">Show rax</button><button type="button" id="showown" aria-pressed="false">Show owners</button></span>
     </div>
   </section>
-  <section>
+  <section id="tablesec">
     <p class="note" id="status" style="margin:0 0 8px">Pick a sport and season.</p>
     <div class="scroll"><table><thead id="head"></thead><tbody id="body"></tbody></table></div>
     <div class="pager" id="pager"></div>
   </section>
+  <!-- Rating calculator (Dennis, 2026-11-09): a pass you own, a target rarity,
+       the rating it still needs and what that costs each way. -->
+  <div id="calc" hidden>
+    <section>
+      <div class="scanbar"><button type="button" class="go" id="cscan">Scan account</button><span class="note" id="cscanmsg"></span></div>
+      <div class="ctl" style="margin-top:12px">
+        <label class="wide">Player you own <input id="cq" list="cpl" placeholder="Start typing a player" autocomplete="off"></label>
+        <datalist id="cpl"></datalist>
+        <label>Target rarity <select id="ctgt"></select></label>
+        <label>Starting <input id="cstart" type="date"></label>
+      </div>
+      <div id="cres" style="margin-top:12px"></div>
+    </section>
+    <section>
+      <div class="ladbar" style="justify-content:space-between"><b>Saved entries</b><button type="button" id="cupd">Update based on recent scan</button></div>
+      <p class="note" id="cupdmsg" style="margin:0 0 6px"></p>
+      <div id="csaved"></div>
+    </section>
+  </div>
 </div>
 <script>
 const $ = s => document.querySelector(s);
@@ -226,6 +262,12 @@ function realPlayerUrl(sport, playerId, season){
   return 'https://www.realapp.com/' + hashidsEncode('routing', 11, [kind[0], kind[1], 0, id])
          + (season ? '/' + season : '');
 }
+// A team on Real: [3, sport, 0, team id] + season (from the Dodgers link Dennis shared, 2026-11-09).
+function realTeamUrl(sport, teamId, season){
+  const kind = REAL_SPORT[String(sport || '').toLowerCase()], id = Number(teamId);
+  if(!kind || !Number.isFinite(id) || id <= 0) return null;
+  return 'https://www.realapp.com/' + hashidsEncode('routing', 11, [3, kind[1], 0, id]) + (season ? '/' + season : '');
+}
 
 /* Pack data, its own page (Dennis, 2026-11-09). Rows come from saved copies
    only: finished seasons as site files, the rest from the board's saved
@@ -294,7 +336,8 @@ function enrich(r){ const n = Number(r.plays) || 0;
     avg3: r.avgRating == null ? null : packRating(r.avgRating), boost: avgBooster(r), seasonLbl: `${SP_LBL[r.sport] || r.sport} ${seasonLabel(r.sport, r.season)}` }; }
 function cell(r, k){
   if(k === 'fav') return `<button class="star${isFav(r) ? ' on' : ''}" data-star="${esc(keyOf(r))}" aria-label="Favorite">★</button>`;
-  if(k === 'player' && tab === 'team') return `<b>${esc(r.player)}</b><span class="sub">${(picks.length > 1) ? `<span class="ms">${esc(r.seasonLbl)}</span>` : ''}</span>`;
+  if(k === 'player' && tab === 'team'){ const tu = realTeamUrl(r.sport, r.teamId, r.season);
+    return `${tu ? `<a class="tm" href="${tu}" target="_blank" rel="noopener">${esc(r.player)}</a>` : `<b>${esc(r.player)}</b>`}<span class="sub">${(picks.length > 1) ? `<span class="ms">${esc(r.seasonLbl)}</span>` : ''}</span>`; }
   if(k === 'player'){ const u = realPlayerUrl(r.sport, r.playerId, r.season);
     return `${u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.player || 'Player')}</a>` : esc(r.player || 'Player')}<span class="sub">${esc(r.team || '')}${(tab === 'fav' || picks.length > 1) ? `<span class="ms">${r.team ? ' · ' : ''}${esc(r.seasonLbl)}</span>` : ''}</span>`; }
   if(/Odds$/.test(k)) return `<span class="${{ legOdds: 'lg', epicOdds: 'ep', mysOdds: 'my', iconOdds: 'ic' }[k]}">${pct(r[k])}</span>`;
@@ -473,8 +516,137 @@ $('#body').addEventListener('change', e => { if(e.target.id === 'price'){ price 
 function showTab(t){
   tab = t; document.querySelectorAll('#tabs button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.t === t)));
   $('#pickrow').hidden = t === 'fav';
+  $('#filters').hidden = $('#tablesec').hidden = t === 'calc'; $('#calc').hidden = t !== 'calc';
+  if(t === 'calc') return calcOpen();
   if(t === 'fav') loadFavs(); else reload();
 }
+
+/* ---- Rating calculator (Dennis, 2026-11-09) ------------------------------
+   Your passes from the site's scan (the same scan, and the same once-a-while
+   limit, as Boosts, Swaps and OTD). Pick a player you own and a target
+   rarity: the rating still needed (the target's total less the rating Real
+   shows on the pass), packs at his rating a pack, and what that costs each
+   way. Saved entries keep the rating they were saved with until "Update
+   based on recent scan" is tapped. */
+const CALC_WAYS = [['self', 'Pack a day', 200], ['swap', 'Swaps', 241], ['back160', '160 back', 271], ['full', 'Full price', 415]];
+let ME = null, cPass = null, calcLoaded = false;
+const cKey = () => 'packs_calc_v1:' + ((ME && ME.key) || 'me');
+let cSaved = [];
+const fmtR = v => Number(v).toLocaleString('en-US', { maximumFractionDigits: 2 });
+const dayStr = d => { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+const fmtDay = ds => new Date(ds + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+const addDays = (ds, n) => { const d = new Date(ds + 'T12:00:00'); d.setDate(d.getDate() + n); return dayStr(d); };
+const rarCls = nm => /^Legendary/.test(nm) ? 'lg' : /^Mystic/.test(nm) ? 'my' : /^Iconic/.test(nm) ? 'ic' : nm === 'Epic' ? 'ep' : nm === 'Rare' ? 'ra' : '';
+const myPasses = () => ((ME && ME.profile && ME.profile.passes) || []).filter(p => p.kind !== 'team' && p.id);
+const passLbl = p => `${p.name || 'Player'} · ${SP_LBL[p.sport] || String(p.sport).toUpperCase()} ${seasonLabel(p.sport, p.season)} · ${p.levelLabel || 'General'}`;
+async function loadMe(){ const j = await api('/api/swaps?op=me&page=packs'); if(!j.error) ME = j; return j; }
+function scanLine(){
+  const pr = ME && ME.profile;
+  if(!pr || !pr.scannedAt) return 'No scan on file yet - tap Scan account.';
+  return `${myPasses().length.toLocaleString()} player passes, from your scan of ${new Date(pr.scannedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.`;
+}
+function drawPassList(){
+  $('#cpl').innerHTML = myPasses().slice().sort((a, b) => String(a.name).localeCompare(String(b.name)) || b.season - a.season).map(p => `<option value="${esc(passLbl(p))}"></option>`).join('');
+}
+async function calcOpen(){
+  if(!$('#cstart').value) $('#cstart').value = dayStr(Date.now());
+  if(!calcLoaded){ $('#cscanmsg').textContent = 'Loading your passes…'; const j = await loadMe(); calcLoaded = !j.error;
+    $('#cscanmsg').textContent = j.error ? j.error : scanLine(); cSaved = ls.get(cKey(), []); drawPassList(); }
+  drawSaved();
+}
+// His rating a pack, from the season's pack data (the same rows as the table).
+async function avgOf(sp, se, id){
+  try{ const rs = await seasonRows(sp, se); const r = rs.find(x => Number(x.playerId) === Number(id)); return r && r.avgRating != null ? Number(r.avgRating) : null; }catch(e){ return null; }
+}
+function waysHtml(need, per, start){
+  const packs = Math.ceil(need / per);
+  return `<div class="cways">` + CALC_WAYS.map(([k, l, c]) => `<div class="cway"><b>${l}</b><div class="v">${(packs * c).toLocaleString()}</div><div class="s">${packs.toLocaleString()} pack${packs === 1 ? '' : 's'} × ${c}`
+    + (k === 'self' ? `<br>${packs.toLocaleString()} day${packs === 1 ? '' : 's'} at 1 a day · done ${fmtDay(addDays(start, packs - 1))}` : '')
+    + (k === 'swap' ? `<br>${packs.toLocaleString()} swap${packs === 1 ? '' : 's'} needed` : '') + `</div></div>`).join('') + `</div>`;
+}
+function tgtOptions(rating, keep){
+  const opts = PACK_LADDER.filter(([, , t]) => t > (Number(rating) || 0));
+  return opts.map(([nm, , t]) => `<option value="${esc(nm)}"${nm === keep ? ' selected' : ''}>${nm} · ${t.toLocaleString()}</option>`).join('');
+}
+async function drawCalc(){
+  const p = cPass;
+  if(!p){ $('#cres').innerHTML = ''; $('#ctgt').innerHTML = ''; return; }
+  if(p.rating == null){ $('#cres').innerHTML = '<p class="note">Real didn\'t give this pass a rating in your last scan - scan again.</p>'; return; }
+  const keep = $('#ctgt').value;
+  $('#ctgt').innerHTML = tgtOptions(p.rating, keep);
+  if(!$('#ctgt').value){ $('#cres').innerHTML = '<p class="note">This pass is already at the top rarity.</p>'; return; }
+  const tg = PACK_LADDER.find(x => x[0] === $('#ctgt').value), need = Math.max(0, tg[2] - Number(p.rating));
+  $('#cres').innerHTML = '<p class="note">Reading his pack data…</p>';
+  const avg = await avgOf(p.sport, p.season, p.id);
+  if(cPass !== p) return;
+  const head = `<div class="cnow"><span><b>${esc(p.name)}</b> <span class="note">${esc(SP_LBL[p.sport] || p.sport)} ${esc(seasonLabel(p.sport, p.season))}</span></span>`
+    + `<span class="note">Now <b>${esc(p.levelLabel || 'General')}</b> · ${fmtR(p.rating)} rating</span><span class="note">Target <b class="${rarCls(tg[0])}">${tg[0]}</b> · ${tg[2].toLocaleString()}</span></div>`
+    + `<div class="cnow"><span class="cneed">${fmtR(need)}</span><span class="note">rating needed</span></div>`;
+  if(avg == null){ $('#cres').innerHTML = head + '<p class="note">No pack data for him this season, so no pack count.</p>'; return; }
+  const per = packRating(avg);
+  $('#cres').innerHTML = head + `<p class="note" style="margin:0 0 8px">${avg.toFixed(2)} avg × 3 = ${(avg * 3).toFixed(2)}${avg * 3 < PACK_FLOOR ? `, floored to ${PACK_FLOOR}` : ''} rating a pack</p>`
+    + waysHtml(need, per, $('#cstart').value || dayStr(Date.now()))
+    + `<div style="margin-top:10px"><button type="button" class="go" id="csave">Save entry</button></div>`;
+}
+$('#cq').addEventListener('input', () => { const v = $('#cq').value.trim(); const p = myPasses().find(x => passLbl(x) === v);
+  if(p && p !== cPass){ cPass = p; $('#ctgt').innerHTML = ''; drawCalc(); } else if(!v){ cPass = null; drawCalc(); } });
+$('#ctgt').addEventListener('change', drawCalc);
+$('#cstart').addEventListener('change', () => { if(cPass) drawCalc(); });
+$('#cres').addEventListener('click', e => { if(e.target.id !== 'csave' || !cPass) return; const p = cPass;
+  const ent = { k: p.key, sport: p.sport, season: Number(p.season), id: Number(p.id), name: p.name, rating: Number(p.rating), label: p.levelLabel || 'General',
+    target: $('#ctgt').value, start: $('#cstart').value || dayStr(Date.now()), scanAt: (ME.profile && ME.profile.scannedAt) || null, savedAt: Date.now() };
+  cSaved = cSaved.filter(x => !(x.k === ent.k && x.target === ent.target)).concat(ent); ls.set(cKey(), cSaved);
+  e.target.textContent = 'Saved'; e.target.disabled = true; drawSaved(); });
+async function drawSaved(){
+  if(!cSaved.length){ $('#csaved').innerHTML = '<p class="note">Nothing saved yet - work one out above and tap Save entry.</p>'; return; }
+  const out = [];
+  for(const x of cSaved){
+    const tg = PACK_LADDER.find(l => l[0] === x.target); if(!tg) continue;
+    const need = Math.max(0, tg[2] - x.rating), avg = await avgOf(x.sport, x.season, x.id);
+    out.push(`<div class="cent"><div class="h"><b>${esc(x.name)}</b><span class="note">${esc(SP_LBL[x.sport] || x.sport)} ${esc(seasonLabel(x.sport, x.season))}</span>`
+      + `<span class="note">${esc(x.label)} → <b class="${rarCls(tg[0])}">${tg[0]}</b> · ${fmtR(x.rating)} rating${x.scanAt ? ` (scan of ${new Date(x.scanAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})` : ''}</span>`
+      + `<button type="button" class="x" data-cdel="${esc(x.k + '|' + x.target)}">Remove</button></div>`
+      + (need <= 0 ? '<p class="note" style="margin:0"><b style="color:var(--ok)">Reached.</b></p>'
+        : `<div class="cnow"><span class="cneed" style="font-size:18px">${fmtR(need)}</span><span class="note">rating needed · started ${fmtDay(x.start)}</span></div>`
+          + (avg == null ? '<p class="note" style="margin:0">No pack data for him this season.</p>' : waysHtml(need, packRating(avg), x.start)))
+      + '</div>');
+  }
+  $('#csaved').innerHTML = out.join('');
+}
+$('#csaved').addEventListener('click', e => { const b = e.target.closest('[data-cdel]'); if(!b) return;
+  cSaved = cSaved.filter(x => x.k + '|' + x.target !== b.dataset.cdel); ls.set(cKey(), cSaved); drawSaved(); });
+// Saved entries move only when asked: each takes its pass's rating from the latest scan.
+$('#cupd').addEventListener('click', async () => {
+  if(!cSaved.length){ $('#cupdmsg').textContent = 'No saved entries to update.'; return; }
+  $('#cupdmsg').textContent = 'Reading your latest scan…';
+  const j = await loadMe(); if(j.error){ $('#cupdmsg').textContent = j.error; return; }
+  const by = new Map(myPasses().map(p => [p.key, p])); let n = 0, gone = 0;
+  for(const x of cSaved){ const p = by.get(x.k); if(!p){ gone++; continue; } if(p.rating != null){ if(Number(p.rating) !== x.rating || (p.levelLabel || 'General') !== x.label) n++; x.rating = Number(p.rating); x.label = p.levelLabel || 'General'; x.scanAt = ME.profile.scannedAt || x.scanAt; } }
+  ls.set(cKey(), cSaved); drawPassList(); $('#cscanmsg').textContent = scanLine();
+  $('#cupdmsg').textContent = `${n} entr${n === 1 ? 'y' : 'ies'} changed from your scan of ${new Date(ME.profile.scannedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.` + (gone ? ` ${gone} no longer in your passes (kept as saved).` : '');
+  drawSaved();
+});
+// The site's one scan, in parts, as on Boosts and Swaps (its wait between scans is the server's, shared by every page).
+async function packScan(onPart){
+  let part = 0, j, waits = 0;
+  for(let i = 0; i < 60; i++){
+    j = await api(`/api/swaps?op=scan&part=${part}&page=packs`);
+    if(j && j.queued){ if(onPart) onPart(j); await new Promise(r => setTimeout(r, 4000)); i--; if(++waits > 900) return { error: 'The scan line is very long right now - try again later.' }; continue; }
+    if(j && j.busy){ await new Promise(r => setTimeout(r, 3000)); i--; if(++waits > 900) return { error: 'Try again in a minute.' }; continue; }
+    if(!j || j.error || j.done) return j || { error: 'Could not reach the board.' };
+    if(onPart) onPart(j); part = j.next;
+  }
+  return { error: 'The scan took too long - try again.' };
+}
+$('#cscan').addEventListener('click', async () => {
+  $('#cscan').disabled = true; $('#cscanmsg').textContent = 'Scans typically take 25 seconds, longer at high website volume.';
+  const j = await packScan(p => { $('#cscanmsg').textContent = p.queued ? `You're #${p.position} in the scan line - about ${p.wait}. Your scan keeps running if you leave.` : 'Scans typically take 25 seconds, longer at high website volume.'; });
+  $('#cscan').disabled = false;
+  if(j.error){ $('#cscanmsg').textContent = j.error; return; }
+  await loadMe(); drawPassList();
+  if(cPass){ const p = myPasses().find(x => x.key === cPass.key); if(p){ cPass = p; drawCalc(); } }
+  $('#cscanmsg').textContent = j.cached ? j.note : scanLine() + ' Saved entries keep their rating until you tap Update based on recent scan.';
+});
 $('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if(b) showTab(b.dataset.t); });
 
 (async () => {
