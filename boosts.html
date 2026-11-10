@@ -255,6 +255,7 @@
       <div class="note" id="allhead"></div>
       <div class="cum" id="allcum" hidden></div>
       <button class="sm copybtn" id="allcopy" type="button" hidden>Copy boosts</button>
+      <button class="sm hidestart" id="allhidestart" type="button" aria-pressed="false">Hide games that already started</button>
       <button class="sm simplebtn" id="allfullbtn" type="button" aria-pressed="false">View full layout</button>
       <button class="sm simplebtn boxlinkbtn" type="button" aria-pressed="false">Whole box opens the player: off</button>
       <div class="sum" id="allsum"></div>
@@ -263,7 +264,7 @@
     <section id="out" hidden>
       <div class="note" id="outhead"></div>
       <button class="sm copybtn" id="copybtn" type="button" hidden>Copy boosts</button>
-      <button class="sm hidestart" id="hidestart" type="button" hidden aria-pressed="false">Hide games that already started</button>
+      <button class="sm hidestart" id="hidestart" type="button" aria-pressed="false">Hide games that already started</button>
       <button class="sm simplebtn" id="simplebtn" type="button" aria-pressed="false">View simple layout</button>
       <button class="sm simplebtn boxlinkbtn" type="button" aria-pressed="false">Whole box opens the player: off</button>
       <div id="simple" class="simple-list"></div>
@@ -712,9 +713,8 @@ async function run(){
   try{ localStorage.setItem('boosts_pick_v1', JSON.stringify({ sport: sp, mode })); }catch(e){} saveMode(sp, mode);
   $('#run').disabled = true; $('#out').hidden = false; $('#copybtn').hidden = true; copyText = ''; $('#rows').innerHTML = ''; $('#simple').innerHTML = ''; $('#sum').innerHTML = ''; $('#foot').textContent = '';
   $('#outhead').textContent = 'Working it out…';
-  const j = await api(`/api/swaps?op=boostplan&page=boosts&sport=${sp}&date=${day}&mode=${mode}` + (mode === 'custom' ? cusQuery() : '') + (sp === 'soccer' && hideStarted() ? '&upcoming=1' : ''));
-  $('#hidestart').hidden = sp !== 'soccer'; $('#hidestart').setAttribute('aria-pressed', String(hideStarted()));
-  $('#hidestart').textContent = hideStarted() ? `✓ Hiding games that started${j.started ? ` (${j.started})` : ''}` : 'Hide games that already started';
+  const j = await api(`/api/swaps?op=boostplan&page=boosts&sport=${sp}&date=${day}&mode=${mode}` + (mode === 'custom' ? cusQuery() : '') + (hideStarted() ? '&upcoming=1' : ''));
+  $('#hidestart').hidden = false; paintHide(j.started);
   $('#run').disabled = false;
   if(j.error){ $('#outhead').textContent = j.error; return; }
   const rows = j.rows || [];
@@ -828,7 +828,7 @@ async function runAll(reuse){
     if(sp === 'nfl' && ![0, 1, 4].includes(wd)) return { sp, lbl, m, skip: 'No NFL games - NFL plays Thursday, Sunday and Monday.' };
     const date = sp === 'golf' ? golfEv && golfEv.day : day;
     if(!date) return { sp, lbl, m, skip: 'No tournament that day.' };
-    const j = await api(`/api/swaps?op=boostplan&page=boosts&sport=${sp}&date=${date}&mode=${m}` + (m === 'custom' ? cusQueryFor(sp) : '') + (sp === 'soccer' && hideStarted() ? '&upcoming=1' : ''));
+    const j = await api(`/api/swaps?op=boostplan&page=boosts&sport=${sp}&date=${date}&mode=${m}` + (m === 'custom' ? cusQueryFor(sp) : '') + (hideStarted() ? '&upcoming=1' : ''));
     return { sp, lbl, m, j, date };
   }));
   if(ask !== allAsk) return;
@@ -868,6 +868,7 @@ async function runAll(reuse){
       return `<div class="srow${on ? ' boosted' : ''}"${u ? ` data-href="${esc(u)}"` : ''}><span class="snm">${u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.name)}</a>` : esc(r.name)}</span><span class="smeta"><span class="spl">${x.lbl}</span><span class="b ${r.boost}">${LBL[r.boost]}</span><b class="sat">${esc(r.best.label)}</b>${r.withBoost != null ? `<span class="note">${Math.round(r.withBoost)} proj</span>` : ''}${(r.flags || []).length ? `<span class="flag" style="display:inline">⚠ ${esc(r.flags[0])}</span>` : ''}</span><button class="bdone${on ? ' on' : ''}" data-alldone="${esc(dk)}" data-done="${esc(k)}" aria-label="Boosted" title="Mark as boosted"></button></div>`; }).join('') + '</div>' : '')
     + (quiet.length ? `<div class="allnone">${quiet.map(esc).join('<br>')}</div>` : '');
   allCum = res; drawCum();
+  paintHide(res.reduce((t, x) => t + ((x.j && x.j.started) || 0), 0));
   const dl = $('#day').selectedOptions[0] ? $('#day').selectedOptions[0].textContent : day;
   if(err && !anyPlay && res.every(x => x.skip || (x.j && x.j.error))){ $('#allhead').textContent = err; return; }
   $('#allhead').textContent = `All sports · ${dl} · ${copyRows.length} boost${copyRows.length === 1 ? '' : 's'}` + (h.size ? ` · ${h.size} sport${h.size === 1 ? '' : 's'} hidden` : '');
@@ -897,9 +898,13 @@ $('#copybtn').addEventListener('click', async () => {
   b.textContent = (await copyOut(copyText)) ? '✓ Copied' : 'Copy failed - long-press to select instead';
   setTimeout(() => { b.textContent = was; }, 1800);
 });
-// FC: leave out games that have kicked off (their boosters go to games still to come). Remembered in this browser.
-const hideStarted = () => { try{ return localStorage.getItem('boosts_fc_hidestart_v1') === '1'; }catch(e){ return false; } };
-$('#hidestart').addEventListener('click', () => { try{ localStorage.setItem('boosts_fc_hidestart_v1', hideStarted() ? '0' : '1'); }catch(e){} run(); });
+/* Leave out games that have started (their boosters go to games still to come), every sport and
+   All sports (2026-11-09; was FC only). One setting for the whole page, remembered in this browser. */
+const hideStarted = () => { try{ const v = localStorage.getItem('boosts_hidestart_v1'); return v != null ? v === '1' : localStorage.getItem('boosts_fc_hidestart_v1') === '1'; }catch(e){ return false; } };
+function paintHide(started){ const on = hideStarted();
+  document.querySelectorAll('.hidestart').forEach(b => { b.setAttribute('aria-pressed', String(on)); b.textContent = on ? `✓ Hiding games that already started${started ? ` (${started})` : ''}` : 'Hide games that already started'; }); }
+document.querySelectorAll('.hidestart').forEach(b => b.addEventListener('click', () => { try{ localStorage.setItem('boosts_hidestart_v1', hideStarted() ? '0' : '1'); }catch(e){} paintHide(); if(shown()) run(); }));
+paintHide();
 // FC: competition names and the lineup chip on each row.
 const FC_LG = { 'eng.1': 'Premier League', 'eng.2': 'Championship', 'esp.1': 'La Liga', 'ita.1': 'Serie A', 'ger.1': 'Bundesliga', 'fra.1': 'Ligue 1', 'mex.1': 'Liga MX', 'uefa.champions': 'Champions League', 'uefa.europa': 'Europa League', 'uefa.nations': 'Nations League', 'fifa.worldq.uefa': 'WC qualifier', 'fifa.world': 'World Cup' };
 function luChip(r){

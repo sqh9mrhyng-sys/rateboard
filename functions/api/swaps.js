@@ -6103,6 +6103,9 @@ async function handle({ request, env, waitUntil }) {
         }
       }
     } catch (e) {}
+    // "Hide games that already started", every sport (Dennis, 2026-11-09; FC had it already, above):
+    // those players come off before boosters are handed out, so they go to games still to come.
+    if (sp !== 'soccer' && url.searchParams.get('upcoming') === '1') { const now = Date.now(), n0 = rows.length; rows = rows.filter(r => !(r.at && Date.parse(r.at) <= now)); if (sched) sched.started = n0 - rows.length; }
     const pinOf = r => sp === 'ncaam' && CBB_PIN[r.id] && !r.skip ? CBB_PIN[r.id] : null;
     rows.sort((a, b) => (a.skip - b.skip) || (((pinOf(a) || [99])[0]) - ((pinOf(b) || [99])[0]))
       || ((a.noData ? 1 : 0) - (b.noData ? 1 : 0)) || ((b.proj ?? -1) - (a.proj ?? -1)));
