@@ -941,7 +941,7 @@ function applyGameDataVisibility(){
   if(sel){
     // Options are added and taken away rather than hidden: a hidden option
     // still shows in Safari's picker.
-    const want = [...(otdOn ? [['home', 'Home (new)']] : []), ['board', 'Board'], ...(canSeePackData() ? [['cbb', 'Game data']] : []),
+    const want = [['home', 'Home'], ['board', 'Board'], ...(canSeePackData() ? [['cbb', 'Game data']] : []),
                   ...(marketAccess ? [['market', 'Market data']] : []),
                   ...(boostsOn ? [['boosts', 'Boosts/Buys (beta)']] : []), ['projections', 'Projections'], ['tags', 'Tag finder'],   // projections everyone (2026-11-08); tag finder everyone (2026-11-09)
                   ...(swapsOn ? [['swaps', 'Swaps (beta)']] : []), ...(otdOn ? [['otd', 'OTD optimization'], ['admin', 'Admin']] : [])];

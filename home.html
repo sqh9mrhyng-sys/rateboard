@@ -84,8 +84,7 @@
 <div class="menu acctmenu hide" id="acctmenu" role="menu"></div>
 
 <script>
-/* Home (Dennis, 2026-11-09): the new front page, Dennis only while he shapes
-   it. Row 1 is one dropdown to every page; row 2 is the account bar - the
+/* Home (Dennis, 2026-11-09): the new front page, open to everyone signed in. Row 1 is one dropdown to every page; row 2 is the account bar - the
    active account, every account signed in on this browser (tap to switch, or
    add one), and Sign out. It uses the same saved accounts as the board. */
 const $ = s => document.querySelector(s);
@@ -102,21 +101,24 @@ const api = async (u, o = {}) => { try{ const t = getToken(); const r = await fe
 // Every page on the site. Board and game data live on the board page.
 const PAGES = [
   ['/home', 'Home', 'This page'],
-  ['/', 'Board', 'Buy offers for Real cards - post, browse and sell', true],
-  ['/#gamedata', 'Game data', 'Every game log, rax and box score'],
-  ['/market', 'Market data', 'Recent sales and prices'],
+  ['/', 'Board', 'Buy offers for Real cards - post, browse and sell'],
+  ['/#gamedata', 'Game data', 'Every game log, rax and box score', 'admin'],
+  ['/market', 'Market data', 'Recent sales and prices', 'market'],
   ['/swaps', 'Swaps', 'Trade passes with other members, matched every hour'],
   ['/boosts', 'Boosts/Buys', 'Which boosters to use each day, and what to buy'],
   ['/projections', 'Projections', 'Projected rax for the rest of the regular season'],
   ['/tags', 'Tag finder', 'Every game that earned a performance tag'],
-  ['/otd', 'OTD optimization', 'On-this-day claims and upgrades'],
-  ['/admin', 'Admin', 'Users, reports, traffic and sponsors', false, true]
+  ['/otd', 'OTD optimization', 'On-this-day claims and upgrades', 'admin'],
+  ['/admin', 'Admin', 'Users, reports, traffic and sponsors', 'admin']
 ];
+// Pages behind access only show to those who have it (Dennis opened Home to everyone, 2026-11-09).
+let ACC = {};
+const canOpen = p => !p[3] || ACC.admin || (p[3] === 'market' && ACC.access);
 
 // The tiles' order: moved with the arrows, kept in this browser.
 const ORDER = 'rb_home_order_v1';
 function tileList(){
-  const list = PAGES.filter(p => p[0] !== '/home');
+  const list = PAGES.filter(p => p[0] !== '/home' && canOpen(p));
   let o = []; try{ o = JSON.parse(ls.get(ORDER) || '[]') || []; }catch(e){}
   const pos = h => { const i = o.indexOf(h); return i < 0 ? 1e3 + list.findIndex(p => p[0] === h) : i; };
   return list.slice().sort((a, b) => pos(a[0]) - pos(b[0]));
@@ -205,9 +207,12 @@ $('#signout').addEventListener('click', async () => {
 });
 
 (async () => {
-  if(!getToken()){ $('#lockmsg').innerHTML = 'Sign in on <a href="/">the board</a> first.'; return; }
-  const j = await api('/api/rax?market=me');
-  if(!j.admin){ $('#lockmsg').innerHTML = j.signedIn ? 'This page isn\'t open yet - <a href="/">back to the board</a>.' : 'Sign in on <a href="/">the board</a> first.'; return; }
+  const signIn = 'Sign in on <a href="/">the board</a> first.';
+  if(!getToken()){ $('#lockmsg').innerHTML = signIn; return; }
+  let j = await api('/api/rax?market=me');
+  for(let i = 0; i < 2 && !j.signedIn && !j.error; i++){ await new Promise(r => setTimeout(r, 1000 * (i + 1))); j = await api('/api/rax?market=me'); }
+  if(!j.signedIn){ $('#lockmsg').innerHTML = j.error && !/sign in/i.test(j.error) ? esc(j.error) : signIn; return; }
+  ACC = j;
   const d = loadDevice();
   $('#me').textContent = (d && (d.name || d.key)) || '';
   drawNav();
