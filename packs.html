@@ -132,7 +132,7 @@
   <header><h1>Pack data</h1><span data-acct></span><a href="/">Back to home</a></header>
   <div class="warnbox">Opening player packs for Legendary boosters is not profitable outside of football.</div>
   <div class="upd">Pack data updates <b>every day from 11am ET (7am Alaska)</b>, after the morning game-data sweep - <span class="note">NBA, CBB and NHL daily · NFL Fri, Mon, Tue · CFB Sun. Finished seasons don't change.</span></div>
-  <div class="seg" id="tabs"><button data-t="all" aria-pressed="true">All players</button><button data-t="team" aria-pressed="false">Team packs</button><button data-t="fav" aria-pressed="false">★ Favorites <span id="favn"></span></button><button data-t="calc" aria-pressed="false">Rating calculator</button></div>
+  <div class="seg" id="tabs"><button data-t="all" aria-pressed="true">All players</button><button data-t="team" aria-pressed="false" id="teamtab" hidden>Team packs</button><button data-t="fav" aria-pressed="false">★ Favorites <span id="favn"></span></button><button data-t="calc" aria-pressed="false">Rating calculator</button></div>
   <section id="filters">
     <div id="pickrow">
       <div class="note pk-h">Sports - pick any number</div>
@@ -685,6 +685,7 @@ $('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]
   if(!me.signedIn) return lock('Sign in on <a href="/board">the board</a> first.');
   // Open to everyone signed in (Dennis, 2026-11-09).
   $('#main').hidden = false; paintFavN();
+  $('#teamtab').hidden = !me.admin;   // Team packs: Dennis only for now (2026-11-09)
   try{ const m = ls.get('packs_min_v1', null); if(m != null) $('#min').value = m; }catch(e){}
   const s = await api('/api/rax?plays=seasons');
   seasons = (s.seasons || []).filter(x => Number(x.plays) > 0);

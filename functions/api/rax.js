@@ -8455,7 +8455,8 @@ export async function onRequestGet(ctx) {
   /* Team packs on /packs: public. The endpoint keeps its own KV copy (and a
      build lock), and answers {building:true} while one builds - so it is
      routed here rather than through the edge cache, which would keep that. */
-  if (url.searchParams.get('plays') === 'teams' && !WRITE_FLAGS.some(f => url.searchParams.get(f))) {
+  // Private again for now (Dennis, 2026-11-09: the numbers aren't right yet) - admins only until it is.
+  if (url.searchParams.get('plays') === 'teams' && !WRITE_FLAGS.some(f => url.searchParams.get(f)) && await isAdminRequest(env, request)) {
     if (!(await allow(origin, 'pkteams:' + clientIp(request), 60, 600))) return json({ error: 'Too many requests - try again in a few minutes.' }, 429);
     return handleGet(ctx);
   }
