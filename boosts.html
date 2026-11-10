@@ -83,7 +83,7 @@
   .allhd b{font-size:17px}
   .allsp .none{color:var(--mute);font-size:13px}
   .allnone{margin-top:12px;color:var(--mute);font-size:13px;line-height:1.6}
-  .srow .spl{font-size:11px;font-weight:800;letter-spacing:.04em;color:var(--mute);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+  .spl{margin-left:4px;font-size:11px;font-weight:800;letter-spacing:.04em;color:var(--mute);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
   body.boxlink .srow[data-href]{cursor:pointer}
   body.boxlink .srow[data-href]:hover{border-color:var(--accent)}
   /* Tick off each boost as it's put on (Dennis, 2026-11-07). */
@@ -223,6 +223,7 @@
     <section id="allout" hidden>
       <div class="note" id="allhead"></div>
       <button class="sm copybtn" id="allcopy" type="button" hidden>Copy boosts</button>
+      <button class="sm simplebtn" id="allfullbtn" type="button" aria-pressed="false">View full layout</button>
       <button class="sm simplebtn boxlinkbtn" type="button" aria-pressed="false">Whole box opens the player: off</button>
       <div class="sum" id="allsum"></div>
       <div id="alllist"></div>
@@ -751,7 +752,8 @@ $('#allshow').addEventListener('click', e => { const b = e.target.closest('[data
 let allCopy = '', allAsk = 0;
 const RANKR = { legendary: 0, epic: 1, rare: 2 }, HEARTS = { legendary: '💜', epic: '❤️', rare: '🧡' };
 const passUrl = (sp, r, j) => r.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(r.passId)]) : realPlayerUrl(sp, r.id, r.season || j.season);
-async function runAll(){
+let allLast = null;
+async function runAll(reuse){
   const day = $('#day').value, ask = ++allAsk;
   $('#out').hidden = true; $('#allout').hidden = false; $('#allcopy').hidden = true; allCopy = ''; $('#allsum').innerHTML = ''; $('#alllist').innerHTML = '';
   if(!day){ $('#allhead').textContent = 'Pick a day.'; return; }
@@ -764,7 +766,8 @@ async function runAll(){
     const g = daysCache.golf || await api('/api/swaps?op=boostdays&page=boosts&sport=golf'); if(!g.error) daysCache.golf = g;
     golfEv = ((g && g.days) || []).find(d => d.day <= day && (Date.parse(day) - Date.parse(d.day)) / 86400000 <= 3) || null;
   }
-  const res = await Promise.all(list.map(async ([sp, lbl]) => {
+  const key = day + '|' + list.map(x => x[0] + ':' + modeFor(x[0])).join(',');
+  const res = reuse === true && allLast && allLast.key === key ? allLast.res : await Promise.all(list.map(async ([sp, lbl]) => {
     const m = modeFor(sp);
     if(sp === 'nfl' && ![0, 1, 4].includes(wd)) return { sp, lbl, m, skip: 'No NFL games - NFL plays Thursday, Sunday and Monday.' };
     const date = sp === 'golf' ? golfEv && golfEv.day : day;
@@ -773,6 +776,7 @@ async function runAll(){
     return { sp, lbl, m, j, date };
   }));
   if(ask !== allAsk) return;
+  allLast = { key, res };
   $('#run').disabled = false;
   const tot = { legendary: 0, epic: 0, rare: 0 }, copyRows = [], quiet = [];
   let err = null, anyPlay = 0;
@@ -791,8 +795,20 @@ async function runAll(){
   const val = r => Number(r.withBoost != null ? r.withBoost : r.proj) || 0;
   copyRows.sort((a, b) => RANKR[a[1].boost] - RANKR[b[1].boost] || val(b[1]) - val(a[1]));
   const doneOf = {};
-  $('#alllist').innerHTML = (copyRows.length ? '<div class="allsp">' + copyRows.map(([sp, r, j, x]) => {
-      const dk = sp + ':' + x.date, done = doneOf[dk] || (doneOf[dk] = loadDone(dk)), u = passUrl(sp, r, j), k = doneKey(r), on = done.has(k);
+  const dOf = (sp, x) => { const dk = sp + ':' + x.date; return [dk, doneOf[dk] || (doneOf[dk] = loadDone(dk))]; };
+  // Full layout: the same table as a sport's own tab, one table for every sport.
+  const full = allFull() && copyRows.length ? '<div class="scroll"><table class="cards"><thead><tr><th>Rarity</th><th>Player</th><th style="text-align:left">Boost</th><th style="text-align:left">Game</th><th>Avg rax</th><th>Proj rax</th><th>Proj w/ boost</th></tr></thead><tbody>'
+    + copyRows.map(([sp, r, j, x]) => { const [dk, done] = dOf(sp, x), u = passUrl(sp, r, j), k = doneKey(r), on = done.has(k), golf = sp === 'golf';
+      const one = o => esc(o.label) + (o.avg != null ? ` <span class="note">${o.avg}/${o.gain}</span>` : '');
+      return `<tr class="${on ? 'boosted' : ''}"><td data-l="Rarity"><span class="b ${r.boost}">${LBL[r.boost]}</span></td>
+        <td data-l="Player" class="pc">${u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.name)}</a>` : esc(r.name)} <span class="spl">${x.lbl}</span><span class="sub">${esc([r.pos, r.team].filter(Boolean).join(' · '))}${r.basis ? ' · ' + esc(r.basis) : ''}</span>${(r.flags || []).map(f => `<span class="flag">⚠ ${esc(f)}</span>`).join('')}</td>
+        <td data-l="Boost" class="bcell" style="text-align:left;white-space:normal"><b>${one(r.best)}</b>${r.alt ? `<span class="sub">or ${one(r.alt)}</span>` : ''}<button class="bdone${on ? ' on' : ''}" data-alldone="${esc(dk)}" data-done="${esc(k)}" aria-label="Boosted" title="Mark as boosted"></button></td>
+        <td data-l="${golf ? 'Event' : 'Game'}" style="text-align:left">${golf ? esc(r.opp) : `${r.home ? 'vs' : '@'} ${esc(r.opp || '')}`}<span class="sub">${golf ? '' : tm(r.at)}${sp === 'soccer' && FC_LG[r.lg] ? ' · ' + FC_LG[r.lg] : ''}</span>${sp === 'soccer' ? luChip(r) : ''}</td>
+        <td data-l="${golf ? 'Form' : 'Avg rax'}">${r.avg != null ? r.avg + `<span class="sub">${r.games} ${golf ? 'event' : 'game'}${r.games === 1 ? '' : 's'}${r.avgLast != null ? (golf ? ' · here ' : ' · last yr ') + r.avgLast : ''}</span>` : r.avgLast != null ? `–<span class="sub">${golf ? 'here' : 'last yr'} ${r.avgLast}</span>` : '–'}</td>
+        <td data-l="Proj rax">${r.proj == null ? 'no data' : r.proj}</td>
+        <td data-l="Proj w/ boost"><b>${r.withBoost != null ? Math.round(r.withBoost).toLocaleString() : (r.proj ?? '–')}</b>${r.withBoost != null ? `<span class="sub">${r.proj} × ${r.mult} + ${(r.best && r.best.gain) || 0}</span>` : ''}</td></tr>`; }).join('') + '</tbody></table></div>' : '';
+  $('#alllist').innerHTML = full ? full + (quiet.length ? `<div class="allnone">${quiet.map(esc).join('<br>')}</div>` : '') : (copyRows.length ? '<div class="allsp">' + copyRows.map(([sp, r, j, x]) => {
+      const [dk, done] = dOf(sp, x), u = passUrl(sp, r, j), k = doneKey(r), on = done.has(k);
       return `<div class="srow${on ? ' boosted' : ''}"${u ? ` data-href="${esc(u)}"` : ''}><span class="snm">${u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.name)}</a>` : esc(r.name)}</span><span class="smeta"><span class="spl">${x.lbl}</span><span class="b ${r.boost}">${LBL[r.boost]}</span><b class="sat">${esc(r.best.label)}</b>${r.withBoost != null ? `<span class="note">${Math.round(r.withBoost)} proj</span>` : ''}${(r.flags || []).length ? `<span class="flag" style="display:inline">⚠ ${esc(r.flags[0])}</span>` : ''}</span><button class="bdone${on ? ' on' : ''}" data-alldone="${esc(dk)}" data-done="${esc(k)}" aria-label="Boosted" title="Mark as boosted"></button></div>`; }).join('') + '</div>' : '')
     + (quiet.length ? `<div class="allnone">${quiet.map(esc).join('<br>')}</div>` : '');
   const dl = $('#day').selectedOptions[0] ? $('#day').selectedOptions[0].textContent : day;
@@ -807,7 +823,13 @@ $('#allcopy').addEventListener('click', async () => { if(!allCopy) return; const
 $('#allout').addEventListener('click', e => { const b = e.target.closest('.bdone'); if(!b) return;
   const dk = b.dataset.alldone, k = b.dataset.done, set = loadDone(dk), on = !set.has(k);
   on ? set.add(k) : set.delete(k); try{ localStorage.setItem('boost_done_' + dk, JSON.stringify([...set])); }catch(err){}
-  b.classList.toggle('on', on); b.closest('.srow').classList.toggle('boosted', on); });
+  b.classList.toggle('on', on); b.closest('.srow, tr').classList.toggle('boosted', on); });
+/* All sports, full layout (Dennis, 2026-11-09): the table instead of the list. Remembered in this browser. */
+function allFull(){ try{ return localStorage.getItem('boosts_allfull_v1') === '1'; }catch(e){ return false; } }
+function paintAllFull(){ const on = allFull(); $('#allfullbtn').setAttribute('aria-pressed', String(on)); $('#allfullbtn').textContent = on ? 'View simple layout' : 'View full layout';
+  document.querySelectorAll('#allout .boxlinkbtn').forEach(b => { b.hidden = on; }); }
+$('#allfullbtn').addEventListener('click', () => { try{ localStorage.setItem('boosts_allfull_v1', allFull() ? '0' : '1'); }catch(e){} paintAllFull(); if(!$('#allout').hidden) runAll(true); });
+paintAllFull();
 async function copyOut(t){
   try{ await navigator.clipboard.writeText(t); return true; }catch(e){}
   try{ const a = document.createElement('textarea'); a.value = t; a.setAttribute('readonly', ''); a.style.position = 'fixed'; a.style.opacity = '0'; document.body.appendChild(a); a.select(); const ok = document.execCommand('copy'); a.remove(); return ok; }catch(e){ return false; }
