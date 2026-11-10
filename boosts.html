@@ -70,6 +70,18 @@
   .srow .bdone{position:static;transform:none;grid-column:2;grid-row:1 / span 2;width:48px;height:48px}
   .srow.boosted .snm, .srow.boosted .smeta{opacity:.4}
   .hidestart[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
+  /* All sports (2026-11-09): a tab as wide as the sport tabs together, above them. */
+  .sportcol{display:inline-flex;flex-direction:column;gap:6px}
+  .allseg{display:flex} .allseg button{flex:1;font-weight:700}
+  .allctl{margin-top:10px}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+  .chips button{padding:6px 12px;border-radius:999px;font-size:13px}
+  .chips button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);font-weight:700}
+  .chips button[aria-pressed="false"]{opacity:.55;text-decoration:line-through}
+  .allsp{margin-top:14px}
+  .allhd{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:8px}
+  .allhd b{font-size:17px}
+  .allsp .none{color:var(--mute);font-size:13px}
   /* Tick off each boost as it's put on (Dennis, 2026-11-07). */
   td.bcell{position:relative;padding-right:64px!important}
   .bdone{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:48px;height:48px;border-radius:12px;border:2px solid var(--line);background:var(--panel);color:transparent;font-size:30px;line-height:1;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
@@ -147,6 +159,7 @@
   .note.sub{margin:10px 0 0;font-size:12.5px}
   @media (max-width: 680px){
     .tabsrow{flex-direction:column}
+    .sportcol{display:flex}
     select,button,input{min-height:44px}
     .seg button{min-height:44px}
     .ctl label{flex:none}
@@ -157,14 +170,15 @@
 <div class="lock" id="lock" hidden><h1>Boosts &amp; Buys <span class="beta">BETA</span></h1><p class="note" id="lockmsg">Checking…</p><p id="signinbtn" hidden><a class="btn" href="/" style="display:inline-block;padding:10px 14px;border-radius:9px;background:#E8A33D;color:#141925;font-weight:700;text-decoration:none">Sign in on the board</a></p><p class="note" id="signinhint" hidden>Signed in already? Open the board once - it will ask for your password one more time, then this page works. Opened this from inside Real? Use the browser you signed in with.</p><p><a href="/home">Back to home</a></p></div>
 <div class="wrap" id="main" hidden>
   <header><h1>Boosts &amp; Buys</h1><span class="beta">BETA</span><a href="/home" style="margin-left:auto">Back to home</a></header>
-  <div class="tabsrow"><div class="seg" id="sportseg"><button data-s="ncaam" aria-pressed="true">CBB</button><button data-s="ncaaf" aria-pressed="false">CFB</button><button data-s="nfl" aria-pressed="false">NFL</button><button data-s="nba" aria-pressed="false">NBA</button><button data-s="nhl" aria-pressed="false">NHL</button><button data-s="golf" aria-pressed="false">Golf</button><button data-s="soccer" aria-pressed="false">FC</button></div>
+  <div class="tabsrow"><div class="sportcol"><div class="seg allseg" id="allseg"><button data-s="all" aria-pressed="false">All sports</button></div><div class="seg" id="sportseg"><button data-s="ncaam" aria-pressed="true">CBB</button><button data-s="ncaaf" aria-pressed="false">CFB</button><button data-s="nfl" aria-pressed="false">NFL</button><button data-s="nba" aria-pressed="false">NBA</button><button data-s="nhl" aria-pressed="false">NHL</button><button data-s="golf" aria-pressed="false">Golf</button><button data-s="soccer" aria-pressed="false">FC</button></div></div>
   <div class="seg" id="tab"><button data-t="boosts" aria-pressed="true">Boosts</button><button data-t="buys" aria-pressed="false" id="tab2">Buys</button></div></div>
 
   <div id="t-boosts">
     <section>
       <div class="ctl">
         <label class="note"><span id="daylbl">Day</span> <select id="day"></select></label>
-        <select id="sport" hidden><option value="ncaam">CBB 2026-27</option><option value="ncaaf">CFB 2026</option><option value="nfl">NFL 2026</option><option value="nba">NBA 2026-27</option><option value="nhl">NHL 2026-27</option><option value="golf">Golf 2026</option><option value="soccer">FC 2026-27</option></select>
+        <select id="sport" hidden><option value="all">All sports</option><option value="ncaam">CBB 2026-27</option><option value="ncaaf">CFB 2026</option><option value="nfl">NFL 2026</option><option value="nba">NBA 2026-27</option><option value="nhl">NHL 2026-27</option><option value="golf">Golf 2026</option><option value="soccer">FC 2026-27</option></select>
+        <label class="note" id="setsplbl" hidden>Settings for <select id="setsp"></select></label>
         <label class="note">Setting <select id="mode"><option value="balanced" selected>Balanced</option></select></label>
       </div>
       <div class="custom" id="custom" hidden>
@@ -175,6 +189,7 @@
         <button class="sm" id="c-reset" type="button" style="grid-column:1 / -1;justify-self:start">Reset to Balanced</button>
       </div>
       <p class="note modenote" id="modenote"></p>
+      <div class="allctl" id="allctl" hidden><span class="note">Sports shown - tap to hide or show</span><div class="chips" id="allshow"></div></div>
       <button class="go big" id="run">Show my boosts</button>
       <div class="bar userbar">
         <input id="rsuser" placeholder="Real username" autocomplete="off">
@@ -186,6 +201,12 @@
       <div class="invhd"><button class="fold" id="invfold" type="button" aria-expanded="true"><span class="chev">▾</span><b class="h">Your boosters</b></button><button id="invgo" class="sm">Load from Real</button></div>
       <div id="invbody"><p class="note" id="invmsg" style="margin:6px 0 0">Every 2 hours, all five sports (CBB, CFB, NFL, golf, FC).</p>
       <div id="invout" style="margin:10px 0 0" hidden></div></div>
+    </section>
+    <section id="allout" hidden>
+      <div class="note" id="allhead"></div>
+      <button class="sm copybtn" id="allcopy" type="button" hidden>Copy boosts</button>
+      <div class="sum" id="allsum"></div>
+      <div id="alllist"></div>
     </section>
     <section id="out" hidden>
       <div class="note" id="outhead"></div>
@@ -375,6 +396,7 @@ let daysAsk = 0;
 async function drawDays(){
   const sp = $('#sport').value, prev = $('#day').value, list = days(sp);
   const fill = (opts, empty) => { $('#day').innerHTML = opts.length ? opts.map(([v, l]) => `<option value="${v}"${v === prev ? ' selected' : ''}>${esc(l)}</option>`).join('') : `<option value="">${esc(empty)}</option>`; };
+  if(sp === 'all'){ ++daysAsk; fill(list, ''); return; }   // All sports: the next 4 days
   if(!daysCache[sp]) fill(list, sp === 'golf' ? 'Loading tournaments…' : 'No games in the next 4 days');
   const ask = ++daysAsk;
   const j = daysCache[sp] || await api('/api/swaps?op=boostdays&page=boosts&sport=' + sp);
@@ -398,18 +420,35 @@ try{ if(localStorage.getItem('boosts_invopen_v1') === '0') invFold(false); }catc
 /* Custom: your own bars and maxes, per sport, kept in this browser. */
 const CUS_DEF = { ncaam: { l: 14.5, e: 10, r: 5 }, ncaaf: { l: 22, e: 15, r: 10 }, nfl: { l: 22.5, e: 17, r: 7 }, nba: { l: 99, e: 7.5, r: 4 }, nhl: { l: 99, e: 7.5, r: 4 }, golf: { l: 19, e: 15, r: 10 }, soccer: { l: 11.2, e: 9, r: 6 } };
 const CUS_IDS = { l: 'c-l', e: 'c-e', r: 'c-r', ml: 'm-l', me: 'm-e', mr: 'm-r' };
+/* Settings are per sport (2026-11-09: All sports runs every sport on its own
+   setting). The sport being set: the tab's, or on All sports the "Settings
+   for" pick. */
+const SPORTS = [['ncaam', 'CBB'], ['ncaaf', 'CFB'], ['nfl', 'NFL'], ['nba', 'NBA'], ['nhl', 'NHL'], ['golf', 'Golf'], ['soccer', 'FC']];
+const SP_LBL = Object.fromEntries(SPORTS);
+const MODE_LBL = { balanced: 'Balanced', heavy: 'Heavy Legendary', saver: 'Boost saver', custom: 'Custom' };
+const isAll = () => $('#sport').value === 'all';
+const setSp = () => isAll() ? ($('#setsp').value || 'ncaam') : $('#sport').value;
+const lsj = (k, d) => { try{ return JSON.parse(localStorage.getItem(k) || 'null') ?? d; }catch(e){ return d; } };
+const lsput = (k, v) => { try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} };
+function modeFor(sp){ const m = lsj('boosts_modes_v1', {})[sp] || (lsj('boosts_pick_v1', {}) || {}).mode || 'balanced';
+  return [...$('#mode').options].some(o => o.value === m) ? m : 'balanced'; }
+function saveMode(sp, m){ const all = lsj('boosts_modes_v1', {}); all[sp] = m; lsput('boosts_modes_v1', all); }
+function cusQueryFor(sp){ const v = (lsj('boosts_custom_v1', {}) || {})[sp] || { ...CUS_DEF[sp], ml: '', me: '', mr: '' };
+  return Object.entries({ cl: 'l', ce: 'e', cr: 'r', ml: 'ml', me: 'me', mr: 'mr' }).map(([q, k]) => `&${q}=${encodeURIComponent(String(v[k] ?? '').trim())}`).join(''); }
+const loadSet = () => { const sp = setSp(); $('#mode').value = modeFor(sp); cusLoad(sp); drawMode(); };
 function cusLoad(sp){ let all = {}; try{ all = JSON.parse(localStorage.getItem('boosts_custom_v1') || '{}') || {}; }catch(e){}
   const v = all[sp] || { ...CUS_DEF[sp], ml: '', me: '', mr: '' };
   for(const [k, id] of Object.entries(CUS_IDS)) $('#' + id).value = v[k] ?? ''; }
-function cusSave(){ const sp = $('#sport').value; let all = {}; try{ all = JSON.parse(localStorage.getItem('boosts_custom_v1') || '{}') || {}; }catch(e){}
+function cusSave(){ const sp = setSp(); let all = {}; try{ all = JSON.parse(localStorage.getItem('boosts_custom_v1') || '{}') || {}; }catch(e){}
   all[sp] = Object.fromEntries(Object.entries(CUS_IDS).map(([k, id]) => [k, $('#' + id).value.trim()]));
   try{ localStorage.setItem('boosts_custom_v1', JSON.stringify(all)); }catch(e){} }
 const cusQuery = () => Object.entries({ cl: 'c-l', ce: 'c-e', cr: 'c-r', ml: 'm-l', me: 'm-e', mr: 'm-r' }).map(([q, id]) => `&${q}=${encodeURIComponent($('#' + id).value.trim())}`).join('');
 const cusNote = () => { const v = id => $('#' + id).value.trim(), part = (n, c, m) => `${n} ${v(c) === '' ? 'off' : v(c) + '+'}${v(m) !== '' ? ` (max ${v(m)})` : ''}`;
   return [part('Legendary', 'c-l', 'm-l'), part('Epic', 'c-e', 'm-e'), part('Rare', 'c-r', 'm-r')].join(' · '); };
 let cusT = null;
-Object.values(CUS_IDS).forEach(id => $('#' + id).addEventListener('input', () => { cusSave(); drawMode(); clearTimeout(cusT); cusT = setTimeout(() => { if(!$('#out').hidden) run(); }, 700); }));
-$('#c-reset').addEventListener('click', () => { const d = CUS_DEF[$('#sport').value]; $('#c-l').value = d.l; $('#c-e').value = d.e; $('#c-r').value = d.r; $('#m-l').value = $('#m-e').value = $('#m-r').value = ''; cusSave(); drawMode(); if(!$('#out').hidden) run(); });
+const shown = () => !$('#out').hidden || !$('#allout').hidden;
+Object.values(CUS_IDS).forEach(id => $('#' + id).addEventListener('input', () => { cusSave(); drawMode(); clearTimeout(cusT); cusT = setTimeout(() => { if(shown()) run(); }, 700); }));
+$('#c-reset').addEventListener('click', () => { const d = CUS_DEF[setSp()]; $('#c-l').value = d.l; $('#c-e').value = d.e; $('#c-r').value = d.r; $('#m-l').value = $('#m-e').value = $('#m-r').value = ''; cusSave(); drawMode(); if(shown()) run(); });
 const drawMode = () => { const m = $('#mode').value;
   $('#custom').hidden = m !== 'custom';
   if(m === 'custom'){ $('#modenote').textContent = cusNote(); return; }
@@ -418,7 +457,7 @@ const drawMode = () => { const m = $('#mode').value;
     saver: 'Legendary 27.5+ proj rax (max 20% a week) · Epic 20+ · Rare 10+' };
   const GOLF_NOTE = { balanced: 'Legendary 19+ proj rax · Epic 15+ · Rare 10+ (a whole tournament)', heavy: 'Legendary 17+ proj rax · Epic 13.5+ · Rare 10+', saver: 'Legendary 22+ proj rax · Epic 18+ · Rare 10+' };
   const FC_NOTE = { balanced: 'Legendary 11.2+ proj rax (max 50% a day) · Epic 9+ · Rare 6+ (rax in a start)', heavy: 'Legendary 9.8+ proj rax (no cap) · Epic 7.8+ · Rare 6+', saver: 'Legendary 13+ proj rax (max 25% a day) · Epic 10.5+ · Rare 6+' };
-  const sp0 = $('#sport').value;
+  const sp0 = setSp();
     // NBA / NHL (Dennis, 2026-11-09): the same on every setting.
   const PRO_NOTE = 'No Legendary · Epic 7.5+ proj rax (max 2 a day) · Rare 4+ (max 20% of your Rares a day)';
   const NBA_NOTE = { balanced: PRO_NOTE, heavy: PRO_NOTE, saver: PRO_NOTE };
@@ -426,12 +465,15 @@ const drawMode = () => { const m = $('#mode').value;
   const NHL_NOTE = { balanced: NHL_P, heavy: NHL_P, saver: NHL_P };
   const NFL_NOTE = { balanced: 'Legendary 22.5+ proj rax (max 35% a day) · Epic 17+ · Rare 7+', heavy: 'Legendary 19+ proj rax (max 40% a day) · Epic 14.9+ · Rare 5+', saver: 'Legendary 29.7+ proj rax · Epic 23.9+ · Rare 5+' };
   $('#modenote').textContent = sp0 === 'ncaaf' ? (CFB_NOTE[m] || MODE_NOTE[m]) : sp0 === 'golf' ? (GOLF_NOTE[m] || GOLF_NOTE.balanced) : sp0 === 'soccer' ? (FC_NOTE[m] || FC_NOTE.balanced) : sp0 === 'nfl' ? (NFL_NOTE[m] || MODE_NOTE[m]) : sp0 === 'nba' ? (NBA_NOTE[m] || NBA_NOTE.balanced) : sp0 === 'nhl' ? (NHL_NOTE[m] || NHL_NOTE.balanced) : MODE_NOTE[m]; };
-$('#sport').addEventListener('change', () => { cusLoad($('#sport').value); drawMode(); });
-$('#mode').addEventListener('change', () => { drawMode(); if(!$('#out').hidden) run(); });
+$('#setsp').innerHTML = SPORTS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+try{ const v = localStorage.getItem('boosts_setsp_v1'); if(v && SP_LBL[v]) $('#setsp').value = v; }catch(e){}
+$('#sport').addEventListener('change', loadSet);
+$('#setsp').addEventListener('change', () => { try{ localStorage.setItem('boosts_setsp_v1', $('#setsp').value); }catch(e){} loadSet(); });
+$('#mode').addEventListener('change', () => { saveMode(setSp(), $('#mode').value); drawMode(); if(shown()) run(); });
 // A new day re-runs the plan, so what's shown (and copied) is always that day's.
-$('#day').addEventListener('change', () => { if(!$('#out').hidden) run(); });
-drawMode();
-try{ const s = JSON.parse(localStorage.getItem('boosts_pick_v1') || '{}'); if(s.sport) $('#sport').value = s.sport; if(s.mode){ $('#mode').value = s.mode; drawMode(); } }catch(e){}
+$('#day').addEventListener('change', () => { if(shown()) run(); });
+try{ const s = JSON.parse(localStorage.getItem('boosts_pick_v1') || '{}'); if(s.sport && [...$('#sport').options].some(o => o.value === s.sport)) $('#sport').value = s.sport; }catch(e){}
+loadSet();
 drawDays(); golfLook();
 
 let curTab = 'boosts', subPick = '';
@@ -501,16 +543,19 @@ document.querySelectorAll('#tab button').forEach(b => b.addEventListener('click'
 // The sport picker at the top: CBB's second tab is Buys, CFB's is Legendary boosts, NFL has none.
 function paintSport(){
   const sp = $('#sport').value;
-  document.querySelectorAll('#sportseg button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.s === sp)));
-  const noBuys = sp === 'nfl' || sp === 'golf' || sp === 'soccer' || sp === 'nba' || sp === 'nhl';
+  document.querySelectorAll('#sportseg button, #allseg button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.s === sp)));
+  const all = sp === 'all';
+  $('#setsplbl').hidden = !all; $('#allctl').hidden = !all;
+  if(all){ $('#out').hidden = true; drawShow(); } else $('#allout').hidden = true;
+  const noBuys = all || sp === 'nfl' || sp === 'golf' || sp === 'soccer' || sp === 'nba' || sp === 'nhl';
   $('#tab2').hidden = noBuys; $('#tab2').textContent = 'Buys';
   showTab(noBuys ? 'boosts' : curTab);
 }
-document.querySelectorAll('#sportseg button').forEach(b => b.addEventListener('click', () => {
+document.querySelectorAll('#sportseg button, #allseg button').forEach(b => b.addEventListener('click', () => {
   if($('#sport').value === b.dataset.s) return;
   $('#sport').value = b.dataset.s; $('#sport').dispatchEvent(new Event('change'));
   try{ const s = JSON.parse(localStorage.getItem('boosts_pick_v1') || '{}'); s.sport = b.dataset.s; localStorage.setItem('boosts_pick_v1', JSON.stringify(s)); }catch(e){}
-  $('#out').hidden = true; paintSport();
+  $('#out').hidden = true; $('#allout').hidden = true; paintSport();
 }));
 
 // --- Legendary boosts (CFB): fetched once per visit; the numbers behind it are kept on the server.
@@ -598,6 +643,7 @@ async function loadBuys(){
 }
 const tm = iso => iso ? new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }) + ' ET' : '';
 async function run(){
+  if(isAll()) return runAll();
   const sp = $('#sport').value, day = $('#day').value, mode = $('#mode').value;
   /* No day to pick: say why, for the sport picked (2026-11-09: it always said NFL). */
   if(!day){ const why = ($('#day').selectedOptions[0] || {}).textContent || '', nm = ($('#sport').selectedOptions[0] || {}).textContent || 'this sport';
@@ -607,7 +653,7 @@ async function run(){
       : sp === 'nfl' ? 'No NFL games in the next 4 days - NFL plays Thursday, Sunday and Monday.'
       : `No ${nm} games in the next 4 days.`;
     return; }
-  try{ localStorage.setItem('boosts_pick_v1', JSON.stringify({ sport: sp, mode })); }catch(e){}
+  try{ localStorage.setItem('boosts_pick_v1', JSON.stringify({ sport: sp, mode })); }catch(e){} saveMode(sp, mode);
   $('#run').disabled = true; $('#out').hidden = false; $('#copybtn').hidden = true; copyText = ''; $('#rows').innerHTML = ''; $('#simple').innerHTML = ''; $('#sum').innerHTML = ''; $('#foot').textContent = '';
   $('#outhead').textContent = 'Working it out…';
   const j = await api(`/api/swaps?op=boostplan&page=boosts&sport=${sp}&date=${day}&mode=${mode}` + (mode === 'custom' ? cusQuery() : '') + (sp === 'soccer' && hideStarted() ? '&upcoming=1' : ''));
@@ -673,6 +719,72 @@ async function run(){
 }
 $('#run').addEventListener('click', run);
 let copyText = '', copyLabel = '';
+/* ---- All sports (Dennis, 2026-11-09): every sport's boosts for one day, each
+   on its own setting, sports can be hidden. Golf goes by the tournament
+   being played that day. Ticks are the same ones as on each sport's tab. */
+function hiddenSp(){ return new Set(lsj('boosts_allhide_v1', []) || []); }
+function drawShow(){ const h = hiddenSp();
+  $('#allshow').innerHTML = SPORTS.map(([v, l]) => `<button type="button" data-show="${v}" aria-pressed="${!h.has(v)}">${l}</button>`).join(''); }
+$('#allshow').addEventListener('click', e => { const b = e.target.closest('[data-show]'); if(!b) return;
+  const h = hiddenSp(); h.has(b.dataset.show) ? h.delete(b.dataset.show) : h.add(b.dataset.show); lsput('boosts_allhide_v1', [...h]); drawShow();
+  if(!$('#allout').hidden) runAll(); });
+let allCopy = '', allAsk = 0;
+const RANKR = { legendary: 0, epic: 1, rare: 2 }, HEARTS = { legendary: '💜', epic: '❤️', rare: '🧡' };
+const passUrl = (sp, r, j) => r.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(r.passId)]) : realPlayerUrl(sp, r.id, r.season || j.season);
+async function runAll(){
+  const day = $('#day').value, ask = ++allAsk;
+  $('#out').hidden = true; $('#allout').hidden = false; $('#allcopy').hidden = true; allCopy = ''; $('#allsum').innerHTML = ''; $('#alllist').innerHTML = '';
+  if(!day){ $('#allhead').textContent = 'Pick a day.'; return; }
+  const h = hiddenSp(), list = SPORTS.filter(([v]) => !h.has(v));
+  if(!list.length){ $('#allhead').textContent = 'Every sport is hidden - tap one above to show it.'; return; }
+  $('#allhead').textContent = 'Working it out…'; $('#run').disabled = true;
+  const wd = new Date(day + 'T12:00:00Z').getUTCDay();   // 0 Sun ... 4 Thu
+  let golfEv = null;
+  if(list.some(([v]) => v === 'golf')){
+    const g = daysCache.golf || await api('/api/swaps?op=boostdays&page=boosts&sport=golf'); if(!g.error) daysCache.golf = g;
+    golfEv = ((g && g.days) || []).find(d => d.day <= day && (Date.parse(day) - Date.parse(d.day)) / 86400000 <= 3) || null;
+  }
+  const res = await Promise.all(list.map(async ([sp, lbl]) => {
+    const m = modeFor(sp);
+    if(sp === 'nfl' && ![0, 1, 4].includes(wd)) return { sp, lbl, m, skip: 'No NFL games - NFL plays Thursday, Sunday and Monday.' };
+    const date = sp === 'golf' ? golfEv && golfEv.day : day;
+    if(!date) return { sp, lbl, m, skip: 'No tournament that day.' };
+    const j = await api(`/api/swaps?op=boostplan&page=boosts&sport=${sp}&date=${date}&mode=${m}` + (m === 'custom' ? cusQueryFor(sp) : '') + (sp === 'soccer' && hideStarted() ? '&upcoming=1' : ''));
+    return { sp, lbl, m, j, date };
+  }));
+  if(ask !== allAsk) return;
+  $('#run').disabled = false;
+  const tot = { legendary: 0, epic: 0, rare: 0 }, copyRows = [];
+  let err = null, anyPlay = 0;
+  $('#alllist').innerHTML = res.map(x => {
+    const hd = t => `<div class="allsp"><div class="allhd"><b>${x.lbl}</b><span class="note">${esc(MODE_LBL[x.m] || x.m)}${t ? ' · ' + t : ''}</span></div>`;
+    if(x.skip) return hd('') + `<div class="none">${esc(x.skip)}</div></div>`;
+    const j = x.j;
+    if(j.error){ err = err || j.error; return hd('') + `<div class="none">${esc(j.error)}</div></div>`; }
+    const rows = j.rows || [];
+    anyPlay += rows.length;
+    const rec = rows.filter(r => r.boost && r.best && !r.belowCut).map((r, i) => [r, i]).sort((a, b) => RANKR[a[0].boost] - RANKR[b[0].boost] || a[1] - b[1]).map(y => y[0]);
+    rec.forEach(r => { tot[r.boost]++; copyRows.push([x.sp, r, j]); });
+    const dk = x.sp + ':' + x.date, done = loadDone(dk);
+    const what = x.sp === 'golf' ? (j.event || 'this week') : `${rows.length} of your ${j.players ?? 0} passes play`;
+    return hd(`${what} · ${rec.length} boost${rec.length === 1 ? '' : 's'}`)
+      + (rec.length ? rec.map(r => { const u = passUrl(x.sp, r, j), k = doneKey(r), on = done.has(k);
+          return `<div class="srow${on ? ' boosted' : ''}"><span class="snm">${u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.name)}</a>` : esc(r.name)}</span><span class="smeta"><span class="b ${r.boost}">${LBL[r.boost]}</span><b class="sat">${esc(r.best.label)}</b>${(r.flags || []).length ? `<span class="flag" style="display:inline">⚠ ${esc(r.flags[0])}</span>` : ''}</span><button class="bdone${on ? ' on' : ''}" data-alldone="${esc(dk)}" data-done="${esc(k)}" aria-label="Boosted" title="Mark as boosted"></button></div>`; }).join('')
+        : `<div class="none">${rows.length ? 'No boosters recommended.' : 'None of your passes play.'}</div>`) + '</div>';
+  }).join('');
+  const dl = $('#day').selectedOptions[0] ? $('#day').selectedOptions[0].textContent : day;
+  if(err && !anyPlay && res.every(x => x.skip || (x.j && x.j.error))){ $('#allhead').textContent = err; return; }
+  $('#allhead').textContent = `All sports · ${dl} · ${copyRows.length} boost${copyRows.length === 1 ? '' : 's'}` + (h.size ? ` · ${h.size} sport${h.size === 1 ? '' : 's'} hidden` : '');
+  $('#allsum').innerHTML = ['legendary', 'epic', 'rare'].map(k => `<span><span class="b ${k}">${LBL[k]}</span> × ${tot[k]}</span>`).join('');
+  allCopy = copyRows.length ? 'JOIN RAX ACADEMY ON REAL https://www.realapp.com/ngWcxFRF4E8\n\n' + copyRows.map(([sp, r, j], i) => `${i + 1}. ${passUrl(sp, r, j) || r.name} ${HEARTS[r.boost]} ${r.best.label}`).join('\n\n') : '';
+  $('#allcopy').hidden = !allCopy; $('#allcopy').textContent = `Copy boosts (all sports · ${dl} · ${copyRows.length})`;
+}
+$('#allcopy').addEventListener('click', async () => { if(!allCopy) return; const b = $('#allcopy'), was = b.textContent;
+  b.textContent = (await copyOut(allCopy)) ? '✓ Copied' : 'Copy failed - long-press to select instead'; setTimeout(() => { b.textContent = was; }, 1800); });
+$('#allout').addEventListener('click', e => { const b = e.target.closest('.bdone'); if(!b) return;
+  const dk = b.dataset.alldone, k = b.dataset.done, set = loadDone(dk), on = !set.has(k);
+  on ? set.add(k) : set.delete(k); try{ localStorage.setItem('boost_done_' + dk, JSON.stringify([...set])); }catch(err){}
+  b.classList.toggle('on', on); b.closest('.srow').classList.toggle('boosted', on); });
 async function copyOut(t){
   try{ await navigator.clipboard.writeText(t); return true; }catch(e){}
   try{ const a = document.createElement('textarea'); a.value = t; a.setAttribute('readonly', ''); a.style.position = 'fixed'; a.style.opacity = '0'; document.body.appendChild(a); a.select(); const ok = document.execCommand('copy'); a.remove(); return ok; }catch(e){ return false; }
@@ -732,7 +844,7 @@ function invHtml(list){
 }
 $('#invgo').addEventListener('click', async () => {
   $('#invgo').disabled = true; $('#invmsg').textContent = 'Loading…';
-  const j = await api(`/api/swaps?op=boostinv&page=boosts&sport=${$('#sport').value}&fresh=1`);
+  const j = await api(`/api/swaps?op=boostinv&page=boosts&sport=${setSp()}&fresh=1`);
   $('#invgo').disabled = false;
   if(j.error){ $('#invmsg').textContent = j.error; return; }
   const when = ms => new Date(ms).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
@@ -777,7 +889,7 @@ $('#scan').addEventListener('click', async () => {
   if(j.error){ $('#scanmsg').textContent = j.error; return; }
   $('#scanmsg').textContent = j.cached ? j.note : `${(j.passes || []).length} passes read just now.` + (j.note ? ' ' + j.note : '');
   for(const k of Object.keys(daysCache)) delete daysCache[k]; await drawDays();   // the days first, so the plan has one to use
-  if(!$('#out').hidden) run();
+  if(shown()) run();
 });
 
 (async () => {
@@ -792,9 +904,7 @@ $('#scan').addEventListener('click', async () => {
   if(me.boostModes){
     $('#mode').innerHTML = '<option value="balanced">Balanced</option><option value="heavy">Heavy Legendary</option><option value="saver">Boost saver</option><option value="custom">Custom</option>';
   } else $('#mode').innerHTML = '<option value="balanced">Balanced</option><option value="custom">Custom</option>';
-  try{ const sv = JSON.parse(localStorage.getItem('boosts_pick_v1') || '{}'); if(sv.mode && [...$('#mode').options].some(o => o.value === sv.mode)) $('#mode').value = sv.mode; }catch(e){}
-  cusLoad($('#sport').value);
-  drawMode();
+  loadSet();
   $('#rsuser').value = (me.profile && me.profile.rsUser) || '';
   setTimeout(resumeScan, 300);
   const p = me.profile;
