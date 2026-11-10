@@ -1,5 +1,5 @@
 import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS, touchSeen, userStats, sessionState } from '../../lib/auth.js';
-import { swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick, fcSchedule, whyNotFull } from './swaps.js';
+import { swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick, fcSchedule, whyNotFull, TAG_DEFS } from './swaps.js';
 import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, capNow } from '../../lib/dbwatch.js';
 import { packAllowed } from './kv.js';
 
@@ -4267,7 +4267,7 @@ async function handleGet({ request, env, waitUntil }) {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
     if (!['mlb', 'nba', 'nfl', 'ncaaf'].includes(sport)) return json({ error: 'Team packs are MLB, NBA, NFL and CFB.' }, 400);
-    const se = Number(season), K = `pkteams_v8_${sport}_${se}`, L = `pkteams_lock_${sport}_${se}`;
+    const se = Number(season), K = `pkteams_v9_${sport}_${se}`, L = `pkteams_lock_${sport}_${se}`;
     const live = OTD_LIVE_SEASONS.has(`${sport}:${se}`);
     let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
     const fresh = c && Date.now() - c.at < (live ? 86400000 : 30 * 86400000);
@@ -4348,7 +4348,13 @@ async function handleGet({ request, env, waitUntil }) {
            set in the query, so it reads the season once and returns little. */
         try {
           const tr = new Map();
-          for (const t of ((await db.prepare('SELECT id, rarity FROM tags WHERE sport=?').bind(sport).all()).results || [])) tr.set(Number(t.id), Number(t.rarity) || 0);
+          // Dennis's own tag lists say which performance tags are Iconic, Mystic and Legendary; Real's tag table fills in the rest.
+          const mine = new Map();
+          for (const d of (TAG_DEFS[sport] || [])) { const lv = { iconic: 7, mystic: 6, legendary: 5 }[d.rarity]; if (!lv) continue;
+            for (const h of [d.tag].concat(d.alias || [])) mine.set(String(h).replace(/^#/, '').toLowerCase(), lv); }
+          const norm = v => String(v || '').replace(/^#/, '').replace(/[\s-]+/g, '').toLowerCase();
+          for (const t of ((await db.prepare('SELECT id, rarity, hash, label FROM tags WHERE sport=?').bind(sport).all()).results || []))
+            tr.set(Number(t.id), mine.get(norm(t.hash)) || mine.get(norm(t.label)) || Number(t.rarity) || 0);
           const pf = await db.prepare(`SELECT teamId AS t, tags, COUNT(*) AS n FROM performances
               WHERE sport=? AND season=? AND played=1 AND teamId IS NOT NULL GROUP BY teamId, tags`).bind(sport, se).all();
           const by = new Map();

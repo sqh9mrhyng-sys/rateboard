@@ -3767,7 +3767,7 @@ const tn = v => { const m = String(v == null ? '' : v).match(/^-?\d+(\.\d+)?/); 
 const tfrac = (v, i) => { const m = String(v || '').match(/^(\d+)\/(\d+)$/); return m ? Number(m[i + 1]) : 0; };
 const tTds = o => Math.max(tn(o.td), tn(o.rutd) + tn(o.retd));
 const TAG_DEFS_V = 9;   // 9: NBA Legendary   // 8: NBA   // 7: MLB   // 6: CFB   // 5: #marksman defined   // 3: Mystic NFL; 4: Legendary NFL (2026-11-09)   // 2: Real's own tags and box-score links (2026-11-09)
-const TAG_DEFS = {
+export const TAG_DEFS = {
   nfl: [
     { tag: '#3hundo', rarity: 'iconic', desc: '300+ rushing + receiving yards', sql: `COALESCE(${tagJ('ruyds')}, 0) + COALESCE(${tagJ('reyds')}, 0) >= 300`,
       test: o => tn(o.ruyds) + tn(o.reyds) >= 300, line: o => `${tn(o.ruyds)} rush + ${tn(o.reyds)} rec yds` },
