@@ -421,7 +421,31 @@ const SEASON_GIVE_MAX = 25;
    toward the 25 per sport + season), the buyer's as received (their goal and
    per-day limits). warnS / warnB = seller / buyer told (30 min before). */
 const T160_DDL = `CREATE TABLE IF NOT EXISTS swap_160 (id INTEGER PRIMARY KEY AUTOINCREMENT, buyer TEXT, seller TEXT, pass TEXT, slot INTEGER, dueAt INTEGER, createdAt INTEGER, status TEXT, warnS INTEGER, warnB INTEGER, note TEXT)`;
-const MAX_160_HOUR = 15;   // most 160s one buyer gets in one hour
+const MAX_160_HOUR = 15;
+/* Niche players. A player fewer than NICHE_UNDER active swappers own (active =
+   in a swap in the last 7 days) can't find swap partners, so the member who
+   wants him can ask N opted-in members to BUY the player and a pack at an hour
+   they share; the requester pays full price for the cards. Someone is only
+   asked while they hold fewer than 85 players of a season being played, or
+   fewer than 100 of an old one. One niche buy an hour, two a swap day each. */
+const NICHE_UNDER = 20, NICHE_MAX_ASK = 20, NICHE_DAY_MAX = 2, NICHE_LIVE_CAP = 85, NICHE_OLD_CAP = 100;
+const NICHE_KEY = 'swap_ownercounts_v1';
+const nicheLiveSeason = k => { const [sp, se] = String(k).split(':'); return Number(se) === (SWAP_SEASONS[sp] || [])[0]; };
+// How many active swappers own each pass: one read, kept 30 minutes.
+async function ownerCounts(env, db) {
+  let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(NICHE_KEY)) || 'null'); } catch (e) {}
+  if (c && Date.now() - c.at < 30 * 60000) return c;
+  const since = Date.now() - 7 * 86400000, n = {};
+  const act = [...new Set((((await db.prepare(`SELECT a AS k FROM swap_matches WHERE createdAt > ?1 AND status NOT IN ('cancelled','cancelling')
+      UNION SELECT b AS k FROM swap_matches WHERE createdAt > ?1 AND status NOT IN ('cancelled','cancelling')`).bind(since).all()).results) || []).map(r => r.k))];
+  for (let i = 0; i < act.length; i += 40) { const part = act.slice(i, i + 40);
+    for (const r of (((await db.prepare(`SELECT json_extract(p.value, '$.key') AS k, COUNT(DISTINCT u.key) AS n FROM swap_users u, json_each(u.passes) p
+        WHERE u.key IN (${part.map(() => '?').join(',')}) AND u.passes IS NOT NULL AND COALESCE(json_extract(p.value, '$.kind'), 'player') <> 'team' GROUP BY k`).bind(...part).all()).results) || []))
+      if (r.k) n[r.k] = (n[r.k] || 0) + Number(r.n); }
+  c = { at: Date.now(), active: act.length, n };
+  try { await env.RATEBOARD_KV.put(NICHE_KEY, JSON.stringify(c), { expirationTtl: 6 * 3600 }); } catch (e) {}
+  return c;
+}   // most 160s one buyer gets in one hour
 const seasonOf = k => String(k || '').split(':').slice(0, 2).join(':');
 /* When a member can swap (Dennis, 2026-11-04). Three ways:
      daily   - the same hours every day (slots, UTC hours, as before)
@@ -719,9 +743,10 @@ async function runMatchingInner(db, env) {
   try { await db.prepare(SBLOCK_DDL).run(); } catch (e) {}
   try { await matchCols(db); } catch (e) {}
   const users = (await pagedRows(db, `SELECT * FROM swap_users WHERE active=1 AND passes IS NOT NULL
-      AND ((wants IS NOT NULL AND wants <> '[]') OR s160=1 OR only160=1) AND ((slots IS NOT NULL AND slots <> '[]') OR s160=1 OR only160=1)
+      AND ((wants IS NOT NULL AND wants <> '[]') OR s160=1 OR only160=1 OR nicheIn=1) AND ((slots IS NOT NULL AND slots <> '[]') OR s160=1 OR only160=1)
       AND key NOT IN (SELECT key FROM restricted) AND key NOT IN (SELECT key FROM swap_block)
       AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`))
+    .map(u => ({ ...u, nicheReq: parse(u.niche, {}) || {} }))
     .map(u => ({ ...u, sched: parse(u.sched, null), wants: parse(u.wants, []), keep: new Set(parse(u.keep, [])), touch: new Set(parse(u.touch, [])), slots: parse(u.slots, []),
                  passes: parse(u.passes, []), caps: parse(u.caps, {}) || {} }))
     // Only here for 160s: no swaps for them (their picks are ignored), and they sell.
@@ -787,7 +812,7 @@ async function runMatchingInner(db, env) {
   // 160s already made: the seller's pack is given, the buyer's received.
   try { await drop160Held(db, ((await db.prepare(`SELECT * FROM swap_160 WHERE status='pending' AND warnS IS NULL AND dueAt > ?`).bind(Date.now()).all()).results) || []); } catch (e) {}
   let live160 = [];
-  try { live160 = ((await db.prepare(`SELECT buyer, seller, pass, dueAt, createdAt, status, warnS FROM swap_160 WHERE createdAt > ? AND (status <> 'cancelled' OR warnS IS NOT NULL)`).bind(Date.now() - 2 * 86400000).all()).results) || []; } catch (e) {}
+  try { live160 = ((await db.prepare(`SELECT buyer, seller, pass, dueAt, createdAt, status, warnS, kind FROM swap_160 WHERE createdAt > ? AND (status <> 'cancelled' OR warnS IS NOT NULL)`).bind(Date.now() - 2 * 86400000).all()).results) || []; } catch (e) {}
   for (const r of live160) { const d = swapDay(Number(r.dueAt));
     if (!given.has(`${r.seller}|${r.pass}|${d}`)) giveSeason(r.seller, r.pass, d);
     given.add(`${r.seller}|${r.pass}|${d}`);
@@ -928,6 +953,46 @@ async function runMatchingInner(db, env) {
         if (!any) break;
       }
     }); }
+  /* Niche players: after swaps and 160s. Each request still short of its number
+     is handed, hour by hour, to opted-in members who swap at that hour, don't
+     own the player and have room for one more in that season. */
+  const madeNiche = [];
+  try {
+    const helpers = users.filter(u => u.nicheIn && !u.only160), askers = users.filter(u => u.wants.some(w => u.nicheReq[w] && Number(u.nicheReq[w].n) > 0));
+    if (helpers.length && askers.length) {
+      const past = ((await db.prepare("SELECT buyer, seller, pass, dueAt, createdAt FROM swap_160 WHERE kind='niche' AND status <> 'cancelled'").all()).results) || [];
+      const asked = new Map(), usedBy = new Set(), hourOf = new Set(), dayOf = new Map(), pend = new Map();
+      const seas = k => String(k).split(':').slice(0, 2).join(':');
+      const note = (b, sl, w, due, at) => { (asked.get(b + '|' + w) || asked.set(b + '|' + w, []).get(b + '|' + w)).push(Number(at) || 0);
+        usedBy.add(`${b}|${w}|${sl}`); usedBy.add(`*|${w}|${sl}`); hourOf.add(`${sl}|${due}`); bump(dayOf, `${sl}|${swapDay(due)}`); };
+      for (const r of past) { note(r.buyer, r.seller, r.pass, Number(r.dueAt), r.createdAt); if (Number(r.dueAt) > now - 86400000) bump(pend, `${r.seller}|${seas(r.pass)}`); }
+      const owns = new Map(helpers.map(h => [h.key, new Set(h.passes.map(p => p.key))]));
+      const held = new Map(helpers.map(h => { const m = new Map(); for (const p of h.passes) if (p.kind !== 'team') bump(m, `${p.sport}:${p.season}`); return [h.key, m]; }));
+      const room = (h, w) => (held.get(h.key).get(seas(w)) || 0) + (pend.get(`${h.key}|${seas(w)}`) || 0) < (nicheLiveSeason(w) ? NICHE_LIVE_CAP : NICHE_OLD_CAP);
+      dues.forEach((due, k) => {
+        const d = swapDay(due), slot = new Date(due).getUTCHours();
+        const H = helpers.filter(h => ranks.get(h.key)[k] >= 0); if (!H.length) return;
+        for (const b of askers) {
+          if (ranks.get(b.key)[k] < 0) continue;
+          for (const w of b.wants) {
+            const q = b.nicheReq[w]; if (!q || !(Number(q.n) > 0)) continue;
+            let left = Math.min(NICHE_MAX_ASK, Number(q.n)) - (asked.get(b.key + '|' + w) || []).filter(t => t >= (Number(q.at) || 0)).length;
+            while (left > 0) {
+              if (!goalOk(b.key, w) || !perDayOk(b.key, w, d)) break;
+              const can = H.filter(h => h.key !== b.key && !owns.get(h.key).has(w) && !usedBy.has(`*|${w}|${h.key}`) && !hourOf.has(`${h.key}|${due}`)
+                && (dayOf.get(`${h.key}|${d}`) || 0) < NICHE_DAY_MAX && room(h, w) && seasonRoom(h.key, w, d));
+              if (!can.length) break;
+              const h = can.reduce((m, x) => (dayOf.get(`${x.key}|${d}`) || 0) < (dayOf.get(`${m.key}|${d}`) || 0) ? x : m, can[Math.floor(Math.random() * can.length)]);
+              madeNiche.push({ buyer: b.key, seller: h.key, pass: w, slot, due });
+              note(b.key, h.key, w, due, now); bump(pend, `${h.key}|${seas(w)}`); giveSeason(h.key, w, d);
+              bump(recv, `${b.key}|${w}|${d}`); goalLeft.set(`${b.key}|${w}`, (goalLeft.get(`${b.key}|${w}`) ?? Infinity) - 1);
+              left--;
+            }
+          }
+        }
+      });
+    }
+  } catch (e) { await botFail(db, 'matching', `niche: ${e.message}`); }
   await lap();   // 4: pairing
   // Never the same swap twice on one swap day, even if two runs overlap: checked against the
   // live swaps read at the start (in memory), then saved 50 at a time.
@@ -941,14 +1006,16 @@ async function runMatchingInner(db, env) {
     ins.push(db.prepare(`INSERT INTO swap_matches (a, b, aGets, bGets, slot, createdAt, status, dueAt) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`).bind(m.a, m.b, m.aGets, m.bGets, m.slot, now, m.due)); }
   for (let i = 0; i < ins.length; i += 50) await db.batch(ins.slice(i, i + 50));
   // The 160s: never the same buyer, seller and pass twice on one swap day.
-  { const sig1 = (b, s0, p, d) => `${b}|${s0}|${p}|${d}`, seen1 = new Set(live160.filter(r => r.status !== 'cancelled').map(r => sig1(r.buyer, r.seller, r.pass, swapDay(Number(r.dueAt)))));
+  { const sig1 = (b, s0, p, d) => `${b}|${s0}|${p}|${d}`, seen1 = new Set(live160.filter(r => r.status !== 'cancelled' && r.kind !== 'niche').map(r => sig1(r.buyer, r.seller, r.pass, swapDay(Number(r.dueAt)))));
     const ins1 = [];
     for (const m of made160) { const k = sig1(m.buyer, m.seller, m.pass, swapDay(m.due)); if (seen1.has(k)) continue; seen1.add(k);
       ins1.push(db.prepare(`INSERT INTO swap_160 (buyer, seller, pass, slot, dueAt, createdAt, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')`).bind(m.buyer, m.seller, m.pass, m.slot, m.due, now)); }
     try { for (let i = 0; i < ins1.length; i += 50) await db.batch(ins1.slice(i, i + 50)); } catch (e) { await botFail(db, 'matching', `160s not saved: ${e.message}`); }
     made.n160 = ins1.length; }
+  if (madeNiche.length) { try { const insN = madeNiche.map(m => db.prepare(`INSERT INTO swap_160 (buyer, seller, pass, slot, dueAt, createdAt, status, kind) VALUES (?, ?, ?, ?, ?, ?, 'pending', 'niche')`).bind(m.buyer, m.seller, m.pass, m.slot, m.due, now));
+      for (let i = 0; i < insN.length; i += 50) await db.batch(insN.slice(i, i + 50)); made.nNiche = insN.length; } catch (e) { await botFail(db, 'matching', `niche not saved: ${e.message}`); } }
   await lap();   // 5: saved
-  made.timing = `${made.n160 || 0} 160s, members ${users.length}, read ${T[1] - T[0]}ms, plays ${T[2] - T[1]}ms, goals ${T[3] - T[2]}ms, pairing ${T[4] - T[3]}ms, save ${T[5] - T[4]}ms`;
+  made.timing = `${made.n160 || 0} 160s, ${made.nNiche || 0} niche, members ${users.length}, read ${T[1] - T[0]}ms, plays ${T[2] - T[1]}ms, goals ${T[3] - T[2]}ms, pairing ${T[4] - T[3]}ms, save ${T[5] - T[4]}ms`;
   return made;
 }
 
@@ -1432,6 +1499,12 @@ async function sideLines(member, m, side) {
 async function matchCols(db) {
   for (const c of ['warnA', 'warnB', 'doneA', 'doneB', 'followA', 'followB', 'dueAt']) { try { await alterOnce(db, `ALTER TABLE swap_matches ADD COLUMN ${c} INTEGER`); } catch (e) {} }
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN comment TEXT'); } catch (e) {}
+  /* Niche players (Dennis, 2026-11-09): niche = { passKey: { n, at } } - how many
+     people a member asked to buy a player few active swappers own; nicheIn = they
+     opted in to be asked. The requests made live in swap_160 with kind='niche'. */
+  try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN niche TEXT'); } catch (e) {}
+  try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN nicheIn INTEGER'); } catch (e) {}
+  try { await alterOnce(db, T160_DDL); await alterOnce(db, 'ALTER TABLE swap_160 ADD COLUMN kind TEXT'); } catch (e) {}
   // Untouchable passes the member chose to swap anyway (step 3).
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN touch TEXT'); } catch (e) {}
   // Packs today: passes the member marked as used this swap day ({ day, keys }).
@@ -1595,9 +1668,10 @@ async function runDms(env, db, auth, rows, max, force) {
       { const me0 = await member(who);   // always the site message now (Dennis, 2026-11-05), whatever the size
         // 160s at the same hour ride along (2026-11-08, Dennis's wording).
         let x160 = '';
-        try { const c = await db.prepare(`SELECT SUM(CASE WHEN seller=? THEN 1 ELSE 0 END) AS s, SUM(CASE WHEN buyer=? THEN 1 ELSE 0 END) AS b FROM swap_160 WHERE dueAt=? AND status <> 'cancelled' AND (seller=? OR buyer=?)`).bind(who, who, wh[0].due, who, who).first();
-          const sN = Number(c && c.s) || 0, bN = Number(c && c.b) || 0;
-          x160 = [sN ? `You're also selling ${sN} player${sN === 1 ? '' : 's'} through 160s` : '', bN ? `You're also receiving ${bN} player${bN === 1 ? '' : 's'} through 160s` : ''].filter(Boolean).join('\n'); } catch (e) {}
+        try { const c = await db.prepare(`SELECT SUM(CASE WHEN seller=?1 AND kind IS NULL THEN 1 ELSE 0 END) AS s, SUM(CASE WHEN buyer=?1 AND kind IS NULL THEN 1 ELSE 0 END) AS b,
+              SUM(CASE WHEN seller=?1 AND kind='niche' THEN 1 ELSE 0 END) AS ns, SUM(CASE WHEN buyer=?1 AND kind='niche' THEN 1 ELSE 0 END) AS nb FROM swap_160 WHERE dueAt=?2 AND status <> 'cancelled' AND (seller=?1 OR buyer=?1)`).bind(who, wh[0].due).first();
+          const sN = Number(c && c.s) || 0, bN = Number(c && c.b) || 0, nsN = Number(c && c.ns) || 0, nbN = Number(c && c.nb) || 0;
+          x160 = [nsN ? nicheLine(nsN, true) : '', nbN ? nicheLine(nbN, false) : '', sN ? `You're also selling ${sN} player${sN === 1 ? '' : 's'} through 160s` : '', bN ? `You're also receiving ${bN} player${bN === 1 ? '' : 's'} through 160s` : ''].filter(Boolean).join('\n'); } catch (e) {}
         wmsg = [siteDm('Heads up - you swap in 30 min. Buy your packs now.', items.length, await hourLink(env, who, wh[0].due), recvSummary(me0, items), x160 || undefined)]; }
       if (!(items.length && await send(who, wmsg, 'warn'))) { await unclaim(wh, 'warn'); warnFail = true; }
     }
@@ -2314,12 +2388,16 @@ async function drop160Held(db, rows) {
       held.set(u.key, new Set([...parse(u.wants, []), ...parse(u.keep, [])])); }
   const out = [];
   for (const r of rows) {
-    if (r.status === 'pending' && !r.warnS && (held.get(r.seller) || new Set()).has(r.pass)) {
+    if (r.kind !== 'niche' && r.status === 'pending' && !r.warnS && (held.get(r.seller) || new Set()).has(r.pass)) {
       await db.prepare(`UPDATE swap_160 SET status='cancelled', note='called off: the seller has that player picked or kept' WHERE id=? AND status='pending' AND warnS IS NULL`).bind(r.id).run(); continue; }
     out.push(r);
   }
   return out;
 }
+// Niche DM lines: the member asked to buy, and the member who asked.
+const nicheLine = (n, buying) => buying
+  ? `Niche request: buy ${n} player${n === 1 ? '' : 's'} you don't own and a pack of ${n === 1 ? 'him' : 'each'} - the member who asked pays full price`
+  : `${n} member${n === 1 ? ' is' : 's are'} buying your niche player and a pack - you pay full price for the cards`;
 async function dm160(env, db, auth) {
   const now = Date.now();
   await matchCols(db);
@@ -2343,13 +2421,18 @@ async function dm160(env, db, auth) {
     const me = await loadMember(db, g.who);
     if (!me || !me.hashId) continue;
     // Dennis's wording (2026-11-08). Counted from every 160 they have that hour.
-    const all1 = ((await db.prepare("SELECT seller, buyer FROM swap_160 WHERE dueAt=? AND status <> 'cancelled' AND (seller=? OR buyer=?)").bind(g.due, g.who, g.who).all()).results) || [];
+    const all0 = ((await db.prepare("SELECT seller, buyer, kind FROM swap_160 WHERE dueAt=? AND status <> 'cancelled' AND (seller=? OR buyer=?)").bind(g.due, g.who, g.who).all()).results) || [];
+    const all1 = all0.filter(r => r.kind !== 'niche'), nAll = all0.filter(r => r.kind === 'niche');
+    const nBuy = nAll.filter(r => r.seller === g.who).length, nGet = nAll.filter(r => r.buyer === g.who).length;
     const sells = all1.filter(r => r.seller === g.who).length, buys = all1.filter(r => r.buyer === g.who).length;
     const pl = n => `${n} player${n === 1 ? '' : 's'}`, link = await hourLink(env, g.who, g.due);
-    const text = sells
+    const nTxt = [nBuy ? nicheLine(nBuy, true) : '', nGet ? nicheLine(nGet, false) : ''].filter(Boolean).join('\n');
+    const text = (sells
       ? `You're selling ${pl(sells)}\nGo to ${link} to see them all\nPlease buy within 30 mins` + (buys ? `\n\nYou're also receiving ${pl(buys)} through 160s` : '')
-      : `You're receiving ${pl(buys)} through 160s\nGo to ${link} to see them all`;
-    if (!sells && !buys) continue;
+      : buys ? `You're receiving ${pl(buys)} through 160s\nGo to ${link} to see them all`
+      : `${nTxt}\nGo to ${link} to see them all` + (nBuy ? '\nPlease buy within 30 mins' : ''))
+      + ((sells || buys) && nTxt ? '\n\n' + nTxt : '');
+    if (!sells && !buys && !nBuy && !nGet) continue;
     try { const ch = await dmChannel(db, auth, me.hashId, me.rsUser, env); await dmSendRetry(auth, ch, text); await stat(db, 'dm_160'); sentN++; }
     catch (e) { for (const [r, col] of got) await db.prepare(`UPDATE swap_160 SET ${col}=NULL WHERE id=? AND ${col}=?`).bind(r.id, now).run();
       await botFail(db, 'dm_160', `${g.who}: ${e.message || e}`); }
@@ -2663,7 +2746,7 @@ export async function swapAccess(env, request) {
 }
 // What a member (not an admin) may do: their own swap and nothing else, and
 // for OTD their own passes and games.
-const MEMBER_OPS = new Set(['confirm', 'recbuys', 'myhour', 'me', 'save', 'keep', 'touch', 'packstoday', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
+const MEMBER_OPS = new Set(['confirm', 'recbuys', 'myhour', 'me', 'save', 'keep', 'touch', 'packstoday', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'ownercounts', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
 const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan', 'search', 'otdpool']);
 const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostdays', 'projections', 'tagview', 'boostinv', 'buys', 'legboosts', 'resell', 'nosell']);
 const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
@@ -4517,13 +4600,16 @@ async function handle({ request, env, waitUntil }) {
       canRate = !(await db.prepare('SELECT 1 AS x FROM swap_rate_block WHERE key=?').bind(u.key).first()); } catch (e) {}
     for (const x of out) if (x.partnerKey) { x.myStars = rated[x.partnerKey] || null; delete x.partnerKey; }
     // 160s this hour: packs they open for buyers (sell), and 160s they offer on (buy).
-    const sell160 = [], buy160 = [];
+    const sell160 = [], buy160 = [], nicheBuy = [], nicheGet = [];
     try { for (const r of (((await db.prepare("SELECT * FROM swap_160 WHERE (buyer=? OR seller=?) AND dueAt=? AND status <> 'cancelled' ORDER BY id").bind(u.key, u.key, due).all()).results) || [])) {
         const o = await mem(r.seller === u.key ? r.buyer : r.seller), x = { id: r.id, user: o && o.rsUser, url: o ? profileUrl(o.rsUser, o.hashId) : null, player: playerName(me, r.pass), playerUrl: playerUrl(r.pass) };
+        // Niche: the member asked buys the player and a pack; the one who asked pays full price.
+        if (r.kind === 'niche') { const nm = r.seller === u.key ? playerName((o && o.passes) ? o : (me || {}), r.pass) : x.player;
+          if (r.seller === u.key) nicheBuy.push({ ...x, player: nm }); else nicheGet.push({ ...x, comment: (o && o.comment) || null }); continue; }
         if (r.seller === u.key) sell160.push({ ...x, yourCard: me ? passUrl(me, r.pass) : null });
         else buy160.push({ ...x, comment: (o && o.comment) || null });
       } } catch (e) {}
-    return json({ user: (me && me.rsUser) || u.key, due, swaps: out, sell160, buy160, canRate, ratingsOff: ratingsOff() || undefined, admin: ADMINS.includes(u.key.toLowerCase()) || undefined });
+    return json({ user: (me && me.rsUser) || u.key, due, swaps: out, sell160, buy160, nicheBuy, nicheGet, canRate, ratingsOff: ratingsOff() || undefined, admin: ADMINS.includes(u.key.toLowerCase()) || undefined });
   }
   /* Most picked players, for everyone on the hour page (Dennis, 2026-11-05):
      how many active members are swapping for each player, most first. */
@@ -4920,6 +5006,14 @@ async function handle({ request, env, waitUntil }) {
   }
 
   // How many saved swappers picked each player, kept 5 minutes.
+  // Step 4: how many active swappers own each of the caller's passes (niche under 20).
+  if (op === 'ownercounts') {
+    if (!acc.admin && !(await allow(url.origin, 'ownercounts:' + me, 20, 600))) return json({ error: 'Wait a few minutes and try again.' }, 429);
+    const c = await ownerCounts(env, db), out = {};
+    const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
+    for (const p of parse(u && u.passes, [])) if (p.kind !== 'team') out[p.key] = c.n[p.key] || 0;
+    return json({ at: c.at, active: c.active, under: NICHE_UNDER, n: out });
+  }
   if (op === 'wantcounts') {
     let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get('swap_wantcounts_v1')) || 'null'); } catch (e) {}
     if (!c || Date.now() - c.at > 300000) {
@@ -5325,7 +5419,7 @@ async function handle({ request, env, waitUntil }) {
     mark(request, 'plays');
     const cDay = confirmDayNow();
     return json({ confirmShow: Date.now() >= CONFIRM_SHOW_AT, confirmedToday: !!(u && u.confirmDay === cDay), confirmStarts: CONFIRM_FROM_DAY, swapToday: cDay, key: me, admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
-      keep: parse(u.keep, []), touch: parse(u.touch, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: lite ? [] : parse(u.passes, []), passCount: (() => { try { return parse(u.passes, []).length; } catch (e) { return 0; } })(), passSummary: lite ? passSummary(parse(u.passes, [])) : undefined, lowPlays: lowP, scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {}, b160: !!u.b160, s160: !!u.s160, only160: !!u.only160, sell160m: u.sell160m || null, sell160h: parse(u.sell160h, []) } : null, real: realN });
+      keep: parse(u.keep, []), touch: parse(u.touch, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: lite ? [] : parse(u.passes, []), passCount: (() => { try { return parse(u.passes, []).length; } catch (e) { return 0; } })(), passSummary: lite ? passSummary(parse(u.passes, [])) : undefined, lowPlays: lowP, scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {}, b160: !!u.b160, s160: !!u.s160, only160: !!u.only160, nicheIn: !!u.nicheIn, niche: parse(u.niche, {}) || {}, sell160m: u.sell160m || null, sell160h: parse(u.sell160h, []) } : null, real: realN });
   }
 
   // A tick in the passes list saves at once: the passes they won't give.
@@ -5404,14 +5498,27 @@ async function handle({ request, env, waitUntil }) {
       let sh = [...new Set((Array.isArray(b.sell160h) ? b.sell160h : []).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24))];
       if (sm === 'one') sh = sh.slice(0, 1);
       if (sell && sm !== 'swaps' && !sh.length) return json({ error: sm === 'one' ? 'Pick the time to sell your 160s (step 6).' : 'Pick at least one time to sell your 160s (step 6).' }, 400);
+      // Niche: opted in to be asked to buy, and how many people they ask to buy each of their picks.
+      try { await matchCols(db); } catch (e) {}
+      { const nIn = !only && b.nicheIn ? 1 : 0, old = parse((await db.prepare('SELECT niche FROM swap_users WHERE key=?').bind(me).first() || {}).niche, {}) || {}, nq = {};
+        let oc = null; try { oc = await ownerCounts(env, db); } catch (e) {}
+        for (const [w, v] of Object.entries((b.niche && typeof b.niche === 'object') ? b.niche : {})) {
+          const n = Math.floor(Number(v && v.n != null ? v.n : v)); if (!wants.includes(w) || !(n > 0)) continue;
+          if (oc && (oc.n[w] || 0) >= NICHE_UNDER) continue;   // only players under 20 active owners
+          const m = Math.min(NICHE_MAX_ASK, n); nq[w] = { n: m, at: old[w] && Number(old[w].n) === m && old[w].at ? old[w].at : Date.now() }; }
+        await db.prepare('UPDATE swap_users SET nicheIn=?, niche=? WHERE key=?').bind(nIn, JSON.stringify(nq), me).run();
+        // Requests not yet warned come off when they opt out, or drop the request.
+        if (!nIn) await db.prepare(`UPDATE swap_160 SET status='cancelled', note='called off: they stopped buying niche players' WHERE seller=? AND kind='niche' AND status='pending' AND warnS IS NULL AND warnB IS NULL`).bind(me).run().catch(() => {});
+        for (const r of (((await db.prepare(`SELECT id, pass FROM swap_160 WHERE buyer=? AND kind='niche' AND status='pending' AND warnS IS NULL AND warnB IS NULL`).bind(me).all().catch(() => ({}))).results) || []))
+          if (!nq[r.pass]) await db.prepare(`UPDATE swap_160 SET status='cancelled', note='called off: the niche request was removed' WHERE id=?`).bind(r.id).run().catch(() => {}); }
       await db.prepare('UPDATE swap_users SET b160=?, s160=?, only160=?, sell160m=?, sell160h=? WHERE key=?').bind(buy, sell, only, sell ? sm : null, sell && sm !== 'swaps' ? JSON.stringify(sh) : null, me).run();
       // 160s not yet warned at an hour they no longer sell at come off.
       if (sell && sm !== 'swaps') { const keepH = new Set(sh);
-        for (const r of (((await db.prepare(`SELECT id, dueAt FROM swap_160 WHERE seller=? AND status='pending' AND warnS IS NULL AND warnB IS NULL`).bind(me).all()).results) || []))
+        for (const r of (((await db.prepare(`SELECT id, dueAt FROM swap_160 WHERE seller=? AND kind IS NULL AND status='pending' AND warnS IS NULL AND warnB IS NULL`).bind(me).all()).results) || []))
           if (!keepH.has(new Date(Number(r.dueAt)).getUTCHours())) await db.prepare(`UPDATE swap_160 SET status='cancelled', note='called off: seller changed their 160 times' WHERE id=?`).bind(r.id).run(); }
       // Stopped buying or selling: their 160s not yet warned come off.
-      if (!sell) await db.prepare(`UPDATE swap_160 SET status='cancelled', note='called off: seller stopped selling 160s' WHERE seller=? AND status='pending' AND warnS IS NULL AND warnB IS NULL`).bind(me).run().catch(() => {});
-      if (!buy) await db.prepare(`UPDATE swap_160 SET status='cancelled', note='called off: buyer stopped buying 160s' WHERE buyer=? AND status='pending' AND warnS IS NULL AND warnB IS NULL`).bind(me).run().catch(() => {}); }
+      if (!sell) await db.prepare(`UPDATE swap_160 SET status='cancelled', note='called off: seller stopped selling 160s' WHERE seller=? AND kind IS NULL AND status='pending' AND warnS IS NULL AND warnB IS NULL`).bind(me).run().catch(() => {});
+      if (!buy) await db.prepare(`UPDATE swap_160 SET status='cancelled', note='called off: buyer stopped buying 160s' WHERE buyer=? AND kind IS NULL AND status='pending' AND warnS IS NULL AND warnB IS NULL`).bind(me).run().catch(() => {}); }
     try { await autoConfirm(db, me, mine, { slots, sched }); } catch (e) {}
     try { await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); await env.RATEBOARD_KV.delete('swap_wantcounts_v1'); } catch (e) {}
     let calledOff = 0, late = 0;

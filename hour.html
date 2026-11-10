@@ -165,7 +165,7 @@
     <p class="note" id="andrmsg" style="margin:6px 0 0"></p>
   </section>
   <section id="buy" hidden><h2>Buy these packs <span class="n" id="nbuy"></span></h2><div id="buylist"></div></section>
-  <section id="w160" hidden class="w160"><h2>Your 160s <span class="n" id="nw160"></span></h2><p class="note" style="margin:0 0 6px">Separate from your swaps above.</p><div id="w160list"></div></section>
+  <section id="w160" hidden class="w160"><h2>Your 160s and niche <span class="n" id="nw160"></span></h2><p class="note" style="margin:0 0 6px">Separate from your swaps above.</p><div id="w160list"></div></section>
   <p class="note wait" id="wait" hidden></p>
   <section id="con" hidden><h2>Offer on your partners' cards <span class="n" id="ncon"></span></h2><p class="note" style="margin:0 0 6px">Use their comment only to reach them if they didn't buy.</p><label class="showrate"><input type="checkbox" id="showrate" checked> Show rankings</label><div id="conlist"></div><p class="note ratenote" id="ratenote" hidden>Vote fairly or your perms to vote are gone. A 1 star is something like no pack on time + no communication; a 5 star is they had the pack on time and offered on your cards extremely fast. You rate each person once - you can change it later.</p></section>
   <section id="s160" hidden><h2>160s <span class="n" id="n160"></span></h2><p class="note" style="margin:0 0 6px" id="s160note"></p><div id="s160list"></div></section>
@@ -183,7 +183,7 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
   catch(e){ $('#sub').textContent = 'Could not reach the board - try again.'; return; }
   if(j.error){ $('#sub').textContent = j.error; return; }
   const when = new Date(Number(j.due)).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-  const live = j.swaps.filter(x => !x.off), sell160 = j.sell160 || [], buy160 = j.buy160 || [], n160 = sell160.length + buy160.length;
+  const live = j.swaps.filter(x => !x.off), sell160 = j.sell160 || [], buy160 = j.buy160 || [], n160 = sell160.length + buy160.length, nW = n160 + (j.nicheBuy || []).length + (j.nicheGet || []).length;
   $('#h').innerHTML = `@${esc(j.user)} · <button class="tbtn" id="tbtn" aria-expanded="false">${esc(when)} <span class="car">▾</span></button>`;
   $('#tbtn').addEventListener('click', openMenu);
   isAdm = !!j.admin; rateOff = !!j.ratingsOff;
@@ -194,7 +194,7 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
   // Packs today view: the page shows only that.
   if(q.get('v') === 'packs'){ $('#tbtn').firstChild.textContent = 'Packs today '; ['#buy', '#w160', '#con', '#s160', '#andr', '#wait', '#sub'].forEach(id => { const el = $(id); if(el) el.hidden = true; }); $('#pkview').hidden = false; loadPk(); return; }
   $('#sub').textContent = `${live.length} swap${live.length === 1 ? '' : 's'} at this time` + (j.swaps.length > live.length ? ` (${j.swaps.length - live.length} called off)` : '') + (n160 ? ` · ${n160} 160${n160 === 1 ? '' : 's'}` : '') + '.';
-  $('#buy').hidden = !j.swaps.length; $('#w160').hidden = !n160;
+  $('#buy').hidden = !j.swaps.length; $('#w160').hidden = !nW;
   $('#andr').hidden = !live.length;
   // The swap DM can only be asked for once it's swap time.
   const sb = document.querySelector('[data-dm="contact"]'), lock = () => { const t = new Date(Number(j.due)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); sb.disabled = true; sb.textContent = `Swap DM at ${t}`; };
@@ -211,7 +211,7 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
     $('#wait').hidden = false; $('#wait').textContent = `Who to offer on shows up here at ${at} - keep this page open or come back then.`;
     setTimeout(() => showOffers(false), Math.max(0, openAt - Date.now()) + 500);
   }
-  $('#nbuy').textContent = live.length; $('#ncon').textContent = live.length; $('#nw160').textContent = n160;
+  $('#nbuy').textContent = live.length; $('#ncon').textContent = live.length; $('#nw160').textContent = nW;
   // Grouped by the player they receive; each line is a pack to buy.
   // Both lists in order of the player you receive (then partner); each keeps its own index for its tick box.
   const ord = j.swaps.map((x, i) => [x, i]).sort(([a], [b]) => String(a.receive || '').localeCompare(String(b.receive || '')) || String(a.partner || '').localeCompare(String(b.partner || '')));
@@ -233,6 +233,13 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
       const byP = new Map(); for(const x of buy160){ const g = byP.get(x.player) || byP.set(x.player, { url: x.playerUrl, n: 0 }).get(x.player); g.n++; }
       h += `<div class="sh">Receiving through 160s <span class="n">${buy160.length}</span></div>` + [...byP.entries()].map(([nm, g]) => `<div class="row"><span><b>${lnk(nm, g.url)}</b></span><span class="note">×${g.n}</span></div>`).join('');
     }
+    /* Niche (2026-11-09): asked to buy a player they don't own and a pack of him
+       (the member who asked pays full price), or the one who asked. */
+    const nb = j.nicheBuy || [], ng = j.nicheGet || [];
+    if(nb.length) h += `<div class="sh">Niche - buy the player and a pack <span class="n">${nb.length}</span></div><p class="note" style="margin:4px 0 6px">You don't own these players: buy the player, then a pack of him. The member who asked pays full price for the cards.</p>`
+      + nb.map(x => `<div class="row" data-r160="nb${x.id}"><span class="grp"><span class="chk2">${chk('nbp' + x.id, 'Bought player + pack')}${chk('nbo' + x.id, 'Got full price')}</span><span><b>${pl(x)}</b><span class="sub">for ${who(x)}</span></span></span></div>`).join('');
+    if(ng.length) h += `<div class="sh">Niche - they bought your player <span class="n">${ng.length}</span></div><p class="note" style="margin:4px 0 6px">Each of these members bought your player and a pack for you. Pay full price for the cards.</p>`
+      + ng.map(x => `<div class="row" data-r160="ng${x.id}"><span class="grp"><span class="chk2">${chk('ngo' + x.id, 'Paid full price')}</span><span><b>${who(x)}</b><span class="sub">You receive <b class="rv">${pl(x)}</b></span></span></span><span class="acts">${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : ''}</span></div>`).join('');
     $('#w160list').innerHTML = h; }
   $('#n160').textContent = n160;
   $('#s160note').textContent = sell160.length && buy160.length ? 'Selling: the buyer takes all cards for minimum - send 160 back on a random unowned card. Buying: offer min on the cards from their pack - they send you 160 back.'
