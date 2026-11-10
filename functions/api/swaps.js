@@ -5925,7 +5925,8 @@ async function handle({ request, env, waitUntil }) {
     if (!u || !u.passes) return json({ error: 'Scan your passes first.' }, 400);
     const cards = { at: u.scannedAt || null, players: parse(u.passes, [])
       .filter(p => p.sport === sp && (Number(p.season) === se || (sp === 'soccer' && Number(p.season) === FC_MLS_SEASON)) && p.kind !== 'team')   // FC: 2025 cards for MLS
-      .map(p => ({ id: Number(p.id), name: p.name || '', passId: p.passId || null, season: Number(p.season) })) };
+      .map(p => ({ id: Number(p.id), name: p.name || '', passId: p.passId || null, season: Number(p.season),
+        mult: p.mult || null, levelLabel: p.levelLabel || null })) };   // the card's own rarity multiplier, for "Include my card rarities" (2026-11-09)
     let sched = null, depth = null, inv = null, rows = [], idle = [];
     if (sp === 'golf') {
       // Golf: the tournament is the game; form plus course history (see golfRows).

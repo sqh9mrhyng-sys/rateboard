@@ -796,8 +796,13 @@ function drawCum(){
   const res = allCum; if(!res){ $('#allcum').hidden = true; return; }
   const cm = withCards(); let base = 0, rec = 0, n = 0; const by = [];
   for(const x of res){ if(x.skip || !x.j || x.j.error) continue; let sb = 0, sr = 0;
-    for(const r of (x.j.rows || [])){ if(r.skip || r.proj == null) continue; const m = cm ? (Number(r.pm) || 1) : 1;
-      sb += r.proj * m; sr += (r.boost && r.best && !r.belowCut ? (r.withBoost ?? r.proj) : r.proj) * m; n++; }
+    for(const r of (x.j.rows || [])){ if(r.skip || r.proj == null) continue; n++;
+      /* A card above General adds its own multiplier to the booster's (Dennis, 2026-11-09:
+         a Common card with a Rare booster is 10x + 2x = 12x); a General card is just the booster.
+         With no booster the card's multiplier alone. The attribute's extra is added on top. */
+      const m = cm ? (Number(r.pm) || 1) : 1, card = m > 1 ? m : 0, rec = r.boost && r.best && !r.belowCut;
+      sb += r.proj * (cm ? m : 1);
+      sr += rec ? (card ? r.proj * ((Number(r.mult) || 1) + card) + ((r.best && r.best.gain) || 0) : (r.withBoost ?? r.proj)) : r.proj * (cm ? m : 1); }
     base += sb; rec += sr; if(sr > 0) by.push([x.lbl, sr]); }
   if(!n){ $('#allcum').hidden = true; return; }
   const f = v => Math.round(v).toLocaleString();
