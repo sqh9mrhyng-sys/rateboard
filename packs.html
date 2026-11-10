@@ -84,6 +84,13 @@
   .scanbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
   .go{background:var(--accent);border-color:var(--accent);color:#141925;font-weight:800}
   .go:disabled{opacity:.6}
+  .cqw{position:relative}
+  .cdd{position:absolute;z-index:20;left:0;right:0;top:100%;margin-top:4px;max-height:300px;overflow-y:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.45)}
+  .cdd button{display:block;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);border-radius:0;padding:10px 12px;color:var(--ink);font-size:14px}
+  .cdd button:last-child{border-bottom:0}
+  .cdd button:hover,.cdd button.hi{background:var(--panel2)}
+  .cdd button span{display:block;color:var(--mute);font-size:12px;font-weight:400}
+  .cdd .none{padding:10px 12px;color:var(--mute);font-size:13px}
   .cnow{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline;margin-bottom:10px}
   .cneed{font-size:22px;font-weight:800;color:var(--accent)}
   .cways{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
@@ -148,8 +155,7 @@
     <section>
       <div class="scanbar"><button type="button" class="go" id="cscan">Scan account</button><span class="note" id="cscanmsg"></span></div>
       <div class="ctl" style="margin-top:12px">
-        <label class="wide">Player you own <input id="cq" list="cpl" placeholder="Start typing a player" autocomplete="off"></label>
-        <datalist id="cpl"></datalist>
+        <label class="wide cqw">Player you own <input id="cq" placeholder="Start typing a player" autocomplete="off"><div id="cdd" class="cdd" hidden></div></label>
         <label>Target rarity <select id="ctgt"></select></label>
         <label>Starting <input id="cstart" type="date"></label>
       </div>
@@ -545,8 +551,17 @@ function scanLine(){
   if(!pr || !pr.scannedAt) return 'No scan on file yet - tap Scan account.';
   return `${myPasses().length.toLocaleString()} player passes, from your scan of ${new Date(pr.scannedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.`;
 }
+// The list under the box as they type: their passes whose name matches, best levels first.
 function drawPassList(){
-  $('#cpl').innerHTML = myPasses().slice().sort((a, b) => String(a.name).localeCompare(String(b.name)) || b.season - a.season).map(p => `<option value="${esc(passLbl(p))}"></option>`).join('');
+  const q = $('#cq').value.trim().toLowerCase(), dd = $('#cdd');
+  if(document.activeElement !== $('#cq')){ dd.hidden = true; return; }
+  const all = myPasses();
+  if(!all.length){ dd.innerHTML = '<div class="none">No passes on file - tap Scan account.</div>'; dd.hidden = false; return; }
+  const list = all.filter(p => !q || String(p.name || '').toLowerCase().includes(q) || passLbl(p).toLowerCase().includes(q))
+    .sort((a, b) => (Number(b.rating) || 0) - (Number(a.rating) || 0) || String(a.name).localeCompare(String(b.name))).slice(0, 40);
+  dd.innerHTML = list.map(p => `<button type="button" data-ck="${esc(p.key)}"><b>${esc(p.name || 'Player')}</b><span>${esc(SP_LBL[p.sport] || String(p.sport).toUpperCase())} ${esc(seasonLabel(p.sport, p.season))} · ${esc(p.levelLabel || 'General')}${p.rating != null ? ' · ' + fmtR(p.rating) + ' rating' : ''}</span></button>`).join('')
+    || `<div class="none">No pass of yours matches "${esc(q)}".</div>`;
+  dd.hidden = false;
 }
 async function calcOpen(){
   if(!$('#cstart').value) $('#cstart').value = dayStr(Date.now());
@@ -588,8 +603,13 @@ async function drawCalc(){
     + waysHtml(need, per, $('#cstart').value || dayStr(Date.now()))
     + `<div style="margin-top:10px"><button type="button" class="go" id="csave">Save entry</button></div>`;
 }
-$('#cq').addEventListener('input', () => { const v = $('#cq').value.trim(); const p = myPasses().find(x => passLbl(x) === v);
-  if(p && p !== cPass){ cPass = p; $('#ctgt').innerHTML = ''; drawCalc(); } else if(!v){ cPass = null; drawCalc(); } });
+$('#cq').addEventListener('input', () => { if(!$('#cq').value.trim() && cPass){ cPass = null; drawCalc(); } drawPassList(); });
+$('#cq').addEventListener('focus', drawPassList);
+$('#cq').addEventListener('blur', () => setTimeout(() => { $('#cdd').hidden = true; }, 200));
+// mousedown/touch picks before the box loses focus.
+$('#cdd').addEventListener('pointerdown', e => { const b = e.target.closest('[data-ck]'); if(!b) return; e.preventDefault();
+  const p = myPasses().find(x => x.key === b.dataset.ck); if(!p) return;
+  cPass = p; $('#cq').value = passLbl(p); $('#cdd').hidden = true; $('#cq').blur(); $('#ctgt').innerHTML = ''; drawCalc(); });
 $('#ctgt').addEventListener('change', drawCalc);
 $('#cstart').addEventListener('change', () => { if(cPass) drawCalc(); });
 $('#cres').addEventListener('click', e => { if(e.target.id !== 'csave' || !cPass) return; const p = cPass;
