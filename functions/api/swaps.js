@@ -3221,7 +3221,7 @@ async function golfRows(env, db, cards, day) {
     if (rc.length >= 4 && cuts >= Math.ceil(rc.length / 2)) flags.push(`Missed ${cuts} of his last ${rc.length} cuts`);
     const basis = [form != null ? `form ${Math.round(form * 10) / 10} over ${rc.length} event${rc.length === 1 ? '' : 's'}` : 'no recent events',
       hn ? `here ${Math.round(ha * 10) / 10} over ${hn} (best ${best != null ? (best === 1 ? 'win' : '#' + best) : '-'})` : 'no history here'].join(' · ');
-    rows.push({ id: p.id, passId: p.passId, name, team: (rc[0] && rc[0].team) || null, tid: null, pos: '', opp: ev.name, home: true, at: ev.start, exp: {},
+    rows.push({ id: p.id, passId: p.passId, pm: p.mult || null, plv: p.levelLabel || null, name, team: (rc[0] && rc[0].team) || null, tid: null, pos: '', opp: ev.name, home: true, at: ev.start, exp: {},
       avg: form == null ? null : Math.round(form * 10) / 10, games: rc.length, avgLast: hn ? Math.round(ha * 10) / 10 : null, course: hn ? { n: hn, avg: Math.round(ha * 10) / 10, best } : null,
       proj: proj == null ? null : Math.round(proj * 10) / 10, basis, flags, skip: false, fresh: false, noData: proj == null });
   }
@@ -3637,7 +3637,7 @@ async function fcRows(env, db, cards, day, inv) {
       if (e != null) exp[st] = Math.round(e * k * (att ? gfac : 1) * (lu === 'tbd' && rate < 0.8 && last5.length >= 3 ? rate : 1) * 100) / 100;
     }
     const pos = (lastG && lastG.position) || '';
-    rows.push({ id: p.id, passId: p.passId, season: M ? FC_MLS_SEASON : FC_SEASON[0], name, team: g.nm, tid: null, pos, opp: g.opp, home: g.home, at: g.at, exp, lu, form: LT ? LT.f : null, lg: g.lg, nat: side.nat,
+    rows.push({ id: p.id, passId: p.passId, pm: p.mult || null, plv: p.levelLabel || null, season: M ? FC_MLS_SEASON : FC_SEASON[0], name, team: g.nm, tid: null, pos, opp: g.opp, home: g.home, at: g.at, exp, lu, form: LT ? LT.f : null, lg: g.lg, nat: side.nat,
       avg: avg(cg) == null ? null : Math.round(avg(cg) * 10) / 10, games: cg.length, avgLast: avg(og) == null ? null : Math.round(avg(og) * 10) / 10,
       proj: proj == null ? null : Math.round(proj * k * mf * hf * 10) / 10, basis, flags, skip, fresh: false, noData: startProj == null });
   }
@@ -6084,7 +6084,7 @@ async function handle({ request, env, waitUntil }) {
           }
           if (e != null) exp[st] = Math.round(e * k * mf * 100) / 100;
         }
-        rows.push({ id: p.id, passId: p.passId, name, team, tid: g.id, pos, opp: g.opp, home: g.home, at: g.at, exp,
+        rows.push({ id: p.id, passId: p.passId, pm: p.mult || null, plv: p.levelLabel || null, name, team, tid: g.id, pos, opp: g.opp, home: g.home, at: g.at, exp,
           avg: ca == null ? null : Math.round(ca * 10) / 10, games: cg, avgLast: oa == null ? null : Math.round(oa * 10) / 10,
           proj: proj == null ? null : Math.round(proj * k * mf * 10) / 10, basis, flags, skip, fresh, noData });
       }

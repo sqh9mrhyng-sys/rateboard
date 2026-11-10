@@ -82,6 +82,14 @@
   .allhd{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:8px}
   .allhd b{font-size:17px}
   .allsp .none{color:var(--mute);font-size:13px}
+  .cum{margin:10px 0 4px;border:1px solid color-mix(in srgb,var(--accent) 45%,var(--line));border-radius:12px;padding:12px 14px;background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 14%,var(--panel2)),var(--panel2) 70%)}
+  .cum .big{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+  .cum .big b{font-size:30px;color:var(--accent);line-height:1.1}
+  .cum .sub2{color:var(--mute);font-size:13px;margin-top:2px}
+  .cum .bysp{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .cum .bysp span{font-size:12px;padding:2px 8px;border-radius:999px;background:var(--panel);border:1px solid var(--line)}
+  .cum .tgl{margin-top:10px;width:100%;font-weight:700}
+  .cum .tgl[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
   .allnone{margin-top:12px;color:var(--mute);font-size:13px;line-height:1.6}
   .spl{margin-left:4px;font-size:11px;font-weight:800;letter-spacing:.04em;color:var(--mute);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
   body.boxlink .srow[data-href]{cursor:pointer}
@@ -245,6 +253,7 @@
     </section>
     <section id="allout" hidden>
       <div class="note" id="allhead"></div>
+      <div class="cum" id="allcum" hidden></div>
       <button class="sm copybtn" id="allcopy" type="button" hidden>Copy boosts</button>
       <button class="sm simplebtn" id="allfullbtn" type="button" aria-pressed="false">View full layout</button>
       <button class="sm simplebtn boxlinkbtn" type="button" aria-pressed="false">Whole box opens the player: off</button>
@@ -778,10 +787,31 @@ $('#allshow').addEventListener('click', e => { const b = e.target.closest('[data
 let allCopy = '', allAsk = 0;
 const RANKR = { legendary: 0, epic: 1, rare: 2 }, HEARTS = { legendary: '💜', epic: '❤️', rare: '🧡' };
 const passUrl = (sp, r, j) => r.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(r.passId)]) : realPlayerUrl(sp, r.id, r.season || j.season);
-let allLast = null;
+let allLast = null, allCum = null;
+/* Projected earnings for the day across every sport shown (Dennis, 2026-11-09):
+   with the recommended boosts, and without. "Include my card rarities" also
+   multiplies each player by his pass's own multiplier (an Iconic Josh Allen). */
+const withCards = () => { try{ return localStorage.getItem('boosts_cardmult_v1') === '1'; }catch(e){ return false; } };
+function drawCum(){
+  const res = allCum; if(!res){ $('#allcum').hidden = true; return; }
+  const cm = withCards(); let base = 0, rec = 0, n = 0; const by = [];
+  for(const x of res){ if(x.skip || !x.j || x.j.error) continue; let sb = 0, sr = 0;
+    for(const r of (x.j.rows || [])){ if(r.skip || r.proj == null) continue; const m = cm ? (Number(r.pm) || 1) : 1;
+      sb += r.proj * m; sr += (r.boost && r.best && !r.belowCut ? (r.withBoost ?? r.proj) : r.proj) * m; n++; }
+    base += sb; rec += sr; if(sr > 0) by.push([x.lbl, sr]); }
+  if(!n){ $('#allcum').hidden = true; return; }
+  const f = v => Math.round(v).toLocaleString();
+  $('#allcum').hidden = false;
+  $('#allcum').innerHTML = `<div class="note">Projected rax${cm ? ', with your card rarities' : ''}</div>`
+    + `<div class="big"><b>${f(rec)}</b><span class="note">with recommended boosts</span></div>`
+    + `<div class="sub2">${f(base)} without boosts · ${n} player${n === 1 ? '' : 's'} playing</div>`
+    + `<div class="bysp">${by.sort((a, b) => b[1] - a[1]).map(([l, v]) => `<span>${l} ${f(v)}</span>`).join('')}</div>`
+    + `<button class="sm tgl" type="button" aria-pressed="${cm}">Include my card rarities: ${cm ? 'on' : 'off'}</button>`;
+}
+$('#allcum').addEventListener('click', e => { if(!e.target.closest('.tgl')) return; try{ localStorage.setItem('boosts_cardmult_v1', withCards() ? '0' : '1'); }catch(err){} drawCum(); });
 async function runAll(reuse){
   const day = $('#day').value, ask = ++allAsk;
-  $('#out').hidden = true; $('#allout').hidden = false; $('#allcopy').hidden = true; allCopy = ''; $('#allsum').innerHTML = ''; $('#alllist').innerHTML = '';
+  $('#out').hidden = true; $('#allout').hidden = false; $('#allcopy').hidden = true; allCopy = ''; $('#allcum').hidden = true; $('#allsum').innerHTML = ''; $('#alllist').innerHTML = '';
   if(!day){ $('#allhead').textContent = 'Pick a day.'; return; }
   const h = hiddenSp(), list = SPORTS.filter(([v]) => !h.has(v));
   if(!list.length){ $('#allhead').textContent = 'Every sport is hidden - tap one above to show it.'; return; }
@@ -837,6 +867,7 @@ async function runAll(reuse){
       const [dk, done] = dOf(sp, x), u = passUrl(sp, r, j), k = doneKey(r), on = done.has(k);
       return `<div class="srow${on ? ' boosted' : ''}"${u ? ` data-href="${esc(u)}"` : ''}><span class="snm">${u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.name)}</a>` : esc(r.name)}</span><span class="smeta"><span class="spl">${x.lbl}</span><span class="b ${r.boost}">${LBL[r.boost]}</span><b class="sat">${esc(r.best.label)}</b>${r.withBoost != null ? `<span class="note">${Math.round(r.withBoost)} proj</span>` : ''}${(r.flags || []).length ? `<span class="flag" style="display:inline">⚠ ${esc(r.flags[0])}</span>` : ''}</span><button class="bdone${on ? ' on' : ''}" data-alldone="${esc(dk)}" data-done="${esc(k)}" aria-label="Boosted" title="Mark as boosted"></button></div>`; }).join('') + '</div>' : '')
     + (quiet.length ? `<div class="allnone">${quiet.map(esc).join('<br>')}</div>` : '');
+  allCum = res; drawCum();
   const dl = $('#day').selectedOptions[0] ? $('#day').selectedOptions[0].textContent : day;
   if(err && !anyPlay && res.every(x => x.skip || (x.j && x.j.error))){ $('#allhead').textContent = err; return; }
   $('#allhead').textContent = `All sports · ${dl} · ${copyRows.length} boost${copyRows.length === 1 ? '' : 's'}` + (h.size ? ` · ${h.size} sport${h.size === 1 ? '' : 's'} hidden` : '');
