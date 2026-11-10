@@ -1,6 +1,7 @@
 import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS, touchSeen, userStats, sessionState } from '../../lib/auth.js';
 import { swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick, fcSchedule, whyNotFull } from './swaps.js';
 import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, capNow } from '../../lib/dbwatch.js';
+import { packAllowed } from './kv.js';
 
 /* Adding a column that already exists just errors (and is ignored). Each
    ALTER is tried once per server instance, not on every request. */
@@ -8049,7 +8050,8 @@ export async function onRequestGet(ctx) {
       if (a.who) touchSeen(env, a.who, ctx.waitUntil);
       let swaps = false, otd = false;
       try { if (a.who) { const sa = await swapAccess(env, request); swaps = sa.swaps; otd = sa.otd; } } catch (e) {}
-      return json({ signedIn: !!a.who, access: a.ok, admin: a.admin, swaps, otd,
+      let pack = !!a.admin; try { if (!pack && a.who) pack = await packAllowed(env, a.who); } catch (e) {}
+      return json({ signedIn: !!a.who, access: a.ok, admin: a.admin, swaps, otd, pack,
         ...(await (async () => { if (a.admin) return { puller: true, grant: { all: true, queue: [], pull: [], players: [] } };
           const g = a.who ? await pullGrantFor(env, a.who) : null; return { puller: !!g, grant: g }; })()) });
     }

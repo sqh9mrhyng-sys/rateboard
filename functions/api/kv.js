@@ -179,6 +179,13 @@ async function readSide(env) {
            house: m.house || [] }, grantLists(m));
 }
 
+/* Pack data's own page (2026-11-09): may this account open it? */
+export async function packAllowed(env, who) {
+  if (!who) return false;
+  const side = await readSide(env), w = String(who).toLowerCase();
+  return (side.packdata || []).includes(w) || (Date.now() < PACK_GRANT.until);
+}
+
 /* ---- who can open which part of game data --------------------------------
    Each part is granted on its own now: gamedata (by player and every game),
    packdata, golfdata, and shiftdata (rax shift and historical together).

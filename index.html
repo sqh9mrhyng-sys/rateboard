@@ -106,6 +106,7 @@ const PAGES = [
   ['/', 'Home', 'This page'],
   ['/board', 'Board', 'Buy offers for Real cards - post, browse and sell'],
   ['/board#gamedata', 'Game data', 'Every game log, rax and box score', 'admin'],
+  ['/packs', 'Pack data', 'Pack odds and packs to each rarity, for every player', 'pack'],
   ['/market', 'Market data', 'Recent sales and prices', 'market'],
   ['/swaps', 'Swaps', 'Trade passes with other members, matched every hour'],
   ['/boosts', 'Boosts/Buys', 'Which boosters to use each day, and what to buy'],
@@ -115,11 +116,11 @@ const PAGES = [
   ['/admin', 'Admin', 'Users, reports, traffic and sponsors', 'admin']
 ];
 // A colour for each page's box.
-const LOOK = { '/board': '#E8A33D', '/board#gamedata': '#5aa9e6', '/market': '#2fb8a6', '/swaps': '#a56bff', '/boosts': '#e5484d',
+const LOOK = { '/board': '#E8A33D', '/board#gamedata': '#5aa9e6', '/packs': '#a77bf0', '/market': '#2fb8a6', '/swaps': '#a56bff', '/boosts': '#e5484d',
   '/projections': '#5fbf7a', '/tags': '#ff5fb3', '/otd': '#f2c94c', '/admin': '#9aa3b5' };
 // Pages behind access only show to those who have it (Dennis opened Home to everyone, 2026-11-09).
 let ACC = {};
-const canOpen = p => !p[3] || ACC.admin || (p[3] === 'market' && ACC.access);
+const canOpen = p => !p[3] || ACC.admin || (p[3] === 'market' && ACC.access) || (p[3] === 'pack' && ACC.pack);
 
 // The tiles' order: moved with the arrows, kept in this browser.
 const ORDER = 'rb_home_order_v1';

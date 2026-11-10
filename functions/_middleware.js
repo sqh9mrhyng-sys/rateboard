@@ -50,7 +50,7 @@ import { countPageView } from './api/sponsor.js';
 /* Page views (2026-11-08): every page a person opens, counted per page per
    day - link previews, crawlers and prefetches left out. */
 const PV_PAGES = { '/': 'home', '/index.html': 'home', '/board': 'board', '/board.html': 'board', '/market': 'market', '/market.html': 'market', '/swaps': 'swaps', '/swaps.html': 'swaps',
-  '/hour': 'hour', '/hour.html': 'hour', '/otd': 'otd', '/otd.html': 'otd', '/boosts': 'boosts', '/boosts.html': 'boosts', '/projections': 'projections', '/projections.html': 'projections', '/tags': 'tags', '/tags.html': 'tags', };
+  '/hour': 'hour', '/hour.html': 'hour', '/otd': 'otd', '/otd.html': 'otd', '/boosts': 'boosts', '/boosts.html': 'boosts', '/projections': 'projections', '/projections.html': 'projections', '/tags': 'tags', '/tags.html': 'tags', '/packs': 'packs', '/packs.html': 'packs' };
 const BOT_UA = /bot|crawl|spider|slurp|preview|facebookexternalhit|embedly|quora|whatsapp|telegram|discord|slack|twitter|headless|lighthouse|curl|wget|python|node-fetch|go-http/i;
 function pageOf(request, url) {
   if (request.method !== 'GET') return null;
