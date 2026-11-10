@@ -69,6 +69,15 @@
   .dtabs b{font-size:15px}
   .seg.sm{margin:0;display:inline-flex} .seg.sm button{padding:7px 12px;font-size:13px;flex:none}
   .sub2{display:none;color:var(--mute);font-size:11px}
+  .pls{display:flex;flex-direction:column;max-width:720px}
+  .plh,.plr{display:grid;grid-template-columns:52px minmax(0,1fr) 46px 78px;gap:8px;align-items:center;padding:8px 2px;border-bottom:1px solid var(--line)}
+  .plh{color:var(--mute);font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;padding-top:2px}
+  .plh span:nth-child(3),.plr .pv{text-align:right}
+  .plr .pd{white-space:nowrap;color:var(--mute);font-size:12.5px}
+  .plr .pt{font-size:13.5px;line-height:1.3;overflow-wrap:anywhere}
+  .plr .pt a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)}
+  .plr .pv{font-variant-numeric:tabular-nums}
+  .plr .pr{white-space:nowrap;font-size:12.5px}
   .lad td,.lad th{padding:6px 6px}
   .ladbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px}
   .pager{display:flex;gap:8px;align-items:center;justify-content:center;margin-top:10px}
@@ -315,12 +324,17 @@ function plays(r, k){
   const sums = [7, 6, 5, 4, 3, 2, 1].filter(t => by[t]).map(t => `<span class="${RAR[t][1]}">${RAR[t][0]} ${by[t]}</span>`).join(' · ');
   return `<p class="note" style="margin:0 0 6px">${num(c.plays)} plays over ${num(c.games)} games${c.gamesPlayed ? ` (plays collected for ${num(c.gamesCollected || 0)} of his ${num(c.gamesPlayed)} games)` : ''} · avg ${c.avgRating ?? '–'} · best ${c.bestRating ?? '–'}${sums ? '<br>' + sums : ''}</p>`
     + `<div class="ladbar"><span class="note">Sort by</span><div class="seg sm"><button data-pls="rating" aria-pressed="${plSort === 'rating'}">Rating${plSort === 'rating' ? (plDir < 0 ? ' ▾' : ' ▴') : ''}</button><button data-pls="rarity" aria-pressed="${plSort === 'rarity'}">Rarity${plSort === 'rarity' ? (plDir < 0 ? ' ▾' : ' ▴') : ''}</button></div>${(c.top || []).length < (c.plays || 0) ? `<span class="note">top ${c.top.length} by rating</span>` : ''}</div>`
-    + `<div class="scroll"><table class="lad"><thead><tr><th class="l">Date</th><th class="l">Play</th><th>Rating</th><th class="l">Rarity</th><th class="l hm2">Tags</th></tr></thead><tbody>`
+    /* One clean line a play (Dennis, 2026-11-09): date - play - rating (#.#) - rarity.
+       Real's tags are kept on the play (press and hold, or hover). */
+    + `<div class="pls"><div class="plh"><span>Date</span><span>Play</span><span>Rating</span><span>Rarity</span></div>`
     + list.map(x => { const tg = String(x.tags || '').split(',').map(t => names[Number(t)]).filter(Boolean).map(t => '#' + String(t).replace(/\s+/g, '')).join(' ');
       // Each play links to it on Real: [6, sport, 0, play id] (decoded from a play link Dennis shared, 2026-11-09).
       const pu = x.id && REAL_SPORT[r.sport] ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [6, REAL_SPORT[r.sport][1], 0, Number(x.id)]) : null;
-      return `<tr><td class="l">${esc(String(x.day || '–').slice(5))}</td><td class="l pl" style="white-space:normal">${pu ? `<a href="${pu}" target="_blank" rel="noopener">${esc(x.label || 'Play')}</a>` : esc(x.label || '–')}<span class="sub2">${esc(tg)}</span></td><td><b>${x.value == null ? '–' : Math.round(Number(x.value) * 10) / 10}</b></td><td class="l"><span class="${RAR[Number(x.rarity) || 0][1]}">${RAR[Number(x.rarity) || 0][0]}</span></td><td class="l hm2" style="white-space:normal">${esc(tg)}</td></tr>`; }).join('')
-    + '</tbody></table></div>';
+      const d = x.day ? new Date(String(x.day).slice(0, 10) + 'T12:00:00Z').toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' }) : '–';
+      const rr = RAR[Number(x.rarity) || 0];
+      return `<div class="plr" title="${esc(tg)}"><span class="pd">${esc(d)}</span><span class="pt">${pu ? `<a href="${pu}" target="_blank" rel="noopener">${esc(x.label || 'Play')}</a>` : esc(x.label || '–')}</span>`
+        + `<b class="pv">${x.value == null ? '–' : Number(x.value).toFixed(1)}</b><span class="pr ${rr[1]}">${rr[0]}</span></div>`; }).join('')
+    + '</div>';
 }
 // Packs to each rarity for one player, from his own row (nothing is read).
 function ladder(r){
