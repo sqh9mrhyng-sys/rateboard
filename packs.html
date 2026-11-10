@@ -19,6 +19,7 @@
   section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
   select,button,input{font:inherit;padding:9px 11px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
   button{cursor:pointer}
+  .warnbox{border:2px solid var(--bad);background:color-mix(in srgb,var(--bad) 14%,var(--panel));border-radius:12px;padding:12px 14px;margin-bottom:10px;font-weight:800;font-size:15px;text-align:center;letter-spacing:.01em}
   .upd{border:1px solid color-mix(in srgb,var(--accent) 45%,var(--line));background:color-mix(in srgb,var(--accent) 10%,var(--panel));border-radius:12px;padding:10px 14px;margin-bottom:12px;font-size:13.5px}
   .upd b{color:var(--accent)}
   .seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-bottom:12px}
@@ -92,6 +93,7 @@
 <div class="lock" id="lock" hidden><h1>Pack data</h1><p class="note" id="lockmsg">Checking…</p><p><a href="/">Back to home</a></p></div>
 <div class="wrap" id="main" hidden>
   <header><h1>Pack data</h1><span data-acct></span><a href="/">Back to home</a></header>
+  <div class="warnbox">Opening player packs for Legendary boosters is not profitable outside of football.</div>
   <div class="upd">Pack data updates <b>every day from 11am ET (7am Alaska)</b>, after the morning game-data sweep - <span class="note">NBA, CBB and NHL daily · NFL Fri, Mon, Tue · CFB Sun. Finished seasons don't change.</span></div>
   <div class="seg" id="tabs"><button data-t="all" aria-pressed="true">All players</button><button data-t="fav" aria-pressed="false">★ Favorites <span id="favn"></span></button></div>
   <section>
