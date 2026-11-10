@@ -28,6 +28,13 @@
   .ctl label{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--mute);font-weight:600}
   .ctl select,.ctl input{width:100%;min-width:0}
   .ctl .wide{grid-column:1 / -1}
+  .pk-h{margin:2px 0 6px;font-weight:600}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+  .chips button{padding:7px 13px;border-radius:999px;font-size:13.5px;font-weight:600}
+  .chips button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#141925;font-weight:800}
+  .sgrp{margin-bottom:8px} .sgrp b{display:block;font-size:12px;color:var(--mute);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px}
+  .sgrp .chips{margin-bottom:4px}
+  .sgrp .chips button span{font-weight:400;font-size:11.5px;opacity:.75;margin-left:4px}
   .opts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;align-items:center}
   .opts button{padding:6px 12px;border-radius:999px;font-size:13px}
   .opts button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);font-weight:700}
@@ -62,13 +69,17 @@
   <div class="upd">Pack data updates <b>every day from 11am ET (7am Alaska)</b>, after the morning game-data sweep - <span class="note">NBA and CBB daily · NFL Fri, Mon, Tue · NHL Sun, Tue, Thu · CFB Sun · FC Mon. Finished seasons don't change.</span></div>
   <div class="seg" id="tabs"><button data-t="all" aria-pressed="true">All players</button><button data-t="fav" aria-pressed="false">★ Favorites <span id="favn"></span></button></div>
   <section>
-    <div class="ctl" id="pickrow">
-      <label>Sport <select id="sport"><option value="">Pick a sport</option></select></label>
-      <label>Season <select id="season" disabled><option value="">-</option></select></label>
+    <div id="pickrow">
+      <div class="note pk-h">Sports - pick any number</div>
+      <div class="chips" id="sports"></div>
+      <div class="note pk-h">Seasons - pick any number</div>
+      <div id="seasons"><span class="note">Pick a sport first.</span></div>
+    </div>
+    <div class="ctl" style="margin-top:12px">
       <label class="wide">Search <input id="q" placeholder="Player name" autocomplete="off"></label>
     </div>
     <div class="opts">
-      <label class="note">Min plays <select id="min"><option value="0">0</option><option value="10" selected>10</option><option value="25">25</option><option value="50">50</option><option value="100">100</option></select></label>
+      <label class="note">Min plays <input id="min" type="number" inputmode="numeric" min="0" step="1" value="10" style="width:90px"></label>
       <button type="button" id="top" aria-pressed="false">Show Mystic &amp; Iconic</button>
     </div>
   </section>
@@ -230,7 +241,7 @@ async function seasonRows(sp, se){
 }
 
 function cols(){
-  const multi = tab === 'fav';
+  const multi = tab === 'fav' || picks.length > 1;
   return [['fav', '', 'l'], ['player', 'Player', 'l'], ...(multi ? [['seasonLbl', 'Season', 'l']] : []), ['plays', 'Plays'],
     ...(showTop ? [['iconic', 'Iconic'], ['iconOdds', 'Iconic odds'], ['mystic', 'Mystic'], ['mysOdds', 'Mystic odds']] : []),
     ['legendary', 'Leg', '', 'hm'], ['legOdds', 'Leg odds'], ['epic', 'Epic', '', 'hm'], ['epicOdds', 'Epic odds'], ['avg3', 'Rating / pack'], ['boost', 'Avg booster', '', 'hm'],
@@ -275,17 +286,26 @@ function paint(){
       + (open ? `<tr class="det"><td colspan="${cs.length}">${ladder(r)}</td></tr>` : ''); }).join('')
     || `<tr><td colspan="${cs.length}" class="empty">${tab === 'fav' ? (favs.length ? 'No favorites match.' : 'Tap ★ next to a player to add him here.') : q ? `No player matching "${esc(q)}".` : 'No players with that many plays.'}</td></tr>`;
   $('#pager').innerHTML = pages > 1 ? `<button data-pg="-1"${page ? '' : ' disabled'}>Previous</button><span class="note">Page ${page + 1} of ${pages}</span><button data-pg="1"${page < pages - 1 ? '' : ' disabled'}>Next</button>` : '';
-  if(tab === 'all' && rows.length) $('#status').textContent = `${list.length.toLocaleString()} players · ${SP_LBL[$('#sport').value]} ${seasonLabel($('#sport').value, $('#season').value)}. Tap a player for packs to each rarity, ★ to favorite.`;
+  if(tab === 'all' && rows.length) $('#status').textContent = `${list.length.toLocaleString()} players · ${picks.map(pr => { const [sp, se] = pr.split(':'); return `${SP_LBL[sp] || sp} ${seasonLabel(sp, se)}`; }).join(', ')}. Tap a player for packs to each rarity, ★ to favorite.`;
 }
+/* Sports and seasons, any number of each (like the board's picker): the
+   seasons of every sport ticked, each season its own button. */
+let selSp = ls.get('packs_sports_v1', []), picks = ls.get('packs_picks_v1', []), loadTok = 0;
 async function loadSeason(){
-  const sp = $('#sport').value, se = $('#season').value;
-  ls.set('packs_pick_v1', { sp, se });
+  ls.set('packs_sports_v1', selSp); ls.set('packs_picks_v1', picks);
   openK = null; page = 0;
-  if(!sp || !se){ rows = []; $('#status').textContent = 'Pick a sport and season.'; $('#head').innerHTML = ''; $('#body').innerHTML = ''; $('#pager').innerHTML = ''; return; }
-  $('#status').textContent = 'Loading…';
-  try{ rows = await seasonRows(sp, se); }catch(e){ rows = []; $('#status').textContent = 'Could not load that season - try again in a minute.'; paint(); return; }
-  if($('#sport').value !== sp || $('#season').value !== se || tab !== 'all') return;
-  paint();
+  const mine = ++loadTok, want = picks.slice();
+  if(!want.length){ rows = []; $('#status').textContent = selSp.length ? 'Pick one or more seasons.' : 'Pick a sport, then one or more seasons.'; $('#head').innerHTML = ''; $('#body').innerHTML = ''; $('#pager').innerHTML = ''; return; }
+  let out = [], failed = [];
+  for(let i = 0; i < want.length; i++){
+    const [sp, se] = want[i].split(':');
+    $('#status').textContent = want.length > 1 ? `Loading season ${i + 1} of ${want.length}…` : 'Loading…';
+    try{ out = out.concat(await seasonRows(sp, se)); }catch(e){ failed.push(`${SP_LBL[sp] || sp} ${seasonLabel(sp, se)}`); }
+    if(mine !== loadTok || tab !== 'all') return;
+    rows = out; paint();   // what's arrived so far
+  }
+  rows = out; paint();
+  if(failed.length) $('#status').textContent += ` · ${failed.join(', ')} could not be loaded`;
 }
 async function loadFavs(){
   openK = null; page = 0;
@@ -297,19 +317,23 @@ async function loadFavs(){
   rows = out; paint();
   if(favs.length) $('#status').textContent = `${favs.length} favorite${favs.length === 1 ? '' : 's'}, from every season. Tap a player for packs to each rarity.`;
 }
+const allSports = () => [...new Set(seasons.map(x => x.sport))].filter(sp => sp !== 'soccer');
 function drawSports(){
-  const sps = [...new Set(seasons.map(x => x.sport))].filter(sp => sp !== 'soccer');
-  $('#sport').innerHTML = '<option value="">Pick a sport</option>' + sps.map(sp => `<option value="${sp}">${SP_LBL[sp] || sp.toUpperCase()}</option>`).join('');
+  $('#sports').innerHTML = allSports().map(sp => `<button type="button" data-sp="${sp}" aria-pressed="${selSp.includes(sp)}">${SP_LBL[sp] || sp.toUpperCase()}</button>`).join('');
 }
-function drawSeasons(sel){
-  const sp = $('#sport').value, list = seasons.filter(x => x.sport === sp).sort((a, b) => b.season - a.season);
-  $('#season').disabled = !sp;
-  $('#season').innerHTML = sp ? '<option value="">Pick a season</option>' + list.map(x => `<option value="${x.season}"${String(x.season) === String(sel) ? ' selected' : ''}>${seasonLabel(sp, x.season)}</option>`).join('') : '<option value="">-</option>';
+function drawSeasons(){
+  if(!selSp.length){ $('#seasons').innerHTML = '<span class="note">Pick a sport first.</span>'; return; }
+  $('#seasons').innerHTML = selSp.map(sp => { const list = seasons.filter(x => x.sport === sp).sort((a, b) => b.season - a.season);
+    return `<div class="sgrp"><b>${SP_LBL[sp] || sp}</b><div class="chips">${list.map(x => { const k = `${sp}:${x.season}`;
+      return `<button type="button" data-pk="${k}" aria-pressed="${picks.includes(k)}" title="${Number(x.plays).toLocaleString()} plays across ${x.games} games">${seasonLabel(sp, x.season)}<span>${x.games}g</span></button>`; }).join('')}</div></div>`; }).join('');
 }
-$('#sport').addEventListener('change', () => { drawSeasons(); loadSeason(); });
-$('#season').addEventListener('change', loadSeason);
+$('#sports').addEventListener('click', e => { const b = e.target.closest('[data-sp]'); if(!b) return; const sp = b.dataset.sp;
+  if(selSp.includes(sp)){ selSp = selSp.filter(x => x !== sp); picks = picks.filter(k => !k.startsWith(sp + ':')); } else selSp.push(sp);
+  drawSports(); drawSeasons(); loadSeason(); });
+$('#seasons').addEventListener('click', e => { const b = e.target.closest('[data-pk]'); if(!b) return; const k = b.dataset.pk;
+  picks = picks.includes(k) ? picks.filter(x => x !== k) : picks.concat(k); drawSeasons(); loadSeason(); });
 let qT = null; $('#q').addEventListener('input', () => { clearTimeout(qT); qT = setTimeout(() => { page = 0; paint(); }, 200); });
-$('#min').addEventListener('change', () => { page = 0; ls.set('packs_min_v1', $('#min').value); paint(); });
+$('#min').addEventListener('input', () => { clearTimeout(qT); qT = setTimeout(() => { page = 0; ls.set('packs_min_v1', $('#min').value); paint(); }, 250); });
 $('#top').addEventListener('click', () => { showTop = !showTop; $('#top').setAttribute('aria-pressed', String(showTop)); paint(); });
 $('#head').addEventListener('click', e => { const th = e.target.closest('[data-k]'); if(!th || th.dataset.k === 'fav') return;
   if(sortK === th.dataset.k) sortD = -sortD; else { sortK = th.dataset.k; sortD = (sortK === 'player' || sortK === 'seasonLbl') ? 1 : -1; } paint(); });
@@ -329,7 +353,7 @@ $('#body').addEventListener('click', e => {
 $('#body').addEventListener('change', e => { if(e.target.id === 'price'){ price = e.target.value; ls.set('packs_price_v1', price); paint(); } });
 function showTab(t){
   tab = t; document.querySelectorAll('#tabs button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.t === t)));
-  $('#pickrow').querySelectorAll('label:not(.wide)').forEach(l => { l.hidden = t === 'fav'; });
+  $('#pickrow').hidden = t === 'fav';
   if(t === 'fav') loadFavs(); else loadSeason();
 }
 $('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if(b) showTab(b.dataset.t); });
@@ -340,16 +364,15 @@ $('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]
   if(!tk) return lock('Sign in on <a href="/board">the board</a> first.');
   const me = await api('/api/rax?market=me');
   if(!me.signedIn) return lock('Sign in on <a href="/board">the board</a> first.');
-  if(!me.pack) return lock('Pack data isn\'t open for your account yet.');
+  // Dennis only for now (2026-11-09).
+  if(!me.admin) return lock('This page isn\'t open yet.');
   $('#main').hidden = false; paintFavN();
   try{ const m = ls.get('packs_min_v1', null); if(m != null) $('#min').value = m; }catch(e){}
   const s = await api('/api/rax?plays=seasons');
   seasons = (s.seasons || []).filter(x => Number(x.plays) > 0);
-  drawSports();
   // Opens on what was picked last time - nothing is picked for you.
-  const last = ls.get('packs_pick_v1', null);
-  if(last && last.sp && seasons.some(x => x.sport === last.sp)){ $('#sport').value = last.sp; drawSeasons(last.se); }
-  else drawSeasons();
+  selSp = selSp.filter(sp => allSports().includes(sp)); picks = picks.filter(k => seasons.some(x => `${x.sport}:${x.season}` === k));
+  drawSports(); drawSeasons();
   showTab('all');
 })();
 </script>

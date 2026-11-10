@@ -2572,7 +2572,7 @@ function pageShell(title, bodyHTML){
 
 function goPage(want){
   // Pack data only: its own page (2026-11-09).
-  if(want === 'cbb' && packOnly()){ location.href = '/packs'; return; }
+  if(want === 'cbb' && packOnly() && isAdmin()){ location.href = '/packs'; return; }
   const to = (want === 'cbb' && canSeePackData()) ? 'cbb' : 'board';
   if(to === curPage) return;
   curPage = to;
@@ -4970,7 +4970,7 @@ async function cbbPanel(){
     <div class="seg seg-2up" role="group" aria-label="View">
       <button data-cm="players" aria-pressed="${st.mode === 'players' ? 'true' : 'false'}">By player</button>
       <button data-cm="games" aria-pressed="false">Every game</button>
-      <button data-cm="pack" aria-pressed="false">Pack data &#8599;</button>
+      <button data-cm="pack" aria-pressed="${st.mode === 'pack' ? 'true' : 'false'}">Pack data${isAdmin() ? ' &#8599;' : ''}</button>
       <button data-cm="golf" aria-pressed="${st.mode === 'golf' ? 'true' : 'false'}">Golf</button>
       <button data-cm="shift" aria-pressed="${st.mode === 'shift' ? 'true' : 'false'}">Rax shift</button>
       <button data-cm="hist" aria-pressed="false">Historical</button>
@@ -7758,7 +7758,7 @@ async function cbbPanel(){
 
     const m = e.target.closest('[data-cm]');
     // Pack data has its own page now (2026-11-09).
-    if(m && m.dataset.cm === 'pack'){ location.href = '/packs'; return; }
+    if(m && m.dataset.cm === 'pack' && isAdmin()){ location.href = '/packs'; return; }   // Dennis only for now
     if(m){
       if(st.mode === m.dataset.cm) return;
       st.mode = m.dataset.cm;
