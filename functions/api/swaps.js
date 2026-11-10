@@ -5866,8 +5866,12 @@ async function handle({ request, env, waitUntil }) {
     const u = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(me).first();
     if (!u || !u.hashId) return json({ error: 'Re-read your passes first so the board knows your Real account.' }, 400);
     const want = url.searchParams.get('fresh') === '1';
-    const fast = acc.admin || BOOST_FAST.has(String(me || '').toLowerCase());
-    if (want && !fast && !(await allow(url.origin, 'boostinv-all', 15, 60))) return json({ error: HIGH_VOL }, 429);
+    /* Booster reads are 7 calls to Real each (one a sport), and too many of them
+       got the account limited (2026-11-10). Every member: one read every 2
+       hours, no exceptions but admins, and at most 15 a minute / 60 every 10
+       minutes across the site. */
+    const fast = acc.admin;
+    if (want && !fast && (!(await allow(url.origin, 'boostinv-all', 15, 60)) || !(await allow(url.origin, 'boostinv-10m', 60, 600)))) return json({ error: HIGH_VOL }, 429);
     const all = await boostInventoryAll(env, env.RS_AUTH_TOKEN || auth, u.hashId, want, fast);
     if (all.error) return json({ error: all.error }, 502);
     return json({ sport: sp, at: all.at, next: all.next, cached: !!all.cached, boosters: (all.sports || {})[sp] || [], sports: all.sports });
