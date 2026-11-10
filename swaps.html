@@ -307,7 +307,7 @@
   <div class="savebar"><button class="primary big" id="save">Save my swap</button><span class="note" id="savemsg"></span></div>
   <div class="bar two"><button id="pauseall">Pause all</button><button id="endall" class="danger">End all</button></div>
   <span class="note" id="pausemsg"></span>
-  <p class="note sub"><b>Pause</b> = no new matches. <b>End all</b> = also calls off upcoming swaps. Save to start again.</p>
+  <p class="note sub"><b>Pause</b> = no new matches, and calls off your 160s and niche buys not yet messaged. <b>End all</b> = also calls off upcoming swaps. Save to start again.</p>
   <div class="bar"><button id="whynot" class="ghost">Why haven't I matched?</button></div>
   <div class="note" id="whyout"></div>
   <div class="saved" id="saved" hidden role="dialog" aria-modal="true" aria-labelledby="savedh"><div class="card"><div class="tick">✓</div><div class="big1" id="savedh">SAVED</div><div class="big2">YOU WILL RECEIVE A DM LATER</div><p class="note extra" id="savedx" hidden></p><button class="primary" id="savedok">Got it</button></div></div>
@@ -986,13 +986,19 @@ function drawSwaps(){
     : per === 'tomorrow' ? dayOf(x.due) === shift(1) : per === 'yesterday' ? dayOf(x.due) === shift(-1) : per === '7d' ? nowMs - x.due <= 7 * 86400000
     : per === 'day' ? (pick == null || dayOf(x.due) === pick) : true;
   const list = mySwaps.filter(x => (swTab === 'up' ? x.upcoming : !x.upcoming) && inPer(x));
-  $('#swcount').textContent = `${list.length} swap${list.length === 1 ? '' : 's'}`;
+  { const n1 = list.filter(x => !x.kind).length, n2 = list.length - n1; $('#swcount').textContent = `${n1} swap${n1 === 1 ? '' : 's'}` + (n2 ? ` · ${n2} 160${n2 === 1 ? '' : 's'}/niche` : ''); }
   if(swTab === 'up') list.sort((a, b) => a.due - b.due);
   const when = ms => new Date(ms).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)}</a>` : esc(t);
   const tm = ms => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const ext = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)} ↗</a>` : '';
   $('#swlist').innerHTML = list.map(x => { const t = TAG[x.state] || TAG.scheduled, who = '@' + esc(x.partner || '?'), whoL = x.partnerUrl ? `<a href="${esc(x.partnerUrl)}" target="_blank" rel="noopener">${who}</a>` : who;
+    // A 160 or a niche buy (2026-11-10): one line of what you do, with whom.
+    if(x.kind){ const what = x.kind === 'niche'
+        ? (x.role === 'sell' ? `Niche: buy <b>${lnk(x.player, x.playerUrl)}</b> and a pack for ${whoL} - they pay full price` : `Niche: ${whoL} buys <b>${lnk(x.player, x.playerUrl)}</b> and a pack for you - you pay full price`)
+        : (x.role === 'sell' ? `160: you sell a <b>${lnk(x.player, x.playerUrl)}</b> pack to ${whoL}` : `160: you buy a <b>${lnk(x.player, x.playerUrl)}</b> pack from ${whoL}`);
+      return `<div class="sw1"><div class="top"><b>${x.hourUrl ? `<a href="${esc(x.hourUrl)}" target="_blank" rel="noopener" title="This time's page">${when(x.due)} ↗</a>` : when(x.due)}</b><span class="tag" style="color:${t[1]}">${t[0]}</span></div>`
+        + `<div class="swwho">${what}</div>` + (x.made ? `<div class="note swtl">Matched ${when(x.made)}</div>` : '') + (x.note ? `<div class="note" style="margin-top:4px">${esc(x.note)}</div>` : '') + `</div>`; }
     const gp = String(x.give || '').replace(/ \d{4}$/, ''), rp = String(x.get || '').replace(/ \d{4}$/, '');
     return `<div class="sw1"><div class="top"><b>${x.hourUrl ? `<a href="${esc(x.hourUrl)}" target="_blank" rel="noopener" title="This time's page">${when(x.due)} ↗</a>` : when(x.due)}</b><span class="tag" style="color:${t[1]}">${t[0]}</span></div>`
       + `<div class="swwho">With <b>${whoL}</b>${x.comment ? ` · ${ext('their comment', x.comment)}` : ''}</div>`
@@ -1004,7 +1010,7 @@ function drawSwaps(){
       + (x.note ? `<div class="note" style="margin-top:4px">${esc(x.note)}</div>` : '') + `</div>`; }).join('')
     || `<p class="note">${$('#swper').value !== 'all' ? 'No swaps in that time period.' : swTab === 'up' ? 'No swaps scheduled yet. Matching runs every hour at :20 for the next 3 hours.' : 'No swaps in the last 14 days.'}</p>`;
 }
-async function loadSwaps(){ const j = await api('/api/swaps?op=myswaps'); if(j.error){ $('#swlist').innerHTML = `<p class="note">${esc(j.error)}</p>`; return; } mySwaps = j.swaps || []; drawSwaps(); }
+async function loadSwaps(){ const j = await api('/api/swaps?op=myswaps'); if(j.error){ $('#swlist').innerHTML = `<p class="note">${esc(j.error)}</p>`; return; } mySwaps = (j.swaps || []).concat(j.s160 || []); drawSwaps(); }
 const swPer = {};
 $('#swper').addEventListener('change', () => { swPer[swTab] = $('#swper').value; if($('#swper').value === 'day' && !$('#swday').value){ const d = new Date(); $('#swday').value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; } drawSwaps(); });
 $('#swday').addEventListener('change', drawSwaps);

@@ -1786,6 +1786,22 @@ async function cancelDropped(db, who, wants, slots, sched) {
     const why = !wants.has(gets) ? 'no longer swapping for that player' : rankAt(me, sideDue(m)) < 0 ? 'no longer picks that hour' : null;
     if (why) await callOff(db, m, `called off: @${who} ${why}`, res);
   }
+  /* 160s and niche buys too (2026-11-10: a member who unpicked 4:00 was still
+     down for 10 160s then). Not yet messaged ones only, as with every call-off
+     of a 160: a buyer's need the player still picked and the hour; a seller's
+     the hour, unless they sell 160s at hours of their own. */
+  try {
+    const u = await db.prepare('SELECT sell160m FROM swap_users WHERE key=?').bind(who).first();
+    const ownHours = u && (u.sell160m === 'one' || u.sell160m === 'multi');
+    const r1 = ((await db.prepare(`SELECT id, buyer, seller, pass, dueAt, kind FROM swap_160 WHERE status='pending' AND warnS IS NULL AND warnB IS NULL AND dueAt > ? AND (buyer=? OR seller=?)`)
+      .bind(Date.now(), who, who).all()).results) || [];
+    for (const r of r1) {
+      const hourGone = rankAt(me, Number(r.dueAt)) < 0, isBuyer = r.buyer === who;
+      const why = isBuyer ? (!wants.has(r.pass) ? 'no longer swapping for that player' : hourGone ? 'no longer picks that hour' : null)
+        : (hourGone && (r.kind === 'niche' || !ownHours) ? 'no longer picks that hour' : null);
+      if (why) { await db.prepare(`UPDATE swap_160 SET status='cancelled', note=? WHERE id=? AND status='pending' AND warnS IS NULL AND warnB IS NULL`).bind(`called off: @${who} ${why}`, r.id).run(); res.n++; }
+    }
+  } catch (e) {}
   return res;
 }
 // Admin "Send now": every DM for one match straight away (warn, contact, follow-up).
@@ -4947,6 +4963,8 @@ async function handle({ request, env, waitUntil }) {
     await db.prepare('UPDATE swap_users SET active=0, updatedAt=? WHERE key=?').bind(Date.now(), me).run();
     try { await env.RATEBOARD_KV.delete('swap_hourcounts_v1'); await env.RATEBOARD_KV.delete('swap_wantcounts_v1'); } catch (e) {}
     let res = { n: 0, late: 0, soon: 0 };
+    // Paused: no new matches, and their 160s and niche buys not yet messaged are called off too (2026-11-10).
+    if (op === 'pause') { try { const c = await db.prepare(`UPDATE swap_160 SET status='cancelled', note=? WHERE status='pending' AND warnS IS NULL AND warnB IS NULL AND (buyer=? OR seller=?)`).bind(`called off: @${me} paused`, me, me).run(); res.n += (c && c.meta && c.meta.changes) || 0; } catch (e) {} }
     if (op === 'endall') {
       const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned') AND (a=? OR b=?)`).bind(me, me).all()).results) || [];
       for (const m of rows) await callOff(db, m, `called off: @${me} ended their swaps`, res);
@@ -5038,7 +5056,27 @@ async function handle({ request, env, waitUntil }) {
     const hp = new Map();
     for (const x of out) if (x.due && !hp.has(x.due)) hp.set(x.due, `/hour?u=${encodeURIComponent(me)}&d=${x.due}&t=${await hourSig(env, me, x.due)}`);
     for (const x of out) x.hourUrl = hp.get(x.due) || null;
-    return json({ swaps: out, now });
+    /* Their 160s and niche buys too (2026-11-10), bought or sold, last 14 days. */
+    const s160 = [];
+    try {
+      const r1 = ((await db.prepare(`SELECT id, buyer, seller, pass, dueAt, createdAt, status, note, warnS, warnB, kind FROM swap_160 WHERE (buyer=? OR seller=?) AND createdAt > ? ORDER BY dueAt DESC LIMIT 150`)
+        .bind(me, me, Date.now() - 14 * 86400000).all()).results) || [];
+      const ok2 = [...new Set(r1.map(r => r.buyer === me ? r.seller : r.buyer).filter(k => !who.has(k)))];
+      for (let i = 0; i < ok2.length; i += 90) { const part = ok2.slice(i, i + 90);
+        for (const x of (((await db.prepare(`SELECT key, rsUser, hashId, comment FROM swap_users WHERE key IN (${part.map(() => '?').join(',')})`).bind(...part).all()).results) || [])) who.set(x.key, x); }
+      const nameOf = new Map();
+      for (const r of r1) {
+        const buy = r.buyer === me, ok = buy ? r.seller : r.buyer, o = who.get(ok), off = r.status === 'cancelled', due = Number(r.dueAt);
+        let nm = mine ? playerName(mine, r.pass) : r.pass;
+        if (/^Player \d/.test(nm)) { if (!nameOf.has(ok)) nameOf.set(ok, await loadMember(db, ok).catch(() => null)); const om = nameOf.get(ok); if (om) nm = playerName(om, r.pass); }
+        const sent = buy ? r.warnB : r.warnS;
+        s160.push({ id: 's' + r.id, kind: r.kind === 'niche' ? 'niche' : '160', role: buy ? 'buy' : 'sell', due, made: r.createdAt,
+          partner: (o && o.rsUser) || null, partnerUrl: o ? profileUrl(o.rsUser, o.hashId) : null, player: nm, playerUrl: playerUrl(r.pass),
+          state: off ? 'off' : sent ? 'warned' : 'scheduled', upcoming: !off && r.status === 'pending' && due > now - 3600000,
+          note: off ? (r.note || 'called off') : null, hourUrl: hp.get(due) || `/hour?u=${encodeURIComponent(me)}&d=${due}&t=${await hourSig(env, me, due)}` });
+      }
+    } catch (e) {}
+    return json({ swaps: out, s160, now });
   }
 
   if (op === 'whynot') {
