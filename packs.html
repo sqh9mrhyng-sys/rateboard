@@ -44,6 +44,8 @@
   .sgrp .chips button span{font-weight:400;font-size:11.5px;opacity:.75;margin-left:4px}
   .opts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;align-items:center}
   .opts button{padding:6px 12px;border-radius:999px;font-size:13px}
+  .tgls{display:inline-flex;flex-wrap:wrap;gap:5px}
+  .tgls button{padding:4px 9px;font-size:12px;font-weight:600;min-height:0}
   .opts button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);font-weight:700}
   .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
   table{width:100%;border-collapse:collapse;font-size:13.5px}
@@ -104,7 +106,7 @@
     </div>
     <div class="opts">
       <label class="note">Min plays <input id="min" type="number" inputmode="numeric" min="0" step="1" value="10" style="width:90px"></label>
-      <button type="button" id="top" aria-pressed="false">Show Mystic &amp; Iconic</button>
+      <span class="tgls"><button type="button" id="top" aria-pressed="false">Mystic &amp; Iconic</button><button type="button" id="showrax" aria-pressed="false">Show rax</button><button type="button" id="showown" aria-pressed="false">Show owners</button></span>
     </div>
   </section>
   <section>
@@ -239,6 +241,7 @@ function packOdds(plays, hits){ const n = Number(plays) || 0, k = Number(hits) |
 const pct = v => !v ? '0%' : (v * 100 < 1 ? (v * 100).toFixed(2) : (v * 100).toFixed(1)) + '%';
 const num = v => v == null ? '–' : Math.round(Number(v)).toLocaleString();
 
+let showRax = ls.get('packs_showrax_v1', false), showOwn = ls.get('packs_showown_v1', false);
 let seasons = [], tab = 'all', rows = [], sortK = 'plays', sortD = -1, page = 0, openK = null, showTop = false, price = ls.get('packs_price_v1', 'self');
 const PAGE = 100, cache = new Map();
 let favs = ls.get('packs_favs_v1', []);
@@ -269,7 +272,7 @@ function cols(){
   return [['fav', '', 'l'], ['player', 'Player', 'l'], ...(multi ? [['seasonLbl', 'Season', 'l', 'hm']] : []), ['plays', 'Plays'],
     ...(showTop ? [['iconic', 'Iconic', '', 'hm'], ['iconOdds', 'Icon %'], ['mystic', 'Mystic', '', 'hm'], ['mysOdds', 'Myst %']] : []),
     ['legendary', 'Leg', '', 'hm'], ['legOdds', 'Leg %'], ['epic', 'Epic', '', 'hm'], ['epicOdds', 'Epic %'], ['avg3', 'Per pack'], ['boost', 'Avg booster', '', 'hm'],
-    ['earnings', 'Rax', '', 'hm'], ['owners', 'Owners', '', 'hm']];
+    ...(showRax ? [['earnings', 'Rax']] : []), ...(showOwn ? [['owners', 'Owners']] : [])];
 }
 function enrich(r){ const n = Number(r.plays) || 0;
   return { ...r, legOdds: packOdds(n, r.legendary), epicOdds: packOdds(n, r.epic), mysOdds: packOdds(n, r.mystic), iconOdds: packOdds(n, r.iconic),
@@ -395,6 +398,11 @@ $('#seasons').addEventListener('click', e => { const b = e.target.closest('[data
 let qT = null; $('#q').addEventListener('input', () => { clearTimeout(qT); qT = setTimeout(() => { page = 0; paint(); }, 200); });
 $('#min').addEventListener('input', () => { clearTimeout(qT); qT = setTimeout(() => { page = 0; ls.set('packs_min_v1', $('#min').value); paint(); }, 250); });
 $('#top').addEventListener('click', () => { showTop = !showTop; $('#top').setAttribute('aria-pressed', String(showTop)); paint(); });
+// Rax and owners columns, off to start; remembered in this browser.
+const paintTgl = () => { $('#showrax').setAttribute('aria-pressed', String(showRax)); $('#showown').setAttribute('aria-pressed', String(showOwn)); };
+$('#showrax').addEventListener('click', () => { showRax = !showRax; ls.set('packs_showrax_v1', showRax); paintTgl(); paint(); });
+$('#showown').addEventListener('click', () => { showOwn = !showOwn; ls.set('packs_showown_v1', showOwn); paintTgl(); paint(); });
+paintTgl();
 $('#head').addEventListener('click', e => { const th = e.target.closest('[data-k]'); if(!th || th.dataset.k === 'fav') return;
   if(sortK === th.dataset.k) sortD = -sortD; else { sortK = th.dataset.k; sortD = (sortK === 'player' || sortK === 'seasonLbl') ? 1 : -1; } paint(); });
 $('#pager').addEventListener('click', e => { const b = e.target.closest('[data-pg]'); if(!b) return; page += Number(b.dataset.pg); paint(); $('#head').scrollIntoView({ block: 'nearest' }); });
