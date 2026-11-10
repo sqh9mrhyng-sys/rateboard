@@ -1187,7 +1187,7 @@ async function resetFlow(env, db, url, request, op, waitUntil) {
   try {
     waitUntil((async () => {
       if (found.request) { try { await fetch(`https://web.realapp.com/messages/channels/${found.request}/acceptrequest`, { method: 'PUT', headers: { ...rsHeaders(auth), 'content-type': 'application/json' }, body: '{}' }); } catch (e) {} }
-      if (found.channel) { try { await dmSend(auth, found.channel, 'Code confirmed; password reset available on https://raxacademy.app'); await stat(db, 'dm_reset'); } catch (e) { await botFail(db, 'dm_reset', e.message); } }
+      if (found.channel) { try { await dmSend(auth, found.channel, 'Code confirmed; password reset available on https://raxacademy.app/board'); await stat(db, 'dm_reset'); } catch (e) { await botFail(db, 'dm_reset', e.message); } }
     })());
   } catch (e) {}
   return json({ ok: !!(res.meta && res.meta.changes), reset: true });

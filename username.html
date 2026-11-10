@@ -25,7 +25,7 @@
 <body>
 <div class="wrap">
   <header><h1>Link your Real account</h1><a href="/swaps" id="backlink" style="margin-left:auto">Back to Swaps</a></header>
-  <script>try{ if(/\/home/.test(document.referrer)){ const b = document.getElementById('backlink'); b.href = '/home'; b.textContent = 'Back to home'; } }catch(e){}</script>
+  <script>try{ if(/^https?:\/\/[^/]+\/?(\?|#|$)/.test(document.referrer)){ const b = document.getElementById('backlink'); b.href = '/'; b.textContent = 'Back to home'; } }catch(e){}</script>
   <p class="note" id="who">Checking…</p>
   <div id="main" hidden>
     <section>

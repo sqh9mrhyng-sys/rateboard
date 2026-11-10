@@ -49,8 +49,8 @@ import { countPageView } from './api/sponsor.js';
 
 /* Page views (2026-11-08): every page a person opens, counted per page per
    day - link previews, crawlers and prefetches left out. */
-const PV_PAGES = { '/': 'board', '/index.html': 'board', '/market': 'market', '/market.html': 'market', '/swaps': 'swaps', '/swaps.html': 'swaps',
-  '/hour': 'hour', '/hour.html': 'hour', '/otd': 'otd', '/otd.html': 'otd', '/boosts': 'boosts', '/boosts.html': 'boosts', '/projections': 'projections', '/projections.html': 'projections', '/tags': 'tags', '/tags.html': 'tags', '/home': 'home', '/home.html': 'home' };
+const PV_PAGES = { '/': 'home', '/index.html': 'home', '/board': 'board', '/board.html': 'board', '/market': 'market', '/market.html': 'market', '/swaps': 'swaps', '/swaps.html': 'swaps',
+  '/hour': 'hour', '/hour.html': 'hour', '/otd': 'otd', '/otd.html': 'otd', '/boosts': 'boosts', '/boosts.html': 'boosts', '/projections': 'projections', '/projections.html': 'projections', '/tags': 'tags', '/tags.html': 'tags', };
 const BOT_UA = /bot|crawl|spider|slurp|preview|facebookexternalhit|embedly|quora|whatsapp|telegram|discord|slack|twitter|headless|lighthouse|curl|wget|python|node-fetch|go-http/i;
 function pageOf(request, url) {
   if (request.method !== 'GET') return null;
@@ -65,6 +65,9 @@ function pageOf(request, url) {
 
 export async function onRequest({ request, next, env, waitUntil }) {
   const url = new URL(request.url);
+  /* Home is the front page and the board lives at /board (Dennis, 2026-11-09):
+     the old /home address goes to the front page. */
+  if (url.pathname === '/home' || url.pathname === '/home.html') return Response.redirect(url.origin + '/' + url.search + url.hash, 301);
   if (url.hostname !== OLD_HOST) { const pg = pageOf(request, url); if (pg && waitUntil) waitUntil(countPageView(env, pg)); }
   if (url.hostname === OLD_HOST) {
     if (url.pathname === '/__move') {
