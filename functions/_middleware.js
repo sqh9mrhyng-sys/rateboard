@@ -70,11 +70,12 @@ export async function onRequest({ request, next, env, waitUntil }) {
      the old /home address goes to the front page. */
   if (url.pathname === '/home' || url.pathname === '/home.html') return Response.redirect(url.origin + '/' + url.search + url.hash, 301);
   /* View-as sessions are look-only (2026-11-10): no writes of any kind, and
-     no scans started. Signing out of one is the only thing it may post. */
+     except re-reading their passes. Signing out of one is the only thing it may post. */
   if (url.pathname.startsWith('/api/') && isViewToken(request.headers.get('x-rb-token') || '')) {
     const m = request.method, op = url.searchParams.get('op') || '';
     let ok = m === 'GET' || m === 'HEAD';
-    if (ok && ['scan', 'scantick', 'save', 'saveslots', 'pause', 'endall', 'confirm', 'dropwant', 'touch', 'keep', 'report', 'dmsend', 'dmopen', 'connect', 'inboxact'].includes(op)) ok = false;
+    // Re-reading their passes is allowed (Dennis, 2026-11-10): the scan saves to their account like their own would.
+    if (ok && ['save', 'saveslots', 'pause', 'endall', 'confirm', 'dropwant', 'touch', 'keep', 'report', 'dmsend', 'dmopen', 'connect', 'inboxact'].includes(op)) ok = false;
     if (ok && /^(grant|revoke|reset|pullplayer)$/.test(url.searchParams.get('market') || '')) ok = false;
     if (!ok && m === 'POST' && url.pathname === '/api/kv') { try { const b = await request.clone().json(); if (b && b.op === 'signout') ok = true; } catch (e) {} }
     if (!ok) return new Response(JSON.stringify({ error: "You're viewing this account - look only, nothing is saved." }), { status: 403, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });

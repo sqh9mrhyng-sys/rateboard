@@ -24,7 +24,7 @@
     if(document.getElementById('viewasbar')) return;
     var el = document.createElement('div'); el.id = 'viewasbar';
     el.setAttribute('style', 'position:sticky;top:0;z-index:9999;display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap;padding:8px 12px;background:#7a1f2b;color:#fff;font:600 14px/1.3 system-ui,-apple-system,sans-serif;box-shadow:0 2px 10px rgba(0,0,0,.4)');
-    el.innerHTML = '<span>Viewing <b>@' + esc((d && (d.name || d.key)) || 'member') + '</b> - look only, nothing is saved</span><button type="button" style="font:inherit;font-weight:800;padding:5px 12px;border-radius:999px;border:0;background:#fff;color:#7a1f2b;cursor:pointer">Back to ' + esc((back && back.name) || 'my account') + '</button>';
+    el.innerHTML = '<span>Viewing <b>@' + esc((d && (d.name || d.key)) || 'member') + '</b> - look only (re-reading passes still saves)</span><button type="button" style="font:inherit;font-weight:800;padding:5px 12px;border-radius:999px;border:0;background:#fff;color:#7a1f2b;cursor:pointer">Back to ' + esc((back && back.name) || 'my account') + '</button>';
     el.querySelector('button').addEventListener('click', goBack);
     document.body.insertBefore(el, document.body.firstChild);
   }
