@@ -3922,8 +3922,8 @@ async function tagSeasonSig(env, db, sp, se) {
   const r = await db.prepare(`SELECT COUNT(*) AS n, MAX(day) AS d FROM gamelog WHERE sport=? AND season=? AND stats IS NOT NULL`).bind(sp, se).first();
   let p = null; try { p = await db.prepare(`SELECT COUNT(*) AS n FROM performances WHERE sport=? AND season=?`).bind(sp, se).first(); } catch (e) {}
   const v = `${r && r.n}|${r && r.d}|${p && p.n}`;
-  // A finished season barely moves: its fingerprint is kept 6 hours, the current one 15 minutes.
-  try { await env.RATEBOARD_KV.put(k, v, { expirationTtl: se === TAG_SEASONS[sp][0] ? 900 : 6 * 3600 }); } catch (e) {}
+  // A finished season barely moves (only Real's tags still coming in): its fingerprint is kept a day, the current one an hour.
+  try { await env.RATEBOARD_KV.put(k, v, { expirationTtl: se === TAG_SEASONS[sp][0] ? 3600 : 86400 }); } catch (e) {}
   return v;
 }
 async function tagSig(env, db, sp) { const out = []; for (const se of TAG_SEASONS[sp]) out.push(await tagSeasonSig(env, db, sp, se)); return out.join('/'); }
@@ -3997,7 +3997,7 @@ async function tagBuild(env, db, sp) {
   return c;
 }
 
-const PROJ_MEM = new Map();
+const PROJ_MEM = new Map(), TAG_MEM = new Map();
 const projMem = c => ({ c, read: 0, byId: new Map((c.rows || []).map(r => [r.i, r])), rowsText: JSON.stringify((c.rows || []).map(({ x, ...r }) => r)) });
 const projSigOf = (n, d, s) => `${n}|${d || ''}|${Math.round(Number(s) || 0)}`;
 async function projSig(env, db, sp) {
@@ -4283,6 +4283,41 @@ export async function whyNotFull(db, env, key) {
   return out;
 }
 
+/* Tag finder (2026-11-09): which games earned each performance tag. Answered
+   before the per-request table setup - it only reads its saved list. */
+async function tagViewOp(env, db, url, acc, waitUntil) {
+    /* Open to everyone signed in (Dennis, 2026-11-09). Like projections: the
+       list is kept in memory per worker with its text ready, and the saved copy
+       re-read at most once a minute, so a crowd costs one KV read a minute;
+       the game data is checked for changes at most once an hour. */
+    if (!acc.who) return json({ error: 'Sign in on the board first.' }, 403);
+    if (!acc.admin && !(await allow(url.origin, 'tagview:' + acc.who, 40, 600))) return json({ error: 'Too many refreshes - wait a few minutes.' }, 429);
+    const sp = TAG_DEFS[url.searchParams.get('sport')] ? url.searchParams.get('sport') : 'nfl';
+    const k = `tagview_v1_${sp}`;
+    let m = TAG_MEM.get(sp);
+    if (!m || Date.now() - m.read > 60000) {
+      let c0 = null; try { c0 = JSON.parse((await env.RATEBOARD_KV.get(k)) || 'null'); } catch (e) {}
+      if (c0) { if (!m || m.c.at !== c0.at) m = { c: c0, text: JSON.stringify(c0) }; m.read = Date.now(); TAG_MEM.set(sp, m); }
+      else if (m) m.read = Date.now();
+    }
+    const c = m ? m.c : null;
+    const lockK = `tagview_lock_${sp}`;
+    // A changed tag list or new games: the last list is shown while the new one is built.
+    let stale = !c || c.v !== TAG_DEFS_V;
+    if (c && !stale && Date.now() - c.at > 60 * 60000 && (!m.sigAt || Date.now() - m.sigAt > 10 * 60000)) {
+      m.sigAt = Date.now(); try { stale = (await tagSig(env, db, sp)) !== c.sig; } catch (e) {} }
+    if (stale) {
+      let locked = false; try { locked = !!(await env.RATEBOARD_KV.get(lockK)); } catch (e) {}
+      if (!locked) {
+        try { await env.RATEBOARD_KV.put(lockK, '1', { expirationTtl: 120 }); } catch (e) {}
+        const job = tagBuild(env, db, sp).finally(() => env.RATEBOARD_KV.delete(lockK).catch(() => {}));
+        // Built in the background; the page checks back (a first build of a big sport - CFB - takes a while).
+        try { waitUntil(job.catch(() => {})); } catch (e) {}
+        if (!c) return json({ building: true, note: 'Building the tag list for the first time - this page checks again in 20 seconds.' });
+      } else if (!c) return json({ building: true, note: 'Building the tag list - try again in a minute.' });
+    }
+    return new Response(m.text, { headers: { 'content-type': 'application/json', 'cache-control': 'private, max-age=60' } });
+  }
 export async function onRequest(ctx) {
   const t0 = Date.now();
   try { await perfOnlyRefresh(ctx.env); } catch (e) {}
@@ -4703,6 +4738,7 @@ async function handle({ request, env, waitUntil }) {
   if (!acc.ok && !boostCall) return forbidden(acc.who ? 'Your account does not have this page yet.' : 'Sign in on the board first.');
   if (!acc.admin && !boostCall && !((acc.swaps && MEMBER_OPS.has(op)) || (acc.otd && OTD_OPS.has(op)))) return forbidden('Your account does not have this.');
   const me = acc.who;
+  if (op === 'tagview') return tagViewOp(env, db, url, acc, waitUntil);
   await ready(db);
   mark(request, 'ready');
   const auth = swapToken(env);
@@ -5754,29 +5790,6 @@ async function handle({ request, env, waitUntil }) {
     rows.forEach((r, i) => walk(r, '', i));
     return json({ sport: sp, season: se, account: u.rsUser, passes: rows.length, topKeys: Object.keys(d || {}),
       fields: Object.fromEntries([...seen].map(([k, v]) => [k, [...v]])), first3: rows.slice(0, 3) });
-  }
-  // Tag finder (2026-11-09): which games earned each performance tag.
-  if (op === 'tagview') {
-    // Dennis only until it's finished (2026-11-09).
-    if (!acc.admin) return json({ error: 'This page is not open yet.' }, 403);
-    const sp = TAG_DEFS[url.searchParams.get('sport')] ? url.searchParams.get('sport') : 'nfl';
-    const k = `tagview_v1_${sp}`;
-    let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(k)) || 'null'); } catch (e) {}
-    const lockK = `tagview_lock_${sp}`;
-    // A changed tag list or new games: the last list is shown while the new one is built.
-    let stale = !c || c.v !== TAG_DEFS_V;
-    if (c && Date.now() - c.at > 30 * 60000) { try { stale = (await tagSig(env, db, sp)) !== c.sig; } catch (e) {} }
-    if (stale) {
-      let locked = false; try { locked = !!(await env.RATEBOARD_KV.get(lockK)); } catch (e) {}
-      if (!locked) {
-        try { await env.RATEBOARD_KV.put(lockK, '1', { expirationTtl: 120 }); } catch (e) {}
-        const job = tagBuild(env, db, sp).finally(() => env.RATEBOARD_KV.delete(lockK).catch(() => {}));
-        // Built in the background; the page checks back (a first build of a big sport - CFB - takes a while).
-        try { waitUntil(job.catch(() => {})); } catch (e) {}
-        if (!c) return json({ building: true, note: 'Building the tag list for the first time - this page checks again in 20 seconds.' });
-      } else if (!c) return json({ building: true, note: 'Building the tag list - try again in a minute.' });
-    }
-    return json(c);
   }
   if (op === 'projections') {
     // Open to everyone signed in (Dennis, 2026-11-08; was Dennis only).

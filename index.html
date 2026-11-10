@@ -943,7 +943,7 @@ function applyGameDataVisibility(){
     // still shows in Safari's picker.
     const want = [['board', 'Board'], ...(canSeePackData() ? [['cbb', 'Game data']] : []),
                   ...(marketAccess ? [['market', 'Market data']] : []),
-                  ...(boostsOn ? [['boosts', 'Boosts/Buys (beta)']] : []), ['projections', 'Projections'], ...(otdOn ? [['tags', 'Tag finder']] : []),   // projections everyone (2026-11-08); tag finder Dennis only for now
+                  ...(boostsOn ? [['boosts', 'Boosts/Buys (beta)']] : []), ['projections', 'Projections'], ['tags', 'Tag finder'],   // projections everyone (2026-11-08); tag finder everyone (2026-11-09)
                   ...(swapsOn ? [['swaps', 'Swaps (beta)']] : []), ...(otdOn ? [['otd', 'OTD optimization'], ['admin', 'Admin']] : [])];
     const have = [...sel.options].map(o => o.value).join(',');
     if(have !== want.map(w => w[0]).join(',')){
