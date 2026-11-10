@@ -217,6 +217,40 @@ function statBlob(b) {
   return Object.keys(out).length ? JSON.stringify(out) : null;
 }
 
+/* Performances from a player's season feed (2026-11-09): the game-log walk reads
+   the same feed, so on every sweep it now keeps performances (box score id,
+   Real's tags) up to date too - no separate pull for the season being played.
+   Only rows that changed are written. */
+const PERF_UPSERT = `INSERT INTO performances (id, sport, season, playerId, player, gameId, day,
+         seasonType, teamId, oppTeamId, team, opponent, value, rarity, tags, stats,
+         played, started, seenAt)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(id) DO UPDATE SET value=excluded.value, tags=excluded.tags,
+         stats=excluded.stats, day=excluded.day, seenAt=excluded.seenAt
+       WHERE performances.value IS NOT excluded.value OR performances.tags IS NOT excluded.tags
+         OR performances.stats IS NOT excluded.stats OR performances.day IS NOT excluded.day`;
+function perfStatements(db, sport, season, boxScores) {
+  const stmt = db.prepare(PERF_UPSERT), out = [];
+  for (const r of (boxScores || [])) {
+    if (!r || r.id == null) continue;
+    if (!keepsPlays(sport, r.seasonType)) continue;
+    const tg = [].concat(r.performanceTags || [], r.performanceTagsManual || [])
+      .map(x => (x && x.id != null) ? Number(x.id) : Number(x)).filter(n => Number.isFinite(n));
+    out.push(stmt.bind(
+      Number(r.id), sport, Number(r.season || season),
+      r.playerId == null ? null : Number(r.playerId), playName(r.player),
+      r.gameId == null ? null : Number(r.gameId), r.day || null, r.seasonType || null,
+      r.teamId == null ? null : Number(r.teamId),
+      r.opponentTeamId == null ? null : Number(r.opponentTeamId),
+      (r.team && r.team.key) || null, (r.awayTeam && r.awayTeam.key) || null,
+      r.value == null ? null : Math.abs(Number(r.value)),
+      null, tg.length ? tg.join(',') : null,
+      r.topStats ? JSON.stringify(r.topStats).slice(0, 900) : null,
+      r.played ? 1 : 0, r.started ? 1 : 0, Date.now()));
+  }
+  return out;
+}
+
 function gamelogRow(sport, season, b) {
   const sv = {};
   for (const x of (b.statValues || [])) if (x && x.label) sv[x.label] = x;
@@ -1891,8 +1925,8 @@ const SWEEP_HOUR_ET = 9;
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 const SWEEPS = [
   { sport: 'nba',    season: 2027, days: ALL_DAYS },
-  { sport: 'nhl',    season: 2026, days: [0, 2, 4] },   // every other day (was daily) - frees the queue for CBB/NFL
-  { sport: 'soccer', season: 2026, days: [1] },       // Monday (was daily): the biggest season, not used by Boosts/Swaps
+  { sport: 'nhl',    season: 2026, days: ALL_DAYS },    // daily again (Dennis, 2026-11-09): re-walks only read each player's newest games
+  { sport: 'soccer', season: 2026, days: ALL_DAYS },    // daily (Dennis, 2026-11-09; was Monday)
   { sport: 'ncaaf',  season: 2026, days: [0] },          // Sunday
   { sport: 'nfl',    season: 2026, days: [5, 1, 2] },    // Friday, Monday, Tuesday
   { sport: 'golf',   season: 2026, days: [1] },          // Monday
@@ -2446,6 +2480,7 @@ async function handleGet({ request, env, waitUntil }) {
      the season. One request per player covers their whole season, so this is
      far cheaper per row than the play sweep. */
   if (url.searchParams.get('perf') === 'collect') {
+    /* (see perfStatements below - the game-log walk now writes these too) */
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
     await perfReady(db);
@@ -6940,6 +6975,7 @@ async function handleGet({ request, env, waitUntil }) {
           let walked = null; try { walked = await env.RATEBOARD_KV.get(WALKED_KEY); } catch (e) {}
           const feedN = walked ? 12 : 200;
           const glWin = walked ? await sweepWindow(env, sport, season) : { from: null, to: etYesterday() };
+          let perfOk = false; try { await perfReady(db); perfOk = true; } catch (e) {}
           for (const id of todo) {
             try {
               const d = await rsGet(feedUrl(id, feedN), auth);
@@ -6962,6 +6998,9 @@ async function handleGet({ request, env, waitUntil }) {
                 if (batch.length) await db.batch(batch);
               }
               rowsWritten += rows.length;
+              // The same box scores as performances (Tag finder, box-score links), in the same window.
+              if (perfOk) { try { const ps = perfStatements(db, sport, season, bs.filter(b => inWindow(glWin, b.day)));
+                for (let i = 0; i < ps.length; i += 100) await db.batch(ps.slice(i, i + 100)); } catch (e) {} }
               done[id] = 1;
             } catch (e) {
               if (!firstError) {

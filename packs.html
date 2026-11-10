@@ -32,7 +32,14 @@
   .chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
   .chips button{padding:7px 13px;border-radius:999px;font-size:13.5px;font-weight:600}
   .chips button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#141925;font-weight:800}
-  .sgrp{margin-bottom:8px} .sgrp b{display:block;font-size:12px;color:var(--mute);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px}
+  .sgrp{margin-bottom:8px;border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--panel2)}
+  .sgrp summary{cursor:pointer;display:flex;align-items:center;gap:8px;list-style:none}
+  .sgrp summary::-webkit-details-marker{display:none}
+  .sgrp summary::before{content:'▸';color:var(--mute);transition:transform .15s}
+  .sgrp[open] summary::before{transform:rotate(90deg)}
+  .sgrp summary b{font-size:13px;letter-spacing:.04em}
+  .sgrp summary .sel{color:var(--accent);font-weight:700}
+  .sgrp .chips{margin:8px 0 2px}
   .sgrp .chips{margin-bottom:4px}
   .sgrp .chips button span{font-weight:400;font-size:11.5px;opacity:.75;margin-left:4px}
   .opts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;align-items:center}
@@ -51,6 +58,7 @@
   td.pl .sub{display:block;color:var(--mute);font-size:11.5px;font-weight:400}
   .star{background:none;border:0;padding:2px 4px;font-size:19px;line-height:1;color:var(--line);cursor:pointer}
   .star.on{color:var(--accent)}
+  .ra{color:#f0913a;font-weight:700}
   .lg{color:var(--purple);font-weight:700} .ep{color:var(--red);font-weight:700} .my{color:var(--gold);font-weight:700} .ic{color:var(--pink);font-weight:700}
   tr.det td{background:var(--panel2);text-align:left;white-space:normal;padding:10px 12px 14px}
   .lad{width:100%;max-width:640px;font-size:13px}
@@ -59,14 +67,24 @@
   .pager{display:flex;gap:8px;align-items:center;justify-content:center;margin-top:10px}
   .lock{max-width:460px;margin:12vh auto;text-align:center}
   .empty{padding:18px 6px;text-align:center;color:var(--mute)}
-  @media (max-width:640px){ th.hm,td.hm{display:none} .wrap{padding:12px} }
+  td.pl .ms{display:none}
+  @media (max-width:640px){
+    th.hm,td.hm{display:none} .wrap{padding:10px} section{padding:10px}
+    td.pl .ms{display:inline}
+    table{font-size:12.5px} th,td{padding:7px 4px} th{font-size:10px;letter-spacing:.02em}
+    td.pl{white-space:normal;min-width:110px} td.pl a{font-size:13px}
+    .star{font-size:17px;padding:0 2px}
+    .lad th.hm2,.lad td.hm2{display:none}
+    tr.det td{padding:8px 6px 12px}
+    .ladbar{gap:6px} .ladbar select{width:100%}
+  }
 </style>
 </head>
 <body>
 <div class="lock" id="lock" hidden><h1>Pack data</h1><p class="note" id="lockmsg">Checking…</p><p><a href="/">Back to home</a></p></div>
 <div class="wrap" id="main" hidden>
   <header><h1>Pack data</h1><span data-acct></span><a href="/">Back to home</a></header>
-  <div class="upd">Pack data updates <b>every day from 11am ET (7am Alaska)</b>, after the morning game-data sweep - <span class="note">NBA and CBB daily · NFL Fri, Mon, Tue · NHL Sun, Tue, Thu · CFB Sun · FC Mon. Finished seasons don't change.</span></div>
+  <div class="upd">Pack data updates <b>every day from 11am ET (7am Alaska)</b>, after the morning game-data sweep - <span class="note">NBA, CBB and NHL daily · NFL Fri, Mon, Tue · CFB Sun. Finished seasons don't change.</span></div>
   <div class="seg" id="tabs"><button data-t="all" aria-pressed="true">All players</button><button data-t="fav" aria-pressed="false">★ Favorites <span id="favn"></span></button></div>
   <section>
     <div id="pickrow">
@@ -242,9 +260,9 @@ async function seasonRows(sp, se){
 
 function cols(){
   const multi = tab === 'fav' || picks.length > 1;
-  return [['fav', '', 'l'], ['player', 'Player', 'l'], ...(multi ? [['seasonLbl', 'Season', 'l']] : []), ['plays', 'Plays'],
-    ...(showTop ? [['iconic', 'Iconic'], ['iconOdds', 'Iconic odds'], ['mystic', 'Mystic'], ['mysOdds', 'Mystic odds']] : []),
-    ['legendary', 'Leg', '', 'hm'], ['legOdds', 'Leg odds'], ['epic', 'Epic', '', 'hm'], ['epicOdds', 'Epic odds'], ['avg3', 'Rating / pack'], ['boost', 'Avg booster', '', 'hm'],
+  return [['fav', '', 'l'], ['player', 'Player', 'l'], ...(multi ? [['seasonLbl', 'Season', 'l', 'hm']] : []), ['plays', 'Plays'],
+    ...(showTop ? [['iconic', 'Iconic', '', 'hm'], ['iconOdds', 'Icon %'], ['mystic', 'Mystic', '', 'hm'], ['mysOdds', 'Myst %']] : []),
+    ['legendary', 'Leg', '', 'hm'], ['legOdds', 'Leg %'], ['epic', 'Epic', '', 'hm'], ['epicOdds', 'Epic %'], ['avg3', 'Per pack'], ['boost', 'Avg booster', '', 'hm'],
     ['earnings', 'Rax', '', 'hm'], ['owners', 'Owners', '', 'hm']];
 }
 function enrich(r){ const n = Number(r.plays) || 0;
@@ -253,7 +271,7 @@ function enrich(r){ const n = Number(r.plays) || 0;
 function cell(r, k){
   if(k === 'fav') return `<button class="star${isFav(r) ? ' on' : ''}" data-star="${esc(keyOf(r))}" aria-label="Favorite">★</button>`;
   if(k === 'player'){ const u = realPlayerUrl(r.sport, r.playerId, r.season);
-    return `${u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.player || 'Player')}</a>` : esc(r.player || 'Player')}<span class="sub">${esc(r.team || '')}</span>`; }
+    return `${u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.player || 'Player')}</a>` : esc(r.player || 'Player')}<span class="sub">${esc(r.team || '')}${(tab === 'fav' || picks.length > 1) ? `<span class="ms">${r.team ? ' · ' : ''}${esc(r.seasonLbl)}</span>` : ''}</span>`; }
   if(/Odds$/.test(k)) return `<span class="${{ legOdds: 'lg', epicOdds: 'ep', mysOdds: 'my', iconOdds: 'ic' }[k]}">${pct(r[k])}</span>`;
   if(k === 'avg3') return r.avg3 == null ? '–' : (r.avgRating * 3 < PACK_FLOOR ? `<span class="note" title="Floored to ${PACK_FLOOR}">${PACK_FLOOR}</span>` : r.avg3.toFixed(1));
   if(k === 'boost') return r.boost == null ? '–' : r.boost.toFixed(1) + 'x';
@@ -267,10 +285,10 @@ function ladder(r){
   let prev = 0;
   return `<div class="ladbar"><b>${esc(r.player)}</b><span class="note">${Number(r.avgRating).toFixed(2)} avg × 3 = ${(r.avgRating * 3).toFixed(2)}${r.avgRating * 3 < PACK_FLOOR ? `, floored to ${PACK_FLOOR}` : ''} rating a pack</span>
     <select id="price">${PACK_PRICES.map(([k, l, c]) => `<option value="${k}"${k === price ? ' selected' : ''}>${l} · ${c}</option>`).join('')}</select></div>
-    <div class="scroll"><table class="lad"><thead><tr><th class="l">Rarity</th><th>Mult</th><th>Rating</th><th>Packs</th><th>Cost</th><th>Packs from prev</th></tr></thead><tbody>`
+    <div class="scroll"><table class="lad"><thead><tr><th class="l">Rarity</th><th>Mult</th><th class="hm2">Rating</th><th>Packs</th><th>Cost</th><th class="hm2">From prev</th></tr></thead><tbody>`
     + PACK_LADDER.map(([nm, m, need]) => { const packs = Math.ceil(need / per), step = packs - prev; prev = packs;
-      const cls = /^Legendary/.test(nm) ? 'lg' : /^Mystic/.test(nm) ? 'my' : /^Iconic/.test(nm) ? 'ic' : nm === 'Epic' ? 'ep' : '';
-      return `<tr><td class="l"><span class="${cls}">${nm}</span></td><td>${m}x</td><td>${need.toLocaleString()}</td><td><b>${packs.toLocaleString()}</b></td><td>${(packs * cost).toLocaleString()}</td><td>${step.toLocaleString()}</td></tr>`; }).join('')
+      const cls = /^Legendary/.test(nm) ? 'lg' : /^Mystic/.test(nm) ? 'my' : /^Iconic/.test(nm) ? 'ic' : nm === 'Epic' ? 'ep' : nm === 'Rare' ? 'ra' : '';
+      return `<tr><td class="l"><span class="${cls}">${nm}</span></td><td>${m}x</td><td class="hm2">${need.toLocaleString()}</td><td><b>${packs.toLocaleString()}</b></td><td>${(packs * cost).toLocaleString()}</td><td class="hm2">+${step.toLocaleString()}</td></tr>`; }).join('')
     + '</tbody></table></div>';
 }
 function paint(){
@@ -290,6 +308,7 @@ function paint(){
 }
 /* Sports and seasons, any number of each (like the board's picker): the
    seasons of every sport ticked, each season its own button. */
+let closedSp = ls.get('packs_closed_v1', []);
 let selSp = ls.get('packs_sports_v1', []), picks = ls.get('packs_picks_v1', []), loadTok = 0;
 async function loadSeason(){
   ls.set('packs_sports_v1', selSp); ls.set('packs_picks_v1', picks);
@@ -324,12 +343,16 @@ function drawSports(){
 function drawSeasons(){
   if(!selSp.length){ $('#seasons').innerHTML = '<span class="note">Pick a sport first.</span>'; return; }
   $('#seasons').innerHTML = selSp.map(sp => { const list = seasons.filter(x => x.sport === sp).sort((a, b) => b.season - a.season);
-    return `<div class="sgrp"><b>${SP_LBL[sp] || sp}</b><div class="chips">${list.map(x => { const k = `${sp}:${x.season}`;
-      return `<button type="button" data-pk="${k}" aria-pressed="${picks.includes(k)}" title="${Number(x.plays).toLocaleString()} plays across ${x.games} games">${seasonLabel(sp, x.season)}<span>${x.games}g</span></button>`; }).join('')}</div></div>`; }).join('');
+    const on = picks.filter(k => k.startsWith(sp + ':')).length, open = !closedSp.includes(sp);
+    return `<details class="sgrp" data-g="${sp}"${open ? ' open' : ''}><summary><b>${SP_LBL[sp] || sp}</b><span class="note">${list.length} season${list.length === 1 ? '' : 's'}${on ? ` · <span class="sel">${on} picked</span>` : ''}</span></summary><div class="chips">${list.map(x => { const k = `${sp}:${x.season}`;
+      return `<button type="button" data-pk="${k}" aria-pressed="${picks.includes(k)}" title="${Number(x.plays).toLocaleString()} plays across ${x.games} games">${seasonLabel(sp, x.season)}<span>${x.games}g</span></button>`; }).join('')}</div></details>`; }).join('');
 }
 $('#sports').addEventListener('click', e => { const b = e.target.closest('[data-sp]'); if(!b) return; const sp = b.dataset.sp;
   if(selSp.includes(sp)){ selSp = selSp.filter(x => x !== sp); picks = picks.filter(k => !k.startsWith(sp + ':')); } else selSp.push(sp);
   drawSports(); drawSeasons(); loadSeason(); });
+// Each sport's seasons fold away; remembered in this browser.
+$('#seasons').addEventListener('toggle', e => { const d = e.target.closest('details[data-g]'); if(!d) return; const sp = d.dataset.g;
+  closedSp = d.open ? closedSp.filter(x => x !== sp) : [...new Set(closedSp.concat(sp))]; ls.set('packs_closed_v1', closedSp); }, true);
 $('#seasons').addEventListener('click', e => { const b = e.target.closest('[data-pk]'); if(!b) return; const k = b.dataset.pk;
   picks = picks.includes(k) ? picks.filter(x => x !== k) : picks.concat(k); drawSeasons(); loadSeason(); });
 let qT = null; $('#q').addEventListener('input', () => { clearTimeout(qT); qT = setTimeout(() => { page = 0; paint(); }, 200); });
