@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rax Academy</title>
+<style>
+  :root{--bg:#141925;--panel:#1d2433;--panel2:#232b3d;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;--ok:#5fbf7a;--bad:#e5484d}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:16px}
+  a{color:var(--accent)}
+  .note{color:var(--mute);font-size:13px}
+  button{font:inherit;cursor:pointer;color:var(--ink)}
+  .hide{display:none!important}
+
+  /* Row 1: the one dropdown. */
+  .top{display:flex;justify-content:center;margin:4px 0 12px}
+  .navbtn{display:inline-flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 18px;font-weight:800;font-size:17px}
+  .navbtn .caret{color:var(--mute);font-size:12px}
+  .menu{position:absolute;z-index:20;min-width:230px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:6px;box-shadow:0 12px 32px rgba(0,0,0,.45)}
+  .menu a,.menu button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:0;border-radius:8px;padding:10px 12px;color:var(--ink);text-decoration:none;font-size:15px}
+  .menu a:hover,.menu button:hover{background:var(--panel2)}
+  .menu .cur{color:var(--accent);font-weight:800}
+  .menu .sep{height:1px;background:var(--line);margin:6px 4px}
+  .menu .dot{width:7px;height:7px;border-radius:50%;background:var(--line);flex:none}
+  .menu .cur .dot{background:var(--accent)}
+
+  /* Row 2: the account bar. */
+  .acct{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px 12px;margin-bottom:16px}
+  .acct .who{font-size:13px;color:var(--mute);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .acct .who b{color:var(--ink);font-size:14px}
+  .acct .mid{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:7px 12px;font-size:13.5px;font-weight:700}
+  .acct .out{justify-self:end;background:none;border:0;color:var(--mute);font-size:13.5px;text-decoration:underline;padding:6px 0}
+  .acctmenu .me{color:var(--accent);font-weight:800}
+  .acctmenu .tag{margin-left:auto;font-size:11px;color:var(--mute);font-weight:600}
+  .acctmenu .add{color:var(--accent);font-weight:700}
+
+  /* The page body - a first pass to adjust from. */
+  h1{font-size:22px;margin:4px 0 2px;font-weight:800}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px;margin-top:14px}
+  .tile{display:block;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;text-decoration:none;color:var(--ink)}
+  .tile:hover{border-color:var(--accent)}
+  .tile b{display:block;font-size:16px;margin-bottom:3px}
+  .tile span{color:var(--mute);font-size:13px}
+  .tile.main{border-color:var(--accent)}
+  .lock{max-width:460px;margin:14vh auto;text-align:center;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}
+  .acct .who .lbl{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <section class="lock" id="lock"><p id="lockmsg">Checking your sign-in…</p></section>
+
+  <div id="page" class="hide">
+    <!-- Row 1: just the dropdown. -->
+    <div class="top"><button class="navbtn" id="navbtn" aria-haspopup="menu" aria-expanded="false">Home <span class="caret">&#9662;</span></button></div>
+
+    <!-- Row 2: active account · all accounts · sign out. -->
+    <div class="acct">
+      <div class="who"><span class="lbl">Active account</span><b id="me"></b></div>
+      <button class="mid" id="acctbtn" aria-haspopup="menu" aria-expanded="false">Accounts &#9662;</button>
+      <button class="out" id="signout">Sign out</button>
+    </div>
+
+    <h1>Rax Academy</h1>
+    <p class="note">Everything on the site, in one place.</p>
+    <div class="tiles" id="tiles"></div>
+  </div>
+</div>
+<div class="menu hide" id="navmenu" role="menu"></div>
+<div class="menu acctmenu hide" id="acctmenu" role="menu"></div>
+
+<script>
+/* Home (Dennis, 2026-11-09): the new front page, Dennis only while he shapes
+   it. Row 1 is one dropdown to every page; row 2 is the account bar - the
+   active account, every account signed in on this browser (tap to switch, or
+   add one), and Sign out. It uses the same saved accounts as the board. */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const TOKEN = 'ratebrd_token_v1', DEVICE = 'ratebrd_device_v1', SESSION = 'ratebrd_session', ACCTS = 'ratebrd_accounts_v1';
+const ls = { get: k => { try{ return localStorage.getItem(k); }catch(e){ return null; } }, set: (k, v) => { try{ v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); }catch(e){} } };
+const getToken = () => ls.get(TOKEN) || '';
+const loadDevice = () => { try{ const d = JSON.parse(ls.get(DEVICE) || 'null'); if(d && d.key) return d; }catch(e){} const s = ls.get(SESSION); return s ? { key: s, name: s } : null; };
+const loadAccts = () => { try{ const a = JSON.parse(ls.get(ACCTS) || '[]'); return Array.isArray(a) ? a.filter(x => x && x.key && x.token) : []; }catch(e){ return []; } };
+const saveAccts = a => ls.set(ACCTS, JSON.stringify(a.slice(0, 8)));
+const api = async (u, o = {}) => { try{ const t = getToken(); const r = await fetch(u, Object.assign({}, o, { headers: Object.assign({}, o.headers || {}, t ? { 'x-rb-token': t } : {}) }));
+  const j = await r.json().catch(() => ({})); if(!r.ok && !j.error) j.error = 'Error ' + r.status; return j; }catch(e){ return { error: 'Could not reach the board.' }; } };
+
+// Every page on the site. Board and game data live on the board page.
+const PAGES = [
+  ['/home', 'Home', 'This page'],
+  ['/', 'Board', 'Buy offers for Real cards - post, browse and sell', true],
+  ['/#gamedata', 'Game data', 'Every game log, rax and box score'],
+  ['/market', 'Market data', 'Recent sales and prices'],
+  ['/swaps', 'Swaps', 'Trade passes with other members, matched every hour'],
+  ['/boosts', 'Boosts/Buys', 'Which boosters to use each day, and what to buy'],
+  ['/projections', 'Projections', 'Projected rax for the rest of the regular season'],
+  ['/tags', 'Tag finder', 'Every game that earned a performance tag'],
+  ['/otd', 'OTD optimization', 'On-this-day claims and upgrades'],
+  ['/admin', 'Admin', 'Users, reports, traffic and sponsors', false, true]
+];
+
+function drawNav(){
+  $('#navmenu').innerHTML = PAGES.map(([h, t, , , sep]) => (sep ? '<div class="sep"></div>' : '')
+    + `<a role="menuitem" href="${h}" class="${h === '/home' ? 'cur' : ''}"><span class="dot"></span>${esc(t)}</a>`).join('');
+  $('#tiles').innerHTML = PAGES.filter(p => p[0] !== '/home').map(([h, t, d, main]) => `<a class="tile${main ? ' main' : ''}" href="${h}"><b>${esc(t)}</b><span>${esc(d)}</span></a>`).join('');
+}
+function drawAcctMenu(){
+  const d = loadDevice(), cur = d && d.key;
+  let a = loadAccts();
+  if(cur && !a.some(x => x.key === cur)) a = [{ key: cur, name: d.name || cur, token: getToken() }, ...a];
+  $('#acctmenu').innerHTML = a.map(x => x.key === cur
+      ? `<button class="me" disabled><span>${esc(x.name)}</span><span class="tag">active</span></button>`
+      : `<button data-use="${esc(x.key)}"><span>${esc(x.name)}</span><span class="tag">switch</span></button>`).join('')
+    + '<div class="sep"></div><button class="add" data-add="1">+ Add new account</button>';
+}
+function openMenu(btn, menu, align){
+  const open = menu.classList.contains('hide');
+  closeMenus();
+  if(!open) return;
+  menu.classList.remove('hide'); btn.setAttribute('aria-expanded', 'true');
+  const r = btn.getBoundingClientRect();
+  menu.style.top = Math.round(window.scrollY + r.bottom + 8) + 'px';
+  const left = align === 'center' ? r.left + r.width / 2 - menu.offsetWidth / 2 : r.left;
+  menu.style.left = Math.round(Math.max(12, Math.min(left, window.innerWidth - menu.offsetWidth - 12))) + 'px';
+}
+function closeMenus(){ for(const [b, m] of [['#navbtn', '#navmenu'], ['#acctbtn', '#acctmenu']]){ $(m).classList.add('hide'); $(b).setAttribute('aria-expanded', 'false'); } }
+$('#navbtn').addEventListener('click', e => { e.stopPropagation(); openMenu($('#navbtn'), $('#navmenu'), 'center'); });
+$('#acctbtn').addEventListener('click', e => { e.stopPropagation(); drawAcctMenu(); openMenu($('#acctbtn'), $('#acctmenu'), 'center'); });
+document.addEventListener('click', e => { if(!e.target.closest('.menu')) closeMenus(); });
+document.addEventListener('keydown', e => { if(e.key === 'Escape') closeMenus(); });
+window.addEventListener('resize', closeMenus);
+
+// Switching: the saved token becomes the live one, then the page reloads as that account.
+function keepCurrent(){ const d = loadDevice(), t = getToken(); if(!d || !d.key || !t) return; const a = loadAccts().filter(x => x.key !== d.key); a.unshift({ key: d.key, name: d.name || d.key, token: t }); saveAccts(a); }
+$('#acctmenu').addEventListener('click', e => {
+  const b = e.target.closest('button'); if(!b || b.disabled) return;
+  if(b.dataset.use){ const x = loadAccts().find(a => a.key === b.dataset.use); if(!x) return; keepCurrent();
+    ls.set(TOKEN, x.token); ls.set(DEVICE, JSON.stringify({ key: x.key, name: x.name, ts: Date.now() })); ls.set(SESSION, x.key); location.reload(); }
+  else if(b.dataset.add){
+    // This account stays saved; the board's sign-in shows for the new one.
+    keepCurrent(); ls.set(TOKEN, null); ls.set(DEVICE, null); ls.set(SESSION, null);
+    try{ sessionStorage.setItem('rb_addacct', '1'); }catch(e){}
+    location.href = '/'; }
+});
+$('#signout').addEventListener('click', async () => {
+  if(getToken()) await api('/api/kv', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'signout' }) });
+  const d = loadDevice(); if(d && d.key) saveAccts(loadAccts().filter(x => x.key !== d.key));
+  ls.set(TOKEN, null); ls.set(DEVICE, null); ls.set(SESSION, null);
+  location.href = '/';
+});
+
+(async () => {
+  if(!getToken()){ $('#lockmsg').innerHTML = 'Sign in on <a href="/">the board</a> first.'; return; }
+  const j = await api('/api/rax?market=me');
+  if(!j.admin){ $('#lockmsg').innerHTML = j.signedIn ? 'This page isn\'t open yet - <a href="/">back to the board</a>.' : 'Sign in on <a href="/">the board</a> first.'; return; }
+  const d = loadDevice();
+  $('#me').textContent = (d && (d.name || d.key)) || '';
+  drawNav();
+  $('#lock').classList.add('hide'); $('#page').classList.remove('hide');
+})();
+</script>
+<script src="/sponsor.js" data-page="home" defer></script>
+</body>
+</html>

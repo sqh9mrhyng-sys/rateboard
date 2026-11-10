@@ -941,7 +941,7 @@ function applyGameDataVisibility(){
   if(sel){
     // Options are added and taken away rather than hidden: a hidden option
     // still shows in Safari's picker.
-    const want = [['board', 'Board'], ...(canSeePackData() ? [['cbb', 'Game data']] : []),
+    const want = [...(otdOn ? [['home', 'Home (new)']] : []), ['board', 'Board'], ...(canSeePackData() ? [['cbb', 'Game data']] : []),
                   ...(marketAccess ? [['market', 'Market data']] : []),
                   ...(boostsOn ? [['boosts', 'Boosts/Buys (beta)']] : []), ['projections', 'Projections'], ['tags', 'Tag finder'],   // projections everyone (2026-11-08); tag finder everyone (2026-11-09)
                   ...(swapsOn ? [['swaps', 'Swaps (beta)']] : []), ...(otdOn ? [['otd', 'OTD optimization'], ['admin', 'Admin']] : [])];
@@ -1002,6 +1002,7 @@ function pageGo(){
   if(sel && sel.value === 'boosts'){ location.href = '/boosts'; return; }
   if(sel && sel.value === 'projections'){ location.href = '/projections'; return; }
   if(sel && sel.value === 'tags'){ location.href = '/tags'; return; }
+  if(sel && sel.value === 'home'){ location.href = '/home'; return; }
   if(sel && sel.value === 'admin'){ location.href = '/admin'; return; }
   if(sel) goPage(sel.value);
 }
@@ -2810,6 +2811,8 @@ function drawSaved(){
 }
 $('#g-saved').addEventListener('click', e => { const t = e.target.closest('[data-use]'); if(t) useAcct(t.dataset.use); });
 drawSaved(); drawAcct();
+// Sent here from Home's "+ Add new account": the other account stays saved.
+try{ if(sessionStorage.getItem('rb_addacct')){ sessionStorage.removeItem('rb_addacct'); const m = $('#g-msg'); if(m){ m.textContent = 'Sign in to your other account. The one you were on stays saved - switch back any time with one tap.'; m.classList.remove('hide'); m.style.color = 'var(--mute)'; } } }catch(e){}
 
 /* =========================================================
    Floor prices — the least someone is allowed to offer for a

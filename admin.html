@@ -1014,7 +1014,7 @@ $('#bo-list').addEventListener('click', e => { const b = e.target.closest('[data
 boostOut();
 
 // Traffic & sponsor (2026-11-08).
-const SP_LBL = { board: 'Board', market: 'Market', swaps: 'Swaps', hour: 'Swap pages', otd: 'OTD', boosts: 'Boosts', projections: 'Projections', tags: 'Tags' };
+const SP_LBL = { board: 'Board', market: 'Market', swaps: 'Swaps', hour: 'Swap pages', otd: 'OTD', boosts: 'Boosts', projections: 'Projections', tags: 'Tags', home: 'Home' };
 function loadTraffic(){
   api('/api/sponsor?admin=1&t=' + Date.now()).then(j => {
     if(j.error){ $('#tr-grid').innerHTML = `<span class="note">${esc(j.error)}</span>`; return; }
