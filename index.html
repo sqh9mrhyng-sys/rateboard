@@ -47,8 +47,9 @@
   .act.c1{--c:#5aa9e6} .act.c2{--c:#e5484d} .act.c3{--c:#5fbf7a}
   .tiles{display:grid;grid-template-columns:1fr;gap:10px;margin-top:16px}
   /* Each box: the link, and grip lines on the right that drag it up or down. */
-  .tile{--c:var(--accent);display:flex;align-items:stretch;background:radial-gradient(120% 90% at 50% 115%,color-mix(in srgb,var(--c) 34%,transparent),transparent 62%),var(--panel);border:1px solid color-mix(in srgb,var(--c) 22%,var(--line));border-bottom:4px solid var(--c);border-radius:12px;box-shadow:0 8px 22px -12px var(--c)}
-  .tile:hover{border-color:color-mix(in srgb,var(--c) 60%,var(--line));border-bottom-color:var(--c)}
+  /* Every tile one navy that lights up (Dennis, 2026-11-09): a soft blue glow from the bottom edge, brighter when touched. */
+  .tile{--c:#3d6fd6;display:flex;align-items:stretch;background:radial-gradient(120% 95% at 50% 118%,rgba(61,111,214,.28),transparent 60%),linear-gradient(180deg,#1a2338,#141c2e);border:1px solid #26365a;border-bottom:3px solid #3d6fd6;border-radius:12px;box-shadow:0 10px 24px -16px rgba(61,111,214,.9);transition:box-shadow .15s,border-color .15s,background .15s}
+  .tile:hover,.tile:active,.tile:focus-within{border-color:#3d6fd6;border-bottom-color:#6f9bff;box-shadow:0 0 0 1px rgba(111,155,255,.35),0 12px 30px -10px rgba(91,140,255,.75);background:radial-gradient(120% 95% at 50% 118%,rgba(91,140,255,.42),transparent 62%),linear-gradient(180deg,#1c2740,#152036)}
   .tile .tl{flex:1;min-width:0;padding:14px 0 14px 46px;color:var(--ink);text-decoration:none;text-align:center}
   .tile .grip{flex:none;width:46px;display:flex;align-items:center;justify-content:center;cursor:grab;touch-action:none;color:var(--mute)}
   .tile .grip i{display:block;width:18px;height:2px;background:currentColor;border-radius:2px;box-shadow:0 -6px 0 currentColor,0 6px 0 currentColor}
@@ -134,7 +135,7 @@ function tileList(){
 function drawNav(){
   const list = tileList();
   $('#tiles').innerHTML = list.map(([h, t, d]) => { const c = LOOK[h] || '#E8A33D';
-    return `<div class="tile" data-h="${h}" style="--c:${c}"><a class="tl" href="${h}"><b>${esc(t)}</b><span>${esc(d)}</span></a>`
+    return `<div class="tile" data-h="${h}"><a class="tl" href="${h}"><b>${esc(t)}</b><span>${esc(d)}</span></a>`
     + `<span class="grip" aria-label="Drag to move ${esc(t)}" title="Drag to move"><i></i></span></div>`; }).join('');
 }
 /* Dragging by the grip lines (mouse or finger): the box follows the pointer,
