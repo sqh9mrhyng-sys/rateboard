@@ -315,7 +315,9 @@ function plays(r, k){
     + `<div class="ladbar"><span class="note">Sort by</span><div class="seg sm"><button data-pls="rating" aria-pressed="${plSort === 'rating'}">Rating${plSort === 'rating' ? (plDir < 0 ? ' ▾' : ' ▴') : ''}</button><button data-pls="rarity" aria-pressed="${plSort === 'rarity'}">Rarity${plSort === 'rarity' ? (plDir < 0 ? ' ▾' : ' ▴') : ''}</button></div>${(c.top || []).length < (c.plays || 0) ? `<span class="note">top ${c.top.length} by rating</span>` : ''}</div>`
     + `<div class="scroll"><table class="lad"><thead><tr><th class="l">Date</th><th class="l">Play</th><th>Rating</th><th class="l">Rarity</th><th class="l hm2">Tags</th></tr></thead><tbody>`
     + list.map(x => { const tg = String(x.tags || '').split(',').map(t => names[Number(t)]).filter(Boolean).map(t => '#' + String(t).replace(/\s+/g, '')).join(' ');
-      return `<tr><td class="l">${esc(String(x.day || '–').slice(5))}</td><td class="l" style="white-space:normal">${esc(x.label || '–')}<span class="sub2">${esc(tg)}</span></td><td><b>${x.value ?? '–'}</b></td><td class="l"><span class="${RAR[Number(x.rarity) || 0][1]}">${RAR[Number(x.rarity) || 0][0]}</span></td><td class="l hm2" style="white-space:normal">${esc(tg)}</td></tr>`; }).join('')
+      // Each play links to it on Real: [6, sport, 0, play id] (decoded from a play link Dennis shared, 2026-11-09).
+      const pu = x.id && REAL_SPORT[r.sport] ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [6, REAL_SPORT[r.sport][1], 0, Number(x.id)]) : null;
+      return `<tr><td class="l">${esc(String(x.day || '–').slice(5))}</td><td class="l pl" style="white-space:normal">${pu ? `<a href="${pu}" target="_blank" rel="noopener">${esc(x.label || 'Play')}</a>` : esc(x.label || '–')}<span class="sub2">${esc(tg)}</span></td><td><b>${x.value ?? '–'}</b></td><td class="l"><span class="${RAR[Number(x.rarity) || 0][1]}">${RAR[Number(x.rarity) || 0][0]}</span></td><td class="l hm2" style="white-space:normal">${esc(tg)}</td></tr>`; }).join('')
     + '</tbody></table></div>';
 }
 // Packs to each rarity for one player, from his own row (nothing is read).

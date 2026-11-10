@@ -6254,7 +6254,7 @@ async function cbbPanel(){
       const tg = String(r.tags || '').split(',').map(x => names[Number(x)])
         .filter(Boolean).map(x => '#' + String(x).replace(/\s+/g, '')).join(' ');
       return `<tr><td class="l">${esc(r.day || '—')}</td>`
-        + `<td class="l">${esc(r.label || '—')}</td>`
+        + `<td class="l">${r.id && REAL_SPORT[sport] ? `<a href="${esc('https://www.realapp.com/' + hashidsEncode('routing', 11, [6, REAL_SPORT[sport][1], 0, Number(r.id)]))}" target="_blank" rel="noopener">${esc(r.label || 'Play')}</a>` : esc(r.label || '—')}</td>`
         + `<td>${r.value == null ? '—' : r.value}</td>`
         + `<td class="l">${esc(RAR_NAMES[r.rarity] || '—')}</td>`
         + `<td class="l">${esc(tg)}</td></tr>`;
