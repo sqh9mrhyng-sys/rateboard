@@ -420,7 +420,7 @@ function paint(){
       + (open ? `<tr class="det"><td colspan="${cs.length}">${detail(r)}</td></tr>` : ''); }).join('')
     || `<tr><td colspan="${cs.length}" class="empty">${tab === 'team' ? (teamMsg || 'No teams.') : tab === 'fav' ? (favs.length ? 'No favorites match.' : 'Tap ★ next to a player to add him here.') : q ? `No player matching "${esc(q)}".` : 'No players with that many plays.'}</td></tr>`;
   $('#pager').innerHTML = pages > 1 ? `<button data-pg="-1"${page ? '' : ' disabled'}>Previous</button><span class="note">Page ${page + 1} of ${pages}</span><button data-pg="1"${page < pages - 1 ? '' : ' disabled'}>Next</button>` : '';
-  if(tab === 'team' && rows.length) $('#status').textContent = `${list.length} teams. A team pack is 1 performance card and 3 play cards from that team only (a player's cards for another team - Ohtani's for Japan - aren't in it). Odds are for the 3 play cards.`;
+  if(tab === 'team' && rows.length) $('#status').textContent = `${list.length} teams.`;
   if(tab === 'all' && rows.length) $('#status').textContent = `${list.length.toLocaleString()} players · ${picks.map(pr => { const [sp, se] = pr.split(':'); return `${SP_LBL[sp] || sp} ${seasonLabel(sp, se)}`; }).join(', ')}. Tap a player for packs to each rarity, ★ to favorite.`;
 }
 /* Sports and seasons, any number of each (like the board's picker): the
