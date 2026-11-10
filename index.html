@@ -78,6 +78,9 @@
   #pagebtn{display:inline-flex;align-items:center;gap:8px;background:color-mix(in srgb, var(--accent) 14%, transparent);
     border:1px solid var(--accent);color:var(--bone);padding:7px 13px;border-radius:999px;font:inherit;font-weight:700;font-size:13px;cursor:pointer;max-width:100%}
   #pagebtn:hover{background:color-mix(in srgb, var(--accent) 24%, transparent)}
+  #homebtn{display:inline-flex;align-items:center;gap:6px;background:color-mix(in srgb, var(--accent) 14%, transparent);border:1px solid var(--accent);color:var(--bone);padding:7px 14px;border-radius:999px;font-weight:700;font-size:13px;text-decoration:none;white-space:nowrap}
+  #homebtn:hover{background:color-mix(in srgb, var(--accent) 24%, transparent)}
+  .topbar .whoami{display:none!important}
   #pagebtn .caret{position:static;transform:none;color:var(--accent);font-size:11px}
   #pagebtn-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* Fixed to the screen, not the header: the header clips anything that
@@ -606,7 +609,10 @@
       <div class="brand"><span class="pip"></span> Rate Board</div>
       <!-- Which page you are on. On a phone this fills the gap that sat empty
            between the name and the sport. -->
-      <div class="pagepick" id="pagepick">
+      <!-- Board (2026-11-09): the page dropdown and the account / tools rows are gone;
+           Home has every page and the accounts. -->
+      <a id="homebtn" href="/home">&#8592; Home</a>
+      <div class="pagepick" id="pagepick" style="display:none">
         <select id="pagesel" aria-label="Page" class="sr-sel" tabindex="-1">
           <option value="board">Board</option>
           <option value="boosts">Boosts/Buys (beta)</option>

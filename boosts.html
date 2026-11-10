@@ -126,7 +126,21 @@
   .tot{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0}
   .tot div{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px 12px}
   .tot b{display:block;font-size:20px}
+  [hidden]{display:none!important}
   .invhd{display:flex;align-items:center;gap:8px}
+  #inv{background:linear-gradient(135deg,color-mix(in srgb,var(--purple) 12%,var(--panel)),var(--panel) 60%);border-color:color-mix(in srgb,var(--purple) 35%,var(--line))}
+  .invic{width:28px;height:28px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--accent) 22%,transparent);font-size:15px}
+  #inv .h{font-size:17px}
+  .invg{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px}
+  .invc{--c:var(--orange);border:1px solid color-mix(in srgb,var(--c) 45%,var(--line));border-radius:12px;padding:10px 12px;background:color-mix(in srgb,var(--c) 9%,var(--panel2))}
+  .invc.legendary{--c:var(--purple)} .invc.epic{--c:var(--red)} .invc.rare{--c:var(--orange)}
+  .invt{display:flex;align-items:center;gap:8px}
+  .invt .n{margin-left:auto;font-size:22px;font-weight:800;color:var(--c);line-height:1}
+  .invt .u{font-size:12px;color:var(--mute);font-weight:600}
+  .invs{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+  .invs span{font-size:12px;padding:3px 8px;border-radius:999px;background:var(--panel);border:1px solid var(--line);color:var(--ink)}
+  .invs span i{font-style:normal;color:var(--mute)}
+  .invs span b{color:var(--c)}
   .invhd #invgo{margin-left:auto;flex:none}
   button.fold{display:flex;align-items:center;gap:8px;background:none;border:0;padding:4px 0;color:var(--ink);flex:1;text-align:left;min-width:0}
   button.fold .chev{display:inline-block;transition:transform .15s;color:var(--mute)}
@@ -174,6 +188,12 @@
   <div class="seg" id="tab"><button data-t="boosts" aria-pressed="true">Boosts</button><button data-t="buys" aria-pressed="false" id="tab2">Buys</button></div></div>
 
   <div id="t-boosts">
+    <!-- Your boosters: at the top (Dennis, 2026-11-09). -->
+    <section id="inv">
+      <div class="invhd"><button class="fold" id="invfold" type="button" aria-expanded="true"><span class="chev">▾</span><span class="invic">⚡</span><b class="h">Your boosters</b></button><button id="invgo" class="sm">Load from Real</button></div>
+      <div id="invbody"><p class="note" id="invmsg" style="margin:6px 0 0">Tap Load from Real to see every booster you hold, by rarity (read at most every 2 hours).</p>
+      <div id="invout" style="margin:10px 0 0" hidden></div></div>
+    </section>
     <section>
       <div class="ctl">
         <label class="note"><span id="daylbl">Day</span> <select id="day"></select></label>
@@ -196,11 +216,6 @@
         <button id="scan">Re-read passes</button>
       </div>
       <span class="note" id="scanmsg"></span>
-    </section>
-    <section id="inv">
-      <div class="invhd"><button class="fold" id="invfold" type="button" aria-expanded="true"><span class="chev">▾</span><b class="h">Your boosters</b></button><button id="invgo" class="sm">Load from Real</button></div>
-      <div id="invbody"><p class="note" id="invmsg" style="margin:6px 0 0">Every 2 hours, all five sports (CBB, CFB, NFL, golf, FC).</p>
-      <div id="invout" style="margin:10px 0 0" hidden></div></div>
     </section>
     <section id="allout" hidden>
       <div class="note" id="allhead"></div>
@@ -833,14 +848,15 @@ $('#simplebtn').addEventListener('click', () => { try{ localStorage.setItem('boo
 applySimple();
 
 const RN = { 5: 'legendary', 4: 'epic', 3: 'rare' };
+/* One card per rarity: how many you hold (and use today), then each stat booster as a chip. */
 function invHtml(list){
   if(!list || !list.length) return '<span class="note">No boosters for this sport.</span>';
-  return [5, 4, 3].map(r => {
+  return '<div class="invg">' + [5, 4, 3].map(r => {
     const g = list.filter(b => b.rarity === r); if(!g.length) return '';
     const tot = g.reduce((t, b) => t + b.count, 0), usedN = g.reduce((t, b) => t + (b.used || 0), 0);
-    return `<div style="margin:6px 0"><span class="b ${RN[r]}">${esc(g[0].label)} ${esc(g[0].mult ? g[0].mult + 'x' : '')}</span> <b>${tot}</b>${g.some(b => b.used != null) ? ` <span class="note">(${usedN} used today)</span>` : ''}<br>`
-      + g.map(b => `<span class="note">${esc(b.stat)} +${b.boost}: ${b.count}${b.used ? ` · use ${b.used}` : ''}</span>`).join(' &nbsp;·&nbsp; ') + '</div>';
-  }).join('');
+    return `<div class="invc ${RN[r]}"><div class="invt"><span class="b ${RN[r]}">${esc(g[0].label)}${g[0].mult ? ' ' + esc(g[0].mult) + 'x' : ''}</span>${g.some(b => b.used != null) ? `<span class="u">use ${usedN} today</span>` : ''}<span class="n">${tot}</span></div>`
+      + `<div class="invs">${g.map(b => `<span>${esc(b.stat)} <i>+${b.boost}</i> × <b>${b.count}</b>${b.used ? ` <i>· use ${b.used}</i>` : ''}</span>`).join('')}</div></div>`;
+  }).join('') + '</div>';
 }
 $('#invgo').addEventListener('click', async () => {
   $('#invgo').disabled = true; $('#invmsg').textContent = 'Loading…';
@@ -848,7 +864,7 @@ $('#invgo').addEventListener('click', async () => {
   $('#invgo').disabled = false;
   if(j.error){ $('#invmsg').textContent = j.error; return; }
   const when = ms => new Date(ms).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-  $('#invmsg').textContent = (j.cached ? `From your read at ${when(j.at)} (CBB, CFB and NFL). ` : 'Read just now for CBB, CFB and NFL. ') + `Next read allowed after ${when(j.next)}.`;
+  $('#invmsg').textContent = `${SP_LBL[setSp()] || ''} boosters · ` + (j.cached ? `from your read at ${when(j.at)}. ` : 'read just now. ') + `Next read allowed after ${when(j.next)}.`;
   $('#invout').hidden = false; $('#invout').innerHTML = invHtml(j.boosters);
 });
 
