@@ -82,6 +82,10 @@
   .allhd{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:8px}
   .allhd b{font-size:17px}
   .allsp .none{color:var(--mute);font-size:13px}
+  .allnone{margin-top:12px;color:var(--mute);font-size:13px;line-height:1.6}
+  .srow .spl{font-size:11px;font-weight:800;letter-spacing:.04em;color:var(--mute);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+  body.boxlink .srow[data-href]{cursor:pointer}
+  body.boxlink .srow[data-href]:hover{border-color:var(--accent)}
   /* Tick off each boost as it's put on (Dennis, 2026-11-07). */
   td.bcell{position:relative;padding-right:64px!important}
   .bdone{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:48px;height:48px;border-radius:12px;border:2px solid var(--line);background:var(--panel);color:transparent;font-size:30px;line-height:1;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
@@ -129,7 +133,6 @@
   [hidden]{display:none!important}
   .invhd{display:flex;align-items:center;gap:8px}
   #inv{background:linear-gradient(135deg,color-mix(in srgb,var(--purple) 12%,var(--panel)),var(--panel) 60%);border-color:color-mix(in srgb,var(--purple) 35%,var(--line))}
-  .invic{width:28px;height:28px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--accent) 22%,transparent);font-size:15px}
   #inv .h{font-size:17px}
   .invg{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px}
   .invc{--c:var(--orange);border:1px solid color-mix(in srgb,var(--c) 45%,var(--line));border-radius:12px;padding:10px 12px;background:color-mix(in srgb,var(--c) 9%,var(--panel2))}
@@ -190,7 +193,7 @@
   <div id="t-boosts">
     <!-- Your boosters: at the top (Dennis, 2026-11-09). -->
     <section id="inv">
-      <div class="invhd"><button class="fold" id="invfold" type="button" aria-expanded="true"><span class="chev">▾</span><span class="invic">⚡</span><b class="h">Your boosters</b></button><button id="invgo" class="sm">Load from Real</button></div>
+      <div class="invhd"><button class="fold" id="invfold" type="button" aria-expanded="true"><span class="chev">▾</span><b class="h">Your boosters</b></button><button id="invgo" class="sm">Load from Real</button></div>
       <div id="invbody"><p class="note" id="invmsg" style="margin:6px 0 0">Tap Load from Real to see every booster you hold, by rarity (read at most every 2 hours).</p>
       <div id="invout" style="margin:10px 0 0" hidden></div></div>
     </section>
@@ -220,6 +223,7 @@
     <section id="allout" hidden>
       <div class="note" id="allhead"></div>
       <button class="sm copybtn" id="allcopy" type="button" hidden>Copy boosts</button>
+      <button class="sm simplebtn boxlinkbtn" type="button" aria-pressed="false">Whole box opens the player: off</button>
       <div class="sum" id="allsum"></div>
       <div id="alllist"></div>
     </section>
@@ -228,6 +232,7 @@
       <button class="sm copybtn" id="copybtn" type="button" hidden>Copy boosts</button>
       <button class="sm hidestart" id="hidestart" type="button" hidden aria-pressed="false">Hide games that already started</button>
       <button class="sm simplebtn" id="simplebtn" type="button" aria-pressed="false">View simple layout</button>
+      <button class="sm simplebtn boxlinkbtn" type="button" aria-pressed="false" hidden>Whole box opens the player: off</button>
       <div id="simple" class="simple-list"></div>
       <div class="tot" id="tot"></div>
       <div class="sum" id="sum"></div>
@@ -251,7 +256,7 @@
       <details class="how"><summary>How this is worked out</summary><p class="note">Leg odds and avg boost come from pack data. <b>Base rax to profit</b> = 200 ÷ avg boost (a pack costs 200). Profit = base rax × avg boost − 200.</p></details>
     </section>
     <section id="cbbbuys">
-      <details class="tip"><summary>📸 Add a player headshot to your card</summary>
+      <details class="tip"><summary>Add a player headshot to your card</summary>
         <ol style="margin:6px 0 0;padding-left:20px">
           <li>Click <b>Save photo</b> underneath a player</li>
           <li>On the bottom row with share options, click <b>“Save Image”</b></li>
@@ -724,7 +729,7 @@ async function run(){
   $('#simple').innerHTML = boosted.length ? boosted.map(r => {
     const u = r.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(r.passId)]) : realPlayerUrl(sp, r.id, r.season || j.season);
     const on = doneSet.has(doneKey(r));
-    return `<div class="srow${on ? ' boosted' : ''}"><span class="snm">${u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.name)}</a>` : esc(r.name)}</span><span class="smeta"><span class="b ${r.boost}">${LBL[r.boost]}</span><b class="sat">${esc(r.best.label)}</b></span><button class="bdone${on ? ' on' : ''}" data-done="${esc(doneKey(r))}" aria-label="Boosted" title="Mark as boosted"></button></div>`;
+    return `<div class="srow${on ? ' boosted' : ''}"${u ? ` data-href="${esc(u)}"` : ''}><span class="snm">${u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.name)}</a>` : esc(r.name)}</span><span class="smeta"><span class="b ${r.boost}">${LBL[r.boost]}</span><b class="sat">${esc(r.best.label)}</b></span><button class="bdone${on ? ' on' : ''}" data-done="${esc(doneKey(r))}" aria-label="Boosted" title="Mark as boosted"></button></div>`;
   }).join('') : '<p class="note">No boosters recommended for this day.</p>';
   if(fc){ $('#foot').textContent = 'FC: the slate is every game Real scores - the Premier League, Championship, La Liga, Serie A, Bundesliga, Ligue 1, Liga MX, Champions League, Europa League and Nations League (no cups or friendlies). Projected rax is what he makes in a start (55+ minutes), from every start he has made this season and last: recent starts count most (a start 5 games back counts half as much as the latest), mixed half and half with his average pulled toward a typical starter at his position, so a hot or cold patch doesn\'t swing him too far. Then home x1.05 / away x0.95, how much rax the opponent gives up and how many goals they concede. Backtested on 14,000 starts this season, it picks better than a plain last-5 average (top 10% of picks: 10.4 rax a start against 9.8). Starting lineups come from ESPN, read every few minutes from about 85 minutes before kickoff (they are usually out an hour before): starting = boost, on the bench or not in the squad = no booster. Before the lineup is out, a regular starter keeps his starting number and anyone rotated in and out is marked down; check back once the lineup is in. The game log is updated from Real after every game. Players out (Boosts\' injury list) or with no game in three weeks get no booster.' + (j.notPlaying ? ` ${j.notPlaying} of your players don't play that day.` : ''); scheduleFcRefresh(rows); return; }
   if(sp === 'golf'){ $('#foot').textContent = 'Golf: a tournament counts as one game. Projected rax is his average over his last 8 events (this season and last), mixed with his average at this event and course from every season on the site - the more times he has played it, the more it counts (up to half). Only golfers in ESPN\'s field for the event are shown once the field is out.' + (j.notPlaying ? ` ${j.notPlaying} of your golfers aren't in the field.` : ''); return; }
@@ -769,24 +774,27 @@ async function runAll(){
   }));
   if(ask !== allAsk) return;
   $('#run').disabled = false;
-  const tot = { legendary: 0, epic: 0, rare: 0 }, copyRows = [];
+  const tot = { legendary: 0, epic: 0, rare: 0 }, copyRows = [], quiet = [];
   let err = null, anyPlay = 0;
-  $('#alllist').innerHTML = res.map(x => {
-    const hd = t => `<div class="allsp"><div class="allhd"><b>${x.lbl}</b><span class="note">${esc(MODE_LBL[x.m] || x.m)}${t ? ' · ' + t : ''}</span></div>`;
-    if(x.skip) return hd('') + `<div class="none">${esc(x.skip)}</div></div>`;
+  /* One list for every sport, best boosts first (Dennis, 2026-11-09): rarity,
+     then projected rax with the boost. Sports with nothing listed underneath. */
+  for(const x of res){
+    if(x.skip){ quiet.push(`${x.lbl}: ${x.skip}`); continue; }
     const j = x.j;
-    if(j.error){ err = err || j.error; return hd('') + `<div class="none">${esc(j.error)}</div></div>`; }
+    if(j.error){ err = err || j.error; quiet.push(`${x.lbl}: ${j.error}`); continue; }
     const rows = j.rows || [];
     anyPlay += rows.length;
-    const rec = rows.filter(r => r.boost && r.best && !r.belowCut).map((r, i) => [r, i]).sort((a, b) => RANKR[a[0].boost] - RANKR[b[0].boost] || a[1] - b[1]).map(y => y[0]);
-    rec.forEach(r => { tot[r.boost]++; copyRows.push([x.sp, r, j]); });
-    const dk = x.sp + ':' + x.date, done = loadDone(dk);
-    const what = x.sp === 'golf' ? (j.event || 'this week') : `${rows.length} of your ${j.players ?? 0} passes play`;
-    return hd(`${what} · ${rec.length} boost${rec.length === 1 ? '' : 's'}`)
-      + (rec.length ? rec.map(r => { const u = passUrl(x.sp, r, j), k = doneKey(r), on = done.has(k);
-          return `<div class="srow${on ? ' boosted' : ''}"><span class="snm">${u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.name)}</a>` : esc(r.name)}</span><span class="smeta"><span class="b ${r.boost}">${LBL[r.boost]}</span><b class="sat">${esc(r.best.label)}</b>${(r.flags || []).length ? `<span class="flag" style="display:inline">⚠ ${esc(r.flags[0])}</span>` : ''}</span><button class="bdone${on ? ' on' : ''}" data-alldone="${esc(dk)}" data-done="${esc(k)}" aria-label="Boosted" title="Mark as boosted"></button></div>`; }).join('')
-        : `<div class="none">${rows.length ? 'No boosters recommended.' : 'None of your passes play.'}</div>`) + '</div>';
-  }).join('');
+    const rec = rows.filter(r => r.boost && r.best && !r.belowCut);
+    if(!rec.length) quiet.push(`${x.lbl} (${MODE_LBL[x.m] || x.m}): ${rows.length ? 'no boosters recommended' : 'none of your passes play'}`);
+    rec.forEach(r => { tot[r.boost]++; copyRows.push([x.sp, r, j, x]); });
+  }
+  const val = r => Number(r.withBoost != null ? r.withBoost : r.proj) || 0;
+  copyRows.sort((a, b) => RANKR[a[1].boost] - RANKR[b[1].boost] || val(b[1]) - val(a[1]));
+  const doneOf = {};
+  $('#alllist').innerHTML = (copyRows.length ? '<div class="allsp">' + copyRows.map(([sp, r, j, x]) => {
+      const dk = sp + ':' + x.date, done = doneOf[dk] || (doneOf[dk] = loadDone(dk)), u = passUrl(sp, r, j), k = doneKey(r), on = done.has(k);
+      return `<div class="srow${on ? ' boosted' : ''}"${u ? ` data-href="${esc(u)}"` : ''}><span class="snm">${u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.name)}</a>` : esc(r.name)}</span><span class="smeta"><span class="spl">${x.lbl}</span><span class="b ${r.boost}">${LBL[r.boost]}</span><b class="sat">${esc(r.best.label)}</b>${r.withBoost != null ? `<span class="note">${Math.round(r.withBoost)} proj</span>` : ''}${(r.flags || []).length ? `<span class="flag" style="display:inline">⚠ ${esc(r.flags[0])}</span>` : ''}</span><button class="bdone${on ? ' on' : ''}" data-alldone="${esc(dk)}" data-done="${esc(k)}" aria-label="Boosted" title="Mark as boosted"></button></div>`; }).join('') + '</div>' : '')
+    + (quiet.length ? `<div class="allnone">${quiet.map(esc).join('<br>')}</div>` : '');
   const dl = $('#day').selectedOptions[0] ? $('#day').selectedOptions[0].textContent : day;
   if(err && !anyPlay && res.every(x => x.skip || (x.j && x.j.error))){ $('#allhead').textContent = err; return; }
   $('#allhead').textContent = `All sports · ${dl} · ${copyRows.length} boost${copyRows.length === 1 ? '' : 's'}` + (h.size ? ` · ${h.size} sport${h.size === 1 ? '' : 's'} hidden` : '');
@@ -846,6 +854,20 @@ const simpleOn = () => { try{ return localStorage.getItem('boosts_simple_v1') ==
 function applySimple(){ const on = simpleOn(); $('#out').classList.toggle('simple', on); $('#simplebtn').setAttribute('aria-pressed', String(on)); $('#simplebtn').textContent = on ? 'View full layout' : 'View simple layout'; }
 $('#simplebtn').addEventListener('click', () => { try{ localStorage.setItem('boosts_simple_v1', simpleOn() ? '0' : '1'); }catch(e){} applySimple(); });
 applySimple();
+/* Whole box opens the player (Dennis, 2026-11-09), off to start; remembered in this browser.
+   The ✓ and links inside keep working as before. */
+const boxLink = () => { try{ return localStorage.getItem('boosts_boxlink_v1') === '1'; }catch(e){ return false; } };
+function applyBoxLink(){ const on = boxLink(); document.body.classList.toggle('boxlink', on);
+  document.querySelectorAll('.boxlinkbtn').forEach(b => { b.setAttribute('aria-pressed', String(on)); b.textContent = `Whole box opens the player: ${on ? 'on' : 'off'}`; });
+  const sb = document.querySelector('#out .boxlinkbtn'); if(sb) sb.hidden = !simpleOn(); }
+document.querySelectorAll('.boxlinkbtn').forEach(b => b.addEventListener('click', () => { try{ localStorage.setItem('boosts_boxlink_v1', boxLink() ? '0' : '1'); }catch(e){} applyBoxLink(); }));
+document.addEventListener('click', e => {
+  if(!boxLink()) return;
+  const row = e.target.closest('.srow[data-href]'); if(!row || e.target.closest('a, button')) return;
+  window.open(row.dataset.href, '_blank', 'noopener');
+});
+$('#simplebtn').addEventListener('click', applyBoxLink);
+applyBoxLink();
 
 const RN = { 5: 'legendary', 4: 'epic', 3: 'rare' };
 /* One card per rarity: how many you hold (and use today), then each stat booster as a chip. */
