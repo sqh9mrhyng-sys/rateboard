@@ -4267,11 +4267,11 @@ async function handleGet({ request, env, waitUntil }) {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
     if (!['mlb', 'nba', 'nfl', 'ncaaf'].includes(sport)) return json({ error: 'Team packs are MLB, NBA, NFL and CFB.' }, 400);
-    const se = Number(season), K = `pkteams_v6_${sport}_${se}`, L = `pkteams_lock_${sport}_${se}`;
+    const se = Number(season), K = `pkteams_v7_${sport}_${se}`, L = `pkteams_lock_${sport}_${se}`;
     const live = OTD_LIVE_SEASONS.has(`${sport}:${se}`);
     let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
     const fresh = c && Date.now() - c.at < (live ? 86400000 : 30 * 86400000);
-    if (c && fresh) return json({ sport, season: se, at: c.at, rows: c.rows });
+    if (c && fresh) return json({ sport, season: se, at: c.at, rows: c.rows, ...(c.sides != null ? { sides: c.sides } : {}) });
     let locked = null; try { locked = await env.RATEBOARD_KV.get(L); } catch (e) {}
     if (!locked) {
       try { await env.RATEBOARD_KV.put(L, '1', { expirationTtl: 300 }); } catch (e) {}
@@ -4292,6 +4292,7 @@ async function handleGet({ request, env, waitUntil }) {
                  SUM(CASE WHEN rarity = 4 THEN 1 ELSE 0 END) AS epic
             FROM c WHERE t IS NOT NULL GROUP BY t`).bind(sport, se).all();
         let rows = r.results || [];
+        const sides = rows.length;
         /* Each team's code: a sample of its plays, matched to those players'
            games in the game log, most common code wins (one play could miss -
            a player with no game log row, a trade). A side with no code at all
@@ -4342,7 +4343,7 @@ async function handleGet({ request, env, waitUntil }) {
            side nobody can name isn't one either. */
         rows = rows.filter(x => x.team && (sport !== 'mlb' || (x.teamId >= 108 && x.teamId <= 158)));
         // Nothing named: keep the empty answer an hour, not a month.
-        await env.RATEBOARD_KV.put(K, JSON.stringify({ at: Date.now(), rows }), { expirationTtl: rows.length ? 60 * 86400 : 3600 });
+        await env.RATEBOARD_KV.put(K, JSON.stringify({ at: Date.now(), rows, ...(rows.length ? {} : { sides }) }), { expirationTtl: rows.length ? 60 * 86400 : 3600 });
       })().catch(() => {}).finally(() => env.RATEBOARD_KV.delete(L).catch(() => {}));
       try { waitUntil(build); } catch (e) {}
     }
