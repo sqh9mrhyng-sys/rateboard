@@ -963,6 +963,9 @@ function applyGameDataVisibility(){
   // Someone who reloaded on the game data page, or followed a link to it,
   // belongs there rather than back on the board.
   if(location.hash === '#gamedata' && curPage !== 'cbb' && canSeePackData()) goPage('cbb');
+  // Home's buttons (2026-11-09): /#report and /#feature open those forms once signed in.
+  if(location.hash === '#report' || location.hash === '#feature'){ const h = location.hash; history.replaceState(null, '', location.pathname + location.search);
+    setTimeout(() => { if(h === '#report') reportUser(''); else featureForm(); }, 0); }
   // A grant pulled while they were looking at it puts them back on the board.
   if(curPage === 'cbb' && !canSeePackData()) goPage('board');
 }
