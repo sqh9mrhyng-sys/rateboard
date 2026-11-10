@@ -131,6 +131,26 @@
   .tot div{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px 12px}
   .tot b{display:block;font-size:20px}
   [hidden]{display:none!important}
+  .rdrow{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .rd{--c:var(--accent);display:flex;flex-direction:column;border:1px solid color-mix(in srgb,var(--c) 45%,var(--line));border-radius:12px;overflow:hidden;background:color-mix(in srgb,var(--c) 10%,var(--panel2))}
+  .rd.bst{--c:var(--purple)}
+  .rdgo{border:0!important;border-radius:0!important;background:none!important;padding:14px 8px!important;font-weight:800;font-size:15.5px;color:var(--ink)}
+  .rdgo:disabled{opacity:.6}
+  .rdx{border:0!important;border-top:1px solid color-mix(in srgb,var(--c) 30%,var(--line))!important;border-radius:0!important;background:color-mix(in srgb,var(--c) 6%,transparent)!important;padding:7px 8px!important;font-size:12.5px;color:var(--mute);min-height:0!important}
+  .rdx .chev{display:inline-block;transition:transform .15s}
+  .rdx[aria-expanded="true"]{color:var(--c)} .rdx[aria-expanded="true"] .chev{transform:rotate(180deg)}
+  .reads #scanmsg{display:block;margin-top:8px}
+  .rdb{margin-top:12px;border-top:1px solid var(--line);padding-top:12px}
+  .rdb label{display:flex;flex-direction:column;gap:4px;font-weight:600;margin-bottom:10px}
+  .rdb label input{width:100%}
+  .rdb h4{margin:12px 0 6px;font-size:14px}
+  .pst{width:100%;border-collapse:collapse;font-size:13px}
+  .pst th,.pst td{padding:6px 6px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+  .pst th:first-child,.pst td:first-child{text-align:left}
+  .pst th{color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+  .pst .rc{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+  .pst .rc span{font-size:11px;padding:1px 6px;border-radius:6px;background:var(--panel);border:1px solid var(--line)}
+  body.boxlink table.cards tr[data-href]{cursor:pointer}
   .invhd{display:flex;align-items:center;gap:8px}
   #inv{background:linear-gradient(135deg,color-mix(in srgb,var(--purple) 12%,var(--panel)),var(--panel) 60%);border-color:color-mix(in srgb,var(--purple) 35%,var(--line))}
   #inv .h{font-size:17px}
@@ -191,11 +211,19 @@
   <div class="seg" id="tab"><button data-t="boosts" aria-pressed="true">Boosts</button><button data-t="buys" aria-pressed="false" id="tab2">Buys</button></div></div>
 
   <div id="t-boosts">
-    <!-- Your boosters: at the top (Dennis, 2026-11-09). -->
-    <section id="inv">
-      <div class="invhd"><button class="fold" id="invfold" type="button" aria-expanded="true"><span class="chev">▾</span><b class="h">Your boosters</b></button><button id="invgo" class="sm">Load from Real</button></div>
-      <div id="invbody"><p class="note" id="invmsg" style="margin:6px 0 0">Tap Load from Real to see every booster you hold, by rarity (read at most every 2 hours).</p>
-      <div id="invout" style="margin:10px 0 0" hidden></div></div>
+    <!-- Read my passes / Read my boosters (Dennis, 2026-11-09), each opening a breakdown. -->
+    <section class="reads">
+      <div class="rdrow">
+        <div class="rd"><button class="rdgo" id="scan" type="button">Read my passes</button><button class="rdx" id="passx" type="button" aria-expanded="false">Breakdown <span class="chev">▾</span></button></div>
+        <div class="rd bst"><button class="rdgo" id="invgo" type="button">Read my boosters</button><button class="rdx" id="invx" type="button" aria-expanded="false">Breakdown <span class="chev">▾</span></button></div>
+      </div>
+      <span class="note" id="scanmsg"></span>
+      <div class="rdb" id="passbody" hidden>
+        <label class="note">Real username <input id="rsuser" placeholder="Real username" autocomplete="off"></label>
+        <div id="passout"></div>
+      </div>
+      <div class="rdb bst" id="invbody" hidden><p class="note" id="invmsg" style="margin:0">Tap Read my boosters to see every booster you hold, by rarity (read at most every 2 hours).</p>
+        <div id="invout" style="margin:10px 0 0" hidden></div></div>
     </section>
     <section>
       <div class="ctl">
@@ -214,11 +242,6 @@
       <p class="note modenote" id="modenote"></p>
       <div class="allctl" id="allctl" hidden><span class="note">Sports shown - tap to hide or show</span><div class="chips" id="allshow"></div></div>
       <button class="go big" id="run">Show my boosts</button>
-      <div class="bar userbar">
-        <input id="rsuser" placeholder="Real username" autocomplete="off">
-        <button id="scan">Re-read passes</button>
-      </div>
-      <span class="note" id="scanmsg"></span>
     </section>
     <section id="allout" hidden>
       <div class="note" id="allhead"></div>
@@ -233,7 +256,7 @@
       <button class="sm copybtn" id="copybtn" type="button" hidden>Copy boosts</button>
       <button class="sm hidestart" id="hidestart" type="button" hidden aria-pressed="false">Hide games that already started</button>
       <button class="sm simplebtn" id="simplebtn" type="button" aria-pressed="false">View simple layout</button>
-      <button class="sm simplebtn boxlinkbtn" type="button" aria-pressed="false" hidden>Whole box opens the player: off</button>
+      <button class="sm simplebtn boxlinkbtn" type="button" aria-pressed="false">Whole box opens the player: off</button>
       <div id="simple" class="simple-list"></div>
       <div class="tot" id="tot"></div>
       <div class="sum" id="sum"></div>
@@ -434,10 +457,12 @@ $('#sport').addEventListener('change', drawDays);
 const golfLook = () => { const g = $('#sport').value === 'golf'; document.querySelector('.ctl').classList.toggle('golf', g); $('#daylbl').textContent = g ? 'Tournament' : 'Day'; };
 $('#sport').addEventListener('change', golfLook);
 // CFB Balanced has its own bars (one slate a week).
-/* Your boosters folds away; remembered in this browser. */
-const invFold = open => { $('#invbody').hidden = !open; $('#invfold').setAttribute('aria-expanded', String(open)); try{ localStorage.setItem('boosts_invopen_v1', open ? '1' : '0'); }catch(e){} };
-$('#invfold').addEventListener('click', () => invFold($('#invbody').hidden));
-try{ if(localStorage.getItem('boosts_invopen_v1') === '0') invFold(false); }catch(e){}
+/* The two breakdowns open and close; remembered in this browser. */
+function rdOpen(btn, body, key, open){ body.hidden = !open; btn.setAttribute('aria-expanded', String(open)); try{ localStorage.setItem(key, open ? '1' : '0'); }catch(e){} }
+$('#passx').addEventListener('click', () => rdOpen($('#passx'), $('#passbody'), 'boosts_passopen_v1', $('#passbody').hidden));
+$('#invx').addEventListener('click', () => { rdOpen($('#invx'), $('#invbody'), 'boosts_invopen_v2', $('#invbody').hidden); if(!$('#invbody').hidden) drawInv(); });
+try{ if(localStorage.getItem('boosts_passopen_v1') === '1') rdOpen($('#passx'), $('#passbody'), 'boosts_passopen_v1', true);
+  if(localStorage.getItem('boosts_invopen_v2') === '1') rdOpen($('#invx'), $('#invbody'), 'boosts_invopen_v2', true); }catch(e){}
 /* Custom: your own bars and maxes, per sport, kept in this browser. */
 const CUS_DEF = { ncaam: { l: 14.5, e: 10, r: 5 }, ncaaf: { l: 22, e: 15, r: 10 }, nfl: { l: 22.5, e: 17, r: 7 }, nba: { l: 99, e: 7.5, r: 4 }, nhl: { l: 99, e: 7.5, r: 4 }, golf: { l: 19, e: 15, r: 10 }, soccer: { l: 11.2, e: 9, r: 6 } };
 const CUS_IDS = { l: 'c-l', e: 'c-e', r: 'c-r', ml: 'm-l', me: 'm-e', mr: 'm-r' };
@@ -570,6 +595,7 @@ function paintSport(){
   if(all){ $('#out').hidden = true; drawShow(); } else $('#allout').hidden = true;
   const noBuys = all || sp === 'nfl' || sp === 'golf' || sp === 'soccer' || sp === 'nba' || sp === 'nhl';
   $('#tab2').hidden = noBuys; $('#tab2').textContent = 'Buys';
+  $('#tab').hidden = noBuys;   // a lone "Boosts" button did nothing (2026-11-09)
   showTab(noBuys ? 'boosts' : curTab);
 }
 document.querySelectorAll('#sportseg button, #allseg button').forEach(b => b.addEventListener('click', () => {
@@ -708,7 +734,7 @@ async function run(){
     const u = r.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(r.passId)]) : realPlayerUrl(sp, r.id, r.season || j.season);
     const nm = u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.name)}</a>` : esc(r.name);
     const one = o => esc(o.label) + (o.avg != null ? ` <span class="note">${o.avg}/${o.gain}</span>` : '');
-    return cutRow + `<tr class="${r.skip ? 'skip' : ''}${r.belowCut ? ' below' : ''}${r.boost && r.best && doneSet.has(doneKey(r)) ? ' boosted' : ''}"><td data-l="Rarity">${r.boost ? `<span class="b ${r.boost}">${LBL[r.boost]}</span>` : '<span class="b none">None</span>'}</td>
+    return cutRow + `<tr class="${r.skip ? 'skip' : ''}${r.belowCut ? ' below' : ''}${r.boost && r.best && doneSet.has(doneKey(r)) ? ' boosted' : ''}"${u ? ` data-href="${esc(u)}"` : ''}><td data-l="Rarity">${r.boost ? `<span class="b ${r.boost}">${LBL[r.boost]}</span>` : '<span class="b none">None</span>'}</td>
       <td data-l="Player" class="pc">${nm}${r.noData ? ' <span class="note">*not enough data*</span>' : ''}<span class="sub">${esc([r.pos, r.team].filter(Boolean).join(' · '))}${r.basis ? ' · ' + esc(r.basis) : ''}</span>${(r.flags || []).map(f => `<span class="flag">⚠ ${esc(f)}</span>`).join('')}</td>
       <td data-l="Boost" class="${r.boost && r.best ? 'bcell' : ''}" style="text-align:left;white-space:normal">${r.boost && r.best ? `<b>${one(r.best)}</b>${r.alt ? `<span class="sub">or ${one(r.alt)}</span>` : ''}<button class="bdone${doneSet.has(doneKey(r)) ? ' on' : ''}" data-done="${esc(doneKey(r))}" aria-label="Boosted" title="Mark as boosted"></button>` : '<span class="note">–</span>'}</td>
       <td data-l="${golf ? 'Event' : 'Game'}" style="text-align:left">${golf ? esc(r.opp) : `${r.home ? 'vs' : '@'} ${esc(r.opp)}`}<span class="sub">${golf && r.at ? 'Starts ' + new Date(r.at).toLocaleDateString('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' }) : tm(r.at)}${fc && FC_LG[r.lg] ? ' · ' + FC_LG[r.lg] : ''}</span>${fc ? luChip(r) : ''}</td>
@@ -800,7 +826,7 @@ async function runAll(reuse){
   const full = allFull() && copyRows.length ? '<div class="scroll"><table class="cards"><thead><tr><th>Rarity</th><th>Player</th><th style="text-align:left">Boost</th><th style="text-align:left">Game</th><th>Avg rax</th><th>Proj rax</th><th>Proj w/ boost</th></tr></thead><tbody>'
     + copyRows.map(([sp, r, j, x]) => { const [dk, done] = dOf(sp, x), u = passUrl(sp, r, j), k = doneKey(r), on = done.has(k), golf = sp === 'golf';
       const one = o => esc(o.label) + (o.avg != null ? ` <span class="note">${o.avg}/${o.gain}</span>` : '');
-      return `<tr class="${on ? 'boosted' : ''}"><td data-l="Rarity"><span class="b ${r.boost}">${LBL[r.boost]}</span></td>
+      return `<tr class="${on ? 'boosted' : ''}"${u ? ` data-href="${esc(u)}"` : ''}><td data-l="Rarity"><span class="b ${r.boost}">${LBL[r.boost]}</span></td>
         <td data-l="Player" class="pc">${u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.name)}</a>` : esc(r.name)} <span class="spl">${x.lbl}</span><span class="sub">${esc([r.pos, r.team].filter(Boolean).join(' · '))}${r.basis ? ' · ' + esc(r.basis) : ''}</span>${(r.flags || []).map(f => `<span class="flag">⚠ ${esc(f)}</span>`).join('')}</td>
         <td data-l="Boost" class="bcell" style="text-align:left;white-space:normal"><b>${one(r.best)}</b>${r.alt ? `<span class="sub">or ${one(r.alt)}</span>` : ''}<button class="bdone${on ? ' on' : ''}" data-alldone="${esc(dk)}" data-done="${esc(k)}" aria-label="Boosted" title="Mark as boosted"></button></td>
         <td data-l="${golf ? 'Event' : 'Game'}" style="text-align:left">${golf ? esc(r.opp) : `${r.home ? 'vs' : '@'} ${esc(r.opp || '')}`}<span class="sub">${golf ? '' : tm(r.at)}${sp === 'soccer' && FC_LG[r.lg] ? ' · ' + FC_LG[r.lg] : ''}</span>${sp === 'soccer' ? luChip(r) : ''}</td>
@@ -827,7 +853,7 @@ $('#allout').addEventListener('click', e => { const b = e.target.closest('.bdone
 /* All sports, full layout (Dennis, 2026-11-09): the table instead of the list. Remembered in this browser. */
 function allFull(){ try{ return localStorage.getItem('boosts_allfull_v1') === '1'; }catch(e){ return false; } }
 function paintAllFull(){ const on = allFull(); $('#allfullbtn').setAttribute('aria-pressed', String(on)); $('#allfullbtn').textContent = on ? 'View simple layout' : 'View full layout';
-  document.querySelectorAll('#allout .boxlinkbtn').forEach(b => { b.hidden = on; }); }
+}
 $('#allfullbtn').addEventListener('click', () => { try{ localStorage.setItem('boosts_allfull_v1', allFull() ? '0' : '1'); }catch(e){} paintAllFull(); if(!$('#allout').hidden) runAll(true); });
 paintAllFull();
 async function copyOut(t){
@@ -881,14 +907,13 @@ applySimple();
 const boxLink = () => { try{ return localStorage.getItem('boosts_boxlink_v1') === '1'; }catch(e){ return false; } };
 function applyBoxLink(){ const on = boxLink(); document.body.classList.toggle('boxlink', on);
   document.querySelectorAll('.boxlinkbtn').forEach(b => { b.setAttribute('aria-pressed', String(on)); b.textContent = `Whole box opens the player: ${on ? 'on' : 'off'}`; });
-  const sb = document.querySelector('#out .boxlinkbtn'); if(sb) sb.hidden = !simpleOn(); }
+}
 document.querySelectorAll('.boxlinkbtn').forEach(b => b.addEventListener('click', () => { try{ localStorage.setItem('boosts_boxlink_v1', boxLink() ? '0' : '1'); }catch(e){} applyBoxLink(); }));
 document.addEventListener('click', e => {
   if(!boxLink()) return;
-  const row = e.target.closest('.srow[data-href]'); if(!row || e.target.closest('a, button')) return;
+  const row = e.target.closest('.srow[data-href], table.cards tr[data-href]'); if(!row || e.target.closest('a, button')) return;
   window.open(row.dataset.href, '_blank', 'noopener');
 });
-$('#simplebtn').addEventListener('click', applyBoxLink);
 applyBoxLink();
 
 const RN = { 5: 'legendary', 4: 'epic', 3: 'rare' };
@@ -902,16 +927,37 @@ function invHtml(list){
       + `<div class="invs">${g.map(b => `<span>${esc(b.stat)} <i>+${b.boost}</i> × <b>${b.count}</b>${b.used ? ` <i>· use ${b.used}</i>` : ''}</span>`).join('')}</div></div>`;
   }).join('') + '</div>';
 }
+let invData = null;
+const invWhen = ms => new Date(ms).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+function drawInv(){
+  const j = invData; if(!j) return;
+  const sp = $('#sport').value, all = sp === 'all', S = j.sports || {};
+  $('#invmsg').textContent = (all ? 'Every sport' : `${SP_LBL[sp] || ''} boosters`) + ' · ' + (j.cached ? `from your read at ${invWhen(j.at)}. ` : 'read just now. ') + `Next read allowed after ${invWhen(j.next)}.`;
+  $('#invout').hidden = false;
+  $('#invout').innerHTML = all ? SPORTS.filter(([v]) => (S[v] || []).length).map(([v, l]) => `<h4>${l}</h4>` + invHtml(S[v])).join('') || '<span class="note">No boosters found.</span>' : invHtml(S[sp] || j.boosters);
+}
 $('#invgo').addEventListener('click', async () => {
-  $('#invgo').disabled = true; $('#invmsg').textContent = 'Loading…';
-  const j = await api(`/api/swaps?op=boostinv&page=boosts&sport=${setSp()}&fresh=1`);
-  $('#invgo').disabled = false;
-  if(j.error){ $('#invmsg').textContent = j.error; return; }
-  const when = ms => new Date(ms).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-  $('#invmsg').textContent = `${SP_LBL[setSp()] || ''} boosters · ` + (j.cached ? `from your read at ${when(j.at)}. ` : 'read just now. ') + `Next read allowed after ${when(j.next)}.`;
-  $('#invout').hidden = false; $('#invout').innerHTML = invHtml(j.boosters);
+  $('#invgo').disabled = true; $('#invgo').textContent = 'Reading…';
+  const j = await api(`/api/swaps?op=boostinv&page=boosts&sport=${isAll() ? 'nfl' : $('#sport').value}&fresh=1`);
+  $('#invgo').disabled = false; $('#invgo').textContent = 'Read my boosters';
+  if(j.error){ $('#invmsg').textContent = j.error; rdOpen($('#invx'), $('#invbody'), 'boosts_invopen_v2', true); return; }
+  invData = j; rdOpen($('#invx'), $('#invbody'), 'boosts_invopen_v2', true); drawInv();
 });
+$('#sport').addEventListener('change', drawInv);
 
+/* Read my passes breakdown: passes per sport and season, teams, and pass rarities. */
+const SEAS = (sp, se) => ['ncaam', 'nba', 'nhl', 'soccer'].includes(sp) ? `${Number(se) - 1}-${String(se).slice(2)}` : String(se);
+const RLBL = { R1: 'Common', R2: 'Uncommon', R3: 'Rare', R4: 'Epic', R5: 'Legendary', R6: 'Mystic', R7: 'Iconic' };
+function drawPassSum(p){
+  const list = (p && p.passSummary) || [];
+  if(!list.length){ $('#passout').innerHTML = '<p class="note">No passes on file yet - enter your Real username and tap Read my passes.</p>'; return; }
+  const nm = sp => SP_LBL[sp] || String(sp).toUpperCase();
+  $('#passout').innerHTML = `<p class="note" style="margin:0 0 8px">${(p.passCount || 0).toLocaleString()} passes${p.scannedAt ? `, read ${new Date(p.scannedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ''}.</p>`
+    + `<div class="scroll"><table class="pst"><thead><tr><th>Sport</th><th>Passes</th><th>Teams</th><th>By rarity</th></tr></thead><tbody>`
+    + list.map(x => `<tr><td><b>${esc(nm(x.sport))}</b> <span class="note">${esc(SEAS(x.sport, x.season))}</span></td><td>${x.n - x.teams}</td><td>${x.teams || '-'}</td><td><div class="rc">${Object.entries(x.by || {}).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<span>${esc(RLBL[k] || k)} ${n}</span>`).join('')}</div></td></tr>`).join('')
+    + '</tbody></table></div>';
+}
+async function loadPassSum(){ const j = await api('/api/swaps?op=me&page=boosts'); if(!j.error) drawPassSum(j.profile); }
 // One scan for the whole site, in parts: keeps asking until it's done.
 let scanStart = 0;
 async function fullScan(extra, onPart){
@@ -940,7 +986,7 @@ async function resumeScan(){
 }
 $('#scan').addEventListener('click', async () => {
   const u = $('#rsuser').value.trim();
-  if(!u){ $('#scanmsg').textContent = 'Enter your Real username first.'; return; }
+  if(!u){ $('#scanmsg').textContent = 'Enter your Real username first.'; rdOpen($('#passx'), $('#passbody'), 'boosts_passopen_v1', true); $('#rsuser').focus(); return; }
   $('#scan').disabled = true; $('#scanmsg').textContent = 'Scans typically take 25 seconds, longer at high website volume';
   let canDm = null;   // the server finishes a scan they leave, and the bot DMs them (2026-11-08)
   const leave = () => canDm ? ' You can leave this page - we\'ll DM you on Real when your scan is complete.' : canDm === false ? ' You can leave this page - your scan keeps running and will be ready when you come back.' : '';
@@ -948,6 +994,7 @@ $('#scan').addEventListener('click', async () => {
   $('#scan').disabled = false;
   if(j.error){ $('#scanmsg').textContent = j.error; return; }
   $('#scanmsg').textContent = j.cached ? j.note : `${(j.passes || []).length} passes read just now.` + (j.note ? ' ' + j.note : '');
+  loadPassSum();
   for(const k of Object.keys(daysCache)) delete daysCache[k]; await drawDays();   // the days first, so the plan has one to use
   if(shown()) run();
 });
@@ -966,6 +1013,7 @@ $('#scan').addEventListener('click', async () => {
   } else $('#mode').innerHTML = '<option value="balanced">Balanced</option><option value="custom">Custom</option>';
   loadSet();
   $('#rsuser').value = (me.profile && me.profile.rsUser) || '';
+  drawPassSum(me.profile);
   setTimeout(resumeScan, 300);
   const p = me.profile;
   const pn = p ? (p.passCount ?? (p.passes || []).length) : 0;

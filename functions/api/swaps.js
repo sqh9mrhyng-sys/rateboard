@@ -205,6 +205,14 @@ function passOf(p, sport, season, kind = 'player') {
     passId: Number.isFinite(passId) ? passId : null } : null;
 }
 
+/* Boosts' "Read my passes" breakdown (2026-11-09): passes per sport-season,
+   teams apart, and how many of each pass rarity. */
+function passSummary(ps) {
+  const m = new Map();
+  for (const p of ps) { const k = p.sport + ':' + p.season; const o = m.get(k) || m.set(k, { sport: p.sport, season: p.season, n: 0, teams: 0, by: {} }).get(k);
+    o.n++; if (p.kind === 'team') o.teams++; const l = p.levelLabel || (p.rarity != null ? 'R' + p.rarity : ''); if (l) o.by[l] = (o.by[l] || 0) + 1; }
+  return [...m.values()].sort((a, b) => b.n - a.n);
+}
 // Names Real didn't put on the pass, from the board's own game log.
 async function fillNames(db, passes) {
   const need = passes.filter(p => p.kind !== 'team' && (!p.name || /^player$/i.test(p.name)));
@@ -5281,7 +5289,7 @@ async function handle({ request, env, waitUntil }) {
     mark(request, 'plays');
     const cDay = confirmDayNow();
     return json({ confirmShow: Date.now() >= CONFIRM_SHOW_AT, confirmedToday: !!(u && u.confirmDay === cDay), confirmStarts: CONFIRM_FROM_DAY, swapToday: cDay, key: me, admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
-      keep: parse(u.keep, []), touch: parse(u.touch, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: lite ? [] : parse(u.passes, []), passCount: (() => { try { return parse(u.passes, []).length; } catch (e) { return 0; } })(), lowPlays: lowP, scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {}, b160: !!u.b160, s160: !!u.s160, only160: !!u.only160, sell160m: u.sell160m || null, sell160h: parse(u.sell160h, []) } : null, real: realN });
+      keep: parse(u.keep, []), touch: parse(u.touch, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: lite ? [] : parse(u.passes, []), passCount: (() => { try { return parse(u.passes, []).length; } catch (e) { return 0; } })(), passSummary: lite ? passSummary(parse(u.passes, [])) : undefined, lowPlays: lowP, scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {}, b160: !!u.b160, s160: !!u.s160, only160: !!u.only160, sell160m: u.sell160m || null, sell160h: parse(u.sell160h, []) } : null, real: realN });
   }
 
   // A tick in the passes list saves at once: the passes they won't give.
