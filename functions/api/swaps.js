@@ -462,6 +462,25 @@ async function saveOwnerCounts(env, db) {
   } catch (e) { try { await botFail(db, 'scan_bg', 'owner counts: ' + String(e.message || e).slice(0, 120)); } catch (e2) {} }
   try { await env.RATEBOARD_KV.delete(LOCK); } catch (e) {}
 }
+const seasonOf = k => String(k || '').split(':').slice(0, 2).join(':');
+/* When a member can swap (Dennis, 2026-11-04). Three ways:
+     daily   - the same hours every day (slots, UTC hours, as before)
+     weekly  - different hours for each day of the week, in their own time
+     date    - just one day, in their own time
+   sched = { mode, tz, week: { '0'..'6': [local hours] }, date: 'YYYY-MM-DD', hours: [local hours] }.
+   For weekly/date, slots also holds every UTC hour they use, for the counts
+   and quick filters. Each list is in tap order: the first is the primary. */
+const localAt = (ms, tz) => { try { const o = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz || 'UTC', hourCycle: 'h23', weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit' }).formatToParts(new Date(ms)).map(x => [x.type, x.value]));
+  return { wd: { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[o.weekday], hour: Number(o.hour) % 24, date: `${o.year}-${o.month}-${o.day}` }; } catch (e) { return null; } };
+// Their rank for a swap at this moment (0 = primary), or -1 if they don't swap then.
+function rankAt(u, due) {
+  const sc = u.sched && typeof u.sched === 'object' ? u.sched : null;
+  if (!sc || sc.mode === 'daily' || !sc.mode) return (u.slots || []).indexOf(new Date(due).getUTCHours());
+  const l = localAt(due, sc.tz); if (!l) return -1;
+  if (sc.mode === 'weekly') return ((sc.week || {})[l.wd] || []).indexOf(l.hour);
+  if (sc.mode === 'date') return l.date === sc.date ? (sc.hours || []).indexOf(l.hour) : -1;
+  return -1;
+}
 function cleanSched(b) {
   const hrs = a => [...new Set((Array.isArray(a) ? a : []).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24))].slice(0, MAX_SLOTS);
   const mode = ['daily', 'weekly', 'date'].includes(b && b.mode) ? b.mode : 'daily';
