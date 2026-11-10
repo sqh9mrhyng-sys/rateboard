@@ -3064,7 +3064,8 @@ const CBB_TOP175 = {"4711255":[1,"MSU","jxtRc6FPBpw9"],"5187600":[2,"VAN","aetec
 /* Dennis's CBB boost order: these always go first, in this order, and get
    at least the rarity shown (5 Legendary, 4 Epic) whatever their projection,
    as long as they're playing and not hurt. */
-const CBB_PIN = { 4711255: [1, 5], 5187600: [2, 5], 5080489: [3, 5], 5142731: [4, 4], 4858604: [5, 4] };   // Fears, Tanner, Haugh, Stokes, Sandfort
+// No CBB players pinned (Dennis, 2026-11-10). Was: Fears, Tanner, Haugh (Legendary), Stokes, Sandfort (Epic).
+const CBB_PIN = {};
 // Player shots Dennis made for the Buys list (img/cbb/<id>.png).
 /* Legendary boosts. Daily packs are Dennis's four (the team card's numbers are
    his: team packs aren't in pack data); weekly packs are his gallery. CFB
