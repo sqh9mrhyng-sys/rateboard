@@ -251,6 +251,58 @@ function perfStatements(db, sport, season, boxScores) {
   return out;
 }
 
+/* A doubleheader day: the day's earnings on its first game (lowest game id), 0 on the rest. */
+function dhStatements(db, sport, season, pid, day, earned) {
+  return [
+    db.prepare(`UPDATE gamelog SET rax = ? WHERE sport = ? AND season = ? AND playerId = ? AND day = ? AND rax IS NOT ?
+      AND gameId = (SELECT MIN(gameId) FROM gamelog WHERE sport = ? AND season = ? AND playerId = ? AND day = ?)`)
+      .bind(earned, sport, Number(season), Number(pid), day, earned, sport, Number(season), Number(pid), day),
+    db.prepare(`UPDATE gamelog SET rax = 0 WHERE sport = ? AND season = ? AND playerId = ? AND day = ? AND (rax IS NULL OR rax <> 0)
+      AND gameId > (SELECT MIN(gameId) FROM gamelog WHERE sport = ? AND season = ? AND playerId = ? AND day = ?)`)
+      .bind(sport, Number(season), Number(pid), day, sport, Number(season), Number(pid), day)
+  ];
+}
+/* One-off (2026-11-09): every doubleheader day already in the game log was left
+   at 0 (the rax pass skipped two-game days). For each sport-season, the players
+   with a two-game day are asked for their earnings again, 30 a minute, and those
+   days filled; then the season's saved pack and game-data copies are rebuilt.
+   Progress in health (dhFix). */
+const DH_SEASONS = [['mlb', 2026], ['mlb', 2025], ['mlb', 2024], ['mlb', 2023], ['mlb', 2022], ['wnba', 2026], ['wnba', 2025], ['wnba', 2024]];
+const DH_KEY = 'dhfix_v1';
+async function dhFixTick(env) {
+  const db = env.RATEBOARD_DB, auth = env.RS_AUTH_TOKEN;
+  if (!db || !auth) return;
+  let st = null; try { st = JSON.parse((await env.RATEBOARD_KV.get(DH_KEY)) || 'null'); } catch (e) {}
+  st = st || { i: 0, ids: null, pos: 0, fixed: 0, log: [] };
+  if (st.i >= DH_SEASONS.length) return;
+  const [sp, se] = DH_SEASONS[st.i];
+  if (!st.ids) {
+    const r = await db.prepare(`SELECT DISTINCT playerId AS p FROM (SELECT playerId, day FROM gamelog WHERE sport = ? AND season = ? GROUP BY playerId, day HAVING COUNT(*) > 1)`).bind(sp, se).all();
+    st.ids = (r.results || []).map(x => Number(x.p)); st.pos = 0;
+  }
+  const part = st.ids.slice(st.pos, st.pos + 30);
+  for (const id of part) {
+    try {
+      const d = await rsGet(`https://web.realapp.com/userpassearnings/${sp}/season/${se}/entity/player/${id}`, auth);
+      const stmts = [];
+      for (const e of ((d && d.earnings) || [])) if (e && e.day && e.earnings != null && Array.isArray(e.playerBoxScoreIds) && e.playerBoxScoreIds.length > 1) stmts.push(...dhStatements(db, sp, se, id, e.day, Number(e.earnings)));
+      for (let i = 0; i < stmts.length; i += 40) await db.batch(stmts.slice(i, i + 40));
+      st.fixed += stmts.length / 2;
+    } catch (e) {}
+    await sleep(80);
+  }
+  st.pos += part.length;
+  if (st.pos >= st.ids.length) {
+    // Season done: its saved copies are rebuilt with the new figures.
+    try { await db.prepare(PACKSNAP_DDL).run(); await db.prepare('UPDATE pack_snap SET at = 0 WHERE sport = ? AND season = ?').bind(sp, se).run(); } catch (e) {}
+    try { await env.RATEBOARD_KV.delete(`glsnap_v1_${sp}:${se}`); } catch (e) {}
+    try { await env.RATEBOARD_KV.delete(`otdseason_v1_${sp}:${se}`); } catch (e) {}
+    st.log.push(`${sp}:${se} ${st.ids.length} players`); st.i++; st.ids = null; st.pos = 0;
+  }
+  st.at = Date.now();
+  try { await env.RATEBOARD_KV.put(DH_KEY, JSON.stringify(st)); } catch (e) {}
+}
+
 function gamelogRow(sport, season, b) {
   const sv = {};
   for (const x of (b.statValues || [])) if (x && x.label) sv[x.label] = x;
@@ -6901,7 +6953,11 @@ async function handleGet({ request, env, waitUntil }) {
                 .bind(sport, Number(season), Number(id))];
               for (const e of list) {
                 if (!e || !e.day || e.earnings == null || !inWindow(win, e.day)) continue;
-                if (Array.isArray(e.playerBoxScoreIds) && e.playerBoxScoreIds.length > 1) { skipped++; continue; }
+                /* Two games on one day (a doubleheader): Real gives one figure for
+                   the day. It goes on the day's first game and the other gets 0, so
+                   the season adds up (2026-11-09: Ohtani was 6 short - his Jul 19
+                   doubleheader sat at 0 + 0). */
+                if (Array.isArray(e.playerBoxScoreIds) && e.playerBoxScoreIds.length > 1) { stmts.push(...dhStatements(db, sport, season, id, e.day, Number(e.earnings))); skipped++; continue; }
                 stmts.push(db.prepare(sql).bind(Number(e.earnings), sport, Number(season), Number(id), e.day, Number(e.earnings)));
               }
               for (let i = 0; i < stmts.length; i += 40) {
@@ -8059,7 +8115,7 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), marketAccount: { busyWithMarket: await marketBusy(env), lastGapHelp: await kvj('gap_push_last') }, budget: await jobOverBudget(env) ? 'over' : 'ok' }, null, 1);
+    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), dhFix: await (async () => { const x = await kvj('dhfix_v1'); return x ? { season: (DH_SEASONS[x.i] || ['done']).join(':'), pos: x.pos, of: x.ids ? x.ids.length : null, fixed: x.fixed, done: x.log, at: x.at } : null; })(), marketAccount: { busyWithMarket: await marketBusy(env), lastGapHelp: await kvj('gap_push_last') }, budget: await jobOverBudget(env) ? 'over' : 'ok' }, null, 1);
   const res = new Response(body, { headers: { 'content-type': 'application/json', 'cache-control': 'max-age=60' } });
   try { await caches.default.put(ck, res.clone()); } catch (e) {}
   return res;
@@ -8089,6 +8145,7 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil(nhlZeroFix(env).catch(() => {}));
     ctx.waitUntil(nhlCatchup(env).catch(() => {}));
     ctx.waitUntil(swapDiag(env).catch(() => {}));
+    ctx.waitUntil(dhFixTick(env).catch(() => {}));
     ctx.waitUntil(perfMarketTick(ctx).catch(() => {}));
     // FC Boosts: lineups near kickoff, and the game log after each game.
     ctx.waitUntil(fcLineupTick(env).catch(() => {}));
