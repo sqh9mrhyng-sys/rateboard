@@ -429,25 +429,27 @@ const MAX_160_HOUR = 15;
    asked while they hold fewer than 85 players of a season being played, or
    fewer than 100 of an old one. One niche buy an hour, two a swap day each. */
 const NICHE_UNDER = 20, NICHE_MAX_ASK = 40, NICHE_DAY_MAX = 2, NICHE_HOUR_MAX = 1, NICHE_LIVE_CAP = 85, NICHE_OLD_CAP = 100;
-const NICHE_KEY = 'swap_ownercounts_v1';
+const NICHE_KEY = 'swap_ownercounts_v2';
 const NICHE_OVER = new Set(['mlb:2026', 'wnba:2026']);   // newest season, but finished: counts as an old one (under 100)
 const nicheLiveSeason = k => { const [sp, se] = String(k).split(':'); return Number(se) === (SWAP_SEASONS[sp] || [])[0] && !NICHE_OVER.has(`${sp}:${se}`); };
 // A member's own limits on niche buys (step 6): { h: an hour, d: a swap day }.
 const nicheLim = u => { const l = parse(u.nicheLim, {}) || {}; return { h: Math.max(1, Math.min(10, Math.floor(Number(l.h)) || NICHE_HOUR_MAX)), d: Math.max(1, Math.min(40, Math.floor(Number(l.d)) || NICHE_DAY_MAX)) }; };
-// How many active swappers own each pass: one read, kept 30 minutes.
-async function ownerCounts(env, db) {
-  let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(NICHE_KEY)) || 'null'); } catch (e) {}
-  if (c && Date.now() - c.at < 30 * 60000) return c;
-  const since = Date.now() - 7 * 86400000, n = {};
-  const act = [...new Set((((await db.prepare(`SELECT a AS k FROM swap_matches WHERE createdAt > ?1 AND status NOT IN ('cancelled','cancelling')
-      UNION SELECT b AS k FROM swap_matches WHERE createdAt > ?1 AND status NOT IN ('cancelled','cancelling')`).bind(since).all()).results) || []).map(r => r.k))];
-  for (let i = 0; i < act.length; i += 40) { const part = act.slice(i, i + 40);
-    for (const r of (((await db.prepare(`SELECT json_extract(p.value, '$.key') AS k, COUNT(DISTINCT u.key) AS n FROM swap_users u, json_each(u.passes) p
-        WHERE u.key IN (${part.map(() => '?').join(',')}) AND u.passes IS NOT NULL AND COALESCE(json_extract(p.value, '$.kind'), 'player') <> 'team' GROUP BY k`).bind(...part).all()).results) || []))
-      if (r.k) n[r.k] = (n[r.k] || 0) + Number(r.n); }
-  c = { at: Date.now(), active: act.length, n };
-  try { await env.RATEBOARD_KV.put(NICHE_KEY, JSON.stringify(c), { expirationTtl: 6 * 3600 }); } catch (e) {}
-  return c;
+/* How many active swappers own each pass. Worked out by the hourly matching
+   run, which already has every member's passes in hand, and kept in KV: the
+   database is never asked (2026-11-10: unpacking every member's passes in a
+   query overloaded it). Active = in a swap in the last 7 days. */
+async function ownerCounts(env) {
+  try { const c = JSON.parse((await env.RATEBOARD_KV.get(NICHE_KEY)) || 'null'); if (c && c.n) return c; } catch (e) {}
+  return { at: 0, active: 0, n: {} };
+}
+async function saveOwnerCounts(env, db, users) {
+  try {
+    const act = new Set((((await db.prepare(`SELECT DISTINCT a AS k FROM swap_matches WHERE createdAt > ?1 AND status NOT IN ('cancelled','cancelling')
+        UNION SELECT DISTINCT b FROM swap_matches WHERE createdAt > ?1 AND status NOT IN ('cancelled','cancelling')`).bind(Date.now() - 7 * 86400000).all()).results) || []).map(r => r.k));
+    const n = {};
+    for (const u of users) { if (!act.has(u.key)) continue; const seen = new Set(); for (const p of u.passes || []) if (p.kind !== 'team' && !seen.has(p.key)) { seen.add(p.key); n[p.key] = (n[p.key] || 0) + 1; } }
+    await env.RATEBOARD_KV.put(NICHE_KEY, JSON.stringify({ at: Date.now(), active: act.size, n }), { expirationTtl: 3 * 86400 });
+  } catch (e) {}
 }   // most 160s one buyer gets in one hour
 const seasonOf = k => String(k || '').split(':').slice(0, 2).join(':');
 /* When a member can swap (Dennis, 2026-11-04). Three ways:
@@ -997,6 +999,7 @@ async function runMatchingInner(db, env) {
       });
     }
   } catch (e) { await botFail(db, 'matching', `niche: ${e.message}`); }
+  if (env) await saveOwnerCounts(env, db, users);
   await lap();   // 4: pairing
   // Never the same swap twice on one swap day, even if two runs overlap: checked against the
   // live swaps read at the start (in memory), then saved 50 at a time.
@@ -5043,7 +5046,7 @@ async function handle({ request, env, waitUntil }) {
   // Step 4: how many active swappers own each of the caller's passes (niche under 20).
   if (op === 'ownercounts') {
     if (!acc.admin && !(await allow(url.origin, 'ownercounts:' + me, 20, 600))) return json({ error: 'Wait a few minutes and try again.' }, 429);
-    const c = await ownerCounts(env, db), out = {};
+    const c = await ownerCounts(env), out = {};
     const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
     for (const p of parse(u && u.passes, [])) if (p.kind !== 'team') out[p.key] = c.n[p.key] || 0;
     return json({ at: c.at, active: c.active, under: NICHE_UNDER, n: out });
@@ -5535,7 +5538,7 @@ async function handle({ request, env, waitUntil }) {
       // Niche: opted in to be asked to buy, and how many people they ask to buy each of their picks.
       try { await matchCols(db); } catch (e) {}
       { const nIn = !only && b.nicheIn ? 1 : 0, old = parse((await db.prepare('SELECT niche FROM swap_users WHERE key=?').bind(me).first() || {}).niche, {}) || {}, nq = {};
-        let oc = null; try { oc = await ownerCounts(env, db); } catch (e) {}
+        let oc = null; try { oc = await ownerCounts(env); if (!oc.at) oc = null; } catch (e) {}
         for (const [w, v] of Object.entries((b.niche && typeof b.niche === 'object') ? b.niche : {})) {
           const n = Math.floor(Number(v && v.n != null ? v.n : v)); if (!wants.includes(w) || !(n > 0)) continue;
           if (!old[w] && oc && (oc.n[w] || 0) >= NICHE_UNDER) continue;   // a new ask needs a niche player; one already made stays until cancelled or filled
