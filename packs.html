@@ -317,7 +317,7 @@ function plays(r, k){
     + list.map(x => { const tg = String(x.tags || '').split(',').map(t => names[Number(t)]).filter(Boolean).map(t => '#' + String(t).replace(/\s+/g, '')).join(' ');
       // Each play links to it on Real: [6, sport, 0, play id] (decoded from a play link Dennis shared, 2026-11-09).
       const pu = x.id && REAL_SPORT[r.sport] ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [6, REAL_SPORT[r.sport][1], 0, Number(x.id)]) : null;
-      return `<tr><td class="l">${esc(String(x.day || '–').slice(5))}</td><td class="l pl" style="white-space:normal">${pu ? `<a href="${pu}" target="_blank" rel="noopener">${esc(x.label || 'Play')}</a>` : esc(x.label || '–')}<span class="sub2">${esc(tg)}</span></td><td><b>${x.value ?? '–'}</b></td><td class="l"><span class="${RAR[Number(x.rarity) || 0][1]}">${RAR[Number(x.rarity) || 0][0]}</span></td><td class="l hm2" style="white-space:normal">${esc(tg)}</td></tr>`; }).join('')
+      return `<tr><td class="l">${esc(String(x.day || '–').slice(5))}</td><td class="l pl" style="white-space:normal">${pu ? `<a href="${pu}" target="_blank" rel="noopener">${esc(x.label || 'Play')}</a>` : esc(x.label || '–')}<span class="sub2">${esc(tg)}</span></td><td><b>${x.value == null ? '–' : Math.round(Number(x.value) * 10) / 10}</b></td><td class="l"><span class="${RAR[Number(x.rarity) || 0][1]}">${RAR[Number(x.rarity) || 0][0]}</span></td><td class="l hm2" style="white-space:normal">${esc(tg)}</td></tr>`; }).join('')
     + '</tbody></table></div>';
 }
 // Packs to each rarity for one player, from his own row (nothing is read).
