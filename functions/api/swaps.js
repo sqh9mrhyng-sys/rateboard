@@ -6615,3 +6615,30 @@ async function handle({ request, env, waitUntil }) {
 
   return json({ error: 'unknown op' }, 400);
 }
+
+/* One-off (2026-11-10, Dennis: "25 seconds a scan seems excessive"): does Real
+   hand back passes for more than one season or sport in one call? A full scan
+   is 76 calls, one per sport, season and kind. A few reads of Dennis's own
+   passes, 2 seconds apart, results kept in KV for the health page. */
+export async function scanProbe(env, db) {
+  const K = 'diag_scanprobe_1110';
+  try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ at: Date.now(), running: true }), { expirationTtl: 3 * 86400 }); } catch (e) { return; }
+  const out = { at: Date.now(), tries: [] };
+  try {
+    const u = await db.prepare("SELECT hashId FROM swap_users WHERE key='dennis'").first();
+    const tok = scanTok(env); if (!u || !u.hashId || !tok) throw new Error('no hashId or token');
+    const base = `https://web.realapp.com/userpasses/${encodeURIComponent(u.hashId)}/passes`;
+    for (const q of ['entityType=player&season=2026&sport=nfl', 'entityType=player&sport=nfl', 'entityType=player', 'season=2026&sport=nfl', '', 'entityType=player&season=2026&sport=nfl&limit=500']) {
+      const t0 = Date.now(); let st = 0, n = null, keys = null, combos = null, cur = null, err = null;
+      try { const r = await fetch(base + (q ? '?' + q : ''), { headers: rsHeaders(tok) }); st = r.status; const tx = await r.text();
+        let d = null; try { d = JSON.parse(tx); } catch (e) { err = tx.slice(0, 80); }
+        if (d) { const rows = rowsOf(d); n = rows.length; keys = Array.isArray(d) ? 'array' : Object.keys(d).slice(0, 12).join(',');
+          const c = new Set(); for (const x of rows) { const p = x && (x.pass || x.entity || x); c.add([x.sport || (p && p.sport) || '?', x.season || (p && p.season) || '?', x.entityType || (p && p.entityType) || '?'].join(':')); }
+          combos = [...c].slice(0, 15); cur = passCursor(d) || null; if (st >= 400) err = tx.slice(0, 100); } } catch (e) { err = String(e.message || e).slice(0, 100); }
+      out.tries.push({ q: q || '(none)', st, ms: Date.now() - t0, n, keys, combos, cur: cur ? String(cur).slice(0, 30) : null, err });
+      await sleep(2000);
+    }
+  } catch (e) { out.err = String(e.message || e).slice(0, 150); }
+  try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 3 * 86400 }); } catch (e) {}
+}
+
