@@ -4267,7 +4267,7 @@ async function handleGet({ request, env, waitUntil }) {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
     if (!['mlb', 'nba', 'nfl', 'ncaaf'].includes(sport)) return json({ error: 'Team packs are MLB, NBA, NFL and CFB.' }, 400);
-    const se = Number(season), K = `pkteams_v7_${sport}_${se}`, L = `pkteams_lock_${sport}_${se}`;
+    const se = Number(season), K = `pkteams_v8_${sport}_${se}`, L = `pkteams_lock_${sport}_${se}`;
     const live = OTD_LIVE_SEASONS.has(`${sport}:${se}`);
     let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
     const fresh = c && Date.now() - c.at < (live ? 86400000 : 30 * 86400000);
@@ -4342,6 +4342,23 @@ async function handleGet({ request, env, waitUntil }) {
            All-Star sides and exhibition opponents are not team packs), and a
            side nobody can name isn't one either. */
         rows = rows.filter(x => x.team && (sport !== 'mlb' || (x.teamId >= 108 && x.teamId <= 158)));
+        /* The pack's one performance card: each team's performances (games
+           played), and how many carry an Iconic, Mystic, Legendary or Epic
+           tag - a performance's rarity is its highest tag's. Grouped by tag
+           set in the query, so it reads the season once and returns little. */
+        try {
+          const tr = new Map();
+          for (const t of ((await db.prepare('SELECT id, rarity FROM tags WHERE sport=?').bind(sport).all()).results || [])) tr.set(Number(t.id), Number(t.rarity) || 0);
+          const pf = await db.prepare(`SELECT teamId AS t, tags, COUNT(*) AS n FROM performances
+              WHERE sport=? AND season=? AND played=1 AND teamId IS NOT NULL GROUP BY teamId, tags`).bind(sport, se).all();
+          const by = new Map();
+          for (const z of pf.results || []) {
+            const o = by.get(z.t) || by.set(z.t, { perfs: 0, pIconic: 0, pMystic: 0, pLegendary: 0, pEpic: 0 }).get(z.t);
+            let top = 0; for (const id of String(z.tags || '').split(',')) top = Math.max(top, tr.get(Number(id)) || 0);
+            o.perfs += z.n; if (top === 7) o.pIconic += z.n; else if (top === 6) o.pMystic += z.n; else if (top === 5) o.pLegendary += z.n; else if (top === 4) o.pEpic += z.n;
+          }
+          for (const x of rows) Object.assign(x, by.get(x.teamId) || { perfs: 0 });
+        } catch (e) {}
         // Nothing named: keep the empty answer an hour, not a month.
         await env.RATEBOARD_KV.put(K, JSON.stringify({ at: Date.now(), rows, ...(rows.length ? {} : { sides }) }), { expirationTtl: rows.length ? 60 * 86400 : 3600 });
       })().catch(() => {}).finally(() => env.RATEBOARD_KV.delete(L).catch(() => {}));

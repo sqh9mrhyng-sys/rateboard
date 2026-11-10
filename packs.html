@@ -335,7 +335,9 @@ function cols(){
   // Team packs: plays, Leg and Epic with their odds, and the avg booster (Dennis, 2026-11-09).
   if(tab === 'team') return [['player', 'Team', 'l'], ...(multi ? [['seasonLbl', 'Season', 'l', 'hm']] : []), ['plays', 'Plays'],
     ...(showTop ? [['iconic', 'Iconic', '', 'hm'], ['iconOdds', 'Icon %'], ['mystic', 'Mystic', '', 'hm'], ['mysOdds', 'Myst %']] : []),
-    ['legendary', 'Leg'], ['legOdds', 'Leg %'], ['epic', 'Epic'], ['epicOdds', 'Epic %'], ['boost', 'Avg booster']];
+    ['legendary', 'Leg'], ['legOdds', 'Leg %'], ['epic', 'Epic'], ['epicOdds', 'Epic %'], ['boost', 'Avg booster'],
+    // The pack's one performance card (2026-11-09): the team's performances and the odds it is each rarity.
+    ['perfs', 'Perfs'], ['pIconic', 'Perf Icon'], ['pMystic', 'Perf Myst'], ['pLegendary', 'Perf Leg'], ['pEpic', 'Perf Epic']];
   return [['fav', '', 'l'], ['player', 'Player', 'l'], ...(multi ? [['seasonLbl', 'Season', 'l', 'hm']] : []), ['plays', 'Plays'],
     ...(showTop ? [['iconic', 'Iconic', '', 'hm'], ['iconOdds', 'Icon %'], ['mystic', 'Mystic', '', 'hm'], ['mysOdds', 'Myst %']] : []),
     ['legendary', 'Leg', '', 'hm'], ['legOdds', 'Leg %'], ['epic', 'Epic', '', 'hm'], ['epicOdds', 'Epic %'], ['avg3', 'Per pack'], ['boost', 'Avg booster', '', 'hm'],
@@ -350,6 +352,8 @@ function cell(r, k){
     return `${tu ? `<a class="tm" href="${tu}" target="_blank" rel="noopener">${esc(r.player)}</a>` : `<b>${esc(r.player)}</b>`}<span class="sub">${(picks.length > 1) ? `<span class="ms">${esc(r.seasonLbl)}</span>` : ''}</span>`; }
   if(k === 'player'){ const u = realPlayerUrl(r.sport, r.playerId, r.season);
     return `${u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.player || 'Player')}</a>` : esc(r.player || 'Player')}<span class="sub">${esc(r.team || '')}${(tab === 'fav' || picks.length > 1) ? `<span class="ms">${r.team ? ' · ' : ''}${esc(r.seasonLbl)}</span>` : ''}</span>`; }
+  if(/^p(Iconic|Mystic|Legendary|Epic)$/.test(k)){ const n = Number(r[k]) || 0, t = Number(r.perfs) || 0;
+    return t ? `<span class="${{ pIconic: 'ic', pMystic: 'my', pLegendary: 'lg', pEpic: 'ep' }[k]}">${n.toLocaleString()} · ${pct(n / t)}</span>` : '–'; }
   if(/Odds$/.test(k)) return `<span class="${{ legOdds: 'lg', epicOdds: 'ep', mysOdds: 'my', iconOdds: 'ic' }[k]}">${pct(r[k])}</span>`;
   if(k === 'avg3') return r.avg3 == null ? '–' : (r.avgRating * 3 < PACK_FLOOR ? `<span class="note" title="Floored to ${PACK_FLOOR}">${PACK_FLOOR}</span>` : r.avg3.toFixed(1));
   if(k === 'boost') return r.boost == null ? '–' : r.boost.toFixed(1) + 'x';
