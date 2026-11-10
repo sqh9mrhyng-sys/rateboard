@@ -4267,7 +4267,7 @@ async function handleGet({ request, env, waitUntil }) {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
     if (!['mlb', 'nba', 'nfl', 'ncaaf'].includes(sport)) return json({ error: 'Team packs are MLB, NBA, NFL and CFB.' }, 400);
-    const se = Number(season), K = `pkteams_v1_${sport}_${se}`, L = `pkteams_lock_${sport}_${se}`;
+    const se = Number(season), K = `pkteams_v2_${sport}_${se}`, L = `pkteams_lock_${sport}_${se}`;
     const live = OTD_LIVE_SEASONS.has(`${sport}:${se}`);
     let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
     const fresh = c && Date.now() - c.at < (live ? 86400000 : 30 * 86400000);
@@ -4291,14 +4291,22 @@ async function handleGet({ request, env, waitUntil }) {
                  SUM(CASE WHEN rarity = 5 THEN 1 ELSE 0 END) AS legendary,
                  SUM(CASE WHEN rarity = 4 THEN 1 ELSE 0 END) AS epic
             FROM c WHERE t IS NOT NULL GROUP BY t`).bind(sport, se).all();
-        const rows = r.results || [];
-        // Each team's code: one of its plays, and that player's game in the game log.
+        let rows = r.results || [];
+        /* Each team's code: a sample of its plays, matched to those players'
+           games in the game log, most common code wins (one play could miss -
+           a player with no game log row, a trade). A side with no code at all
+           is a WBC, All-Star or exhibition side: not a team pack, left out. */
         for (const x of rows) {
           try {
-            const p = await db.prepare('SELECT playerId, gameId FROM plays WHERE sport=? AND season=? AND teamId=? AND playerId IS NOT NULL LIMIT 1').bind(sport, se, x.teamId).first();
-            if (p) { const g = await db.prepare('SELECT team FROM gamelog WHERE sport=? AND season=? AND playerId=? AND gameId=? LIMIT 1').bind(sport, se, p.playerId, p.gameId).first(); x.team = g ? g.team : null; }
-          } catch (e) {}
+            const g = await db.prepare(`SELECT g.team AS team, COUNT(*) AS n FROM
+                (SELECT playerId, gameId FROM plays WHERE sport=?1 AND season=?2 AND teamId=?3 AND playerId IS NOT NULL LIMIT 60) p
+                JOIN gamelog g ON g.sport=?1 AND g.season=?2 AND g.playerId=p.playerId AND g.gameId=p.gameId
+               WHERE g.team IS NOT NULL AND g.team <> '' GROUP BY g.team ORDER BY n DESC LIMIT 1`).bind(sport, se, x.teamId).first();
+            x.team = g ? g.team : null;
+          } catch (e) { x.team = null; }
         }
+
+        // (no-code sides are kept for now, flagged by team:null)
         await env.RATEBOARD_KV.put(K, JSON.stringify({ at: Date.now(), rows }), { expirationTtl: 60 * 86400 });
       })().catch(() => {}).finally(() => env.RATEBOARD_KV.delete(L).catch(() => {}));
       try { waitUntil(build); } catch (e) {}
