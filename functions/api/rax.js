@@ -8385,6 +8385,13 @@ export async function onRequestGet(ctx) {
     if (pullAllowed(g, mk, url.searchParams.get('sport'), url.searchParams.get('playerId'))) return handleGet(ctx);
     if (g) return json({ error: mk === 'front' ? 'You can only queue the sports Dennis gave you.' : 'You can only pull the players or sports Dennis gave you.' }, 403);
   }
+  /* Team packs on /packs: public. The endpoint keeps its own KV copy (and a
+     build lock), and answers {building:true} while one builds - so it is
+     routed here rather than through the edge cache, which would keep that. */
+  if (url.searchParams.get('plays') === 'teams' && !WRITE_FLAGS.some(f => url.searchParams.get(f))) {
+    if (!(await allow(origin, 'pkteams:' + clientIp(request), 60, 600))) return json({ error: 'Too many requests - try again in a few minutes.' }, 429);
+    return handleGet(ctx);
+  }
   if (!(await isAdminRequest(env, request))) return forbidden();
   return handleGet(ctx);
 }
