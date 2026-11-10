@@ -2654,7 +2654,7 @@ export async function swapAccess(env, request) {
 // What a member (not an admin) may do: their own swap and nothing else, and
 // for OTD their own passes and games.
 const MEMBER_OPS = new Set(['confirm', 'recbuys', 'myhour', 'me', 'save', 'keep', 'touch', 'packstoday', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
-const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan']);
+const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan', 'search', 'otdpool']);
 const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostdays', 'projections', 'tagview', 'boostinv', 'buys', 'legboosts', 'resell', 'nosell']);
 const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
 const PAGE_OPS = new Set(['projections', 'me', 'procheck', 'myswaps', 'hourcounts', 'wantcounts', 'boostplan', 'boostinv', 'buys', 'legboosts', 'resell', 'boostdays']);
@@ -5190,6 +5190,30 @@ async function handle({ request, env, waitUntil }) {
       } catch (e) {}
     }
     return json({ rows });
+  }
+  /* OTD view (Dennis, 2026-11-09): any players' games, held or not. With ids:
+     those players of one sport-season. Without: the season's top players by
+     rax (up to 300) - the pool "best players to add" picks from. Names from
+     the search index. Reads the shared saved season (otdSeason), not the log. */
+  if (op === 'otdpool') {
+    const sp = String(url.searchParams.get('sport') || ''), se = Number(url.searchParams.get('season'));
+    if (!/^[a-z]+$/.test(sp) || !(se > 2000)) return json({ error: 'Pick a sport and season.' }, 400);
+    if (!acc.admin && !(await allow(url.origin, 'otdpool:' + me, 30, 600))) return json({ error: 'Too many loads - wait a few minutes.' }, 429);
+    const games = await otdSeason(env, db, sp, se);
+    const ids = String(url.searchParams.get('ids') || '').split(',').map(Number).filter(n => n > 0).slice(0, 80);
+    const tot = id => (games[id] || []).reduce((a, g) => a + g[1], 0);
+    const pick = ids.length ? ids : Object.keys(games).map(Number).sort((a, b) => tot(b) - tot(a)).slice(0, 300);
+    const out = {}, names = {};
+    for (const id of pick) if (games[id] && games[id].length) out[id] = games[id];
+    try {
+      const want = Object.keys(out).map(Number);
+      for (let i = 0; i < want.length; i += 90) {
+        const part = want.slice(i, i + 90);
+        const r = await db.prepare(`SELECT playerId, player, team FROM swap_index WHERE sport=? AND season=? AND playerId IN (${part.map(() => '?').join(',')})`).bind(sp, se, ...part).all();
+        for (const x of (r.results || [])) names[x.playerId] = [x.player, x.team];
+      }
+    } catch (e) {}
+    return json({ sport: sp, season: se, games: out, names });
   }
   /* OTD optimiser: every game of every pass the member holds, as
      [MM-DD, rax] pairs, one query per sport-season. */
