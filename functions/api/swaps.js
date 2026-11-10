@@ -1943,6 +1943,35 @@ async function scanWork(env, db, me, job, auth) {
     for (const r of rows) { const p = passOf(r, sport, season, kind); if (p) job.passes.push(p); }
   };
   const STEPS = job.steps || SCAN_STEPS;
+  /* One call for everything (2026-11-10): Real returns every pass a member
+     holds, every sport, season and kind, from the address with no filters -
+     about 1,000 passes in under a second, against 76 calls (25s+) one season
+     at a time. Each pass says its own sport, season and kind. If that call
+     fails, or finds clearly fewer passes than the last scan, the scan goes
+     on the old way. */
+  if (job.idx === 0 && !job.oneTried) {
+    job.oneTried = 1;
+    try {
+      const tok = pickTok(), tq = Date.now();
+      const res = await fetch(`https://web.realapp.com/userpasses/${encodeURIComponent(job.hashId)}/passes`, { headers: rsHeaders(tok) });
+      job.calls = (job.calls || 0) + 1; job.callMs = (job.callMs || 0) + (Date.now() - tq);
+      if (res.status === 429) TOK_COOL.set(tok, Date.now() + 3 * 60000);
+      if (!res.ok) throw new Error(`Real ${res.status}`);
+      const d = JSON.parse(await res.text()), rows = rowsOf(d);
+      const want = new Set(SCAN_STEPS.map(([sp, se, k]) => `${sp}:${se}:${k}`)), got = [];
+      for (const x of rows) {
+        const e = (x && (x.pass || x.entity)) || x || {};
+        const sp = String(x.sport || e.sport || '').toLowerCase(), se = Number(x.season || e.season), k = String(x.entityType || e.entityType || '').toLowerCase();
+        if (!want.has(`${sp}:${se}:${k}`)) continue;
+        const p = passOf(x, sp, se, k); if (p) got.push(p);
+      }
+      const pr = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
+      const before = parse(pr && pr.passes, []).length;
+      if (rows.length && !got.length) throw new Error('passes came back without sport/season');
+      if (before > 20 && got.length < before * 0.9) throw new Error(`one call found ${got.length}, last scan ${before}`);
+      job.passes = got; job.idx = SCAN_STEPS.length; job.one = 1; job.full = true; job.steps = null;
+    } catch (e) { job.oneErr = String(e.message || e).slice(0, 100); }
+  }
   while (job.idx < STEPS.length && budget()) {
     const step = STEPS[job.idx++];
     /* When Real answers "high volume" (429), every read at this pace fails and
@@ -1998,7 +2027,7 @@ async function scanWork(env, db, me, job, auth) {
   // How long scans take, for the health page: the last 15.
   try { const k = 'scan_perf_v1'; const l = JSON.parse((await env.RATEBOARD_KV.get(k)) || '[]') || [];
     l.unshift({ at: new Date().toISOString(), secs: Math.round((Date.now() - job.at) / 1000), steps: (job.steps || SCAN_STEPS).length, full: job.full !== false,
-      calls: job.calls || 0, avgMs: job.calls ? Math.round(job.callMs / job.calls) : null, failed: job.failed.length, firstErr: job.firstErr || null, botTok: !!auth });
+      calls: job.calls || 0, avgMs: job.calls ? Math.round(job.callMs / job.calls) : null, failed: job.failed.length, firstErr: job.firstErr || null, botTok: !!auth, one: job.one ? 1 : 0, oneErr: job.oneErr || null });
     await env.RATEBOARD_KV.put(k, JSON.stringify(l.slice(0, 15))); } catch (e) {}
   if (job.kept) { await stat(db, 'scan_partial'); await botFail(db, 'scan', `${me}: ${job.kept} season(s) kept from last scan - ${job.errors.slice(0, 3).join(' | ')}`); }
   else await stat(db, 'scan_ok');
