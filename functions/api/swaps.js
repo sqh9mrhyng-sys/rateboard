@@ -359,11 +359,11 @@ async function packAvg(db, cache, key) {
   const card = c.by.get(Number(id)) || c.all || null;
   return card ? Math.max(10, card * 3) : null;
 }
-/* Only players with 27+ collectible plays can be swapped for (Dennis,
+/* Only players with 30+ (27+ until 2026-11-10) collectible plays can be swapped for (Dennis,
    2026-11-04): a pack of a thin player is mostly the same few cards. Counts
    come from pack data (each season's saved board), kept 12 hours as a small
    id -> plays map. A season with no pack data at all isn't held back. */
-const MIN_PLAYS = 27;
+const MIN_PLAYS = 30;   // 27 until 2026-11-10
 async function playsMap(env, db, sp, se) {
   const k = `plays_ct_v1_${sp}_${se}`;
   try { const c = JSON.parse((await env.RATEBOARD_KV.get(k)) || 'null'); if (c && Date.now() - c.at < 12 * 3600000) return c.m; } catch (e) {}
@@ -827,7 +827,7 @@ async function runMatchingInner(db, env) {
   const swappable = k => !/^(soccer|ufc):/.test(k) && !seasonOff(k);
   // Up to 5 players each, in their order, and only passes they own: they buy cards for those.
   for (const u of users) { const own = new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key)); u.wants = u.wants.filter(k => swappable(k) && own.has(k)).slice(0, MAX_WANTS); }
-  // Players with fewer than 27 collectible plays are never matched, even if picked before the rule.
+  // Players with fewer than MIN_PLAYS (30) collectible plays are never matched, even if picked before the rule.
   if (env) { try { const low = await lowPlays(env, db, [...new Set(users.flatMap(u => u.wants))]); if (low.size) for (const u of users) u.wants = u.wants.filter(k => !low.has(k)); } catch (e) {} }
   /* Goal rating, per player they want: how many more swaps that pass can take.
      The counts come from one read of the live swaps, done here in memory
@@ -4333,7 +4333,7 @@ const MARKS = new WeakMap();
 const mark = (req, what) => { const m = MARKS.get(req); if (m) m.push(`${what} ${Date.now() - m.t}`); };
 /* Who could actually be matched with a member, by the matcher's own rules
    (2026-11-09: "Why haven't I matched?" said 59 matches for a member who got
-   none - it skipped the rules for untouchable passes, under-27-play players,
+   none - it skipped the rules for untouchable passes, under-30-play players,
    weekly/one-day schedules, restricted members and passes already given out
    that swap day). Counts only: no names. */
 export async function whyNotFull(db, env, key) {
@@ -4362,7 +4362,7 @@ export async function whyNotFull(db, env, key) {
   out.picks = picked.length; out.usable = wants.length;
   out.dropped = { notOwned: picked.filter(k => !owned.has(k)).length, lowPlays: picked.filter(k => low.has(k)).length, seasonOff: picked.filter(k => seasonOff(k)).length };
   if (!picked.length) out.why.push('You have not picked a player to swap for (step 4).');
-  else if (!wants.length) out.why.push(out.dropped.lowPlays ? 'Every player you picked has under 27 plays, so none can be matched - pick others.'
+  else if (!wants.length) out.why.push(out.dropped.lowPlays ? 'Every player you picked has under 30 plays, so none can be matched - pick others.'
     : out.dropped.notOwned ? 'The players you picked are not in your last scan - scan again.' : 'None of the players you picked can be swapped yet.');
   // The hours the next 24 really give them (a weekly or one-day schedule can leave none).
   const dues = [];
