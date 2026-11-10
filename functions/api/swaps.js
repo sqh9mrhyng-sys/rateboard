@@ -6698,7 +6698,7 @@ export async function scanProbe(env, db) {
 
 // One-off (2026-11-10): do booster reads take a season? (cdeck24's CBB showed 4, Real's 2026-27 page 1.)
 export async function boostProbe(env, db) {
-  const K = 'diag_boostprobe_1110';
+  const K = 'diag_boostprobe_1110b';
   try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1 }), { expirationTtl: 3 * 86400 }); } catch (e) { return; }
   const out = { at: Date.now(), tries: [] };
   try {
@@ -6709,7 +6709,7 @@ export async function boostProbe(env, db) {
       try { const r = await fetch(`https://web.realapp.com/userpassboostercards/undefined/entity/player?displayType=collectionstats&sport=ncaam&userId=${encodeURIComponent(u.hashId)}&version=stat${q}`, { headers: rsHeaders(tok) });
         st = r.status; const d = JSON.parse(await r.text());
         groups = (((d && d.boosterCardInfo) || {}).rarityGroups || []).map(g => `${g.label}: ` + (g.statBoostKeyInfo || []).map(k => `${(k.info || []).map(i => i.label).join('/')}x${k.count}`).join(', ')); } catch (e) { err = String(e.message || e).slice(0, 100); }
-      out.tries.push({ q: q || '(none)', st, groups, err }); await sleep(1500);
+      out.tries.push({ q: q || '(none)', st, groups, err }); await sleep(5000);
     }
   } catch (e) { out.err = String(e.message || e).slice(0, 150); }
   try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 3 * 86400 }); } catch (e) {}
