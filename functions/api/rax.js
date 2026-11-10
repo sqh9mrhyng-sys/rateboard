@@ -1,5 +1,5 @@
 import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS, touchSeen, userStats, sessionState } from '../../lib/auth.js';
-import { swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick, fcSchedule, whyNotFull, TAG_DEFS, scanProbe, boostProbe } from './swaps.js';
+import { swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick, fcSchedule, whyNotFull, TAG_DEFS, scanProbe, boostProbe, wiltProbe } from './swaps.js';
 import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, capNow } from '../../lib/dbwatch.js';
 import { packAllowed } from './kv.js';
 
@@ -8234,7 +8234,7 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), boostProbe: await kvj('diag_boostprobe_1110c'), nicheCounts: await (async () => { const x = await kvj('swap_ownercounts_v3'); if (!x) return null; const v = Object.values(x.n || {}); return { at: new Date(x.at).toISOString().slice(11, 19), active: x.active, read: x.read, players: v.length, under20: v.filter(c => c < 20).length, max: Math.max(0, ...v) }; })(), dhFix: await (async () => { const x = await kvj('dhfix_v1'); return x ? { season: (DH_SEASONS[x.i] || ['done']).join(':'), pos: x.pos, of: x.ids ? x.ids.length : null, fixed: x.fixed, done: x.log, at: x.at } : null; })(), marketAccount: { busyWithMarket: await marketBusy(env), lastGapHelp: await kvj('gap_push_last') }, budget: await jobOverBudget(env) ? 'over' : 'ok' }, null, 1);
+    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), boostProbe: await kvj('diag_boostprobe_1110c'), wilt: await (async () => { const x = await kvj('diag_wilt_1962'); return x ? { at: x.at, ok: x.ok, feedSt: x.feedSt, earnSt: x.earnSt, games: (x.games || []).length, earnDays: (x.earnings || []).length, err: x.err } : null; })(), nicheCounts: await (async () => { const x = await kvj('swap_ownercounts_v3'); if (!x) return null; const v = Object.values(x.n || {}); return { at: new Date(x.at).toISOString().slice(11, 19), active: x.active, read: x.read, players: v.length, under20: v.filter(c => c < 20).length, max: Math.max(0, ...v) }; })(), dhFix: await (async () => { const x = await kvj('dhfix_v1'); return x ? { season: (DH_SEASONS[x.i] || ['done']).join(':'), pos: x.pos, of: x.ids ? x.ids.length : null, fixed: x.fixed, done: x.log, at: x.at } : null; })(), marketAccount: { busyWithMarket: await marketBusy(env), lastGapHelp: await kvj('gap_push_last') }, budget: await jobOverBudget(env) ? 'over' : 'ok' }, null, 1);
   const res = new Response(body, { headers: { 'content-type': 'application/json', 'cache-control': 'max-age=60' } });
   try { await caches.default.put(ck, res.clone()); } catch (e) {}
   return res;
@@ -8266,6 +8266,7 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil(swapDiag(env).catch(() => {}));
     ctx.waitUntil(scanProbe(env, env.RATEBOARD_DB).catch(() => {}));
     ctx.waitUntil(boostProbe(env, env.RATEBOARD_DB).catch(() => {}));
+    ctx.waitUntil(wiltProbe(env).catch(() => {}));
     ctx.waitUntil(dhFixTick(env).catch(() => {}));
     ctx.waitUntil(perfMarketTick(ctx).catch(() => {}));
     // FC Boosts: lineups near kickoff, and the game log after each game.
