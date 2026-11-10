@@ -1866,8 +1866,18 @@ async function scanWork(env, db, me, job, auth) {
   const STEPS = job.steps || SCAN_STEPS;
   while (job.idx < STEPS.length && budget()) {
     const step = STEPS[job.idx++];
-    try { await read(step, pickTok()); } catch (e) { job.failed.push(step); if (!job.firstErr) job.firstErr = String(e.message || e).slice(0, 120); }
-    await sleep(200);
+    /* When Real answers "high volume" (429), every read at this pace fails and
+       the whole scan is then read a second time (2026-11-09: 76 of 76, scans
+       of 1-4 minutes). So after the first 429 the scan slows to a pace Real
+       accepts, and the step that failed is tried again there and then. */
+    try { await read(step, pickTok()); } catch (e) {
+      if (!job.firstErr) job.firstErr = String(e.message || e).slice(0, 120);
+      if (/429|high volume|too many/i.test(String(e.message || e))) {
+        job.slow = 1; await sleep(900);
+        try { await read(step, pickTok()); } catch (e2) { job.failed.push(step); }
+      } else job.failed.push(step);
+    }
+    await sleep(job.slow ? 650 : 200);
   }
   if (job.idx >= STEPS.length) {
     while (job.ri < job.failed.length && budget()) {
