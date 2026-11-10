@@ -4656,8 +4656,13 @@ async function handle({ request, env, waitUntil }) {
     try { for (const r of (((await db.prepare("SELECT * FROM swap_160 WHERE (buyer=? OR seller=?) AND dueAt=? AND status <> 'cancelled' ORDER BY id").bind(u.key, u.key, due).all()).results) || [])) {
         const o = await mem(r.seller === u.key ? r.buyer : r.seller), x = { id: r.id, user: o && o.rsUser, url: o ? profileUrl(o.rsUser, o.hashId) : null, player: playerName(me, r.pass), playerUrl: playerUrl(r.pass) };
         // Niche: the member asked buys the player and a pack; the one who asked pays full price.
-        if (r.kind === 'niche') { const nm = r.seller === u.key ? playerName((o && o.passes) ? o : (me || {}), r.pass) : x.player;
-          if (r.seller === u.key) nicheBuy.push({ ...x, player: nm }); else nicheGet.push({ ...x, comment: (o && o.comment) || null }); continue; }
+        /* The member asked doesn't own the player, so his name and card come
+           from the one who asked (2026-11-10: it showed "Player 8482116 2024"). */
+        if (r.kind === 'niche') {
+          if (r.seller === u.key) { const asker = await loadMember(db, r.buyer).catch(() => null);
+            nicheBuy.push({ ...x, player: asker ? playerName(asker, r.pass) : x.player, theirCard: asker ? passUrl(asker, r.pass) : null }); }
+          else nicheGet.push({ ...x, comment: (o && o.comment) || null, yourCard: me ? passUrl(me, r.pass) : null });
+          continue; }
         if (r.seller === u.key) sell160.push({ ...x, yourCard: me ? passUrl(me, r.pass) : null });
         else buy160.push({ ...x, comment: (o && o.comment) || null });
       } } catch (e) {}
