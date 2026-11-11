@@ -6205,7 +6205,9 @@ async function handle({ request, env, waitUntil }) {
       /* A game he sat out isn't a game (2026-11-11: Luka read as 93 rax in 12
          games, 7.8 a game, when he'd played 10 - 9.3). Out = no minutes, or
          no minutes and no stats at all where minutes aren't kept. */
-      const sat = x => (x.min != null && Number(x.min) <= 0) || (x.min == null && !Number(x.rax) && x.pts == null && x.reb == null && x.ast == null && !x.stats);
+      // Only where minutes are kept (NBA, CBB, FC): NHL, NFL and CFB store 0 minutes for every game (2026-11-11: that read as every game sat out, and their boosts went blank).
+      const minSp = sp === 'nba' || sp === 'ncaam' || sp === 'soccer' || sp === 'wnba';
+      const sat = x => minSp && x.min != null && Number(x.min) <= 0;
       for (let i = 0; i < ids.length; i += 90) {
         const part = ids.slice(i, i + 90), ph = part.map(() => '?').join(',');
         try {
