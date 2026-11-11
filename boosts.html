@@ -209,6 +209,8 @@
     .seg button{min-height:44px}
     .ctl label{flex:none}
   }
+  .bsort{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--mute);margin:6px 0}
+  .bsort select{width:auto;padding:5px 8px;font-size:13px}
 </style>
 </head>
 <body>
@@ -259,12 +261,14 @@
       <button class="sm simplebtn" id="allfullbtn" type="button" aria-pressed="false">View full layout</button>
       <button class="sm simplebtn boxlinkbtn" type="button" aria-pressed="false">Whole box opens the player: off</button>
       <div class="sum" id="allsum"></div>
+      <label class="bsort">Sort <select class="bsortsel"><option value="rec">Recommended</option><option value="rar">Booster rarity</option><option value="name">Name A-Z</option><option value="team">Team</option><option value="time">Game time</option><option value="proj">Projection</option><option value="rax">Avg rax</option></select></label>
       <div id="alllist"></div>
     </section>
     <section id="out" hidden>
       <div class="note" id="outhead"></div>
       <button class="sm copybtn" id="copybtn" type="button" hidden>Copy boosts</button>
       <button class="sm hidestart" id="hidestart" type="button" aria-pressed="false">Hide games that already started</button>
+      <label class="bsort">Sort <select class="bsortsel"><option value="rec">Recommended</option><option value="rar">Booster rarity</option><option value="name">Name A-Z</option><option value="team">Team</option><option value="time">Game time</option><option value="proj">Projection</option><option value="rax">Avg rax</option></select></label>
       <button class="sm simplebtn" id="simplebtn" type="button" aria-pressed="false">View simple layout</button>
       <button class="sm simplebtn boxlinkbtn" type="button" aria-pressed="false">Whole box opens the player: off</button>
       <div id="simple" class="simple-list"></div>
@@ -720,7 +724,7 @@ async function run(){
   $('#hidestart').hidden = false; paintHide(j.started);
   $('#run').disabled = false;
   if(j.error){ $('#outhead').textContent = j.error; return; }
-  const rows = j.rows || [];
+  const rows = sortBoost(j.rows || [], r => r);
   const c = { legendary: 0, epic: 0, rare: 0 };
   rows.forEach(r => { if(r.boost) c[r.boost]++; });
   lastOne = { j, sp, url: bpUrl, t: lastOne && lastOne.j === j ? lastOne.t : Date.now() }; drawTot();
@@ -739,7 +743,7 @@ async function run(){
   const golf = sp === 'golf', fc = sp === 'soccer';
   doneDay = sp + ':' + day; doneSet = loadDone(doneDay);
   $('#rows').innerHTML = rows.map(r => {
-    const cutRow = (!cutDone && r.belowCut) ? (cutDone = true, `<tr class="cut"><td colspan="7">Recommended cutoff - Rares below this line only if you have spares (projection under ${j.cutAt})</td></tr>`) : '';
+    const cutRow = (bSort() === 'rec' && !cutDone && r.belowCut) ? (cutDone = true, `<tr class="cut"><td colspan="7">Recommended cutoff - Rares below this line only if you have spares (projection under ${j.cutAt})</td></tr>`) : '';
     // The member's own pass, like on Swaps; the player's page if the pass id isn't known.
     const u = r.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(r.passId)]) : realPlayerUrl(sp, r.id, r.season || j.season);
     const nm = u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.name)}</a>` : esc(r.name);
@@ -803,6 +807,23 @@ const wbC = r => { if(r.withBoost == null) return null; const c = cardX(r); retu
 const wbTxt = r => `${r.proj} × ${cardX(r) ? `(${r.mult} + ${cardX(r)} card)` : r.mult} + ${(r.best && r.best.gain) || 0}`;
 const cardTgl = () => `<button class="sm tgl" type="button" aria-pressed="${withCards()}">Include my card rarities: ${withCards() ? 'on' : 'off'}</button>`;
 let lastOne = null, redrawOnly = false;
+/* Sort the list the way the cards are sorted on Real (member suggestion, 2026-11-11). Remembered on this phone. */
+const bSort = () => { try{ return localStorage.getItem('boosts_sort_v1') || 'rec'; }catch(e){ return 'rec'; } };
+function sortBoost(list, get){
+  const k = bSort(); if(k === 'rec') return list.slice();
+  const R = { legendary: 0, epic: 1, rare: 2 }, num = v => v == null ? -Infinity : Number(v);
+  const f = { rar: (a, b) => (R[a.boost] ?? 9) - (R[b.boost] ?? 9) || num(b.proj) - num(a.proj),
+    name: (a, b) => String(a.name).localeCompare(String(b.name)), team: (a, b) => String(a.team || '').localeCompare(String(b.team || '')) || String(a.name).localeCompare(String(b.name)),
+    time: (a, b) => (Date.parse(a.at) || 9e15) - (Date.parse(b.at) || 9e15) || String(a.name).localeCompare(String(b.name)),
+    proj: (a, b) => num(b.proj) - num(a.proj), rax: (a, b) => num(b.avg) - num(a.avg) }[k];
+  return f ? list.slice().sort((x, y) => f(get(x), get(y))) : list.slice();
+}
+document.addEventListener('change', e => { const sel = e.target.closest('.bsortsel'); if(!sel) return;
+  try{ localStorage.setItem('boosts_sort_v1', sel.value); }catch(err){}
+  document.querySelectorAll('.bsortsel').forEach(x => { x.value = sel.value; });
+  if(lastOne && !$('#out').hidden){ redrawOnly = true; $('#run').click(); } if(allLast && !$('#allout').hidden) runAll(true); });
+document.addEventListener('DOMContentLoaded', () => document.querySelectorAll('.bsortsel').forEach(x => { x.value = bSort(); }));
+setTimeout(() => document.querySelectorAll('.bsortsel').forEach(x => { x.value = bSort(); }), 0);
 // One sport's totals, worked out here so "Include my card rarities" counts too.
 function drawTot(){
   if(!lastOne) return; const { j } = lastOne, rows = j.rows || [];
@@ -882,6 +903,7 @@ async function runAll(reuse){
   }
   const val = r => Number(r.withBoost != null ? wbC(r) : projC(r)) || 0;
   copyRows.sort((a, b) => RANKR[a[1].boost] - RANKR[b[1].boost] || val(b[1]) - val(a[1]));
+  if(bSort() !== 'rec'){ const o = sortBoost(copyRows, x => x[1]); copyRows.length = 0; copyRows.push(...o); }
   const doneOf = {};
   const dOf = (sp, x) => { const dk = sp + ':' + x.date; return [dk, doneOf[dk] || (doneOf[dk] = loadDone(dk))]; };
   // Full layout: the same table as a sport's own tab, one table for every sport.

@@ -4781,6 +4781,8 @@ async function handle({ request, env, waitUntil }) {
         if (r.seller === u.key) sell160.push({ ...x, yourCard: me ? passUrl(me, r.pass) : null });
         else buy160.push({ ...x, comment: (o && o.comment) || null });
       } } catch (e) {}
+    // Each partner's trust level (2026-11-11), shown by their name.
+    try { const tm = await trustMap(env, db); for (const x of out) x.lv = (tm[x.partnerKey] || {}).lv || 'new'; } catch (e) {}
     return json({ user: (me && me.rsUser) || u.key, due, swaps: out, sell160, buy160, nicheBuy, nicheGet, canRate, ratingsOff: ratingsOff() || undefined, admin: ADMINS.includes(u.key.toLowerCase()) || undefined });
   }
   /* Most picked players, for everyone on the hour page (Dennis, 2026-11-05):

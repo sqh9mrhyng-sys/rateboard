@@ -112,6 +112,13 @@
   .phgrid button.on{background:var(--accent);border-color:var(--accent);color:#141925;font-weight:800}
   .phgrid button .ord{position:absolute;top:2px;right:5px;font-size:9.5px;font-weight:800}
   #con.new{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 35%,transparent)}
+  .tl{display:inline-block;font-size:10.5px;font-weight:800;letter-spacing:.03em;padding:1px 7px;border-radius:999px;vertical-align:1px;text-transform:uppercase}
+  .tl.new{background:var(--panel2);color:var(--mute);border:1px solid var(--line)}
+  .tl.trusted{background:#2a6fdb;color:#fff}
+  .tl.vet{background:#E8A33D;color:#141925}
+  .rlper{display:flex;gap:6px;margin:0 0 10px}
+  .rlper button{flex:1;padding:7px 8px;border-radius:999px;border:1px solid var(--line);background:none;color:var(--ink);font-weight:700;font-size:13px}
+  .rlper button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#141925}
 </style>
 </head>
 <body>
@@ -137,8 +144,10 @@
       <div id="raxlist"></div></section></div>
   <div id="rateview" hidden><section>
     <h2>Rating leaderboard</h2>
+    <div class="rlper" id="rlper"><button data-per="week">This week</button><button data-per="month">This month</button><button data-per="all">All time</button></div>
     <p class="note" id="rlsum" style="margin:0 0 8px">Loading…</p>
-    <div class="rlh"><span>#</span><span>Member</span><span>Avg</span><span>Votes</span></div>
+    <p class="note" style="margin:0 0 8px"><span class="tl new">New</span> <span class="tl trusted">Trusted</span> 25+ trades and 4.5+ stars · <span class="tl vet">Vet</span> 100+ trades. Trusted and Vet members get a small edge when two people want the same player.</p>
+    <div class="rlh"><span>#</span><span>Member</span><span>Stars</span><span>Votes</span></div>
     <div id="rllist"></div></section></div>
   <div id="pickview" hidden>
     <p class="note" id="pkmsg2" style="margin:10px 0 0"></p>
@@ -252,7 +261,7 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
   $('#ratenote').hidden = !j.swaps.some(x => !x.off);
   // Two ticks per partner here (Dennis, 2026-11-06): offer sent, then swap done.
   $('#conlist').innerHTML = ord.map(([x, i]) => `<div class="row${x.off ? ' off' : ''}${done['c' + i] && done['d' + i] ? ' both' : ''}" data-row="${i}"><span class="grp"><span class="chk2"><label><input type="checkbox" class="chk" data-k="c${i}" ${done['c' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}><span>Offered</span></label><label><input type="checkbox" class="chk" data-k="d${i}" ${done['d' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}><span>Done</span></label></span>
-    <span><b>${x.partnerUrl ? `<a href="${esc(x.partnerUrl)}" target="_blank" rel="noopener">@${esc(x.partner || '?')}</a>` : '@' + esc(x.partner || '?')}</b><span class="sub">You receive <b class="rv">${lnk(x.receive, x.receiveUrl)}</b></span><span class="sub">(You're giving ${esc(x.give)})</span></span></span><span class="acts">${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : '<span class="note">no comment</span>'}${x.id && !x.off ? `<button class="btn rp" type="button" data-rp="${x.id}">Report</button>` : ''}</span></div><div class="rpbox" id="rp${x.id}" hidden></div>${x.off ? '' : rateRow(x, j)}`).join('');
+    <span><b>${x.partnerUrl ? `<a href="${esc(x.partnerUrl)}" target="_blank" rel="noopener">@${esc(x.partner || '?')}</a>` : '@' + esc(x.partner || '?')}</b>${x.lv ? ` <span class="tl ${x.lv}">${{ vet: 'Vet', trusted: 'Trusted', new: 'New' }[x.lv]}</span>` : ''}<span class="sub">You receive <b class="rv">${lnk(x.receive, x.receiveUrl)}</b></span><span class="sub">(You're giving ${esc(x.give)})</span></span></span><span class="acts">${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : '<span class="note">no comment</span>'}${x.id && !x.off ? `<button class="btn rp" type="button" data-rp="${x.id}">Report</button>` : ''}</span></div><div class="rpbox" id="rp${x.id}" hidden></div>${x.off ? '' : rateRow(x, j)}`).join('');
 })();
 /* Packs today: what the system counts as used, plus your own additions. */
 const pkUrl = () => `/api/swaps?op=hourpacks&u=${encodeURIComponent(q.get('u') || '')}&d=${encodeURIComponent(q.get('d') || '')}&t=${encodeURIComponent(q.get('t') || '')}`;
@@ -274,14 +283,17 @@ $('#pklist').addEventListener('click', async e => { const b = e.target.closest('
 { const pq2 = new URLSearchParams(location.search); pq2.set('v', 'picks'); pq2.delete('at'); $('#picksbtn').href = '?' + pq2.toString(); if(q.get('v') === 'picks') $('#picksbtn').classList.add('go'); }
 /* Rating leaderboard: every rated member by average stars. */
 async function loadRatings(){
-  let j; try{ j = await (await fetch(`/api/swaps?op=hourratings&${sig()}`)).json(); }catch(e){ $('#rlsum').textContent = 'Could not reach the board.'; return; }
+  let per = 'all'; try{ per = localStorage.getItem('rl_period') || 'all'; }catch(e){}
+  document.querySelectorAll('#rlper [data-per]').forEach(b => b.setAttribute('aria-pressed', b.dataset.per === per));
+  let j; try{ j = await (await fetch(`/api/swaps?op=hourratings&period=${per}&${sig()}`)).json(); }catch(e){ $('#rlsum').textContent = 'Could not reach the board.'; return; }
   if(j.error){ $('#rlsum').textContent = j.error; return; }
-  $('#rlsum').textContent = j.rows.length ? `${j.rows.length} rated member${j.rows.length === 1 ? '' : 's'}, best average first (more votes first on a tie). Members rate each other after a swap, from the swap page.` : 'Nobody has been rated yet - rate your partners after a swap, under "Offer on your partners\' cards".';
+  $('#rlsum').textContent = j.rows.length ? `${j.rows.length} rated member${j.rows.length === 1 ? '' : 's'}, best weighted stars first (a few ratings count for less than many). Members rate each other after a swap, from the swap page.` : 'Nobody has been rated yet - rate your partners after a swap, under "Offer on your partners\' cards".';
   rlAdmin = !!j.admin;
   $('#rlsum').textContent += j.live ? ' Ratings now count when two people want the same player.' : ` Ratings start counting in matching once ${j.needMembers} members have ${j.needVotes}+ ratings each (${j.ready} so far).`;
-  $('#rllist').innerHTML = j.rows.map((x, i) => `<div class="rl${x.mine ? ' me' : ''}${j.admin ? ' tap' : ''}"${j.admin ? ` data-rlk="${esc(x.k)}"` : ''}><span class="rk">${i + 1}</span><span>${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">@${esc(x.user)}</a>` : '@' + esc(x.user)}${x.mine ? '<span class="you">YOU</span>' : ''}</span><span class="av">${x.avg.toFixed(2)} <span class="sx">★</span></span><span class="vt">${x.votes}</span></div>${j.admin ? `<div class="rlbd" id="rlbd-${esc(x.k)}" hidden></div>` : ''}`).join('');
+  $('#rllist').innerHTML = j.rows.map((x, i) => `<div class="rl${x.mine ? ' me' : ''}${j.admin ? ' tap' : ''}"${j.admin ? ` data-rlk="${esc(x.k)}"` : ''}><span class="rk">${i + 1}</span><span>${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">@${esc(x.user)}</a>` : '@' + esc(x.user)}${x.mine ? '<span class="you">YOU</span>' : ''} <span class="tl ${x.lv}">${{ vet: 'Vet', trusted: 'Trusted', new: 'New' }[x.lv] || 'New'}</span><span class="note" style="display:block;font-size:12px">${x.trades || 0} trade${x.trades === 1 ? '' : 's'} · ${x.avg.toFixed(2)} avg</span></span><span class="av">${(x.score ?? x.avg).toFixed(2)} <span class="sx">★</span></span><span class="vt">${x.votes}</span></div>${j.admin ? `<div class="rlbd" id="rlbd-${esc(x.k)}" hidden></div>` : ''}`).join('');
   if(j.admin) $('#rlsum').textContent += ' Tap a member to see who rated them and change a rating.';
 }
+document.addEventListener('click', e => { const b = e.target.closest('#rlper [data-per]'); if(!b) return; try{ localStorage.setItem('rl_period', b.dataset.per); }catch(err){} loadRatings(); });
 let rlAdmin = false;
 async function rlOpen(k, body){
   const box = document.getElementById('rlbd-' + k); if(!box) return;
