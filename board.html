@@ -2695,6 +2695,8 @@ async function doSignIn(){
   me = market.users[key]?.name || d.name || u;
   saveDevice(key, me);
   rememberAcct(key, me);
+  // Signing in lands on Home (Dennis, 2026-11-10), unless they came for a part of the board (#report, #feature, #gamedata...).
+  if(!location.hash){ location.href = '/'; return; }
   enter();
 }
 
