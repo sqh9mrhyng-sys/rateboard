@@ -184,6 +184,15 @@
   .blchips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
   .blchips span{display:inline-flex;align-items:center;gap:6px;padding:6px 6px 6px 12px;border:1px solid var(--line);border-radius:999px;background:var(--panel2);font-weight:700;font-size:14px}
   .blchips span button{border:0;background:none;color:var(--mute);font-size:18px;line-height:1;padding:0 6px;cursor:pointer}
+  .pass .lk{margin-left:auto;font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:none;color:var(--mute);cursor:pointer;white-space:nowrap}
+  .pass .lk.on{border-color:var(--accent);color:#141925;background:var(--accent)}
+  .seg.wrap{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+  .seg.wrap button{padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:none;color:var(--ink);font-weight:700}
+  .seg.wrap button[aria-pressed="true"]{background:#c0392b;border-color:#c0392b;color:#fff}
+  .pksearch{position:relative;flex:1 1 200px;min-width:0}
+  .pkdd{position:absolute;z-index:20;left:0;right:0;top:100%;margin-top:4px;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.45);max-height:300px;overflow-y:auto}
+  .pkdd button{display:block;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);border-radius:0;padding:10px 12px;color:var(--ink);font-size:14px}
+  .pkdd button:hover{background:var(--panel2)}
 </style>
 </head>
 <body>
@@ -236,6 +245,9 @@
     <p class="note" style="margin:4px 0 0">Scans read every season. In a hurry? <button type="button" class="linkbtn" id="scanfull">Rescan current seasons only</button> (plus old seasons you already hold passes in).</p>
     <div class="note" id="scanmsg"></div>
     <div class="untouch" id="untouch" hidden></div>
+    <!-- Sports maxed today (2026-11-11): Real allows only so many packs a day per sport, so give nothing more in these until the swap day ends. -->
+    <div class="field" id="nosp" hidden><label>Maxed out today? Give nothing in:</label><div class="seg wrap" id="nospb"></div>
+      <p class="note sub" style="margin:4px 0 0">Resets when the swap day ends (7am ET). Your other sports keep swapping.</p></div>
     <div class="psum" id="psum" hidden style="margin-bottom:8px"><span id="psumtxt"></span><button id="ptoggle" class="sm">Done - collapse</button></div>
     <div class="bar" id="pctl" hidden>
       <select id="pview" aria-label="View"><option value="all">All passes</option><option value="season">By season</option></select>
@@ -334,7 +346,7 @@
     <div class="stabs"><button id="tabup" class="on">Scheduled</button><button id="tabpast">Previous</button><button id="tabpacks">Packs today</button></div>
     <div id="packsbox" hidden>
       <p class="note" style="margin:0 0 8px">Passes you've used today - each one scheduled to go out in a swap, plus any you add yourself. A pass is only given once a swap day (7am to 7am ET), and you give in at most 25 swaps a swap day per sport + season (Real allows 30 packs) - receiving has no limit.</p>
-      <div class="bar"><select id="packadd" style="flex:1 1 200px;min-width:0"></select><button class="primary" id="packaddbtn">Add</button></div>
+      <div class="bar"><div class="pksearch"><input id="packq" placeholder="Search a pass you used today" autocomplete="off"><div class="pkdd" id="packdd" hidden></div></div><select id="packadd" hidden></select></div>
       <span class="note" id="packmsg"></span>
       <a class="btn" id="packsite" hidden target="_blank" rel="noopener" style="display:block;text-align:center;margin-top:8px">Open your swap page ↗</a>
       <div id="packlist"><p class="note">Loading…</p></div>
@@ -655,7 +667,7 @@ function passRow(p, keep, showSeason){
   const un = !!p.untouchable && !(prof.touch || []).includes(p.key), k = un || keep.has(p.key);
   return `<label class="pass${k ? ' keep' : ''}"${un ? ' title="Set untouchable on Real - never swapped. Change it in Real to swap it."' : ''}><input type="checkbox" data-keep="${p.key}" ${k ? 'checked' : ''}${un ? ' disabled' : ''} aria-label="Keep ${nm}">
     <span class="nm">${u ? `<a href="${u}" target="_blank" rel="noopener">${nm}</a>` : nm}</span><span class="k">${un ? 'untouchable' : k ? 'keeping' : 'swappable'}</span>
-    <span class="meta">${passTag(p)} ${showSeason ? esc(keyLbl(p.key)) : ''}${prog ? ' · ' + prog : ''}${earned ? ' ' + earned : ''}</span></label>`;
+    <span class="meta">${passTag(p)} ${showSeason ? esc(keyLbl(p.key)) : ''}${prog ? ' · ' + prog : ''}${earned ? ' ' + earned : ''}</span>${k ? '' : `<button type="button" class="lk${(prof.lock1 || []).includes(p.key) ? ' on' : ''}" data-lock="${p.key}" title="Only give this pass in a swap for your 1st pick">${(prof.lock1 || []).includes(p.key) ? '1st pick only' : 'Lock to 1st pick'}</button>`}</label>`;
 }
 /* Step 3's own list of passes set untouchable on Real, each with a switch, so
    a wrong read (or a change of mind) can be fixed here. */
@@ -688,6 +700,7 @@ $('#untouch').addEventListener('click', async e => {
   const m = $('#untouchmsg'); if(m) m.textContent = j.error ? 'Could not save: ' + j.error : (on ? 'Saved - that pass can be swapped now.' : 'Saved - that pass won\'t be swapped.') + (j.cancelled ? ` ${j.cancelled} swap${j.cancelled === 1 ? '' : 's'} using it called off.` : '');
 });
 function drawSum(){
+  try{ drawNoSp(); }catch(e){}
   const all = prof.passes.filter(p => !NO_SWAP.has(p.sport) && !isTeam(p) && !offSeason(p));
   const keep = new Set(prof.keep), tch = new Set(prof.touch || []), kept = all.filter(p => (p.untouchable && !tch.has(p.key)) || keep.has(p.key)).length;
   drawUntouch();
@@ -737,9 +750,29 @@ function saveKeep(){
     el.textContent = j.error ? 'Could not save your keeps: ' + j.error : `Keeps saved (${j.keep}).` + (j.cancelled ? ` ${j.cancelled} swap${j.cancelled === 1 ? '' : 's'} using a pass you now keep ${j.cancelled === 1 ? 'was' : 'were'} called off.` : '');
   }, 900);
 }
-$('#passes').addEventListener('click', e => { if(e.target.closest('a')) e.stopPropagation(); });
+$('#passes').addEventListener('click', e => { if(e.target.closest('a')) e.stopPropagation();
+  // Lock to the 1st pick (2026-11-11): a valuable pass only goes out for the player you want most.
+  const lb = e.target.closest('[data-lock]'); if(!lb) return; e.preventDefault(); e.stopPropagation();
+  const k = lb.dataset.lock, on = !(prof.lock1 || []).includes(k);
+  prof.lock1 = on ? [...new Set([...(prof.lock1 || []), k])] : (prof.lock1 || []).filter(x => x !== k);
+  lb.classList.toggle('on', on); lb.textContent = on ? '1st pick only' : 'Lock to 1st pick'; saveGivePrefs(); });
+// Locks and sports maxed today save on their own.
+let gpT = null;
+function saveGivePrefs(){ clearTimeout(gpT); gpT = setTimeout(async () => {
+  const j = await api('/api/swaps?op=giveprefs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ lock1: prof.lock1 || [], noSp: prof.noSp || [] }) });
+  $('#scanmsg').textContent = j.error ? 'Could not save: ' + j.error : `Saved - ${(j.lock1 || []).length} pass${(j.lock1 || []).length === 1 ? '' : 'es'} locked to your 1st pick` + ((j.noSp || []).length ? `, giving nothing today in ${(j.noSp).map(x => SPORT[x] || x.toUpperCase()).join(', ')}` : '') + '.' + (j.cancelled ? ` ${j.cancelled} upcoming swap${j.cancelled === 1 ? '' : 's'} called off.` : '');
+}, 700); }
+function drawNoSp(){
+  const have = [...new Set(prof.passes.filter(p => !NO_SWAP.has(p.sport) && !isTeam(p) && !offSeason(p)).map(p => p.sport))];
+  $('#nosp').hidden = !have.length;
+  $('#nospb').innerHTML = have.map(sp => `<button type="button" data-nosp="${sp}" aria-pressed="${(prof.noSp || []).includes(sp)}">${esc(SPORT[sp] || sp.toUpperCase())}</button>`).join('');
+}
+$('#nospb').addEventListener('click', e => { const b = e.target.closest('[data-nosp]'); if(!b) return;
+  const sp = b.dataset.nosp, on = !(prof.noSp || []).includes(sp);
+  prof.noSp = on ? [...(prof.noSp || []), sp] : (prof.noSp || []).filter(x => x !== sp);
+  b.setAttribute('aria-pressed', on); saveGivePrefs(); });
 $('#ptoggle').addEventListener('click', () => {
-  collapsed = !collapsed; drawPasses();
+  collapsed = !collapsed; try{ localStorage.setItem('swaps_passes_folded', collapsed ? '1' : '0'); }catch(e){} drawPasses();
   if(collapsed) $('#psum').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 });
 // One scan for the whole site, in parts: keeps asking until it's done.
@@ -1045,15 +1078,27 @@ function paintPacks(j){
     || '<p class="note">No packs used yet today.</p>';
   // The add list: your swappable passes not already used today.
   const opts = j.options || prof.passes.filter(p => !isTeam(p) && !NO_SWAP.has(p.sport) && !offSeason(p) && !used.has(p.key)).map(p => ({ key: p.key, name: (p.name || 'Player ' + p.id) + ' ' + p.season }));
-  $('#packadd').innerHTML = '<option value="">Add a pass you used today…</option>' + opts.map(p => `<option value="${esc(p.key)}">${esc(p.name)} · ${esc(keyLbl(p.key))}</option>`).join('');
+  packOpts = opts; drawPackDD();
   $('#packsite').hidden = !j.hourUrl; if(j.hourUrl) $('#packsite').href = j.hourUrl;
 }
 async function loadPacks(){ paintPacks(await api('/api/swaps?op=packstoday')); }
-$('#packaddbtn').addEventListener('click', async () => {
-  const k = $('#packadd').value; if(!k) return;
+/* Search instead of a 1,200-line list (2026-11-11): type a name, tap the pass. */
+let packOpts = [];
+function drawPackDD(){
+  const q = ($('#packq').value || '').trim().toLowerCase(), dd = $('#packdd');
+  if(!q){ dd.hidden = true; return; }
+  const l = packOpts.filter(p => String(p.name).toLowerCase().includes(q)).slice(0, 30);
+  dd.innerHTML = l.length ? l.map(p => `<button type="button" data-pk="${esc(p.key)}">${esc(p.name)} <span class="note">· ${esc(keyLbl(p.key))}</span></button>`).join('') : '<div class="note" style="padding:10px 12px">No pass matches.</div>';
+  dd.hidden = false;
+}
+$('#packq').addEventListener('input', drawPackDD);
+document.addEventListener('click', e => { if(!e.target.closest('.pksearch')) $('#packdd').hidden = true; });
+$('#packdd').addEventListener('click', async e => { const b = e.target.closest('[data-pk]'); if(!b) return;
+  $('#packq').value = ''; $('#packdd').hidden = true; await addPack(b.dataset.pk); });
+async function addPack(k){ if(!k) return;
   const j = await api('/api/swaps?op=packstoday', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: k }) });
   $('#packmsg').textContent = j.error || 'Added - it won\'t be given in a swap again today.'; paintPacks(j);
-});
+}
 $('#packlist').addEventListener('click', async e => {
   const b = e.target.closest('[data-unpack]'); if(!b) return;
   const j = await api('/api/swaps?op=packstoday', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: b.dataset.unpack, remove: true }) });
@@ -1232,6 +1277,8 @@ async function proGate(){
   draw160();
   $('#clink').value = (j.profile && j.profile.comment) || '';
   if(prof.passes.length && prof.keep.length) collapsed = true;   // back again with picks made: start folded
+  // Folded or open as they last left it, on this phone (2026-11-11).
+  try{ const f = localStorage.getItem('swaps_passes_folded'); if(f != null) collapsed = f === '1'; }catch(e){}
   paintConn(!!j.connected);
   $('#admin').hidden = !j.admin;
   savedWants = new Set((j.profile && j.profile.active && j.profile.wants) || []);
