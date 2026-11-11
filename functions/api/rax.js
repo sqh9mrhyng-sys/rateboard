@@ -6899,8 +6899,10 @@ async function handleGet({ request, env, waitUntil }) {
           return c;
         };
         const teams = new Set(), confs = new Set(), posN = new Map(); let first = null, last = null;
-        for (const [sp, se] of fp) {
-          const c = await one(sp, se);
+        // Kept copies read side by side; any missing are worked out one at a time.
+        const kept = await Promise.all(fp.map(([sp, se]) => env.RATEBOARD_KV.get(`glfacet_v1_${sp}_${se}`).then(v => { try { return JSON.parse(v || 'null'); } catch (e) { return null; } }).catch(() => null)));
+        for (let i = 0; i < fp.length; i++) {
+          const [sp, se] = fp[i], c = kept[i] || await one(sp, se);
           c.teams.forEach(x => teams.add(x)); c.conferences.forEach(x => confs.add(x));
           for (const [k, n] of c.positions) posN.set(k, (posN.get(k) || 0) + n);
           if (c.dates) { if (c.dates.first && (!first || c.dates.first < first)) first = c.dates.first; if (c.dates.last && (!last || c.dates.last > last)) last = c.dates.last; }
