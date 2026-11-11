@@ -176,6 +176,14 @@
     .want1{padding:10px}
     .want1 .mv button{min-height:30px;padding:2px 10px}
   }
+  .bldd{position:absolute;z-index:20;left:0;right:0;top:100%;margin-top:4px;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.45);max-height:280px;overflow-y:auto}
+  .bldd button{display:block;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);border-radius:0;padding:10px 12px;color:var(--ink);font-size:14px}
+  .bldd button:last-child{border-bottom:0}
+  .bldd button:hover{background:var(--panel2)}
+  .bldd .none{padding:10px 12px;color:var(--mute);font-size:13px}
+  .blchips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  .blchips span{display:inline-flex;align-items:center;gap:6px;padding:6px 6px 6px 12px;border:1px solid var(--line);border-radius:999px;background:var(--panel2);font-weight:700;font-size:14px}
+  .blchips span button{border:0;background:none;color:var(--mute);font-size:18px;line-height:1;padding:0 6px;cursor:pointer}
 </style>
 </head>
 <body>
@@ -302,6 +310,16 @@
     </div>
     <p class="note sub" id="capnote"></p>
     <p class="note sub">Days run 7am-7am ET. Empty = no limit.</p>
+  </section>
+
+  <!-- Blacklist (Dennis, 2026-11-11): members you never want to be matched with. -->
+  <section>
+    <h2><span class="n">8</span>Blacklist <span class="opt">optional</span></h2>
+    <p class="note sub">Pick members you don't want to swap with. You won't be matched with them - swaps, 160s or niche - until you take them off. Upcoming ones not yet messaged are called off when you save.</p>
+    <div class="field" style="position:relative"><label for="blq">Add a member</label>
+      <input id="blq" placeholder="Start typing a username" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <div id="bldd" class="bldd" hidden></div></div>
+    <div id="blchips" class="blchips"></div>
   </section>
 
   <div class="savebar"><button class="primary big" id="save">Save my swap</button><span class="note" id="savemsg"></span></div>
@@ -953,7 +971,7 @@ $('#save').addEventListener('click', async () => {
   if(!SWAP_COMMENT_RE.test($('#clink').value.trim())){ $('#savemsg').textContent = 'That link is not a comment under the swap post. Open the swap post, copy the link to your comment, and paste it in step 2.'; return; }
   const j = await api('/api/swaps?op=save', { method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 10), sched: schedOf().mode === 'daily' ? { mode: 'daily', tz: TZ } : { ...schedOf(), tz: TZ }, comment: $('#clink').value.trim(), goal: '', dayCap: $('#daycap').value.trim(), caps, keep: prof.keep, slots: prof.slots, names: wantNames,
-      nicheIn: !prof.only160 && $('#nichein').checked, nicheLim: { h: $('#nicheh').value, d: $('#niched').value }, niche: Object.fromEntries(Object.entries(nicheReq).filter(([k, v]) => prof.wants.includes(k) && v > 0)),
+      blist: prof.blist || [], nicheIn: !prof.only160 && $('#nichein').checked, nicheLim: { h: $('#nicheh').value, d: $('#niched').value }, niche: Object.fromEntries(Object.entries(nicheReq).filter(([k, v]) => prof.wants.includes(k) && v > 0)),
       only160: !!prof.only160, s160: !!prof.only160 || $('#s160').checked, b160: !prof.only160 && $('#b160').checked, sell160m: sellMode(), sell160h: prof.sell160h || [] }) });
   const extra = (j.late ? ' Too late to change swaps already warned - please do them at :00.' : '') + (j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} for a player or hour you removed ${j.calledOff === 1 ? 'is' : 'are'} called off - you'll both get a message.` : '');
   $('#savemsg').textContent = j.error ? j.error : '';
@@ -1219,7 +1237,7 @@ async function proGate(){
   savedWants = new Set((j.profile && j.profile.active && j.profile.wants) || []);
   paintPaused();
   nicheReq = {}; for(const [k, v] of Object.entries((j.profile && j.profile.niche) || {})) if(v && v.n) nicheReq[k] = Number(v.n);
-  loadOwnCounts();
+  loadOwnCounts(); drawBl();
   drawPasses(); drawWants(); drawHours(); loadHourCounts(); loadWantCounts(); loadSwaps(); if(j.admin){ loadMatches(); $('#adminprio').hidden = false; $('#adminund').hidden = false; loadPrio(); loadUnd(); }
   resumeScan();
   // The big button to their swap page (next swap time, or the last one).
@@ -1228,6 +1246,30 @@ async function proGate(){
   api('/api/swaps?op=myhour').then(h => { if(h && h.url){ $('#hourgo').href = h.url; $('#hourgo').hidden = false; } }).catch(() => {});
   api('/api/swaps?op=buildindex');   // adds one season to the search table, at most every 5 minutes
 })();
+
+/* Blacklist (2026-11-11): names suggested as they type (members on Swaps), picked
+   ones shown as chips with an x; saved with the rest of the swap. */
+function drawBl(){
+  const l = (prof && prof.blist) || [];
+  $('#blchips').innerHTML = l.length ? l.map(k => `<span>@${esc(k)}<button type="button" data-blx="${esc(k)}" aria-label="Remove ${esc(k)}">×</button></span>`).join('') : '<span class="note" style="border:0;background:none;padding:0;font-weight:400">Nobody blacklisted.</span>';
+}
+let blAsk = 0, blT = 0;
+$('#blq').addEventListener('input', () => {
+  clearTimeout(blT); const q = $('#blq').value.trim().replace(/^@/, '');
+  if(!q){ $('#bldd').hidden = true; return; }
+  blT = setTimeout(async () => { const n = ++blAsk;
+    const j = await api('/api/swaps?op=usersearch&q=' + encodeURIComponent(q)); if(n !== blAsk) return;
+    const have = new Set(((prof && prof.blist) || []).map(k => k.toLowerCase()));
+    const us = ((j && j.users) || []).filter(u => !have.has(String(u.key).toLowerCase()));
+    $('#bldd').innerHTML = us.length ? us.map(u => `<button type="button" data-blk="${esc(u.key)}">@${esc(u.name)}</button>`).join('') : `<div class="none">No swapper named "${esc(q)}".</div>`;
+    $('#bldd').hidden = false; }, 150);
+});
+$('#bldd').addEventListener('click', e => { const b = e.target.closest('[data-blk]'); if(!b || !prof) return;
+  prof.blist = [...new Set([...(prof.blist || []), b.dataset.blk])]; $('#blq').value = ''; $('#bldd').hidden = true; drawBl();
+  $('#savemsg').textContent = 'Blacklist changed - tap Save to keep it.'; });
+$('#blchips').addEventListener('click', e => { const b = e.target.closest('[data-blx]'); if(!b || !prof) return;
+  prof.blist = (prof.blist || []).filter(k => k !== b.dataset.blx); drawBl(); $('#savemsg').textContent = 'Blacklist changed - tap Save to keep it.'; });
+document.addEventListener('click', e => { if(!e.target.closest('#blq') && !e.target.closest('#bldd')) $('#bldd').hidden = true; });
 </script>
 <script src="/acct.js" defer></script>
 <script src="/sponsor.js" data-page="swaps" defer></script>

@@ -776,7 +776,7 @@ async function runMatchingInner(db, env) {
       AND ((wants IS NOT NULL AND wants <> '[]') OR s160=1 OR only160=1 OR nicheIn=1) AND ((slots IS NOT NULL AND slots <> '[]') OR s160=1 OR only160=1)
       AND key NOT IN (SELECT key FROM restricted) AND key NOT IN (SELECT key FROM swap_block)
       AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`))
-    .map(u => ({ ...u, nicheReq: parse(u.niche, {}) || {} }))
+    .map(u => ({ ...u, nicheReq: parse(u.niche, {}) || {}, bl: new Set((parse(u.blist, []) || []).map(k => String(k).toLowerCase())) }))
     .map(u => ({ ...u, sched: parse(u.sched, null), wants: parse(u.wants, []), keep: new Set(parse(u.keep, [])), touch: new Set(parse(u.touch, [])), slots: parse(u.slots, []),
                  passes: parse(u.passes, []), caps: parse(u.caps, {}) || {} }))
     // Only here for 160s: no swaps for them (their picks are ignored), and they sell.
@@ -919,9 +919,14 @@ async function runMatchingInner(db, env) {
      each run lets a lower-rated member win some, so they can build a rating. */
   const score = await ratingScores(db);
   const rs = k => score.get(k) ?? RATE_PRIOR;
+  // Either one has blacklisted the other: never matched - swaps, 160s or niche (2026-11-11).
+  const byKey = new Map(users.map(u => [u.key, u]));
+  const blocked = (a, b) => { const A = typeof a === 'string' ? byKey.get(a) : a, B = typeof b === 'string' ? byKey.get(b) : b;
+    return !!(A && B && ((A.bl && A.bl.has(String(B.key).toLowerCase())) || (B.bl && B.bl.has(String(A.key).toLowerCase())))); };
   for (let i = 0; i < users.length; i++) for (let j = i + 1; j < users.length; j++) {
     const A = users[i], B = users[j];
     if (!A.wants.length || !B.wants.length) continue;
+    if (blocked(A, B)) continue;
     const RA = ranks.get(A.key), RB = ranks.get(B.key);
     dues.forEach((due, k) => {
       const ra = RA[k], rb = RB[k]; if (ra < 0 || rb < 0) return;
@@ -971,7 +976,7 @@ async function runMatchingInner(db, env) {
           if ((got.get(b.key) || 0) >= MAX_160_HOUR) continue;
           for (const w of b.wants) {
             if (!goalOk(b.key, w) || !perDayOk(b.key, w, d)) continue;
-            const can = S.filter(x => x.key !== b.key && givesOne(x, w, d));
+            const can = S.filter(x => x.key !== b.key && !blocked(b, x) && givesOne(x, w, d));
             if (!can.length) continue;
             const sl = can.reduce((m, x) => (sold.get(x.key) || 0) < (sold.get(m.key) || 0) ? x : m, can[0]);
             made160.push({ buyer: b.key, seller: sl.key, pass: w, slot, due });
@@ -1010,7 +1015,7 @@ async function runMatchingInner(db, env) {
             let left = Math.min(NICHE_MAX_ASK, Number(q.n)) - (asked.get(b.key + '|' + w) || []).filter(t => t >= (Number(q.at) || 0)).length;
             while (left > 0) {
               if (!goalOk(b.key, w) || !perDayOk(b.key, w, d)) break;
-              const can = H.filter(h => h.key !== b.key && !owns.get(h.key).has(w) && !usedBy.has(`*|${w}|${h.key}`) && (hourOf.get(`${h.key}|${due}`) || 0) < lim.get(h.key).h
+              const can = H.filter(h => h.key !== b.key && !blocked(b, h) && !owns.get(h.key).has(w) && !usedBy.has(`*|${w}|${h.key}`) && (hourOf.get(`${h.key}|${due}`) || 0) < lim.get(h.key).h
                 && (dayOf.get(`${h.key}|${d}`) || 0) < lim.get(h.key).d && room(h, w) && seasonRoom(h.key, w, d));
               if (!can.length) break;
               const h = can.reduce((m, x) => (dayOf.get(`${x.key}|${d}`) || 0) < (dayOf.get(`${m.key}|${d}`) || 0) ? x : m, can[Math.floor(Math.random() * can.length)]);
@@ -1536,6 +1541,8 @@ async function matchCols(db) {
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN niche TEXT'); } catch (e) {}
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN nicheIn INTEGER'); } catch (e) {}
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN nicheLim TEXT'); } catch (e) {}
+  // Blacklist (Dennis, 2026-11-11): members they never want to be matched with, as a JSON list of keys.
+  try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN blist TEXT'); } catch (e) {}
   try { await alterOnce(db, T160_DDL); await alterOnce(db, 'ALTER TABLE swap_160 ADD COLUMN kind TEXT'); } catch (e) {}
   // Untouchable passes the member chose to swap anyway (step 3).
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN touch TEXT'); } catch (e) {}
@@ -2828,7 +2835,7 @@ export async function swapAccess(env, request) {
 }
 // What a member (not an admin) may do: their own swap and nothing else, and
 // for OTD their own passes and games.
-const MEMBER_OPS = new Set(['confirm', 'recbuys', 'myhour', 'me', 'save', 'keep', 'touch', 'packstoday', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'ownercounts', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
+const MEMBER_OPS = new Set(['confirm', 'recbuys', 'myhour', 'me', 'save', 'keep', 'touch', 'packstoday', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'ownercounts', 'usersearch', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
 const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan', 'search', 'otdpool']);
 const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostdays', 'projections', 'tagview', 'boostinv', 'buys', 'legboosts', 'resell', 'nosell']);
 const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
@@ -5164,6 +5171,14 @@ async function handle({ request, env, waitUntil }) {
     for (const p of parse(u && u.passes, [])) if (p.kind !== 'team') out[p.key] = Math.max(0, (c.n[p.key] || 0) - selfIn);
     return json({ at: c.at, active: c.active, under: NICHE_UNDER, n: c.at ? out : {}, ready: !!c.at });
   }
+  // Blacklist search (2026-11-11): swappers whose name starts with what's typed, as they type.
+  if (op === 'usersearch') {
+    const q = String(url.searchParams.get('q') || '').trim().toLowerCase().replace(/^@/, '').slice(0, 30);
+    if (q.length < 1) return json({ users: [] });
+    if (!acc.admin && !(await allow(url.origin, 'usersearch:' + me, 120, 60))) return json({ users: [] });
+    const r = ((await db.prepare(`SELECT key, rsUser FROM swap_users WHERE key >= ? AND key < ? AND key <> ? ORDER BY key LIMIT 8`).bind(q, q + '\uffff', me).all()).results) || [];
+    return json({ users: r.map(x => ({ key: x.key, name: x.rsUser || x.key })) });
+  }
   if (op === 'wantcounts') {
     let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get('swap_wantcounts_v1')) || 'null'); } catch (e) {}
     if (!c || Date.now() - c.at > 300000) {
@@ -5569,7 +5584,7 @@ async function handle({ request, env, waitUntil }) {
     mark(request, 'plays');
     const cDay = confirmDayNow();
     return json({ confirmShow: Date.now() >= CONFIRM_SHOW_AT, confirmedToday: !!(u && u.confirmDay === cDay), confirmStarts: CONFIRM_FROM_DAY, swapToday: cDay, key: me, admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
-      keep: parse(u.keep, []), touch: parse(u.touch, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: lite ? [] : parse(u.passes, []), passCount: (() => { try { return parse(u.passes, []).length; } catch (e) { return 0; } })(), passSummary: lite ? passSummary(parse(u.passes, [])) : undefined, lowPlays: lowP, scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {}, b160: !!u.b160, s160: !!u.s160, only160: !!u.only160, nicheIn: !!u.nicheIn, niche: parse(u.niche, {}) || {}, nicheLim: nicheLim(u), sell160m: u.sell160m || null, sell160h: parse(u.sell160h, []) } : null, real: realN });
+      keep: parse(u.keep, []), touch: parse(u.touch, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: lite ? [] : parse(u.passes, []), passCount: (() => { try { return parse(u.passes, []).length; } catch (e) { return 0; } })(), passSummary: lite ? passSummary(parse(u.passes, [])) : undefined, lowPlays: lowP, scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {}, b160: !!u.b160, s160: !!u.s160, only160: !!u.only160, nicheIn: !!u.nicheIn, niche: parse(u.niche, {}) || {}, nicheLim: nicheLim(u), blist: parse(u.blist, []) || [], sell160m: u.sell160m || null, sell160h: parse(u.sell160h, []) } : null, real: realN });
   }
 
   // A tick in the passes list saves at once: the passes they won't give.
@@ -5650,6 +5665,18 @@ async function handle({ request, env, waitUntil }) {
       if (sell && sm !== 'swaps' && !sh.length) return json({ error: sm === 'one' ? 'Pick the time to sell your 160s (step 6).' : 'Pick at least one time to sell your 160s (step 6).' }, 400);
       // Niche: opted in to be asked to buy, and how many people they ask to buy each of their picks.
       try { await matchCols(db); } catch (e) {}
+      // Blacklist: members only, never themselves, at most 100.
+      if (Array.isArray(b.blist)) {
+        const want = [...new Set(b.blist.map(k => String(k || '').trim().toLowerCase().replace(/^@/, '')).filter(k => k && k !== String(me).toLowerCase()))].slice(0, 100);
+        let ok = [];
+        for (let i = 0; i < want.length; i += 90) { const part = want.slice(i, i + 90);
+          ok = ok.concat((((await db.prepare(`SELECT key FROM swap_users WHERE lower(key) IN (${part.map(() => '?').join(',')})`).bind(...part).all()).results) || []).map(r => String(r.key).toLowerCase())); }
+        await db.prepare('UPDATE swap_users SET blist=? WHERE key=?').bind(JSON.stringify(ok), me).run();
+        // Upcoming swaps and 160s with them that haven't been messaged yet are called off.
+        if (ok.length) { const ph = ok.map(() => '?').join(',');
+          try { for (const m of (((await db.prepare(`SELECT * FROM swap_matches WHERE status='scheduled' AND warnA IS NULL AND warnB IS NULL AND ((a=? AND lower(b) IN (${ph})) OR (b=? AND lower(a) IN (${ph})))`).bind(me, ...ok, me, ...ok).all()).results) || []))
+            await callOff(db, m, `called off: @${me} blacklisted them`, { n: 0, late: 0, soon: 0 }); } catch (e) {}
+          try { await db.prepare(`UPDATE swap_160 SET status='cancelled', note=? WHERE status='pending' AND warnS IS NULL AND warnB IS NULL AND ((buyer=? AND lower(seller) IN (${ph})) OR (seller=? AND lower(buyer) IN (${ph})))`).bind(`called off: @${me} blacklisted them`, me, ...ok, me, ...ok).run(); } catch (e) {} } }
       { const nIn = !only && b.nicheIn ? 1 : 0, old = parse((await db.prepare('SELECT niche FROM swap_users WHERE key=?').bind(me).first() || {}).niche, {}) || {}, nq = {};
         let oc = null; try { oc = await ownerCounts(env); if (!oc.at) oc = null; } catch (e) {}
         for (const [w, v] of Object.entries((b.niche && typeof b.niche === 'object') ? b.niche : {})) {
