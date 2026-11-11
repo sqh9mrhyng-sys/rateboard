@@ -6797,3 +6797,21 @@ export async function wiltProbe(env) {
   try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 7 * 86400 }); } catch (e) {}
 }
 
+// One-off (2026-11-11): card rarities on Boosts - do saved passes carry Real's multiplier since scans became one call?
+export async function multProbe(env, db) {
+  const K = 'diag_multprobe_1111';
+  try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1, at: Date.now() }), { expirationTtl: 3 * 86400 }); } catch (e) { return; }
+  const out = { at: Date.now() };
+  try {
+    const rows = ((await db.prepare("SELECT key, passes, scannedAt FROM swap_users WHERE passes IS NOT NULL AND scannedAt > ? ORDER BY scannedAt DESC LIMIT 12").bind(Date.now() - 2 * 86400000).all()).results) || [];
+    out.members = rows.map(r => { const ps = parse(r.passes, []); return { at: new Date(r.scannedAt).toISOString().slice(5, 16), n: ps.length, withMult: ps.filter(p => p.mult).length, withLevel: ps.filter(p => p.levelLabel).length, sample: ps.filter(p => p.levelLabel && p.levelLabel !== 'General').slice(0, 3).map(p => [p.levelLabel, p.mult]) }; });
+    const u = await db.prepare("SELECT hashId FROM swap_users WHERE key='dennis'").first();
+    const r = await fetch(`https://web.realapp.com/userpasses/${encodeURIComponent(u.hashId)}/passes`, { headers: rsHeaders(scanTok(env)) });
+    out.st = r.status; const d = JSON.parse(await r.text()); const rr = rowsOf(d);
+    const one = rr.find(x => x && x.boostInfo && x.boostInfo.rarityLabel && !/general/i.test(x.boostInfo.rarityLabel)) || rr[0];
+    out.keys = one ? Object.keys(one) : null; out.boostInfo = one ? one.boostInfo || null : null;
+    out.withBoostInfo = rr.filter(x => x && x.boostInfo).length; out.total = rr.length;
+  } catch (e) { out.err = String(e.message || e).slice(0, 150); }
+  try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 3 * 86400 }); } catch (e) {}
+}
+
