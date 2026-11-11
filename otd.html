@@ -752,6 +752,8 @@ $('#scan').addEventListener('click', async () => {
     me = await api('/api/swaps?op=me');
   }
   if(me.error){ $('#lock').hidden = false; $('#lockmsg').textContent = me.error; return; }
+  // Hidden from members for now; admin only.
+  if(!me.admin){ $('#lock').hidden = false; $('#lockmsg').textContent = 'OTD Optimization is off for now - check back soon.'; return; }
   $('#main').hidden = false;
   $('#rsuser').value = (me.profile && me.profile.rsUser) || '';
   setTimeout(resumeScan, 300);

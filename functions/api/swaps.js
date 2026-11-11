@@ -5516,6 +5516,7 @@ async function handle({ request, env, waitUntil }) {
      rax (up to 300) - the pool "best players to add" picks from. Names from
      the search index. Reads the shared saved season (otdSeason), not the log. */
   if (op === 'otdpool') {
+    if (!acc.admin) return forbidden('OTD Optimization is off for now.');
     const sp = String(url.searchParams.get('sport') || ''), se = Number(url.searchParams.get('season'));
     if (!/^[a-z]+$/.test(sp) || !(se > 2000)) return json({ error: 'Pick a sport and season.' }, 400);
     if (!acc.admin && !(await allow(url.origin, 'otdpool:' + me, 30, 600))) return json({ error: 'Too many loads - wait a few minutes.' }, 429);
