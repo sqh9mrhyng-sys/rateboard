@@ -346,6 +346,19 @@
   #page-cbb .modal{max-width:none;max-height:none;overflow:visible}
   #page-cbb .modal .panel-hd{position:static}
   .dtbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .cb-more{margin:8px 0;border:1px solid var(--line);border-radius:12px;padding:0 12px}
+  .cb-more>summary{cursor:pointer;padding:10px 0;font-weight:700;list-style:none}
+  .cb-more>summary::-webkit-details-marker{display:none}
+  .cb-more>summary::before{content:'▸ ';color:var(--mute)}
+  .cb-more[open]>summary::before{content:'▾ '}
+  .cb-more[open]{padding-bottom:10px}
+  .cb-more .dtbar+.dtbar{margin-top:8px}
+  .cb-more .dtbar{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+  .cb-more .dtbar>*{width:100%;min-width:0;flex:none!important;padding-right:28px}
+  .cb-more .dtbar>button{padding-right:12px}
+  #cb-fn{font-weight:600;font-size:12px;color:#141925;background:var(--accent);border-radius:999px;padding:1px 8px;margin-left:4px}
+  #cb-fn:empty{display:none}
+  .cb-scl>summary{cursor:pointer}
   .dtbar .field{width:auto;flex:0 1 auto;padding:8px 10px;font-size:13px;min-width:0}
   .dtbar .field.grow{flex:1 1 150px}
   .dtwrap{overflow:auto;max-height:50vh;border:1px solid var(--line);border-radius:10px}
@@ -4976,9 +4989,18 @@ async function cbbPanel(){
       <button data-cm="hist" aria-pressed="false">Historical</button>
     </div>
     <div id="cb-seasons"><span class="note">Loading seasons&hellip;</span></div>
-    <p class="note" id="cb-scope"></p>
+    <div class="note" id="cb-scope" style="margin:6px 0"></div>
+    <!-- Cleaner layout (2026-11-10): search and the buttons on one line, every
+         other filter folded away under "Filters" with a count of those on. -->
     <div class="dtbar cb-filt">
       <input class="field grow" id="cb-q" placeholder="Player name" autocomplete="off">
+      <button class="btn-ghost" id="cb-cols">Columns</button>
+      <button class="btn-ghost" id="cb-clear">Clear</button>
+      <button class="btn" id="cb-refresh" disabled>Up to date</button>
+    </div>
+    <details class="cb-filt cb-more" id="cb-more">
+      <summary>Filters <span id="cb-fn"></span></summary>
+    <div class="dtbar">
       <select class="field" id="cb-conf"><option value="">Any conference</option></select>
       <select class="field" id="cb-team"><option value="">Any team</option></select>
       <select class="field" id="cb-pos" title="Position in that game - SP is a pitcher's starts"><option value="">Any position</option></select>
@@ -4992,22 +5014,20 @@ async function cbbPanel(){
       <select class="field" id="cb-res"><option value="">W + L</option>
         <option value="W">Wins</option><option value="L">Losses</option></select>
     </div>
-    <div class="dtbar cb-filt">
+    <div class="dtbar">
       <input class="field" id="cb-from" placeholder="From MM-DD" autocomplete="off" style="flex:0 1 120px">
       <input class="field" id="cb-to" placeholder="To MM-DD" autocomplete="off" style="flex:0 1 120px">
       <button class="btn-ghost" id="cb-exact" aria-pressed="false">Exact dates</button>
       <input class="field" id="cb-mg" placeholder="Min games" inputmode="numeric" style="flex:0 1 110px">
       <button class="btn-ghost" id="cb-played" aria-pressed="false">Played only</button>
     </div>
-    <div class="dtbar cb-filt">
+    <div class="dtbar">
       <input class="field" id="cb-mino" placeholder="Min owners" inputmode="numeric" style="flex:0 1 120px">
       <input class="field" id="cb-maxo" placeholder="Max owners" inputmode="numeric" style="flex:0 1 120px">
       <input class="field" id="cb-minr" placeholder="Min rax" inputmode="numeric" style="flex:0 1 110px">
       <input class="field" id="cb-maxr" placeholder="Max rax" inputmode="numeric" style="flex:0 1 110px">
-      <button class="btn-ghost" id="cb-cols">Columns</button>
-      <button class="btn-ghost" id="cb-clear">Clear</button>
-      <button class="btn" id="cb-refresh" disabled>Up to date</button>
     </div>
+    </details>
     <div class="dtbar hide cb-filt" id="cb-colbar"></div>
     <div id="cb-golf" class="hide">
       <div class="dtbar">
@@ -5122,6 +5142,16 @@ async function cbbPanel(){
       <div class="note" id="cb-key-body" style="margin-top:8px"></div>
     </details>`);
   box.querySelector('.modal').classList.add('wide');
+  // How many of the folded-away filters are on, shown on the "Filters" line.
+  const cbFiltCount = () => {
+    let n = 0;
+    for (const id of ['cb-conf','cb-team','cb-pos','cb-type','cb-ha','cb-res','cb-from','cb-to','cb-mg','cb-mino','cb-maxo','cb-minr','cb-maxr']) {
+      const el = box.querySelector('#' + id); if (el && el.value && !el.classList.contains('hide') && el.style.display !== 'none') n++; }
+    for (const id of ['cb-exact','cb-played']) { const el = box.querySelector('#' + id); if (el && el.getAttribute('aria-pressed') === 'true') n++; }
+    const f = box.querySelector('#cb-fn'); if (f) f.textContent = n ? n + ' on' : '';
+  };
+  ['input','change','click'].forEach(ev => box.addEventListener(ev, () => setTimeout(cbFiltCount, 0)));
+  setTimeout(cbFiltCount, 300);
 
   const $b = sel => box.querySelector(sel);
   const sportsOn = () => [...new Set(st.pairs.map(p => p.split('|')[0]))];
@@ -5242,11 +5272,12 @@ async function cbbPanel(){
       const [sp, se] = k.split('|');
       return sportSeason(sp, se);
     });
-    $b('#cb-scope').textContent = !st.pairs.length
-      ? 'Pick at least one season.'
-      : `Showing ${names.join(', ')}`
-        + (st.pairs.length > 1 ? ' — each player gets a row per season.' : '')
-        + (sps.length > 1 ? ' Different sports selected, so only shared columns are shown.' : '');
+    // Many seasons: a count, with the list one tap away, instead of a paragraph of names.
+    const tail = (st.pairs.length > 1 && st.mode === 'players' ? ' Each player gets a row per season.' : '')
+      + (sps.length > 1 ? ' Only columns every sport shares are shown.' : '');
+    $b('#cb-scope').innerHTML = !st.pairs.length ? 'Pick at least one season.'
+      : st.pairs.length <= 3 ? esc(`Showing ${names.join(', ')}.` + tail)
+      : `<details class="cb-scl"><summary>Showing <b>${st.pairs.length} seasons</b> across ${sps.length} sport${sps.length === 1 ? '' : 's'}.${esc(tail)}</summary><div style="margin-top:4px">${esc(names.join(' · '))}</div></details>`;
   }
 
   // Golf has no opponent or result; conferences are a college thing. Anything
