@@ -6787,26 +6787,28 @@ async function handleGet({ request, env, waitUntil }) {
            left out; and the answer is kept 30 minutes, since game data
            changes once a day. */
         if (mode === 'games' && pairs.length > 1) {
-          const ck = 'glg_v1_' + [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(url.search.replace(/[?&](x|_)=[^&]*/g, ''))))].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 40);
+          const ck = 'glg_v2_' + [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(url.search.replace(/[?&](x|_)=[^&]*/g, ''))))].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 40);
           try { const c0 = await env.RATEBOARD_KV.get(ck); if (c0) return new Response(c0, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } }); } catch (e) {}
           const need = Math.min(1000, offset + limit);
           const rest = where.slice(1), restBinds = binds.slice(scopeBinds.length), merged = [];
-          let capped = false;
+          let capped = false, failed = 0, lastErr = '';
           for (const [sp, se] of pairs) {
             const w1 = ['(sport = ? AND season = ?)'].concat(rest).join(' AND ');
             try {
               const r1 = await db.prepare(`SELECT ${GAME_COLS.join(', ')} FROM gamelog WHERE ${w1} ORDER BY ${sort} ${dir} LIMIT ${need}`).bind(sp, se, ...restBinds).all();
               const got = (r1 && r1.results) || []; if (got.length >= need) capped = true;
               for (const row of got) merged.push(row);
-            } catch (e) {}
+            } catch (e) { failed++; lastErr = String((e && e.message) || e); }
           }
+          // Nothing read at all is an error, not "no games" - and nothing short of a clean read is kept (2026-11-10: an overloaded moment was saved as an empty page).
+          if (failed && !merged.length) return json({ error: 'Game data is busy right now - try again in a minute. (' + lastErr.slice(0, 80) + ')' }, 503);
           const txt = ['player', 'team', 'sport', 'opponent', 'day', 'position', 'conference', 'result', 'homeAway', 'seasonType'].includes(sort), sgn = dir === 'ASC' ? 1 : -1;
           merged.sort((a, b) => { const av = a[sort], bv = b[sort];
             if (txt) return sgn * String(av == null ? '' : av).localeCompare(String(bv == null ? '' : bv));
             const an = av == null ? -Infinity : Number(av), bn = bv == null ? -Infinity : Number(bv); return an === bn ? 0 : sgn * (an - bn); });
           const body = JSON.stringify({ mode, sort, dir: dir.toLowerCase(), limit, offset, pairs: pairs.map(([x, y]) => `${x}:${y}`),
             total: capped ? null : merged.length, capped, columns: GAME_COLS, rows: merged.slice(offset, offset + limit) });
-          try { await env.RATEBOARD_KV.put(ck, body, { expirationTtl: 1800 }); } catch (e) {}
+          if (!failed) { try { await env.RATEBOARD_KV.put(ck, body, { expirationTtl: 1800 }); } catch (e) {} }
           return new Response(body, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
         }
 
