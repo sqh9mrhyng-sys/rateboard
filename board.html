@@ -22,6 +22,10 @@
     --r:10px;
   }
   [data-sport="FC"]{ --accent:#3FD0A6; }
+  .seas{font-size:11px;padding:1px 6px;border-radius:6px;background:rgba(63,208,166,.15);color:#3FD0A6;margin-left:4px;vertical-align:middle}
+  .tl{font-size:10px;padding:1px 5px;border-radius:5px;margin-left:5px;font-weight:700;vertical-align:middle}
+  .tl.trusted{background:rgba(80,160,255,.18);color:#7fb6ff}
+  .tl.vet{background:rgba(255,190,60,.18);color:#ffc95a}
   [data-sport="NFL"]{ --accent:#7E9BFF; }
   [data-sport="UFC"]{ --accent:#E5484D; }
   [data-sport="NHL"]{ --accent:#6FC3E8; }
@@ -722,6 +726,13 @@
                 <ul id="b-suggest" class="suggest hide" role="listbox"></ul>
               </div>
               <div id="b-fighter"></div>
+              <div id="b-season-wrap" class="hide" style="margin-top:8px">
+                <label for="b-season">Card season</label>
+                <select id="b-season" class="field">
+                  <option value="2026-27">2026-27</option>
+                  <option value="2025-26">2025-26 (incl. MLS sprint)</option>
+                </select>
+              </div>
             </div>
             <div>
               <label for="b-rate">Rate you'll pay</label>
@@ -3101,7 +3112,12 @@ $('#b-guide-toggle').addEventListener('click', () => {
 const PLAYER_EXAMPLES = { CFB:'Julian Sayin', FC:'Lamine Yamal', NFL:'Josh Allen', UFC:'Jon Jones', NHL:'Connor McDavid', NBA:'Nikola Jokic' };
 function updatePlayerPlaceholder(){
   $('#b-player').placeholder = 'e.g. ' + (PLAYER_EXAMPLES[sport] || '');
+  $('#b-season-wrap').classList.toggle('hide', sport !== 'FC');
 }
+const seasonTag = o => o.sport === 'FC' && o.season ? ` <span class="seas">${esc(o.season)}</span>` : '';
+const LV_RANK = { vet: 2, trusted: 1 };
+const lvOf = u => (market.users[u] || {}).lv;
+const lvTag = u => { const l = lvOf(u); return l ? ` <span class="tl ${l}">${l === 'vet' ? 'Vet' : 'Trusted'}</span>` : ''; };
 updatePlayerPlaceholder();
 
 $('#sport').addEventListener('change', e => {
@@ -3253,14 +3269,15 @@ async function render(){
   updateBell();
   const live = market.offers
     .filter(o => o.sport===sport && !market.users[o.user]?.banned)
-    .sort((a,b) => b.rate - a.rate || a.ts - b.ts);
+    // Same rate: Vet, then Trusted swappers sit higher.
+    .sort((a,b) => b.rate - a.rate || (LV_RANK[lvOf(b.user)]||0) - (LV_RANK[lvOf(a.user)]||0) || a.ts - b.ts);
 
   $('#board-title').textContent = `${SPORTS[sport]} buy offers`;
   $('#board-count').textContent = live.length ? `${live.length} standing` : '';
   $('#board').innerHTML = live.length ? live.map(o => `
     <li class="row ${o.user===me.toLowerCase()?'mine':''}">
       <span class="rate num">${o.rate}<small>/1</small></span>
-      <span><span class="player">${esc(o.player)}</span><br><span class="who">${esc(market.users[o.user]?.name||o.user)}</span></span>
+      <span><span class="player">${esc(o.player)}</span>${seasonTag(o)}<br><span class="who">${esc(market.users[o.user]?.name||o.user)}</span>${lvTag(o.user)}</span>
       <span class="rowacts">${o.user===me.toLowerCase()
         ? `<button class="btn-ghost" data-edit="${o.id}">Change rate</button><button class="btn-ghost btn-danger" data-del="${o.id}">Remove</button>`
         : `<button class="btn-ghost" data-rep="${esc(market.users[o.user]?.name||o.user)}">Report</button>` +
@@ -3276,7 +3293,7 @@ async function render(){
   $('#mine').innerHTML = mine.length ? mine.map(o => `
     <li class="row">
       <span class="rate num">${o.rate}<small>/1</small></span>
-      <span class="player">${esc(o.player)}</span>
+      <span class="player">${esc(o.player)}${seasonTag(o)}</span>
       <span class="rowacts">
         <button class="btn-ghost" data-edit="${o.id}">Change</button>
         <button class="btn-ghost btn-danger" data-del="${o.id}">Remove</button>
@@ -3342,13 +3359,13 @@ $('#b-post').addEventListener('click', async () => {
   }
 
   const posted = await patch('addOffer', {
-    offer: { id:uid(), user:me.toLowerCase(), sport, player, rate, link }
+    offer: { id:uid(), user:me.toLowerCase(), sport, player, rate, link, ...(sport==='FC' ? { season: $('#b-season').value } : {}) }
   });
   if(!posted) return;
   $('#b-player').value=''; $('#b-link').value='';
   closeSuggest();
   renderBuyInstructions();
-  toast(`Posted ${player} at ${rate}/1`);
+  toast(`Posted ${player}${sport==='FC' ? ' ('+$('#b-season').value+')' : ''} at ${rate}/1`);
   render();
 });
 
@@ -3653,7 +3670,7 @@ async function showTopPlayers(){
       key: k,
       buyers: buyers.map(o => ({
         rate: o.rate,
-        who: market.users[o.user]?.name || o.user,
+        who: (market.users[o.user]?.name || o.user) + (o.season ? ' (' + o.season + ')' : ''),
         link: o.link || ''
       }))
     };
@@ -3937,7 +3954,7 @@ async function showMatches(raw){
     // Everyone standing on this player, best price first — not just the top one.
     const buyers = live.filter(o => samePlayer(o.player, p.name))
                        .sort((a,b) => b.rate - a.rate)
-                       .map(o => ({ user:o.user, rate:o.rate, buyer: market.users[o.user]?.name || o.user, link: o.link || '' }));
+                       .map(o => ({ user:o.user, rate:o.rate, buyer: market.users[o.user]?.name || o.user, season: o.season || '', link: o.link || '' }));
     if(buyers.length) hits.push({
       player: p.name,
       value: p.totalValue != null ? p.totalValue : (p.boost != null ? p.boost : null),
@@ -3996,7 +4013,7 @@ async function showMatches(raw){
           <div class="bidder">
             <span class="rate num">${b.rate}<small>/1</small></span>
             <span>
-              <span class="who">${esc(b.buyer)}</span>
+              <span class="who">${esc(b.buyer)}${b.season ? ` <span class="seas">${esc(b.season)}</span>` : ""}</span>
               <div class="note" data-msg="${i}-${j}" style="margin-top:4px"></div>
             </span>
             <span class="hitacts">

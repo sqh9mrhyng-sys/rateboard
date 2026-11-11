@@ -98,6 +98,8 @@ const KV_KEY = 'ratebrd_market_v1';
 const ALLOWED_KEYS = new Set([KV_KEY]);
 const MAX_VALUE_BYTES = 8_000_000;
 const MAX_OFFERS = 20_000;
+const FC_SEASONS = ['2025-26', '2026-27'];
+let seasonColOk = false;
 
 /* ---- backups ----------------------------------------------------------
    These live in D1 alongside the listings, NOT in KV. They used to be KV
@@ -204,7 +206,11 @@ async function readBoard(env, includeHashes) {
   const side = await readSide(env);
   const [offersRes, usersRes] = await Promise.all([
     env.RATEBOARD_DB.prepare(
-      'SELECT id, user, sport, player, rate, link, ts FROM offers').all(),
+      'SELECT id, user, sport, player, rate, link, ts, season FROM offers').all().catch(async () => {
+        // The FC season column is new; add it once and read again.
+        try { await env.RATEBOARD_DB.prepare('ALTER TABLE offers ADD COLUMN season TEXT').run(); } catch (e) {}
+        return env.RATEBOARD_DB.prepare('SELECT id, user, sport, player, rate, link, ts, season FROM offers').all();
+      }),
     env.RATEBOARD_DB.prepare(
       'SELECT key, name, hash, created, banned FROM users').all()
   ]);
@@ -216,12 +222,17 @@ async function readBoard(env, includeHashes) {
       // whether one is set, which is what the page needs to spot a reset.
       : { name: u.name, hasPass: !!u.hash, created: u.created, banned: !!u.banned };
   }
+  // Swap trust levels (Trusted / Vet), only from the swaps cache — never built here.
+  try {
+    const t = JSON.parse((await env.RATEBOARD_KV.get('swap_trust_v1')) || 'null');
+    for (const [k, v] of Object.entries((t && t.m) || {})) if (users[k] && v && v.lv && v.lv !== 'new') users[k].lv = v.lv;
+  } catch (e) {}
   const now = Date.now();
   return {
     users,
     offers: (offersRes.results || []).map(o => ({
       id: o.id, user: o.user, sport: o.sport, player: o.player,
-      rate: o.rate, link: o.link || '', ts: o.ts
+      rate: o.rate, link: o.link || '', ts: o.ts, ...(o.season ? { season: o.season } : {})
     })),
     reports: side.reports, minimums: side.minimums, keeplist: side.keeplist, house: side.house,
     gamedata: side.gamedata, packdata: side.packdata, golfdata: side.golfdata, shiftdata: side.shiftdata,
@@ -252,21 +263,26 @@ async function applyOp(env, body) {
     try { await db.prepare('CREATE TABLE IF NOT EXISTS restricted (key TEXT PRIMARY KEY, at INTEGER, why TEXT)').run();
       if (user && await db.prepare('SELECT 1 AS x FROM restricted WHERE LOWER(key)=?').bind(user.toLowerCase()).first()) return 'your account can no longer post offers'; } catch (e) {}
     const rate = Number(o.rate), link = str(o.link, 300) || '';
+    // FC cards differ by season (e.g. the MLS sprint is still 2025-26).
+    const season = sport === 'FC' && FC_SEASONS.includes(String(o.season)) ? String(o.season) : null;
     if (!user || !player || !sport || !(rate > 0)) return 'bad offer';
 
     const count = await db.prepare('SELECT COUNT(*) AS n FROM offers').first();
     if (count && count.n >= MAX_OFFERS) return 'board is full';
 
+    if (!seasonColOk) { try { await db.prepare('ALTER TABLE offers ADD COLUMN season TEXT').run(); } catch (e) {} seasonColOk = true; }
+    // A season-tagged FC post replaces this person's old untagged one.
+    if (season) await db.prepare("DELETE FROM offers WHERE user=? AND sport='FC' AND player_key=?").bind(user, norm(player)).run();
     // One statement: adds this listing, or updates this person's existing one
     // for the same player. No other row is read or touched, so it can't
     // collide with anyone else posting at the same moment.
     await db.prepare(
-      `INSERT INTO offers (id, user, sport, player, player_key, rate, link, ts)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO offers (id, user, sport, player, player_key, rate, link, ts, season)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user, sport, player_key)
        DO UPDATE SET rate = excluded.rate, player = excluded.player,
-                     link = excluded.link, ts = excluded.ts`
-    ).bind(str(o.id, 40) || uid(), user, sport, player, norm(player), rate, link, Date.now()).run();
+                     link = excluded.link, ts = excluded.ts, season = excluded.season`
+    ).bind(str(o.id, 40) || uid(), user, sport, player, norm(player) + (season ? '|' + season : ''), rate, link, Date.now(), season).run();
     return null;
   }
 

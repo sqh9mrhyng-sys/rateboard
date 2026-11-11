@@ -61,13 +61,27 @@
   body.dragging{user-select:none;-webkit-user-select:none}
   .tl b{display:block;font-size:18px;font-weight:800;margin-bottom:3px}
   .tl span{color:var(--mute);font-size:13px}
+  .hsign{display:flex;flex-direction:column;gap:10px;text-align:left}
+  .hsign input{font:inherit;font-size:16px;padding:12px 14px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
+  .hsign button{font:inherit;font-weight:800;font-size:16px;padding:12px;border-radius:10px;border:0;background:var(--accent);color:#141925;cursor:pointer}
+  .hsign button:disabled{opacity:.6}
   .lock{max-width:460px;margin:14vh auto;text-align:center;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}
   .acct .who .lbl{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <section class="lock" id="lock"><p id="lockmsg">Checking your sign-in…</p></section>
+  <section class="lock" id="lock"><p id="lockmsg">Checking your sign-in…</p>
+    <!-- Sign in right here (member suggestion, 2026-11-11), instead of going to the board first. -->
+    <form id="hsign" class="hsign" hidden autocomplete="on">
+      <h2 style="margin:0 0 4px">Rax Academy</h2>
+      <p class="note" style="margin:0 0 12px">Sign in with your board account.</p>
+      <input id="hs-u" placeholder="Your Real username" autocomplete="username" autocapitalize="off" spellcheck="false">
+      <input id="hs-p" type="password" placeholder="Board password" autocomplete="current-password">
+      <button type="submit" id="hs-go">Sign in</button>
+      <p class="note" id="hs-msg" style="margin:8px 0 0"></p>
+      <p class="note" style="margin:10px 0 0">New here, or forgot your password? <a href="/board">Use the board's sign-in</a>.</p>
+    </form></section>
 
   <div id="page" class="hide">
     <!-- Row 2: active account · all accounts · sign out. -->
@@ -218,12 +232,31 @@ $('#signout').addEventListener('click', async () => {
   location.href = '/board';
 });
 
+// The same sign-in as the board: the password is hashed here the same way, the server checks it.
+async function hsHash(p){ const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('rb1:' + p)); return 's:' + [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
+$('#hsign').addEventListener('submit', async e => {
+  e.preventDefault();
+  const u = $('#hs-u').value.trim(), p = $('#hs-p').value, msg = t => { $('#hs-msg').textContent = t; };
+  if(u.length < 2) return msg('Enter your username.');
+  if(p.length < 4) return msg('Password needs at least 4 characters.');
+  $('#hs-go').disabled = true; msg('Signing in…');
+  let d = null;
+  try{ const r = await fetch('/api/kv', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'auth', key: u.toLowerCase(), name: u, hash: await hsHash(p) }) });
+    d = await r.json().catch(() => null); if(!r.ok || !d || !d.ok){ $('#hs-go').disabled = false; return msg((d && d.error) || 'Could not sign in. Try again.'); } }
+  catch(err){ $('#hs-go').disabled = false; return msg('Could not reach the site. Try again in a moment.'); }
+  const key = u.toLowerCase(), name = d.name || u;
+  ls.set(TOKEN, d.token); ls.set(DEVICE, JSON.stringify({ key, name, ts: Date.now() })); ls.set(SESSION, key);
+  saveAccts([{ key, name, token: d.token }].concat(loadAccts().filter(x => x.key !== key)));
+  location.reload();
+});
+
 (async () => {
   const signIn = 'Sign in on <a href="/board">the board</a> first.';
-  if(!getToken()){ $('#lockmsg').innerHTML = signIn; return; }
+  const showSign = () => { $('#lockmsg').hidden = true; $('#hsign').hidden = false; setTimeout(() => $('#hs-u').focus(), 50); };
+  if(!getToken()){ showSign(); return; }
   let j = await api('/api/rax?market=me');
   for(let i = 0; i < 2 && !j.signedIn && !j.error; i++){ await new Promise(r => setTimeout(r, 1000 * (i + 1))); j = await api('/api/rax?market=me'); }
-  if(!j.signedIn){ $('#lockmsg').innerHTML = j.error && !/sign in/i.test(j.error) ? esc(j.error) : signIn; return; }
+  if(!j.signedIn){ if(j.error && !/sign in/i.test(j.error)) $('#lockmsg').innerHTML = esc(j.error); else showSign(); return; }
   ACC = j;
   const d = loadDevice();
   $('#me').textContent = (d && (d.name || d.key)) || '';
