@@ -98,6 +98,7 @@
       <label class="note">Pack price <select id="price"><option value="200">Pack yourself · 200</option><option value="241">Swapping · 241</option><option value="271">160 back · 271</option><option value="415">Full price · 415</option></select></label>
       <label class="note">Profit over <select id="win"><option value="1">Next month</option><option value="3">Next 3 months</option><option value="6">Next 6 months</option><option value="12" selected>Next year</option><option value="24">Next 2 years</option><option value="0">All-time</option><option value="custom">Pick dates…</option></select></label>
       <label class="note">Rank by <select id="rank"><option value="bal">Balanced (profit and return)</option><option value="profit">Most profit</option><option value="ratio">Best return per 1,000</option></select></label>
+      <label class="note">Min target <select id="mintier"><option value="">Any level</option><option value="Legendary">Legendary+</option><option value="Mystic">Mystic+</option><option value="Iconic">Iconic</option></select></label>
       <label class="note">Min profit <input id="minp" type="number" inputmode="numeric" placeholder="0" style="width:100px"></label>
       <input id="rsuser" placeholder="Real username" autocomplete="off" style="flex:0 1 160px">
       <button id="scan" style="background:var(--accent);color:#141925;border-color:var(--accent);font-weight:700">Scan my passes</button>
@@ -144,7 +145,7 @@
   <section>
     <h2>By player</h2>
     <p class="note">What each pass earns you a year on its own level, counting only the claims it actually wins on your calendar.</p>
-    <div class="scroll"><table><thead><tr><th>Player</th><th>Level</th><th>Games</th><th>Claimed rax / yr</th><th>Lost to the limit</th></tr></thead><tbody id="byp"></tbody></table></div>
+    <div class="scroll"><table><thead><tr><th>Player</th><th>Level</th><th>Games</th><th>Claimed rax / yr</th><th>Lost to the limit</th><th>Flag</th></tr></thead><tbody id="byp"></tbody></table></div>
   </section>
 
   <section>
@@ -427,6 +428,14 @@ function passOptions(i, ctx){
    rax spent, apply it to the calendar, and look again - so every later pick
    already sees the passes bought before it. Stops when the money runs out or
    nothing left makes a profit in the window. */
+/* Lowest target level allowed by "Min target" (e.g. only upgrades that reach Legendary). */
+function tierOk(p, k){
+  const t = $('#mintier').value; if(!t) return true;
+  const L = ladderOf(p), first = L.findIndex(x => String(x[0]).startsWith(t));
+  return first < 0 ? false : k >= first;
+}
+try { const v = localStorage.getItem('otd_mintier'); if(v != null) $('#mintier').value = v; } catch(e) {}
+$('#mintier').addEventListener('change', () => { try { localStorage.setItem('otd_mintier', $('#mintier').value); } catch(e) {} compute(); });
 function plan(){
   const budget = Number($('#budget').value) || 0, el = $('#plan');
   if(!(budget > 0)){ el.innerHTML = '<p class="note">Enter an amount of rax to spend.</p>'; return; }
@@ -438,7 +447,7 @@ function plan(){
     const sc = scanAll(claims), ctx = makeCtx(sc.dayRes, sc.per);
     let best = null;
     P.forEach((p, i) => { for(const o of passOptions(i, ctx)){
-      if(o.cost == null || o.cost <= 0 || o.cost > left || !(o.profit > 0)) continue;
+      if(o.cost == null || o.cost <= 0 || o.cost > left || !(o.profit > 0) || !tierOk(p, o.k)) continue;
       const v = o.profit / o.cost;
       if(!best || v > best.v) best = { ...o, v };
     } });
@@ -486,7 +495,7 @@ function compute(){
       : mode === 'ratio' ? (o.cost ? o.profit / o.cost : -Infinity)
       : o.profit <= 0 ? o.profit : o.profit * Math.sqrt(o.profit / Math.max(1, o.cost));
     let best = null;
-    for(const o of opts){ o.rank = val(o); if(!best || o.rank > best.rank) best = o; }
+    for(const o of opts){ if(!tierOk(p, o.k)) continue; o.rank = val(o); if(!best || o.rank > best.rank) best = o; }
     const minp = Number($('#minp').value);
     if(best && $('#minp').value !== '' && !(best.profit >= minp)) best = null;
     if(best) ups.push(best);
@@ -513,9 +522,15 @@ function compute(){
     <td>${fmt(u.ratio)}</td></tr>`).join('') || '<tr><td colspan="10" class="note">No upgrade clears that profit.</td></tr>';
   if(upOpen != null) drawUp(upOpen);
 
-  const rows = P.map((p, i) => ({ p, ...per.get(i) })).filter(r => r.p.games.length && r.p.mult).sort((a, b) => b.won - a.won);
-  $('#byp').innerHTML = rows.slice(0, 300).map(r => `<tr><td>${nm(r.p)}</td><td>${tag(r.p.lv, r.p)}</td><td>${fmt(r.p.games.length)}</td><td>${fmt(r.won)}</td><td>${fmt(r.lost)}</td></tr>`).join('')
-    || '<tr><td colspan="5" class="note">None of your passes has a claiming level and games yet.</td></tr>';
+  const capped = p => p.capLeft != null && p.capLeft !== Infinity && p.capLeft <= 0;
+  const rows = P.map((p, i) => ({ p, ...per.get(i) })).filter(r => r.p.games.length && (r.p.mult || capped(r.p))).sort((a, b) => b.won - a.won);
+  /* Flags: a pass at its all-time cap earns nothing more until upgraded; one that
+     loses a big share of its claims to the daily limit clashes with your others. */
+  const flag = r => capped(r.p) ? '<span style="color:var(--bad,#f66);font-weight:700">Capped</span>'
+    : r.lost > 0 && r.lost >= (r.won + r.lost) * 0.25 ? `<span style="color:#ffc95a;font-weight:700">Clashes</span> <span class="note">${Math.round(r.lost / (r.won + r.lost) * 100)}% lost</span>`
+    : '';
+  $('#byp').innerHTML = rows.slice(0, 300).map(r => `<tr><td>${nm(r.p)}</td><td>${tag(r.p.lv, r.p)}</td><td>${fmt(r.p.games.length)}</td><td>${fmt(r.won)}</td><td>${fmt(r.lost)}</td><td>${flag(r)}</td></tr>`).join('')
+    || '<tr><td colspan="6" class="note">None of your passes has a claiming level and games yet.</td></tr>';
   drawCal(dayRes);
   drawTargets();
 }
