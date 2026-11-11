@@ -725,7 +725,8 @@ async function run(){
   rows.forEach(r => { if(r.boost) c[r.boost]++; });
   lastOne = { j, sp, url: bpUrl, t: lastOne && lastOne.j === j ? lastOne.t : Date.now() }; drawTot();
   $('#outhead').textContent = `${$('#sport').selectedOptions[0].textContent} · ${$('#day').selectedOptions[0].textContent} · ${rows.length} of your ${j.players} passes play` + (sp === 'golf' ? ` (${j.event || 'this week'}${j.course ? ' · ' + j.course : ''}${j.field === 0 ? ' · field not out yet - showing all your golfers' : ''})` : sp === 'soccer' ? ` (${j.games} games on the slate · lineups out for ${j.lineups || 0}${j.lineupsAt ? ', checked ' + new Date(j.lineupsAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''})` : ` (${j.games} games on the slate)`)
-    + (j.cardsAt ? ` · passes read ${new Date(j.cardsAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : '');
+    + (j.cardsAt ? ` · passes read ${new Date(j.cardsAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : '')
+    + (j.invAt ? ` · boosters read ${new Date(j.invAt).toLocaleString('en-US', { hour: 'numeric', minute: '2-digit' })}` : '');
   if(j.statMode){
     const own0 = r => (j.inv || []).filter(b => b.rarity === r).reduce((t, b) => t + b.count, 0);
     $('#sum').innerHTML = [[5,'legendary'],[4,'epic'],[3,'rare']].map(([r, k]) => `<span><span class="b ${k}">${LBL[k]}</span> use ${c[k]} of ${own0(r)}${j.dayCap ? ` <span class="note">(max ${j.dayCap[r]} today)</span>` : ''}</span>`).join('');

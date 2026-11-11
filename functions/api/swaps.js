@@ -3042,6 +3042,43 @@ async function boostInventory(env, tok, hashId, sp, fresh) {
   if (all.error) return all;
   return { at: all.at, next: all.next, list: (all.sports || {})[sp] || [] };
 }
+/* One sport's boosters, kept close to live for the plan (2026-11-11: a member
+   was told to use boosters he'd already used, from a read hours old). When a
+   sport's saved copy is over 15 minutes old, that one sport is read again -
+   one call to Real, at most 30 a minute across the site; if Real won't answer
+   the saved copy is used. */
+const BOOSTINV_SPORT_EVERY = 15 * 60000;
+function boostListOf(d) {
+  const list = [];
+  for (const g of (((d && d.boosterCardInfo) || {}).rarityGroups || [])) {
+    const mult = parseFloat(String(g.multiplierDisplay || '').replace(/x$/i, '')) || null;
+    for (const k of (g.statBoostKeyInfo || [])) {
+      const attrs = (k.info || []).map(i => ({ stat: String(i.label || ''), boost: parseFloat(i.boostValue) || 0 })).filter(a => a.stat);
+      list.push({ rarity: Number(g.rarity), label: String(g.label || ''), mult, key: String(k.statBoostKey), attrs,
+        stat: attrs.map(a => a.stat).join(' / '), boost: attrs.length ? attrs[0].boost : 0, count: Number(k.count) || 0 });
+    }
+  }
+  return list;
+}
+async function boostInventorySport(env, tok, hashId, sp, origin) {
+  const key = `boostinv_v8_${hashId}`;
+  let c = null;
+  try { c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); } catch (e) {}
+  const at = c ? Number((c.spAt || {})[sp] || c.at || 0) : 0;
+  if (c && Date.now() - at < BOOSTINV_SPORT_EVERY) return { at, list: (c.sports || {})[sp] || [] };
+  try {
+    if (!(await allow(origin, 'boostinv-sp', 30, 60))) throw new Error('busy');
+    const d = await rsGetJson(`https://web.realapp.com/userpassboostercards/undefined/entity/player?displayType=collectionstats&sport=${sp}&userId=${encodeURIComponent(hashId)}&version=stat`, tok);
+    const list = boostListOf(d), now = Date.now();
+    const n = c || { at: now, sports: {} };
+    n.sports = { ...(n.sports || {}), [sp]: list }; n.spAt = { ...(n.spAt || {}), [sp]: now };
+    try { await env.RATEBOARD_KV.put(key, JSON.stringify(n), { expirationTtl: 30 * 86400 }); } catch (e) {}
+    return { at: now, list };
+  } catch (e) {
+    if (c) return { at, list: (c.sports || {})[sp] || [], stale: true };
+    return { error: 'Could not read your boosters from Real.' };
+  }
+}
 /* All four sports' boosters (CBB, CFB, NFL, golf) in one read, at most once every 4 hours per
    member; inside that the saved copy is used. */
 const BOOSTINV_EVERY = 2 * 3600000;
@@ -3078,7 +3115,7 @@ async function boostInventoryAll(env, tok, hashId, fresh, admin) {
       if (add.length) await env.RATEBOARD_KV.put(lk, JSON.stringify(seen.concat(add).slice(-60))); } catch (e) {} }
     await sleep(700);
   }
-  const out = { at: Date.now(), sports };
+  const out = { at: Date.now(), sports, spAt: {} };
   try { await env.RATEBOARD_KV.put(key, JSON.stringify(out), { expirationTtl: 30 * 86400 }); } catch (e) {}
   return { ...out, next: out.at + BOOSTINV_EVERY };
 }
@@ -6188,7 +6225,7 @@ async function handle({ request, env, waitUntil }) {
       .filter(p => p.sport === sp && (Number(p.season) === se || (sp === 'soccer' && Number(p.season) === FC_MLS_SEASON)) && p.kind !== 'team')   // FC: 2025 cards for MLS
       .map(p => ({ id: Number(p.id), name: p.name || '', passId: p.passId || null, season: Number(p.season),
         mult: cardMultOf(p), levelLabel: p.levelLabel || null })) };   // the card's own rarity multiplier, for "Include my card rarities" (2026-11-09)
-    let sched = null, depth = null, inv = null, rows = [], idle = [];
+    let sched = null, depth = null, inv = null, rows = [], idle = [], invAt = null;
     if (sp === 'golf') {
       // Golf: the tournament is the game; form plus course history (see golfRows).
       const gr = await golfRows(env, db, cards, day);
@@ -6196,11 +6233,11 @@ async function handle({ request, env, waitUntil }) {
       ({ sched, rows, idle } = gr);
       // Their golf boosters, read with the other sports' (caps the plan at what they hold).
       try { const uu = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(me).first();
-        if (uu && uu.hashId) { const r = await boostInventory(env, env.RS_AUTH_TOKEN || auth, uu.hashId, 'golf', false); if (!r.error && r.list && r.list.length) inv = r.list; } } catch (e) {}
+        if (uu && uu.hashId) { const r = await boostInventorySport(env, env.RS_AUTH_TOKEN || auth, uu.hashId, 'golf', url.origin); invAt = r.at || null; if (!r.error && r.list && r.list.length) inv = r.list; } } catch (e) {}
     } else if (sp === 'soccer') {
       // FC: ESPN's slate and lineups, the game log's starts (see fcRows). Boosters first - the stat counts follow them.
       try { const uu = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(me).first();
-        if (uu && uu.hashId) { const r = await boostInventory(env, env.RS_AUTH_TOKEN || auth, uu.hashId, 'soccer', false); if (!r.error && r.list && r.list.length) inv = r.list; } } catch (e) {}
+        if (uu && uu.hashId) { const r = await boostInventorySport(env, env.RS_AUTH_TOKEN || auth, uu.hashId, 'soccer', url.origin); invAt = r.at || null; if (!r.error && r.list && r.list.length) inv = r.list; } } catch (e) {}
       const fr = await fcRows(env, db, cards, day, inv);
       if (fr.error) return json({ error: fr.error }, 502);
       ({ sched, rows, idle } = fr);
@@ -6244,7 +6281,7 @@ async function handle({ request, env, waitUntil }) {
       depth = sp === 'nfl' ? await boostDepth(env, sched) : null;
       // The member's boosters, if Real will give them.
       try { const uu = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(me).first();
-        if (uu && uu.hashId) { const r = await boostInventory(env, env.RS_AUTH_TOKEN || auth, uu.hashId, sp, false); if (!r.error) inv = r.list; } } catch (e) {}
+        if (uu && uu.hashId) { const r = await boostInventorySport(env, env.RS_AUTH_TOKEN || auth, uu.hashId, sp, url.origin); invAt = r.at || null; if (!r.error) inv = r.list; } } catch (e) {}
       // Current teams from ESPN's rosters (CBB: transfers and freshmen), and
       // how much each opponent gave up last season and this one.
       let roster = {}, match = {};
@@ -6519,7 +6556,7 @@ async function handle({ request, env, waitUntil }) {
     for (const k of Object.keys(totals)) totals[k] = Math.round(totals[k]);
     if (inv) used = inv.map((b, i) => ({ ...b, used: b.count - left[i].count }));
 
-    return json({ sport: sp, season: se, date: day, mode, bars: bars.map(x => Number.isFinite(x) ? x : null), cutAt, totals, lineups: sched.lineups ?? null, lineupsAt: sched.lineupsAt || null, started: sched.started ?? null, legCap: inv && Number.isFinite(dayCap[5]) ? dayCap[5] : null, inv: used, statMode: !!used, rsUser: u.rsUser, cardsAt: cards.at, games: sched.games, event: sched.event || null, course: sched.course || null, field: sched.field ?? null, depth: !!depth,
+    return json({ sport: sp, season: se, date: day, mode, bars: bars.map(x => Number.isFinite(x) ? x : null), cutAt, totals, lineups: sched.lineups ?? null, lineupsAt: sched.lineupsAt || null, started: sched.started ?? null, legCap: inv && Number.isFinite(dayCap[5]) ? dayCap[5] : null, inv: used, statMode: !!used, rsUser: u.rsUser, cardsAt: cards.at, invAt, games: sched.games, event: sched.event || null, course: sched.course || null, field: sched.field ?? null, depth: !!depth,
       rows, notPlaying: idle.length, players: cards.players.length });
   }
 
