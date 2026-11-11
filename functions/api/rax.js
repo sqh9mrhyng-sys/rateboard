@@ -6875,30 +6875,38 @@ async function handleGet({ request, env, waitUntil }) {
     if (glArg === 'facets') {
       try {
         const fp = [];
-        for (const bit of ((url.searchParams.get('seasons') || '').split(',')).slice(0, 30)) {
+        for (const bit of ((url.searchParams.get('seasons') || '').split(',')).slice(0, 60)) {
           const [sp, se] = String(bit).split(':');
           if (SPORTS.has(String(sp).toLowerCase()) && /^\d{4}$/.test(se)) fp.push([String(sp).toLowerCase(), Number(se)]);
         }
         if (!fp.length) fp.push([sport, Number(season)]);
-        const fScope = '(' + fp.map(() => '(sport = ? AND season = ?)').join(' OR ') + ')';
-        const fBinds = [];
-        for (const [sp, se] of fp) fBinds.push(sp, se);
-        const t = await db.prepare(
-          `SELECT DISTINCT team AS k FROM gamelog WHERE ${fScope} AND team IS NOT NULL ORDER BY team`)
-          .bind(...fBinds).all();
-        const cf = await db.prepare(
-          `SELECT DISTINCT conference AS k FROM gamelog
-            WHERE ${fScope} AND conference IS NOT NULL AND conference <> '-' ORDER BY conference`)
-          .bind(...fBinds).all();
-        const d = await db.prepare(
-          `SELECT MIN(day) AS first, MAX(day) AS last FROM gamelog WHERE ${fScope}`)
-          .bind(...fBinds).first();
-        let pos = [];
-        try { pos = ((await db.prepare(`SELECT position AS k, COUNT(*) AS n FROM gamelog WHERE ${fScope} AND position IS NOT NULL AND position <> '' GROUP BY position ORDER BY n DESC`)
-          .bind(...fBinds).all()).results || []).map(x => x.k); } catch (e) {}
-        return json({ teams: ((t && t.results) || []).map(x => x.k),
-                      conferences: ((cf && cf.results) || []).map(x => x.k), positions: pos,
-                      dates: d || null });
+        /* Each season's lists are worked out once and kept in KV (12 hours
+           for a season being played, a week otherwise), then joined here.
+           2026-11-10: these were four scans of the whole game log across every
+           picked season, again for each change of selection - with 44 seasons
+           picked that overloaded the database for everyone. */
+        const one = async (sp, se) => {
+          const K = `glfacet_v1_${sp}_${se}`;
+          try { const c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (c) return c; } catch (e) {}
+          const t = await db.prepare(`SELECT DISTINCT team AS k FROM gamelog WHERE sport = ? AND season = ? AND team IS NOT NULL`).bind(sp, se).all();
+          const cf = await db.prepare(`SELECT DISTINCT conference AS k FROM gamelog WHERE sport = ? AND season = ? AND conference IS NOT NULL AND conference <> '-'`).bind(sp, se).all();
+          const d = await db.prepare(`SELECT MIN(day) AS first, MAX(day) AS last FROM gamelog WHERE sport = ? AND season = ?`).bind(sp, se).first();
+          let pos = [];
+          try { pos = ((await db.prepare(`SELECT position AS k, COUNT(*) AS n FROM gamelog WHERE sport = ? AND season = ? AND position IS NOT NULL AND position <> '' GROUP BY position`).bind(sp, se).all()).results || []).map(x => [x.k, x.n]); } catch (e) {}
+          const c = { teams: ((t && t.results) || []).map(x => x.k), conferences: ((cf && cf.results) || []).map(x => x.k), positions: pos, dates: d || null };
+          const live = Number(se) >= (({ ncaaf: 2026, ncaam: 2027, nfl: 2026, nba: 2027, nhl: 2026, soccer: 2026, mlb: 2026, wnba: 2026 })[sp] || 9999);
+          try { await env.RATEBOARD_KV.put(K, JSON.stringify(c), { expirationTtl: live ? 12 * 3600 : 7 * 86400 }); } catch (e) {}
+          return c;
+        };
+        const teams = new Set(), confs = new Set(), posN = new Map(); let first = null, last = null;
+        for (const [sp, se] of fp) {
+          const c = await one(sp, se);
+          c.teams.forEach(x => teams.add(x)); c.conferences.forEach(x => confs.add(x));
+          for (const [k, n] of c.positions) posN.set(k, (posN.get(k) || 0) + n);
+          if (c.dates) { if (c.dates.first && (!first || c.dates.first < first)) first = c.dates.first; if (c.dates.last && (!last || c.dates.last > last)) last = c.dates.last; }
+        }
+        return json({ teams: [...teams].sort(), conferences: [...confs].sort(),
+                      positions: [...posN.entries()].sort((x, y) => y[1] - x[1]).map(x => x[0]), dates: { first, last } });
       } catch (e) { return json({ error: String((e && e.message) || e) }, 500); }
     }
 
