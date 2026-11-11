@@ -6202,17 +6202,21 @@ async function handle({ request, env, waitUntil }) {
       // Game-by-game for this season and averages for last, from the game log.
       const ids = [...new Set(cards.players.map(p => Number(p.id)).filter(Number.isFinite))];
       const games = new Map(), old = new Map();
+      /* A game he sat out isn't a game (2026-11-11: Luka read as 93 rax in 12
+         games, 7.8 a game, when he'd played 10 - 9.3). Out = no minutes, or
+         no minutes and no stats at all where minutes aren't kept. */
+      const sat = x => (x.min != null && Number(x.min) <= 0) || (x.min == null && !Number(x.rax) && x.pts == null && x.reb == null && x.ast == null && !x.stats);
       for (let i = 0; i < ids.length; i += 90) {
         const part = ids.slice(i, i + 90), ph = part.map(() => '?').join(',');
         try {
           const r = await db.prepare(`SELECT playerId, day, rax, min, team, position, player, pts, reb, ast, stl, blk, fg3${sp === 'ncaam' ? '' : ', stats'} FROM gamelog
             WHERE sport=? AND season=? AND rax IS NOT NULL AND COALESCE(seasonType, 'regularseason') <> 'preseason' AND playerId IN (${ph}) ORDER BY day`).bind(sp, se, ...part).all();   // no preseason (2026-11-09: five 0s each pulled NBA stars down)
-          for (const x of (r.results || [])) (games.get(Number(x.playerId)) || games.set(Number(x.playerId), []).get(Number(x.playerId))).push(x);
+          for (const x of (r.results || [])) if (!sat(x)) (games.get(Number(x.playerId)) || games.set(Number(x.playerId), []).get(Number(x.playerId))).push(x);
         } catch (e) {}
         try {
           const r = await db.prepare(`SELECT playerId, team, position, day, rax, min, player, pts, reb, ast, stl, blk, fg3${sp === 'ncaam' ? '' : ', stats'} FROM gamelog
             WHERE sport=? AND season=? AND rax IS NOT NULL AND seasonType='regularseason' AND playerId IN (${ph}) ORDER BY day`).bind(sp, prev, ...part).all();
-          for (const x of (r.results || [])) { const k = Number(x.playerId); const o = old.get(k) || { rows: [] }; o.rows.push(x); old.set(k, o); }
+          for (const x of (r.results || [])) { if (sat(x)) continue; const k = Number(x.playerId); const o = old.get(k) || { rows: [] }; o.rows.push(x); old.set(k, o); }
         } catch (e) {}
       }
       // NFL starters from ESPN's depth charts, for the teams playing that day.
