@@ -713,22 +713,22 @@ async function run(){
   try{ localStorage.setItem('boosts_pick_v1', JSON.stringify({ sport: sp, mode })); }catch(e){} saveMode(sp, mode);
   $('#run').disabled = true; $('#out').hidden = false; $('#copybtn').hidden = true; copyText = ''; $('#rows').innerHTML = ''; $('#simple').innerHTML = ''; $('#sum').innerHTML = ''; $('#foot').textContent = '';
   $('#outhead').textContent = 'Working it out…';
-  const j = await api(`/api/swaps?op=boostplan&page=boosts&sport=${sp}&date=${day}&mode=${mode}` + (mode === 'custom' ? cusQuery() : '') + (hideStarted() ? '&upcoming=1' : ''));
+  const bpUrl = `/api/swaps?op=boostplan&page=boosts&sport=${sp}&date=${day}&mode=${mode}` + (mode === 'custom' ? cusQuery() : '') + (hideStarted() ? '&upcoming=1' : '');
+  // Redrawing (the card-rarity toggle) reuses the answer from the last 5 minutes instead of asking again.
+  const j = redrawOnly && lastOne && lastOne.url === bpUrl && Date.now() - lastOne.t < 300000 ? lastOne.j : await api(bpUrl);
+  redrawOnly = false;
   $('#hidestart').hidden = false; paintHide(j.started);
   $('#run').disabled = false;
   if(j.error){ $('#outhead').textContent = j.error; return; }
   const rows = j.rows || [];
   const c = { legendary: 0, epic: 0, rare: 0 };
   rows.forEach(r => { if(r.boost) c[r.boost]++; });
-  const t = j.totals || {};
-  $('#tot').innerHTML = `<div><span class="note">Projected rax, no boosts</span><b>${(t.base || 0).toLocaleString()}</b></div>`
-    + `<div><span class="note">With recommended boosts</span><b style="color:var(--accent)">${(t.recBoosted || 0).toLocaleString()}</b></div>`
-    + (j.cutAt != null ? `<div><span class="note">With every Rare above the floor</span><b>${(t.boosted || 0).toLocaleString()}</b></div>` : '');
+  lastOne = { j, sp, url: bpUrl, t: lastOne && lastOne.j === j ? lastOne.t : Date.now() }; drawTot();
   $('#outhead').textContent = `${$('#sport').selectedOptions[0].textContent} · ${$('#day').selectedOptions[0].textContent} · ${rows.length} of your ${j.players} passes play` + (sp === 'golf' ? ` (${j.event || 'this week'}${j.course ? ' · ' + j.course : ''}${j.field === 0 ? ' · field not out yet - showing all your golfers' : ''})` : sp === 'soccer' ? ` (${j.games} games on the slate · lineups out for ${j.lineups || 0}${j.lineupsAt ? ', checked ' + new Date(j.lineupsAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''})` : ` (${j.games} games on the slate)`)
     + (j.cardsAt ? ` · passes read ${new Date(j.cardsAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : '');
   if(j.statMode){
-    const own = r => (j.inv || []).filter(b => b.rarity === r).reduce((t, b) => t + b.count, 0);
-    $('#sum').innerHTML = [[5,'legendary'],[4,'epic'],[3,'rare']].map(([r, k]) => `<span><span class="b ${k}">${LBL[k]}</span> use ${c[k]} of ${own(r)}${j.dayCap ? ` <span class="note">(max ${j.dayCap[r]} today)</span>` : ''}</span>`).join('');
+    const own0 = r => (j.inv || []).filter(b => b.rarity === r).reduce((t, b) => t + b.count, 0);
+    $('#sum').innerHTML = [[5,'legendary'],[4,'epic'],[3,'rare']].map(([r, k]) => `<span><span class="b ${k}">${LBL[k]}</span> use ${c[k]} of ${own0(r)}${j.dayCap ? ` <span class="note">(max ${j.dayCap[r]} today)</span>` : ''}</span>`).join('');
     $('#invout').hidden = false; $('#invout').innerHTML = invHtml(j.inv); $('#invmsg').textContent = 'What you hold, and what today\'s plan uses.';
   } else {
     $('#sum').innerHTML = ['legendary','epic','rare'].map((k, i) => `<span><span class="b ${k}">${LBL[k]}</span> × ${c[k]} <span class="note">(${j.bars ? (j.bars[i] == null ? 'off' : j.bars[i] + '+ proj') : ''})</span></span>`).join('');
@@ -748,8 +748,8 @@ async function run(){
       <td data-l="Boost" class="${r.boost && r.best ? 'bcell' : ''}" style="text-align:left;white-space:normal">${r.boost && r.best ? `<b>${one(r.best)}</b>${r.alt ? `<span class="sub">or ${one(r.alt)}</span>` : ''}<button class="bdone${doneSet.has(doneKey(r)) ? ' on' : ''}" data-done="${esc(doneKey(r))}" aria-label="Boosted" title="Mark as boosted"></button>` : '<span class="note">–</span>'}</td>
       <td data-l="${golf ? 'Event' : 'Game'}" style="text-align:left">${golf ? esc(r.opp) : `${r.home ? 'vs' : '@'} ${esc(r.opp)}`}<span class="sub">${golf && r.at ? 'Starts ' + new Date(r.at).toLocaleDateString('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' }) : tm(r.at)}${fc && FC_LG[r.lg] ? ' · ' + FC_LG[r.lg] : ''}</span>${fc ? luChip(r) : ''}</td>
       <td data-l="${golf ? 'Form' : 'Avg rax'}">${r.avg != null ? r.avg + `<span class="sub">${r.games} ${golf ? 'event' : 'game'}${r.games === 1 ? '' : 's'}${r.avgLast != null ? (golf ? ' · here ' : ' · last yr ') + r.avgLast : ''}</span>` : r.avgLast != null ? `–<span class="sub">${golf ? 'here' : 'last yr'} ${r.avgLast}</span>` : '–'}</td>
-      <td data-l="Proj rax">${r.proj == null ? 'no data' : r.proj}</td>
-      <td data-l="Proj w/ boost"><b>${r.boost && r.withBoost != null ? Math.round(r.withBoost).toLocaleString() : (r.proj ?? '–')}</b>${r.boost && r.withBoost != null ? `<span class="sub">${r.proj} × ${r.mult} + ${(r.best && r.best.gain) || 0}</span>` : ''}</td></tr>`;
+      <td data-l="Proj rax">${r.proj == null ? 'no data' : projC(r)}${cardX(r) ? `<span class="sub">${r.proj} × ${cardX(r)} card</span>` : ''}</td>
+      <td data-l="Proj w/ boost"><b>${r.boost && r.withBoost != null ? Math.round(wbC(r)).toLocaleString() : (projC(r) ?? '–')}</b>${r.boost && r.withBoost != null ? `<span class="sub">${wbTxt(r)}</span>` : ''}</td></tr>`;
   }).join('');
   const boosted = rows.filter(r => r.boost && r.best);
   // Copy (Dennis, 2026-11-08): the recommended boosts for this sport and day as a
@@ -792,6 +792,28 @@ let allLast = null, allCum = null;
    with the recommended boosts, and without. "Include my card rarities" also
    multiplies each player by his pass's own multiplier (an Iconic Josh Allen). */
 const withCards = () => { try{ return localStorage.getItem('boosts_cardmult_v1') === '1'; }catch(e){ return false; } };
+/* With "Include my card rarities" on (Dennis, 2026-11-11: on every tab and every
+   player, not just the All sports total). The card's multiplier comes from its
+   rating (server). A General card (1x) is just the booster; above General the
+   booster's and the card's multipliers add; the attribute's extra is added once. */
+const cardX = r => { const m = Number(r.pm) || 1; return withCards() && m > 1 ? m : 0; };
+const projC = r => r.proj == null ? null : Math.round(r.proj * (cardX(r) || 1) * 10) / 10;
+const wbC = r => { if(r.withBoost == null) return null; const c = cardX(r); return c ? Math.round((r.proj * ((Number(r.mult) || 1) + c) + ((r.best && r.best.gain) || 0)) * 10) / 10 : r.withBoost; };
+const wbTxt = r => `${r.proj} × ${cardX(r) ? `(${r.mult} + ${cardX(r)} card)` : r.mult} + ${(r.best && r.best.gain) || 0}`;
+const cardTgl = () => `<button class="sm tgl" type="button" aria-pressed="${withCards()}">Include my card rarities: ${withCards() ? 'on' : 'off'}</button>`;
+let lastOne = null, redrawOnly = false;
+// One sport's totals, worked out here so "Include my card rarities" counts too.
+function drawTot(){
+  if(!lastOne) return; const { j } = lastOne, rows = j.rows || [];
+  let base = 0, rec = 0, all = 0;
+  for(const r of rows){ if(r.skip || r.proj == null) continue; const p = projC(r), w = wbC(r) ?? p;
+    base += p; all += r.boost ? w : p; rec += r.boost && !r.belowCut ? w : p; }
+  const f = v => Math.round(v).toLocaleString();
+  $('#tot').innerHTML = `<div><span class="note">Projected rax, no boosts</span><b>${f(base)}</b></div>`
+    + `<div><span class="note">With recommended boosts</span><b style="color:var(--accent)">${f(rec)}</b></div>`
+    + (j.cutAt != null ? `<div><span class="note">With every Rare above the floor</span><b>${f(all)}</b></div>` : '')
+    + `<div style="flex-basis:100%">${cardTgl()}</div>`;
+}
 function drawCum(){
   const res = allCum; if(!res){ $('#allcum').hidden = true; return; }
   const cm = withCards(); let base = 0, rec = 0, n = 0; const by = [];
@@ -800,9 +822,9 @@ function drawCum(){
       /* A card above General adds its own multiplier to the booster's (Dennis, 2026-11-09:
          a Common card with a Rare booster is 10x + 2x = 12x); a General card is just the booster.
          With no booster the card's multiplier alone. The attribute's extra is added on top. */
-      const m = cm ? (Number(r.pm) || 1) : 1, card = m > 1 ? m : 0, rec = r.boost && r.best && !r.belowCut;
-      sb += r.proj * (cm ? m : 1);
-      sr += rec ? (card ? r.proj * ((Number(r.mult) || 1) + card) + ((r.best && r.best.gain) || 0) : (r.withBoost ?? r.proj)) : r.proj * (cm ? m : 1); }
+      const rec = r.boost && r.best && !r.belowCut;
+      sb += projC(r);
+      sr += rec ? (wbC(r) ?? projC(r)) : projC(r); }
     base += sb; rec += sr; if(sr > 0) by.push([x.lbl, sr]); }
   if(!n){ $('#allcum').hidden = true; return; }
   const f = v => Math.round(v).toLocaleString();
@@ -811,9 +833,13 @@ function drawCum(){
     + `<div class="big"><b>${f(rec)}</b><span class="note">with recommended boosts</span></div>`
     + `<div class="sub2">${f(base)} without boosts · ${n} player${n === 1 ? '' : 's'} playing</div>`
     + `<div class="bysp">${by.sort((a, b) => b[1] - a[1]).map(([l, v]) => `<span>${l} ${f(v)}</span>`).join('')}</div>`
-    + `<button class="sm tgl" type="button" aria-pressed="${cm}">Include my card rarities: ${cm ? 'on' : 'off'}</button>`;
+    + cardTgl();
 }
-$('#allcum').addEventListener('click', e => { if(!e.target.closest('.tgl')) return; try{ localStorage.setItem('boosts_cardmult_v1', withCards() ? '0' : '1'); }catch(err){} drawCum(); });
+// The toggle on either tab flips both, and redraws whatever is on screen.
+function flipCards(){ try{ localStorage.setItem('boosts_cardmult_v1', withCards() ? '0' : '1'); }catch(err){} drawCum(); drawTot();
+  if(lastOne && !$('#out').hidden){ redrawOnly = true; $('#run').click(); } if(allLast && !$('#allout').hidden) runAll(true); }
+$('#allcum').addEventListener('click', e => { if(!e.target.closest('.tgl')) return; flipCards(); });
+$('#tot').addEventListener('click', e => { if(!e.target.closest('.tgl')) return; flipCards(); });
 async function runAll(reuse){
   const day = $('#day').value, ask = ++allAsk;
   $('#out').hidden = true; $('#allout').hidden = false; $('#allcopy').hidden = true; allCopy = ''; $('#allcum').hidden = true; $('#allsum').innerHTML = ''; $('#alllist').innerHTML = '';
@@ -853,7 +879,7 @@ async function runAll(reuse){
     if(!rec.length) quiet.push(`${x.lbl} (${MODE_LBL[x.m] || x.m}): ${rows.length ? 'no boosters recommended' : 'none of your passes play'}`);
     rec.forEach(r => { tot[r.boost]++; copyRows.push([x.sp, r, j, x]); });
   }
-  const val = r => Number(r.withBoost != null ? r.withBoost : r.proj) || 0;
+  const val = r => Number(r.withBoost != null ? wbC(r) : projC(r)) || 0;
   copyRows.sort((a, b) => RANKR[a[1].boost] - RANKR[b[1].boost] || val(b[1]) - val(a[1]));
   const doneOf = {};
   const dOf = (sp, x) => { const dk = sp + ':' + x.date; return [dk, doneOf[dk] || (doneOf[dk] = loadDone(dk))]; };
@@ -866,8 +892,8 @@ async function runAll(reuse){
         <td data-l="Boost" class="bcell" style="text-align:left;white-space:normal"><b>${one(r.best)}</b>${r.alt ? `<span class="sub">or ${one(r.alt)}</span>` : ''}<button class="bdone${on ? ' on' : ''}" data-alldone="${esc(dk)}" data-done="${esc(k)}" aria-label="Boosted" title="Mark as boosted"></button></td>
         <td data-l="${golf ? 'Event' : 'Game'}" style="text-align:left">${golf ? esc(r.opp) : `${r.home ? 'vs' : '@'} ${esc(r.opp || '')}`}<span class="sub">${golf ? '' : tm(r.at)}${sp === 'soccer' && FC_LG[r.lg] ? ' · ' + FC_LG[r.lg] : ''}</span>${sp === 'soccer' ? luChip(r) : ''}</td>
         <td data-l="${golf ? 'Form' : 'Avg rax'}">${r.avg != null ? r.avg + `<span class="sub">${r.games} ${golf ? 'event' : 'game'}${r.games === 1 ? '' : 's'}${r.avgLast != null ? (golf ? ' · here ' : ' · last yr ') + r.avgLast : ''}</span>` : r.avgLast != null ? `–<span class="sub">${golf ? 'here' : 'last yr'} ${r.avgLast}</span>` : '–'}</td>
-        <td data-l="Proj rax">${r.proj == null ? 'no data' : r.proj}</td>
-        <td data-l="Proj w/ boost"><b>${r.withBoost != null ? Math.round(r.withBoost).toLocaleString() : (r.proj ?? '–')}</b>${r.withBoost != null ? `<span class="sub">${r.proj} × ${r.mult} + ${(r.best && r.best.gain) || 0}</span>` : ''}</td></tr>`; }).join('') + '</tbody></table></div>' : '';
+        <td data-l="Proj rax">${r.proj == null ? 'no data' : projC(r)}${cardX(r) ? `<span class="sub">${r.proj} × ${cardX(r)} card</span>` : ''}</td>
+        <td data-l="Proj w/ boost"><b>${r.withBoost != null ? Math.round(wbC(r)).toLocaleString() : (projC(r) ?? '–')}</b>${r.withBoost != null ? `<span class="sub">${wbTxt(r)}</span>` : ''}</td></tr>`; }).join('') + '</tbody></table></div>' : '';
   $('#alllist').innerHTML = full ? full + (quiet.length ? `<div class="allnone">${quiet.map(esc).join('<br>')}</div>` : '') : (copyRows.length ? '<div class="allsp">' + copyRows.map(([sp, r, j, x]) => {
       const [dk, done] = dOf(sp, x), u = passUrl(sp, r, j), k = doneKey(r), on = done.has(k);
       return `<div class="srow${on ? ' boosted' : ''}"${u ? ` data-href="${esc(u)}"` : ''}><span class="snm">${u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.name)}</a>` : esc(r.name)}</span><span class="smeta"><span class="spl">${x.lbl}</span><span class="b ${r.boost}">${LBL[r.boost]}</span><b class="sat">${esc(r.best.label)}</b>${r.withBoost != null ? `<span class="note">${Math.round(r.withBoost)} proj</span>` : ''}${(r.flags || []).length ? `<span class="flag" style="display:inline">⚠ ${esc(r.flags[0])}</span>` : ''}</span><button class="bdone${on ? ' on' : ''}" data-alldone="${esc(dk)}" data-done="${esc(k)}" aria-label="Boosted" title="Mark as boosted"></button></div>`; }).join('') + '</div>' : '')

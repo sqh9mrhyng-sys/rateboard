@@ -363,6 +363,19 @@ async function packAvg(db, cache, key) {
    2026-11-04): a pack of a thin player is mostly the same few cards. Counts
    come from pack data (each season's saved board), kept 12 hours as a small
    id -> plays map. A season with no pack data at all isn't held back. */
+/* A pass's own multiplier, worked out from its rating (Dennis, 2026-11-11).
+   Real's own figure is fine below Legendary (Rare 4x, Epic 10x), but from
+   Legendary up it sends two kinds: "Legendary 2" 28x, "Iconic 1" 150x - and
+   for some passes just "Legendary" 2.5x, "Mystic" 4x, "Iconic" 6x. So from
+   380 rating (Legendary 1) the level and its multiplier come from the
+   rating, on the same ladder as Pack data. */
+const CARD_LADDER = [[380, 25], [520, 28], [720, 32], [1000, 35], [1180, 40], [1380, 75], [1560, 79], [1760, 83], [1980, 87], [2220, 91], [2480, 95], [2760, 98], [3000, 101], [3180, 103], [3250, 105],
+  [3380, 150], [3820, 153], [4320, 156], [4920, 159], [5620, 163], [6420, 167], [7320, 171], [8320, 175], [9420, 180], [10620, 185], [12000, 190], [13600, 196], [15400, 202], [17500, 208], [19900, 214], [22700, 220], [26000, 226], [29000, 233], [34500, 240], [40000, 250]];
+function cardMultOf(p) {
+  const r = Number(p && p.rating);
+  if (Number.isFinite(r) && r >= 380) { let m = 25; for (const [at, x] of CARD_LADDER) if (r >= at) m = x; return m; }
+  return (p && p.mult) || null;
+}
 const MIN_PLAYS = 30;   // 27 until 2026-11-10
 async function playsMap(env, db, sp, se) {
   const k = `plays_ct_v1_${sp}_${se}`;
@@ -6174,7 +6187,7 @@ async function handle({ request, env, waitUntil }) {
     const cards = { at: u.scannedAt || null, players: parse(u.passes, [])
       .filter(p => p.sport === sp && (Number(p.season) === se || (sp === 'soccer' && Number(p.season) === FC_MLS_SEASON)) && p.kind !== 'team')   // FC: 2025 cards for MLS
       .map(p => ({ id: Number(p.id), name: p.name || '', passId: p.passId || null, season: Number(p.season),
-        mult: p.mult || null, levelLabel: p.levelLabel || null })) };   // the card's own rarity multiplier, for "Include my card rarities" (2026-11-09)
+        mult: cardMultOf(p), levelLabel: p.levelLabel || null })) };   // the card's own rarity multiplier, for "Include my card rarities" (2026-11-09)
     let sched = null, depth = null, inv = null, rows = [], idle = [];
     if (sp === 'golf') {
       // Golf: the tournament is the game; form plus course history (see golfRows).
