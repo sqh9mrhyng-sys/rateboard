@@ -7319,6 +7319,22 @@ export async function keepProbe(env, db) {
   try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 2 * 86400 }); } catch (e) {}
 }
 
+/* One-off (2026-11-12 08:50 AK): Dennis got a "You have 6 swaps" DM with no swaps active. His own swaps around now (counts and times only). */
+export async function dennisProbe(env, db) {
+  const K = 'diag_dennis_1112b';
+  try { if (await env.RATEBOARD_KV.get(K)) return; } catch (e) { return; }
+  const out = { at: Date.now() };
+  try {
+    const u = await db.prepare("SELECT active, confirmDay, updatedAt, slots, sched FROM swap_users WHERE key='dennis'").first();
+    out.user = u ? { active: u.active, confirmDay: u.confirmDay, updatedAt: u.updatedAt, slots: u.slots, sched: String(u.sched || '').slice(0, 300) } : null;
+    const ms = ((await db.prepare("SELECT id, a, b, status, createdAt, dueAt, slot, warnA, warnB, note FROM swap_matches WHERE (a='dennis' OR b='dennis') AND createdAt > ?").bind(Date.now() - 6 * 3600000).all()).results) || [];
+    out.matches = ms.map(m => ({ id: m.id, st: m.status, made: m.createdAt, due: m.dueAt, slot: m.slot, side: m.a === 'dennis' ? 'a' : 'b', warned: m.a === 'dennis' ? m.warnA : m.warnB, note: String(m.note || '').replace(/@\S+/g, '@x').slice(0, 80) }));
+    const q = ((await db.prepare("SELECT label, at, tries FROM dm_retry ORDER BY id LIMIT 40").all()).results) || [];
+    out.retryQueue = q.map(r => ({ l: String(r.label || '').replace(/\s\S+$/, ''), at: r.at, t: r.tries }));
+  } catch (e) { out.err = String(e.message || e).slice(0, 150); }
+  try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 86400 }); } catch (e) {}
+}
+
 export async function scanProbe(env, db) {
   const K = 'diag_scanprobe_1110';
   try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ at: Date.now(), running: true }), { expirationTtl: 3 * 86400 }); } catch (e) { return; }
