@@ -2894,7 +2894,7 @@ const MOD_DDL = [
   'CREATE TABLE IF NOT EXISTS mod_state (key TEXT PRIMARY KEY, resetAt INTEGER, banned INTEGER, bannedAt INTEGER)',
   'CREATE TABLE IF NOT EXISTS unban_requests (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT, text TEXT, ts INTEGER, status TEXT, answer TEXT)'];
 const MOD_STRIKES = 3;
-const MOD_AUTO = false;   // false: the 10-minute run only previews (counts kept in KV); true: it acts
+const MOD_AUTO = true;   // false: the 10-minute run only previews (counts kept in KV); true: it acts
 const MOD_EARLY = 10 * 60000;          // a report may come up to 10 min before the swap's time
 const MOD_LOOKBACK = 3 * 86400000;     // a report naming someone looks back 3 days for their swap
 const modTime = ms => { try { return new Date(ms).toLocaleString('en-US', { timeZone: 'America/Anchorage', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' AKT'; }
@@ -5166,7 +5166,8 @@ async function handle({ request, env, waitUntil }) {
     if (go) { try { const oc = await ownerCounts(env); if (Date.now() - (oc.at || 0) > 60 * 60000) waitUntil(saveOwnerCounts(env, db).catch(() => {})); } catch (e) {} }
     // Moderation: reports counted into warnings / strikes / bans every 10 minutes.
     if (go) { try { const ml = Number(await env.RATEBOARD_KV.get('mod_last_v1')) || 0;
-      if (Date.now() - ml > 10 * 60000) { await env.RATEBOARD_KV.put('mod_last_v1', String(Date.now()));
+      const mm2 = new Date().getUTCMinutes(), quiet = (mm2 >= 5 && mm2 < 16) || (mm2 >= 35 && mm2 < 50);   // its DMs stay clear of the swap-hour rush
+      if (quiet && Date.now() - ml > 10 * 60000) { await env.RATEBOARD_KV.put('mod_last_v1', String(Date.now()));
         waitUntil((MOD_AUTO ? moderate(env, db) : moderate(env, db, true).then(o => env.RATEBOARD_KV.put('mod_preview_v1', JSON.stringify({ at: Date.now(), ...o,
           users: undefined, strikesDist: o.users.reduce((a, u) => { a[u.strikes] = (a[u.strikes] || 0) + 1; return a; }, {}) }))))
           .catch(e => botFail(db, 'moderate', e.message))); } } catch (e) {} }
