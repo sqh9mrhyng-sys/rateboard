@@ -311,7 +311,7 @@ let showRax = ls.get('packs_showrax_v1', false), showOwn = ls.get('packs_showown
 let seasons = [], tab = 'all', rows = [], sortK = 'plays', sortD = -1, page = 0, openK = null, showTop = false, price = ls.get('packs_price_v1', 'self');
 const PAGE = 100, cache = new Map();
 let favs = ls.get('packs_favs_v1', []);
-const keyOf = r => `${r.sport}:${r.season}:${r.playerId}`;
+const keyOf = r => `${r.sport}:${r.season}:${r.playerId != null ? r.playerId : 't' + r.teamId}`;
 const isFav = r => favs.some(f => f.k === keyOf(r));
 const paintFavN = () => { $('#favn').textContent = favs.length ? `(${favs.length})` : ''; };
 
@@ -336,17 +336,24 @@ async function seasonRows(sp, se){
 function cols(){
   const multi = tab === 'fav' || picks.length > 1;
   // Team packs: plays, Leg and Epic with their odds, and the avg booster (Dennis, 2026-11-09).
-  if(tab === 'team') return [['player', 'Team', 'l'], ...(multi ? [['seasonLbl', 'Season', 'l', 'hm']] : []), ['plays', 'Plays'],
-    ...(showTop ? [['iconic', 'Iconic', '', 'hm'], ['iconOdds', 'Icon %'], ['mystic', 'Mystic', '', 'hm'], ['mysOdds', 'Myst %']] : []),
-    ['legendary', 'Leg'], ['legOdds', 'Leg %'], ['epic', 'Epic'], ['epicOdds', 'Epic %'], ['boost', 'Avg booster'],
-    // The pack's one performance card (2026-11-09): the team's performances and the odds it is each rarity.
-    ['perfs', 'Perfs'], ['pIconic', 'Perf Icon'], ['pMystic', 'Perf Myst'], ['pLegendary', 'Perf Leg'], ['pEpic', 'Perf Epic']];
+  /* Team packs (Dennis, 2026-11-11): one set of odds for the whole pack - 3 of
+     the team's plays + 1 of its performances (games rated .5+), every card
+     equally likely. Counts are plays + performances; tap a team for the split. */
+  if(tab === 'team') return [['player', 'Team', 'l'], ...(multi ? [['seasonLbl', 'Season', 'l', 'hm']] : []), ['plays', 'Plays'], ['perfs', 'Perfs'],
+    ...(showTop ? [['tIconic', 'Iconic', '', 'hm'], ['iconOdds', 'Icon %'], ['tMystic', 'Mystic', '', 'hm'], ['mysOdds', 'Myst %']] : []),
+    ['tLegendary', 'Leg'], ['legOdds', 'Leg %'], ['tEpic', 'Epic'], ['epicOdds', 'Epic %'], ['boost', 'Avg booster', '', 'hm']];
   return [['fav', '', 'l'], ['player', 'Player', 'l'], ...(multi ? [['seasonLbl', 'Season', 'l', 'hm']] : []), ['plays', 'Plays'],
     ...(showTop ? [['iconic', 'Iconic', '', 'hm'], ['iconOdds', 'Icon %'], ['mystic', 'Mystic', '', 'hm'], ['mysOdds', 'Myst %']] : []),
     ['legendary', 'Leg', '', 'hm'], ['legOdds', 'Leg %'], ['epic', 'Epic', '', 'hm'], ['epicOdds', 'Epic %'], ['avg3', 'Per pack'], ['boost', 'Avg booster', '', 'hm'],
     ...(showRax ? [['earnings', 'Rax']] : []), ...(showOwn ? [['owners', 'Owners']] : [])];
 }
+// A team pack has at least one of a rarity: from its 3 plays, or its 1 performance.
+const teamOdds = (r, k, pk) => { const pf = Number(r.perfs) || 0, a = packOdds(r.plays, r[k]), b = pf ? (Number(r[pk]) || 0) / pf : 0; return 1 - (1 - a) * (1 - b); };
 function enrich(r){ const n = Number(r.plays) || 0;
+  if(r.teamId != null && r.playerId == null) return { ...r, tIconic: (r.iconic || 0) + (r.pIconic || 0), tMystic: (r.mystic || 0) + (r.pMystic || 0),
+    tLegendary: (r.legendary || 0) + (r.pLegendary || 0), tEpic: (r.epic || 0) + (r.pEpic || 0),
+    iconOdds: teamOdds(r, 'iconic', 'pIconic'), mysOdds: teamOdds(r, 'mystic', 'pMystic'), legOdds: teamOdds(r, 'legendary', 'pLegendary'), epicOdds: teamOdds(r, 'epic', 'pEpic'),
+    boost: avgBooster(r), seasonLbl: `${SP_LBL[r.sport] || r.sport} ${seasonLabel(r.sport, r.season)}` };
   return { ...r, legOdds: packOdds(n, r.legendary), epicOdds: packOdds(n, r.epic), mysOdds: packOdds(n, r.mystic), iconOdds: packOdds(n, r.iconic),
     avg3: r.avgRating == null ? null : packRating(r.avgRating), boost: avgBooster(r), seasonLbl: `${SP_LBL[r.sport] || r.sport} ${seasonLabel(r.sport, r.season)}` }; }
 function cell(r, k){
@@ -371,6 +378,7 @@ const plCache = new Map();
 const RAR = { 0: ['–', ''], 1: ['Common', ''], 2: ['Uncommon', ''], 3: ['Rare', 'ra'], 4: ['Epic', 'ep'], 5: ['Legendary', 'lg'], 6: ['Mystic', 'my'], 7: ['Iconic', 'ic'] };
 function detail(r){
   const k = keyOf(r);
+  if(r.teamId != null && r.playerId == null) return teamDetail(r, k);
   return `<div class="dtabs"><b>${esc(r.player)}</b><div class="seg sm" role="tablist"><button data-dt="price" aria-pressed="${detTab === 'price'}">Price per rarity</button><button data-dt="plays" aria-pressed="${detTab === 'plays'}">Best plays</button></div></div>`
     + (detTab === 'price' ? ladder(r) : plays(r, k));
 }
@@ -400,6 +408,39 @@ function plays(r, k){
       return `<div class="plr" title="${esc(tg)}"><span class="pd">${esc(d)}</span><span class="pt">${pu ? `<a href="${pu}" target="_blank" rel="noopener">${esc(x.label || 'Play')}</a>` : esc(x.label || '–')}</span>`
         + `<b class="pv">${x.value == null ? '–' : Number(x.value).toFixed(1)}</b><span class="pr ${rr[1]}">${rr[0]}</span></div>`; }).join('')
     + '</div>';
+}
+/* A team, opened (Dennis, 2026-11-11): best performances - best plays - odds breakdown. */
+let tmTab = ls.get('packs_tmtab_v1', 'perfs');
+const tmCache = new Map();
+function teamDetail(r, k){
+  const bar = `<div class="dtabs"><b>${esc(r.player)}</b><div class="seg sm" role="tablist">${[['perfs', 'Best performances'], ['plays', 'Best plays'], ['odds', 'Odds breakdown']]
+    .map(([v, l]) => `<button data-tmt="${v}" aria-pressed="${tmTab === v}">${l}</button>`).join('')}</div></div>`;
+  if(tmTab === 'odds') return bar + teamOddsTable(r);
+  const c = tmCache.get(k);
+  if(!c){ tmCache.set(k, 'loading');
+    api(`/api/rax?plays=teamtop&sport=${r.sport}&season=${r.season}&teamId=${r.teamId}`).then(d => { tmCache.set(k, d.error ? { error: d.error } : d); if(openK === k) paint(); });
+    return bar + '<p class="note">Loading the team…</p>'; }
+  if(c === 'loading') return bar + '<p class="note">Loading the team…</p>';
+  if(c.error){ tmCache.delete(k); return bar + `<p class="note">Could not load the team (${esc(c.error)}). Tap it again.</p>`; }
+  const list = tmTab === 'perfs' ? c.perfs : c.plays;
+  if(!list.length) return bar + `<p class="note">No ${tmTab === 'perfs' ? 'performances rated .5 or higher' : 'plays'} collected yet.</p>`;
+  const kind = tmTab === 'perfs' ? 0 : 6;
+  return bar + `<div class="pls"><div class="plh"><span>Date</span><span>${tmTab === 'perfs' ? 'Player · game' : 'Player · play'}</span><span>Rating</span><span>Rarity</span></div>`
+    + list.map(x => { const d = x.day ? new Date(String(x.day).slice(0, 10) + 'T12:00:00Z').toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' }) : '–';
+      const rr = RAR[Number(x.rarity) || 0], tg = (x.tags || []).map(t => '#' + String(t).replace(/\s+/g, '')).join(' ');
+      const pu = kind && x.id && REAL_SPORT[r.sport] ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [6, REAL_SPORT[r.sport][1], 0, Number(x.id)]) : null;
+      const what = tmTab === 'perfs' ? `${esc(x.player || 'Player')}${x.opponent ? ` <span class="note">vs ${esc(x.opponent)}</span>` : ''}`
+        : `${esc(x.player || 'Player')} · ${pu ? `<a href="${pu}" target="_blank" rel="noopener">${esc(x.label || 'Play')}</a>` : esc(x.label || 'Play')}`;
+      return `<div class="plr" title="${esc(tg)}"><span class="pd">${esc(d)}</span><span class="pt">${what}</span><b class="pv">${x.value == null ? '–' : Number(x.value).toFixed(1)}</b><span class="pr ${rr[1]}">${rr[0]}</span></div>`; }).join('')
+    + '</div>';
+}
+function teamOddsTable(r){
+  const pl = Number(r.plays) || 0, pf = Number(r.perfs) || 0;
+  const rows = [['Iconic', 'iconic', 'pIconic', 'ic'], ['Mystic', 'mystic', 'pMystic', 'my'], ['Legendary', 'legendary', 'pLegendary', 'lg'], ['Epic', 'epic', 'pEpic', 'ep']];
+  return `<p class="note" style="margin:0 0 6px">A pack is 3 of the team's ${num(pl)} plays and 1 of its ${num(pf)} performances (games rated .5+). Every card is equally likely, whatever its rarity.</p>
+    <div class="scroll"><table class="lad"><thead><tr><th class="l">Rarity</th><th>Plays</th><th>In 3 plays</th><th>Perfs</th><th>The perf</th><th>Whole pack</th></tr></thead><tbody>`
+    + rows.map(([nm, k, pk, cls]) => `<tr><td class="l"><span class="${cls}">${nm}</span></td><td>${num(r[k] || 0)}</td><td>${pct(packOdds(pl, r[k]))}</td><td>${num(r[pk] || 0)}</td><td>${pct(pf ? (r[pk] || 0) / pf : 0)}</td><td><b>${pct(teamOdds(r, k, pk))}</b></td></tr>`).join('')
+    + `</tbody></table></div><p class="note" style="margin:6px 0 0">"Whole pack" = the chance of at least one card of that rarity in a pack.</p>`;
 }
 // Packs to each rarity for one player, from his own row (nothing is read).
 function ladder(r){
@@ -483,13 +524,14 @@ async function loadFavs(){
   rows = out; paint();
   if(favs.length) $('#status').textContent = `${favs.length} favorite${favs.length === 1 ? '' : 's'}, from every season. Tap a player for packs to each rarity.`;
 }
-const allSports = () => [...new Set(seasons.map(x => x.sport))].filter(sp => sp !== 'soccer');
+const allSports = () => [...new Set(seasons.map(x => x.sport))].filter(sp => sp !== 'soccer' && (tab !== 'team' || TEAM_SP.includes(sp)));
 function drawSports(){
   $('#sports').innerHTML = allSports().map(sp => `<button type="button" data-sp="${sp}" aria-pressed="${selSp.includes(sp)}">${SP_LBL[sp] || sp.toUpperCase()}</button>`).join('');
 }
 function drawSeasons(){
-  if(!selSp.length){ $('#seasons').innerHTML = '<span class="note">Pick a sport first.</span>'; return; }
-  $('#seasons').innerHTML = selSp.map(sp => { const list = seasons.filter(x => x.sport === sp).sort((a, b) => b.season - a.season);
+  const shown = selSp.filter(sp => allSports().includes(sp));
+  if(!shown.length){ $('#seasons').innerHTML = '<span class="note">Pick a sport first.</span>'; return; }
+  $('#seasons').innerHTML = shown.map(sp => { const list = seasons.filter(x => x.sport === sp).sort((a, b) => b.season - a.season);
     const on = picks.filter(k => k.startsWith(sp + ':')).length, open = !closedSp.includes(sp);
     return `<details class="sgrp" data-g="${sp}"${open ? ' open' : ''}><summary><b>${SP_LBL[sp] || sp}</b><span class="note">${list.length} season${list.length === 1 ? '' : 's'}${on ? ` · <span class="sel">${on} picked</span>` : ''}</span></summary><div class="chips">${list.map(x => { const k = `${sp}:${x.season}`;
       return `<button type="button" data-pk="${k}" aria-pressed="${picks.includes(k)}" title="${Number(x.plays).toLocaleString()} plays across ${x.games} games">${seasonLabel(sp, x.season)}<span>${x.games}g</span></button>`; }).join('')}</div></details>`; }).join('');
@@ -521,12 +563,14 @@ $('#body').addEventListener('click', e => {
     ls.set('packs_favs_v1', favs); paintFavN();
     if(tab === 'fav') rows = rows.filter(x => favs.some(f => f.k === keyOf(x)));
     paint(); return; }
+  const tmt = e.target.closest('[data-tmt]');
+  if(tmt){ tmTab = tmt.dataset.tmt; ls.set('packs_tmtab_v1', tmTab); paint(); return; }
   const dt = e.target.closest('[data-dt]');
   if(dt){ detTab = dt.dataset.dt; ls.set('packs_dettab_v1', detTab); paint(); return; }
   const ps = e.target.closest('[data-pls]');
   if(ps){ if(plSort === ps.dataset.pls) plDir = -plDir; else { plSort = ps.dataset.pls; plDir = -1; } paint(); return; }
   if(e.target.closest('a, select, .det')) return;
-  const tr = e.target.closest('tr.row'); if(!tr || tab === 'team') return;
+  const tr = e.target.closest('tr.row'); if(!tr) return;
   openK = openK === tr.dataset.k ? null : tr.dataset.k; paint();
 });
 $('#body').addEventListener('change', e => { if(e.target.id === 'price'){ price = e.target.value; ls.set('packs_price_v1', price); paint(); } });
@@ -535,6 +579,8 @@ function showTab(t){
   $('#pickrow').hidden = t === 'fav';
   $('#filters').hidden = $('#tablesec').hidden = t === 'calc'; $('#calc').hidden = t !== 'calc';
   if(t === 'calc') return calcOpen();
+  // Team packs: only MLB, NBA, NFL and CFB can be picked.
+  drawSports(); drawSeasons();
   if(t === 'fav') loadFavs(); else reload();
 }
 

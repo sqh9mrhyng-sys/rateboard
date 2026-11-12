@@ -4263,6 +4263,50 @@ async function handleGet({ request, env, waitUntil }) {
      pitcher's, so it goes to the fielding team. Built once per season (a full
      read of the season's plays), saved in KV - finished seasons for 30 days,
      the season being played for a day - and built in the background. */
+  /* One team's pack, opened (Dennis, 2026-11-11): its best performances (games
+     rated .5+), its best plays, and the tag rarities to split them by. */
+  if (url.searchParams.get('plays') === 'teamtop') {
+    const db = env.RATEBOARD_DB;
+    if (!db) return json({ error: 'no database binding' }, 503);
+    if (!['mlb', 'nba', 'nfl', 'ncaaf'].includes(sport)) return json({ error: 'Team packs are MLB, NBA, NFL and CFB.' }, 400);
+    const se = Number(season), tid = parseInt(url.searchParams.get('teamId') || '0', 10);
+    if (!tid) return json({ error: 'teamId required' }, 400);
+    const K = `pkteamtop_v1_${sport}_${se}_${tid}`;
+    try { const c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (c) return json(c); } catch (e) {}
+    try {
+      await playsReady(db); await perfReady(db);
+      const pl = await db.prepare(`
+        WITH c AS (
+          SELECT id, playerId AS pid, player AS pname, gameId, day, value, rarity, tags FROM plays
+           WHERE sport=?1 AND season=?2 AND teamId=?3 AND ${CARD_SQL} AND NOT ${STRIKEOUT}
+          UNION ALL
+          SELECT id, player2Id AS pid, player2 AS pname, gameId, day, value, COALESCE(rarity2, rarity) AS rarity, tags FROM plays
+           WHERE sport=?1 AND season=?2 AND ${CARD_SQL}
+             AND player2Id IS NOT NULL AND player2Id <> COALESCE(playerId, -1)
+             AND (${PASS_CREDIT} OR ${STRIKEOUT} OR ${HOCKEY_SECOND})
+             AND (CASE WHEN ${STRIKEOUT} THEN oppTeamId ELSE teamId END) = ?3)
+        SELECT c.id, c.pid, c.pname, c.day, c.value, COALESCE(c.rarity, 0) AS rarity, c.tags, p.label
+          FROM c JOIN plays p ON p.id = c.id ORDER BY c.value DESC LIMIT 150`).bind(sport, se, tid).all();
+      const pf = await db.prepare(`SELECT id, playerId AS pid, player AS pname, gameId, day, opponent, value, tags FROM performances
+          WHERE sport=? AND season=? AND teamId=? AND played=1 AND value >= 0.5 ORDER BY value DESC LIMIT 150`).bind(sport, se, tid).all();
+      // Tag rarities: Dennis's tag lists first, Real's tag table for the rest (as the team build does).
+      const mine = new Map(), tr = new Map(), names = {};
+      for (const d of (TAG_DEFS[sport] || [])) { const lv = { iconic: 7, mystic: 6, legendary: 5 }[d.rarity]; if (!lv) continue;
+        for (const h of [d.tag].concat(d.alias || [])) mine.set(String(h).replace(/^#/, '').toLowerCase(), lv); }
+      const norm = v => String(v || '').replace(/^#/, '').replace(/[\s-]+/g, '').toLowerCase();
+      for (const t of ((await db.prepare('SELECT id, rarity, hash, label FROM tags WHERE sport=?').bind(sport).all()).results || [])) {
+        tr.set(Number(t.id), mine.get(norm(t.hash)) || mine.get(norm(t.label)) || Number(t.rarity) || 0); names[t.id] = t.label; }
+      const tagList = v => String(v || '').split(',').map(Number).filter(Boolean);
+      const perfs = (pf.results || []).map(x => { const ids = tagList(x.tags);
+        return { id: x.id, pid: x.pid, player: x.pname, day: x.day, opponent: x.opponent, value: x.value,
+          rarity: ids.reduce((m, i) => Math.max(m, tr.get(i) || 0), 0), tags: ids.map(i => names[i]).filter(Boolean) }; });
+      const plays = (pl.results || []).map(x => ({ id: x.id, pid: x.pid, player: x.pname, day: x.day, value: x.value, rarity: Number(x.rarity) || 0,
+        label: x.label, tags: tagList(x.tags).map(i => names[i]).filter(Boolean) }));
+      const out = { sport, season: se, teamId: tid, at: Date.now(), perfs, plays };
+      try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 12 * 3600 }); } catch (e) {}
+      return json(out);
+    } catch (e) { return json({ error: 'Team data is busy right now - try again shortly.' }, 503); }
+  }
   if (url.searchParams.get('plays') === 'teams') {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
@@ -8502,7 +8546,7 @@ export async function onRequestGet(ctx) {
      build lock), and answers {building:true} while one builds - so it is
      routed here rather than through the edge cache, which would keep that. */
   // Private again for now (Dennis, 2026-11-09: the numbers aren't right yet) - admins only until it is.
-  if (url.searchParams.get('plays') === 'teams' && !WRITE_FLAGS.some(f => url.searchParams.get(f)) && await isAdminRequest(env, request)) {
+  if (['teams', 'teamtop'].includes(url.searchParams.get('plays')) && !WRITE_FLAGS.some(f => url.searchParams.get(f)) && await isAdminRequest(env, request)) {
     if (!(await allow(origin, 'pkteams:' + clientIp(request), 60, 600))) return json({ error: 'Too many requests - try again in a few minutes.' }, 429);
     return handleGet(ctx);
   }
