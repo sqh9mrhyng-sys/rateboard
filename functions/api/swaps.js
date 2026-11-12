@@ -5391,12 +5391,15 @@ async function handle({ request, env, waitUntil }) {
     if (go && auth0) { try { waitUntil(backgroundScans(env, db, auth0).catch(e => botFail(db, 'scan_bg', e.message))); } catch (e) {} }
     // Niche owner counts, refreshed once an hour.
     if (go) { try { const oc = await ownerCounts(env); if (Date.now() - (oc.at || 0) > 60 * 60000) waitUntil(saveOwnerCounts(env, db).catch(() => {})); } catch (e) {} }
-    if (go) { try { waitUntil(untouchRefresh(env, db).catch(() => {})); } catch (e) {} }
+    // Untouchable re-reads only at :00-:17, never while warnings (:30-:55) or contacts (:55-:10) go out... :00-:10 is light (contacts are sent by the DM tick, not here).
+    if (go && new Date().getUTCMinutes() >= 1 && new Date().getUTCMinutes() < 18) { try { waitUntil(untouchRefresh(env, db).catch(() => {})); } catch (e) {} }
     if (go) { try { waitUntil(top15Dm(env, db).catch(() => {})); } catch (e) {} }
     // Moderation: reports counted into warnings / strikes / bans every 10 minutes.
     if (go) { try { const ml = Number(await env.RATEBOARD_KV.get('mod_last_v1')) || 0;
-      const mm2 = new Date().getUTCMinutes(), quiet = (mm2 >= 5 && mm2 < 16) || (mm2 >= 35 && mm2 < 50);   // its DMs stay clear of the swap-hour rush
-      if (quiet && Date.now() - ml > 10 * 60000) { await env.RATEBOARD_KV.put('mod_last_v1', String(Date.now()));
+      /* Only at :11-:17 (2026-11-12): its big reads during :30-:55 overloaded the
+         database while the swap warnings were going out, and members missed them. */
+      const mm2 = new Date().getUTCMinutes(), quiet = mm2 >= 11 && mm2 < 18;
+      if (quiet && Date.now() - ml > 25 * 60000) { await env.RATEBOARD_KV.put('mod_last_v1', String(Date.now()));
         waitUntil((MOD_AUTO ? moderate(env, db) : moderate(env, db, true).then(o => env.RATEBOARD_KV.put('mod_preview_v1', JSON.stringify({ at: Date.now(), ...o,
           users: undefined, strikesDist: o.users.reduce((a, u) => { a[u.strikes] = (a[u.strikes] || 0) + 1; return a; }, {}) }))))
           .catch(e => { botFail(db, 'moderate', e.message); return env.RATEBOARD_KV.put('mod_error_v1', JSON.stringify({ at: Date.now(), err: String(e && e.message || e).slice(0, 200) })); })); } } catch (e) {} }
