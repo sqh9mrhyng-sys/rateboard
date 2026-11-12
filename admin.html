@@ -202,6 +202,11 @@
 
     <!-- REPORTS -->
     <div id="t-reports" class="hide">
+      <section><h2>Moderation <span class="note" id="md-n"></span></h2>
+        <p class="note" style="margin:0 0 8px">Automatic, every 10 minutes: only a reporter's first report on someone counts, and only if they really had a swap or 160 together that wasn't called off. 1st counted report = warning; every report after = a strike, but all reports on one swap time make one strike. 3 strikes takes Swaps away (nothing else). Approving an unban gives Swaps back and clears their record.</p>
+        <div class="bar"><button id="md-load" class="sm">Refresh</button><button id="md-dry" class="sm">Preview a run</button><button id="md-run" class="sm">Run now</button><span class="note" id="md-msg"></span></div>
+        <h3 style="font-size:14px;margin:12px 0 6px">Unban requests</h3><div id="md-req" class="note">Loading…</div>
+        <h3 style="font-size:14px;margin:12px 0 6px">Warnings &amp; strikes</h3><div id="md-list" class="note">Loading…</div></section>
       <section><h2>Inbox <span class="note" id="ib-n"></span></h2>
         <p class="note" style="margin:0 0 8px">Swaps reports, board member reports and feature requests. When the sender has a chat with the bot, your reply and the outcome are sent to them on Real.</p>
         <div class="bar"><select id="ib-f"><option value="">All</option><option value="swap">Swaps reports</option><option value="board">Board reports</option><option value="feature">Feature requests</option></select><button id="ib-load" class="sm">Refresh</button></div>
@@ -791,8 +796,39 @@ $('#bm-list').addEventListener('click', async e => { const b = e.target.closest(
   const j = await api('/api/swaps?op=dmcheck', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ who: b.dataset.chk }) });
   b.disabled = false; toast(j.error || (j.sent ? '"check" sent - the chat is at the top of the bot\'s DMs.' : 'Not sent: ' + j.why)); });
 
+/* ---------- moderation ---------- */
+async function loadMod(){
+  const j = await api('/api/swaps?op=modlist');
+  if(j.error){ $('#md-list').textContent = j.error; $('#md-req').textContent = ''; return; }
+  const ev = x => x.events.map(e => `${e.kind === 'warn' ? 'warning' : 'strike ' + e.n}: ${esc(e.when)}${e.reports > 1 ? ` (${e.reports} reports)` : ''}`).join(' · ');
+  $('#md-n').textContent = `${j.rows.filter(r => r.banned).length} banned · ${j.rows.length} with a record` + (j.last ? ` · last run ${new Date(j.last.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '');
+  $('#md-req').innerHTML = j.requests.length ? j.requests.map(r => `<div style="padding:8px 0;border-bottom:1px solid var(--line)"><b>@${esc(r.rsUser)}</b> <span class="note">${new Date(r.ts).toLocaleString()}</span>
+      <div style="margin:4px 0;white-space:pre-wrap">${esc(r.text)}</div>${r.record ? `<div class="note">${ev(r.record)}</div>` : ''}
+      <input data-mdans="${r.id}" placeholder="Note to them (optional)" style="width:100%;margin:6px 0">
+      <button class="sm" data-mdok="${r.id}">Approve - give Swaps back</button> <button class="sm" data-mdno="${r.id}">Decline</button></div>`).join('') : 'None waiting.';
+  $('#md-list').innerHTML = j.rows.length ? j.rows.map(r => `<div style="padding:6px 0;border-bottom:1px solid var(--line)"><b>@${esc(r.rsUser)}</b> ${r.banned ? '<span class="pill off">banned</span>' : `<span class="note">${r.strikes}/3 strikes</span>`}
+      ${r.banned ? `<button class="sm" data-mdkey="${esc(r.key)}">Unban</button>` : ''}<div class="note">${ev(r)}</div></div>`).join('') : 'Nobody yet.';
+}
+$('#md-load').addEventListener('click', loadMod);
+for(const [id, dry] of [['md-dry', true], ['md-run', false]]) $('#' + id).addEventListener('click', async () => {
+  if(!dry && !confirm('Count every report now and send the warnings / strikes / bans?')) return;
+  $('#md-msg').textContent = dry ? 'Looking…' : 'Running…';
+  const j = await api('/api/swaps?op=modrun' + (dry ? '&dry=1' : ''), { method: dry ? 'GET' : 'POST' });
+  $('#md-msg').textContent = j.error || `${j.reports} reports: ${j.counted} count, ${j.repeats} repeats, ${j.noSwap} no swap found, ${j.calledOff} called off, ${j.early} too early · new: ${j.warned} warnings, ${j.struck} strikes, ${j.banned} bans` + (dry ? ' (preview - nothing sent)' : ` · ${j.dms} DMs queued`);
+  if(!dry) loadMod();
+});
+document.addEventListener('click', async e => {
+  const ok = e.target.closest('[data-mdok]'), no = e.target.closest('[data-mdno]'), k = e.target.closest('[data-mdkey]');
+  if(!ok && !no && !k) return;
+  const id = (ok || no) && (ok || no).dataset[ok ? 'mdok' : 'mdno'];
+  if(k && !confirm('Give @' + k.dataset.mdkey + ' Swaps back and clear their record?')) return;
+  const body = k ? { key: k.dataset.mdkey, approve: true } : { id: Number(id), approve: !!ok, answer: (document.querySelector(`[data-mdans="${id}"]`) || {}).value || '' };
+  const j = await api('/api/swaps?op=modunban', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  $('#md-msg').textContent = j.error || (body.approve ? 'Swaps given back' : 'Declined') + (j.dm ? ' - they were messaged.' : ' - no chat with the bot, so no message.');
+  loadMod();
+});
 async function loadReports(){
-  loadInbox(); loadCalledOff(); loadBotMsgs(false);
+  loadInbox(); loadCalledOff(); loadBotMsgs(false); loadMod();
   const d = await api('/api/kv?datareports=1');
   const when = ts => ts ? new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
   if(d.error) $('#rp-data').textContent = d.error;

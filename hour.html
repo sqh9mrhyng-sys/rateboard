@@ -248,13 +248,13 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
     if(nb.length) h += `<div class="sh">Niche - buy the player and a pack <span class="n">${nb.length}</span></div><p class="note" style="margin:4px 0 6px">You don't own these players: buy the player, then a pack of him. The member who asked pays full price for the cards.</p>`
       + nb.map(x => `<div class="row" data-r160="nb${x.id}"><span class="grp"><span class="chk2">${chk('nbp' + x.id, 'Bought player + pack')}${chk('nbo' + x.id, 'Got full price')}</span><span><b>${pl(x)}</b><span class="sub">for ${who(x)}</span></span></span><span class="acts">${x.playerUrl ? `<a class="btn go" href="${esc(x.playerUrl)}" target="_blank" rel="noopener">Buy player</a>` : ''}${x.theirCard ? `<a class="btn" href="${esc(x.theirCard)}" target="_blank" rel="noopener">Their card</a>` : ''}</span></div>`).join('');
     if(ng.length) h += `<div class="sh">Niche - they bought your player <span class="n">${ng.length}</span></div><p class="note" style="margin:4px 0 6px">Each of these members bought your player and a pack for you. Pay full price for the cards.</p>`
-      + ng.map(x => `<div class="row" data-r160="ng${x.id}"><span class="grp"><span class="chk2">${chk('ngo' + x.id, 'Paid full price')}</span><span><b>${who(x)}</b><span class="sub">You receive <b class="rv">${pl(x)}</b></span></span></span><span class="acts">${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : ''}</span></div>`).join('');
+      + ng.map(x => `<div class="row" data-r160="ng${x.id}"><span class="grp"><span class="chk2">${chk('ngo' + x.id, 'Paid full price')}</span><span><b>${who(x)}</b><span class="sub">You receive <b class="rv">${pl(x)}</b></span></span></span><span class="acts">${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : ''}<button class="btn rp" type="button" data-rp="160-${x.id}">Report</button></span></div><div class="rpbox" id="rp160-${x.id}" hidden></div>`).join('');
     $('#w160list').innerHTML = h; }
   $('#n160').textContent = n160;
   $('#s160note').textContent = sell160.length && buy160.length ? 'Selling: the buyer takes all cards for minimum - send 160 back on a random unowned card. Buying: offer min on the cards from their pack - they send you 160 back.'
     : sell160.length ? 'The buyer takes all cards for minimum - send them 160 back on a random unowned card.' : 'Offer min on the cards from each seller\'s pack - they send you 160 back.';
   $('#s160list').innerHTML = sell160.map(x => `<div class="row${done['sq' + x.id] && done['sr' + x.id] ? ' both' : ''}" data-r160="s${x.id}"><span class="grp"><span class="chk2">${chk('sq' + x.id, 'Received offer')}${chk('sr' + x.id, 'Sent 160 back')}</span>
-      <span><b>${who(x)}</b><span class="sub">Receiving <b class="rv">${pl(x)}</b> from your pack</span></span></span></div>`).join('')
+      <span><b>${who(x)}</b><span class="sub">Receiving <b class="rv">${pl(x)}</b> from your pack</span></span></span><span class="acts"><button class="btn rp" type="button" data-rp="160-${x.id}">Report</button></span></div><div class="rpbox" id="rp160-${x.id}" hidden></div>`).join('')
     + buy160.map(x => `<div class="row${done['bo' + x.id] && done['bk' + x.id] ? ' both' : ''}" data-r160="b${x.id}"><span class="grp"><span class="chk2">${chk('bo' + x.id, 'Offered')}${chk('bk' + x.id, '160 back')}</span>
       <span><b>${who(x)}</b><span class="sub">You receive <b class="rv">${pl(x)}</b></span></span></span><span class="acts">${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : ''}</span></div>`).join('');
   // Each partner: who, what you receive, what you give - and their comment to reach them.
@@ -470,14 +470,14 @@ document.addEventListener('click', async e => {
 document.addEventListener('click', async e => {
   const op = e.target.closest('[data-rp]'), sd = e.target.closest('[data-rpsend]');
   if(op){ const box = $('#rp' + op.dataset.rp); if(!box) return; box.hidden = !box.hidden; if(box.hidden || box.dataset.ready) return; box.dataset.ready = '1';
-    box.innerHTML = `<select data-rpwhy><option value="nooffer">Didn't send me an offer</option><option value="nobuy">Didn't buy my pack</option><option value="wrong">Sent the wrong offer</option><option value="other">Something else</option></select>
+    box.innerHTML = `<select data-rpwhy><option value="nooffer">Didn't send me an offer</option><option value="nobuy">${String(op.dataset.rp).startsWith('160-') ? "Didn't send 160 back" : "Didn't buy my pack"}</option><option value="wrong">Sent the wrong offer</option><option value="other">Something else</option></select>
       <textarea data-rpnote maxlength="800" placeholder="Anything else to add (optional)"></textarea>
       <div class="rprow"><span class="note" data-rpmsg style="margin-right:auto;align-self:center"></span><button class="btn go" type="button" data-rpsend="${op.dataset.rp}" style="cursor:pointer;font:inherit;font-weight:700">Send report</button></div>`; return; }
   if(!sd) return;
   const box = $('#rp' + sd.dataset.rpsend), msg = box.querySelector('[data-rpmsg]');
   sd.disabled = true; msg.textContent = 'Sending…';
   try{ const r = await fetch(`/api/swaps?op=hourreport&u=${encodeURIComponent(q.get('u') || '')}&d=${encodeURIComponent(q.get('d') || '')}&t=${encodeURIComponent(q.get('t') || '')}`, { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ id: Number(sd.dataset.rpsend), reason: box.querySelector('[data-rpwhy]').value, detail: box.querySelector('[data-rpnote]').value }) });
+      body: JSON.stringify({ id: Number(String(sd.dataset.rpsend).replace(/^160-/, '')), k160: String(sd.dataset.rpsend).startsWith('160-'), reason: box.querySelector('[data-rpwhy]').value, detail: box.querySelector('[data-rpnote]').value }) });
     const j = await r.json();
     if(j.error){ msg.textContent = j.error; sd.disabled = false; }
     else { box.innerHTML = '<p class="note" style="margin:0">Reported - it\'s with the admins now.</p>'; const b = document.querySelector(`[data-rp="${sd.dataset.rpsend}"]`); if(b){ b.textContent = 'Reported'; b.disabled = true; } } }

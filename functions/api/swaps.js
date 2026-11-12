@@ -2877,6 +2877,155 @@ export async function swapAccess(env, request) {
 // for OTD their own passes and games.
 const MEMBER_OPS = new Set(['confirm', 'recbuys', 'myhour', 'me', 'save', 'keep', 'touch', 'giveprefs', 'packstoday', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'ownercounts', 'usersearch', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
 const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan', 'search', 'otdpool']);
+
+/* ---------- Moderation (Dennis, 2026-11-11) ----------
+   Reports on swap / 160 partners are counted automatically:
+   - only a reporter's FIRST report on someone counts (repeats count for nothing);
+   - a report only counts if the two really had a swap or 160 together that
+     wasn't called off, at or before the report (the swap's time is its period);
+   - the first counted report is a warning, not a strike;
+   - every report after it is a strike, but all reports on one swap time
+     make one strike between them (5 reports on 2:00 = 1 strike);
+   - strike 3 takes Swaps away (swap_block) - nothing else on the site.
+   Each new warning/strike is DMed through the bot's paced queue and shown
+   on /swaps. An unban (Dennis, from Admin > Reports) starts their record over. */
+const MOD_DDL = [
+  'CREATE TABLE IF NOT EXISTS mod_events (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT, kind TEXT, n INTEGER, period INTEGER, at INTEGER, reports INTEGER)',
+  'CREATE TABLE IF NOT EXISTS mod_state (key TEXT PRIMARY KEY, resetAt INTEGER, banned INTEGER, bannedAt INTEGER)',
+  'CREATE TABLE IF NOT EXISTS unban_requests (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT, text TEXT, ts INTEGER, status TEXT, answer TEXT)'];
+const MOD_STRIKES = 3;
+const MOD_AUTO = false;   // false: the 10-minute run only previews (counts kept in KV); true: it acts
+const MOD_EARLY = 10 * 60000;          // a report may come up to 10 min before the swap's time
+const MOD_LOOKBACK = 3 * 86400000;     // a report naming someone looks back 3 days for their swap
+const modTime = ms => { try { return new Date(ms).toLocaleString('en-US', { timeZone: 'America/Anchorage', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' AKT'; }
+  catch (e) { return new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC'; } };
+async function modRows(db, sql, binds, order, size = 1000) {
+  const out = [];
+  for (let off = 0; off < 50000; off += size) {
+    const r = ((await db.prepare(`${sql} ORDER BY ${order} LIMIT ? OFFSET ?`).bind(...binds, size, off).all()).results) || [];
+    out.push(...r); if (r.length < size) break;
+  }
+  return out;
+}
+async function modReady(db) {
+  for (const d of MOD_DDL) await db.prepare(d).run();
+  await db.prepare(SREPORT_DDL).run();
+  try { await alterOnce(db, 'ALTER TABLE swap_reports ADD COLUMN matchId INTEGER'); } catch (e) {}
+  try { await alterOnce(db, 'ALTER TABLE swap_reports ADD COLUMN m160 INTEGER'); } catch (e) {}
+}
+async function modBan(db, key) {
+  await db.prepare(SBLOCK_DDL).run();
+  await db.prepare('INSERT OR REPLACE INTO swap_block (key, at) VALUES (?, ?)').bind(key, Date.now()).run();
+  await db.prepare('UPDATE swap_users SET active=0 WHERE key=?').bind(key).run();
+  const ms = ((await db.prepare("SELECT * FROM swap_matches WHERE status IN ('pending','warned') AND (a=? OR b=?)").bind(key, key).all()).results) || [];
+  const res = { n: 0, late: 0, soon: 0 };
+  for (const m of ms) await callOff(db, m, `called off: @${key} can no longer swap`, res);
+  try { await db.prepare(`UPDATE swap_160 SET status='cancelled', note=? WHERE status='pending' AND warnS IS NULL AND warnB IS NULL AND dueAt > ? AND (buyer=? OR seller=?)`)
+    .bind(`called off: @${key} can no longer swap`, Date.now(), key, key).run(); } catch (e) {}
+  await db.prepare('INSERT INTO mod_state (key, resetAt, banned, bannedAt) VALUES (?, 0, 1, ?) ON CONFLICT(key) DO UPDATE SET banned=1, bannedAt=excluded.bannedAt').bind(key, Date.now()).run();
+  ACCESS_MEMO.delete(key);
+}
+async function moderate(env, db, dry) {
+  await modReady(db); await matchCols(db); await db.prepare(T160_DDL).run(); await db.prepare(DM_DDL).run();
+  const reps = await modRows(db, "SELECT rowid AS id, ts, by_user, target, matchId, m160 FROM swap_reports WHERE kind='user' AND status IN ('open','closed','auto')", [], 'ts, rowid');
+  const out = { reports: reps.length, counted: 0, repeats: 0, noSwap: 0, calledOff: 0, early: 0, warned: 0, struck: 0, banned: 0, dms: 0, users: [] };
+  if (!reps.length) return out;
+  const since = Math.min(...reps.map(r => Number(r.ts) || 0)) - MOD_LOOKBACK;
+  const [users, ms, ss, st, ev, dmr] = await Promise.all([
+    modRows(db, 'SELECT key, rsUser, hashId FROM swap_users', [], 'key'),
+    modRows(db, 'SELECT id, a, b, slot, createdAt, dueAt, status FROM swap_matches WHERE COALESCE(dueAt, createdAt) >= ?', [since], 'id', 2000),
+    modRows(db, 'SELECT id, buyer, seller, dueAt, status FROM swap_160 WHERE dueAt >= ?', [since], 'id', 2000),
+    modRows(db, 'SELECT key, resetAt, banned FROM mod_state', [], 'key'),
+    modRows(db, 'SELECT key, kind, n, at FROM mod_events', [], 'id'),
+    modRows(db, 'SELECT hashId, channelId FROM swap_dm WHERE channelId IS NOT NULL', [], 'hashId', 2000)]);
+  for (const m of ms) m.dueAt = sideDue(m);
+  const lc = x => String(x || '').trim().replace(/^@/, '').toLowerCase();
+  const byName = new Map(); for (const u of users) { byName.set(lc(u.key), u); if (u.rsUser) byName.set(lc(u.rsUser), u); }
+  const byKey = new Map(users.map(u => [u.key, u]));
+  const off = s => /cancel/.test(String(s || ''));
+  const mById = new Map(ms.map(m => [Number(m.id), m])), sById = new Map(ss.map(s => [Number(s.id), s]));
+  // Every swap / 160 between two members, for reports that only name someone.
+  const pairs = new Map(), addPair = (x, y, t) => { const k = x + '|' + y; if (!pairs.has(k)) pairs.set(k, []); pairs.get(k).push(t); };
+  for (const m of ms) if (!off(m.status)) { addPair(m.a, m.b, Number(m.dueAt)); addPair(m.b, m.a, Number(m.dueAt)); }
+  for (const s of ss) if (!off(s.status)) { addPair(s.buyer, s.seller, Number(s.dueAt)); addPair(s.seller, s.buyer, Number(s.dueAt)); }
+  const state = new Map(st.map(s => [s.key, s]));
+  const first = new Map(), handled = [];
+  for (const r of reps) {
+    const by = String(r.by_user || ''), ts = Number(r.ts) || 0;
+    let tgt = null, period = null;
+    if (r.m160) {
+      const s = sById.get(Number(r.m160));
+      if (!s || (s.buyer !== by && s.seller !== by)) { out.noSwap++; continue; }
+      if (off(s.status)) { out.calledOff++; continue; }
+      tgt = s.buyer === by ? s.seller : s.buyer; period = Number(s.dueAt);
+    } else if (r.matchId) {
+      const m = mById.get(Number(r.matchId));
+      if (!m || (m.a !== by && m.b !== by)) { out.noSwap++; continue; }
+      if (off(m.status)) { out.calledOff++; continue; }
+      tgt = m.a === by ? m.b : m.a; period = Number(m.dueAt);
+    } else {
+      const u = byName.get(lc(r.target)); if (!u || u.key === by) { out.noSwap++; continue; }
+      const times = (pairs.get(by + '|' + u.key) || []).filter(t => t <= ts + MOD_EARLY && t >= ts - MOD_LOOKBACK);
+      if (!times.length) { out.noSwap++; continue; }
+      tgt = u.key; period = Math.max(...times);
+    }
+    if (ts < period - MOD_EARLY) { out.early++; continue; }
+    const s0 = state.get(tgt); if (s0 && ts < Number(s0.resetAt || 0)) { handled.push(r.id); continue; }
+    const k = by + '|' + tgt;
+    if (first.has(k)) { out.repeats++; handled.push(r.id); continue; }
+    first.set(k, { tgt, period, ts }); handled.push(r.id); out.counted++;
+  }
+  // Per reported member: their warning and strikes, in order.
+  const per = new Map();
+  for (const x of first.values()) { if (!per.has(x.tgt)) per.set(x.tgt, []); per.get(x.tgt).push(x); }
+  const had = new Map();
+  for (const e of ev) { const s0 = state.get(e.key); if (s0 && Number(e.at) < Number(s0.resetAt || 0)) continue;
+    const h = had.get(e.key) || { warn: false, strikes: 0 }; if (e.kind === 'warn') h.warn = true; else if (e.kind === 'strike') h.strikes = Math.max(h.strikes, Number(e.n) || 0); had.set(e.key, h); }
+  const chan = new Map(dmr.map(d => [String(d.hashId), d.channelId]));
+  for (const [key, list] of per) {
+    list.sort((a, b) => a.ts - b.ts);
+    const want = [{ kind: 'warn', n: 0, period: list[0].period, at: list[0].ts, reports: 1 }];
+    const struck = new Map();
+    for (let i = 1; i < list.length; i++) { const p = list[i].period;
+      if (struck.has(p)) { struck.get(p).reports++; continue; }
+      if (struck.size >= MOD_STRIKES) continue;
+      const e = { kind: 'strike', n: struck.size + 1, period: p, at: list[i].ts, reports: 1 }; struck.set(p, e); want.push(e); }
+    const h = had.get(key) || { warn: false, strikes: 0 };
+    const fresh = want.filter(e => e.kind === 'warn' ? !h.warn : e.n > h.strikes);
+    const s0 = state.get(key), nowStrikes = Math.max(h.strikes, ...want.filter(e => e.kind === 'strike').map(e => e.n), 0);
+    const ban = nowStrikes >= MOD_STRIKES && !(s0 && s0.banned);
+    const u = byKey.get(key);
+    out.users.push({ key, rsUser: (u && u.rsUser) || key, reports: list.length, strikes: nowStrikes, warned: true, newEvents: fresh.length, ban });
+    if (!fresh.length && !ban) continue;
+    for (const e of fresh) { if (e.kind === 'warn') out.warned++; else out.struck++; }
+    if (ban) out.banned++;
+    if (dry) continue;
+    for (const e of fresh) await db.prepare('INSERT INTO mod_events (key, kind, n, period, at, reports) VALUES (?, ?, ?, ?, ?, ?)').bind(key, e.kind, e.n, e.period, Date.now(), e.reports).run();
+    if (ban) await modBan(db, key);
+    // One message with everything new for them.
+    const lines = fresh.map(e => e.kind === 'warn'
+      ? `You've been reported for not completing a swap at ${modTime(e.period)}. This is a warning, not a strike.`
+      : `You've been reported for not doing swaps at ${modTime(e.period)}. Strike ${e.n}/${MOD_STRIKES}.`);
+    if (ban) lines.push(`That's ${MOD_STRIKES} strikes, so your Swaps access has been removed (the rest of the site still works). You can request an unban at raxacademy.app/swaps`);
+    const ch = u && u.hashId && chan.get(String(u.hashId));
+    if (ch && lines.length) { await queueDm(db, ch, [lines.join('\n')], 'mod ' + key); out.dms++; }
+  }
+  if (!dry) for (let i = 0; i < handled.length; i += 80) {
+    const ids = handled.slice(i, i + 80);
+    await db.prepare(`UPDATE swap_reports SET status='auto' WHERE status='open' AND rowid IN (${ids.map(() => '?').join(',')})`).bind(...ids).run();
+  }
+  if (!dry) try { await env.RATEBOARD_KV.put('mod_summary_v1', JSON.stringify({ at: Date.now(), reports: out.reports, counted: out.counted, warned: out.warned, struck: out.struck, banned: out.banned })); } catch (e) {}
+  return out;
+}
+// A member's own record: warnings, strikes, ban and unban request.
+async function modRecord(db, key) {
+  await modReady(db);
+  const s0 = await db.prepare('SELECT resetAt, banned FROM mod_state WHERE key=?').bind(key).first();
+  const evs = ((await db.prepare('SELECT kind, n, period, reports FROM mod_events WHERE key=? AND at >= ? ORDER BY id').bind(key, Number((s0 && s0.resetAt) || 0)).all()).results) || [];
+  const req = await db.prepare('SELECT status, ts, answer FROM unban_requests WHERE key=? ORDER BY id DESC LIMIT 1').bind(key).first();
+  return { banned: !!(s0 && s0.banned), strikes: evs.filter(e => e.kind === 'strike').length, max: MOD_STRIKES,
+    events: evs.map(e => ({ kind: e.kind, n: e.n, at: e.period, when: modTime(e.period), reports: e.reports })), request: req || null };
+}
 const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostdays', 'projections', 'tagview', 'boostinv', 'buys', 'legboosts', 'resell', 'nosell']);
 const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
 const PAGE_OPS = new Set(['projections', 'me', 'procheck', 'myswaps', 'hourcounts', 'wantcounts', 'boostplan', 'boostinv', 'buys', 'legboosts', 'resell', 'boostdays']);
@@ -4940,6 +5089,20 @@ async function handle({ request, env, waitUntil }) {
     if (reason === REASONS.other && note.length < 5) return json({ error: 'Say what happened.' }, 400);
     await matchCols(db);
     const u = await db.prepare('SELECT key FROM swap_users WHERE LOWER(key)=?').bind(key.toLowerCase()).first();
+    // A 160 partner (same rules as swaps - Dennis, 2026-11-11).
+    if (b.k160 && u) {
+      const t = await db.prepare('SELECT * FROM swap_160 WHERE id=? AND (buyer=? OR seller=?) AND dueAt=?').bind(Number(b.id), u.key, u.key, due).first();
+      if (!t) return json({ error: 'That 160 was not found.' }, 404);
+      const other = t.buyer === u.key ? t.seller : t.buyer, o = await loadMember(db, other);
+      const target = (o && o.rsUser) || other;
+      if (!(await allow(url.origin, 'swapreport:' + u.key, 10, 3600))) return json({ error: 'You have sent a lot of reports - try again later.' }, 429);
+      const R160 = { nooffer: "Didn't send me an offer", nobuy: "Didn't send 160 back", wrong: 'Sent the wrong offer', other: 'Other' };
+      const detail = `${R160[b.reason] || R160.other} - 160 #${t.id} (${new Date(due).toISOString().slice(0, 16).replace('T', ' ')} UTC), reporter was the ${t.buyer === u.key ? 'buyer' : 'seller'}` + (note ? `\n${note}` : '');
+      await modReady(db);
+      await db.prepare('INSERT INTO swap_reports (ts, by_user, kind, target, detail, status, m160) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(Date.now(), u.key, 'user', target, detail, 'open', t.id).run();
+      await stat(db, 'report_user');
+      return json({ ok: true });
+    }
     const m = u && await db.prepare('SELECT * FROM swap_matches WHERE id=? AND (a=? OR b=?) AND dueAt=?').bind(Number(b.id), u.key, u.key, due).first();
     if (!m) return json({ error: 'That swap was not found.' }, 404);
     const side = m.a === u.key ? 'A' : 'B', o = await loadMember(db, side === 'A' ? m.b : m.a), me = await loadMember(db, u.key);
@@ -5001,6 +5164,12 @@ async function handle({ request, env, waitUntil }) {
     if (go && auth0) { try { waitUntil(backgroundScans(env, db, auth0).catch(e => botFail(db, 'scan_bg', e.message))); } catch (e) {} }
     // Niche owner counts, refreshed once an hour.
     if (go) { try { const oc = await ownerCounts(env); if (Date.now() - (oc.at || 0) > 60 * 60000) waitUntil(saveOwnerCounts(env, db).catch(() => {})); } catch (e) {} }
+    // Moderation: reports counted into warnings / strikes / bans every 10 minutes.
+    if (go) { try { const ml = Number(await env.RATEBOARD_KV.get('mod_last_v1')) || 0;
+      if (Date.now() - ml > 10 * 60000) { await env.RATEBOARD_KV.put('mod_last_v1', String(Date.now()));
+        waitUntil((MOD_AUTO ? moderate(env, db) : moderate(env, db, true).then(o => env.RATEBOARD_KV.put('mod_preview_v1', JSON.stringify({ at: Date.now(), ...o,
+          users: undefined, strikesDist: o.users.reduce((a, u) => { a[u.strikes] = (a[u.strikes] || 0) + 1; return a; }, {}) }))))
+          .catch(e => botFail(db, 'moderate', e.message))); } } catch (e) {} }
     return json({ ok: true, started: go });
   }
   if (op === 'dmtick') {
@@ -5017,6 +5186,24 @@ async function handle({ request, env, waitUntil }) {
   }
   const acc = await swapAccess(env, request);
   mark(request, 'access');
+  /* Moderation, for anyone signed in (a member whose Swaps were taken away
+     still sees their record and can ask for an unban). */
+  if (op === 'modme') {
+    if (!acc.who) return forbidden('Sign in on the board first.');
+    return json(await modRecord(db, acc.who));
+  }
+  if (op === 'unbanreq' && request.method === 'POST') {
+    if (!acc.who) return forbidden('Sign in on the board first.');
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    const text = String(b.text || '').trim().slice(0, 1000);
+    if (text.length < 10) return json({ error: 'Say why you should get Swaps back (a sentence or two).' }, 400);
+    const rec = await modRecord(db, acc.who);
+    if (!rec.banned) return json({ error: 'Your Swaps access is not removed.' }, 400);
+    if (rec.request && rec.request.status === 'open') return json({ error: 'You already have a request waiting.' }, 400);
+    if (!(await allow(url.origin, 'unbanreq:' + acc.who, 3, 86400))) return json({ error: 'Too many requests - try again tomorrow.' }, 429);
+    await db.prepare("INSERT INTO unban_requests (key, text, ts, status) VALUES (?, ?, ?, 'open')").bind(acc.who, text, Date.now()).run();
+    return json({ ok: true, ...(await modRecord(db, acc.who)) });
+  }
   if (op === 'procheck') return proCheck(env, db, url, acc);
   if (op === 'rnstatus' || op === 'rnstart' || op === 'rncheck') return renameFlow(env, db, url, acc, op, waitUntil);
   // Boosts (BETA) is open to every signed-in member; its calls say page=boosts.
@@ -6075,6 +6262,51 @@ async function handle({ request, env, waitUntil }) {
   /* Admin: priority swappers - read, add, remove (by board or Real username). */
   /* Admin, Users & access: who has swaps taken away, who's restricted by a
      report (no posts, no swaps), and turning either off or on. */
+  /* Admin, moderation: everyone with a warning/strike, the open unban
+     requests, running the count now (dry=1 to only look), and answering a request. */
+  if (op === 'modlist') {
+    if (!acc.admin) return forbidden('Admin only.');
+    await modReady(db);
+    const st = new Map((((await db.prepare('SELECT key, resetAt, banned, bannedAt FROM mod_state').all()).results) || []).map(r => [r.key, r]));
+    const evs = ((await db.prepare('SELECT key, kind, n, period, at, reports FROM mod_events ORDER BY id').all()).results) || [];
+    const per = new Map();
+    for (const e of evs) { const s0 = st.get(e.key); if (s0 && Number(e.at) < Number(s0.resetAt || 0)) continue;
+      if (!per.has(e.key)) per.set(e.key, { key: e.key, strikes: 0, events: [] }); const x = per.get(e.key);
+      if (e.kind === 'strike') x.strikes++; x.events.push({ kind: e.kind, n: e.n, when: modTime(e.period), reports: e.reports }); }
+    for (const [k, s0] of st) if (s0.banned && !per.has(k)) per.set(k, { key: k, strikes: MOD_STRIKES, events: [] });
+    const rs = new Map((((await db.prepare('SELECT key, rsUser FROM swap_users').all()).results) || []).map(r => [r.key, r.rsUser]));
+    const rows = [...per.values()].map(x => ({ ...x, rsUser: rs.get(x.key) || x.key, banned: !!(st.get(x.key) || {}).banned })).sort((a, b) => b.banned - a.banned || b.strikes - a.strikes);
+    const reqs = ((await db.prepare("SELECT id, key, text, ts, status FROM unban_requests WHERE status='open' ORDER BY ts").all()).results) || [];
+    let last = null; try { last = JSON.parse((await env.RATEBOARD_KV.get('mod_summary_v1')) || 'null'); } catch (e) {}
+    return json({ rows, requests: reqs.map(r => ({ ...r, rsUser: rs.get(r.key) || r.key, record: per.get(r.key) || null })), last });
+  }
+  if (op === 'modrun') {
+    if (!acc.admin) return forbidden('Admin only.');
+    const dry = url.searchParams.get('dry') === '1' || request.method !== 'POST';
+    return json(await moderate(env, db, dry));
+  }
+  if (op === 'modunban' && request.method === 'POST') {
+    if (!acc.admin) return forbidden('Admin only.');
+    await modReady(db);
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    const r = b.id ? await db.prepare('SELECT * FROM unban_requests WHERE id=?').bind(Number(b.id)).first() : null;
+    const key = (r && r.key) || String(b.key || '');
+    if (!key) return json({ error: 'Pick a request or member.' }, 400);
+    const yes = b.approve !== false, answer = String(b.answer || '').trim().slice(0, 500);
+    if (yes) {
+      await db.prepare(SBLOCK_DDL).run();
+      await db.prepare('DELETE FROM swap_block WHERE key=?').bind(key).run();
+      await db.prepare('INSERT INTO mod_state (key, resetAt, banned) VALUES (?, ?, 0) ON CONFLICT(key) DO UPDATE SET banned=0, resetAt=excluded.resetAt').bind(key, Date.now()).run();
+      ACCESS_MEMO.delete(key);
+    }
+    if (r) await db.prepare('UPDATE unban_requests SET status=?, answer=? WHERE id=?').bind(yes ? 'approved' : 'declined', answer || null, r.id).run();
+    const u = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(key).first();
+    const d = u && u.hashId && await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=? AND channelId IS NOT NULL').bind(u.hashId).first();
+    if (d && b.notify !== false) await queueDm(db, d.channelId, [(yes
+      ? 'Your Swaps access is back and your strikes are cleared. Turn your swaps back on at raxacademy.app/swaps'
+      : 'Your unban request was declined.') + (answer ? '\n' + answer : '')], 'unban ' + key);
+    return json({ ok: true, dm: !!d });
+  }
   if (op === 'blocks') {
     if (!acc.admin) return forbidden('Admin only.');
     await db.prepare(SBLOCK_DDL).run(); await db.prepare(RESTRICT_DDL).run();
