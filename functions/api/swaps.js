@@ -5969,7 +5969,7 @@ async function handle({ request, env, waitUntil }) {
   }
   if (op === 'keep' && request.method === 'POST') {
     let b = {}; try { b = await request.json(); } catch (e) {}
-    const keep = (Array.isArray(b.keep) ? b.keep : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, 3000);
+    const keep = (Array.isArray(b.keep) ? b.keep : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, 5000);
     await db.prepare(`INSERT INTO swap_users (key, keep, updatedAt, active, wants, slots) VALUES (?, ?, ?, 0, '[]', '[]')
       ON CONFLICT(key) DO UPDATE SET keep=excluded.keep, updatedAt=excluded.updatedAt`).bind(me, JSON.stringify(keep), Date.now()).run();
     const res = await afterCallOff(env, db, auth, me, await cancelKept(db, me, new Set(keep)));
@@ -5981,7 +5981,7 @@ async function handle({ request, env, waitUntil }) {
     let b = {};
     try { b = await request.json(); } catch (e) {}
     const wants = (Array.isArray(b.wants) ? b.wants : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, MAX_WANTS);
-    const keep = (Array.isArray(b.keep) ? b.keep : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, 2000);
+    const keep = (Array.isArray(b.keep) ? b.keep : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)).slice(0, 5000);
     const sched = cleanSched(b.sched);
     const slots = schedUtc(sched) || [...new Set((Array.isArray(b.slots) ? b.slots : []).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24))].slice(0, MAX_SLOTS);
     const rsUser = await realName(db, me);   // their Real account: board username, or the one they linked
@@ -7237,6 +7237,30 @@ export async function untouchProbe(env, db) {
     out.done = 1;
   } catch (e) { out.err = String(e.message || e).slice(0, 150); }
   try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 3 * 86400 }); } catch (e) {}
+}
+
+/* One-off (2026-11-12): one member's swaps today that give a pass he keeps
+   or has untouchable - when each was made against when his keeps last
+   changed. Counts and times only (no names) for the health page. */
+export async function keepProbe(env, db) {
+  const K = 'diag_keep_1112';
+  try { const o = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (o && o.done) return; } catch (e) {}
+  const out = { at: Date.now() };
+  try {
+    const u = await db.prepare("SELECT key, keep, touch, passes, updatedAt, untouchAt FROM swap_users WHERE LOWER(key)='uawheel'").first();
+    if (!u) throw new Error('no member');
+    const keep = new Set(parse(u.keep, [])), touch = new Set(parse(u.touch, [])), ps = parse(u.passes, []);
+    const un = new Set(ps.filter(p => p.untouchable && !touch.has(p.key)).map(p => p.key));
+    out.keepN = keep.size; out.untouchN = un.size; out.touchN = touch.size; out.passN = ps.length; out.updatedAt = u.updatedAt;
+    const ms = ((await db.prepare(`SELECT * FROM swap_matches WHERE (a=? OR b=?) AND dueAt > ?`).bind(u.key, u.key, Date.now() - 20 * 3600000).all()).results) || [];
+    out.matches = ms.map(m => { const gives = m.a === u.key ? m.bGets : m.aGets;
+      return { st: m.status, made: m.createdAt, due: m.dueAt, warned: !!(m.warnA || m.warnB), kept: keep.has(gives), untouch: un.has(gives), touched: touch.has(gives),
+        stored: (ps.find(p => p.key === gives) || {}).untouchable ? 1 : 0, sp: String(gives).split(':').slice(0, 2).join(':') }; })
+      .filter(x => x.kept || x.untouch || x.touched || x.stored);
+    out.allMatches = ms.length;
+    out.done = 1;
+  } catch (e) { out.err = String(e.message || e).slice(0, 150); }
+  try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 2 * 86400 }); } catch (e) {}
 }
 
 export async function scanProbe(env, db) {
