@@ -6381,6 +6381,20 @@ async function handle({ request, env, waitUntil }) {
      report (no posts, no swaps), and turning either off or on. */
   /* Admin, moderation: everyone with a warning/strike, the open unban
      requests, running the count now (dry=1 to only look), and answering a request. */
+  /* Admin: who has done the most swaps - ones that went out (messaged), not
+     called off, and whose time has passed. 160s and niche buys not counted. */
+  if (op === 'topswappers') {
+    if (!acc.admin) return forbidden('Admin only.');
+    await matchCols(db);
+    const days = Math.min(365, Math.max(0, Number(url.searchParams.get('days')) || 0));
+    const since = days ? Date.now() - days * 86400000 : 0;
+    const rows = ((await db.prepare(`SELECT k, COUNT(*) AS n FROM (
+        SELECT a AS k FROM swap_matches WHERE status NOT IN ('cancelled','cancelling','cleared') AND (warnA IS NOT NULL OR warnB IS NOT NULL) AND dueAt <= ?1 AND dueAt >= ?2
+        UNION ALL SELECT b FROM swap_matches WHERE status NOT IN ('cancelled','cancelling','cleared') AND (warnA IS NOT NULL OR warnB IS NOT NULL) AND dueAt <= ?1 AND dueAt >= ?2)
+      GROUP BY k ORDER BY n DESC LIMIT 25`).bind(Date.now(), since).all()).results) || [];
+    const rs = new Map((((await db.prepare(`SELECT key, rsUser FROM swap_users WHERE key IN (${rows.map(() => '?').join(',') || "''"})`).bind(...rows.map(r => r.k)).all()).results) || []).map(r => [r.key, r.rsUser]));
+    return json({ days, rows: rows.map(r => ({ key: r.k, rsUser: rs.get(r.k) || r.k, n: r.n })) });
+  }
   if (op === 'modlist') {
     if (!acc.admin) return forbidden('Admin only.');
     await modReady(db);

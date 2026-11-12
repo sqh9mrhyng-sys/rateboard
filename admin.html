@@ -224,6 +224,10 @@
 
     <!-- SWAPS -->
     <div id="t-swaps" class="hide">
+      <section><h2>Top swappers</h2>
+        <p class="note" style="margin:0 0 8px">Swaps that went out (messaged) and weren't called off, once their time has passed. 160s and niche buys aren't counted.</p>
+        <div class="bar"><select id="ts-days"><option value="0">All time</option><option value="30">Last 30 days</option><option value="7">Last 7 days</option><option value="1">Last 24 hours</option></select><button id="ts-load" class="sm">Refresh</button></div>
+        <div id="ts-list" class="note">Loading…</div></section>
       <section>
         <h2>Matches</h2>
         <div class="bar"><button id="sw-run">Run matching now</button><button id="sw-reload">Refresh</button><span class="note" id="sw-msg"></span></div>
@@ -320,7 +324,7 @@ function show(tab){
   document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-pressed', b.dataset.tab === tab ? 'true' : 'false'));
   for(const t of ['status','offers','users','swaps','reports']) $('#t-' + t).classList.toggle('hide', t !== tab);
   try{ localStorage.setItem('rb_admin_tab', tab); }catch(e){}
-  if(!loaded[tab]){ loaded[tab] = true; ({ status: loadStatus, offers: loadBoard, users: loadUsers, swaps: loadSwaps, reports: loadReports })[tab](); }
+  if(!loaded[tab]){ loaded[tab] = true; ({ status: loadStatus, offers: loadBoard, users: loadUsers, swaps: () => { loadSwaps(); loadTop(); }, reports: loadReports })[tab](); }
 }
 document.querySelector('.tabs').addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if(b) show(b.dataset.tab); });
 
@@ -796,6 +800,14 @@ $('#bm-list').addEventListener('click', async e => { const b = e.target.closest(
   const j = await api('/api/swaps?op=dmcheck', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ who: b.dataset.chk }) });
   b.disabled = false; toast(j.error || (j.sent ? '"check" sent - the chat is at the top of the bot\'s DMs.' : 'Not sent: ' + j.why)); });
 
+/* ---------- top swappers ---------- */
+async function loadTop(){
+  $('#ts-list').textContent = 'Loading…';
+  const j = await api('/api/swaps?op=topswappers&days=' + $('#ts-days').value);
+  if(j.error){ $('#ts-list').textContent = j.error; return; }
+  $('#ts-list').innerHTML = j.rows.length ? '<ol style="margin:0;padding-left:22px">' + j.rows.slice(0, 15).map(r => `<li><b>@${esc(r.rsUser)}</b> - ${r.n.toLocaleString()} swap${r.n === 1 ? '' : 's'}</li>`).join('') + '</ol>' : 'No swaps yet.';
+}
+$('#ts-load').addEventListener('click', loadTop); $('#ts-days').addEventListener('change', loadTop);
 /* ---------- moderation ---------- */
 async function loadMod(){
   const j = await api('/api/swaps?op=modlist');
