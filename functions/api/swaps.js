@@ -5061,7 +5061,7 @@ async function handle({ request, env, waitUntil }) {
             nicheBuy.push({ ...x, player: asker ? playerName(asker, r.pass) : x.player, theirCard: asker ? passUrl(asker, r.pass) : null }); }
           else nicheGet.push({ ...x, comment: (o && o.comment) || null, yourCard: me ? passUrl(me, r.pass) : null });
           continue; }
-        if (r.seller === u.key) sell160.push({ ...x, yourCard: me ? passUrl(me, r.pass) : null });
+        if (r.seller === u.key) sell160.push({ ...x, comment: (o && o.comment) || null, yourCard: me ? passUrl(me, r.pass) : null });
         else buy160.push({ ...x, comment: (o && o.comment) || null });
       } } catch (e) {}
     // Each partner's trust level (2026-11-11), shown by their name.
