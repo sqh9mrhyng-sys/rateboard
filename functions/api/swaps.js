@@ -1219,9 +1219,9 @@ async function retryDms(db, auth) {
      swap is minutes away or past, and a late one just confuses. */
   const LOW = /^(mod|top15|unban|scan done)\b/;
   const all = ((await db.prepare('SELECT * FROM dm_retry ORDER BY id LIMIT 60').all()).results) || [];
-  for (const r of all) if (!LOW.test(String(r.label || '')) && Date.now() - Number(r.at || 0) > 25 * 60000) {
-    await db.prepare('DELETE FROM dm_retry WHERE id=?').bind(r.id).run(); await botFail(db, 'dm_retry', `${r.label}: dropped, over 25 minutes late`); }
-  const rows = all.filter(r => LOW.test(String(r.label || '')) || Date.now() - Number(r.at || 0) <= 25 * 60000)
+  for (const r of all) if (!LOW.test(String(r.label || '')) && Date.now() - Number(r.at || 0) > 60 * 60000) {
+    await db.prepare('DELETE FROM dm_retry WHERE id=?').bind(r.id).run(); await botFail(db, 'dm_retry', `${r.label}: dropped, over an hour late`); }
+  const rows = all.filter(r => LOW.test(String(r.label || '')) || Date.now() - Number(r.at || 0) <= 60 * 60000)
     .sort((a, b) => (LOW.test(String(a.label || '')) ? 1 : 0) - (LOW.test(String(b.label || '')) ? 1 : 0) || a.id - b.id).slice(0, 20);
   const usedCh = new Set();
   for (const r of rows) {
@@ -2512,6 +2512,55 @@ async function auditHour(env, db, auth) {
   }
   await save();
 }
+/* Nov 12, 9:00am Alaska (18:00 UTC) run: many swap DMs never arrived (the
+   DM line was jammed by the re-run Nov 5 check). Each member in that hour has
+   their chat read back for their hour link; anyone without it gets the swap DM
+   now. Runs only until 10:30am Alaska; state kept with no expiry. */
+const FIX_DUE = Date.UTC(2026, 10, 12, 18, 0, 0);
+async function fixHourDms(env, db, auth) {
+  if (Date.now() < FIX_DUE || Date.now() > FIX_DUE + 90 * 60000) return;
+  const K = 'dm_fix_' + FIX_DUE;
+  let st = null; try { st = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
+  if (st && st.finished) return;
+  st = st || { done: [], ok: [], resent: [], failed: [], startedAt: Date.now() };
+  const save = () => env.RATEBOARD_KV.put(K, JSON.stringify(st));
+  await matchCols(db);
+  const ms = ((await db.prepare("SELECT * FROM swap_matches WHERE dueAt BETWEEN ? AND ? AND status NOT IN ('cancelled','cancelling','cleared')").bind(FIX_DUE - 3600000, FIX_DUE + 3600000).all()).results) || [];
+  const per = new Map();
+  for (const m of ms) for (const side of ['A', 'B']) if (sideDue(m) === FIX_DUE) { const who = side === 'A' ? m.a : m.b; (per.get(who) || per.set(who, []).get(who)).push({ m, side }); }
+  let s160 = [];
+  try { s160 = ((await db.prepare("SELECT seller, buyer FROM swap_160 WHERE dueAt=? AND status <> 'cancelled'").bind(FIX_DUE).all()).results) || []; } catch (e) {}
+  for (const r of s160) for (const who of [r.seller, r.buyer]) if (!per.has(who)) per.set(who, []);
+  const cache = new Map(), member = async k => cache.has(k) ? cache.get(k) : (cache.set(k, await loadMember(db, k)), cache.get(k));
+  for (const [who, list] of [...per.entries()].sort()) {
+    if (TICK_T0 && tickLeft() - dmWaitAhead() < 8000) break;
+    if (st.done.includes(who)) continue;
+    const me = await member(who), name = '@' + ((me && me.rsUser) || who);
+    try {
+      if (!me || !me.hashId) throw new Error('never verified');
+      const had = await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=?').bind(me.hashId).first();
+      if (!had || !had.channelId) throw new Error('no chat with the bot');
+      const lo = await hourLink(env, who, FIX_DUE, 'offer'), lb = await hourLink(env, who, FIX_DUE);
+      const blob = JSON.stringify((await rsGetJson(`https://web.realapp.com/messages/channels/${had.channelId}/messages`, auth)) || '');
+      if (blob.includes(lo.split('/').pop()) || blob.includes(lb.split('/').pop())) st.ok.push(name);
+      else {
+        const items = []; for (const x of list) { const l = await sideLines(member, x.m, x.side); if (l) items.push(l); }
+        const text = items.length ? siteDm('Your 9:00am (Alaska) swaps - sorry this is late, the bot was backed up.', items.length, lo, recvSummary(me, items), '')
+          : fitOne(`Your 9:00am (Alaska) 160s - sorry this is late, the bot was backed up. Everything is here: ${lb}`);
+        await dmSendRetry(auth, had.channelId, text); await stat(db, 'dm_fix_resend'); st.resent.push(name);
+      }
+    } catch (e) { st.failed.push(`${name} (${String(e.message || e).slice(0, 50)})`); }
+    st.done.push(who); await save(); await sleep(300);
+  }
+  if (per.size && [...per.keys()].every(k => st.done.includes(k))) st.finished = true;
+  if (st.finished && !st.told) {
+    st.told = Date.now();
+    try { const dn = await loadMember(db, 'dennis');
+      if (dn && dn.hashId) { const ch = await dmChannel(db, auth, dn.hashId, dn.rsUser, env);
+        await dmSend(auth, ch, fitOne(`9:00 fix: ${per.size} people. ${st.ok.length} had their DM. Resent to ${st.resent.length}: ${st.resent.join(', ') || 'nobody'}.${st.failed.length ? ` Couldn't reach: ${st.failed.join(', ')}.` : ''}`)); } } catch (e) {}
+  }
+  await save();
+}
 /* Daily confirm (Dennis, 2026-11-06), from Saturday Nov 7's swap day.
    - At the start of each swap day (7am ET = 3am Alaska, no swaps that hour)
      everyone with hours that day gets a DM: their times, in their own time,
@@ -2756,6 +2805,7 @@ async function dmTick(env) {
   try { await confirmPrompts(env, db, auth); } catch (e) { await botFail(db, 'dm_confirm_prompt', e.message); }
   // auditHour was a one-off for Nov 5's 8:00 run; it ran again on Nov 12 when its saved state expired and resent week-old swaps. Off for good.
   // try { await auditHour(env, db, auth); } catch (e) { await botFail(db, 'dm_audit', e.message); }
+  try { await fixHourDms(env, db, auth); } catch (e) { await botFail(db, 'dm_fix', e.message); }
   return out;
 }
 export async function swapTick(env) {
@@ -3001,6 +3051,8 @@ const MOD_DDL = [
   'CREATE TABLE IF NOT EXISTS mod_state (key TEXT PRIMARY KEY, resetAt INTEGER, banned INTEGER, bannedAt INTEGER)',
   'CREATE TABLE IF NOT EXISTS unban_requests (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT, text TEXT, ts INTEGER, status TEXT, answer TEXT)'];
 const MOD_STRIKES = 3;
+// Swap times whose reports count for nothing (Dennis, 2026-11-12: the 9:00am Alaska DMs didn't go out).
+const MOD_VOID = new Set([Date.UTC(2026, 10, 12, 18, 0, 0)]);
 const MOD_AUTO = true;   // false: the 10-minute run only previews (counts kept in KV); true: it acts
 const MOD_EARLY = 10 * 60000;          // a report may come up to 10 min before the swap's time
 const MOD_LOOKBACK = 3 * 86400000;     // a report naming someone looks back 3 days for their swap
@@ -3080,6 +3132,7 @@ async function moderate(env, db, dry) {
       tgt = u.key; period = Math.max(...times);
     }
     if (ts < period - MOD_EARLY) { out.early++; continue; }
+    if (MOD_VOID.has(Number(period))) { out.voided = (out.voided || 0) + 1; handled.push(r.id); continue; }
     const s0 = state.get(tgt); if (s0 && ts < Number(s0.resetAt || 0)) { handled.push(r.id); continue; }
     const k = by + '|' + tgt;
     if (first.has(k)) { out.repeats++; handled.push(r.id); continue; }
