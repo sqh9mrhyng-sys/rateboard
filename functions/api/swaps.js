@@ -4523,6 +4523,11 @@ async function projBuild(env, db, sp) {
      count as games he played, at his rate, but not in his rate. */
   const all = ((await db.prepare(`SELECT playerId, player, team, position, day, rax, min, opponent, homeAway${fc ? ', conference' : ''} FROM gamelog WHERE sport=? AND season=?
       AND (seasonType IS NULL OR seasonType='regularseason')`).bind(sp, Number(se)).all()).results) || [];
+  /* A blank rax on a game Real has already paid his teammates for is a 0, not
+     a game still waiting (2026-11-12: a CFB DL with a 0 last game showed 8
+     games and 14.1 a game - 113 over 8 - instead of 9 games, 12.6). */
+  const paid = new Set(all.filter(x => x.rax != null).map(x => `${x.team}|${x.day}`));
+  let zf = 0; for (const x of all) if (x.rax == null && paid.has(`${x.team}|${x.day}`)) { x.rax = 0; zf++; }
   const cur = all.filter(x => x.rax != null);
   // How far the game log reaches: a team's games after this day aren't in it yet, so they aren't missed games.
   const cover = all.reduce((m, x) => String(x.day || '') > m ? String(x.day) : m, '');
@@ -4654,7 +4659,7 @@ async function projBuild(env, db, sp) {
   rows.sort((x, y) => y.pr - x.pr);
   // The latest game in the game data it was built from (shown at the top of the page).
   const gd = cur.reduce((m, x) => String(x.day || '') > m ? String(x.day) : m, '');
-  const out = { at: Date.now(), gd: gd || null, sig: projSigOf(cur.length, gd, cur.reduce((t, x) => t + Number(x.rax || 0), 0)), sport: sp, season: se, model: 2, lg: r2(lg), of, hf, rows: rows.slice(0, 4000), players: rows.length, schedPages: sched.pages, schedOf: sched.of };
+  const out = { at: Date.now(), gd: gd || null, zfix: 1, sig: projSigOf(cur.length - zf, gd, cur.reduce((t, x) => t + Number(x.rax || 0), 0)), sport: sp, season: se, model: 2, lg: r2(lg), of, hf, rows: rows.slice(0, 4000), players: rows.length, schedPages: sched.pages, schedOf: sched.of };
   try { await env.RATEBOARD_KV.put(`proj_v3_${sp}`, JSON.stringify(out), { expirationTtl: 3 * 86400 }); } catch (e) {}
   return out;
 }
@@ -6556,7 +6561,7 @@ async function handle({ request, env, waitUntil }) {
     const pid = Number(url.searchParams.get('pid'));
     if (pid) { const row = m ? m.byId.get(pid) : null; return json({ row: row || null, ...(await projDetail(env, sp, row, c)) }); }
     const lockK = `proj_lock_v1_${sp}`;
-    let stale = !c || (acc.admin && url.searchParams.get('refresh') === '1') || (m && m.force > c.at);
+    let stale = !c || (acc.admin && url.searchParams.get('refresh') === '1') || (m && m.force > c.at) || Number(c.zfix || 0) < 1;   // zfix: blank-rax 0s counted (2026-11-12)
     // Rebuilt when the game data has changed - and at most every 30 minutes while games are coming in.
     if (!stale && Date.now() - c.at > 30 * 60000) { try { stale = (await projSig(env, db, sp)) !== c.sig; } catch (e) { stale = Date.now() - c.at > 24 * 3600000; } }
     if (stale) {
