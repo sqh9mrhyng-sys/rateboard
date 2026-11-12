@@ -971,6 +971,10 @@ function opsSetup(){
    button, land where you were rather than dumping you on the board. Declared
    up here because the visibility pass below reads it. */
 let curPage = 'board';
+/* Two screens off one panel (Dennis, 2026-11-12): OTD (#otd) holds By player and
+   Every game; Game data (#gamedata) holds Golf, Rax shift and Historical. */
+let cbView = location.hash === '#otd' ? 'otd' : 'gd';
+const CB_OTD_TABS = ['players', 'games'];
 function applyGameDataVisibility(){
   // The picker is the only way in now; the panel itself decides how many tabs
   // someone with a pack-data-only grant gets.
@@ -1006,7 +1010,7 @@ function applyGameDataVisibility(){
   }
   // Someone who reloaded on the game data page, or followed a link to it,
   // belongs there rather than back on the board.
-  if(location.hash === '#gamedata' && curPage !== 'cbb' && canSeePackData()) goPage('cbb');
+  if((location.hash === '#gamedata' || location.hash === '#otd') && curPage !== 'cbb' && canSeePackData()){ cbView = location.hash === '#otd' ? 'otd' : 'gd'; goPage('cbb'); }
   // Home's buttons (2026-11-09): /#report and /#feature open those forms once signed in.
   if(location.hash === '#report' || location.hash === '#feature'){ const h = location.hash; history.replaceState(null, '', location.pathname + location.search);
     setTimeout(() => { if(h === '#report') reportUser(''); else featureForm(); }, 0); }
@@ -2612,7 +2616,7 @@ function goPage(want){
   // Pack data only: its own page (2026-11-09).
   if(want === 'cbb' && packOnly()){ location.href = '/packs'; return; }
   const to = (want === 'cbb' && canSeePackData()) ? 'cbb' : 'board';
-  if(to === curPage) return;
+  if(to === curPage && (to !== 'cbb' || $('#page-cbb').dataset.view === cbView)) return;
   curPage = to;
   const bd = $('#page-board'), gd = $('#page-cbb');
   if(bd) bd.classList.toggle('hide', to === 'cbb');
@@ -2621,17 +2625,20 @@ function goPage(want){
   { const spk = document.querySelector('.topbar .sportpick'); if(spk) spk.style.display = to === 'cbb' ? 'none' : ''; }
   const sel = $('#pagesel');
   if(sel) sel.value = to;
-  if(to === 'cbb') cbbPanel();
+  if(to === 'cbb'){ $('#page-cbb').dataset.view = cbView; cbbPanel(); }
   else if(gd) gd.innerHTML = '';          // next visit rebuilds, as it always did
-  const h = to === 'cbb' ? '#gamedata' : '';
+  const h = to === 'cbb' ? (cbView === 'otd' ? '#otd' : '#gamedata') : '';
   if((location.hash || '') !== h){
     try { history.replaceState(null, '', location.pathname + location.search + h); }
     catch(e) { location.hash = h; }
   }
   window.scrollTo(0, 0);
 }
-window.addEventListener('hashchange', () =>
-  goPage(location.hash === '#gamedata' ? 'cbb' : 'board'));
+window.addEventListener('hashchange', () => {
+  const on = location.hash === '#gamedata' || location.hash === '#otd';
+  if(on) cbView = location.hash === '#otd' ? 'otd' : 'gd';
+  goPage(on ? 'cbb' : 'board');
+});
 
 function modal(title, bodyHTML){
   const scrim = document.createElement('div');
@@ -5006,12 +5013,12 @@ async function cbbPanel(){
   let available = [];
 
   const only = packOnly();
-  const tabsOk = dataTabs();
+  const tabsOk = dataTabs().filter(t => cbView === 'otd' ? CB_OTD_TABS.includes(t) : !CB_OTD_TABS.includes(t));
   if(!tabsOk.includes(st.mode)) st.mode = tabsOk[0] || 'pack';
-  const box = pageShell(only ? 'Pack data' : 'Game data', `
+  const box = pageShell(only ? 'Pack data' : cbView === 'otd' ? 'OTD' : 'Game data', `
     <div class="seg seg-tabs" role="group" aria-label="View">
       <button data-cm="players" aria-pressed="${st.mode === 'players' ? 'true' : 'false'}">By player</button>
-      <button data-cm="games" aria-pressed="false" title="Every game, one row each - set a date window to see on-this-day games">OTD</button>
+      <button data-cm="games" aria-pressed="false">Every game</button>
       <button data-cm="pack" class="hide" aria-pressed="${st.mode === 'pack' ? 'true' : 'false'}">Pack data &#8599;</button>
       <button data-cm="golf" aria-pressed="${st.mode === 'golf' ? 'true' : 'false'}">Golf</button>
       <button data-cm="shift" aria-pressed="${st.mode === 'shift' ? 'true' : 'false'}">Rax shift</button>

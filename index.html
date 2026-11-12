@@ -146,7 +146,8 @@ const api = async (u, o = {}) => { try{ const t = getToken(); const r = await fe
 const PAGES = [
   ['/', 'Home', 'This page'],
   ['/board', 'Board', 'Buy offers for Real cards - post, browse and sell'],
-  ['/board#gamedata', 'Game data', 'By player and OTD - every game, rax and box score', 'admin'],
+  ['/board#otd', 'OTD', 'By player and every game - rax and box scores', 'admin'],
+  ['/board#gamedata', 'Game data', 'Golf, rax shift and historical', 'admin'],
   ['/packs', 'Pack data', 'Pack odds and packs to each rarity, for every player'],   // everyone (2026-11-09)
   ['/market', 'Market data', 'Recent sales and prices', 'market'],
   ['/swaps', 'Swaps', 'Trade passes with other members, matched every hour'],
@@ -157,7 +158,7 @@ const PAGES = [
 ];
 // A colour for each page's box.
 // Each page's own colour (2026-11-09: brighter, and themed - swaps the two-way cyan, boosts fire, packs Legendary purple, projections growth green).
-const LOOK = { '/board': '#ffb020', '/board#gamedata': '#3b9eff', '/packs': '#b06bff', '/market': '#14d6b0', '/swaps': '#22d3ee', '/boosts': '#ff5a36',
+const LOOK = { '/board': '#ffb020', '/board#gamedata': '#3b9eff', '/board#otd': '#ffd60a', '/packs': '#b06bff', '/market': '#14d6b0', '/swaps': '#22d3ee', '/boosts': '#ff5a36',
   '/projections': '#34d67a', '/tags': '#ff4fb0', '/otd': '#ffd60a', '/admin': '#c3cbdb' };
 // Pages behind access only show to those who have it (Dennis opened Home to everyone, 2026-11-09).
 let ACC = {};
