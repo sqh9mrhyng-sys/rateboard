@@ -3941,6 +3941,10 @@ function fcStat(row, label) {
   const k = raw.toLowerCase().replace(/[^a-z0-9]/g, '');
   if (k === 'cleansheet' || k === 'cleansheets' || k === 'cs') return row.oppScore === 0 && (fcMin(row) >= 60) ? 1 : 0;
   const col = FC_STAT_KEY[k] || Object.keys(o).find(x => x.toLowerCase() === k);
+  /* Some national-team competitions don't track every stat (Nations League has
+     no duels - a member, 2026-11-12): missing there means not counted, not 0,
+     so those games are left out of that stat's average. */
+  if (col && (o[col] == null || o[col] === '') && FC_NAT_CONF.has(String(row.conference || '').toUpperCase())) return null;
   return col ? n(o[col]) : null;
 }
 // Minutes: Real leaves them off goalkeepers almost always (they play the 90).
