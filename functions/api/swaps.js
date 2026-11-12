@@ -1195,7 +1195,7 @@ const dmMark = t => { const u = String(t).match(/https?:\/\/[^\s)]+/); return u 
 async function verifyDms(db, auth) {
   await db.prepare(DMV_DDL).run();
   // A second look more than 25 minutes overdue is dropped (its swap is past) - 2026-11-12.
-  await db.prepare('DELETE FROM dm_verify WHERE checkAt < ?').bind(Date.now() - 25 * 60000).run();
+  await db.prepare('DELETE FROM dm_verify WHERE checkAt < ?').bind(Date.now() - 10 * 60000).run();
   const rows = ((await db.prepare('SELECT * FROM dm_verify WHERE checkAt <= ? ORDER BY checkAt LIMIT 4').bind(Date.now()).all()).results) || [];
   for (const r of rows) {
     // Every bit of text in the chat, flattened the same way as the marks.
@@ -1223,9 +1223,9 @@ async function retryDms(db, auth) {
      swap is minutes away or past, and a late one just confuses. */
   const LOW = /^(mod|top15|unban|scan done)\b/;
   const all = ((await db.prepare('SELECT * FROM dm_retry ORDER BY id LIMIT 60').all()).results) || [];
-  for (const r of all) if (!LOW.test(String(r.label || '')) && Date.now() - Number(r.at || 0) > 60 * 60000) {
-    await db.prepare('DELETE FROM dm_retry WHERE id=?').bind(r.id).run(); await botFail(db, 'dm_retry', `${r.label}: dropped, over an hour late`); }
-  const rows = all.filter(r => LOW.test(String(r.label || '')) || Date.now() - Number(r.at || 0) <= 60 * 60000)
+  for (const r of all) if (!LOW.test(String(r.label || '')) && Date.now() - Number(r.at || 0) > 15 * 60000) {
+    await db.prepare('DELETE FROM dm_retry WHERE id=?').bind(r.id).run(); await botFail(db, 'dm_retry', `${r.label}: dropped, over 15 minutes late`); }
+  const rows = all.filter(r => LOW.test(String(r.label || '')) || Date.now() - Number(r.at || 0) <= 15 * 60000)
     .sort((a, b) => (LOW.test(String(a.label || '')) ? 1 : 0) - (LOW.test(String(b.label || '')) ? 1 : 0) || a.id - b.id).slice(0, 20);
   const usedCh = new Set();
   for (const r of rows) {
@@ -2522,7 +2522,7 @@ async function auditHour(env, db, auth) {
    now. Runs only until 10:30am Alaska; state kept with no expiry. */
 const FIX_DUE = Date.UTC(2026, 10, 12, 18, 0, 0);
 async function fixHourDms(env, db, auth) {
-  if (Date.now() < FIX_DUE || Date.now() > FIX_DUE + 90 * 60000) return;
+  if (Date.now() < FIX_DUE || Date.now() > FIX_DUE + 55 * 60000) return;   // ended 9:55 (Dennis, 2026-11-12: DMs running late)
   const K = 'dm_fix_' + FIX_DUE;
   let st = null; try { st = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
   if (st && st.finished) return;
@@ -2810,6 +2810,14 @@ async function dmTick(env) {
   // auditHour was a one-off for Nov 5's 8:00 run; it ran again on Nov 12 when its saved state expired and resent week-old swaps. Off for good.
   // try { await auditHour(env, db, auth); } catch (e) { await botFail(db, 'dm_audit', e.message); }
   try { await fixHourDms(env, db, auth); } catch (e) { await botFail(db, 'dm_fix', e.message); }
+  /* Dennis, 2026-11-12: once the 10:00am Alaska swap DMs are out, everything
+     still waiting in the resend lines is deleted, so nobody gets an old message. */
+  try { if (Date.now() >= Date.UTC(2026, 10, 12, 19, 8) && !(await env.RATEBOARD_KV.get('dm_purge_1112'))) {
+    await env.RATEBOARD_KV.put('dm_purge_1112', String(Date.now()));
+    await db.prepare(DMQ_DDL).run(); await db.prepare(DMV_DDL).run();
+    const a = await db.prepare('DELETE FROM dm_retry').run(), b = await db.prepare('DELETE FROM dm_verify').run();
+    await env.RATEBOARD_KV.put('dm_purge_1112_n', JSON.stringify({ at: Date.now(), retry: a.meta && a.meta.changes, verify: b.meta && b.meta.changes }));
+  } } catch (e) { await botFail(db, 'dm_purge', e.message); }
   return out;
 }
 export async function swapTick(env) {
