@@ -1190,6 +1190,8 @@ const dmFlat = t => String(t).replace(/[^A-Za-z0-9]+/g, ' ').trim();
 const dmMark = t => { const u = String(t).match(/https?:\/\/[^\s)]+/); return u ? dmFlat(u[0]) : dmFlat(t).slice(0, 30); };
 async function verifyDms(db, auth) {
   await db.prepare(DMV_DDL).run();
+  // A second look more than 25 minutes overdue is dropped (its swap is past) - 2026-11-12.
+  await db.prepare('DELETE FROM dm_verify WHERE checkAt < ?').bind(Date.now() - 25 * 60000).run();
   const rows = ((await db.prepare('SELECT * FROM dm_verify WHERE checkAt <= ? ORDER BY checkAt LIMIT 4').bind(Date.now()).all()).results) || [];
   for (const r of rows) {
     // Every bit of text in the chat, flattened the same way as the marks.
@@ -5219,6 +5221,32 @@ async function handle({ request, env, waitUntil }) {
     if (reason === REASONS.other && note.length < 5) return json({ error: 'Say what happened.' }, 400);
     await matchCols(db);
     const u = await db.prepare('SELECT key FROM swap_users WHERE LOWER(key)=?').bind(key.toLowerCase()).first();
+    /* "Took 30+ min, no word" (a member's idea, 2026-11-12): a heads-up only.
+       The partner gets a DM with a link to make it right; it never counts
+       toward warnings or strikes. One per partner per swap. */
+    if (b.reason === 'late' && u) {
+      if (Date.now() < due + 30 * 60000) return json({ error: 'This one opens 30 minutes after the swap time.' }, 400);
+      let other = null, id = Number(b.id);
+      if (b.k160) { const t = await db.prepare('SELECT buyer, seller FROM swap_160 WHERE id=? AND (buyer=? OR seller=?) AND dueAt=?').bind(id, u.key, u.key, due).first(); if (t) other = t.buyer === u.key ? t.seller : t.buyer; }
+      else { const m0 = await db.prepare("SELECT a, b FROM swap_matches WHERE id=? AND (a=? OR b=?) AND dueAt=? AND status NOT IN ('cancelled','cancelling','cleared')").bind(id, u.key, u.key, due).first(); if (m0) other = m0.a === u.key ? m0.b : m0.a; }
+      if (!other) return json({ error: 'That swap was not found.' }, 404);
+      const once = `late_v1_${u.key}_${b.k160 ? 's' : 'm'}${id}`;
+      if (await env.RATEBOARD_KV.get(once)) return json({ error: 'You already sent this one.' }, 429);
+      if (!(await allow(url.origin, 'swapreport:' + u.key, 10, 3600))) return json({ error: 'You have sent a lot of reports - try again later.' }, 429);
+      const me = await loadMember(db, u.key), o = await db.prepare('SELECT key, rsUser, hashId, sched FROM swap_users WHERE key=?').bind(other).first();
+      await db.prepare(SREPORT_DDL).run();
+      await db.prepare('INSERT INTO swap_reports (ts, by_user, kind, target, detail, status) VALUES (?, ?, ?, ?, ?, ?)').bind(Date.now(), u.key, 'late', (o && o.rsUser) || other,
+        `Took 30+ min, no word - ${b.k160 ? '160' : 'swap'} #${id} (${new Date(due).toISOString().slice(0, 16).replace('T', ' ')} UTC)` + (note ? `\n${note}` : ''), 'auto').run();
+      await env.RATEBOARD_KV.put(once, '1', { expirationTtl: 7 * 86400 });
+      await stat(db, 'report_late');
+      let sent = false;
+      try { const auth = swapToken(env);
+        if (auth && o && o.hashId) {
+          const tz = ((parse(o.sched, null)) || {}).tz, link = await hourLink(env, o.key, due);
+          const text = `This is just a heads-up report - no action will be taken. You were reported for your swap on ${modTime(due, tz)} with @${(me && me.rsUser) || u.key}. Here's the link if you would like to make it right: ${link}`;
+          const ch = await dmChannel(db, auth, o.hashId, o.rsUser, env); await queueDm(db, ch, [text], 'late ' + o.key); sent = true; } } catch (e) {}
+      return json({ ok: true, sent });
+    }
     // A 160 partner (same rules as swaps - Dennis, 2026-11-11).
     if (b.k160 && u) {
       const t = await db.prepare('SELECT * FROM swap_160 WHERE id=? AND (buyer=? OR seller=?) AND dueAt=?').bind(Number(b.id), u.key, u.key, due).first();

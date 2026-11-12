@@ -470,7 +470,7 @@ document.addEventListener('click', async e => {
 document.addEventListener('click', async e => {
   const op = e.target.closest('[data-rp]'), sd = e.target.closest('[data-rpsend]');
   if(op){ const box = $('#rp' + op.dataset.rp); if(!box) return; box.hidden = !box.hidden; if(box.hidden || box.dataset.ready) return; box.dataset.ready = '1';
-    box.innerHTML = `<select data-rpwhy><option value="nooffer">Didn't send me an offer</option><option value="nobuy">${String(op.dataset.rp).startsWith('160-') ? "Didn't send 160 back" : "Didn't buy my pack"}</option><option value="wrong">Sent the wrong offer</option><option value="other">Something else</option></select>
+    box.innerHTML = `<select data-rpwhy><option value="nooffer">Didn't send me an offer</option><option value="nobuy">${String(op.dataset.rp).startsWith('160-') ? "Didn't send 160 back" : "Didn't buy my pack"}</option><option value="wrong">Sent the wrong offer</option><option value="late">Took 30+ min, no word (heads-up only)</option><option value="other">Something else</option></select>
       <textarea data-rpnote maxlength="800" placeholder="Anything else to add (optional)"></textarea>
       <div class="rprow"><span class="note" data-rpmsg style="margin-right:auto;align-self:center"></span><button class="btn go" type="button" data-rpsend="${op.dataset.rp}" style="cursor:pointer;font:inherit;font-weight:700">Send report</button></div>`; return; }
   if(!sd) return;
@@ -480,7 +480,9 @@ document.addEventListener('click', async e => {
       body: JSON.stringify({ id: Number(String(sd.dataset.rpsend).replace(/^160-/, '')), k160: String(sd.dataset.rpsend).startsWith('160-'), reason: box.querySelector('[data-rpwhy]').value, detail: box.querySelector('[data-rpnote]').value }) });
     const j = await r.json();
     if(j.error){ msg.textContent = j.error; sd.disabled = false; }
-    else { box.innerHTML = '<p class="note" style="margin:0">Reported - it\'s with the admins now.</p>'; const b = document.querySelector(`[data-rp="${sd.dataset.rpsend}"]`); if(b){ b.textContent = 'Reported'; b.disabled = true; } } }
+    else { box.innerHTML = box.querySelector('[data-rpwhy]') && box.querySelector('[data-rpwhy]').value === 'late'
+        ? `<p class="note" style="margin:0">Sent - they got a heads-up with a link to make it right${j.sent ? '' : ' (they can\'t get DMs from the bot yet, so it\'s saved for the admins)'}. No strike is given for this.</p>`
+        : '<p class="note" style="margin:0">Reported - it\'s with the admins now.</p>'; const b = document.querySelector(`[data-rp="${sd.dataset.rpsend}"]`); if(b){ b.textContent = 'Reported'; b.disabled = true; } } }
   catch(err){ msg.textContent = 'Could not reach the board - try again.'; sd.disabled = false; }
 });
 document.addEventListener('change', e => { const k = e.target.dataset.k; if(!k) return; done[k] = e.target.checked; try{ localStorage.setItem(key, JSON.stringify(done)); }catch(err){}
