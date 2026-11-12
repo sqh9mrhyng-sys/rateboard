@@ -713,6 +713,8 @@ async function chatState(auth, channelId, theirId, since) {
 }
 
 const PRIO_KEY = 'swap_priority_v1';
+// Members given Dennis's own matching priority for a while (2026-11-12): { key: untilMs }.
+const BOSS_KEY = 'swap_boss_v1';
 /* Ratings (Dennis, 2026-11-06). After a swap each side can rate the other
    1-5 stars on the swap page - once per person (they can change it). A
    member's score is their average, pulled toward RATE_PRIOR until they have a
@@ -962,7 +964,9 @@ async function runMatchingInner(db, env) {
      hour they pick counts as their 1st, and their pairs go ahead of everyone
      but Dennis's - so when two people want the same player, they get it. */
   let prio = new Set(); try { prio = new Set((JSON.parse((env && await env.RATEBOARD_KV.get(PRIO_KEY)) || '[]') || []).map(k => String(k).toLowerCase())); } catch (e) {}
-  const isPrio = k => prio.has(String(k).toLowerCase()), bossOf = k => ADMINS.includes(String(k).toLowerCase()) ? 2 : isPrio(k) ? 1 : 0;
+  let boss = {}; try { boss = JSON.parse((env && await env.RATEBOARD_KV.get(BOSS_KEY)) || '{}') || {}; } catch (e) {}
+  const isBoss = k => Number(boss[String(k).toLowerCase()] || 0) > Date.now();
+  const isPrio = k => prio.has(String(k).toLowerCase()), bossOf = k => ADMINS.includes(String(k).toLowerCase()) || isBoss(k) ? 2 : isPrio(k) ? 1 : 0;
   // Every hour a member picks counts the same (Dennis, 2026-11-06: "primary" was too easy to game).
   const ranks = new Map(users.map(u => [u.key, dues.map(t => rankAt(u, t) >= 0 ? 0 : -1)]));
   /* Ratings decide toss-ups (Dennis, 2026-11-06): when two people want the same
@@ -6617,6 +6621,28 @@ async function handle({ request, env, waitUntil }) {
     const today = etDay(Date.now());
     return json({ today, sports: Object.fromEntries(['ncaaf', 'ncaam', 'nfl', 'soccer'].map(sp => [sp, Object.entries(all[sp] || {})
       .map(([key, v]) => ({ key, ...v, expired: !!(v.until && v.until < today) })).sort((a, b) => a.name.localeCompare(b.name))])) });
+  }
+  /* Admin: give a member Dennis's own priority (level 2) until a time. */
+  if (op === 'bosspri') {
+    if (!acc.admin) return forbidden('Admin only.');
+    let m = {}; try { m = JSON.parse((await env.RATEBOARD_KV.get(BOSS_KEY)) || '{}') || {}; } catch (e) {}
+    for (const k of Object.keys(m)) if (Number(m[k]) <= Date.now()) delete m[k];
+    if (request.method === 'POST') {
+      let b = {}; try { b = await request.json(); } catch (e) {}
+      const add = String(b.add || '').trim().replace(/^@/, '').toLowerCase(), del = String(b.remove || '').trim().toLowerCase();
+      if (add) {
+        const u = await db.prepare('SELECT key FROM swap_users WHERE LOWER(key)=? OR LOWER(rsUser)=?').bind(add, add).first();
+        if (!u) return json({ error: `No swapper called @${add}.` }, 404);
+        const until = Number(b.until);
+        if (!(until > Date.now() && until < Date.now() + 366 * 86400000)) return json({ error: 'Pick an end time in the future.' }, 400);
+        m[u.key.toLowerCase()] = until;
+      }
+      if (del) delete m[del];
+      await env.RATEBOARD_KV.put(BOSS_KEY, JSON.stringify(m));
+    }
+    const list = [];
+    for (const [k, until] of Object.entries(m)) { let real = k; try { const r = await db.prepare('SELECT rsUser FROM swap_users WHERE LOWER(key)=?').bind(k).first(); real = (r && r.rsUser) || k; } catch (e) {} list.push({ key: k, real, until }); }
+    return json({ list: list.sort((a, b) => a.until - b.until) });
   }
   if (op === 'priority') {
     if (!acc.admin) return forbidden('Admin only.');

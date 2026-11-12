@@ -363,6 +363,15 @@
     <div class="bar"><input id="prioin" placeholder="Username" autocomplete="off" autocapitalize="off"><button class="primary" id="prioadd">Add</button></div>
     <div id="priolist" class="chips"></div><span class="note" id="priomsg"></span>
   </section>
+  <section id="adminboss" class="adm" hidden>
+    <h2>Give your priority (admin)</h2>
+    <p class="note">They match exactly like you do - ahead of everyone, priority swappers included - until the time you pick, then it ends on its own.</p>
+    <div class="bar" style="flex-wrap:wrap"><input id="bossin" placeholder="Username" autocomplete="off" autocapitalize="off">
+      <select id="bossfor"><option value="1">1 hour</option><option value="3">3 hours</option><option value="6">6 hours</option><option value="12">12 hours</option><option value="24" selected>1 day</option><option value="72">3 days</option><option value="168">1 week</option><option value="720">30 days</option><option value="custom">Until…</option></select>
+      <input id="bossuntil" type="datetime-local" hidden>
+      <button class="primary" id="bossadd">Give</button></div>
+    <div id="bosslist" class="chips"></div><span class="note" id="bossmsg"></span>
+  </section>
   <section id="adminund" class="adm" hidden>
     <h2>Didn't get a DM (last 24h)</h2>
     <p class="note">Members Real refused a warning or contact DM for. Real sometimes takes a message and still doesn't show it - those can't be seen from here.</p>
@@ -1113,6 +1122,24 @@ $('#packlist').addEventListener('click', async e => {
 function paintPrio(j){
   $('#priolist').innerHTML = (j.list || []).map(x => `<span class="chip">@${esc(x.real || x.key)}<button data-prio="${esc(x.key)}" aria-label="Remove">✕</button></span>`).join('') || '<span class="note">Nobody yet.</span>';
 }
+function paintBoss(j){
+  const left = t => { const m = Math.max(0, Math.round((t - Date.now()) / 60000)); return m >= 1440 ? `${Math.round(m / 1440 * 10) / 10}d` : m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`; };
+  $('#bosslist').innerHTML = (j.list || []).map(x => `<span class="chip" title="Until ${esc(new Date(x.until).toLocaleString())}">@${esc(x.real || x.key)} · ${left(x.until)} left<button data-boss="${esc(x.key)}" aria-label="Remove">✕</button></span>`).join('') || '<span class="note">Nobody right now.</span>';
+}
+async function loadBoss(){ const j = await api('/api/swaps?op=bosspri'); if(!j.error) paintBoss(j); }
+$('#bossfor').addEventListener('change', () => { $('#bossuntil').hidden = $('#bossfor').value !== 'custom'; });
+$('#bossadd').addEventListener('click', async () => {
+  const v = $('#bossin').value.trim(); if(!v) return;
+  const f = $('#bossfor').value, until = f === 'custom' ? new Date($('#bossuntil').value).getTime() : Date.now() + Number(f) * 3600000;
+  if(!(until > Date.now())){ $('#bossmsg').textContent = 'Pick an end time in the future.'; return; }
+  const j = await api('/api/swaps?op=bosspri', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ add: v, until }) });
+  $('#bossmsg').textContent = j.error || 'Given - counts from the next matching run.'; if(j.list){ paintBoss(j); $('#bossin').value = ''; }
+});
+$('#bosslist').addEventListener('click', async e => {
+  const b = e.target.closest('[data-boss]'); if(!b) return;
+  const j = await api('/api/swaps?op=bosspri', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ remove: b.dataset.boss }) });
+  if(j.list) paintBoss(j); $('#bossmsg').textContent = j.error || 'Taken back.';
+});
 async function loadPrio(){ const j = await api('/api/swaps?op=priority'); if(!j.error) paintPrio(j); }
 $('#prioadd').addEventListener('click', async () => {
   const v = $('#prioin').value.trim(); if(!v) return;
@@ -1316,7 +1343,7 @@ async function showModNote(){
   paintPaused();
   nicheReq = {}; for(const [k, v] of Object.entries((j.profile && j.profile.niche) || {})) if(v && v.n) nicheReq[k] = Number(v.n);
   loadOwnCounts(); drawBl();
-  drawPasses(); drawWants(); drawHours(); loadHourCounts(); loadWantCounts(); loadSwaps(); if(j.admin){ loadMatches(); $('#adminprio').hidden = false; $('#adminund').hidden = false; loadPrio(); loadUnd(); }
+  drawPasses(); drawWants(); drawHours(); loadHourCounts(); loadWantCounts(); loadSwaps(); if(j.admin){ loadMatches(); $('#adminprio').hidden = false; $('#adminboss').hidden = false; $('#adminund').hidden = false; loadPrio(); loadBoss(); loadUnd(); }
   resumeScan();
   // The big button to their swap page (next swap time, or the last one).
   loadRecBuys();
