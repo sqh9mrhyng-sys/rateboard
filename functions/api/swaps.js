@@ -765,15 +765,37 @@ async function trustMap(env, db) {
   } catch (e) {}
   return m;
 }
-// Spamming 1 stars: 5+ ratings given with 80%+ of them 1 star, or 5+ one-stars in a day.
+/* Spamming 1 stars. Dennis, 2026-11-11: honest 1 stars for partners who
+   never opened packs were tripping the old rule (5 one-stars in a day), so a
+   1 star now only counts against the rater when the person they rated is
+   well rated by everyone else (3+ other ratings averaging 4+ stars).
+   Blocked: 5+ ratings given with 60%+ of them such 1 stars, or 4+ in a day. */
+async function rateSpam(db, rater) {
+  const r = await db.prepare(`SELECT COUNT(*) AS n,
+      SUM(CASE WHEN x.stars=1 AND o.n >= 3 AND o.s * 1.0 / o.n >= 4 THEN 1 ELSE 0 END) AS bad,
+      SUM(CASE WHEN x.stars=1 AND o.n >= 3 AND o.s * 1.0 / o.n >= 4 AND x.at > ?2 THEN 1 ELSE 0 END) AS bad24
+    FROM swap_ratings x LEFT JOIN (SELECT ratee, SUM(stars) AS s, COUNT(*) AS n FROM swap_ratings WHERE rater <> ?1 GROUP BY ratee) o ON o.ratee = x.ratee
+    WHERE x.rater = ?1`).bind(rater, Date.now() - 86400000).first();
+  const n = Number(r && r.n) || 0, bad = Number(r && r.bad) || 0, bad24 = Number(r && r.bad24) || 0;
+  return { n, bad, bad24, spam: (n >= 5 && bad / n >= 0.6) || bad24 >= 4 };
+}
 async function rateModerate(db, rater) {
-  const g = await db.prepare('SELECT COUNT(*) AS n, SUM(CASE WHEN stars=1 THEN 1 ELSE 0 END) AS ones, SUM(CASE WHEN stars=1 AND at > ? THEN 1 ELSE 0 END) AS ones24 FROM swap_ratings WHERE rater=?').bind(Date.now() - 86400000, rater).first();
-  const n = Number(g && g.n) || 0, ones = Number(g && g.ones) || 0, ones24 = Number(g && g.ones24) || 0;
-  if ((n >= 5 && ones / n >= 0.8) || ones24 >= 5) {
-    await db.prepare('INSERT OR IGNORE INTO swap_rate_block (key, at, why) VALUES (?, ?, ?)').bind(rater, Date.now(), `${ones} of ${n} ratings were 1 star${ones24 >= 5 ? `, ${ones24} in a day` : ''}`).run();
+  const g = await rateSpam(db, rater);
+  if (g.spam) {
+    await db.prepare('INSERT OR IGNORE INTO swap_rate_block (key, at, why) VALUES (?, ?, ?)').bind(rater, Date.now(), `${g.bad} of ${g.n} ratings were 1 star for well-rated partners${g.bad24 >= 4 ? `, ${g.bad24} in a day` : ''}`).run();
     await stat(db, 'rate_blocked'); return true;
   }
   return false;
+}
+// Blocks made under the old rule are checked again; anyone it was unfair to gets rating back.
+async function rateRecheck(env, db) {
+  await db.prepare(RATE_DDL).run(); await db.prepare(RATE_BLOCK_DDL).run();
+  const bl = ((await db.prepare('SELECT key, why FROM swap_rate_block').all()).results) || [];
+  let freed = 0;
+  for (const b of bl) { if (/well-rated|by admin/i.test(String(b.why || ''))) continue;
+    if (!(await rateSpam(db, b.key)).spam) { await db.prepare('DELETE FROM swap_rate_block WHERE key=?').bind(b.key).run(); freed++; } }
+  if (freed) { try { await env.RATEBOARD_KV.delete(TRUST_KEY); } catch (e) {} }
+  return freed;
 }
 /* One matching run at a time (2026-11-06): two runs 10 seconds apart (a
    member's save refresh) each made the same swap - Dennis got Pete
@@ -2929,6 +2951,7 @@ async function modBan(db, key) {
 }
 async function moderate(env, db, dry) {
   await modReady(db); await matchCols(db); await db.prepare(T160_DDL).run(); await db.prepare(DM_DDL).run();
+  if (!dry) { try { if (!(await env.RATEBOARD_KV.get('rate_recheck_v1'))) { const f = await rateRecheck(env, db); await env.RATEBOARD_KV.put('rate_recheck_v1', JSON.stringify({ at: Date.now(), freed: f })); } } catch (e) {} }
   const reps = await modRows(db, "SELECT rowid AS id, ts, by_user, target, matchId, m160 FROM swap_reports WHERE kind='user' AND status IN ('open','closed','auto')", [], 'ts, rowid');
   const out = { reports: reps.length, counted: 0, repeats: 0, noSwap: 0, calledOff: 0, early: 0, warned: 0, struck: 0, banned: 0, dms: 0, users: [] };
   if (!reps.length) return out;
