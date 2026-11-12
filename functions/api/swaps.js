@@ -5960,7 +5960,7 @@ async function handle({ request, env, waitUntil }) {
     await db.prepare('UPDATE swap_users SET lock1=?, noSp=? WHERE key=?').bind(JSON.stringify(lock), JSON.stringify(noSp), me).run();
     // Swaps not yet messaged that now break a rule are called off.
     let n = 0;
-    try { for (const m of (((await db.prepare(`SELECT * FROM swap_matches WHERE status='scheduled' AND warnA IS NULL AND warnB IS NULL AND (a=? OR b=?)`).bind(me, me).all()).results) || [])) {
+    try { for (const m of (((await db.prepare(`SELECT * FROM swap_matches WHERE status='pending' AND warnA IS NULL AND warnB IS NULL AND (a=? OR b=?)`).bind(me, me).all()).results) || [])) {
       const iGive = m.a === me ? m.bGets : m.aGets, iGet = m.a === me ? m.aGets : m.bGets;
       const w0 = (parse((await db.prepare('SELECT wants FROM swap_users WHERE key=?').bind(me).first() || {}).wants, []) || [])[0];
       const bad = (lock.includes(iGive) && iGet !== w0) || (noSp[String(iGive).split(':')[0]] && swapDay(Number(m.dueAt)) === today);
