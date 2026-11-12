@@ -872,7 +872,7 @@ const grantHas = list => !!me && (market[list] || []).map(x => String(x).toLower
 const DATA_TABS = ['players', 'games', 'pack', 'golf', 'shift', 'hist'];
 function canTab(t){
   if(isAdmin()) return true;
-  if(t === 'players' || t === 'games') return grantHas('gamedata');
+  if(t === 'players' || t === 'games') return !!me;   // OTD's By player and Every game: every signed-in member (Dennis, 2026-11-12)
   if(t === 'pack') return grantHas('packdata') || packGrantNow();
   if(t === 'golf') return grantHas('golfdata');
   if(t === 'shift' || t === 'hist') return grantHas('shiftdata');
@@ -991,10 +991,10 @@ function applyGameDataVisibility(){
   if(sel){
     // Options are added and taken away rather than hidden: a hidden option
     // still shows in Safari's picker.
-    const want = [['home', 'Home'], ['board', 'Board'], ...(canSeePackData() ? [['cbb', 'Game data']] : []),
+    const want = [['home', 'Home'], ['board', 'Board'], ...(me ? [['otd', 'OTD']] : []), ...(isAdmin() ? [['cbb', 'Game data']] : []),
                   ...(marketAccess ? [['market', 'Market data']] : []),
                   ...(boostsOn ? [['boosts', 'Boosts/Buys (beta)']] : []), ['projections', 'Projections'], ['tags', 'Tag finder'],   // projections everyone (2026-11-08); tag finder everyone (2026-11-09)
-                  ...(swapsOn ? [['swaps', 'Swaps (beta)']] : []), ...(otdOn ? [['otd', 'OTD optimization'], ['admin', 'Admin']] : [])];
+                  ...(swapsOn ? [['swaps', 'Swaps (beta)']] : []), ...(otdOn ? [['admin', 'Admin']] : [])];
     const have = [...sel.options].map(o => o.value).join(',');
     if(have !== want.map(w => w[0]).join(',')){
       sel.innerHTML = want.map(([v, t]) => `<option value="${v}">${t}</option>`).join('');
@@ -1051,7 +1051,8 @@ function pageGo(){
   const sel = $('#pagesel');
   if(sel && sel.value === 'market'){ location.href = '/market'; return; }
   if(sel && sel.value === 'swaps'){ location.href = '/swaps'; return; }
-  if(sel && sel.value === 'otd'){ location.href = '/otd'; return; }
+  if(sel && sel.value === 'otd'){ location.href = '/board#otd'; cbView = 'otd'; goPage('cbb'); return; }
+  if(sel && sel.value === 'cbb') cbView = 'gd';
   if(sel && sel.value === 'boosts'){ location.href = '/boosts'; return; }
   if(sel && sel.value === 'projections'){ location.href = '/projections'; return; }
   if(sel && sel.value === 'tags'){ location.href = '/tags'; return; }
@@ -2628,7 +2629,7 @@ function goPage(want){
   // Game data has its own season pickers: the board's sport picker goes (2026-11-09).
   { const spk = document.querySelector('.topbar .sportpick'); if(spk) spk.style.display = to === 'cbb' ? 'none' : ''; }
   const sel = $('#pagesel');
-  if(sel) sel.value = to;
+  if(sel) sel.value = to === 'cbb' && cbView === 'otd' ? 'otd' : to;
   if(to === 'cbb'){ $('#page-cbb').dataset.view = cbView; cbbPanel(); }
   else if(gd) gd.innerHTML = '';          // next visit rebuilds, as it always did
   const h = to === 'cbb' ? (cbView === 'otd' ? '#otd' : '#gamedata') : '';

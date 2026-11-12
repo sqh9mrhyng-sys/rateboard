@@ -3259,7 +3259,7 @@ const boostAlias = (sp, t) => (BOOST_ALIAS_BY[sp] || BOOST_ALIAS)[t] || t;
    fetched once, and saved for everyone. */
 async function boostSchedule(env, sp, day, force) {
   const key = `boostsched_v2_${sp}_${day}`;
-  if (!force) { try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c) return c; } catch (e) {} }
+  if (!force) { try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c) return boostSchedAlias(sp, c); } catch (e) {} }
   let d;
   try {
     const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${ESPN_PATH[sp]}/scoreboard?dates=${day.replace(/-/g, '')}&limit=500${ESPN_GROUP[sp]}`);
@@ -3279,7 +3279,18 @@ async function boostSchedule(env, sp, day, force) {
   }
   const out = { at: Date.now(), games, teams };
   try { await env.RATEBOARD_KV.put(key, JSON.stringify(out), { expirationTtl: 5 * 86400 }); } catch (e) {}
-  return out;
+  return boostSchedAlias(sp, out);
+}
+/* ESPN's scoreboard calls Utah "UTA" while its team list says "UTAH"
+   (2026-11-12: Mammoth players showed as having no game). Every schedule is
+   reachable under both spellings of each aliased code. */
+function boostSchedAlias(sp, s) {
+  const t = s && s.teams; if (!t) return s;
+  for (const [a, b] of Object.entries(BOOST_ALIAS_BY[sp] || {})) {
+    if (t[a] && !t[b]) t[b] = t[a];
+    else if (t[b] && !t[a]) t[a] = t[b];
+  }
+  return s;
 }
 
 /* The daily refresh: at 10am and 5pm Eastern, today's and the next three

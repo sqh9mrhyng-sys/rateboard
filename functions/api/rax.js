@@ -7724,7 +7724,7 @@ async function pass(){
    Everything else - rescoring, requeueing, wiping, crawling, probes - needs an
    admin session. These used to be open to anyone who knew the address. */
 const READS = {
-  gamelog: { query: 300, top: 900, seasons: 900, facets: 900 },   // facets: the team, conference and position lists (members with game data were getting none)
+  gamelog: { query: 1800, top: 1800, seasons: 1800, facets: 1800 },   // 30 min, shared copies (OTD opened to every member, 2026-11-12)   // facets: the team, conference and position lists (members with game data were getting none)
   plays:   { board: 3600, player: 1800, seasons: 1800, tagboard: 3600, progress: 120 },   // pack data: rebuilt at most hourly
   golf:    { seasons: 1800, tournaments: 1800, allevents: 1800, board: 1800 },
   earn:    { shift: 900 },
@@ -8504,6 +8504,11 @@ export async function onRequestGet(ctx) {
           return resp;
         }
       }
+    }
+    // OTD searches that aren't saved yet each run a big query: 20 a minute per person (2026-11-12).
+    if (url.searchParams.get('gamelog') === 'query' && !(await allow(origin, 'otd-miss:' + clientIp(request), 20, 60))) {
+      return new Response(JSON.stringify({ error: 'Too many new searches at once - wait a minute and try again.' }),
+        { status: 429, headers: { 'content-type': 'application/json', 'retry-after': '60' } });
     }
     if (!(await allow(origin, 'rax-miss:' + clientIp(request), 60, 60))) {
       return new Response(JSON.stringify({ error: 'Too many requests at once - try again in a minute.' }),
