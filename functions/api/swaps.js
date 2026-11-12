@@ -2738,7 +2738,8 @@ async function confirmGate(env, db, auth) {
     /* Dennis, 2026-11-12: members who never confirmed were still getting
        swaps when the morning DM hadn't reached them. Confirming is required
        of everyone now (the button is always on /swaps; adding a time counts). */
-    const was = () => true;
+    // Back to only those the morning DM reached (Dennis, 2026-11-12: calling off and DMing everyone else jammed the swap DMs).
+    const was = k => asked.get(day).has(String(k).toLowerCase());
     const ua = await get(m.a), ub = await get(m.b), noA = !isConfirmed(ua, day) && was(m.a), noB = !isConfirmed(ub, day) && was(m.b);
     if (!noA && !noB) continue;
     const who = [noA && m.a, noB && m.b].filter(Boolean);
@@ -2750,7 +2751,8 @@ async function confirmGate(env, db, auth) {
     for (const r of (((await db.prepare(`SELECT * FROM swap_160 WHERE status='pending' AND warnS IS NULL AND warnB IS NULL AND dueAt > ? AND dueAt <= ?`).bind(now, now + 31 * 60000).all()).results) || [])) {
       const day = swapDay(Number(r.dueAt)); if (!confirmOn(day)) continue;
       if (!asked.has(day)) { const rs = ((await db.prepare('SELECT key FROM bot_once WHERE campaign=? AND ok = 2').bind('cprompt_' + day).all()).results) || []; asked.set(day, new Set(rs.map(x => x.key))); }
-      const no = [r.buyer, r.seller];
+      const was = k => asked.get(day).has(String(k).toLowerCase());
+      const no = [r.buyer, r.seller].filter(k => was(k));
       const off = []; for (const k of no) if (!isConfirmed(await get(k), day)) off.push(k);
       if (off.length) { await db.prepare(`UPDATE swap_160 SET status='cancelled', note=? WHERE id=? AND status='pending'`).bind(`called off: ${off.map(k => '@' + k).join(', ')} didn't confirm today`, r.id).run(); await stat(db, 'confirm_calledoff_160'); }
     } } catch (e) {}
