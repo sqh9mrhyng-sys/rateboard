@@ -2600,7 +2600,10 @@ async function confirmGate(env, db, auth) {
     const due = sideDue(m), day = swapDay(due); if (!confirmOn(day)) continue;
     // Only someone the confirm DM actually reached can lose swaps for not confirming.
     if (!asked.has(day)) { const rs = ((await db.prepare(`SELECT key FROM bot_once WHERE campaign=? AND ok ${day === '2026-11-07' ? 'IN (1,2)' : '= 2'}`).bind('cprompt_' + day).all()).results) || [];   /* Nov 7's were sent before ok=2 was kept */ asked.set(day, new Set(rs.map(r => r.key))); }
-    const was = k => asked.get(day).has(String(k).toLowerCase());
+    /* Dennis, 2026-11-12: members who never confirmed were still getting
+       swaps when the morning DM hadn't reached them. Confirming is required
+       of everyone now (the button is always on /swaps; adding a time counts). */
+    const was = () => true;
     const ua = await get(m.a), ub = await get(m.b), noA = !isConfirmed(ua, day) && was(m.a), noB = !isConfirmed(ub, day) && was(m.b);
     if (!noA && !noB) continue;
     const who = [noA && m.a, noB && m.b].filter(Boolean);
@@ -2612,8 +2615,7 @@ async function confirmGate(env, db, auth) {
     for (const r of (((await db.prepare(`SELECT * FROM swap_160 WHERE status='pending' AND warnS IS NULL AND warnB IS NULL AND dueAt > ? AND dueAt <= ?`).bind(now, now + 31 * 60000).all()).results) || [])) {
       const day = swapDay(Number(r.dueAt)); if (!confirmOn(day)) continue;
       if (!asked.has(day)) { const rs = ((await db.prepare('SELECT key FROM bot_once WHERE campaign=? AND ok = 2').bind('cprompt_' + day).all()).results) || []; asked.set(day, new Set(rs.map(x => x.key))); }
-      const was = k => asked.get(day).has(String(k).toLowerCase());
-      const no = [r.buyer, r.seller].filter(k => was(k));
+      const no = [r.buyer, r.seller];
       const off = []; for (const k of no) if (!isConfirmed(await get(k), day)) off.push(k);
       if (off.length) { await db.prepare(`UPDATE swap_160 SET status='cancelled', note=? WHERE id=? AND status='pending'`).bind(`called off: ${off.map(k => '@' + k).join(', ')} didn't confirm today`, r.id).run(); await stat(db, 'confirm_calledoff_160'); }
     } } catch (e) {}
@@ -3296,7 +3298,14 @@ async function boostInventorySport(env, tok, hashId, sp, origin) {
     if (!(await allow(origin, 'boostinv-sp', 30, 60))) throw new Error('busy');
     const d = await rsGetJson(`https://web.realapp.com/userpassboostercards/undefined/entity/player?displayType=collectionstats&sport=${sp}&userId=${encodeURIComponent(hashId)}&version=stat`, tok);
     const list = boostListOf(d), now = Date.now();
+    /* An empty answer when we had boosters saved is kept as a miss, not
+       saved (2026-11-12: a member saw "no boosts" in every sport). */
+    const had = ((c && c.sports && c.sports[sp]) || []).length;
+    if (!list.length && had) { const e = Number((c.emptyN || {})[sp] || 0) + 1;
+      if (e < 3) { try { await env.RATEBOARD_KV.put(key, JSON.stringify({ ...c, emptyN: { ...(c.emptyN || {}), [sp]: e } }), { expirationTtl: 30 * 86400 }); } catch (x) {}
+        return { at, list: c.sports[sp], stale: true }; } }
     const n = c || { at: now, sports: {} };
+    if (n.emptyN) n.emptyN = { ...n.emptyN, [sp]: 0 };
     n.sports = { ...(n.sports || {}), [sp]: list }; n.spAt = { ...(n.spAt || {}), [sp]: now };
     try { await env.RATEBOARD_KV.put(key, JSON.stringify(n), { expirationTtl: 30 * 86400 }); } catch (e) {}
     return { at: now, list };
@@ -3341,6 +3350,9 @@ async function boostInventoryAll(env, tok, hashId, fresh, admin) {
       if (add.length) await env.RATEBOARD_KV.put(lk, JSON.stringify(seen.concat(add).slice(-60))); } catch (e) {} }
     await sleep(700);
   }
+  // Every sport empty when boosters were saved before: Real answered without them - keep the saved ones.
+  const hadAny = c && Object.values(c.sports || {}).some(l => (l || []).length);
+  if (hadAny && !Object.values(sports).some(l => (l || []).length)) return { ...c, next: Date.now() + 15 * 60000, stale: true };
   const out = { at: Date.now(), sports, spAt: {} };
   try { await env.RATEBOARD_KV.put(key, JSON.stringify(out), { expirationTtl: 30 * 86400 }); } catch (e) {}
   return { ...out, next: out.at + BOOSTINV_EVERY };
