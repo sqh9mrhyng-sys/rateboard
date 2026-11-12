@@ -2462,6 +2462,7 @@ const siteDm = (pre, n, link, sum, extra) => fitOne(`${pre ? pre + '\n\n' : ''}Y
    check stops instead of sending everyone a repeat. */
 const AUDIT_DUE = Date.UTC(2026, 10, 5, 17, 0, 0);
 async function auditHour(env, db, auth) {
+  if (Date.now() > AUDIT_DUE + 86400000) return;   // never again (it re-ran a week later, 2026-11-12)
   const K = 'dm_audit_' + AUDIT_DUE;
   let st = null; try { st = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
   if (st && st.finished) return;
@@ -2753,7 +2754,8 @@ async function dmTick(env) {
     if (rows.length) out = await runDms(env, db, auth, rows, DM_PER_TICK, false);
   } catch (e) { await botFail(db, 'dm_run', e.message); }
   try { await confirmPrompts(env, db, auth); } catch (e) { await botFail(db, 'dm_confirm_prompt', e.message); }
-  try { await auditHour(env, db, auth); } catch (e) { await botFail(db, 'dm_audit', e.message); }
+  // auditHour was a one-off for Nov 5's 8:00 run; it ran again on Nov 12 when its saved state expired and resent week-old swaps. Off for good.
+  // try { await auditHour(env, db, auth); } catch (e) { await botFail(db, 'dm_audit', e.message); }
   return out;
 }
 export async function swapTick(env) {
