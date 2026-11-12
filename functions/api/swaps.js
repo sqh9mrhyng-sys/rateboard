@@ -2180,6 +2180,39 @@ async function scanDoneDms(db, auth, t0) {
    on through the swap-DM rush too, on the non-bot accounts then): carry on
    scans whose page went away, start whoever is next in line if they've left
    the page, and send the "scan done" DMs. */
+/* One-off (Dennis, 2026-11-12): at 8:45am Alaska, a DM to the 15 members with
+   the most swaps that went out (messaged, not called off, time passed). */
+const TOP15_AT = Date.UTC(2026, 10, 12, 17, 45);
+async function topSwapCounts(db, since = 0, limit = 25) {
+  await matchCols(db);
+  const k = `topswap_${since}`;
+  return ((await db.prepare(`SELECT k, COUNT(*) AS n FROM (
+      SELECT a AS k FROM swap_matches WHERE status NOT IN ('cancelled','cancelling','cleared') AND (warnA IS NOT NULL OR warnB IS NOT NULL) AND dueAt <= ?1 AND dueAt >= ?2
+      UNION ALL SELECT b FROM swap_matches WHERE status NOT IN ('cancelled','cancelling','cleared') AND (warnA IS NOT NULL OR warnB IS NOT NULL) AND dueAt <= ?1 AND dueAt >= ?2)
+    GROUP BY k ORDER BY n DESC LIMIT ?3`).bind(Date.now(), since, limit).all()).results) || [];
+}
+async function top15Dm(env, db) {
+  if (Date.now() < TOP15_AT || Date.now() > TOP15_AT + 6 * 3600000) return;
+  const K = 'oneoff_top15_1112';
+  try { const o = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (o && (o.done || Date.now() - (o.at || 0) < 3 * 60000)) return;
+    await env.RATEBOARD_KV.put(K, JSON.stringify({ at: Date.now(), running: 1 }), { expirationTtl: 7 * 86400 }); } catch (e) { return; }
+  const out = { at: Date.now(), sent: 0, noChat: 0, failed: 0 };
+  try {
+    const auth = swapToken(env); if (!auth) throw new Error('no bot token');
+    const top = (await topSwapCounts(db, 0, 30)).filter(r => !ADMINS.includes(String(r.k).toLowerCase())).slice(0, 15);
+    let rank = 0;
+    for (const r of top) {
+      rank++;
+      const u = await db.prepare('SELECT key, rsUser, hashId FROM swap_users WHERE key=?').bind(r.k).first();
+      if (!u || !u.hashId) { out.noChat++; continue; }
+      const text = `Hi, you've made the #${rank} most swaps on Rax Academy, at ${Number(r.n).toLocaleString('en-US')} swaps. What changes would you like to see to the site? Whatever you request will almost certainly be added.`;
+      try { const ch = await dmChannel(db, auth, u.hashId, u.rsUser, env); await queueDm(db, ch, [text], 'top15 ' + u.key); out.sent++; }
+      catch (e) { out.failed++; await botFail(db, 'top15', `${u.key}: ${e.message || e}`); }
+    }
+    out.done = 1;
+  } catch (e) { out.err = String(e.message || e).slice(0, 150); }
+  try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 7 * 86400 }); } catch (e) {}
+}
 /* Untouchables kept fresh before swaps (Dennis, 2026-11-12: a member got
    matched to give passes he'd set untouchable on Real - the site only learns
    that from a scan). Each minute, up to 6 members with a swap 31-100 minutes
@@ -5248,6 +5281,7 @@ async function handle({ request, env, waitUntil }) {
     // Niche owner counts, refreshed once an hour.
     if (go) { try { const oc = await ownerCounts(env); if (Date.now() - (oc.at || 0) > 60 * 60000) waitUntil(saveOwnerCounts(env, db).catch(() => {})); } catch (e) {} }
     if (go) { try { waitUntil(untouchRefresh(env, db).catch(() => {})); } catch (e) {} }
+    if (go) { try { waitUntil(top15Dm(env, db).catch(() => {})); } catch (e) {} }
     // Moderation: reports counted into warnings / strikes / bans every 10 minutes.
     if (go) { try { const ml = Number(await env.RATEBOARD_KV.get('mod_last_v1')) || 0;
       const mm2 = new Date().getUTCMinutes(), quiet = (mm2 >= 5 && mm2 < 16) || (mm2 >= 35 && mm2 < 50);   // its DMs stay clear of the swap-hour rush
@@ -6387,11 +6421,10 @@ async function handle({ request, env, waitUntil }) {
     if (!acc.admin) return forbidden('Admin only.');
     await matchCols(db);
     const days = Math.min(365, Math.max(0, Number(url.searchParams.get('days')) || 0));
-    const since = days ? Date.now() - days * 86400000 : 0;
-    const rows = ((await db.prepare(`SELECT k, COUNT(*) AS n FROM (
-        SELECT a AS k FROM swap_matches WHERE status NOT IN ('cancelled','cancelling','cleared') AND (warnA IS NOT NULL OR warnB IS NOT NULL) AND dueAt <= ?1 AND dueAt >= ?2
-        UNION ALL SELECT b FROM swap_matches WHERE status NOT IN ('cancelled','cancelling','cleared') AND (warnA IS NOT NULL OR warnB IS NOT NULL) AND dueAt <= ?1 AND dueAt >= ?2)
-      GROUP BY k ORDER BY n DESC LIMIT 25`).bind(Date.now(), since).all()).results) || [];
+    const since = days ? Date.now() - days * 86400000 : 0, CK = 'topswap_cache_' + days;
+    let rows = null; try { const c = JSON.parse((await env.RATEBOARD_KV.get(CK)) || 'null'); if (c && Date.now() - c.at < 10 * 60000) rows = c.rows; } catch (e) {}
+    if (!rows) { try { rows = await topSwapCounts(db, since, 25); } catch (e) { return json({ error: 'The database is busy - try Refresh in a minute.' }, 503); }
+      try { await env.RATEBOARD_KV.put(CK, JSON.stringify({ at: Date.now(), rows }), { expirationTtl: 3600 }); } catch (e) {} }
     const rs = new Map((((await db.prepare(`SELECT key, rsUser FROM swap_users WHERE key IN (${rows.map(() => '?').join(',') || "''"})`).bind(...rows.map(r => r.k)).all()).results) || []).map(r => [r.key, r.rsUser]));
     return json({ days, rows: rows.map(r => ({ key: r.k, rsUser: rs.get(r.k) || r.k, n: r.n })) });
   }
