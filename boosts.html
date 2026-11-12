@@ -214,7 +214,7 @@
 </style>
 </head>
 <body>
-<div class="lock" id="lock" hidden><h1>Boosts &amp; Buys <span class="beta">BETA</span></h1><p class="note" id="lockmsg">Checking…</p><p id="signinbtn" hidden><a class="btn" href="/?next=/boosts" style="display:inline-block;padding:10px 14px;border-radius:9px;background:#E8A33D;color:#141925;font-weight:700;text-decoration:none">Sign in</a></p><p class="note" id="signinhint" hidden>Signed in already? Open the board once - it will ask for your password one more time, then this page works. Opened this from inside Real? Use the browser you signed in with.</p><p><a href="/">Back to home</a></p></div>
+<div class="lock" id="lock" hidden><h1>Boosts &amp; Buys <span class="beta">BETA</span></h1><p class="note" id="lockmsg">Checking…</p><p id="signinbtn" hidden><a class="btn" href="/?next=/boosts" style="display:inline-block;padding:10px 14px;border-radius:9px;background:#E8A33D;color:#141925;font-weight:700;text-decoration:none">Sign in</a></p><p class="note" id="signinhint" hidden>Sign in to get booster picks for the cards you own. Opened this from inside Real? Use the browser you signed in with.</p><div id="pubtop" hidden></div><p><a href="/">Back to home</a></p></div>
 <div class="wrap" id="main" hidden>
   <header><h1>Boosts &amp; Buys</h1><span class="beta">BETA</span><a href="/" style="margin-left:auto">Back to home</a></header>
   <div class="tabsrow"><div class="sportcol"><div class="seg allseg" id="allseg"><button data-s="all" aria-pressed="false">All sports</button></div><div class="seg" id="sportseg"><button data-s="ncaam" aria-pressed="true">CBB</button><button data-s="ncaaf" aria-pressed="false">CFB</button><button data-s="nfl" aria-pressed="false">NFL</button><button data-s="nba" aria-pressed="false">NBA</button><button data-s="nhl" aria-pressed="false">NHL</button><button data-s="golf" aria-pressed="false">Golf</button><button data-s="soccer" aria-pressed="false">FC</button></div></div>
@@ -1089,13 +1089,31 @@ $('#scan').addEventListener('click', async () => {
   if(shown()) run();
 });
 
+/* Signed out (Dennis, 2026-11-12): today's top players to boost, for
+   everyone - from the projections and today's schedule. */
+const PT_SP = { nfl: 'NFL', ncaaf: 'CFB', nba: 'NBA', ncaam: 'CBB', nhl: 'NHL' };
+let ptSp = null;
+async function pubTop(){
+  const j = await api('/api/swaps?op=boosttop'); const box = $('#pubtop');
+  if(!j || j.error){ return; }
+  const sps = Object.keys(PT_SP).filter(k => (j.sports[k] || []).length);
+  if(!sps.length){ box.hidden = false; box.innerHTML = '<p class="note">No games today in the sports we cover.</p>'; return; }
+  if(!ptSp || !sps.includes(ptSp)) ptSp = sps[0];
+  const t = new Date(j.day + 'T12:00:00Z').toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'short', day: 'numeric' });
+  box.hidden = false;
+  box.innerHTML = `<h2 style="margin:22px 0 4px;font-size:19px">Today's top players to boost</h2><p class="note" style="margin:0 0 10px">${esc(t)} - the players with the most projected rax in today's games, from their own games this season and the opponent.</p>`
+    + `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${sps.map(k => `<button type="button" data-ptsp="${k}" style="padding:6px 12px;border-radius:8px;border:1px solid #2c3549;background:${k === ptSp ? '#E8A33D' : 'transparent'};color:${k === ptSp ? '#141925' : 'inherit'};font-weight:700">${PT_SP[k]}</button>`).join('')}</div>`
+    + `<div style="text-align:left">${j.sports[ptSp].map((x, i) => `<div style="display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid #2c3549"><span class="note" style="width:22px;text-align:right">${i + 1}</span><span style="flex:1"><b>${esc(x.n)}</b> <span class="note">${esc(x.t)}${x.p ? ' · ' + esc(x.p) : ''} ${x.h === 'away' ? '@' : 'vs'} ${esc(x.opp || '')}${x.inj ? ' · ' + esc(x.inj) : ''}</span></span><span style="text-align:right"><b>${x.v}</b><span class="note" style="display:block;font-size:11px">proj. rax · avg ${x.a}</span></span></div>`).join('')}</div>`
+    + '<p class="note" style="margin-top:10px">Projections are estimates, not guarantees. Sign in to see which of <b>your</b> cards to boost and with which booster.</p>';
+}
+document.addEventListener('click', e => { const b = e.target.closest('[data-ptsp]'); if(b){ ptSp = b.dataset.ptsp; pubTop(); } });
 (async () => {
   let me = await api('/api/swaps?op=me&page=boosts');
   for(let i = 0; i < 4 && me.error && /sign in/i.test(me.error) && (()=>{try{return !!localStorage.getItem('ratebrd_token_v1')}catch(e){return false}})(); i++){
     await new Promise(r => setTimeout(r, 1200 * (i + 1)));
     me = await api('/api/swaps?op=me&page=boosts');
   }
-  if(me.error){ $('#lock').hidden = false; $('#lockmsg').textContent = /sign in/i.test(me.error) ? 'Sign in first.' : me.error; if(/sign in/i.test(me.error)){ $('#signinbtn').hidden = false; $('#signinhint').hidden = false; } return; }
+  if(me.error){ $('#lock').hidden = false; $('#lockmsg').textContent = /sign in/i.test(me.error) ? 'Sign in first.' : me.error; if(/sign in/i.test(me.error)){ $('#signinbtn').hidden = false; $('#signinhint').hidden = false; pubTop(); } return; }
   $('#main').hidden = false;
   // The extra settings are only offered to the accounts that have them.
   if(me.boostModes){

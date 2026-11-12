@@ -5219,6 +5219,32 @@ async function handle({ request, env, waitUntil }) {
   mark(request, 'access');
   /* Moderation, for anyone signed in (a member whose Swaps were taken away
      still sees their record and can ask for an unban). */
+  /* Public (Dennis, 2026-11-12): today's top players to boost, from the
+     projections and team schedules - player names only, nothing about members.
+     Saved for 20 minutes; a crowd costs one KV read. */
+  if (op === 'boosttop') {
+    if (!(await allow(url.origin, 'boosttop:' + (request.headers.get('cf-connecting-ip') || ''), 30, 60))) return json({ error: 'Too many refreshes - wait a minute.' }, 429);
+    const K = 'boosttop_v1';
+    try { const c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (c && Date.now() - c.at < 20 * 60000) return json(c); } catch (e) {}
+    const etd = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+    const today = etd(new Date()), out = { at: Date.now(), day: today, sports: {} };
+    for (const sp of ['nfl', 'ncaaf', 'nba', 'ncaam', 'nhl']) {
+      let pj = null, sc = null;
+      try { [pj, sc] = await Promise.all([env.RATEBOARD_KV.get(`proj_v3_${sp}`), env.RATEBOARD_KV.get(`projsched_v2_${sp}`)]); pj = JSON.parse(pj || 'null'); sc = JSON.parse(sc || 'null'); } catch (e) {}
+      if (!pj || !sc || !sc.teams) continue;
+      const of = pj.of || {}, hf = pj.hf || {}, list = [];
+      for (const r of (pj.rows || [])) {
+        const x = r.x || {}; if (!x.ab || !(x.av > 0) || x.sk || x.sn) continue;
+        const g = (sc.teams[x.ab] || []).find(t => !t[2] && etd(new Date(t[0])) === today); if (!g) continue;
+        const v = x.rate * x.av * (of[g[1]] || 1) * (hf[g[3]] || 1);
+        list.push({ n: r.n, t: r.t, p: r.p, opp: g[1], h: g[3], at: g[0], v: Math.round(v * 10) / 10, a: r.a, gp: r.gp, inj: (r.f || []).find(f => /questionable|doubtful|day-to-day/i.test(f)) || undefined });
+      }
+      list.sort((a, b) => b.v - a.v);
+      if (list.length) out.sports[sp] = list.slice(0, 30);
+    }
+    try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 3600 }); } catch (e) {}
+    return json(out);
+  }
   if (op === 'modme') {
     if (!acc.who) return forbidden('Sign in first (raxacademy.app).');
     return json(await modRecord(db, acc.who));

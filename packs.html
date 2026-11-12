@@ -158,6 +158,7 @@
   </section>
   <!-- Rating calculator (Dennis, 2026-11-09): a pass you own, a target rarity,
        the rating it still needs and what that costs each way. -->
+  <p id="cguest" hidden style="margin:12px 0">The rating calculator reads your own passes, so it needs an account. <a href="/?next=/packs">Sign in or sign up</a> - it's free.</p>
   <div id="calc" hidden>
     <section>
       <div class="scanbar"><button type="button" class="go" id="cscan">Scan account</button><span class="note" id="cscanmsg"></span></div>
@@ -588,7 +589,7 @@ $('#body').addEventListener('change', e => { if(e.target.id === 'price'){ price 
 function showTab(t){
   tab = t; document.querySelectorAll('#tabs button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.t === t)));
   $('#pickrow').hidden = t === 'fav';
-  $('#filters').hidden = $('#tablesec').hidden = t === 'calc'; $('#calc').hidden = t !== 'calc';
+  $('#filters').hidden = $('#tablesec').hidden = t === 'calc'; $('#calc').hidden = t !== 'calc'; $('#cguest').hidden = true;
   if(t === 'calc') return calcOpen();
   // Team packs: only MLB, NBA, NFL and CFB can be picked.
   drawSports(); drawSeasons();
@@ -630,7 +631,9 @@ function drawPassList(){
     || `<div class="none">No pass of yours matches "${esc(q)}".</div>`;
   dd.hidden = false;
 }
+let guest = false;
 async function calcOpen(){
+  if(guest){ $('#calc').hidden = true; $('#cguest').hidden = false; return; }
   if(!$('#cstart').value) $('#cstart').value = dayStr(Date.now());
   if(!calcLoaded){ $('#cscanmsg').textContent = 'Loading your passes…'; const j = await loadMe(); calcLoaded = !j.error;
     $('#cscanmsg').textContent = j.error ? j.error : scanLine(); cSaved = ls.get(cKey(), []); drawPassList(); }
@@ -744,11 +747,10 @@ $('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]
 
 (async () => {
   let tk = ''; try{ tk = localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){}
-  const lock = m => { $('#lock').hidden = false; $('#lockmsg').innerHTML = m; };
-  if(!tk) return lock('<a href="/?next=/packs">Sign in</a> first.');
-  const me = await api('/api/rax?market=me');
-  if(!me.signedIn) return lock('<a href="/?next=/packs">Sign in</a> first.');
-  // Open to everyone signed in (Dennis, 2026-11-09).
+  /* Pack data is open to everyone (Dennis, 2026-11-12); only the rating
+     calculator needs an account (it reads your passes). */
+  const me = tk ? await api('/api/rax?market=me') : { signedIn: false };
+  guest = !me.signedIn;
   $('#main').hidden = false; paintFavN();
   $('#teamtab').hidden = !me.admin;   // Team packs: Dennis only for now (2026-11-09)
   try{ const m = ls.get('packs_min_v1', null); if(m != null) $('#min').value = m; }catch(e){}
