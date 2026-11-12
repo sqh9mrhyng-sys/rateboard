@@ -202,15 +202,15 @@
 
     <!-- REPORTS -->
     <div id="t-reports" class="hide">
+      <section><h2>Inbox <span class="note" id="ib-n"></span></h2>
+        <p class="note" style="margin:0 0 8px">Swaps reports, board member reports and feature requests. When the sender has a chat with the bot, your reply and the outcome are sent to them on Real.</p>
+        <div class="bar"><select id="ib-f"><option value="">All</option><option value="swap">Swaps reports</option><option value="board">Board reports</option><option value="feature">Feature requests</option></select><button id="ib-load" class="sm">Refresh</button></div>
+        <div id="ib-list" class="note">Loading…</div></section>
       <section><h2>Moderation <span class="note" id="md-n"></span></h2>
         <p class="note" style="margin:0 0 8px">Automatic, every 10 minutes: only a reporter's first report on someone counts, and only if they really had a swap or 160 together that wasn't called off. 1st counted report = warning; every report after = a strike, but all reports on one swap time make one strike. 3 strikes takes Swaps away (nothing else). Approving an unban gives Swaps back and clears their record.</p>
         <div class="bar"><button id="md-load" class="sm">Refresh</button><button id="md-dry" class="sm">Preview a run</button><button id="md-run" class="sm">Run now</button><span class="note" id="md-msg"></span></div>
         <h3 style="font-size:14px;margin:12px 0 6px">Unban requests</h3><div id="md-req" class="note">Loading…</div>
         <h3 style="font-size:14px;margin:12px 0 6px">Warnings &amp; strikes</h3><div id="md-list" class="note">Loading…</div></section>
-      <section><h2>Inbox <span class="note" id="ib-n"></span></h2>
-        <p class="note" style="margin:0 0 8px">Swaps reports, board member reports and feature requests. When the sender has a chat with the bot, your reply and the outcome are sent to them on Real.</p>
-        <div class="bar"><select id="ib-f"><option value="">All</option><option value="swap">Swaps reports</option><option value="board">Board reports</option><option value="feature">Feature requests</option></select><button id="ib-load" class="sm">Refresh</button></div>
-        <div id="ib-list" class="note">Loading…</div></section>
       <section><h2>Called-off swaps <span class="note" id="co-n"></span></h2>
         <p class="note" style="margin:0 0 8px">Last 30 days. "Told to buy" means they got the warning or contact DM, so they may have bought the pack. Send the rax on Real, then tap <b>Mark refunded</b> (tap again to undo). <span class="pill off">reported</span> = they've filed a called-off report for it.</p>
         <div class="bar"><label class="note"><input type="checkbox" id="co-told" checked> only people told to buy</label><button id="co-load" class="sm">Refresh</button></div>

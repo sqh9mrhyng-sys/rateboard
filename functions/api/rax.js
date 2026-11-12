@@ -4267,7 +4267,7 @@ async function handleGet({ request, env, waitUntil }) {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
     if (!['mlb', 'nba', 'nfl', 'ncaaf'].includes(sport)) return json({ error: 'Team packs are MLB, NBA, NFL and CFB.' }, 400);
-    const se = Number(season), K = `pkteams_v9_${sport}_${se}`, L = `pkteams_lock_${sport}_${se}`;
+    const se = Number(season), K = `pkteams_v10_${sport}_${se}`, L = `pkteams_lock_${sport}_${se}`;
     const live = OTD_LIVE_SEASONS.has(`${sport}:${se}`);
     let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
     const fresh = c && Date.now() - c.at < (live ? 86400000 : 30 * 86400000);
@@ -4343,7 +4343,7 @@ async function handleGet({ request, env, waitUntil }) {
            side nobody can name isn't one either. */
         rows = rows.filter(x => x.team && (sport !== 'mlb' || (x.teamId >= 108 && x.teamId <= 158)));
         /* The pack's one performance card: each team's performances (games
-           played), and how many carry an Iconic, Mystic, Legendary or Epic
+           played, rated .5 or higher - lower ones aren't in team packs), and how many carry an Iconic, Mystic, Legendary or Epic
            tag - a performance's rarity is its highest tag's. Grouped by tag
            set in the query, so it reads the season once and returns little. */
         try {
@@ -4356,7 +4356,7 @@ async function handleGet({ request, env, waitUntil }) {
           for (const t of ((await db.prepare('SELECT id, rarity, hash, label FROM tags WHERE sport=?').bind(sport).all()).results || []))
             tr.set(Number(t.id), mine.get(norm(t.hash)) || mine.get(norm(t.label)) || Number(t.rarity) || 0);
           const pf = await db.prepare(`SELECT teamId AS t, tags, COUNT(*) AS n FROM performances
-              WHERE sport=? AND season=? AND played=1 AND teamId IS NOT NULL GROUP BY teamId, tags`).bind(sport, se).all();
+              WHERE sport=? AND season=? AND played=1 AND value >= 0.5 AND teamId IS NOT NULL GROUP BY teamId, tags`).bind(sport, se).all();
           const by = new Map();
           for (const z of pf.results || []) {
             const o = by.get(z.t) || by.set(z.t, { perfs: 0, pIconic: 0, pMystic: 0, pLegendary: 0, pEpic: 0 }).get(z.t);
