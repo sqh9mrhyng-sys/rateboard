@@ -39,13 +39,13 @@ RestartSec=3
 WantedBy=multi-user.target
 UNIT
 
-# Pulls new versions from GitHub every minute; restarts only at quiet minutes
-# (never :18-:40 or :55-:10, when matching and swap DMs run).
+# Pulls new versions from GitHub every minute; restarts only at :11-:17, the
+# one stretch with no matching (:20), warnings (:30-:55) or swap DMs (:55-:10).
 cat > /opt/rax/update.sh <<'UPD'
 #!/bin/bash
 cd /opt/rax/app || exit 0
 M=$(date -u +%-M)
-if { [ $M -ge 18 ] && [ $M -le 40 ]; } || [ $M -ge 55 ] || [ $M -lt 10 ]; then exit 0; fi
+if [ $M -lt 11 ] || [ $M -gt 17 ]; then exit 0; fi
 OLD=$(git rev-parse HEAD)
 sudo -u rax git pull -q --ff-only || exit 0
 NEW=$(git rev-parse HEAD)
