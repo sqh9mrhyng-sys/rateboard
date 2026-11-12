@@ -1,0 +1,9 @@
+{
+  "name": "raxacademy-server",
+  "private": true,
+  "type": "module",
+  "description": "Runs the Rax Academy site (pages + /api functions) on its own server instead of Cloudflare Pages.",
+  "dependencies": {
+    "better-sqlite3": "^11.5.0"
+  }
+}
