@@ -1657,6 +1657,24 @@ const PERF_DDL = `CREATE TABLE IF NOT EXISTS performances (
 const PERF_CURSOR = 'perf_cursor_v1';
 const PERF_PER_TICK = 60;     // players per call; one call covers their season
 
+/* Performance rarity from the stat line too, the way the Tag finder finds
+   tags (Dennis, 2026-11-11: Tag finder had 5 NFL Iconic performances, team
+   packs 1 - Real's own tags on the performance aren't all collected yet).
+   Returns playerId|gameId -> level (7 Iconic, 6 Mystic, 5 Legendary). */
+async function statTagLevels(db, sport, se) {
+  const defs = (TAG_DEFS[sport] || []).filter(d => d.sql && d.test && { iconic: 1, mystic: 1, legendary: 1 }[d.rarity]);
+  const out = new Map(); if (!defs.length) return out;
+  const rows = ((await db.prepare(`SELECT playerId, gameId, position, stats FROM gamelog
+      WHERE sport=? AND season=? AND stats IS NOT NULL AND COALESCE(seasonType, 'regularseason') <> 'preseason' AND (${defs.map(d => `(${d.sql})`).join(' OR ')})
+      LIMIT 3000`).bind(sport, se).all()).results) || [];
+  for (const r of rows) {
+    let o = {}; try { o = JSON.parse(r.stats || '{}') || {}; } catch (e) {}
+    const pos = String(r.position || '').toUpperCase();
+    let lv = 0; for (const d of defs) { try { if (d.test(o, pos)) lv = Math.max(lv, { iconic: 7, mystic: 6, legendary: 5 }[d.rarity]); } catch (e) {} }
+    if (lv) out.set(`${r.playerId}|${r.gameId}`, lv);
+  }
+  return out;
+}
 async function perfReady(db) {
   await db.prepare(PERF_DDL).run();
   for (const ix of [
@@ -4271,7 +4289,7 @@ async function handleGet({ request, env, waitUntil }) {
     if (!['mlb', 'nba', 'nfl', 'ncaaf'].includes(sport)) return json({ error: 'Team packs are MLB, NBA, NFL and CFB.' }, 400);
     const se = Number(season), tid = parseInt(url.searchParams.get('teamId') || '0', 10);
     if (!tid) return json({ error: 'teamId required' }, 400);
-    const K = `pkteamtop_v1_${sport}_${se}_${tid}`;
+    const K = `pkteamtop_v2_${sport}_${se}_${tid}`;
     try { const c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (c) return json(c); } catch (e) {}
     try {
       await playsReady(db); await perfReady(db);
@@ -4297,9 +4315,12 @@ async function handleGet({ request, env, waitUntil }) {
       for (const t of ((await db.prepare('SELECT id, rarity, hash, label FROM tags WHERE sport=?').bind(sport).all()).results || [])) {
         tr.set(Number(t.id), mine.get(norm(t.hash)) || mine.get(norm(t.label)) || Number(t.rarity) || 0); names[t.id] = t.label; }
       const tagList = v => String(v || '').split(',').map(Number).filter(Boolean);
+      let lvs = new Map(); try { lvs = await statTagLevels(db, sport, se); } catch (e) {}
       const perfs = (pf.results || []).map(x => { const ids = tagList(x.tags);
         return { id: x.id, pid: x.pid, player: x.pname, day: x.day, opponent: x.opponent, value: x.value,
-          rarity: ids.reduce((m, i) => Math.max(m, tr.get(i) || 0), 0), tags: ids.map(i => names[i]).filter(Boolean) }; });
+          rarity: Math.max(ids.reduce((m, i) => Math.max(m, tr.get(i) || 0), 0), lvs.get(`${x.pid}|${x.gameId}`) || 0), tags: ids.map(i => names[i]).filter(Boolean) }; });
+      // The pack's rare performances first, then the best-rated.
+      perfs.sort((a, b) => (b.rarity >= 5 ? b.rarity : 0) - (a.rarity >= 5 ? a.rarity : 0) || (Number(b.value) || 0) - (Number(a.value) || 0));
       const plays = (pl.results || []).map(x => ({ id: x.id, pid: x.pid, player: x.pname, day: x.day, value: x.value, rarity: Number(x.rarity) || 0,
         label: x.label, tags: tagList(x.tags).map(i => names[i]).filter(Boolean) }));
       const out = { sport, season: se, teamId: tid, at: Date.now(), perfs, plays };
@@ -4311,7 +4332,7 @@ async function handleGet({ request, env, waitUntil }) {
     const db = env.RATEBOARD_DB;
     if (!db) return json({ error: 'no database binding' }, 503);
     if (!['mlb', 'nba', 'nfl', 'ncaaf'].includes(sport)) return json({ error: 'Team packs are MLB, NBA, NFL and CFB.' }, 400);
-    const se = Number(season), K = `pkteams_v10_${sport}_${se}`, L = `pkteams_lock_${sport}_${se}`;
+    const se = Number(season), K = `pkteams_v11_${sport}_${se}`, L = `pkteams_lock_${sport}_${se}`;
     const live = OTD_LIVE_SEASONS.has(`${sport}:${se}`);
     let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
     const fresh = c && Date.now() - c.at < (live ? 86400000 : 30 * 86400000);
@@ -4407,6 +4428,23 @@ async function handleGet({ request, env, waitUntil }) {
             let top = 0; for (const id of String(z.tags || '').split(',')) top = Math.max(top, tr.get(Number(id)) || 0);
             o.perfs += z.n; if (top === 7) o.pIconic += z.n; else if (top === 6) o.pMystic += z.n; else if (top === 5) o.pLegendary += z.n; else if (top === 4) o.pEpic += z.n;
           }
+          // Stat-line tags lift a performance's rarity where Real's tags haven't come in.
+          try {
+            const lv = await statTagLevels(db, sport, se);
+            const pids = [...new Set([...lv.keys()].map(k => Number(k.split('|')[0])))];
+            for (let i = 0; i < pids.length; i += 80) {
+              const part = pids.slice(i, i + 80);
+              const rs = ((await db.prepare(`SELECT playerId, gameId, teamId, tags FROM performances WHERE sport=? AND season=? AND played=1 AND value >= 0.5
+                  AND teamId IS NOT NULL AND playerId IN (${part.map(() => '?').join(',')})`).bind(sport, se, ...part).all()).results) || [];
+              for (const z of rs) { const l = lv.get(`${z.playerId}|${z.gameId}`); if (!l) continue;
+                let top = 0; for (const id of String(z.tags || '').split(',')) top = Math.max(top, tr.get(Number(id)) || 0);
+                if (l <= top) continue;
+                const o = by.get(z.teamId); if (!o) continue;
+                const B = { 7: 'pIconic', 6: 'pMystic', 5: 'pLegendary', 4: 'pEpic' };
+                if (B[top] && o[B[top]] > 0) o[B[top]]--;
+                o[B[l]] = (o[B[l]] || 0) + 1; }
+            }
+          } catch (e) {}
           for (const x of rows) Object.assign(x, by.get(x.teamId) || { perfs: 0 });
         } catch (e) {}
         // Nothing named: keep the empty answer an hour, not a month.
