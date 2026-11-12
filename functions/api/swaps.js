@@ -7464,6 +7464,21 @@ export async function dennisProbe(env, db) {
   try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 86400 }); } catch (e) {}
 }
 
+/* One-off (2026-11-12): where members are, for picking a server region -
+   time zone counts only (from the hours they set on Swaps). Runs once. */
+export async function tzProbe(env, db) {
+  const K = 'diag_tz_1112';
+  try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1, at: Date.now() })); } catch (e) { return; }
+  const out = { at: Date.now(), tz: {}, active: {} };
+  try {
+    const rows = ((await db.prepare("SELECT active, sched FROM swap_users WHERE sched IS NOT NULL").all()).results) || [];
+    for (const r of rows) { let z = 'unknown'; try { z = (JSON.parse(r.sched) || {}).tz || 'unknown'; } catch (e) {}
+      out.tz[z] = (out.tz[z] || 0) + 1; if (r.active) out.active[z] = (out.active[z] || 0) + 1; }
+    out.n = rows.length; out.done = 1;
+  } catch (e) { out.err = String(e.message || e).slice(0, 150); }
+  try { await env.RATEBOARD_KV.put(K, JSON.stringify(out)); } catch (e) {}
+}
+
 export async function scanProbe(env, db) {
   const K = 'diag_scanprobe_1110';
   try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ at: Date.now(), running: true }), { expirationTtl: 3 * 86400 }); } catch (e) { return; }
