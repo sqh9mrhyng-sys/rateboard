@@ -146,14 +146,13 @@ const api = async (u, o = {}) => { try{ const t = getToken(); const r = await fe
 const PAGES = [
   ['/', 'Home', 'This page'],
   ['/board', 'Board', 'Buy offers for Real cards - post, browse and sell'],
-  ['/board#gamedata', 'Game data', 'Every game log, rax and box score', 'admin'],
+  ['/board#gamedata', 'Game data', 'By player and OTD - every game, rax and box score', 'admin'],
   ['/packs', 'Pack data', 'Pack odds and packs to each rarity, for every player'],   // everyone (2026-11-09)
   ['/market', 'Market data', 'Recent sales and prices', 'market'],
   ['/swaps', 'Swaps', 'Trade passes with other members, matched every hour'],
   ['/boosts', 'Boosts/Buys', 'Which boosters to use each day, and what to buy'],
   ['/projections', 'Projections', 'Projected rax for the rest of the regular season'],
   ['/tags', 'Tag finder', 'Every game that earned a performance tag'],
-  ['/otd', 'OTD optimization', 'On-this-day claims and upgrades', 'admin'],
   ['/admin', 'Admin', 'Users, reports, traffic and sponsors', 'admin']
 ];
 // A colour for each page's box.

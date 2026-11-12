@@ -197,6 +197,9 @@
      the labels full size on a phone. */
   .seg-2up{display:grid;grid-template-columns:1fr 1fr;border-radius:14px}
   .seg-2up button{border-radius:11px}
+  .seg-tabs{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:4px;border-radius:14px;scrollbar-width:none}
+  .seg-tabs::-webkit-scrollbar{display:none}
+  .seg-tabs button{flex:1 0 auto;white-space:nowrap;border-radius:11px;padding-left:14px;padding-right:14px}
   .shcopy{padding:3px 9px;font-size:11px;border-radius:7px;white-space:nowrap}
   /* A name that is also a link - underlined faintly so it reads as a name
      first and a link second. */
@@ -365,7 +368,18 @@
   .cb-scl>summary{cursor:pointer}
   .dtbar .field{width:auto;flex:0 1 auto;padding:8px 10px;font-size:13px;min-width:0}
   .dtbar .field.grow{flex:1 1 150px}
-  .dtwrap{overflow:auto;max-height:50vh;border:1px solid var(--line);border-radius:10px}
+  .dtwrap{overflow:auto;max-height:65vh;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+  #cb-colbar{display:block;border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:8px 0}
+  .colgrp{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+  .colgrp+.colgrp{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+  .colh{width:100%;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--mute)}
+  .colh .note{text-transform:none;letter-spacing:0;font-weight:400}
+  .colt{font:inherit;font-size:12.5px;padding:6px 11px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--mute);cursor:pointer}
+  .colt[aria-pressed="true"]{background:var(--panel-2);color:var(--ink);border-color:var(--accent)}
+  .colt:disabled{opacity:.6;cursor:default}
+  .colt.colreset{border-style:dashed;color:var(--accent)}
+  table.dt tbody tr:nth-child(even){background:rgba(255,255,255,.018)}
+  table.dt td{font-variant-numeric:tabular-nums}
   table.dt{border-collapse:collapse;width:100%;font-size:12.5px;white-space:nowrap}
   table.dt th,table.dt td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:right}
   table.dt th.l,table.dt td.l{text-align:left}
@@ -4995,10 +5009,10 @@ async function cbbPanel(){
   const tabsOk = dataTabs();
   if(!tabsOk.includes(st.mode)) st.mode = tabsOk[0] || 'pack';
   const box = pageShell(only ? 'Pack data' : 'Game data', `
-    <div class="seg seg-2up" role="group" aria-label="View">
+    <div class="seg seg-tabs" role="group" aria-label="View">
       <button data-cm="players" aria-pressed="${st.mode === 'players' ? 'true' : 'false'}">By player</button>
-      <button data-cm="games" aria-pressed="false">Every game</button>
-      <button data-cm="pack" aria-pressed="${st.mode === 'pack' ? 'true' : 'false'}">Pack data &#8599;</button>
+      <button data-cm="games" aria-pressed="false" title="Every game, one row each - set a date window to see on-this-day games">OTD</button>
+      <button data-cm="pack" class="hide" aria-pressed="${st.mode === 'pack' ? 'true' : 'false'}">Pack data &#8599;</button>
       <button data-cm="golf" aria-pressed="${st.mode === 'golf' ? 'true' : 'false'}">Golf</button>
       <button data-cm="shift" aria-pressed="${st.mode === 'shift' ? 'true' : 'false'}">Rax shift</button>
       <button data-cm="hist" aria-pressed="false">Historical</button>
@@ -5223,7 +5237,13 @@ async function cbbPanel(){
     gameStatCols = out;
   }
 
-  function cols(){
+  /* Every column can be switched off (Dennis, 2026-11-12), per view, remembered
+     on this device. The player column always stays. */
+  const CB_HIDE_KEY = 'cb_hidecols_v1';
+  let hideCols = {}; try { hideCols = JSON.parse(localStorage.getItem(CB_HIDE_KEY) || '{}') || {}; } catch (e) {}
+  const hiddenNow = () => new Set(hideCols[st.mode === 'games' ? 'games' : 'players'] || []);
+  function cols(){ const h = hiddenNow(); return baseCols().filter(c => c[0] === 'player' || !h.has(c[0])); }
+  function baseCols(){
     if(st.mode === 'games') return CB_GAME_COLS.concat(gameStatCols);
     const on = consensusStats().concat(st.extra.filter(k => !consensusStats().includes(k)));
     const byKey = new Map(allStats().map(c => [c[0], c]));
@@ -5320,12 +5340,16 @@ async function cbbPanel(){
   }
 
   function drawCols(){
+    const h = hiddenNow(), base = baseCols();
     const cons = consensusStats();
-    const opts = allStats().filter(c => !cons.includes(c[0]));
-    $b('#cb-colbar').innerHTML = opts.length
-      ? opts.map(([k, label]) =>
-          `<button class="btn-ghost" data-col="${esc(k)}" aria-pressed="${st.extra.includes(k) ? 'true' : 'false'}">${esc(label)}</button>`).join('')
-      : '<span class="note">Every column for this selection is already shown.</span>';
+    const opts = st.mode === 'games' ? [] : allStats().filter(c => !cons.includes(c[0]) && !st.extra.includes(c[0]));
+    const off = base.filter(c => c[0] !== 'player' && h.has(c[0])).length;
+    $b('#cb-cols').textContent = off ? `Columns · ${off} off` : 'Columns';
+    $b('#cb-colbar').innerHTML = `<div class="colgrp"><span class="colh">Shown <span class="note">- tap to hide</span></span>`
+      + base.map(([k, label]) => `<button class="colt" data-hcol="${esc(k)}" aria-pressed="${k === 'player' || !h.has(k) ? 'true' : 'false'}"${k === 'player' ? ' disabled' : ''}>${esc(label)}</button>`).join('')
+      + (off ? '<button class="colt colreset" data-hcolreset="1">Show all</button>' : '') + '</div>'
+      + (opts.length ? `<div class="colgrp"><span class="colh">More stats <span class="note">- tap to add</span></span>`
+        + opts.map(([k, label]) => `<button class="colt" data-col="${esc(k)}" aria-pressed="false">+ ${esc(label)}</button>`).join('') + '</div>' : '');
   }
 
   function drawKey(){
@@ -7376,7 +7400,7 @@ async function cbbPanel(){
     $b('#cb-seasons').classList.toggle('hide', pk || gf || sh || hs);
     $b('#cb-scope').classList.toggle('hide', pk || gf || sh || hs);
     if(table) drawSeasons();
-    box.querySelectorAll('[data-cm]').forEach(x => x.classList.toggle('hide', !tabsOk.includes(x.dataset.cm)));
+    box.querySelectorAll('[data-cm]').forEach(x => x.classList.toggle('hide', !tabsOk.includes(x.dataset.cm) || (x.dataset.cm === 'pack' && !packOnly())));   // pack data has its own page
     if(gf) gfInit();
     else if(pk) pkInit();
     else if(sh) shInit();
@@ -7721,6 +7745,15 @@ async function cbbPanel(){
       return queue();
     }
 
+    const hc = e.target.closest('[data-hcol]'), hr = e.target.closest('[data-hcolreset]');
+    if(hc || hr){
+      const v = st.mode === 'games' ? 'games' : 'players', set = new Set(hideCols[v] || []);
+      if(hr) set.clear(); else { const k = hc.dataset.hcol; if(k === 'player') return; set.has(k) ? set.delete(k) : set.add(k); }
+      hideCols[v] = [...set]; try { localStorage.setItem(CB_HIDE_KEY, JSON.stringify(hideCols)); } catch (x) {}
+      if(!cols().some(c => c[0] === st.sort)){ st.sort = 'rax'; st.dir = 'desc'; }
+      drawCols();
+      return queue();
+    }
     const col = e.target.closest('[data-col]');
     if(col){
       const k = col.dataset.col;
