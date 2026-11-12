@@ -1,3 +1,5 @@
+// Google AdSense (Dennis, 2026-11-11): in the <head> of every page, for site verification and ads.
+const ADSENSE = '<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-9004770228790143" crossorigin="anonymous"></script>';
 // raxacademy.app is the board's address now. Anyone opening the old
 // pages.dev address in a browser is sent there, path and query kept.
 //
@@ -92,8 +94,8 @@ export async function onRequest({ request, next, env, waitUntil }) {
     }
   }
   const res = await next();
-  // Every page carries the view-as bar (it shows only while viewing an account).
+  // Every page carries the view-as bar (and Google AdSense's code - Dennis, 2026-11-11) (it shows only while viewing an account).
   if (request.method === 'GET' && (res.headers.get('content-type') || '').includes('text/html') && !url.pathname.startsWith('/api/'))
-    return new HTMLRewriter().on('head', { element(el) { el.append('<script src="/viewas.js" defer></script>', { html: true }); } }).transform(res);
+    return new HTMLRewriter().on('head', { element(el) { el.append('<script src="/viewas.js" defer></script>' + ADSENSE, { html: true }); } }).transform(res);
   return res;
 }
