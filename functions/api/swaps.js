@@ -5173,7 +5173,7 @@ async function handle({ request, env, waitUntil }) {
       if (quiet && Date.now() - ml > 10 * 60000) { await env.RATEBOARD_KV.put('mod_last_v1', String(Date.now()));
         waitUntil((MOD_AUTO ? moderate(env, db) : moderate(env, db, true).then(o => env.RATEBOARD_KV.put('mod_preview_v1', JSON.stringify({ at: Date.now(), ...o,
           users: undefined, strikesDist: o.users.reduce((a, u) => { a[u.strikes] = (a[u.strikes] || 0) + 1; return a; }, {}) }))))
-          .catch(e => botFail(db, 'moderate', e.message))); } } catch (e) {} }
+          .catch(e => { botFail(db, 'moderate', e.message); return env.RATEBOARD_KV.put('mod_error_v1', JSON.stringify({ at: Date.now(), err: String(e && e.message || e).slice(0, 200) })); })); } } catch (e) {} }
     return json({ ok: true, started: go });
   }
   if (op === 'dmtick') {
