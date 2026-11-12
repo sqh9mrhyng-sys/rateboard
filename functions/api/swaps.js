@@ -2984,6 +2984,7 @@ async function moderate(env, db, dry) {
   for (const e of ev) { const s0 = state.get(e.key); if (s0 && Number(e.at) < Number(s0.resetAt || 0)) continue;
     const h = had.get(e.key) || { warn: false, strikes: 0 }; if (e.kind === 'warn') h.warn = true; else if (e.kind === 'strike') h.strikes = Math.max(h.strikes, Number(e.n) || 0); had.set(e.key, h); }
   const chan = new Map(dmr.map(d => [String(d.hashId), d.channelId]));
+  let acted = 0; if (!dry) await db.prepare(DMQ_DDL).run();
   for (const [key, list] of per) {
     list.sort((a, b) => a.ts - b.ts);
     const want = [{ kind: 'warn', n: 0, period: list[0].period, at: list[0].ts, reports: 1 }];
@@ -3002,7 +3003,9 @@ async function moderate(env, db, dry) {
     for (const e of fresh) { if (e.kind === 'warn') out.warned++; else out.struck++; }
     if (ban) out.banned++;
     if (dry) continue;
-    for (const e of fresh) await db.prepare('INSERT INTO mod_events (key, kind, n, period, at, reports) VALUES (?, ?, ?, ?, ?, ?)').bind(key, e.kind, e.n, e.period, Date.now(), e.reports).run();
+    // A run does at most 20 members (it was cut off doing 60+ one by one); the next run carries on.
+    if (++acted > 20) { out.more = true; continue; }
+    const stmts = fresh.map(e => db.prepare('INSERT INTO mod_events (key, kind, n, period, at, reports) VALUES (?, ?, ?, ?, ?, ?)').bind(key, e.kind, e.n, e.period, Date.now(), e.reports));
     if (ban) await modBan(db, key);
     // One message with everything new for them.
     const tz = ((u && parse(u.sched, null)) || {}).tz;
@@ -3011,7 +3014,8 @@ async function moderate(env, db, dry) {
       : `You've been reported for not doing swaps at ${modTime(e.period, tz)}. Strike ${e.n}/${MOD_STRIKES}.`);
     if (ban) lines.push(`That's ${MOD_STRIKES} strikes, so your Swaps access has been removed (the rest of the site still works). You can request an unban at raxacademy.app/swaps`);
     const ch = u && u.hashId && chan.get(String(u.hashId));
-    if (ch && lines.length) { await queueDm(db, ch, [lines.join('\n')], 'mod ' + key); out.dms++; }
+    if (ch && lines.length) { stmts.push(db.prepare('INSERT INTO dm_retry (channelId, parts, label, tries, at) VALUES (?, ?, ?, 0, ?)').bind(Number(ch), JSON.stringify([lines.join('\n')]), 'mod ' + key, Date.now())); out.dms++; }
+    await db.batch(stmts);
   }
   if (!dry) for (let i = 0; i < handled.length; i += 80) {
     const ids = handled.slice(i, i + 80);
