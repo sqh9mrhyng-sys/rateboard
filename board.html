@@ -199,6 +199,8 @@
   .seg-2up button{border-radius:11px}
   .seg-tabs{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:4px;border-radius:14px;scrollbar-width:none}
   .seg-tabs::-webkit-scrollbar{display:none}
+  #page-cbb.otdb-on .panel-bd > *:not(.seg-tabs):not(#cb-otdb){display:none!important}
+  #page-cbb:not(.otdb-on) #cb-otdb{display:none}
   .seg-tabs button{flex:1 0 auto;white-space:nowrap;border-radius:11px;padding-left:14px;padding-right:14px}
   .shcopy{padding:3px 9px;font-size:11px;border-radius:7px;white-space:nowrap}
   /* A name that is also a link - underlined faintly so it reads as a name
@@ -2604,10 +2606,12 @@ function toast(msg){
 /* The frame game data draws itself into. Same shape the overlay handed it -
    a .modal with a header and a .panel-bd - so everything inside cbbPanel goes
    on working untouched; it just lives on the page now. */
+// The OTD breakdown frame tells us its height, so it scrolls with the page.
+addEventListener('message', e => { if(e.origin !== location.origin || !e.data || !e.data.otdbH) return;
+  const f = document.querySelector('#cb-otdb iframe'); if(f) f.style.height = Math.max(600, Number(e.data.otdbH) + 20) + 'px'; });
 function pageShell(title, bodyHTML){
   const host = $('#page-cbb');
-  host.innerHTML = `<div class="modal"><div class="panel-hd"><h2>${esc(title)}</h2>`
-    + `<button class="btn-ghost" data-back>Back to buy/sell</button></div>`
+  host.innerHTML = `<div class="modal"><div class="panel-hd"><h2>${esc(title)}</h2></div>`
     + `<div class="panel-bd stack">${bodyHTML}</div></div>`;
   return host;
 }
@@ -5019,6 +5023,7 @@ async function cbbPanel(){
     <div class="seg seg-tabs" role="group" aria-label="View">
       <button data-cm="players" aria-pressed="${st.mode === 'players' ? 'true' : 'false'}">By player</button>
       <button data-cm="games" aria-pressed="false">Every game</button>
+      ${cbView === 'otd' && isAdmin() ? '<button data-otdb="1" aria-pressed="false">OTD breakdown</button>' : ''}
       <button data-cm="pack" class="hide" aria-pressed="${st.mode === 'pack' ? 'true' : 'false'}">Pack data &#8599;</button>
       <button data-cm="golf" aria-pressed="${st.mode === 'golf' ? 'true' : 'false'}">Golf</button>
       <button data-cm="shift" aria-pressed="${st.mode === 'shift' ? 'true' : 'false'}">Rax shift</button>
@@ -7842,7 +7847,20 @@ async function cbbPanel(){
     const prow = e.target.closest('#pk-body tr[data-pid]');
     if(prow) return pkOpenPlayer(Number(prow.dataset.pid), prow.dataset.pkk);
 
+    /* OTD breakdown (Dennis, 2026-11-12): its own page shown in place, below the tabs. */
+    const ob = e.target.closest('[data-otdb]');
+    if(ob){
+      box.classList.add('otdb-on');
+      box.querySelectorAll('[data-cm]').forEach(x => x.setAttribute('aria-pressed', 'false')); ob.setAttribute('aria-pressed', 'true');
+      let f = box.querySelector('#cb-otdb');
+      if(!f){ f = document.createElement('div'); f.id = 'cb-otdb';
+        f.innerHTML = '<iframe src="/otd-breakdown" title="OTD breakdown" style="width:100%;border:0;min-height:900px;display:block;background:transparent"></iframe>';
+        box.querySelector('.panel-bd').appendChild(f); }
+      return;
+    }
     const m = e.target.closest('[data-cm]');
+    if(m && box.classList.contains('otdb-on')){ box.classList.remove('otdb-on'); box.querySelectorAll('[data-otdb]').forEach(x => x.setAttribute('aria-pressed', 'false'));
+      if(st.mode === m.dataset.cm){ m.setAttribute('aria-pressed', 'true'); return; } }
     // Pack data has its own page now (2026-11-09).
     if(m && m.dataset.cm === 'pack'){ location.href = '/packs'; return; }   // its own page, open to everyone (2026-11-09)
     if(m){
