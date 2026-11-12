@@ -1255,7 +1255,7 @@ async function proGate(){
 }
 
 /* Moderation record (2026-11-11): 1st counted report is a warning, then strikes; 3 strikes takes Swaps away. */
-const modList = m => (m.events || []).map(e => `<li>${e.kind === 'warn' ? 'Warning' : `Strike ${e.n}/${m.max}`} - reported for ${e.kind === 'warn' ? 'not completing a swap' : 'not doing swaps'} at ${esc(e.when)}${e.reports > 1 ? ` (${e.reports} reports, 1 strike)` : ''}</li>`).join('');
+const modList = m => (m.events || []).map(e => `<li>${e.kind === 'warn' ? 'Warning' : `Strike ${e.n}/${m.max}`} - reported for ${e.kind === 'warn' ? 'not completing a swap' : 'not doing swaps'} at ${esc(new Date(e.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }))}${e.reports > 1 ? ` (${e.reports} reports, 1 strike)` : ''}</li>`).join('');
 function showBan(m){
   $('#lock').hidden = true; $('#banbox').hidden = false;
   const rq = m.request;

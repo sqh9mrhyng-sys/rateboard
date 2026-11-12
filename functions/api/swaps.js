@@ -2897,8 +2897,10 @@ const MOD_STRIKES = 3;
 const MOD_AUTO = true;   // false: the 10-minute run only previews (counts kept in KV); true: it acts
 const MOD_EARLY = 10 * 60000;          // a report may come up to 10 min before the swap's time
 const MOD_LOOKBACK = 3 * 86400000;     // a report naming someone looks back 3 days for their swap
-const modTime = ms => { try { return new Date(ms).toLocaleString('en-US', { timeZone: 'America/Anchorage', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' AKT'; }
-  catch (e) { return new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC'; } };
+// In the member's own time zone (from their hours), else Eastern (Dennis, 2026-11-11).
+const modTime = (ms, tz) => { for (const z of [tz, 'America/New_York']) { if (!z) continue;
+    try { return new Date(ms).toLocaleString('en-US', { timeZone: z, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }); } catch (e) {} }
+  return new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC'; };
 async function modRows(db, sql, binds, order, size = 1000) {
   const out = [];
   for (let off = 0; off < 50000; off += size) {
@@ -2932,7 +2934,7 @@ async function moderate(env, db, dry) {
   if (!reps.length) return out;
   const since = Math.min(...reps.map(r => Number(r.ts) || 0)) - MOD_LOOKBACK;
   const [users, ms, ss, st, ev, dmr] = await Promise.all([
-    modRows(db, 'SELECT key, rsUser, hashId FROM swap_users', [], 'key'),
+    modRows(db, 'SELECT key, rsUser, hashId, sched FROM swap_users', [], 'key'),
     modRows(db, 'SELECT id, a, b, slot, createdAt, dueAt, status FROM swap_matches WHERE COALESCE(dueAt, createdAt) >= ?', [since], 'id', 2000),
     modRows(db, 'SELECT id, buyer, seller, dueAt, status FROM swap_160 WHERE dueAt >= ?', [since], 'id', 2000),
     modRows(db, 'SELECT key, resetAt, banned FROM mod_state', [], 'key'),
@@ -3003,9 +3005,10 @@ async function moderate(env, db, dry) {
     for (const e of fresh) await db.prepare('INSERT INTO mod_events (key, kind, n, period, at, reports) VALUES (?, ?, ?, ?, ?, ?)').bind(key, e.kind, e.n, e.period, Date.now(), e.reports).run();
     if (ban) await modBan(db, key);
     // One message with everything new for them.
+    const tz = ((u && parse(u.sched, null)) || {}).tz;
     const lines = fresh.map(e => e.kind === 'warn'
-      ? `You've been reported for not completing a swap at ${modTime(e.period)}. This is a warning, not a strike.`
-      : `You've been reported for not doing swaps at ${modTime(e.period)}. Strike ${e.n}/${MOD_STRIKES}.`);
+      ? `You've been reported for not completing a swap at ${modTime(e.period, tz)}. This is a warning, not a strike.`
+      : `You've been reported for not doing swaps at ${modTime(e.period, tz)}. Strike ${e.n}/${MOD_STRIKES}.`);
     if (ban) lines.push(`That's ${MOD_STRIKES} strikes, so your Swaps access has been removed (the rest of the site still works). You can request an unban at raxacademy.app/swaps`);
     const ch = u && u.hashId && chan.get(String(u.hashId));
     if (ch && lines.length) { await queueDm(db, ch, [lines.join('\n')], 'mod ' + key); out.dms++; }
