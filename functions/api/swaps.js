@@ -7176,6 +7176,32 @@ async function handle({ request, env, waitUntil }) {
    hand back passes for more than one season or sport in one call? A full scan
    is 76 calls, one per sport, season and kind. A few reads of Dennis's own
    passes, 2 seconds apart, results kept in KV for the health page. */
+/* One-off (2026-11-12): a member was matched to give passes he set
+   untouchable on Real. Does the one-call pass read carry Real's untouchable
+   flag (and under which name), next to the per-sport read? Counts only. */
+export async function untouchProbe(env, db) {
+  const K = 'diag_untouch_1112';
+  try { const o = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (o && (o.done || Date.now() - (o.at || 0) < 10 * 60000)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ at: Date.now(), running: 1 }), { expirationTtl: 3 * 86400 }); } catch (e) { return; }
+  const out = { at: Date.now() };
+  try {
+    const u = await db.prepare("SELECT hashId FROM swap_users WHERE key='dennis'").first();
+    const tok = scanTok(env); const base = `https://web.realapp.com/userpasses/${encodeURIComponent(u.hashId)}/passes`;
+    const look = rows => { const keys = {}; let n = 0;
+      const walk = (o, path, depth) => { if (!o || typeof o !== 'object' || depth > 3) return;
+        for (const [k, v] of Object.entries(o)) { if (/untouch|lock|protect|tradeable|tradable/i.test(k)) { const kk = path + k + '=' + JSON.stringify(v).slice(0, 20); keys[kk] = (keys[kk] || 0) + 1; }
+          if (v && typeof v === 'object' && !Array.isArray(v)) walk(v, path + k + '.', depth + 1); } };
+      for (const r of rows) { n++; walk(r, '', 0); } return { n, keys }; };
+    for (const q of ['', 'entityType=player&season=2026&sport=nhl']) {
+      const r = await fetch(base + (q ? '?' + q : ''), { headers: rsHeaders(tok) }); const d = await r.json().catch(() => null);
+      out[q || 'onecall'] = { st: r.status, ...look((d && d.passes) || []) };
+    }
+    const c = await db.prepare(`SELECT COUNT(*) AS n FROM swap_users WHERE passes LIKE '%"untouchable":1%'`).first();
+    out.membersWithUntouchableSaved = c && c.n;
+    out.done = 1;
+  } catch (e) { out.err = String(e.message || e).slice(0, 150); }
+  try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 3 * 86400 }); } catch (e) {}
+}
+
 export async function scanProbe(env, db) {
   const K = 'diag_scanprobe_1110';
   try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ at: Date.now(), running: true }), { expirationTtl: 3 * 86400 }); } catch (e) { return; }
