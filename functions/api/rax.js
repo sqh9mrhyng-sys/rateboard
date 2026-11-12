@@ -8392,13 +8392,6 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil(nhlZeroFix(env).catch(() => {}));
     ctx.waitUntil(nhlCatchup(env).catch(() => {}));
     ctx.waitUntil(swapDiag(env).catch(() => {}));
-    ctx.waitUntil(scanProbe(env, env.RATEBOARD_DB).catch(() => {}));
-    ctx.waitUntil(untouchProbe(env, env.RATEBOARD_DB).catch(() => {}));
-    ctx.waitUntil(keepProbe(env, env.RATEBOARD_DB).catch(() => {}));
-    ctx.waitUntil(dennisProbe(env, env.RATEBOARD_DB).catch(() => {}));
-    ctx.waitUntil(boostProbe(env, env.RATEBOARD_DB).catch(() => {}));
-    ctx.waitUntil(wiltProbe(env).catch(() => {}));
-    ctx.waitUntil(multProbe(env, env.RATEBOARD_DB).catch(() => {}));
     ctx.waitUntil(dhFixTick(env).catch(() => {}));
     ctx.waitUntil(perfMarketTick(ctx).catch(() => {}));
     // FC Boosts: lineups near kickoff, and the game log after each game.
