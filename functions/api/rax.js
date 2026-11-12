@@ -4336,6 +4336,9 @@ async function handleGet({ request, env, waitUntil }) {
     const live = OTD_LIVE_SEASONS.has(`${sport}:${se}`);
     let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
     const fresh = c && Date.now() - c.at < (live ? 86400000 : 30 * 86400000);
+    // Never a wait (Dennis, 2026-11-11): while a new build runs, the last version's numbers are shown.
+    let old = null;
+    if (!c) for (const v of [10, 9]) { try { old = JSON.parse((await env.RATEBOARD_KV.get(`pkteams_v${v}_${sport}_${se}`)) || 'null'); } catch (e) {} if (old && (old.rows || []).length) break; old = null; }
     if (c && fresh) return json({ sport, season: se, at: c.at, rows: c.rows, ...(c.sides != null ? { sides: c.sides } : {}) });
     let locked = null; try { locked = await env.RATEBOARD_KV.get(L); } catch (e) {}
     if (!locked) {
@@ -4453,6 +4456,7 @@ async function handleGet({ request, env, waitUntil }) {
       try { waitUntil(build); } catch (e) {}
     }
     if (c) return json({ sport, season: se, at: c.at, rows: c.rows, stale: true });
+    if (old) return json({ sport, season: se, at: old.at, rows: old.rows, stale: true, updating: true });
     return json({ building: true });
   }
 

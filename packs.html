@@ -411,26 +411,30 @@ function plays(r, k){
     + '</div>';
 }
 /* A team, opened (Dennis, 2026-11-11): best performances - best plays - odds breakdown. */
-let tmTab = ls.get('packs_tmtab_v1', 'perfs');
+let tmTab = ls.get('packs_tmtab_v1', 'perfs'), tmSort = ls.get('packs_tmsort_v1', 'rating');
 const tmCache = new Map();
 function teamDetail(r, k){
   const bar = `<div class="dtabs"><b>${esc(r.player)}</b><div class="seg sm" role="tablist">${[['perfs', 'Best performances'], ['plays', 'Best plays'], ['odds', 'Odds breakdown']]
     .map(([v, l]) => `<button data-tmt="${v}" aria-pressed="${tmTab === v}">${l}</button>`).join('')}</div></div>`;
   if(tmTab === 'odds') return bar + teamOddsTable(r);
+  if(!tmCache.has(k)){ const sv = ls.get('packs_tmtop_v2_' + k, null); if(sv && Date.now() - (sv.at || 0) < 12 * 3600000) tmCache.set(k, sv); }
   const c = tmCache.get(k);
   if(!c){ tmCache.set(k, 'loading');
-    api(`/api/rax?plays=teamtop&sport=${r.sport}&season=${r.season}&teamId=${r.teamId}`).then(d => { tmCache.set(k, d.error ? { error: d.error } : d); if(openK === k) paint(); });
+    api(`/api/rax?plays=teamtop&sport=${r.sport}&season=${r.season}&teamId=${r.teamId}`).then(d => { tmCache.set(k, d.error ? { error: d.error } : d); if(!d.error) ls.set('packs_tmtop_v2_' + k, d); if(openK === k) paint(); });
     return bar + '<p class="note">Loading the team…</p>'; }
   if(c === 'loading') return bar + '<p class="note">Loading the team…</p>';
   if(c.error){ tmCache.delete(k); return bar + `<p class="note">Could not load the team (${esc(c.error)}). Tap it again.</p>`; }
-  const list = tmTab === 'perfs' ? c.perfs : c.plays;
+  const val = x => Number(x.value) || 0, rar = x => Number(x.rarity) || 0;
+  const list = (tmTab === 'perfs' ? c.perfs : c.plays).slice().sort((a, b) => tmSort === 'rarity' ? rar(b) - rar(a) || val(b) - val(a) : val(b) - val(a));
   if(!list.length) return bar + `<p class="note">No ${tmTab === 'perfs' ? 'performances rated .5 or higher' : 'plays'} collected yet.</p>`;
   const kind = tmTab === 'perfs' ? 0 : 6;
-  return bar + `<div class="pls"><div class="plh"><span>Date</span><span>${tmTab === 'perfs' ? 'Player · game' : 'Player · play'}</span><span>Rating</span><span>Rarity</span></div>`
+  return bar + `<div class="ladbar"><span class="note">Sort by</span><div class="seg sm"><button data-tms="rating" aria-pressed="${tmSort === 'rating'}">Rating</button><button data-tms="rarity" aria-pressed="${tmSort === 'rarity'}">Rarity</button></div></div>`
+    + `<div class="pls"><div class="plh"><span>Date</span><span>${tmTab === 'perfs' ? 'Player · game' : 'Player · play'}</span><span>Rating</span><span>Rarity</span></div>`
     + list.map(x => { const d = x.day ? new Date(String(x.day).slice(0, 10) + 'T12:00:00Z').toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' }) : '–';
       const rr = RAR[Number(x.rarity) || 0], tg = (x.tags || []).map(t => '#' + String(t).replace(/\s+/g, '')).join(' ');
-      const pu = kind && x.id && REAL_SPORT[r.sport] ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [6, REAL_SPORT[r.sport][1], 0, Number(x.id)]) : null;
-      const what = tmTab === 'perfs' ? `${esc(x.player || 'Player')}${x.opponent ? ` <span class="note">vs ${esc(x.opponent)}</span>` : ''}`
+      // Plays link as [6, sport, 0, id]; performances as [14, sport, 0, id] (the Tag finder's box-score links).
+      const pu = x.id && REAL_SPORT[r.sport] ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [kind || 14, REAL_SPORT[r.sport][1], 0, Number(x.id)]) : null;
+      const what = tmTab === 'perfs' ? `${pu ? `<a href="${pu}" target="_blank" rel="noopener">${esc(x.player || 'Player')}${x.opponent ? ` vs ${esc(x.opponent)}` : ''}</a>` : `${esc(x.player || 'Player')}${x.opponent ? ` <span class="note">vs ${esc(x.opponent)}</span>` : ''}`}`
         : `${esc(x.player || 'Player')} · ${pu ? `<a href="${pu}" target="_blank" rel="noopener">${esc(x.label || 'Play')}</a>` : esc(x.label || 'Play')}`;
       return `<div class="plr" title="${esc(tg)}"><span class="pd">${esc(d)}</span><span class="pt">${what}</span><b class="pv">${x.value == null ? '–' : Number(x.value).toFixed(1)}</b><span class="pr ${rr[1]}">${rr[0]}</span></div>`; }).join('')
     + '</div>';
@@ -485,11 +489,14 @@ async function loadTeams(){
   openK = null; page = 0; clearTimeout(teamT);
   const mine = ++loadTok, want = picks.filter(k => TEAM_SP.includes(k.split(':')[0]));
   if(!want.length){ rows = []; teamMsg = 'Team packs are MLB, NBA, NFL and CFB - pick one of their seasons above.'; $('#status').textContent = teamMsg; paint(); return; }
-  let out = [], building = 0;
+  let out = [], building = 0, updating = 0;
   for(const k of want){
     const [sp, se] = k.split(':');
-    let d = teamCache.get(k);
-    if(!d){ $('#status').textContent = 'Loading teams…'; d = await api(`/api/rax?plays=teams&sport=${sp}&season=${se}`); if(d.rows) teamCache.set(k, d); }
+    // Kept in this browser too, so a season opens instantly; refreshed quietly behind it.
+    let d = teamCache.get(k) || ls.get('packs_team_v2_' + k, null);
+    const fetchIt = () => api(`/api/rax?plays=teams&sport=${sp}&season=${se}`).then(x => { if(x.rows && !x.updating){ teamCache.set(k, x); ls.set('packs_team_v2_' + k, x); } return x; });
+    if(d){ if(!teamCache.has(k)){ teamCache.set(k, d); fetchIt().then(x => { if(x.rows && tab === 'team' && JSON.stringify(x.rows) !== JSON.stringify(d.rows)) loadTeams(); }).catch(() => {}); } }
+    else { $('#status').textContent = 'Loading teams…'; d = await fetchIt(); if(d.updating) updating++; }
     if(mine !== loadTok || tab !== 'team') return;
     if(d.building){ building++; continue; }
     out = out.concat((d.rows || []).map(x => ({ ...x, sport: sp, season: Number(se), playerId: 't' + x.teamId, player: x.team || ('Team ' + x.teamId) })));
@@ -497,6 +504,7 @@ async function loadTeams(){
   rows = out; teamMsg = building ? `Working out team packs for ${building} season${building === 1 ? '' : 's'} - this takes a minute the first time.` : 'No teams with that many plays.';
   paint();
   if(building){ $('#status').textContent = teamMsg; teamT = setTimeout(() => { if(tab === 'team') loadTeams(); }, 20000); }
+  else if(updating){ $('#status').textContent = `${out.length} teams - last numbers shown while ${updating} season${updating === 1 ? '' : 's'} update.`; teamT = setTimeout(() => { if(tab === 'team') loadTeams(); }, 20000); }
 }
 const reload = () => tab === 'team' ? loadTeams() : loadSeason();
 async function loadSeason(){
@@ -564,6 +572,8 @@ $('#body').addEventListener('click', e => {
     ls.set('packs_favs_v1', favs); paintFavN();
     if(tab === 'fav') rows = rows.filter(x => favs.some(f => f.k === keyOf(x)));
     paint(); return; }
+  const tms = e.target.closest('[data-tms]');
+  if(tms){ tmSort = tms.dataset.tms; ls.set('packs_tmsort_v1', tmSort); paint(); return; }
   const tmt = e.target.closest('[data-tmt]');
   if(tmt){ tmTab = tmt.dataset.tmt; ls.set('packs_tmtab_v1', tmTab); paint(); return; }
   const dt = e.target.closest('[data-dt]');
