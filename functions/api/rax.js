@@ -8422,7 +8422,7 @@ export async function onRequestGet(ctx) {
         ...(await (async () => { if (a.admin) return { puller: true, grant: { all: true, queue: [], pull: [], players: [] } };
           const g = a.who ? await pullGrantFor(env, a.who) : null; return { puller: !!g, grant: g }; })()) });
     }
-    if (!a.ok) return json({ error: a.who ? 'Your account does not have market data.' : 'Sign in on the board first.' }, 403);
+    if (!a.ok) return json({ error: a.who ? 'Your account does not have market data.' : 'Sign in first (raxacademy.app).' }, 403);
     if (mk === 'fav' || mk === 'favs') return marketMember(env, url, a.who, ctx.waitUntil);
   }
 

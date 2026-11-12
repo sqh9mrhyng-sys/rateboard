@@ -544,7 +544,7 @@
     .ownrow{grid-template-columns:1fr}
   }
 </style>
-<script>
+<script>window.RB_START_HASH = /rbmove/.test(location.hash) ? '' : location.hash;   // kept for the sign-in return trip (#report, #feature...)
 /* Carries a member's saved sign-in, loadouts and settings over from the old
    rateboard-cgi.pages.dev address. Browsers keep saved data per address, so
    the move to raxacademy.app started everyone empty. A browser with nothing
@@ -586,7 +586,7 @@
 <div id="pagemenu" class="pagemenu hide" role="menu"></div>
 
 <!-- ============ LOGIN GATE ============ -->
-<div id="gate" class="gate">
+<div id="gate" class="gate hide">
   <h1>Rate Board</h1>
   <p class="sub">Standing buy offers for CFB, FC, NFL, UFC and NHL cards. Post what you'll pay, or scan your stats and see who's paying most.</p>
   <div class="panel">
@@ -2785,8 +2785,7 @@ $('#signout').addEventListener('click', async () => {
   setToken('');
   clearDevice();
   me = null;
-  $('#app').classList.add('hide'); $('#gate').classList.remove('hide');
-  $('#g-pass').value=''; gateMsg(''); drawSaved();
+  location.href = '/';
 });
 
 /* =========================================================
@@ -2817,11 +2816,8 @@ $('#addacct').addEventListener('click', e => { e.stopPropagation(); addAcct(); }
 function addAcct(){
   const d = loadDevice(); if(d && d.key && me) rememberAcct(d.key, me);
   setToken(''); clearDevice(); me = null;
-  $('#acctmenu').classList.add('hide');
-  $('#app').classList.add('hide'); $('#gate').classList.remove('hide');
-  $('#g-user').value = ''; $('#g-pass').value = ''; drawSaved();
-  const m = $('#g-msg'); m.textContent = 'Sign in to your other account. The one you were on stays saved - switch back any time with one tap.'; m.classList.remove('hide'); m.style.color = 'var(--mute)';
-  setTimeout(() => { try{ $('#g-user').focus(); }catch(e){} }, 50);
+  try{ sessionStorage.setItem('rb_addacct', '1'); }catch(e){}
+  location.href = '/?next=/board';
 }
 $('#switchacct').addEventListener('click', e => {
   e.stopPropagation();
@@ -8708,8 +8704,11 @@ $('#rs-go').addEventListener('click', async () => {
 /* =========================================================
    Boot
    ========================================================= */
+/* One sign-in for the whole site (Dennis, 2026-11-11): Home's. Not signed
+   in here goes there, and comes back to the board (and its #part) after. */
+const toSignIn = () => location.replace('/?next=' + encodeURIComponent('/board' + ((/rbmove/.test(location.hash) ? '' : location.hash) || window.RB_START_HASH || '')));
 (async () => {
-  if(await resume()) enter();
+  if(await resume()) enter(); else toSignIn();
 })();
 </script>
 <script src="/sponsor.js" data-page="board" defer></script>

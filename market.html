@@ -707,9 +707,9 @@ async function start(){
   }
   if(!me || !me.access){
     $('#lock').hidden = false;
-    $('#lockmsg').textContent = !me ? 'Could not check your account. Try again in a minute.'
+    $('#lockmsg').innerHTML = !me ? 'Could not check your account. Try again in a minute.'
       : me.signedIn ? 'Your account does not have market data. Ask Dennis if you should.'
-      : 'Sign in on the board first, in this browser. If you are signed in already, sign out and back in once.';
+      : '<a href="/?next=/market">Sign in</a> first. If you are signed in already, sign out and back in once.';
     return;
   }
   $('#main').hidden = false;

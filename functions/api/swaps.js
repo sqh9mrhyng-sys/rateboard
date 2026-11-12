@@ -4737,7 +4737,7 @@ async function tagViewOp(env, db, url, acc, waitUntil) {
        list is kept in memory per worker with its text ready, and the saved copy
        re-read at most once a minute, so a crowd costs one KV read a minute;
        the game data is checked for changes at most once an hour. */
-    if (!acc.who) return json({ error: 'Sign in on the board first.' }, 403);
+    if (!acc.who) return json({ error: 'Sign in first (raxacademy.app).' }, 403);
     if (!acc.admin && !(await allow(url.origin, 'tagview:' + acc.who, 40, 600))) return json({ error: 'Too many refreshes - wait a few minutes.' }, 429);
     const sp = TAG_DEFS[url.searchParams.get('sport')] ? url.searchParams.get('sport') : 'nfl';
     const k = `tagview_v1_${sp}`;
@@ -4783,7 +4783,7 @@ export async function onRequest(ctx) {
    Real account Swaps uses for them. Their Pro check and scan start over. */
 const RN_PHRASE = 'CONFIRM USERNAME CHANGE';
 async function renameFlow(env, db, url, acc, op, waitUntil) {
-  if (!acc.who) return json({ error: 'Sign in on the board first.' }, 401);
+  if (!acc.who) return json({ error: 'Sign in first (raxacademy.app).' }, 401);
   try { await alterOnce(db, 'ALTER TABLE users ADD COLUMN rsName TEXT'); } catch (e) {}
   const kvKey = 'rn_v1_' + acc.who;
   if (op === 'rnstatus') {
@@ -4831,7 +4831,7 @@ async function renameFlow(env, db, url, acc, op, waitUntil) {
 }
 
 async function proCheck(env, db, url, acc) {
-  if (!acc.who) return json({ error: 'Sign in on the board first.' }, 401);
+  if (!acc.who) return json({ error: 'Sign in first (raxacademy.app).' }, 401);
   if (acc.swaps) return json({ access: true });
   if (!SWAPS_OPEN) return json({ error: 'Swaps is not open yet.' }, 403);
   await db.prepare(SPRO_DDL).run();
@@ -5220,11 +5220,11 @@ async function handle({ request, env, waitUntil }) {
   /* Moderation, for anyone signed in (a member whose Swaps were taken away
      still sees their record and can ask for an unban). */
   if (op === 'modme') {
-    if (!acc.who) return forbidden('Sign in on the board first.');
+    if (!acc.who) return forbidden('Sign in first (raxacademy.app).');
     return json(await modRecord(db, acc.who));
   }
   if (op === 'unbanreq' && request.method === 'POST') {
-    if (!acc.who) return forbidden('Sign in on the board first.');
+    if (!acc.who) return forbidden('Sign in first (raxacademy.app).');
     let b = {}; try { b = await request.json(); } catch (e) {}
     const text = String(b.text || '').trim().slice(0, 1000);
     if (text.length < 10) return json({ error: 'Say why you should get Swaps back (a sentence or two).' }, 400);
@@ -5242,7 +5242,7 @@ async function handle({ request, env, waitUntil }) {
   const boostCall = BOOSTS_OPEN && url.searchParams.get('page') === 'boosts' && BOOST_OPS.has(op) && !!acc.who;
   // Pack data's rating calculator (open to everyone signed in): their passes and the site's one scan.
   const packCall = url.searchParams.get('page') === 'packs' && ['me', 'scan', 'scanstatus'].includes(op) && !!acc.who;
-  if (!acc.ok && !boostCall && !packCall) return forbidden(acc.who ? 'Your account does not have this page yet.' : 'Sign in on the board first.');
+  if (!acc.ok && !boostCall && !packCall) return forbidden(acc.who ? 'Your account does not have this page yet.' : 'Sign in first (raxacademy.app).');
   if (!acc.admin && !boostCall && !packCall && !((acc.swaps && MEMBER_OPS.has(op)) || (acc.otd && OTD_OPS.has(op)))) return forbidden('Your account does not have this.');
   const me = acc.who;
   if (op === 'tagview') return tagViewOp(env, db, url, acc, waitUntil);
@@ -6462,7 +6462,7 @@ async function handle({ request, env, waitUntil }) {
   }
   if (op === 'projections') {
     // Open to everyone signed in (Dennis, 2026-11-08; was Dennis only).
-    if (!acc.who) return json({ error: 'Sign in on the board first.' }, 403);
+    if (!acc.who) return json({ error: 'Sign in first (raxacademy.app).' }, 403);
     const sp = PROJ_SEASON[url.searchParams.get('sport')] ? url.searchParams.get('sport') : 'ncaaf';
     /* Kept in memory per worker, with the list already turned into text, and
        the saved copy re-read from KV at most once a minute: a crowd opening the

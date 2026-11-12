@@ -76,12 +76,24 @@
     <!-- Sign in right here (member suggestion, 2026-11-11), instead of going to the board first. -->
     <form id="hsign" class="hsign" hidden autocomplete="on">
       <h2 style="margin:0 0 4px">Rax Academy</h2>
-      <p class="note" style="margin:0 0 12px">Sign in with your board account.</p>
+      <p class="note" style="margin:0 0 12px">One sign-in for the whole site. A new username signs you up; a returning one signs you in.</p>
+      <div id="hs-saved" hidden></div>
       <input id="hs-u" placeholder="Your Real username" autocomplete="username" autocapitalize="off" spellcheck="false">
       <input id="hs-p" type="password" placeholder="Board password" autocomplete="current-password">
       <button type="submit" id="hs-go">Sign in</button>
       <p class="note" id="hs-msg" style="margin:8px 0 0"></p>
-      <p class="note" style="margin:10px 0 0">New here, or forgot your password? <a href="/board">Use the board's sign-in</a>.</p>
+      <p class="note" style="margin:8px 0 0">Don't reuse your Real password - this one is only for Rax Academy.</p>
+      <p class="note" style="margin:10px 0 0"><a href="#" id="hs-forgot">Forgot your password?</a></p>
+      <div id="hs-reset" hidden style="border-top:1px solid #2a3348;margin-top:10px;padding-top:10px">
+        <b>Reset your password</b>
+        <p class="note">Enter your username above, then tap Get a code. Send that code in a DM to <b>@raxacademy.app</b> on Real from your own account. Once it arrives your password is cleared, and the next password you sign in with becomes your new one.</p>
+        <button type="button" id="hs-rcode">Get a code</button>
+        <div id="hs-rbox" hidden style="text-align:center;margin-top:8px">
+          <div style="font-size:28px;font-weight:900;letter-spacing:.08em" id="hs-rc"></div>
+          <button type="button" id="hs-rcopy" style="margin:6px 0">Copy code</button>
+          <p class="note" id="hs-rmsg"></p>
+        </div>
+      </div>
     </form></section>
 
   <div id="page" class="hide">
@@ -224,13 +236,13 @@ $('#acctmenu').addEventListener('click', e => {
     // This account stays saved; the board's sign-in shows for the new one.
     keepCurrent(); ls.set(TOKEN, null); ls.set(DEVICE, null); ls.set(SESSION, null);
     try{ sessionStorage.setItem('rb_addacct', '1'); }catch(e){}
-    location.href = '/board'; }
+    location.href = '/'; }
 });
 $('#signout').addEventListener('click', async () => {
   if(getToken()) await api('/api/kv', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'signout' }) });
   const d = loadDevice(); if(d && d.key) saveAccts(loadAccts().filter(x => x.key !== d.key));
   ls.set(TOKEN, null); ls.set(DEVICE, null); ls.set(SESSION, null);
-  location.href = '/board';
+  location.href = '/';
 });
 
 // The same sign-in as the board: the password is hashed here the same way, the server checks it.
@@ -248,16 +260,64 @@ $('#hsign').addEventListener('submit', async e => {
   const key = u.toLowerCase(), name = d.name || u;
   ls.set(TOKEN, d.token); ls.set(DEVICE, JSON.stringify({ key, name, ts: Date.now() })); ls.set(SESSION, key);
   saveAccts([{ key, name, token: d.token }].concat(loadAccts().filter(x => x.key !== key)));
-  location.reload();
+  goNext();
+});
+/* Where to go after signing in: back to the page that sent them here
+   (?next=/swaps etc., this site only), else Home. */
+function goNext(){
+  let n = ''; try{ n = new URLSearchParams(location.search).get('next') || ''; }catch(e){}
+  if(/^\/(?!\/)/.test(n) && !/^\/\\/.test(n)) location.href = n; else location.href = '/';
+}
+// Saved accounts on this browser: one tap to continue as one.
+function drawSaved(){
+  const a = loadAccts(), box = $('#hs-saved'); box.hidden = !a.length;
+  box.innerHTML = a.length ? a.map(x => `<button type="button" data-cont="${esc(x.key)}" style="width:100%;margin:0 0 6px">Continue as ${esc(x.name)}</button>`).join('') + '<p class="note" style="margin:0 0 8px">Or sign in to another account:</p>' : '';
+}
+$('#hs-saved').addEventListener('click', e => { const b = e.target.closest('[data-cont]'); if(!b) return; const x = loadAccts().find(a => a.key === b.dataset.cont); if(!x) return;
+  ls.set(TOKEN, x.token); ls.set(DEVICE, JSON.stringify({ key: x.key, name: x.name, ts: Date.now() })); ls.set(SESSION, x.key); goNext(); });
+// Password reset: a code DM'd to the bot from their own Real account (as the board had).
+let hsTimer = null;
+$('#hs-forgot').addEventListener('click', e => { e.preventDefault(); $('#hs-reset').hidden = !$('#hs-reset').hidden; });
+$('#hs-rcode').addEventListener('click', async () => {
+  const u = $('#hs-u').value.trim(), msg = t => { $('#hs-msg').textContent = t; };
+  if(u.length < 2) return msg('Enter your username first.');
+  msg(''); $('#hs-rcode').disabled = true;
+  let j = null; try{ j = await (await fetch('/api/swaps?op=resetstart&user=' + encodeURIComponent(u))).json(); }catch(e){ j = { error: 'Could not reach the site.' }; }
+  $('#hs-rcode').disabled = false;
+  if(!j || j.error) return msg((j && j.error) || 'Could not start a reset.');
+  $('#hs-rbox').hidden = false; $('#hs-rc').textContent = j.code;
+  $('#hs-rmsg').textContent = `Send ${j.code} in a DM to @${j.bot} on Real, from ${u}. Good for ${j.minutes} minutes - this page checks for it automatically.`;
+  clearInterval(hsTimer); const started = Date.now();
+  hsTimer = setInterval(async () => {
+    if(Date.now() - started > 15 * 60000){ clearInterval(hsTimer); $('#hs-rmsg').textContent = 'That code ran out. Get a new one.'; return; }
+    let c = null; try{ c = await (await fetch('/api/swaps?op=resetcheck&user=' + encodeURIComponent(u))).json(); }catch(e){ return; }
+    if(c && c.reset){ clearInterval(hsTimer); $('#hs-rmsg').textContent = 'Got it - your password is cleared. Type a new password above and tap Sign in.'; $('#hs-rmsg').style.color = '#5fbf7a'; $('#hs-p').value = ''; $('#hs-p').focus(); }
+    else if(c && c.error){ clearInterval(hsTimer); $('#hs-rmsg').textContent = c.error; }
+  }, 20000);
+});
+$('#hs-rcopy').addEventListener('click', async () => {
+  const t = $('#hs-rc').textContent.trim(); if(!t) return; let ok = false;
+  try{ await navigator.clipboard.writeText(t); ok = true; }catch(e){}
+  $('#hs-rcopy').textContent = ok ? 'Copied' : 'Copy failed - type it in'; setTimeout(() => { $('#hs-rcopy').textContent = 'Copy code'; }, 2000);
 });
 
 (async () => {
-  const signIn = 'Sign in on <a href="/board">the board</a> first.';
-  const showSign = () => { $('#lockmsg').hidden = true; $('#hsign').hidden = false; setTimeout(() => $('#hs-u').focus(), 50); };
+  const signIn = 'Sign in first.';
+  const showSign = () => { $('#lockmsg').hidden = true; $('#hsign').hidden = false; drawSaved();
+    try{ if(sessionStorage.getItem('rb_addacct')){ sessionStorage.removeItem('rb_addacct'); $('#hs-msg').textContent = 'Sign in to your other account. The one you were on stays saved.'; } }catch(e){}
+    setTimeout(() => $('#hs-u').focus(), 50); };
   if(!getToken()){ showSign(); return; }
   let j = await api('/api/rax?market=me');
   for(let i = 0; i < 2 && !j.signedIn && !j.error; i++){ await new Promise(r => setTimeout(r, 1000 * (i + 1))); j = await api('/api/rax?market=me'); }
   if(!j.signedIn){ if(j.error && !/sign in/i.test(j.error)) $('#lockmsg').innerHTML = esc(j.error); else showSign(); return; }
+  // Sent here to sign in but already signed in: straight back. If that page sent
+  // them back again within seconds (its own check failed), one fresh sign-in fixes it.
+  if(new URLSearchParams(location.search).get('next')){
+    let last = 0; try{ last = Number(sessionStorage.getItem('rb_nexthop')) || 0; }catch(e){}
+    if(Date.now() - last > 15000){ try{ sessionStorage.setItem('rb_nexthop', String(Date.now())); }catch(e){} goNext(); return; }
+    ls.set(TOKEN, null); ls.set(DEVICE, null); ls.set(SESSION, null);
+    showSign(); $('#hs-msg').textContent = 'Please sign in once more with your password.'; return;
+  }
   ACC = j;
   const d = loadDevice();
   $('#me').textContent = (d && (d.name || d.key)) || '';

@@ -745,9 +745,9 @@ $('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]
 (async () => {
   let tk = ''; try{ tk = localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){}
   const lock = m => { $('#lock').hidden = false; $('#lockmsg').innerHTML = m; };
-  if(!tk) return lock('Sign in on <a href="/board">the board</a> first.');
+  if(!tk) return lock('<a href="/?next=/packs">Sign in</a> first.');
   const me = await api('/api/rax?market=me');
-  if(!me.signedIn) return lock('Sign in on <a href="/board">the board</a> first.');
+  if(!me.signedIn) return lock('<a href="/?next=/packs">Sign in</a> first.');
   // Open to everyone signed in (Dennis, 2026-11-09).
   $('#main').hidden = false; paintFavN();
   $('#teamtab').hidden = !me.admin;   // Team packs: Dennis only for now (2026-11-09)
