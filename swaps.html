@@ -339,7 +339,7 @@
   <div class="savebar"><button class="primary big" id="save">Save my swap</button><span class="note" id="savemsg"></span></div>
   <div class="bar two"><button id="pauseall">Pause all</button><button id="endall" class="danger">End all</button></div>
   <span class="note" id="pausemsg"></span>
-  <p class="note sub"><b>Pause</b> = no new matches, and calls off your 160s and niche buys not yet messaged. <b>End all</b> = also calls off upcoming swaps. Save to start again.</p>
+  <p class="note sub"><b>Pause</b> = no new matches, and calls off every swap, 160 and niche buy not yet messaged (ones already messaged, or under 35 minutes away, still go ahead). <b>End all</b> = the same. Save to start again.</p>
   <div class="bar"><button id="whynot" class="ghost">Why haven't I matched?</button></div>
   <div class="note" id="whyout"></div>
   <div class="saved" id="saved" hidden role="dialog" aria-modal="true" aria-labelledby="savedh"><div class="card"><div class="tick">✓</div><div class="big1" id="savedh">SAVED</div><div class="big2">YOU WILL RECEIVE A DM LATER</div><p class="note extra" id="savedx" hidden></p><button class="primary" id="savedok">Got it</button></div></div>
@@ -939,6 +939,8 @@ $('#pauseall').addEventListener('click', async () => {
   const j = await api('/api/swaps?op=pause', { method: 'POST' });
   if(j.error){ $('#pausemsg').textContent = j.error; return; }
   prof.active = false; savedWants = new Set(); paintPaused(); loadHourCounts(); loadWantCounts(); loadSwaps();
+  $('#pausemsg').innerHTML += (j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} called off.` : '')
+    + (j.late ? ` <b>${j.late} swap${j.late === 1 ? ' was' : 's were'} already messaged or under 35 minutes away, so ${j.late === 1 ? 'it still goes' : 'they still go'} ahead - do ${j.late === 1 ? 'it' : 'them'}.</b>` : '');
 });
 $('#endall').addEventListener('click', async e => {
   const b = e.currentTarget;

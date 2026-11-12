@@ -5259,9 +5259,15 @@ async function handle({ request, env, waitUntil }) {
     let res = { n: 0, late: 0, soon: 0 };
     // Paused: no new matches, and their 160s and niche buys not yet messaged are called off too (2026-11-10).
     if (op === 'pause') { try { const c = await db.prepare(`UPDATE swap_160 SET status='cancelled', note=? WHERE status='pending' AND warnS IS NULL AND warnB IS NULL AND (buyer=? OR seller=?)`).bind(`called off: @${me} paused`, me, me).run(); res.n += (c && c.meta && c.meta.changes) || 0; } catch (e) {} }
-    if (op === 'endall') {
+    /* Pause calls off upcoming swaps not yet messaged too (Dennis, 2026-11-11:
+       members paused before a swap and still got its DMs, since Pause only
+       stopped NEW matches). Swaps already messaged (or under 35 min away) still go ahead. */
+    {
       const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned') AND (a=? OR b=?)`).bind(me, me).all()).results) || [];
-      for (const m of rows) await callOff(db, m, `called off: @${me} ended their swaps`, res);
+      for (const m of rows) await callOff(db, m, `called off: @${me} ${op === 'pause' ? 'paused' : 'ended their swaps'}`, res);
+      if (op === 'pause') { try { await afterCallOff(env, db, auth, me, res); } catch (e) {} }
+    }
+    if (op === 'endall') {
       try { await db.prepare(`UPDATE swap_160 SET status='cancelled', note=? WHERE status='pending' AND warnS IS NULL AND warnB IS NULL AND (buyer=? OR seller=?)`).bind(`called off: @${me} ended their swaps`, me, me).run(); } catch (e) {}
       try { await afterCallOff(env, db, auth, me, res); } catch (e) {}
     }
