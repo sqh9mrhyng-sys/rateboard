@@ -1211,11 +1211,21 @@ async function verifyDms(db, auth) {
 }
 async function retryDms(db, auth) {
   await db.prepare(DMQ_DDL).run();
-  const rows = ((await db.prepare('SELECT * FROM dm_retry ORDER BY id LIMIT 20').all()).results) || [];
+  /* Swap messages first; notices (moderation, top-15, unban, scan done) after
+     them, so a batch of notices never holds up a swap warning (2026-11-12).
+     A swap message more than 25 minutes old is dropped instead - by then its
+     swap is minutes away or past, and a late one just confuses. */
+  const LOW = /^(mod|top15|unban|scan done)\b/;
+  const all = ((await db.prepare('SELECT * FROM dm_retry ORDER BY id LIMIT 60').all()).results) || [];
+  for (const r of all) if (!LOW.test(String(r.label || '')) && Date.now() - Number(r.at || 0) > 25 * 60000) {
+    await db.prepare('DELETE FROM dm_retry WHERE id=?').bind(r.id).run(); await botFail(db, 'dm_retry', `${r.label}: dropped, over 25 minutes late`); }
+  const rows = all.filter(r => LOW.test(String(r.label || '')) || Date.now() - Number(r.at || 0) <= 25 * 60000)
+    .sort((a, b) => (LOW.test(String(a.label || '')) ? 1 : 0) - (LOW.test(String(b.label || '')) ? 1 : 0) || a.id - b.id).slice(0, 20);
   const usedCh = new Set();
   for (const r of rows) {
     if (usedCh.has(Number(r.channelId))) continue;   // that chat already got a message this minute
     if (TICK_T0 && tickLeft() < 14000) break;   // leave the rest of the minute for the swaps' own DMs
+    if (LOW.test(String(r.label || '')) && dmWindow()) continue;   // notices wait out the :25-:40 / :55-:10 swap rush
     let parts = parse(r.parts, []);
     parts = parts.flatMap(fitDm);   // queued before the length fix: cut down to size
     usedCh.add(Number(r.channelId));
