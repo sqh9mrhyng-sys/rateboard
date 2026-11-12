@@ -2180,6 +2180,42 @@ async function scanDoneDms(db, auth, t0) {
    on through the swap-DM rush too, on the non-bot accounts then): carry on
    scans whose page went away, start whoever is next in line if they've left
    the page, and send the "scan done" DMs. */
+/* Untouchables kept fresh before swaps (Dennis, 2026-11-12: a member got
+   matched to give passes he'd set untouchable on Real - the site only learns
+   that from a scan). Each minute, up to 6 members with a swap 31-100 minutes
+   out (not yet messaged) whose untouchables weren't re-read in 3 hours get one
+   pass read; only the untouchable flags are updated, and any swap that would
+   give an untouchable pass is called off before its messages go out. */
+async function untouchRefresh(env, db) {
+  const tok = scanTok(env); if (!tok) return;
+  try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN untouchAt INTEGER'); } catch (e) {}
+  const now = Date.now(), lo = now + 31 * 60000, hi = now + 100 * 60000;
+  const due = ((await db.prepare(`SELECT u.key, u.hashId, u.passes, u.touch FROM swap_users u
+      WHERE u.hashId IS NOT NULL AND (u.untouchAt IS NULL OR u.untouchAt < ?) AND u.key IN (
+        SELECT a FROM swap_matches WHERE status='pending' AND warnA IS NULL AND warnB IS NULL AND dueAt BETWEEN ? AND ?
+        UNION SELECT b FROM swap_matches WHERE status='pending' AND warnA IS NULL AND warnB IS NULL AND dueAt BETWEEN ? AND ?)
+      LIMIT 6`).bind(now - 3 * 3600000, lo, hi, lo, hi).all()).results) || [];
+  for (const u of due) {
+    let fresh = null;
+    try { const r = await fetch(`https://web.realapp.com/userpasses/${encodeURIComponent(u.hashId)}/passes`, { headers: rsHeaders(tok) });
+      if (r.status === 429) break; if (!r.ok) throw new Error(String(r.status));
+      const rows = rowsOf(await r.json()); fresh = new Map();
+      for (const x of rows) { const e = (x && (x.pass || x.entity)) || x || {};
+        const sp = String(x.sport || e.sport || '').toLowerCase(), se = Number(x.season || e.season), k = String(x.entityType || e.entityType || '').toLowerCase();
+        const p = passOf(x, sp, se, k); if (p) fresh.set(p.key, !!p.untouchable); }
+    } catch (e) { await db.prepare('UPDATE swap_users SET untouchAt=? WHERE key=?').bind(now - 2 * 3600000, u.key).run(); continue; }
+    const passes = parse(u.passes, []); let changed = false;
+    if (fresh.size) for (const p of passes) { if (!fresh.has(p.key)) continue; const t = fresh.get(p.key);
+      if (t && !p.untouchable) { p.untouchable = 1; changed = true; } else if (!t && p.untouchable) { delete p.untouchable; changed = true; } }
+    await db.prepare(`UPDATE swap_users SET untouchAt=?${changed ? ', passes=?' : ''} WHERE key=?`).bind(...(changed ? [now, JSON.stringify(passes), u.key] : [now, u.key])).run();
+    if (!changed) continue;
+    const touch = new Set(parse(u.touch, [])), un = new Set(passes.filter(p => p.untouchable && !touch.has(p.key)).map(p => p.key));
+    const ms = ((await db.prepare(`SELECT * FROM swap_matches WHERE status='pending' AND warnA IS NULL AND warnB IS NULL AND dueAt > ? AND (a=? OR b=?)`).bind(now, u.key, u.key).all()).results) || [];
+    const res = { n: 0, late: 0, soon: 0 };
+    for (const m of ms) { const gives = m.a === u.key ? m.bGets : m.aGets;
+      if (un.has(gives)) { await callOff(db, m, `called off: @${u.key} set that pass untouchable`, res); await stat(db, 'untouch_calledoff'); } }
+  }
+}
 async function backgroundScans(env, db, auth) {
   try { await perfOnlyRefresh(env); } catch (e) {}
   await scanTables(db);
@@ -5206,6 +5242,7 @@ async function handle({ request, env, waitUntil }) {
     if (go && auth0) { try { waitUntil(backgroundScans(env, db, auth0).catch(e => botFail(db, 'scan_bg', e.message))); } catch (e) {} }
     // Niche owner counts, refreshed once an hour.
     if (go) { try { const oc = await ownerCounts(env); if (Date.now() - (oc.at || 0) > 60 * 60000) waitUntil(saveOwnerCounts(env, db).catch(() => {})); } catch (e) {} }
+    if (go) { try { waitUntil(untouchRefresh(env, db).catch(() => {})); } catch (e) {} }
     // Moderation: reports counted into warnings / strikes / bans every 10 minutes.
     if (go) { try { const ml = Number(await env.RATEBOARD_KV.get('mod_last_v1')) || 0;
       const mm2 = new Date().getUTCMinutes(), quiet = (mm2 >= 5 && mm2 < 16) || (mm2 >= 35 && mm2 < 50);   // its DMs stay clear of the swap-hour rush
