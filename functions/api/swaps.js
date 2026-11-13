@@ -7754,3 +7754,16 @@ export async function dayProbe(env, db) {
   } catch (e) { out.err = String(e.message || e).slice(0, 200); }
   try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 86400 }); } catch (e) {}
 }
+
+/* One-off (2026-11-12): Dennis's MLB player passes for an OTD plan - ids, levels, ratings, earned (no names, no usernames). */
+export async function mlbPassProbe(env, db) {
+  const K = 'diag_mlbpass_1112';
+  try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1 }), { expirationTtl: 86400 }); } catch (e) { return; }
+  const out = { at: Date.now() };
+  try { const u = await db.prepare("SELECT passes, scannedAt FROM swap_users WHERE key='dennis'").first();
+    out.scannedAt = u && u.scannedAt;
+    out.mlb = (u && u.passes ? JSON.parse(u.passes) : []).filter(p => p.sport === 'mlb' && p.kind !== 'team')
+      .map(p => ({ id: p.id, se: p.season, lv: p.levelLabel, r: p.rating, m: p.mult, e: p.earned })); out.done = 1;
+  } catch (e) { out.err = String(e.message || e).slice(0, 150); }
+  try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 86400 }); } catch (e) {}
+}
