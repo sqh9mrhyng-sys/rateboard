@@ -477,6 +477,32 @@ async function bulkProbe(env) {
   try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 86400 }); } catch (e) {}
 }
 
+
+/* One-off (2026-11-13): Real's own web app code, searched for how its
+   Auctions "Bulk rating" view asks for listings. Only short snippets kept. */
+async function bulkJsProbe(env) {
+  const K = 'diag_bulkjs_1113';
+  try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1 }), { expirationTtl: 86400 }); } catch (e) { return; }
+  const out = { at: Date.now(), pages: [], hits: [] };
+  try {
+    const seen = new Set(), queue = [];
+    for (const u of ['https://www.realapp.com/', 'https://web.realapp.com/', 'https://realapp.com/']) {
+      try { const r = await fetch(u, { headers: { 'user-agent': 'Mozilla/5.0' } }); const t = await r.text(); out.pages.push({ u, st: r.status, len: t.length });
+        for (const m of t.matchAll(/(?:src|href)="([^"]+\.js[^"]*)"/g)) { const v = new URL(m[1], u).href; if (!seen.has(v)) { seen.add(v); queue.push(v); } } } catch (e) { out.pages.push({ u, err: String(e.message).slice(0, 80) }); }
+    }
+    let n = 0;
+    while (queue.length && n < 60) { const u = queue.shift(); n++;
+      try { const t = await (await fetch(u)).text(); out.pages.push({ u: u.slice(0, 120), len: t.length });
+        for (const m of t.matchAll(/["'`\/]([a-zA-Z0-9_./-]*(?:[Mm]arketplace|[Aa]uction|[Bb]ulk)[a-zA-Z0-9_./-]*)/g)) { const i = m.index; const sn = t.slice(Math.max(0, i - 120), i + 160);
+          if (out.hits.length < 120 && !out.hits.some(h => h.s === m[1])) out.hits.push({ s: m[1], ctx: sn.replace(/\s+/g, ' ') }); }
+        for (const m of t.matchAll(/["'`]([^"'`]*\.js)["'`]/g)) { if (/chunk|static|assets|_next/.test(m[1])) { try { const v = new URL(m[1], u).href; if (!seen.has(v) && seen.size < 400) { seen.add(v); queue.push(v); } } catch (e) {} } }
+      } catch (e) {}
+    }
+    out.done = 1;
+  } catch (e) { out.err = String(e.message || e).slice(0, 150); }
+  try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 86400 }); } catch (e) {}
+}
+
 async function rsGet(url, auth) {
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(url, { headers: rsHeaders(auth) });
@@ -8440,7 +8466,7 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkProbe: await kvj('diag_bulk_1113b'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
+    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkJs: await kvj('diag_bulkjs_1113'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
       const o = {}; for (const r of rows) { const k = new Date(Number(r.at)).toISOString().slice(11, 14) + '00 ' + r.kind + ' | ' + String(r.msg || '').replace(/@[\w.\-]+/g, '@x').replace(/^[\w.\-]+:/, 'u:').replace(/(dropped|send|late)\s.*$/, '$1').slice(0, 140); o[k] = (o[k] || 0) + 1; } return o; } catch (e) { return String(e.message); } })(), dmTiming: await (async () => {
       /* How late swap DMs go out (2026-11-13): per swap hour in the last 12h,
          minutes from the hour to each side's warning and swap DM (counts only). */
@@ -8488,7 +8514,7 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil(gapPush(ctx).catch(() => {}));
   }
   // Read-only collector progress, no sign-in: counts and dates only, nothing from the market or any account.
-  if (url.searchParams.get('collector') === 'health') { ctx.waitUntil(bulkProbe(env).catch(() => {})); return collectorHealth(env, url); }
+  if (url.searchParams.get('collector') === 'health') { ctx.waitUntil(bulkJsProbe(env).catch(() => {})); return collectorHealth(env, url); }
   const mk = url.searchParams.get('market');
   if (MARKET_MEMBER.includes(mk)) {
     const a = await marketWho(env, request);
