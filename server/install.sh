@@ -41,6 +41,9 @@ UNIT
 
 # Pulls new versions from GitHub every minute; restarts only at :11-:17, the
 # one stretch with no matching (:20), warnings (:30-:55) or swap DMs (:55-:10).
+# Root runs git in the rax-owned clone (2026-11-12: without this, update.sh
+# pulled but never restarted - git refused root with "dubious ownership").
+git config --system --add safe.directory /opt/rax/app
 cat > /opt/rax/update.sh <<'UPD'
 #!/bin/bash
 cd /opt/rax/app || exit 0
