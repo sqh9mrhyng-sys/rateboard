@@ -2839,15 +2839,18 @@ async function confirmGate(env, db, auth) {
   const off = ((await db.prepare(`SELECT a, b, slot, createdAt, dueAt FROM swap_matches WHERE status='cancelled' AND note LIKE '%didn''t confirm today%' AND dueAt > ? AND dueAt <= ?`).bind(now, now + 31 * 60000).all()).results) || [];
   for (const m of off) { const due = sideDue(m), day = swapDay(due);
     for (const k of [m.a, m.b]) if (!told.has(k) && !isConfirmed(await get(k), day)) told.set(k, due); }
-  for (const [k, due] of told) {
-    if (TICK_T0 && tickLeft() - dmWaitAhead() < 5000) break;
+  /* The "you didn't confirm" DMs go after the swap warnings and swap DMs, not
+     before (2026-11-13: sent here first, they took most of each minute from
+     :30 and the 1pm warnings never went out). dmTick calls the returned job last. */
+  return async () => { for (const [k, due] of told) {
+    if (TICK_T0 && tickLeft() < 8000) break;
     const u = cache.get(k); if (!u || !u.hashId) continue;
     if (!(await onceFor(db, 'noconf_' + due, k))) continue;
     try { const ch = await dmChannel(db, auth, u.hashId, u.rsUser, env);
       await dmSendRetry(auth, ch, `You didn't confirm your swaps, go to https://raxacademy.app/swaps to confirm it for your next set time`);
       await stat(db, 'dm_noconfirm'); }
     catch (e) { await botFail(db, 'dm_noconfirm', `${k}: ${e.message || e}`); }
-  }
+  } };
 }
 async function dmTick(env) {
   TICK_T0 = Date.now(); TICK_BUDGET = ON_DROPLET ? 57000 : 26000;
@@ -2871,8 +2874,13 @@ async function dmTick(env) {
     } } } catch (e) { await botFail(db, 'dm_admin', 'example: ' + (e.message || e)); }
   // Unconfirmed members' swaps come off before any warning goes out; the day's confirm DMs at its start.
   try { await dedupeSweep(db); } catch (e) { await botFail(db, 'dedupe', e.message); }
-  try { await confirmGate(env, db, auth); } catch (e) { await botFail(db, 'confirm_gate', e.message); }
-  try { await retryDms(db, auth); } catch (e) { await botFail(db, 'dm_retry', e.message); }   // unsent parts first
+  let gateDms = null;
+  try { gateDms = await confirmGate(env, db, auth); } catch (e) { await botFail(db, 'confirm_gate', e.message); }
+  /* On the droplet the resends and 160 warnings run alongside the swap DMs and
+     the priority line puts swap warnings/DMs first (2026-11-13); on
+     Cloudflare they still go one after another. */
+  const retryJob = () => retryDms(db, auth).catch(e => botFail(db, 'dm_retry', e.message));
+  if (!ON_DROPLET) await retryJob();   // unsent parts first
   /* Swap warnings and swap DMs first, the day's confirm DMs after (2026-11-08:
      the confirm run ate the whole minute from 3:30 to 3:45am Alaska and no
      4am warning went out). */
@@ -2881,9 +2889,11 @@ async function dmTick(env) {
     // Only what's due soon (warnings from 30 minutes out, swap DMs at the hour) plus call-offs.
     const rows = ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned','cancelling') AND createdAt > ? AND (status='cancelling' OR (dueAt <= ? AND dueAt > ?)) ORDER BY COALESCE(dueAt, createdAt), id LIMIT 800`)
       .bind(Date.now() - 2 * 86400000, Date.now() + 45 * 60000, Date.now() - 3 * 3600000).all()).results) || [];
-    try { await dm160(env, db, auth); } catch (e) { await botFail(db, 'dm_160', e.message); }   // first, a few a minute: it was starved by the swap DMs
-    if (rows.length) out = await runDms(env, db, auth, rows, DM_PER_TICK, false);
+    const j160 = () => dm160(env, db, auth).catch(e => botFail(db, 'dm_160', e.message));
+    if (ON_DROPLET) { const r = await Promise.all([retryJob(), j160(), rows.length ? runDms(env, db, auth, rows, DM_PER_TICK, false) : []]); out = r[2] || []; }
+    else { await j160(); if (rows.length) out = await runDms(env, db, auth, rows, DM_PER_TICK, false); }
   } catch (e) { await botFail(db, 'dm_run', e.message); }
+  try { if (typeof gateDms === 'function') await gateDms(); } catch (e) { await botFail(db, 'dm_noconfirm', e.message); }
   try { await confirmPrompts(env, db, auth); } catch (e) { await botFail(db, 'dm_confirm_prompt', e.message); }
   // auditHour was a one-off for Nov 5's 8:00 run; it ran again on Nov 12 when its saved state expired and resent week-old swaps. Off for good.
   // try { await auditHour(env, db, auth); } catch (e) { await botFail(db, 'dm_audit', e.message); }
