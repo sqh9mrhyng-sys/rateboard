@@ -824,10 +824,23 @@ async function runMatchingInner(db, env) {
   await db.prepare(DM_DDL).run();
   try { await db.prepare(RESTRICT_DDL).run(); } catch (e) {}
   try { await db.prepare(SBLOCK_DDL).run(); } catch (e) {}
+  try { await db.prepare(DM403_DDL).run(); } catch (e) {}
   try { await matchCols(db); } catch (e) {}
+  /* Their swaps not yet warned are called off, and their unwarned 160s, so no
+     partner buys packs for someone the bot can't reach. */
+  try { const out = new Set((((await db.prepare(DM403_OUT).bind(Date.now() - 86400000).all()).results) || []).map(r => r.key));
+    if (out.size) { const res = { n: 0, late: 0, soon: 0 };
+      for (const m of (((await db.prepare(`SELECT * FROM swap_matches WHERE status='pending' AND warnA IS NULL AND warnB IS NULL AND dueAt > ?`).bind(Date.now() + 5 * 60000).all()).results) || [])) {
+        const who = out.has(String(m.a).toLowerCase()) ? m.a : out.has(String(m.b).toLowerCase()) ? m.b : null;
+        if (who) await callOff(db, m, `called off: Real won't let the bot message @${who} right now`, res); }
+      for (const r of (((await db.prepare(`SELECT id, seller, buyer FROM swap_160 WHERE status='pending' AND warnS IS NULL AND warnB IS NULL AND dueAt > ?`).bind(Date.now() + 5 * 60000).all()).results) || [])) {
+        const who = out.has(String(r.seller).toLowerCase()) ? r.seller : out.has(String(r.buyer).toLowerCase()) ? r.buyer : null;
+        if (who) await db.prepare(`UPDATE swap_160 SET status='cancelled', note=? WHERE id=? AND status='pending'`).bind(`called off: Real won't let the bot message @${who} right now`, r.id).run(); }
+      if (res.n) await stat(db, 'dm403_calledoff', res.n); } } catch (e) {}
   const users = (await pagedRows(db, `SELECT * FROM swap_users WHERE active=1 AND passes IS NOT NULL
       AND ((wants IS NOT NULL AND wants <> '[]') OR s160=1 OR only160=1 OR nicheIn=1) AND ((slots IS NOT NULL AND slots <> '[]') OR s160=1 OR only160=1)
       AND key NOT IN (SELECT key FROM restricted) AND key NOT IN (SELECT key FROM swap_block)
+      AND LOWER(key) NOT IN (SELECT key FROM dm_403 WHERE n >= 3 AND last - first >= 600000 AND last > ${Date.now() - 86400000})
       AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`))
     .map(u => ({ ...u, nicheReq: parse(u.niche, {}) || {}, bl: new Set((parse(u.blist, []) || []).map(k => String(k).toLowerCase())), lock1: new Set(parse(u.lock1, []) || []), noSp: parse(u.noSp, {}) || {} }))
     .map(u => ({ ...u, sched: parse(u.sched, null), wants: parse(u.wants, []), keep: new Set(parse(u.keep, [])), touch: new Set(parse(u.touch, [])), slots: parse(u.slots, []),
@@ -1152,6 +1165,18 @@ async function stat(db, k, n = 1) {
   try { await botTables(db);
     await db.prepare('INSERT INTO bot_stats (day, k, n) VALUES (?, ?, ?) ON CONFLICT(day, k) DO UPDATE SET n = n + excluded.n').bind(etDay(), k, n).run(); } catch (e) {}
 }
+/* Members Real won't let the bot message (2026-11-12: 200+ "Cannot message
+   this channel right now" refusals in a day, and swaps where one side never
+   got a warning or contact). Three refusals in a row over 10+ minutes keeps
+   them out of matching for a day; any message that goes through clears it. */
+const DM403_DDL = 'CREATE TABLE IF NOT EXISTS dm_403 (key TEXT PRIMARY KEY, n INTEGER, first INTEGER, last INTEGER)';
+async function dm403(db, who, failed) {
+  try { await db.prepare(DM403_DDL).run(); const k = String(who || '').toLowerCase(); if (!k) return;
+    if (!failed) { await db.prepare('DELETE FROM dm_403 WHERE key=?').bind(k).run(); return; }
+    const t = Date.now();
+    await db.prepare('INSERT INTO dm_403 (key, n, first, last) VALUES (?, 1, ?, ?) ON CONFLICT(key) DO UPDATE SET n=n+1, last=excluded.last').bind(k, t, t).run(); } catch (e) {}
+}
+const DM403_OUT = `SELECT key FROM dm_403 WHERE n >= 3 AND last - first >= 600000 AND last > ${'?'}`;
 async function botFail(db, kind, msg) {
   try { await botTables(db); await stat(db, 'fail');
     await db.prepare('INSERT INTO bot_log (at, kind, msg) VALUES (?, ?, ?)').bind(Date.now(), kind, String(msg || '').slice(0, 300)).run();
@@ -1754,10 +1779,11 @@ async function runDms(env, db, auth, rows, max, force) {
       }
       // A second look in a few minutes: read the chat back and re-send any part that isn't there.
       // (The read-back second look is off: Real stores links differently from what was sent, so it re-sent messages that had landed.)
+      await dm403(db, who, false);
       notes.push(`${kind} sent to @${me.rsUser} (${msgs.length} message${msgs.length === 1 ? '' : 's'})`); return true;
     }
     catch (e) { notes.push(`${kind} to @${me.rsUser} failed: ${String(e.message || e).slice(0, 160)}`); await botFail(db, 'dm_' + kind, `@${me.rsUser}: ${e.message || e}`);
-      if (/send 403/.test(String(e.message || e))) NO_MSG.set(who, Date.now() + 4 * 60000);   // try them again in a few minutes, not every tick
+      if (/send 403/.test(String(e.message || e))) { NO_MSG.set(who, Date.now() + 4 * 60000); await dm403(db, who, true); }   // try them again in a few minutes, not every tick
       return false; }
   };
   // Soonest (or most overdue) first, so a busy hour can't leave earlier ones waiting.
@@ -2687,8 +2713,10 @@ const nicheLine = (n, buying) => buying
 async function dm160(env, db, auth) {
   const now = Date.now();
   await matchCols(db);
+  /* From 38 minutes out and up to 8 a minute (2026-11-12: at 4 a minute from
+     :30, 170 of the 2pm and 3pm 160s never got their warning). */
   let rows = ((await db.prepare(`SELECT * FROM swap_160 WHERE status='pending' AND dueAt > ? AND dueAt <= ? AND (warnS IS NULL OR warnB IS NULL) ORDER BY dueAt, id LIMIT 400`)
-    .bind(now, now + 30 * 60000).all()).results) || [];
+    .bind(now, now + 38 * 60000).all()).results) || [];
   if (!rows.length) return;
   rows = await drop160Held(db, rows);
   const per = new Map();
@@ -2698,7 +2726,7 @@ async function dm160(env, db, auth) {
   let sentN = 0;
   for (const g of per.values()) {
     // A few a minute: this runs ahead of the swap warnings, which mustn't wait on it.
-    if (sentN >= 4 || (TICK_T0 && tickLeft() - dmWaitAhead() < 6000)) break;
+    if (sentN >= 8 || (TICK_T0 && tickLeft() - dmWaitAhead() < 6000)) break;
     const got = [];
     for (const [r, col] of g.list) { const c = await db.prepare(`UPDATE swap_160 SET ${col}=? WHERE id=? AND ${col} IS NULL`).bind(now, r.id).run(); if (c && c.meta && c.meta.changes) got.push([r, col]); }
     if (!got.length) continue;
@@ -2719,8 +2747,9 @@ async function dm160(env, db, auth) {
       : `${nTxt}\nGo to ${link} to see them all` + (nBuy ? '\nPlease buy within 30 mins' : ''))
       + ((sells || buys) && nTxt ? '\n\n' + nTxt : '');
     if (!sells && !buys && !nBuy && !nGet) continue;
-    try { const ch = await dmChannel(db, auth, me.hashId, me.rsUser, env); await dmSendRetry(auth, ch, text); await stat(db, 'dm_160'); sentN++; }
+    try { const ch = await dmChannel(db, auth, me.hashId, me.rsUser, env); await dmSendRetry(auth, ch, text); await stat(db, 'dm_160'); sentN++; await dm403(db, g.who, false); }
     catch (e) { for (const [r, col] of got) await db.prepare(`UPDATE swap_160 SET ${col}=NULL WHERE id=? AND ${col}=?`).bind(r.id, now).run();
+      if (/send 403/.test(String(e.message || e))) await dm403(db, g.who, true);
       await botFail(db, 'dm_160', `${g.who}: ${e.message || e}`); }
   }
 }
