@@ -61,6 +61,7 @@ export class KV {
     this.db = new Database(file);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('synchronous = NORMAL');
+    this.db.pragma('busy_timeout = 5000');
     this.db.exec('CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v BLOB, exp INTEGER)');
     this.g = this.db.prepare('SELECT v, exp FROM kv WHERE k=?');
     this.p = this.db.prepare('INSERT OR REPLACE INTO kv (k, v, exp) VALUES (?, ?, ?)');
