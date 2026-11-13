@@ -27,11 +27,20 @@ if (cluster.isPrimary && !process.env.ROLE) {
     logEv(`${role} process ended (${code ?? sig}), free RAM ${Math.round(os.freemem() / 1048576)}MB - restarting it`);
     setTimeout(() => start(role), 1000);
   });
+  /* Stopping in order (2026-11-13: web processes quit at once while the jobs
+     process finished its DMs, so the site showed errors for ~85 seconds on
+     every update): the jobs process finishes first while the web processes
+     keep answering, then the web processes stop (about a second). */
   const stop = () => {
     if (stopping) return; stopping = true; logEv('restart/stop requested');
-    for (const w of Object.values(cluster.workers)) { try { w.process.kill('SIGTERM'); } catch (e) {} }
-    setTimeout(() => process.exit(0), 95000).unref();
-    if (!Object.keys(cluster.workers).length) process.exit(0);
+    const all = () => Object.values(cluster.workers);
+    const webs = () => all().filter(w => roles.get(w.id) === 'web');
+    const jobs = all().filter(w => roles.get(w.id) === 'jobs');
+    const stopWebs = () => { for (const w of webs()) { try { w.send('stop'); } catch (e) {} } };
+    if (jobs.length) { for (const w of jobs) { try { w.send('stop'); } catch (e) {} w.on('exit', () => { if (!all().some(x => x !== w && x.id !== w.id && roles.get(x.id) === 'jobs')) stopWebs(); }); } }
+    else stopWebs();
+    setTimeout(() => { logEv('stop took too long - exiting'); process.exit(0); }, 92000).unref();
+    if (!all().length) process.exit(0);
   };
   process.on('SIGTERM', stop); process.on('SIGINT', stop);
 } else {

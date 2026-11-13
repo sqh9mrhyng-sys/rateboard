@@ -158,4 +158,6 @@ const stop = async () => {
   while ((cronBusy() || inflight > 0 || pending.size > 0) && Date.now() - t0 < 85000) await new Promise(r => setTimeout(r, 250));
   server.close(); process.exit(0);
 };
-process.on('SIGTERM', stop); process.on('SIGINT', stop);
+// Under the cluster, the main process says when to stop (in order); a stray signal is ignored.
+if (process.send) { process.on('message', m => { if (m === 'stop') stop(); }); process.on('SIGTERM', () => {}); process.on('SIGINT', () => {}); }
+else { process.on('SIGTERM', stop); process.on('SIGINT', stop); }
