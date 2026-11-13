@@ -95,12 +95,12 @@ export class KV {
 
 // caches.default: kept in memory, by URL, for as long as the response's max-age says.
 class MemCache {
-  constructor() { this.m = new Map(); }
+  constructor() { this.m = new Map(); this.bytes = 0; }
   key(r) { return typeof r === 'string' ? r : r.url; }
   async match(r) {
     const e = this.m.get(this.key(r));
     if (!e) return undefined;
-    if (e.until < Date.now()) { this.m.delete(this.key(r)); return undefined; }
+    if (e.until < Date.now()) { this.bytes -= e.body.byteLength; this.m.delete(this.key(r)); return undefined; }
     return new Response(e.body, { status: e.status, headers: e.headers });
   }
   async put(r, res) {
@@ -109,10 +109,14 @@ class MemCache {
     const ttl = m ? Number(m[1]) : 0;
     if (!ttl || /no-store|private/.test(cc)) return;
     const body = await res.arrayBuffer();
-    if (this.m.size > 3000) this.m.delete(this.m.keys().next().value);
-    this.m.set(this.key(r), { body, status: res.status, headers: [...res.headers.entries()], until: Date.now() + ttl * 1000 });
+    /* Kept to 200MB a process, nothing over 8MB (2026-11-13: big game-log
+       answers piled up to 3GB in one process and the droplet ran out of memory). */
+    if (body.byteLength > 8 * 1048576) return;
+    const k = this.key(r), old = this.m.get(k); if (old) { this.bytes -= old.body.byteLength; this.m.delete(k); }
+    while (this.m.size && (this.bytes + body.byteLength > 200 * 1048576 || this.m.size > 3000)) { const [k0, e0] = this.m.entries().next().value; this.bytes -= e0.body.byteLength; this.m.delete(k0); }
+    this.m.set(k, { body, status: res.status, headers: [...res.headers.entries()], until: Date.now() + ttl * 1000 }); this.bytes += body.byteLength;
   }
-  async delete(r) { return this.m.delete(this.key(r)); }
+  async delete(r) { const e = this.m.get(this.key(r)); if (e) this.bytes -= e.body.byteLength; return this.m.delete(this.key(r)); }
 }
 export const caches = { default: new MemCache() };
 

@@ -16,7 +16,11 @@ if (cluster.isPrimary && !process.env.ROLE) {
   const WEB = Math.max(2, Math.min(4, os.cpus().length));
   let stopping = false;
   const roles = new Map();
-  const start = role => { const w = cluster.fork({ ROLE: role }); roles.set(w.id, role); return w; };
+  /* Memory per process (2026-11-13: one process reached 3GB of the droplet's 4GB):
+     if one goes over it restarts on its own instead of starving the rest. */
+  const HEAP = { web: 600, heavy: 1600, jobs: 900 };
+  const start = role => { cluster.setupPrimary({ execArgv: [...process.execArgv.filter(a => !a.startsWith('--max-old-space-size')), `--max-old-space-size=${HEAP[role] || 600}`] });
+    const w = cluster.fork({ ROLE: role }); roles.set(w.id, role); return w; };
   logEv(`primary started: ${WEB} web + 1 heavy + 1 jobs, ${Math.round(os.totalmem() / 1048576)}MB RAM, ${os.cpus().length} CPUs`);
   for (let i = 0; i < WEB; i++) start('web');
   start('heavy');
