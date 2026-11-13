@@ -449,20 +449,19 @@ async function predProbe(env) {
 /* One-off (2026-11-13): how Real serves the Auctions "Bulk rating" view, read
    with account 2. Keeps only shapes, statuses and a few listing fields. */
 async function bulkProbe(env) {
-  const K = 'diag_bulk_1113b';
+  const K = 'diag_bulk_1113c';
   try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1 }), { expirationTtl: 86400 }); } catch (e) { return; }
   const tok = env.RS_MARKET_TOKEN, out = { at: Date.now(), tries: [] };
   const base = 'cohort=all&offset=0&limit=8&prestige=all&rarity=all&beforeEndsAt=' + encodeURIComponent(new Date(Date.now() + 30 * 86400000).toISOString());
   const brief = r => { const c = r.card || r; const e = c.entity || c.player || c.primaryPlayer || {};
     return { id: r.id, type: r.listingType, rar: c.rarity || c.rarityLabel || (c.boostInfo || {}).rarityLabel, rating: c.boostValue ?? c.rating ?? null, name: e.lastName || e.name || c.label || null,
       minBid: r.minimumBid ?? r.minBid ?? null, cur: r.currentBid ?? r.highestBid ?? null, buy: r.buyNowPrice ?? r.buyNow ?? null, ends: r.endsAt, bulk: Object.keys(r).filter(k => /bulk/i.test(k)).map(k => k + '=' + JSON.stringify(r[k]).slice(0, 40)) }; };
-  // Round 2: with a sport and season (Real returns nothing without them), several listing types.
-  const sb = base + '&sport=nba&season=2026';
-  const urls = [['nba card', `cardmarketplacelistings?${sb}&listingType=card`]];
-  for (const lt of ['rating', 'bulkRating', 'bulk_rating', 'bulkrating', 'Rating', 'boost', 'pass', 'all', 'player', 'cardRating'])
-    urls.push(['nba ' + lt, `cardmarketplacelistings?${sb}&listingType=${lt}`]);
-  urls.push(['nba none', `cardmarketplacelistings?${sb}`], ['soccer card', `cardmarketplacelistings?${base}&sport=soccer&season=2027&listingType=card`],
-    ['all sports', `cardmarketplacelistings?${base}&sport=all&season=all&listingType=card`]);
+  // Round 3: the old pull's exact shape (it worked in November), ending times near now.
+  const b2 = t => 'cohort=all&listingType=card&offset=0&limit=8&prestige=all&rarity=all&beforeEndsAt=' + encodeURIComponent(new Date(Date.now() + t).toISOString());
+  const urls = [];
+  for (const [sp, se] of [['nba', 2027], ['nba', 2026], ['nfl', 2026], ['soccer', 2027], ['mlb', 2026]]) for (const t of [3600000, 6 * 3600000, 86400000])
+    urls.push([`${sp} ${se} +${t / 3600000}h`, `cardmarketplacelistings?${b2(t)}&season=${se}&sport=${sp}`]);
+  urls.push(['nba 2027 sort=rating', `cardmarketplacelistings?${b2(86400000)}&season=2027&sport=nba&sort=rating`]);
   try {
     for (const [lab, u] of urls) {
       try { const res = await fetch('https://web.realapp.com/' + u, { headers: rsHeaders(tok) }); const t = await res.text(); let d = null; try { d = JSON.parse(t); } catch (e) {}
@@ -8466,7 +8465,7 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkJs: await kvj('diag_bulkjs_1113'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
+    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkProbe: await kvj('diag_bulk_1113c'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
       const o = {}; for (const r of rows) { const k = new Date(Number(r.at)).toISOString().slice(11, 14) + '00 ' + r.kind + ' | ' + String(r.msg || '').replace(/@[\w.\-]+/g, '@x').replace(/^[\w.\-]+:/, 'u:').replace(/(dropped|send|late)\s.*$/, '$1').slice(0, 140); o[k] = (o[k] || 0) + 1; } return o; } catch (e) { return String(e.message); } })(), dmTiming: await (async () => {
       /* How late swap DMs go out (2026-11-13): per swap hour in the last 12h,
          minutes from the hour to each side's warning and swap DM (counts only). */
@@ -8514,7 +8513,7 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil(gapPush(ctx).catch(() => {}));
   }
   // Read-only collector progress, no sign-in: counts and dates only, nothing from the market or any account.
-  if (url.searchParams.get('collector') === 'health') { ctx.waitUntil(bulkJsProbe(env).catch(() => {})); return collectorHealth(env, url); }
+  if (url.searchParams.get('collector') === 'health') { ctx.waitUntil(bulkProbe(env).catch(() => {})); return collectorHealth(env, url); }
   const mk = url.searchParams.get('market');
   if (MARKET_MEMBER.includes(mk)) {
     const a = await marketWho(env, request);
