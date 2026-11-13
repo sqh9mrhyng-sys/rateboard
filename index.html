@@ -61,6 +61,7 @@
   .tiles.dragging .tile:not(.drag){transition:transform .12s}
   body.dragging{user-select:none;-webkit-user-select:none}
   .tl b{display:block;font-size:18px;font-weight:800;margin-bottom:3px}
+  .ndot{display:inline-block;min-width:20px;height:20px;line-height:20px;padding:0 6px;margin-left:8px;border-radius:999px;background:#e5534b;color:#fff;font-size:12px;font-weight:800;text-align:center;vertical-align:2px}
   .tl span{color:var(--mute);font-size:13px}
   .hsign{display:flex;flex-direction:column;gap:10px;text-align:left}
   .hsign input{font:inherit;font-size:16px;padding:12px 14px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
@@ -154,12 +155,13 @@ const PAGES = [
   ['/boosts', 'Boosts/Buys', 'Which boosters to use each day, and what to buy'],
   ['/projections', 'Projections', 'Projected rax for the rest of the regular season'],
   ['/tags', 'Tag finder', 'Every game that earned a performance tag'],
+  ['/notifications', 'Notifications', 'Replies to you, your reports and requests, strikes, and what\'s new'],   // 2026-11-12
   ['/admin', 'Admin', 'Users, reports, traffic and sponsors', 'admin']
 ];
 // A colour for each page's box.
 // Each page's own colour (2026-11-09: brighter, and themed - swaps the two-way cyan, boosts fire, packs Legendary purple, projections growth green).
 const LOOK = { '/board': '#ffb020', '/board#gamedata': '#3b9eff', '/board#otd': '#ffd60a', '/packs': '#b06bff', '/market': '#14d6b0', '/swaps': '#22d3ee', '/boosts': '#ff5a36',
-  '/projections': '#34d67a', '/tags': '#ff4fb0', '/otd': '#ffd60a', '/admin': '#c3cbdb' };
+  '/projections': '#34d67a', '/notifications': '#f2c94c', '/tags': '#ff4fb0', '/otd': '#ffd60a', '/admin': '#c3cbdb' };
 // Pages behind access only show to those who have it (Dennis opened Home to everyone, 2026-11-09).
 let ACC = {};
 const canOpen = p => !p[3] || ACC.admin || (p[3] === 'market' && ACC.access) || (p[3] === 'pack' && ACC.pack);
@@ -335,6 +337,10 @@ $('#hs-rcopy').addEventListener('click', async () => {
   $('#me').textContent = (d && (d.name || d.key)) || '';
   drawNav();
   $('#lock').classList.add('hide'); $('#page').classList.remove('hide');
+  // Unseen notifications: a count on the Notifications box (cleared when the page is opened).
+  try{ const n = await api('/api/swaps?op=notifs'); const seen = Number(ls.get('rb_notifs_seen_v1') || 0);
+    const c = [...(n.notes || []), ...(n.news || [])].filter(x => x.ts > seen).length;
+    const b = document.querySelector('.tile[data-h="/notifications"] b'); if(c && b) b.insertAdjacentHTML('beforeend', `<span class="ndot">${c > 9 ? '9+' : c}</span>`); }catch(e){}
 })();
 </script>
 <script src="/sponsor.js" data-page="home" defer></script>

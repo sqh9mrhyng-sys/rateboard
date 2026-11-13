@@ -550,8 +550,32 @@ async function whoIs(db, name) {
   return { name: n, key: b ? b.key : (u ? u.key : null), rsUser: (u && u.rsUser) || null, hashId: (u && u.hashId) || (ch && ch.hashId) || null,
     comment: (u && u.comment) || null, channelId: ch ? Number(ch.channelId) : null, banned: !!(b && b.banned), restricted, swapper: !!(u && u.active) };
 }
+/* Notifications (Dennis, 2026-11-12): every message the board sends a member
+   (replies, outcomes, warnings and strikes) is also kept for their
+   Notifications page - so those the bot can't message still see it. */
+const NOTE_DDL = 'CREATE TABLE IF NOT EXISTS user_notes (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT, ts INTEGER, kind TEXT, text TEXT)';
+async function addNote(db, key, kind, text) {
+  try { if (!key) return; await db.prepare(NOTE_DDL).run();
+    await db.prepare('INSERT INTO user_notes (key, ts, kind, text) VALUES (?, ?, ?, ?)').bind(String(key).toLowerCase(), Date.now(), kind, String(text).slice(0, 1500)).run(); } catch (e) {}
+}
+/* What's new on the site, newest first - shown to everyone on Notifications. */
+const SITE_NEWS = [
+  ['2026-11-12', 'Top players on Boosts: every sport\'s top 100 by projected rax for any of the next 7 days, plus all sports together.'],
+  ['2026-11-12', '160s can be rated with stars, the same as swaps.'],
+  ['2026-11-12', 'Rating stars stay bright after you tick Done, until you submit a rating.'],
+  ['2026-11-12', 'Boosts keeps a separate day for each sport, and "Re-read them" reads your boosters fresh after you use some.'],
+  ['2026-11-12', 'Warnings and strikes now say which swap: who reported and the players both ways.'],
+  ['2026-11-12', 'Liga MX players can be searched on the FC board.'],
+  ['2026-11-12', 'OTD (By player and Every game) is open to every member.'],
+  ['2026-11-12', 'The site moved to its own server - faster, and no more late swap DMs from an overloaded database.'],
+  ['2026-11-11', 'Swaps moderation: a first report is a warning, then strikes; 3 strikes removes Swaps access, with an unban request on /swaps.'],
+  ['2026-11-11', 'Late heads-up reports on the swap page, and each 160 links to the other member\'s comment.'],
+  ['2026-11-10', 'Pack data team cards: best performances, best plays and the odds breakdown for each team.'],
+  ['2026-11-09', 'Tag finder: every game that earned a performance tag.'],
+  ['2026-11-09', 'New Home page with every page in one place, and one sign-in for the whole site.']];
 async function adminDm(db, auth, who, text, ref) {
-  if (!who || !who.channelId) return { sent: false, why: 'no open chat with the bot' };
+  if (who) await addNote(db, who.key || who.name, 'reply', text);
+  if (!who || !who.channelId) return { sent: false, why: 'no open chat with the bot - kept on their Notifications page' };
   await db.prepare(ADMIN_DM_DDL).run();
   try {
     await dmSend(auth, who.channelId, text);
@@ -3229,6 +3253,7 @@ async function moderate(env, db, dry) {
       ? `You've been reported for not completing a swap at ${modTime(e.period, tz)}${which(e)}. This is a warning, not a strike.`
       : `You've been reported for not doing swaps at ${modTime(e.period, tz)}${which(e)}. Strike ${e.n}/${MOD_STRIKES}.`);
     if (ban) lines.push(`That's ${MOD_STRIKES} strikes, so your Swaps access has been removed (the rest of the site still works). You can request an unban at raxacademy.app/swaps`);
+    if (lines.length) await addNote(db, key, 'mod', lines.join('\n'));
     const ch = u && u.hashId && chan.get(String(u.hashId));
     if (ch && lines.length) { stmts.push(db.prepare('INSERT INTO dm_retry (channelId, parts, label, tries, at) VALUES (?, ?, ?, 0, ?)').bind(Number(ch), JSON.stringify([lines.join('\n')]), 'mod ' + key, Date.now())); out.dms++; }
     await db.batch(stmts);
@@ -5484,11 +5509,16 @@ async function handle({ request, env, waitUntil }) {
      Saved for 20 minutes; a crowd costs one KV read. */
   if (op === 'boosttop') {
     if (!(await allow(url.origin, 'boosttop:' + (request.headers.get('cf-connecting-ip') || ''), 30, 60))) return json({ error: 'Too many refreshes - wait a minute.' }, 429);
-    const K = 'boosttop_v1';
-    try { const c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (c && Date.now() - c.at < 20 * 60000) return json(c); } catch (e) {}
+    /* Top players tab on Boosts (Dennis, 2026-11-12): every sport's top 100 by
+       projected rax for a day (today up to 6 days ahead), plus all sports
+       together. One build per day every 20 minutes, shared by everyone. */
     const etd = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
-    const today = etd(new Date()), out = { at: Date.now(), day: today, sports: {} };
-    for (const sp of ['nfl', 'ncaaf', 'nba', 'ncaam', 'nhl']) {
+    const days0 = [...Array(7)].map((_, i) => etd(new Date(Date.now() + i * 86400000)));
+    const today = days0.includes(url.searchParams.get('day')) ? url.searchParams.get('day') : days0[0];
+    const K = 'boosttop_v2_' + today;
+    try { const c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (c && Date.now() - c.at < 20 * 60000) return json(c); } catch (e) {}
+    const out = { at: Date.now(), day: today, sports: {} };
+    for (const sp of ['nfl', 'ncaaf', 'nba', 'ncaam', 'nhl', 'soccer']) {
       let pj = null, sc = null;
       try { [pj, sc] = await Promise.all([env.RATEBOARD_KV.get(`proj_v3_${sp}`), env.RATEBOARD_KV.get(`projsched_v2_${sp}`)]); pj = JSON.parse(pj || 'null'); sc = JSON.parse(sc || 'null'); } catch (e) {}
       if (!pj || !sc || !sc.teams) continue;
@@ -5500,9 +5530,25 @@ async function handle({ request, env, waitUntil }) {
         list.push({ n: r.n, t: r.t, p: r.p, opp: g[1], h: g[3], at: g[0], v: Math.round(v * 10) / 10, a: r.a, gp: r.gp, inj: (r.f || []).find(f => /questionable|doubtful|day-to-day/i.test(f)) || undefined });
       }
       list.sort((a, b) => b.v - a.v);
-      if (list.length) out.sports[sp] = list.slice(0, 30);
+      if (list.length) out.sports[sp] = list.slice(0, 100);
     }
+    out.all = Object.entries(out.sports).flatMap(([sp, l]) => l.map(x => ({ ...x, sp }))).sort((a, b) => b.v - a.v).slice(0, 100);
     try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 3600 }); } catch (e) {}
+    return json(out);
+  }
+  if (op === 'notifs') {
+    if (!acc.who) return forbidden('Sign in first (raxacademy.app).');
+    const me0 = String(acc.who).toLowerCase(), out = { news: SITE_NEWS.map(([d, t]) => ({ ts: Date.parse(d + 'T20:00:00Z'), text: t })) };
+    try { await db.prepare(NOTE_DDL).run(); out.notes = ((await db.prepare('SELECT ts, kind, text FROM user_notes WHERE key=? ORDER BY id DESC LIMIT 60').bind(me0).all()).results) || []; } catch (e) { out.notes = []; }
+    const ST = { open: 'Waiting for review', auto: 'Counted by moderation', closed: 'Completed', declined: 'Denied', done: 'Completed' };
+    try { await db.prepare(SREPORT_DDL).run();
+      out.reports = (((await db.prepare('SELECT ts, kind, target, detail, status FROM swap_reports WHERE LOWER(by_user)=? ORDER BY ts DESC LIMIT 40').bind(me0).all()).results) || [])
+        .map(r => ({ ts: r.ts, about: r.target || null, what: r.kind === 'user' ? 'Swaps report' : r.kind === 'refund' ? 'Called-off swap' : r.kind === 'late' ? 'Late heads-up' : 'Swaps problem', detail: String(r.detail || '').slice(0, 200), status: ST[r.status] || r.status })); } catch (e) { out.reports = []; }
+    try { const m = JSON.parse((await env.RATEBOARD_KV.get(BOARD_KV)) || '{}') || {};
+      for (const r of (m.reports || []).filter(x => String(x.by || '').toLowerCase() === me0).slice(-20)) out.reports.push({ ts: r.ts, about: r.target || null, what: 'Board report', detail: String(r.reason || '').slice(0, 200), status: ST[r.status] || r.status }); } catch (e) {}
+    out.reports.sort((a, b) => b.ts - a.ts);
+    try { out.features = (((await db.prepare('SELECT ts, title, status FROM features WHERE LOWER(by_user)=? ORDER BY ts DESC LIMIT 40').bind(me0).all()).results) || []).map(r => ({ ts: r.ts, title: r.title, status: ST[r.status] || r.status })); } catch (e) { out.features = []; }
+    try { out.mod = await modRecord(db, acc.who); } catch (e) { out.mod = null; }
     return json(out);
   }
   if (op === 'modme') {

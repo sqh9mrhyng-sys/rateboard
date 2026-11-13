@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Notifications - Rax Academy</title>
+<style>
+  :root{--bg:#141925;--panel:#1d2433;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;--good:#3fbf7f;--bad:#e5534b}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:20px 16px 40px}
+  a{color:var(--accent)}
+  h1{font-size:26px;margin:8px 0 2px} h2{font-size:18px;margin:26px 0 8px}
+  .note{color:var(--mute);font-size:14px}
+  .top{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .item{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:8px 0;white-space:pre-line}
+  .item.new{border-color:var(--accent)}
+  .meta{display:flex;justify-content:space-between;gap:10px;font-size:13px;color:var(--mute);margin-bottom:4px;white-space:normal}
+  .pill{display:inline-block;font-size:12px;font-weight:700;padding:2px 9px;border-radius:999px;border:1px solid var(--line)}
+  .pill.ok{color:var(--good);border-color:var(--good)} .pill.no{color:var(--bad);border-color:var(--bad)} .pill.wait{color:var(--accent);border-color:var(--accent)}
+  .strikes{display:flex;gap:6px;margin:6px 0}
+  .strikes i{width:22px;height:22px;border-radius:6px;border:1px solid var(--line);display:inline-block}
+  .strikes i.on{background:var(--bad);border-color:var(--bad)}
+  .empty{color:var(--mute);font-size:14px;padding:6px 2px}
+</style>
+</head>
+<body><div class="wrap">
+<div class="top"><a href="/" style="text-decoration:none;color:var(--ink);font-weight:900;font-size:20px">Rax Academy</a><a href="/">Back to home</a></div>
+<h1>Notifications</h1>
+<p class="note" id="msg">Loading…</p>
+<div id="body" hidden>
+  <h2>Messages to you</h2><div id="notes"></div>
+  <h2>Your strikes</h2><div id="mod"></div>
+  <h2>Your reports</h2><div id="reports"></div>
+  <h2>Your feature requests</h2><div id="features"></div>
+  <h2>What's new on the site</h2><div id="news"></div>
+</div>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const ls = { get: k => { try{ return localStorage.getItem(k); }catch(e){ return null; } }, set: (k, v) => { try{ localStorage.setItem(k, v); }catch(e){} } };
+const when = ts => new Date(ts).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const day = ts => new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+const pill = s => `<span class="pill ${/complet/i.test(s) ? 'ok' : /denied/i.test(s) ? 'no' : 'wait'}">${esc(s)}</span>`;
+// What they've already seen: anything newer is outlined (and is what the dot on Home counts).
+const SEEN = 'rb_notifs_seen_v1', seen = Number(ls.get(SEEN) || 0);
+(async () => {
+  let j;
+  try{ const t = ls.get('ratebrd_token_v1') || ''; const r = await fetch('/api/swaps?op=notifs', { headers: t ? { 'x-rb-token': t } : {} }); j = await r.json(); }
+  catch(e){ j = { error: 'Could not reach the site - try again.' }; }
+  if(j.error){ $('#msg').innerHTML = /sign in/i.test(j.error) ? 'Sign in first - <a href="/?next=/notifications">go to sign in</a>.' : esc(j.error); return; }
+  $('#msg').textContent = 'Replies from the site, your reports and requests, any strikes, and what\'s new.';
+  $('#body').hidden = false;
+  const isNew = ts => ts > seen ? ' new' : '';
+  $('#notes').innerHTML = (j.notes || []).map(n => `<div class="item${isNew(n.ts)}"><div class="meta"><span>${n.kind === 'mod' ? 'Swaps moderation' : 'From the site'}</span><span>${when(n.ts)}</span></div>${esc(n.text)}</div>`).join('') || '<div class="empty">No messages yet.</div>';
+  const m = j.mod;
+  $('#mod').innerHTML = !m ? '<div class="empty">-</div>' : `<div class="item"><div class="strikes">${[...Array(m.max)].map((_, i) => `<i class="${i < m.strikes ? 'on' : ''}"></i>`).join('')}</div>`
+    + `<b>${m.banned ? 'Your Swaps access is removed.' : m.strikes ? `${m.strikes} of ${m.max} strikes.` : (m.events || []).length ? 'A warning, no strikes.' : 'No warnings or strikes.'}</b>`
+    + (m.events || []).map(e => `<div class="note">${e.kind === 'warn' ? 'Warning' : 'Strike ' + e.n} - swap at ${esc(e.when)}</div>`).join('')
+    + (m.banned ? `<div class="note" style="margin-top:6px">You can ask for Swaps back on <a href="/swaps">the Swaps page</a>.${m.request ? ' Your request: ' + esc(m.request.status) + (m.request.answer ? ' - ' + esc(m.request.answer) : '') : ''}</div>` : '') + '</div>';
+  $('#reports').innerHTML = (j.reports || []).map(r => `<div class="item"><div class="meta"><span>${esc(r.what)}${r.about ? ' about @' + esc(r.about) : ''}</span><span>${when(r.ts)}</span></div>${r.detail ? `<div class="note">${esc(r.detail)}</div>` : ''}${pill(r.status)}</div>`).join('') || '<div class="empty">You haven\'t reported anyone.</div>';
+  $('#features').innerHTML = (j.features || []).map(f => `<div class="item"><div class="meta"><span>${esc(f.title)}</span><span>${when(f.ts)}</span></div>${pill(f.status)}</div>`).join('') || '<div class="empty">No feature requests yet - send one from Home.</div>';
+  $('#news').innerHTML = (j.news || []).map(n => `<div class="item${isNew(n.ts)}"><div class="meta"><span>New</span><span>${day(n.ts)}</span></div>${esc(n.text)}</div>`).join('');
+  ls.set(SEEN, String(Date.now()));
+})();
+</script>
+</body>
+</html>

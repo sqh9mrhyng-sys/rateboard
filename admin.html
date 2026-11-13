@@ -698,8 +698,8 @@ function party(role, w, fallback, action, extra){
   const open = !!(w && w.channelId);
   return `<div class="party"><div class="ph"><span class="note">${role}</span><b><a href="https://www.realapp.com/u/${encodeURIComponent(nm)}" target="_blank" rel="noopener">@${esc(nm)}</a></b>${w && w.key && w.rsUser && w.rsUser.toLowerCase() !== String(w.key).toLowerCase() ? `<span class="note">board: ${esc(w.key)}</span>` : ''}${chatPill(w)}</div>
     ${extra || ''}
-    <textarea data-txt="${action}" placeholder="${open ? 'Message - sent by the bot on Real' : 'No chat with the bot - a message can\'t be sent'}"${open ? '' : ' disabled'}></textarea>
-    <button class="sm" data-a="${action}"${open ? '' : ' disabled'}>Send to @${esc(nm)}</button></div>`;
+    <textarea data-txt="${action}" placeholder="${open ? 'Message - sent by the bot on Real, and on their Notifications page' : 'No chat with the bot - goes to their Notifications page on the site'}"></textarea>
+    <button class="sm" data-a="${action}">Send to @${esc(nm)}</button></div>`;
 }
 // The called-off swaps a Swaps reporter was in, each with Mark refunded.
 function offsBox(x){

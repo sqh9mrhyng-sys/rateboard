@@ -218,7 +218,7 @@
 <div class="wrap" id="main" hidden>
   <header><h1>Boosts &amp; Buys</h1><span class="beta">BETA</span><a href="/" style="margin-left:auto">Back to home</a></header>
   <div class="tabsrow"><div class="sportcol"><div class="seg allseg" id="allseg"><button data-s="all" aria-pressed="false">All sports</button></div><div class="seg" id="sportseg"><button data-s="ncaam" aria-pressed="true">CBB</button><button data-s="ncaaf" aria-pressed="false">CFB</button><button data-s="nfl" aria-pressed="false">NFL</button><button data-s="nba" aria-pressed="false">NBA</button><button data-s="nhl" aria-pressed="false">NHL</button><button data-s="golf" aria-pressed="false">Golf</button><button data-s="soccer" aria-pressed="false">FC</button></div></div>
-  <div class="seg" id="tab"><button data-t="boosts" aria-pressed="true">Boosts</button><button data-t="buys" aria-pressed="false" id="tab2">Buys</button></div></div>
+  <div class="seg" id="tab"><button data-t="boosts" aria-pressed="true">Boosts</button><button data-t="buys" aria-pressed="false" id="tab2">Buys</button><button data-t="top" aria-pressed="false">Top players</button></div></div>
 
   <div id="t-boosts">
     <!-- Read my passes / Read my boosters (Dennis, 2026-11-09), each opening a breakdown. -->
@@ -306,6 +306,15 @@
       <div class="sum" id="buysum"></div>
       <div class="scroll"><table class="cards buys"><thead><tr><th>#</th><th>Player</th><th style="text-align:left">Team</th><th>You</th></tr></thead><tbody id="buyrows"><tr><td colspan="4" class="note">Loading…</td></tr></tbody></table></div>
       <p class="note sub">No pass = recommended buy. After buying, re-read your passes on the Boosts tab.</p>
+    </section>
+  </div>
+
+  <!-- Top players (Dennis, 2026-11-12): each sport's top 100 by projected rax for a day; All sports = top 100 across them. -->
+  <div id="t-top" hidden>
+    <section>
+      <div class="ctl"><label class="note">Day <select id="topday"></select></label></div>
+      <p class="note" id="tophead" style="margin:8px 0"></p>
+      <div id="toplist"></div>
     </section>
   </div>
 </div>
@@ -540,10 +549,33 @@ loadSet();
 drawDays(); golfLook();
 
 let curTab = 'boosts', subPick = '';
+/* Top players: today and the next 6 days (Eastern), the server's list per day. */
+const TOP_SP = { nfl: 'NFL', ncaaf: 'CFB', nba: 'NBA', ncaam: 'CBB', nhl: 'NHL', soccer: 'FC' };
+const topCache = {};
+function topDays(){
+  const f = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+  return [...Array(7)].map((_, i) => { const v = f(new Date(Date.now() + i * 86400000));
+    return [v, i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : new Date(v + 'T12:00:00Z').toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' })]; });
+}
+async function drawTop(){
+  const sel = $('#topday');
+  if(!sel.options.length){ sel.innerHTML = topDays().map(([v, l]) => `<option value="${v}">${l}</option>`).join(''); sel.addEventListener('change', drawTop); }
+  const sp = $('#sport').value, day = sel.value, box = $('#toplist');
+  if(sp === 'golf'){ $('#tophead').textContent = 'No projections for golf - pick another sport.'; box.innerHTML = ''; return; }
+  $('#tophead').textContent = 'Loading…';
+  const j = topCache[day] && Date.now() - topCache[day].t < 10 * 60000 ? topCache[day].j : await api('/api/swaps?op=boosttop&day=' + day);
+  if(!j || j.error){ $('#tophead').textContent = (j && j.error) || 'Could not load the list.'; return; }
+  topCache[day] = { j, t: Date.now() };
+  if(sel.value !== day || $('#sport').value !== sp) return;
+  const all = sp === 'all', list = all ? (j.all || []) : ((j.sports || {})[sp] || []);
+  $('#tophead').textContent = list.length ? `Top ${list.length} ${all ? 'across all sports' : TOP_SP[sp] || ''} by projected rax - from each player's games this season and the opponent. Estimates, not guarantees.` : `No ${all ? '' : (TOP_SP[sp] || '') + ' '}games that day.`;
+  box.innerHTML = list.map((x, i) => `<div style="display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid #2c3549"><span class="note" style="width:26px;text-align:right">${i + 1}</span><span style="flex:1"><b>${esc(x.n)}</b> <span class="note">${all ? esc(TOP_SP[x.sp] || '') + ' · ' : ''}${esc(x.t || '')}${x.p ? ' · ' + esc(x.p) : ''} ${x.h === 'away' ? '@' : 'vs'} ${esc(x.opp || '')}${x.inj ? ' · ' + esc(x.inj) : ''}</span></span><span style="text-align:right"><b>${x.v}</b><span class="note" style="display:block;font-size:11px">proj. rax · avg ${x.a ?? '-'}</span></span></div>`).join('');
+}
 function showTab(t){
   curTab = t;
   document.querySelectorAll('#tab button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.t === t)));
-  $('#t-boosts').hidden = t !== 'boosts'; $('#t-buys').hidden = t !== 'buys';
+  $('#t-boosts').hidden = t !== 'boosts'; $('#t-buys').hidden = t !== 'buys'; $('#t-top').hidden = t !== 'top';
+  if(t === 'top'){ drawTop(); return; }
   const sp = $('#sport').value;
   // The second tab's sub-pick: what each sport has.
   // CBB resell is hidden for now (Dennis, 2026-11-04): just the top 78.
@@ -612,8 +644,7 @@ function paintSport(){
   if(all){ $('#out').hidden = true; drawShow(); } else $('#allout').hidden = true;
   const noBuys = all || sp === 'nfl' || sp === 'golf' || sp === 'soccer' || sp === 'nba' || sp === 'nhl';
   $('#tab2').hidden = noBuys; $('#tab2').textContent = 'Buys';
-  $('#tab').hidden = noBuys;   // a lone "Boosts" button did nothing (2026-11-09)
-  showTab(noBuys ? 'boosts' : curTab);
+  showTab(noBuys && curTab === 'buys' ? 'boosts' : curTab);
 }
 document.querySelectorAll('#sportseg button, #allseg button').forEach(b => b.addEventListener('click', () => {
   if($('#sport').value === b.dataset.s) return;
@@ -1112,7 +1143,7 @@ async function pubTop(){
   box.hidden = false;
   box.innerHTML = `<h2 style="margin:22px 0 4px;font-size:19px">Today's top players to boost</h2><p class="note" style="margin:0 0 10px">${esc(t)} - the players with the most projected rax in today's games, from their own games this season and the opponent.</p>`
     + `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${sps.map(k => `<button type="button" data-ptsp="${k}" style="padding:6px 12px;border-radius:8px;border:1px solid #2c3549;background:${k === ptSp ? '#E8A33D' : 'transparent'};color:${k === ptSp ? '#141925' : 'inherit'};font-weight:700">${PT_SP[k]}</button>`).join('')}</div>`
-    + `<div style="text-align:left">${j.sports[ptSp].map((x, i) => `<div style="display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid #2c3549"><span class="note" style="width:22px;text-align:right">${i + 1}</span><span style="flex:1"><b>${esc(x.n)}</b> <span class="note">${esc(x.t)}${x.p ? ' · ' + esc(x.p) : ''} ${x.h === 'away' ? '@' : 'vs'} ${esc(x.opp || '')}${x.inj ? ' · ' + esc(x.inj) : ''}</span></span><span style="text-align:right"><b>${x.v}</b><span class="note" style="display:block;font-size:11px">proj. rax · avg ${x.a}</span></span></div>`).join('')}</div>`
+    + `<div style="text-align:left">${j.sports[ptSp].slice(0, 30).map((x, i) => `<div style="display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid #2c3549"><span class="note" style="width:22px;text-align:right">${i + 1}</span><span style="flex:1"><b>${esc(x.n)}</b> <span class="note">${esc(x.t)}${x.p ? ' · ' + esc(x.p) : ''} ${x.h === 'away' ? '@' : 'vs'} ${esc(x.opp || '')}${x.inj ? ' · ' + esc(x.inj) : ''}</span></span><span style="text-align:right"><b>${x.v}</b><span class="note" style="display:block;font-size:11px">proj. rax · avg ${x.a}</span></span></div>`).join('')}</div>`
     + '<p class="note" style="margin-top:10px">Projections are estimates, not guarantees. Sign in to see which of <b>your</b> cards to boost and with which booster.</p>';
 }
 document.addEventListener('click', e => { const b = e.target.closest('[data-ptsp]'); if(b){ ptSp = b.dataset.ptsp; pubTop(); } });
