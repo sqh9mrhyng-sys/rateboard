@@ -128,6 +128,9 @@ const server = http.createServer(async (req, res) => {
   } finally { inflight--; }
 });
 server.listen(PORT, '127.0.0.1', () => console.log(`Rax Academy (${ROLE}) on http://127.0.0.1:${PORT}`));
+// Every 5 minutes each process notes its memory and load (2026-11-13), so a crash leaves a trail.
+setInterval(async () => { try { const os = await import('node:os');
+  fs.appendFileSync(path.join(DATA, 'server-events.log'), `${new Date().toISOString()} ${ROLE} pid ${process.pid}: rss ${Math.round(process.memoryUsage().rss / 1048576)}MB, free ${Math.round(os.freemem() / 1048576)}MB, load ${os.loadavg()[0].toFixed(2)}, in flight ${inflight}\n`); } catch (e) {} }, 300000).unref();
 
 /* The old cron Worker, every minute: it pokes the collectors on /api/rax
    (which also starts the swap DM and scan ticks). Its address is pointed here. */

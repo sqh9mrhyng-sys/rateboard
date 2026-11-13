@@ -971,7 +971,7 @@ function draw160(){
   $('#wbody').hidden = only; $('#w160').hidden = !only;
   $('#s160').checked = only || !!prof.s160; $('#s160').disabled = only;
   $('#b160').checked = !only && !!prof.b160; $('#b160').disabled = only;
-  $('#nichein').checked = !only && !!prof.nicheIn; $('#nichein').disabled = only; $('#nichein').closest('.o160').classList.toggle('dis', only);
+  $('#nichein').checked = !!prof.nicheIn; $('#nichein').disabled = false; $('#nichein').closest('.o160').classList.remove('dis');   // open to 160-only sellers too (2026-11-13)
   $('#nicheopts').hidden = !$('#nichein').checked; { const l = prof.nicheLim || {}; $('#nicheh').value = l.h || 1; $('#niched').value = l.d || 2; }
   $('#s160').closest('.o160').classList.toggle('dis', only); $('#b160').closest('.o160').classList.toggle('dis', only);
   drawSell();
@@ -1017,7 +1017,7 @@ $('#save').addEventListener('click', async () => {
   if(!SWAP_COMMENT_RE.test($('#clink').value.trim())){ $('#savemsg').textContent = 'That link is not a comment under the swap post. Open the swap post, copy the link to your comment, and paste it in step 2.'; return; }
   const j = await api('/api/swaps?op=save', { method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ rsUser: $('#rsuser').textContent.trim().replace(/^@/, ''), wants: prof.wants.slice(0, 10), sched: schedOf().mode === 'daily' ? { mode: 'daily', tz: TZ } : { ...schedOf(), tz: TZ }, comment: $('#clink').value.trim(), goal: '', dayCap: $('#daycap').value.trim(), caps, keep: prof.keep, slots: prof.slots, names: wantNames,
-      blist: prof.blist || [], nicheIn: !prof.only160 && $('#nichein').checked, nicheLim: { h: $('#nicheh').value, d: $('#niched').value }, niche: Object.fromEntries(Object.entries(nicheReq).filter(([k, v]) => prof.wants.includes(k) && v > 0)),
+      blist: prof.blist || [], nicheIn: $('#nichein').checked, nicheLim: { h: $('#nicheh').value, d: $('#niched').value }, niche: Object.fromEntries(Object.entries(nicheReq).filter(([k, v]) => prof.wants.includes(k) && v > 0)),
       only160: !!prof.only160, s160: !!prof.only160 || $('#s160').checked, b160: !prof.only160 && $('#b160').checked, sell160m: sellMode(), sell160h: prof.sell160h || [] }) });
   const extra = (j.late ? ' Too late to change swaps already warned - please do them at :00.' : '') + (j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} for a player or hour you removed ${j.calledOff === 1 ? 'is' : 'are'} called off - you'll both get a message.` : '');
   $('#savemsg').textContent = j.error ? j.error : '';

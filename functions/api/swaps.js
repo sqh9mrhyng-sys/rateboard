@@ -560,6 +560,7 @@ async function addNote(db, key, kind, text) {
 }
 /* What's new on the site, newest first - shown to everyone on Notifications. */
 const SITE_NEWS = [
+  ['2026-11-13', 'Only here to sell 160s? You can now also opt in to buy niche players for others, at the hours you sell 160s.'],
   ['2026-11-12', 'Top players on Boosts: every sport\'s top 100 by projected rax for any of the next 7 days, plus all sports together.'],
   ['2026-11-12', '160s can be rated with stars, the same as swaps.'],
   ['2026-11-12', 'Rating stars stay bright after you tick Done, until you submit a rating.'],
@@ -1091,7 +1092,9 @@ async function runMatchingInner(db, env) {
      own the player and have room for one more in that season. */
   const madeNiche = [];
   try {
-    const helpers = users.filter(u => u.nicheIn && !u.only160), askers = users.filter(u => u.wants.some(w => u.nicheReq[w] && Number(u.nicheReq[w].n) > 0));
+    /* Members only here to sell 160s can buy niche players too (a member,
+       2026-11-13): they're available at the hours they sell 160s. */
+    const helpers = users.filter(u => u.nicheIn), askers = users.filter(u => u.wants.some(w => u.nicheReq[w] && Number(u.nicheReq[w].n) > 0));
     if (helpers.length && askers.length) {
       const past = ((await db.prepare("SELECT buyer, seller, pass, dueAt, createdAt FROM swap_160 WHERE kind='niche' AND status <> 'cancelled'").all()).results) || [];
       const asked = new Map(), usedBy = new Set(), hourOf = new Map(), dayOf = new Map(), pend = new Map();
@@ -1105,7 +1108,7 @@ async function runMatchingInner(db, env) {
       const room = (h, w) => (held.get(h.key).get(seas(w)) || 0) + (pend.get(`${h.key}|${seas(w)}`) || 0) < (nicheLiveSeason(w) ? NICHE_LIVE_CAP : NICHE_OLD_CAP);
       dues.forEach((due, k) => {
         const d = swapDay(due), slot = new Date(due).getUTCHours();
-        const H = helpers.filter(h => ranks.get(h.key)[k] >= 0); if (!H.length) return;
+        const H = helpers.filter(h => ranks.get(h.key)[k] >= 0 || (h.only160 && h.sellHours && h.sellHours.has(slot))); if (!H.length) return;
         for (const b of askers) {
           if (ranks.get(b.key)[k] < 0) continue;
           for (const w of b.wants) {
@@ -6300,7 +6303,7 @@ async function handle({ request, env, waitUntil }) {
           try { for (const m of (((await db.prepare(`SELECT * FROM swap_matches WHERE status='scheduled' AND warnA IS NULL AND warnB IS NULL AND ((a=? AND lower(b) IN (${ph})) OR (b=? AND lower(a) IN (${ph})))`).bind(me, ...ok, me, ...ok).all()).results) || []))
             await callOff(db, m, `called off: @${me} blacklisted them`, { n: 0, late: 0, soon: 0 }); } catch (e) {}
           try { await db.prepare(`UPDATE swap_160 SET status='cancelled', note=? WHERE status='pending' AND warnS IS NULL AND warnB IS NULL AND ((buyer=? AND lower(seller) IN (${ph})) OR (seller=? AND lower(buyer) IN (${ph})))`).bind(`called off: @${me} blacklisted them`, me, ...ok, me, ...ok).run(); } catch (e) {} } }
-      { const nIn = !only && b.nicheIn ? 1 : 0, old = parse((await db.prepare('SELECT niche FROM swap_users WHERE key=?').bind(me).first() || {}).niche, {}) || {}, nq = {};
+      { const nIn = b.nicheIn ? 1 : 0, old = parse((await db.prepare('SELECT niche FROM swap_users WHERE key=?').bind(me).first() || {}).niche, {}) || {}, nq = {};
         let oc = null; try { oc = await ownerCounts(env); if (!oc.at) oc = null; } catch (e) {}
         for (const [w, v] of Object.entries((b.niche && typeof b.niche === 'object') ? b.niche : {})) {
           const n = Math.floor(Number(v && v.n != null ? v.n : v)); if (!wants.includes(w) || !(n > 0)) continue;
