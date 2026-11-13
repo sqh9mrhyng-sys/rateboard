@@ -1211,11 +1211,11 @@ async function botFail(db, kind, msg) {
 }
 
 // A send that waits and tries again when Real is busy (429) or hiccups (5xx).
-async function dmSendRetry(auth, channelId, text) {
+async function dmSendRetry(auth, channelId, text, prio = 2) {
   let last;
   for (const wait of [0, 2500, 6000]) {
     if (wait) await sleep(wait);
-    try { return await dmSend(auth, channelId, text); } catch (e) { last = e; if (!/send (429|5\d\d)/.test(String(e.message || e))) throw e; }
+    try { return await dmSend(auth, channelId, text, prio); } catch (e) { last = e; if (!/send (429|5\d\d)/.test(String(e.message || e))) throw e; }
   }
   throw last;
 }
@@ -1287,7 +1287,7 @@ async function retryDms(db, auth) {
     let parts = parse(r.parts, []);
     parts = parts.flatMap(fitDm);   // queued before the length fix: cut down to size
     usedCh.add(Number(r.channelId));
-    try { await dmSendRetry(auth, r.channelId, parts[0]); parts.shift(); await stat(db, 'dm_retried'); await sleep(400); }
+    try { await dmSendRetry(auth, r.channelId, parts[0], /^(warn|contact)\b/.test(String(r.label || '')) ? 0 : 2); parts.shift(); await stat(db, 'dm_retried'); await sleep(400); }
     catch (e) { if (Number(r.tries) % 5 === 0) await botFail(db, 'dm_retry', `${r.label} try ${r.tries}: ${String(e.message || e).slice(0, 120)}`); }
     if (!parts.length) await db.prepare('DELETE FROM dm_retry WHERE id=?').bind(r.id).run();
     else if (Number(r.tries) >= 60) { await db.prepare('DELETE FROM dm_retry WHERE id=?').bind(r.id).run(); await botFail(db, 'dm_retry', `${r.label}: gave up after an hour, ${parts.length} part(s) unsent`); }
@@ -1299,10 +1299,24 @@ async function retryDms(db, auth) {
    now" from Real. Each send takes the next free slot, DM_GAP_MS after the last. */
 const DM_GAP_MS = 3000;   // 1 message every 3 seconds, everything combined (Dennis, 2026-11-05)
 let dmNextAt = 0;
-const dmWaitAhead = () => Math.max(0, dmNextAt - Date.now());
-async function dmPace() { const t = Date.now(), at = Math.max(t, dmNextAt); dmNextAt = at + DM_GAP_MS; if (at > t) await sleep(at - t); }
-async function dmSend(auth, channelId, text) {
-  await dmPace();
+/* On the droplet every message shares one line through one process, so it's a
+   priority line (2026-11-13: confirm, 160 and resend messages queued ahead
+   held the swap warnings and swap DMs back 10-25 minutes). Swap warnings and
+   swap DMs (0) go before 160s (1), and those before everything else (2) -
+   still one message every 3 seconds. */
+const PQ = []; let pqBusy = false;
+function pqPump() {
+  if (pqBusy) return; pqBusy = true;
+  (async () => { try { while (PQ.length) { const w = dmNextAt - Date.now(); if (w > 0) await sleep(w);
+    PQ.sort((a, b) => a.p - b.p || a.t - b.t); const x = PQ.shift(); dmNextAt = Date.now() + DM_GAP_MS; x.go(); } } finally { pqBusy = false; if (PQ.length) pqPump(); } })();
+}
+const dmWaitAhead = () => ON_DROPLET ? 0 : Math.max(0, dmNextAt - Date.now());
+async function dmPace(prio = 2) {
+  if (ON_DROPLET) return new Promise(go => { PQ.push({ p: prio, t: Date.now(), go }); pqPump(); });
+  const t = Date.now(), at = Math.max(t, dmNextAt); dmNextAt = at + DM_GAP_MS; if (at > t) await sleep(at - t);
+}
+async function dmSend(auth, channelId, text, prio = 2) {
+  await dmPace(prio);
   const res = await fetch(`https://web.realapp.com/messages/channels/${channelId}/messages`, {
     method: 'POST', headers: { ...rsHeaders(auth), 'content-type': 'application/json' },
     body: JSON.stringify({ text, parentMessageId: null }) });
@@ -1800,7 +1814,7 @@ async function runDms(env, db, auth, rows, max, force) {
         // Out of time this minute: the rest go first thing next minute.
         if (i && TICK_T0 && !force && tickLeft() < 5000) { await queueDm(db, ch, msgs.slice(i), `${kind} @${me.rsUser}`); await stat(db, 'dm_parts_deferred', msgs.length - i); break; }
         if (i) await sleep(4500);
-        try { await dmSendRetry(auth, ch, msgs[i]); }
+        try { await dmSendRetry(auth, ch, msgs[i], kind === 'warn' || kind === 'contact' ? 0 : 1); }
         catch (e) { if (i === 0) throw e; await queueDm(db, ch, msgs.slice(i), `${kind} @${me.rsUser}`); await botFail(db, 'dm_' + kind, `@${me.rsUser} part ${i + 1}/${msgs.length} queued for retry: ${e.message || e}`); break; }
         sent++; await stat(db, 'dm_' + kind);
       }
@@ -2422,7 +2436,7 @@ let TICK_T0 = 0, TICK_BUDGET = 22000;
 /* On the droplet nothing cuts a tick off at 30 seconds, so the bot sends for
    almost the whole minute (2026-11-13: with ~25s of each minute, a big hour's
    swap DMs went out 15-20 minutes late). */
-const ON_DROPLET = typeof process !== 'undefined' && !!(process.env && process.env.ROLE);
+const ON_DROPLET = !!(globalThis.process && globalThis.process.env && globalThis.process.env.ROLE);
 const RUN_MS = ON_DROPLET ? 55000 : 40000;
 const tickLeft = () => TICK_BUDGET - (Date.now() - TICK_T0);
 const NO_MSG = new Map();   // members Real just refused a DM for -> when to try again
@@ -2780,7 +2794,7 @@ async function dm160(env, db, auth) {
       : `${nTxt}\nGo to ${link} to see them all` + (nBuy ? '\nPlease buy within 30 mins' : ''))
       + ((sells || buys) && nTxt ? '\n\n' + nTxt : '');
     if (!sells && !buys && !nBuy && !nGet) continue;
-    try { const ch = await dmChannel(db, auth, me.hashId, me.rsUser, env); await dmSendRetry(auth, ch, text); await stat(db, 'dm_160'); sentN++; await dm403(db, g.who, false); }
+    try { const ch = await dmChannel(db, auth, me.hashId, me.rsUser, env); await dmSendRetry(auth, ch, text, 1); await stat(db, 'dm_160'); sentN++; await dm403(db, g.who, false); }
     catch (e) { for (const [r, col] of got) await db.prepare(`UPDATE swap_160 SET ${col}=NULL WHERE id=? AND ${col}=?`).bind(r.id, now).run();
       if (/send 403/.test(String(e.message || e))) await dm403(db, g.who, true);
       await botFail(db, 'dm_160', `${g.who}: ${e.message || e}`); }

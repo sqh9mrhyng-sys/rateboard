@@ -8429,7 +8429,7 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil((async () => { const k = await dmTickKey(env); if (!k) return;
       await fetch(`${origin}/api/swaps?op=dmtick&k=${k}`, { cf: { cacheTtl: 0 } }).catch(() => {});
       // On the droplet one run uses the whole minute (no 30-second cutoff), so no second run.
-      if (typeof process !== 'undefined' && process.env && process.env.ROLE) return;
+      if (globalThis.process && globalThis.process.env && globalThis.process.env.ROLE) return;
       await new Promise(r => setTimeout(r, 27000));
       await fetch(`${origin}/api/swaps?op=dmtick&k=${k}&half=2`, { cf: { cacheTtl: 0 } }).catch(() => {}); })().catch(() => {}));
     // Pass scans whose page went away, carried on by the server in a run of their own (2026-11-08).
