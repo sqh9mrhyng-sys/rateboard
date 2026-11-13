@@ -96,6 +96,16 @@ async function handle(request) {
 
 const server = http.createServer(async (req, res) => {
   inflight++;
+  // Health of the server itself - no member data (2026-11-13).
+  if (req.url === '/__status') {
+    let ev = ''; try { ev = fs.readFileSync(path.join(DATA, 'server-events.log'), 'utf8').split('\n').slice(-40).join('\n'); } catch (e) {}
+    const os = await import('node:os');
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    res.end(JSON.stringify({ role: ROLE, pid: process.pid, up: Math.round(process.uptime()), rssMB: Math.round(process.memoryUsage().rss / 1048576),
+      heapMB: Math.round(process.memoryUsage().heapUsed / 1048576), inflight, freeMB: Math.round(os.freemem() / 1048576), totalMB: Math.round(os.totalmem() / 1048576),
+      load: os.loadavg().map(x => +x.toFixed(2)), events: ev }, null, 1));
+    inflight--; return;
+  }
   try {
     const proto = String(req.headers['x-forwarded-proto'] || 'http').split(',')[0];
     const host = req.headers['x-forwarded-host'] || req.headers.host || `127.0.0.1:${PORT}`;
