@@ -5515,7 +5515,7 @@ async function handle({ request, env, waitUntil }) {
     const etd = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
     const days0 = [...Array(7)].map((_, i) => etd(new Date(Date.now() + i * 86400000)));
     const today = days0.includes(url.searchParams.get('day')) ? url.searchParams.get('day') : days0[0];
-    const K = 'boosttop_v2_' + today;
+    const K = 'boosttop_v3_' + today;   // v3: player links
     try { const c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (c && Date.now() - c.at < 20 * 60000) return json(c); } catch (e) {}
     const out = { at: Date.now(), day: today, sports: {} };
     for (const sp of ['nfl', 'ncaaf', 'nba', 'ncaam', 'nhl', 'soccer']) {
@@ -5527,7 +5527,7 @@ async function handle({ request, env, waitUntil }) {
         const x = r.x || {}; if (!x.ab || !(x.av > 0) || x.sk || x.sn) continue;
         const g = (sc.teams[x.ab] || []).find(t => !t[2] && etd(new Date(t[0])) === today); if (!g) continue;
         const v = x.rate * x.av * (of[g[1]] || 1) * (hf[g[3]] || 1);
-        list.push({ n: r.n, t: r.t, p: r.p, opp: g[1], h: g[3], at: g[0], v: Math.round(v * 10) / 10, a: r.a, gp: r.gp, inj: (r.f || []).find(f => /questionable|doubtful|day-to-day/i.test(f)) || undefined });
+        list.push({ n: r.n, u: r.i ? playerUrl(`${sp}:${(PROJ_SEASON[sp] || [])[0]}:${r.i}`) : null, t: r.t, p: r.p, opp: g[1], h: g[3], at: g[0], v: Math.round(v * 10) / 10, a: r.a, gp: r.gp, inj: (r.f || []).find(f => /questionable|doubtful|day-to-day/i.test(f)) || undefined });
       }
       list.sort((a, b) => b.v - a.v);
       if (list.length) out.sports[sp] = list.slice(0, 100);
