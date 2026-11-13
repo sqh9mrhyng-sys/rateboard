@@ -449,25 +449,29 @@ async function predProbe(env) {
 /* One-off (2026-11-13): how Real serves the Auctions "Bulk rating" view, read
    with account 2. Keeps only shapes, statuses and a few listing fields. */
 async function bulkProbe(env) {
-  const K = 'diag_bulk_1113c';
+  const K = 'diag_bulk_1113d';
   try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1 }), { expirationTtl: 86400 }); } catch (e) { return; }
   const tok = env.RS_MARKET_TOKEN, out = { at: Date.now(), tries: [] };
   const base = 'cohort=all&offset=0&limit=8&prestige=all&rarity=all&beforeEndsAt=' + encodeURIComponent(new Date(Date.now() + 30 * 86400000).toISOString());
   const brief = r => { const c = r.card || r; const e = c.entity || c.player || c.primaryPlayer || {};
     return { id: r.id, type: r.listingType, rar: c.rarity || c.rarityLabel || (c.boostInfo || {}).rarityLabel, rating: c.boostValue ?? c.rating ?? null, name: e.lastName || e.name || c.label || null,
       minBid: r.minimumBid ?? r.minBid ?? null, cur: r.currentBid ?? r.highestBid ?? null, buy: r.buyNowPrice ?? r.buyNow ?? null, ends: r.endsAt, bulk: Object.keys(r).filter(k => /bulk/i.test(k)).map(k => k + '=' + JSON.stringify(r[k]).slice(0, 40)) }; };
-  // Round 3: the old pull's exact shape (it worked in November), ending times near now.
-  const b2 = t => 'cohort=all&listingType=card&offset=0&limit=8&prestige=all&rarity=all&beforeEndsAt=' + encodeURIComponent(new Date(Date.now() + t).toISOString());
-  const urls = [];
-  for (const [sp, se] of [['nba', 2027], ['nba', 2026], ['nfl', 2026], ['soccer', 2027], ['mlb', 2026]]) for (const t of [3600000, 6 * 3600000, 86400000])
-    urls.push([`${sp} ${se} +${t / 3600000}h`, `cardmarketplacelistings?${b2(t)}&season=${se}&sport=${sp}`]);
-  urls.push(['nba 2027 sort=rating', `cardmarketplacelistings?${b2(86400000)}&season=2027&sport=nba&sort=rating`]);
+  // Round 4: which cohort / entity values exist, and what bundles (linked cards) look like.
+  const b2 = (t, ex = '') => 'listingType=card&offset=0&limit=100&prestige=all&rarity=all&beforeEndsAt=' + encodeURIComponent(new Date(Date.now() + t).toISOString()) + ex;
+  const urls = [['nba all 100', `cardmarketplacelistings?cohort=all&${b2(86400000)}&season=2027&sport=nba`]];
+  for (const c of ['bulk', 'bulkRating', 'rating', 'pass', 'player', 'bundle', 'linked', 'boost'])
+    urls.push(['cohort ' + c, `cardmarketplacelistings?cohort=${c}&${b2(86400000)}&season=2027&sport=nba`]);
+  for (const [k, v] of [['entityType', 'userpass'], ['entityType', 'pass'], ['isBulk', 'true'], ['bulk', 'true'], ['hasLinkedCards', 'true'], ['listingCategory', 'bulk']])
+    urls.push([`${k}=${v}`, `cardmarketplacelistings?cohort=all&${b2(86400000)}&season=2027&sport=nba&${k}=${v}`]);
   try {
     for (const [lab, u] of urls) {
       try { const res = await fetch('https://web.realapp.com/' + u, { headers: rsHeaders(tok) }); const t = await res.text(); let d = null; try { d = JSON.parse(t); } catch (e) {}
         const rows = d ? rowsOf(d) : [];
         out.tries.push({ lab, st: res.status, top: d && typeof d === 'object' && !Array.isArray(d) ? Object.keys(d).slice(0, 15) : null, n: rows.length,
-          keys: rows[0] ? Object.keys(rows[0]).slice(0, 40) : null, cardKeys: rows[0] && rows[0].card ? Object.keys(rows[0].card).slice(0, 40) : null, first: rows.slice(0, 4).map(brief), raw: rows.length ? undefined : t.slice(0, 200) }); }
+          keys: rows[0] ? Object.keys(rows[0]).slice(0, 40) : null,
+          mix: rows.length ? { cohort: [...new Set(rows.map(r => r.cohort))].slice(0, 8), ent: [...new Set(rows.map(r => r.entityType))].slice(0, 8), disp: [...new Set(rows.map(r => JSON.stringify(r.listingTypeDisplay)))].slice(0, 5),
+            linked: rows.filter(r => Array.isArray(r.linkedCardIds) && r.linkedCardIds.length).length, linkedEx: (rows.find(r => Array.isArray(r.linkedCardIds) && r.linkedCardIds.length) || {}).id || null,
+            detail: [...new Set(rows.map(r => JSON.stringify(r.detailDisplay).slice(0, 120)))].slice(0, 3), quick: rows.filter(r => r.isQuickList).length } : null, cardKeys: rows[0] && rows[0].card ? Object.keys(rows[0].card).slice(0, 40) : null, first: rows.slice(0, 4).map(brief), raw: rows.length ? undefined : t.slice(0, 200) }); }
       catch (e) { out.tries.push({ lab, err: String(e.message || e).slice(0, 100) }); }
       await sleep(3500);
     }
