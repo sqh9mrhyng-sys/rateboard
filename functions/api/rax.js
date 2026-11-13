@@ -449,26 +449,20 @@ async function predProbe(env) {
 /* One-off (2026-11-13): how Real serves the Auctions "Bulk rating" view, read
    with account 2. Keeps only shapes, statuses and a few listing fields. */
 async function bulkProbe(env) {
-  const K = 'diag_bulk_1113';
+  const K = 'diag_bulk_1113b';
   try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1 }), { expirationTtl: 86400 }); } catch (e) { return; }
   const tok = env.RS_MARKET_TOKEN, out = { at: Date.now(), tries: [] };
   const base = 'cohort=all&offset=0&limit=8&prestige=all&rarity=all&beforeEndsAt=' + encodeURIComponent(new Date(Date.now() + 30 * 86400000).toISOString());
   const brief = r => { const c = r.card || r; const e = c.entity || c.player || c.primaryPlayer || {};
     return { id: r.id, type: r.listingType, rar: c.rarity || c.rarityLabel || (c.boostInfo || {}).rarityLabel, rating: c.boostValue ?? c.rating ?? null, name: e.lastName || e.name || c.label || null,
       minBid: r.minimumBid ?? r.minBid ?? null, cur: r.currentBid ?? r.highestBid ?? null, buy: r.buyNowPrice ?? r.buyNow ?? null, ends: r.endsAt, bulk: Object.keys(r).filter(k => /bulk/i.test(k)).map(k => k + '=' + JSON.stringify(r[k]).slice(0, 40)) }; };
-  const urls = [
-    ['card', `cardmarketplacelistings?${base}&listingType=card`],
-    ['auction', `cardmarketplacelistings?${base}&listingType=auction`],
-    ['bulk', `cardmarketplacelistings?${base}&listingType=bulk`],
-    ['sort bulkRating', `cardmarketplacelistings?${base}&listingType=card&sort=bulkRating`],
-    ['sortBy bulkRating', `cardmarketplacelistings?${base}&listingType=card&sortBy=bulkRating`],
-    ['orderBy bulkRating', `cardmarketplacelistings?${base}&listingType=card&orderBy=bulkRating`],
-    ['sort bulk', `cardmarketplacelistings?${base}&listingType=card&sort=bulk`],
-    ['type bulkrating', `cardmarketplacelistings?${base}&listingType=card&type=bulkrating`],
-    ['view bulk', `cardmarketplacelistings?${base}&listingType=card&view=bulk`],
-    ['auctions', `auctions?${base}`], ['cardauctions', `cardauctions?${base}`], ['marketplace', `marketplace?${base}`],
-    ['bulkrating', `bulkrating?${base}`], ['cardmarketplacelistings/bulk', `cardmarketplacelistings/bulk?${base}`],
-    ['cardmarketplace', `cardmarketplace?${base}`], ['bulkratinglistings', `bulkratinglistings?${base}`]];
+  // Round 2: with a sport and season (Real returns nothing without them), several listing types.
+  const sb = base + '&sport=nba&season=2026';
+  const urls = [['nba card', `cardmarketplacelistings?${sb}&listingType=card`]];
+  for (const lt of ['rating', 'bulkRating', 'bulk_rating', 'bulkrating', 'Rating', 'boost', 'pass', 'all', 'player', 'cardRating'])
+    urls.push(['nba ' + lt, `cardmarketplacelistings?${sb}&listingType=${lt}`]);
+  urls.push(['nba none', `cardmarketplacelistings?${sb}`], ['soccer card', `cardmarketplacelistings?${base}&sport=soccer&season=2027&listingType=card`],
+    ['all sports', `cardmarketplacelistings?${base}&sport=all&season=all&listingType=card`]);
   try {
     for (const [lab, u] of urls) {
       try { const res = await fetch('https://web.realapp.com/' + u, { headers: rsHeaders(tok) }); const t = await res.text(); let d = null; try { d = JSON.parse(t); } catch (e) {}
@@ -476,7 +470,7 @@ async function bulkProbe(env) {
         out.tries.push({ lab, st: res.status, top: d && typeof d === 'object' && !Array.isArray(d) ? Object.keys(d).slice(0, 15) : null, n: rows.length,
           keys: rows[0] ? Object.keys(rows[0]).slice(0, 40) : null, cardKeys: rows[0] && rows[0].card ? Object.keys(rows[0].card).slice(0, 40) : null, first: rows.slice(0, 4).map(brief), raw: rows.length ? undefined : t.slice(0, 200) }); }
       catch (e) { out.tries.push({ lab, err: String(e.message || e).slice(0, 100) }); }
-      await sleep(1500);
+      await sleep(3500);
     }
     out.done = 1;
   } catch (e) { out.err = String(e.message || e).slice(0, 150); }
@@ -8446,7 +8440,7 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkProbe: await kvj('diag_bulk_1113'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
+    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkProbe: await kvj('diag_bulk_1113b'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
       const o = {}; for (const r of rows) { const k = new Date(Number(r.at)).toISOString().slice(11, 14) + '00 ' + r.kind + ' | ' + String(r.msg || '').replace(/@[\w.\-]+/g, '@x').replace(/^[\w.\-]+:/, 'u:').replace(/(dropped|send|late)\s.*$/, '$1').slice(0, 140); o[k] = (o[k] || 0) + 1; } return o; } catch (e) { return String(e.message); } })(), dmTiming: await (async () => {
       /* How late swap DMs go out (2026-11-13): per swap hour in the last 12h,
          minutes from the hour to each side's warning and swap DM (counts only). */
