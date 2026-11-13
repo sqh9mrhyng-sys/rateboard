@@ -143,6 +143,10 @@ const server = http.createServer(async (req, res) => {
   } finally { inflight--; }
 });
 server.listen(PORT, '127.0.0.1', () => console.log(`Rax Academy (${ROLE}) on http://127.0.0.1:${PORT}`));
+/* The heavy process restarts itself once it holds over 1.5GB (2026-11-13: it
+   grew to 3GB of the droplet's 4GB). It waits for a quiet moment, up to 2GB. */
+if (ROLE === 'heavy') setInterval(() => { const mb = process.memoryUsage().rss / 1048576;
+  if (mb > 2000 || (mb > 1500 && inflight === 0)) { try { fs.appendFileSync(path.join(DATA, 'server-events.log'), `${new Date().toISOString()} heavy pid ${process.pid}: ${Math.round(mb)}MB - restarting itself\n`); } catch (e) {} process.exit(0); } }, 15000).unref();
 // Every 5 minutes each process notes its memory and load (2026-11-13), so a crash leaves a trail.
 setInterval(async () => { try { const os = await import('node:os');
   fs.appendFileSync(path.join(DATA, 'server-events.log'), `${new Date().toISOString()} ${ROLE} pid ${process.pid}: rss ${Math.round(process.memoryUsage().rss / 1048576)}MB, free ${Math.round(os.freemem() / 1048576)}MB, load ${os.loadavg()[0].toFixed(2)}, in flight ${inflight}\n`); } catch (e) {} }, 300000).unref();
