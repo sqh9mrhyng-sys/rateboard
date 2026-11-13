@@ -7583,3 +7583,21 @@ export async function multProbe(env, db) {
   try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 3 * 86400 }); } catch (e) {}
 }
 
+
+/* One-off (2026-11-12): Dennis's CFB 2026 player passes for a bowl-season
+   projection - pass ids, levels and multipliers only (no names, no usernames). */
+export async function cfbPassProbe(env, db) {
+  const K = 'diag_cfbpass_1112';
+  try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1, at: Date.now() }), { expirationTtl: 86400 }); } catch (e) { return; }
+  const out = { at: Date.now() };
+  try {
+    const u = await db.prepare("SELECT passes, scannedAt FROM swap_users WHERE key='dennis'").first();
+    const ps = u && u.passes ? JSON.parse(u.passes) : [];
+    out.scannedAt = u ? u.scannedAt : null;
+    out.sports = [...new Set(ps.map(p => p.sport + ':' + p.season + ':' + (p.kind || '')))].slice(0, 40);
+    out.cfb = ps.filter(p => (p.sport === 'ncaaf' || p.sport === 'cfb') && p.kind !== 'team')
+      .map(p => ({ id: Number(p.id), se: Number(p.season), lv: p.levelLabel || null, m: cardMultOf(p) }));
+    out.done = 1;
+  } catch (e) { out.err = String(e.message || e).slice(0, 150); }
+  try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 86400 }); } catch (e) {}
+}

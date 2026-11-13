@@ -1,5 +1,5 @@
 import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS, touchSeen, userStats, sessionState } from '../../lib/auth.js';
-import { swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick, fcSchedule, whyNotFull, TAG_DEFS, scanProbe, boostProbe, wiltProbe, multProbe, untouchProbe, keepProbe, dennisProbe, tzProbe } from './swaps.js';
+import { swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick, fcSchedule, whyNotFull, TAG_DEFS, scanProbe, boostProbe, wiltProbe, multProbe, untouchProbe, keepProbe, dennisProbe, tzProbe, cfbPassProbe } from './swaps.js';
 import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, capNow } from '../../lib/dbwatch.js';
 import { packAllowed } from './kv.js';
 
@@ -8362,7 +8362,7 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), modSummary: await kvj('mod_summary_v1'), modError: await kvj('mod_error_v1'), rateRecheck: await kvj('rate_recheck_v1'), modLast: await env.RATEBOARD_KV.get('mod_last_v1'), boostProbe: await kvj('diag_boostprobe_1110d'), wilt: null, multProbe: await kvj('diag_multprobe_1111'), nicheCounts: await (async () => { const x = await kvj('swap_ownercounts_v4'); if (!x) return null; const v = Object.values(x.n || {}); return { at: new Date(x.at).toISOString().slice(11, 19), active: x.active, read: x.read, players: v.length, under20: v.filter(c => c < 20).length, max: Math.max(0, ...v) }; })(), dhFix: await (async () => { const x = await kvj('dhfix_v1'); return x ? { season: (DH_SEASONS[x.i] || ['done']).join(':'), pos: x.pos, of: x.ids ? x.ids.length : null, fixed: x.fixed, done: x.log, at: x.at } : null; })(), marketAccount: { busyWithMarket: await marketBusy(env), lastGapHelp: await kvj('gap_push_last') }, budget: await jobOverBudget(env) ? 'over' : 'ok' }, null, 1);
+    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), cfbPass: await kvj('diag_cfbpass_1112'), modSummary: await kvj('mod_summary_v1'), modError: await kvj('mod_error_v1'), rateRecheck: await kvj('rate_recheck_v1'), modLast: await env.RATEBOARD_KV.get('mod_last_v1'), boostProbe: await kvj('diag_boostprobe_1110d'), wilt: null, multProbe: await kvj('diag_multprobe_1111'), nicheCounts: await (async () => { const x = await kvj('swap_ownercounts_v4'); if (!x) return null; const v = Object.values(x.n || {}); return { at: new Date(x.at).toISOString().slice(11, 19), active: x.active, read: x.read, players: v.length, under20: v.filter(c => c < 20).length, max: Math.max(0, ...v) }; })(), dhFix: await (async () => { const x = await kvj('dhfix_v1'); return x ? { season: (DH_SEASONS[x.i] || ['done']).join(':'), pos: x.pos, of: x.ids ? x.ids.length : null, fixed: x.fixed, done: x.log, at: x.at } : null; })(), marketAccount: { busyWithMarket: await marketBusy(env), lastGapHelp: await kvj('gap_push_last') }, budget: await jobOverBudget(env) ? 'over' : 'ok' }, null, 1);
   const res = new Response(body, { headers: { 'content-type': 'application/json', 'cache-control': 'max-age=60' } });
   try { await caches.default.put(ck, res.clone()); } catch (e) {}
   return res;
@@ -8400,7 +8400,7 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil(gapPush(ctx).catch(() => {}));
   }
   // Read-only collector progress, no sign-in: counts and dates only, nothing from the market or any account.
-  if (url.searchParams.get('collector') === 'health') { ctx.waitUntil(tzProbe(env, env.RATEBOARD_DB).catch(() => {})); return collectorHealth(env, url); }
+  if (url.searchParams.get('collector') === 'health') { ctx.waitUntil(cfbPassProbe(env, env.RATEBOARD_DB).catch(() => {})); return collectorHealth(env, url); }
   const mk = url.searchParams.get('market');
   if (MARKET_MEMBER.includes(mk)) {
     const a = await marketWho(env, request);
