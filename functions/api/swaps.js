@@ -1225,9 +1225,9 @@ async function dmSendRetry(auth, channelId, text) {
    50+ people). It sends up to 20 messages a minute, and pass scans stay off
    the bot from :25 to :40 and :55 to :10 so Real doesn't throttle it while
    the warnings and contacts go out. */
-const DM_PER_TICK = 40;   // a cap per run; time is the real limit
+const DM_PER_TICK = 60;   // a cap per run; time is the real limit
 const CANCEL_DM_ON = false;   // called-off notices (Dennis, 2026-11-04: too many extra DMs) - flip to bring them back   // Real's message slowmode: 10, then the rest of the minute off
-const dmWindow = (t = new Date()) => { const m = t.getUTCMinutes(); return (m >= 25 && m < 40) || m >= 55 || m < 10; };
+const dmWindow = (t = new Date()) => { const m = t.getUTCMinutes(); return (m >= 25 && m < 40) || m >= 50 || m < 10; };
 const DMQ_DDL = 'CREATE TABLE IF NOT EXISTS dm_retry (id INTEGER PRIMARY KEY AUTOINCREMENT, channelId INTEGER, parts TEXT, label TEXT, tries INTEGER, at INTEGER)';
 async function queueDm(db, channelId, parts, label) {
   try { await db.prepare(DMQ_DDL).run();
@@ -1818,7 +1818,7 @@ async function runDms(env, db, auth, rows, max, force) {
   /* Members are worked two at a time; every send waits its turn in dmPace,
      DM_GAP_MS apart, so Real never gets a burst. */
   const doList = async list => {
-    if (sent >= max || Date.now() - now > 40000 || (TICK_T0 && !force && tickLeft() - dmWaitAhead() < 6000)) return;   // never past the tick's time
+    if (sent >= max || Date.now() - now > RUN_MS || (TICK_T0 && !force && tickLeft() - dmWaitAhead() < 6000)) return;   // never past the tick's time
     const who = list[0].who;
     if (!force && (NO_MSG.get(who) || 0) > Date.now()) return;   // Real refused them a minute ago: not every tick
     const first = Math.min(...list.map(x => x.due)), last = Math.max(...list.map(x => x.due));
@@ -1827,10 +1827,10 @@ async function runDms(env, db, auth, rows, max, force) {
     const warnHours = new Map();
     // From :25 (35 minutes before the hour).
     // Past :55 the contact message carries it instead.
-    for (const x of list) if (!x.m['warn' + x.side] && (force || (now >= x.due - 30 * 60000 && now < x.due - 5 * 60000))) { const k = force ? 'now' : x.due; (warnHours.get(k) || warnHours.set(k, []).get(k)).push(x); }
+    for (const x of list) if (!x.m['warn' + x.side] && (force || (now >= x.due - 30 * 60000 && now < x.due - 10 * 60000))) { const k = force ? 'now' : x.due; (warnHours.get(k) || warnHours.set(k, []).get(k)).push(x); }
     let warnFail = false;
     for (const [, wh0] of warnHours) {
-      if (sent >= max || Date.now() - now > 40000 || (TICK_T0 && !force && tickLeft() - dmWaitAhead() < 6000)) break;   // never past the tick's time
+      if (sent >= max || Date.now() - now > RUN_MS || (TICK_T0 && !force && tickLeft() - dmWaitAhead() < 6000)) break;   // never past the tick's time
       const wh = await claim(wh0, 'warn');
       if (!wh.length) continue;
       const items = []; for (const x of wh) { const l = await sideLines(member, x.m, x.side); if (l) items.push(l); }
@@ -1848,10 +1848,11 @@ async function runDms(env, db, auth, rows, max, force) {
     if (warnFail) return;
     // 2-4. contact: one per swap hour that has come.
     const byHour = new Map();
-    // From :55 (5 minutes before the hour).
-    for (const x of list) if (!x.m['done' + x.side] && now >= x.due - 5 * 60000) { const k = force ? 'now' : x.due; (byHour.get(k) || byHour.set(k, []).get(k)).push(x); }
+    /* From :50 (10 minutes before the hour; was :55): a big hour's swap DMs
+       finish around the hour instead of 15-20 minutes after it (2026-11-13). */
+    for (const x of list) if (!x.m['done' + x.side] && now >= x.due - 10 * 60000) { const k = force ? 'now' : x.due; (byHour.get(k) || byHour.set(k, []).get(k)).push(x); }
     for (const [, hr0] of byHour) {
-      if (sent >= max || Date.now() - now > 40000 || (TICK_T0 && !force && tickLeft() - dmWaitAhead() < 6000)) break;   // never past the tick's time
+      if (sent >= max || Date.now() - now > RUN_MS || (TICK_T0 && !force && tickLeft() - dmWaitAhead() < 6000)) break;   // never past the tick's time
       const noWarn = hr0.filter(x => !x.m['warn' + x.side]);
       const hr = await claim(hr0, 'done');
       if (!hr.length) continue;
@@ -2418,6 +2419,11 @@ async function feedbackDms(env, db, auth) {
    new member is started after 16s, and a part that would go after 22s is
    queued for the next minute instead. Scans don't run in the DM windows. */
 let TICK_T0 = 0, TICK_BUDGET = 22000;
+/* On the droplet nothing cuts a tick off at 30 seconds, so the bot sends for
+   almost the whole minute (2026-11-13: with ~25s of each minute, a big hour's
+   swap DMs went out 15-20 minutes late). */
+const ON_DROPLET = typeof process !== 'undefined' && !!(process.env && process.env.ROLE);
+const RUN_MS = ON_DROPLET ? 55000 : 40000;
 const tickLeft = () => TICK_BUDGET - (Date.now() - TICK_T0);
 const NO_MSG = new Map();   // members Real just refused a DM for -> when to try again
 /* The DMs' own run (2026-11-05): the collector tick calls /api/swaps?op=dmtick
@@ -2753,7 +2759,7 @@ async function dm160(env, db, auth) {
   let sentN = 0;
   for (const g of per.values()) {
     // A few a minute: this runs ahead of the swap warnings, which mustn't wait on it.
-    if (sentN >= 8 || (TICK_T0 && tickLeft() - dmWaitAhead() < 6000)) break;
+    if (sentN >= 5 || (TICK_T0 && tickLeft() - dmWaitAhead() < 6000)) break;   // 5 a minute leaves most of it for the swap warnings
     const got = [];
     for (const [r, col] of g.list) { const c = await db.prepare(`UPDATE swap_160 SET ${col}=? WHERE id=? AND ${col} IS NULL`).bind(now, r.id).run(); if (c && c.meta && c.meta.changes) got.push([r, col]); }
     if (!got.length) continue;
@@ -2830,7 +2836,7 @@ async function confirmGate(env, db, auth) {
   }
 }
 async function dmTick(env) {
-  TICK_T0 = Date.now(); TICK_BUDGET = 26000;
+  TICK_T0 = Date.now(); TICK_BUDGET = ON_DROPLET ? 57000 : 26000;
   const db = env.RATEBOARD_DB, auth = swapToken(env);
   if (!db || !auth || !DM_ON) return [];
   // One-off (2026-11-05, Dennis asked): the new one-message DMs sent to him exactly as members get them, from his own swaps.
