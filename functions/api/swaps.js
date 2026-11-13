@@ -3138,8 +3138,8 @@ async function moderate(env, db, dry) {
   const since = Math.min(...reps.map(r => Number(r.ts) || 0)) - MOD_LOOKBACK;
   const [users, ms, ss, st, ev, dmr] = await Promise.all([
     modRows(db, 'SELECT key, rsUser, hashId, sched FROM swap_users', [], 'key'),
-    modRows(db, 'SELECT id, a, b, slot, createdAt, dueAt, status FROM swap_matches WHERE COALESCE(dueAt, createdAt) >= ?', [since], 'id', 2000),
-    modRows(db, 'SELECT id, buyer, seller, dueAt, status FROM swap_160 WHERE dueAt >= ?', [since], 'id', 2000),
+    modRows(db, 'SELECT id, a, b, aGets, bGets, slot, createdAt, dueAt, status FROM swap_matches WHERE COALESCE(dueAt, createdAt) >= ?', [since], 'id', 2000),
+    modRows(db, 'SELECT id, buyer, seller, pass, kind, dueAt, status FROM swap_160 WHERE dueAt >= ?', [since], 'id', 2000),
     modRows(db, 'SELECT key, resetAt, banned FROM mod_state', [], 'key'),
     modRows(db, 'SELECT key, kind, n, at FROM mod_events', [], 'id'),
     modRows(db, 'SELECT hashId, channelId FROM swap_dm WHERE channelId IS NOT NULL', [], 'hashId', 2000)]);
@@ -3157,29 +3157,32 @@ async function moderate(env, db, dry) {
   const first = new Map(), handled = [];
   for (const r of reps) {
     const by = String(r.by_user || ''), ts = Number(r.ts) || 0;
-    let tgt = null, period = null;
+    let tgt = null, period = null, src = null;
     if (r.m160) {
       const s = sById.get(Number(r.m160));
       if (!s || (s.buyer !== by && s.seller !== by)) { out.noSwap++; continue; }
       if (off(s.status)) { out.calledOff++; continue; }
-      tgt = s.buyer === by ? s.seller : s.buyer; period = Number(s.dueAt);
+      tgt = s.buyer === by ? s.seller : s.buyer; period = Number(s.dueAt); src = { s, by };
     } else if (r.matchId) {
       const m = mById.get(Number(r.matchId));
       if (!m || (m.a !== by && m.b !== by)) { out.noSwap++; continue; }
       if (off(m.status)) { out.calledOff++; continue; }
-      tgt = m.a === by ? m.b : m.a; period = Number(m.dueAt);
+      tgt = m.a === by ? m.b : m.a; period = Number(m.dueAt); src = { m, by };
     } else {
       const u = byName.get(lc(r.target)); if (!u || u.key === by) { out.noSwap++; continue; }
       const times = (pairs.get(by + '|' + u.key) || []).filter(t => t <= ts + MOD_EARLY && t >= ts - MOD_LOOKBACK);
       if (!times.length) { out.noSwap++; continue; }
       tgt = u.key; period = Math.max(...times);
+      const m = ms.find(x => !off(x.status) && Number(x.dueAt) === period && ((x.a === by && x.b === tgt) || (x.b === by && x.a === tgt)));
+      const s1 = m ? null : ss.find(x => !off(x.status) && Number(x.dueAt) === period && ((x.buyer === by && x.seller === tgt) || (x.seller === by && x.buyer === tgt)));
+      src = m ? { m, by } : s1 ? { s: s1, by } : null;
     }
     if (ts < period - MOD_EARLY) { out.early++; continue; }
     if (MOD_VOID.has(Number(period))) { out.voided = (out.voided || 0) + 1; handled.push(r.id); continue; }
     const s0 = state.get(tgt); if (s0 && ts < Number(s0.resetAt || 0)) { handled.push(r.id); continue; }
     const k = by + '|' + tgt;
     if (first.has(k)) { out.repeats++; handled.push(r.id); continue; }
-    first.set(k, { tgt, period, ts }); handled.push(r.id); out.counted++;
+    first.set(k, { tgt, period, ts, src }); handled.push(r.id); out.counted++;
   }
   // Per reported member: their warning and strikes, in order.
   const per = new Map();
@@ -3191,12 +3194,12 @@ async function moderate(env, db, dry) {
   let acted = 0; if (!dry) await db.prepare(DMQ_DDL).run();
   for (const [key, list] of per) {
     list.sort((a, b) => a.ts - b.ts);
-    const want = [{ kind: 'warn', n: 0, period: list[0].period, at: list[0].ts, reports: 1 }];
+    const want = [{ kind: 'warn', n: 0, period: list[0].period, at: list[0].ts, reports: 1, src: list[0].src }];
     const struck = new Map();
     for (let i = 1; i < list.length; i++) { const p = list[i].period;
       if (struck.has(p)) { struck.get(p).reports++; continue; }
       if (struck.size >= MOD_STRIKES) continue;
-      const e = { kind: 'strike', n: struck.size + 1, period: p, at: list[i].ts, reports: 1 }; struck.set(p, e); want.push(e); }
+      const e = { kind: 'strike', n: struck.size + 1, period: p, at: list[i].ts, reports: 1, src: list[i].src }; struck.set(p, e); want.push(e); }
     const h = had.get(key) || { warn: false, strikes: 0 };
     const fresh = want.filter(e => e.kind === 'warn' ? !h.warn : e.n > h.strikes);
     const s0 = state.get(key), nowStrikes = Math.max(h.strikes, ...want.filter(e => e.kind === 'strike').map(e => e.n), 0);
@@ -3213,9 +3216,18 @@ async function moderate(env, db, dry) {
     if (ban) await modBan(db, key);
     // One message with everything new for them.
     const tz = ((u && parse(u.sched, null)) || {}).tz;
+    /* Which swap it was, not just the time (a member, 2026-11-12: "I did every
+       swap - say which one"): who reported and the players both ways. */
+    const me0 = fresh.some(e => e.src) ? await loadMember(db, key).catch(() => null) : null;
+    const which = e => { const x = e.src; if (!x) return '';
+      const rep0 = byKey.get(x.by), rn = '@' + ((rep0 && rep0.rsUser) || x.by);
+      if (x.m) { const give = x.m.a === key ? x.m.bGets : x.m.aGets, get = x.m.a === key ? x.m.aGets : x.m.bGets;
+        return ` (swap with ${rn}: you give ${me0 ? playerName(me0, give) : give}, you get ${me0 ? playerName(me0, get) : get})`; }
+      if (x.s) return x.s.seller === key ? ` (160 with ${rn}: you sell ${me0 ? playerName(me0, x.s.pass) : x.s.pass})` : ` (160 with ${rn}: you buy their ${me0 ? playerName(me0, x.s.pass) : x.s.pass})`;
+      return ''; };
     const lines = fresh.map(e => e.kind === 'warn'
-      ? `You've been reported for not completing a swap at ${modTime(e.period, tz)}. This is a warning, not a strike.`
-      : `You've been reported for not doing swaps at ${modTime(e.period, tz)}. Strike ${e.n}/${MOD_STRIKES}.`);
+      ? `You've been reported for not completing a swap at ${modTime(e.period, tz)}${which(e)}. This is a warning, not a strike.`
+      : `You've been reported for not doing swaps at ${modTime(e.period, tz)}${which(e)}. Strike ${e.n}/${MOD_STRIKES}.`);
     if (ban) lines.push(`That's ${MOD_STRIKES} strikes, so your Swaps access has been removed (the rest of the site still works). You can request an unban at raxacademy.app/swaps`);
     const ch = u && u.hashId && chan.get(String(u.hashId));
     if (ch && lines.length) { stmts.push(db.prepare('INSERT INTO dm_retry (channelId, parts, label, tries, at) VALUES (?, ?, ?, 0, ?)').bind(Number(ch), JSON.stringify([lines.join('\n')]), 'mod ' + key, Date.now())); out.dms++; }
@@ -3478,12 +3490,13 @@ function boostListOf(d) {
   }
   return list;
 }
-async function boostInventorySport(env, tok, hashId, sp, origin) {
+async function boostInventorySport(env, tok, hashId, sp, origin, force) {
   const key = `boostinv_v8_${hashId}`;
   let c = null;
   try { c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); } catch (e) {}
   const at = c ? Number((c.spAt || {})[sp] || c.at || 0) : 0;
-  if (c && Date.now() - at < BOOSTINV_SPORT_EVERY) return { at, list: (c.sports || {})[sp] || [] };
+  // force: the member tapped "Re-read" - anything over a minute old is read again.
+  if (c && Date.now() - at < (force ? 60000 : BOOSTINV_SPORT_EVERY)) return { at, list: (c.sports || {})[sp] || [] };
   try {
     if (!(await allow(origin, 'boostinv-sp', 30, 60))) throw new Error('busy');
     const d = await rsGetJson(`https://web.realapp.com/userpassboostercards/undefined/entity/player?displayType=collectionstats&sport=${sp}&userId=${encodeURIComponent(hashId)}&version=stat`, tok);
@@ -5155,11 +5168,10 @@ async function handle({ request, env, waitUntil }) {
     try { await db.prepare(RATE_DDL).run(); await db.prepare(RATE_BLOCK_DDL).run();
       for (const r of ((await db.prepare('SELECT ratee, stars FROM swap_ratings WHERE rater=?').bind(u.key).all()).results || [])) rated[r.ratee] = Number(r.stars);
       canRate = !(await db.prepare('SELECT 1 AS x FROM swap_rate_block WHERE key=?').bind(u.key).first()); } catch (e) {}
-    for (const x of out) if (x.partnerKey) { x.myStars = rated[x.partnerKey] || null; delete x.partnerKey; }
     // 160s this hour: packs they open for buyers (sell), and 160s they offer on (buy).
     const sell160 = [], buy160 = [], nicheBuy = [], nicheGet = [];
     try { for (const r of (((await db.prepare("SELECT * FROM swap_160 WHERE (buyer=? OR seller=?) AND dueAt=? AND status <> 'cancelled' ORDER BY id").bind(u.key, u.key, due).all()).results) || [])) {
-        const o = await mem(r.seller === u.key ? r.buyer : r.seller), x = { id: r.id, user: o && o.rsUser, url: o ? profileUrl(o.rsUser, o.hashId) : null, player: playerName(me, r.pass), playerUrl: playerUrl(r.pass) };
+        const o = await mem(r.seller === u.key ? r.buyer : r.seller), x = { id: r.id, partnerKey: r.seller === u.key ? r.buyer : r.seller, user: o && o.rsUser, url: o ? profileUrl(o.rsUser, o.hashId) : null, player: playerName(me, r.pass), playerUrl: playerUrl(r.pass) };
         // Niche: the member asked buys the player and a pack; the one who asked pays full price.
         /* The member asked doesn't own the player, so his name and card come
            from the one who asked (2026-11-10: it showed "Player 8482116 2024"). */
@@ -5173,6 +5185,8 @@ async function handle({ request, env, waitUntil }) {
       } } catch (e) {}
     // Each partner's trust level (2026-11-11), shown by their name.
     try { const tm = await trustMap(env, db); for (const x of out) x.lv = (tm[x.partnerKey] || {}).lv || 'new'; } catch (e) {}
+    // Stars they gave, on swaps and 160s alike (2026-11-12); the partner keys stay on the server.
+    for (const x of [...out, ...sell160, ...buy160, ...nicheBuy, ...nicheGet]) { if (x.partnerKey) x.myStars = rated[x.partnerKey] || null; delete x.partnerKey; }
     return json({ user: (me && me.rsUser) || u.key, due, swaps: out, sell160, buy160, nicheBuy, nicheGet, canRate, ratingsOff: ratingsOff() || undefined, admin: ADMINS.includes(u.key.toLowerCase()) || undefined });
   }
   /* Most picked players, for everyone on the hour page (Dennis, 2026-11-05):
@@ -5308,9 +5322,13 @@ async function handle({ request, env, waitUntil }) {
     if (!(stars >= 1 && stars <= 5)) return json({ error: 'Pick 1 to 5 stars.' }, 400);
     await matchCols(db); await db.prepare(RATE_DDL).run(); await db.prepare(RATE_BLOCK_DDL).run();
     const u = await db.prepare('SELECT key FROM swap_users WHERE LOWER(key)=?').bind(key.toLowerCase()).first();
-    const m = u && await db.prepare("SELECT * FROM swap_matches WHERE id=? AND (a=? OR b=?) AND dueAt=? AND status NOT IN ('cancelled','cancelling','cleared')").bind(Number(b.id), u.key, u.key, due).first();
+    // A 160 (2026-11-12): rated like a swap partner - one rating per person either way.
+    let m = null;
+    if (b.k160 != null) { const r = u && await db.prepare("SELECT * FROM swap_160 WHERE id=? AND (buyer=? OR seller=?) AND dueAt=? AND status <> 'cancelled'").bind(Number(b.k160), u.key, u.key, due).first();
+      if (r) m = { id: null, a: r.buyer, b: r.seller, dueAt: r.dueAt, k160: 1 }; }
+    else m = u && await db.prepare("SELECT * FROM swap_matches WHERE id=? AND (a=? OR b=?) AND dueAt=? AND status NOT IN ('cancelled','cancelling','cleared')").bind(Number(b.id), u.key, u.key, due).first();
     if (!m) return json({ error: 'That swap was not found.' }, 404);
-    if (Date.now() < sideDue(m)) return json({ error: 'You can rate once the swap time has come.' }, 400);
+    if (Date.now() < (m.k160 ? Number(m.dueAt) : sideDue(m))) return json({ error: 'You can rate once the swap time has come.' }, 400);
     if (await db.prepare('SELECT 1 AS x FROM swap_rate_block WHERE key=?').bind(u.key).first()) return json({ error: 'Your rating was turned off for rating unfairly.' }, 403);
     if (!(await allow(url.origin, 'rate:' + u.key, 60, 3600))) return json({ error: 'Too many ratings at once - try again later.' }, 429);
     const ratee = m.a === u.key ? m.b : m.a;
@@ -6891,7 +6909,7 @@ async function handle({ request, env, waitUntil }) {
       .filter(p => p.sport === sp && (Number(p.season) === se || (sp === 'soccer' && Number(p.season) === FC_MLS_SEASON)) && p.kind !== 'team')   // FC: 2025 cards for MLS
       .map(p => ({ id: Number(p.id), name: p.name || '', passId: p.passId || null, season: Number(p.season),
         mult: cardMultOf(p), levelLabel: p.levelLabel || null })) };   // the card's own rarity multiplier, for "Include my card rarities" (2026-11-09)
-    let sched = null, depth = null, inv = null, rows = [], idle = [], invAt = null;
+    let sched = null, depth = null, inv = null, rows = [], idle = [], invAt = null, binvMsg = null;
     if (sp === 'golf') {
       // Golf: the tournament is the game; form plus course history (see golfRows).
       const gr = await golfRows(env, db, cards, day);
@@ -6947,7 +6965,9 @@ async function handle({ request, env, waitUntil }) {
       depth = sp === 'nfl' ? await boostDepth(env, sched) : null;
       // The member's boosters, if Real will give them.
       try { const uu = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(me).first();
-        if (uu && uu.hashId) { const r = await boostInventorySport(env, env.RS_AUTH_TOKEN || auth, uu.hashId, sp, url.origin); invAt = r.at || null; if (!r.error) inv = r.list; } } catch (e) {}
+        let force = url.searchParams.get('binv') === '1';
+        if (force && !(await allow(url.origin, 'binv:' + me, 4, 600))) { force = false; binvMsg = 'Re-read limit: 4 every 10 minutes'; }
+        if (uu && uu.hashId) { const r = await boostInventorySport(env, env.RS_AUTH_TOKEN || auth, uu.hashId, sp, url.origin, force); invAt = r.at || null; if (!r.error) inv = r.list; } } catch (e) {}
       // Current teams from ESPN's rosters (CBB: transfers and freshmen), and
       // how much each opponent gave up last season and this one.
       let roster = {}, match = {};
@@ -7222,7 +7242,7 @@ async function handle({ request, env, waitUntil }) {
     for (const k of Object.keys(totals)) totals[k] = Math.round(totals[k]);
     if (inv) used = inv.map((b, i) => ({ ...b, used: b.count - left[i].count }));
 
-    return json({ sport: sp, season: se, date: day, mode, bars: bars.map(x => Number.isFinite(x) ? x : null), cutAt, totals, lineups: sched.lineups ?? null, lineupsAt: sched.lineupsAt || null, started: sched.started ?? null, legCap: inv && Number.isFinite(dayCap[5]) ? dayCap[5] : null, inv: used, statMode: !!used, rsUser: u.rsUser, cardsAt: cards.at, invAt, games: sched.games, event: sched.event || null, course: sched.course || null, field: sched.field ?? null, depth: !!depth,
+    return json({ sport: sp, season: se, date: day, mode, binvMsg: binvMsg || undefined, bars: bars.map(x => Number.isFinite(x) ? x : null), cutAt, totals, lineups: sched.lineups ?? null, lineupsAt: sched.lineupsAt || null, started: sched.started ?? null, legCap: inv && Number.isFinite(dayCap[5]) ? dayCap[5] : null, inv: used, statMode: !!used, rsUser: u.rsUser, cardsAt: cards.at, invAt, games: sched.games, event: sched.event || null, course: sched.course || null, field: sched.field ?? null, depth: !!depth,
       rows, notPlaying: idle.length, players: cards.players.length });
   }
 

@@ -39,7 +39,8 @@
   .rsub{cursor:pointer;font:inherit;font-weight:700;font-size:14px;padding:7px 14px}
   .rsub:disabled{opacity:.5;cursor:default}
   .ratenote{margin:10px 0 0;padding:10px 12px;border:1px dashed var(--line);border-radius:10px}
-  #conlist .row.both + .rpbox + .ratebox{opacity:.5}
+  /* Stars stay bright until they've rated (a member, 2026-11-12: they faded on checking done, before rating). */
+  #conlist .row.both + .rpbox + .ratebox[data-sent="1"]{opacity:.5}
   .chk2{display:flex;flex-direction:column;gap:8px;flex:none}
   .chk2 label{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:10.5px;font-weight:700;color:var(--mute);text-transform:uppercase;letter-spacing:.03em;cursor:pointer}
   .acts{display:flex;flex-direction:column;align-items:stretch;gap:6px;flex:none}
@@ -254,9 +255,9 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
   $('#s160note').textContent = sell160.length && buy160.length ? 'Selling: the buyer takes all cards for minimum - send 160 back on a random unowned card. Buying: offer min on the cards from their pack - they send you 160 back.'
     : sell160.length ? 'The buyer takes all cards for minimum - send them 160 back on a random unowned card.' : 'Offer min on the cards from each seller\'s pack - they send you 160 back.';
   $('#s160list').innerHTML = sell160.map(x => `<div class="row${done['sq' + x.id] && done['sr' + x.id] ? ' both' : ''}" data-r160="s${x.id}"><span class="grp"><span class="chk2">${chk('sq' + x.id, 'Received offer')}${chk('sr' + x.id, 'Sent 160 back')}</span>
-      <span><b>${who(x)}</b><span class="sub">Receiving <b class="rv">${pl(x)}</b> from your pack</span></span></span><span class="acts">${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : ''}<button class="btn rp" type="button" data-rp="160-${x.id}">Report</button></span></div><div class="rpbox" id="rp160-${x.id}" hidden></div>`).join('')
+      <span><b>${who(x)}</b><span class="sub">Receiving <b class="rv">${pl(x)}</b> from your pack</span></span></span><span class="acts">${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : ''}<button class="btn rp" type="button" data-rp="160-${x.id}">Report</button></span></div><div class="rpbox" id="rp160-${x.id}" hidden></div>${rateRow(x, j, 'k')}`).join('')
     + buy160.map(x => `<div class="row${done['bo' + x.id] && done['bk' + x.id] ? ' both' : ''}" data-r160="b${x.id}"><span class="grp"><span class="chk2">${chk('bo' + x.id, 'Offered')}${chk('bk' + x.id, '160 back')}</span>
-      <span><b>${who(x)}</b><span class="sub">You receive <b class="rv">${pl(x)}</b></span></span></span><span class="acts">${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : ''}</span></div>`).join('');
+      <span><b>${who(x)}</b><span class="sub">You receive <b class="rv">${pl(x)}</b></span></span></span><span class="acts">${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : ''}</span></div>${rateRow(x, j, 'k')}`).join('');
   // Each partner: who, what you receive, what you give - and their comment to reach them.
   $('#ratenote').hidden = !j.swaps.some(x => !x.off);
   // Two ticks per partner here (Dennis, 2026-11-06): offer sent, then swap done.
@@ -444,11 +445,13 @@ document.addEventListener('click', async e => {
 let rateOff = false;   // ratings switched off for the day: no stars, note, box or leaderboard
 /* Stars for each partner (Dennis, 2026-11-06): open once the swap time comes.
    One rating per person, changeable; ratings decide who goes first when two want the same player. */
-function rateRow(x, j){
-  if(Date.now() < j.due) return `<div class="ratebox"><span class="note">Rate @${esc(x.partner || '?')} after the swap - from ${new Date(j.due).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span></div>`;
+/* 160s get the same stars (a member, 2026-11-12): pre = 'k' marks a 160 row. */
+function rateRow(x, j, pre = ''){
+  if(pre && rateOff) return '';
+  if(Date.now() < j.due) return `<div class="ratebox"><span class="note">Rate @${esc(x.partner || x.user || '?')} after the swap - from ${new Date(j.due).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span></div>`;
   if(j.canRate === false) return `<div class="ratebox"><span class="note">Your rating is turned off for rating unfairly.</span></div>`;
   const v = x.myStars || 0;
-  return `<div class="ratebox" data-rate="${x.id}" data-v="${v}"><span class="stars">${[1, 2, 3, 4, 5].map(n => `<button type="button" class="st${n <= v ? ' on' : ''}" data-star="${n}" aria-label="${n} star${n === 1 ? '' : 's'}">★</button>`).join('')}</span><button type="button" class="btn go rsub" data-ratesend="${x.id}"${v ? '' : ' disabled'}>${v ? 'Update' : 'Submit'}</button><span class="note rmsg">${v ? `You gave ${v} ★` : ''}</span></div>`;
+  return `<div class="ratebox" data-rate="${pre}${x.id}" data-v="${v}" data-sent="${v ? 1 : 0}"><span class="stars">${[1, 2, 3, 4, 5].map(n => `<button type="button" class="st${n <= v ? ' on' : ''}" data-star="${n}" aria-label="${n} star${n === 1 ? '' : 's'}">★</button>`).join('')}</span><button type="button" class="btn go rsub" data-ratesend="${pre}${x.id}"${v ? '' : ' disabled'}>${v ? 'Update' : 'Submit'}</button><span class="note rmsg">${v ? `You gave ${v} ★` : ''}</span></div>`;
 }
 document.addEventListener('click', async e => {
   const st = e.target.closest('[data-star]'), sd = e.target.closest('[data-ratesend]');
@@ -459,11 +462,11 @@ document.addEventListener('click', async e => {
   const box = sd.closest('[data-rate]'), msg = box.querySelector('.rmsg'), v = Number(box.dataset.v);
   if(!v){ msg.textContent = 'Pick the stars first.'; return; }
   sd.disabled = true; msg.textContent = 'Sending…';
-  try{ const r = await fetch(`/api/swaps?op=hourrate&u=${encodeURIComponent(q.get('u') || '')}&d=${encodeURIComponent(q.get('d') || '')}&t=${encodeURIComponent(q.get('t') || '')}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: Number(sd.dataset.ratesend), stars: v }) });
+  try{ const r = await fetch(`/api/swaps?op=hourrate&u=${encodeURIComponent(q.get('u') || '')}&d=${encodeURIComponent(q.get('d') || '')}&t=${encodeURIComponent(q.get('t') || '')}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(/^k/.test(sd.dataset.ratesend) ? { k160: Number(sd.dataset.ratesend.slice(1)), stars: v } : { id: Number(sd.dataset.ratesend), stars: v }) });
     const j = await r.json();
     if(j.error){ msg.textContent = j.error; sd.disabled = false; return; }
     if(j.blocked){ msg.textContent = 'Your rating has been turned off for rating unfairly.'; document.querySelectorAll('[data-ratesend],[data-star]').forEach(b => b.disabled = true); return; }
-    msg.textContent = `Rated ${v} ★`; sd.textContent = 'Update'; sd.disabled = false;
+    msg.textContent = `Rated ${v} ★`; sd.textContent = 'Update'; sd.disabled = false; box.dataset.sent = '1';
   }catch(err){ msg.textContent = 'Could not reach the board - try again.'; sd.disabled = false; }
 });
 // Report a partner right here: opens a short form under their row.

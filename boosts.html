@@ -451,8 +451,11 @@ function days(sp){
    server, which knows your teams); the plain next 4 days until it answers. */
 const daysCache = {};
 let daysAsk = 0;
+/* Each sport keeps its own day and starts on its soonest one (a member,
+   2026-11-12: picking Sunday on NFL carried Sunday over to every sport). */
+const dayBySport = {};
 async function drawDays(){
-  const sp = $('#sport').value, prev = $('#day').value, list = days(sp);
+  const sp = $('#sport').value, prev = dayBySport[sp] || '', list = days(sp);
   const fill = (opts, empty) => { $('#day').innerHTML = opts.length ? opts.map(([v, l]) => `<option value="${v}"${v === prev ? ' selected' : ''}>${esc(l)}</option>`).join('') : `<option value="">${esc(empty)}</option>`; };
   if(sp === 'all'){ ++daysAsk; fill(list, ''); return; }   // All sports: the next 4 days
   if(!daysCache[sp]) fill(list, sp === 'golf' ? 'Loading tournaments…' : 'No games in the next 4 days');
@@ -531,7 +534,7 @@ $('#sport').addEventListener('change', loadSet);
 $('#setsp').addEventListener('change', () => { try{ localStorage.setItem('boosts_setsp_v1', $('#setsp').value); }catch(e){} loadSet(); });
 $('#mode').addEventListener('change', () => { saveMode(setSp(), $('#mode').value); drawMode(); if(shown()) run(); });
 // A new day re-runs the plan, so what's shown (and copied) is always that day's.
-$('#day').addEventListener('change', () => { if(shown()) run(); });
+$('#day').addEventListener('change', () => { dayBySport[$('#sport').value] = $('#day').value; if(shown()) run(); });
 try{ const s = JSON.parse(localStorage.getItem('boosts_pick_v1') || '{}'); if(s.sport && [...$('#sport').options].some(o => o.value === s.sport)) $('#sport').value = s.sport; }catch(e){}
 loadSet();
 drawDays(); golfLook();
@@ -703,6 +706,7 @@ async function loadBuys(){
     <td data-l="You">${x.owned ? '<span class="b none">Owned</span>' : '<span class="b rare">Buy</span>'}</td></tr>`).join('') || '<tr><td colspan="4" class="note">You own all of them.</td></tr>';
 }
 const tm = iso => iso ? new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }) + ' ET' : '';
+let binvNext = false;   // the next plan reads boosters fresh from Real
 async function run(){
   if(isAll()) return runAll();
   const sp = $('#sport').value, day = $('#day').value, mode = $('#mode').value;
@@ -717,7 +721,8 @@ async function run(){
   try{ localStorage.setItem('boosts_pick_v1', JSON.stringify({ sport: sp, mode })); }catch(e){} saveMode(sp, mode);
   $('#run').disabled = true; $('#out').hidden = false; $('#copybtn').hidden = true; copyText = ''; $('#rows').innerHTML = ''; $('#simple').innerHTML = ''; $('#sum').innerHTML = ''; $('#foot').textContent = '';
   $('#outhead').textContent = 'Working it out…';
-  const bpUrl = `/api/swaps?op=boostplan&page=boosts&sport=${sp}&date=${day}&mode=${mode}` + (mode === 'custom' ? cusQuery() : '') + (hideStarted() ? '&upcoming=1' : '');
+  const bpUrl = `/api/swaps?op=boostplan&page=boosts&sport=${sp}&date=${day}&mode=${mode}` + (mode === 'custom' ? cusQuery() : '') + (hideStarted() ? '&upcoming=1' : '') + (binvNext ? '&binv=1' : '');
+  binvNext = false;
   // Redrawing (the card-rarity toggle) reuses the answer from the last 5 minutes instead of asking again.
   const j = redrawOnly && lastOne && lastOne.url === bpUrl && Date.now() - lastOne.t < 300000 ? lastOne.j : await api(bpUrl);
   redrawOnly = false;
@@ -731,6 +736,10 @@ async function run(){
   $('#outhead').textContent = `${$('#sport').selectedOptions[0].textContent} · ${$('#day').selectedOptions[0].textContent} · ${rows.length} of your ${j.players} passes play` + (sp === 'golf' ? ` (${j.event || 'this week'}${j.course ? ' · ' + j.course : ''}${j.field === 0 ? ' · field not out yet - showing all your golfers' : ''})` : sp === 'soccer' ? ` (${j.games} games on the slate · lineups out for ${j.lineups || 0}${j.lineupsAt ? ', checked ' + new Date(j.lineupsAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''})` : ` (${j.games} games on the slate)`)
     + (j.cardsAt ? ` · passes read ${new Date(j.cardsAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : '')
     + (j.invAt ? ` · boosters read ${new Date(j.invAt).toLocaleString('en-US', { hour: 'numeric', minute: '2-digit' })}` : '');
+  /* Boosters put on a player since the last read still show as yours (a member,
+     2026-11-12): one tap reads them again from Real. */
+  if(j.invAt){ const a = document.createElement('a'); a.href = '#'; a.textContent = ' · Used boosters since? Re-read them'; a.onclick = e => { e.preventDefault(); binvNext = true; run(); }; $('#outhead').appendChild(a); }
+  if(j.binvMsg){ const s0 = document.createElement('span'); s0.textContent = ' · ' + j.binvMsg; $('#outhead').appendChild(s0); }
   if(j.statMode){
     const own0 = r => (j.inv || []).filter(b => b.rarity === r).reduce((t, b) => t + b.count, 0);
     $('#sum').innerHTML = [[5,'legendary'],[4,'epic'],[3,'rare']].map(([r, k]) => `<span><span class="b ${k}">${LBL[k]}</span> use ${c[k]} of ${own0(r)}${j.dayCap ? ` <span class="note">(max ${j.dayCap[r]} today)</span>` : ''}</span>`).join('');

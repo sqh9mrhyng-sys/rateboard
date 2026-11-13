@@ -53,14 +53,42 @@ async function readState(env, sport) {
   try { return JSON.parse(raw); } catch (e) { return null; }
 }
 
-export async function onRequestGet({ request, env }) {
+/* Liga MX for FC (a member, 2026-11-11: missing from the buy-offer list).
+   The droplet can reach ESPN directly, so its rosters are read on the server,
+   kept a week, and searched alongside the imported list. */
+const FC_EXTRA_KEY = 'players_fc_extra_v1', FC_EXTRA_LEAGUES = ['mex.1'];
+async function fcExtraRefresh(env) {
+  const lock = 'players_fc_extra_lock';
+  if (await env.RATEBOARD_KV.get(lock)) return;
+  await env.RATEBOARD_KV.put(lock, '1', { expirationTtl: 3600 });
+  const out = [];
+  for (const lg of FC_EXTRA_LEAGUES) {
+    try {
+      const t = await (await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/${lg}/teams`)).json();
+      for (const x of ((((t.sports || [])[0] || {}).leagues || [])[0] || {}).teams || []) {
+        const id = x.team && x.team.id, ab = (x.team && x.team.abbreviation) || '';
+        try { const r = await (await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/${lg}/teams/${id}/roster`)).json();
+          for (const a of r.athletes || []) if (a.displayName) out.push([asciiName(a.displayName), ab]); } catch (e) {}
+        await new Promise(z => setTimeout(z, 300));
+      }
+    } catch (e) {}
+  }
+  if (out.length) await env.RATEBOARD_KV.put(FC_EXTRA_KEY, JSON.stringify({ at: Date.now(), players: out }), { expirationTtl: 8 * 86400 });
+}
+
+export async function onRequestGet({ request, env, waitUntil }) {
   const url = new URL(request.url);
   const sport = (url.searchParams.get('sport') || '').toUpperCase();
   const q = (url.searchParams.get('q') || '').trim().toLowerCase();
   if (!['CFB', 'NFL', 'FC', 'UFC', 'NHL'].includes(sport)) return json({ error: 'bad sport' }, 400);
 
   const state = await readState(env, sport);
-  const players = (state && state.players) || [];
+  let players = (state && state.players) || [];
+  if (sport === 'FC') {
+    let ex = null; try { ex = JSON.parse((await env.RATEBOARD_KV.get(FC_EXTRA_KEY)) || 'null'); } catch (e) {}
+    if (ex && ex.players) players = players.concat(ex.players);
+    if (!ex || Date.now() - ex.at > 7 * 86400000) { const job = fcExtraRefresh(env).catch(() => {}); if (waitUntil) waitUntil(job); }
+  }
 
   // ?team=SEA returns that whole roster instead of doing a name search.
   // The board uses this to know which players are off limits.
