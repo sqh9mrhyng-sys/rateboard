@@ -17,8 +17,9 @@ if (cluster.isPrimary && !process.env.ROLE) {
   let stopping = false;
   const roles = new Map();
   const start = role => { const w = cluster.fork({ ROLE: role }); roles.set(w.id, role); return w; };
-  logEv(`primary started: ${WEB} web + 1 jobs, ${Math.round(os.totalmem() / 1048576)}MB RAM, ${os.cpus().length} CPUs`);
+  logEv(`primary started: ${WEB} web + 1 heavy + 1 jobs, ${Math.round(os.totalmem() / 1048576)}MB RAM, ${os.cpus().length} CPUs`);
   for (let i = 0; i < WEB; i++) start('web');
+  start('heavy');
   start('jobs');
   cluster.on('exit', (w, code, sig) => {
     const role = roles.get(w.id); roles.delete(w.id);
@@ -36,10 +37,12 @@ if (cluster.isPrimary && !process.env.ROLE) {
     const all = () => Object.values(cluster.workers);
     const webs = () => all().filter(w => roles.get(w.id) === 'web');
     const jobs = all().filter(w => roles.get(w.id) === 'jobs');
-    const stopWebs = () => { for (const w of webs()) { try { w.send('stop'); } catch (e) {} } };
+    let webStopped = false;
+    const stopWebs = () => { if (webStopped) return; webStopped = true; for (const w of all()) { if (roles.get(w.id) !== 'jobs') try { w.send('stop'); } catch (e) {} } };
+    setTimeout(stopWebs, 50000).unref();   // never wait on the bot past 50s
     if (jobs.length) { for (const w of jobs) { try { w.send('stop'); } catch (e) {} w.on('exit', () => { if (!all().some(x => x !== w && x.id !== w.id && roles.get(x.id) === 'jobs')) stopWebs(); }); } }
     else stopWebs();
-    setTimeout(() => { logEv('stop took too long - exiting'); process.exit(0); }, 92000).unref();
+    setTimeout(() => { logEv('stop took too long - exiting'); for (const w of all()) { try { w.process.kill('SIGKILL'); } catch (e) {} } process.exit(0); }, 75000).unref();
     if (!all().length) process.exit(0);
   };
   process.on('SIGTERM', stop); process.on('SIGINT', stop);

@@ -16,8 +16,15 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
    process runs the bot and the collectors on JOBS_PORT, so its heavy work
    never holds up a page. */
 const ROLE = process.env.ROLE || 'all';
-const PORT = ROLE === 'jobs' ? Number(process.env.JOBS_PORT || 8788) : Number(process.env.PORT || 8787);
-const JOBS_PORT = Number(process.env.JOBS_PORT || 8788);
+const JOBS_PORT = Number(process.env.JOBS_PORT || 8788), HEAVY_PORT = Number(process.env.HEAVY_PORT || 8789);
+const PORT = ROLE === 'jobs' ? JOBS_PORT : ROLE === 'heavy' ? HEAVY_PORT : Number(process.env.PORT || 8787);
+/* Big database reads (game log, plays, pack data, OTD, projections, boost
+   plans) go to a 'heavy' process (2026-11-13): each runs for seconds and holds
+   its process, so on the web processes they froze every page behind them. */
+const HEAVY_RAX = /[?&](gamelog|plays|tags|tagview|golf|market)=/;
+const HEAVY_OPS = new Set(['otdpool', 'games', 'boosttop', 'boostplan', 'boostdays', 'projections', 'tagview', 'packstoday', 'legboosts', 'search', 'passcounts', 'wantcounts']);
+const isHeavy = u => { if (u.startsWith('/api/rax')) return HEAVY_RAX.test(u) && !/[?&]market=(me|post|offer)/.test(u);
+  if (u.startsWith('/api/swaps')) { const m = /[?&]op=([a-z0-9]+)/.exec(u); return !!(m && HEAVY_OPS.has(m[1])); } return false; };
 const DATA = process.env.DATA_DIR || '/opt/rax/data';
 fs.mkdirSync(DATA, { recursive: true });
 
@@ -106,6 +113,14 @@ const server = http.createServer(async (req, res) => {
       load: os.loadavg().map(x => +x.toFixed(2)), events: ev }, null, 1));
     inflight--; return;
   }
+  if (ROLE === 'web' && isHeavy(req.url)) {
+    // Passed through as-is; the heavy process answers with this request's own host.
+    const hdr = { ...req.headers, 'x-forwarded-host': req.headers['x-forwarded-host'] || req.headers.host || '' };
+    const up = http.request({ host: '127.0.0.1', port: HEAVY_PORT, method: req.method, path: req.url, headers: hdr }, r => { res.writeHead(r.statusCode, r.headers); r.pipe(res); r.on('end', () => { inflight--; }); });
+    up.on('error', () => { try { res.writeHead(503, { 'content-type': 'application/json' }); res.end('{"error":"Busy - try again in a moment."}'); } catch (e) {} inflight--; });
+    up.setTimeout(120000, () => up.destroy());
+    req.pipe(up); return;
+  }
   try {
     const proto = String(req.headers['x-forwarded-proto'] || 'http').split(',')[0];
     const host = req.headers['x-forwarded-host'] || req.headers.host || `127.0.0.1:${PORT}`;
@@ -155,7 +170,9 @@ const stop = async () => {
   console.log('stopping: letting work in flight finish');
   // Our own server keeps answering the bot's self-calls until the work is done; only then closes.
   const t0 = Date.now();
-  while ((cronBusy() || inflight > 0 || pending.size > 0) && Date.now() - t0 < 85000) await new Promise(r => setTimeout(r, 250));
+  // The bot gets up to 45s to finish a DM run; long background jobs are left to pick up next start.
+  const lim = ROLE === 'jobs' ? 45000 : 15000;
+  while ((cronBusy() || inflight > 0 || (pending.size > 0 && Date.now() - t0 < 10000)) && Date.now() - t0 < lim) await new Promise(r => setTimeout(r, 250));
   server.close(); process.exit(0);
 };
 // Under the cluster, the main process says when to stop (in order); a stray signal is ignored.
