@@ -1,5 +1,5 @@
 import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS, touchSeen, userStats, sessionState } from '../../lib/auth.js';
-import { swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick, fcSchedule, whyNotFull, TAG_DEFS, scanProbe, boostProbe, wiltProbe, multProbe, untouchProbe, keepProbe, dennisProbe, tzProbe, cfbPassProbe, mlbPassProbe } from './swaps.js';
+import { swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick, fcSchedule, whyNotFull, TAG_DEFS, scanProbe, boostProbe, wiltProbe, multProbe, untouchProbe, keepProbe, dennisProbe, tzProbe, cfbPassProbe } from './swaps.js';
 import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, capNow } from '../../lib/dbwatch.js';
 import { packAllowed } from './kv.js';
 
@@ -445,6 +445,44 @@ async function predProbe(env) {
   try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 86400 }); } catch (e) {}
 }
 
+
+/* One-off (2026-11-13): how Real serves the Auctions "Bulk rating" view, read
+   with account 2. Keeps only shapes, statuses and a few listing fields. */
+async function bulkProbe(env) {
+  const K = 'diag_bulk_1113';
+  try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1 }), { expirationTtl: 86400 }); } catch (e) { return; }
+  const tok = env.RS_MARKET_TOKEN, out = { at: Date.now(), tries: [] };
+  const base = 'cohort=all&offset=0&limit=8&prestige=all&rarity=all&beforeEndsAt=' + encodeURIComponent(new Date(Date.now() + 30 * 86400000).toISOString());
+  const brief = r => { const c = r.card || r; const e = c.entity || c.player || c.primaryPlayer || {};
+    return { id: r.id, type: r.listingType, rar: c.rarity || c.rarityLabel || (c.boostInfo || {}).rarityLabel, rating: c.boostValue ?? c.rating ?? null, name: e.lastName || e.name || c.label || null,
+      minBid: r.minimumBid ?? r.minBid ?? null, cur: r.currentBid ?? r.highestBid ?? null, buy: r.buyNowPrice ?? r.buyNow ?? null, ends: r.endsAt, bulk: Object.keys(r).filter(k => /bulk/i.test(k)).map(k => k + '=' + JSON.stringify(r[k]).slice(0, 40)) }; };
+  const urls = [
+    ['card', `cardmarketplacelistings?${base}&listingType=card`],
+    ['auction', `cardmarketplacelistings?${base}&listingType=auction`],
+    ['bulk', `cardmarketplacelistings?${base}&listingType=bulk`],
+    ['sort bulkRating', `cardmarketplacelistings?${base}&listingType=card&sort=bulkRating`],
+    ['sortBy bulkRating', `cardmarketplacelistings?${base}&listingType=card&sortBy=bulkRating`],
+    ['orderBy bulkRating', `cardmarketplacelistings?${base}&listingType=card&orderBy=bulkRating`],
+    ['sort bulk', `cardmarketplacelistings?${base}&listingType=card&sort=bulk`],
+    ['type bulkrating', `cardmarketplacelistings?${base}&listingType=card&type=bulkrating`],
+    ['view bulk', `cardmarketplacelistings?${base}&listingType=card&view=bulk`],
+    ['auctions', `auctions?${base}`], ['cardauctions', `cardauctions?${base}`], ['marketplace', `marketplace?${base}`],
+    ['bulkrating', `bulkrating?${base}`], ['cardmarketplacelistings/bulk', `cardmarketplacelistings/bulk?${base}`],
+    ['cardmarketplace', `cardmarketplace?${base}`], ['bulkratinglistings', `bulkratinglistings?${base}`]];
+  try {
+    for (const [lab, u] of urls) {
+      try { const res = await fetch('https://web.realapp.com/' + u, { headers: rsHeaders(tok) }); const t = await res.text(); let d = null; try { d = JSON.parse(t); } catch (e) {}
+        const rows = d ? rowsOf(d) : [];
+        out.tries.push({ lab, st: res.status, top: d && typeof d === 'object' && !Array.isArray(d) ? Object.keys(d).slice(0, 15) : null, n: rows.length,
+          keys: rows[0] ? Object.keys(rows[0]).slice(0, 40) : null, cardKeys: rows[0] && rows[0].card ? Object.keys(rows[0].card).slice(0, 40) : null, first: rows.slice(0, 4).map(brief), raw: rows.length ? undefined : t.slice(0, 200) }); }
+      catch (e) { out.tries.push({ lab, err: String(e.message || e).slice(0, 100) }); }
+      await sleep(1500);
+    }
+    out.done = 1;
+  } catch (e) { out.err = String(e.message || e).slice(0, 150); }
+  try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 86400 }); } catch (e) {}
+}
+
 async function rsGet(url, auth) {
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(url, { headers: rsHeaders(auth) });
@@ -656,7 +694,7 @@ const MARKET_SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'ncaam', 'nhl', 'soccer', '
    just for this, so throttling or a ban lands there and never on the key the
    rest of the board runs on. Without that secret the pull does nothing - it
    never falls back to the main key. */
-const MARKET_ON = true;           // back on 2026-11-02 after Cloudflare replied; held to the daily job budget (lib/dbwatch.js)
+const MARKET_ON = false;          // off 2026-11-13: account 2 is for bulk-rating auctions only now (Dennis)           // back on 2026-11-02 after Cloudflare replied; held to the daily job budget (lib/dbwatch.js)
 /* Manual only (Dennis, 2026-11-02): nothing is pulled on its own. A season
    runs only when it's queued (the queue button on /market, market=front) and
    a single player only through "Pull this player now" (market=pullplayer).
@@ -7886,10 +7924,17 @@ async function glSnapBuild(env, db, sp, se) {
       FROM gamelog WHERE sport = ? AND season = ? GROUP BY playerId, sport, season`).bind(sp, se).all();
   return (r && r.results) || [];
 }
+/* Each season's player table kept in memory (2026-11-13): every "by player"
+   OTD search read and parsed every season's saved table again - dozens of
+   big tables per search - which is what kept running the server out of
+   memory. Now parsed once and re-read at most once a minute. */
+const GLSNAP_MEM = new Map();
 async function glSnap(env, db, sp, se, waitUntil) {
   const job = `${sp}:${se}`, KEY = 'glsnap_v1_' + job, LOCK = 'glsnap_lock_' + job;
   let c = null;
-  try { c = JSON.parse((await env.RATEBOARD_KV.get(KEY)) || 'null'); } catch (e) {}
+  const mem = GLSNAP_MEM.get(job);
+  if (mem && Date.now() - mem.read < 60000) c = mem.c;
+  else { try { c = JSON.parse((await env.RATEBOARD_KV.get(KEY)) || 'null'); } catch (e) {} if (c) GLSNAP_MEM.set(job, { c, read: Date.now() }); }
   const save = async () => {
     const rows = await glSnapBuild(env, db, sp, se);
     try { await env.RATEBOARD_KV.put(KEY, JSON.stringify({ at: Date.now(), rows })); } catch (e) {}
@@ -8108,7 +8153,8 @@ async function marketBusy(env) {
    perf_all_done_v1 is set and the account goes back to its usual work. */
 async function perfOnly(env) { try { return !(await env.RATEBOARD_KV.get('perf_all_done_v1')); } catch (e) { return true; } }
 async function perfMarketTick(ctx) {
-  const env0 = ctx.env, alt = env0.RS_MARKET_TOKEN;
+  // On the board account since 2026-11-13 (Dennis): account 2 does bulk-rating auctions only.
+  const env0 = ctx.env, alt = env0.RS_AUTH_TOKEN;
   if (!alt || !(await perfOnly(env0)) || await jobOverBudget(env0)) return;
   const env = new Proxy(env0, { get: (t, k) => k === 'RS_AUTH_TOKEN' ? alt : t[k] });
   const origin = new URL(ctx.request.url).origin;
@@ -8121,7 +8167,8 @@ async function perfMarketTick(ctx) {
   }
 }
 async function gapPush(ctx) {
-  const env0 = ctx.env, alt = env0.RS_MARKET_TOKEN;
+  // Off 2026-11-13: it was account 2's extra lane; the board account does the game logs itself.
+  const env0 = ctx.env, alt = null;
   if (!alt || await marketBusy(env0) || await perfOnly(env0)) return;   // on performances only for now
   const kvj = async k => { try { return JSON.parse((await env0.RATEBOARD_KV.get(k)) || 'null'); } catch (e) { return null; } };
   let job = null, phase = null;
@@ -8399,7 +8446,7 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), mlbPass: await kvj('diag_mlbpass_1112'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
+    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkProbe: await kvj('diag_bulk_1113'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
       const o = {}; for (const r of rows) { const k = new Date(Number(r.at)).toISOString().slice(11, 14) + '00 ' + r.kind + ' | ' + String(r.msg || '').replace(/@[\w.\-]+/g, '@x').replace(/^[\w.\-]+:/, 'u:').replace(/(dropped|send|late)\s.*$/, '$1').slice(0, 140); o[k] = (o[k] || 0) + 1; } return o; } catch (e) { return String(e.message); } })(), dmTiming: await (async () => {
       /* How late swap DMs go out (2026-11-13): per swap hour in the last 12h,
          minutes from the hour to each side's warning and swap DM (counts only). */
@@ -8447,7 +8494,7 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil(gapPush(ctx).catch(() => {}));
   }
   // Read-only collector progress, no sign-in: counts and dates only, nothing from the market or any account.
-  if (url.searchParams.get('collector') === 'health') { ctx.waitUntil(mlbPassProbe(env, env.RATEBOARD_DB).catch(() => {})); return collectorHealth(env, url); }
+  if (url.searchParams.get('collector') === 'health') { ctx.waitUntil(bulkProbe(env).catch(() => {})); return collectorHealth(env, url); }
   const mk = url.searchParams.get('market');
   if (MARKET_MEMBER.includes(mk)) {
     const a = await marketWho(env, request);

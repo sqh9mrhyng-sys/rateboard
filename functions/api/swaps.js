@@ -264,7 +264,8 @@ async function perfOnlyRefresh(env) {
   try { PERF_ONLY = !(await env.RATEBOARD_KV.get('perf_all_done_v1')); PERF_ONLY_AT = Date.now(); } catch (e) {}
   return PERF_ONLY;
 }
-const marketTok = env => PERF_ONLY ? null : env.RS_MARKET_TOKEN;
+// Account 2 no longer helps with scans or lookups (2026-11-13, Dennis): bulk-rating auctions only.
+const marketTok = env => null;
 function scanToks(env) {
   // The market account first: it sits idle unless a market pull is queued,
   // while the board account is busy with the game-data collectors all day.

@@ -88,7 +88,7 @@ async function route(ctx) {
 /* Polite restarts (2026-11-12): updates can land any minute. On a restart the
    server stops taking new requests, lets every request and background job in
    flight finish (a DM tick included), then exits - nothing is cut off midway. */
-let inflight = 0;
+let inflight = 0, heavyWaiting = 0;
 const pending = new Set();
 async function handle(request) {
   const waits = [];
@@ -113,7 +113,12 @@ const server = http.createServer(async (req, res) => {
       load: os.loadavg().map(x => +x.toFixed(2)), events: ev }, null, 1));
     inflight--; return;
   }
+  /* At most 4 big reads waiting per web process (2026-11-13): a pile-up of
+     them is what filled the droplet's memory. More get "busy, try again". */
+  if (ROLE === 'web' && isHeavy(req.url) && heavyWaiting >= 4) { res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '5' }); res.end('{"error":"Busy - try again in a few seconds."}'); inflight--; return; }
   if (ROLE === 'web' && isHeavy(req.url)) {
+    heavyWaiting++; let doneH = false; const endH = () => { if (!doneH) { doneH = true; heavyWaiting--; } };
+    res.on('close', endH);
     // Passed through as-is; the heavy process answers with this request's own host.
     const hdr = { ...req.headers, 'x-forwarded-host': req.headers['x-forwarded-host'] || req.headers.host || '' };
     const up = http.request({ host: '127.0.0.1', port: HEAVY_PORT, method: req.method, path: req.url, headers: hdr }, r => { res.writeHead(r.statusCode, r.headers); r.pipe(res); r.on('end', () => { inflight--; }); });
@@ -130,13 +135,18 @@ const server = http.createServer(async (req, res) => {
     headers.set('cf-connecting-ip', ip);
     const hasBody = !['GET', 'HEAD'].includes(req.method);
     const request = new Request(`${proto}://${host}${req.url}`, { method: req.method, headers, body: hasBody ? req : undefined, duplex: hasBody ? 'half' : undefined });
+    const t0r = Date.now(), m0 = process.memoryUsage().rss;
     const out = await handle(request);
+    /* Slow answers are logged by path (and op), never with member details (2026-11-13), to find what loads the server. */
+    { const ms = Date.now() - t0r, grew = Math.round((process.memoryUsage().rss - m0) / 1048576); if (ms > 3000 || grew > 200) { const u = new URL(request.url), op = u.searchParams.get('op') || [...u.searchParams.keys()].slice(0, 2).join(',');
+      try { fs.appendFileSync(path.join(DATA, 'server-events.log'), `${new Date().toISOString()} ${ROLE} slow ${ms}ms +${grew}MB ${req.method} ${u.pathname}${op ? ' ' + op : ''} ${[...u.searchParams.entries()].filter(([k]) => /^(mode|format|seasons|sport|season|limit|gamelog|plays|market|sort)$/.test(k)).map(([k, v]) => k + '=' + String(v).slice(0, 40)).join('&')}\n`); } catch (e) {} } }
     const h = {}; out.headers.forEach((v, k) => { if (k === 'set-cookie') return; h[k] = v; });
     const cookies = out.headers.getSetCookie ? out.headers.getSetCookie() : [];
     if (cookies.length) h['set-cookie'] = cookies;
     res.writeHead(out.status, h);
     if (out.body && req.method !== 'HEAD') { for await (const chunk of out.body) res.write(chunk); }
     res.end();
+    if (ROLE === 'heavy' && process.memoryUsage().rss > 1500 * 1048576 && inflight <= 1) { try { fs.appendFileSync(path.join(DATA, 'server-events.log'), `${new Date().toISOString()} heavy pid ${process.pid}: ${Math.round(process.memoryUsage().rss / 1048576)}MB after a request - restarting itself\n`); } catch (e) {} setTimeout(() => process.exit(0), 50); }
   } catch (e) {
     console.error('request failed', e);
     try { res.writeHead(500, { 'content-type': 'text/plain' }); res.end('Server error'); } catch (x) {}
@@ -148,8 +158,9 @@ server.listen(PORT, '127.0.0.1', () => console.log(`Rax Academy (${ROLE}) on htt
 if (ROLE === 'heavy') setInterval(() => { const mb = process.memoryUsage().rss / 1048576;
   if (mb > 2000 || (mb > 1500 && inflight === 0)) { try { fs.appendFileSync(path.join(DATA, 'server-events.log'), `${new Date().toISOString()} heavy pid ${process.pid}: ${Math.round(mb)}MB - restarting itself\n`); } catch (e) {} process.exit(0); } }, 15000).unref();
 // Every 5 minutes each process notes its memory and load (2026-11-13), so a crash leaves a trail.
-setInterval(async () => { try { const os = await import('node:os');
-  fs.appendFileSync(path.join(DATA, 'server-events.log'), `${new Date().toISOString()} ${ROLE} pid ${process.pid}: rss ${Math.round(process.memoryUsage().rss / 1048576)}MB, free ${Math.round(os.freemem() / 1048576)}MB, load ${os.loadavg()[0].toFixed(2)}, in flight ${inflight}\n`); } catch (e) {} }, 300000).unref();
+let cpu0 = process.cpuUsage(), cpuT = Date.now();
+setInterval(async () => { try { const os = await import('node:os'); const c = process.cpuUsage(cpu0), pct = Math.round((c.user + c.system) / 1000 / (Date.now() - cpuT) * 100); cpu0 = process.cpuUsage(); cpuT = Date.now();
+  fs.appendFileSync(path.join(DATA, 'server-events.log'), `${new Date().toISOString()} ${ROLE} pid ${process.pid}: cpu ${pct}%, rss ${Math.round(process.memoryUsage().rss / 1048576)}MB, free ${Math.round(os.freemem() / 1048576)}MB, load ${os.loadavg()[0].toFixed(2)}, in flight ${inflight}\n`); } catch (e) {} }, 120000).unref();
 
 /* The old cron Worker, every minute: it pokes the collectors on /api/rax
    (which also starts the swap DM and scan ticks). Its address is pointed here. */
