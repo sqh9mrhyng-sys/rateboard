@@ -7601,3 +7601,61 @@ export async function cfbPassProbe(env, db) {
   } catch (e) { out.err = String(e.message || e).slice(0, 150); }
   try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 86400 }); } catch (e) {}
 }
+
+/* One-off (2026-11-12 evening): what went wrong today - warnings missed per
+   hour, 160s/swaps called off and why, paused members matched, the bot's
+   failures, and the liamthomson/cookiedagoat Suzuki 160. No usernames out. */
+export async function dayProbe(env, db) {
+  const K = 'diag_day_1112';
+  try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1, at: Date.now() }), { expirationTtl: 86400 }); } catch (e) { return; }
+  const out = { at: Date.now() }, now = Date.now(), from = now - 26 * 3600000;
+  const strip = t => String(t || '').replace(/@[\w.\-]+/g, '@x').replace(/^[\w.\-]+:/, 'u:').slice(0, 140);
+  const hr = ms => new Date(Number(ms) - 9 * 3600000).toISOString().slice(5, 16);
+  try {
+    await matchCols(db);
+    const ms = ((await db.prepare('SELECT a, b, status, note, dueAt, createdAt, warnA, warnB FROM swap_matches WHERE dueAt > ? AND dueAt < ?').bind(from, now + 20 * 3600000).all()).results) || [];
+    const H = {};
+    for (const m of ms) { const h = hr(m.dueAt), x = H[h] || (H[h] = { n: 0, st: {}, noWarn: 0, halfWarn: 0 });
+      x.n++; x.st[m.status] = (x.st[m.status] || 0) + 1;
+      if (Number(m.dueAt) < now && !['cancelled', 'cleared'].includes(m.status)) { if (!m.warnA && !m.warnB) x.noWarn++; else if (!m.warnA || !m.warnB) x.halfWarn++; } }
+    out.swapsByHour = H;
+    const notes = {}; for (const m of ms) if (m.status === 'cancelled') { const k = strip(m.note).replace(/\d+/g, '#'); notes[k] = (notes[k] || 0) + 1; }
+    out.cancelNotes = notes;
+    const t = ((await db.prepare('SELECT seller, buyer, pass, status, note, dueAt, warnS, warnB, kind, createdAt FROM swap_160 WHERE dueAt > ? AND dueAt < ?').bind(from, now + 20 * 3600000).all()).results) || [];
+    const T = {}; for (const r of t) { const h = hr(r.dueAt), x = T[h] || (T[h] = { n: 0, st: {}, noWarn: 0 }); x.n++; x.st[r.status] = (x.st[r.status] || 0) + 1;
+      if (Number(r.dueAt) < now && r.status !== 'cancelled' && (!r.warnS || !r.warnB)) x.noWarn++; }
+    out.s160ByHour = T;
+    const n2 = {}; for (const r of t) if (r.status === 'cancelled') { const k = strip(r.note).replace(/\d+/g, '#'); n2[k] = (n2[k] || 0) + 1; }
+    out.cancel160Notes = n2;
+    // Paused members still matched: inactive now, with a swap made after they last saved.
+    const us = ((await db.prepare('SELECT key, active, updatedAt, b160, s160, only160 FROM swap_users').all()).results) || [];
+    const U = new Map(us.map(u => [u.key, u]));
+    const pm = []; for (const m of ms) for (const k of [m.a, m.b]) { const u = U.get(k); if (u && !u.active && Number(m.createdAt) > Number(u.updatedAt || 0) && m.status !== 'cancelled') pm.push({ made: hr(m.createdAt), due: hr(m.dueAt), saved: hr(u.updatedAt), st: m.status }); }
+    out.pausedMatched = { n: pm.length, ex: pm.slice(0, 15) };
+    const p1 = []; for (const r of t) for (const k of [r.seller, r.buyer]) { const u = U.get(k); if (u && !u.active && Number(r.createdAt) > Number(u.updatedAt || 0) && r.status !== 'cancelled') p1.push({ made: hr(r.createdAt), due: hr(r.dueAt), saved: hr(u.updatedAt), st: r.status, side: k === r.seller ? 'S' : 'B', s160: u.s160, b160: u.b160, only160: u.only160 }); }
+    out.paused160 = { n: p1.length, ex: p1.slice(0, 15) };
+    // 160s whose seller no longer owns the pass.
+    const own = new Map(); let notOwned = 0; const exNO = [];
+    for (const r of t) { if (r.kind === 'niche' || r.status === 'cancelled') continue;
+      if (!own.has(r.seller)) { const m = await loadMember(db, r.seller).catch(() => null); own.set(r.seller, m ? new Set((m.passes || []).map(p => p.key)) : null); }
+      const o = own.get(r.seller); if (o && !o.has(r.pass)) { notOwned++; if (exNO.length < 10) exNO.push({ pass: r.pass, due: hr(r.dueAt), st: r.status }); } }
+    out.sellerMissingPass = { n: notOwned, ex: exNO };
+    // The Suzuki 160.
+    const ks = us.filter(u => /^(liamthomson|cookiedagoat)$/i.test(u.key)).map(u => u.key);
+    const sz = ((await db.prepare(`SELECT * FROM swap_160 WHERE (seller IN (${ks.map(() => '?').join(',') || "''"}) AND buyer IN (${ks.map(() => '?').join(',') || "''"})) AND dueAt > ?`).bind(...ks, ...ks, from).all()).results) || [];
+    out.suzuki = [];
+    for (const r of sz) { const S = await loadMember(db, r.seller).catch(() => null), B = await loadMember(db, r.buyer).catch(() => null);
+      out.suzuki.push({ id: r.id, pass: r.pass, kind: r.kind || null, st: r.status, note: strip(r.note), due: hr(r.dueAt), made: hr(r.createdAt), warnS: !!r.warnS, warnB: !!r.warnB,
+        sellerIsLiam: /liam/i.test(r.seller), sellerOwns: S ? (S.passes || []).some(p => p.key === r.pass) : null, sellerName: S ? playerName(S, r.pass) : null, buyerName: B ? playerName(B, r.pass) : null,
+        sellerScanned: S ? hr(S.scannedAt || 0) : null, sellerHeld: S ? (S.wants || []).includes(r.pass) || (S.keep || []).includes(r.pass) : null }); }
+    // Bot failures and the DM queues.
+    const bl = ((await db.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(from).all()).results) || [];
+    const BK = {}; for (const r of bl) { const k = r.kind + ' | ' + strip(r.msg).replace(/\d+/g, '#').slice(0, 90); BK[k] = (BK[k] || 0) + 1; }
+    out.botFails = BK;
+    out.stats = ((await db.prepare('SELECT day, k, n FROM bot_stats WHERE day >= ?').bind(new Date(from).toISOString().slice(0, 10)).all()).results) || [];
+    out.retry = await db.prepare('SELECT COUNT(*) AS n, MIN(at) AS oldest FROM dm_retry').first();
+    out.users = { all: us.length, active: us.filter(u => u.active).length };
+    out.done = 1;
+  } catch (e) { out.err = String(e.message || e).slice(0, 200); }
+  try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 86400 }); } catch (e) {}
+}
