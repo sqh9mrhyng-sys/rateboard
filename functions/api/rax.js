@@ -1,5 +1,5 @@
 import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS, touchSeen, userStats, sessionState } from '../../lib/auth.js';
-import { swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick, fcSchedule, whyNotFull, TAG_DEFS, scanProbe, boostProbe, wiltProbe, multProbe, untouchProbe, keepProbe, dennisProbe, tzProbe, cfbPassProbe, dayProbe } from './swaps.js';
+import { swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick, fcSchedule, whyNotFull, TAG_DEFS, scanProbe, boostProbe, wiltProbe, multProbe, untouchProbe, keepProbe, dennisProbe, tzProbe, cfbPassProbe } from './swaps.js';
 import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, capNow } from '../../lib/dbwatch.js';
 import { packAllowed } from './kv.js';
 
@@ -408,6 +408,43 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // RS throttles hard when pages are pulled back to back, so each page is spaced
 // out and a 429 is waited on rather than thrown straight at the caller.
+
+/* One-off (2026-11-12): where Real keeps its prediction markets. Reads a few
+   recent/upcoming games and some likely list endpoints with the game-data
+   token and keeps only key paths that look like markets/odds/predictions. */
+async function predProbe(env) {
+  const K = 'diag_pred_1112';
+  try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1 }), { expirationTtl: 86400 }); } catch (e) { return; }
+  const auth = env.RS_AUTH_TOKEN, out = { at: Date.now(), games: [], lists: [] };
+  const RX = /predict|market|odds|prob|wager|pick|forecast|line|spread|moneyline|price/i;
+  const walk = (o, path, acc, d) => { if (!o || typeof o !== 'object' || d > 5 || acc.length > 60) return;
+    for (const [k, v] of Object.entries(o)) { const p = path + '.' + k;
+      if (RX.test(k)) acc.push([p, typeof v === 'object' ? JSON.stringify(v).slice(0, 300) : String(v).slice(0, 80)]);
+      if (v && typeof v === 'object') walk(Array.isArray(v) ? v.slice(0, 2) : v, p, acc, d + 1); } };
+  try {
+    for (const sp of ['nba', 'nhl', 'nfl', 'ncaaf']) {
+      const r = await env.RATEBOARD_DB.prepare('SELECT MAX(gameId) AS g FROM gamelog WHERE sport=?').bind(sp).first();
+      const g0 = Number(r && r.g) || 0; if (!g0) continue;
+      for (const gid of [g0, g0 + 1, g0 + 3, g0 + 8]) {
+        try { const d = await rsGet(`https://web.realapp.com/games/${gid}/sport/${sp}`, auth); const acc = []; walk(d, '', acc, 0);
+          out.games.push({ sp, gid, keys: Object.keys(d || {}).slice(0, 40), hits: acc, status: d && (d.status || (d.game && d.game.status)) || null }); }
+        catch (e) { out.games.push({ sp, gid, err: String(e.message || e).slice(0, 120) }); }
+        await sleep(1200);
+      }
+    }
+    const day = new Date(Date.now() - 9 * 3600000).toISOString().slice(0, 10);
+    for (const u of ['predictions', 'predictionmarkets', 'markets', 'predictions?sport=nba', 'markets?sport=nba', 'sports/nba/games', `games?sport=nba&date=${day}`, 'games/sport/nba', 'home', 'home/sport/nba', 'sport/nba/home', 'explore', 'picks', 'predictions/sport/nba']) {
+      try { const res = await fetch('https://web.realapp.com/' + u, { headers: rsHeaders(auth) }); const t = await res.text(); let d = null; try { d = JSON.parse(t); } catch (e) {}
+        const acc = []; if (d) walk(d, '', acc, 0);
+        out.lists.push({ u, st: res.status, keys: d && typeof d === 'object' ? Object.keys(d).slice(0, 30) : t.slice(0, 80), hits: acc.slice(0, 25) }); }
+      catch (e) { out.lists.push({ u, err: String(e.message || e).slice(0, 100) }); }
+      await sleep(1200);
+    }
+    out.done = 1;
+  } catch (e) { out.err = String(e.message || e).slice(0, 200); }
+  try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 86400 }); } catch (e) {}
+}
+
 async function rsGet(url, auth) {
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(url, { headers: rsHeaders(auth) });
@@ -8362,7 +8399,7 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), dayProbe: await kvj('diag_day_1112'), modSummary: await kvj('mod_summary_v1'), modError: await kvj('mod_error_v1'), rateRecheck: await kvj('rate_recheck_v1'), modLast: await env.RATEBOARD_KV.get('mod_last_v1'), boostProbe: await kvj('diag_boostprobe_1110d'), wilt: null, multProbe: await kvj('diag_multprobe_1111'), nicheCounts: await (async () => { const x = await kvj('swap_ownercounts_v4'); if (!x) return null; const v = Object.values(x.n || {}); return { at: new Date(x.at).toISOString().slice(11, 19), active: x.active, read: x.read, players: v.length, under20: v.filter(c => c < 20).length, max: Math.max(0, ...v) }; })(), dhFix: await (async () => { const x = await kvj('dhfix_v1'); return x ? { season: (DH_SEASONS[x.i] || ['done']).join(':'), pos: x.pos, of: x.ids ? x.ids.length : null, fixed: x.fixed, done: x.log, at: x.at } : null; })(), marketAccount: { busyWithMarket: await marketBusy(env), lastGapHelp: await kvj('gap_push_last') }, budget: await jobOverBudget(env) ? 'over' : 'ok' }, null, 1);
+    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), predProbe: await kvj('diag_pred_1112'), modSummary: await kvj('mod_summary_v1'), modError: await kvj('mod_error_v1'), rateRecheck: await kvj('rate_recheck_v1'), modLast: await env.RATEBOARD_KV.get('mod_last_v1'), boostProbe: await kvj('diag_boostprobe_1110d'), wilt: null, multProbe: await kvj('diag_multprobe_1111'), nicheCounts: await (async () => { const x = await kvj('swap_ownercounts_v4'); if (!x) return null; const v = Object.values(x.n || {}); return { at: new Date(x.at).toISOString().slice(11, 19), active: x.active, read: x.read, players: v.length, under20: v.filter(c => c < 20).length, max: Math.max(0, ...v) }; })(), dhFix: await (async () => { const x = await kvj('dhfix_v1'); return x ? { season: (DH_SEASONS[x.i] || ['done']).join(':'), pos: x.pos, of: x.ids ? x.ids.length : null, fixed: x.fixed, done: x.log, at: x.at } : null; })(), marketAccount: { busyWithMarket: await marketBusy(env), lastGapHelp: await kvj('gap_push_last') }, budget: await jobOverBudget(env) ? 'over' : 'ok' }, null, 1);
   const res = new Response(body, { headers: { 'content-type': 'application/json', 'cache-control': 'max-age=60' } });
   try { await caches.default.put(ck, res.clone()); } catch (e) {}
   return res;
@@ -8400,7 +8437,7 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil(gapPush(ctx).catch(() => {}));
   }
   // Read-only collector progress, no sign-in: counts and dates only, nothing from the market or any account.
-  if (url.searchParams.get('collector') === 'health') { ctx.waitUntil(dayProbe(env, env.RATEBOARD_DB).catch(() => {})); return collectorHealth(env, url); }
+  if (url.searchParams.get('collector') === 'health') { ctx.waitUntil(predProbe(env).catch(() => {})); return collectorHealth(env, url); }
   const mk = url.searchParams.get('market');
   if (MARKET_MEMBER.includes(mk)) {
     const a = await marketWho(env, request);

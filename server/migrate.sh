@@ -21,7 +21,8 @@ cd /opt/rax/data
 rm -f d1.sql
 CLOUDFLARE_API_TOKEN=$CF_API_TOKEN CLOUDFLARE_ACCOUNT_ID=$CF_ACCOUNT_ID npx -y wrangler@3 d1 export "$DB" --remote --output /opt/rax/data/d1.sql
 rm -f rateboard.db rateboard.db-wal rateboard.db-shm
-sqlite3 rateboard.db < d1.sql
+# One transaction, no syncing per row: row-by-row took hours (2026-11-12).
+(echo 'PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; BEGIN;'; cat d1.sql; echo 'COMMIT;') | sqlite3 rateboard.db
 sqlite3 rateboard.db 'PRAGMA journal_mode=WAL;' >/dev/null
 echo "Database rows per table:"; sqlite3 rateboard.db "SELECT name FROM sqlite_master WHERE type='table'" | while read t; do echo "  $t $(sqlite3 rateboard.db "SELECT COUNT(*) FROM \"$t\"")"; done
 rm -f kv.db kv.db-wal kv.db-shm
