@@ -72,9 +72,14 @@ async function route(ctx) {
   return fn({ ...ctx, params });
 }
 
+/* Polite restarts (2026-11-12): updates can land any minute. On a restart the
+   server stops taking new requests, lets every request and background job in
+   flight finish (a DM tick included), then exits - nothing is cut off midway. */
+let inflight = 0;
+const pending = new Set();
 async function handle(request) {
   const waits = [];
-  const waitUntil = p => { waits.push(Promise.resolve(p).catch(e => console.error('waitUntil:', e && e.message))); };
+  const waitUntil = p => { const q = Promise.resolve(p).catch(e => console.error('waitUntil:', e && e.message)).finally(() => pending.delete(q)); pending.add(q); waits.push(q); };
   const ctx = { request, env, waitUntil, data: {}, passThroughOnException() {} };
   ctx.next = async () => route(ctx);
   let res;
@@ -83,7 +88,8 @@ async function handle(request) {
   return res;
 }
 
-http.createServer(async (req, res) => {
+const server = http.createServer(async (req, res) => {
+  inflight++;
   try {
     const proto = String(req.headers['x-forwarded-proto'] || 'http').split(',')[0];
     const host = req.headers['x-forwarded-host'] || req.headers.host || `127.0.0.1:${PORT}`;
@@ -103,8 +109,9 @@ http.createServer(async (req, res) => {
   } catch (e) {
     console.error('request failed', e);
     try { res.writeHead(500, { 'content-type': 'text/plain' }); res.end('Server error'); } catch (x) {}
-  }
-}).listen(PORT, '127.0.0.1', () => console.log(`Rax Academy on http://127.0.0.1:${PORT}`));
+  } finally { inflight--; }
+});
+server.listen(PORT, '127.0.0.1', () => console.log(`Rax Academy on http://127.0.0.1:${PORT}`));
 
 /* The old cron Worker, every minute: it pokes the collectors on /api/rax
    (which also starts the swap DM and scan ticks). Its address is pointed here. */
@@ -114,11 +121,22 @@ globalThis.fetch = (u, init) => {
   if (typeof u === 'string' && u.startsWith(OLD)) u = `http://127.0.0.1:${PORT}` + u.slice(OLD.length);
   return realFetch(u, init);
 };
+let stopping = false, cronBusy = () => false;
 if (process.env.NO_CRON !== '1') {
   const cron = (await import(pathToFileURL(path.join(ROOT, 'worker', 'rateboard-cron.js')).href)).default;
   let busy = false;
-  const tick = async () => { if (busy) return; busy = true;
+  const tick = async () => { if (busy || stopping) return; busy = true;
     try { await cron.scheduled({ scheduledTime: Date.now(), cron: '* * * * *' }, env, { waitUntil() {} }); } catch (e) { console.error('cron', e && e.message); }
     busy = false; };
   setTimeout(() => { tick(); setInterval(tick, 60000); }, (60 - new Date().getSeconds()) * 1000);
+  cronBusy = () => busy;
 }
+const stop = async () => {
+  if (stopping) return; stopping = true;
+  console.log('stopping: letting work in flight finish');
+  // Our own server keeps answering the bot's self-calls until the work is done; only then closes.
+  const t0 = Date.now();
+  while ((cronBusy() || inflight > 0 || pending.size > 0) && Date.now() - t0 < 85000) await new Promise(r => setTimeout(r, 250));
+  server.close(); process.exit(0);
+};
+process.on('SIGTERM', stop); process.on('SIGINT', stop);

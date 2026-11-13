@@ -34,21 +34,21 @@ WorkingDirectory=/opt/rax/app
 EnvironmentFile=/opt/rax/.env
 ExecStart=/usr/bin/node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --max-old-space-size=2048 server/index.mjs
 Restart=always
-RestartSec=3
+RestartSec=1
+# A restart waits for DMs and jobs in flight to finish (server/index.mjs).
+TimeoutStopSec=95
 [Install]
 WantedBy=multi-user.target
 UNIT
 
-# Pulls new versions from GitHub every minute; restarts only at :11-:17, the
-# one stretch with no matching (:20), warnings (:30-:55) or swap DMs (:55-:10).
+# Pulls new versions from GitHub every minute and restarts right away - the
+# restart waits for anything in flight to finish (2026-11-12).
 # Root runs git in the rax-owned clone (2026-11-12: without this, update.sh
 # pulled but never restarted - git refused root with "dubious ownership").
 git config --system --add safe.directory /opt/rax/app
 cat > /opt/rax/update.sh <<'UPD'
 #!/bin/bash
 cd /opt/rax/app || exit 0
-M=$(date -u +%-M)
-if [ $M -lt 11 ] || [ $M -gt 17 ]; then exit 0; fi
 OLD=$(git rev-parse HEAD)
 sudo -u rax git pull -q --ff-only || exit 0
 NEW=$(git rev-parse HEAD)
