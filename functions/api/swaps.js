@@ -4870,6 +4870,9 @@ async function projBuild(env, db, sp) {
       else if (ij && /^(doubtful|questionable|day-to-day)/i.test(ij.status)) flags.push(ij.status);
       if (recent.length >= P.look && missed >= P.miss) { flags.push(`Missed ${missed} of his ${fc ? 'club' : 'team'}'s last ${recent.length} - only 30% of the games left counted`); avail *= 0.3; }
     }
+    // Football: sat out his team's latest game - left off the day's Top players (2026-11-13, Malachi Toney).
+    const ml = (sp === 'ncaaf' || sp === 'nfl') && teamDays.length && avail > 0 && !near(days, teamDays[teamDays.length - 1]) ? 1 : 0;
+    if (ml && !flags.some(f => /^Missed /.test(f))) flags.push(`Missed his team's last game (${teamDays[teamDays.length - 1]})`);
     avail = Math.min(1, avail);
     // 3. Each game left: his rate x the chance he plays x opponent x home/away.
     let add = 0;
@@ -4884,12 +4887,12 @@ async function projBuild(env, db, sp) {
     rows.push({ i: id, n: last.player || ('Player ' + id), t: last.team || '', p: last.position || '', gp, r: Math.round(rax), a: r1(rax / gp),
       pg: r1(rate * avail), l: rest.length, tg: total, nx: rest[0] && rest[0][1] ? rest[0][1] : null,
       pr: Math.round(rax + add), pc: Math.round(rax + rax / gp * (rest.length + waitN)), f: flags.length ? flags : undefined,   // pc = on pace: his rate a game played over the games left (2026-11-08: was rate x all the team's games, so one 54-rax game showed 648)
-      x: { rate: r2(rate), prior: r2(prior), ph: priorHow, av: r2(avail), since, ab, sk: skipNext ? 1 : 0, sn: skipN || undefined, w: r1(wsum), fc: fcx || undefined, wt: waitN || undefined } });
+      x: { rate: r2(rate), prior: r2(prior), ph: priorHow, av: r2(avail), since, ab, sk: skipNext ? 1 : 0, sn: skipN || undefined, ml: ml || undefined, w: r1(wsum), fc: fcx || undefined, wt: waitN || undefined } });
   }
   rows.sort((x, y) => y.pr - x.pr);
   // The latest game in the game data it was built from (shown at the top of the page).
   const gd = cur.reduce((m, x) => String(x.day || '') > m ? String(x.day) : m, '');
-  const out = { at: Date.now(), gd: gd || null, zfix: 1, sig: projSigOf(cur.length - zf, gd, cur.reduce((t, x) => t + Number(x.rax || 0), 0)), sport: sp, season: se, model: 2, lg: r2(lg), of, hf, rows: rows.slice(0, 4000), players: rows.length, schedPages: sched.pages, schedOf: sched.of };
+  const out = { at: Date.now(), gd: gd || null, zfix: 2, sig: projSigOf(cur.length - zf, gd, cur.reduce((t, x) => t + Number(x.rax || 0), 0)), sport: sp, season: se, model: 2, lg: r2(lg), of, hf, rows: rows.slice(0, 4000), players: rows.length, schedPages: sched.pages, schedOf: sched.of };
   try { await env.RATEBOARD_KV.put(`proj_v3_${sp}`, JSON.stringify(out), { expirationTtl: 3 * 86400 }); } catch (e) {}
   return out;
 }
@@ -5549,7 +5552,7 @@ async function handle({ request, env, waitUntil }) {
     const etd = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
     const days0 = [...Array(7)].map((_, i) => etd(new Date(Date.now() + i * 86400000)));
     const today = days0.includes(url.searchParams.get('day')) ? url.searchParams.get('day') : days0[0];
-    const K = 'boosttop_v3_' + today;   // v3: player links
+    const K = 'boosttop_v4_' + today;   // v4: no one who sat out his team's last game
     try { const c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (c && Date.now() - c.at < 20 * 60000) return json(c); } catch (e) {}
     const out = { at: Date.now(), day: today, sports: {} };
     for (const sp of ['nfl', 'ncaaf', 'nba', 'ncaam', 'nhl', 'soccer']) {
@@ -5558,7 +5561,7 @@ async function handle({ request, env, waitUntil }) {
       if (!pj || !sc || !sc.teams) continue;
       const of = pj.of || {}, hf = pj.hf || {}, list = [];
       for (const r of (pj.rows || [])) {
-        const x = r.x || {}; if (!x.ab || !(x.av > 0) || x.sk || x.sn) continue;
+        const x = r.x || {}; if (!x.ab || !(x.av > 0) || x.sk || x.sn || x.ml) continue;
         const g = (sc.teams[x.ab] || []).find(t => !t[2] && etd(new Date(t[0])) === today); if (!g) continue;
         const v = x.rate * x.av * (of[g[1]] || 1) * (hf[g[3]] || 1);
         list.push({ n: r.n, u: r.i ? playerUrl(`${sp}:${(PROJ_SEASON[sp] || [])[0]}:${r.i}`) : null, t: r.t, p: r.p, opp: g[1], h: g[3], at: g[0], v: Math.round(v * 10) / 10, a: r.a, gp: r.gp, inj: (r.f || []).find(f => /questionable|doubtful|day-to-day/i.test(f)) || undefined });
@@ -6884,7 +6887,7 @@ async function handle({ request, env, waitUntil }) {
     const pid = Number(url.searchParams.get('pid'));
     if (pid) { const row = m ? m.byId.get(pid) : null; return json({ row: row || null, ...(await projDetail(env, sp, row, c)) }); }
     const lockK = `proj_lock_v1_${sp}`;
-    let stale = !c || (acc.admin && url.searchParams.get('refresh') === '1') || (m && m.force > c.at) || Number(c.zfix || 0) < 1;   // zfix: blank-rax 0s counted (2026-11-12)
+    let stale = !c || (acc.admin && url.searchParams.get('refresh') === '1') || (m && m.force > c.at) || Number(c.zfix || 0) < 2;   // zfix: blank-rax 0s counted (2026-11-12); 2 = missed-last-game flag (2026-11-13)
     // Rebuilt when the game data has changed - and at most every 30 minutes while games are coming in.
     if (!stale && Date.now() - c.at > 30 * 60000) { try { stale = (await projSig(env, db, sp)) !== c.sig; } catch (e) { stale = Date.now() - c.at > 24 * 3600000; } }
     if (stale) {
@@ -7069,6 +7072,19 @@ async function handle({ request, env, waitUntil }) {
       }
       const avg = a => a.length ? a.reduce((t, x) => t + Number(x.rax || 0), 0) / a.length : null;
       const dayMs = Date.parse(day + 'T12:00:00Z');
+      /* Football: each team's latest game in the log, so a player who sat out
+         his team's last game is caught even with no injury report (2026-11-13:
+         Malachi Toney, Miami - out with an ankle, missed Notre Dame, CFB has no
+         injury list, and his last game was inside the 15 days). */
+      let teamLast = {};
+      if (sp === 'ncaaf' || sp === 'nfl') {
+        const tk = `boostteamlast_v1_${sp}`;
+        try { const c = JSON.parse((await env.RATEBOARD_KV.get(tk)) || 'null'); if (c && Date.now() - c.at < 30 * 60000) teamLast = c.m; else throw 0; }
+        catch (e) { try { const from = new Date(Date.now() - 21 * 86400000).toISOString().slice(0, 10);
+          const r = await db.prepare(`SELECT team, MAX(day) AS d FROM gamelog WHERE sport=? AND season=? AND day >= ? AND team IS NOT NULL GROUP BY team`).bind(sp, se, from).all();
+          teamLast = {}; for (const x of (r.results || [])) teamLast[x.team] = x.d;
+          await env.RATEBOARD_KV.put(tk, JSON.stringify({ at: Date.now(), m: teamLast }), { expirationTtl: 3600 }); } catch (e2) {} }
+      }
       rows = []; idle = [];
       for (const p of cards.players) {
         const gs = games.get(Number(p.id)) || [], o = old.get(Number(p.id));
@@ -7132,6 +7148,10 @@ async function handle({ request, env, waitUntil }) {
         }
         // Hasn't been playing: no game in the last 15 days of a season under way (football).
         if (sp !== 'ncaam' && cg && lastG && dayMs - Date.parse(lastG.day + 'T12:00:00Z') > 15 * 86400000) { skip = true; flags.push(`No game since ${lastG.day}`); }
+        // Football: sat out his team's last game (and wasn't traded) - likely hurt, no booster.
+        else if (!skip && !moved && (sp === 'ncaaf' || sp === 'nfl') && cg >= 2 && lastG && lastG.team && teamLast[lastG.team] && teamLast[lastG.team] > lastG.day && teamLast[lastG.team] < day) {
+          skip = true; flags.push(`Missed his team's last game (${teamLast[lastG.team]}) - likely hurt`);
+        }
         if (sp !== 'ncaam' && !cg && o) { k *= 0.6; flags.push('No games this season yet'); }
         // Basketball minutes: recent ones if there are any, else last season's.
         if (sp === 'ncaam' || sp === 'nba') {
