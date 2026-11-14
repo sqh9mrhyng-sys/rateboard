@@ -819,7 +819,7 @@ async function loadMod(){
       <input data-mdans="${r.id}" placeholder="Note to them (optional)" style="width:100%;margin:6px 0">
       <button class="sm" data-mdok="${r.id}">Approve - give Swaps back</button> <button class="sm" data-mdno="${r.id}">Decline</button></div>`).join('') : 'None waiting.';
   $('#md-list').innerHTML = j.rows.length ? j.rows.map(r => `<div style="padding:6px 0;border-bottom:1px solid var(--line)"><b>@${esc(r.rsUser)}</b> ${r.banned ? '<span class="pill off">banned</span>' : `<span class="note">${r.strikes}/3 strikes</span>`}
-      ${r.banned ? `<button class="sm" data-mdkey="${esc(r.key)}">Unban</button>` : ''}<div class="note">${ev(r)}</div></div>`).join('') : 'Nobody yet.';
+      ${r.banned ? `<button class="sm" data-mdkey="${esc(r.key)}">Unban</button>` : `<button class="sm" data-mdclear="${esc(r.key)}" data-mdname="${esc(r.rsUser)}">Clear strikes</button>`}<div class="note">${ev(r)}</div></div>`).join('') : 'Nobody yet.';
 }
 $('#md-load').addEventListener('click', loadMod);
 for(const [id, dry] of [['md-dry', true], ['md-run', false]]) $('#' + id).addEventListener('click', async () => {
@@ -830,7 +830,11 @@ for(const [id, dry] of [['md-dry', true], ['md-run', false]]) $('#' + id).addEve
   if(!dry) loadMod();
 });
 document.addEventListener('click', async e => {
-  const ok = e.target.closest('[data-mdok]'), no = e.target.closest('[data-mdno]'), k = e.target.closest('[data-mdkey]');
+  const ok = e.target.closest('[data-mdok]'), no = e.target.closest('[data-mdno]'), k = e.target.closest('[data-mdkey]'), cl = e.target.closest('[data-mdclear]');
+  // Clear a member's warnings and strikes (Dennis, 2026-11-13); reports from before now stop counting.
+  if(cl){ if(!confirm('Clear @' + cl.dataset.mdname + "'s warnings and strikes?")) return;
+    const j = await api('/api/swaps?op=modunban', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: cl.dataset.mdclear, approve: true, clear: true }) });
+    $('#md-msg').textContent = j.error || 'Strikes cleared' + (j.dm ? ' - they were messaged.' : ' - no chat with the bot; it\'s on their Notifications page.'); loadMod(); return; }
   if(!ok && !no && !k) return;
   const id = (ok || no) && (ok || no).dataset[ok ? 'mdok' : 'mdno'];
   if(k && !confirm('Give @' + k.dataset.mdkey + ' Swaps back and clear their record?')) return;

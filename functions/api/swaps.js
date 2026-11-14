@@ -6718,9 +6718,11 @@ async function handle({ request, env, waitUntil }) {
     if (r) await db.prepare('UPDATE unban_requests SET status=?, answer=? WHERE id=?').bind(yes ? 'approved' : 'declined', answer || null, r.id).run();
     const u = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(key).first();
     const d = u && u.hashId && await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=? AND channelId IS NOT NULL').bind(u.hashId).first();
-    if (d && b.notify !== false) await queueDm(db, d.channelId, [(yes
-      ? 'Your Swaps access is back and your strikes are cleared. Turn your swaps back on at raxacademy.app/swaps'
-      : 'Your unban request was declined.') + (answer ? '\n' + answer : '')], 'unban ' + key);
+    const note = (b.clear ? 'Your Swaps warnings and strikes have been cleared - you have a clean record.'
+      : yes ? 'Your Swaps access is back and your strikes are cleared. Turn your swaps back on at raxacademy.app/swaps'
+      : 'Your unban request was declined.') + (answer ? '\n' + answer : '');
+    if (b.notify !== false) await addNote(db, key, 'mod', note);
+    if (d && b.notify !== false) await queueDm(db, d.channelId, [note], 'unban ' + key);
     return json({ ok: true, dm: !!d });
   }
   if (op === 'blocks') {
