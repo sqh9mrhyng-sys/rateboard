@@ -1,3 +1,5 @@
+// One shared ET-day formatter: building one per call was slow and memory-hungry (2026-11-14).
+const ET_DAY_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
 /* ---- Swaps ---------------------------------------------------------------
    Pack swaps between board members. Each member says which player (any
    season) they want, which of their own player passes they will not give up,
@@ -3431,7 +3433,7 @@ export async function boostRefresh(env) {
   try { st = JSON.parse((await env.RATEBOARD_KV.get(BOOST_REFRESH_KEY)) || 'null'); } catch (e) {}
   if (st && st.run === run && st.done) return null;
   if (!st || st.run !== run) {
-    const days = [0, 1, 2, 3].map(i => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' })
+    const days = [0, 1, 2, 3].map(i => ET_DAY_FMT
       .format(new Date(Date.now() + i * 86400000)));
     const steps = [];
     for (const sp of Object.keys(BOOST_SEASON)) { steps.push(['inj', sp]); for (const d of days) steps.push(['sched', sp, d]); }
@@ -3871,7 +3873,7 @@ const GOLF_SEASON = [2026, 2025];
 async function golfEvents(env, force) {
   const key = 'boostgolf_v1';
   if (!force) { try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c && Date.now() - c.at < 2 * 3600000) return c.events; } catch (e) {} }
-  const etDate = iso => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
+  const etDate = iso => ET_DAY_FMT.format(new Date(iso));
   let d;
   try { const r = await fetch('https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard'); if (!r.ok) throw new Error(String(r.status)); d = await r.json(); }
   catch (e) { try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c) return c.events; } catch (e2) {} return []; }
@@ -3940,7 +3942,7 @@ async function golfRows(env, db, cards, day) {
   }
   return { rows, idle, sched: { games: 1, event: ev.name, course: course || null, field: ev.field.length } };
 }
-const etDayOf = iso => iso ? new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso)) : '';
+const etDayOf = iso => iso ? ET_DAY_FMT.format(new Date(iso)) : '';
 
 /* ---- FC boosts (2026-11-07) ------------------------------------------------
    Real scores every league game in the Premier League, Championship, La Liga,
@@ -4447,7 +4449,7 @@ const PROJ_P = {
    games themselves - a team whose opponent on a day is known can only be the
    other side of that day's game. */
 function projLearnAlias(sp, cur, sched) {
-  const etd = iso => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
+  const etd = iso => ET_DAY_FMT.format(new Date(iso));
   const byDay = new Map();
   for (const [ab, gl] of Object.entries(sched.teams || {})) for (const g of gl) { const d = etd(g[0]); (byDay.get(d) || byDay.set(d, []).get(d)).push([ab, g[1]]); }
   const map = {};
@@ -4797,7 +4799,7 @@ async function projBuild(env, db, sp) {
     const c = club.get(clubKey(x)) || club.set(clubKey(x), { lg: x.conference, all: new Set() }).get(clubKey(x));
     c.all.add(x.day);
   }
-  const etd = iso => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
+  const etd = iso => ET_DAY_FMT.format(new Date(iso));
   const near = (days, d0) => { const t = Date.parse(d0 + 'T12:00:00Z'); return days.some(d => Math.abs(Date.parse(d + 'T12:00:00Z') - t) <= 86400000); };
   const r1 = x => x == null ? null : Math.round(x * 10) / 10, r2 = x => x == null ? null : Math.round(x * 100) / 100;
   const rows = [];
@@ -5553,7 +5555,8 @@ async function handle({ request, env, waitUntil }) {
     /* Top players tab on Boosts (Dennis, 2026-11-12): every sport's top 100 by
        projected rax for a day (today up to 6 days ahead), plus all sports
        together. One build per day every 20 minutes, shared by everyone. */
-    const etd = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+    // One formatter, not one per call (2026-11-14: a new Intl formatter per row x per game was 25s and +2GB a build).
+    const ETF = ET_DAY_FMT, etd = d => ETF.format(d);
     const days0 = [...Array(7)].map((_, i) => etd(new Date(Date.now() + i * 86400000)));
     const today = days0.includes(url.searchParams.get('day')) ? url.searchParams.get('day') : days0[0];
     const K = 'boosttop_v5_' + today;   // v4: no one who sat out his team's last game
@@ -5563,10 +5566,12 @@ async function handle({ request, env, waitUntil }) {
       let pj = null, sc = null;
       try { [pj, sc] = await Promise.all([env.RATEBOARD_KV.get(`proj_v3_${sp}`), env.RATEBOARD_KV.get(`projsched_v2_${sp}`)]); pj = JSON.parse(pj || 'null'); sc = JSON.parse(sc || 'null'); } catch (e) {}
       if (!pj || !sc || !sc.teams) continue;
-      const of = pj.of || {}, hf = pj.hf || {}, list = [];
+      const of = pj.of || {}, hf = pj.hf || {}, list = [], todayG = new Map();
+      // Each team's game that day, worked out once per team.
+      for (const [ab, gs] of Object.entries(sc.teams)) { const g = (gs || []).find(t => !t[2] && t[0] && etd(new Date(t[0])) === today); if (g) todayG.set(ab, g); }
       for (const r of (pj.rows || [])) {
         const x = r.x || {}; if (!x.ab || !(x.av > 0) || x.sk || x.sn || x.ml) continue;
-        const g = (sc.teams[x.ab] || []).find(t => !t[2] && etd(new Date(t[0])) === today); if (!g) continue;
+        const g = todayG.get(x.ab); if (!g) continue;
         const v = x.rate * x.av * (of[g[1]] || 1) * (hf[g[3]] || 1);
         list.push({ n: r.n, u: r.i ? playerUrl(`${sp}:${(PROJ_SEASON[sp] || [])[0]}:${r.i}`) : null, t: r.t, p: r.p, opp: g[1], h: g[3], at: g[0], v: Math.round(v * 10) / 10, a: r.a, gp: r.gp, inj: (r.f || []).find(f => /questionable|doubtful|day-to-day/i.test(f)) || undefined });
       }
@@ -6934,7 +6939,7 @@ async function handle({ request, env, waitUntil }) {
       const mine = parse(u && u.passes, []).filter(p => p.sport === 'soccer' && p.kind !== 'team');
       const ids = [...new Set(mine.filter(p => Number(p.season) === FC_SEASON[0]).map(p => Number(p.id)).filter(Number.isFinite))];
       const idsM = [...new Set(mine.filter(p => Number(p.season) === FC_MLS_SEASON).map(p => Number(p.id)).filter(Number.isFinite))];
-      const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
+      const fmt = ET_DAY_FMT;
       const today = fmt.format(new Date());
       const { cur, old } = await fcGames(db, ids, '9999-12-31');
       const teamSets = ids.map(id => { const sd = fcSides((cur.get(id) || []).filter(fcPlayed), (old.get(id) || []).filter(x => String(x.conference || '').toUpperCase() !== 'MLS').filter(fcPlayed));
@@ -6967,7 +6972,7 @@ async function handle({ request, env, waitUntil }) {
     }
     // One team per player: this season's, else the CBB list's, else last season's.
     const teamOf = ids.map(id => { const t = cur.get(id) || (sp === 'ncaam' && CBB_TOP175[id] ? CBB_TOP175[id][1] : null) || old.get(id); return t ? boostAlias(sp, t) : null; }).filter(Boolean);
-    const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
+    const fmt = ET_DAY_FMT;
     const cand = [...Array(12).keys()].map(i => fmt.format(new Date(Date.now() + i * 86400000)));
     const scheds = await Promise.all(cand.map(d => boostSchedule(env, sp, d).catch(() => ({ error: 1 }))));
     const days = [];

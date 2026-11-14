@@ -3,6 +3,8 @@ import { swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick, 
 import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, capNow } from '../../lib/dbwatch.js';
 import { packAllowed } from './kv.js';
 
+// One shared ET-day formatter: building one per call was slow and memory-hungry (2026-11-14).
+const ET_DAY_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
 /* Adding a column that already exists just errors (and is ignored). Each
    ALTER is tried once per server instance, not on every request. */
 const ALTERED = new Set();
@@ -1264,7 +1266,7 @@ async function marketAgg(db, sport, season, nowIso, pids) {
    re-writes what was already collected and never picks up a game that is
    still being played, or whose rax Real hasn't posted yet. */
 const etYesterday = () => { const d = new Date(Date.now() - 86400000);
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d); };
+  return ET_DAY_FMT.format(d); };
 const nextDay = day => { const d = new Date(day + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); };
 async function sweepWindow(env, sport, season) {
   try { return JSON.parse((await env.RATEBOARD_KV.get(`gl_window_${sport}_${season}`)) || 'null'); } catch (e) { return null; }
@@ -7287,7 +7289,7 @@ async function handleGet({ request, env, waitUntil }) {
                  - their earnings weren't up yet - and stayed 0). Until then it
                  stays blank and is asked about again. */
               const lastListed = list.reduce((m, e) => e && e.day && String(e.day) > m ? String(e.day) : m, '');
-              const old4 = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.now() - 4 * 86400000));
+              const old4 = ET_DAY_FMT.format(new Date(Date.now() - 4 * 86400000));
               const zeroTo = (lastListed > old4 ? lastListed : old4).replace(/'/g, '');
               const winSql = (win && win.from ? ` AND day >= '${win.from}'` : '') + (win && win.to ? ` AND day <= '${win.to}'` : '') + ` AND day <= '${zeroTo}'`;
               const stmts = [db.prepare(
@@ -8218,7 +8220,7 @@ async function gapPush(ctx) {
    rax Real posted late. A game no earnings line ever shows up for (an unused
    sub) goes to 0 after 30 hours, like the sweep does. */
 const FC_GL_KEY = 'fc_glrefresh_v1';
-const fcEtDay = ms => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
+const fcEtDay = ms => ET_DAY_FMT.format(new Date(ms));
 export async function fcGameRefresh(env) {
   const db = env.RATEBOARD_DB, auth = env.RS_AUTH_TOKEN;
   if (!db || !auth) return null;
@@ -8420,9 +8422,9 @@ async function collectorHealth(env, url) {
       stuckOn: stuck && stuck.tag, stuckPasses: stuck && stuck.n, setAsideToday: stuck && stuck.skip ? Object.keys(stuck.skip).filter(k => stuck.skip[k] === new Date().toISOString().slice(0, 10)) : [] },
     scans: await (async () => { try {
       // Pass scans today (Eastern): counts, the line, and the last few failures with no usernames in them.
-      const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+      const day = ET_DAY_FMT.format(new Date());
       const st = ((await db.prepare("SELECT k, n FROM bot_stats WHERE day=? AND (k LIKE 'scan%' OR k LIKE 'rescan%')").bind(day).all()).results) || [];
-      const yday = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.now() - 86400000));
+      const yday = ET_DAY_FMT.format(new Date(Date.now() - 86400000));
       const dmsY = ((await db.prepare("SELECT k, n FROM bot_stats WHERE day=? AND k LIKE 'dm_%'").bind(yday).all()).results) || [];
       const q = await db.prepare('SELECT SUM(CASE WHEN startedAt IS NOT NULL THEN 1 ELSE 0 END) AS running, SUM(CASE WHEN startedAt IS NULL THEN 1 ELSE 0 END) AS waiting FROM scan_queue').first();
       const fails = ((await db.prepare("SELECT at, msg FROM bot_log WHERE kind IN ('scan','rescan','scan_bg') ORDER BY at DESC LIMIT 8").all()).results) || [];
@@ -8435,7 +8437,7 @@ async function collectorHealth(env, url) {
       // Same pass given (or received) twice on one swap day, among swaps still on.
       let dupes = null; try {
         const ms = ((await db.prepare("SELECT a, b, aGets, bGets, dueAt FROM swap_matches WHERE status IN ('pending','sending','warned','sent') AND dueAt > ?").bind(Date.now() - 30 * 3600000).all()).results) || [];
-        const sd = ms2 => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms2 - 7 * 3600000));
+        const sd = ms2 => ET_DAY_FMT.format(new Date(ms2 - 7 * 3600000));
         const g = new Map(), r = new Map(), bump = (m, k) => m.set(k, (m.get(k) || 0) + 1);
         for (const m of ms) { const d = sd(Number(m.dueAt)); bump(g, `${m.b}|${m.aGets}|${d}`); bump(g, `${m.a}|${m.bGets}|${d}`); bump(r, `${m.a}|${m.aGets}|${d}`); bump(r, `${m.b}|${m.bGets}|${d}`); }
         // Plus called-off swaps on the side that had been told to buy (they may have bought it).
@@ -8456,7 +8458,7 @@ async function collectorHealth(env, url) {
         let lineups = 0; for (const e of ((sc && sc.events) || [])) { const l = await kvj(`fclineup_v1_${e.id}`); if (l && l.out) lineups++; }
         return { gamelog: { queue: (g.q || []).length, mlsQueue: (g.q || []).filter(x => /@2025/.test(String(x))).length, mlsRaxFixed: g.mlsFixed || 0, playersToday: g.today || 0, playersAll: g.players || 0, rows: g.rows || 0, raxSet: g.raxSet || 0, lastRun: g.last ? new Date(g.last).toISOString() : null, fails: g.fails || 0, lastErr: g.lastErr || null },
           today: { day: d, games: sc ? sc.games : null, scheduleAt: sc ? new Date(sc.at).toISOString() : null, lineupsOut: lineups },
-          boosterLabels: await kvj('fc_booster_labels') }; } catch (e) { return { error: String(e.message || e).slice(0, 120) }; } })(), confirmRun: await (async () => { try { const d = new Date(Date.now() + 30 * 60000 - 7 * 3600000); const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d); return { day, ...(JSON.parse((await env.RATEBOARD_KV.get('confirm_run_' + day)) || 'null') || {}) }; } catch (e) { return null; } })(), matchLog: await (async () => { try {
+          boosterLabels: await kvj('fc_booster_labels') }; } catch (e) { return { error: String(e.message || e).slice(0, 120) }; } })(), confirmRun: await (async () => { try { const d = new Date(Date.now() + 30 * 60000 - 7 * 3600000); const day = ET_DAY_FMT.format(d); return { day, ...(JSON.parse((await env.RATEBOARD_KV.get('confirm_run_' + day)) || 'null') || {}) }; } catch (e) { return null; } })(), matchLog: await (async () => { try {
         const f = ((await db.prepare("SELECT at, kind, msg FROM bot_log WHERE kind IN ('matching','swap_tick','match') ORDER BY at DESC LIMIT 10").all()).results) || [];
         const runs = ((await db.prepare('SELECT hour, at FROM swap_runs ORDER BY hour DESC LIMIT 12').all()).results) || [];
         const st2 = ((await db.prepare("SELECT day, k, n FROM bot_stats WHERE k IN ('matches','match_runs','match_refresh') ORDER BY day DESC LIMIT 12").all()).results) || [];
