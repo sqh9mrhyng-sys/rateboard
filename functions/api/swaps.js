@@ -5559,6 +5559,10 @@ async function handle({ request, env, waitUntil }) {
       let pj = null, sc = null;
       try { [pj, sc] = await Promise.all([env.RATEBOARD_KV.get(`proj_v3_${sp}`), env.RATEBOARD_KV.get(`projsched_v2_${sp}`)]); pj = JSON.parse(pj || 'null'); sc = JSON.parse(sc || 'null'); } catch (e) {}
       if (!pj || !sc || !sc.teams) continue;
+      // Built before the missed-last-game flag: build it again in the background (shared lock with the Projections page).
+      if (Number(pj.zfix || 0) < 2) { const lk = `proj_lock_v1_${sp}`; let busy = false; try { busy = !!(await env.RATEBOARD_KV.get(lk)); } catch (e) {}
+        if (!busy) { try { await env.RATEBOARD_KV.put(lk, '1', { expirationTtl: 120 }); } catch (e) {} out.rebuilding = 1;
+          try { waitUntil(projBuild(env, db, sp).catch(() => {}).finally(() => env.RATEBOARD_KV.delete(lk).catch(() => {}))); } catch (e) {} } }
       const of = pj.of || {}, hf = pj.hf || {}, list = [];
       for (const r of (pj.rows || [])) {
         const x = r.x || {}; if (!x.ab || !(x.av > 0) || x.sk || x.sn || x.ml) continue;
@@ -5570,7 +5574,7 @@ async function handle({ request, env, waitUntil }) {
       if (list.length) out.sports[sp] = list.slice(0, 100);
     }
     out.all = Object.entries(out.sports).flatMap(([sp, l]) => l.map(x => ({ ...x, sp }))).sort((a, b) => b.v - a.v).slice(0, 100);
-    try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 3600 }); } catch (e) {}
+    if (!out.rebuilding) { try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 3600 }); } catch (e) {} }
     return json(out);
   }
   if (op === 'notifs') {
