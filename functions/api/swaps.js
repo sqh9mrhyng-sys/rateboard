@@ -4751,7 +4751,7 @@ async function projBuild(env, db, sp) {
      of them, plus 2 games not in the log yet, and was taken for a player who
      had missed his team's last 5 - projected 224 at 151 in 18 games). They
      count as games he played, at his rate, but not in his rate. */
-  const all = ((await db.prepare(`SELECT playerId, player, team, position, day, rax, min, opponent, homeAway${fc ? ', conference' : ''} FROM gamelog WHERE sport=? AND season=?
+  const all = ((await db.prepare(`SELECT playerId, player, team, position, day, rax, min, opponent, homeAway, (stats IS NULL) AS ns${fc ? ', conference' : ''} FROM gamelog WHERE sport=? AND season=?
       AND (seasonType IS NULL OR seasonType='regularseason')`).bind(sp, Number(se)).all()).results) || [];
   /* A blank rax on a game Real has already paid his teammates for is a 0, not
      a game still waiting (2026-11-12: a CFB DL with a 0 last game showed 8
@@ -4764,7 +4764,11 @@ async function projBuild(env, db, sp) {
   const pendBy = new Map();
   const pendFrom = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);   // older blanks are games Real never paid out on
   for (const x of all) if (x.rax == null && String(x.day) >= pendFrom) (pendBy.get(Number(x.playerId)) || pendBy.set(Number(x.playerId), []).get(Number(x.playerId))).push(x);
-  const played = x => !useMin || x.min == null || Number(x.min) > 0;
+  /* Football keeps no minutes: a game with no stats and no rax is a game he
+     sat out (2026-11-13: Malachi Toney's Notre Dame game - out hurt - read as
+     a 0-rax game played, so he wasn't seen missing it). */
+  const foot = sp === 'ncaaf' || sp === 'nfl';
+  const played = x => (!useMin || x.min == null || Number(x.min) > 0) && !(foot && Number(x.ns) === 1 && !(Number(x.rax) > 0));
   const alias = fc ? (c => c) : projLearnAlias(sp, cur, sched);
   // Last season, per game actually played.
   const old = new Map();
@@ -4892,7 +4896,7 @@ async function projBuild(env, db, sp) {
   rows.sort((x, y) => y.pr - x.pr);
   // The latest game in the game data it was built from (shown at the top of the page).
   const gd = cur.reduce((m, x) => String(x.day || '') > m ? String(x.day) : m, '');
-  const out = { at: Date.now(), gd: gd || null, zfix: 2, sig: projSigOf(cur.length - zf, gd, cur.reduce((t, x) => t + Number(x.rax || 0), 0)), sport: sp, season: se, model: 2, lg: r2(lg), of, hf, rows: rows.slice(0, 4000), players: rows.length, schedPages: sched.pages, schedOf: sched.of };
+  const out = { at: Date.now(), gd: gd || null, zfix: 3, sig: projSigOf(cur.length - zf, gd, cur.reduce((t, x) => t + Number(x.rax || 0), 0)), sport: sp, season: se, model: 2, lg: r2(lg), of, hf, rows: rows.slice(0, 4000), players: rows.length, schedPages: sched.pages, schedOf: sched.of };
   try { await env.RATEBOARD_KV.put(`proj_v3_${sp}`, JSON.stringify(out), { expirationTtl: 3 * 86400 }); } catch (e) {}
   return out;
 }
@@ -5560,7 +5564,7 @@ async function handle({ request, env, waitUntil }) {
       try { [pj, sc] = await Promise.all([env.RATEBOARD_KV.get(`proj_v3_${sp}`), env.RATEBOARD_KV.get(`projsched_v2_${sp}`)]); pj = JSON.parse(pj || 'null'); sc = JSON.parse(sc || 'null'); } catch (e) {}
       if (!pj || !sc || !sc.teams) continue;
       // Built before the missed-last-game flag: build it again in the background (shared lock with the Projections page).
-      if (Number(pj.zfix || 0) < 2) { const lk = `proj_lock_v1_${sp}`; let busy = false; try { busy = !!(await env.RATEBOARD_KV.get(lk)); } catch (e) {}
+      if (Number(pj.zfix || 0) < 3) { const lk = `proj_lock_v1_${sp}`; let busy = false; try { busy = !!(await env.RATEBOARD_KV.get(lk)); } catch (e) {}
         if (!busy) { try { await env.RATEBOARD_KV.put(lk, '1', { expirationTtl: 120 }); } catch (e) {} out.rebuilding = 1;
           try { waitUntil(projBuild(env, db, sp).catch(() => {}).finally(() => env.RATEBOARD_KV.delete(lk).catch(() => {}))); } catch (e) {} } }
       const of = pj.of || {}, hf = pj.hf || {}, list = [];
@@ -6891,7 +6895,7 @@ async function handle({ request, env, waitUntil }) {
     const pid = Number(url.searchParams.get('pid'));
     if (pid) { const row = m ? m.byId.get(pid) : null; return json({ row: row || null, ...(await projDetail(env, sp, row, c)) }); }
     const lockK = `proj_lock_v1_${sp}`;
-    let stale = !c || (acc.admin && url.searchParams.get('refresh') === '1') || (m && m.force > c.at) || Number(c.zfix || 0) < 2;   // zfix: blank-rax 0s counted (2026-11-12); 2 = missed-last-game flag (2026-11-13)
+    let stale = !c || (acc.admin && url.searchParams.get('refresh') === '1') || (m && m.force > c.at) || Number(c.zfix || 0) < 3;   // zfix: blank-rax 0s counted (2026-11-12); 2 = missed-last-game flag (2026-11-13)
     // Rebuilt when the game data has changed - and at most every 30 minutes while games are coming in.
     if (!stale && Date.now() - c.at > 30 * 60000) { try { stale = (await projSig(env, db, sp)) !== c.sig; } catch (e) { stale = Date.now() - c.at > 24 * 3600000; } }
     if (stale) {
@@ -7030,7 +7034,8 @@ async function handle({ request, env, waitUntil }) {
          no minutes and no stats at all where minutes aren't kept. */
       // Only where minutes are kept (NBA, CBB, FC): NHL, NFL and CFB store 0 minutes for every game (2026-11-11: that read as every game sat out, and their boosts went blank).
       const minSp = sp === 'nba' || sp === 'ncaam' || sp === 'soccer' || sp === 'wnba';
-      const sat = x => minSp && x.min != null && Number(x.min) <= 0;
+      const sat = x => (minSp && x.min != null && Number(x.min) <= 0)
+        || ((sp === 'ncaaf' || sp === 'nfl') && !x.stats && !(Number(x.rax) > 0));   // football: no stats, no rax = sat out (Toney, 2026-11-13)
       for (let i = 0; i < ids.length; i += 90) {
         const part = ids.slice(i, i + 90), ph = part.map(() => '?').join(',');
         try {
