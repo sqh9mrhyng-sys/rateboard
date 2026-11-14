@@ -57,6 +57,7 @@
   .lu-bad{background:color-mix(in srgb,var(--bad) 18%,transparent);border-color:var(--bad);color:#ff8a8d}
   .lu-mute{color:var(--mute)}
   .hidestart{margin:8px 0 2px}
+  .copybtn[hidden] + .copynote{display:none} .copynote{margin:0 0 8px;font-size:13px}
   .copybtn{margin:10px 0 4px;display:block;width:100%;padding:14px 16px!important;font-size:17px!important;font-weight:700;border-radius:12px;border-color:var(--accent)!important;color:var(--accent)}
   .simplebtn{margin:10px 0 4px;display:block;width:100%;padding:14px 16px!important;font-size:17px!important;font-weight:700;border-radius:12px}
   .simplebtn[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
@@ -257,6 +258,7 @@
       <div class="note" id="allhead"></div>
       <div class="cum" id="allcum" hidden></div>
       <button class="sm copybtn" id="allcopy" type="button" hidden>Copy boosts</button>
+      <div class="note copynote" data-for="allcopy">Copy boosts is for people that want to put all their boosts for a day into an album or DMs so they don't have to switch between site and Real 100 times.</div>
       <button class="sm hidestart" id="allhidestart" type="button" aria-pressed="false">Hide games that already started</button>
       <button class="sm simplebtn" id="allfullbtn" type="button" aria-pressed="false">View full layout</button>
       <button class="sm simplebtn boxlinkbtn" type="button" aria-pressed="false">Whole box opens the player: off</button>
@@ -267,6 +269,7 @@
     <section id="out" hidden>
       <div class="note" id="outhead"></div>
       <button class="sm copybtn" id="copybtn" type="button" hidden>Copy boosts</button>
+      <div class="note copynote" data-for="copybtn">Copy boosts is for people that want to put all their boosts for a day into an album or DMs so they don't have to switch between site and Real 100 times.</div>
       <button class="sm hidestart" id="hidestart" type="button" aria-pressed="false">Hide games that already started</button>
       <label class="bsort">Sort <select class="bsortsel"><option value="rec">Recommended</option><option value="rar">Booster rarity</option><option value="name">Name A-Z</option><option value="team">Team</option><option value="time">Game time</option><option value="proj">Projection</option><option value="rax">Avg rax</option></select></label>
       <button class="sm simplebtn" id="simplebtn" type="button" aria-pressed="false">View simple layout</button>
@@ -802,8 +805,7 @@ async function run(){
   const HEART = { legendary: '💜', epic: '❤️', rare: '🧡' }, RANK = { legendary: 0, epic: 1, rare: 2 };
   const rec = boosted.filter(r => !r.belowCut).map((r, i) => [r, i]).sort((a, b) => RANK[a[0].boost] - RANK[b[0].boost] || a[1] - b[1]).map(x => x[0]);
   copyText = rec.length ? 'JOIN RAX ACADEMY ON REAL https://www.realapp.com/ngWcxFRF4E8\n\n' + rec.map((r, i) => {
-    const u = r.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(r.passId)]) : realPlayerUrl(sp, r.id, r.season || j.season);
-    return `${i + 1}. ${u || r.name} ${HEART[r.boost]} ${r.best.label}`;
+    return copyLine(i, sp, r, j, HEART[r.boost]);
   }).join('\n\n') : '';
   copyLabel = `${$('#sportseg [aria-pressed="true"]')?.textContent || sp.toUpperCase()} · ${$('#day').selectedOptions[0].textContent}`;
   $('#copybtn').hidden = !rec.length; $('#copybtn').textContent = `Copy boosts (${copyLabel} · ${rec.length})`;
@@ -831,6 +833,11 @@ $('#allshow').addEventListener('click', e => { const b = e.target.closest('[data
   if(!$('#allout').hidden) runAll(); });
 let allCopy = '', allAsk = 0;
 const RANKR = { legendary: 0, epic: 1, rare: 2 }, HEARTS = { legendary: '💜', epic: '❤️', rare: '🧡' };
+// Copy line (Dennis, 2026-11-14): "Rank. Pass link | player link | heart | attribute".
+const copyLine = (i, sp, r, j, heart) => {
+  const pl = realPlayerUrl(sp, r.id, r.season || j.season) || r.name, pu = r.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(r.passId)]) : 'no pass';
+  return `${i + 1}. ${pu} | ${pl} | ${heart} | ${r.best.label}`;
+};
 const passUrl = (sp, r, j) => r.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(r.passId)]) : realPlayerUrl(sp, r.id, r.season || j.season);
 let allLast = null, allCum = null;
 /* Projected earnings for the day across every sport shown (Dennis, 2026-11-09):
@@ -967,7 +974,7 @@ async function runAll(reuse){
   if(err && !anyPlay && res.every(x => x.skip || (x.j && x.j.error))){ $('#allhead').textContent = err; return; }
   $('#allhead').textContent = `All sports · ${dl} · ${copyRows.length} boost${copyRows.length === 1 ? '' : 's'}` + (h.size ? ` · ${h.size} sport${h.size === 1 ? '' : 's'} hidden` : '');
   $('#allsum').innerHTML = ['legendary', 'epic', 'rare'].map(k => `<span><span class="b ${k}">${LBL[k]}</span> × ${tot[k]}</span>`).join('');
-  allCopy = copyRows.length ? 'JOIN RAX ACADEMY ON REAL https://www.realapp.com/ngWcxFRF4E8\n\n' + copyRows.map(([sp, r, j], i) => `${i + 1}. ${passUrl(sp, r, j) || r.name} ${HEARTS[r.boost]} ${r.best.label}`).join('\n\n') : '';
+  allCopy = copyRows.length ? 'JOIN RAX ACADEMY ON REAL https://www.realapp.com/ngWcxFRF4E8\n\n' + copyRows.map(([sp, r, j], i) => copyLine(i, sp, r, j, HEARTS[r.boost])).join('\n\n') : '';
   $('#allcopy').hidden = !allCopy; $('#allcopy').textContent = `Copy boosts (all sports · ${dl} · ${copyRows.length})`;
 }
 $('#allcopy').addEventListener('click', async () => { if(!allCopy) return; const b = $('#allcopy'), was = b.textContent;
