@@ -5559,8 +5559,8 @@ async function handle({ request, env, waitUntil }) {
     const ETF = ET_DAY_FMT, etd = d => ETF.format(d);
     const days0 = [...Array(7)].map((_, i) => etd(new Date(Date.now() + i * 86400000)));
     const today = days0.includes(url.searchParams.get('day')) ? url.searchParams.get('day') : days0[0];
-    const K = 'boosttop_v6_' + today;   // v4: no one who sat out his team's last game
-    try { const c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (c && Date.now() - c.at < 20 * 60000) return json(c); } catch (e) {}
+    const K = 'boosttop_v7_' + today;   // v4: no one who sat out his team's last game
+    try { const c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (c && Date.now() - c.at < 10 * 60000) return json(c); } catch (e) {}
     const out = { at: Date.now(), day: today, sports: {} };
     for (const sp of ['nfl', 'ncaaf', 'nba', 'ncaam', 'nhl', 'soccer']) {
       let pj = null, sc = null;
@@ -5569,11 +5569,22 @@ async function handle({ request, env, waitUntil }) {
       const of = pj.of || {}, hf = pj.hf || {}, list = [], todayG = new Map();
       // Each team's game that day, worked out once per team.
       for (const [ab, gs] of Object.entries(sc.teams)) { const g = (gs || []).find(t => !t[2] && t[0] && etd(new Date(t[0])) === today); if (g) todayG.set(ab, g); }
+      /* Today's injury report, not the one from when the projections were built
+         (2026-11-15: Kenneth Walker was ruled out and still showed Questionable). */
+      let inj = {};
+      if (sp !== 'soccer') {
+        try { inj = { ...(await boostInjuries(env, sp)) }; } catch (e) {}
+        if (sp === 'nfl' && sc.ids) { try { Object.assign(inj, await boostTeamInj(env, sp, [...todayG.keys()].map(ab => sc.ids[ab]))); } catch (e) {} }
+      }
+      try { Object.assign(inj, await boostManualOut(env, sp, today)); } catch (e) {}
       for (const r of (pj.rows || [])) {
         const x = r.x || {}; if (!x.ab || !(x.av > 0) || x.sk || x.sn || x.ml) continue;
         const g = todayG.get(x.ab); if (!g) continue;
+        const ij = injOf(inj, r.n, sc.ids ? sc.ids[x.ab] : null);
+        if (ij && /^(out|injured reserve|doubtful|suspen)/i.test(ij.status)) continue;
+        const injNow = ij && /questionable|day-to-day/i.test(ij.status) ? ij.status : undefined;
         const v = x.rate * x.av * (of[g[1]] || 1) * (hf[g[3]] || 1);
-        list.push({ id: r.i, n: r.n, u: r.i ? playerUrl(`${sp}:${(PROJ_SEASON[sp] || [])[0]}:${r.i}`) : null, t: r.t, p: r.p, opp: g[1], h: g[3], at: g[0], v: Math.round(v * 10) / 10, a: r.a, gp: r.gp, inj: (r.f || []).find(f => /questionable|doubtful|day-to-day/i.test(f)) || undefined });
+        list.push({ id: r.i, n: r.n, u: r.i ? playerUrl(`${sp}:${(PROJ_SEASON[sp] || [])[0]}:${r.i}`) : null, t: r.t, p: r.p, opp: g[1], h: g[3], at: g[0], v: Math.round(v * 10) / 10, a: r.a, gp: r.gp, inj: injNow });
       }
       list.sort((a, b) => b.v - a.v);
       const top = list.slice(0, 100);
