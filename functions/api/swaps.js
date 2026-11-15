@@ -2835,8 +2835,9 @@ async function confirmGate(env, db, auth) {
     if (c.meta && c.meta.changes) { await stat(db, 'confirm_calledoff'); for (const k of who) told.set(k, due); }
   }
   // 160s the same way: off before their warning if the buyer or seller didn't confirm.
+  // From 40 minutes out (2026-11-15): 160 warnings go from 38 minutes out, so at 31 they were already warned and never came off.
   try { await matchCols(db);
-    for (const r of (((await db.prepare(`SELECT * FROM swap_160 WHERE status='pending' AND warnS IS NULL AND warnB IS NULL AND dueAt > ? AND dueAt <= ?`).bind(now, now + 31 * 60000).all()).results) || [])) {
+    for (const r of (((await db.prepare(`SELECT * FROM swap_160 WHERE status='pending' AND warnS IS NULL AND warnB IS NULL AND dueAt > ? AND dueAt <= ?`).bind(now, now + 40 * 60000).all()).results) || [])) {
       const day = swapDay(Number(r.dueAt)); if (!confirmOn(day)) continue;
       if (!asked.has(day)) { const rs = ((await db.prepare('SELECT key FROM bot_once WHERE campaign=? AND ok = 2').bind('cprompt_' + day).all()).results) || []; asked.set(day, new Set(rs.map(x => x.key))); }
       const was = k => asked.get(day).has(String(k).toLowerCase());
