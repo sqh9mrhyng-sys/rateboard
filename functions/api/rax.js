@@ -8469,7 +8469,14 @@ async function collectorHealth(env, url) {
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
     oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkProbe: await kvj('diag_bulk_1114c'), modVoid: await kvj('mod_void_1115_n'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
-      const o = {}; for (const r of rows) { const k = new Date(Number(r.at)).toISOString().slice(11, 14) + '00 ' + r.kind + ' | ' + String(r.msg || '').replace(/@[\w.\-]+/g, '@x').replace(/^[\w.\-]+:/, 'u:').replace(/(dropped|send|late)\s.*$/, '$1').slice(0, 140); o[k] = (o[k] || 0) + 1; } return o; } catch (e) { return String(e.message); } })(), dmWin: await (async () => {
+      const o = {}; for (const r of rows) { const k = new Date(Number(r.at)).toISOString().slice(11, 14) + '00 ' + r.kind + ' | ' + String(r.msg || '').replace(/@[\w.\-]+/g, '@x').replace(/^[\w.\-]+:/, 'u:').replace(/(dropped|send|late)\s.*$/, '$1').slice(0, 140); o[k] = (o[k] || 0) + 1; } return o; } catch (e) { return String(e.message); } })(), multDist: await (async () => {
+      /* One-off (2026-11-15): card multiplier by rarity/label/rating band across members' passes - counts only. */
+      try { const c = {}; let n = 0;
+        for (const r of (((await env.RATEBOARD_DB.prepare("SELECT passes FROM swap_users WHERE passes IS NOT NULL AND active=1 LIMIT 120").all()).results) || [])) {
+          let ps = []; try { ps = JSON.parse(r.passes) || []; } catch (e) {}
+          for (const p of ps) { if (p.kind === 'team') continue; n++; const band = p.rating == null ? 'na' : p.rating >= 380 ? '380+' : String(Math.floor(p.rating / 50) * 50);
+            const k = `${p.rarity}|${p.levelLabel}|${band}|${p.mult}`; c[k] = (c[k] || 0) + 1; } }
+        return { n, c: Object.fromEntries(Object.entries(c).sort((a, b) => b[1] - a[1]).slice(0, 80)) }; } catch (e) { return String(e.message); } })(), dmWin: await (async () => {
       /* One-off (2026-11-15): what the bot did 16:30-19:00 UTC - claims per minute and its log, names hidden. */
       try { const t0 = Date.UTC(2026, 10, 15, 16, 30), t1 = Date.UTC(2026, 10, 15, 19, 0), db = env.RATEBOARD_DB;
         const per = {}, add = (t, k) => { if (t >= t0 && t <= t1) { const m = new Date(t).toISOString().slice(11, 16); (per[m] || (per[m] = {}))[k] = ((per[m] || {})[k] || 0) + 1; } };
