@@ -2843,7 +2843,7 @@ async function confirmGate(env, db, auth) {
       const was = k => asked.get(day).has(String(k).toLowerCase());
       const no = [r.buyer, r.seller].filter(k => was(k));
       const off = []; for (const k of no) if (!isConfirmed(await get(k), day)) off.push(k);
-      if (off.length) { await db.prepare(`UPDATE swap_160 SET status='cancelled', note=? WHERE id=? AND status='pending'`).bind(`called off: ${off.map(k => '@' + k).join(', ')} didn't confirm today`, r.id).run(); await stat(db, 'confirm_calledoff_160'); }
+      if (off.length) { await db.prepare(`UPDATE swap_160 SET status='cancelled', note=? WHERE id=? AND status='pending'`).bind(`called off: ${off.map(k => '@' + k).join(', ')} didn't confirm today`, r.id).run(); await stat(db, 'confirm_calledoff_160'); for (const k of off) if (!told.has(k)) told.set(k, Number(r.dueAt)); }
     } } catch (e) {}
   /* Everyone whose swaps were called off for this (2026-11-07: 36 swaps came
      off at 4am Alaska but only 2 people were told - a tick that ran out of
