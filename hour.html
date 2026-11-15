@@ -81,16 +81,25 @@
   .bs.off .sd{opacity:.5;text-decoration:line-through}
   .st{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
   .topbtns .btn{text-decoration:none}
-  .tl{display:grid;grid-template-columns:26px 1fr auto;gap:4px 10px;align-items:center;padding:7px 0;border-top:1px solid var(--line)} .tl:first-child{border-top:0}
-  .tl .rk{color:var(--mute);font-weight:800;font-size:13px;text-align:right}
-  .tl .nm a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)} .tl .nm .you{color:var(--accent);font-size:11px;font-weight:800;margin-left:6px}
-  .tl .ct{font-weight:800;font-size:13px}
-  .tl .bar{grid-column:2/4;height:6px;border-radius:99px;background:var(--panel2);overflow:hidden} .tl .bar i{display:block;height:100%;background:var(--accent);border-radius:99px}
-  .tl.me .bar i{background:var(--ok)}
   .rxh,.rx{display:grid;grid-template-columns:24px 1fr 44px 56px 38px;gap:6px;align-items:center}
   .rx .ow{text-align:right;font-size:13px} .rxh span:nth-child(n+3){text-align:right} .rx .se{display:block;font-size:12px}
   .rxh{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--mute);padding:0 0 4px}
   .rx{padding:7px 0;border-top:1px solid var(--line);font-size:14px}
+  /* Most picked (2026-11-15): one player a line, bigger names, tap a line for who's swapping for him. */
+  .tp{border-top:1px solid var(--line);cursor:pointer;-webkit-tap-highlight-color:transparent} .tp:first-child{border-top:0}
+  .tp .row{display:grid;grid-template-columns:30px 1fr auto 16px;gap:2px 12px;align-items:center;padding:11px 2px 10px}
+  .tp .rk{color:var(--mute);font-weight:800;font-size:14px;text-align:right}
+  .tp .nm{font-size:17px;font-weight:800;line-height:1.25;min-width:0}
+  .tp .nm a{color:var(--ink);text-decoration:none} .tp .nm a:active{color:var(--accent)}
+  .tp .tag{display:block;font-size:12px;font-weight:700;color:var(--mute);margin-top:1px;letter-spacing:.02em}
+  .tp .you{color:var(--accent);font-size:11px;font-weight:800;margin-left:6px;vertical-align:2px}
+  .tp .ct{font-weight:900;font-size:18px;text-align:right;font-variant-numeric:tabular-nums}
+  .tp .ct small{display:block;font-size:10.5px;font-weight:700;color:var(--mute);letter-spacing:.02em}
+  .tp .chev{color:var(--mute);font-size:12px;transition:transform .15s} .tp.open .chev{transform:rotate(90deg)}
+  .tp .bar{grid-column:2/4;height:5px;border-radius:99px;background:var(--panel2);overflow:hidden;margin-top:6px} .tp .bar i{display:block;height:100%;background:var(--accent);border-radius:99px}
+  .tp.me .bar i{background:var(--ok)}
+  .tp .who{display:none;padding:0 2px 12px 44px} .tp.open .who{display:block}
+  .tp .who .u{display:inline-block;margin:3px 6px 3px 0;padding:4px 10px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);font-size:13.5px;font-weight:700}
   .rx .rk{color:var(--mute);font-weight:800;font-size:13px;text-align:right} .rxh span:first-child{text-align:right}
   .rx a{color:var(--ink);text-decoration:none;border-bottom:1px dotted var(--mute)} .rx .se{color:var(--mute);font-size:13px;white-space:nowrap}
   .rx .rv{font-weight:800;text-align:right}
@@ -317,13 +326,28 @@ document.addEventListener('change', e => {
   const s = e.target.closest('[data-rlset]'); if(!s) return;
   rlOpen(s.dataset.rlee, { rater: s.dataset.rlset, ratee: s.dataset.rlee, stars: Number(s.value) });
 });
+// Tap a Most picked line: who's swapping for that player.
+$('#toplist').addEventListener('click', async e => {
+  if(e.target.closest('a')) return;
+  const row = e.target.closest('.tp'); if(!row) return;
+  row.classList.toggle('open'); const box = row.querySelector('.who');
+  if(!row.classList.contains('open') || box.dataset.done) return;
+  box.innerHTML = '<span class="note">Loading…</span>';
+  let j; try{ j = await (await fetch(`/api/swaps?op=hourwho&k=${encodeURIComponent(row.dataset.k)}&${sig()}`)).json(); }catch(err){ j = { error: 'Could not reach the board.' }; }
+  if(j.error){ box.innerHTML = `<span class="note">${esc(j.error)}</span>`; return; }
+  box.dataset.done = '1';
+  box.innerHTML = j.names.length ? j.names.map(n => `<span class="u">@${esc(n)}</span>`).join('') : '<span class="note">Nobody right now.</span>';
+});
 /* Most picked players: everyone's picks, most first. */
 async function loadTop(){
   let j; try{ j = await (await fetch(`/api/swaps?op=hourtop&${sig()}`)).json(); }catch(e){ $('#topsum').textContent = 'Could not reach the board.'; return; }
   if(j.error){ $('#topsum').textContent = j.error; return; }
   const max = Math.max(1, ...j.rows.map(x => x.n));
   $('#topsum').textContent = `How many of the ${j.members} active swappers are swapping for each player. Updated every 5 minutes.`;
-  $('#toplist').innerHTML = j.rows.map((x, i) => `<div class="tl${x.mine ? ' me' : ''}"><span class="rk">${i + 1}</span><span class="nm">${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.name)}</a>` : esc(x.name)}${x.mine ? '<span class="you">YOURS</span>' : ''}</span><span class="ct">${x.n}</span><span class="bar"><i style="width:${Math.round(x.n / max * 100)}%"></i></span></div>`).join('')
+  $('#toplist').innerHTML = j.rows.map((x, i) => { const m = String(x.name).match(/^(.*) (\S+) (\d{4})$/), nm = m ? m[1] : x.name, tag = m ? `${m[2]} ${m[3]}` : '';
+    return `<div class="tp${x.mine ? ' me' : ''}" data-k="${esc(x.key)}"><div class="row"><span class="rk">${i + 1}</span>`
+      + `<span class="nm">${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(nm)}</a>` : esc(nm)}${x.mine ? '<span class="you">YOURS</span>' : ''}<span class="tag">${esc(tag)}</span></span>`
+      + `<span class="ct">${x.n}<small>swapping</small></span><span class="chev">▶</span><span class="bar"><i style="width:${Math.round(x.n / max * 100)}%"></i></span></div><div class="who"></div></div>`; }).join('')
     || '<p class="note">Nobody has picked a player yet.</p>';
   if(isAdm) loadRax();
 }

@@ -5293,6 +5293,16 @@ async function handle({ request, env, waitUntil }) {
   }
   /* Most picked players, for everyone on the hour page (Dennis, 2026-11-05):
      how many active members are swapping for each player, most first. */
+  // Who's swapping for one player on Most picked (Dennis, 2026-11-15): active swappers' Real usernames.
+  if (op === 'hourwho') {
+    const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));
+    if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
+    const pk = String(url.searchParams.get('k') || '').slice(0, 40);
+    if (!/^[a-z]+:\d{4}:t?\d+$/.test(pk)) return json({ error: 'Pick a player.' }, 400);
+    const rs = ((await db.prepare(`SELECT u.rsUser AS n, j.key AS i FROM swap_users u, json_each(u.wants) j WHERE u.active=1 AND u.wants IS NOT NULL AND j.value=?`).bind(pk).all()).results) || [];
+    const names = rs.filter(r => Number(r.i) < MAX_WANTS && r.n).map(r => r.n).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+    return json({ key: pk, names });
+  }
   if (op === 'hourtop') {
     const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));
     if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
