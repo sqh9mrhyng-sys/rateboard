@@ -5559,7 +5559,7 @@ async function handle({ request, env, waitUntil }) {
     const ETF = ET_DAY_FMT, etd = d => ETF.format(d);
     const days0 = [...Array(7)].map((_, i) => etd(new Date(Date.now() + i * 86400000)));
     const today = days0.includes(url.searchParams.get('day')) ? url.searchParams.get('day') : days0[0];
-    const K = 'boosttop_v5_' + today;   // v4: no one who sat out his team's last game
+    const K = 'boosttop_v6_' + today;   // v4: no one who sat out his team's last game
     try { const c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (c && Date.now() - c.at < 20 * 60000) return json(c); } catch (e) {}
     const out = { at: Date.now(), day: today, sports: {} };
     for (const sp of ['nfl', 'ncaaf', 'nba', 'ncaam', 'nhl', 'soccer']) {
@@ -5573,10 +5573,25 @@ async function handle({ request, env, waitUntil }) {
         const x = r.x || {}; if (!x.ab || !(x.av > 0) || x.sk || x.sn || x.ml) continue;
         const g = todayG.get(x.ab); if (!g) continue;
         const v = x.rate * x.av * (of[g[1]] || 1) * (hf[g[3]] || 1);
-        list.push({ n: r.n, u: r.i ? playerUrl(`${sp}:${(PROJ_SEASON[sp] || [])[0]}:${r.i}`) : null, t: r.t, p: r.p, opp: g[1], h: g[3], at: g[0], v: Math.round(v * 10) / 10, a: r.a, gp: r.gp, inj: (r.f || []).find(f => /questionable|doubtful|day-to-day/i.test(f)) || undefined });
+        list.push({ id: r.i, n: r.n, u: r.i ? playerUrl(`${sp}:${(PROJ_SEASON[sp] || [])[0]}:${r.i}`) : null, t: r.t, p: r.p, opp: g[1], h: g[3], at: g[0], v: Math.round(v * 10) / 10, a: r.a, gp: r.gp, inj: (r.f || []).find(f => /questionable|doubtful|day-to-day/i.test(f)) || undefined });
       }
       list.sort((a, b) => b.v - a.v);
-      if (list.length) out.sports[sp] = list.slice(0, 100);
+      const top = list.slice(0, 100);
+      /* Football: each player's average a game of every booster stat (Dennis, 2026-11-15),
+         so the best attribute can be picked from the day's booster values. */
+      if ((sp === 'nfl' || sp === 'ncaaf') && top.length) {
+        try { const ids = top.map(x => x.id).filter(Boolean);
+          const rs = (await db.prepare(`SELECT playerId, position, rax, stats FROM gamelog WHERE sport=? AND season=? AND playerId IN (${ids.map(() => '?').join(',')}) AND COALESCE(seasonType, 'regularseason') <> 'preseason'`).bind(sp, Number((PROJ_SEASON[sp] || [])[0]), ...ids).all()).results || [];
+          const acc = new Map();
+          for (const g of rs) { if (!g.stats && !(Number(g.rax) > 0)) continue;   // sat out
+            let o = {}; try { o = JSON.parse(g.stats || '{}') || {}; } catch (e) {}
+            const a = acc.get(Number(g.playerId)) || acc.set(Number(g.playerId), { n: 0, t: {} }).get(Number(g.playerId)); a.n++;
+            for (const st of ['PTD', 'RUYDS', 'REC', 'TD', 'FGM', 'TKL', 'SACK', 'INT', 'FF', 'TFL']) { const v = footStat(o, st, g.position); if (v != null) a.t[st] = (a.t[st] || 0) + v; } }
+          for (const x of top) { const a = acc.get(Number(x.id)); if (a && a.n) { x.st = {}; for (const [k, v] of Object.entries(a.t)) x.st[k] = Math.round(v / a.n * 100) / 100; x.gp = a.n; } }
+        } catch (e) {}
+      }
+      for (const x of top) delete x.id;
+      if (top.length) out.sports[sp] = top;
     }
     out.all = Object.entries(out.sports).flatMap(([sp, l]) => l.map(x => ({ ...x, sp }))).sort((a, b) => b.v - a.v).slice(0, 100);
     try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 3600 }); } catch (e) {}
