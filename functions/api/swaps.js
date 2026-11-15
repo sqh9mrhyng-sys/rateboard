@@ -3189,10 +3189,17 @@ async function modBan(db, key) {
   await db.prepare('INSERT INTO mod_state (key, resetAt, banned, bannedAt) VALUES (?, 0, 1, ?) ON CONFLICT(key) DO UPDATE SET banned=1, bannedAt=excluded.bannedAt').bind(key, Date.now()).run();
   ACCESS_MEMO.delete(key);
 }
+/* Members who can't send reports (Dennis, 2026-11-15): their new reports are
+   refused and the ones they already sent stop counting. Keyed by account key. */
+const RBLOCK_KV = 'report_block_v1';
+async function reportBlocks(env) { try { return JSON.parse((await env.RATEBOARD_KV.get(RBLOCK_KV)) || '{}') || {}; } catch (e) { return {}; } }
+async function reportBlocked(env, key) { return !!(await reportBlocks(env))[String(key || '').toLowerCase()]; }
 async function moderate(env, db, dry) {
   await modReady(db); await matchCols(db); await db.prepare(T160_DDL).run(); await db.prepare(DM_DDL).run();
   if (!dry) { try { if (!(await env.RATEBOARD_KV.get('rate_recheck_v1'))) { const f = await rateRecheck(env, db); await env.RATEBOARD_KV.put('rate_recheck_v1', JSON.stringify({ at: Date.now(), freed: f })); } } catch (e) {} }
-  const reps = await modRows(db, "SELECT rowid AS id, ts, by_user, target, matchId, m160 FROM swap_reports WHERE kind='user' AND status IN ('open','closed','auto')", [], 'ts, rowid');
+  const rb = await reportBlocks(env);
+  const reps = (await modRows(db, "SELECT rowid AS id, ts, by_user, target, matchId, m160 FROM swap_reports WHERE kind='user' AND status IN ('open','closed','auto')", [], 'ts, rowid'))
+    .filter(r => !rb[String(r.by_user || '').toLowerCase()]);   // reporters whose reporting was taken away
   const out = { reports: reps.length, counted: 0, repeats: 0, noSwap: 0, calledOff: 0, early: 0, warned: 0, struck: 0, banned: 0, dms: 0, users: [] };
   if (!reps.length) return out;
   const since = Math.min(...reps.map(r => Number(r.ts) || 0)) - MOD_LOOKBACK;
@@ -5421,6 +5428,7 @@ async function handle({ request, env, waitUntil }) {
     if (reason === REASONS.other && note.length < 5) return json({ error: 'Say what happened.' }, 400);
     await matchCols(db);
     const u = await db.prepare('SELECT key FROM swap_users WHERE LOWER(key)=?').bind(key.toLowerCase()).first();
+    if (u && await reportBlocked(env, u.key)) return json({ error: "Your ability to send reports has been removed." }, 403);
     /* "Took 30+ min, no word" (a member's idea, 2026-11-12): a heads-up only.
        The partner gets a DM with a link to make it right; it never counts
        toward warnings or strikes. One per partner per swap. */
@@ -5889,6 +5897,7 @@ async function handle({ request, env, waitUntil }) {
   // Reports from the Swaps page: someone misusing swaps, or a problem with it.
   if (op === 'report' && request.method === 'POST') {
     let b = {}; try { b = await request.json(); } catch (e) {}
+    if (me && await reportBlocked(env, me)) return json({ error: "Your ability to send reports has been removed." }, 403);
     const kind = b.kind === 'problem' ? 'problem' : b.kind === 'refund' ? 'refund' : 'user';
     let target = String(b.target || '').trim().replace(/^@/, '').slice(0, 60), detail = String(b.detail || '').trim().slice(0, 1000), matchId = null;
     if (kind === 'refund') {
@@ -6723,6 +6732,28 @@ async function handle({ request, env, waitUntil }) {
     const rs = new Map((((await db.prepare(`SELECT key, rsUser FROM swap_users WHERE key IN (${rows.map(() => '?').join(',') || "''"})`).bind(...rows.map(r => r.k)).all()).results) || []).map(r => [r.key, r.rsUser]));
     return json({ days, rows: rows.map(r => ({ key: r.k, rsUser: rs.get(r.k) || r.k, n: r.n })) });
   }
+  // Admin: take away / give back a member's reporting, found by Real username or account (2026-11-15).
+  if (op === 'reportblock' && request.method === 'POST') {
+    if (!acc.admin) return forbidden('Admin only.');
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    const q = String(b.user || '').trim().replace(/^@/, '').toLowerCase();
+    if (q.length < 2) return json({ error: 'Enter a username.' }, 400);
+    const u = await db.prepare('SELECT key, rsUser FROM swap_users WHERE LOWER(key)=? OR LOWER(rsUser)=?').bind(q, q).first();
+    const m = await reportBlocks(env);
+    const k = u ? String(u.key).toLowerCase() : q;
+    if (!u && !m[k]) return json({ error: `No member named @${q}.` }, 404);
+    if (b.block) m[k] = { at: Date.now(), name: (u && u.rsUser) || q }; else delete m[k];
+    await env.RATEBOARD_KV.put(RBLOCK_KV, JSON.stringify(m));
+    return json({ ok: true, name: (u && u.rsUser) || q, blocked: !!b.block });
+  }
+  if (op === 'modlookup') {
+    if (!acc.admin) return forbidden('Admin only.');
+    const q = String(url.searchParams.get('q') || '').trim().replace(/^@/, '').toLowerCase();
+    if (q.length < 2) return json({ rows: [] });
+    const rs = ((await db.prepare("SELECT key, rsUser FROM swap_users WHERE LOWER(rsUser) LIKE ? OR LOWER(key) LIKE ? ORDER BY rsUser LIMIT 15").bind('%' + q + '%', '%' + q + '%').all()).results) || [];
+    const m = await reportBlocks(env);
+    return json({ rows: rs.map(r => ({ key: r.key, rsUser: r.rsUser || r.key, noReport: !!m[String(r.key).toLowerCase()] })) });
+  }
   if (op === 'modlist') {
     if (!acc.admin) return forbidden('Admin only.');
     await modReady(db);
@@ -6737,7 +6768,10 @@ async function handle({ request, env, waitUntil }) {
     const rows = [...per.values()].map(x => ({ ...x, rsUser: rs.get(x.key) || x.key, banned: !!(st.get(x.key) || {}).banned })).sort((a, b) => b.banned - a.banned || b.strikes - a.strikes);
     const reqs = ((await db.prepare("SELECT id, key, text, ts, status FROM unban_requests WHERE status='open' ORDER BY ts").all()).results) || [];
     let last = null; try { last = JSON.parse((await env.RATEBOARD_KV.get('mod_summary_v1')) || 'null'); } catch (e) {}
-    return json({ rows, requests: reqs.map(r => ({ ...r, rsUser: rs.get(r.key) || r.key, record: per.get(r.key) || null })), last });
+    const rb = await reportBlocks(env);
+    for (const r of rows) r.noReport = !!rb[String(r.key).toLowerCase()];
+    const noReport = Object.entries(rb).map(([k, v]) => ({ key: k, rsUser: v.name || rs.get(k) || k, at: v.at }));
+    return json({ rows, noReport, requests: reqs.map(r => ({ ...r, rsUser: rs.get(r.key) || r.key, record: per.get(r.key) || null })), last });
   }
   if (op === 'modrun') {
     if (!acc.admin) return forbidden('Admin only.');
