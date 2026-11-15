@@ -3156,6 +3156,10 @@ const MOD_DDL = [
 const MOD_STRIKES = 3;
 // Swap times whose reports count for nothing (Dennis, 2026-11-12: the 9:00am Alaska DMs didn't go out).
 const MOD_VOID = new Set([Date.UTC(2026, 10, 12, 18, 0, 0)]);
+/* Whole days whose reports count for nothing (Dennis, 2026-11-15: swap DMs went out
+   late or not at all around 1pm ET). A report sent in the window, or about a swap in it. */
+const MOD_VOID_DAYS = [[Date.UTC(2026, 10, 15, 5, 0, 0), Date.UTC(2026, 10, 16, 5, 0, 0)]];
+const modVoidDay = t => MOD_VOID_DAYS.some(([a, b]) => t >= a && t < b);
 const MOD_AUTO = true;   // false: the 10-minute run only previews (counts kept in KV); true: it acts
 const MOD_EARLY = 10 * 60000;          // a report may come up to 10 min before the swap's time
 const MOD_LOOKBACK = 3 * 86400000;     // a report naming someone looks back 3 days for their swap
@@ -3195,8 +3199,26 @@ const RBLOCK_KV = 'report_block_v1';
 async function reportBlocks(env) { try { return JSON.parse((await env.RATEBOARD_KV.get(RBLOCK_KV)) || '{}') || {}; } catch (e) { return {}; } }
 async function reportBlocked(env, key) { return !!(await reportBlocks(env))[String(key || '').toLowerCase()]; }
 async function moderate(env, db, dry) {
+  let out0err = null;
   await modReady(db); await matchCols(db); await db.prepare(T160_DDL).run(); await db.prepare(DM_DDL).run();
   if (!dry) { try { if (!(await env.RATEBOARD_KV.get('rate_recheck_v1'))) { const f = await rateRecheck(env, db); await env.RATEBOARD_KV.put('rate_recheck_v1', JSON.stringify({ at: Date.now(), freed: f })); } } catch (e) {} }
+  // One-off: take back what today's reports already gave (warnings, strikes, a ban from them).
+  if (!dry) { try { if (!(await env.RATEBOARD_KV.get('mod_void_1115'))) { await env.RATEBOARD_KV.put('mod_void_1115', String(Date.now()));
+    const [a0, b0] = MOD_VOID_DAYS[0];
+    const hit = ((await db.prepare('SELECT DISTINCT key FROM mod_events WHERE (period >= ? AND period < ?) OR (at >= ? AND at < ?)').bind(a0, b0, a0, b0).all()).results) || [];
+    await db.prepare('DELETE FROM mod_events WHERE (period >= ? AND period < ?) OR (at >= ? AND at < ?)').bind(a0, b0, a0, b0).run();
+    let unb = 0;
+    for (const { key } of hit) {
+      const st0 = await db.prepare('SELECT banned, bannedAt, resetAt FROM mod_state WHERE key=?').bind(key).first();
+      const left = await db.prepare("SELECT COUNT(*) AS n FROM mod_events WHERE key=? AND kind='strike' AND at >= ?").bind(key, Number((st0 && st0.resetAt) || 0)).first();
+      if (st0 && st0.banned && Number((left && left.n) || 0) < MOD_STRIKES) {
+        await db.prepare(SBLOCK_DDL).run(); await db.prepare('DELETE FROM swap_block WHERE key=?').bind(key).run();
+        await db.prepare('UPDATE mod_state SET banned=0 WHERE key=?').bind(key).run(); try { ACCESS_MEMO.delete(key); } catch (e) {} unb++;
+        await addNote(db, key, 'mod', "Today's Swaps reports don't count - the bot's swap DMs were late. The strikes from today are removed and your Swaps access is back. Turn your swaps back on at raxacademy.app/swaps");
+      } else await addNote(db, key, 'mod', "Today's Swaps reports don't count - the bot's swap DMs were late. Any warning or strike from today has been removed.");
+    }
+    await env.RATEBOARD_KV.put('mod_void_1115_n', JSON.stringify({ at: Date.now(), members: hit.length, unbanned: unb }));
+  } } catch (e) { out0err = String(e.message || e); } }
   const rb = await reportBlocks(env);
   const reps = (await modRows(db, "SELECT rowid AS id, ts, by_user, target, matchId, m160 FROM swap_reports WHERE kind='user' AND status IN ('open','closed','auto')", [], 'ts, rowid'))
     .filter(r => !rb[String(r.by_user || '').toLowerCase()]);   // reporters whose reporting was taken away
@@ -3245,7 +3267,7 @@ async function moderate(env, db, dry) {
       src = m ? { m, by } : s1 ? { s: s1, by } : null;
     }
     if (ts < period - MOD_EARLY) { out.early++; continue; }
-    if (MOD_VOID.has(Number(period))) { out.voided = (out.voided || 0) + 1; handled.push(r.id); continue; }
+    if (MOD_VOID.has(Number(period)) || modVoidDay(Number(period)) || modVoidDay(ts)) { out.voided = (out.voided || 0) + 1; handled.push(r.id); continue; }
     const s0 = state.get(tgt); if (s0 && ts < Number(s0.resetAt || 0)) { handled.push(r.id); continue; }
     const k = by + '|' + tgt;
     if (first.has(k)) { out.repeats++; handled.push(r.id); continue; }
