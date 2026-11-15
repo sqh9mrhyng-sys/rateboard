@@ -4385,6 +4385,9 @@ async function fcRows(env, db, cards, day, inv) {
     // Expected count of each booster stat in a start.
     const exp = {};
     for (const st of want) {
+      /* National-team games: Real doesn't count duels there (Dennis, 2026-11-15), so a duels
+         booster earns nothing - no duels number, and the booster's other side or another booster is used. */
+      if (side.nat && /duel/i.test(String(st))) continue;
       const e = blend(mean(starts.slice(-5), x => fcStat(x, st)), mean(starts, x => fcStat(x, st)), mean(ostarts, x => fcStat(x, st))) ?? mean(useC, x => fcStat(x, st));
       const att = /^(goals?|g|gls|assists?|a|ast)$/i.test(String(st).replace(/[^a-z]/gi, ''));
       if (e != null) exp[st] = Math.round(e * k * (att ? gfac : 1) * (lu === 'tbd' && rate < 0.8 && last5.length >= 3 ? rate : 1) * 100) / 100;
