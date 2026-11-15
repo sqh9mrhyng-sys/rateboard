@@ -180,6 +180,16 @@ if (process.env.NO_CRON !== '1' && ROLE !== 'web') {
   setTimeout(() => { tick(); setInterval(tick, 60000); }, (60 - new Date().getSeconds()) * 1000);
   cronBusy = () => busy;
 }
+/* Swap matching, swap DMs and the other minute jobs on a timer of their own
+   (2026-11-15): riding the collector tick, they waited whenever a game-log
+   slice ran long, and the 1pm ET swap DMs went out 14+ minutes late. */
+if (process.env.NO_CRON !== '1' && ROLE !== 'web' && ROLE !== 'heavy') {
+  const { dmTickKey } = await import(pathToFileURL(path.join(ROOT, 'functions', 'api', 'swaps.js')).href);
+  const port = ROLE === 'all' ? PORT : JOBS_PORT;
+  const ticks = async () => { if (stopping) return;
+    try { const k = await dmTickKey(env); if (k) await realFetch(`http://127.0.0.1:${port}/api/rax?ticks=1&k=${k}`).then(r => r.text()).catch(() => {}); } catch (e) { console.error('ticks', e && e.message); } };
+  setTimeout(() => { ticks(); setInterval(ticks, 60000); }, ((62 - new Date().getSeconds()) % 60) * 1000);
+}
 const stop = async () => {
   if (stopping) return; stopping = true;
   console.log('stopping: letting work in flight finish');

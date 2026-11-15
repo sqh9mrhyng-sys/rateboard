@@ -8498,8 +8498,13 @@ export async function onRequestGet(ctx) {
   const origin = url.origin;
   const ttl = readTtl(url);
 
-  // Swap DMs ride the once-a-minute collector tick, on their own account.
-  if (url.searchParams.get('queue') === 'next' && ctx.waitUntil) {
+  /* Swap DMs ride the once-a-minute collector tick, on their own account.
+     On the droplet they have their own minute timer (ticks=1) instead
+     (2026-11-15: a slow game-log slice held the collector for up to 20
+     minutes, so the swap DMs and matching only ran every few minutes and the
+     1pm ET swaps went out 14+ minutes late or not at all). */
+  const onDroplet = !!(globalThis.process && globalThis.process.env && globalThis.process.env.ROLE);
+  if (((url.searchParams.get('queue') === 'next' && !onDroplet) || (url.searchParams.get('ticks') === '1' && onDroplet && url.searchParams.get('k') && url.searchParams.get('k') === await dmTickKey(env))) && ctx.waitUntil) {
     ctx.waitUntil(swapTick(env).catch(() => {}));
     // The swaps' warnings and contacts in a run of their own (its own 30 seconds).
     /* Two DM runs a minute (2026-11-06): one now and one 27s later, each with its own
@@ -8523,6 +8528,7 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil(fcLineupTick(env).catch(() => {}));
     ctx.waitUntil(fcGameRefresh(env).catch(() => {}));
     ctx.waitUntil(gapPush(ctx).catch(() => {}));
+    if (url.searchParams.get('ticks') === '1') return new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } });
   }
   // Read-only collector progress, no sign-in: counts and dates only, nothing from the market or any account.
   if (url.searchParams.get('collector') === 'health') { ctx.waitUntil(bulkProbe(env).catch(() => {})); return collectorHealth(env, url); }
