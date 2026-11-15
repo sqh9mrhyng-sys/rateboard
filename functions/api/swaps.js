@@ -3718,7 +3718,7 @@ function injOf(map, name, tid) {
    was 25% - a booster on a player who sits out is kept, so the risk is small). */
 const Q_CUT = 0.95;
 async function boostInjuries(env, sp, force) {
-  const key = `boostinj_v2_${sp}`;
+  const key = `boostinj_v3_${sp}`;
   /* Read again when 20 minutes old (2026-11-09: it was only read 4 times a
      day, so Luka stayed Out from Sunday's report after ESPN had him
      day-to-day). A failed read keeps the saved copy. */
@@ -3736,6 +3736,11 @@ async function boostInjuries(env, sp, force) {
       /* With his team (2026-11-09: a Browns Justin Jefferson, out, benched
          the Vikings' Justin Jefferson - the list was by name only). */
       const tid = String((x.athlete.team && x.athlete.team.id) || t.id || ''), e = { status: x.status, note: String(x.shortComment || '').slice(0, 140), tid };
+      /* ESPN's status can lag the news (2026-11-15: Kenneth Walker was ruled out and
+         still listed Questionable) - a fresh note saying he's out counts as Out. */
+      const cmt = String(x.shortComment || '') + ' ' + String(x.longComment || '');
+      if (!/^(out|injured reserve)/i.test(e.status) && (!x.date || Date.now() - Date.parse(x.date) < 4 * 86400000)
+        && /\b(ruled out|downgraded to out|will not play|won't play|is out for|been declared out|inactive for)\b/i.test(cmt) && !/\b(not been ruled out|hasn't been ruled out|has not been ruled out)\b/i.test(cmt)) e.status = 'Out';
       map[boostName(x.athlete.displayName) + '|' + tid] = e;
       if (!map[boostName(x.athlete.displayName)]) map[boostName(x.athlete.displayName)] = e;
     }
@@ -5559,7 +5564,7 @@ async function handle({ request, env, waitUntil }) {
     const ETF = ET_DAY_FMT, etd = d => ETF.format(d);
     const days0 = [...Array(7)].map((_, i) => etd(new Date(Date.now() + i * 86400000)));
     const today = days0.includes(url.searchParams.get('day')) ? url.searchParams.get('day') : days0[0];
-    const K = 'boosttop_v7_' + today;   // v4: no one who sat out his team's last game
+    const K = 'boosttop_v8_' + today;   // v4: no one who sat out his team's last game
     try { const c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (c && Date.now() - c.at < 10 * 60000) return json(c); } catch (e) {}
     const out = { at: Date.now(), day: today, sports: {} };
     for (const sp of ['nfl', 'ncaaf', 'nba', 'ncaam', 'nhl', 'soccer']) {
