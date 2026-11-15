@@ -374,7 +374,16 @@ async function packAvg(db, cache, key) {
    rating, on the same ladder as Pack data. */
 const CARD_LADDER = [[380, 25], [520, 28], [720, 32], [1000, 35], [1180, 40], [1380, 75], [1560, 79], [1760, 83], [1980, 87], [2220, 91], [2480, 95], [2760, 98], [3000, 101], [3180, 103], [3250, 105],
   [3380, 150], [3820, 153], [4320, 156], [4920, 159], [5620, 163], [6420, 167], [7320, 171], [8320, 175], [9420, 180], [10620, 185], [12000, 190], [13600, 196], [15400, 202], [17500, 208], [19900, 214], [22700, 220], [26000, 226], [29000, 233], [34500, 240], [40000, 250]];
+/* The card's own multiplier from its rarity and level (2026-11-15, a member: a boosted
+   Legendary read as x50 - Real's multiplier on a pass includes a booster that's on it,
+   so with "Include my card rarities" the booster was counted twice). Base by label:
+   General 1, Common 2, Uncommon 3, Rare 4, Epic 10; Legendary/Mystic/Iconic by level. */
+const CARD_BASE = { general: 1, common: 2, uncommon: 3, rare: 4, epic: 10 };
 function cardMultOf(p) {
+  const lab = String((p && p.levelLabel) || '').trim().toLowerCase(), lm = lab.match(/^(legendary|mystic|iconic)\s*(\d+)?$/);
+  if (CARD_BASE[lab] != null) return CARD_BASE[lab];
+  if (lm) { const lv = Math.max(1, Number(lm[2]) || 1), at = { legendary: 0, mystic: 5, iconic: 15 }[lm[1]] + lv - 1;
+    if (CARD_LADDER[at] && (lm[1] !== 'legendary' || lv <= 5) && (lm[1] !== 'mystic' || lv <= 10)) return CARD_LADDER[at][1]; }
   const r = Number(p && p.rating);
   if (Number.isFinite(r) && r >= 380) { let m = 25; for (const [at, x] of CARD_LADDER) if (r >= at) m = x; return m; }
   return (p && p.mult) || null;
