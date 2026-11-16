@@ -1631,6 +1631,13 @@ async function draftBuild(env, db, c) {
 /* Daily sport drafts are numbered in order: once an hour, read the next few
    numbers past the last one known and add any that exist (a handful of reads a day). */
 // One-off check (2026-11-16): build one draft now and keep the result's size.
+export async function draftGap(env) {
+  if (await env.RATEBOARD_KV.get('draft_gap_1116')) return; await env.RATEBOARD_KV.put('draft_gap_1116', '1', { expirationTtl: 86400 });
+  const out = [];
+  for (const id of [55767, 55770, 55780, 55800, 55850, 55900, 56000, 56200, 56500, 57000, 58000, 60000, 65000, 70000]) {
+    await sleep(1500); const d = await draftInfo(env, id, 'game').catch(() => null); out.push(`${id}:${d ? d.status : 'x'}${d && d.info ? ':' + d.info.sport + ':' + d.info.day : ''}`); }
+  await env.RATEBOARD_KV.put('draft_gap_1116_r', JSON.stringify(out), { expirationTtl: 86400 });
+}
 export async function draftCheck(env) {
   if (await env.RATEBOARD_KV.get('draft_check_1116')) return; await env.RATEBOARD_KV.put('draft_check_1116', '1', { expirationTtl: 86400 });
   const t0 = Date.now(); let x = null; try { x = await draftBuild(env, env.RATEBOARD_DB, { id: 2466, type: 'sport', sport: 'nhl', day: '2026-11-16' }); } catch (e) { x = { error: String(e.message || e) }; }
