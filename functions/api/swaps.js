@@ -389,6 +389,17 @@ function cardMultOf(p) {
   return (p && p.mult) || null;
 }
 const MIN_PLAYS = 30;   // 27 until 2026-11-10
+// Plays and average card rating per player, from the pack data (Bulk's Grind tab, 2026-11-15).
+async function packInfo(env, db, sp, se) {
+  const k = `pack_info_v1_${sp}_${se}`;
+  try { const c = JSON.parse((await env.RATEBOARD_KV.get(k)) || 'null'); if (c && Date.now() - c.at < 12 * 3600000) return c.m; } catch (e) {}
+  let m = null;
+  try { const r = await db.prepare('SELECT body FROM pack_snap WHERE sport=? AND season=?').bind(sp, Number(se)).first();
+    const rows = parse(r && r.body, null);
+    if (Array.isArray(rows) && rows.length) { m = {}; for (const x of rows) if (x && x.playerId != null) m[x.playerId] = [Number(x.plays) || 0, Number(x.avgRating) || null]; } } catch (e) {}
+  try { await env.RATEBOARD_KV.put(k, JSON.stringify({ at: Date.now(), m }), { expirationTtl: 86400 }); } catch (e) {}
+  return m;
+}
 async function playsMap(env, db, sp, se) {
   const k = `plays_ct_v1_${sp}_${se}`;
   try { const c = JSON.parse((await env.RATEBOARD_KV.get(k)) || 'null'); if (c && Date.now() - c.at < 12 * 3600000) return c.m; } catch (e) {}
@@ -5854,7 +5865,7 @@ async function handle({ request, env, waitUntil }) {
     // Collectible plays in packs, for each player-season in the history (for "best to grind").
     const plays = {};
     try { const ss = new Set(ended.concat(rows).filter(r => r.sport && r.season).map(r => r.sport + ':' + r.season));
-      for (const k of ss) { const [sp0, se0] = k.split(':'); const m = await playsMap(env, db, sp0, se0); if (m) for (const r of ended.concat(rows)) if (r.sport === sp0 && String(r.season) === se0 && m[r.playerId] != null) plays[`${sp0}:${se0}:${r.playerId}`] = m[r.playerId]; } } catch (e) {}
+      for (const k of ss) { const [sp0, se0] = k.split(':'); const m = await packInfo(env, db, sp0, se0); if (m) for (const r of ended.concat(rows)) if (r.sport === sp0 && String(r.season) === se0 && m[r.playerId] != null) plays[`${sp0}:${se0}:${r.playerId}`] = m[r.playerId]; } } catch (e) {}
     return json({ state: { count: st.count || null, lastAt: st.lastAt || null, fullDone: st.fullDone || null, watches: st.watches || 0, nextWatch: st.nextWatch || null, err: st.err || null, pauseUntil: st.pauseUntil || null, reqs: st.reqs || 0, exact: st.detailOk === true ? true : st.detailOk === false ? false : null },
       rows: rows.map(fix), ended: ended.map(fix), mine, plays });
   }
