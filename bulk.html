@@ -41,6 +41,7 @@
   .more{display:block;margin:12px auto;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 16px;font:inherit;cursor:pointer} .more[hidden]{display:none}
   .subseg{display:flex;gap:6px;margin:4px 0 8px} .subseg button{background:var(--panel2);color:var(--mute);border:1px solid var(--line);border-radius:7px;padding:5px 10px;font:inherit;font-size:13px;font-weight:700;cursor:pointer} .subseg button[aria-pressed="true"]{color:var(--ink);border-color:var(--accent)}
   .sc{overflow-x:auto} .ctab{width:100%;min-width:340px;border-collapse:collapse;font-size:13px} .ctab th{color:var(--mute);font-size:11px;text-transform:uppercase;text-align:right;padding:5px 4px;border-bottom:1px solid var(--line)} .ctab td{text-align:right;padding:6px 4px;border-bottom:1px solid var(--line)} .ctab th:first-child,.ctab td:first-child{text-align:left}
+  .dev{margin:0;padding:11px 16px;background:rgba(232,163,61,.12);border-bottom:1px solid var(--line);color:var(--accent);font-size:13.5px} .dev b{color:var(--accent)}
   .empty{padding:14px;color:var(--mute);font-size:14px}
 </style>
 </head>
@@ -260,8 +261,10 @@ function draw(){
     // 1. Only on solid data: 5+ sales of that exact player and season, buy-now listings or bids under the usual price.
     const l = D.rows.filter(pass).map(r => { const w = worth(book, r), p = nowPrice(r); return w && p != null ? { r, w, p, gain: w.v * TAX - p } : null; }).filter(x => x && x.gain >= 100).sort((a, b) => b.gain - a.gain);
     const ready = [...book.by.values()].filter(o => o.sold.length >= MIN_SALES).length;
-    if(!l.length) return out(`<div class="empty">No deals yet. Deals only show for a player and season with ${MIN_SALES}+ sales in the ${perTxt} - ${ready} so far. This fills in as auctions end.</div>`, 0, '');
-    return out(l.slice(0, shown).map(({ r, w, p, gain }) => `<div class="row"><div>${nameCell(r)}<div class="sub">${esc(r.sp)} ${esc(seasonLbl(r.sport, r.season))} · rating ${fmt(r.rating)} · ends in ${left(r.endsAt)}${r.bids ? ` · ${r.bids} bids` : ''}</div>
+    // Still being built (Dennis, 2026-11-16): said plainly at the top.
+    const dev = '<div class="dev"><b>Best deals is still in development.</b> Prices get better as more auctions are tracked - check a deal yourself before buying.</div>';
+    if(!l.length) return out(dev + `<div class="empty">No deals yet. Deals only show for a player and season with ${MIN_SALES}+ sales in the ${perTxt} - ${ready} so far. This fills in as auctions end.</div>`, 0, '');
+    return out(dev + l.slice(0, shown).map(({ r, w, p, gain }) => `<div class="row"><div>${nameCell(r)}<div class="sub">${esc(r.sp)} ${esc(seasonLbl(r.sport, r.season))} · rating ${fmt(r.rating)} · ends in ${left(r.endsAt)}${r.bids ? ` · ${r.bids} bids` : ''}</div>
       <div class="sub">Usually sells for ${r100(w.v)} · ${w.n} sales · profit after tax</div>${openA(r)}</div>
       <div class="px pos">+${r100(gain)}<small>${r.buyNow != null ? 'buy now' : r.curBid != null ? 'bid' : 'min bid'} ${fmt(p)}</small></div></div>`).join(''), l.length,
       `Under what that pass usually sells for, from ${MIN_SALES}+ sales in the ${perTxt}. Buy now is exact; bids can still rise.`);
