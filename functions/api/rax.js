@@ -448,6 +448,53 @@ async function predProbe(env) {
 }
 
 
+/* Bulk rating listings (Dennis, 2026-11-13/15): Real's Auctions "Bulk rating" list,
+   read on account 2 (RS_MARKET_TOKEN) only. Real gives 10 a page, soonest ending
+   first; the next page is asked for with beforeEndsAt = the last listing's end
+   time. A slow loop: one request every 10 seconds (6 a minute), walking the whole
+   list (~280 pages, about 45 minutes a pass) and starting over, so bids and new
+   listings stay current. Saved in bulk_listings; ended ones are cleared. A refusal
+   (401/403/429) pauses it for 30 minutes. */
+const BULK_DDL = `CREATE TABLE IF NOT EXISTS bulk_listings (id INTEGER PRIMARY KEY, endsAt INTEGER, sport TEXT, season INTEGER, playerId INTEGER, name TEXT,
+  rarity TEXT, rating REAL, mult TEXT, buyNow REAL, minBid REAL, curBid REAL, bids INTEGER, value REAL, cards INTEGER, serial TEXT, seller TEXT, seenAt INTEGER)`;
+const BULK_PER_MIN = 6, BULK_GAP = 10000;
+async function bulkTick(env) {
+  const tok = env.RS_MARKET_TOKEN, db = env.RATEBOARD_DB; if (!tok || !db) return;
+  const SK = 'bulk_state_v1';
+  let st = {}; try { st = JSON.parse((await env.RATEBOARD_KV.get(SK)) || '{}') || {}; } catch (e) {}
+  if (st.pauseUntil && Date.now() < st.pauseUntil) return;
+  if (st.lock && Date.now() - st.lock < 75000) return;   // last minute's run still going
+  st.lock = Date.now(); await env.RATEBOARD_KV.put(SK, JSON.stringify(st));
+  await db.prepare(BULK_DDL).run();
+  const base = 'cohort=all&listingType=userpassfull&prestige=all&rarity=all';
+  const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+  try {
+    for (let i = 0; i < BULK_PER_MIN; i++) {
+      if (i) await sleep(BULK_GAP);
+      const u = `https://web.realapp.com/cardmarketplacelistings?${st.cursor ? 'beforeEndsAt=' + encodeURIComponent(st.cursor) + '&' : ''}${base}`;
+      let res, d = null;
+      try { res = await fetch(u, { headers: rsHeaders(tok) }); d = await res.json().catch(() => null); } catch (e) { st.err = String(e.message || e).slice(0, 120); break; }
+      if (!res.ok) { st.err = `Real said ${res.status}`; st.errAt = Date.now(); if ([401, 403, 429].includes(res.status)) st.pauseUntil = Date.now() + 30 * 60000; break; }
+      const L = (d && d.listings) || []; st.count = d && d.listingCount; st.reqs = (st.reqs || 0) + 1; st.lastAt = Date.now(); st.err = null;
+      const now = Date.now(), stmts = [];
+      for (const x of L) { const c = x.card || {}, e = c.entity || {}, b = c.boostInfo || {};
+        stmts.push(db.prepare(`INSERT OR REPLACE INTO bulk_listings (id, endsAt, sport, season, playerId, name, rarity, rating, mult, buyNow, minBid, curBid, bids, value, cards, serial, seller, seenAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+          .bind(Number(x.id), Date.parse(x.endsAt) || null, x.sport || c.sport || null, Number(x.season || c.season) || null, Number(x.playerId || x.entityId) || null,
+            String((e.firstName && e.lastName ? e.firstName + ' ' + e.lastName : '') || c.label || e.displayName || '').slice(0, 80),
+            b.rarityLabel || x.rarity || null, num(c.boostValue), b.multiplier != null ? String(b.multiplier) : null, num(x.buyNowPrice), num(x.minBidPrice), num(x.currentBidAmount),
+            Number(x.numBids) || 0, num(x.value), Array.isArray(x.linkedCardIds) ? x.linkedCardIds.length : null, c.serialNumber != null ? String(c.serialNumber) : null, x.userId != null ? String(x.userId) : null, now)); }
+      if (stmts.length) await db.batch(stmts);
+      // Next page from the last one's end time; past the end, start over from the soonest.
+      const last = L[L.length - 1];
+      if (!L.length || (last && last.endsAt === st.cursor && L.length < 10)) { st.cursor = null; st.passes = (st.passes || 0) + 1; st.passAt = Date.now(); }
+      else st.cursor = last.endsAt === st.cursor ? new Date(Date.parse(last.endsAt) + 1).toISOString() : last.endsAt;   // 10 ending the same moment: step past them
+    }
+    await db.prepare('DELETE FROM bulk_listings WHERE endsAt < ?').bind(Date.now() - 5 * 60000).run();
+  } catch (e) { st.err = String(e.message || e).slice(0, 120); }
+  st.lock = 0;
+  try { await env.RATEBOARD_KV.put(SK, JSON.stringify(st)); } catch (e) {}
+}
+
 /* One-off (2026-11-13): how Real serves the Auctions "Bulk rating" view, read
    with account 2. Keeps only shapes, statuses and a few listing fields. */
 async function bulkProbe(env) {
@@ -8541,10 +8588,11 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil(fcLineupTick(env).catch(() => {}));
     ctx.waitUntil(fcGameRefresh(env).catch(() => {}));
     ctx.waitUntil(gapPush(ctx).catch(() => {}));
+    ctx.waitUntil(bulkTick(env).catch(() => {}));
     if (url.searchParams.get('ticks') === '1') return new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } });
   }
   // Read-only collector progress, no sign-in: counts and dates only, nothing from the market or any account.
-  if (url.searchParams.get('collector') === 'health') { ctx.waitUntil(bulkProbe(env).catch(() => {})); return collectorHealth(env, url); }
+  if (url.searchParams.get('collector') === 'health') return collectorHealth(env, url);
   const mk = url.searchParams.get('market');
   if (MARKET_MEMBER.includes(mk)) {
     const a = await marketWho(env, request);

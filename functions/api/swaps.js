@@ -5679,6 +5679,16 @@ async function handle({ request, env, waitUntil }) {
     try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 3600 }); } catch (e) {}
     return json(out);
   }
+  // Bulk rating listings (Dennis only, 2026-11-15): what account 2's slow loop has read.
+  if (op === 'bulklist') {
+    if (!acc.admin) return forbidden('Admin only.');
+    let st = {}; try { st = JSON.parse((await env.RATEBOARD_KV.get('bulk_state_v1')) || '{}') || {}; } catch (e) {}
+    let rows = [];
+    try { rows = ((await db.prepare('SELECT * FROM bulk_listings WHERE endsAt > ? ORDER BY endsAt LIMIT 5000').bind(Date.now()).all()).results) || []; } catch (e) {}
+    const SPN = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf', soccer: 'FC' };
+    return json({ state: { count: st.count || null, lastAt: st.lastAt || null, passes: st.passes || 0, passAt: st.passAt || null, err: st.err || null, pauseUntil: st.pauseUntil || null, reqs: st.reqs || 0 },
+      rows: rows.map(r => ({ ...r, sp: SPN[r.sport] || r.sport, url: r.playerId && r.sport && r.season ? playerUrl(`${r.sport}:${r.season}:${r.playerId}`) : null })) });
+  }
   if (op === 'notifs') {
     if (!acc.who) return forbidden('Sign in first (raxacademy.app).');
     const me0 = String(acc.who).toLowerCase(), out = { news: SITE_NEWS.map(([d, t]) => ({ ts: Date.parse(d + 'T20:00:00Z'), text: t })) };
