@@ -41,6 +41,7 @@
   .ratenote{margin:10px 0 0;padding:10px 12px;border:1px dashed var(--line);border-radius:10px}
   /* Stars stay bright until they've rated (a member, 2026-11-12: they faded on checking done, before rating). */
   #conlist .row.both + .rpbox + .ratebox[data-sent="1"]{opacity:.5}
+  .cdone{font-size:14px;margin:18px 0 4px;padding-top:10px;border-top:1px solid var(--line);color:var(--mute)} .cdone .n{font-size:12px}
   .chk2{display:flex;flex-direction:column;gap:8px;flex:none}
   .chk2 label{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:10.5px;font-weight:700;color:var(--mute);text-transform:uppercase;letter-spacing:.03em;cursor:pointer}
   .acts{display:flex;flex-direction:column;align-items:stretch;gap:6px;flex:none}
@@ -192,7 +193,7 @@
   <section id="buy" hidden><h2>Buy these packs <span class="n" id="nbuy"></span></h2><div id="buylist"></div></section>
   <section id="w160" hidden class="w160"><h2>Your 160s and niche <span class="n" id="nw160"></span></h2><p class="note" style="margin:0 0 6px">Separate from your swaps above.</p><div id="w160list"></div></section>
   <p class="note wait" id="wait" hidden></p>
-  <section id="con" hidden><h2>Offer on your partners' cards <span class="n" id="ncon"></span></h2><p class="note" style="margin:0 0 6px">Use their comment only to reach them if they didn't buy.</p><label class="showrate"><input type="checkbox" id="showrate" checked> Show rankings</label><div id="conlist"></div><p class="note ratenote" id="ratenote" hidden>Vote fairly or your perms to vote are gone. A 1 star is something like no pack on time + no communication; a 5 star is they had the pack on time and offered on your cards extremely fast. You rate each person once - you can change it later.</p></section>
+  <section id="con" hidden><h2>Offer on your partners' cards <span class="n" id="ncon"></span></h2><p class="note" style="margin:0 0 6px">Use their comment only to reach them if they didn't buy.</p><label class="showrate"><input type="checkbox" id="showrate" checked> Show rankings</label> <label class="showrate" id="byuserL" hidden><input type="checkbox" id="byuser"> Sort by user</label> <label class="showrate"><input type="checkbox" id="donebottom"> Sort to bottom when completed</label><div id="conlist"></div><p class="note ratenote" id="ratenote" hidden>Vote fairly or your perms to vote are gone. A 1 star is something like no pack on time + no communication; a 5 star is they had the pack on time and offered on your cards extremely fast. You rate each person once - you can change it later.</p></section>
   <section id="s160" hidden><h2>160s <span class="n" id="n160"></span></h2><p class="note" style="margin:0 0 6px" id="s160note"></p><div id="s160list"></div></section>
   <p class="note" style="margin-top:14px">Something wrong? Report it on <a href="/swaps">raxacademy.app/swaps</a>.</p>
 </div>
@@ -276,8 +277,21 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
   // Each partner: who, what you receive, what you give - and their comment to reach them.
   $('#ratenote').hidden = !j.swaps.some(x => !x.off);
   // Two ticks per partner here (Dennis, 2026-11-06): offer sent, then swap done.
-  $('#conlist').innerHTML = ord.map(([x, i]) => `<div class="row${x.off ? ' off' : ''}${done['c' + i] && done['d' + i] ? ' both' : ''}" data-row="${i}"><span class="grp"><span class="chk2"><label><input type="checkbox" class="chk" data-k="c${i}" ${done['c' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}><span>Offered</span></label><label><input type="checkbox" class="chk" data-k="d${i}" ${done['d' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}><span>Done</span></label></span>
-    <span><b>${x.partnerUrl ? `<a href="${esc(x.partnerUrl)}" target="_blank" rel="noopener">@${esc(x.partner || '?')}</a>` : '@' + esc(x.partner || '?')}</b>${x.lv ? ` <span class="tl ${x.lv}">${{ owner: 'Owner', goat: '🐐 GOAT', silver: '🥈 2nd', bronze: '🥉 3rd', legend: 'Legend', vet: 'Vet', trusted: 'Trusted', rising: 'Rising', new: 'New' }[x.lv]}</span>` : ''}<span class="sub">You receive <b class="rv">${lnk(x.receive, x.receiveUrl)}</b></span><span class="sub">(You're giving ${esc(x.give)})</span></span></span><span class="acts">${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : '<span class="note">no comment</span>'}${x.id && !x.off ? `<button class="btn rp" type="button" data-rp="${x.id}">Report</button>` : ''}</span></div><div class="rpbox" id="rp${x.id}" hidden></div>${x.off ? '' : rateRow(x, j)}`).join('');
+  /* Sort by user / completed to the bottom (Dennis, 2026-11-15). Both remembered on this phone. */
+  const conRow = ([x, i]) => `<div class="row${x.off ? ' off' : ''}${done['c' + i] && done['d' + i] ? ' both' : ''}" data-row="${i}"><span class="grp"><span class="chk2"><label><input type="checkbox" class="chk" data-k="c${i}" ${done['c' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}><span>Offered</span></label><label><input type="checkbox" class="chk" data-k="d${i}" ${done['d' + i] ? 'checked' : ''}${x.off ? ' disabled' : ''}><span>Done</span></label></span>
+    <span><b>${x.partnerUrl ? `<a href="${esc(x.partnerUrl)}" target="_blank" rel="noopener">@${esc(x.partner || '?')}</a>` : '@' + esc(x.partner || '?')}</b>${x.lv ? ` <span class="tl ${x.lv}">${{ owner: 'Owner', goat: '🐐 GOAT', silver: '🥈 2nd', bronze: '🥉 3rd', legend: 'Legend', vet: 'Vet', trusted: 'Trusted', rising: 'Rising', new: 'New' }[x.lv]}</span>` : ''}<span class="sub">You receive <b class="rv">${lnk(x.receive, x.receiveUrl)}</b></span><span class="sub">(You're giving ${esc(x.give)})</span></span></span><span class="acts">${x.comment ? `<a class="btn go" href="${esc(x.comment)}" target="_blank" rel="noopener">Their comment</a>` : '<span class="note">no comment</span>'}${x.id && !x.off ? `<button class="btn rp" type="button" data-rp="${x.id}">Report</button>` : ''}</span></div><div class="rpbox" id="rp${x.id}" hidden></div>${x.off ? '' : rateRow(x, j)}`;
+  const partners = new Map(); for (const x of j.swaps) partners.set(String(x.partner || '').toLowerCase(), (partners.get(String(x.partner || '').toLowerCase()) || 0) + 1);
+  $('#byuserL').hidden = ![...partners.values()].some(n => n >= 2);
+  window.drawCon = () => {
+    let list = ord.slice();
+    if(!$('#byuserL').hidden && $('#byuser').checked) list.sort(([a], [b]) => String(a.partner || '').toLowerCase().localeCompare(String(b.partner || '').toLowerCase()) || String(a.receive || '').localeCompare(String(b.receive || '')));
+    if($('#donebottom').checked){
+      const fin = ([x, i]) => !x.off && done['c' + i] && done['d' + i];
+      const open = list.filter(r => !fin(r)), comp = list.filter(fin);
+      $('#conlist').innerHTML = open.map(conRow).join('') + (comp.length ? `<h3 class="cdone">Completed <span class="n">${comp.length}</span></h3>` + comp.map(conRow).join('') : '');
+    } else $('#conlist').innerHTML = list.map(conRow).join('');
+  };
+  drawCon();
 })();
 /* Packs today: what the system counts as used, plus your own additions. */
 const pkUrl = () => `/api/swaps?op=hourpacks&u=${encodeURIComponent(q.get('u') || '')}&d=${encodeURIComponent(q.get('d') || '')}&t=${encodeURIComponent(q.get('t') || '')}`;
@@ -472,6 +486,11 @@ document.addEventListener('click', async e => {
 { let on = true; try{ on = localStorage.getItem('hour_showrate') !== '0'; }catch(e){}
   $('#showrate').checked = on; $('#con').classList.toggle('norate', !on);
   $('#showrate').addEventListener('change', e => { $('#con').classList.toggle('norate', !e.target.checked || rateOff); try{ localStorage.setItem('hour_showrate', e.target.checked ? '1' : '0'); }catch(err){} }); }
+// Sort by user / completed to the bottom: remembered on this phone, redrawn when changed.
+for (const [id, k] of [['byuser', 'hour_byuser'], ['donebottom', 'hour_donebottom']]) {
+  try{ $('#' + id).checked = localStorage.getItem(k) === '1'; }catch(e){}
+  $('#' + id).addEventListener('change', e => { try{ localStorage.setItem(k, e.target.checked ? '1' : '0'); }catch(err){} if(window.drawCon) drawCon(); });
+}
 let rateOff = false;   // ratings switched off for the day: no stars, note, box or leaderboard
 /* Stars for each partner (Dennis, 2026-11-06): open once the swap time comes.
    One rating per person, changeable; ratings decide who goes first when two want the same player. */
@@ -520,7 +539,7 @@ document.addEventListener('click', async e => {
 });
 document.addEventListener('change', e => { const k = e.target.dataset.k; if(!k) return; done[k] = e.target.checked; try{ localStorage.setItem(key, JSON.stringify(done)); }catch(err){}
   // Offered and Done both ticked: that partner's row greys out (still usable).
-  const row = e.target.closest('[data-row]'); if(row){ const i = row.dataset.row; row.classList.toggle('both', !!(done['c' + i] && done['d' + i])); }
+  const row = e.target.closest('[data-row]'); if(row){ const i = row.dataset.row; row.classList.toggle('both', !!(done['c' + i] && done['d' + i])); if($('#donebottom').checked && window.drawCon) drawCon(); }
   const r1 = e.target.closest('[data-r160]'); if(r1){ const v = r1.dataset.r160, id = v.slice(1); r1.classList.toggle('both', v[0] === 's' ? !!(done['sq' + id] && done['sr' + id]) : !!(done['bo' + id] && done['bk' + id])); } });
 </script>
 <script src="/sponsor.js" data-page="hour" defer></script>
