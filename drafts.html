@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Drafts - Rax Academy</title>
+<style>
+  :root{--bg:#141925;--panel:#1d2433;--panel2:#262f42;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;--good:#3fbf7f;--bad:#e5534b}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:860px;margin:0 auto;padding:18px 16px 40px}
+  a{color:var(--accent)}
+  h1{font-size:26px;margin:8px 0 2px}
+  .note{color:var(--mute);font-size:13px}
+  .top{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .seg{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin:14px 0;padding:4px;background:var(--panel);border:1px solid var(--line);border-radius:11px}
+  .seg button{background:none;color:var(--mute);border:0;border-radius:8px;padding:9px;font:inherit;font-weight:800;cursor:pointer}
+  .seg button[aria-pressed="true"]{background:var(--accent);color:#141925}
+  .ct{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin:12px 0}
+  .ch{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .ch h2{font-size:18px;margin:0} .ch .tot{font-size:22px;font-weight:900} .ch .tot small{font-size:12px;color:var(--mute);font-weight:700;margin-left:4px}
+  .lu{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:12px 0 4px}
+  .sl{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:8px 6px;text-align:center;min-width:0}
+  .sl .m{font-weight:900;font-size:15px;color:var(--accent)} .sl .m small{display:block;font-size:10.5px;color:var(--mute);font-weight:700}
+  .sl .n{font-weight:800;font-size:13px;line-height:1.2;margin:6px 0 2px;overflow:hidden;text-overflow:ellipsis} .sl .n a{color:var(--ink);text-decoration:none}
+  .sl .t{font-size:11px;color:var(--mute)} .sl .p{font-weight:900;font-size:16px;margin-top:4px} .sl .p small{display:block;font-size:10.5px;color:var(--mute);font-weight:600}
+  .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .btn{display:inline-block;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 12px;font:inherit;font-size:13.5px;font-weight:700;cursor:pointer;text-decoration:none}
+  .btn.go{background:var(--accent);color:#141925;border-color:var(--accent)}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:10px} th{color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.04em;text-align:right;padding:6px 4px;border-bottom:1px solid var(--line)} th:first-child,td:first-child{text-align:left}
+  td{padding:7px 4px;border-bottom:1px solid var(--line);text-align:right} td a{color:var(--ink);text-decoration:none} tr.in td{color:var(--accent);font-weight:700} tr.out td{opacity:.45}
+  .bn{color:var(--good);font-weight:800} .st{color:var(--bad);font-size:11px;font-weight:700}
+  .admin{background:var(--panel);border:1px dashed var(--line);border-radius:12px;padding:12px;margin:14px 0}
+  .admin input{width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;font-size:14px;margin:4px 0}
+  .empty{padding:18px;color:var(--mute);text-align:center}
+  @media (max-width:520px){ .lu{grid-template-columns:repeat(5,minmax(0,1fr));gap:4px} .sl{padding:6px 3px} .sl .n{font-size:11.5px} .sl .p{font-size:14px} }
+</style>
+</head>
+<body><div class="wrap">
+<div class="top"><a href="/" style="text-decoration:none;color:var(--ink);font-weight:900;font-size:20px">Rax Academy</a><a href="/">Back to home</a></div>
+<h1>Drafts</h1>
+<p class="note" id="msg">Loading…</p>
+<div class="seg" id="seg" hidden><button data-v="sport" aria-pressed="true">Daily drafts</button><button data-v="game" aria-pressed="false">Game drafts</button></div>
+<p class="note" id="how"></p>
+<div id="list"></div>
+<div class="admin" id="admin" hidden>
+  <b>Add a draft</b> <span class="note">(admin) - paste the contest or player-list link from Real; the post link and a title are optional.</span>
+  <input id="a-url" placeholder="https://web.realapp.com/games/playerratingcontest/…">
+  <input id="a-post" placeholder="Post link (https://www.realapp.com/…)">
+  <input id="a-title" placeholder="Title (e.g. Ravens @ Chargers)">
+  <button class="btn go" id="a-add">Add</button> <span class="note" id="a-msg"></span>
+</div>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const ls = { get: k => { try{ return localStorage.getItem(k); }catch(e){ return null; } }, set: (k, v) => { try{ localStorage.setItem(k, v); }catch(e){} } };
+const hdr = () => { const t = ls.get('ratebrd_token_v1') || ''; return t ? { 'x-rb-token': t } : {}; };
+const dayLbl = (d, today) => { const t = new Date(d + 'T12:00:00Z'); const w = t.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+  return d === today ? 'Today · ' + w : w; };
+let J = null, view = ls.get('drafts_view') || 'sport';
+async function load(){
+  try{ J = await (await fetch('/api/swaps?op=drafts', { headers: hdr() })).json(); }catch(e){ J = { error: 'Could not reach the site - try again.' }; }
+  if(J.error){ $('#msg').innerHTML = /sign in/i.test(J.error) ? 'Sign in first - <a href="/?next=/drafts">go to sign in</a>.' : esc(J.error); return; }
+  $('#msg').textContent = 'The best lineup for each of Real\'s drafts, from projected Real ratings. Updated every 10 minutes.';
+  $('#seg').hidden = false; $('#admin').hidden = !J.admin; draw();
+}
+function draw(){
+  document.querySelectorAll('#seg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === view));
+  $('#how').textContent = view === 'sport'
+    ? 'Daily drafts: each slot multiplies a player\'s Real rating (2.0x down to 1.2x) and his bonus adds to it. Best 5 = most total rating.'
+    : 'Game drafts: the 5 players who\'ll have the highest Real rating in that game, best in the 2.0x slot. No bonuses.';
+  const l = (J.contests || []).filter(c => c.type === view).sort((a, b) => String(a.day).localeCompare(String(b.day)) || a.id - b.id);
+  $('#list').innerHTML = l.map(c => {
+    if(c.error) return `<div class="ct"><b>Draft ${c.id}</b> <span class="note">${esc(c.error)}</span>${J.admin ? ` <button class="btn" data-del="${c.id}" data-type="${c.type}">Remove</button>` : ''}</div>`;
+    const lu = (c.best && c.best.lineup) || [], ins = new Set(lu.map(p => p.id));
+    return `<div class="ct"><div class="ch"><h2>${esc(c.sportName)} ${c.type === 'game' ? '· ' + esc(c.title || 'Game') : 'daily'} <span class="note">${esc(dayLbl(c.day, J.today))}</span></h2>
+      <span class="tot">${c.best && c.best.score != null ? c.best.score.toFixed(1) : '-'}<small>projected rating</small></span></div>
+      ${lu.length ? `<div class="lu">${lu.map(p => `<div class="sl"><div class="m">${p.mult}x<small>${p.slot}x${p.bonus ? ' + ' + p.bonus : ''}</small></div><div class="n">${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.name)}</a>` : esc(p.name)}</div><div class="t">${esc(p.team)} · ${esc(p.pos)}</div><div class="p">${p.pts}<small>${p.proj} × ${p.mult}</small></div></div>`).join('')}</div>` : '<p class="note">No projections for this pool yet.</p>'}
+      <div class="acts">${c.post ? `<a class="btn go" href="${esc(c.post)}" target="_blank" rel="noopener">Open in Real</a>` : ''}<button class="btn" data-all="${c.type}${c.id}">All ${c.players ? c.players.length : 0} players</button>${J.admin ? `<button class="btn" data-del="${c.id}" data-type="${c.type}">Remove</button>` : ''}</div>
+      <div id="all${c.type}${c.id}" hidden><table><tr><th>Player</th>${c.type === 'sport' ? '<th>Bonus</th>' : ''}<th>Proj</th><th>In 2.0x</th></tr>
+      ${(c.players || []).map(p => `<tr class="${ins.has(p.id) ? 'in' : ''}${p.out ? ' out' : ''}"><td>${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.name)}</a>` : esc(p.name)} <span class="note">${esc(p.team)} ${esc(p.pos)}</span>${p.status && !/^active$/i.test(p.status) ? ` <span class="st">${esc(p.status)}</span>` : ''}</td>${c.type === 'sport' ? `<td class="bn">${p.bonus ? '+' + p.bonus + 'x' : ''}</td>` : ''}<td>${p.proj ?? '-'}</td><td>${p.proj != null ? (p.proj * ((c.slots[0] || 2) + (p.bonus || 0))).toFixed(1) : '-'}</td></tr>`).join('')}</table>
+      <p class="note">Proj = projected Real rating (last 5 games weighted with the season; last season if no games yet). Out players are left out.</p></div></div>`; }).join('')
+    || `<div class="empty">No ${view === 'sport' ? 'daily' : 'game'} drafts for today or tomorrow yet.</div>`;
+}
+document.querySelectorAll('#seg button').forEach(b => b.addEventListener('click', () => { view = b.dataset.v; ls.set('drafts_view', view); draw(); }));
+$('#list').addEventListener('click', async e => {
+  const a = e.target.closest('[data-all]'); if(a){ const el = $('#all' + a.dataset.all); el.hidden = !el.hidden; return; }
+  const d = e.target.closest('[data-del]'); if(d && confirm('Remove this draft from the page?')){ await fetch('/api/swaps?op=draftdel', { method: 'POST', headers: { ...hdr(), 'content-type': 'application/json' }, body: JSON.stringify({ id: Number(d.dataset.del), type: d.dataset.type }) }); load(); }
+});
+$('#a-add').addEventListener('click', async () => {
+  $('#a-msg').textContent = 'Adding…';
+  let j; try{ j = await (await fetch('/api/swaps?op=draftadd', { method: 'POST', headers: { ...hdr(), 'content-type': 'application/json' }, body: JSON.stringify({ url: $('#a-url').value, post: $('#a-post').value, title: $('#a-title').value }) })).json(); }catch(e){ j = { error: 'Could not reach the site.' }; }
+  $('#a-msg').textContent = j.error || `Added ${j.contest.type} draft ${j.contest.id} (${j.contest.sport}, ${j.contest.day}).`;
+  if(!j.error){ $('#a-url').value = $('#a-post').value = $('#a-title').value = ''; view = j.contest.type; load(); }
+});
+load();
+</script>
+</body>
+</html>

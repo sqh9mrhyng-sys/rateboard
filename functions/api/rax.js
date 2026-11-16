@@ -1,5 +1,5 @@
 import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS, touchSeen, userStats, sessionState } from '../../lib/auth.js';
-import { swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick, fcSchedule, whyNotFull, TAG_DEFS, scanProbe, boostProbe, wiltProbe, multProbe, untouchProbe, keepProbe, dennisProbe, tzProbe, cfbPassProbe } from './swaps.js';
+import { draftScan, swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick, fcSchedule, whyNotFull, TAG_DEFS, scanProbe, boostProbe, wiltProbe, multProbe, untouchProbe, keepProbe, dennisProbe, tzProbe, cfbPassProbe } from './swaps.js';
 import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, capNow } from '../../lib/dbwatch.js';
 import { packAllowed } from './kv.js';
 
@@ -8590,7 +8590,7 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), draftProbe: await kvj('diag_draft_1115b'), modVoid: await kvj('mod_void_1115_n'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
+    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), draftTest: await (async () => { const x = await kvj('draft_v1_sport_2460'), g = await kvj('draft_v1_game_55724'); const f = v => v && v.best ? { slots: v.slots, n: v.players && v.players.length, withProj: v.players && v.players.filter(p => p.proj != null).length, score: v.best.score, lineup: v.best.lineup.map(p => `${p.name} ${p.proj}x${p.mult}=${p.pts}`) } : v; return { sport: f(x), game: f(g) }; })(), modVoid: await kvj('mod_void_1115_n'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
       const o = {}; for (const r of rows) { const k = new Date(Number(r.at)).toISOString().slice(11, 14) + '00 ' + r.kind + ' | ' + String(r.msg || '').replace(/@[\w.\-]+/g, '@x').replace(/^[\w.\-]+:/, 'u:').replace(/(dropped|send|late)\s.*$/, '$1').slice(0, 140); o[k] = (o[k] || 0) + 1; } return o; } catch (e) { return String(e.message); } })(), multDist: await (async () => {
       /* One-off (2026-11-15): card multiplier by rarity/label/rating band across members' passes - counts only. */
       try { const c = {}; let n = 0;
@@ -8658,10 +8658,11 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil(fcGameRefresh(env).catch(() => {}));
     ctx.waitUntil(gapPush(ctx).catch(() => {}));
     ctx.waitUntil(bulkTick(env).catch(() => {}));
+    ctx.waitUntil(draftScan(env).catch(() => {}));
     if (url.searchParams.get('ticks') === '1') return new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } });
   }
   // Read-only collector progress, no sign-in: counts and dates only, nothing from the market or any account.
-  if (url.searchParams.get('collector') === 'health') { ctx.waitUntil(draftProbe(env).catch(() => {})); return collectorHealth(env, url); }
+  if (url.searchParams.get('collector') === 'health') return collectorHealth(env, url);
   const mk = url.searchParams.get('market');
   if (MARKET_MEMBER.includes(mk)) {
     const a = await marketWho(env, request);

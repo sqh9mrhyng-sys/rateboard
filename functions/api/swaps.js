@@ -1530,6 +1530,90 @@ async function acceptRequests(db, auth) {
   return { requests: new Set(reqs.map(r => r.channelId)).size, accepted };
 }
 
+
+/* ---- Drafts (Dennis, 2026-11-15) ------------------------------------------
+   Real's "player rating contests": pick 5 players, each slot multiplies his
+   Real rating (2.0, 1.8, 1.6, 1.4, 1.2). Daily sport drafts also give some
+   players a bonus that adds to the slot (+2.4x in the 2.0x slot = 4.4x);
+   game drafts have no bonus. Goal: the highest total rating.
+   Contests come from a saved list (found by drafts discovery, or added by an
+   admin from a Real link); each one's player pool is read on account 1 and
+   kept 10 minutes. Ratings are projected from the game log's Real rating. */
+const DRAFT_LIST_KV = 'draft_contests_v1';
+// The first two, from the links Dennis sent (2026-11-15).
+const DRAFT_SEED = [{ id: 2460, type: 'sport', sport: 'nfl', day: '2026-11-16' }, { id: 55724, type: 'game', sport: 'nfl', day: '2026-11-16', gameId: 19603, post: 'https://www.realapp.com/YDiptOFGvRM', title: 'Ravens @ Chargers' }];
+async function draftList(env) { try { const v = await env.RATEBOARD_KV.get(DRAFT_LIST_KV); return v ? (JSON.parse(v) || []) : DRAFT_SEED.slice(); } catch (e) { return []; } }
+async function draftSaveList(env, l) { await env.RATEBOARD_KV.put(DRAFT_LIST_KV, JSON.stringify(l.slice(-400))); }
+async function draftInfo(env, id, type) {
+  const tok = env.RS_AUTH_TOKEN; if (!tok) return null;
+  const r = await fetch(`https://web.realapp.com/games/playerratingcontest/${id}/draftinfo?contestType=${type}`, { headers: rsHeaders(tok) });
+  if (!r.ok) return { status: r.status };
+  const d = await r.json().catch(() => null); return d && d.info ? { status: 200, info: d.info } : { status: 0 };
+}
+// Best 5 for a pool: a player's worth in a slot = projected rating x (slot + his bonus).
+// Highest projection gets the highest slot (the bonus doesn't depend on the slot), so pick by DP over players sorted by projection.
+function draftBest(players, slots) {
+  const c = players.filter(p => p.proj != null && !p.out).sort((a, b) => b.proj - a.proj), K = slots.length;
+  const dp = Array.from({ length: c.length + 1 }, () => Array(K + 1).fill(-Infinity)), take = Array.from({ length: c.length + 1 }, () => Array(K + 1).fill(false));
+  for (let i = 0; i <= c.length; i++) dp[i][0] = 0;
+  for (let i = 1; i <= c.length; i++) for (let k = 1; k <= K; k++) {
+    const skip = dp[i - 1][k], use = dp[i - 1][k - 1] + c[i - 1].proj * (slots[k - 1] + (c[i - 1].bonus || 0));
+    if (use > skip) { dp[i][k] = use; take[i][k] = true; } else dp[i][k] = skip; }
+  const pick = []; for (let i = c.length, k = K; i > 0 && k > 0; i--) if (take[i][k]) { pick.unshift(c[i - 1]); k--; }
+  return { score: dp[c.length][K] === -Infinity ? null : dp[c.length][K], lineup: pick.map((p, j) => ({ ...p, slot: slots[j], mult: Math.round((slots[j] + (p.bonus || 0)) * 10) / 10, pts: Math.round(p.proj * (slots[j] + (p.bonus || 0)) * 10) / 10 })) };
+}
+async function draftBuild(env, db, c) {
+  const K = `draft_v1_${c.type}_${c.id}`;
+  try { const x = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (x && Date.now() - x.at < 10 * 60000) return x; } catch (e) {}
+  const tok = env.RS_AUTH_TOKEN; if (!tok) return { error: 'No account 1 token.' };
+  const di = await draftInfo(env, c.id, c.type); if (!di || di.status !== 200) return { error: `Real didn't give the draft (${di && di.status}).` };
+  const info = di.info, sp = info.sport || c.sport, gameId = info.gameId || c.gameId || null;
+  const slots = (Array.isArray(info.defaultMultipliers) && info.defaultMultipliers.length ? info.defaultMultipliers : [2, 1.8, 1.6, 1.4, 1.2]).map(Number).slice(0, info.lineupSize || 5);
+  const r = await fetch(`https://web.realapp.com/players/sport/${sp}/search?contestId=${c.id}${gameId ? '&gameId=' + gameId : ''}&includeNoOneOption=false&searchType=ratingLineup`, { headers: rsHeaders(tok) });
+  if (!r.ok) return { error: `Real didn't give the players (${r.status}).` };
+  const pool = ((await r.json().catch(() => ({}))) || {}).players || [];
+  // Projected Real rating: last 5 games weighted with the season, from the game log; last season if no games yet.
+  const [se, prev] = PROJ_SEASON[sp] || [null, null], ids = pool.map(p => Number(p.id)).filter(Number.isFinite), by = new Map(), old = new Map();
+  const minSp = sp === 'nba' || sp === 'ncaam' || sp === 'wnba' || sp === 'soccer', foot = sp === 'nfl' || sp === 'ncaaf';
+  const played = x => (!minSp || x.min == null || Number(x.min) > 0) && !(foot && !x.stats && !(Number(x.rax) > 0));
+  for (let i = 0; i < ids.length; i += 90) { const part = ids.slice(i, i + 90), ph = part.map(() => '?').join(',');
+    for (const [s0, m] of [[se, by], [prev, old]]) { if (!s0) continue;
+      try { for (const x of (((await db.prepare(`SELECT playerId, day, rating, min, rax${foot ? ', stats' : ''} FROM gamelog WHERE sport=? AND season=? AND rating IS NOT NULL AND COALESCE(seasonType, 'regularseason') <> 'preseason' AND playerId IN (${ph}) ORDER BY day`).bind(sp, s0, ...part).all()).results) || []))
+        if (played(x)) (m.get(Number(x.playerId)) || m.set(Number(x.playerId), []).get(Number(x.playerId))).push(Number(x.rating)); } catch (e) {} } }
+  const avg = a => a.length ? a.reduce((t, v) => t + v, 0) / a.length : null;
+  const players = pool.map(p => { const g = by.get(Number(p.id)) || [], o = old.get(Number(p.id)) || [];
+    let proj = null, basis = '';
+    if (g.length >= 3) { proj = 0.6 * avg(g.slice(-5)) + 0.4 * avg(g); basis = `last 5 weighted, ${g.length} games`; }
+    else if (g.length) { proj = o.length ? 0.5 * avg(g) + 0.5 * avg(o) : avg(g); basis = `${g.length} game${g.length === 1 ? '' : 's'}${o.length ? ' + last season' : ''}`; }
+    else if (o.length) { proj = avg(o) * 0.9; basis = 'last season'; }
+    const st = String(p.injuryStatus || '');
+    const out = /^(out|injured|ir|suspend|doubtful)/i.test(st);
+    if (proj != null && /question|day-to-day/i.test(st)) proj *= 0.9;
+    return { id: Number(p.id), name: `${p.firstName || ''} ${p.lastName || ''}`.trim() || p.displayName, team: (p.team && p.team.key) || '', pos: p.position || '', status: st || null, out,
+      bonus: Number(p.multiplierBonus) || 0, proj: proj == null ? null : Math.round(proj * 100) / 100, games: g.length, basis, url: playerUrl(`${sp}:${se}:${p.id}`) }; });
+  const best = draftBest(players, slots);
+  const x = { at: Date.now(), id: c.id, type: c.type, sport: sp, day: info.day || c.day, slots, entered: !!info.isEntered, best, players: players.sort((a, b) => (b.proj ?? -1) - (a.proj ?? -1)), post: c.post || null, gameId };
+  try { await env.RATEBOARD_KV.put(K, JSON.stringify(x), { expirationTtl: 3 * 86400 }); } catch (e) {}
+  return x;
+}
+/* Daily sport drafts are numbered in order: once an hour, read the next few
+   numbers past the last one known and add any that exist (a handful of reads a day). */
+export async function draftScan(env) {
+  const tok = env.RS_AUTH_TOKEN; if (!tok) return;
+  const k = 'draft_scan_v1'; let last = 0; try { last = Number(await env.RATEBOARD_KV.get(k)) || 0; } catch (e) {}
+  if (Date.now() - last < 60 * 60000) return; await env.RATEBOARD_KV.put(k, String(Date.now()));
+  const l = await draftList(env);
+  let top = Math.max(2459, ...l.filter(c => c.type === 'sport').map(c => c.id)), miss = 0;
+  for (let id = top + 1; miss < 3 && id < top + 25; id++) {
+    const d = await draftInfo(env, id, 'sport').catch(() => null); await sleep(4000);
+    if (!d || d.status !== 200) { miss++; continue; }
+    miss = 0; if (!l.some(c => c.type === 'sport' && c.id === id)) l.push({ id, type: 'sport', sport: d.info.sport, day: d.info.day, added: Date.now() });
+  }
+  await draftSaveList(env, l);
+  // Build today's and tomorrow's ahead, so the page opens fast.
+  const etd = d => ET_DAY_FMT.format(d), days = [etd(new Date()), etd(new Date(Date.now() + 86400000))];
+  for (const c of l.filter(c => days.includes(c.day))) { try { await draftBuild(env, env.RATEBOARD_DB, c); } catch (e) {} await sleep(3000); }
+}
 /* Real's own link codes (hashids, salt 'routing', min length 11): a player is
    [2, sport code, 0, id], a pass is [18, 0, 0, passId]. */
 function routeId(numbers) {
@@ -5680,6 +5764,36 @@ async function handle({ request, env, waitUntil }) {
     return json(out);
   }
   // Bulk rating listings (Dennis only, 2026-11-15): what account 2's slow loop has read.
+  // Drafts (2026-11-15): today's and tomorrow's contests with the best lineup for each.
+  if (op === 'drafts') {
+    if (!acc.who) return forbidden('Sign in first (raxacademy.app).');
+    const l = await draftList(env), etd = d => ET_DAY_FMT.format(d), days = [etd(new Date(Date.now() - 86400000)), etd(new Date()), etd(new Date(Date.now() + 86400000)), etd(new Date(Date.now() + 2 * 86400000))];
+    const want = l.filter(c => days.includes(c.day));
+    const out = [];
+    for (const c of want) { try { out.push({ ...(await draftBuild(env, db, c)), sportName: ({ nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf', soccer: 'FC' })[c.sport] || c.sport, title: c.title || null }); } catch (e) { out.push({ id: c.id, type: c.type, error: String(e.message || e).slice(0, 120) }); } }
+    return json({ admin: !!acc.admin, today: days[1], contests: out });
+  }
+  // Admin: add a contest from a Real link (the contest or player-list address; a post link can ride along).
+  if (op === 'draftadd' && request.method === 'POST') {
+    if (!acc.admin) return forbidden('Admin only.');
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    const u = String(b.url || ''), m = u.match(/playerratingcontest\/(\d+)/) || u.match(/contestId=(\d+)/);
+    if (!m) return json({ error: 'Paste the contest link (it has playerratingcontest/<number> or contestId=<number> in it).' }, 400);
+    const id = Number(m[1]), type = /contestType=game|gameId=/.test(u) ? 'game' : 'sport', gm = u.match(/gameId=(\d+)/);
+    const d = await draftInfo(env, id, type).catch(() => null);
+    if (!d || d.status !== 200) return json({ error: `Real didn't find that ${type} draft (${d && d.status}).` }, 400);
+    const l = await draftList(env); const i0 = l.findIndex(c => c.id === id && c.type === type);
+    const c = { id, type, sport: d.info.sport, day: d.info.day, gameId: d.info.gameId || (gm ? Number(gm[1]) : null), post: String(b.post || '').trim() || null, title: String(b.title || '').trim().slice(0, 60) || null, added: Date.now() };
+    if (i0 >= 0) l[i0] = { ...l[i0], ...c }; else l.push(c);
+    await draftSaveList(env, l); try { await env.RATEBOARD_KV.delete(`draft_v1_${type}_${id}`); } catch (e) {}
+    return json({ ok: true, contest: c });
+  }
+  if (op === 'draftdel' && request.method === 'POST') {
+    if (!acc.admin) return forbidden('Admin only.');
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    await draftSaveList(env, (await draftList(env)).filter(c => !(c.id === Number(b.id) && c.type === b.type)));
+    return json({ ok: true });
+  }
   // Bulk ratings (Dennis only, 2026-11-15): live listings, every ended one (history), his passes, and pack plays.
   if (op === 'bulklist') {
     if (String(acc.who || '').toLowerCase() !== 'dennis') return forbidden('Only Dennis can open this page.');
