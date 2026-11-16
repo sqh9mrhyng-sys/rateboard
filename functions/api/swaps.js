@@ -5895,7 +5895,7 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'bulklist') {
     if (!(await allow(url.origin, 'bulk:' + clientIp(request), 20, 60))) return json({ error: 'Too many refreshes - wait a minute.' }, 429);
     const SPN = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf', soccer: 'FC', ufc: 'UFC' };
-    if (!BULK_MEMO.text || Date.now() - BULK_MEMO.at > 3 * 60000) {
+    if (!BULK_MEMO.text || Date.now() - BULK_MEMO.at > 90000) {
       if (!BULK_MEMO.building) BULK_MEMO.building = (async () => {
         let st = {}; try { st = JSON.parse((await env.RATEBOARD_KV.get('bulk_state_v2')) || '{}') || {}; } catch (e) {}
         let rows = [], ended = [];

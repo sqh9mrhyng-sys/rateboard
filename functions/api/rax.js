@@ -519,6 +519,29 @@ async function bulkTick(env) {
       // 2b. New listings only: the slice ending 12/24/48/72h after the last watch up to now.
       const since = st.lastWatch || now - BULK_EVERY * 60000;
       for (const h of BULK_HOURS) { if (stop) break; await walk(new Date(since + h * 3600000 - 60000).toISOString(), now + h * 3600000, 3); }
+      /* 2c. The listings Best deals would show (2026-11-16: many were already bought - a buy-now
+         goes before it ends and the watch only reads ending ones). The top 8 by profit are read
+         one by one; one that's gone is moved to the results as sold at buy now. */
+      if (!stop) { try {
+        const hist = ((await db.prepare("SELECT sport, season, playerId, price, rating FROM bulk_results WHERE price IS NOT NULL AND rating > 0 AND endsAt > ?").bind(Date.now() - 7 * 86400000).all()).results) || [];
+        const by = new Map(); for (const h of hist) { const k = `${h.sport}:${h.season}:${h.playerId}`; (by.get(k) || by.set(k, []).get(k)).push(h.price / h.rating); }
+        const med = a => { const x = a.slice().sort((p, q) => p - q), m = x.length >> 1; return x.length % 2 ? x[m] : (x[m - 1] + x[m]) / 2; };
+        const live = ((await db.prepare("SELECT * FROM bulk_listings WHERE endsAt > ? AND rating > 0").bind(Date.now()).all()).results) || [];
+        const cand = live.filter(x => !/mystic|iconic/i.test(x.rarity || '')).map(x => { const a = by.get(`${x.sport}:${x.season}:${x.playerId}`), p = x.buyNow ?? x.curBid ?? x.minBid;
+          return a && a.length >= 5 && p != null ? { x, gain: med(a) * x.rating * 0.9 - p } : null; }).filter(c => c && c.gain >= 100).sort((a, b) => b.gain - a.gain).slice(0, 8);
+        for (const { x } of cand) { if (stop) break;
+          // Read on its own (a 403/404 here means the listing is gone, not that account 2 is refused).
+          await sleep(BULK_GAP); let r = null;
+          try { const res = await fetch(`https://web.realapp.com/cardmarketplacelistings/${x.id}`, { headers: rsHeaders(tok) }); st.reqs = (st.reqs || 0) + 1; r = { status: res.status, d: res.ok ? await res.json().catch(() => null) : null }; if (res.status === 429) { st.pauseUntil = Date.now() + 30 * 60000; stop = true; } } catch (e) { continue; }
+          const L = r.status === 200 && r.d ? (r.d.listing || r.d) : null;
+          const gone = r.status === 403 || r.status === 404 || r.status === 410 || (L && (L.purchasedUserId != null || L.finalPurchaseAmount != null || /sold|complete|purchas|cancel|expire|closed/i.test(String(L.status || ''))));
+          if (gone) { const price = L ? (num(L.finalPurchaseAmount) ?? num(L.buyNowPrice) ?? x.buyNow) : null, sold = L && (L.purchasedUserId != null || L.finalPurchaseAmount != null);
+            await db.prepare(`INSERT OR REPLACE INTO bulk_results (id, endsAt, sport, season, playerId, name, rarity, rating, mult, buyNow, minBid, price, bids, how, lastSeenBid, lastSeenAt, savedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+              .bind(x.id, Date.now(), x.sport, x.season, x.playerId, x.name, x.rarity, x.rating, x.mult, x.buyNow, x.minBid, sold ? price : null, x.bids, sold ? 'buy now' : 'unsold', x.curBid, x.seenAt, Date.now()).run();
+            await db.prepare('DELETE FROM bulk_listings WHERE id=?').bind(x.id).run(); st.dealsGone = (st.dealsGone || 0) + 1; }
+          else if (L) await db.prepare('UPDATE bulk_listings SET curBid=?, bids=?, seenAt=? WHERE id=?').bind(num(L.currentBidAmount), Number(L.numBids) || 0, Date.now(), x.id).run();
+        }
+      } catch (e) {} }
       st.lastWatch = now; st.nextWatch = now + BULK_EVERY * 60000; st.watches = (st.watches || 0) + 1;
     }
     // 3. Ended listings: final result, one read each (at most 6 a run), else the last price seen.
