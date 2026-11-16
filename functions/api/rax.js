@@ -475,7 +475,7 @@ async function bulkTick(env) {
       let res, d = null;
       try { res = await fetch(u, { headers: rsHeaders(tok) }); d = await res.json().catch(() => null); } catch (e) { st.err = String(e.message || e).slice(0, 120); break; }
       if (!res.ok) { st.err = `Real said ${res.status}`; st.errAt = Date.now(); if ([401, 403, 429].includes(res.status)) st.pauseUntil = Date.now() + 30 * 60000; break; }
-      const L = (d && d.listings) || []; st.count = d && d.listingCount; st.reqs = (st.reqs || 0) + 1; st.lastAt = Date.now(); st.err = null;
+      const L = (d && d.listings) || []; st.count = (d && d.listingCount) ?? st.count; st.reqs = (st.reqs || 0) + 1; st.lastAt = Date.now(); st.err = null;
       const now = Date.now(), stmts = [];
       for (const x of L) { const c = x.card || {}, e = c.entity || {}, b = c.boostInfo || {};
         stmts.push(db.prepare(`INSERT OR REPLACE INTO bulk_listings (id, endsAt, sport, season, playerId, name, rarity, rating, mult, buyNow, minBid, curBid, bids, value, cards, serial, seller, seenAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
