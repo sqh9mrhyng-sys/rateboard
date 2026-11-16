@@ -451,16 +451,16 @@ async function predProbe(env) {
 /* One-off (2026-11-13): how Real serves the Auctions "Bulk rating" view, read
    with account 2. Keeps only shapes, statuses and a few listing fields. */
 async function bulkProbe(env) {
-  const K = 'diag_bulk_1114c';
+  const K = 'diag_bulk_1115a';
   try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1 }), { expirationTtl: 86400 }); } catch (e) { return; }
   const tok = env.RS_MARKET_TOKEN, out = { at: Date.now(), tries: [] };
   const base = 'cohort=all&offset=0&limit=8&prestige=all&rarity=all&beforeEndsAt=' + encodeURIComponent(new Date(Date.now() + 30 * 86400000).toISOString());
   const brief = r => { const c = r.card || r; const e = c.entity || c.player || c.primaryPlayer || {};
     return { id: r.id, type: r.listingType, rar: c.rarity || c.rarityLabel || (c.boostInfo || {}).rarityLabel, rating: c.boostValue ?? c.rating ?? null, name: e.lastName || e.name || c.label || null,
       minBid: r.minimumBid ?? r.minBid ?? null, cur: r.currentBid ?? r.highestBid ?? null, buy: r.buyNowPrice ?? r.buyNow ?? null, ends: r.endsAt, bulk: Object.keys(r).filter(k => /bulk/i.test(k)).map(k => k + '=' + JSON.stringify(r[k]).slice(0, 40)) }; };
-  // Round 7 (2026-11-14): does account 2's new login work at all? One plain search, then the bulk list once more.
+  // Round 8 (2026-11-15): new account 2 login. A plain search, then the bulk list, then 100 a page, then deep.
   const b6 = 'cohort=all&listingType=userpassfull&prestige=all&rarity=all';
-  const urls = [['acct2 search', 'searchusers?query=rax'], ['acct2 bulk', `cardmarketplacelistings?${b6}&offset=0&limit=100`]];
+  const urls = [['acct2 search', 'searchusers?query=rax'], ['bulk plain', `cardmarketplacelistings?${b6}`], ['bulk 100', `cardmarketplacelistings?${b6}&offset=0&limit=100`], ['bulk deep', `cardmarketplacelistings?${b6}&offset=3400&limit=100`]];
   try {
     for (const [lab, u] of urls) {
       try { const res = await fetch('https://web.realapp.com/' + u, { headers: rsHeaders(tok) }); const t = await res.text(); let d = null; try { d = JSON.parse(t); } catch (e) {}
@@ -8468,7 +8468,7 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkProbe: await kvj('diag_bulk_1114c'), modVoid: await kvj('mod_void_1115_n'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
+    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkProbe: await kvj('diag_bulk_1115a'), modVoid: await kvj('mod_void_1115_n'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
       const o = {}; for (const r of rows) { const k = new Date(Number(r.at)).toISOString().slice(11, 14) + '00 ' + r.kind + ' | ' + String(r.msg || '').replace(/@[\w.\-]+/g, '@x').replace(/^[\w.\-]+:/, 'u:').replace(/(dropped|send|late)\s.*$/, '$1').slice(0, 140); o[k] = (o[k] || 0) + 1; } return o; } catch (e) { return String(e.message); } })(), multDist: await (async () => {
       /* One-off (2026-11-15): card multiplier by rarity/label/rating band across members' passes - counts only. */
       try { const c = {}; let n = 0;
