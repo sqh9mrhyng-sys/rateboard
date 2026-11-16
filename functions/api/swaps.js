@@ -758,6 +758,7 @@ const BOSS_KEY = 'swap_boss_v1';
    few ratings. Anyone spamming 1 stars loses rating, and none of their
    ratings count. */
 const RATE_PRIOR = 3.5, RATE_PRIOR_N = 3;
+const RL_MIN = 10;   // votes to be ranked on the rating leaderboard
 const RATE_ON_MEMBERS = 10, RATE_ON_VOTES = 20;
 // Ratings off entirely until the next swap day starts, 3am Alaska Sat Nov 7 (Dennis, 2026-11-06).
 const RATE_OFF_UNTIL = Date.UTC(2026, 10, 7, 12);
@@ -780,12 +781,12 @@ async function ratingScores(db) {
    time has passed and that went ahead for them. Stars are the weighted score
    (pulled toward 3.5 until a member has a few ratings), so 99 fives and a
    four beat four fives. Worked out at most every 30 minutes. */
-const TRUST_KEY = 'swap_trust_v2';
-/* Swap tags (Dennis, 2026-11-15), by swaps done: New up to 30, Understanding 31-60,
+const TRUST_KEY = 'swap_trust_v3';
+/* Swap tags (Dennis, 2026-11-15), by swaps done: New up to 30, Rising 31-60,
    Trusted 61-150, Vet 151-300, Legend 300+. The three with the most swaps show
    🐐 / 🥈 / 🥉 instead, and Dennis shows Owner. lvl is the level (used for the
    small matching edge); lv is the tag shown. */
-const trustOf = trades => trades > 300 ? 'legend' : trades > 150 ? 'vet' : trades > 60 ? 'trusted' : trades > 30 ? 'understanding' : 'new';
+const trustOf = trades => trades > 300 ? 'legend' : trades > 150 ? 'vet' : trades > 60 ? 'trusted' : trades > 30 ? 'rising' : 'new';
 const TAG_OWNER = 'dennis';
 async function tradeCounts(db, since = 0) {
   const now = Date.now(), out = new Map();
@@ -1033,7 +1034,9 @@ async function runMatchingInner(db, env) {
   const score = await ratingScores(db);
   // Trusted and Vet members (2026-11-11) get a small edge in toss-ups - a reason to care about their rating.
   let tmM = {}; try { if (env) tmM = await trustMap(env, db); } catch (e) {}
-  const rs = k => (score.get(k) ?? RATE_PRIOR) + (({ legend: 0.3, vet: 0.3, trusted: 0.15, understanding: 0.05 })[(tmM[k] || {}).lvl || (tmM[k] || {}).lv] || 0);
+  // The higher the tag, the bigger the edge (Dennis, 2026-11-15): Rising < Trusted < Vet < Legend < 🥉 < 🥈 < 🐐.
+  const TAG_EDGE = { owner: 0.5, goat: 0.5, silver: 0.45, bronze: 0.4, legend: 0.35, vet: 0.25, trusted: 0.15, rising: 0.05 };
+  const rs = k => (score.get(k) ?? RATE_PRIOR) + (TAG_EDGE[(tmM[k] || {}).lv] || 0);
   // Either one has blacklisted the other: never matched - swaps, 160s or niche (2026-11-11).
   const byKey = new Map(users.map(u => [u.key, u]));
   const blocked = (a, b) => { const A = typeof a === 'string' ? byKey.get(a) : a, B = typeof b === 'string' ? byKey.get(b) : b;
@@ -5420,9 +5423,11 @@ async function handle({ request, env, waitUntil }) {
       WHERE r.rater NOT IN (SELECT key FROM swap_rate_block) AND r.at >= ? GROUP BY r.ratee LIMIT 1000`).bind(since).all()).results) || [];
     const tm = await trustMap(env, db), tcP = since ? await tradeCounts(db, since) : null;
     rows = rows.map(r => ({ ...r, score: (Number(r.sum) + RATE_PRIOR * RATE_PRIOR_N) / (Number(r.n) + RATE_PRIOR_N), trades: tcP ? (tcP.get(String(r.k)) || 0) : ((tm[r.k] || {}).t || 0) }))
-      .sort((a, b) => b.score - a.score || b.n - a.n).slice(0, 500);
+      /* Plain average shown and ranked (Dennis, 2026-11-15: 33 five-star votes read as 4.88).
+         Ranked once they have RL_MIN votes; fewer go below, same order. */
+      .sort((a, b) => (Number(a.n) >= RL_MIN ? 0 : 1) - (Number(b.n) >= RL_MIN ? 0 : 1) || Number(b.avg) - Number(a.avg) || b.n - a.n).slice(0, 500);
     const ready = rows.filter(r => Number(r.n) >= RATE_ON_VOTES).length;
-    return json({ me: key.toLowerCase(), live: ready >= RATE_ON_MEMBERS, ready, needMembers: RATE_ON_MEMBERS, needVotes: RATE_ON_VOTES, admin: ADMINS.includes(key.toLowerCase()) || undefined, rows: rows.map(r => ({ k: r.k, user: r.rsUser || r.k, url: profileUrl(r.rsUser || r.k, r.hashId), avg: Math.round(Number(r.avg) * 100) / 100, score: Math.round(r.score * 100) / 100, votes: Number(r.n), trades: r.trades, lv: (tm[r.k] || {}).lv || 'new', mine: String(r.k).toLowerCase() === key.toLowerCase() || undefined })), period });
+    return json({ rlMin: RL_MIN, me: key.toLowerCase(), live: ready >= RATE_ON_MEMBERS, ready, needMembers: RATE_ON_MEMBERS, needVotes: RATE_ON_VOTES, admin: ADMINS.includes(key.toLowerCase()) || undefined, rows: rows.map(r => ({ k: r.k, user: r.rsUser || r.k, url: profileUrl(r.rsUser || r.k, r.hashId), avg: Math.round(Number(r.avg) * 100) / 100, score: Math.round(r.score * 100) / 100, votes: Number(r.n), trades: r.trades, lv: (tm[r.k] || {}).lv || 'new', mine: String(r.k).toLowerCase() === key.toLowerCase() || undefined })), period });
   }
   /* Admin (Dennis, 2026-11-06): every rating one member was given, who gave
      it, and changing or removing any of them by hand. */
