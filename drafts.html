@@ -78,9 +78,10 @@ const allTable = c => { const ins = new Set(((c.best && c.best.lineup) || []).ma
 function card(c){
   const k = c.type + c.id, isOpen = open.has(k) || (c.type === 'sport'), t = c.teams && c.teams.length === 2 ? `${c.teams[0]} vs ${c.teams[1]}` : c.title || 'Game';
   if(c.error) return `<div class="ct"><div class="ch"><div class="tt">Draft ${c.id}<small>${esc(c.error)}</small></div></div></div>`;
+  if(c.pending) return `<div class="ct"><div class="ch"><div class="tt">${esc(c.sportName)} daily<small>${esc(dayLbl(c.day))} · pulling every player from Real - refresh in a minute</small></div></div></div>`;
   return `<div class="ct${isOpen ? '' : ' shut'}" data-k="${k}" data-id="${c.id}" data-type="${c.type}"><div class="ch"><div class="tt">${esc(c.sportName)} ${c.type === 'game' ? '· ' + esc(t) : 'daily'}<small>${esc(dayLbl(c.day))}${c.type === 'game' ? (isOpen ? '' : ' · tap for the lineup') : ''}</small></div>
     <div class="tot">${c.best && c.best.score != null ? c.best.score.toFixed(1) : c.built ? '-' : '▸'}<small>${c.best && c.best.score != null ? 'projected' : ''}</small></div></div>
-    <div class="body">${c.built || c.type === 'sport' ? lineup(c) + `<div class="acts">${c.post ? `<a class="btn go" href="${esc(c.post)}" target="_blank" rel="noopener">Open in Real</a>` : ''}<button class="btn" data-all="${k}">All ${c.players ? c.players.length : 0} players</button>${J.admin ? `<button class="btn" data-del="${c.id}" data-type="${c.type}">Remove</button>` : ''}</div><div id="all${k}" hidden>${allTable(c)}</div>` : '<p class="note">Working it out…</p>'}</div></div>`;
+    <div class="body">${c.built || c.type === 'sport' ? lineup(c) + `<div class="acts">${c.post ? `<a class="btn go" href="${esc(c.post)}" target="_blank" rel="noopener">Open in Real</a>` : ''}<button class="btn" data-all="${k}">All ${c.players ? c.players.length : 0} players</button>${J.admin ? `<button class="btn" data-del="${c.id}" data-type="${c.type}">Remove</button>` : ''}</div><div id="all${k}" hidden>${allTable(c)}</div>` : '<p class="note">Pulling every player from Real - this takes about 20 seconds…</p>'}</div></div>`;
 }
 function draw(){
   document.querySelectorAll('#seg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === view));

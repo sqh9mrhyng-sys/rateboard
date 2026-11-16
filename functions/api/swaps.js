@@ -5831,7 +5831,13 @@ async function handle({ request, env, waitUntil }) {
     const SPN0 = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf', soccer: 'FC' };
     for (const g of games) g.sportName = SPN0[g.sport] || g.sport;
     const out = [];
-    for (const c of want) { try { out.push({ ...(await draftBuild(env, db, c)), sportName: ({ nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf', soccer: 'FC' })[c.sport] || c.sport, title: c.title || null }); } catch (e) { out.push({ id: c.id, type: c.type, error: String(e.message || e).slice(0, 120) }); } }
+    /* Shown from the saved build (even a little old) so the page never waits on Real; an old or
+       missing one is rebuilt in the background (a full pool is ~25 searches). */
+    for (const c of want) {
+      let x = null; try { x = JSON.parse((await env.RATEBOARD_KV.get(`draft_v1_${c.type}_${c.id}`)) || 'null'); } catch (e) {}
+      if (!x || Date.now() - x.at > 10 * 60000) { const lk = `draft_bld_${c.type}_${c.id}`; if (!(await env.RATEBOARD_KV.get(lk))) { await env.RATEBOARD_KV.put(lk, '1', { expirationTtl: 120 }); try { waitUntil(draftBuild(env, db, c).catch(() => {})); } catch (e) {} } }
+      out.push(x ? { ...x, sportName: SPN0[c.sport] || c.sport, title: c.title || null } : { id: c.id, type: c.type, sport: c.sport, day: c.day, sportName: SPN0[c.sport] || c.sport, pending: true });
+    }
     return json({ admin: !!acc.admin, today: days[1], contests: out.concat(games) });
   }
   // One draft's lineup, worked out when it's opened.
