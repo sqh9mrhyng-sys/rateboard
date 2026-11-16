@@ -8,85 +8,101 @@
   :root{--bg:#141925;--panel:#1d2433;--panel2:#262f42;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;--good:#3fbf7f;--bad:#e5534b}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-  .wrap{max-width:860px;margin:0 auto;padding:18px 16px 40px}
+  .wrap{max-width:760px;margin:0 auto;padding:18px 16px 48px}
   a{color:var(--accent)}
-  h1{font-size:26px;margin:8px 0 2px}
+  h1{font-size:28px;margin:10px 0 2px}
   .note{color:var(--mute);font-size:13px}
-  .top{display:flex;justify-content:space-between;align-items:center;gap:10px}
-  .seg{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin:14px 0;padding:4px;background:var(--panel);border:1px solid var(--line);border-radius:11px}
-  .seg button{background:none;color:var(--mute);border:0;border-radius:8px;padding:9px;font:inherit;font-weight:800;cursor:pointer}
+  .top{display:flex;justify-content:space-between;align-items:center}
+  .seg{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin:16px 0 10px;padding:4px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+  .seg button{background:none;color:var(--mute);border:0;border-radius:9px;padding:10px;font:inherit;font-weight:800;cursor:pointer}
   .seg button[aria-pressed="true"]{background:var(--accent);color:#141925}
-  .ct{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin:12px 0}
-  .ch{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
-  .ch h2{font-size:18px;margin:0} .ch .tot{font-size:22px;font-weight:900} .ch .tot small{font-size:12px;color:var(--mute);font-weight:700;margin-left:4px}
-  .lu{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:12px 0 4px}
-  .sl{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:8px 6px;text-align:center;min-width:0}
-  .sl .m{font-weight:900;font-size:15px;color:var(--accent)} .sl .m small{display:block;font-size:10.5px;color:var(--mute);font-weight:700}
-  .sl .n{font-weight:800;font-size:13px;line-height:1.2;margin:6px 0 2px;overflow:hidden;text-overflow:ellipsis} .sl .n a{color:var(--ink);text-decoration:none}
-  .sl .t{font-size:11px;color:var(--mute)} .sl .p{font-weight:900;font-size:16px;margin-top:4px} .sl .p small{display:block;font-size:10.5px;color:var(--mute);font-weight:600}
-  .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-  .btn{display:inline-block;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 12px;font:inherit;font-size:13.5px;font-weight:700;cursor:pointer;text-decoration:none}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px} .chips button{background:var(--panel);color:var(--mute);border:1px solid var(--line);border-radius:999px;padding:5px 12px;font:inherit;font-size:13px;font-weight:700;cursor:pointer}
+  .chips button[aria-pressed="true"]{color:var(--ink);border-color:var(--accent)}
+  .ct{background:var(--panel);border:1px solid var(--line);border-radius:16px;margin:12px 0;overflow:hidden}
+  .ch{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px 16px;cursor:pointer}
+  .ch .tt{font-size:18px;font-weight:900} .ch .tt small{display:block;font-size:12.5px;color:var(--mute);font-weight:600;margin-top:1px}
+  .ch .tot{text-align:right;font-size:22px;font-weight:900;white-space:nowrap} .ch .tot small{display:block;font-size:11px;color:var(--mute);font-weight:700}
+  .body{border-top:1px solid var(--line);padding:4px 16px 14px}
+  .ct.shut .body{display:none}
+  .pk{display:grid;grid-template-columns:62px 1fr auto;gap:12px;align-items:center;padding:10px 0;border-top:1px solid var(--line)} .pk:first-child{border-top:0}
+  .pk .m{background:var(--panel2);border-radius:10px;text-align:center;padding:6px 0;font-weight:900;color:var(--accent);font-size:16px} .pk .m small{display:block;font-size:10.5px;color:var(--mute);font-weight:700}
+  .pk .n{font-weight:800;font-size:16px;min-width:0} .pk .n a{color:var(--ink);text-decoration:none} .pk .n small{display:block;font-size:12.5px;color:var(--mute);font-weight:600}
+  .pk .p{text-align:right;font-weight:900;font-size:18px} .pk .p small{display:block;font-size:11px;color:var(--mute);font-weight:600}
+  .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .btn{display:inline-block;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:8px 13px;font:inherit;font-size:13.5px;font-weight:700;cursor:pointer;text-decoration:none}
   .btn.go{background:var(--accent);color:#141925;border-color:var(--accent)}
-  table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:10px} th{color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.04em;text-align:right;padding:6px 4px;border-bottom:1px solid var(--line)} th:first-child,td:first-child{text-align:left}
-  td{padding:7px 4px;border-bottom:1px solid var(--line);text-align:right} td a{color:var(--ink);text-decoration:none} tr.in td{color:var(--accent);font-weight:700} tr.out td{opacity:.45}
-  .bn{color:var(--good);font-weight:800} .st{color:var(--bad);font-size:11px;font-weight:700}
-  .admin{background:var(--panel);border:1px dashed var(--line);border-radius:12px;padding:12px;margin:14px 0}
-  .admin input{width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;font-size:14px;margin:4px 0}
-  .empty{padding:18px;color:var(--mute);text-align:center}
-  @media (max-width:520px){ .lu{grid-template-columns:repeat(5,minmax(0,1fr));gap:4px} .sl{padding:6px 3px} .sl .n{font-size:11.5px} .sl .p{font-size:14px} }
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:12px} th{color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.04em;text-align:right;padding:6px 4px;border-bottom:1px solid var(--line)} th:first-child,td:first-child{text-align:left}
+  td{padding:8px 4px;border-bottom:1px solid var(--line);text-align:right} td a{color:var(--ink);text-decoration:none} tr.in td:first-child a{color:var(--accent);font-weight:800} tr.out td{opacity:.4}
+  .bn{color:var(--good);font-weight:800} .st{color:var(--bad);font-size:11px;font-weight:700;margin-left:4px}
+  .admin{margin:22px 0 0;padding:14px;border:1px dashed var(--line);border-radius:12px}
+  .admin input{width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 10px;font:inherit;font-size:14px;margin:4px 0}
+  .empty{padding:24px;color:var(--mute);text-align:center;background:var(--panel);border:1px solid var(--line);border-radius:14px}
 </style>
 </head>
 <body><div class="wrap">
-<div class="top"><a href="/" style="text-decoration:none;color:var(--ink);font-weight:900;font-size:20px">Rax Academy</a><a href="/">Back to home</a></div>
+<div class="top"><a href="/" style="text-decoration:none;color:var(--ink);font-weight:900;font-size:20px">Rax Academy</a><a href="/">Home</a></div>
 <h1>Drafts</h1>
 <p class="note" id="msg">Loading…</p>
 <div class="seg" id="seg" hidden><button data-v="sport" aria-pressed="true">Daily drafts</button><button data-v="game" aria-pressed="false">Game drafts</button></div>
-<p class="note" id="how"></p>
+<div class="chips" id="chips"></div>
 <div id="list"></div>
-<div class="admin" id="admin" hidden>
-  <b>Add a draft</b> <span class="note">(admin) - paste the contest or player-list link from Real; the post link and a title are optional.</span>
+<details class="admin" id="admin" hidden><summary><b>Add a draft</b> <span class="note">(admin)</span></summary>
+  <p class="note">Drafts are found on their own every hour. To add one by hand, paste its contest or player-list link from Real.</p>
   <input id="a-url" placeholder="https://web.realapp.com/games/playerratingcontest/…">
-  <input id="a-post" placeholder="Post link (https://www.realapp.com/…)">
-  <input id="a-title" placeholder="Title (e.g. Ravens @ Chargers)">
+  <input id="a-post" placeholder="Post link (optional)">
+  <input id="a-title" placeholder="Title (optional, e.g. Ravens @ Chargers)">
   <button class="btn go" id="a-add">Add</button> <span class="note" id="a-msg"></span>
-</div>
+</details>
 </div>
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const ls = { get: k => { try{ return localStorage.getItem(k); }catch(e){ return null; } }, set: (k, v) => { try{ localStorage.setItem(k, v); }catch(e){} } };
 const hdr = () => { const t = ls.get('ratebrd_token_v1') || ''; return t ? { 'x-rb-token': t } : {}; };
-const dayLbl = (d, today) => { const t = new Date(d + 'T12:00:00Z'); const w = t.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
-  return d === today ? 'Today · ' + w : w; };
-let J = null, view = ls.get('drafts_view') || 'sport';
+const dayLbl = d => { const w = new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }); return d === J.today ? 'Today · ' + w : w; };
+let J = null, view = ls.get('drafts_view') || 'sport', chip = ls.get('drafts_chip') || '';
+const open = new Set();
 async function load(){
   try{ J = await (await fetch('/api/swaps?op=drafts', { headers: hdr() })).json(); }catch(e){ J = { error: 'Could not reach the site - try again.' }; }
   if(J.error){ $('#msg').innerHTML = /sign in/i.test(J.error) ? 'Sign in first - <a href="/?next=/drafts">go to sign in</a>.' : esc(J.error); return; }
-  $('#msg').textContent = 'The best lineup for each of Real\'s drafts, from projected Real ratings. Updated every 10 minutes.';
+  $('#msg').textContent = 'The best lineup for Real\'s drafts, from each player\'s projected Real rating.';
   $('#seg').hidden = false; $('#admin').hidden = !J.admin; draw();
+}
+const lineup = c => { const lu = (c.best && c.best.lineup) || [];
+  return lu.length ? lu.map(p => `<div class="pk"><div class="m">${p.mult}x<small>${c.type === 'sport' && p.bonus ? `${p.slot} + ${p.bonus}` : 'slot'}</small></div>
+    <div class="n">${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.name)}</a>` : esc(p.name)}<small>${esc(p.team)} · ${esc(p.pos)} · projected ${p.proj}</small></div>
+    <div class="p">${p.pts}<small>rating</small></div></div>`).join('') : '<p class="note">No projections for this pool yet.</p>'; };
+const allTable = c => { const ins = new Set(((c.best && c.best.lineup) || []).map(p => p.id));
+  return `<table><tr><th>Player</th>${c.type === 'sport' ? '<th>Bonus</th>' : ''}<th>Proj</th><th>Best case</th></tr>${(c.players || []).map(p => `<tr class="${ins.has(p.id) ? 'in' : ''}${p.out ? ' out' : ''}"><td>${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.name)}</a>` : esc(p.name)} <span class="note">${esc(p.team)} ${esc(p.pos)}</span>${p.status && !/^active$/i.test(p.status) ? `<span class="st">${esc(p.status)}</span>` : ''}</td>${c.type === 'sport' ? `<td class="bn">${p.bonus ? '+' + p.bonus + 'x' : ''}</td>` : ''}<td>${p.proj ?? '-'}</td><td>${p.proj != null ? (p.proj * ((c.slots[0] || 2) + (p.bonus || 0))).toFixed(1) : '-'}</td></tr>`).join('')}</table>
+  <p class="note">Proj = projected Real rating (last 5 games weighted with the season). Best case = in the ${(c.slots && c.slots[0]) || 2}x slot. Out players are left out.</p>`; };
+function card(c){
+  const k = c.type + c.id, isOpen = open.has(k) || (c.type === 'sport'), t = c.teams && c.teams.length === 2 ? `${c.teams[0]} vs ${c.teams[1]}` : c.title || 'Game';
+  if(c.error) return `<div class="ct"><div class="ch"><div class="tt">Draft ${c.id}<small>${esc(c.error)}</small></div></div></div>`;
+  return `<div class="ct${isOpen ? '' : ' shut'}" data-k="${k}" data-id="${c.id}" data-type="${c.type}"><div class="ch"><div class="tt">${esc(c.sportName)} ${c.type === 'game' ? '· ' + esc(t) : 'daily'}<small>${esc(dayLbl(c.day))}${c.type === 'game' ? (isOpen ? '' : ' · tap for the lineup') : ''}</small></div>
+    <div class="tot">${c.best && c.best.score != null ? c.best.score.toFixed(1) : c.built ? '-' : '▸'}<small>${c.best && c.best.score != null ? 'projected' : ''}</small></div></div>
+    <div class="body">${c.built || c.type === 'sport' ? lineup(c) + `<div class="acts">${c.post ? `<a class="btn go" href="${esc(c.post)}" target="_blank" rel="noopener">Open in Real</a>` : ''}<button class="btn" data-all="${k}">All ${c.players ? c.players.length : 0} players</button>${J.admin ? `<button class="btn" data-del="${c.id}" data-type="${c.type}">Remove</button>` : ''}</div><div id="all${k}" hidden>${allTable(c)}</div>` : '<p class="note">Working it out…</p>'}</div></div>`;
 }
 function draw(){
   document.querySelectorAll('#seg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === view));
-  $('#how').textContent = view === 'sport'
-    ? 'Daily drafts: each slot multiplies a player\'s Real rating (2.0x down to 1.2x) and his bonus adds to it. Best 5 = most total rating.'
-    : 'Game drafts: the 5 players who\'ll have the highest Real rating in that game, best in the 2.0x slot. No bonuses.';
-  const l = (J.contests || []).filter(c => c.type === view).sort((a, b) => String(a.day).localeCompare(String(b.day)) || a.id - b.id);
-  $('#list').innerHTML = l.map(c => {
-    if(c.error) return `<div class="ct"><b>Draft ${c.id}</b> <span class="note">${esc(c.error)}</span>${J.admin ? ` <button class="btn" data-del="${c.id}" data-type="${c.type}">Remove</button>` : ''}</div>`;
-    const lu = (c.best && c.best.lineup) || [], ins = new Set(lu.map(p => p.id));
-    return `<div class="ct"><div class="ch"><h2>${esc(c.sportName)} ${c.type === 'game' ? '· ' + esc(c.title || 'Game') : 'daily'} <span class="note">${esc(dayLbl(c.day, J.today))}</span></h2>
-      <span class="tot">${c.best && c.best.score != null ? c.best.score.toFixed(1) : '-'}<small>projected rating</small></span></div>
-      ${lu.length ? `<div class="lu">${lu.map(p => `<div class="sl"><div class="m">${p.mult}x<small>${p.slot}x${p.bonus ? ' + ' + p.bonus : ''}</small></div><div class="n">${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.name)}</a>` : esc(p.name)}</div><div class="t">${esc(p.team)} · ${esc(p.pos)}</div><div class="p">${p.pts}<small>${p.proj} × ${p.mult}</small></div></div>`).join('')}</div>` : '<p class="note">No projections for this pool yet.</p>'}
-      <div class="acts">${c.post ? `<a class="btn go" href="${esc(c.post)}" target="_blank" rel="noopener">Open in Real</a>` : ''}<button class="btn" data-all="${c.type}${c.id}">All ${c.players ? c.players.length : 0} players</button>${J.admin ? `<button class="btn" data-del="${c.id}" data-type="${c.type}">Remove</button>` : ''}</div>
-      <div id="all${c.type}${c.id}" hidden><table><tr><th>Player</th>${c.type === 'sport' ? '<th>Bonus</th>' : ''}<th>Proj</th><th>In 2.0x</th></tr>
-      ${(c.players || []).map(p => `<tr class="${ins.has(p.id) ? 'in' : ''}${p.out ? ' out' : ''}"><td>${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.name)}</a>` : esc(p.name)} <span class="note">${esc(p.team)} ${esc(p.pos)}</span>${p.status && !/^active$/i.test(p.status) ? ` <span class="st">${esc(p.status)}</span>` : ''}</td>${c.type === 'sport' ? `<td class="bn">${p.bonus ? '+' + p.bonus + 'x' : ''}</td>` : ''}<td>${p.proj ?? '-'}</td><td>${p.proj != null ? (p.proj * ((c.slots[0] || 2) + (p.bonus || 0))).toFixed(1) : '-'}</td></tr>`).join('')}</table>
-      <p class="note">Proj = projected Real rating (last 5 games weighted with the season; last season if no games yet). Out players are left out.</p></div></div>`; }).join('')
-    || `<div class="empty">No ${view === 'sport' ? 'daily' : 'game'} drafts for today or tomorrow yet.</div>`;
+  const l = (J.contests || []).filter(c => c.type === view);
+  const sps = [...new Set(l.map(c => c.sportName).filter(Boolean))].sort();
+  $('#chips').innerHTML = view === 'game' && sps.length > 1 ? ['', ...sps].map(s => `<button data-chip="${esc(s)}" aria-pressed="${chip === s}">${s || 'All'}</button>`).join('') : '';
+  const shown = l.filter(c => view !== 'game' || !chip || c.sportName === chip).sort((a, b) => String(a.day).localeCompare(String(b.day)) || String(a.sportName).localeCompare(String(b.sportName)) || a.id - b.id);
+  $('#list').innerHTML = shown.map(card).join('') || `<div class="empty">No ${view === 'sport' ? 'daily' : 'game'} drafts for today or tomorrow yet - new ones are picked up every hour.</div>`;
 }
 document.querySelectorAll('#seg button').forEach(b => b.addEventListener('click', () => { view = b.dataset.v; ls.set('drafts_view', view); draw(); }));
+$('#chips').addEventListener('click', e => { const b = e.target.closest('[data-chip]'); if(!b) return; chip = b.dataset.chip; ls.set('drafts_chip', chip); draw(); });
 $('#list').addEventListener('click', async e => {
   const a = e.target.closest('[data-all]'); if(a){ const el = $('#all' + a.dataset.all); el.hidden = !el.hidden; return; }
-  const d = e.target.closest('[data-del]'); if(d && confirm('Remove this draft from the page?')){ await fetch('/api/swaps?op=draftdel', { method: 'POST', headers: { ...hdr(), 'content-type': 'application/json' }, body: JSON.stringify({ id: Number(d.dataset.del), type: d.dataset.type }) }); load(); }
+  const d = e.target.closest('[data-del]'); if(d){ if(confirm('Remove this draft from the page?')){ await fetch('/api/swaps?op=draftdel', { method: 'POST', headers: { ...hdr(), 'content-type': 'application/json' }, body: JSON.stringify({ id: Number(d.dataset.del), type: d.dataset.type }) }); load(); } return; }
+  if(e.target.closest('a')) return;
+  const h = e.target.closest('.ch'); if(!h) return;
+  const ct = h.closest('.ct'), k = ct.dataset.k, c = J.contests.find(x => x.type + x.id === k);
+  if(c.type === 'sport') return;
+  if(open.has(k)){ open.delete(k); draw(); return; }
+  open.add(k); draw();
+  if(!c.built){ let x; try{ x = await (await fetch(`/api/swaps?op=draftone&id=${c.id}&type=game`, { headers: hdr() })).json(); }catch(err){ x = { error: 'Could not reach the site.' }; }
+    Object.assign(c, x.error ? { built: true, best: null, players: [], err: x.error } : x); draw(); }
 });
 $('#a-add').addEventListener('click', async () => {
   $('#a-msg').textContent = 'Adding…';

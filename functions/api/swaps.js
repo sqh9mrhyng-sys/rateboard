@@ -1572,6 +1572,18 @@ async function draftBuild(env, db, c) {
   const r = await fetch(`https://web.realapp.com/players/sport/${sp}/search?contestId=${c.id}${gameId ? '&gameId=' + gameId : ''}&includeNoOneOption=false&searchType=ratingLineup`, { headers: rsHeaders(tok) });
   if (!r.ok) return { error: `Real didn't give the players (${r.status}).` };
   const pool = ((await r.json().catch(() => ({}))) || {}).players || [];
+  /* Real lists 50 at a time; a full page asks for the next (offset), up to 200 players,
+     stopping as soon as a page brings no one new (2026-11-15: pools go past 50). */
+  for (let off = 50; pool.length >= off && off < 200; off += 50) {
+    await sleep(1500);
+    try { const r2 = await fetch(`https://web.realapp.com/players/sport/${sp}/search?contestId=${c.id}${gameId ? '&gameId=' + gameId : ''}&includeNoOneOption=false&searchType=ratingLineup&offset=${off}`, { headers: rsHeaders(tok) });
+      if (!r2.ok) break; const more = (((await r2.json().catch(() => ({}))) || {}).players || []), have = new Set(pool.map(p => Number(p.id)));
+      const fresh = more.filter(p => !have.has(Number(p.id))); if (!fresh.length) break; pool.push(...fresh); } catch (e) { break; } }
+  // The contest's post on Real, for "Open in Real" (Real's code 7: [7, sport, 0, postId]).
+  let post = c.post || null;
+  if (!post) { try { await sleep(1000); const rv = await fetch(`https://web.realapp.com/games/playerratingcontest/${c.id}?contestType=${c.type}`, { headers: rsHeaders(tok) });
+    const v = rv.ok ? await rv.json().catch(() => null) : null, pid = v && v.info && v.info.contest && v.info.contest.postId;
+    if (pid && REAL_SPORT[sp]) post = `https://www.realapp.com/${routeId([7, REAL_SPORT[sp][1], 0, Number(pid)])}`; } catch (e) {} }
   // Projected Real rating: last 5 games weighted with the season, from the game log; last season if no games yet.
   const [se, prev] = PROJ_SEASON[sp] || [null, null], ids = pool.map(p => Number(p.id)).filter(Number.isFinite), by = new Map(), old = new Map();
   const minSp = sp === 'nba' || sp === 'ncaam' || sp === 'wnba' || sp === 'soccer', foot = sp === 'nfl' || sp === 'ncaaf';
@@ -1592,7 +1604,8 @@ async function draftBuild(env, db, c) {
     return { id: Number(p.id), name: `${p.firstName || ''} ${p.lastName || ''}`.trim() || p.displayName, team: (p.team && p.team.key) || '', pos: p.position || '', status: st || null, out,
       bonus: Number(p.multiplierBonus) || 0, proj: proj == null ? null : Math.round(proj * 100) / 100, games: g.length, basis, url: playerUrl(`${sp}:${se}:${p.id}`) }; });
   const best = draftBest(players, slots);
-  const x = { at: Date.now(), id: c.id, type: c.type, sport: sp, day: info.day || c.day, slots, entered: !!info.isEntered, best, players: players.sort((a, b) => (b.proj ?? -1) - (a.proj ?? -1)), post: c.post || null, gameId };
+  const x = { at: Date.now(), id: c.id, type: c.type, sport: sp, day: info.day || c.day, slots, entered: !!info.isEntered, best, players: players.sort((a, b) => (b.proj ?? -1) - (a.proj ?? -1)), post, gameId,
+    teams: [...new Set(pool.map(p => p.team && p.team.key).filter(Boolean))].slice(0, 2) };
   try { await env.RATEBOARD_KV.put(K, JSON.stringify(x), { expirationTtl: 3 * 86400 }); } catch (e) {}
   return x;
 }
@@ -1609,10 +1622,19 @@ export async function draftScan(env) {
     if (!d || d.status !== 200) { miss++; continue; }
     miss = 0; if (!l.some(c => c.type === 'sport' && c.id === id)) l.push({ id, type: 'sport', sport: d.info.sport, day: d.info.day, added: Date.now() });
   }
+  /* Game drafts too, every sport (Dennis, 2026-11-15): numbered in order as well,
+     made a few days ahead in batches - up to 40 reads an hour, 3 seconds apart,
+     stopping after 5 numbers in a row that don't exist. */
+  let gtop = Math.max(55723, ...l.filter(c => c.type === 'game').map(c => c.id)); miss = 0;
+  for (let id = gtop + 1; miss < 5 && id < gtop + 41; id++) {
+    const d = await draftInfo(env, id, 'game').catch(() => null); await sleep(3000);
+    if (!d || d.status !== 200) { miss++; continue; }
+    miss = 0; if (!l.some(c => c.type === 'game' && c.id === id)) l.push({ id, type: 'game', sport: d.info.sport, day: d.info.day, gameId: d.info.gameId || null, added: Date.now() });
+  }
   await draftSaveList(env, l);
   // Build today's and tomorrow's ahead, so the page opens fast.
   const etd = d => ET_DAY_FMT.format(d), days = [etd(new Date()), etd(new Date(Date.now() + 86400000))];
-  for (const c of l.filter(c => days.includes(c.day))) { try { await draftBuild(env, env.RATEBOARD_DB, c); } catch (e) {} await sleep(3000); }
+  for (const c of l.filter(c => c.type === 'sport' && days.includes(c.day))) { try { await draftBuild(env, env.RATEBOARD_DB, c); } catch (e) {} await sleep(3000); }
 }
 /* Real's own link codes (hashids, salt 'routing', min length 11): a player is
    [2, sport code, 0, id], a pass is [18, 0, 0, passId]. */
@@ -5768,10 +5790,30 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'drafts') {
     if (!acc.who) return forbidden('Sign in first (raxacademy.app).');
     const l = await draftList(env), etd = d => ET_DAY_FMT.format(d), days = [etd(new Date(Date.now() - 86400000)), etd(new Date()), etd(new Date(Date.now() + 86400000)), etd(new Date(Date.now() + 2 * 86400000))];
-    const want = l.filter(c => days.includes(c.day));
+    /* Daily: one per sport - today's, else the next one coming (Dennis, 2026-11-15: several
+       days of the same sport showed). Games: today's and tomorrow's, every sport; each
+       one's lineup is worked out when it's opened (op=draftone), or shown if already built. */
+    const today = days[1], spSeen = new Map();
+    for (const c of l.filter(c => c.type === 'sport' && c.day >= today).sort((a, b) => a.day.localeCompare(b.day) || a.id - b.id)) if (!spSeen.has(c.sport)) spSeen.set(c.sport, c);
+    const want = [...spSeen.values()];
+    const games = [];
+    for (const c of l.filter(c => c.type === 'game' && (c.day === today || c.day === days[2]))) {
+      let x = null; try { x = JSON.parse((await env.RATEBOARD_KV.get(`draft_v1_game_${c.id}`)) || 'null'); } catch (e) {}
+      games.push(x ? { ...x, built: true } : { id: c.id, type: 'game', sport: c.sport, day: c.day, gameId: c.gameId, title: c.title || null, post: c.post || null }); }
+    const SPN0 = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf', soccer: 'FC' };
+    for (const g of games) g.sportName = SPN0[g.sport] || g.sport;
     const out = [];
     for (const c of want) { try { out.push({ ...(await draftBuild(env, db, c)), sportName: ({ nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf', soccer: 'FC' })[c.sport] || c.sport, title: c.title || null }); } catch (e) { out.push({ id: c.id, type: c.type, error: String(e.message || e).slice(0, 120) }); } }
-    return json({ admin: !!acc.admin, today: days[1], contests: out });
+    return json({ admin: !!acc.admin, today: days[1], contests: out.concat(games) });
+  }
+  // One draft's lineup, worked out when it's opened.
+  if (op === 'draftone') {
+    if (!acc.who) return forbidden('Sign in first (raxacademy.app).');
+    const id = Number(url.searchParams.get('id')), type = url.searchParams.get('type') === 'game' ? 'game' : 'sport';
+    const c = (await draftList(env)).find(x => x.id === id && x.type === type);
+    if (!c) return json({ error: 'That draft is not on the list.' }, 404);
+    const x = await draftBuild(env, db, c);
+    return json({ ...x, sportName: ({ nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf', soccer: 'FC' })[c.sport] || c.sport, title: c.title || null, built: true });
   }
   // Admin: add a contest from a Real link (the contest or player-list address; a post link can ride along).
   if (op === 'draftadd' && request.method === 'POST') {
