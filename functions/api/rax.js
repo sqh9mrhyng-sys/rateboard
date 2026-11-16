@@ -458,8 +458,9 @@ async function predProbe(env) {
 const BULK_DDL = `CREATE TABLE IF NOT EXISTS bulk_listings (id INTEGER PRIMARY KEY, endsAt INTEGER, sport TEXT, season INTEGER, playerId INTEGER, name TEXT,
   rarity TEXT, rating REAL, mult TEXT, buyNow REAL, minBid REAL, curBid REAL, bids INTEGER, value REAL, cards INTEGER, serial TEXT, seller TEXT, seenAt INTEGER)`;
 const BULK_PER_MIN = 6, BULK_GAP = 10000;
+const BULK_ON = false;   // paused (Dennis, 2026-11-15 9pm AK)
 async function bulkTick(env) {
-  const tok = env.RS_MARKET_TOKEN, db = env.RATEBOARD_DB; if (!tok || !db) return;
+  const tok = env.RS_MARKET_TOKEN, db = env.RATEBOARD_DB; if (!BULK_ON || !tok || !db) return;
   const SK = 'bulk_state_v1';
   let st = {}; try { st = JSON.parse((await env.RATEBOARD_KV.get(SK)) || '{}') || {}; } catch (e) {}
   if (st.pauseUntil && Date.now() < st.pauseUntil) return;
