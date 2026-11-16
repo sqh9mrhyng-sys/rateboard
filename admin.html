@@ -853,7 +853,7 @@ document.addEventListener('click', async e => {
   if(!confirm(block ? `Take away @${name}'s ability to rate? Their ratings stop counting.` : `Give @${name} rating back?`)) return;
   b.disabled = true;
   const j = await api('/api/swaps?op=rateblock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user: name, block }) });
-  $('#md-msg').textContent = j.error || (block ? `@${j.name} can no longer rate.` : `@${j.name} can rate again.`);
+  $('#md-msg').textContent = j.error || (block ? `@${j.name} can no longer rate` + (j.dm ? ' - DM sent.' : ' - no chat with the bot, so no DM (it\'s on their Notifications page).') : `@${j.name} can rate again.`);
   loadMod(); if($('#md-q').value.trim()) $('#md-q').dispatchEvent(new Event('input'));
 });
 document.addEventListener('click', async e => {

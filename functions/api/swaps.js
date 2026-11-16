@@ -6803,7 +6803,16 @@ async function handle({ request, env, waitUntil }) {
     if (b.block) await db.prepare('INSERT OR REPLACE INTO swap_rate_block (key, at, why) VALUES (?, ?, ?)').bind(u.key, Date.now(), 'Turned off by admin').run();
     else await db.prepare('DELETE FROM swap_rate_block WHERE key=?').bind(u.key).run();
     try { await env.RATEBOARD_KV.delete(TRUST_KEY); } catch (e) {}
-    return json({ ok: true, name: u.rsUser || u.key, blocked: !!b.block });
+    // Taken away: an automatic DM (Dennis's wording, 2026-11-15), and it's on their Notifications page.
+    let dm = false;
+    if (b.block) {
+      const text = 'Your ability to rate other users has been taken';
+      try { await addNote(db, u.key, 'mod', text); } catch (e) {}
+      try { const m0 = await db.prepare('SELECT hashId, rsUser FROM swap_users WHERE key=?').bind(u.key).first(), auth = swapToken(env);
+        if (auth && m0 && m0.hashId) { const ch = await dmChannel(db, auth, m0.hashId, m0.rsUser, env); await queueDm(db, ch, [text], 'rateblock ' + u.key); dm = true; } }
+      catch (e) { await botFail(db, 'dm_rateblock', `${u.key}: ${e.message || e}`); }
+    }
+    return json({ ok: true, name: u.rsUser || u.key, blocked: !!b.block, dm });
   }
   if (op === 'modlookup') {
     if (!acc.admin) return forbidden('Admin only.');
