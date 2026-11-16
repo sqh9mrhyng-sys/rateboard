@@ -1555,7 +1555,7 @@ const BULK_MEMO = { text: null, at: 0, building: null };   // Bulk ratings' shar
 // The first two, from the links Dennis sent (2026-11-15).
 const DRAFT_SEED = [{ id: 2460, type: 'sport', sport: 'nfl', day: '2026-11-16' }, { id: 55724, type: 'game', sport: 'nfl', day: '2026-11-16', gameId: 19603, post: 'https://www.realapp.com/YDiptOFGvRM', title: 'Ravens @ Chargers' }];
 async function draftList(env) { try { const v = await env.RATEBOARD_KV.get(DRAFT_LIST_KV); return v ? (JSON.parse(v) || []) : DRAFT_SEED.slice(); } catch (e) { return []; } }
-async function draftSaveList(env, l) { await env.RATEBOARD_KV.put(DRAFT_LIST_KV, JSON.stringify(l.slice(-400))); }
+async function draftSaveList(env, l) { await env.RATEBOARD_KV.put(DRAFT_LIST_KV, JSON.stringify(l.slice(-1500))); }
 async function draftInfo(env, id, type) {
   const tok = env.RS_AUTH_TOKEN; if (!tok) return null;
   const r = await fetch(`https://web.realapp.com/games/playerratingcontest/${id}/draftinfo?contestType=${type}`, { headers: rsHeaders(tok) });
@@ -1638,7 +1638,7 @@ export async function draftCheck(env) {
 }
 export async function draftScan(env) {
   const tok = env.RS_AUTH_TOKEN; if (!tok) return;
-  const k = 'draft_scan_v1'; let last = 0; try { last = Number(await env.RATEBOARD_KV.get(k)) || 0; } catch (e) {}
+  const k = 'draft_scan_v2'; let last = 0; try { last = Number(await env.RATEBOARD_KV.get(k)) || 0; } catch (e) {}
   if (Date.now() - last < 60 * 60000) return; await env.RATEBOARD_KV.put(k, String(Date.now()));
   const l = await draftList(env);
   let top = Math.max(2459, ...l.filter(c => c.type === 'sport').map(c => c.id)), miss = 0;
@@ -1647,15 +1647,29 @@ export async function draftScan(env) {
     if (!d || d.status !== 200) { miss++; continue; }
     miss = 0; if (!l.some(c => c.type === 'sport' && c.id === id)) l.push({ id, type: 'sport', sport: d.info.sport, day: d.info.day, endDay: d.info.endDay || null, added: Date.now() });
   }
-  /* Game drafts too, every sport (Dennis, 2026-11-15): numbered in order as well,
-     made a few days ahead in batches - up to 40 reads an hour, 3 seconds apart,
-     stopping after 5 numbers in a row that don't exist. */
-  let gtop = Math.max(55723, ...l.filter(c => c.type === 'game').map(c => c.id)); miss = 0;
-  for (let id = gtop + 1; miss < 5 && id < gtop + 41; id++) {
-    const d = await draftInfo(env, id, 'game').catch(() => null); await sleep(3000);
-    if (!d || d.status !== 200) { miss++; continue; }
-    miss = 0; if (!l.some(c => c.type === 'game' && c.id === id)) l.push({ id, type: 'game', sport: d.info.sport, day: d.info.day, gameId: d.info.gameId || null, added: Date.now() });
+  /* Game drafts, every sport. They're numbered in order but made in batches days ahead, so
+     numbers don't follow game days (2026-11-16: 55724 was Monday's, 55725-55764 Saturday's).
+     So: find the newest number that exists (jumping ahead, then halving), then read back from
+     it until a long run of drafts for days already past - that picks up today's and the coming
+     days'. After the first catch-up only new numbers are read. Spaced 1.5 seconds. */
+  const etd0 = d => ET_DAY_FMT.format(d), today0 = etd0(new Date());
+  const ex = async id => { await sleep(1500); const d = await draftInfo(env, id, 'game').catch(() => null); return d && d.status === 200 ? d : null; };
+  const add = (id, d) => { if (!l.some(c => c.type === 'game' && c.id === id)) l.push({ id, type: 'game', sport: d.info.sport, day: d.info.day, gameId: d.info.gameId || null, added: Date.now() }); };
+  const FK = 'draft_gfront_v1'; let front = Number(await env.RATEBOARD_KV.get(FK)) || 0;
+  let lo = Math.max(55724, front, ...l.filter(c => c.type === 'game').map(c => c.id)), hi = null, step = 16, n = 0;
+  while (hi == null && n < 14) { const t = lo + step; n++; if (await ex(t)) { lo = t; step *= 2; } else hi = t; }
+  if (hi != null) while (hi - lo > 1 && n < 30) { const m = (lo + hi) >> 1; n++; if (await ex(m)) lo = m; else hi = m; }
+  // Read back from the newest: on the first run until 40 in a row are for past days; after that just the new ones.
+  let past = 0, reads = 0;
+  for (let id = lo; id > (front || 0) && past < 40 && reads < (front ? 120 : 400); id--) {
+    if (l.some(c => c.type === 'game' && c.id === id)) { const c0 = l.find(c => c.type === 'game' && c.id === id); past = c0.day < today0 ? past + 1 : 0; continue; }
+    reads++; const d = await ex(id); if (!d) continue;
+    add(id, d); past = d.info.day < today0 ? past + 1 : 0;
   }
+  await env.RATEBOARD_KV.put(FK, String(lo));
+  // Old games off the list (a week back), so it stays small.
+  const wk = etd0(new Date(Date.now() - 7 * 86400000));
+  for (let k = l.length - 1; k >= 0; k--) if (l[k].type === 'game' && l[k].day && l[k].day < wk) l.splice(k, 1);
   await draftSaveList(env, l);
   // Build today's and tomorrow's ahead, so the page opens fast.
   const etd = d => ET_DAY_FMT.format(d), days = [etd(new Date()), etd(new Date(Date.now() + 86400000))];
