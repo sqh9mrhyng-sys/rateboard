@@ -26,6 +26,9 @@
   .rar{display:inline-block;font-size:11px;font-weight:800;padding:1px 7px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);margin-left:6px;vertical-align:2px}
   .px{text-align:right;font-weight:800;font-size:16px;white-space:nowrap} .px small{display:block;font-weight:600;font-size:11.5px;color:var(--mute)}
   .ends.soon{color:var(--bad)}
+  .seg{display:flex;gap:6px;margin:10px 0 0} .seg button{background:var(--panel);color:var(--mute);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font:inherit;font-weight:700;cursor:pointer} .seg button[aria-pressed="true"]{color:#141925;background:var(--accent);border-color:var(--accent)}
+  .how{font-size:11px;font-weight:700;color:var(--mute)}
+  .more[hidden]{display:none}
   .more{display:block;margin:12px auto;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 16px;font:inherit;cursor:pointer}
 </style>
 </head>
@@ -34,6 +37,7 @@
 <h1>Bulk ratings</h1>
 <p class="note" id="msg">Loading…</p>
 <div class="stat" id="stat" hidden></div>
+<div class="seg" id="seg" hidden><button data-v="live" aria-pressed="true">Live listings</button><button data-v="ended" aria-pressed="false">Ended - final prices</button></div>
 <div class="bar" id="bar" hidden>
   <input id="q" placeholder="Search player" autocomplete="off">
   <select id="sp"><option value="">All sports</option></select>
@@ -57,26 +61,30 @@ const ls = { get: k => { try{ return localStorage.getItem(k); }catch(e){ return 
 const ago = ms => { const m = Math.round((Date.now() - ms) / 60000); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : Math.round(m / 60) + 'h ago'; };
 const left = ms => { const m = Math.round((ms - Date.now()) / 60000); return m < 60 ? m + ' min' : m < 1440 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : Math.floor(m / 1440) + 'd ' + Math.floor(m % 1440 / 60) + 'h'; };
 const price = r => r.buyNow ?? r.curBid ?? r.minBid;
-let rows = [], shown = 100;
+let rows = [], ended = [], shown = 100, view = 'live';
 async function load(){
   let j;
   try{ const t = ls.get('ratebrd_token_v1') || ''; j = await (await fetch('/api/swaps?op=bulklist', { headers: t ? { 'x-rb-token': t } : {} })).json(); }
   catch(e){ j = { error: 'Could not reach the site - try again.' }; }
   if(j.error){ $('#msg').innerHTML = /sign in/i.test(j.error) ? 'Sign in first - <a href="/?next=/bulk">go to sign in</a>.' : esc(j.error); return; }
   rows = j.rows || []; const s = j.state || {};
-  $('#msg').textContent = 'Every bulk rating listing on Real, read slowly on account 2 and kept up to date. Only you can see this page.';
+  $('#msg').textContent = 'Bulk rating listings on Real, read gently on account 2: one full scan, then every 5 minutes only the ones ending soon and new ones. Ended ones keep their final price. Only you can see this page.';
   $('#stat').hidden = false;
-  $('#stat').innerHTML = `<b>${rows.length.toLocaleString()}</b> listings here` + (s.count ? ` of <b>${Number(s.count).toLocaleString()}</b> on Real` : '')
-    + (s.lastAt ? ` · last read ${ago(s.lastAt)}` : ' · not read yet - the first pass takes about 45 minutes')
-    + (s.passes ? ` · full passes: ${s.passes}${s.passAt ? ` (last finished ${ago(s.passAt)})` : ''}` : ' · first pass still going')
+  ended = j.ended || [];
+  $('#stat').innerHTML = `<b>${rows.length.toLocaleString()}</b> live listings here` + (s.count ? ` of <b>${Number(s.count).toLocaleString()}</b> on Real` : '') + ` · <b>${ended.length.toLocaleString()}</b> ended with results saved`
+    + (s.fullDone ? ` · full scan done ${ago(s.fullDone)}, now checking every 5 min for listings ending soon and new ones${s.watches ? ` (${s.watches} checks)` : ''}` : ' · first full scan still going (about 45 minutes)')
+    + (s.lastAt ? ` · last read ${ago(s.lastAt)}` : '')
+    + (s.exact === true ? ' · final prices read from Real' : s.exact === false ? ' · final prices are the last bid seen (Real doesn\'t give single listings)' : '')
     + (s.err ? ` · <span class="err">${esc(s.err)}${s.pauseUntil && s.pauseUntil > Date.now() ? ` - paused until ${new Date(s.pauseUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}</span>` : '');
+  $('#seg').hidden = false;
   const opts = (sel, vals, keep) => { const v = $(sel).value; $(sel).innerHTML = $(sel).options[0].outerHTML + [...new Set(vals.filter(Boolean))].sort().map(x => `<option>${esc(x)}</option>`).join(''); $(sel).value = keep ?? v; };
-  opts('#sp', rows.map(r => r.sp), ls.get('bulk_sp') || ''); opts('#rar', rows.map(r => r.rarity), ls.get('bulk_rar') || '');
+  opts('#sp', rows.concat(ended).map(r => r.sp), ls.get('bulk_sp') || ''); opts('#rar', rows.concat(ended).map(r => r.rarity), ls.get('bulk_rar') || '');
   $('#sort').value = ls.get('bulk_sort') || 'ends';
   $('#bar').hidden = false; $('#list').hidden = false; draw();
 }
 function draw(){
   const q = $('#q').value.trim().toLowerCase(), sp = $('#sp').value, rar = $('#rar').value, so = $('#sort').value;
+  if(view === 'ended') return drawEnded(q, sp, rar, so);
   let l = rows.filter(r => (!q || String(r.name).toLowerCase().includes(q)) && (!sp || r.sp === sp) && (!rar || r.rarity === rar));
   const n = v => v == null ? Infinity : Number(v);
   const f = { ends: (a, b) => a.endsAt - b.endsAt, price: (a, b) => n(price(a)) - n(price(b)), pricehi: (a, b) => (price(b) ?? -1) - (price(a) ?? -1),
@@ -94,6 +102,21 @@ function draw(){
 $('#q').addEventListener('input', () => { shown = 100; draw(); });
 for(const [id, k] of [['#sp', 'bulk_sp'], ['#rar', 'bulk_rar'], ['#sort', 'bulk_sort']]) $(id).addEventListener('change', e => { ls.set(k, e.target.value); shown = 100; draw(); });
 $('#more').addEventListener('click', () => { shown += 200; draw(); });
+document.querySelectorAll('#seg button').forEach(b => b.addEventListener('click', () => { view = b.dataset.v; document.querySelectorAll('#seg button').forEach(x => x.setAttribute('aria-pressed', x === b)); shown = 100; draw(); }));
+// Ended: the final price of each (read from Real, or the last bid seen), newest first unless sorted.
+function drawEnded(q, sp, rar, so){
+  let l = ended.filter(r => (!q || String(r.name).toLowerCase().includes(q)) && (!sp || r.sp === sp) && (!rar || r.rarity === rar));
+  const n = v => v == null ? Infinity : Number(v);
+  const f = { ends: (a, b) => b.endsAt - a.endsAt, price: (a, b) => n(a.price) - n(b.price), pricehi: (a, b) => (b.price ?? -1) - (a.price ?? -1), rating: (a, b) => (b.rating ?? -1) - (a.rating ?? -1),
+    ppr: (a, b) => n(a.price != null && a.rating ? a.price / a.rating : null) - n(b.price != null && b.rating ? b.price / b.rating : null), bids: (a, b) => (b.bids || 0) - (a.bids || 0) }[so];
+  l.sort(f);
+  $('#list').innerHTML = l.slice(0, shown).map(r => `<div class="row"><div><span class="nm">${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.name || 'Player ' + r.playerId)}</a>` : esc(r.name || 'Player ' + r.playerId)}</span>${r.rarity ? `<span class="rar">${esc(r.rarity)}</span>` : ''}
+      <div class="sub">${esc(r.sp || '')} ${esc(r.season || '')}${r.rating != null ? ` · rating ${Number(r.rating).toLocaleString()}` : ''}${r.mult ? ` · ${esc(r.mult)}` : ''}</div>
+      <div class="sub">Ended ${new Date(r.endsAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}${r.bids ? ` · ${r.bids} bid${r.bids === 1 ? '' : 's'}` : ''}${r.buyNow != null ? ` · buy now was ${Number(r.buyNow).toLocaleString()}` : ''}</div></div>
+      <div class="px">${r.price != null ? Number(r.price).toLocaleString() : '-'}<small class="how">${esc(r.how || '')}${r.price != null && r.rating ? ` · ${(r.price / r.rating).toFixed(1)}/rating` : ''}</small></div></div>`).join('')
+    || '<div class="row"><span class="note">No ended listings saved yet.</span></div>';
+  $('#more').hidden = l.length <= shown;
+}
 load();
 </script>
 </body>

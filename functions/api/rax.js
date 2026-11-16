@@ -448,49 +448,100 @@ async function predProbe(env) {
 }
 
 
-/* Bulk rating listings (Dennis, 2026-11-13/15): Real's Auctions "Bulk rating" list,
-   read on account 2 (RS_MARKET_TOKEN) only. Real gives 10 a page, soonest ending
-   first; the next page is asked for with beforeEndsAt = the last listing's end
-   time. A slow loop: one request every 10 seconds (6 a minute), walking the whole
-   list (~280 pages, about 45 minutes a pass) and starting over, so bids and new
-   listings stay current. Saved in bulk_listings; ended ones are cleared. A refusal
-   (401/403/429) pauses it for 30 minutes. */
+/* Bulk rating listings (Dennis, 2026-11-15, second design - kind to account 2):
+   1. One full scan of the list, once (Real gives 10 a page, soonest ending first;
+      the next page is beforeEndsAt = the last one's end time), 6 pages a minute.
+   2. Then every BULK_EVERY minutes, a short watch:
+      - the listings ending in the next 10 minutes (their last bids), and
+      - only new listings: a new one ends 12/24/48/72 hours after it's listed,
+        so just the slice of the list ending that far past the last watch.
+   3. Ended listings: their final result read once each (the listing's own page,
+      if Real gives it), else the last price seen - saved in bulk_results.
+   One request every 10 seconds always; a refusal (401/403/429) pauses it 30 minutes. */
 const BULK_DDL = `CREATE TABLE IF NOT EXISTS bulk_listings (id INTEGER PRIMARY KEY, endsAt INTEGER, sport TEXT, season INTEGER, playerId INTEGER, name TEXT,
   rarity TEXT, rating REAL, mult TEXT, buyNow REAL, minBid REAL, curBid REAL, bids INTEGER, value REAL, cards INTEGER, serial TEXT, seller TEXT, seenAt INTEGER)`;
-const BULK_PER_MIN = 6, BULK_GAP = 10000;
-const BULK_ON = false;   // paused (Dennis, 2026-11-15 9pm AK)
+const BULK_RES_DDL = `CREATE TABLE IF NOT EXISTS bulk_results (id INTEGER PRIMARY KEY, endsAt INTEGER, sport TEXT, season INTEGER, playerId INTEGER, name TEXT,
+  rarity TEXT, rating REAL, mult TEXT, buyNow REAL, minBid REAL, price REAL, bids INTEGER, how TEXT, lastSeenBid REAL, lastSeenAt INTEGER, savedAt INTEGER)`;
+const BULK_GAP = 10000, BULK_FULL_PER_MIN = 6, BULK_EVERY = 5, BULK_ON = true;
+const BULK_HOURS = [12, 24, 48, 72];
 async function bulkTick(env) {
   const tok = env.RS_MARKET_TOKEN, db = env.RATEBOARD_DB; if (!BULK_ON || !tok || !db) return;
-  const SK = 'bulk_state_v1';
+  const SK = 'bulk_state_v2';
   let st = {}; try { st = JSON.parse((await env.RATEBOARD_KV.get(SK)) || '{}') || {}; } catch (e) {}
   if (st.pauseUntil && Date.now() < st.pauseUntil) return;
-  if (st.lock && Date.now() - st.lock < 75000) return;   // last minute's run still going
+  if (st.lock && Date.now() - st.lock < 4 * 60000) return;   // a run is still going
+  const full = !st.fullDone, watchDue = !full && Date.now() >= (st.nextWatch || 0);
+  if (!full && !watchDue) return;
   st.lock = Date.now(); await env.RATEBOARD_KV.put(SK, JSON.stringify(st));
-  await db.prepare(BULK_DDL).run();
+  await db.prepare(BULK_DDL).run(); await db.prepare(BULK_RES_DDL).run();
   const base = 'cohort=all&listingType=userpassfull&prestige=all&rarity=all';
   const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+  let n = 0, stop = false;
+  // One request, spaced BULK_GAP from the last; false once Real refuses.
+  const get = async path => {
+    if (stop) return null;
+    if (n++) await sleep(BULK_GAP);
+    let res, d = null;
+    try { res = await fetch('https://web.realapp.com/' + path, { headers: rsHeaders(tok) }); d = await res.json().catch(() => null); } catch (e) { st.err = String(e.message || e).slice(0, 120); return null; }
+    st.reqs = (st.reqs || 0) + 1; st.lastAt = Date.now();
+    if (!res.ok) { st.err = `Real said ${res.status}`; st.errAt = Date.now(); if ([401, 403, 429].includes(res.status)) { st.pauseUntil = Date.now() + 30 * 60000; stop = true; } return { status: res.status, d }; }
+    st.err = null; return { status: 200, d };
+  };
+  const save = async L => {
+    const now = Date.now(), stmts = [];
+    for (const x of L) { const c = x.card || {}, e = c.entity || {}, b = c.boostInfo || {};
+      stmts.push(db.prepare(`INSERT OR REPLACE INTO bulk_listings (id, endsAt, sport, season, playerId, name, rarity, rating, mult, buyNow, minBid, curBid, bids, value, cards, serial, seller, seenAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .bind(Number(x.id), Date.parse(x.endsAt) || null, x.sport || c.sport || null, Number(x.season || c.season) || null, Number(x.playerId || x.entityId) || null,
+          String((e.firstName && e.lastName ? e.firstName + ' ' + e.lastName : '') || c.label || e.displayName || '').slice(0, 80),
+          b.rarityLabel || x.rarity || null, num(c.boostValue), b.multiplier != null ? String(b.multiplier) : null, num(x.buyNowPrice), num(x.minBidPrice), num(x.currentBidAmount),
+          Number(x.numBids) || 0, num(x.value), Array.isArray(x.linkedCardIds) ? x.linkedCardIds.length : null, c.serialNumber != null ? String(c.serialNumber) : null, x.userId != null ? String(x.userId) : null, now)); }
+    if (stmts.length) await db.batch(stmts);
+  };
+  const page = async cursor => { const r = await get(`cardmarketplacelistings?${cursor ? 'beforeEndsAt=' + encodeURIComponent(cursor) + '&' : ''}${base}`);
+    if (!r || r.status !== 200) return null; const L = (r.d && r.d.listings) || []; if (r.d && r.d.listingCount != null) st.count = r.d.listingCount; await save(L); return L; };
+  // Walk pages from a start time until past an end time (or out of pages).
+  const walk = async (from, until, maxPages) => { let cur = from, pages = 0;
+    while (pages < maxPages && !stop) { const L = await page(cur); pages++; if (!L || !L.length) return { done: true, cur };
+      const last = L[L.length - 1]; const nx = last.endsAt === cur ? new Date(Date.parse(last.endsAt) + 1).toISOString() : last.endsAt;
+      if (L.length < 10 || (until && Date.parse(last.endsAt) >= until)) return { done: true, cur: nx };
+      cur = nx; }
+    return { done: false, cur }; };
   try {
-    for (let i = 0; i < BULK_PER_MIN; i++) {
-      if (i) await sleep(BULK_GAP);
-      const u = `https://web.realapp.com/cardmarketplacelistings?${st.cursor ? 'beforeEndsAt=' + encodeURIComponent(st.cursor) + '&' : ''}${base}`;
-      let res, d = null;
-      try { res = await fetch(u, { headers: rsHeaders(tok) }); d = await res.json().catch(() => null); } catch (e) { st.err = String(e.message || e).slice(0, 120); break; }
-      if (!res.ok) { st.err = `Real said ${res.status}`; st.errAt = Date.now(); if ([401, 403, 429].includes(res.status)) st.pauseUntil = Date.now() + 30 * 60000; break; }
-      const L = (d && d.listings) || []; st.count = (d && d.listingCount) ?? st.count; st.reqs = (st.reqs || 0) + 1; st.lastAt = Date.now(); st.err = null;
-      const now = Date.now(), stmts = [];
-      for (const x of L) { const c = x.card || {}, e = c.entity || {}, b = c.boostInfo || {};
-        stmts.push(db.prepare(`INSERT OR REPLACE INTO bulk_listings (id, endsAt, sport, season, playerId, name, rarity, rating, mult, buyNow, minBid, curBid, bids, value, cards, serial, seller, seenAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-          .bind(Number(x.id), Date.parse(x.endsAt) || null, x.sport || c.sport || null, Number(x.season || c.season) || null, Number(x.playerId || x.entityId) || null,
-            String((e.firstName && e.lastName ? e.firstName + ' ' + e.lastName : '') || c.label || e.displayName || '').slice(0, 80),
-            b.rarityLabel || x.rarity || null, num(c.boostValue), b.multiplier != null ? String(b.multiplier) : null, num(x.buyNowPrice), num(x.minBidPrice), num(x.currentBidAmount),
-            Number(x.numBids) || 0, num(x.value), Array.isArray(x.linkedCardIds) ? x.linkedCardIds.length : null, c.serialNumber != null ? String(c.serialNumber) : null, x.userId != null ? String(x.userId) : null, now)); }
-      if (stmts.length) await db.batch(stmts);
-      // Next page from the last one's end time; past the end, start over from the soonest.
-      const last = L[L.length - 1];
-      if (!L.length || (last && last.endsAt === st.cursor && L.length < 10)) { st.cursor = null; st.passes = (st.passes || 0) + 1; st.passAt = Date.now(); }
-      else st.cursor = last.endsAt === st.cursor ? new Date(Date.parse(last.endsAt) + 1).toISOString() : last.endsAt;   // 10 ending the same moment: step past them
+    if (full) {
+      // 1. The one full scan, a minute's worth at a time.
+      const r = await walk(st.fullCursor || null, null, BULK_FULL_PER_MIN);
+      st.fullCursor = r.cur;
+      if (r.done && !stop) { st.fullDone = Date.now(); st.lastWatch = Date.now(); st.nextWatch = Date.now() + BULK_EVERY * 60000; }
+    } else {
+      // 2a. Ending in the next 10 minutes (their last bids).
+      const now = Date.now();
+      await walk(null, now + 10 * 60000, 3);
+      // 2b. New listings only: the slice ending 12/24/48/72h after the last watch up to now.
+      const since = st.lastWatch || now - BULK_EVERY * 60000;
+      for (const h of BULK_HOURS) { if (stop) break; await walk(new Date(since + h * 3600000 - 60000).toISOString(), now + h * 3600000, 3); }
+      st.lastWatch = now; st.nextWatch = now + BULK_EVERY * 60000; st.watches = (st.watches || 0) + 1;
     }
-    await db.prepare('DELETE FROM bulk_listings WHERE endsAt < ?').bind(Date.now() - 5 * 60000).run();
+    // 3. Ended listings: final result, one read each (at most 6 a run), else the last price seen.
+    if (!stop) {
+      const ended = ((await db.prepare('SELECT * FROM bulk_listings WHERE endsAt < ? ORDER BY endsAt LIMIT 40').bind(Date.now() - 60000).all()).results) || [];
+      let reads = 0;
+      for (const x of ended) {
+        let price = null, how = null;
+        if (!full && st.detailOk !== false && reads < 6 && !stop) {
+          reads++; const r = await get(`cardmarketplacelistings/${x.id}`);
+          const L = r && r.status === 200 && r.d ? (r.d.listing || r.d) : null;
+          if (st.detailOk == null) st.detailOk = !!(L && (L.id || L.status));   // learned once: does Real give a single listing?
+          if (L && (L.id || L.status)) { st.detailShape = st.detailShape || Object.keys(L).slice(0, 40);
+            const fin = num(L.finalPurchaseAmount), cur = num(L.currentBidAmount), sold = /sold|complete|purchas|won/i.test(String(L.status || '')) || L.purchasedUserId != null;
+            price = fin ?? (sold ? cur : null); how = fin != null || sold ? (num(L.buyNowPrice) != null && fin === num(L.buyNowPrice) ? 'buy now' : 'sold') : (Number(L.numBids) ? 'sold' : 'unsold');
+            if (how === 'sold' && price == null) price = cur; }
+        }
+        if (!how) { how = x.bids ? 'last seen bid' : 'no bids seen'; price = x.bids ? x.curBid : null; }
+        await db.prepare(`INSERT OR REPLACE INTO bulk_results (id, endsAt, sport, season, playerId, name, rarity, rating, mult, buyNow, minBid, price, bids, how, lastSeenBid, lastSeenAt, savedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+          .bind(x.id, x.endsAt, x.sport, x.season, x.playerId, x.name, x.rarity, x.rating, x.mult, x.buyNow, x.minBid, price, x.bids, how, x.curBid, x.seenAt, Date.now()).run();
+        await db.prepare('DELETE FROM bulk_listings WHERE id=?').bind(x.id).run();
+      }
+    }
   } catch (e) { st.err = String(e.message || e).slice(0, 120); }
   st.lock = 0;
   try { await env.RATEBOARD_KV.put(SK, JSON.stringify(st)); } catch (e) {}
@@ -8522,7 +8573,7 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v1'), modVoid: await kvj('mod_void_1115_n'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
+    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), modVoid: await kvj('mod_void_1115_n'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
       const o = {}; for (const r of rows) { const k = new Date(Number(r.at)).toISOString().slice(11, 14) + '00 ' + r.kind + ' | ' + String(r.msg || '').replace(/@[\w.\-]+/g, '@x').replace(/^[\w.\-]+:/, 'u:').replace(/(dropped|send|late)\s.*$/, '$1').slice(0, 140); o[k] = (o[k] || 0) + 1; } return o; } catch (e) { return String(e.message); } })(), multDist: await (async () => {
       /* One-off (2026-11-15): card multiplier by rarity/label/rating band across members' passes - counts only. */
       try { const c = {}; let n = 0;
