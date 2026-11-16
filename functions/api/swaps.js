@@ -1662,18 +1662,15 @@ export async function draftScan(env) {
   const etd0 = d => ET_DAY_FMT.format(d), today0 = etd0(new Date());
   const ex = async id => { await sleep(1500); const d = await draftInfo(env, id, 'game').catch(() => null); return d && d.status === 200 ? d : null; };
   const add = (id, d) => { if (!l.some(c => c.type === 'game' && c.id === id)) l.push({ id, type: 'game', sport: d.info.sport, day: d.info.day, gameId: d.info.gameId || null, added: Date.now() }); };
-  const FK = 'draft_gfront_v1'; let front = Number(await env.RATEBOARD_KV.get(FK)) || 0;
-  let lo = Math.max(55724, front, ...l.filter(c => c.type === 'game').map(c => c.id)), hi = null, step = 16, n = 0;
-  while (hi == null && n < 14) { const t = lo + step; n++; if (await ex(t)) { lo = t; step *= 2; } else hi = t; }
-  if (hi != null) while (hi - lo > 1 && n < 30) { const m = (lo + hi) >> 1; n++; if (await ex(m)) lo = m; else hi = m; }
-  // Read back from the newest: on the first run until 40 in a row are for past days; after that just the new ones.
-  let past = 0, reads = 0;
-  for (let id = lo; id > (front || 0) && past < 40 && reads < (front ? 120 : 400); id--) {
-    if (l.some(c => c.type === 'game' && c.id === id)) { const c0 = l.find(c => c.type === 'game' && c.id === id); past = c0.day < today0 ? past + 1 : 0; continue; }
-    reads++; const d = await ex(id); if (!d) continue;
-    add(id, d); past = d.info.day < today0 ? past + 1 : 0;
-  }
-  await env.RATEBOARD_KV.put(FK, String(lo));
+  /* The numbers have gaps (2026-11-16: nothing from 55767 to 55799, then 55800 on), so: look
+     ahead every 10 numbers until 12 in a row (120 numbers) are empty, then read every number up
+     to the last one found. "dk" is the furthest number already read one by one. */
+  const FK = 'draft_gdone_v1'; let done = Number(await env.RATEBOARD_KV.get(FK)) || Math.max(55724, ...l.filter(c => c.type === 'game').map(c => c.id));
+  let last = done, emptyRun = 0, t = done, reads = 0;
+  while (emptyRun < 12 && reads < 60) { t += 10; reads++; if (await ex(t)) { last = t; emptyRun = 0; } else emptyRun++; }
+  let dense = 0;
+  for (let id = done + 1; id <= last + 9 && dense < 450; id++) { dense++; const d = await ex(id); if (d) add(id, d); done = id; }
+  await env.RATEBOARD_KV.put(FK, String(done));
   // Old games off the list (a week back), so it stays small.
   const wk = etd0(new Date(Date.now() - 7 * 86400000));
   for (let k = l.length - 1; k >= 0; k--) if (l[k].type === 'game' && l[k].day && l[k].day < wk) l.splice(k, 1);
