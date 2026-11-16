@@ -983,10 +983,33 @@ async function runMatchingInner(db, env) {
      went per player - ran matching past its time limit and no swaps were
      made from 22:20 UTC). */
   const recvAt = new Map();
-  for (const m of (((await db.prepare("SELECT a, b, aGets, bGets, createdAt FROM swap_matches WHERE status IN ('pending','sending','warned','sent')").all()).results) || []))
-    for (const [k, w] of [[m.a, m.aGets], [m.b, m.bGets]]) { const kk = k + '|' + w; (recvAt.get(kk) || recvAt.set(kk, []).get(kk)).push(Number(m.createdAt) || 0); }
-  for (const r of live160) if (r.status !== 'cancelled') { const kk = r.buyer + '|' + r.pass; (recvAt.get(kk) || recvAt.set(kk, []).get(kk)).push(Number(r.createdAt) || 0); }
+  const recvDue = new Map();
+  for (const m of (((await db.prepare("SELECT a, b, aGets, bGets, createdAt, dueAt FROM swap_matches WHERE status IN ('pending','sending','warned','sent')").all()).results) || []))
+    for (const [k, w] of [[m.a, m.aGets], [m.b, m.bGets]]) { const kk = k + '|' + w; (recvAt.get(kk) || recvAt.set(kk, []).get(kk)).push(Number(m.createdAt) || 0); (recvDue.get(kk) || recvDue.set(kk, []).get(kk)).push(Number(m.dueAt) || 0); }
+  for (const r of live160) if (r.status !== 'cancelled') { const kk = r.buyer + '|' + r.pass; (recvAt.get(kk) || recvAt.set(kk, []).get(kk)).push(Number(r.createdAt) || 0); (recvDue.get(kk) || recvDue.set(kk, []).get(kk)).push(Number(r.dueAt) || 0); }
   const countSince = (k, w, since) => { const t0 = Number(since) || 0; let n = 0; for (const t of (recvAt.get(k + '|' + w) || [])) if (t > t0) n++; return n; };
+  // Swaps not yet done (their cards aren't in the pass yet): due after 20 minutes before the fresh read.
+  const countAhead = (k, w, at) => { let n = 0; for (const t of (recvDue.get(k + '|' + w) || [])) if (t > at - 20 * 60000) n++; return n; };
+  /* A fresh read of each member's passes who has a rating goal on a player they're swapping for
+     (Dennis, 2026-11-16: "scan my account right before matching so I don't go over"). One request
+     a member (every pass at once), 4 at a time, at most 25 seconds; anyone not read in time keeps
+     their last scan. The goal then counts from the pass's rating right now plus swaps still to come. */
+  const freshAt = new Map(); let freshMs = 0;
+  if (env) { try { const tok = scanTok(env), t0 = Date.now();
+    const gl = users.filter(u => u.hashId && u.wants.some(w => Number(u.caps[w] && u.caps[w].g) > 0 || Number(u.goal) > 0)).slice(0, 100);
+    let qi = 0, slow = false;
+    await Promise.all([0, 1, 2, 3].map(async () => { while (qi < gl.length && !slow && Date.now() - t0 < 25000) { const u = gl[qi++];
+      try { const ac = new AbortController(), tm = setTimeout(() => ac.abort(), 6000);
+        const r = await fetch(`https://web.realapp.com/userpasses/${encodeURIComponent(u.hashId)}/passes`, { headers: rsHeaders(tok), signal: ac.signal }); clearTimeout(tm);
+        if (r.status === 429) { slow = true; break; } if (!r.ok) continue;
+        const rt = new Map();
+        for (const x of rowsOf(await r.json())) { const e = (x && (x.pass || x.entity)) || x || {};
+          const p = passOf(x, String(x.sport || e.sport || '').toLowerCase(), Number(x.season || e.season), String(x.entityType || e.entityType || '').toLowerCase());
+          if (p && u.wants.includes(p.key) && p.rating != null) rt.set(p.key, p.rating); }
+        for (const p of u.passes) if (rt.has(p.key)) p.rating = rt.get(p.key);
+        freshAt.set(u.key, Date.now());
+      } catch (e) {} } }));
+    freshMs = Date.now() - t0; } catch (e) {} }
   await lap();   // 2: low plays + live swaps read
   const cache = new Map(), goalLeft = new Map();
   // Every season that has a goal set, read at once rather than one after another.
@@ -994,7 +1017,7 @@ async function runMatchingInner(db, env) {
     await Promise.all([...need.values()].map(w => packAvg(db, cache, w).catch(() => null))); }
   for (const u of users) for (const w of u.wants) {
     let left = Infinity;
-    try { const g = await goalRoom(db, cache, u, (x, ww) => countSince(x.key, ww, x.scannedAt), w); if (g.limited) left = g.left; } catch (e) {}
+    try { const g = await goalRoom(db, cache, u, (x, ww) => freshAt.has(x.key) ? countAhead(x.key, ww, freshAt.get(x.key)) : countSince(x.key, ww, x.scannedAt), w); if (g.limited) left = g.left; } catch (e) {}
     // Scale: their own cap for this player, overall since they set it.
     const c = u.caps[w];
     if (c && Number(c.n) > 0 && c.at) left = Math.min(left, Math.max(0, Number(c.n) - countSince(u.key, w, c.at)));
@@ -1186,7 +1209,7 @@ async function runMatchingInner(db, env) {
   if (madeNiche.length) { try { const insN = madeNiche.map(m => db.prepare(`INSERT INTO swap_160 (buyer, seller, pass, slot, dueAt, createdAt, status, kind) VALUES (?, ?, ?, ?, ?, ?, 'pending', 'niche')`).bind(m.buyer, m.seller, m.pass, m.slot, m.due, now));
       for (let i = 0; i < insN.length; i += 50) await db.batch(insN.slice(i, i + 50)); made.nNiche = insN.length; } catch (e) { await botFail(db, 'matching', `niche not saved: ${e.message}`); } }
   await lap();   // 5: saved
-  made.timing = `${made.n160 || 0} 160s, ${made.nNiche || 0} niche, members ${users.length}, read ${T[1] - T[0]}ms, plays ${T[2] - T[1]}ms, goals ${T[3] - T[2]}ms, pairing ${T[4] - T[3]}ms, save ${T[5] - T[4]}ms`;
+  made.timing = `${made.n160 || 0} 160s, ${made.nNiche || 0} niche, members ${users.length}, goal scans ${freshAt.size} in ${freshMs}ms, read ${T[1] - T[0]}ms, plays ${T[2] - T[1]}ms, goals ${T[3] - T[2]}ms, pairing ${T[4] - T[3]}ms, save ${T[5] - T[4]}ms`;
   return made;
 }
 
