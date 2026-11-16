@@ -1639,7 +1639,7 @@ export async function draftCheck(env) {
 export async function draftScan(env) {
   const tok = env.RS_AUTH_TOKEN; if (!tok) return;
   const k = 'draft_scan_v2'; let last = 0; try { last = Number(await env.RATEBOARD_KV.get(k)) || 0; } catch (e) {}
-  if (Date.now() - last < 60 * 60000) return; await env.RATEBOARD_KV.put(k, String(Date.now()));
+  if (Date.now() - last < 20 * 60000) return; await env.RATEBOARD_KV.put(k, String(Date.now()));   // every 20 minutes (new game drafts show up through the day)
   const l = await draftList(env);
   let top = Math.max(2459, ...l.filter(c => c.type === 'sport').map(c => c.id)), miss = 0;
   for (let id = top + 1; miss < 3 && id < top + 25; id++) {
