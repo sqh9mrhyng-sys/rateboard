@@ -5878,7 +5878,7 @@ async function handle({ request, env, waitUntil }) {
     if (acc.who) { try { const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(acc.who).first();
       mine = parse(u && u.passes, []).filter(p => p.kind !== 'team' && /rare|epic|legendary|mystic|iconic/i.test(p.levelLabel || '')).map(p => ({ key: p.key, name: p.name, sport: p.sport, sp: SPN[p.sport] || p.sport, season: p.season, playerId: p.id, rating: p.rating, label: p.levelLabel || null,
         url: p.passId ? `https://www.realapp.com/${routeId([18, 0, 0, Number(p.passId)])}` : null })); } catch (e) {} }
-    return new Response(BULK_MEMO.text + `,"signedIn":${acc.who ? 'true' : 'false'},"mine":${JSON.stringify(mine)}}`, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
+    return new Response(BULK_MEMO.text + `,"signedIn":${acc.who ? 'true' : 'false'},"grind":${String(acc.who || '').toLowerCase() === 'dennis' ? 'true' : 'false'},"mine":${JSON.stringify(mine)}}`, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
   }
   if (op === 'notifs') {
     if (!acc.who) return forbidden('Sign in first (raxacademy.app).');

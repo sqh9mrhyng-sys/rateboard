@@ -198,6 +198,8 @@ async function load(){
   catch(e){ j = { error: 'Could not reach the site - try again.' }; }
   if(j.error){ $('#msg').innerHTML = /sign in/i.test(j.error) ? 'Sign in first - <a href="/?next=/bulk">go to sign in</a>.' : esc(j.error); return; }
   D = j; $('#msg').hidden = true;
+  // Grind is Dennis's only for now (2026-11-15).
+  if(!D.grind){ const gb = document.querySelector('#seg [data-v="grind"]'); if(gb) gb.remove(); $('#seg').style.gridTemplateColumns = 'repeat(4,1fr)'; if(view === 'grind') view = 'deals'; }
   for (const r of D.rows.concat(D.ended)) { r.sp = SPN[r.sport] || r.sport; r.url = pUrl(r); r.link = aUrl(r); }
   const sps = [...new Set(j.rows.concat(j.ended, j.mine).map(r => r.sp).filter(Boolean))].sort();
   $('#sp').innerHTML = '<option value="">All sports</option>' + sps.map(x => `<option>${esc(x)}</option>`).join(''); $('#sp').value = ls.get('bulk_sp') || '';
@@ -274,7 +276,7 @@ function draw(){
       <div class="kids">${all.map(lkRow).join('')}</div></div>`; }).join(''), l.length,
       'Every ended auction. Avg = rax per rating point (400 rax for an 86 rating = 4.65/1). Tap a player for each auction.');
   }
-  if(view === 'grind'){
+  if(view === 'grind' && D.grind){
     // 3. What a pass sells for at each rarity against what the packs cost to get there.
     const g = grindSetup(), rarT = rarThresholds();
     const l = [...book.by.values()].filter(o => o.sold.length && o.rpr && pass(o) && !GRIND_SKIP(o)).map(o => grindRow(o, g, rarT)).sort((a, b) => (b.best ? b.best.profit : -1e9) - (a.best ? a.best.profit : -1e9));
