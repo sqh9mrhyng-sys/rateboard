@@ -5454,7 +5454,7 @@ async function handle({ request, env, waitUntil }) {
     else m = u && await db.prepare("SELECT * FROM swap_matches WHERE id=? AND (a=? OR b=?) AND dueAt=? AND status NOT IN ('cancelled','cancelling','cleared')").bind(Number(b.id), u.key, u.key, due).first();
     if (!m) return json({ error: 'That swap was not found.' }, 404);
     if (Date.now() < (m.k160 ? Number(m.dueAt) : sideDue(m))) return json({ error: 'You can rate once the swap time has come.' }, 400);
-    if (await db.prepare('SELECT 1 AS x FROM swap_rate_block WHERE key=?').bind(u.key).first()) return json({ error: 'Your rating was turned off for rating unfairly.' }, 403);
+    { const rbk = u && await db.prepare('SELECT why FROM swap_rate_block WHERE key=?').bind(u.key).first(); if (rbk) return json({ error: /by admin/i.test(String(rbk.why || '')) ? 'Your ability to rate has been removed.' : 'Your rating was turned off for rating unfairly.' }, 403); }
     if (!(await allow(url.origin, 'rate:' + u.key, 60, 3600))) return json({ error: 'Too many ratings at once - try again later.' }, 429);
     const ratee = m.a === u.key ? m.b : m.a;
     await db.prepare('INSERT INTO swap_ratings (rater, ratee, stars, at, matchId) VALUES (?, ?, ?, ?, ?) ON CONFLICT(rater, ratee) DO UPDATE SET stars=excluded.stars, at=excluded.at, matchId=excluded.matchId').bind(u.key, ratee, stars, Date.now(), m.id).run();
@@ -6791,13 +6791,28 @@ async function handle({ request, env, waitUntil }) {
     await env.RATEBOARD_KV.put(RBLOCK_KV, JSON.stringify(m));
     return json({ ok: true, name: (u && u.rsUser) || q, blocked: !!b.block });
   }
+  // Admin: take away / give back a member's rating (Dennis, 2026-11-15). Their ratings stop counting while it's off.
+  if (op === 'rateblock' && request.method === 'POST') {
+    if (!acc.admin) return forbidden('Admin only.');
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    const q = String(b.user || '').trim().replace(/^@/, '').toLowerCase();
+    if (q.length < 2) return json({ error: 'Enter a username.' }, 400);
+    const u = await db.prepare('SELECT key, rsUser FROM swap_users WHERE LOWER(key)=? OR LOWER(rsUser)=?').bind(q, q).first();
+    if (!u) return json({ error: `No member named @${q}.` }, 404);
+    await db.prepare(RATE_BLOCK_DDL).run();
+    if (b.block) await db.prepare('INSERT OR REPLACE INTO swap_rate_block (key, at, why) VALUES (?, ?, ?)').bind(u.key, Date.now(), 'Turned off by admin').run();
+    else await db.prepare('DELETE FROM swap_rate_block WHERE key=?').bind(u.key).run();
+    try { await env.RATEBOARD_KV.delete(TRUST_KEY); } catch (e) {}
+    return json({ ok: true, name: u.rsUser || u.key, blocked: !!b.block });
+  }
   if (op === 'modlookup') {
     if (!acc.admin) return forbidden('Admin only.');
     const q = String(url.searchParams.get('q') || '').trim().replace(/^@/, '').toLowerCase();
     if (q.length < 2) return json({ rows: [] });
     const rs = ((await db.prepare("SELECT key, rsUser FROM swap_users WHERE LOWER(rsUser) LIKE ? OR LOWER(key) LIKE ? ORDER BY rsUser LIMIT 15").bind('%' + q + '%', '%' + q + '%').all()).results) || [];
     const m = await reportBlocks(env);
-    return json({ rows: rs.map(r => ({ key: r.key, rsUser: r.rsUser || r.key, noReport: !!m[String(r.key).toLowerCase()] })) });
+    let nr = new Set(); try { await db.prepare(RATE_BLOCK_DDL).run(); nr = new Set(((((await db.prepare('SELECT key FROM swap_rate_block').all()).results) || [])).map(r => r.key)); } catch (e) {}
+    return json({ rows: rs.map(r => ({ key: r.key, rsUser: r.rsUser || r.key, noReport: !!m[String(r.key).toLowerCase()], noRate: nr.has(r.key) })) });
   }
   if (op === 'modlist') {
     if (!acc.admin) return forbidden('Admin only.');
@@ -6816,7 +6831,9 @@ async function handle({ request, env, waitUntil }) {
     const rb = await reportBlocks(env);
     for (const r of rows) r.noReport = !!rb[String(r.key).toLowerCase()];
     const noReport = Object.entries(rb).map(([k, v]) => ({ key: k, rsUser: v.name || rs.get(k) || k, at: v.at }));
-    return json({ rows, noReport, requests: reqs.map(r => ({ ...r, rsUser: rs.get(r.key) || r.key, record: per.get(r.key) || null })), last });
+    let noRate = []; try { await db.prepare(RATE_BLOCK_DDL).run(); noRate = (((await db.prepare('SELECT key, at, why FROM swap_rate_block ORDER BY at DESC').all()).results) || []).map(r => ({ key: r.key, rsUser: rs.get(r.key) || r.key, at: r.at, why: r.why })); } catch (e) {}
+    const nrs = new Set(noRate.map(r => r.key)); for (const r of rows) r.noRate = nrs.has(r.key);
+    return json({ rows, noReport, noRate, requests: reqs.map(r => ({ ...r, rsUser: rs.get(r.key) || r.key, record: per.get(r.key) || null })), last });
   }
   if (op === 'modrun') {
     if (!acc.admin) return forbidden('Admin only.');

@@ -213,6 +213,7 @@
         <h3 style="font-size:14px;margin:12px 0 6px">Find a member</h3>
         <input id="md-q" placeholder="Search by username" autocomplete="off" style="width:100%;margin-bottom:6px"><div id="md-found" class="note"></div>
         <h3 style="font-size:14px;margin:12px 0 6px">Can't send reports</h3><div id="md-norep" class="note">Loading…</div>
+        <h3 style="font-size:14px;margin:12px 0 6px">Can't rate</h3><div id="md-norate" class="note">Loading…</div>
         <h3 style="font-size:14px;margin:12px 0 6px">Warnings &amp; strikes</h3><div id="md-list" class="note">Loading…</div></section>
       <section><h2>Called-off swaps <span class="note" id="co-n"></span></h2>
         <p class="note" style="margin:0 0 8px">Last 30 days. "Told to buy" means they got the warning or contact DM, so they may have bought the pack. Send the rax on Real, then tap <b>Mark refunded</b> (tap again to undo). <span class="pill off">reported</span> = they've filed a called-off report for it.</p>
@@ -823,8 +824,11 @@ async function loadMod(){
       <button class="sm" data-mdok="${r.id}">Approve - give Swaps back</button> <button class="sm" data-mdno="${r.id}">Decline</button></div>`).join('') : 'None waiting.';
   modRows = j.rows;
   $('#md-norep').innerHTML = (j.noReport || []).length ? j.noReport.map(r => `<div style="padding:6px 0;border-bottom:1px solid var(--line)"><b>@${esc(r.rsUser)}</b> <span class="note">since ${new Date(r.at).toLocaleDateString()}</span> ${repBtn(r.rsUser, true)}</div>`).join('') : 'Nobody.';
+  $('#md-norate').innerHTML = (j.noRate || []).length ? j.noRate.map(r => `<div style="padding:6px 0;border-bottom:1px solid var(--line)"><b>@${esc(r.rsUser)}</b> <span class="note">since ${new Date(r.at).toLocaleDateString()}${r.why ? ' · ' + esc(r.why) : ''}</span> ${rateBtn(r.rsUser, true)}</div>`).join('') : 'Nobody.';
   drawModList();
 }
+// Rating on / off for one member (Dennis, 2026-11-15).
+var rateBtn = (name, off) => `<button class="sm" data-ratename="${esc(name)}" data-rateblock="${off ? '0' : '1'}">${off ? 'Give back rating' : 'Take away rating'}</button>`;
 // Reporting on / off for one member (Dennis, 2026-11-15).
 var repBtn = (name, off) => `<button class="sm" data-repname="${esc(name)}" data-repblock="${off ? '0' : '1'}">${off ? 'Give back reporting' : 'Take away reporting'}</button>`;
 var modRows = [];
@@ -833,7 +837,7 @@ function drawModList(){
   const ev = x => x.events.map(e => `${e.kind === 'warn' ? 'warning' : 'strike ' + e.n}: ${esc(e.when)}${e.reports > 1 ? ` (${e.reports} reports)` : ''}`).join(' · ');
   const rows = q ? modRows.filter(r => String(r.rsUser).toLowerCase().includes(q) || String(r.key).toLowerCase().includes(q)) : modRows;
   $('#md-list').innerHTML = rows.length ? rows.map(r => `<div style="padding:6px 0;border-bottom:1px solid var(--line)"><b>@${esc(r.rsUser)}</b> ${r.banned ? '<span class="pill off">banned</span>' : `<span class="note">${r.strikes}/3 strikes</span>`}
-      ${r.banned ? `<button class="sm" data-mdkey="${esc(r.key)}">Unban</button>` : `<button class="sm" data-mdclear="${esc(r.key)}" data-mdname="${esc(r.rsUser)}">Clear strikes</button>`} ${repBtn(r.rsUser, r.noReport)}<div class="note">${ev(r)}</div></div>`).join('') : (q ? 'No one with warnings or strikes matches.' : 'Nobody yet.');
+      ${r.banned ? `<button class="sm" data-mdkey="${esc(r.key)}">Unban</button>` : `<button class="sm" data-mdclear="${esc(r.key)}" data-mdname="${esc(r.rsUser)}">Clear strikes</button>`} ${repBtn(r.rsUser, r.noReport)} ${rateBtn(r.rsUser, r.noRate)}<div class="note">${ev(r)}</div></div>`).join('') : (q ? 'No one with warnings or strikes matches.' : 'Nobody yet.');
 }
 let mdQT = 0;
 $('#md-q').addEventListener('input', () => { drawModList(); clearTimeout(mdQT); mdQT = setTimeout(async () => {
@@ -841,8 +845,17 @@ $('#md-q').addEventListener('input', () => { drawModList(); clearTimeout(mdQT); 
   if(q.replace(/^@/, '').length < 2){ $('#md-found').textContent = ''; return; }
   const j = await api('/api/swaps?op=modlookup&q=' + encodeURIComponent(q));
   if(q !== $('#md-q').value.trim()) return;
-  $('#md-found').innerHTML = j.error ? esc(j.error) : j.rows.length ? j.rows.map(r => `<div style="padding:6px 0;border-bottom:1px solid var(--line)"><b>@${esc(r.rsUser)}</b>${r.noReport ? ' <span class="pill off">can\'t report</span>' : ''} ${repBtn(r.rsUser, r.noReport)}</div>`).join('') : 'No member with that username.';
+  $('#md-found').innerHTML = j.error ? esc(j.error) : j.rows.length ? j.rows.map(r => `<div style="padding:6px 0;border-bottom:1px solid var(--line)"><b>@${esc(r.rsUser)}</b>${r.noReport ? ' <span class="pill off">can\'t report</span>' : ''}${r.noRate ? ' <span class="pill off">can\'t rate</span>' : ''} ${repBtn(r.rsUser, r.noReport)} ${rateBtn(r.rsUser, r.noRate)}</div>`).join('') : 'No member with that username.';
 }, 300); });
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-ratename]'); if(!b) return;
+  const block = b.dataset.rateblock === '1', name = b.dataset.ratename;
+  if(!confirm(block ? `Take away @${name}'s ability to rate? Their ratings stop counting.` : `Give @${name} rating back?`)) return;
+  b.disabled = true;
+  const j = await api('/api/swaps?op=rateblock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user: name, block }) });
+  $('#md-msg').textContent = j.error || (block ? `@${j.name} can no longer rate.` : `@${j.name} can rate again.`);
+  loadMod(); if($('#md-q').value.trim()) $('#md-q').dispatchEvent(new Event('input'));
+});
 document.addEventListener('click', async e => {
   const b = e.target.closest('[data-repname]'); if(!b) return;
   const block = b.dataset.repblock === '1', name = b.dataset.repname;
