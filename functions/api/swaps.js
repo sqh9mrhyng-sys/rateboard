@@ -5680,16 +5680,27 @@ async function handle({ request, env, waitUntil }) {
     return json(out);
   }
   // Bulk rating listings (Dennis only, 2026-11-15): what account 2's slow loop has read.
+  // Bulk ratings (Dennis only, 2026-11-15): live listings, every ended one (history), his passes, and pack plays.
   if (op === 'bulklist') {
-    if (!acc.admin) return forbidden('Admin only.');
+    if (String(acc.who || '').toLowerCase() !== 'dennis') return forbidden('Only Dennis can open this page.');
     let st = {}; try { st = JSON.parse((await env.RATEBOARD_KV.get('bulk_state_v2')) || '{}') || {}; } catch (e) {}
     let rows = [];
-    try { rows = ((await db.prepare('SELECT * FROM bulk_listings WHERE endsAt > ? ORDER BY endsAt LIMIT 5000').bind(Date.now()).all()).results) || []; } catch (e) {}
-    let ended = []; try { ended = ((await db.prepare('SELECT * FROM bulk_results WHERE endsAt > ? ORDER BY endsAt DESC LIMIT 5000').bind(Date.now() - 14 * 86400000).all()).results) || []; } catch (e) {}
+    try { rows = ((await db.prepare('SELECT * FROM bulk_listings WHERE endsAt > ? ORDER BY endsAt LIMIT 6000').bind(Date.now()).all()).results) || []; } catch (e) {}
+    let ended = []; try { ended = ((await db.prepare('SELECT * FROM bulk_results WHERE endsAt > ? ORDER BY endsAt DESC LIMIT 30000').bind(Date.now() - 90 * 86400000).all()).results) || []; } catch (e) {}
     const SPN = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf', soccer: 'FC' };
-    const fix = r => ({ ...r, sp: SPN[r.sport] || r.sport, url: r.playerId && r.sport && r.season ? playerUrl(`${r.sport}:${r.season}:${r.playerId}`) : null });
+    const fix = r => ({ ...r, sp: SPN[r.sport] || r.sport, url: r.playerId && r.sport && r.season ? playerUrl(`${r.sport}:${r.season}:${r.playerId}`) : null,
+      link: r.id ? `https://www.realapp.com/${routeId([30, 0, 0, Number(r.id)])}` : null });   // the auction itself (Real's code 30)
+    // His passes, for "Your pass evaluations".
+    let mine = [];
+    try { const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(acc.who).first();
+      mine = parse(u && u.passes, []).filter(p => p.kind !== 'team').map(p => ({ key: p.key, name: p.name, sport: p.sport, sp: SPN[p.sport] || p.sport, season: p.season, playerId: p.id, rating: p.rating, label: p.levelLabel || null,
+        url: p.passId ? `https://www.realapp.com/${routeId([18, 0, 0, Number(p.passId)])}` : null })); } catch (e) {}
+    // Collectible plays in packs, for each player-season in the history (for "best to grind").
+    const plays = {};
+    try { const ss = new Set(ended.concat(rows).filter(r => r.sport && r.season).map(r => r.sport + ':' + r.season));
+      for (const k of ss) { const [sp0, se0] = k.split(':'); const m = await playsMap(env, db, sp0, se0); if (m) for (const r of ended.concat(rows)) if (r.sport === sp0 && String(r.season) === se0 && m[r.playerId] != null) plays[`${sp0}:${se0}:${r.playerId}`] = m[r.playerId]; } } catch (e) {}
     return json({ state: { count: st.count || null, lastAt: st.lastAt || null, fullDone: st.fullDone || null, watches: st.watches || 0, nextWatch: st.nextWatch || null, err: st.err || null, pauseUntil: st.pauseUntil || null, reqs: st.reqs || 0, exact: st.detailOk === true ? true : st.detailOk === false ? false : null },
-      rows: rows.map(fix), ended: ended.map(fix) });
+      rows: rows.map(fix), ended: ended.map(fix), mine, plays });
   }
   if (op === 'notifs') {
     if (!acc.who) return forbidden('Sign in first (raxacademy.app).');

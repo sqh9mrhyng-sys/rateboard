@@ -14,22 +14,26 @@
   h1{font-size:24px;margin:8px 0 2px}
   .note{color:var(--mute);font-size:13px}
   .top{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:13px;color:var(--mute);margin:10px 0}
+  .stat b{color:var(--ink)} .err{color:var(--bad)}
+  .seg{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 0}
+  .seg button{background:var(--panel);color:var(--mute);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font:inherit;font-weight:700;cursor:pointer}
+  .seg button[aria-pressed="true"]{color:#141925;background:var(--accent);border-color:var(--accent)}
   .bar{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
   .bar input,.bar select{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;font-size:14px}
-  .bar input{flex:1;min-width:150px}
-  .stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:13px;color:var(--mute);margin:10px 0}
-  .stat b{color:var(--ink)} .stat .err{color:var(--bad)}
+  .bar input[type=search]{flex:1;min-width:150px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
-  .row{display:grid;grid-template-columns:1fr auto;gap:2px 12px;padding:10px 14px;border-top:1px solid var(--line)} .row:first-child{border-top:0}
+  .row{display:grid;grid-template-columns:1fr auto;gap:2px 12px;padding:10px 14px;border-top:1px solid var(--line)} .card > .row:first-child,.card > .grp:first-child{border-top:0}
+  .grp{border-top:1px solid var(--line)} .grp > .row{border-top:0;cursor:pointer} .grp .kids{display:none;padding:0 14px 10px} .grp.open .kids{display:block}
+  .kids a{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-top:1px dashed var(--line);font-size:13.5px;text-decoration:none;color:var(--ink)} .kids a span{color:var(--mute)}
   .nm{font-weight:800;font-size:16px} .nm a{color:var(--ink);text-decoration:none}
   .sub{color:var(--mute);font-size:12.5px}
   .rar{display:inline-block;font-size:11px;font-weight:800;padding:1px 7px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);margin-left:6px;vertical-align:2px}
   .px{text-align:right;font-weight:800;font-size:16px;white-space:nowrap} .px small{display:block;font-weight:600;font-size:11.5px;color:var(--mute)}
-  .ends.soon{color:var(--bad)}
-  .seg{display:flex;gap:6px;margin:10px 0 0} .seg button{background:var(--panel);color:var(--mute);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font:inherit;font-weight:700;cursor:pointer} .seg button[aria-pressed="true"]{color:#141925;background:var(--accent);border-color:var(--accent)}
-  .how{font-size:11px;font-weight:700;color:var(--mute)}
-  .more[hidden]{display:none}
-  .more{display:block;margin:12px auto;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 16px;font:inherit;cursor:pointer}
+  .pos{color:var(--good)} .neg{color:var(--bad)}
+  .x{background:none;border:0;color:var(--mute);font-size:18px;cursor:pointer;padding:0 4px;margin-left:6px}
+  .more{display:block;margin:12px auto;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 16px;font:inherit;cursor:pointer} .more[hidden]{display:none}
+  .empty{padding:14px;color:var(--mute);font-size:14px}
 </style>
 </head>
 <body><div class="wrap">
@@ -37,19 +41,19 @@
 <h1>Bulk ratings</h1>
 <p class="note" id="msg">Loading…</p>
 <div class="stat" id="stat" hidden></div>
-<div class="seg" id="seg" hidden><button data-v="live" aria-pressed="true">Live listings</button><button data-v="ended" aria-pressed="false">Ended - final prices</button></div>
+<div class="seg" id="seg" hidden>
+  <button data-v="deals" aria-pressed="true">Best deals</button>
+  <button data-v="history" aria-pressed="false">History</button>
+  <button data-v="grind" aria-pressed="false">Best to grind</button>
+  <button data-v="mine" aria-pressed="false">Your passes</button>
+  <button data-v="live" aria-pressed="false">All live</button>
+</div>
+<p class="note" id="how" style="margin:10px 0 0"></p>
 <div class="bar" id="bar" hidden>
-  <input id="q" placeholder="Search player" autocomplete="off">
+  <input type="search" id="q" placeholder="Search player" autocomplete="off">
   <select id="sp"><option value="">All sports</option></select>
-  <select id="rar"><option value="">All rarities</option></select>
-  <select id="sort">
-    <option value="ends">Ending soonest</option>
-    <option value="price">Price: low to high</option>
-    <option value="pricehi">Price: high to low</option>
-    <option value="rating">Rating: high to low</option>
-    <option value="ppr">Price per rating: best first</option>
-    <option value="bids">Most bids</option>
-  </select>
+  <select id="per"><option value="1">Past 24 hours</option><option value="7" selected>Past week</option><option value="30">Past 30 days</option><option value="c">Custom…</option></select>
+  <input type="date" id="from" hidden><input type="date" id="to" hidden>
 </div>
 <div class="card" id="list" hidden></div>
 <button class="more" id="more" hidden>Show more</button>
@@ -58,65 +62,117 @@
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const ls = { get: k => { try{ return localStorage.getItem(k); }catch(e){ return null; } }, set: (k, v) => { try{ localStorage.setItem(k, v); }catch(e){} } };
-const ago = ms => { const m = Math.round((Date.now() - ms) / 60000); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : Math.round(m / 60) + 'h ago'; };
+const ago = ms => { const m = Math.round((Date.now() - ms) / 60000); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 2880 ? Math.round(m / 60) + 'h ago' : Math.round(m / 1440) + 'd ago'; };
 const left = ms => { const m = Math.round((ms - Date.now()) / 60000); return m < 60 ? m + ' min' : m < 1440 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : Math.floor(m / 1440) + 'd ' + Math.floor(m % 1440 / 60) + 'h'; };
-const price = r => r.buyNow ?? r.curBid ?? r.minBid;
-let rows = [], ended = [], shown = 100, view = 'live';
+const fmt = v => v == null ? '-' : Math.round(v).toLocaleString();
+const day = ms => new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const kOf = r => `${r.sport}:${r.season}:${r.playerId}`;
+const med = a => { if(!a.length) return null; const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+const pct = (a, p) => { if(!a.length) return null; const s = a.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(s.length * p))]; };
+const nowPrice = r => r.buyNow ?? r.curBid ?? r.minBid;
+const SOLD = r => r.price != null && /sold|buy now|last seen bid/.test(r.how || '');
+const MIN_SALES = 3;
+let D = null, view = ls.get('bulk_view') || 'deals', shown = 60;
+const hidden = new Set(JSON.parse(ls.get('bulk_hidden') || '[]'));
+
+// The chosen stretch of time for history-based numbers.
+function span(){
+  const p = $('#per').value;
+  if(p === 'c'){ const f = Date.parse($('#from').value), t = Date.parse($('#to').value); return [Number.isFinite(f) ? f : 0, Number.isFinite(t) ? t + 86400000 : Date.now()]; }
+  return [Date.now() - Number(p) * 86400000, Date.now()];
+}
+// Sales per player-season (and per sport+season+rarity, as a fallback), in the chosen stretch.
+function salesBook(){
+  const [a, b] = span(), by = new Map(), byRar = new Map();
+  for (const r of D.ended) { if(r.endsAt < a || r.endsAt > b) continue;
+    const k = kOf(r), o = by.get(k) || by.set(k, { k, name: r.name, sp: r.sp, sport: r.sport, season: r.season, url: r.url, sold: [], ended: 0 }).get(k); o.ended++;
+    if(SOLD(r)){ o.sold.push(r); if(r.rating){ const rk = `${r.sport}:${r.season}:${r.rarity}`; (byRar.get(rk) || byRar.set(rk, []).get(rk)).push(r.price / r.rating); } } }
+  for (const o of by.values()){ const pr = o.sold.filter(x => x.rating).map(x => x.price / x.rating); o.ppr = med(pr); o.pprLo = pct(pr, .25); o.avg = o.sold.length ? o.sold.reduce((t, x) => t + x.price, 0) / o.sold.length : null; }
+  return { by, byRar };
+}
+// What a pass of this player-season and rating should go for, and how sure.
+function worth(book, r){
+  const o = book.by.get(kOf(r));
+  if(o && o.sold.length >= MIN_SALES && o.ppr && r.rating) return { v: o.ppr * r.rating, lo: o.pprLo * r.rating, n: o.sold.length, basis: 'this player' };
+  const rr = book.byRar.get(`${r.sport}:${r.season}:${r.rarity || r.label}`);
+  if(rr && rr.length >= 5 && r.rating) return { v: med(rr) * r.rating, lo: pct(rr, .25) * r.rating, n: rr.length, basis: 'same rarity' };
+  return null;
+}
 async function load(){
   let j;
   try{ const t = ls.get('ratebrd_token_v1') || ''; j = await (await fetch('/api/swaps?op=bulklist', { headers: t ? { 'x-rb-token': t } : {} })).json(); }
   catch(e){ j = { error: 'Could not reach the site - try again.' }; }
   if(j.error){ $('#msg').innerHTML = /sign in/i.test(j.error) ? 'Sign in first - <a href="/?next=/bulk">go to sign in</a>.' : esc(j.error); return; }
-  rows = j.rows || []; const s = j.state || {};
-  $('#msg').textContent = 'Bulk rating listings on Real, read gently on account 2: one full scan, then every 5 minutes only the ones ending soon and new ones. Ended ones keep their final price. Only you can see this page.';
+  D = j; const s = j.state || {};
+  $('#msg').textContent = 'Only you can see this page. Read gently on account 2: one full scan, then every 5 minutes only listings ending soon and new ones.';
   $('#stat').hidden = false;
-  ended = j.ended || [];
-  $('#stat').innerHTML = `<b>${rows.length.toLocaleString()}</b> live listings here` + (s.count ? ` of <b>${Number(s.count).toLocaleString()}</b> on Real` : '') + ` · <b>${ended.length.toLocaleString()}</b> ended with results saved`
-    + (s.fullDone ? ` · full scan done ${ago(s.fullDone)}, now checking every 5 min for listings ending soon and new ones${s.watches ? ` (${s.watches} checks)` : ''}` : ' · first full scan still going (about 45 minutes)')
-    + (s.lastAt ? ` · last read ${ago(s.lastAt)}` : '')
-    + (s.exact === true ? ' · final prices read from Real' : s.exact === false ? ' · final prices are the last bid seen (Real doesn\'t give single listings)' : '')
+  $('#stat').innerHTML = `<b>${j.rows.length.toLocaleString()}</b> live` + (s.count ? ` of <b>${Number(s.count).toLocaleString()}</b> on Real` : '') + ` · <b>${j.ended.length.toLocaleString()}</b> ended in history (${j.ended.filter(SOLD).length.toLocaleString()} sold)`
+    + (s.fullDone ? ` · checking every 5 min${s.lastAt ? `, last ${ago(s.lastAt)}` : ''}` : ' · first full scan still going')
+    + (s.exact === true ? ' · final prices from Real' : s.exact === false ? ' · final prices = last bid seen' : '')
     + (s.err ? ` · <span class="err">${esc(s.err)}${s.pauseUntil && s.pauseUntil > Date.now() ? ` - paused until ${new Date(s.pauseUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}</span>` : '');
-  $('#seg').hidden = false;
-  const opts = (sel, vals, keep) => { const v = $(sel).value; $(sel).innerHTML = $(sel).options[0].outerHTML + [...new Set(vals.filter(Boolean))].sort().map(x => `<option>${esc(x)}</option>`).join(''); $(sel).value = keep ?? v; };
-  opts('#sp', rows.concat(ended).map(r => r.sp), ls.get('bulk_sp') || ''); opts('#rar', rows.concat(ended).map(r => r.rarity), ls.get('bulk_rar') || '');
-  $('#sort').value = ls.get('bulk_sort') || 'ends';
-  $('#bar').hidden = false; $('#list').hidden = false; draw();
+  const sps = [...new Set(j.rows.concat(j.ended, j.mine).map(r => r.sp).filter(Boolean))].sort();
+  $('#sp').innerHTML = '<option value="">All sports</option>' + sps.map(x => `<option>${esc(x)}</option>`).join(''); $('#sp').value = ls.get('bulk_sp') || '';
+  $('#per').value = ls.get('bulk_per') || '7'; $('#from').value = ls.get('bulk_from') || ''; $('#to').value = ls.get('bulk_to') || '';
+  $('#seg').hidden = false; $('#bar').hidden = false; $('#list').hidden = false; setView(view);
 }
+function setView(v){ view = v; ls.set('bulk_view', v); shown = 60;
+  document.querySelectorAll('#seg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === v));
+  const custom = $('#per').value === 'c'; $('#from').hidden = $('#to').hidden = !custom;
+  draw(); }
+const pass = r => { const q = $('#q').value.trim().toLowerCase(), sp = $('#sp').value; return (!q || String(r.name || '').toLowerCase().includes(q)) && (!sp || r.sp === sp); };
+const nameCell = (r, extra = '') => `<span class="nm">${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.name || 'Player ' + r.playerId)}</a>` : esc(r.name || 'Player ' + r.playerId)}</span>${r.rarity || r.label ? `<span class="rar">${esc(r.rarity || r.label)}</span>` : ''}${extra}`;
+function out(html, n, help){ $('#how').textContent = help; $('#list').innerHTML = html || '<div class="empty">Nothing here yet.</div>'; $('#more').hidden = n <= shown; }
 function draw(){
-  const q = $('#q').value.trim().toLowerCase(), sp = $('#sp').value, rar = $('#rar').value, so = $('#sort').value;
-  if(view === 'ended') return drawEnded(q, sp, rar, so);
-  let l = rows.filter(r => (!q || String(r.name).toLowerCase().includes(q)) && (!sp || r.sp === sp) && (!rar || r.rarity === rar));
-  const n = v => v == null ? Infinity : Number(v);
-  const f = { ends: (a, b) => a.endsAt - b.endsAt, price: (a, b) => n(price(a)) - n(price(b)), pricehi: (a, b) => (price(b) ?? -1) - (price(a) ?? -1),
-    rating: (a, b) => (b.rating ?? -1) - (a.rating ?? -1), ppr: (a, b) => n(price(a) != null && a.rating ? price(a) / a.rating : null) - n(price(b) != null && b.rating ? price(b) / b.rating : null),
-    bids: (a, b) => b.bids - a.bids }[so];
-  l.sort(f);
-  $('#list').innerHTML = l.slice(0, shown).map(r => { const p = price(r), soon = r.endsAt - Date.now() < 3600000;
-    return `<div class="row"><div><span class="nm">${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.name || 'Player ' + r.playerId)}</a>` : esc(r.name || 'Player ' + r.playerId)}</span>${r.rarity ? `<span class="rar">${esc(r.rarity)}</span>` : ''}
-      <div class="sub">${esc(r.sp || '')} ${esc(r.season || '')}${r.rating != null ? ` · rating ${Number(r.rating).toLocaleString()}` : ''}${r.mult ? ` · ${esc(r.mult)}` : ''}${r.cards ? ` · ${r.cards} card${r.cards === 1 ? '' : 's'}` : ''}${r.serial ? ` · #${esc(r.serial)}` : ''}</div>
-      <div class="sub">Ends in <span class="ends${soon ? ' soon' : ''}">${left(r.endsAt)}</span>${r.bids ? ` · ${r.bids} bid${r.bids === 1 ? '' : 's'}` : ''}</div></div>
-      <div class="px">${p != null ? Number(p).toLocaleString() : '-'}<small>${r.buyNow != null ? 'buy now' : r.curBid != null ? 'current bid' : r.minBid != null ? 'min bid' : ''}${p != null && r.rating ? ` · ${(p / r.rating).toFixed(1)}/rating` : ''}</small></div></div>`; }).join('')
-    || '<div class="row"><span class="note">Nothing matches.</span></div>';
-  $('#more').hidden = l.length <= shown;
+  if(!D) return;
+  const book = salesBook();
+  if(view === 'deals'){
+    // 1. Live listings priced under what that pass sells for (buy now is exact; a bid can still go up).
+    const l = D.rows.filter(pass).map(r => { const w = worth(book, r), p = nowPrice(r); return w && p != null ? { r, w, p, gain: w.v - p } : null; }).filter(x => x && x.gain > 0).sort((a, b) => b.gain - a.gain);
+    return out(l.slice(0, shown).map(({ r, w, p, gain }) => `<div class="row"><div>${nameCell(r)}<div class="sub">${esc(r.sp)} ${esc(r.season)} · rating ${fmt(r.rating)}${r.cards ? ` · ${r.cards} cards` : ''} · ends in ${left(r.endsAt)}${r.bids ? ` · ${r.bids} bids` : ''}</div>
+      <div class="sub">Sells for about ${fmt(w.v)} (from ${w.n} sale${w.n === 1 ? '' : 's'}, ${w.basis}) · <a href="${esc(r.link)}" target="_blank" rel="noopener">open auction</a></div></div>
+      <div class="px pos">+${fmt(gain)}<small>${r.buyNow != null ? 'buy now ' : r.curBid != null ? 'bid now ' : 'min bid '}${fmt(p)}</small></div></div>`).join(''), l.length,
+      `Live listings priced under what that pass usually sells for (median price per rating × its rating, from the past ${$('#per').selectedOptions[0].text.replace(/^Past /, '').toLowerCase()}). Needs ${MIN_SALES}+ sales of that player and season, else 5+ of the same rarity. Buy-now prices are exact; bids can still rise. Real's fees aren't taken off.`);
+  }
+  if(view === 'history'){
+    // 2. Sales per player and season in the stretch; tap one for every auction of it.
+    const l = [...book.by.values()].filter(o => o.sold.length && pass(o)).sort((a, b) => b.sold.length - a.sold.length);
+    return out(l.slice(0, shown).map(o => `<div class="grp" data-k="${esc(o.k)}"><div class="row"><div>${nameCell(o)}<div class="sub">${esc(o.sp)} ${esc(o.season)} · ${o.sold.length} sold of ${o.ended} ended · avg ${fmt(o.avg)}${o.ppr ? ` · ${o.ppr.toFixed(1)} per rating` : ''}</div></div><div class="px">${o.sold.length}<small>sold ▾</small></div></div>
+      <div class="kids">${o.sold.slice().sort((a, b) => b.endsAt - a.endsAt).map(x => `<a href="${esc(x.link)}" target="_blank" rel="noopener"><b>${fmt(x.price)}</b><span>rating ${fmt(x.rating)} · ${esc(x.how)} · ${day(x.endsAt)}</span></a>`).join('')}</div></div>`).join(''), l.length,
+      'Every ended auction is kept. Sold count, average price and price per rating for each player and season in the stretch. Tap one to see each sale with a link to the auction.');
+  }
+  if(view === 'grind'){
+    // 3. Sells often, sells well, and has plenty in packs.
+    const l = [...book.by.values()].filter(o => o.ended >= 3 && o.sold.length && pass(o)).map(o => { const thru = o.sold.length / o.ended, pl = D.plays[o.k];
+      return { o, thru, pl, score: thru * (o.avg || 0) }; }).sort((a, b) => b.score - a.score);
+    return out(l.slice(0, shown).map(({ o, thru, pl, score }) => `<div class="row"><div>${nameCell(o)}<div class="sub">${esc(o.sp)} ${esc(o.season)} · ${o.sold.length} of ${o.ended} sold (${Math.round(thru * 100)}%) · avg ${fmt(o.avg)}${o.ppr ? ` · ${o.ppr.toFixed(1)} per rating` : ''}${pl != null ? ` · ${pl} plays in packs` : ''}</div></div>
+      <div class="px">${fmt(score)}<small>expected per listing</small></div></div>`).join(''), l.length,
+      'Passes worth grinding: how many listed ones sell × the average price = what one listing of it is likely to bring. Plays in packs shows how many cards there are to pull. Needs 3+ ended listings.');
+  }
+  if(view === 'mine'){
+    // 4. His passes: what each is worth from sales history and what to list at. X hides one (this phone).
+    const l = D.mine.filter(r => !hidden.has(r.key) && pass(r)).map(r => ({ r, w: worth(book, { ...r, rarity: r.label }) })).sort((a, b) => (b.w ? b.w.v : -1) - (a.w ? a.w.v : -1));
+    return out(l.slice(0, shown).map(({ r, w }) => `<div class="row"><div>${nameCell(r, `<button class="x" data-hide="${esc(r.key)}" title="Hide">✕</button>`)}<div class="sub">${esc(r.sp)} ${esc(r.season)} · rating ${fmt(r.rating)}${r.url ? ` · <a href="${esc(r.url)}" target="_blank" rel="noopener">your pass</a>` : ''}</div>
+      <div class="sub">${w ? `List at about <b>${fmt(w.v)}</b> · quick sale ${fmt(w.lo)} (from ${w.n} sale${w.n === 1 ? '' : 's'}, ${w.basis})` : 'Not enough sales yet to price it'}</div></div>
+      <div class="px">${w ? fmt(w.v) : '-'}<small>worth</small></div></div>`).join('') + (hidden.size ? `<div class="row"><span class="note">${hidden.size} hidden · <a href="#" id="unhide">show them again</a></span></div>` : ''), l.length,
+      'Your passes, priced from what the same player and season sold for (median price per rating × your rating; quick sale = the cheaper quarter of sales). Search to find one, ✕ to hide it.');
+  }
+  // All live listings, ending soonest.
+  const l = D.rows.filter(pass).sort((a, b) => a.endsAt - b.endsAt);
+  out(l.slice(0, shown).map(r => `<div class="row"><div>${nameCell(r)}<div class="sub">${esc(r.sp)} ${esc(r.season)} · rating ${fmt(r.rating)}${r.mult ? ` · ${esc(r.mult)}` : ''}${r.cards ? ` · ${r.cards} cards` : ''} · ends in ${left(r.endsAt)}${r.bids ? ` · ${r.bids} bids` : ''} · <a href="${esc(r.link)}" target="_blank" rel="noopener">open</a></div></div>
+    <div class="px">${fmt(nowPrice(r))}<small>${r.buyNow != null ? 'buy now' : r.curBid != null ? 'current bid' : 'min bid'}</small></div></div>`).join(''), l.length, 'Every live listing, ending soonest first.');
 }
-$('#q').addEventListener('input', () => { shown = 100; draw(); });
-for(const [id, k] of [['#sp', 'bulk_sp'], ['#rar', 'bulk_rar'], ['#sort', 'bulk_sort']]) $(id).addEventListener('change', e => { ls.set(k, e.target.value); shown = 100; draw(); });
-$('#more').addEventListener('click', () => { shown += 200; draw(); });
-document.querySelectorAll('#seg button').forEach(b => b.addEventListener('click', () => { view = b.dataset.v; document.querySelectorAll('#seg button').forEach(x => x.setAttribute('aria-pressed', x === b)); shown = 100; draw(); }));
-// Ended: the final price of each (read from Real, or the last bid seen), newest first unless sorted.
-function drawEnded(q, sp, rar, so){
-  let l = ended.filter(r => (!q || String(r.name).toLowerCase().includes(q)) && (!sp || r.sp === sp) && (!rar || r.rarity === rar));
-  const n = v => v == null ? Infinity : Number(v);
-  const f = { ends: (a, b) => b.endsAt - a.endsAt, price: (a, b) => n(a.price) - n(b.price), pricehi: (a, b) => (b.price ?? -1) - (a.price ?? -1), rating: (a, b) => (b.rating ?? -1) - (a.rating ?? -1),
-    ppr: (a, b) => n(a.price != null && a.rating ? a.price / a.rating : null) - n(b.price != null && b.rating ? b.price / b.rating : null), bids: (a, b) => (b.bids || 0) - (a.bids || 0) }[so];
-  l.sort(f);
-  $('#list').innerHTML = l.slice(0, shown).map(r => `<div class="row"><div><span class="nm">${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.name || 'Player ' + r.playerId)}</a>` : esc(r.name || 'Player ' + r.playerId)}</span>${r.rarity ? `<span class="rar">${esc(r.rarity)}</span>` : ''}
-      <div class="sub">${esc(r.sp || '')} ${esc(r.season || '')}${r.rating != null ? ` · rating ${Number(r.rating).toLocaleString()}` : ''}${r.mult ? ` · ${esc(r.mult)}` : ''}</div>
-      <div class="sub">Ended ${new Date(r.endsAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}${r.bids ? ` · ${r.bids} bid${r.bids === 1 ? '' : 's'}` : ''}${r.buyNow != null ? ` · buy now was ${Number(r.buyNow).toLocaleString()}` : ''}</div></div>
-      <div class="px">${r.price != null ? Number(r.price).toLocaleString() : '-'}<small class="how">${esc(r.how || '')}${r.price != null && r.rating ? ` · ${(r.price / r.rating).toFixed(1)}/rating` : ''}</small></div></div>`).join('')
-    || '<div class="row"><span class="note">No ended listings saved yet.</span></div>';
-  $('#more').hidden = l.length <= shown;
-}
+document.querySelectorAll('#seg button').forEach(b => b.addEventListener('click', () => setView(b.dataset.v)));
+$('#q').addEventListener('input', () => { shown = 60; draw(); });
+$('#sp').addEventListener('change', e => { ls.set('bulk_sp', e.target.value); shown = 60; draw(); });
+$('#per').addEventListener('change', e => { ls.set('bulk_per', e.target.value); setView(view); });
+for(const id of ['from', 'to']) $('#' + id).addEventListener('change', e => { ls.set('bulk_' + id, e.target.value); draw(); });
+$('#more').addEventListener('click', () => { shown += 100; draw(); });
+$('#list').addEventListener('click', e => {
+  const h = e.target.closest('[data-hide]'); if(h){ e.preventDefault(); hidden.add(h.dataset.hide); ls.set('bulk_hidden', JSON.stringify([...hidden])); draw(); return; }
+  if(e.target.id === 'unhide'){ e.preventDefault(); hidden.clear(); ls.set('bulk_hidden', '[]'); draw(); return; }
+  if(e.target.closest('a')) return;
+  const g = e.target.closest('.grp'); if(g) g.classList.toggle('open');
+});
 load();
 </script>
 </body>
