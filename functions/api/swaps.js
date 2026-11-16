@@ -780,8 +780,13 @@ async function ratingScores(db) {
    time has passed and that went ahead for them. Stars are the weighted score
    (pulled toward 3.5 until a member has a few ratings), so 99 fives and a
    four beat four fives. Worked out at most every 30 minutes. */
-const TRUST_KEY = 'swap_trust_v1';
-const trustOf = (trades, score) => trades >= 100 ? 'vet' : trades >= 25 && score >= 4.5 ? 'trusted' : 'new';
+const TRUST_KEY = 'swap_trust_v2';
+/* Swap tags (Dennis, 2026-11-15), by swaps done: New up to 30, Understanding 31-60,
+   Trusted 61-150, Vet 151-300, Legend 300+. The three with the most swaps show
+   🐐 / 🥈 / 🥉 instead, and Dennis shows Owner. lvl is the level (used for the
+   small matching edge); lv is the tag shown. */
+const trustOf = trades => trades > 300 ? 'legend' : trades > 150 ? 'vet' : trades > 60 ? 'trusted' : trades > 30 ? 'understanding' : 'new';
+const TAG_OWNER = 'dennis';
 async function tradeCounts(db, since = 0) {
   const now = Date.now(), out = new Map();
   const rows = ((await db.prepare(`SELECT k, COUNT(*) AS n FROM (
@@ -799,7 +804,10 @@ async function trustMap(env, db) {
     const rs = ((await db.prepare('SELECT ratee, SUM(stars) AS s, COUNT(*) AS n FROM swap_ratings WHERE rater NOT IN (SELECT key FROM swap_rate_block) GROUP BY ratee').all()).results) || [];
     const sc = new Map(rs.map(r => [String(r.ratee), [(Number(r.s) + RATE_PRIOR * RATE_PRIOR_N) / (Number(r.n) + RATE_PRIOR_N), Number(r.n)]]));
     for (const k of new Set([...tc.keys(), ...sc.keys()])) { const t = tc.get(k) || 0, [score, n] = sc.get(k) || [RATE_PRIOR, 0];
-      m[k] = { t, s: Math.round(score * 100) / 100, n, lv: trustOf(t, score) }; }
+      m[k] = { t, s: Math.round(score * 100) / 100, n, lvl: trustOf(t), lv: trustOf(t) }; }
+    const top = Object.entries(m).filter(([k, v]) => k.toLowerCase() !== TAG_OWNER && v.t > 0).sort((a, b) => b[1].t - a[1].t).slice(0, 3);
+    top.forEach(([k], i) => { m[k].lv = ['goat', 'silver', 'bronze'][i]; });
+    for (const k of Object.keys(m)) if (k.toLowerCase() === TAG_OWNER) m[k].lv = 'owner';
     await env.RATEBOARD_KV.put(TRUST_KEY, JSON.stringify({ at: Date.now(), m }), { expirationTtl: 86400 });
   } catch (e) {}
   return m;
@@ -1025,7 +1033,7 @@ async function runMatchingInner(db, env) {
   const score = await ratingScores(db);
   // Trusted and Vet members (2026-11-11) get a small edge in toss-ups - a reason to care about their rating.
   let tmM = {}; try { if (env) tmM = await trustMap(env, db); } catch (e) {}
-  const rs = k => (score.get(k) ?? RATE_PRIOR) + (({ vet: 0.3, trusted: 0.15 })[(tmM[k] || {}).lv] || 0);
+  const rs = k => (score.get(k) ?? RATE_PRIOR) + (({ legend: 0.3, vet: 0.3, trusted: 0.15, understanding: 0.05 })[(tmM[k] || {}).lvl || (tmM[k] || {}).lv] || 0);
   // Either one has blacklisted the other: never matched - swaps, 160s or niche (2026-11-11).
   const byKey = new Map(users.map(u => [u.key, u]));
   const blocked = (a, b) => { const A = typeof a === 'string' ? byKey.get(a) : a, B = typeof b === 'string' ? byKey.get(b) : b;
