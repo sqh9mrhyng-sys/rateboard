@@ -1630,6 +1630,12 @@ async function draftBuild(env, db, c) {
 }
 /* Daily sport drafts are numbered in order: once an hour, read the next few
    numbers past the last one known and add any that exist (a handful of reads a day). */
+// One-off check (2026-11-16): build one draft now and keep the result's size.
+export async function draftCheck(env) {
+  if (await env.RATEBOARD_KV.get('draft_check_1116')) return; await env.RATEBOARD_KV.put('draft_check_1116', '1', { expirationTtl: 86400 });
+  const t0 = Date.now(); let x = null; try { x = await draftBuild(env, env.RATEBOARD_DB, { id: 2466, type: 'sport', sport: 'nhl', day: '2026-11-16' }); } catch (e) { x = { error: String(e.message || e) }; }
+  await env.RATEBOARD_KV.put('draft_check_1116_r', JSON.stringify({ ms: Date.now() - t0, err: x.error || null, n: x.players && x.players.length, teams: x.players ? [...new Set(x.players.map(p => p.team))].join(' ') : null, score: x.best && x.best.score, lineup: x.best && x.best.lineup.map(p => `${p.name} ${p.proj}x${p.mult}=${p.pts}`) }), { expirationTtl: 86400 });
+}
 export async function draftScan(env) {
   const tok = env.RS_AUTH_TOKEN; if (!tok) return;
   const k = 'draft_scan_v1'; let last = 0; try { last = Number(await env.RATEBOARD_KV.get(k)) || 0; } catch (e) {}
