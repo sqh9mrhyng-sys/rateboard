@@ -1581,16 +1581,23 @@ async function draftBuild(env, db, c) {
   const di = await draftInfo(env, c.id, c.type); if (!di || di.status !== 200) return { error: `Real didn't give the draft (${di && di.status}).` };
   const info = di.info, sp = info.sport || c.sport, gameId = info.gameId || c.gameId || null;
   const slots = (Array.isArray(info.defaultMultipliers) && info.defaultMultipliers.length ? info.defaultMultipliers : [2, 1.8, 1.6, 1.4, 1.2]).map(Number).slice(0, info.lineupSize || 5);
-  const r = await fetch(`https://web.realapp.com/players/sport/${sp}/search?contestId=${c.id}${gameId ? '&gameId=' + gameId : ''}&includeNoOneOption=false&searchType=ratingLineup`, { headers: rsHeaders(tok) });
-  if (!r.ok) return { error: `Real didn't give the players (${r.status}).` };
-  const pool = ((await r.json().catch(() => ({}))) || {}).players || [];
-  /* Real lists 50 at a time; a full page asks for the next (offset), up to 200 players,
-     stopping as soon as a page brings no one new (2026-11-15: pools go past 50). */
-  for (let off = 50; pool.length >= off && off < 200; off += 50) {
-    await sleep(1500);
-    try { const r2 = await fetch(`https://web.realapp.com/players/sport/${sp}/search?contestId=${c.id}${gameId ? '&gameId=' + gameId : ''}&includeNoOneOption=false&searchType=ratingLineup&offset=${off}`, { headers: rsHeaders(tok) });
-      if (!r2.ok) break; const more = (((await r2.json().catch(() => ({}))) || {}).players || []), have = new Set(pool.map(p => Number(p.id)));
-      const fresh = more.filter(p => !have.has(Number(p.id))); if (!fresh.length) break; pool.push(...fresh); } catch (e) { break; } }
+  /* The player pool. Real's list stops at 50, but its search (query=) finds players by the
+     start of a first or last name - so each letter a-z is searched (two letters where one
+     letter fills 50) and everything found is put together (2026-11-16). Kept 6 hours. */
+  const PK = `draft_pool_v1_${c.type}_${c.id}`;
+  let pool = null; try { const pc = JSON.parse((await env.RATEBOARD_KV.get(PK)) || 'null'); if (pc && Date.now() - pc.at < 6 * 3600000) pool = pc.pool; } catch (e) {}
+  if (!pool) {
+    const base = `https://web.realapp.com/players/sport/${sp}/search?contestId=${c.id}${gameId ? '&gameId=' + gameId : ''}&includeNoOneOption=false&searchType=ratingLineup`;
+    const got = new Map(), ask = async q => { await sleep(700); const r = await fetch(base + (q ? '&query=' + encodeURIComponent(q) : ''), { headers: rsHeaders(tok) });
+      if (!r.ok) throw new Error(`Real didn't give the players (${r.status}).`); const ps = (((await r.json().catch(() => ({}))) || {}).players) || []; for (const p of ps) got.set(Number(p.id), p); return ps.length; };
+    try {
+      if (await ask('') >= 50) {
+        for (const a of 'abcdefghijklmnopqrstuvwxyz') if (await ask(a) >= 50) for (const b of 'abcdefghijklmnopqrstuvwxyz') await ask(a + b);
+      }
+    } catch (e) { if (!got.size) return { error: String(e.message || e) }; }
+    pool = [...got.values()];
+    try { await env.RATEBOARD_KV.put(PK, JSON.stringify({ at: Date.now(), pool }), { expirationTtl: 86400 }); } catch (e) {}
+  }
   // The contest's post on Real, for "Open in Real" (Real's code 7: [7, sport, 0, postId]).
   let post = c.post || null;
   if (!post) { try { await sleep(1000); const rv = await fetch(`https://web.realapp.com/games/playerratingcontest/${c.id}?contestType=${c.type}`, { headers: rsHeaders(tok) });
@@ -1646,7 +1653,8 @@ export async function draftScan(env) {
   await draftSaveList(env, l);
   // Build today's and tomorrow's ahead, so the page opens fast.
   const etd = d => ET_DAY_FMT.format(d), days = [etd(new Date()), etd(new Date(Date.now() + 86400000))];
-  for (const c of l.filter(c => c.type === 'sport' && days.includes(c.day))) { try { await draftBuild(env, env.RATEBOARD_DB, c); } catch (e) {} await sleep(3000); }
+  const newest = new Map(); for (const c of l.filter(c => c.type === 'sport' && days.includes(c.day))) { const k = c.sport + c.day; if (!newest.has(k) || newest.get(k).id < c.id) newest.set(k, c); }
+  for (const c of newest.values()) { try { await draftBuild(env, env.RATEBOARD_DB, c); } catch (e) {} await sleep(3000); }
 }
 /* Real's own link codes (hashids, salt 'routing', min length 11): a player is
    [2, sport code, 0, id], a pass is [18, 0, 0, passId]. */

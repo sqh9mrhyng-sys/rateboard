@@ -8665,7 +8665,7 @@ export async function onRequestGet(ctx) {
     if (url.searchParams.get('ticks') === '1') return new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } });
   }
   // Read-only collector progress, no sign-in: counts and dates only, nothing from the market or any account.
-  if (url.searchParams.get('collector') === 'health') { ctx.waitUntil(draftProbe(env).catch(() => {})); return collectorHealth(env, url); }
+  if (url.searchParams.get('collector') === 'health') return collectorHealth(env, url);
   const mk = url.searchParams.get('market');
   if (MARKET_MEMBER.includes(mk)) {
     const a = await marketWho(env, request);
