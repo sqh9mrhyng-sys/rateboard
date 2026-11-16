@@ -143,12 +143,12 @@ const nameCell = (r, extra = '') => `<span class="nm">${r.url ? `<a href="${esc(
 function out(html, n, help){ $('#how').textContent = help; $('#how').hidden = !help; $('#list').innerHTML = html || '<div class="empty">Nothing here yet.</div>'; $('#more').hidden = n <= shown; }
 // Seasons the way Real shows them (Dennis, 2026-11-15): 2025-26, or one year where a season sits in one year.
 const seasonLbl = (sp, se) => { se = Number(se); if(!se) return ''; if(['mlb', 'golf', 'wnba'].includes(sp)) return String(se);
-  return ['nba', 'ncaam'].includes(sp) ? `${se - 1}-${String(se).slice(2)}` : `${se}-${String(se + 1).slice(2)}`; };
+  return ['nba', 'ncaam'].includes(sp) ? `${se - 1}-${se}` : `${se}-${se + 1}`; };
 const plainName = r => `<span class="nm">${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.name || 'Player ' + r.playerId)}</a>` : esc(r.name || 'Player ' + r.playerId)}</span>`;
 // The rating where each rarity starts: Rare and Epic from the listings seen, the rest from Real's ladder.
 function rarThresholds(){
   const lo = lab => { const v = D.rows.concat(D.ended).filter(r => r.rarity === lab && r.rating).map(r => r.rating).sort((a, b) => a - b); return v.length >= 10 ? v[Math.floor(v.length * 0.02)] : null; };
-  return [['Rare', lo('Rare') || 50], ['Epic', lo('Epic') || 150], ['Legendary', 380], ['Mystic', 1380]].map(([name, at]) => ({ name, at: Math.round(at) }));
+  return [['Rare', lo('Rare') || 50], ['Epic', lo('Epic') || 150], ['Legendary', 380], ['Mystic', 1380], ['Iconic', 3380]].map(([name, at]) => ({ name, at: Math.round(at) }));
 }
 // How he gets the packs: buy them himself, through swaps, or 160 back - and what a pack costs that way (editable).
 const GRIND_WAYS = { self: ['Pack yourself', 200], swap: ['Swaps', 241], b160: ['160 back', 271], full: ['Full price', 420] };   // Dennis, 2026-11-15
@@ -156,17 +156,24 @@ function grindSetup(){
   const way = GRIND_WAYS[ls.get('bulk_gway')] ? ls.get('bulk_gway') : 'self', cost = GRIND_WAYS[way][1];
   $('#bar2').hidden = false;
   $('#bar2').innerHTML = `<select id="gway">${Object.entries(GRIND_WAYS).map(([k, v]) => `<option value="${k}">${v[0]} - ${v[1]} rax a pack</option>`).join('')}</select>`;
-  $('#gway').value = way;
-  return { way, cost, label: GRIND_WAYS[way][0].toLowerCase() };
+  const rar = ['best', 'Rare', 'Epic', 'Legendary', 'Mystic', 'Iconic'].includes(ls.get('bulk_grar')) ? ls.get('bulk_grar') : 'best';
+  $('#bar2').innerHTML += `<select id="grar">${['best', 'Rare', 'Epic', 'Legendary', 'Mystic', 'Iconic'].map(r => `<option value="${r}">${r === 'best' ? 'Best of Rare-Legendary' : 'Profit at ' + r}</option>`).join('')}</select>`;
+  $('#gway').value = way; $('#grar').value = rar;
+  return { way, cost, rar, label: GRIND_WAYS[way][0].toLowerCase() };
 }
 // Not on Grind (Dennis, 2026-11-15): UFC, FC, and the 2026-27 NBA and CBB seasons for now.
 const GRIND_SKIP = o => ['ufc', 'soccer'].includes(o.sport) || (['nba', 'ncaam'].includes(o.sport) && Number(o.season) >= 2027);
 function grindRow(o, g, rarT){
-  const pi = D.plays[o.k], plays = Array.isArray(pi) ? pi[0] : pi ?? null, avgCard = Array.isArray(pi) ? pi[1] : null, pack = avgCard ? avgCard * 3 : null;
-  const rars = rarT.map(r => { const sell = o.rpr * r.at, packs = pack ? Math.ceil(r.at / pack) : null, cost = packs != null ? packs * g.cost : null;
-    return { ...r, sell, packs, cost, profit: cost != null ? sell - cost : null }; });
-  const best = rars.filter(r => r.profit != null && r.name !== 'Mystic').sort((a, b) => b.profit - a.profit)[0] || null;
-  return { o, plays, pack, rars, best };
+  const pi = D.plays[o.k], plays = Array.isArray(pi) ? pi[0] : pi ?? null, avgCard = Array.isArray(pi) ? pi[1] : null;
+  const pack = avgCard ? Math.max(10, avgCard * 3) : null;   // a pack counts as at least 10 (Dennis, 2026-11-15)
+  const rars = rarT.map(r => {
+    // What it sold for at that rarity, if any sold; else his rax per rating x where the rarity starts.
+    const act = o.clean.filter(x => String(x.rarity || '').toLowerCase().startsWith(r.name.toLowerCase())).map(x => x.price);
+    const sell = act.length ? act.reduce((t, v) => t + v, 0) / act.length : o.rpr * r.at, packs = pack ? Math.ceil(r.at / pack) : null, cost = packs != null ? packs * g.cost : null;
+    return { ...r, sell, est: !act.length, nSold: act.length, packs, cost, profit: cost != null ? sell - cost : null }; });
+  const pick = g.rar === 'best' ? rars.filter(r => r.profit != null && ['Rare', 'Epic', 'Legendary'].includes(r.name)).sort((a, b) => b.profit - a.profit)[0] || null
+    : rars.find(r => r.name === g.rar && r.profit != null) || null;
+  return { o, plays, pack, rars, best: pick };
 }
 const costTable = (x, g) => !x.pack ? '<p class="note">No pack data for this player, so the cost can\'t be worked out.</p>'
   : `<table class="ctab"><tr><th>Rarity</th><th>Rating</th><th>Packs</th><th>Cost</th><th>Sells for</th><th>Profit</th></tr>${x.rars.map(r => `<tr><td>${esc(r.name)}</td><td>${r.at.toLocaleString()}</td><td>${r.packs}</td><td>${r100(r.cost)}</td><td>${r100(r.sell)}</td><td class="${r.profit > 0 ? 'pos' : 'neg'}">${r.profit > 0 ? '+' : ''}${r100(r.profit)}</td></tr>`).join('')}</table>
@@ -201,13 +208,13 @@ function draw(){
     const l = [...book.by.values()].filter(o => o.sold.length && o.rpr && pass(o) && !GRIND_SKIP(o)).map(o => grindRow(o, g, rarT)).sort((a, b) => (b.best ? b.best.profit : -1e9) - (a.best ? a.best.profit : -1e9));
     return out(l.slice(0, Math.max(shown, 100)).map(x => { const o = x.o, all = D.rows.filter(y => kOf(y) === o.k).sort((a, b) => a.endsAt - b.endsAt).concat(D.ended.filter(y => kOf(y) === o.k && inSpan(y) && SOLD(y)).sort((a, b) => b.endsAt - a.endsAt));
       return `<div class="grp"><div class="row"><div>${plainName(o)}
-        <div class="sub">${esc(o.sp)} ${esc(seasonLbl(o.sport, o.season))} | sells ${o.sold.length}/${o.ended} (${Math.round(o.sold.length / o.ended * 100)}%) | ${o.rpr.toFixed(2)}/1</div>
-        <div class="sub">${x.plays != null ? x.plays + ' plays' : 'no pack data'}${x.pack ? ` | avg pack ${x.pack.toFixed(1)}` : ''} | ${x.rars.map(r => `${r.name} = ${r100(r.sell)}`).join(' | ')}</div></div>
+        <div class="sub">${esc(o.sp)} ${esc(seasonLbl(o.sport, o.season))} | sold ${o.sold.length}/${o.ended} (${Math.round(o.sold.length / o.ended * 100)}%) | ${o.rpr.toFixed(2)}/1</div>
+        <div class="sub">${x.plays != null ? x.plays + ' plays' : 'no pack data'}${x.pack ? ` | avg pack ${x.pack.toFixed(1)}` : ''}${x.best ? ` | cost to ${x.best.name.toLowerCase()} (${esc(g.label)}) = ${r100(x.best.cost)} | avg ${x.best.name.toLowerCase()} sell = ${r100(x.best.sell)}${x.best.est ? ' (est.)' : ''}` : ''}</div></div>
         <div class="px ${x.best && x.best.profit > 0 ? 'pos' : 'neg'}">${x.best ? (x.best.profit > 0 ? '+' : '') + r100(x.best.profit) : '-'}<small>${x.best ? 'at ' + x.best.name + ' ▾' : 'no pack data ▾'}</small></div></div>
         <div class="kids"><div class="subseg"><button data-sub="a" aria-pressed="true">Auctions</button><button data-sub="c" aria-pressed="false">Cost &amp; profit</button></div>
         <div class="sa">${all.map(lkRow).join('') || '<p class="note">None.</p>'}</div>
         <div class="sc" hidden>${costTable(x, g)}</div></div></div>`; }).join(''), l.length,
-      `Sorted by profit at the best of Rare, Epic and Legendary: what the pass sells for (its rax per rating × the rarity's rating) minus the packs to get there (pack = 3 cards; ${g.label}, ${g.cost} rax a pack).`);
+      `Sorted by profit at ${g.rar === 'best' ? 'the best of Rare, Epic and Legendary' : g.rar}: what it sells for there (its sales at that rarity, else est. from its rax per rating) minus the packs to get there (${g.label}, ${g.cost} rax a pack; a pack counts as at least 10 rating).`);
   }
   if(view === 'mine'){
     // 4. His passes in clean hundreds; ✕ hides one on this phone.
@@ -232,6 +239,7 @@ $('#more').addEventListener('click', () => { shown += 200; draw(); });
 $('#bar2').addEventListener('change', e => {
   if(e.target.id === 'hsort') ls.set('bulk_hsort', e.target.value);
   if(e.target.id === 'gway') ls.set('bulk_gway', e.target.value);
+  if(e.target.id === 'grar') ls.set('bulk_grar', e.target.value);
   if(e.target.id === 'gcost') ls.set('bulk_gcost2_' + (ls.get('bulk_gway') || 'self'), e.target.value);
   draw(); });
 $('#list').addEventListener('click', e => {
