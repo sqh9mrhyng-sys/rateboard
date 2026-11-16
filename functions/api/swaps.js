@@ -1632,7 +1632,7 @@ export async function draftScan(env) {
   for (let id = top + 1; miss < 3 && id < top + 25; id++) {
     const d = await draftInfo(env, id, 'sport').catch(() => null); await sleep(4000);
     if (!d || d.status !== 200) { miss++; continue; }
-    miss = 0; if (!l.some(c => c.type === 'sport' && c.id === id)) l.push({ id, type: 'sport', sport: d.info.sport, day: d.info.day, added: Date.now() });
+    miss = 0; if (!l.some(c => c.type === 'sport' && c.id === id)) l.push({ id, type: 'sport', sport: d.info.sport, day: d.info.day, endDay: d.info.endDay || null, added: Date.now() });
   }
   /* Game drafts too, every sport (Dennis, 2026-11-15): numbered in order as well,
      made a few days ahead in batches - up to 40 reads an hour, 3 seconds apart,
@@ -5806,7 +5806,9 @@ async function handle({ request, env, waitUntil }) {
        days of the same sport showed). Games: today's and tomorrow's, every sport; each
        one's lineup is worked out when it's opened (op=draftone), or shown if already built. */
     const today = days[1], spSeen = new Map();
-    for (const c of l.filter(c => c.type === 'sport' && c.day >= today).sort((a, b) => a.day.localeCompare(b.day) || a.id - b.id)) if (!spSeen.has(c.sport)) spSeen.set(c.sport, c);
+    /* The newest contest for a sport and day is the real daily one (2026-11-16: earlier numbers for the same
+       day pooled every team in the league - Messi and Haaland on a day with two international games). */
+    for (const c of l.filter(c => c.type === 'sport' && c.day >= today).sort((a, b) => a.day.localeCompare(b.day) || b.id - a.id)) if (!spSeen.has(c.sport)) spSeen.set(c.sport, c);
     const want = [...spSeen.values()];
     const games = [];
     for (const c of l.filter(c => c.type === 'game' && (c.day === today || c.day === days[2]))) {
