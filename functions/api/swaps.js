@@ -1666,10 +1666,10 @@ export async function draftScan(env) {
      ahead every 10 numbers until 12 in a row (120 numbers) are empty, then read every number up
      to the last one found. "dk" is the furthest number already read one by one. */
   const FK = 'draft_gdone_v1'; let done = Number(await env.RATEBOARD_KV.get(FK)) || Math.max(55724, ...l.filter(c => c.type === 'game').map(c => c.id));
-  let last = done, emptyRun = 0, t = done, reads = 0;
-  while (emptyRun < 12 && reads < 60) { t += 10; reads++; if (await ex(t)) { last = t; emptyRun = 0; } else emptyRun++; }
+  let lastHit = done, emptyRun = 0, t = done, reads = 0;
+  while (emptyRun < 12 && reads < 60) { t += 10; reads++; if (await ex(t)) { lastHit = t; emptyRun = 0; } else emptyRun++; }
   let dense = 0;
-  for (let id = done + 1; id <= last + 9 && dense < 450; id++) { dense++; const d = await ex(id); if (d) add(id, d); done = id; }
+  for (let id = done + 1; id <= lastHit + 9 && dense < 450; id++) { dense++; const d = await ex(id); if (d) add(id, d); done = id; }
   await env.RATEBOARD_KV.put(FK, String(done));
   // Old games off the list (a week back), so it stays small.
   const wk = etd0(new Date(Date.now() - 7 * 86400000));
