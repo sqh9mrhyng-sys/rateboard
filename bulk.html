@@ -16,19 +16,25 @@
   .top{display:flex;justify-content:space-between;align-items:center;gap:10px}
   .stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:13px;color:var(--mute);margin:10px 0}
   .stat b{color:var(--ink)} .err{color:var(--bad)}
-  .seg{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 0}
-  .seg button{background:var(--panel);color:var(--mute);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font:inherit;font-weight:700;cursor:pointer}
+  .seg{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin:14px 0 0;padding:4px;background:var(--panel);border:1px solid var(--line);border-radius:11px}
+  .seg button{padding:8px 2px!important;font-size:13.5px!important;white-space:nowrap;background:none;color:var(--mute);border:1px solid transparent;border-radius:8px;padding:8px 12px;font:inherit;font-weight:700;cursor:pointer}
   .seg button[aria-pressed="true"]{color:#141925;background:var(--accent);border-color:var(--accent)}
   .bar{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
   .bar input,.bar select{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;font-size:14px}
   .bar input[type=search]{flex:1;min-width:150px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
-  .row{display:grid;grid-template-columns:1fr auto;gap:2px 12px;padding:10px 14px;border-top:1px solid var(--line)} .card > .row:first-child,.card > .grp:first-child{border-top:0}
-  .grp{border-top:1px solid var(--line)} .grp > .row{border-top:0;cursor:pointer} .grp .kids{display:none;padding:0 14px 10px} .grp.open .kids{display:block}
-  .kids a{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-top:1px dashed var(--line);font-size:13.5px;text-decoration:none;color:var(--ink)} .kids a span{color:var(--mute)}
+  .row{display:grid;grid-template-columns:1fr auto;gap:2px 12px;padding:13px 16px;border-top:1px solid var(--line)} .card > .row:first-child,.card > .grp:first-child{border-top:0}
+  .grp{border-top:1px solid var(--line)} .grp > .row{border-top:0;cursor:pointer} .grp .kids{display:none;padding:0 16px 12px} .grp.open .kids{display:block}
   .nm{font-weight:800;font-size:16px} .nm a{color:var(--ink);text-decoration:none}
   .sub{color:var(--mute);font-size:12.5px}
-  .rar{display:inline-block;font-size:11px;font-weight:800;padding:1px 7px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);margin-left:6px;vertical-align:2px}
+  .rar{display:inline-block;font-size:10.5px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;padding:2px 8px;border-radius:999px;background:var(--panel2);color:var(--mute);margin-left:8px;vertical-align:2px}
+  .rar.r-rare{background:#E8A33D;color:#1a1206} .rar.r-epic{background:#e5534b;color:#fff} .rar.r-legendary{background:#8b5cf6;color:#fff}
+  .rar.r-mystic{background:linear-gradient(135deg,#ffe58a,#d4a017);color:#2a1a00} .rar.r-iconic{background:#ec4899;color:#fff}
+  .open{display:inline-block;margin-top:4px;font-size:12.5px;font-weight:700;text-decoration:none;border:1px solid var(--line);border-radius:7px;padding:3px 9px;color:var(--accent)}
+  .kids .lk{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:8px 0;border-top:1px dashed var(--line);font-size:13.5px}
+  .kids .lk,.kids .lk *{text-decoration:none;color:var(--ink)} .kids .lk .note{color:var(--mute)} .kids .lk .tag{color:var(--accent)}
+  .kids .lk b{min-width:64px} .kids .lk .note{font-size:12.5px} .kids .lk.dim{opacity:.6}
+  .tag{font-size:11px;font-weight:800;color:var(--mute);text-transform:uppercase;letter-spacing:.03em}
   .px{text-align:right;font-weight:800;font-size:16px;white-space:nowrap} .px small{display:block;font-weight:600;font-size:11.5px;color:var(--mute)}
   .pos{color:var(--good)} .neg{color:var(--bad)}
   .x{background:none;border:0;color:var(--mute);font-size:18px;cursor:pointer;padding:0 4px;margin-left:6px}
@@ -42,11 +48,11 @@
 <p class="note" id="msg">Loading…</p>
 <div class="stat" id="stat" hidden></div>
 <div class="seg" id="seg" hidden>
-  <button data-v="deals" aria-pressed="true">Best deals</button>
+  <button data-v="deals" aria-pressed="true">Deals</button>
   <button data-v="history" aria-pressed="false">History</button>
-  <button data-v="grind" aria-pressed="false">Best to grind</button>
-  <button data-v="mine" aria-pressed="false">Your passes</button>
-  <button data-v="live" aria-pressed="false">All live</button>
+  <button data-v="grind" aria-pressed="false">Grind</button>
+  <button data-v="mine" aria-pressed="false">My passes</button>
+  <button data-v="live" aria-pressed="false">Live</button>
 </div>
 <p class="note" id="how" style="margin:10px 0 0"></p>
 <div class="bar" id="bar" hidden>
@@ -65,14 +71,16 @@ const ls = { get: k => { try{ return localStorage.getItem(k); }catch(e){ return 
 const ago = ms => { const m = Math.round((Date.now() - ms) / 60000); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 2880 ? Math.round(m / 60) + 'h ago' : Math.round(m / 1440) + 'd ago'; };
 const left = ms => { const m = Math.round((ms - Date.now()) / 60000); return m < 60 ? m + ' min' : m < 1440 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : Math.floor(m / 1440) + 'd ' + Math.floor(m % 1440 / 60) + 'h'; };
 const fmt = v => v == null ? '-' : Math.round(v).toLocaleString();
+const r100 = v => v == null ? '-' : (Math.round(v / 100) * 100).toLocaleString();   // values in clean hundreds (Dennis, 2026-11-15)
+const rarCls = t => { const m = String(t || '').toLowerCase().match(/rare|epic|legendary|mystic|iconic/); return m ? ' r-' + m[0] : ''; };
 const day = ms => new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 const kOf = r => `${r.sport}:${r.season}:${r.playerId}`;
 const med = a => { if(!a.length) return null; const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 const pct = (a, p) => { if(!a.length) return null; const s = a.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(s.length * p))]; };
 const nowPrice = r => r.buyNow ?? r.curBid ?? r.minBid;
 const SOLD = r => r.price != null && /sold|buy now|last seen bid/.test(r.how || '');
-const MIN_SALES = 3;
-let D = null, view = ls.get('bulk_view') || 'deals', shown = 60;
+const MIN_SALES = 5;   // sales of the same player and season before a value is shown
+let D = null, view = ls.get('bulk_view') || 'deals', shown = 150;
 const hidden = new Set(JSON.parse(ls.get('bulk_hidden') || '[]'));
 
 // The chosen stretch of time for history-based numbers.
@@ -85,17 +93,18 @@ function span(){
 function salesBook(){
   const [a, b] = span(), by = new Map(), byRar = new Map();
   for (const r of D.ended) { if(r.endsAt < a || r.endsAt > b) continue;
-    const k = kOf(r), o = by.get(k) || by.set(k, { k, name: r.name, sp: r.sp, sport: r.sport, season: r.season, url: r.url, sold: [], ended: 0 }).get(k); o.ended++;
+    const k = kOf(r), o = by.get(k) || by.set(k, { k, name: r.name, rarity: r.rarity, sp: r.sp, sport: r.sport, season: r.season, url: r.url, sold: [], ended: 0 }).get(k); o.ended++;
     if(SOLD(r)){ o.sold.push(r); if(r.rating){ const rk = `${r.sport}:${r.season}:${r.rarity}`; (byRar.get(rk) || byRar.set(rk, []).get(rk)).push(r.price / r.rating); } } }
   for (const o of by.values()){ const pr = o.sold.filter(x => x.rating).map(x => x.price / x.rating); o.ppr = med(pr); o.pprLo = pct(pr, .25); o.avg = o.sold.length ? o.sold.reduce((t, x) => t + x.price, 0) / o.sold.length : null; }
   return { by, byRar };
 }
 // What a pass of this player-season and rating should go for, and how sure.
-function worth(book, r){
+function worth(book, r, loose){
   const o = book.by.get(kOf(r));
   if(o && o.sold.length >= MIN_SALES && o.ppr && r.rating) return { v: o.ppr * r.rating, lo: o.pprLo * r.rating, n: o.sold.length, basis: 'this player' };
+  if(!loose) return null;
   const rr = book.byRar.get(`${r.sport}:${r.season}:${r.rarity || r.label}`);
-  if(rr && rr.length >= 5 && r.rating) return { v: med(rr) * r.rating, lo: pct(rr, .25) * r.rating, n: rr.length, basis: 'same rarity' };
+  if(rr && rr.length >= 8 && r.rating) return { v: med(rr) * r.rating, lo: pct(rr, .25) * r.rating, n: rr.length, basis: 'same rarity' };
   return null;
 }
 async function load(){
@@ -115,58 +124,64 @@ async function load(){
   $('#per').value = ls.get('bulk_per') || '7'; $('#from').value = ls.get('bulk_from') || ''; $('#to').value = ls.get('bulk_to') || '';
   $('#seg').hidden = false; $('#bar').hidden = false; $('#list').hidden = false; setView(view);
 }
-function setView(v){ view = v; ls.set('bulk_view', v); shown = 60;
+function setView(v){ view = v; ls.set('bulk_view', v); shown = 150;
   document.querySelectorAll('#seg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === v));
   const custom = $('#per').value === 'c'; $('#from').hidden = $('#to').hidden = !custom;
   draw(); }
 const pass = r => { const q = $('#q').value.trim().toLowerCase(), sp = $('#sp').value; return (!q || String(r.name || '').toLowerCase().includes(q)) && (!sp || r.sp === sp); };
-const nameCell = (r, extra = '') => `<span class="nm">${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.name || 'Player ' + r.playerId)}</a>` : esc(r.name || 'Player ' + r.playerId)}</span>${r.rarity || r.label ? `<span class="rar">${esc(r.rarity || r.label)}</span>` : ''}${extra}`;
-function out(html, n, help){ $('#how').textContent = help; $('#list').innerHTML = html || '<div class="empty">Nothing here yet.</div>'; $('#more').hidden = n <= shown; }
+const openA = r => r.link ? `<a class="open" href="${esc(r.link)}" target="_blank" rel="noopener">Open auction ↗</a>` : '';
+const lkRow = x => `<a class="lk${SOLD(x) ? '' : ' dim'}" href="${esc(x.link)}" target="_blank" rel="noopener"><b>${SOLD(x) ? fmt(x.price) : x.endsAt > Date.now() ? fmt(nowPrice(x)) : '-'}</b><span class="note">${x.endsAt > Date.now() ? 'live · ends in ' + left(x.endsAt) : esc(x.how || '') + ' · ' + day(x.endsAt)} · rating ${fmt(x.rating)}</span><span class="tag">Open ↗</span></a>`;
+const nameCell = (r, extra = '') => `<span class="nm">${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.name || 'Player ' + r.playerId)}</a>` : esc(r.name || 'Player ' + r.playerId)}</span>${r.rarity || r.label ? `<span class="rar${rarCls(r.rarity || r.label)}">${esc(r.rarity || r.label)}</span>` : ''}${extra}`;
+function out(html, n, help){ $('#how').textContent = help; $('#how').hidden = !help; $('#list').innerHTML = html || '<div class="empty">Nothing here yet.</div>'; $('#more').hidden = n <= shown; }
 function draw(){
   if(!D) return;
-  const book = salesBook();
+  const book = salesBook(), perTxt = $('#per').selectedOptions[0].text.replace(/^Past /, '').toLowerCase();
   if(view === 'deals'){
-    // 1. Live listings priced under what that pass sells for (buy now is exact; a bid can still go up).
-    const l = D.rows.filter(pass).map(r => { const w = worth(book, r), p = nowPrice(r); return w && p != null ? { r, w, p, gain: w.v - p } : null; }).filter(x => x && x.gain > 0).sort((a, b) => b.gain - a.gain);
-    return out(l.slice(0, shown).map(({ r, w, p, gain }) => `<div class="row"><div>${nameCell(r)}<div class="sub">${esc(r.sp)} ${esc(r.season)} · rating ${fmt(r.rating)}${r.cards ? ` · ${r.cards} cards` : ''} · ends in ${left(r.endsAt)}${r.bids ? ` · ${r.bids} bids` : ''}</div>
-      <div class="sub">Sells for about ${fmt(w.v)} (from ${w.n} sale${w.n === 1 ? '' : 's'}, ${w.basis}) · <a href="${esc(r.link)}" target="_blank" rel="noopener">open auction</a></div></div>
-      <div class="px pos">+${fmt(gain)}<small>${r.buyNow != null ? 'buy now ' : r.curBid != null ? 'bid now ' : 'min bid '}${fmt(p)}</small></div></div>`).join(''), l.length,
-      `Live listings priced under what that pass usually sells for (median price per rating × its rating, from the past ${$('#per').selectedOptions[0].text.replace(/^Past /, '').toLowerCase()}). Needs ${MIN_SALES}+ sales of that player and season, else 5+ of the same rarity. Buy-now prices are exact; bids can still rise. Real's fees aren't taken off.`);
+    // 1. Only on solid data: 5+ sales of that exact player and season, buy-now listings or bids under the usual price.
+    const l = D.rows.filter(pass).map(r => { const w = worth(book, r), p = nowPrice(r); return w && p != null ? { r, w, p, gain: w.v - p } : null; }).filter(x => x && x.gain >= 100).sort((a, b) => b.gain - a.gain);
+    const ready = [...book.by.values()].filter(o => o.sold.length >= MIN_SALES).length;
+    if(!l.length) return out(`<div class="empty">No deals yet. Deals only show for a player and season with ${MIN_SALES}+ sales in the ${perTxt} - ${ready} so far. This fills in as auctions end.</div>`, 0, '');
+    return out(l.slice(0, shown).map(({ r, w, p, gain }) => `<div class="row"><div>${nameCell(r)}<div class="sub">${esc(r.sp)} ${esc(r.season)} · rating ${fmt(r.rating)} · ends in ${left(r.endsAt)}${r.bids ? ` · ${r.bids} bids` : ''}</div>
+      <div class="sub">Usually sells for ${r100(w.v)} (${w.n} sales)</div>${openA(r)}</div>
+      <div class="px pos">+${r100(gain)}<small>${r.buyNow != null ? 'buy now' : r.curBid != null ? 'bid' : 'min bid'} ${fmt(p)}</small></div></div>`).join(''), l.length,
+      `Under what that pass usually sells for, from ${MIN_SALES}+ sales in the ${perTxt}. Buy now is exact; bids can still rise.`);
   }
   if(view === 'history'){
-    // 2. Sales per player and season in the stretch; tap one for every auction of it.
-    const l = [...book.by.values()].filter(o => o.sold.length && pass(o)).sort((a, b) => b.sold.length - a.sold.length);
-    return out(l.slice(0, shown).map(o => `<div class="grp" data-k="${esc(o.k)}"><div class="row"><div>${nameCell(o)}<div class="sub">${esc(o.sp)} ${esc(o.season)} · ${o.sold.length} sold of ${o.ended} ended · avg ${fmt(o.avg)}${o.ppr ? ` · ${o.ppr.toFixed(1)} per rating` : ''}</div></div><div class="px">${o.sold.length}<small>sold ▾</small></div></div>
-      <div class="kids">${o.sold.slice().sort((a, b) => b.endsAt - a.endsAt).map(x => `<a href="${esc(x.link)}" target="_blank" rel="noopener"><b>${fmt(x.price)}</b><span>rating ${fmt(x.rating)} · ${esc(x.how)} · ${day(x.endsAt)}</span></a>`).join('')}</div></div>`).join(''), l.length,
-      'Every ended auction is kept. Sold count, average price and price per rating for each player and season in the stretch. Tap one to see each sale with a link to the auction.');
+    // 2. Per player and season; tap for every auction (sold and unsold) with its link.
+    const l = [...book.by.values()].filter(o => o.ended && pass(o)).sort((a, b) => b.sold.length - a.sold.length || b.ended - a.ended);
+    return out(l.slice(0, shown).map(o => { const all = D.ended.filter(x => kOf(x) === o.k && inSpan(x)).sort((a, b) => b.endsAt - a.endsAt);
+      return `<div class="grp"><div class="row"><div>${nameCell(o)}<div class="sub">${esc(o.sp)} ${esc(o.season)} · ${o.sold.length} sold of ${o.ended} · avg ${r100(o.avg)}</div></div><div class="px">${o.sold.length}<small>sold ▾</small></div></div>
+      <div class="kids">${all.map(lkRow).join('')}</div></div>`; }).join(''), l.length,
+      'Every ended auction. Tap a player for each auction with its link.');
   }
   if(view === 'grind'){
-    // 3. Sells often, sells well, and has plenty in packs.
-    const l = [...book.by.values()].filter(o => o.ended >= 3 && o.sold.length && pass(o)).map(o => { const thru = o.sold.length / o.ended, pl = D.plays[o.k];
-      return { o, thru, pl, score: thru * (o.avg || 0) }; }).sort((a, b) => b.score - a.score);
-    return out(l.slice(0, shown).map(({ o, thru, pl, score }) => `<div class="row"><div>${nameCell(o)}<div class="sub">${esc(o.sp)} ${esc(o.season)} · ${o.sold.length} of ${o.ended} sold (${Math.round(thru * 100)}%) · avg ${fmt(o.avg)}${o.ppr ? ` · ${o.ppr.toFixed(1)} per rating` : ''}${pl != null ? ` · ${pl} plays in packs` : ''}</div></div>
-      <div class="px">${fmt(score)}<small>expected per listing</small></div></div>`).join(''), l.length,
-      'Passes worth grinding: how many listed ones sell × the average price = what one listing of it is likely to bring. Plays in packs shows how many cards there are to pull. Needs 3+ ended listings.');
+    // 3. Sells often and well; tap for every listing of it (live and ended).
+    const l = [...book.by.values()].filter(o => o.ended >= 3 && o.sold.length && pass(o)).map(o => { const thru = o.sold.length / o.ended; return { o, thru, pl: D.plays[o.k], score: thru * (o.avg || 0) }; }).sort((a, b) => b.score - a.score);
+    return out(l.slice(0, shown).map(({ o, thru, pl, score }) => { const all = D.rows.filter(x => kOf(x) === o.k).sort((a, b) => a.endsAt - b.endsAt).concat(D.ended.filter(x => kOf(x) === o.k && inSpan(x)).sort((a, b) => b.endsAt - a.endsAt));
+      return `<div class="grp"><div class="row"><div>${nameCell(o)}<div class="sub">${esc(o.sp)} ${esc(o.season)} · ${Math.round(thru * 100)}% sell (${o.sold.length}/${o.ended}) · avg ${r100(o.avg)}${pl != null ? ` · ${pl} plays in packs` : ''}</div></div>
+      <div class="px">${r100(score)}<small>per listing ▾</small></div></div><div class="kids">${all.map(lkRow).join('')}</div></div>`; }).join(''), l.length,
+      'Share that sell × average price = what one listing brings. Tap a pass for all its listings.');
   }
   if(view === 'mine'){
-    // 4. His passes: what each is worth from sales history and what to list at. X hides one (this phone).
-    const l = D.mine.filter(r => !hidden.has(r.key) && pass(r)).map(r => ({ r, w: worth(book, { ...r, rarity: r.label }) })).sort((a, b) => (b.w ? b.w.v : -1) - (a.w ? a.w.v : -1));
+    // 4. His passes in clean hundreds; ✕ hides one on this phone.
+    const l = D.mine.filter(r => !hidden.has(r.key) && pass(r)).map(r => ({ r, w: worth(book, { ...r, rarity: r.label }, true) })).sort((a, b) => (b.w ? b.w.v : -1) - (a.w ? a.w.v : -1));
     return out(l.slice(0, shown).map(({ r, w }) => `<div class="row"><div>${nameCell(r, `<button class="x" data-hide="${esc(r.key)}" title="Hide">✕</button>`)}<div class="sub">${esc(r.sp)} ${esc(r.season)} · rating ${fmt(r.rating)}${r.url ? ` · <a href="${esc(r.url)}" target="_blank" rel="noopener">your pass</a>` : ''}</div>
-      <div class="sub">${w ? `List at about <b>${fmt(w.v)}</b> · quick sale ${fmt(w.lo)} (from ${w.n} sale${w.n === 1 ? '' : 's'}, ${w.basis})` : 'Not enough sales yet to price it'}</div></div>
-      <div class="px">${w ? fmt(w.v) : '-'}<small>worth</small></div></div>`).join('') + (hidden.size ? `<div class="row"><span class="note">${hidden.size} hidden · <a href="#" id="unhide">show them again</a></span></div>` : ''), l.length,
-      'Your passes, priced from what the same player and season sold for (median price per rating × your rating; quick sale = the cheaper quarter of sales). Search to find one, ✕ to hide it.');
+      <div class="sub">${w ? `List at <b>${r100(w.v)}</b> · quick sale ${r100(w.lo)} · ${w.n} sales${w.basis === 'same rarity' ? ' (same rarity)' : ''}` : 'Not enough sales yet'}</div></div>
+      <div class="px">${w ? r100(w.v) : '-'}<small>worth</small></div></div>`).join('') + (hidden.size ? `<div class="row"><span class="note">${hidden.size} hidden · <a href="#" id="unhide">show them again</a></span></div>` : ''), l.length,
+      'Priced from sales of the same player and season. Search to find one, ✕ to hide.');
   }
   // All live listings, ending soonest.
   const l = D.rows.filter(pass).sort((a, b) => a.endsAt - b.endsAt);
-  out(l.slice(0, shown).map(r => `<div class="row"><div>${nameCell(r)}<div class="sub">${esc(r.sp)} ${esc(r.season)} · rating ${fmt(r.rating)}${r.mult ? ` · ${esc(r.mult)}` : ''}${r.cards ? ` · ${r.cards} cards` : ''} · ends in ${left(r.endsAt)}${r.bids ? ` · ${r.bids} bids` : ''} · <a href="${esc(r.link)}" target="_blank" rel="noopener">open</a></div></div>
-    <div class="px">${fmt(nowPrice(r))}<small>${r.buyNow != null ? 'buy now' : r.curBid != null ? 'current bid' : 'min bid'}</small></div></div>`).join(''), l.length, 'Every live listing, ending soonest first.');
+  out(l.slice(0, shown).map(r => `<div class="row"><div>${nameCell(r)}<div class="sub">${esc(r.sp)} ${esc(r.season)} · rating ${fmt(r.rating)} · ends in ${left(r.endsAt)}${r.bids ? ` · ${r.bids} bids` : ''}</div>${openA(r)}</div>
+    <div class="px">${fmt(nowPrice(r))}<small>${r.buyNow != null ? 'buy now' : r.curBid != null ? 'current bid' : 'min bid'}</small></div></div>`).join(''), l.length, 'Every live listing, ending soonest.');
 }
+const inSpan = x => { const [a, b] = span(); return x.endsAt >= a && x.endsAt <= b; };
 document.querySelectorAll('#seg button').forEach(b => b.addEventListener('click', () => setView(b.dataset.v)));
-$('#q').addEventListener('input', () => { shown = 60; draw(); });
-$('#sp').addEventListener('change', e => { ls.set('bulk_sp', e.target.value); shown = 60; draw(); });
+$('#q').addEventListener('input', () => { shown = 150; draw(); });
+$('#sp').addEventListener('change', e => { ls.set('bulk_sp', e.target.value); shown = 150; draw(); });
 $('#per').addEventListener('change', e => { ls.set('bulk_per', e.target.value); setView(view); });
 for(const id of ['from', 'to']) $('#' + id).addEventListener('change', e => { ls.set('bulk_' + id, e.target.value); draw(); });
-$('#more').addEventListener('click', () => { shown += 100; draw(); });
+$('#more').addEventListener('click', () => { shown += 200; draw(); });
 $('#list').addEventListener('click', e => {
   const h = e.target.closest('[data-hide]'); if(h){ e.preventDefault(); hidden.add(h.dataset.hide); ls.set('bulk_hidden', JSON.stringify([...hidden])); draw(); return; }
   if(e.target.id === 'unhide'){ e.preventDefault(); hidden.clear(); ls.set('bulk_hidden', '[]'); draw(); return; }
