@@ -143,22 +143,24 @@ const plainName = r => `<span class="nm">${r.url ? `<a href="${esc(r.url)}" targ
 // The rating where each rarity starts: Rare and Epic from the listings seen, the rest from Real's ladder.
 function rarThresholds(){
   const lo = lab => { const v = D.rows.concat(D.ended).filter(r => r.rarity === lab && r.rating).map(r => r.rating).sort((a, b) => a - b); return v.length >= 10 ? v[Math.floor(v.length * 0.02)] : null; };
-  return [['Rare', lo('Rare') || 50], ['Epic', lo('Epic') || 150], ['Legendary', 380], ['Mystic', 1380], ['Iconic', 3380]].map(([name, at]) => ({ name, at: Math.round(at) }));
+  return [['Rare', lo('Rare') || 50], ['Epic', lo('Epic') || 150], ['Legendary', 380], ['Mystic', 1380]].map(([name, at]) => ({ name, at: Math.round(at) }));
 }
 // How he gets the packs: buy them himself, through swaps, or 160 back - and what a pack costs that way (editable).
-const GRIND_WAYS = { self: ['Pack yourself', 200], swap: ['Swaps', 200], b160: ['160 back', 40] };
+const GRIND_WAYS = { self: ['Pack yourself', 200], swap: ['Swaps', 241], b160: ['160 back', 271], full: ['Full price', 420] };   // Dennis, 2026-11-15
 function grindSetup(){
-  const way = ls.get('bulk_gway') || 'self', cost = Number(ls.get('bulk_gcost_' + way)) || GRIND_WAYS[way][1];
+  const way = GRIND_WAYS[ls.get('bulk_gway')] ? ls.get('bulk_gway') : 'self', cost = Number(ls.get('bulk_gcost2_' + way)) || GRIND_WAYS[way][1];
   $('#bar2').hidden = false;
   $('#bar2').innerHTML = `<select id="gway">${Object.entries(GRIND_WAYS).map(([k, v]) => `<option value="${k}">${v[0]}</option>`).join('')}</select><label class="note" style="align-self:center">rax a pack</label><input id="gcost" type="number" min="0" step="10" style="width:90px">`;
   $('#gway').value = way; $('#gcost').value = cost;
   return { way, cost, label: GRIND_WAYS[way][0].toLowerCase() };
 }
+// Not on Grind (Dennis, 2026-11-15): UFC, FC, and the 2026-27 NBA and CBB seasons for now.
+const GRIND_SKIP = o => ['ufc', 'soccer'].includes(o.sport) || (['nba', 'ncaam'].includes(o.sport) && Number(o.season) >= 2027);
 function grindRow(o, g, rarT){
   const pi = D.plays[o.k], plays = Array.isArray(pi) ? pi[0] : pi ?? null, avgCard = Array.isArray(pi) ? pi[1] : null, pack = avgCard ? avgCard * 3 : null;
   const rars = rarT.map(r => { const sell = o.rpr * r.at, packs = pack ? Math.ceil(r.at / pack) : null, cost = packs != null ? packs * g.cost : null;
     return { ...r, sell, packs, cost, profit: cost != null ? sell - cost : null }; });
-  const best = rars.filter(r => r.profit != null).sort((a, b) => b.profit - a.profit)[0] || null;
+  const best = rars.filter(r => r.profit != null && r.name !== 'Mystic').sort((a, b) => b.profit - a.profit)[0] || null;
   return { o, plays, pack, rars, best };
 }
 const costTable = (x, g) => !x.pack ? '<p class="note">No pack data for this player, so the cost can\'t be worked out.</p>'
@@ -183,7 +185,7 @@ function draw(){
     const hs = ls.get('bulk_hsort') || 'sold';
     $('#bar2').hidden = false; $('#bar2').innerHTML = `<select id="hsort"><option value="sold">Sort: most sold</option><option value="rpr">Sort: rax per rating</option></select>`; $('#hsort').value = hs;
     const l = [...book.by.values()].filter(o => o.ended && pass(o)).sort(hs === 'rpr' ? (a, b) => (b.rpr ?? -1) - (a.rpr ?? -1) : (a, b) => b.sold.length - a.sold.length || b.ended - a.ended);
-    return out(l.slice(0, shown).map(o => { const all = D.ended.filter(x => kOf(x) === o.k && inSpan(x)).sort((a, b) => b.endsAt - a.endsAt);
+    return out(l.slice(0, shown).map(o => { const all = D.ended.filter(x => kOf(x) === o.k && inSpan(x) && SOLD(x)).sort((a, b) => b.endsAt - a.endsAt);
       return `<div class="grp"><div class="row"><div>${plainName(o)}<div class="sub">${esc(o.sp)} ${esc(seasonLbl(o.sport, o.season))} · ${o.sold.length}/${o.ended} sold${o.rpr != null ? ` · avg ${o.rpr.toFixed(2)}/1` : ''}</div></div><div class="px">${o.sold.length}<small>sold ▾</small></div></div>
       <div class="kids">${all.map(lkRow).join('')}</div></div>`; }).join(''), l.length,
       'Every ended auction. Avg = rax per rating point (400 rax for an 86 rating = 4.65/1). Tap a player for each auction.');
@@ -191,8 +193,8 @@ function draw(){
   if(view === 'grind'){
     // 3. What a pass sells for at each rarity against what the packs cost to get there.
     const g = grindSetup(), rarT = rarThresholds();
-    const l = [...book.by.values()].filter(o => o.sold.length && o.rpr && pass(o)).map(o => grindRow(o, g, rarT)).sort((a, b) => (b.best ? b.best.profit : -1e9) - (a.best ? a.best.profit : -1e9));
-    return out(l.slice(0, Math.max(shown, 100)).map(x => { const o = x.o, all = D.rows.filter(y => kOf(y) === o.k).sort((a, b) => a.endsAt - b.endsAt).concat(D.ended.filter(y => kOf(y) === o.k && inSpan(y)).sort((a, b) => b.endsAt - a.endsAt));
+    const l = [...book.by.values()].filter(o => o.sold.length && o.rpr && pass(o) && !GRIND_SKIP(o)).map(o => grindRow(o, g, rarT)).sort((a, b) => (b.best ? b.best.profit : -1e9) - (a.best ? a.best.profit : -1e9));
+    return out(l.slice(0, Math.max(shown, 100)).map(x => { const o = x.o, all = D.rows.filter(y => kOf(y) === o.k).sort((a, b) => a.endsAt - b.endsAt).concat(D.ended.filter(y => kOf(y) === o.k && inSpan(y) && SOLD(y)).sort((a, b) => b.endsAt - a.endsAt));
       return `<div class="grp"><div class="row"><div>${plainName(o)}
         <div class="sub">${esc(o.sp)} ${esc(seasonLbl(o.sport, o.season))} | sells ${o.sold.length}/${o.ended} (${Math.round(o.sold.length / o.ended * 100)}%) | ${o.rpr.toFixed(2)}/1</div>
         <div class="sub">${x.plays != null ? x.plays + ' plays' : 'no pack data'}${x.pack ? ` | avg pack ${x.pack.toFixed(1)}` : ''} | ${x.rars.map(r => `${r.name} = ${r100(r.sell)}`).join(' | ')}</div></div>
@@ -200,11 +202,11 @@ function draw(){
         <div class="kids"><div class="subseg"><button data-sub="a" aria-pressed="true">Auctions</button><button data-sub="c" aria-pressed="false">Cost &amp; profit</button></div>
         <div class="sa">${all.map(lkRow).join('') || '<p class="note">None.</p>'}</div>
         <div class="sc" hidden>${costTable(x, g)}</div></div></div>`; }).join(''), l.length,
-      `Sorted by profit at the best rarity: what the pass sells for (its rax per rating × the rarity's rating) minus the packs to get there (pack = 3 cards; ${g.label}, ${g.cost} rax a pack).`);
+      `Sorted by profit at the best of Rare, Epic and Legendary: what the pass sells for (its rax per rating × the rarity's rating) minus the packs to get there (pack = 3 cards; ${g.label}, ${g.cost} rax a pack).`);
   }
   if(view === 'mine'){
     // 4. His passes in clean hundreds; ✕ hides one on this phone.
-    const l = D.mine.filter(r => !hidden.has(r.key) && pass(r)).map(r => ({ r, w: worth(book, { ...r, rarity: r.label }, true) })).sort((a, b) => (b.w ? b.w.v : -1) - (a.w ? a.w.v : -1));
+    const l = D.mine.filter(r => !hidden.has(r.key) && pass(r) && /rare|epic|legendary|mystic|iconic/i.test(r.label || '')).map(r => ({ r, w: worth(book, { ...r, rarity: r.label }, true) })).sort((a, b) => (b.w ? b.w.v : -1) - (a.w ? a.w.v : -1));
     return out(l.slice(0, shown).map(({ r, w }) => `<div class="row"><div>${nameCell(r, `<button class="x" data-hide="${esc(r.key)}" title="Hide">✕</button>`)}<div class="sub">${esc(r.sp)} ${esc(r.season)} · rating ${fmt(r.rating)}${r.url ? ` · <a href="${esc(r.url)}" target="_blank" rel="noopener">your pass</a>` : ''}</div>
       <div class="sub">${w ? `List at <b>${r100(w.v)}</b> · quick sale ${r100(w.lo)} · ${w.n} sales${w.basis === 'same rarity' ? ' (same rarity)' : ''}` : 'Not enough sales yet'}</div></div>
       <div class="px">${w ? r100(w.v) : '-'}<small>worth</small></div></div>`).join('') + (hidden.size ? `<div class="row"><span class="note">${hidden.size} hidden · <a href="#" id="unhide">show them again</a></span></div>` : ''), l.length,
@@ -225,7 +227,7 @@ $('#more').addEventListener('click', () => { shown += 200; draw(); });
 $('#bar2').addEventListener('change', e => {
   if(e.target.id === 'hsort') ls.set('bulk_hsort', e.target.value);
   if(e.target.id === 'gway') ls.set('bulk_gway', e.target.value);
-  if(e.target.id === 'gcost') ls.set('bulk_gcost_' + (ls.get('bulk_gway') || 'self'), e.target.value);
+  if(e.target.id === 'gcost') ls.set('bulk_gcost2_' + (ls.get('bulk_gway') || 'self'), e.target.value);
   draw(); });
 $('#list').addEventListener('click', e => {
   const h = e.target.closest('[data-hide]'); if(h){ e.preventDefault(); hidden.add(h.dataset.hide); ls.set('bulk_hidden', JSON.stringify([...hidden])); draw(); return; }
