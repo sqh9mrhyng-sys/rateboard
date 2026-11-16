@@ -451,22 +451,22 @@ async function predProbe(env) {
 /* One-off (2026-11-13): how Real serves the Auctions "Bulk rating" view, read
    with account 2. Keeps only shapes, statuses and a few listing fields. */
 async function bulkProbe(env) {
-  const K = 'diag_bulk_1115b';
+  const K = 'diag_bulk_1115c';
   try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1 }), { expirationTtl: 86400 }); } catch (e) { return; }
   const tok = env.RS_MARKET_TOKEN, out = { at: Date.now(), tries: [] };
   const base = 'cohort=all&offset=0&limit=8&prestige=all&rarity=all&beforeEndsAt=' + encodeURIComponent(new Date(Date.now() + 30 * 86400000).toISOString());
   const brief = r => { const c = r.card || r; const e = c.entity || c.player || c.primaryPlayer || {};
     return { id: r.id, type: r.listingType, rar: c.rarity || c.rarityLabel || (c.boostInfo || {}).rarityLabel, rating: c.boostValue ?? c.rating ?? null, name: e.lastName || e.name || c.label || null,
       minBid: r.minimumBid ?? r.minBid ?? null, cur: r.currentBid ?? r.highestBid ?? null, buy: r.buyNowPrice ?? r.buyNow ?? null, ends: r.endsAt, bulk: Object.keys(r).filter(k => /bulk/i.test(k)).map(k => k + '=' + JSON.stringify(r[k]).slice(0, 40)) }; };
-  // Round 9 (2026-11-15): offset/limit are ignored (10 a page) - find how the next page is asked for.
+  // Round 10 (2026-11-15): Real's own next page is beforeEndsAt + offset (Dennis captured it).
   const b6 = 'cohort=all&listingType=userpassfull&prestige=all&rarity=all';
   let p1 = null; try { p1 = await (await fetch('https://web.realapp.com/cardmarketplacelistings?' + b6, { headers: rsHeaders(tok) })).json(); } catch (e) {}
   const L = (p1 && p1.listings) || [], last = L[L.length - 1] || {};
-  out.count = p1 && p1.listingCount; out.p1 = L.map(x => x.id); out.lastEnds = last.endsAt;
+  out.count = p1 && p1.listingCount; out.p1 = L.map(x => x.id); out.lastEnds = last.endsAt; out.p1ends = L.map(x => x.endsAt);
   await sleep(6000);
-  const E = encodeURIComponent(last.endsAt || ''), I = last.id;
-  const urls = [['afterEndsAt', `cardmarketplacelistings?${b6}&afterEndsAt=${E}`], ['before', `cardmarketplacelistings?${b6}&before=${I}`], ['after', `cardmarketplacelistings?${b6}&after=${I}`],
-    ['page2', `cardmarketplacelistings?${b6}&page=2`], ['afterId', `cardmarketplacelistings?${b6}&afterId=${I}`], ['endsAfter', `cardmarketplacelistings?${b6}&endsAfter=${E}`]];
+  const far = encodeURIComponent(new Date(Date.now() + 40 * 86400000).toISOString()), E = encodeURIComponent(last.endsAt || '');
+  const urls = [['far off10', `cardmarketplacelistings?beforeEndsAt=${far}&${b6}&offset=10`], ['far off2750', `cardmarketplacelistings?beforeEndsAt=${far}&${b6}&offset=2750`],
+    ['last off10', `cardmarketplacelistings?beforeEndsAt=${E}&${b6}&offset=10`]];
   try {
     for (const [lab, u] of urls) {
       try { const res = await fetch('https://web.realapp.com/' + u, { headers: rsHeaders(tok) }); const t = await res.text(); let d = null; try { d = JSON.parse(t); } catch (e) {}
@@ -475,7 +475,7 @@ async function bulkProbe(env) {
           keys: rows[0] ? Object.keys(rows[0]).slice(0, 40) : null,
           mix: rows.length ? { cohort: [...new Set(rows.map(r => r.cohort))].slice(0, 8), ent: [...new Set(rows.map(r => r.entityType))].slice(0, 8), disp: [...new Set(rows.map(r => JSON.stringify(r.listingTypeDisplay)))].slice(0, 5),
             linked: rows.filter(r => Array.isArray(r.linkedCardIds) && r.linkedCardIds.length).length, linkedEx: (rows.find(r => Array.isArray(r.linkedCardIds) && r.linkedCardIds.length) || {}).id || null,
-            detail: [...new Set(rows.map(r => JSON.stringify(r.detailDisplay).slice(0, 120)))].slice(0, 3), quick: rows.filter(r => r.isQuickList).length } : null, cardKeys: rows[0] && rows[0].card ? Object.keys(rows[0].card).slice(0, 40) : null, ids: rows.map(r => r.id), first: rows.slice(0, 2).map(brief), raw: rows.length ? undefined : t.slice(0, 200) }); }
+            detail: [...new Set(rows.map(r => JSON.stringify(r.detailDisplay).slice(0, 120)))].slice(0, 3), quick: rows.filter(r => r.isQuickList).length } : null, cardKeys: rows[0] && rows[0].card ? Object.keys(rows[0].card).slice(0, 40) : null, ids: rows.map(r => r.id), ends: rows.map(r => r.endsAt), cnt: d && d.listingCount, first: rows.slice(0, 2).map(brief), raw: rows.length ? undefined : t.slice(0, 200) }); }
       catch (e) { out.tries.push({ lab, err: String(e.message || e).slice(0, 100) }); }
       if (out.tries[out.tries.length - 1].st === 403) break;   // refused: stop at once
       await sleep(6000);
@@ -8474,7 +8474,7 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkProbe: await kvj('diag_bulk_1115b'), modVoid: await kvj('mod_void_1115_n'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
+    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkProbe: await kvj('diag_bulk_1115c'), modVoid: await kvj('mod_void_1115_n'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
       const o = {}; for (const r of rows) { const k = new Date(Number(r.at)).toISOString().slice(11, 14) + '00 ' + r.kind + ' | ' + String(r.msg || '').replace(/@[\w.\-]+/g, '@x').replace(/^[\w.\-]+:/, 'u:').replace(/(dropped|send|late)\s.*$/, '$1').slice(0, 140); o[k] = (o[k] || 0) + 1; } return o; } catch (e) { return String(e.message); } })(), multDist: await (async () => {
       /* One-off (2026-11-15): card multiplier by rarity/label/rating band across members' passes - counts only. */
       try { const c = {}; let n = 0;
