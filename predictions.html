@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Predictions EV - Rax Academy</title>
+<meta name="robots" content="noindex">
+<style>
+  :root{--bg:#141925;--panel:#1d2433;--panel2:#262f42;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;--good:#3fbf7f;--bad:#e5534b}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:16px 16px 48px}
+  a{color:var(--accent)}
+  .back{display:inline-block;color:var(--mute);text-decoration:none;font-weight:700;font-size:14px;margin:2px 0 6px}
+  h1{font-size:26px;margin:4px 0 2px} .note{color:var(--mute);font-size:13px}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0} .chips button{background:var(--panel);color:var(--mute);border:1px solid var(--line);border-radius:999px;padding:5px 12px;font:inherit;font-size:13px;font-weight:700;cursor:pointer}
+  .chips button[aria-pressed="true"]{color:var(--ink);border-color:var(--accent)}
+  .g{background:var(--panel);border:1px solid var(--line);border-radius:14px;margin:10px 0;overflow:hidden}
+  .gh{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:12px 14px 4px}
+  .gh b{font-size:16px} .gh a{color:var(--ink);text-decoration:none} .gh .note{font-size:12px}
+  .sd{display:grid;grid-template-columns:1fr auto auto auto;gap:12px;align-items:center;padding:9px 14px;border-top:1px solid var(--line)} .sd:first-of-type{border-top:0}
+  .sd .t{font-weight:800} .sd .c{text-align:right;font-size:13px;color:var(--mute)} .sd .c b{display:block;color:var(--ink);font-size:15px}
+  .ev{min-width:70px;text-align:right;font-weight:900;font-size:17px} .pos{color:var(--good)} .neg{color:var(--bad)}
+  .empty{padding:20px;text-align:center;color:var(--mute);background:var(--panel);border:1px solid var(--line);border-radius:14px}
+</style>
+</head>
+<body><div class="wrap">
+<a href="/" class="back">← Home</a>
+<h1>Predictions EV</h1>
+<p class="note" id="msg">Loading…</p>
+<div class="chips" id="chips"></div>
+<div id="list"></div>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const ls = { get: k => { try{ return localStorage.getItem(k); }catch(e){ return null; } }, set: (k, v) => { try{ localStorage.setItem(k, v); }catch(e){} } };
+const pc = v => v == null ? '-' : Math.round(v * 1000) / 10 + '%';
+const SPN = { nhl: 'NHL', nba: 'NBA', nfl: 'NFL' };
+let J = null, chip = ls.get('pred_chip') || '';
+async function load(){
+  try{ const t = ls.get('ratebrd_token_v1') || ''; J = await (await fetch('/api/swaps?op=predev', { headers: t ? { 'x-rb-token': t } : {} })).json(); }catch(e){ J = { error: 'Could not reach the site.' }; }
+  if(J.error){ $('#msg').innerHTML = /sign in/i.test(J.error) ? 'Sign in first - <a href="/?next=/predictions">sign in</a>.' : esc(J.error); return; }
+  if(!J.keySet){ $('#msg').textContent = 'The Odds API key isn\'t on the server yet.'; return; }
+  const m = J.at ? Math.round((Date.now() - J.at) / 60000) : null;
+  $('#msg').textContent = `EV per rax on Real's game markets vs sportsbook odds (margin removed). Updated ${m == null ? '-' : m < 1 ? 'just now' : m + ' min ago'} · every 2 minutes.`;
+  draw();
+}
+function draw(){
+  const sps = [...new Set(J.games.map(g => g.sport))];
+  $('#chips').innerHTML = sps.length > 1 ? ['', ...sps].map(s => `<button data-c="${s}" aria-pressed="${chip === s}">${s ? SPN[s] || s : 'All'}</button>`).join('') : '';
+  const best = g => Math.max(...g.sides.map(s => s.ev ?? -9));
+  const l = J.games.filter(g => !chip || g.sport === chip).sort((a, b) => best(b) - best(a));
+  $('#list').innerHTML = l.map(g => `<div class="g"><div class="gh"><b>${g.path ? `<a href="https://www.realapp.com${esc(g.path)}" target="_blank" rel="noopener">${esc(g.game)}</a>` : esc(g.game)}</b>
+    <span class="note">${esc(SPN[g.sport] || g.sport)}${g.start ? ' · ' + new Date(g.start).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : ''}${g.locked ? ' · locked' : ''}${g.src ? ' · ' + esc(g.src) : ' · no odds found'}</span></div>
+    ${g.sides.map(s => `<div class="sd"><span class="t">${esc(s.label)}</span><span class="c">Real<b>${pc(s.price)}</b></span><span class="c">Fair<b>${pc(s.fair)}</b></span><span class="ev ${s.ev > 0 ? 'pos' : 'neg'}">${s.ev == null ? '-' : (s.ev > 0 ? '+' : '') + pc(s.ev)}</span></div>`).join('')}</div>`).join('')
+    || '<div class="empty">No open game markets on Real right now for NHL, NBA or NFL.</div>';
+}
+$('#chips').addEventListener('click', e => { const b = e.target.closest('[data-c]'); if(!b) return; chip = b.dataset.c; ls.set('pred_chip', chip); draw(); });
+load(); setInterval(load, 60000);
+</script>
+</body>
+</html>

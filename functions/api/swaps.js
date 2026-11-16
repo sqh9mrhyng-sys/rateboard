@@ -5911,6 +5911,12 @@ async function handle({ request, env, waitUntil }) {
     await draftSaveList(env, (await draftList(env)).filter(c => !(c.id === Number(b.id) && c.type === b.type)));
     return json({ ok: true });
   }
+  // Prediction-market EV (Dennis only for now, 2026-11-16): what the 2-minute job saved.
+  if (op === 'predev') {
+    if (String(acc.who || '').toLowerCase() !== 'dennis') return forbidden('Only Dennis can open this page for now.');
+    let x = null; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_ev_v1')) || 'null'); } catch (e) {}
+    return json(x ? { at: x.at, games: x.games || [], credits: x.credits || null, errs: x.errs || [], keySet: !!env.ODDS_API_KEY } : { at: null, games: [], keySet: !!env.ODDS_API_KEY });
+  }
   // Bulk ratings (Dennis only, 2026-11-15): live listings, every ended one (history), his passes, and pack plays.
   /* Bulk ratings (open to everyone, 2026-11-15): live listings, ended ones (history),
      pack data for Grind, and the viewer's own passes. The shared part is built at most

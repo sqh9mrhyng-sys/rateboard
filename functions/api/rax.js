@@ -2,6 +2,7 @@ import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS, touchSe
 import { draftScan, draftCheck, draftGap, swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick, fcSchedule, whyNotFull, TAG_DEFS, scanProbe, boostProbe, wiltProbe, multProbe, untouchProbe, keepProbe, dennisProbe, tzProbe, cfbPassProbe } from './swaps.js';
 import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, capNow } from '../../lib/dbwatch.js';
 import { packAllowed } from './kv.js';
+import { ODDS_TEAMS, ODDS_SPORT } from '../../lib/teams.js';
 
 // One shared ET-day formatter: building one per call was slow and memory-hungry (2026-11-14).
 const ET_DAY_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -623,6 +624,53 @@ async function draftProbe(env) {
     await sleep(5000);
   }
   try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 86400 }); } catch (e) {}
+}
+
+/* Prediction markets EV (Dennis, 2026-11-16). Every 2 minutes, for each sport with open
+   game-winner markets on Real: Real's price for each side (account 1), against the fair chance
+   from The Odds API's sportsbooks (the bookmakers' prices with their margin taken out; Pinnacle
+   alone when it's there, else the average of all). EV = fair chance / Real's price - 1 (what a
+   rax returns on average). Saved in KV for the page. The API key lives only in the server's
+   settings (ODDS_API_KEY). */
+const PRED_SPORTS = ['nhl', 'nba', 'nfl'];
+const normTeam = t => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+async function predTick(env) {
+  const key = env.ODDS_API_KEY, tok = env.RS_AUTH_TOKEN; if (!key || !tok) return;
+  const K = 'pred_ev_v1';
+  let old = null; try { old = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
+  if (old && Date.now() - old.at < 110000) return;
+  if (old && old.lock && Date.now() - old.lock < 90000) return;
+  await env.RATEBOARD_KV.put(K, JSON.stringify({ ...(old || {}), lock: Date.now() }));
+  const out = { at: Date.now(), games: [], credits: old && old.credits, errs: [] };
+  for (const sp of PRED_SPORTS) {
+    let mk = [];
+    try { const r = await fetch(`https://web.realapp.com/predictions/gamemarkets/${sp}`, { headers: rsHeaders(tok) }); if (r.ok) mk = ((await r.json()) || {}).gameMarkets || []; else out.errs.push(`${sp} real ${r.status}`); } catch (e) { out.errs.push(`${sp} real ${e.message}`); }
+    mk = mk.filter(m => !m.isSettled && Array.isArray(m.outcomes) && m.outcomes.length === 2);
+    if (!mk.length) continue;
+    await sleep(1000);
+    let ev = [];
+    try { const r = await fetch(`https://api.the-odds-api.com/v4/sports/${ODDS_SPORT[sp]}/odds?regions=us,eu&markets=h2h&oddsFormat=decimal&apiKey=${encodeURIComponent(key)}`);
+      out.credits = r.headers.get('x-requests-remaining') || out.credits; if (r.ok) ev = await r.json(); else out.errs.push(`${sp} odds ${r.status}`); } catch (e) { out.errs.push(`${sp} odds ${e.message}`); }
+    const names = ODDS_TEAMS[sp] || {};
+    const nick = code => { const n = names[code]; return n ? normTeam(n).split(' ').pop() : null; };
+    for (const m of mk) {
+      const [a, b] = m.outcomes, na = nick(a.key), nb = nick(b.key);
+      const g = na && nb ? ev.find(e => { const h = normTeam(e.home_team), w = normTeam(e.away_team); return (h.endsWith(na) && w.endsWith(nb)) || (h.endsWith(nb) && w.endsWith(na)); }) : null;
+      let fair = null, books = 0, src = null;
+      if (g) {
+        const one = bk => { const o = ((bk.markets || []).find(x => x.key === 'h2h') || {}).outcomes || []; const pa = o.find(x => normTeam(x.name).endsWith(na)), pb = o.find(x => normTeam(x.name).endsWith(nb));
+          if (!pa || !pb || !(pa.price > 1) || !(pb.price > 1)) return null; const ia = 1 / pa.price, ib = 1 / pb.price; return ia / (ia + ib); };
+        const pin = (g.bookmakers || []).find(bk => bk.key === 'pinnacle'), pv = pin ? one(pin) : null;
+        const all = (g.bookmakers || []).map(one).filter(v => v != null); books = all.length;
+        if (pv != null) { fair = pv; src = 'Pinnacle'; } else if (all.length) { fair = all.reduce((t, v) => t + v, 0) / all.length; src = `${all.length} books`; }
+      }
+      const side = (o, f) => ({ key: o.key, label: o.label, price: o.probability, fair: f, ev: f != null && o.probability > 0 ? f / o.probability - 1 : null });
+      out.games.push({ sport: sp, id: m.id, game: (m.gameDisplay || {}).display || `${a.key} vs ${b.key}`, path: (m.gameDisplay || {}).path || null, locked: !!m.isLocked, volume: m.volumeDisplay || null,
+        start: g ? g.commence_time : null, src, books, sides: [side(a, fair), side(b, fair != null ? 1 - fair : null)] });
+    }
+    await sleep(1000);
+  }
+  await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 3600 });
 }
 
 /* One-off (2026-11-16): the shape of Real's prediction markets (NHL), read once on account 1. */
@@ -8624,7 +8672,7 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), predProbe2: await kvj('diag_pred_1116a'), draftTest: await (async () => { let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get('draft_contests_v1')) || '[]'); } catch (e) {}
+    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), predEv: await (async () => { const x = await kvj('pred_ev_v1'); return x ? { at: x.at, n: (x.games || []).length, matched: (x.games || []).filter(g => g.src).length, errs: x.errs, credits: x.credits } : null; })(), draftTest: await (async () => { let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get('draft_contests_v1')) || '[]'); } catch (e) {}
       const out = []; for (const c of l.filter(c => c.type === 'sport').slice(-30)) { const x = await kvj(`draft_v1_sport_${c.id}`);
         out.push({ id: c.id, sport: c.sport, day: c.day, n: x && x.players && x.players.length, teams: x && x.players ? [...new Set(x.players.map(p => p.team))].join(' ') : null }); }
       return { n: l.length, games: l.filter(c => c.type === 'game').length, gameDays: l.filter(c => c.type === 'game').map(c => `${c.id}:${c.sport}:${c.day}`).join(' '), sport: out }; })(), modVoid: await kvj('mod_void_1115_n'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
@@ -8696,10 +8744,11 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil(gapPush(ctx).catch(() => {}));
     ctx.waitUntil(bulkTick(env).catch(() => {}));
     ctx.waitUntil(draftScan(env).catch(() => {}));
+    ctx.waitUntil(predTick(env).catch(() => {}));
     if (url.searchParams.get('ticks') === '1') return new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } });
   }
   // Read-only collector progress, no sign-in: counts and dates only, nothing from the market or any account.
-  if (url.searchParams.get('collector') === 'health') { ctx.waitUntil(predProbe2(env).catch(() => {})); return collectorHealth(env, url); }
+  if (url.searchParams.get('collector') === 'health') { return collectorHealth(env, url); }
   const mk = url.searchParams.get('market');
   if (MARKET_MEMBER.includes(mk)) {
     const a = await marketWho(env, request);
