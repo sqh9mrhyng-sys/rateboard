@@ -1551,6 +1551,7 @@ async function acceptRequests(db, auth) {
    admin from a Real link); each one's player pool is read on account 1 and
    kept 10 minutes. Ratings are projected from the game log's Real rating. */
 const DRAFT_LIST_KV = 'draft_contests_v1';
+const BULK_MEMO = { text: null, at: 0, building: null };   // Bulk ratings' shared data, per server process
 // The first two, from the links Dennis sent (2026-11-15).
 const DRAFT_SEED = [{ id: 2460, type: 'sport', sport: 'nfl', day: '2026-11-16' }, { id: 55724, type: 'game', sport: 'nfl', day: '2026-11-16', gameId: 19603, post: 'https://www.realapp.com/YDiptOFGvRM', title: 'Ravens @ Chargers' }];
 async function draftList(env) { try { const v = await env.RATEBOARD_KV.get(DRAFT_LIST_KV); return v ? (JSON.parse(v) || []) : DRAFT_SEED.slice(); } catch (e) { return []; } }
@@ -5848,26 +5849,36 @@ async function handle({ request, env, waitUntil }) {
     return json({ ok: true });
   }
   // Bulk ratings (Dennis only, 2026-11-15): live listings, every ended one (history), his passes, and pack plays.
+  /* Bulk ratings (open to everyone, 2026-11-15): live listings, ended ones (history),
+     pack data for Grind, and the viewer's own passes. The shared part is built at most
+     every 3 minutes per server process and kept as text, so a crowd costs one build. */
   if (op === 'bulklist') {
-    if (String(acc.who || '').toLowerCase() !== 'dennis') return forbidden('Only Dennis can open this page.');
-    let st = {}; try { st = JSON.parse((await env.RATEBOARD_KV.get('bulk_state_v2')) || '{}') || {}; } catch (e) {}
-    let rows = [];
-    try { rows = ((await db.prepare('SELECT * FROM bulk_listings WHERE endsAt > ? ORDER BY endsAt LIMIT 6000').bind(Date.now()).all()).results) || []; } catch (e) {}
-    let ended = []; try { ended = ((await db.prepare('SELECT * FROM bulk_results WHERE endsAt > ? ORDER BY endsAt DESC LIMIT 30000').bind(Date.now() - 90 * 86400000).all()).results) || []; } catch (e) {}
-    const SPN = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf', soccer: 'FC' };
-    const fix = r => ({ ...r, sp: SPN[r.sport] || r.sport, url: r.playerId && r.sport && r.season ? playerUrl(`${r.sport}:${r.season}:${r.playerId}`) : null,
-      link: r.id ? `https://www.realapp.com/${routeId([30, 0, 0, Number(r.id)])}` : null });   // the auction itself (Real's code 30)
-    // His passes, for "Your pass evaluations".
+    if (!(await allow(url.origin, 'bulk:' + clientIp(request), 20, 60))) return json({ error: 'Too many refreshes - wait a minute.' }, 429);
+    const SPN = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf', soccer: 'FC', ufc: 'UFC' };
+    if (!BULK_MEMO.text || Date.now() - BULK_MEMO.at > 3 * 60000) {
+      if (!BULK_MEMO.building) BULK_MEMO.building = (async () => {
+        let st = {}; try { st = JSON.parse((await env.RATEBOARD_KV.get('bulk_state_v2')) || '{}') || {}; } catch (e) {}
+        let rows = [], ended = [];
+        try { rows = ((await db.prepare('SELECT id, endsAt, sport, season, playerId, name, rarity, rating, buyNow, minBid, curBid, bids FROM bulk_listings WHERE endsAt > ? ORDER BY endsAt LIMIT 6000').bind(Date.now()).all()).results) || []; } catch (e) {}
+        try { ended = ((await db.prepare("SELECT id, endsAt, sport, season, playerId, name, rarity, rating, buyNow, price, bids, how FROM bulk_results WHERE endsAt > ? AND price IS NOT NULL ORDER BY endsAt DESC LIMIT 20000").bind(Date.now() - 60 * 86400000).all()).results) || []; } catch (e) {}
+        let unsold = []; try { unsold = ((await db.prepare("SELECT sport, season, playerId, endsAt FROM bulk_results WHERE endsAt > ? AND price IS NULL LIMIT 30000").bind(Date.now() - 60 * 86400000).all()).results) || []; } catch (e) {}
+        const fix = r => { for (const k of Object.keys(r)) if (r[k] == null) delete r[k]; return r; };   // links are made on the page; empty fields dropped (keeps it small)
+        const plays = {}, keys = new Set(ended.concat(rows).filter(r => r.sport && r.season && r.playerId).map(r => `${r.sport}:${r.season}:${r.playerId}`));
+        const ss = new Set([...keys].map(k => k.split(':').slice(0, 2).join(':')));
+        for (const k0 of ss) { const [sp0, se0] = k0.split(':'); let m = null; try { m = await packInfo(env, db, sp0, se0); } catch (e) {}
+          if (m) for (const k of keys) if (k.startsWith(k0 + ':')) { const id = k.split(':')[2]; if (m[id] != null) plays[k] = m[id]; } }
+        const state = { count: st.count || null, lastAt: st.lastAt || null, fullDone: st.fullDone || null, err: st.err || null, pauseUntil: st.pauseUntil || null };
+        const body = JSON.stringify({ state, rows: rows.map(fix), ended: ended.map(fix), unsold: unsold.map(u => [`${u.sport}:${u.season}:${u.playerId}`, Number(u.endsAt)]), plays });
+        BULK_MEMO.text = body.slice(0, -1); BULK_MEMO.at = Date.now();
+      })().finally(() => { BULK_MEMO.building = null; });
+      if (!BULK_MEMO.text) await BULK_MEMO.building;
+    }
+    // The viewer's own passes (Rare and up), for "My passes".
     let mine = [];
-    try { const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(acc.who).first();
-      mine = parse(u && u.passes, []).filter(p => p.kind !== 'team').map(p => ({ key: p.key, name: p.name, sport: p.sport, sp: SPN[p.sport] || p.sport, season: p.season, playerId: p.id, rating: p.rating, label: p.levelLabel || null,
-        url: p.passId ? `https://www.realapp.com/${routeId([18, 0, 0, Number(p.passId)])}` : null })); } catch (e) {}
-    // Collectible plays in packs, for each player-season in the history (for "best to grind").
-    const plays = {};
-    try { const ss = new Set(ended.concat(rows).filter(r => r.sport && r.season).map(r => r.sport + ':' + r.season));
-      for (const k of ss) { const [sp0, se0] = k.split(':'); const m = await packInfo(env, db, sp0, se0); if (m) for (const r of ended.concat(rows)) if (r.sport === sp0 && String(r.season) === se0 && m[r.playerId] != null) plays[`${sp0}:${se0}:${r.playerId}`] = m[r.playerId]; } } catch (e) {}
-    return json({ state: { count: st.count || null, lastAt: st.lastAt || null, fullDone: st.fullDone || null, watches: st.watches || 0, nextWatch: st.nextWatch || null, err: st.err || null, pauseUntil: st.pauseUntil || null, reqs: st.reqs || 0, exact: st.detailOk === true ? true : st.detailOk === false ? false : null },
-      rows: rows.map(fix), ended: ended.map(fix), mine, plays });
+    if (acc.who) { try { const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(acc.who).first();
+      mine = parse(u && u.passes, []).filter(p => p.kind !== 'team' && /rare|epic|legendary|mystic|iconic/i.test(p.levelLabel || '')).map(p => ({ key: p.key, name: p.name, sport: p.sport, sp: SPN[p.sport] || p.sport, season: p.season, playerId: p.id, rating: p.rating, label: p.levelLabel || null,
+        url: p.passId ? `https://www.realapp.com/${routeId([18, 0, 0, Number(p.passId)])}` : null })); } catch (e) {} }
+    return new Response(BULK_MEMO.text + `,"signedIn":${acc.who ? 'true' : 'false'},"mine":${JSON.stringify(mine)}}`, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
   }
   if (op === 'notifs') {
     if (!acc.who) return forbidden('Sign in first (raxacademy.app).');

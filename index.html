@@ -154,6 +154,7 @@ const PAGES = [
   ['/swaps', 'Swaps', 'Trade passes with other members, matched every hour'],
   ['/boosts', 'Boosts/Buys', 'Which boosters to use each day, and what to buy'],
   ['/projections', 'Projections', 'Projected rax for the rest of the regular season'],
+  ['/bulk', 'Bulk ratings', 'Bulk auction prices, history, passes worth grinding and what yours are worth'],   // everyone (2026-11-15)
   ['/tags', 'Tag finder', 'Every game that earned a performance tag'],
   ['/notifications', 'Notifications', 'Replies to you, your reports and requests, strikes, and what\'s new'],   // 2026-11-12
   ['/admin', 'Admin', 'Users, reports, traffic and sponsors', 'admin']
@@ -161,7 +162,7 @@ const PAGES = [
 // A colour for each page's box.
 // Each page's own colour (2026-11-09: brighter, and themed - swaps the two-way cyan, boosts fire, packs Legendary purple, projections growth green).
 const LOOK = { '/board': '#ffb020', '/board#gamedata': '#3b9eff', '/board#otd': '#ffd60a', '/packs': '#b06bff', '/market': '#14d6b0', '/swaps': '#22d3ee', '/boosts': '#ff5a36',
-  '/projections': '#34d67a', '/notifications': '#f2c94c', '/tags': '#ff4fb0', '/otd': '#ffd60a', '/admin': '#c3cbdb' };
+  '/projections': '#34d67a', '/bulk': '#8b5cf6', '/notifications': '#f2c94c', '/tags': '#ff4fb0', '/otd': '#ffd60a', '/admin': '#c3cbdb' };
 // Pages behind access only show to those who have it (Dennis opened Home to everyone, 2026-11-09).
 let ACC = {};
 const canOpen = p => !p[3] || ACC.admin || (p[3] === 'market' && ACC.access) || (p[3] === 'pack' && ACC.pack);
