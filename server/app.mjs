@@ -37,6 +37,7 @@ const env = {
   RS_AUTH_TOKEN: process.env.RS_AUTH_TOKEN,
   RS_MARKET_TOKEN: process.env.RS_MARKET_TOKEN,
   RS_SWAP_TOKEN: process.env.RS_SWAP_TOKEN,
+  ODDS_API_KEY: process.env.ODDS_API_KEY,   // The Odds API (Dennis, 2026-11-16) - typed into /opt/rax/.env, never in the code
 };
 
 const mod = async f => import(pathToFileURL(path.join(ROOT, 'functions', f)).href);
