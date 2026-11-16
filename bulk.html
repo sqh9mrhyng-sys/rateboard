@@ -259,7 +259,8 @@ function draw(){
   const book = salesBook(), perTxt = $('#per').selectedOptions[0].text.replace(/^Past /, '').toLowerCase();
   if(view === 'deals'){
     // 1. Only on solid data: 5+ sales of that exact player and season, buy-now listings or bids under the usual price.
-    const l = D.rows.filter(pass).map(r => { const w = worth(book, r), p = nowPrice(r); return w && p != null ? { r, w, p, gain: w.v * TAX - p } : null; }).filter(x => x && x.gain >= 100).sort((a, b) => b.gain - a.gain);
+    // No Mystic or Iconic on deals (Dennis, 2026-11-16).
+    const l = D.rows.filter(r => pass(r) && !/mystic|iconic/i.test(r.rarity || '')).map(r => { const w = worth(book, r), p = nowPrice(r); return w && p != null ? { r, w, p, gain: w.v * TAX - p } : null; }).filter(x => x && x.gain >= 100).sort((a, b) => b.gain - a.gain);
     const ready = [...book.by.values()].filter(o => o.sold.length >= MIN_SALES).length;
     // Still being built (Dennis, 2026-11-16): said plainly at the top.
     const dev = '<div class="dev"><b>Best deals is still in development.</b> Prices get better as more auctions are tracked - check a deal yourself before buying.</div>';
