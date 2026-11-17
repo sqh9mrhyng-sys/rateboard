@@ -999,7 +999,7 @@ function applyGameDataVisibility(){
     // Options are added and taken away rather than hidden: a hidden option
     // still shows in Safari's picker.
     const want = [['home', 'Home'], ['board', 'Board'], ...(me ? [['otd', 'OTD']] : []), ...(isAdmin() ? [['cbb', 'Game data']] : []),
-                  ...(marketAccess ? [['market', 'Market data']] : []),
+                     // market data retired 2026-11-16
                   ...(boostsOn ? [['boosts', 'Boosts/Buys (beta)']] : []), ['projections', 'Projections'], ['tags', 'Tag finder'],   // projections everyone (2026-11-08); tag finder everyone (2026-11-09)
                   ...(swapsOn ? [['swaps', 'Swaps (beta)']] : []), ...(otdOn ? [['admin', 'Admin']] : [])];
     const have = [...sel.options].map(o => o.value).join(',');
@@ -1056,7 +1056,7 @@ window.addEventListener('resize', closePageMenu);
 window.addEventListener('scroll', closePageMenu, { passive: true });
 function pageGo(){
   const sel = $('#pagesel');
-  if(sel && sel.value === 'market'){ location.href = '/market'; return; }
+  if(sel && sel.value === 'market'){ location.href = '/'; return; }   // market data retired 2026-11-16
   if(sel && sel.value === 'swaps'){ location.href = '/swaps'; return; }
   if(sel && sel.value === 'otd'){ location.href = '/board#otd'; cbView = 'otd'; goPage('cbb'); return; }
   if(sel && sel.value === 'cbb') cbView = 'gd';

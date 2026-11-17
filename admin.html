@@ -85,7 +85,7 @@
 <div class="wrap">
   <header>
     <h1>Admin</h1>
-    <span class="links"><a href="/">Home</a><a href="/board">Board</a><a href="/board#otd">OTD</a><a href="/board#gamedata">Game data</a><a href="/market">Market</a><a href="/swaps">Swaps</a></span>
+    <span class="links"><a href="/">Home</a><a href="/board">Board</a><a href="/board#otd">OTD</a><a href="/board#gamedata">Game data</a><a href="/swaps">Swaps</a><a href="/bulk">Bulk</a><a href="/predictions">Predictions</a></span>
   </header>
 
   <section id="lock" class="hide"><p id="lockmsg">Checking your sign-in…</p><p class="note"><a href="/?next=/admin">Sign in</a> with an admin account.</p></section>
@@ -97,7 +97,6 @@
       <button data-tab="users" aria-pressed="false">Users &amp; access</button>
       <button data-tab="swaps" aria-pressed="false">Swaps &amp; DMs</button>
       <button data-tab="reports" aria-pressed="false">Reports</button>
-      <a href="/bulk" style="align-self:center;margin-left:6px;font-weight:700">Bulk ratings →</a>
     </div>
 
     <!-- STATUS -->
@@ -153,7 +152,7 @@
         <div class="bar"><button id="du-load">Load</button><button id="du-copy" class="hide">Copy</button></div>
         <div class="scroll" id="du-out"></div>
       </section>
-      <section style="margin-top:12px">
+      <section style="margin-top:12px" hidden>
         <h2>UFC market check</h2>
         <p class="note">Asks Real (on the bot account) how many UFC listings it has under each season, and compares with what's stored.</p>
         <div class="bar"><button id="ufc-run">Run UFC check</button><button id="ufc-copy" class="hide">Copy result</button></div>
@@ -193,10 +192,10 @@
       <section>
         <div class="bar">
           <input type="search" id="us-q" placeholder="Search accounts" autocomplete="off">
-          <select id="us-f"><option value="">Everyone</option><option value="any">Has any access</option><option value="gamedata">Game data</option><option value="packdata">Pack data</option><option value="golfdata">Golf</option><option value="shiftdata">Rax shift / historical</option><option value="market">Market data</option><option value="swaps">Swaps</option><option value="otd">OTD</option><option value="banned">Removed (site ban)</option><option value="blocked">Swaps taken / restricted</option><option value="nopass">Password reset</option></select>
+          <select id="us-f"><option value="">Everyone</option><option value="any">Has any access</option><option value="golfdata">Golf</option><option value="shiftdata">Rax shift / historical</option><option value="banned">Removed (site ban)</option><option value="blocked">Swaps taken / restricted</option><option value="nopass">Password reset</option></select>
         </div>
         <p class="note" id="us-count">Loading…</p>
-        <p class="note">Tap a pill to give or take that access. Lit pills are on. "Game data" covers by player and every game.</p>
+        <p class="note">Tap a pill to give or take that access. Lit pills are on.</p>
         <div id="us-rows"></div>
         <div class="bar"><button id="us-more" class="hide">Show more</button></div>
       </section>
@@ -234,7 +233,7 @@
         <p class="note" style="margin:0 0 8px">Swaps that went out (messaged) and weren't called off, once their time has passed. 160s and niche buys aren't counted.</p>
         <div class="bar"><select id="ts-days"><option value="0">All time</option><option value="30">Last 30 days</option><option value="7">Last 7 days</option><option value="1">Last 24 hours</option></select><button id="ts-load" class="sm">Refresh</button></div>
         <div id="ts-list" class="note">Loading…</div></section>
-      <section>
+      <section hidden>
         <h2>Matches</h2>
         <div class="bar"><button id="sw-run">Run matching now</button><button id="sw-reload">Refresh</button><span class="note" id="sw-msg"></span></div>
         <div class="scroll" id="sw-matches">Loading…</div>
@@ -261,7 +260,7 @@
         <div class="bar"><button id="hu-load">Refresh</button><label class="note"><input type="checkbox" id="hu-empty"> show empty hours</label></div>
         <div id="hu-list" class="note">Loading…</div>
       </section>
-      <section>
+      <section hidden>
         <h2>Swap reports <span class="note" id="sr-n"></span></h2>
         <div id="sr-list" class="note">Loading…</div>
       </section>
@@ -395,14 +394,14 @@ function loadStatus(){
   loadMembers();
   loadTraffic();
   loadPerfPull();
-  $('#st-grid').innerHTML = card('c-db', 'Database') + card('c-market', 'Market pull') + card('c-collect', 'Game data collector')
+  $('#st-grid').innerHTML = card('c-db', 'Database') + card('c-collect', 'Game data collector')
     + card('c-sweeps', 'Game data sweeps') + card('c-bot', 'Swap bot');
   // All at once; each card fills in as its own answer lands.
   api('/api/rax?market=me&t=' + Date.now()).then(j => {
     const lvl = j.error ? 'bad' : j.__ms > 4000 ? 'bad' : j.__ms > 1500 ? 'warn' : 'ok';
     fill('c-db', lvl, j.error ? esc(j.error) : kv({ 'Response': j.__ms < 1500 ? 'healthy' : j.__ms < 4000 ? 'slow' : 'struggling', 'Small query': msTag(j.__ms) }), j.__ms);
   });
-  api('/api/rax?market=status').then(j => {
+  if(0) api('/api/rax?market=status').then(j => {
     if(j.error){ fill('c-market', 'bad', esc(j.error), j.__ms); return; }
     const seasons = j.seasons || [];
     const newest = seasons.filter(s => s.pulledAt).sort((a, b) => b.pulledAt.localeCompare(a.pulledAt))[0];
@@ -599,8 +598,8 @@ $('#of-rows').addEventListener('click', async e => {
 /* ---------- users ---------- */
 let usShown = 60, marketSet = new Set(), swapSet = new Set(), namedSwap = new Set(), otdSet = new Set(), blockSet = new Set(), restrictSet = new Set();
 const paintBlocks = j => { if(j && !j.error){ blockSet = new Set((j.swapBlocked || []).map(k => k.toLowerCase())); restrictSet = new Set((j.restricted || []).map(k => k.toLowerCase())); } };
-const ACCESS = [['gamedata', 'Game data'], ['packdata', 'Pack data'], ['golfdata', 'Golf'], ['shiftdata', 'Rax shift / historical'],
-  ['market', 'Market data'], ['swaps', 'Swaps'], ['otd', 'OTD']];
+// Only the access that still gates something (2026-11-16: game data, pack data, swaps, OTD and market data are open or gone).
+const ACCESS = [['golfdata', 'Golf'], ['shiftdata', 'Rax shift / historical']];
 const has = (k, what) => {
   if(['gamedata', 'packdata', 'golfdata', 'shiftdata'].includes(what)) return (board.lists[what] || []).map(x => String(x).toLowerCase()).includes(k.toLowerCase());
   if(what === 'market') return marketSet.has(k);
@@ -1033,7 +1032,7 @@ $('#su-list').addEventListener('click', async e => {
   const c = e.target.closest('[data-su]'); if(c && !e.target.closest('[data-sm]')) openSwapper(c.dataset.su); });
 ['#su-q', '#su-sort', '#su-act'].forEach(id => $(id).addEventListener(id === '#su-q' ? 'input' : 'change', drawSwappers));
 $('#su-load').addEventListener('click', loadSwappers);
-function loadSwaps(){ loadSwappers(); loadMatches(); loadNamed(); loadEvery(); loadBot(); loadSwapReports(); loadHourUsers(); }
+function loadSwaps(){ loadSwappers(); loadNamed(); loadEvery(); loadBot(); loadHourUsers(); }   // matches and swap reports dropped (2026-11-16; reports are in the Inbox)
 const everyLbl = m => m === 15 ? 'every 15 minutes' : 'every hour';
 function drawEvery(m){ const b = $('#sw-every'); b.dataset.m = m;
   b.textContent = m === 15 ? 'Members: every 15 min · switch to every hour' : 'Members: every hour · switch to 15 min'; }

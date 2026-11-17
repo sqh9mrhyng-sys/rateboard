@@ -46,7 +46,7 @@
   .act:hover{border-color:var(--c)}
   .act{--c:var(--accent);background:color-mix(in srgb,var(--c) 13%,var(--panel2));border-color:color-mix(in srgb,var(--c) 40%,var(--line))}
   /* One blue for all three (Dennis, 2026-11-10), matching the navy tiles. */
-  .act.c1,.act.c2,.act.c3{--c:var(--tile,#3d6fd6);background:linear-gradient(180deg,color-mix(in srgb,var(--c) 22%,var(--panel)),color-mix(in srgb,var(--c) 12%,var(--panel)));border-color:color-mix(in srgb,var(--c) 55%,var(--line));box-shadow:0 8px 20px -14px var(--c)}
+  .act.c1,.act.c2,.act.c3{--c:var(--tile,#3d6fd6);background:radial-gradient(120% 95% at 50% 118%,color-mix(in srgb,var(--c) 22%,transparent),transparent 60%),linear-gradient(180deg,color-mix(in srgb,var(--c) 8%,var(--panel)),var(--bg));border-color:color-mix(in srgb,var(--c) 70%,var(--line));box-shadow:none;color:color-mix(in srgb,var(--ink) 90%,var(--c))}
   .act.c1:hover,.act.c2:hover,.act.c3:hover{border-color:#5b8cff}
   .tiles{display:grid;grid-template-columns:1fr;gap:10px;margin-top:16px}
   /* Each box: the link, and grip lines on the right that drag it up or down. */
@@ -164,7 +164,6 @@ const PAGES = [
   ['/board#otd', 'OTD', 'Every player and every game - rax and box scores'],   // everyone (2026-11-12)
   ['/board#gamedata', 'Game data', 'Golf, rax shift and historical', 'admin'],
   ['/packs', 'Pack data', 'Pack odds and packs to each rarity, for every player'],   // everyone (2026-11-09)
-  ['/market', 'Market data', 'Recent sales and prices', 'market'],
   ['/swaps', 'Swaps', 'Trade passes with other members, matched every hour'],
   ['/boosts', 'Boosts/Buys', 'Which boosters to use each day, and what to buy'],
   ['/projections', 'Projections', 'Projected rax for the rest of the regular season'],

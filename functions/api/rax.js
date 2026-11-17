@@ -805,6 +805,19 @@ function predEtWall(t) { const p = Object.fromEntries(new Intl.DateTimeFormat('e
 function predEtToUtc(y, m, d, h, mi) { const guess = Date.UTC(y, m - 1, d, h, mi), w = predEtWall(guess), off = Date.UTC(w.y, w.m - 1, w.d, w.h, w.mi) - guess; return guess - off; }
 function predTradingDay(t) { const w = predEtWall(t - (7 * 60 + 15) * 60000); return `${w.y}-${w.m}-${w.d}`; }
 function predNext715(t) { const w = predEtWall(t); let u = predEtToUtc(w.y, w.m, w.d, 7, 15); if (u <= t) { const n = predEtWall(t + 86400000); u = predEtToUtc(n.y, n.m, n.d, 7, 15); } return u; }
+/* One-off (Dennis, 2026-11-16): the old market data is retired - its sales, seasons, favourites and
+   access grants are deleted for everyone. MARKET_ON stays false so nothing refills it. */
+async function marketWipe(env) {
+  const K = 'oneoff_market_wipe_1116'; if (await env.RATEBOARD_KV.get(K)) return;
+  await env.RATEBOARD_KV.put(K, JSON.stringify({ at: Date.now(), running: true }));
+  const db = env.RATEBOARD_DB, out = { at: Date.now() };
+  for (const t of ['market_v2', 'market_seasons', 'market_favs', 'market_access']) {
+    try { const r = await db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).first(); out[t] = r ? r.n : 0;
+      // In chunks so the database isn't locked for long.
+      for (let i = 0; i < 400; i++) { const d = await db.prepare(`DELETE FROM ${t} WHERE rowid IN (SELECT rowid FROM ${t} LIMIT 5000)`).run(); if (!d.meta || !d.meta.changes) break; await sleep(50); }
+    } catch (e) { out[t] = 'err ' + e.message; } }
+  await env.RATEBOARD_KV.put(K, JSON.stringify(out));
+}
 async function predTick(env) {
   try { const P = JSON.parse((await env.RATEBOARD_KV.get('pred_pause_v1')) || '{}') || {}; if (P.until && Date.now() < P.until) return; } catch (e) {}
   await Promise.all([predOdds(env).catch(() => {}), predReal(env).catch(() => {})]); }
@@ -8797,7 +8810,7 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predPause: await kvj('pred_pause_v1'), predStore: await (async () => { const o = {}; for (const k of ['pred_ev_v1', 'pred_recent_v1', 'pred_odds_v2', 'pred_real_open', 'bulk_state_v2']) { const v = await env.RATEBOARD_KV.get(k); o[k] = v ? v.length : 0; }
+    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predPause: await kvj('pred_pause_v1'), marketWipe: await kvj('oneoff_market_wipe_1116'), predStore: await (async () => { const o = {}; for (const k of ['pred_ev_v1', 'pred_recent_v1', 'pred_odds_v2', 'pred_real_open', 'bulk_state_v2']) { const v = await env.RATEBOARD_KV.get(k); o[k] = v ? v.length : 0; }
       try { for (const t of ['bulk_listings', 'bulk_results']) { const r = await env.RATEBOARD_DB.prepare(`SELECT COUNT(*) AS n FROM ${t}`).first().catch(() => null); o[t] = r ? r.n : null; } } catch (e) {} return o; })(), predEv: await (async () => { const x = await kvj('pred_ev_v1'); return x ? { settledSeen: Object.keys((await kvj('pred_settled_v1')) || {}).length, books: (() => { const c = {}; for (const g of (x.games || [])) for (const f of (g.sources || [])) for (const b of (f.books || [])) c[b] = (c[b] || 0) + 1; return c; })(), keys: x.keys, used: x.used, live: (x.games || []).filter(g => g.live).length, srcs: (x.games || []).map(g => (g.sources || []).length).join(','), at: x.at, n: (x.games || []).length,  errs: x.errs, credits: x.credits } : null; })(), draftTest: await (async () => { let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get('draft_contests_v1')) || '[]'); } catch (e) {}
       const out = []; for (const c of l.filter(c => c.type === 'sport').slice(-30)) { const x = await kvj(`draft_v1_sport_${c.id}`);
         out.push({ id: c.id, sport: c.sport, day: c.day, n: x && x.players && x.players.length, teams: x && x.players ? [...new Set(x.players.map(p => p.team))].join(' ') : null }); }
@@ -8871,6 +8884,7 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil(bulkTick(env).catch(() => {}));
     ctx.waitUntil(draftScan(env).catch(() => {}));
     ctx.waitUntil(predTick(env).catch(() => {}));
+    ctx.waitUntil(marketWipe(env).catch(() => {}));
     if (url.searchParams.get('ticks') === '1') return new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } });
   }
   // Read-only collector progress, no sign-in: counts and dates only, nothing from the market or any account.
