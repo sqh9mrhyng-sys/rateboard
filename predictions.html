@@ -82,6 +82,14 @@
   .leg{display:grid;grid-template-columns:28px 1fr 74px 74px auto;gap:8px;align-items:center;padding:8px 14px;border-top:1px solid var(--line)} .leg .ln{min-width:0;font-size:14px} .leg .ln small{display:block;font-size:12px;color:var(--mute)} .leg .ln .tag{font-size:10px;padding:1px 6px}
   .leg label{font-size:10px;color:var(--mute);font-weight:700;text-transform:uppercase} .leg input{display:block;width:100%;margin-top:2px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:5px 6px;font:inherit;font-size:15px}
   .lact{display:flex;gap:4px} .lact button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:4px 7px;font:inherit;font-size:12px;font-weight:800;cursor:pointer} .lact .del{color:var(--bad)}
+.kinds2{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px} .kinds2 button{background:var(--panel2);color:var(--ink);border:2px solid var(--line);border-radius:12px;padding:10px 8px;font:inherit;font-weight:800;font-size:13px;cursor:pointer;text-align:left} .kinds2 button small{display:block;color:var(--mute);font-weight:500;font-size:11px;margin-top:2px} .kinds2 button[aria-pressed="true"]{border-color:var(--accent)}
+  .fl{display:block;font-size:12px;font-weight:700;color:var(--mute);margin:0 0 10px} .fl input,.fl select,.fl textarea{display:block;width:100%;margin-top:4px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font:inherit;font-size:16px} .fl textarea{min-height:96px;resize:vertical}
+  .place.big{width:100%;padding:12px;font-size:15px;background:var(--accent);color:#1a1205;border-color:var(--accent)}
+  .fb{background:var(--panel);border:1px solid var(--line);border-radius:14px;margin:10px 0;padding:12px 14px} .fb .top2{display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap} .fb h4{margin:6px 0 2px;font-size:15px} .fb p{margin:4px 0;font-size:14px;white-space:pre-wrap}
+  .st{font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;background:var(--panel2);color:var(--mute);text-transform:uppercase;letter-spacing:.04em} .st.planned{color:var(--accent);background:rgba(232,163,61,.14)} .st.done{color:var(--good);background:rgba(63,191,127,.14)} .st.declined{color:var(--bad);background:rgba(229,83,75,.14)}
+  .rp{border-left:3px solid var(--accent);padding:4px 10px;margin:8px 0 0;font-size:13px;background:rgba(232,163,61,.06);border-radius:0 8px 8px 0} .rp small{display:block;color:var(--mute);font-size:11px}
+  .fbact{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px} .fbact button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 10px;font:inherit;font-size:12px;font-weight:800;cursor:pointer} .fbact .del{color:var(--bad);margin-left:auto}
+  .fbr{display:flex;gap:6px;margin-top:8px} .fbr input{flex:1;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;font-size:15px}
   .upto{font-size:12px;color:var(--mute)} .upto b{color:var(--ink)}
   .place{white-space:nowrap;align-self:flex-start}
   .place,.bact button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 10px;font:inherit;font-size:13px;font-weight:800;cursor:pointer}
@@ -101,7 +109,7 @@
 <body><div class="wrap">
 <a href="/" class="back">← Home</a>
 <div class="top"><h1>Predictions EV</h1><span class="pulse" id="pulse"><i></i><span id="ago">-</span></span></div>
-<div class="tabs" id="tabs"><button data-t="m" aria-pressed="true">Markets</button><button data-t="b" aria-pressed="false">My bets <span id="bn"></span></button><button data-t="r" aria-pressed="false" hidden>Arbitrage <span id="rn"></span></button><button data-t="g" aria-pressed="false">Guide</button><button data-t="a" aria-pressed="false" hidden>Access</button></div>
+<div class="tabs" id="tabs"><button data-t="m" aria-pressed="true">Markets</button><button data-t="b" aria-pressed="false">My bets <span id="bn"></span></button><button data-t="r" aria-pressed="false" hidden>Arbitrage <span id="rn"></span></button><button data-t="f" aria-pressed="false">Request/Report <span id="fn"></span></button><button data-t="g" aria-pressed="false">Guide</button><button data-t="a" aria-pressed="false" hidden>Access</button></div>
 <div id="vm">
 <label class="bank"><span>Enter your rax amount for custom recommendations</span><input id="bank" type="number" inputmode="numeric" min="0" step="100" placeholder="e.g. 5000"><small id="banknote">1u = 1% of your rax</small></label>
 <div class="sum" id="sum"></div>
@@ -124,6 +132,19 @@
 <div class="keep" style="display:block"><b>Arbitrage</b><p class="note" style="margin:4px 0 8px">After you've placed a bet, buying the other side at a low enough price locks in a profit whichever way the game goes. Only options with at least <b>10% guaranteed profit</b> after slippage are shown as ready.</p>
 <label style="font-size:13px;font-weight:700">Slippage (points Real's price moves against you as you buy) <input id="slip" type="number" inputmode="decimal" min="0" max="10" step="0.5" style="width:70px;margin-left:6px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:4px 6px;font:inherit"></label></div>
 <div id="rlist"></div></div>
+<div id="vf" hidden>
+<form class="guide fbf" id="fbform">
+  <h2 style="margin-top:12px">Request or report</h2>
+  <p class="note" style="margin:2px 0 10px">Something wrong on this page, or an idea to make it better? It goes straight to Dennis, and his answer shows up here and in your Notifications.</p>
+  <div class="kinds2" id="fbk"><button type="button" data-k="issue" aria-pressed="true">🐞 Issue<small>Something's broken or looks wrong</small></button><button type="button" data-k="odds" aria-pressed="false">📉 Odds look off<small>A fair % or EV doesn't add up</small></button><button type="button" data-k="idea" aria-pressed="false">💡 Idea<small>A new feature or change</small></button></div>
+  <label class="fl">Game (optional)<select id="fbg"><option value="">Not about one game</option></select></label>
+  <label class="fl">In one line<input id="fbt" maxlength="140" autocomplete="off" placeholder="e.g. Utah's fair % looked 10 points off the books" required></label>
+  <label class="fl">Detail (optional)<textarea id="fbd" maxlength="1500" placeholder="What you saw, when, what you expected. Screenshot links help."></textarea></label>
+  <button class="place big" id="fbgo">Send</button><p class="note" id="fbmsg"></p>
+</form>
+<div id="fbown" hidden><div class="bar" style="margin-top:10px"><div class="chips" id="fbfilter"><button data-s="open" aria-pressed="true">Open</button><button data-s="planned" aria-pressed="false">Planned</button><button data-s="done" aria-pressed="false">Done</button><button data-s="all" aria-pressed="false">All</button></div></div></div>
+<div id="fblist"></div>
+</div>
 <div id="vg" hidden>
 <section class="guide">
 <h2>What EV means</h2>
@@ -399,7 +420,7 @@ function draw(){
 }
 document.addEventListener('toggle', e => { const d = e.target; if(!d.matches || !d.matches('details.bd')) return; d.open ? openBd.add(d.dataset.bd) : openBd.delete(d.dataset.bd); }, true);
 $('#chips').addEventListener('click', e => { const b = e.target.closest('[data-c]'); if(!b) return; chip = b.dataset.c; ls.set('pred_chip', chip); draw(); });
-$('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if(!b) return; for (const x of document.querySelectorAll('#tabs button')) x.setAttribute('aria-pressed', x === b); $('#vm').hidden = b.dataset.t !== 'm'; $('#vg').hidden = b.dataset.t !== 'g'; $('#va').hidden = b.dataset.t !== 'a'; if (b.dataset.t === 'a') accLoad(); $('#vb').hidden = b.dataset.t !== 'b'; if (b.dataset.t === 'b') drawBets(); $('#vr').hidden = b.dataset.t !== 'r'; if (b.dataset.t === 'r') drawArb(); });
+$('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if(!b) return; for (const x of document.querySelectorAll('#tabs button')) x.setAttribute('aria-pressed', x === b); $('#vm').hidden = b.dataset.t !== 'm'; $('#vg').hidden = b.dataset.t !== 'g'; $('#va').hidden = b.dataset.t !== 'a'; $('#vf').hidden = b.dataset.t !== 'f'; if (b.dataset.t === 'f') { fbCall(); } if (b.dataset.t === 'a') accLoad(); $('#vb').hidden = b.dataset.t !== 'b'; if (b.dataset.t === 'b') drawBets(); $('#vr').hidden = b.dataset.t !== 'r'; if (b.dataset.t === 'r') drawArb(); });
 $('#list').addEventListener('click', e => {
   const c = e.target.closest('[data-cl]'); if (c) { const id = c.dataset.cl; collapsed.has(id) ? collapsed.delete(id) : collapsed.add(id); ls.set('pred_collapsed2', JSON.stringify([...collapsed])); draw(); return; }
   const x = e.target.closest('.bfx'); if (x) { betForm = null; draw(); return; }
@@ -418,6 +439,37 @@ $('#cform').addEventListener('submit', async e => { e.preventDefault(); const f 
   if (!name || !(pct > 0 && pct < 100) || !(amt > 0)) return; const btn = f.querySelector('button'); btn.disabled = true; btn.textContent = 'Saving…';
   await betsCall({ add: { gid: 0, side: 0, custom: true, sport: f.sport.value, game: opp ? `${name} vs ${opp}` : name, name, teams: opp ? [name, opp] : [], start: opp ? new Date().toISOString() : '', price: pct / 100, amt, u: 0, ev: 0 } });
   f.reset(); btn.disabled = false; btn.textContent = 'Add bet'; $('#cbox').open = false; });
+// Request/Report tab (2026-11-16): members send; Dennis answers here.
+let FB = { items: [] }, fbKind = 'issue', fbFilter = 'open';
+const FBK = { issue: '🐞 Issue', odds: '📉 Odds look off', idea: '💡 Idea' }, ago2 = t => { const m = Math.round((Date.now() - t) / 60000); return m < 60 ? m + 'm ago' : m < 1440 ? Math.round(m / 60) + 'h ago' : Math.round(m / 1440) + 'd ago'; };
+async function fbCall(body){ const t = ls.get('ratebrd_token_v1') || ''; try { const j = await (await fetch('/api/swaps?op=predfb', body ? { method: 'POST', headers: { 'content-type': 'application/json', ...(t ? { 'x-rb-token': t } : {}) }, body: JSON.stringify(body) } : { headers: t ? { 'x-rb-token': t } : {} })).json(); if (j.items) FB = j; else if (j.error) return j; } catch (e) { return { error: 'Could not reach the site.' }; } drawFb(); return {}; }
+function drawFb(){
+  const own = !!FB.owner, open = FB.items.filter(x => x.status === 'open').length;
+  $('#fn').textContent = own && open ? `(${open})` : '';
+  $('#fbown').hidden = !own; $('#fbform').hidden = own;
+  const gs = (J && J.games || []).filter(g => !g.ended); const sel = $('#fbg'), cur = sel.value;
+  sel.innerHTML = '<option value="">Not about one game</option>' + gs.map(g => `<option>${esc(g.game)}</option>`).join(''); sel.value = cur;
+  const list = own ? FB.items.filter(x => fbFilter === 'all' || x.status === fbFilter) : FB.items;
+  $('#fblist').innerHTML = (!own && list.length ? '<div class="sph"><span>Your requests</span></div>' : '') + (list.map(x => `<div class="fb"><div class="top2"><span><b>${FBK[x.kind] || x.kind}</b>${own ? ` · <span class="note">@${esc(x.by)}</span>` : ''} · <span class="note">${ago2(x.at)}</span></span><span class="st ${x.status}">${x.status}</span></div>
+    <h4>${esc(x.title)}</h4>${x.game ? `<div class="note">Game: ${esc(x.game)}</div>` : ''}${x.detail ? `<p>${esc(x.detail)}</p>` : ''}
+    ${(x.replies || []).map(r => `<div class="rp"><small>Dennis · ${ago2(r.at)}</small>${esc(r.text)}</div>`).join('')}
+    ${own ? `<div class="fbr"><input placeholder="Reply - shows here and in their Notifications" data-ri="${x.id}"><button class="place" data-reply="${x.id}">Reply</button></div>
+      <div class="fbact">${['open', 'planned', 'done', 'declined'].filter(st => st !== x.status).map(st => `<button data-st="${st}" data-id="${x.id}">${st === 'open' ? 'Reopen' : st[0].toUpperCase() + st.slice(1)}</button>`).join('')}<button class="del" data-fdel="${x.id}">Delete</button></div>`
+      : (x.status === 'open' ? `<div class="fbact"><button class="del" data-fdel="${x.id}">Withdraw</button></div>` : '')}</div>`).join('')
+    || (own ? '<div class="empty">Nothing here.</div>' : ''));
+}
+$('#fbk').addEventListener('click', e => { const b = e.target.closest('[data-k]'); if (!b) return; fbKind = b.dataset.k; document.querySelectorAll('#fbk button').forEach(x => x.setAttribute('aria-pressed', x === b)); });
+$('#fbform').addEventListener('submit', async e => { e.preventDefault(); const title = $('#fbt').value.trim(); if (title.length < 4) { $('#fbmsg').textContent = 'Give it a line I can read at a glance.'; return; }
+  $('#fbgo').disabled = true; $('#fbmsg').textContent = 'Sending…'; const r = await fbCall({ add: { kind: fbKind, title, detail: $('#fbd').value.trim(), game: $('#fbg').value } }); $('#fbgo').disabled = false;
+  if (r.error) { $('#fbmsg').textContent = r.error; return; } $('#fbt').value = ''; $('#fbd').value = ''; $('#fbg').value = ''; $('#fbmsg').textContent = 'Sent - thanks! You\'ll see the answer below.'; });
+$('#fbfilter').addEventListener('click', e => { const b = e.target.closest('[data-s]'); if (!b) return; fbFilter = b.dataset.s; document.querySelectorAll('#fbfilter button').forEach(x => x.setAttribute('aria-pressed', x === b)); drawFb(); });
+$('#fblist').addEventListener('click', e => { const r = e.target.closest('[data-reply]'), st = e.target.closest('[data-st]'), d = e.target.closest('[data-fdel]');
+  if (r) { const i = document.querySelector(`[data-ri="${r.dataset.reply}"]`); if (i && i.value.trim()) { r.disabled = true; fbCall({ reply: { id: r.dataset.reply, text: i.value.trim() } }); } }
+  if (st) fbCall({ status: { id: st.dataset.id, s: st.dataset.st } });
+  if (d && confirm2(d)) fbCall({ del: d.dataset.fdel }); });
+// Two taps to delete, no pop-up.
+function confirm2(b){ if (b.dataset.sure) return true; b.dataset.sure = '1'; b.textContent = 'Tap again'; setTimeout(() => { if (b.isConnected) { delete b.dataset.sure; b.textContent = FB.owner ? 'Delete' : 'Withdraw'; } }, 3000); return false; }
+fbCall();
 $('#keepb').checked = keepBets;
 $('#keepb').addEventListener('change', e => { keepBets = e.target.checked; ls.set('pred_keepbets', keepBets ? '1' : '0'); if (J && J.games) draw(); });
 let amtT = 0;

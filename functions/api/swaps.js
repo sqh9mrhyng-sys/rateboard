@@ -5992,6 +5992,32 @@ async function handle({ request, env, waitUntil }) {
       if (ch) await env.RATEBOARD_KV.put(K, JSON.stringify(l)); } catch (e) {}
     return json({ bets: l });
   }
+  /* Predictions feedback (Dennis, 2026-11-16): members with access send an issue or an idea from the
+     Predictions page; Dennis reads and answers them there, not in Admin. A reply also lands on the
+     member's Notifications page. KV list, newest first, at most 500. */
+  if (op === 'predfb') {
+    const who = String(acc.who || '').toLowerCase();
+    if (!who) return json({ error: 'Sign in first.' }, 401);
+    const owner = who === 'dennis';
+    if (!owner && !(await predAcc()).includes(who)) return forbidden('Predictions is invite-only for now.');
+    const K = 'pred_fb_v1'; let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get(K)) || '[]') || []; } catch (e) {}
+    if (request.method === 'POST') {
+      let b = {}; try { b = await request.json(); } catch (e) {}
+      const str = (v, n) => String(v == null ? '' : v).trim().slice(0, n);
+      if (b.add) {
+        if (!owner && !(await allow(url.origin, 'predfb:' + who, 10, 3600))) return json({ error: 'That is a lot of sends - try again later.' }, 429);
+        const title = str(b.add.title, 140); if (title.length < 4) return json({ error: 'Give it a line I can read at a glance.' }, 400);
+        l.unshift({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), by: who, kind: ['issue', 'idea', 'odds'].includes(b.add.kind) ? b.add.kind : 'idea', title, detail: str(b.add.detail, 1500), game: str(b.add.game, 120), at: Date.now(), status: 'open', replies: [] });
+      }
+      if (owner && b.reply) { const x = l.find(y => y.id === b.reply.id); const t = str(b.reply.text, 1000);
+        if (x && t) { x.replies = (x.replies || []).concat({ at: Date.now(), text: t }); await addNote(db, x.by, 'reply', `Predictions - "${x.title}": ${t}`); } }
+      if (owner && b.status) { const x = l.find(y => y.id === b.status.id); if (x && ['open', 'planned', 'done', 'declined'].includes(b.status.s)) { x.status = b.status.s;
+        if (b.status.s !== 'open') await addNote(db, x.by, 'reply', `Predictions - "${x.title}" is now marked ${b.status.s}.`); } }
+      if (b.del) l = l.filter(y => y.id !== String(b.del) || (!owner && y.by !== who));
+      l = l.slice(0, 500); await env.RATEBOARD_KV.put(K, JSON.stringify(l));
+    }
+    return json({ owner: owner || undefined, items: owner ? l : l.filter(y => y.by === who) });
+  }
   if (op === 'predev') {
     const who = String(acc.who || '').toLowerCase();
     if (!who) return json({ error: 'Sign in first.' }, 401);
