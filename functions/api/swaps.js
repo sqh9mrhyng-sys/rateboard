@@ -2793,6 +2793,32 @@ const AUDIT_DUE = Date.UTC(2026, 10, 5, 17, 0, 0);
    run's warning DMs start - whoever isn't reached by then is skipped. Hard end date, so it can never rerun. */
 const PROMO_DUE = Date.UTC(2026, 10, 17, 21, 0, 0), PROMO_STOP = PROMO_DUE - 30 * 60000;
 const PROMO_TEXT = 'Tired of inconsistent times from the bot, or missing the notification because it becomes 1 of 50 for real? Push notifications available for swaps now! Follow instructions on https://raxacademy.app/notifications to activate';
+/* One-off (Dennis, 2026-11-17, his wording and his list): ask these members for Predictions feedback. Only
+   chats the bot already has; each member claimed in the database first so two processes can't both send.
+   Ends at midnight UTC tonight. */
+const PREDASK_END = Date.UTC(2026, 10, 18, 9, 0, 0);
+const PREDASK_TEXT = 'Hey we were interested in your feedback, what do you think about https://raxacademy.app/predictions what changes would make you stay longterm?';
+const PREDASK_USERS = ['bill', 'blaps', 'bryson', 'tovw', 'pup', 'maobappe', 'watto', 'ryanthegoat1as', 'raxrothschild', 'z.brian', 'ethand_', 'matt_boldy12', 'mac', 'lfed', 'kn1cks5', 'fears_'];
+async function predAsk(env, db, auth) {
+  if (Date.now() >= PREDASK_END) return;
+  const K = 'dm_predask_v1';
+  let st = null; try { st = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
+  st = st || { sent: [], noChat: [], notFound: [], failed: [] };
+  if (st.sent.length + st.noChat.length + st.notFound.length + st.failed.length >= PREDASK_USERS.length) return;
+  await db.prepare('CREATE TABLE IF NOT EXISTS dm_once (k TEXT PRIMARY KEY, at INTEGER)').run();
+  for (const u of PREDASK_USERS) {
+    if (TICK_T0 && tickLeft() - dmWaitAhead() < 9000) break;
+    const c = await db.prepare('INSERT OR IGNORE INTO dm_once (k, at) VALUES (?, ?)').bind('predask:' + u, Date.now()).run();
+    if (!(c && c.meta && c.meta.changes)) continue;   // already handled, here or by another process
+    const r = await db.prepare('SELECT key, hashId FROM swap_users WHERE LOWER(rsUser)=? LIMIT 1').bind(u).first();
+    if (!r || !r.hashId) { st.notFound.push(u); }
+    else { const had = await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=?').bind(r.hashId).first();
+      if (!had || !had.channelId) st.noChat.push(u);
+      else { try { await dmSendRetry(auth, had.channelId, PREDASK_TEXT, 3); st.sent.push(u); await stat(db, 'dm_predask'); } catch (e) { st.failed.push(u + ': ' + String(e.message || e).slice(0, 60)); } } }
+    try { const cur = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (cur) for (const f of ['sent', 'noChat', 'notFound', 'failed']) st[f] = [...new Set([...(cur[f] || []), ...st[f]])]; } catch (e) {}
+    await env.RATEBOARD_KV.put(K, JSON.stringify(st), { expirationTtl: 3 * 86400 }); await sleep(400);
+  }
+}
 async function pushPromo(env, db, auth) {
   if (Date.now() >= PROMO_STOP) return;
   const K = 'dm_promo_' + PROMO_DUE;
@@ -3180,6 +3206,7 @@ async function dmTick(env) {
   // try { await auditHour(env, db, auth); } catch (e) { await botFail(db, 'dm_audit', e.message); }
   try { await fixHourDms(env, db, auth); } catch (e) { await botFail(db, 'dm_fix', e.message); }
   try { await pushPromo(env, db, auth); } catch (e) { await botFail(db, 'dm_promo', e.message); }
+  try { await predAsk(env, db, auth); } catch (e) { await botFail(db, 'dm_predask', e.message); }
   /* Dennis, 2026-11-12: once the 10:00am Alaska swap DMs are out, everything
      still waiting in the resend lines is deleted, so nobody gets an old message. */
   try { if (Date.now() >= Date.UTC(2026, 10, 12, 19, 8) && !(await env.RATEBOARD_KV.get('dm_purge_1112'))) {
