@@ -764,8 +764,8 @@ async function predReal(env) {
           for (const m of mk) { if (m.isLocked) continue; const v = volOf(m), p0 = Number((m.outcomes[0] || {}).probability); if (!(v >= 0) || !(p0 > 0)) continue;
             const L = SL[m.id] = SL[m.id] || { sp, s: [] }, last = L.s[L.s.length - 1];
             if (!last || last[1] !== v || Math.abs(last[2] - p0) > 1e-6) { L.s.push([Date.now(), v, Math.round(p0 * 1e5) / 1e5]); ch = true; }
-            L.s = L.s.filter(x => Date.now() - x[0] < 2 * 3600000).slice(-800); }
-          for (const k of Object.keys(SL)) if (!SL[k].s.length || Date.now() - SL[k].s[SL[k].s.length - 1][0] > 6 * 3600000) { delete SL[k]; ch = true; }
+            L.s = L.s.filter(x => Date.now() - x[0] < 12 * 3600000).slice(-1500); }
+          for (const k of Object.keys(SL)) if (!SL[k].s.length || Date.now() - SL[k].s[SL[k].s.length - 1][0] > 14 * 3600000) { delete SL[k]; ch = true; }
           if (ch) await env.RATEBOARD_KV.put('pred_slip_v1', JSON.stringify(SL), { expirationTtl: 86400 }); } catch (e) {}
       }
       const names = ODDS_TEAMS[sp] || {}, abbr = odds.abbr || {};
