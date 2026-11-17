@@ -94,7 +94,7 @@
 <body><div class="wrap">
 <a href="/" class="back">← Home</a>
 <div class="top"><h1>Predictions EV</h1><span class="pulse" id="pulse"><i></i><span id="ago">-</span></span></div>
-<div class="tabs" id="tabs"><button data-t="m" aria-pressed="true">Markets</button><button data-t="b" aria-pressed="false">My bets <span id="bn"></span></button><button data-t="r" aria-pressed="false">Arbitrage <span id="rn"></span></button><button data-t="g" aria-pressed="false">Guide</button><button data-t="a" aria-pressed="false" hidden>Access</button></div>
+<div class="tabs" id="tabs"><button data-t="m" aria-pressed="true">Markets</button><button data-t="b" aria-pressed="false">My bets <span id="bn"></span></button><button data-t="r" aria-pressed="false" hidden>Arbitrage <span id="rn"></span></button><button data-t="g" aria-pressed="false">Guide</button><button data-t="a" aria-pressed="false" hidden>Access</button></div>
 <div id="vm">
 <label class="bank"><span>Enter your rax amount for custom recommendations</span><input id="bank" type="number" inputmode="numeric" min="0" step="100" placeholder="e.g. 5000"><small id="banknote">1u = 1% of your rax</small></label>
 <div class="sum" id="sum"></div>
@@ -133,8 +133,8 @@
 <p>Example with 5,000 rax: 1u = 50 rax. A favorite at 60% with a 70% fair price is Kelly 25% → 2u → <b>100 rax</b>. An underdog at 15% with a 20% fair price is Kelly 6% → capped 0.5u → <b>25 rax</b>.</p>
 <h2>Placing a bet</h2>
 <p>Every side shows a <b>unit ladder</b>, like <b>0.5u under 50% · 1u under 47% · 2u under 44%</b>: the size to bet at each Real price, from the same rule as above. Live prices swing between refreshes, so if Real jumps to 46% you already know it's a 1u bet without waiting. The size the current price earns is lit green. <b>+EV up to X%</b> is the highest price that's still worth a bet at all; above it, skip. Once you buy, tap <b>Bet placed</b>, put in the Real % you actually got and the rax you bet (both filled in for you), and tap <b>Enter</b>: the game leaves Markets and shows in <b>My bets</b>. Change the amount if you put in something different; the payout (amount ÷ the price you paid) updates with it. The payout can be changed too if Real paid something different (clear it to go back to auto). When the market settles on Real it's marked Won or Lost for you; you can still tap Won or Lost yourself.</p>
-<h2>Arbitrage (locking in profit)</h2>
-<p>Once you hold a side, Real's price often swings the other way during a game. If you then buy the <b>other side</b> so both sides pay the same, you win the same amount whichever team wins. Example: 300 rax on a team at 30% pays 1,000. If the other side drops to 55%, buying it for 570 rax also pays 1,000 - you've staked 870 total and get 1,000 back either way: <b>+130 locked (15%)</b>. The Arbitrage tab works this out for every open bet, adds slippage (how many points Real's price moves against you as you buy - 2 by default, change it there), and only calls it ready at <b>10%+ guaranteed profit</b>. It also shows the price the other side has to reach. After you buy, tap <b>Hedge placed</b> and it shows as locked.</p>
+<div id="garb" hidden><h2>Arbitrage (locking in profit)</h2>
+<p>Once you hold a side, Real's price often swings the other way during a game. If you then buy the <b>other side</b> so both sides pay the same, you win the same amount whichever team wins. Example: 300 rax on a team at 30% pays 1,000. If the other side drops to 55%, buying it for 570 rax also pays 1,000 - you've staked 870 total and get 1,000 back either way: <b>+130 locked (15%)</b>. The Arbitrage tab works this out for every open bet, adds slippage (how many points Real's price moves against you as you buy - 2 by default, change it there), and only calls it ready at <b>10%+ guaranteed profit</b>. It also shows the price the other side has to reach. After you buy, tap <b>Hedge placed</b> and it shows as locked.</p></div>
 <h2>Step 5 - When not to trust it</h2>
 <p><b>Thin odds</b>: during a game, if fewer than 3 books have a line, or the newest line is over a minute old, the EV is greyed out and gets no unit size - books freeze their lines in blowouts and late in games, so a huge EV there is usually just an old line. Open <b>Book breakdown</b> to see every book's % and how old its line is.</p>
 <p><b>Hidden games</b>: the <b>+EV</b> tab shows only games with a bet to make, best EV first, and leaves out games where a side's fair % is under 7% (basically decided). <b>All</b> shows every open market. Locked markets are always hidden.</p>
@@ -300,11 +300,12 @@ function arbOf(b){
   const room = (P - (1 + ARB_MIN) * b.amt) / ((1 + ARB_MIN) * P), other = legs.length === 1 ? Math.floor((room - slip / 100) * 100) : null;
   return { g, P, legs, total, profit, pct, ready: pct >= ARB_MIN, target: other };
 }
-function arbLine(b){ const a = arbOf(b); if (!a) return '';
+function arbLine(b){ if (!J || !J.owner) return ''; const a = arbOf(b); if (!a) return '';
   if (a.hedged) return `<div class="arb ok">🔒 Hedged: ${a.worst >= 0 ? '+' : ''}${Math.round(a.worst).toLocaleString()} to ${a.best >= 0 ? '+' : ''}${Math.round(a.best).toLocaleString()} rax whichever way it goes</div>`;
   return a.ready ? `<div class="arb ok">⚡ Arb now: buy ${a.legs.map(l => `${esc(l.name)} ${Math.round(l.stake).toLocaleString()} rax at ≤${Math.round(l.q * 100)}%`).join(' + ')} → +${Math.round(a.profit).toLocaleString()} rax locked (${Math.round(a.pct * 100)}%)</div>`
     : `<div class="arb">Arb: ${a.target != null && a.target > 0 ? `${esc(a.legs[0].name)} at ${a.target}% or less locks 10%+ (now ${pw(a.legs[0].now)})` : `needs the other side${a.legs.length > 1 ? 's' : ''} to drop (now ${Math.round(a.pct * 100)}%)`}</div>`; }
 function drawArb(){
+  if (!J || !J.owner) return;   // arbitrage is Dennis-only for now (2026-11-16)
   const seen = new Set(), act = BETS.filter(b => !b.res && !seen.has(b.gid) && seen.add(b.gid)), rows = act.map(b => ({ b, a: arbOf(b) })).filter(x => x.a);
   const ready = rows.filter(x => x.a.ready && !x.a.hedged);
   $('#rn').textContent = ready.length ? `(${ready.length})` : '';
@@ -355,7 +356,7 @@ function draw(){
     html = html || `<div class="empty">${chip === '_ev' && games.length ? 'No +EV bets right now.' : 'No open game markets on Real right now.'}</div>`;
   }
   $('#list').innerHTML = html;
-  $('#tabs [data-t="a"]').hidden = !J.owner;
+  $('#tabs [data-t="a"]').hidden = !J.owner; $('#tabs [data-t="r"]').hidden = !J.owner; $('#garb').hidden = !J.owner;
   tick();
 }
 document.addEventListener('toggle', e => { const d = e.target; if(!d.matches || !d.matches('details.bd')) return; d.open ? openBd.add(d.dataset.bd) : openBd.delete(d.dataset.bd); }, true);
