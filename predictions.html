@@ -77,6 +77,11 @@
   .tk{background:rgba(232,163,61,.12);color:var(--accent);font-size:12px;font-weight:800;padding:6px 14px;border-bottom:1px solid var(--line)} .g.taken{border-color:rgba(232,163,61,.45)}
 .arb{font-size:12px;font-weight:700;color:var(--mute);padding:6px 14px;border-top:1px solid var(--line)} .arb.ok{color:var(--good);background:rgba(63,191,127,.08)}
 .endbox{margin-top:8px} .endbox>summary{cursor:pointer;list-style:none} .endbox>summary::-webkit-details-marker{display:none}
+.atot{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:8px 14px;border-top:1px solid var(--line);background:rgba(232,163,61,.06)} .atot .c{text-align:left;font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em} .atot .c b{display:block;font-size:17px;color:var(--ink);text-transform:none;letter-spacing:0} .atot .c b.pos{color:var(--good)} .atot .c b.neg{color:var(--bad)}
+  .tag.arbt{background:rgba(232,163,61,.15);color:var(--accent)}
+  .leg{display:grid;grid-template-columns:28px 1fr 74px 74px auto;gap:8px;align-items:center;padding:8px 14px;border-top:1px solid var(--line)} .leg .ln{min-width:0;font-size:14px} .leg .ln small{display:block;font-size:12px;color:var(--mute)} .leg .ln .tag{font-size:10px;padding:1px 6px}
+  .leg label{font-size:10px;color:var(--mute);font-weight:700;text-transform:uppercase} .leg input{display:block;width:100%;margin-top:2px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:5px 6px;font:inherit;font-size:15px}
+  .lact{display:flex;gap:4px} .lact button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:4px 7px;font:inherit;font-size:12px;font-weight:800;cursor:pointer} .lact .del{color:var(--bad)}
   .upto{font-size:12px;color:var(--mute)} .upto b{color:var(--ink)}
   .place{white-space:nowrap;align-self:flex-start}
   .place,.bact button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 10px;font:inherit;font-size:13px;font-weight:800;cursor:pointer}
@@ -339,8 +344,22 @@ function drawBets(){
       <div class="bamt"><label>Amount placed <input type="number" inputmode="numeric" min="0" step="1" value="${b.amt || ''}" placeholder="rax" data-amt="${esc(b.id)}"></label>
         <label class="payl">${b.res === 'won' ? 'Paid out' : 'Pays'} <input type="number" inputmode="numeric" min="0" step="1" value="${Math.round(pay)}" data-pay="${esc(b.id)}"><small>${b.pay != null ? `<a href="#" data-payauto="${esc(b.id)}">auto (${Math.round(auto).toLocaleString()})</a>` : 'auto'} · ${b.res === 'lost' ? `-${Math.round(b.amt || 0).toLocaleString()}` : `+${Math.round(pay - (b.amt || 0)).toLocaleString()}`} profit</small></label></div>
       ${b.res ? '' : arbLine(b)}<div class="bact">${b.res ? `<button data-res="${esc(b.id)}" data-v="">Undo result</button>` : `<button data-res="${esc(b.id)}" data-v="won">Won</button><button data-res="${esc(b.id)}" data-v="lost">Lost</button>`}<button data-del="${esc(b.id)}" class="del">Remove</button></div></div>`; };
-  $('#blist').innerHTML = (act.length ? '<div class="sph"><span>Active</span></div>' + act.map(row).join('') : '<div class="empty">No active bets. Tap "Bet placed" on a side in Markets and it moves here.</div>')
-    + (done.length ? '<div class="sph"><span>Settled</span></div>' + done.map(row).join('') : '');
+  /* Two or more bets on one game (both sides): one "Arbitrage bet" block with totals (Dennis, 2026-11-16). */
+  const groupRow = l => { const b0 = l[0], g = now.get(b0.gid), placed = l.reduce((a, b) => a + (b.amt || 0), 0), settled = l.every(b => b.res);
+    const paid = l.filter(b => b.res === 'won').reduce((a, b) => a + payOf(b), 0), pays = l.map(b => payOf(b)), lo = Math.min(...pays), hi = Math.max(...pays);
+    const st = settled ? '<span class="tag">Settled</span>' : !g || g.ended ? '<span class="tag">Waiting for result</span>' : g.live ? '<span class="tag live">● LIVE</span>' : when(g);
+    const money = v => `${v >= 0 ? '+' : ''}${Math.round(v).toLocaleString()}`;
+    return `<div class="g bet arbg"><div class="gh"><div style="min-width:0;flex:1"><span class="nm">${esc(b0.game)}</span><div class="meta"><span class="tag">${esc(SPN[b0.sport] || b0.sport)}</span><span class="tag arbt">Arbitrage bet</span>${st}</div></div>${b0.link ? `<a class="go" href="${esc(b0.link)}" target="_blank" rel="noopener">Open ↗</a>` : ''}</div>
+      <div class="atot"><span class="c">Total placed<b>${Math.round(placed).toLocaleString()}</b></span><span class="c">${settled ? 'Paid out' : 'Pays'}<b class="pos">${settled ? Math.round(paid).toLocaleString() : lo === hi ? Math.round(lo).toLocaleString() : `${Math.round(lo).toLocaleString()}-${Math.round(hi).toLocaleString()}`}</b></span><span class="c">Profit<b class="${(settled ? paid - placed : lo - placed) >= 0 ? 'pos' : 'neg'}">${settled ? money(paid - placed) : lo === hi ? money(lo - placed) : `${money(lo - placed)} to ${money(hi - placed)}`}</b></span></div>
+      ${l.map(b => `<div class="leg">${b.logo ? `<img class="lg" src="${esc(b.logo)}" alt="" loading="lazy">` : '<i class="dot"></i>'}<span class="ln"><b>${esc(b.name)}</b>${b.res ? ` <span class="tag ${b.res}">${b.res === 'won' ? 'Won' : 'Lost'}</span>` : ''}<small>at ${pw(b.price)}</small></span>
+        <label>Placed<input type="number" inputmode="numeric" min="0" step="1" value="${b.amt || ''}" data-amt="${esc(b.id)}"></label><label>Pays<input type="number" inputmode="numeric" min="0" step="1" value="${Math.round(payOf(b))}" data-pay="${esc(b.id)}"></label>
+        <span class="lact">${b.res ? `<button data-res="${esc(b.id)}" data-v="" title="Undo result">↺</button>` : `<button data-res="${esc(b.id)}" data-v="won">W</button><button data-res="${esc(b.id)}" data-v="lost">L</button>`}<button data-del="${esc(b.id)}" class="del" title="Remove">✕</button></span></div>`).join('')}</div>`; };
+  const blocks = list => { const by = new Map(), out = []; for (const b of list) { const k = b.gid > 0 ? 'g' + b.gid : 'i' + b.id; if (!by.has(k)) { by.set(k, []); out.push(k); } by.get(k).push(b); }
+    return out.map(k => by.get(k).length > 1 ? groupRow(by.get(k)) : row(by.get(k)[0])).join(''); };
+  // A game with any leg still open stays in Active as a whole.
+  const openG = new Set(act.filter(b => b.gid > 0).map(b => b.gid)), actL = BETS.filter(b => !b.res || (b.gid > 0 && openG.has(b.gid))), doneL = BETS.filter(b => !actL.includes(b));
+  $('#blist').innerHTML = (actL.length ? '<div class="sph"><span>Active</span></div>' + blocks(actL) : '<div class="empty">No active bets. Tap "Bet placed" on a side in Markets and it moves here.</div>')
+    + (doneL.length ? '<div class="sph"><span>Settled</span></div>' + blocks(doneL) : '');
 }
 function draw(){
   const ae = document.activeElement; if (ae && ae.closest && ae.closest('form.bf')) { tick(); return; }
@@ -395,7 +414,7 @@ $('#keepb').checked = keepBets;
 $('#keepb').addEventListener('change', e => { keepBets = e.target.checked; ls.set('pred_keepbets', keepBets ? '1' : '0'); if (J && J.games) draw(); });
 let amtT = 0;
 $('#blist').addEventListener('input', e => { const i = e.target.closest('[data-amt]'); if (!i) return; clearTimeout(amtT);
-  const b = BETS.find(x => x.id === i.dataset.amt); if (b) { b.amt = Number(i.value) || 0; const pi = i.closest('.bamt').querySelector('[data-pay]'); if (pi && b.pay == null && b.price > 0) pi.value = Math.round(b.amt / b.price); }
+  const b = BETS.find(x => x.id === i.dataset.amt); if (b) { b.amt = Number(i.value) || 0; const pi = (i.closest('.bamt') || i.closest('.leg')).querySelector('[data-pay]'); if (pi && b.pay == null && b.price > 0) pi.value = Math.round(b.amt / b.price); }
   amtT = setTimeout(() => betsCall({ set: { id: i.dataset.amt, amt: Number(i.value) || 0 } }), 800); });
 let payT = 0;
 $('#blist').addEventListener('input', e => { const i = e.target.closest('[data-pay]'); if (!i) return; clearTimeout(payT);
