@@ -43,7 +43,7 @@ async function load(){
   if(J.error){ $('#msg').innerHTML = /sign in/i.test(J.error) ? 'Sign in first - <a href="/?next=/predictions">sign in</a>.' : esc(J.error); return; }
   if(!J.keySet){ $('#msg').textContent = 'The Odds API key isn\'t on the server yet.'; return; }
   const m = J.at ? Math.round((Date.now() - J.at) / 60000) : null;
-  $('#msg').textContent = `EV per rax on Real's game markets vs sportsbook odds (margin removed). Updated ${m == null ? '-' : m < 1 ? 'just now' : m + ' min ago'} · every 2 minutes.`;
+  $('#msg').textContent = `EV per rax on Real's game markets vs sportsbook odds (margin removed). Updated ${m == null ? '-' : m < 1 ? 'just now' : m + ' min ago'}${J.credits != null ? ` · ${J.credits} odds credits left` : ''}.`;
   draw();
 }
 function draw(){
