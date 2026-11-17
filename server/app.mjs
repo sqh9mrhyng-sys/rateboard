@@ -72,7 +72,7 @@ function serveStatic(req) {
   const body = fs.readFileSync(f);
   return new Response(req.method === 'HEAD' ? null : body, { status: 200, headers: {
     'content-type': TYPES[ext] || 'application/octet-stream',
-    'cache-control': ext === '.html' || u.pathname === '/sw.js' ? 'no-cache' : /^\/(img|data)\//.test(u.pathname) ? 'public, max-age=3600' : 'public, max-age=300' } });
+    'cache-control': ext === '.html' || u.pathname === '/sw.js' || (ext === '.js' && /^\/[^/]+$/.test(u.pathname)) ? 'no-cache' : /^\/(img|data)\//.test(u.pathname) ? 'public, max-age=3600' : 'public, max-age=300' } });
 }
 
 async function route(ctx) {

@@ -17,6 +17,8 @@
     ['/notifications', 'Notifications'],
     ['/admin', 'Admin', 'admin']
   ];
+  // Default menu order (Dennis, 2026-11-17); a member's own order from the UI panel replaces it.
+  var NAV_DEFAULT = ['/swaps', '/boosts', '/predictions', '/board#otd', '/board', '/bulk', '/packs', '/projections', '/tags', '/notifications', '/board#gamedata', '/admin'];
   window.RB_NAV_PAGES = PAGES;
   var ls = { get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
   var ss = { get: function (k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }, set: function (k, v) { try { sessionStorage.setItem(k, v); } catch (e) {} } };
@@ -30,7 +32,7 @@
   var canOpen = function (p) { return !p[2] || (p[2] === 'pred' ? !!ACC.pred : !!ACC.admin); };
 
   function list() {
-    var u = ui(), hid = u.navHidden || [], o = u.navOrder || []; if (!o.length) try { o = JSON.parse(ls.get('rb_home_order_v1') || '[]') || []; } catch (e) {}
+    var u = ui(), hid = u.navHidden || [], o = (u.navOrder && u.navOrder.length) ? u.navOrder : NAV_DEFAULT;
     var rest = PAGES.slice(1).filter(function (p) { return canOpen(p) && hid.indexOf(p[0]) < 0; });
     var pos = function (h, i) { var k = o.indexOf(h); return k < 0 ? 1e3 + i : k; };
     rest = rest.map(function (p, i) { return [p, pos(p[0], i)]; }).sort(function (a, b) { return a[1] - b[1]; }).map(function (x) { return x[0]; });
@@ -54,7 +56,7 @@
   function show(b) {
     close();
     var m = document.createElement('div'); m.className = 'rbnav-m'; m.setAttribute('role', 'menu');
-    m.innerHTML = list().map(function (p) { var c = here(p[0]); return '<a role="menuitem" href="' + esc(p[0]) + '"' + (c ? ' class="cur" aria-current="page"' : '') + '><span class="d"></span>' + esc(p[1]) + '</a>'; }).join('')
+    m.innerHTML = list().map(function (p) { var c = here(p[0]); return '<a role="menuitem" href="' + esc(p[0]) + '"' + (c ? ' class="cur" aria-current="page"' : '') + '><span class="d"></span>' + esc(p[1]) + '</a>' + (p[0] === '/' ? '<div class="s"></div>' : ''); }).join('')
       + '<div class="s"></div><a role="menuitem" class="cz" href="/?ui=1">Customize this menu</a>';
     document.body.appendChild(m);
     var r = b.getBoundingClientRect(), w = m.offsetWidth;

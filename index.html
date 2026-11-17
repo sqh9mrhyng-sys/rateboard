@@ -346,9 +346,9 @@ const THEME_NAMES = { custom: 'Your own', '': 'Classic', midnight: 'Midnight', o
 async function saveUI(part){ Object.assign(UI, part); ls.set('rb_ui_v1', JSON.stringify(UI)); drawNav();
   await api('/api/kv', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'uiPrefs', set: part }) }); }
 // The page menu's order and pages (2026-11-17): arrows move a page, the tick shows or hides it.
+const NAV_DEFAULT = ['/swaps', '/boosts', '/predictions', '/board#otd', '/board', '/bulk', '/packs', '/projections', '/tags', '/notifications', '/board#gamedata', '/admin'];
 function navOrdered(){
-  const list = PAGES.filter(p => p[0] !== '/' && canOpen(p)); let o = UI.navOrder || [];
-  if(!o.length){ try{ o = JSON.parse(ls.get(ORDER) || '[]') || []; }catch(e){} }
+  const list = PAGES.filter(p => p[0] !== '/' && canOpen(p)); const o = (UI.navOrder && UI.navOrder.length) ? UI.navOrder : NAV_DEFAULT;
   const pos = (h, i) => { const k = o.indexOf(h); return k < 0 ? 1e3 + i : k; };
   return list.map((p, i) => [p, pos(p[0], i)]).sort((a, b) => a[1] - b[1]).map(x => x[0]);
 }
@@ -370,9 +370,11 @@ function openUI(){
     ${pages.map(([h, t]) => `<label class="tg">${esc(t)}<input type="checkbox" data-page="${esc(h)}"${(UI.hidden || []).includes(h) ? '' : ' checked'}></label>`).join('')}
     <h3 id="ui-menu">Show in the menu</h3><p class="note" style="margin:0 0 4px">The Menu at the top of every other page. Use the arrows to move a page, untick it to leave it out. Home always stays first.</p>
     <div id="ui-navlist">${navRows()}</div>
+    <button class="x" type="button" id="ui-navreset" style="margin-top:8px">Reset to the default order</button>
     <p class="note" style="margin:14px 0 0">Saved to your account, so it follows you to other devices.</p></div>`;
   document.body.appendChild(el);
   el.addEventListener('click', e => { if(e.target === el || e.target.closest('[data-close]')) el.remove();
+    if(e.target.id === 'ui-navreset'){ saveUI({ navOrder: [] }); el.querySelector('#ui-navlist').innerHTML = navRows(); return; }
     const mv = e.target.closest('[data-nmove]'); if(mv){ const o = navOrdered().map(p => p[0]), i = o.indexOf(mv.dataset.nh), j = i + Number(mv.dataset.nmove);
       if(i >= 0 && j >= 0 && j < o.length){ [o[i], o[j]] = [o[j], o[i]]; saveUI({ navOrder: o }); const box = el.querySelector('#ui-navlist'); box.innerHTML = navRows(); const nb = box.querySelector(`[data-nh="${CSS.escape(mv.dataset.nh)}"][data-nmove="${mv.dataset.nmove}"]`); if(nb && !nb.disabled) nb.focus(); } return; }
     const b = e.target.closest('[data-theme]'); if(b){ const k = b.dataset.theme; el.querySelectorAll('[data-theme]').forEach(x => x.setAttribute('aria-pressed', x === b)); if(window.rbApplyTheme) rbApplyTheme(k, UI.custom); el.querySelector('#ui-own').hidden = k !== 'custom'; saveUI({ theme: k }); }
