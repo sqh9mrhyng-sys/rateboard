@@ -6103,7 +6103,18 @@ async function handle({ request, env, waitUntil }) {
     if (acc.who) { try { const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(acc.who).first();
       mine = parse(u && u.passes, []).filter(p => p.kind !== 'team' && /rare|epic|legendary|mystic|iconic/i.test(p.levelLabel || '')).map(p => ({ key: p.key, name: p.name, sport: p.sport, sp: SPN[p.sport] || p.sport, season: p.season, playerId: p.id, rating: p.rating, label: p.levelLabel || null,
         url: p.passId ? `https://www.realapp.com/${routeId([18, 0, 0, Number(p.passId)])}` : null })); } catch (e) {} }
-    return new Response(BULK_MEMO.text + `,"signedIn":${acc.who ? 'true' : 'false'},"grind":${String(acc.who || '').toLowerCase() === 'dennis' ? 'true' : 'false'},"mine":${JSON.stringify(mine)}}`, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
+    /* Injured players (Dennis, 2026-11-16: Drake Maye is out long-term, so everyone sells him cheap and he
+       kept showing as a deal): Out / IR / Doubtful / Suspension from ESPN and the hand list, by sport and
+       name, read every 10 minutes. The page leaves their current-season passes off Best deals. */
+    if (!BULK_MEMO.inj || Date.now() - BULK_MEMO.injAt > 10 * 60000) {
+      const inj = {};
+      for (const sp of ['nfl', 'ncaaf', 'nba', 'ncaam', 'nhl', 'mlb']) {
+        let m = {}; try { m = Object.assign({}, (ESPN_PATH[sp] ? await boostInjuries(env, sp) : {}) || {}, await boostManualOut(env, sp)); } catch (e) {}
+        for (const [k, v] of Object.entries(m)) { if (k.includes('|') || !v || !/^(out|injured reserve|ir|doubtful|suspen)/i.test(String(v.status || ''))) continue; inj[sp + '|' + k] = String(v.status) + (v.note ? ' - ' + String(v.note).slice(0, 60) : ''); }
+      }
+      BULK_MEMO.inj = JSON.stringify(inj); BULK_MEMO.injAt = Date.now();
+    }
+    return new Response(BULK_MEMO.text + `,"inj":${BULK_MEMO.inj},"signedIn":${acc.who ? 'true' : 'false'},"grind":${String(acc.who || '').toLowerCase() === 'dennis' ? 'true' : 'false'},"mine":${JSON.stringify(mine)}}`, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
   }
   if (op === 'notifs') {
     if (!acc.who) return forbidden('Sign in first (raxacademy.app).');
@@ -7269,6 +7280,14 @@ async function handle({ request, env, waitUntil }) {
   }
   /* Username suggestions for the Report page (2026-11-16), signed-in members only: names that start
      with what was typed first, then names that contain it. Usernames only. */
+  /* Your passes by sport, names only (2026-11-16, Board seller's "Exclude owned"): from your last pass scan. */
+  if (op === 'mypassnames') {
+    if (!acc.who) return json({ error: 'Sign in first.' }, 401);
+    const u = await db.prepare('SELECT passes, scannedAt FROM swap_users WHERE LOWER(key)=?').bind(String(acc.who).toLowerCase()).first().catch(() => null);
+    if (!u) return json({ none: true, sports: {} });
+    const out = {}; for (const p0 of parse(u.passes, [])) { const sp = String(p0.key || '').split(':')[0]; if (!sp || !p0.name) continue; (out[sp] = out[sp] || []).push(p0.name); }
+    return json({ sports: out, at: u.scannedAt || null });
+  }
   if (op === 'membersearch') {
     if (!acc.who) return json({ error: 'Sign in first.' }, 401);
     if (!(await allow(url.origin, 'msearch:' + acc.who, 60, 60))) return json({ rows: [] });

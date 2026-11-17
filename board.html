@@ -795,6 +795,8 @@
             </div>
             <p class="note hide" id="rs-none"></p>
             <button id="s-exclude" class="btn-ghost">Exclude players/teams</button>
+            <label class="note" style="display:flex;gap:8px;align-items:center;font-weight:700"><input type="checkbox" id="s-exowned"> Exclude owned - leave out players you have a pass for</label>
+            <p class="note hide" id="s-exowned-note" style="margin:-4px 0 0"></p>
             <button id="s-hide-board" class="btn-ghost">Hide the buy offers board</button>
           </div>
         </div>
@@ -3853,6 +3855,20 @@ function saveExcludes(list){ try{ localStorage.setItem(EXCLUDE_KEY, JSON.stringi
 function isExcluded(name, list){ return (list || loadExcludes()).some(x => samePlayer(x, name)); }
 
 $('#s-exclude').addEventListener('click', excludeManager);
+/* Exclude owned (Dennis, 2026-11-16): leave out every player you have a pass for (from your last pass scan on
+   Swaps), so you aren't told to sell the cards you're grinding. On/off is remembered on this device. */
+const EXOWN_KEY = 'ratebrd_exowned_v1', BOARD_SP = { CFB: 'ncaaf', FC: 'soccer', NFL: 'nfl', UFC: 'ufc', NHL: 'nhl', NBA: 'nba' };
+let ownedCache = null;
+async function ownedPassNames(){
+  let on = false; try{ on = localStorage.getItem(EXOWN_KEY) === '1'; }catch(e){}
+  if(!on) return [];
+  if(!ownedCache){ try{ ownedCache = await (await fetch('/api/swaps?op=mypassnames')).json(); }catch(e){ ownedCache = { sports: {} }; } }
+  const n = $('#s-exowned-note'), list = (ownedCache.sports || {})[BOARD_SP[sport]] || [];
+  if(n){ n.classList.remove('hide'); n.textContent = ownedCache.none ? 'No passes found - scan your passes on the Swaps page first.' : `${list.length} ${SPORTS[sport]} pass${list.length === 1 ? '' : 'es'} left out${ownedCache.at ? ' (from your scan ' + new Date(ownedCache.at).toLocaleDateString() + ')' : ''}.`; }
+  return list;
+}
+try{ $('#s-exowned').checked = localStorage.getItem(EXOWN_KEY) === '1'; }catch(e){}
+$('#s-exowned').addEventListener('change', e => { try{ localStorage.setItem(EXOWN_KEY, e.target.checked ? '1' : '0'); }catch(e2){} if(!e.target.checked) $('#s-exowned-note').classList.add('hide'); else ownedPassNames(); });
 
 function excludeManager(){
   const box = modal('Exclude players/teams', `
@@ -3973,10 +3989,11 @@ async function showMatches(raw){
                            .map(p => ({...p, name: asciiName(p.name)}))
                            .filter(p => p.name);
 
-  const excludes = loadExcludes();
+  const excludes = loadExcludes(), owned = await ownedPassNames();
   const hits = [], noBuyer = [], blocked = [];
   for(const p of players){
     if(isExcluded(p.name, excludes)) continue;
+    if(owned.length && owned.some(n => samePlayer(n, p.name))) continue;   // Exclude owned (2026-11-16)
     // On the house list: bought at a set rate, so it never goes on the board.
     const hs = houseFor(sport, p.name);
     if(hs){ blocked.push({ name:p.name, cfg:hs,

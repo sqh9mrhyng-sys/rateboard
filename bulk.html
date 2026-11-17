@@ -212,6 +212,11 @@ function setView(v){ view = v; ls.set('bulk_view', v); shown = 150;
   document.querySelectorAll('#seg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === v));
   const custom = $('#per').value === 'c'; $('#from').hidden = $('#to').hidden = !custom;
   draw(); }
+/* Injuries (2026-11-16): a player who's Out / IR / Doubtful sells cheap for a reason, so his passes for the
+   sport's newest season are left off Best deals and flagged. */
+const injName = n => String(n || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\b(jr|sr|ii|iii|iv)\b\.?/g, '').replace(/[^a-z]/g, '');
+const newestSeason = sp => Math.max(0, ...((D && D.rows) || []).filter(x => x.sport === sp).map(x => Number(x.season) || 0));
+const injOf = r => { const st = D && D.inj && D.inj[`${r.sport}|${injName(r.name)}`]; return st && Number(r.season) === newestSeason(r.sport) ? st : null; };
 const pass = r => { const q = $('#q').value.trim().toLowerCase(), sp = $('#sp').value; return (!q || String(r.name || '').toLowerCase().includes(q)) && (!sp || r.sp === sp); };
 const openA = r => r.link ? `<a class="open" href="${esc(r.link)}" target="_blank" rel="noopener">Open auction ↗</a>` : '';
 const lkRow = x => `<a class="lk${SOLD(x) && !x.odd ? '' : ' dim'}" href="${esc(x.link)}" target="_blank" rel="noopener"><b>${SOLD(x) ? fmt(x.price) : x.endsAt > Date.now() ? fmt(nowPrice(x)) : '-'}</b><span class="note">${x.endsAt > Date.now() ? 'live · ends in ' + left(x.endsAt) : day(x.endsAt)} · rating ${fmt(x.rating)}${x.how === 'buy now' ? ' · buy now' : ''}</span><span class="tag">${x.odd ? 'ignored · ' : ''}Open ↗</span></a>`;
@@ -261,7 +266,7 @@ function draw(){
   if(view === 'deals'){
     // 1. Only on solid data: 5+ sales of that exact player and season, buy-now listings or bids under the usual price.
     // No Mystic or Iconic on deals (Dennis, 2026-11-16).
-    const l = D.rows.filter(r => pass(r) && !/mystic|iconic/i.test(r.rarity || '')).map(r => { const w = worth(book, r), p = nowPrice(r); return w && p != null ? { r, w, p, gain: w.v * TAX - p } : null; }).filter(x => x && x.gain >= 100).sort((a, b) => b.gain - a.gain);
+    const l = D.rows.filter(r => pass(r) && !/mystic|iconic/i.test(r.rarity || '') && !injOf(r)).map(r => { const w = worth(book, r), p = nowPrice(r); return w && p != null ? { r, w, p, gain: w.v * TAX - p } : null; }).filter(x => x && x.gain >= 100).sort((a, b) => b.gain - a.gain);
     const ready = [...book.by.values()].filter(o => o.sold.length >= MIN_SALES).length;
     // Still being built (Dennis, 2026-11-16): said plainly at the top.
     const dev = '<div class="dev"><b>Best deals is still in development.</b> Prices get better as more auctions are tracked - check a deal yourself before buying.</div>';
@@ -269,7 +274,7 @@ function draw(){
     return out(dev + l.slice(0, shown).map(({ r, w, p, gain }) => `<div class="row"><div>${nameCell(r)}<div class="sub">${esc(r.sp)} ${esc(seasonLbl(r.sport, r.season))} · rating ${fmt(r.rating)} · ends in ${left(r.endsAt)}${r.bids ? ` · ${r.bids} bids` : ''}</div>
       <div class="sub">Usually sells for ${r100(w.v)} · ${w.n} sales · profit after tax</div>${openA(r)}</div>
       <div class="px pos">+${r100(gain)}<small>${r.buyNow != null ? 'buy now' : r.curBid != null ? 'bid' : 'min bid'} ${fmt(p)}</small></div></div>`).join(''), l.length,
-      `Under what that pass usually sells for, from ${MIN_SALES}+ sales in the ${perTxt}. Buy now is exact; bids can still rise.`);
+      `Under what that pass usually sells for, from ${MIN_SALES}+ sales in the ${perTxt}. Buy now is exact; bids can still rise. Injured players (Out, IR, Doubtful) are left off.`);
   }
   if(view === 'history'){
     // 2. Per player and season: sold/ended and average rax per rating point. Tap for every auction with its link.
