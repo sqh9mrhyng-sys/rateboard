@@ -7285,7 +7285,11 @@ async function handle({ request, env, waitUntil }) {
     if (!acc.who) return json({ error: 'Sign in first.' }, 401);
     const u = await db.prepare('SELECT passes, scannedAt FROM swap_users WHERE LOWER(key)=?').bind(String(acc.who).toLowerCase()).first().catch(() => null);
     if (!u) return json({ none: true, sports: {} });
-    const out = {}; for (const p0 of parse(u.passes, [])) { const sp = String(p0.key || '').split(':')[0]; if (!sp || !p0.name) continue; (out[sp] = out[sp] || []).push(p0.name); }
+    // Current season only (Dennis, 2026-11-16: 26-27 CFB, not last year's passes). Football keys are the start
+    // year (2026 = 26-27), basketball and hockey the end year (2027 = 26-27), the rest the calendar year.
+    const now0 = new Date(), y0 = now0.getUTCFullYear(), m0 = now0.getUTCMonth();
+    const cur = sp => /^(nfl|ncaaf)$/.test(sp) ? (m0 >= 6 ? y0 : y0 - 1) : /^(nba|ncaam|nhl)$/.test(sp) ? (m0 >= 8 ? y0 + 1 : y0) : sp === 'soccer' ? (m0 >= 6 ? y0 + 1 : y0) : y0;
+    const out = {}; for (const p0 of parse(u.passes, [])) { const [sp, se] = String(p0.key || '').split(':'); if (!sp || !p0.name || Number(se) !== cur(sp)) continue; (out[sp] = out[sp] || []).push(p0.name); }
     return json({ sports: out, at: u.scannedAt || null });
   }
   if (op === 'membersearch') {

@@ -795,7 +795,7 @@
             </div>
             <p class="note hide" id="rs-none"></p>
             <button id="s-exclude" class="btn-ghost">Exclude players/teams</button>
-            <label class="note" style="display:flex;gap:8px;align-items:center;font-weight:700"><input type="checkbox" id="s-exowned"> Exclude owned - leave out players you have a pass for</label>
+            <label class="note" style="display:flex;gap:8px;align-items:center;font-weight:700"><input type="checkbox" id="s-exowned"> Exclude owned - leave out players you have a this-season pass for</label>
             <p class="note hide" id="s-exowned-note" style="margin:-4px 0 0"></p>
             <button id="s-hide-board" class="btn-ghost">Hide the buy offers board</button>
           </div>
@@ -3864,7 +3864,7 @@ async function ownedPassNames(){
   if(!on) return [];
   if(!ownedCache){ try{ ownedCache = await (await fetch('/api/swaps?op=mypassnames')).json(); }catch(e){ ownedCache = { sports: {} }; } }
   const n = $('#s-exowned-note'), list = (ownedCache.sports || {})[BOARD_SP[sport]] || [];
-  if(n){ n.classList.remove('hide'); n.textContent = ownedCache.none ? 'No passes found - scan your passes on the Swaps page first.' : `${list.length} ${SPORTS[sport]} pass${list.length === 1 ? '' : 'es'} left out${ownedCache.at ? ' (from your scan ' + new Date(ownedCache.at).toLocaleDateString() + ')' : ''}.`; }
+  if(n){ n.classList.remove('hide'); n.textContent = ownedCache.none ? 'No passes found - scan your passes on the Swaps page first.' : `${list.length} current-season ${SPORTS[sport]} pass${list.length === 1 ? '' : 'es'} left out${ownedCache.at ? ' (from your scan ' + new Date(ownedCache.at).toLocaleDateString() + ')' : ''}.`; }
   return list;
 }
 try{ $('#s-exowned').checked = localStorage.getItem(EXOWN_KEY) === '1'; }catch(e){}
