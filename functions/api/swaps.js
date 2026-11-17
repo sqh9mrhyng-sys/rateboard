@@ -7119,15 +7119,22 @@ async function handle({ request, env, waitUntil }) {
     }
     const cur = new Map(R.cur.map(x => [Number(x.id), x])), prev = new Map(R.prev.map(x => [Number(x.id), x]));
     // Out for the season: ESPN's injury list, any date, read for "season" / "indefinitely".
-    let out = {};
-    try { const c = JSON.parse((await env.RATEBOARD_KV.get('resell_out_v1_' + SP)) || 'null'); if (c && Date.now() - c.at < 6 * 3600000) out = c.m; else throw 0; }
+    /* Out for the season only on clear wording (2026-11-16: "season" anywhere in the note had Sam Darnold,
+       expected to practice this week, and Lamar Jackson, out 6-10 weeks, both marked out for the season).
+       "Out N(-M) weeks" takes those weeks of games off his games left instead. */
+    let out = {}, outWk = {};
+    const SEASON_OUT = /\b(out for the (rest of the )?season|season[- ]ending|rest of the season|remainder of the season|out indefinitely|miss the (rest|remainder) of)\b/i;
+    try { const c = JSON.parse((await env.RATEBOARD_KV.get('resell_out_v2_' + SP)) || 'null'); if (c && Date.now() - c.at < 6 * 3600000) { out = c.m; outWk = c.w || {}; } else throw 0; }
     catch (e) {
       try { const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${ESPN_PATH[SP]}/injuries`); const d = r.ok ? await r.json() : {};
         for (const t of (d.injuries || [])) for (const x of (t.injuries || [])) {
-          const txt = `${x.status || ''} ${x.shortComment || ''} ${x.longComment || ''}`;
-          if (x.athlete && /season|indefinite/i.test(txt) && !/^active$/i.test(x.status || '')) out[boostName(x.athlete.displayName)] = String(x.shortComment || x.status || '').slice(0, 140);
+          if (!x.athlete || /^active$/i.test(x.status || '')) continue;
+          const txt = `${x.shortComment || ''} ${x.longComment || ''}`, nm = boostName(x.athlete.displayName);
+          if (SEASON_OUT.test(txt)) { out[nm] = String(x.shortComment || x.status || '').slice(0, 140); continue; }
+          const w = txt.match(/\b(\d+)\s*(?:-\s*to\s*-|-|to)\s*(\d+)\s*weeks?\b/i) || txt.match(/\b(\d+)\s*weeks?\b/i);
+          if (w && /out|sideline|miss|expected/i.test(txt)) outWk[nm] = { weeks: w[2] ? (Number(w[1]) + Number(w[2])) / 2 : Number(w[1]), note: String(x.shortComment || x.status || '').slice(0, 140) };
         } } catch (e2) {}
-      try { await env.RATEBOARD_KV.put('resell_out_v1_' + SP, JSON.stringify({ at: Date.now(), m: out }), { expirationTtl: 86400 }); } catch (e) {}
+      try { await env.RATEBOARD_KV.put('resell_out_v2_' + SP, JSON.stringify({ at: Date.now(), m: out, w: outWk }), { expirationTtl: 86400 }); } catch (e) {}
     }
     // Out-for-the-season entries on the hand list too.
     try { const mo = await boostManualOut(env, SP); for (const [k, v] of Object.entries(mo)) if (/season|indefinite/i.test(`${v.status} ${v.note}`)) out[k] = v.note || v.status; } catch (e) {}
@@ -7146,13 +7153,16 @@ async function handle({ request, env, waitUntil }) {
     const teamOf = id => (cur.get(id) || {}).t || null;
     const left = id => { const t = teamG.get(teamOf(id)); return t ? (Number(t.post) > 0 ? 0 : Math.max(0, SEASON_GAMES - Number(t.reg))) : Math.max(0, SEASON_GAMES - played(id)); };
     const teamPlayed = id => { const t = teamG.get(teamOf(id)); return t ? Number(t.reg) + Number(t.post) : null; };
+    // Games a week, for "out N weeks" (from his injury note).
+    const GPW = { ncaaf: 1, nfl: 1, ncaam: 2, nba: 3.5, nhl: 3.5 }[SP] || 1;
+    const leftNow = (id, nm) => { const w = outWk[boostName(nm)]; return Math.max(0, left(id) - (w ? Math.ceil(w.weeks * GPW) : 0)); };
     const owned = new Set(mine.map(p => Number(p.id)));
     const cards = mine.map(p => { const id = Number(p.id), r = rate(id), nm = p.name || (SP === 'ncaam' && CBB_TOP175[id] && CBB_TOP175[id][3]) || (cur.get(id) || prev.get(id) || {}).n || 'Player ' + id;
       const earned = Number(p.earned) || 0, isOut = out[boostName(nm)] || null;
       return { id, name: nm, team: (cur.get(id) || prev.get(id) || {}).t || (SP === 'ncaam' && CBB_TOP175[id] && CBB_TOP175[id][1]) || null, link: playerUrl(`${SP}:${SEASON}:${id}`),
         card: p.passId ? `https://www.realapp.com/${routeId([18, 0, 0, Number(p.passId)])}` : null,
         rpg: r ? Math.round(r.rpg * 10) / 10 : null, basis: r ? r.basis : 'no games yet', played: played(id),
-        left: isOut ? 0 : left(id), teamPlayed: teamPlayed(id), earned, sellCost: Math.max(0, earned - 100), out: isOut, noSell: noSell.has(String(id)) }; })
+        left: isOut ? 0 : leftNow(id, nm), teamPlayed: teamPlayed(id), earned, sellCost: Math.max(0, earned - 100), out: isOut, outFor: !isOut && outWk[boostName(nm)] ? outWk[boostName(nm)] : null, noSell: noSell.has(String(id)) }; })
       .sort((a, b) => (b.out ? 1 : 0) - (a.out ? 1 : 0) || (a.rpg ?? -1) - (b.rpg ?? -1));
     /* Consistency: his average with his best game left out (one huge game can't
        carry it), and how often he clears a good game (CFB 20+, CBB 10+). Buys
