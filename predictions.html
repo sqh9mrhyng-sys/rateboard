@@ -35,6 +35,7 @@
   .go{flex:none;background:var(--accent);color:#1a1205;text-decoration:none;font-weight:900;font-size:13px;padding:7px 12px;border-radius:10px;white-space:nowrap}
   .sd{display:grid;grid-template-columns:1fr 64px 64px 78px;gap:8px;align-items:center;padding:9px 14px;border-top:1px solid var(--line)}
   .sd .t{font-weight:800;display:flex;align-items:center;gap:8px;min-width:0} .sd .t span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ref{display:block;font-size:11px;font-weight:600;color:var(--mute)}
   .dot{width:10px;height:10px;border-radius:3px;flex:none;border:1px solid rgba(255,255,255,.2)}
   .sd .c{text-align:right;font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em} .sd .c b{display:block;color:var(--ink);font-size:15px;text-transform:none;letter-spacing:0}
   .ev{text-align:right;font-weight:900;font-size:17px} .ev small{display:block;font-size:10px;color:var(--mute);font-weight:700;letter-spacing:.04em}
@@ -104,12 +105,12 @@ function draw(){
       ${g.path ? `<a class="nm" href="https://www.realapp.com${esc(g.path)}" target="_blank" rel="noopener">${esc(g.game)}</a>` : `<span class="nm">${esc(g.game)}</span>`}
       <div class="meta"><span class="tag">${esc(SPN[g.sport] || g.sport)}</span>${when(g)}${g.locked ? '<span class="tag lock">Locked</span>' : ''}${g.volume ? `<span class="tag">${esc(g.volume)} vol</span>` : ''}</div></div>
       ${g.link ? `<a class="go" href="${esc(g.link)}" target="_blank" rel="noopener">Predict ↗</a>` : ''}</div>
-    ${g.sides.map(s => `<div class="sd"><span class="t"><i class="dot" style="background:${esc(s.color || '#555')}"></i><span>${esc(s.label)}</span></span>
+    ${g.sides.map((s, si) => `<div class="sd"><span class="t"><i class="dot" style="background:${esc(s.color || '#555')}"></i><span>${esc(s.label)}${(g.refs || []).length ? `<small class="ref">${g.refs.map(r => `${esc(r.src)} ${pc(r.p[si])}`).join(' · ')}</small>` : ''}</span></span>
       <span class="c">Real<b>${pc(s.price)}</b></span><span class="c">Fair<b>${pc(s.fair)}</b></span>
       <span class="ev ${s.ev == null ? 'nil' : s.ev > 0 ? 'pos' : 'neg'}">${s.ev == null ? '-' : (s.ev > 0 ? '+' : '') + pc(s.ev)}<small>EV</small></span></div>`).join('')}
     <div class="ft"><span class="srcs">${srcs.length ? 'Fair from <b>' + srcs.map(x => x.books ? `<span title="${esc(x.books.join(', '))}">${esc(x.src)}</span>` : esc(x.src)).join('</b>, <b>') + '</b>' : 'No sportsbook odds found for this game yet'}</span>${(() => { const h = g.hist || []; if (h.length < 2) return ''; const v = h[h.length - 1], sd = g.sides.reduce((a, x) => Math.abs((x.price ?? 9) - v) < Math.abs((a.price ?? 9) - v) ? x : a, g.sides[0]); return `<span class="src" title="Real's price for ${esc(sd.label)}, last few hours">${esc(sd.label)} ${spark(h)}</span>`; })()}</div></div>`;
   }).join('') || `<div class="empty">${plus ? 'No +EV sides right now.' : 'No open game markets on Real right now.'}</div>`;
-  $('#foot').textContent = `Real's prices refresh every 10 s. Sportsbook odds: every 5 min, every minute in the 2 hours before a game, every 40 s while it's live. Pinnacle counts double in the fair price.${J.credits != null ? ` ${Number(J.credits).toLocaleString()} odds credits left.` : ''}`;
+  $('#foot').textContent = `Real's prices refresh every 10 s. Sportsbook odds: every 5 min, every minute in the 2 hours before a game, every 40 s while it's live. Fair price: DraftKings, FanDuel, BetMGM, Caesars, Fanatics, ESPN BET, BetRivers, BetOnline, Novig and Pinnacle (Pinnacle weighted 3x, Novig 2x), margins removed, stale lines dropped. Kalshi and Polymarket shown for comparison only.${J.credits != null ? ` ${Number(J.credits).toLocaleString()} odds credits left.` : ''}`;
   tick();
 }
 $('#chips').addEventListener('click', e => { const b = e.target.closest('[data-c]'); if(!b) return; chip = b.dataset.c; ls.set('pred_chip', chip); draw(); });
