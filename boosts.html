@@ -306,6 +306,7 @@
         <details class="vw"><summary>View</summary><div class="vwp">
           <button class="sm hidestart" id="hidestart" type="button" aria-pressed="false">Hide games that already started</button>
           <button class="sm simplebtn" id="simplebtn" type="button" aria-pressed="false">View simple layout</button>
+          <button class="sm spreadbtn" id="spreadbtn" type="button" aria-pressed="true" title="Use the booster types you have plenty of when they're nearly as good, so points / goals boosters don't run out first">Use spare booster types: on</button>
           <button class="sm simplebtn boxlinkbtn" type="button" aria-pressed="false">Whole box opens the player: off</button></div></details></div>
       <div id="simple" class="simple-list"></div>
       <div class="tot" id="tot"></div>
@@ -797,7 +798,7 @@ async function run(){
   try{ localStorage.setItem('boosts_pick_v1', JSON.stringify({ sport: sp, mode })); }catch(e){} saveMode(sp, mode);
   $('#run').disabled = true; $('#out').hidden = false; $('#copybtn').hidden = true; copyText = ''; $('#rows').innerHTML = ''; $('#simple').innerHTML = ''; $('#sum').innerHTML = ''; $('#foot').textContent = '';
   $('#outhead').textContent = 'Working it out…';
-  const bpUrl = `/api/swaps?op=boostplan&page=boosts&sport=${sp}&date=${day}&mode=${mode}` + (mode === 'custom' ? cusQuery() : '') + (hideStarted() ? '&upcoming=1' : '') + (binvNext ? '&binv=1' : '');
+  const bpUrl = `/api/swaps?op=boostplan&page=boosts&sport=${sp}&date=${day}&mode=${mode}` + (mode === 'custom' ? cusQuery() : '') + (hideStarted() ? '&upcoming=1' : '') + (spreadOn() ? '' : '&spread=0') + (binvNext ? '&binv=1' : '');
   binvNext = false;
   // Redrawing (the card-rarity toggle) reuses the answer from the last 5 minutes instead of asking again.
   const j = redrawOnly && lastOne && lastOne.url === bpUrl && Date.now() - lastOne.t < 300000 ? lastOne.j : await api(bpUrl);
@@ -970,7 +971,7 @@ async function runAll(reuse){
     if(sp === 'nfl' && ![0, 1, 4].includes(wd)) return { sp, lbl, m, skip: 'No NFL games - NFL plays Thursday, Sunday and Monday.' };
     const date = sp === 'golf' ? golfEv && golfEv.day : day;
     if(!date) return { sp, lbl, m, skip: 'No tournament that day.' };
-    const j = await api(`/api/swaps?op=boostplan&page=boosts&sport=${sp}&date=${date}&mode=${m}` + (m === 'custom' ? cusQueryFor(sp) : '') + (hideStarted() ? '&upcoming=1' : ''));
+    const j = await api(`/api/swaps?op=boostplan&page=boosts&sport=${sp}&date=${date}&mode=${m}` + (m === 'custom' ? cusQueryFor(sp) : '') + (hideStarted() ? '&upcoming=1' : '') + (spreadOn() ? '' : '&spread=0'));
     return { sp, lbl, m, j, date };
   }));
   if(ask !== allAsk) return;
@@ -1043,6 +1044,11 @@ $('#copybtn').addEventListener('click', async () => {
 });
 /* Leave out games that have started (their boosters go to games still to come), every sport and
    All sports (2026-11-09; was FC only). One setting for the whole page, remembered in this browser. */
+// Use spare booster types (2026-11-17): on unless turned off; saved on this device.
+const spreadOn = () => { try{ return localStorage.getItem('boosts_spread_v1') !== '0'; }catch(e){ return true; } };
+const paintSpread = () => { const b = $('#spreadbtn'); if(b){ b.setAttribute('aria-pressed', String(spreadOn())); b.textContent = `Use spare booster types: ${spreadOn() ? 'on' : 'off'}`; } };
+document.addEventListener('click', e => { if(e.target.id !== 'spreadbtn') return; try{ localStorage.setItem('boosts_spread_v1', spreadOn() ? '0' : '1'); }catch(err){} paintSpread(); if(shown()) run(); });
+setTimeout(paintSpread, 0);
 const hideStarted = () => { try{ const v = localStorage.getItem('boosts_hidestart_v1'); return v != null ? v === '1' : localStorage.getItem('boosts_fc_hidestart_v1') === '1'; }catch(e){ return false; } };
 function paintHide(started){ const on = hideStarted();
   document.querySelectorAll('.hidestart').forEach(b => { b.setAttribute('aria-pressed', String(on)); b.textContent = on ? `✓ Hiding games that already started${started ? ` (${started})` : ''}` : 'Hide games that already started'; }); }

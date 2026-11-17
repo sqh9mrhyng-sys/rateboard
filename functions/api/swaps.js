@@ -8138,6 +8138,7 @@ async function handle({ request, env, waitUntil }) {
          saver     Legendary 18+, Epic 14.5+, everyone else 5+ a Rare
        capped by what the member holds; pinned CBB players go first. */
     const left = inv ? inv.map(b => ({ ...b })) : null;
+    const spread = url.searchParams.get('spread') !== '0';
     const scale = { ncaam: 1, ncaaf: 2.17, nfl: 1.65 }[sp] || 1;
     const MODE_RULES = { balanced: { leg: 14.5, epic: 10, cap: 0.15 }, heavy: { leg: 11.5, epic: 9, cap: 0.4 }, saver: { leg: 18, epic: 14.5, cap: 1 } };
     const R = { ...(MODE_RULES[mode] || MODE_RULES.balanced) };
@@ -8225,7 +8226,14 @@ async function handle({ request, env, waitUntil }) {
       const ps = rows.filter(r => r._r === rr);
       const groups = left.filter(b => b.rarity === rr && b.count > 0);
       if (!ps.length || !groups.length) continue;
-      const g = (r, b) => { const x = gainOf(r, b); return x ? x.g : 0; };
+      const g0 = (r, b) => { const x = gainOf(r, b); return x ? x.g : 0; };
+      /* Use spare types (member feedback via Dennis, 2026-11-17): most of a boost is the rarity multiplier,
+         the attribute only adds a little, but always taking the best attribute burned points / goals boosters
+         and left piles of saves and the like. Choosing weighs each type by how many of it you hold against the
+         others of that rarity, so a plentiful type gets used when it's nearly as good. spread=0 turns it off. */
+      const n0 = new Map(groups.map(b => [b, b.count])), mean = groups.reduce((t, b) => t + b.count, 0) / groups.length;
+      const wOf = b => spread && groups.length > 1 && mean > 0 ? Math.min(1.25, Math.max(0.6, Math.pow(n0.get(b) / mean, 0.4))) : 1;
+      const g = (r, b) => g0(r, b) * wOf(b);
       const pairs = [];
       for (const r of ps) for (const b of groups) pairs.push({ r, b, v: g(r, b) });
       pairs.sort((x, y) => y.v - x.v || y.b.count - x.b.count);
@@ -8249,7 +8257,7 @@ async function handle({ request, env, waitUntil }) {
         const b = pick.get(r);
         if (b) r.best = pack(b, r);
         // Second option: the next best booster of this rarity for him.
-        const alt = groups.filter(x => x !== b).map(x => ({ x, v: g(r, x) })).sort((p, q) => q.v - p.v)[0];
+        const alt = groups.filter(x => x !== b).map(x => ({ x, v: g0(r, x) })).sort((p, q) => q.v - p.v)[0];
         if (alt) r.alt = pack(alt.x, r);
       }
     }
