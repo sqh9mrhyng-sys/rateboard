@@ -64,6 +64,7 @@
   .ndot{display:inline-block;min-width:20px;height:20px;line-height:20px;padding:0 6px;margin-left:8px;border-radius:999px;background:#e5534b;color:#fff;font-size:12px;font-weight:800;text-align:center;vertical-align:2px}
   .tl span{color:var(--mute);font-size:13px}
   /* Compact Home: two boxes a line, no descriptions. */
+.tiles.short .tl span{display:none} .tiles.short .tl b{margin:0}
   .tiles.compact{grid-template-columns:1fr 1fr} .tiles.compact .tile .tl{padding:14px 0 14px 10px} .tiles.compact .tl span{display:none} .tiles.compact .tl b{font-size:15px;margin:0} .tiles.compact .tile .grip{width:30px}
   .sheet{position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center}
   .sheet .box{width:100%;max-width:560px;max-height:88vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:16px 16px 0 0;padding:16px 16px 28px}
@@ -193,7 +194,7 @@ function tileList(){
 }
 function drawNav(){
   const list = tileList();
-  $('#tiles').classList.toggle('compact', !!UI.compact);
+  $('#tiles').classList.toggle('compact', !!UI.compact); $('#tiles').classList.toggle('short', !!UI.short);
   $('#tiles').innerHTML = list.map(([h, t, d]) => { const c = LOOK[h] || '#E8A33D';
     return `<div class="tile" data-h="${h}"><a class="tl" href="${h}"><b>${esc(t)}</b><span>${esc(d)}</span></a>`
     + `<span class="grip" aria-label="Drag to move ${esc(t)}" title="Drag to move"><i></i></span></div>`; }).join('');
@@ -344,7 +345,7 @@ function openUI(){
     <div id="ui-own"${(UI.theme || '') === 'custom' ? '' : ' hidden'}><h3>Your own colours</h3><p class="note" style="margin:0 0 6px">Tap a swatch to pick from the colour wheel.</p>
       ${[['bg', 'Background', '#141925'], ['tile', 'Boxes and buttons', '#3d6fd6'], ['accent', 'Highlights and links', '#E8A33D']].map(([k, l, d]) => `<label class="tg">${l}<input type="color" class="cw" data-c="${k}" value="${esc(((UI.custom || {})[k]) || d)}"></label>`).join('')}
       <button class="x" type="button" id="ui-reset" style="margin-top:8px">Reset to Classic colours</button></div>
-    <h3>Home layout</h3><label class="tg">Compact - two boxes a line<input type="checkbox" id="ui-compact"${UI.compact ? ' checked' : ''}></label>
+    <h3>Home layout</h3><label class="tg">Compact - two boxes a line<input type="checkbox" id="ui-compact"${UI.compact ? ' checked' : ''}></label><label class="tg">Hide descriptions - names only<input type="checkbox" id="ui-short"${UI.short ? ' checked' : ''}></label>
     <h3>Show on Home</h3><p class="note" style="margin:0 0 4px">Untick a page to hide its box. It's still in the menu and at its link.</p>
     ${pages.map(([h, t]) => `<label class="tg">${esc(t)}<input type="checkbox" data-page="${esc(h)}"${(UI.hidden || []).includes(h) ? '' : ' checked'}></label>`).join('')}
     <p class="note" style="margin:14px 0 0">Saved to your account, so it follows you to other devices.</p></div>`;
@@ -357,7 +358,7 @@ function openUI(){
   el.addEventListener('input', e => { if(!e.target.classList.contains('cw')) return; const c = Object.assign({}, UI.custom || {}, { [e.target.dataset.c]: e.target.value }); UI.custom = c;
     if(window.rbApplyTheme) rbApplyTheme('custom', c); const sw = el.querySelector('[data-theme="custom"] i'); if(sw && window.rbCustomTheme){ const t = rbCustomTheme(c); sw.innerHTML = `<b style="background:${t.bg};border:1px solid #555"></b><b style="background:${t.tile}"></b><b style="background:${t.accent}"></b>`; }
     clearTimeout(cwT); cwT = setTimeout(() => saveUI({ custom: c }), 600); });
-  el.addEventListener('change', e => { if(e.target.id === 'ui-compact') saveUI({ compact: e.target.checked });
+  el.addEventListener('change', e => { if(e.target.id === 'ui-compact') saveUI({ compact: e.target.checked }); if(e.target.id === 'ui-short') saveUI({ short: e.target.checked });
     if(e.target.dataset.page){ const h = new Set(UI.hidden || []); e.target.checked ? h.delete(e.target.dataset.page) : h.add(e.target.dataset.page); saveUI({ hidden: [...h] }); } });
 }
 $('#uibtn').addEventListener('click', openUI);
