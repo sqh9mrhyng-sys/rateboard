@@ -7180,6 +7180,17 @@ async function handle({ request, env, waitUntil }) {
     }
     return json({ ok: true, name: u.rsUser || u.key, blocked: !!b.block, dm });
   }
+  /* Username suggestions for the Report page (2026-11-16), signed-in members only: names that start
+     with what was typed first, then names that contain it. Usernames only. */
+  if (op === 'membersearch') {
+    if (!acc.who) return json({ error: 'Sign in first.' }, 401);
+    if (!(await allow(url.origin, 'msearch:' + acc.who, 60, 60))) return json({ rows: [] });
+    const q = String(url.searchParams.get('q') || '').trim().replace(/^@/, '').toLowerCase();
+    if (q.length < 2) return json({ rows: [] });
+    const like = q.replace(/[%_]/g, '');
+    const rs = ((await db.prepare("SELECT DISTINCT COALESCE(rsUser, key) AS u FROM swap_users WHERE LOWER(COALESCE(rsUser, key)) LIKE ? ORDER BY CASE WHEN LOWER(COALESCE(rsUser, key)) LIKE ? THEN 0 ELSE 1 END, LENGTH(COALESCE(rsUser, key)) LIMIT 8").bind('%' + like + '%', like + '%').all()).results) || [];
+    return json({ rows: rs.map(r => r.u) });
+  }
   if (op === 'modlookup') {
     if (!acc.admin) return forbidden('Admin only.');
     const q = String(url.searchParams.get('q') || '').trim().replace(/^@/, '').toLowerCase();

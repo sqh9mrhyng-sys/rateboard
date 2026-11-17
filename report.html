@@ -20,6 +20,7 @@
   .go{width:100%;background:var(--accent);color:#1a1205;border:0;border-radius:12px;padding:14px;font:inherit;font-size:16px;font-weight:900;cursor:pointer} .go:disabled{opacity:.6}
   .msg{margin:12px 0 0;font-size:14px;color:var(--mute)} .msg.ok{color:var(--good)} .msg.bad{color:var(--bad)}
   .note{color:var(--mute);font-size:13px}
+.sug{position:absolute;left:0;right:0;top:100%;margin-top:-18px;z-index:5;background:var(--panel2);border:1px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:0 10px 24px rgba(0,0,0,.4)} .sug button{display:block;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line);color:var(--ink);font:inherit;font-size:16px;padding:11px 14px;cursor:pointer} .sug button:first-child{border-top:0} .sug button:hover,.sug button:focus{background:var(--panel)} .sug b{color:var(--accent)}
   .done{text-align:center;padding:24px 8px} .done b{display:block;font-size:20px;margin-bottom:6px}
   .kinds{display:grid;grid-template-columns:1fr 1fr;gap:8px} .kinds button{background:var(--panel2);color:var(--ink);border:2px solid var(--line);border-radius:12px;padding:12px 8px;font:inherit;font-weight:700;font-size:14px;cursor:pointer;text-align:left}
   .kinds button small{display:block;color:var(--mute);font-weight:500;font-size:12px} .kinds button[aria-pressed="true"]{border-color:var(--accent)}
@@ -31,7 +32,7 @@
 <h1>Report a user</h1>
 <p class="lead">Scammed, fake screenshots, didn't send? Tell me who and what happened. Reports go to the admin only - nothing is shared with the person you report.</p>
 <form class="card" id="f">
-  <div class="f"><label for="who">Their Real username</label><input id="who" placeholder="e.g. somebody123" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="60" required></div>
+  <div class="f" style="position:relative"><label for="who">Their Real username</label><input id="who" placeholder="e.g. somebody123" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="60" required><div class="sug" id="sug" hidden></div><p class="note" id="whonote" style="margin:6px 0 0"></p></div>
   <div class="f"><label for="why">What happened</label><textarea id="why" maxlength="1000" placeholder="What you agreed, what they did, when. Links to screenshots or comments help." required></textarea></div>
   <button class="go" id="go">Send report</button>
   <p class="msg" id="msg"></p>
@@ -43,6 +44,18 @@ const tok = () => { try { return localStorage.getItem('ratebrd_token_v1') || '';
 if (!tok()) location.href = '/?next=' + encodeURIComponent(location.pathname);
 async function send(body){ const r = await fetch('/api/kv', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-rb-token': tok() }, body: JSON.stringify(body) }); const j = await r.json().catch(() => ({})); if (r.status === 401) { location.href = '/?next=' + encodeURIComponent(location.pathname); return null; } return r.ok ? j : { error: j.error || 'Could not send. Try again.' }; }
 const p = new URLSearchParams(location.search).get('u'); if (p) $('#who').value = p;
+// Suggestions as you type, so the right person gets reported.
+let sT = 0, picked = '';
+const hl = (u, q) => { const i = u.toLowerCase().indexOf(q.toLowerCase()); const e = x => x.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); return i < 0 ? e(u) : e(u.slice(0, i)) + '<b>' + e(u.slice(i, i + q.length)) + '</b>' + e(u.slice(i + q.length)); };
+$('#who').addEventListener('input', () => { clearTimeout(sT); picked = ''; $('#whonote').textContent = ''; const q = $('#who').value.trim().replace(/^@/, '');
+  if (q.length < 2) { $('#sug').hidden = true; return; }
+  sT = setTimeout(async () => { let j = null; try { j = await (await fetch('/api/swaps?op=membersearch&q=' + encodeURIComponent(q), { headers: { 'x-rb-token': tok() } })).json(); } catch (e) {}
+    const rows = (j && j.rows) || []; if (q !== $('#who').value.trim().replace(/^@/, '')) return;
+    $('#sug').innerHTML = rows.map(u => `<button type="button" data-u="${u.replace(/"/g, '&quot;')}">@${hl(u, q)}</button>`).join('');
+    $('#sug').hidden = !rows.length;
+    if (!rows.length) $('#whonote').textContent = 'Not a Rax Academy member - double-check the spelling on Real.'; }, 200); });
+$('#sug').addEventListener('click', e => { const b = e.target.closest('[data-u]'); if (!b) return; $('#who').value = picked = b.dataset.u; $('#sug').hidden = true; $('#whonote').textContent = '✓ Picked @' + b.dataset.u; $('#why').focus(); });
+document.addEventListener('click', e => { if (!e.target.closest('#sug') && e.target.id !== 'who') $('#sug').hidden = true; });
 $('#f').addEventListener('submit', async e => { e.preventDefault();
   const target = $('#who').value.trim().replace(/^@/, ''), reason = $('#why').value.trim();
   if (target.length < 2 || reason.length < 3) { $('#msg').className = 'msg bad'; $('#msg').textContent = 'Add a username and what happened.'; return; }
