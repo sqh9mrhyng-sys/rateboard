@@ -6082,6 +6082,8 @@ async function handle({ request, env, waitUntil }) {
   /* Who else can open Predictions (Dennis, 2026-11-16, until it goes public): KV list of member keys. */
   const PRED_ACC = 'pred_access_v1';
   const predAcc = async () => { try { return JSON.parse((await env.RATEBOARD_KV.get(PRED_ACC)) || '[]') || []; } catch (e) { return []; } };
+  // Open to every signed-in member (Dennis, 2026-11-17). The list stays for if it ever goes invite-only again.
+  const PRED_PUBLIC = true;
   if (op === 'predaccess') {
     if (String(acc.who || '').toLowerCase() !== 'dennis') return forbidden('Only Dennis can change this.');
     let l = await predAcc();
@@ -6097,7 +6099,7 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'predbets') {
     const who = String(acc.who || '').toLowerCase();
     if (!who) return json({ error: 'Sign in first.' }, 401);
-    if (who !== 'dennis' && !(await predAcc()).includes(who)) return forbidden('Predictions is invite-only for now.');
+    if (!PRED_PUBLIC && who !== 'dennis' && !(await predAcc()).includes(who)) return forbidden('Predictions is invite-only for now.');
     const K = 'pred_bets_v1_' + who; let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get(K)) || '[]') || []; } catch (e) {}
     if (request.method === 'POST') {
       let b = {}; try { b = await request.json(); } catch (e) {}
@@ -6147,7 +6149,7 @@ async function handle({ request, env, waitUntil }) {
     const who = String(acc.who || '').toLowerCase();
     if (!who) return json({ error: 'Sign in first.' }, 401);
     const owner = who === 'dennis';
-    if (!owner && !(await predAcc()).includes(who)) return forbidden('Predictions is invite-only for now.');
+    if (!PRED_PUBLIC && !owner && !(await predAcc()).includes(who)) return forbidden('Predictions is invite-only for now.');
     const K = 'pred_fb_v1'; let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get(K)) || '[]') || []; } catch (e) {}
     if (request.method === 'POST') {
       let b = {}; try { b = await request.json(); } catch (e) {}
@@ -6169,7 +6171,7 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'predev') {
     const who = String(acc.who || '').toLowerCase();
     if (!who) return json({ error: 'Sign in first.' }, 401);
-    if (who !== 'dennis' && !(await predAcc()).includes(who)) return forbidden('Predictions is invite-only for now - ask Dennis for access.');
+    if (!PRED_PUBLIC && who !== 'dennis' && !(await predAcc()).includes(who)) return forbidden('Predictions is invite-only for now - ask Dennis for access.');
     let x = null; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_ev_v1')) || 'null'); } catch (e) {}
     const owner = who === 'dennis' || undefined;
     return json(x ? { owner, at: x.at, games: x.games || [], credits: x.credits || null, used: x.used || null, errs: x.errs || [], keySet: !!env.ODDS_API_KEY } : { owner, at: null, games: [], keySet: !!env.ODDS_API_KEY });
