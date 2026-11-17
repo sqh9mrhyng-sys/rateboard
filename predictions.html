@@ -581,14 +581,17 @@ $('#va').addEventListener('click', async e => { const b = e.target.closest('butt
 
 /* Card view (Dennis, 2026-11-17). Full = everything; Clean = the game and EV only; Custom = pick. */
 const VIEW_PARTS = [['fair', 'Fair %'], ['real', "Real's price"], ['poly', 'Polymarket'], ['lad', 'Unit ladder'], ['books', 'Books & breakdown'], ['chart', 'Price chart'], ['bet', 'Bet placed button'], ['chips', 'Sport, time & volume']];
+/* Clean (Dennis, 2026-11-17): fair %, Real's price, units & rax, the Bet placed button and the sport/time/volume
+   tags stay; Polymarket, the ladder, books and the chart go. */
+const CLEAN_HIDE = ['poly', 'lad', 'books', 'chart'];
 let VIEW = { mode: 'clean', hide: [] };   // Clean unless the member picked another (Dennis, 2026-11-17) try { VIEW = Object.assign(VIEW, JSON.parse(ls.get('pred_view_v1') || '{}') || {}); } catch (e) {}
 VIEW.hide = (VIEW.hide || []).filter(k => k !== 'units');   // units & rax always show (Dennis, 2026-11-17)
 function applyView(){
-  const hide = VIEW.mode === 'clean' ? VIEW_PARTS.map(p => p[0]) : VIEW.mode === 'custom' ? VIEW.hide : [];
+  const hide = VIEW.mode === 'clean' ? CLEAN_HIDE : VIEW.mode === 'custom' ? VIEW.hide : [];
   for (const [k] of VIEW_PARTS) document.body.classList.toggle('h-' + k, hide.includes(k));
   $('#vname').textContent = { full: 'Full', clean: 'Clean', custom: 'Custom' }[VIEW.mode] || 'Full';
   document.querySelectorAll('[data-vm]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.vm === VIEW.mode)));
-  $('#vnote').textContent = VIEW.mode === 'full' ? 'Everything on every card.' : VIEW.mode === 'clean' ? 'Just the game and the EV on each side.' : 'Untick what you don\'t want to see.';
+  $('#vnote').textContent = VIEW.mode === 'full' ? 'Everything on every card.' : VIEW.mode === 'clean' ? 'Fair %, Real\'s price, EV, units and the Bet placed button. No ladder, books or chart.' : 'Untick what you don\'t want to see.';
   $('#vopts').hidden = VIEW.mode !== 'custom';
   $('#vopts').innerHTML = VIEW_PARTS.map(([k, t]) => `<label><input type="checkbox" data-vp="${k}"${VIEW.hide.includes(k) ? '' : ' checked'}> ${esc(t)}</label>`).join('');
   try { ls.set('pred_view_v1', JSON.stringify(VIEW)); } catch (e) {}
