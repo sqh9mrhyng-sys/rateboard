@@ -753,7 +753,7 @@ async function predReal(env) {
         for (const g of srcs) {
           const map = oc.map(x => isDraw(x.label) || isDraw(x.key) ? g.names.find(isDraw) : g.names.find(n => !isDraw(n) && sideHits(aliasOf(x), n)));
           if (map.some(x => !x) || new Set(map).size !== map.length) continue;
-          found.push({ src: g.src, p: map.map(n => g.p[n]), start: g.start, live: g.live, books: g.books, ref: g.ref, bk: (g.bk || []).map(b => ({ t: b.t, w: b.w, u: b.u, p: map.map(n => Math.round((b.p[n] || 0) * 1000) / 1000), d: map.map(n => b.d[n]) })) });
+          found.push({ names: map, src: g.src, p: map.map(n => g.p[n]), start: g.start, live: g.live, books: g.books, ref: g.ref, bk: (g.bk || []).map(b => ({ t: b.t, w: b.w, u: b.u, p: map.map(n => Math.round((b.p[n] || 0) * 1000) / 1000), d: map.map(n => b.d[n]) })) });
         }
         // Fair chance: Pinnacle counts double when it's there, every other source once.
         const refs = found.filter(f => f.ref), fnd = found.filter(f => !f.ref);
@@ -764,7 +764,7 @@ async function predReal(env) {
         out.games.push({ sport: sp, id: m.id, game: (m.gameDisplay || {}).display || oc.map(x => x.label).join(' vs '), path: (m.gameDisplay || {}).path || null,
           link: `https://www.realapp.com/${routeId([36, 0, 0, Number(m.id)])}`, locked: !!m.isLocked, volume: m.volumeDisplay || null, start: st, oddsAt, live: !!(found.find(f => f.live)), hist,
           sources: fnd.map(f => ({ src: f.src, p: f.p.map(v => Math.round(v * 1000) / 1000), books: f.books, bk: f.bk })), refs: refs.map(f => ({ src: f.src, p: f.p.map(v => Math.round(v * 1000) / 1000) })),
-          sides: oc.map((x, i) => ({ key: x.key, label: x.label, color: x.backgroundColor || null, price: x.probability, fair: fair[i], ev: fair[i] != null && x.probability > 0 ? fair[i] / x.probability - 1 : null })) });
+          sides: oc.map((x, i) => ({ key: x.key, label: x.label, name: (found[0] && found[0].names[i]) || names[x.key] || ((odds.abbr || {})[`${sp}:${x.key}`] || [])[0] || x.label, color: x.backgroundColor || null, price: x.probability, fair: fair[i], ev: fair[i] != null && x.probability > 0 ? fair[i] / x.probability - 1 : null })) });
       }
     }
     await env.RATEBOARD_KV.put('pred_real_open', JSON.stringify(open), { expirationTtl: 3600 });
