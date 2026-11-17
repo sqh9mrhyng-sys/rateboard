@@ -51,7 +51,7 @@
   .bkr span:not(:first-child){text-align:right;font-weight:700} .bkr small{display:block;font-size:10px;color:var(--mute);font-weight:600}
   .bkr em{font-style:normal;font-size:11px;color:var(--accent)} .bkr .ag{color:var(--mute);font-weight:600}
   .bkh{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute);border-top:0;margin-top:6px} .bkh span{font-weight:800!important}
-  .bkr.old{opacity:.55} .bkr.tot{background:rgba(232,163,61,.06)} .bkr.ref2{color:var(--mute)}
+  .bkr.old{opacity:.55} .bkr em.off{color:var(--bad);display:block} .bkr.tot{background:rgba(232,163,61,.06)} .bkr.ref2{color:var(--mute)}
   .tabs{display:flex;gap:6px;margin:10px 0 4px} .tabs button{flex:1;background:var(--panel);color:var(--mute);border:1px solid var(--line);border-radius:10px;padding:8px;font:inherit;font-weight:800;cursor:pointer}
   .tabs button[aria-pressed="true"]{color:var(--ink);border-color:var(--accent);background:var(--panel2)}
   .bank{display:block;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:10px 0 0}
@@ -119,7 +119,7 @@ const MIN_FAIR = 0.07, MIN_EV_U = 0.02;
 let bank = Number(ls.get('pred_bank')) || 0;
 /* Thin odds: a live game priced from fewer than 3 books, or whose newest line is over 60 s old.
    Its EV is greyed out and kept out of the counts at the top. */
-const bkOf = g => (g.sources || []).flatMap(x => x.bk || []);
+const bkOf = g => (g.sources || []).flatMap(x => x.bk || []).filter(b => !b.out);
 const thin = g => { const b = bkOf(g); if (!b.length) return true; if (!g.live) return b.length < 2; const newest = Math.max(...b.map(x => x.u || 0)); return b.length < 3 || Date.now() - newest > 60000; };
 const best = g => thin(g) ? -9 : Math.max(...g.sides.map(s => s.ev ?? -9));
 /* Hidden (unless Show all): games where a side's fair chance is under 7% - basically decided. */
@@ -148,11 +148,11 @@ function breakdown(g){
   const sorted = bks.slice().sort((a, b) => b.w - a.w || a.t.localeCompare(b.t));
   const hd = head.replace('class="bkr bkh"', `class="bkr bkh" style="grid-template-columns:1fr repeat(${g.sides.length},minmax(56px,auto)) 44px"`);
   return `<details class="bd" data-bd="${g.id}"${openBd.has(String(g.id)) ? ' open' : ''}><summary>Book breakdown (${bks.length})</summary>${hd}
-    ${sorted.map(b => row(`${esc(b.t)}${b.w !== 1 ? ` <em>×${b.w}</em>` : ''}`, b.p, b.d, age(b.u), age(b.u) && (Date.now() - b.u) > 120000 ? 'old' : '')).join('')}
+    ${sorted.map(b => row(`${esc(b.t)}${b.w !== 1 && !b.out ? ` <em>×${b.w}</em>` : ''}${b.out ? ' <em class="off">off-market, left out</em>' : ''}`, b.p, b.d, age(b.u), b.out || (age(b.u) && (Date.now() - b.u) > 120000) ? 'old' : '')).join('')}
     ${row('<b>Fair</b>', g.sides.map(s => s.fair), null, '', 'tot')}
     ${row('<b>Real</b>', g.sides.map(s => s.price), null, '', 'tot')}
     ${(g.refs || []).map(r => row(`${esc(r.src)} <em>ref</em>`, r.p, null, '', 'ref2')).join('')}
-    <p class="note" style="margin:6px 0 0">% is each book's chance with its margin taken out; small number is its American odds. Age is how long since that book last moved the line. Books older than 2 min (live) or 90 min (pregame) are already left out.</p></details>`;
+    <p class="note" style="margin:6px 0 0">% is each book's chance with its margin taken out; small number is its American odds. Age is how long since that book last moved the line. Books older than 2 min (live) or 90 min (pregame) are already left out, and so is any book more than 8 points away from the rest.</p></details>`;
 }
 function when(g){
   if(g.live) return '<span class="tag live">● LIVE</span>';
@@ -179,11 +179,16 @@ let offBooks = new Set(JSON.parse(ls.get('pred_off_books') || '[]')), showPoly =
 let collapsed = new Set(JSON.parse(ls.get('pred_collapsed') || '[]'));
 const allBooks = () => [...new Set((J.games || []).flatMap(g => (g.sources || []).flatMap(x => (x.bk || []).map(b => b.t))))].sort();
 function derive(g){
-  const bk = (g.sources || []).flatMap(x => x.bk || []).filter(b => !offBooks.has(b.t));
+  const all = (g.sources || []).flatMap(x => x.bk || []).filter(b => !offBooks.has(b.t)).map(b => ({ ...b, out: false }));
+  /* Off-market lines (2026-11-16: Pinnacle live at 34% while every other book had 55%): with 3+ books,
+     a book more than 8 points from the middle of the others is left out of the fair %. */
+  if (all.length >= 3) for (const b of all) { const o = all.filter(x => x !== b).map(x => x.p[0]).sort((a, c) => a - c);
+    const med = o.length % 2 ? o[(o.length - 1) / 2] : (o[o.length / 2 - 1] + o[o.length / 2]) / 2; b.out = Math.abs(b.p[0] - med) > 0.08; }
+  const bk = all.filter(b => !b.out);
   const wt = bk.reduce((a, b) => a + (b.w || 1), 0);
   const sides = g.sides.map((s, i) => { const fair = wt ? bk.reduce((a, b) => a + (b.w || 1) * (b.p[i] || 0), 0) / wt : null;
     return { ...s, fair, ev: fair != null && s.price > 0 ? fair / s.price - 1 : null }; });
-  return { ...g, sides, sources: bk.length ? [{ src: `${bk.length} book${bk.length === 1 ? '' : 's'}`, books: bk.map(b => b.t), bk }] : [], refs: showPoly ? g.refs : [] };
+  return { ...g, sides, sources: all.length ? [{ src: `${bk.length} book${bk.length === 1 ? '' : 's'}`, books: bk.map(b => b.t), bk: all }] : [], refs: showPoly ? g.refs : [] };
 }
 const SP_ORDER = ['nfl', 'ncaaf', 'nba', 'nhl', 'soccer', 'ufc'];
 const stable = (a, b) => (SP_ORDER.indexOf(a.sport) - SP_ORDER.indexOf(b.sport)) || ((Date.parse(a.start) || 0) - (Date.parse(b.start) || 0)) || (a.id - b.id);
