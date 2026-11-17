@@ -673,6 +673,7 @@ async function predOdds(env) {
       for (const ev of ((d && d.events) || [])) { const c = (ev.competitions || [])[0] || {}, od = (c.odds || [])[0], h = (c.competitors || []).find(x => x.homeAway === 'home'), w = (c.competitors || []).find(x => x.homeAway === 'away');
         if (!h || !w) continue;
         for (const t of [h, w]) if (t.team && t.team.abbreviation) o.abbr[`${sp}:${t.team.abbreviation}`] = [t.team.displayName, t.team.shortDisplayName, t.team.location].filter(Boolean);
+        o.logo = o.logo || {}; for (const t of [h, w]) if (t.team && t.team.logo) { o.logo[`${sp}:${t.team.abbreviation}`] = t.team.logo; o.logo[`${sp}:${normTeam(t.team.displayName)}`] = t.team.logo; }
         if (!od) continue; const ml = od.moneyline || {}, mlOf = x => x && ((x.close && x.close.odds) || (x.open && x.open.odds));
         const dh = decOf(mlOf(ml.home) || (od.homeTeamOdds && od.homeTeamOdds.moneyLine)), dw = decOf(mlOf(ml.away) || (od.awayTeamOdds && od.awayTeamOdds.moneyLine)); if (!dh || !dw) continue;
         games.push({ names: [h.team.displayName, w.team.displayName], p: devig([[h.team.displayName, dh], [w.team.displayName, dw]]), src: `${(od.provider && od.provider.name) || 'ESPN'} (ESPN)`, start: ev.date }); }
@@ -770,7 +771,7 @@ async function predReal(env) {
         out.games.push({ sport: sp, id: m.id, game: (m.gameDisplay || {}).display || oc.map(x => x.label).join(' vs '), path: (m.gameDisplay || {}).path || null,
           link: `https://www.realapp.com/${routeId([36, 0, 0, Number(m.id)])}`, locked: !!m.isLocked, volume: m.volumeDisplay || null, start: st, oddsAt, live: !!(found.find(f => f.live)), hist,
           sources: fnd.map(f => ({ src: f.src, p: f.p.map(v => Math.round(v * 1000) / 1000), books: f.books, bk: f.bk })), refs: refs.map(f => ({ src: f.src, p: f.p.map(v => Math.round(v * 1000) / 1000) })),
-          sides: oc.map((x, i) => ({ key: x.key, label: x.label, name: (found[0] && found[0].names[i]) || names[x.key] || ((odds.abbr || {})[`${sp}:${x.key}`] || [])[0] || x.label, color: x.backgroundColor || null, price: x.probability, fair: fair[i], ev: fair[i] != null && x.probability > 0 ? fair[i] / x.probability - 1 : null })) });
+          sides: oc.map((x, i) => ({ key: x.key, label: x.label, logo: ((odds.logo || {})[`${sp}:${x.key}`]) || ((odds.logo || {})[`${sp}:${normTeam((found[0] && found[0].names[i]) || names[x.key] || '')}`]) || null, name: (found[0] && found[0].names[i]) || names[x.key] || ((odds.abbr || {})[`${sp}:${x.key}`] || [])[0] || x.label, color: x.backgroundColor || null, price: x.probability, fair: fair[i], ev: fair[i] != null && x.probability > 0 ? fair[i] / x.probability - 1 : null })) });
       }
     }
     await env.RATEBOARD_KV.put('pred_real_open', JSON.stringify(open), { expirationTtl: 3600 });
