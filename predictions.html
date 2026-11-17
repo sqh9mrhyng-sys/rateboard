@@ -60,6 +60,12 @@
   .guide{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:6px 16px 14px;margin-top:10px} .guide h2{font-size:16px;margin:14px 0 4px;color:var(--accent)} .guide p{margin:4px 0 8px;font-size:14px;line-height:1.55}
   .sd .fr{display:block;font-size:12px;font-weight:700;color:var(--ink);opacity:.85} .sd .fr b{color:var(--accent)}
   .ev .rx{display:block;font-size:11px;color:var(--good);font-weight:800;margin-top:2px}
+  .sph{display:flex;justify-content:space-between;align-items:center;width:100%;background:none;border:0;border-bottom:1px solid var(--line);color:var(--ink);font:inherit;font-weight:900;font-size:17px;padding:14px 2px 8px;cursor:pointer;text-align:left}
+  .sph .note{font-weight:600}
+  .bkbox{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px 12px;margin:8px 0}
+  .bkbox summary{cursor:pointer;font-weight:700;font-size:13px;color:var(--mute)} .bkbox summary span{color:var(--ink)}
+  #books{display:grid;grid-template-columns:repeat(2,1fr);gap:6px 10px;padding:4px 0 2px} .bkc{font-size:14px;display:flex;align-items:center;gap:6px} .bkc em{font-style:normal;font-size:11px;color:var(--accent)} .bkc.ref{color:var(--mute)}
+  .ar{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--line)} .ar button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 10px;font:inherit;font-size:13px;font-weight:700;cursor:pointer}
   .empty{padding:20px;text-align:center;color:var(--mute);background:var(--panel);border:1px solid var(--line);border-radius:14px}
   @media(max-width:520px){.sd{grid-template-columns:1fr 56px 78px;gap:6px}.sum b{font-size:17px}.gh{align-items:flex-start}}
 </style>
@@ -67,13 +73,19 @@
 <body><div class="wrap">
 <a href="/" class="back">← Home</a>
 <div class="top"><h1>Predictions EV</h1><span class="pulse" id="pulse"><i></i><span id="ago">-</span></span></div>
-<div class="tabs" id="tabs"><button data-t="m" aria-pressed="true">Markets</button><button data-t="g" aria-pressed="false">Guide into EV</button></div>
+<div class="tabs" id="tabs"><button data-t="m" aria-pressed="true">Markets</button><button data-t="g" aria-pressed="false">Guide into EV</button><button data-t="a" aria-pressed="false" hidden>Access</button></div>
 <div id="vm">
 <label class="bank"><span>Enter your rax amount for custom recommendations</span><input id="bank" type="number" inputmode="numeric" min="0" step="100" placeholder="e.g. 5000"><small id="banknote">1u = 1% of your rax</small></label>
 <div class="sum" id="sum"></div>
 <div class="bar"><div class="chips" id="chips"></div><button class="tog" id="plus" aria-pressed="false">Show all</button></div>
+<details class="bkbox" id="bkbox"><summary>Sportsbooks: <span id="bksum">All books</span></summary><p class="note" style="margin:6px 0">The fair % uses only the books you tick (saved on this device).</p><div id="books"></div></details>
 <div id="list"></div>
 </div>
+<div id="va" hidden><section class="guide">
+<h2>Who can open Predictions</h2>
+<p class="note">Only you and the members below can see this page. This tab goes away when it's public.</p>
+<input id="aq" type="search" placeholder="Search a member by username" autocomplete="off" style="width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;font-size:16px">
+<div id="ares"></div><h2>Has access</h2><div id="alist"><p class="note">Loading…</p></div></section></div>
 <div id="vg" hidden>
 <section class="guide">
 <h2>What EV means</h2>
@@ -161,17 +173,23 @@ function tick(){
   $('#ago').textContent = `Real ${s < 60 ? s + 's' : Math.round(s / 60) + 'm'} ago${os != null ? ` · Books ${os < 90 ? os + 's' : Math.round(os / 60) + 'm'} ago` : ''}`;
   $('#pulse').classList.toggle('stale', s > 60);
 }
-function draw(){
-  const games = (J.games || []).filter(g => !g.locked);
-  const sps = [...new Set(games.map(g => g.sport))];
-  $('#chips').innerHTML = sps.length > 1 ? ['', ...sps].map(s => `<button data-c="${s}" aria-pressed="${chip === s}">${s ? SPN[s] || s : 'All'}</button>`).join('') : '';
-  $('#plus').setAttribute('aria-pressed', showAll); $('#plus').textContent = showAll ? 'Hide under 7% fair' : 'Show all';
-  const pos = games.filter(g => g.sides.some(s => units(g, s))), top = games.reduce((a, g) => Math.max(a, best(g)), -9);
-  $('#sum').innerHTML = `<div><b>${games.length}</b><span>open markets</span></div><div><b class="pos">${pos.length}</b><span>bets to make</span></div><div><b class="${top > 0 ? 'pos' : 'nil'}">${top > -9 ? (top > 0 ? '+' : '') + pc(top) : '-'}</b><span>best edge</span></div>`;
-  const l = games.filter(g => (!chip || g.sport === chip) && (showAll || !decided(g))).sort((a, b) => (b.live - a.live) || (best(b) - best(a)) || (rawBest(b) - rawBest(a)));
-  $('#list').innerHTML = l.map(g => {
-    const srcs = g.sources || [];
-    return `<div class="g${g.sides.some(s => units(g, s)) ? ' hot' : ''}">
+/* Your own books (2026-11-16): the fair % is worked out again in the page from only the books you
+   tick (Pinnacle still counts double). Saved on this device. */
+let offBooks = new Set(JSON.parse(ls.get('pred_off_books') || '[]')), showPoly = ls.get('pred_poly') !== '0';
+let collapsed = new Set(JSON.parse(ls.get('pred_collapsed') || '[]'));
+const allBooks = () => [...new Set((J.games || []).flatMap(g => (g.sources || []).flatMap(x => (x.bk || []).map(b => b.t))))].sort();
+function derive(g){
+  const bk = (g.sources || []).flatMap(x => x.bk || []).filter(b => !offBooks.has(b.t));
+  const wt = bk.reduce((a, b) => a + (b.w || 1), 0);
+  const sides = g.sides.map((s, i) => { const fair = wt ? bk.reduce((a, b) => a + (b.w || 1) * (b.p[i] || 0), 0) / wt : null;
+    return { ...s, fair, ev: fair != null && s.price > 0 ? fair / s.price - 1 : null }; });
+  return { ...g, sides, sources: bk.length ? [{ src: `${bk.length} book${bk.length === 1 ? '' : 's'}`, books: bk.map(b => b.t), bk }] : [], refs: showPoly ? g.refs : [] };
+}
+const SP_ORDER = ['nfl', 'ncaaf', 'nba', 'nhl', 'soccer', 'ufc'];
+const stable = (a, b) => (SP_ORDER.indexOf(a.sport) - SP_ORDER.indexOf(b.sport)) || ((Date.parse(a.start) || 0) - (Date.parse(b.start) || 0)) || (a.id - b.id);
+function card(g){
+  const srcs = g.sources || [];
+  return `<div class="g${g.sides.some(s => units(g, s)) ? ' hot' : ''}">
     <div class="gh"><div style="min-width:0">
       ${g.path ? `<a class="nm" href="https://www.realapp.com${esc(g.path)}" target="_blank" rel="noopener">${esc(g.game)}</a>` : `<span class="nm">${esc(g.game)}</span>`}
       <div class="meta"><span class="tag">${esc(SPN[g.sport] || g.sport)}</span>${when(g)}${thin(g) && bkOf(g).length ? '<span class="tag lock" title="Too few books or lines too old to trust the EV">Thin odds</span>' : ''}${g.volume ? `<span class="tag">${esc(g.volume)} vol</span>` : ''}</div></div>
@@ -179,8 +197,37 @@ function draw(){
     ${g.sides.map((s, si) => { const u = units(g, s); return `<div class="sd"><span class="t"><i class="dot" style="background:${esc(s.color || '#555')};margin-top:5px"></i><span>${esc(s.name || s.label)}<small class="fr">Fair <b>${pc(s.fair)}</b></small>${(g.refs || []).length ? `<small class="ref">${g.refs.map(r => `${esc(r.src)} ${pc(r.p[si])}`).join(' · ')}</small>` : ''}</span></span>
       <span class="c">Real<b>${pc(s.price)}</b></span>
       <span class="ev ${s.ev == null || thin(g) ? 'nil' : s.ev > 0 ? 'pos' : 'neg'}">${s.ev == null ? '-' : (s.ev > 0 ? '+' : '') + pc(s.ev)}<small>EV</small>${u ? `<span class="u">${u}u</span>${bank ? `<span class="rx">${Math.round(bank * u / 100).toLocaleString()} rax</span>` : ''}` : ''}</span></div>`; }).join('')}
-    <div class="ft"><span class="srcs">${srcs.length ? 'Fair from <b>' + srcs.map(x => x.books ? `<span title="${esc(x.books.join(', '))}">${esc(x.src)}</span>` : esc(x.src)).join('</b>, <b>') + '</b>' : 'No sportsbook odds found for this game yet'}</span>${(() => { const h = g.hist || []; if (h.length < 2) return ''; const v = h[h.length - 1], sd = g.sides.reduce((a, x) => Math.abs((x.price ?? 9) - v) < Math.abs((a.price ?? 9) - v) ? x : a, g.sides[0]); return `<span class="src" title="Real's price for ${esc(sd.label)}, last few hours">${esc(sd.label)} ${spark(h)}</span>`; })()}</div>${breakdown(g)}</div>`;
-  }).join('') || `<div class="empty">${!showAll && games.length ? `Every open game is basically decided - <a href="#" id="sa">show all ${games.length}</a>.` : 'No open game markets on Real right now.'}</div>`;
+    <div class="ft"><span class="srcs">${srcs.length ? 'Fair from <b>' + srcs.map(x => x.books ? `<span title="${esc(x.books.join(', '))}">${esc(x.src)}</span>` : esc(x.src)).join('</b>, <b>') + '</b>' : 'No sportsbook odds for this game'}</span>${(() => { const h = g.hist || []; if (h.length < 2) return ''; const v = h[h.length - 1], sd = g.sides.reduce((a, x) => Math.abs((x.price ?? 9) - v) < Math.abs((a.price ?? 9) - v) ? x : a, g.sides[0]); return `<span class="src" title="Real's price for ${esc(sd.name || sd.label)}, last few hours">${esc(sd.label)} ${spark(h)}</span>`; })()}</div>${breakdown(g)}</div>`;
+}
+function drawBooks(){
+  const bks = allBooks();
+  $('#books').innerHTML = bks.map(t => `<label class="bkc"><input type="checkbox" data-bk="${esc(t)}"${offBooks.has(t) ? '' : ' checked'}> ${esc(t)}${t === 'Pinnacle' ? ' <em>×2</em>' : ''}</label>`).join('')
+    + `<label class="bkc ref"><input type="checkbox" id="poly"${showPoly ? ' checked' : ''}> Polymarket <em>compare only</em></label>`;
+  $('#bksum').textContent = offBooks.size ? `${bks.filter(t => !offBooks.has(t)).length} of ${bks.length} books` : 'All books';
+}
+function draw(){
+  const games = (J.games || []).filter(g => !g.locked).map(derive);
+  const sps = SP_ORDER.filter(sp => games.some(g => g.sport === sp));
+  $('#chips').innerHTML = ['', '_best', ...(sps.length > 1 ? sps : [])].map(s => `<button data-c="${s}" aria-pressed="${chip === s}">${s === '_best' ? 'Best EV' : s ? SPN[s] || s : 'All'}</button>`).join('');
+  $('#plus').setAttribute('aria-pressed', showAll); $('#plus').textContent = showAll ? 'Hide under 7% fair' : 'Show all';
+  const pos = games.filter(g => g.sides.some(s => units(g, s))), top = games.reduce((a, g) => Math.max(a, best(g)), -9);
+  $('#sum').innerHTML = `<div><b>${games.length}</b><span>open markets</span></div><div><b class="pos">${pos.length}</b><span>bets to make</span></div><div><b class="${top > 0 ? 'pos' : 'nil'}">${top > -9 ? (top > 0 ? '+' : '') + pc(top) : '-'}</b><span>best edge</span></div>`;
+  if (!$('#bkbox').open) drawBooks();
+  const vis = games.filter(g => showAll || !decided(g));
+  let html;
+  if (chip === '_best') {
+    // Best EV: every game with a usable edge, highest first.
+    const l = vis.filter(g => best(g) > 0).sort((a, b) => best(b) - best(a) || stable(a, b));
+    html = l.map(card).join('') || '<div class="empty">No sides with a usable edge right now.</div>';
+  } else {
+    // Fixed order (sport, start time, game) so cards don't jump when prices refresh.
+    html = (chip ? [chip] : sps).map(sp => { const l = vis.filter(g => g.sport === sp).sort(stable); if (!l.length) return '';
+      const n = l.filter(g => g.sides.some(s => units(g, s))).length, c = collapsed.has(sp);
+      return `<button class="sph" data-sp="${sp}" aria-expanded="${!c}"><span>${c ? '▸' : '▾'} ${esc(SPN[sp] || sp)}</span><span class="note">${l.length} game${l.length === 1 ? '' : 's'}${n ? ` · <b class="pos">${n} bet${n === 1 ? '' : 's'}</b>` : ''}</span></button>${c ? '' : l.map(card).join('')}`; }).join('');
+    html = html || `<div class="empty">${!showAll && games.length ? `Every open game is basically decided - <a href="#" id="sa">show all ${games.length}</a>.` : 'No open game markets on Real right now.'}</div>`;
+  }
+  $('#list').innerHTML = html;
+  $('#tabs [data-t="a"]').hidden = !J.owner;
   tick();
 }
 document.addEventListener('toggle', e => { const d = e.target; if(!d.matches || !d.matches('details.bd')) return; d.open ? openBd.add(d.dataset.bd) : openBd.delete(d.dataset.bd); }, true);
@@ -188,7 +235,19 @@ $('#chips').addEventListener('click', e => { const b = e.target.closest('[data-c
 const flip = () => { showAll = !showAll; ls.set('pred_all', showAll ? '1' : '0'); draw(); };
 $('#plus').addEventListener('click', flip);
 $('#list').addEventListener('click', e => { if (e.target.id === 'sa') { e.preventDefault(); flip(); } });
-$('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if(!b) return; for (const x of document.querySelectorAll('#tabs button')) x.setAttribute('aria-pressed', x === b); $('#vm').hidden = b.dataset.t !== 'm'; $('#vg').hidden = b.dataset.t !== 'g'; });
+$('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if(!b) return; for (const x of document.querySelectorAll('#tabs button')) x.setAttribute('aria-pressed', x === b); $('#vm').hidden = b.dataset.t !== 'm'; $('#vg').hidden = b.dataset.t !== 'g'; $('#va').hidden = b.dataset.t !== 'a'; if (b.dataset.t === 'a') accLoad(); });
+$('#list').addEventListener('click', e => { const h = e.target.closest('.sph'); if(!h) return; const sp = h.dataset.sp; collapsed.has(sp) ? collapsed.delete(sp) : collapsed.add(sp); ls.set('pred_collapsed', JSON.stringify([...collapsed])); draw(); });
+$('#books').addEventListener('change', e => { const t = e.target; if (t.id === 'poly') { showPoly = t.checked; ls.set('pred_poly', showPoly ? '1' : '0'); } else if (t.dataset.bk) { t.checked ? offBooks.delete(t.dataset.bk) : offBooks.add(t.dataset.bk); ls.set('pred_off_books', JSON.stringify([...offBooks])); } $('#bksum').textContent = offBooks.size ? `${allBooks().filter(x => !offBooks.has(x)).length} of ${allBooks().length} books` : 'All books'; draw(); });
+// Access (Dennis only, until public).
+const api = async q => { const t = ls.get('ratebrd_token_v1') || ''; return (await fetch('/api/swaps?' + q, { headers: t ? { 'x-rb-token': t } : {} })).json(); };
+async function accLoad(q = ''){ let j; try { j = await api('op=predaccess' + q); } catch (e) { return; } if (j.error) { $('#alist').innerHTML = `<p class="note">${esc(j.error)}</p>`; return; }
+  $('#alist').innerHTML = j.rows.length ? j.rows.map(r => `<div class="ar"><span>@${esc(r.rsUser)}</span><button data-del="${esc(r.key)}">Remove</button></div>`).join('') : '<p class="note">Nobody yet.</p>'; }
+let aqT = 0;
+$('#aq').addEventListener('input', e => { clearTimeout(aqT); const q = e.target.value.trim(); if (q.length < 2) { $('#ares').innerHTML = ''; return; }
+  aqT = setTimeout(async () => { let j; try { j = await api('op=modlookup&q=' + encodeURIComponent(q)); } catch (e) { return; }
+    $('#ares').innerHTML = (j.rows || []).map(r => `<div class="ar"><span>@${esc(r.rsUser)}</span><button data-add="${esc(r.key)}">Give access</button></div>`).join('') || '<p class="note">No member found.</p>'; }, 300); });
+$('#va').addEventListener('click', async e => { const b = e.target.closest('button[data-add],button[data-del]'); if(!b) return; b.disabled = true;
+  await accLoad(b.dataset.add ? '&add=' + encodeURIComponent(b.dataset.add) : '&del=' + encodeURIComponent(b.dataset.del)); if (b.dataset.add) { $('#aq').value = ''; $('#ares').innerHTML = ''; } });
 if (bank) $('#bank').value = bank;
 const bankNote = () => { $('#banknote').textContent = bank ? `1u = ${Math.round(bank / 100).toLocaleString()} rax (1% of ${bank.toLocaleString()})` : '1u = 1% of your rax'; };
 bankNote();

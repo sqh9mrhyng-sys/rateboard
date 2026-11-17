@@ -5931,10 +5931,26 @@ async function handle({ request, env, waitUntil }) {
     return json({ ok: true });
   }
   // Prediction-market EV (Dennis only for now, 2026-11-16): what the 2-minute job saved.
+  /* Who else can open Predictions (Dennis, 2026-11-16, until it goes public): KV list of member keys. */
+  const PRED_ACC = 'pred_access_v1';
+  const predAcc = async () => { try { return JSON.parse((await env.RATEBOARD_KV.get(PRED_ACC)) || '[]') || []; } catch (e) { return []; } };
+  if (op === 'predaccess') {
+    if (String(acc.who || '').toLowerCase() !== 'dennis') return forbidden('Only Dennis can change this.');
+    let l = await predAcc();
+    const add = String(url.searchParams.get('add') || '').trim().toLowerCase(), del = String(url.searchParams.get('del') || '').trim().toLowerCase();
+    if (add && !l.includes(add)) { l.push(add); await env.RATEBOARD_KV.put(PRED_ACC, JSON.stringify(l)); }
+    if (del) { l = l.filter(k => k !== del); await env.RATEBOARD_KV.put(PRED_ACC, JSON.stringify(l)); }
+    const rows = [];
+    for (const k of l) { let r = null; try { r = await db.prepare('SELECT key, rsUser FROM swap_users WHERE LOWER(key)=?').bind(k).first(); } catch (e) {} rows.push({ key: k, rsUser: (r && r.rsUser) || k }); }
+    return json({ rows });
+  }
   if (op === 'predev') {
-    if (String(acc.who || '').toLowerCase() !== 'dennis') return forbidden('Only Dennis can open this page for now.');
+    const who = String(acc.who || '').toLowerCase();
+    if (!who) return json({ error: 'Sign in first.' }, 401);
+    if (who !== 'dennis' && !(await predAcc()).includes(who)) return forbidden('Predictions is invite-only for now - ask Dennis for access.');
     let x = null; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_ev_v1')) || 'null'); } catch (e) {}
-    return json(x ? { at: x.at, games: x.games || [], credits: x.credits || null, used: x.used || null, errs: x.errs || [], keySet: !!env.ODDS_API_KEY } : { at: null, games: [], keySet: !!env.ODDS_API_KEY });
+    const owner = who === 'dennis' || undefined;
+    return json(x ? { owner, at: x.at, games: x.games || [], credits: x.credits || null, used: x.used || null, errs: x.errs || [], keySet: !!env.ODDS_API_KEY } : { owner, at: null, games: [], keySet: !!env.ODDS_API_KEY });
   }
   // Bulk ratings (Dennis only, 2026-11-15): live listings, every ended one (history), his passes, and pack plays.
   /* Bulk ratings (open to everyone, 2026-11-15): live listings, ended ones (history),
