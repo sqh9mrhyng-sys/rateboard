@@ -712,12 +712,12 @@ async function predOdds(env) {
           for (const bk of (e.bookmakers || [])) { const mk0 = (bk.markets || []).find(x => x.key === 'h2h') || {}, ou = mk0.outcomes || [];
             // A line that hasn't moved in a while is stale: 3 min while live, 90 min before.
             const upd = Date.parse(mk0.last_update || bk.last_update || 0); if (!Number.isFinite(upd) || Date.now() - upd > (isLive ? 3 : 90) * 60000) continue;
-            if (ou.length >= 2 && ou.every(x => x.price > 1)) (PRED_REF[bk.key] ? refs : books).push({ key: bk.key, title: bk.title, p: devig(ou.map(x => [x.name, x.price])) }); }
+            if (ou.length >= 2 && ou.every(x => x.price > 1)) (PRED_REF[bk.key] ? refs : books).push({ key: bk.key, title: bk.title, u: upd, raw: Object.fromEntries(ou.map(x => [x.name, x.price])), p: devig(ou.map(x => [x.name, x.price])) }); }
           if (!books.length && !refs.length) continue;
           const names = Object.keys((books[0] || refs[0]).p);
           if (books.length) { const fair = {}; let wt = 0; for (const b of books) wt += PRED_W[b.key] || 1;
             for (const n of names) fair[n] = books.reduce((a, b) => a + (PRED_W[b.key] || 1) * (b.p[n] || 0), 0) / wt;
-            games.push({ names, p: fair, src: books.length === 1 ? books[0].title : `${books.length} books`, start: e.commence_time, live: isLive, books: books.map(b => b.title) }); }
+            games.push({ names, p: fair, src: books.length === 1 ? books[0].title : `${books.length} books`, start: e.commence_time, live: isLive, books: books.map(b => b.title), bk: books.map(b => ({ t: b.title, w: PRED_W[b.key] || 1, u: b.u, p: b.p, d: b.raw })) }); }
           for (const b of refs) games.push({ names, p: b.p, src: b.title, ref: true, start: e.commence_time, live: isLive }); }
         o.api[k] = { at: Date.now(), games, live, every }; } catch (e) { o.errs.push(`${k} odds ${e.message}`); }
       await sleep(300);
@@ -755,7 +755,7 @@ async function predReal(env) {
         for (const g of srcs) {
           const map = oc.map(x => isDraw(x.label) || isDraw(x.key) ? g.names.find(isDraw) : g.names.find(n => !isDraw(n) && sideHits(aliasOf(x), n)));
           if (map.some(x => !x) || new Set(map).size !== map.length) continue;
-          found.push({ src: g.src, p: map.map(n => g.p[n]), start: g.start, live: g.live, books: g.books, ref: g.ref });
+          found.push({ src: g.src, p: map.map(n => g.p[n]), start: g.start, live: g.live, books: g.books, ref: g.ref, bk: (g.bk || []).map(b => ({ t: b.t, w: b.w, u: b.u, p: map.map(n => Math.round((b.p[n] || 0) * 1000) / 1000), d: map.map(n => b.d[n]) })) });
         }
         // Fair chance: Pinnacle counts double when it's there, every other source once.
         const refs = found.filter(f => f.ref), fnd = found.filter(f => !f.ref);
@@ -764,7 +764,7 @@ async function predReal(env) {
         const hist = (m.probabilityHistory || []).slice(-24).map(h => Math.round(h.pA * 1000) / 1000);
         out.games.push({ sport: sp, id: m.id, game: (m.gameDisplay || {}).display || oc.map(x => x.label).join(' vs '), path: (m.gameDisplay || {}).path || null,
           link: `https://www.realapp.com/${routeId([36, 0, 0, Number(m.id)])}`, locked: !!m.isLocked, volume: m.volumeDisplay || null, start: st, live: !!(found.find(f => f.live)), hist,
-          sources: fnd.map(f => ({ src: f.src, p: f.p.map(v => Math.round(v * 1000) / 1000), books: f.books })), refs: refs.map(f => ({ src: f.src, p: f.p.map(v => Math.round(v * 1000) / 1000) })),
+          sources: fnd.map(f => ({ src: f.src, p: f.p.map(v => Math.round(v * 1000) / 1000), books: f.books, bk: f.bk })), refs: refs.map(f => ({ src: f.src, p: f.p.map(v => Math.round(v * 1000) / 1000) })),
           sides: oc.map((x, i) => ({ key: x.key, label: x.label, color: x.backgroundColor || null, price: x.probability, fair: fair[i], ev: fair[i] != null && x.probability > 0 ? fair[i] / x.probability - 1 : null })) });
       }
     }
