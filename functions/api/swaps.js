@@ -5956,9 +5956,9 @@ async function handle({ request, env, waitUntil }) {
       const num = v => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : 0; };
       const str = v => String(v == null ? '' : v).slice(0, 120);
       if (b.add && typeof b.add === 'object') { const a = b.add;
-        l = l.filter(x => !(x.gid === Number(a.gid) && x.side === Number(a.side)));
+        if (Number(a.gid) > 0) l = l.filter(x => !(x.gid === Number(a.gid) && x.side === Number(a.side)));
         l.unshift({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), gid: Number(a.gid) || 0, side: Number(a.side) || 0, sport: str(a.sport), game: str(a.game), name: str(a.name),
-          price: num(a.price), fair: num(a.fair), ev: Number(a.ev) || 0, u: num(a.u), amt: num(a.amt), teams: Array.isArray(a.teams) ? a.teams.slice(0, 3).map(str) : [], start: str(a.start), logo: /^https:\/\/a\.espncdn\.com\//.test(String(a.logo || '')) ? String(a.logo).slice(0, 300) : '', link: /^https:\/\/www\.realapp\.com\//.test(String(a.link || '')) ? str(a.link) : '', at: Date.now() }); }
+          price: num(a.price), fair: num(a.fair), ev: Number(a.ev) || 0, u: num(a.u), amt: num(a.amt), teams: Array.isArray(a.teams) ? a.teams.slice(0, 3).map(str) : [], start: str(a.start), custom: !!a.custom, logo: /^https:\/\/a\.espncdn\.com\//.test(String(a.logo || '')) ? String(a.logo).slice(0, 300) : '', link: /^https:\/\/www\.realapp\.com\//.test(String(a.link || '')) ? str(a.link) : '', at: Date.now() }); }
       if (b.set && typeof b.set === 'object') { const x = l.find(y => y.id === b.set.id); if (x) { if (b.set.pay !== undefined) { if (b.set.pay === null || b.set.pay === '') delete x.pay; else x.pay = num(b.set.pay); } if (b.set.res != null) x.auto = false; if (b.set.amt != null) x.amt = num(b.set.amt); if (b.set.price != null) x.price = num(b.set.price); if (b.set.res != null) x.res = ['won', 'lost', ''].includes(b.set.res) ? b.set.res : ''; } }
       if (b.del) l = l.filter(x => x.id !== String(b.del));
       l = l.slice(0, 300); await env.RATEBOARD_KV.put(K, JSON.stringify(l));
