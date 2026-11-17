@@ -6006,7 +6006,7 @@ async function handle({ request, env, waitUntil }) {
       const str = (v, n) => String(v == null ? '' : v).trim().slice(0, n);
       if (b.add) {
         if (!owner && !(await allow(url.origin, 'predfb:' + who, 10, 3600))) return json({ error: 'That is a lot of sends - try again later.' }, 429);
-        const title = str(b.add.title, 140); if (title.length < 4) return json({ error: 'Give it a line I can read at a glance.' }, 400);
+        const title = str(b.add.title, 140); if (title.length < 4) return json({ error: 'Give it a line I can read at a glance.' }, 400); if (str(b.add.detail, 1500).length < 10) return json({ error: 'Add some detail - what you saw and when.' }, 400);
         l.unshift({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), by: who, kind: ['issue', 'idea', 'odds'].includes(b.add.kind) ? b.add.kind : 'idea', title, detail: str(b.add.detail, 1500), game: str(b.add.game, 120), at: Date.now(), status: 'open', replies: [] });
       }
       if (owner && b.reply) { const x = l.find(y => y.id === b.reply.id); const t = str(b.reply.text, 1000);

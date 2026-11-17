@@ -82,7 +82,7 @@
   .leg{display:grid;grid-template-columns:28px 1fr 74px 74px auto;gap:8px;align-items:center;padding:8px 14px;border-top:1px solid var(--line)} .leg .ln{min-width:0;font-size:14px} .leg .ln small{display:block;font-size:12px;color:var(--mute)} .leg .ln .tag{font-size:10px;padding:1px 6px}
   .leg label{font-size:10px;color:var(--mute);font-weight:700;text-transform:uppercase} .leg input{display:block;width:100%;margin-top:2px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:5px 6px;font:inherit;font-size:15px}
   .lact{display:flex;gap:4px} .lact button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:4px 7px;font:inherit;font-size:12px;font-weight:800;cursor:pointer} .lact .del{color:var(--bad)}
-.kinds2{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px} .kinds2 button{background:var(--panel2);color:var(--ink);border:2px solid var(--line);border-radius:12px;padding:10px 8px;font:inherit;font-weight:800;font-size:13px;cursor:pointer;text-align:left} .kinds2 button small{display:block;color:var(--mute);font-weight:500;font-size:11px;margin-top:2px} .kinds2 button[aria-pressed="true"]{border-color:var(--accent)}
+.kinds2{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px} .kinds2 button{background:var(--panel2);color:var(--ink);border:2px solid var(--line);border-radius:12px;padding:12px 6px;font:inherit;font-weight:800;font-size:14px;cursor:pointer;text-align:center} .kinds2 button small{display:block;color:var(--mute);font-weight:500;font-size:11px;margin-top:2px} .kinds2 button[aria-pressed="true"]{border-color:var(--accent)}
   .fl{display:block;font-size:12px;font-weight:700;color:var(--mute);margin:0 0 10px} .fl input,.fl select,.fl textarea{display:block;width:100%;margin-top:4px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font:inherit;font-size:16px} .fl textarea{min-height:96px;resize:vertical}
   .place.big{width:100%;padding:12px;font-size:15px;background:var(--accent);color:#1a1205;border-color:var(--accent)}
   .fb{background:var(--panel);border:1px solid var(--line);border-radius:14px;margin:10px 0;padding:12px 14px} .fb .top2{display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap} .fb h4{margin:6px 0 2px;font-size:15px} .fb p{margin:4px 0;font-size:14px;white-space:pre-wrap}
@@ -136,11 +136,10 @@
 <div id="vf" hidden>
 <form class="guide fbf" id="fbform">
   <h2 style="margin-top:12px">Request or report</h2>
-  <p class="note" style="margin:2px 0 10px">Something wrong on this page, or an idea to make it better? It goes straight to Dennis, and his answer shows up here and in your Notifications.</p>
-  <div class="kinds2" id="fbk"><button type="button" data-k="issue" aria-pressed="true">🐞 Issue<small>Something's broken or looks wrong</small></button><button type="button" data-k="odds" aria-pressed="false">📉 Odds look off<small>A fair % or EV doesn't add up</small></button><button type="button" data-k="idea" aria-pressed="false">💡 Idea<small>A new feature or change</small></button></div>
+  <div class="kinds2" id="fbk"><button type="button" data-k="issue" aria-pressed="true">Issue</button><button type="button" data-k="odds" aria-pressed="false">Odds look off</button><button type="button" data-k="idea" aria-pressed="false">Idea</button></div>
   <label class="fl">Game (optional)<select id="fbg"><option value="">Not about one game</option></select></label>
   <label class="fl">In one line<input id="fbt" maxlength="140" autocomplete="off" placeholder="e.g. Utah's fair % looked 10 points off the books" required></label>
-  <label class="fl">Detail (optional)<textarea id="fbd" maxlength="1500" placeholder="What you saw, when, what you expected. Screenshot links help."></textarea></label>
+  <label class="fl">Detail<textarea id="fbd" maxlength="1500" required></textarea></label>
   <button class="place big" id="fbgo">Send</button><p class="note" id="fbmsg"></p>
 </form>
 <div id="fbown" hidden><div class="bar" style="margin-top:10px"><div class="chips" id="fbfilter"><button data-s="open" aria-pressed="true">Open</button><button data-s="planned" aria-pressed="false">Planned</button><button data-s="done" aria-pressed="false">Done</button><button data-s="all" aria-pressed="false">All</button></div></div></div>
@@ -457,7 +456,7 @@ $('#cform').addEventListener('submit', async e => { e.preventDefault(); const f 
   f.reset(); btn.disabled = false; btn.textContent = 'Add bet'; $('#cbox').open = false; });
 // Request/Report tab (2026-11-16): members send; Dennis answers here.
 let FB = { items: [] }, fbKind = 'issue', fbFilter = 'open';
-const FBK = { issue: '🐞 Issue', odds: '📉 Odds look off', idea: '💡 Idea' }, ago2 = t => { const m = Math.round((Date.now() - t) / 60000); return m < 60 ? m + 'm ago' : m < 1440 ? Math.round(m / 60) + 'h ago' : Math.round(m / 1440) + 'd ago'; };
+const FBK = { issue: 'Issue', odds: 'Odds look off', idea: 'Idea' }, ago2 = t => { const m = Math.round((Date.now() - t) / 60000); return m < 60 ? m + 'm ago' : m < 1440 ? Math.round(m / 60) + 'h ago' : Math.round(m / 1440) + 'd ago'; };
 async function fbCall(body){ const t = ls.get('ratebrd_token_v1') || ''; try { const j = await (await fetch('/api/swaps?op=predfb', body ? { method: 'POST', headers: { 'content-type': 'application/json', ...(t ? { 'x-rb-token': t } : {}) }, body: JSON.stringify(body) } : { headers: t ? { 'x-rb-token': t } : {} })).json(); if (j.items) FB = j; else if (j.error) return j; } catch (e) { return { error: 'Could not reach the site.' }; } drawFb(); return {}; }
 function drawFb(){
   const own = !!FB.owner, open = FB.items.filter(x => x.status === 'open').length;
@@ -476,6 +475,7 @@ function drawFb(){
 }
 $('#fbk').addEventListener('click', e => { const b = e.target.closest('[data-k]'); if (!b) return; fbKind = b.dataset.k; document.querySelectorAll('#fbk button').forEach(x => x.setAttribute('aria-pressed', x === b)); });
 $('#fbform').addEventListener('submit', async e => { e.preventDefault(); const title = $('#fbt').value.trim(); if (title.length < 4) { $('#fbmsg').textContent = 'Give it a line I can read at a glance.'; return; }
+  if ($('#fbd').value.trim().length < 10) { $('#fbmsg').textContent = 'Add some detail - what you saw and when.'; $('#fbd').focus(); return; }
   $('#fbgo').disabled = true; $('#fbmsg').textContent = 'Sending…'; const r = await fbCall({ add: { kind: fbKind, title, detail: $('#fbd').value.trim(), game: $('#fbg').value } }); $('#fbgo').disabled = false;
   if (r.error) { $('#fbmsg').textContent = r.error; return; } $('#fbt').value = ''; $('#fbd').value = ''; $('#fbg').value = ''; $('#fbmsg').textContent = 'Sent - thanks! You\'ll see the answer below.'; });
 $('#fbfilter').addEventListener('click', e => { const b = e.target.closest('[data-s]'); if (!b) return; fbFilter = b.dataset.s; document.querySelectorAll('#fbfilter button').forEach(x => x.setAttribute('aria-pressed', x === b)); drawFb(); });
