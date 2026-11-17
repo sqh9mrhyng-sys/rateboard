@@ -72,7 +72,7 @@
   .sheet .x{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:6px 12px;font-weight:700}
   .thm{display:grid;grid-template-columns:repeat(4,1fr);gap:8px} .thm button{border:2px solid var(--line);border-radius:12px;padding:10px 4px 8px;background:var(--panel2);font-size:12px;font-weight:700}
   .thm button[aria-pressed="true"]{border-color:var(--accent)} .thm i{display:flex;justify-content:center;gap:3px;margin-bottom:6px} .thm i b{width:14px;height:14px;border-radius:50%;display:block}
-  .tg{display:flex;justify-content:space-between;align-items:center;padding:10px 2px;border-top:1px solid var(--line);font-weight:700} .tg input{width:22px;height:22px;accent-color:var(--accent)}
+  .tg{display:flex;justify-content:space-between;align-items:center;padding:10px 2px;border-top:1px solid var(--line);font-weight:700} .tg input{width:22px;height:22px;accent-color:var(--accent)} .tg input.cw{width:52px;height:34px;padding:0;border:1px solid var(--line);border-radius:8px;background:none;cursor:pointer}
   .hsign{display:flex;flex-direction:column;gap:10px;text-align:left}
   .hsign input{font:inherit;font-size:16px;padding:12px 14px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
   .hsign button{font:inherit;font-weight:800;font-size:16px;padding:12px;border-radius:10px;border:0;background:var(--accent);color:#141925;cursor:pointer}
@@ -332,7 +332,7 @@ $('#hs-rcopy').addEventListener('click', async () => {
   $('#hs-rcopy').textContent = ok ? 'Copied' : 'Copy failed - type it in'; setTimeout(() => { $('#hs-rcopy').textContent = 'Copy code'; }, 2000);
 });
 
-const THEME_NAMES = { '': 'Classic', midnight: 'Midnight', ocean: 'Ocean', forest: 'Forest', plum: 'Plum', crimson: 'Crimson', slate: 'Slate' };
+const THEME_NAMES = { custom: 'Your own', '': 'Classic', midnight: 'Midnight', ocean: 'Ocean', forest: 'Forest', plum: 'Plum', crimson: 'Crimson', slate: 'Slate' };
 async function saveUI(part){ Object.assign(UI, part); ls.set('rb_ui_v1', JSON.stringify(UI)); drawNav();
   await api('/api/kv', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'uiPrefs', set: part }) }); }
 function openUI(){
@@ -340,14 +340,23 @@ function openUI(){
   const pages = PAGES.filter(p => p[0] !== '/' && p[0] !== '/notifications' && canOpen(p));
   const el = document.createElement('div'); el.className = 'sheet';
   el.innerHTML = `<div class="box" role="dialog" aria-label="Look settings"><div class="hd"><h2>UI</h2><button class="x" data-close>Done</button></div>
-    <h3>Theme</h3><div class="thm">${Object.keys(THEME_NAMES).map(k => { const t = T[k] || cls['']; return `<button data-theme="${k}" aria-pressed="${(UI.theme || '') === k}"><i><b style="background:${t.bg};border:1px solid #555"></b><b style="background:${t.tile}"></b><b style="background:${t.accent}"></b></i>${THEME_NAMES[k]}</button>`; }).join('')}</div>
+    <h3>Theme</h3><div class="thm">${Object.keys(THEME_NAMES).map(k => { const t = k === 'custom' && window.rbCustomTheme ? rbCustomTheme(UI.custom) : T[k] || cls['']; return `<button data-theme="${k}" aria-pressed="${(UI.theme || '') === k}"><i><b style="background:${t.bg};border:1px solid #555"></b><b style="background:${t.tile}"></b><b style="background:${t.accent}"></b></i>${THEME_NAMES[k]}</button>`; }).join('')}</div>
+    <div id="ui-own"${(UI.theme || '') === 'custom' ? '' : ' hidden'}><h3>Your own colours</h3><p class="note" style="margin:0 0 6px">Tap a swatch to pick from the colour wheel.</p>
+      ${[['bg', 'Background', '#141925'], ['tile', 'Boxes and buttons', '#3d6fd6'], ['accent', 'Highlights and links', '#E8A33D']].map(([k, l, d]) => `<label class="tg">${l}<input type="color" class="cw" data-c="${k}" value="${esc(((UI.custom || {})[k]) || d)}"></label>`).join('')}
+      <button class="x" type="button" id="ui-reset" style="margin-top:8px">Reset to Classic colours</button></div>
     <h3>Home layout</h3><label class="tg">Compact - two boxes a line<input type="checkbox" id="ui-compact"${UI.compact ? ' checked' : ''}></label>
     <h3>Show on Home</h3><p class="note" style="margin:0 0 4px">Untick a page to hide its box. It's still in the menu and at its link.</p>
     ${pages.map(([h, t]) => `<label class="tg">${esc(t)}<input type="checkbox" data-page="${esc(h)}"${(UI.hidden || []).includes(h) ? '' : ' checked'}></label>`).join('')}
     <p class="note" style="margin:14px 0 0">Saved to your account, so it follows you to other devices.</p></div>`;
   document.body.appendChild(el);
   el.addEventListener('click', e => { if(e.target === el || e.target.closest('[data-close]')) el.remove();
-    const b = e.target.closest('[data-theme]'); if(b){ const k = b.dataset.theme; el.querySelectorAll('[data-theme]').forEach(x => x.setAttribute('aria-pressed', x === b)); if(window.rbApplyTheme) rbApplyTheme(k); saveUI({ theme: k }); } });
+    const b = e.target.closest('[data-theme]'); if(b){ const k = b.dataset.theme; el.querySelectorAll('[data-theme]').forEach(x => x.setAttribute('aria-pressed', x === b)); if(window.rbApplyTheme) rbApplyTheme(k, UI.custom); el.querySelector('#ui-own').hidden = k !== 'custom'; saveUI({ theme: k }); }
+    if(e.target.id === 'ui-reset'){ const c = { bg: '#141925', tile: '#3d6fd6', accent: '#E8A33D' }; el.querySelectorAll('.cw').forEach(x => { x.value = c[x.dataset.c]; }); UI.custom = c; if(window.rbApplyTheme) rbApplyTheme('custom', c); saveUI({ custom: c }); } });
+  // Colour wheel: shows as you drag, saves when you let go.
+  let cwT = 0;
+  el.addEventListener('input', e => { if(!e.target.classList.contains('cw')) return; const c = Object.assign({}, UI.custom || {}, { [e.target.dataset.c]: e.target.value }); UI.custom = c;
+    if(window.rbApplyTheme) rbApplyTheme('custom', c); const sw = el.querySelector('[data-theme="custom"] i'); if(sw && window.rbCustomTheme){ const t = rbCustomTheme(c); sw.innerHTML = `<b style="background:${t.bg};border:1px solid #555"></b><b style="background:${t.tile}"></b><b style="background:${t.accent}"></b>`; }
+    clearTimeout(cwT); cwT = setTimeout(() => saveUI({ custom: c }), 600); });
   el.addEventListener('change', e => { if(e.target.id === 'ui-compact') saveUI({ compact: e.target.checked });
     if(e.target.dataset.page){ const h = new Set(UI.hidden || []); e.target.checked ? h.delete(e.target.dataset.page) : h.add(e.target.dataset.page); saveUI({ hidden: [...h] }); } });
 }
@@ -374,7 +383,7 @@ $('#uibtn').addEventListener('click', openUI);
   $('#me').textContent = (d && (d.name || d.key)) || '';
   drawNav();
   // The account's saved look, from the server (it follows them to other devices).
-  api('/api/kv', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'uiPrefs' }) }).then(r => { if(r && r.prefs){ UI = r.prefs; ls.set('rb_ui_v1', JSON.stringify(UI)); if(window.rbApplyTheme) rbApplyTheme(UI.theme || ''); drawNav(); } });
+  api('/api/kv', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'uiPrefs' }) }).then(r => { if(r && r.prefs){ UI = r.prefs; ls.set('rb_ui_v1', JSON.stringify(UI)); if(window.rbApplyTheme) rbApplyTheme(UI.theme || '', UI.custom); drawNav(); } });
   $('#lock').classList.add('hide'); $('#page').classList.remove('hide');
   // Unseen notifications: a count on the Notifications box (cleared when the page is opened).
   try{ const n = await api('/api/swaps?op=notifs'); const seen = Number(ls.get('rb_notifs_seen_v1') || 0);

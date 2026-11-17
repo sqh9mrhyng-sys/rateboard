@@ -740,6 +740,7 @@ export async function onRequestPost({ request, env, waitUntil }) {
       if (typeof s0.theme === 'string') p.theme = s0.theme.slice(0, 20);
       if (Array.isArray(s0.hidden)) p.hidden = s0.hidden.filter(x => typeof x === 'string').slice(0, 40).map(x => x.slice(0, 40));
       if (s0.compact != null) p.compact = !!s0.compact;
+      if (s0.custom && typeof s0.custom === 'object') { const c = {}; for (const k of ['bg', 'accent', 'tile']) if (/^#?[0-9a-f]{6}$/i.test(String(s0.custom[k] || ''))) c[k] = '#' + String(s0.custom[k]).replace('#', ''); p.custom = c; }
       await env.RATEBOARD_KV.put(K, JSON.stringify(p));
     }
     return json({ prefs: p });
