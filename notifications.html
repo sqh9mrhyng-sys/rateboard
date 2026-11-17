@@ -21,6 +21,7 @@
   .ab{margin:8px 0 0 42px} .ar.sub2{padding-left:14px;color:var(--mute);font-size:13px} .ar select{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 6px;font:inherit;font-size:13px} .bs.all{border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:4px} .bs input[type=checkbox]{width:20px!important;height:20px!important;flex:none;accent-color:var(--accent)} .ar{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;font-size:14px} .ar input[type=checkbox]{width:20px;height:20px;accent-color:var(--accent)}
   .bs{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:14px} .bs b{width:44px} .bs select{margin-left:auto;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 6px;font:inherit;font-size:14px}
   .ab.off{opacity:.45;pointer-events:none}
+  .act.locked .ag{opacity:.4;pointer-events:none} .lockmsg{display:none;margin:0 0 8px;color:var(--accent)} .act.locked .lockmsg{display:block}
   .note{color:var(--mute);font-size:14px}
   .top{display:flex;justify-content:space-between;align-items:center;gap:10px}
   .item{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:8px 0;white-space:pre-line}
@@ -54,6 +55,7 @@
 </div>
 <div class="act" id="act" hidden>
   <h2 style="margin:0 0 8px">Activate notifications</h2>
+  <p class="note lockmsg" id="alock">Turn on push notifications for this device above first - then choose which ones you want here.</p>
   <div class="ag" data-g="swaps"><div class="ah"><button class="ax" data-x="swaps" aria-expanded="false">▸</button><b>Swaps</b><button class="aon" data-on="swaps">Activate</button></div>
     <div class="ab" hidden>
       <label class="ar"><span>Warning 30 minutes before your swaps</span><input type="checkbox" data-k="swaps.warn"></label>
@@ -105,6 +107,9 @@ const $ = s => document.querySelector(s);
   let saveT = 0;
   const save = () => { clearTimeout(saveT); saveT = setTimeout(async () => { const r = await call(P); $('#amsg').textContent = r.error ? r.error : 'Saved.' + (typeof Notification !== 'undefined' && Notification.permission !== 'granted' ? ' Turn on push notifications above for this device to get them.' : ''); }, 300); };
   $('#act').hidden = false; draw();
+  // Locked until this device has notifications on (the push card below tells us).
+  const lockTo = on => { $('#act').classList.toggle('locked', !on); };
+  lockTo(!!window.RB_PUSH_ON); window.addEventListener('rb-push', e => lockTo(!!e.detail));
   $('#act').addEventListener('click', e => {
     const x = e.target.closest('[data-x]'); if (x) { const b = document.querySelector(`.ag[data-g="${x.dataset.x}"] .ab`); b.hidden = !b.hidden; x.setAttribute('aria-expanded', String(!b.hidden)); x.textContent = b.hidden ? '▸' : '▾'; return; }
     if (e.target.closest('label') && e.target.tagName === 'SELECT') return;
@@ -140,7 +145,7 @@ const $ = s => document.querySelector(s);
     const perm = Notification.permission;
     if (perm === 'denied') { state(false, 'Blocked'); msg(ios ? 'Notifications are blocked. Turn them on in Settings > Notifications > Rax Academy.' : 'Notifications are blocked for this site - allow them in your browser settings.'); $('#pon').hidden = true; $('#ptest').hidden = true; $('#poff').hidden = true; return; }
     $('#pon').hidden = !!sub; $('#ptest').hidden = !sub; $('#poff').hidden = !sub;
-    state(!!sub, sub ? 'On' : 'Off');
+    state(!!sub, sub ? 'On' : 'Off'); window.RB_PUSH_ON = !!sub; window.dispatchEvent(new CustomEvent('rb-push', { detail: !!sub }));
     msg(sub ? 'This device gets the notifications you activate below.' : 'Turn this on for each phone or computer you want notifications on, then choose which ones below.');
   };
   $('#pon').addEventListener('click', async () => {

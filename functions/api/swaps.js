@@ -6213,6 +6213,10 @@ async function handle({ request, env, waitUntil }) {
     if (!acc.who) return json({ error: 'Sign in first.' }, 401);
     const who = String(acc.who).toLowerCase(); let p = await pushPrefs(env, who);
     if (request.method === 'POST') { let b = {}; try { b = await request.json(); } catch (e) {}
+      // Settings only once notifications are on for at least one device (Dennis, 2026-11-17).
+      await db.prepare(PUSH_DDL).run();
+      const dv = await db.prepare('SELECT COUNT(*) AS n FROM push_subs WHERE key=?').bind(who).first();
+      if (!(Number(dv && dv.n) > 0)) return json({ error: 'Turn on push notifications for this device first (top of this page).', prefs: p, sports: BOOST_PUSH_SP }, 400);
       const bool = v => v === true || v === false ? v : undefined, clean = {};
       const sw = b.swaps || {}; clean.swaps = { on: !!sw.on, warn: bool(sw.warn) ?? true, live: bool(sw.live) ?? true, confirm: bool(sw.confirm) ?? true, dmWarn: bool(sw.dmWarn) ?? true, dmLive: bool(sw.dmLive) ?? true, confirmLead: [0, 15, 30, 60, 120, 240].includes(Number(sw.confirmLead)) ? Number(sw.confirmLead) : 0 };
       const bo = b.boosts || {}, sps = {}; for (const k of Object.keys(BOOST_PUSH_SP)) { const x = (bo.sports || {})[k] || {}; const h = Math.max(0.25, Math.min(36, Number(x.hours) || 2)); sps[k] = { on: !!x.on, hours: Math.round(h * 4) / 4 }; }
