@@ -125,6 +125,9 @@
   .phgrid button.on{background:var(--accent);border-color:var(--accent);color:#141925;font-weight:800}
   .phgrid button .ord{position:absolute;top:2px;right:5px;font-size:9.5px;font-weight:800}
   #con.new{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 35%,transparent)}
+.stg{display:grid;grid-template-columns:repeat(4,1fr);gap:8px} .stg div{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px} .stg b{display:block;font-size:16px;color:var(--ink)} .stg b.bad{color:#e5534b} .stg span{font-size:11px;color:var(--mute)}
+  @media(max-width:520px){.stg{grid-template-columns:repeat(2,1fr)}}
+  .spl{margin-top:10px} .spl div{display:grid;grid-template-columns:28px 1fr 34px;gap:8px;align-items:center;font-size:12px;margin:3px 0} .spl i{display:block;height:8px;border-radius:4px;background:#F5B83D;min-width:2px} .spl b{text-align:right;color:var(--ink)}
   .tl{display:inline-block;font-size:10.5px;font-weight:800;letter-spacing:.03em;padding:1px 7px;border-radius:999px;vertical-align:1px;text-transform:uppercase}
   .tl.new{background:var(--panel2);color:var(--mute);border:1px solid var(--line)}
   .tl.trusted{background:#2a6fdb;color:#fff}
@@ -147,6 +150,7 @@
   <div class="topbtns" id="topbtns"><a class="btn" href="/swaps">← Swaps page</a><a class="btn" id="picksbtn" href="#">Your players &amp; hours</a></div>
   <div class="hmenu" id="hmenu" hidden><div class="hm-t"><span>Today</span></div><div id="hm-up"></div><div class="hm-t"><span>Previous</span></div><div id="hm-past"></div></div>
   <div id="pkview" hidden>
+    <section id="mystats"><h2>Your stats</h2><div id="stbox" class="note">Loading…</div></section>
     <section><h2>Your grinds today</h2><p class="note" style="margin:0 0 6px">Packs coming to you today (7am to 7am ET) for each player you're swapping for.</p><div id="pkgrinds"></div></section>
     <section><h2>Packs used today</h2>
       <p class="note" style="margin:0 0 8px">Every pass that's gone out (or is scheduled to) in a swap today, plus any you add. Add one you used yourself and it won't be given in a swap again today - swaps already scheduled with it still go ahead.</p>
@@ -223,7 +227,7 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
   if(views[q.get('v')]){ const [id, lbl, fn] = views[q.get('v')]; $('#tbtn').firstChild.textContent = lbl; ['#buy', '#w160', '#con', '#s160', '#andr', '#wait', '#sub'].forEach(x => { const el = $(x); if(el) el.hidden = true; }); $(id).hidden = false; fn(); return; }
   if(q.get('v') === 'byhour' && isAdm){ $('#tbtn').firstChild.textContent = 'Swaps by hour '; ['#buy', '#w160', '#con', '#s160', '#andr', '#wait', '#sub'].forEach(id => { const el = $(id); if(el) el.hidden = true; }); $('#byview').hidden = false; byLoad(Number(q.get('at')) || 0); return; }
   // Packs today view: the page shows only that.
-  if(q.get('v') === 'packs'){ $('#tbtn').firstChild.textContent = 'Packs today '; ['#buy', '#w160', '#con', '#s160', '#andr', '#wait', '#sub'].forEach(id => { const el = $(id); if(el) el.hidden = true; }); $('#pkview').hidden = false; loadPk(); return; }
+  if(q.get('v') === 'packs'){ $('#tbtn').firstChild.textContent = 'Your stats and packs '; ['#buy', '#w160', '#con', '#s160', '#andr', '#wait', '#sub'].forEach(id => { const el = $(id); if(el) el.hidden = true; }); $('#pkview').hidden = false; loadPk(); return; }
   $('#sub').textContent = `${live.length} swap${live.length === 1 ? '' : 's'} at this time` + (j.swaps.length > live.length ? ` (${j.swaps.length - live.length} called off)` : '') + (n160 ? ` · ${n160} 160${n160 === 1 ? '' : 's'}` : '') + '.';
   $('#buy').hidden = !j.swaps.length; $('#w160').hidden = !nW;
   $('#andr').hidden = !live.length;
@@ -300,7 +304,24 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
 })();
 /* Packs today: what the system counts as used, plus your own additions. */
 const pkUrl = () => `/api/swaps?op=hourpacks&u=${encodeURIComponent(q.get('u') || '')}&d=${encodeURIComponent(q.get('d') || '')}&t=${encodeURIComponent(q.get('t') || '')}`;
+const TAGN = { owner: 'Owner', goat: '🐐 GOAT', silver: '🥈 2nd', bronze: '🥉 3rd', legend: 'Legend', vet: 'Vet', trusted: 'Trusted', rising: 'Rising', new: 'New' };
+function paintStats(st){
+  if(!st || st.error){ $('#stbox').textContent = st && st.error ? 'Stats unavailable right now.' : ''; return; }
+  const bar = n => { const mx = Math.max(1, ...Object.values(st.split)); return `<i style="width:${Math.round(n / mx * 100)}%"></i>`; };
+  $('#stbox').innerHTML = `<div class="stg">
+    <div><b>${st.pts != null ? Math.round(st.pts) : '-'}</b><span>Swap Score</span></div>
+    <div><b><span class="tl ${esc(st.lv)}">${TAGN[st.lv] || 'New'}</span></b><span>Tag</span></div>
+    <div><b>${st.stars != null ? st.stars.toFixed(2) + ' ★' : '-'}</b><span>${st.votes} vote${st.votes === 1 ? '' : 's'}</span></div>
+    <div><b>${st.swaps.toLocaleString()}</b><span>swaps all time</span></div>
+    <div><b>${st.week}</b><span>this week</span></div>
+    <div><b>${st.todayDone}/${st.today}</b><span>swaps today</span></div>
+    <div><b>${st.buy160 + st.sell160}</b><span>160s today${st.buy160 + st.sell160 ? ` (${st.buy160} buying, ${st.sell160} selling)` : ''}</span></div>
+    <div><b class="${st.strikes ? 'bad' : ''}">${st.strikes ? `${st.strikes}/${st.max}` : st.warned ? 'Warning' : 'Clean'}</b><span>strikes</span></div></div>
+    ${st.votes ? `<div class="spl">${[5, 4, 3, 2, 1].map(k => `<div><span>${k}★</span>${bar(st.split[k])}<b>${st.split[k]}</b></div>`).join('')}</div>` : '<p class="note" style="margin:8px 0 0">No ratings yet - partners rate you after a swap.</p>'}
+    <p class="note" style="margin:8px 0 0">Swap Score mixes your stars (counted as if you started with 10 votes of 3.5) and your swaps. It decides your tag and who gets a player when two people want the same one.</p>`;
+}
 function paintPk(j){
+  if(j.stats) paintStats(j.stats);
   if(j.error){ $('#pklist').innerHTML = `<p class="note">${esc(j.error)}</p>`; return; }
   const tm = ms => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   $('#pklist').innerHTML = (j.system || []).map(x => `<div class="hm-i"><span><b>${esc(x.name)}</b><span class="sub">swap at ${x.times.map(tm).join(', ')}${x.off ? ` · ${x.off} called off after the warning (still counts)` : ''}</span></span><span class="note">used</span></div>`).join('')
@@ -477,7 +498,7 @@ async function openMenu(){
   const rq = new URLSearchParams(location.search); rq.set('v', 'ratings'); rq.delete('at');
   const rateItem = rateOff ? '' : `<a class="hm-i pk${q.get('v') === 'ratings' ? ' on' : ''}" href="?${rq.toString()}"><span>⭐ Rating leaderboard</span><span class="note">everyone's stars</span></a>`;
   const byItem = isAdm ? `<a class="hm-i pk${q.get('v') === 'byhour' ? ' on' : ''}" href="?${bq.toString()}"><span>🗂 Swaps by hour</span><span class="note">everyone, any hour</span></a>` : '';
-  $('#hm-up').innerHTML = `<a class="hm-i pk${q.get('v') === 'packs' ? ' on' : ''}" href="?${pq.toString()}"><span>📦 Packs today</span><span class="note">grinds and packs used</span></a>` + topItem + rateItem + byItem + (up.map(item).join('') || '<p class="note" style="margin:6px 0">Nothing scheduled.</p>');
+  $('#hm-up').innerHTML = `<a class="hm-i pk${q.get('v') === 'packs' ? ' on' : ''}" href="?${pq.toString()}"><span>📊 Your stats and packs</span><span class="note">rating, swaps, packs used today</span></a>` + topItem + rateItem + byItem + (up.map(item).join('') || '<p class="note" style="margin:6px 0">Nothing scheduled.</p>');
   $('#hm-past').innerHTML = past.map(item).join('') || '<p class="note" style="margin:6px 0">Nothing in the last 14 days.</p>';
 }
 document.addEventListener('click', async e => {

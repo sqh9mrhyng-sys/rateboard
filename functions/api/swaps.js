@@ -2065,12 +2065,12 @@ async function runDms(env, db, auth, rows, max, force) {
       let wmsg = warnGrouped(items);
       { const me0 = await member(who);   // always the site message now (Dennis, 2026-11-05), whatever the size
         // 160s at the same hour ride along (2026-11-08, Dennis's wording).
-        let x160 = '';
+        let x160 = '', b160w = 0;
         try { const c = await db.prepare(`SELECT SUM(CASE WHEN seller=?1 AND kind IS NULL THEN 1 ELSE 0 END) AS s, SUM(CASE WHEN buyer=?1 AND kind IS NULL THEN 1 ELSE 0 END) AS b,
               SUM(CASE WHEN seller=?1 AND kind='niche' THEN 1 ELSE 0 END) AS ns, SUM(CASE WHEN buyer=?1 AND kind='niche' THEN 1 ELSE 0 END) AS nb FROM swap_160 WHERE dueAt=?2 AND status <> 'cancelled' AND (seller=?1 OR buyer=?1)`).bind(who, wh[0].due).first();
-          const sN = Number(c && c.s) || 0, bN = Number(c && c.b) || 0, nsN = Number(c && c.ns) || 0, nbN = Number(c && c.nb) || 0;
+          const sN = Number(c && c.s) || 0, bN = Number(c && c.b) || 0, nsN = Number(c && c.ns) || 0, nbN = Number(c && c.nb) || 0; b160w = bN;
           x160 = [nsN ? nicheLine(nsN, true) : '', nbN ? nicheLine(nbN, false) : '', sN ? `You're also selling ${sN} player${sN === 1 ? '' : 's'} through 160s` : '', bN ? `You're also receiving ${bN} player${bN === 1 ? '' : 's'} through 160s` : ''].filter(Boolean).join('\n'); } catch (e) {}
-        wmsg = [siteDm('Heads up - you swap in 30 min. Buy your packs now.', items.length, await hourLink(env, who, wh[0].due), recvSummary(me0, items), x160 || undefined)]; }
+        wmsg = [siteDm('Heads up - you swap in 30 min. Buy your packs now.', items.length, await hourLink(env, who, wh[0].due), recvSummary(me0, items), x160 || undefined, b160w)]; }
       if (!(items.length && await send(who, wmsg, 'warn'))) { await unclaim(wh, 'warn'); warnFail = true; }
     }
     if (warnFail) return;
@@ -2088,7 +2088,8 @@ async function runDms(env, db, auth, rows, max, force) {
       for (const x of hr) { const l = await sideLines(member, x.m, x.side); if (!l) continue; items.push(l); if (noWarn.includes(x)) buy.push(l); }
       let cmsg = contactGrouped(items, buy);
       { const me0 = await member(who);   // always the site message now
-        cmsg = [siteDm('', items.length, await hourLink(env, who, hr[0].due, 'offer'), recvSummary(me0, items), buy.length ? `You weren't warned earlier: buy the ${buy.length} pack${buy.length === 1 ? '' : 's'} on the site first.` : '')]; }
+        let b160c = 0; try { const c = await db.prepare(`SELECT COUNT(*) AS n FROM swap_160 WHERE dueAt=? AND buyer=? AND status <> 'cancelled' AND kind IS NULL`).bind(hr[0].due, who).first(); b160c = Number(c && c.n) || 0; } catch (e) {}
+        cmsg = [siteDm('', items.length, await hourLink(env, who, hr[0].due, 'offer'), recvSummary(me0, items), buy.length ? `You weren't warned earlier: buy the ${buy.length} pack${buy.length === 1 ? '' : 's'} on the site first.` : '', b160c)]; }
       if (items.length && await send(who, cmsg, 'contact')) await mark(hr.filter(x => noWarn.includes(x)), 'warn');
       else await unclaim(hr, 'done');
     }
@@ -2744,7 +2745,10 @@ function recvSummary(me, items) {
   return [...c.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${playerUrl(k) || playerName(me, k)} ${String(k).split(':')[1]} x${n}`).join(', ');
 }
 // Dennis's wording (2026-11-05) for the one-message DM.
-const siteDm = (pre, n, link, sum, extra) => fitOne(`${pre ? pre + '\n\n' : ''}You have ${n} swap${n === 1 ? '' : 's'}, all details on site below, we are using the site to avoid large quantity of dm issues\n${link}\n\nPlayers you're receiving this run: ${sum}${extra ? '\n\n' + extra : ''}`);
+/* Dennis's wording (2026-11-16): the link inline, then roughly what the run costs - 241 rax a swap
+   pack, 271 for each 160 they're buying - then the players coming to them. */
+const siteDm = (pre, n, link, sum, extra, b160 = 0) => { const cost = n * 241 + b160 * 271;
+  return fitOne(`${pre ? pre + '\n\n' : ''}You have ${n} swap${n === 1 ? '' : 's'}, all details on ${link}\nThis will cost roughly ${cost.toLocaleString('en-US')} rax${b160 ? ` (${n} x 241 + ${b160} x 271 for 160s)` : ''}\nPlayers you're receiving this run: ${sum}${extra ? '\n\n' + extra : ''}`); };
 /* One-off check (Dennis, 2026-11-05): everyone in the 8:00 AKST run (17:00
    UTC). Each member's chat is read back and looked for their swap link (its
    short code); anyone without it gets the swap DM again. A few chats each
@@ -3373,7 +3377,16 @@ const MOD_VOID = new Set([Date.UTC(2026, 10, 12, 18, 0, 0)]);
 const MOD_VOID_DAYS = [[Date.UTC(2026, 10, 15, 5, 0, 0), Date.UTC(2026, 10, 16, 5, 0, 0)]];
 const modVoidDay = t => MOD_VOID_DAYS.some(([a, b]) => t >= a && t < b);
 const MOD_AUTO = true;   // false: the 10-minute run only previews (counts kept in KV); true: it acts
-const MOD_EARLY = 10 * 60000;          // a report may come up to 10 min before the swap's time
+const MOD_EARLY = 10 * 60000;          // (old) a report may come up to 10 min before the swap's time
+/* Revenge and rushed reports (Dennis, 2026-11-16, "well documented that there's revenge reports"):
+   - a no-show report only counts from 20 min after the swap time (people get a fair chance to show);
+   - two members reporting each other over the same swap: neither counts until Dennis decides;
+   - a report against someone who reported you first, within 3 days: held for Dennis as likely payback;
+   - a warning or strike Dennis removes on appeal stays removed (its reports never count again). */
+const MOD_GRACE = 20 * 60000;
+const MOD_VOIDED_KV = 'mod_voided_v1', MOD_FORCE_KV = 'mod_force_v1', MOD_HELD_KV = 'mod_held_v1';
+const APPEAL_DDL = 'CREATE TABLE IF NOT EXISTS mod_appeals (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT, period INTEGER, kind TEXT, n INTEGER, text TEXT, ts INTEGER, status TEXT, answer TEXT)';
+const kvObj = async (env, k) => { try { return JSON.parse((await env.RATEBOARD_KV.get(k)) || '{}') || {}; } catch (e) { return {}; } };
 const MOD_LOOKBACK = 3 * 86400000;     // a report naming someone looks back 3 days for their swap
 // In the member's own time zone (from their hours), else Eastern (Dennis, 2026-11-11).
 const modTime = (ms, tz) => { for (const z of [tz, 'America/New_York']) { if (!z) continue;
@@ -3455,7 +3468,7 @@ async function moderate(env, db, dry) {
   for (const m of ms) if (!off(m.status)) { addPair(m.a, m.b, Number(m.dueAt)); addPair(m.b, m.a, Number(m.dueAt)); }
   for (const s of ss) if (!off(s.status)) { addPair(s.buyer, s.seller, Number(s.dueAt)); addPair(s.seller, s.buyer, Number(s.dueAt)); }
   const state = new Map(st.map(s => [s.key, s]));
-  const first = new Map(), handled = [];
+  const first = new Map(), handled = [], voided = await kvObj(env, MOD_VOIDED_KV), force = await kvObj(env, MOD_FORCE_KV);
   for (const r of reps) {
     const by = String(r.by_user || ''), ts = Number(r.ts) || 0;
     let tgt = null, period = null, src = null;
@@ -3478,13 +3491,26 @@ async function moderate(env, db, dry) {
       const s1 = m ? null : ss.find(x => !off(x.status) && Number(x.dueAt) === period && ((x.buyer === by && x.seller === tgt) || (x.seller === by && x.buyer === tgt)));
       src = m ? { m, by } : s1 ? { s: s1, by } : null;
     }
-    if (ts < period - MOD_EARLY) { out.early++; continue; }
+    if (ts < period + MOD_GRACE) { out.early++; continue; }
+    if (voided[`${tgt}|${period}`]) { out.appealed = (out.appealed || 0) + 1; handled.push(r.id); continue; }
     if (MOD_VOID.has(Number(period)) || modVoidDay(Number(period)) || modVoidDay(ts)) { out.voided = (out.voided || 0) + 1; handled.push(r.id); continue; }
     const s0 = state.get(tgt); if (s0 && ts < Number(s0.resetAt || 0)) { handled.push(r.id); continue; }
     const k = by + '|' + tgt;
     if (first.has(k)) { out.repeats++; handled.push(r.id); continue; }
-    first.set(k, { tgt, period, ts, src }); handled.push(r.id); out.counted++;
+    first.set(k, { by, tgt, period, ts, src, id: r.id }); handled.push(r.id); out.counted++;
   }
+  // Holds: mutual reports over one swap, and payback reports (see MOD_GRACE above). Dennis can count one anyway.
+  const held = [];
+  for (const [k, x] of [...first.entries()]) {
+    const back = first.get(x.tgt + '|' + x.by), fk = `${x.by}|${x.tgt}|${x.period}`;
+    if (!back || force[fk]) continue;
+    let why = null;
+    if (back.period === x.period) why = 'both reported each other for the same swap';
+    else if (back.ts < x.ts && x.ts - back.ts < 3 * 86400000) why = 'reported someone who had reported them first';
+    if (why) held.push({ k: fk, by: x.by, tgt: x.tgt, period: x.period, ts: x.ts, why, id: x.id });
+  }
+  for (const h of held) { first.delete(h.by + '|' + h.tgt); out.counted--; out.held = (out.held || 0) + 1; }
+  if (!dry) { try { const byK = new Map(users.map(u => [u.key, u.rsUser || u.key])); await env.RATEBOARD_KV.put(MOD_HELD_KV, JSON.stringify(held.map(h => ({ ...h, byName: byK.get(h.by) || h.by, tgtName: byK.get(h.tgt) || h.tgt })))); } catch (e) {} }
   // Per reported member: their warning and strikes, in order.
   const per = new Map();
   for (const x of first.values()) { if (!per.has(x.tgt)) per.set(x.tgt, []); per.get(x.tgt).push(x); }
@@ -3548,8 +3574,10 @@ async function modRecord(db, key) {
   const s0 = await db.prepare('SELECT resetAt, banned FROM mod_state WHERE key=?').bind(key).first();
   const evs = ((await db.prepare('SELECT kind, n, period, reports FROM mod_events WHERE key=? AND at >= ? ORDER BY id').bind(key, Number((s0 && s0.resetAt) || 0)).all()).results) || [];
   const req = await db.prepare('SELECT status, ts, answer FROM unban_requests WHERE key=? ORDER BY id DESC LIMIT 1').bind(key).first();
+  let aps = []; try { await db.prepare(APPEAL_DDL).run(); aps = ((await db.prepare('SELECT period, status, answer FROM mod_appeals WHERE key=? ORDER BY id DESC').bind(key).all()).results) || []; } catch (e) {}
+  const apOf = p => aps.find(a => Number(a.period) === Number(p)) || null;
   return { banned: !!(s0 && s0.banned), strikes: evs.filter(e => e.kind === 'strike').length, max: MOD_STRIKES,
-    events: evs.map(e => ({ kind: e.kind, n: e.n, at: e.period, when: modTime(e.period), reports: e.reports })), request: req || null };
+    events: evs.map(e => ({ kind: e.kind, n: e.n, at: e.period, when: modTime(e.period), reports: e.reports, appeal: apOf(e.period) })), request: req || null };
 }
 const BOOST_OPS = new Set(['me', 'scan', 'scanstatus', 'boostplan', 'boostdays', 'projections', 'tagview', 'boostinv', 'buys', 'legboosts', 'resell', 'nosell']);
 const BOOSTS_OPEN = true;   // opened to everyone signed in, 2026-11-02
@@ -5420,7 +5448,24 @@ async function handle({ request, env, waitUntil }) {
     const u = await db.prepare('SELECT key FROM swap_users WHERE LOWER(key)=?').bind(key.toLowerCase()).first();
     if (!u) return json({ error: 'No swaps found.' }, 404);
     let b = null; if (request.method === 'POST') { try { b = await request.json(); } catch (e) { b = {}; } }
-    return json(await packsToday(env, db, u.key, b));
+    const pk = await packsToday(env, db, u.key, b);
+    /* Your stats (Dennis, 2026-11-16, and a member's request to see their own ratings): Swap Score and tag,
+       stars with the split, swaps all time / this week / today, 160s today, warnings and strikes. */
+    try {
+      const tm = await trustMap(env, db), v = tm[u.key] || {};
+      await db.prepare(RATE_DDL).run(); await db.prepare(RATE_BLOCK_DDL).run();
+      const rs = ((await db.prepare('SELECT stars, COUNT(*) AS n FROM swap_ratings WHERE ratee=? AND rater NOT IN (SELECT key FROM swap_rate_block) GROUP BY stars').bind(u.key).all()).results) || [];
+      const split = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 }; let tot = 0, sum = 0; for (const r of rs) { split[r.stars] = Number(r.n); tot += Number(r.n); sum += Number(r.n) * Number(r.stars); }
+      const now = Date.now(), d0 = swapDayStart(now), d1 = d0 + 24 * 3600000;
+      const sw = await db.prepare(`SELECT COUNT(*) AS n, SUM(CASE WHEN dueAt < ?1 THEN 1 ELSE 0 END) AS done FROM swap_matches WHERE (a=?2 OR b=?2) AND dueAt >= ?3 AND dueAt < ?4 AND status NOT IN ('cancelled','cancelling','cleared')`).bind(now, u.key, d0, d1).first();
+      const s160 = await db.prepare(`SELECT SUM(CASE WHEN buyer=?1 THEN 1 ELSE 0 END) AS b, SUM(CASE WHEN seller=?1 THEN 1 ELSE 0 END) AS s FROM swap_160 WHERE (buyer=?1 OR seller=?1) AND dueAt >= ?2 AND dueAt < ?3 AND status <> 'cancelled'`).bind(u.key, d0, d1).first();
+      const wk = await tradeCounts(db, now - 7 * 86400000);
+      let mod = null; try { mod = await modRecord(db, u.key); } catch (e) {}
+      pk.stats = { pts: v.pts != null ? v.pts : null, lv: v.lv || 'new', stars: tot ? Math.round(sum / tot * 100) / 100 : null, weighted: v.s || null, votes: tot, split,
+        swaps: v.t || 0, week: wk.get(u.key) || 0, today: Number(sw && sw.n) || 0, todayDone: Number(sw && sw.done) || 0, buy160: Number(s160 && s160.b) || 0, sell160: Number(s160 && s160.s) || 0,
+        strikes: mod ? mod.strikes : 0, warned: mod ? mod.events.some(e => e.kind === 'warn') : false, max: MOD_STRIKES };
+    } catch (e) { pk.stats = { error: String(e.message || e) }; }
+    return json(pk);
   }
   /* Admin only (Dennis, 2026-11-05): "Swaps by hour" on his own hour page -
      every swap at one hour, past or coming, with who gets what and whether
@@ -5712,6 +5757,7 @@ async function handle({ request, env, waitUntil }) {
       const other = t.buyer === u.key ? t.seller : t.buyer, o = await loadMember(db, other);
       const target = (o && o.rsUser) || other;
       if (!(await allow(url.origin, 'swapreport:' + u.key, 10, 3600))) return json({ error: 'You have sent a lot of reports - try again later.' }, 429);
+      if (Date.now() < due + MOD_GRACE) return json({ error: `You can report a no-show from ${new Date(due + MOD_GRACE).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })} ET - 20 minutes after the swap time, so everyone gets a fair chance to show up.` }, 400);
       const R160 = { nooffer: "Didn't send me an offer", nobuy: "Didn't send 160 back", wrong: 'Sent the wrong offer', other: 'Other' };
       const detail = `${R160[b.reason] || R160.other} - 160 #${t.id} (${new Date(due).toISOString().slice(0, 16).replace('T', ' ')} UTC), reporter was the ${t.buyer === u.key ? 'buyer' : 'seller'}` + (note ? `\n${note}` : '');
       await modReady(db);
@@ -5721,6 +5767,7 @@ async function handle({ request, env, waitUntil }) {
     }
     const m = u && await db.prepare('SELECT * FROM swap_matches WHERE id=? AND (a=? OR b=?) AND dueAt=?').bind(Number(b.id), u.key, u.key, due).first();
     if (!m) return json({ error: 'That swap was not found.' }, 404);
+    if (Date.now() < due + MOD_GRACE) return json({ error: `You can report a no-show from ${new Date(due + MOD_GRACE).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })} ET - 20 minutes after the swap time, so everyone gets a fair chance to show up. Use "running late" if you just want to nudge them.` }, 400);
     const side = m.a === u.key ? 'A' : 'B', o = await loadMember(db, side === 'A' ? m.b : m.a), me = await loadMember(db, u.key);
     const target = (o && o.rsUser) || (side === 'A' ? m.b : m.a);
     if (!(await allow(url.origin, 'swapreport:' + u.key, 10, 3600))) return json({ error: 'You have sent a lot of reports - try again later.' }, 429);
@@ -6076,6 +6123,20 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'modme') {
     if (!acc.who) return forbidden('Sign in first (raxacademy.app).');
     return json(await modRecord(db, acc.who));
+  }
+  /* Appeal a warning or strike with evidence (member request, 2026-11-16). One per event. */
+  if (op === 'modappeal' && request.method === 'POST') {
+    if (!acc.who) return forbidden('Sign in first (raxacademy.app).');
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    const text = String(b.text || '').trim().slice(0, 1500), period = Number(b.at);
+    if (text.length < 15) return json({ error: 'Explain what happened, and add links to screenshots if you have them.' }, 400);
+    const rec = await modRecord(db, acc.who), ev0 = rec.events.find(e => Number(e.at) === period);
+    if (!ev0) return json({ error: 'That warning or strike was not found.' }, 404);
+    if (ev0.appeal && ev0.appeal.status === 'open') return json({ error: 'You already appealed this one - it is waiting for Dennis.' }, 400);
+    if (!(await allow(url.origin, 'modappeal:' + acc.who, 5, 86400))) return json({ error: 'Too many appeals - try again tomorrow.' }, 429);
+    await db.prepare(APPEAL_DDL).run();
+    await db.prepare('INSERT INTO mod_appeals (key, period, kind, n, text, ts, status) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(String(acc.who), period, ev0.kind, Number(ev0.n) || 0, text, Date.now(), 'open').run();
+    return json({ ok: true, ...(await modRecord(db, acc.who)) });
   }
   if (op === 'unbanreq' && request.method === 'POST') {
     if (!acc.who) return forbidden('Sign in first (raxacademy.app).');
@@ -7246,6 +7307,46 @@ async function handle({ request, env, waitUntil }) {
     let noRate = []; try { await db.prepare(RATE_BLOCK_DDL).run(); noRate = (((await db.prepare('SELECT key, at, why FROM swap_rate_block ORDER BY at DESC').all()).results) || []).map(r => ({ key: r.key, rsUser: rs.get(r.key) || r.key, at: r.at, why: r.why })); } catch (e) {}
     const nrs = new Set(noRate.map(r => r.key)); for (const r of rows) r.noRate = nrs.has(r.key);
     return json({ rows, noReport, noRate, requests: reqs.map(r => ({ ...r, rsUser: rs.get(r.key) || r.key, record: per.get(r.key) || null })), last });
+  }
+  /* Admin: appeals and held reports (2026-11-16). */
+  if (op === 'modappeals') {
+    if (!acc.admin) return forbidden('Admin only.');
+    await db.prepare(APPEAL_DDL).run();
+    if (request.method === 'POST') {
+      let b = {}; try { b = await request.json(); } catch (e) {}
+      const r = await db.prepare('SELECT * FROM mod_appeals WHERE id=?').bind(Number(b.id)).first();
+      if (!r) return json({ error: 'Appeal not found.' }, 404);
+      const yes = !!b.approve, answer = String(b.answer || '').trim().slice(0, 500);
+      await db.prepare('UPDATE mod_appeals SET status=?, answer=? WHERE id=?').bind(yes ? 'approved' : 'declined', answer || null, r.id).run();
+      let note;
+      if (yes) {
+        // The reports behind it never count again; the event goes; Swaps comes back if they're under the limit.
+        const v = await kvObj(env, MOD_VOIDED_KV); v[`${r.key}|${r.period}`] = Date.now(); await env.RATEBOARD_KV.put(MOD_VOIDED_KV, JSON.stringify(v));
+        await modReady(db);
+        await db.prepare('DELETE FROM mod_events WHERE key=? AND period=?').bind(r.key, Number(r.period)).run();
+        const st = await db.prepare('SELECT banned, resetAt FROM mod_state WHERE key=?').bind(r.key).first();
+        const left = await db.prepare("SELECT COUNT(*) AS n FROM mod_events WHERE key=? AND kind='strike' AND at >= ?").bind(r.key, Number((st && st.resetAt) || 0)).first();
+        if (st && st.banned && Number((left && left.n) || 0) < MOD_STRIKES) {
+          await db.prepare(SBLOCK_DDL).run(); await db.prepare('DELETE FROM swap_block WHERE key=?').bind(r.key).run();
+          await db.prepare('UPDATE mod_state SET banned=0 WHERE key=?').bind(r.key).run(); ACCESS_MEMO.delete(r.key); }
+        note = `Your appeal was accepted - the ${r.kind === 'warn' ? 'warning' : 'strike'} for ${modTime(r.period)} is removed.`;
+      } else note = `Your appeal for the ${r.kind === 'warn' ? 'warning' : 'strike'} on ${modTime(r.period)} was declined.`;
+      if (answer) note += '\n' + answer;
+      await addNote(db, r.key, 'mod', note);
+      const u = await db.prepare('SELECT hashId FROM swap_users WHERE key=?').bind(r.key).first();
+      const d = u && u.hashId && await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=? AND channelId IS NOT NULL').bind(u.hashId).first();
+      if (d) await queueDm(db, d.channelId, [note], 'appeal ' + r.key);
+    }
+    const rows = ((await db.prepare("SELECT a.*, u.rsUser FROM mod_appeals a LEFT JOIN swap_users u ON u.key = a.key ORDER BY CASE WHEN a.status='open' THEN 0 ELSE 1 END, a.id DESC LIMIT 60").all()).results) || [];
+    return json({ rows: rows.map(r => ({ ...r, when: modTime(r.period) })) });
+  }
+  if (op === 'modheld') {
+    if (!acc.admin) return forbidden('Admin only.');
+    if (request.method === 'POST') { let b = {}; try { b = await request.json(); } catch (e) {}
+      const k = String(b.k || ''); if (k) { const f = await kvObj(env, MOD_FORCE_KV); f[k] = Date.now(); await env.RATEBOARD_KV.put(MOD_FORCE_KV, JSON.stringify(f)); } }
+    let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get(MOD_HELD_KV)) || '[]') || []; } catch (e) {}
+    const f = await kvObj(env, MOD_FORCE_KV);
+    return json({ rows: l.filter(h => !f[h.k]).map(h => ({ ...h, when: modTime(h.period) })) });
   }
   if (op === 'modrun') {
     if (!acc.admin) return forbidden('Admin only.');

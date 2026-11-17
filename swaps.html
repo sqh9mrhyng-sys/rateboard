@@ -1283,7 +1283,15 @@ async function proGate(){
 }
 
 /* Moderation record (2026-11-11): 1st counted report is a warning, then strikes; 3 strikes takes Swaps away. */
-const modList = m => (m.events || []).map(e => `<li>${e.kind === 'warn' ? 'Warning' : `Strike ${e.n}/${m.max}`} - reported for ${e.kind === 'warn' ? 'not completing a swap' : 'not doing swaps'} at ${esc(new Date(e.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }))}${e.reports > 1 ? ` (${e.reports} reports, 1 strike)` : ''}</li>`).join('');
+const modList = m => (m.events || []).map(e => `<li>${e.kind === 'warn' ? 'Warning' : `Strike ${e.n}/${m.max}`} - reported for ${e.kind === 'warn' ? 'not completing a swap' : 'not doing swaps'} at ${esc(new Date(e.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }))}${e.reports > 1 ? ` (${e.reports} reports, 1 strike)` : ''}${e.appeal ? `<br><span class="note">Appeal ${e.appeal.status === 'open' ? 'waiting for Dennis' : e.appeal.status === 'approved' ? 'accepted' : 'declined'}${e.appeal.answer ? ': ' + esc(e.appeal.answer) : ''}</span>` : ` <a href="#" data-appeal="${e.at}">Appeal</a><div class="apbox" data-apbox="${e.at}" hidden><textarea maxlength="1500" rows="3" style="width:100%;box-sizing:border-box;margin-top:6px" placeholder="What really happened - links to screenshots help"></textarea><button class="primary" data-apsend="${e.at}" style="margin-top:4px">Send appeal</button> <span class="note" data-apmsg="${e.at}"></span></div>`}</li>`).join('');
+// Appeals (2026-11-16): open the box, send it, then show the record again.
+document.addEventListener('click', async ev => {
+  const a = ev.target.closest('[data-appeal]'); if (a) { ev.preventDefault(); const bx = document.querySelector(`[data-apbox="${a.dataset.appeal}"]`); if (bx) bx.hidden = !bx.hidden; return; }
+  const b = ev.target.closest('[data-apsend]'); if (!b) return; const at = b.dataset.apsend, bx = document.querySelector(`[data-apbox="${at}"]`), msg = document.querySelector(`[data-apmsg="${at}"]`);
+  b.disabled = true; msg.textContent = 'Sending…';
+  const r = await api('/api/swaps?op=modappeal', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ at: Number(at), text: bx.querySelector('textarea').value }) });
+  if (r.error) { msg.textContent = r.error; b.disabled = false; return; }
+  if (r.banned) showBan(r); else showModNote(); });
 function showBan(m){
   $('#lock').hidden = true; $('#banbox').hidden = false;
   const rq = m.request;
