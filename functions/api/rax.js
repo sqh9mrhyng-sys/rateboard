@@ -775,6 +775,14 @@ async function predReal(env) {
       }
     }
     await env.RATEBOARD_KV.put('pred_real_open', JSON.stringify(open), { expirationTtl: 3600 });
+    /* Ended games stay listed for 24 hours (members, 2026-11-16: "markets available after the game" so a
+       bet can still be logged): Real drops a market once it settles, so the last copy we saw is kept,
+       marked ended, prices frozen. */
+    try { const R = JSON.parse((await env.RATEBOARD_KV.get('pred_recent_v1')) || '{}') || {}, ids = new Set(out.games.map(g => g.id));
+      for (const g of out.games) R[g.id] = { ...g, seen: Date.now() };
+      for (const k of Object.keys(R)) { const g = R[k]; if (Date.now() - g.seen > 24 * 3600000) { delete R[k]; continue; }
+        if (!ids.has(g.id) && Date.now() - g.seen > 30000) out.games.push({ ...g, ended: true, locked: true, live: false, sides: g.sides.map(x => ({ ...x, ev: null })) }); }
+      if (round === 0 || round === 3) await env.RATEBOARD_KV.put('pred_recent_v1', JSON.stringify(R), { expirationTtl: 86400 }); } catch (e) {}
     await env.RATEBOARD_KV.put('pred_ev_v1', JSON.stringify(out), { expirationTtl: 3600 });
     const wait = 10000 - (Date.now() - t0); if (round < 5 && wait > 0) await sleep(wait);
   }

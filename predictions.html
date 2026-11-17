@@ -76,6 +76,7 @@
 .keep{display:flex;gap:8px;align-items:center;font-size:14px;font-weight:700;margin:10px 0 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
   .tk{background:rgba(232,163,61,.12);color:var(--accent);font-size:12px;font-weight:800;padding:6px 14px;border-bottom:1px solid var(--line)} .g.taken{border-color:rgba(232,163,61,.45)}
 .arb{font-size:12px;font-weight:700;color:var(--mute);padding:6px 14px;border-top:1px solid var(--line)} .arb.ok{color:var(--good);background:rgba(63,191,127,.08)}
+.endbox{margin-top:8px} .endbox>summary{cursor:pointer;list-style:none} .endbox>summary::-webkit-details-marker{display:none}
   .upto{font-size:12px;color:var(--mute)} .upto b{color:var(--ink)}
   .place{white-space:nowrap;align-self:flex-start}
   .place,.bact button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 10px;font:inherit;font-size:13px;font-weight:800;cursor:pointer}
@@ -245,6 +246,13 @@ function derive(g){
 }
 const SP_ORDER = ['nfl', 'ncaaf', 'nba', 'nhl', 'soccer', 'ufc'];
 const stable = (a, b) => (SP_ORDER.indexOf(a.sport) - SP_ORDER.indexOf(b.sport)) || ((Date.parse(a.start) || 0) - (Date.parse(b.start) || 0)) || (a.id - b.id);
+let endOpen = false;
+document.addEventListener('toggle', e => { if (e.target.classList && e.target.classList.contains('endbox')) endOpen = e.target.open; }, true);
+function endCard(g){
+  return `<div class="g"><div class="gh"><div style="min-width:0;flex:1"><span class="nm">${esc(g.game)}</span><div class="meta"><span class="tag">${esc(SPN[g.sport] || g.sport)}</span><span class="tag lock">${g.ended ? 'Ended' : 'Locked'}</span></div></div></div>
+    ${g.sides.map((s, si) => `<div class="sd"><span class="t">${s.logo ? `<img class="lg" src="${esc(s.logo)}" alt="" loading="lazy">` : `<i class="dot" style="background:${esc(s.color || '#555')};margin-top:5px"></i>`}<span>${esc(s.name || s.label)}<small class="fr">Fair <b>${pc(s.fair)}</b></small></span></span><span class="c">Last<b>${pw(s.price)}</b></span><span class="ev nil"><button class="place" data-g="${g.id}" data-s="${si}">Log bet</button></span></div>
+      ${betForm && betForm.gid === g.id && betForm.si === si ? `<form class="bf" data-g="${g.id}" data-s="${si}"><label>Avg %<input name="pct" type="number" inputmode="numeric" min="1" max="99" step="1" value="${betForm.pct}" required></label><label>Rax bet<input name="amt" type="number" inputmode="numeric" min="1" step="1" value="${betForm.amt}" required></label><button type="submit" class="place">Enter</button><button type="button" class="bfx" aria-label="Cancel">✕</button></form>` : ''}`).join('')}</div>`;
+}
 function card(g){
   const srcs = g.sources || [];
   const c = collapsed.has(String(g.id)), bestS = g.sides.reduce((a, x) => (x.ev ?? -9) > (a.ev ?? -9) ? x : a, g.sides[0]);
@@ -325,7 +333,7 @@ function drawBets(){
   const pl = done.reduce((a, b) => a + (b.res === 'won' ? payOf(b) - (b.amt || 0) : -(b.amt || 0)), 0);
   $('#bsum').innerHTML = `<div><b>${Math.round(staked).toLocaleString()}</b><span>rax in play</span></div><div><b class="pos">${Math.round(pot).toLocaleString()}</b><span>potential payout</span></div><div><b class="${pl >= 0 ? 'pos' : 'neg'}">${pl >= 0 ? '+' : ''}${Math.round(pl).toLocaleString()}</b><span>settled profit</span></div>`;
   const row = b => { const g = now.get(b.gid), sd = g && g.sides[b.side], auto = b.price > 0 ? (b.amt || 0) / b.price : 0, pay = b.pay != null ? b.pay : auto;
-    const st = b.res ? `<span class="tag ${b.res === 'won' ? 'won' : 'lost'}">${b.res === 'won' ? 'Won' : 'Lost'}${b.auto ? ' · auto' : ''}</span>` : !g ? `<span class="tag">${b.custom ? 'Custom' : 'Waiting for result'}</span>` : g.live ? '<span class="tag live">● LIVE</span>' : when(g);
+    const st = b.res ? `<span class="tag ${b.res === 'won' ? 'won' : 'lost'}">${b.res === 'won' ? 'Won' : 'Lost'}${b.auto ? ' · auto' : ''}</span>` : !g || g.ended ? `<span class="tag">${b.custom ? 'Custom' : 'Waiting for result'}</span>` : g.live ? '<span class="tag live">● LIVE</span>' : when(g);
     return `<div class="g bet"><div class="gh">${b.logo ? `<img class="lg" src="${esc(b.logo)}" alt="" loading="lazy" style="margin-right:8px">` : ''}<div style="min-width:0;flex:1"><span class="nm">${esc(b.name)}</span><div class="meta"><span class="tag">${esc(SPN[b.sport] || b.sport)}</span>${st}<span class="note">${esc(b.game)}</span></div></div>${b.link ? `<a class="go" href="${esc(b.link)}" target="_blank" rel="noopener">Open ↗</a>` : ''}</div>
       <div class="bgrid"><span class="c">Bought at<b>${pw(b.price)}</b></span><span class="c">Real now<b>${sd ? pw(sd.price) : '-'}</b></span><span class="c">Fair now<b>${sd ? pc(sd.fair) : '-'}</b></span>${b.custom ? '<span class="c">EV then<b>-</b></span>' : `<span class="c">EV then<b class="${b.ev > 0 ? 'pos' : 'neg'}">${b.ev > 0 ? '+' : ''}${pc(b.ev)}</b></span>`}</div>
       <div class="bamt"><label>Amount placed <input type="number" inputmode="numeric" min="0" step="1" value="${b.amt || ''}" placeholder="rax" data-amt="${esc(b.id)}"></label>
@@ -355,6 +363,9 @@ function draw(){
       return `<div class="sph"><span>${esc(SPN[sp] || sp)}</span><span class="note">${l.length} game${l.length === 1 ? '' : 's'}${n ? ` · <b class="pos">${n} bet${n === 1 ? '' : 's'}</b>` : ''}</span></div>${l.map(card).join('')}`; }).join('');
     html = html || `<div class="empty">${chip === '_ev' && games.length ? 'No +EV bets right now.' : 'No open game markets on Real right now.'}</div>`;
   }
+  // Locked and ended games (kept 24 h) at the bottom, so a bet can still be logged after the fact.
+  const ended = (J.games || []).filter(g => g.locked && !bg.has(g.id) && (!chip || chip === '_ev' || g.sport === chip)).map(derive).sort(stable);
+  if (ended.length && chip !== '_ev') html += `<details class="endbox"${endOpen ? ' open' : ''}><summary class="sph"><span>Locked &amp; ended</span><span class="note">${ended.length} game${ended.length === 1 ? '' : 's'} · log a bet you made</span></summary>${ended.map(endCard).join('')}</details>`;
   $('#list').innerHTML = html;
   $('#tabs [data-t="a"]').hidden = !J.owner; $('#tabs [data-t="r"]').hidden = !J.owner; $('#garb').hidden = !J.owner;
   tick();
