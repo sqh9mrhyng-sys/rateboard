@@ -40,7 +40,8 @@
   .ev{text-align:right;font-weight:900;font-size:17px} .ev small{display:block;font-size:10px;color:var(--mute);font-weight:700;letter-spacing:.04em}
   .pos{color:var(--good)} .neg{color:var(--bad)} .nil{color:var(--mute)}
   .ft{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 14px 10px;border-top:1px solid var(--line);background:rgba(0,0,0,.12)}
-  .src{font-size:12px;color:var(--mute);display:inline-flex;align-items:center;gap:6px} .src b{color:var(--ink);font-weight:700}
+  .srcs{font-size:12px;color:var(--mute)} .srcs b{color:var(--ink);font-weight:700}
+  .src{font-size:12px;flex:none;color:var(--mute);display:inline-flex;align-items:center;gap:6px} .src b{color:var(--ink);font-weight:700}
   svg.sp{flex:none;vertical-align:middle}
   .empty{padding:20px;text-align:center;color:var(--mute);background:var(--panel);border:1px solid var(--line);border-radius:14px}
   @media(max-width:520px){.sd{grid-template-columns:1fr 52px 52px 66px;gap:6px}.sum b{font-size:17px}.gh{align-items:flex-start}}
@@ -106,7 +107,7 @@ function draw(){
     ${g.sides.map(s => `<div class="sd"><span class="t"><i class="dot" style="background:${esc(s.color || '#555')}"></i><span>${esc(s.label)}</span></span>
       <span class="c">Real<b>${pc(s.price)}</b></span><span class="c">Fair<b>${pc(s.fair)}</b></span>
       <span class="ev ${s.ev == null ? 'nil' : s.ev > 0 ? 'pos' : 'neg'}">${s.ev == null ? '-' : (s.ev > 0 ? '+' : '') + pc(s.ev)}<small>EV</small></span></div>`).join('')}
-    <div class="ft"><span class="src">${srcs.length ? 'Fair from <b>' + srcs.map(x => esc(x.src)).join('</b>, <b>') + '</b>' : 'No sportsbook odds found for this game yet'}</span>${(() => { const h = g.hist || []; if (h.length < 2) return ''; const v = h[h.length - 1], sd = g.sides.reduce((a, x) => Math.abs((x.price ?? 9) - v) < Math.abs((a.price ?? 9) - v) ? x : a, g.sides[0]); return `<span class="src" title="Real's price for ${esc(sd.label)}, last few hours">${esc(sd.label)} ${spark(h)}</span>`; })()}</div></div>`;
+    <div class="ft"><span class="srcs">${srcs.length ? 'Fair from <b>' + srcs.map(x => esc(x.src)).join('</b>, <b>') + '</b>' : 'No sportsbook odds found for this game yet'}</span>${(() => { const h = g.hist || []; if (h.length < 2) return ''; const v = h[h.length - 1], sd = g.sides.reduce((a, x) => Math.abs((x.price ?? 9) - v) < Math.abs((a.price ?? 9) - v) ? x : a, g.sides[0]); return `<span class="src" title="Real's price for ${esc(sd.label)}, last few hours">${esc(sd.label)} ${spark(h)}</span>`; })()}</div></div>`;
   }).join('') || `<div class="empty">${plus ? 'No +EV sides right now.' : 'No open game markets on Real right now.'}</div>`;
   $('#foot').textContent = `Real's prices refresh every 10 s. Sportsbook odds: every 5 min, every minute in the 2 hours before a game, every 40 s while it's live. Pinnacle counts double in the fair price.${J.credits != null ? ` ${Number(J.credits).toLocaleString()} odds credits left.` : ''}`;
   tick();
