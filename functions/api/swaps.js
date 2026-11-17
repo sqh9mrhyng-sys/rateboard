@@ -1698,7 +1698,22 @@ export async function draftCheck(env) {
   const t0 = Date.now(); let x = null; try { x = await draftBuild(env, env.RATEBOARD_DB, { id: 2466, type: 'sport', sport: 'nhl', day: '2026-11-16' }); } catch (e) { x = { error: String(e.message || e) }; }
   await env.RATEBOARD_KV.put('draft_check_1116_r', JSON.stringify({ ms: Date.now() - t0, err: x.error || null, n: x.players && x.players.length, teams: x.players ? [...new Set(x.players.map(p => p.team))].join(' ') : null, score: x.best && x.best.score, lineup: x.best && x.best.lineup.map(p => `${p.name} ${p.proj}x${p.mult}=${p.pts}`) }), { expirationTtl: 86400 });
 }
+/* Scans first (Dennis, 2026-11-17): Real answers "high volume" 429s at busy times, and every call the server
+   makes shares the allowance. While a member's scan is running, or for 3 minutes after a scan was refused,
+   the background collectors (Bulk listings, FC game log, game drafts) wait. Predictions is left alone. */
+export async function realBusy(env) {
+  try { const t = Number(await env.RATEBOARD_KV.get('real_busy_at')) || 0; if (Date.now() - t < 3 * 60000) return true; } catch (e) {}
+  try { const q = await env.RATEBOARD_DB.prepare('SELECT COUNT(*) AS n FROM scan_queue WHERE startedAt IS NOT NULL').first(); return !!(q && q.n > 0); } catch (e) { return false; }
+}
+// The same, but a collector never waits more than maxMs in a row (so Bulk deals and FC data don't go stale).
+export async function realWait(env, name, maxMs = 15 * 60000) {
+  const k = 'real_last_go_' + name; let last = 0; try { last = Number(await env.RATEBOARD_KV.get(k)) || 0; } catch (e) {}
+  if (Date.now() - last < maxMs && await realBusy(env)) return true;
+  try { await env.RATEBOARD_KV.put(k, String(Date.now()), { expirationTtl: 86400 }); } catch (e) {}
+  return false;
+}
 export async function draftScan(env) {
+  if (await realWait(env, 'draft', 40 * 60000)) return;
   const tok = env.RS_AUTH_TOKEN; if (!tok) return;
   const k = 'draft_scan_v2'; let last = 0; try { last = Number(await env.RATEBOARD_KV.get(k)) || 0; } catch (e) {}
   if (Date.now() - last < 20 * 60000) return; await env.RATEBOARD_KV.put(k, String(Date.now()));   // every 20 minutes (new game drafts show up through the day)
@@ -2374,7 +2389,7 @@ async function scanWork(env, db, me, job, auth) {
     const res = await fetch(base, { headers: rsHeaders(tok) });
     job.calls = (job.calls || 0) + 1; job.callMs = (job.callMs || 0) + (Date.now() - tq);
     const text = await res.text();
-    if (res.status === 429) TOK_COOL.set(tok, Date.now() + 3 * 60000);
+    if (res.status === 429) { TOK_COOL.set(tok, Date.now() + 3 * 60000); try { await env.RATEBOARD_KV.put('real_busy_at', String(Date.now()), { expirationTtl: 600 }); } catch (e) {} }
     if (!res.ok) throw new Error(`Real ${res.status}: ${text.slice(0, 80)}`);
     let d = null; try { d = JSON.parse(text); } catch (e) {}
     // Only a reply that says it's an error counts as a failure; an empty or
