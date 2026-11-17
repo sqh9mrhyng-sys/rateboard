@@ -710,6 +710,40 @@ export async function onRequestPost({ request, env, waitUntil }) {
     return json({ ok: true, token, key: u.key, name: u.name || u.key });
   }
 
+  /* Report a user and Request a feature from their own pages (Dennis, 2026-11-16), signed in. Reports
+     land in the board's report list for the admin screen; a member whose reporting was turned off
+     can't send one. */
+  if (body && (body.op === 'userReport' || body.op === 'featureRequest2')) {
+    const me = await sessionKey(env, request);
+    if (!me) return json({ error: 'Sign in first.' }, 401);
+    if (!(await allow(origin, 'rep:' + me, 10, 3600))) return json({ error: 'That is a lot of sends - try again later.' }, 429);
+    try {
+      if (body.op === 'featureRequest2') { const err = await applyOp(env, { ...body, op: 'featureRequest', by: me }); if (err) return json({ error: err }, 400); return json({ ok: true }); }
+      let blocked = {}; try { blocked = JSON.parse((await env.RATEBOARD_KV.get('report_block_v1')) || '{}') || {}; } catch (e) {}
+      if (blocked[String(me).toLowerCase()]) return json({ error: 'Your ability to send reports has been turned off.' }, 403);
+      const target = str(body.target, 60), reason = str(body.reason, 1000);
+      if (!target || target.length < 2 || !reason || reason.length < 3) return json({ error: 'Add a username and what happened.' }, 400);
+      const raw = await env.RATEBOARD_KV.get(KV_KEY); let m = {}; try { m = JSON.parse(raw || '{}') || {}; } catch (e) { m = {}; }
+      m.reports = m.reports || []; m.reports.push({ id: uid(), by: me, target: target.replace(/^@/, ''), reason, ts: Date.now(), status: 'open' });
+      await env.RATEBOARD_KV.put(KV_KEY, JSON.stringify(m)); await bustBoard(origin);
+      return json({ ok: true });
+    } catch (e) { return json({ error: 'Could not send: ' + (e && e.message || e) }, 503); }
+  }
+  /* Look settings per account (Dennis, 2026-11-16): theme, hidden Home boxes, compact Home. */
+  if (body && body.op === 'uiPrefs') {
+    const me = await sessionKey(env, request);
+    if (!me) return json({ error: 'Sign in first.' }, 401);
+    const K = 'ui_prefs_v1_' + String(me).toLowerCase();
+    let p = {}; try { p = JSON.parse((await env.RATEBOARD_KV.get(K)) || '{}') || {}; } catch (e) {}
+    if (body.set && typeof body.set === 'object') {
+      const s0 = body.set;
+      if (typeof s0.theme === 'string') p.theme = s0.theme.slice(0, 20);
+      if (Array.isArray(s0.hidden)) p.hidden = s0.hidden.filter(x => typeof x === 'string').slice(0, 40).map(x => x.slice(0, 40));
+      if (s0.compact != null) p.compact = !!s0.compact;
+      await env.RATEBOARD_KV.put(K, JSON.stringify(p));
+    }
+    return json({ prefs: p });
+  }
   if (body && body.op === 'signout') {
     await endSession(env, request);
     return json({ ok: true });

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Request a feature - Rax Academy</title>
+<style>
+  :root{--bg:#141925;--panel:#1d2433;--panel2:#262f42;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;--good:#3fbf7f;--bad:#e5534b}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:560px;margin:0 auto;padding:16px 16px 48px}
+  .back{display:inline-block;color:var(--mute);text-decoration:none;font-weight:700;font-size:14px;margin:2px 0 10px}
+  h1{font-size:26px;margin:4px 0 4px} .lead{color:var(--mute);margin:0 0 18px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px}
+  label{display:block;font-size:13px;font-weight:700;color:var(--mute);margin:0 0 6px}
+  .f{margin-bottom:16px}
+  input,select,textarea{width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font:inherit;font-size:16px}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+  textarea{min-height:130px;resize:vertical}
+  .go{width:100%;background:var(--accent);color:#1a1205;border:0;border-radius:12px;padding:14px;font:inherit;font-size:16px;font-weight:900;cursor:pointer} .go:disabled{opacity:.6}
+  .msg{margin:12px 0 0;font-size:14px;color:var(--mute)} .msg.ok{color:var(--good)} .msg.bad{color:var(--bad)}
+  .note{color:var(--mute);font-size:13px}
+  .done{text-align:center;padding:24px 8px} .done b{display:block;font-size:20px;margin-bottom:6px}
+  .kinds{display:grid;grid-template-columns:1fr 1fr;gap:8px} .kinds button{background:var(--panel2);color:var(--ink);border:2px solid var(--line);border-radius:12px;padding:12px 8px;font:inherit;font-weight:700;font-size:14px;cursor:pointer;text-align:left}
+  .kinds button small{display:block;color:var(--mute);font-weight:500;font-size:12px} .kinds button[aria-pressed="true"]{border-color:var(--accent)}
+</style>
+<script src="/theme.js"></script>
+</head>
+<body><div class="wrap">
+<a href="/" class="back">← Home</a>
+<h1>Request a feature</h1>
+<p class="lead">Tell me what you want and why. I read every one of these.</p>
+<form class="card" id="f">
+  <div class="f"><label>What kind</label><div class="kinds" id="kinds">
+    <button type="button" data-k="feature" aria-pressed="true">Something new<small>A tool or page that isn't here</small></button>
+    <button type="button" data-k="change" aria-pressed="false">Change something<small>How an existing page works</small></button>
+    <button type="button" data-k="data" aria-pressed="false">Data is wrong<small>Missing or wrong numbers</small></button>
+    <button type="button" data-k="bug" aria-pressed="false">Something's broken<small>An error or a page not working</small></button></div></div>
+  <div class="f"><label for="t">In one line</label><input id="t" maxlength="120" autocomplete="off" placeholder="e.g. let me sort the board by owners" required></div>
+  <div class="f"><label for="d">Any detail (optional)</label><textarea id="d" maxlength="1000" placeholder="What you're trying to do, and what gets in the way."></textarea></div>
+  <button class="go" id="go">Send it</button>
+  <p class="msg" id="msg"></p>
+</form>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+const tok = () => { try { return localStorage.getItem('ratebrd_token_v1') || ''; } catch (e) { return ''; } };
+if (!tok()) location.href = '/?next=' + encodeURIComponent(location.pathname);
+async function send(body){ const r = await fetch('/api/kv', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-rb-token': tok() }, body: JSON.stringify(body) }); const j = await r.json().catch(() => ({})); if (r.status === 401) { location.href = '/?next=' + encodeURIComponent(location.pathname); return null; } return r.ok ? j : { error: j.error || 'Could not send. Try again.' }; }
+let kind = 'feature';
+$('#kinds').addEventListener('click', e => { const b = e.target.closest('[data-k]'); if (!b) return; kind = b.dataset.k; document.querySelectorAll('#kinds button').forEach(x => x.setAttribute('aria-pressed', x === b)); });
+$('#f').addEventListener('submit', async e => { e.preventDefault();
+  const title = $('#t').value.trim(); if (title.length < 4) { $('#msg').className = 'msg bad'; $('#msg').textContent = 'Give it a line I can read at a glance.'; return; }
+  $('#go').disabled = true; $('#msg').className = 'msg'; $('#msg').textContent = 'Sending…';
+  const j = await send({ op: 'featureRequest2', kind, title, detail: $('#d').value.trim() }); if (!j) return;
+  if (j.error) { $('#go').disabled = false; $('#msg').className = 'msg bad'; $('#msg').textContent = j.error; return; }
+  $('#f').innerHTML = '<div class="done"><b>Sent - thanks</b><span class="note">I\'ll take a look. Replies show up under Notifications.</span><p><a href="/" style="color:var(--accent)">Back to Home</a></p></div>'; });
+</script>
+</body>
+</html>
