@@ -708,7 +708,7 @@ async function predOdds(env) {
           const names = Object.keys(books[0].p), avg = {}; for (const n of names) { const v = books.map(b => b.p[n]).filter(x => x != null); avg[n] = v.reduce((a, x) => a + x, 0) / v.length; }
           const pin = books.find(b => b.key === 'pinnacle');
           if (pin) games.push({ names, p: pin.p, src: 'Pinnacle', start: e.commence_time, live: Date.parse(e.commence_time) <= Date.now() });
-          games.push({ names, p: avg, src: `${books.length} books avg`, start: e.commence_time, live: Date.parse(e.commence_time) <= Date.now(), n: books.length }); }
+          games.push({ names, p: avg, src: `${books.length} books avg`, start: e.commence_time, live: Date.parse(e.commence_time) <= Date.now(), books: books.map(b => b.title) }); }
         o.api[k] = { at: Date.now(), games, live, every }; } catch (e) { o.errs.push(`${k} odds ${e.message}`); }
       await sleep(300);
     }
@@ -746,7 +746,7 @@ async function predReal(env) {
         for (const g of srcs) {
           const map = oc.map(x => isDraw(x.label) || isDraw(x.key) ? g.names.find(isDraw) : g.names.find(n => !isDraw(n) && sideHits(aliasOf(x), n)));
           if (map.some(x => !x) || new Set(map).size !== map.length) continue;
-          found.push({ src: g.src, p: map.map(n => g.p[n]), start: g.start, live: g.live });
+          found.push({ src: g.src, p: map.map(n => g.p[n]), start: g.start, live: g.live, books: g.books });
         }
         // Fair chance: Pinnacle counts double when it's there, every other source once.
         let wt = 0; const sum = oc.map(() => 0); for (const f of found) { const w0 = f.src === 'Pinnacle' ? 2 : 1; wt += w0; f.p.forEach((v, i) => { sum[i] += w0 * v; }); }
@@ -754,7 +754,7 @@ async function predReal(env) {
         const hist = (m.probabilityHistory || []).slice(-24).map(h => Math.round(h.pA * 1000) / 1000);
         out.games.push({ sport: sp, id: m.id, game: (m.gameDisplay || {}).display || oc.map(x => x.label).join(' vs '), path: (m.gameDisplay || {}).path || null,
           link: `https://www.realapp.com/${routeId([36, 0, 0, Number(m.id)])}`, locked: !!m.isLocked, volume: m.volumeDisplay || null, start: st, live: !!(found.find(f => f.live)), hist,
-          sources: found.map(f => ({ src: f.src, p: f.p.map(v => Math.round(v * 1000) / 1000) })),
+          sources: found.map(f => ({ src: f.src, p: f.p.map(v => Math.round(v * 1000) / 1000), books: f.books })),
           sides: oc.map((x, i) => ({ key: x.key, label: x.label, color: x.backgroundColor || null, price: x.probability, fair: fair[i], ev: fair[i] != null && x.probability > 0 ? fair[i] / x.probability - 1 : null })) });
       }
     }
@@ -8754,7 +8754,7 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predEv: await (async () => { const x = await kvj('pred_ev_v1'); return x ? { keys: x.keys, used: x.used, live: (x.games || []).filter(g => g.live).length, srcs: (x.games || []).map(g => (g.sources || []).length).join(','), at: x.at, n: (x.games || []).length,  errs: x.errs, credits: x.credits } : null; })(), draftTest: await (async () => { let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get('draft_contests_v1')) || '[]'); } catch (e) {}
+    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predEv: await (async () => { const x = await kvj('pred_ev_v1'); return x ? { books: (() => { const c = {}; for (const g of (x.games || [])) for (const f of (g.sources || [])) for (const b of (f.books || [])) c[b] = (c[b] || 0) + 1; return c; })(), keys: x.keys, used: x.used, live: (x.games || []).filter(g => g.live).length, srcs: (x.games || []).map(g => (g.sources || []).length).join(','), at: x.at, n: (x.games || []).length,  errs: x.errs, credits: x.credits } : null; })(), draftTest: await (async () => { let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get('draft_contests_v1')) || '[]'); } catch (e) {}
       const out = []; for (const c of l.filter(c => c.type === 'sport').slice(-30)) { const x = await kvj(`draft_v1_sport_${c.id}`);
         out.push({ id: c.id, sport: c.sport, day: c.day, n: x && x.players && x.players.length, teams: x && x.players ? [...new Set(x.players.map(p => p.team))].join(' ') : null }); }
       return { n: l.length, games: l.filter(c => c.type === 'game').length, gameDays: l.filter(c => c.type === 'game').map(c => `${c.id}:${c.sport}:${c.day}`).join(' '), sport: out }; })(), modVoid: await kvj('mod_void_1115_n'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
