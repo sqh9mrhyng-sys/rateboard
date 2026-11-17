@@ -638,10 +638,16 @@ async function predTick(env) {
   const key = env.ODDS_API_KEY, tok = env.RS_AUTH_TOKEN; if (!key || !tok) return;
   const K = 'pred_ev_v1';
   let old = null; try { old = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
-  if (old && Date.now() - old.at < 110000) return;
+  /* Paced to the credits left (2026-11-16: the key had 495, not millions): each run costs one
+     credit a sport with markets open, so the gap between runs stretches to make what's left last
+     to the end of the month - every 2 minutes at the least. */
+  const monthEnd = (() => { const d = new Date(); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1); })();
+  const left = old && old.credits != null ? Number(old.credits) : null, perRun = Math.max(1, (old && old.perRun) || 3);
+  const gap = left != null && Number.isFinite(left) ? Math.max(110000, (monthEnd - Date.now()) / Math.max(1, left / perRun)) : 110000;
+  if (old && Date.now() - old.at < gap) return;
   if (old && old.lock && Date.now() - old.lock < 90000) return;
   await env.RATEBOARD_KV.put(K, JSON.stringify({ ...(old || {}), lock: Date.now() }));
-  const out = { at: Date.now(), games: [], credits: old && old.credits, errs: [] };
+  const out = { at: Date.now(), games: [], credits: old && old.credits, errs: [], perRun: 0 };
   for (const sp of PRED_SPORTS) {
     let mk = [];
     try { const r = await fetch(`https://web.realapp.com/predictions/gamemarkets/${sp}`, { headers: rsHeaders(tok) }); if (r.ok) mk = ((await r.json()) || {}).gameMarkets || []; else out.errs.push(`${sp} real ${r.status}`); } catch (e) { out.errs.push(`${sp} real ${e.message}`); }
@@ -649,8 +655,8 @@ async function predTick(env) {
     if (!mk.length) continue;
     await sleep(1000);
     let ev = [];
-    try { const r = await fetch(`https://api.the-odds-api.com/v4/sports/${ODDS_SPORT[sp]}/odds?regions=us,eu&markets=h2h&oddsFormat=decimal&apiKey=${encodeURIComponent(key)}`);
-      out.credits = r.headers.get('x-requests-remaining') || out.credits; if (r.ok) ev = await r.json(); else out.errs.push(`${sp} odds ${r.status}`); } catch (e) { out.errs.push(`${sp} odds ${e.message}`); }
+    try { const r = await fetch(`https://api.the-odds-api.com/v4/sports/${ODDS_SPORT[sp]}/odds?regions=eu&markets=h2h&oddsFormat=decimal&apiKey=${encodeURIComponent(key)}`);
+      out.perRun++; out.credits = r.headers.get('x-requests-remaining') || out.credits; if (r.ok) ev = await r.json(); else out.errs.push(`${sp} odds ${r.status}`); } catch (e) { out.errs.push(`${sp} odds ${e.message}`); }
     const names = ODDS_TEAMS[sp] || {};
     const nick = code => { const n = names[code]; return n ? normTeam(n).split(' ').pop() : null; };
     for (const m of mk) {
@@ -8672,7 +8678,7 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predEv: await (async () => { const x = await kvj('pred_ev_v1'); return x ? { at: x.at, n: (x.games || []).length, matched: (x.games || []).filter(g => g.src).length, errs: x.errs, credits: x.credits } : null; })(), draftTest: await (async () => { let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get('draft_contests_v1')) || '[]'); } catch (e) {}
+    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predEv: await (async () => { const x = await kvj('pred_ev_v1'); return x ? { perRun: x.perRun, at: x.at, n: (x.games || []).length, matched: (x.games || []).filter(g => g.src).length, errs: x.errs, credits: x.credits } : null; })(), draftTest: await (async () => { let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get('draft_contests_v1')) || '[]'); } catch (e) {}
       const out = []; for (const c of l.filter(c => c.type === 'sport').slice(-30)) { const x = await kvj(`draft_v1_sport_${c.id}`);
         out.push({ id: c.id, sport: c.sport, day: c.day, n: x && x.players && x.players.length, teams: x && x.players ? [...new Set(x.players.map(p => p.team))].join(' ') : null }); }
       return { n: l.length, games: l.filter(c => c.type === 'game').length, gameDays: l.filter(c => c.type === 'game').map(c => `${c.id}:${c.sport}:${c.day}`).join(' '), sport: out }; })(), modVoid: await kvj('mod_void_1115_n'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
