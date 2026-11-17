@@ -7084,11 +7084,19 @@ async function handle({ request, env, waitUntil }) {
      offensive players only as buys, and no sells at all for anyone holding
      fewer than 100 CFB 2026 passes - they're shown buys instead. */
   if (op === 'resell') {
-    const SP = url.searchParams.get('sport') === 'ncaaf' ? 'ncaaf' : 'ncaam';
-    // HIT: a good game's rax, for how often a player gets there (consistency).
-    const CFG = SP === 'ncaaf' ? { SEASON: 2026, PREV: 2025, SEASON_GAMES: 12, MIN_G: 5, offense: true, sellMin: 100, HIT: 20 }
-                               : { SEASON: 2027, PREV: 2026, SEASON_GAMES: 31, MIN_G: 4, offense: false, sellMin: 100, HIT: 10 };
+    /* Every sport now (Dennis, 2026-11-16: "add the CFB resells/buys to every other sport"). HIT: a good game's
+       rax, for consistency. SHARE: how many of his games a card is likely boosted in - CFB and NFL play once
+       a week so every game gets a booster; CBB, NBA and NHL play too often for that, so only part of the
+       games left get the booster and the rest earn plain rax. The page can change it. */
+    const RS_CFG = { ncaaf: { SEASON_GAMES: 12, MIN_G: 5, offense: true, HIT: 20, SHARE: 1 }, nfl: { SEASON_GAMES: 17, MIN_G: 4, offense: true, HIT: 20, SHARE: 1 },
+      ncaam: { SEASON_GAMES: 31, MIN_G: 4, offense: false, HIT: 10, SHARE: 0.4 }, nba: { SEASON_GAMES: 82, MIN_G: 5, offense: false, HIT: 15, SHARE: 0.25 },
+      nhl: { SEASON_GAMES: 82, MIN_G: 5, offense: false, HIT: 8, SHARE: 0.25 } };
+    const SP = RS_CFG[url.searchParams.get('sport')] ? url.searchParams.get('sport') : 'ncaam';
+    const CFG = { ...RS_CFG[SP], SEASON: BOOST_SEASON[SP][0], PREV: BOOST_SEASON[SP][1], sellMin: 100 };
+    const shareQ = Number(url.searchParams.get('share')); if (shareQ > 0 && shareQ <= 1) CFG.SHARE = shareQ;
     const { SEASON, PREV, SEASON_GAMES, MIN_G } = CFG, PACK = 200;
+    // A booster on SHARE of his games, plain rax on the rest.
+    const effM = m => CFG.SHARE * m + (1 - CFG.SHARE);
     const OFF = /^(QB|RB|HB|FB|WR|TE)$/i;
     try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN noSell TEXT'); } catch (e) {}
     const u = await db.prepare('SELECT passes, scannedAt, noSell FROM swap_users WHERE key=?').bind(me).first();
@@ -7097,7 +7105,7 @@ async function handle({ request, env, waitUntil }) {
     const mine = parse(u.passes, []).filter(p => p.sport === SP && Number(p.season) === SEASON && p.kind !== 'team');
     const sells = mine.length >= CFG.sellMin;
     // Every CBB player's rax a game this season and last (one grouped read each, kept 30 minutes).
-    const rkey = 'resell_rpg_v4_' + SP;
+    const rkey = 'resell_rpg_v5_' + SP;
     let R = null; try { R = JSON.parse((await env.RATEBOARD_KV.get(rkey)) || 'null'); } catch (e) {}
     if (!R || Date.now() - R.at > 30 * 60000) {
       const grab = async se => ((await db.prepare(`SELECT playerId AS id, MAX(player) AS n, MAX(team) AS t, MAX(position) AS pos, COUNT(*) AS g, SUM(rax) AS r, MAX(rax) AS mx,
@@ -7169,21 +7177,21 @@ async function handle({ request, env, waitUntil }) {
       .map(x => ({ ...x, pos: (cur.get(x.id) || prev.get(x.id) || {}).pos || null, rpg: Math.round(x.rpg * 10) / 10, avg: Math.round(x.avg * 10) / 10,
         hitPct: Math.round(x.hitRate * 100), score: Math.round(x.score * 10) / 10, left: left(x.id), teamPlayed: teamPlayed(x.id), link: playerUrl(`${SP}:${SEASON}:${x.id}`),
         // A straight buy: his rax over his games left x the booster, less the 200 pack.
-        buy: MULTS.map(([k, m]) => ({ booster: k, mult: m, profit: Math.round(left(x.id) * x.rpg * m - PACK) })) }));
+        buy: MULTS.map(([k, m]) => ({ booster: k, mult: m, profit: Math.round(left(x.id) * x.rpg * effM(m) - PACK) })) }));
     // For each of their worst 10: the best replacement, and swap vs keep per booster over the games left.
     // Worst card gets the best replacement, the next worst the next one, so no one is suggested twice.
     const plans = (sells ? cards.filter(c => !c.noSell) : []).slice(0, 10).map((c, i) => {
       const best = reps[i] || null;
       const per = MULTS.map(([k, m]) => {
-        const keep = c.rpg != null ? Math.round(c.left * c.rpg * m) : 0;
-        const swap = best ? Math.round(best.left * best.rpg * m - PACK - c.sellCost) : null;
+        const keep = c.rpg != null ? Math.round(c.left * c.rpg * effM(m)) : 0;
+        const swap = best ? Math.round(best.left * best.rpg * effM(m) - PACK - c.sellCost) : null;
         return { booster: k, mult: m, keep, swap, gain: swap == null ? null : swap - keep };
       });
       const leg = per.find(x => x.booster === 'legendary');
       return { ...c, replaceWith: best, per, verdict: !best ? 'no replacement yet' : leg.gain > 0 ? 'replace' : 'keep - let him sit, don\'t boost' };
     });
     return json({ sport: SP, scannedAt: u.scannedAt || null, cards, plans, replacements: reps, seasonGames: SEASON_GAMES, minGames: MIN_G, pack: PACK, earlySeason: !thisSeasonEnough,
-      sells, held: mine.length, sellMin: CFG.sellMin, offenseOnly: CFG.offense, hitBar: CFG.HIT, kept: cards.filter(c => c.noSell) });
+      sells, held: mine.length, sellMin: CFG.sellMin, offenseOnly: CFG.offense, hitBar: CFG.HIT, share: CFG.SHARE, kept: cards.filter(c => c.noSell) });
   }
   // "Don't sell" on a card: it's left out of the resell suggestions until switched back.
   if (op === 'nosell' && request.method === 'POST') {

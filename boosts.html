@@ -211,7 +211,29 @@
     .ctl label{flex:none}
   }
   .bsort{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--mute);margin:6px 0}
+  /* Toolbar: Copy, Sort and a View menu on one line. */
+  .tb{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0 6px;position:relative}
+  .tb .copybtn{display:inline-block;width:auto;margin:0;padding:8px 14px!important;font-size:14px!important;border-radius:10px}
+  .tb .bsort{margin:0}
+  .vw{margin-left:auto} .vw>summary{list-style:none;cursor:pointer;font-size:13px;font-weight:700;color:var(--mute);border:1px solid var(--line);border-radius:10px;padding:7px 12px;background:var(--panel)} .vw>summary::-webkit-details-marker{display:none} .vw>summary::after{content:' ▾'}
+  .vw[open]>summary{color:var(--ink);border-color:var(--accent)}
+  .vwp{position:absolute;right:0;top:calc(100% + 6px);z-index:20;width:min(320px,92vw);background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:6px;box-shadow:0 12px 30px rgba(0,0,0,.45);display:grid;gap:6px}
+  .vwp .hidestart,.vwp .simplebtn{margin:0;width:100%;padding:10px 12px!important;font-size:14px!important;text-align:left;border-radius:9px}
   .bsort select{width:auto;padding:5px 8px;font-size:13px}
+  /* Clean-up (Dennis, 2026-11-16): sports in one 4x2 grid with All sports as one of them, lighter read
+     buttons, smaller chips and notes. */
+  .tabsrow{flex-direction:column;gap:8px}
+  .sportcol{display:grid!important;grid-template-columns:repeat(4,1fr);gap:6px;flex-direction:initial}
+  .sportcol .seg{display:contents}
+  .sportcol .seg button{border:1px solid var(--line)!important;border-radius:10px!important;background:var(--panel);padding:9px 4px;min-height:0;font-size:14px;font-weight:700}
+  .sportcol .seg button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent)!important;color:#141925}
+  #allseg button{font-weight:700}
+  .rdgo{padding:11px 8px!important;font-size:15px}
+  .rdx{padding:5px 8px!important;font-size:12px}
+  .modenote{font-size:12px;margin:6px 0 0}
+  .allctl .note{font-size:12px}
+  .allctl .chips button{padding:4px 10px;font-size:12px}
+  .how>summary{font-size:13px}
 </style>
 <script src="/theme.js"></script>
 </head>
@@ -219,7 +241,7 @@
 <div class="lock" id="lock" hidden><h1>Boosts &amp; Buys <span class="beta">BETA</span></h1><p class="note" id="lockmsg">Checking…</p><p id="signinbtn" hidden><a class="btn" href="/?next=/boosts" style="display:inline-block;padding:10px 14px;border-radius:9px;background:#E8A33D;color:#141925;font-weight:700;text-decoration:none">Sign in</a></p><p class="note" id="signinhint" hidden>Sign in to get booster picks for the cards you own. Opened this from inside Real? Use the browser you signed in with.</p><div id="pubtop" hidden></div><p><a href="/">Back to home</a></p></div>
 <div class="wrap" id="main" hidden>
   <header><h1>Boosts &amp; Buys</h1><span class="beta">BETA</span><a href="/" style="margin-left:auto">Back to home</a></header>
-  <div class="tabsrow"><div class="sportcol"><div class="seg allseg" id="allseg"><button data-s="all" aria-pressed="false">All sports</button></div><div class="seg" id="sportseg"><button data-s="ncaam" aria-pressed="true">CBB</button><button data-s="ncaaf" aria-pressed="false">CFB</button><button data-s="nfl" aria-pressed="false">NFL</button><button data-s="nba" aria-pressed="false">NBA</button><button data-s="nhl" aria-pressed="false">NHL</button><button data-s="golf" aria-pressed="false">Golf</button><button data-s="soccer" aria-pressed="false">FC</button></div></div>
+  <div class="tabsrow"><div class="sportcol"><div class="seg allseg" id="allseg"><button data-s="all" aria-pressed="false">All</button></div><div class="seg" id="sportseg"><button data-s="ncaam" aria-pressed="true">CBB</button><button data-s="ncaaf" aria-pressed="false">CFB</button><button data-s="nfl" aria-pressed="false">NFL</button><button data-s="nba" aria-pressed="false">NBA</button><button data-s="nhl" aria-pressed="false">NHL</button><button data-s="golf" aria-pressed="false">Golf</button><button data-s="soccer" aria-pressed="false">FC</button></div></div>
   <div class="seg" id="tab"><button data-t="boosts" aria-pressed="true">Boosts</button><button data-t="buys" aria-pressed="false" id="tab2">Buys</button><button data-t="top" aria-pressed="false">Top players</button></div></div>
 
   <div id="t-boosts">
@@ -252,29 +274,28 @@
         <button class="sm" id="c-reset" type="button" style="grid-column:1 / -1;justify-self:start">Reset to Balanced</button>
       </div>
       <p class="note modenote" id="modenote"></p>
-      <div class="allctl" id="allctl" hidden><span class="note">Sports shown - tap to hide or show</span><div class="chips" id="allshow"></div></div>
+      <div class="allctl" id="allctl" hidden><span class="note">Sports in All - tap to hide</span><div class="chips" id="allshow"></div></div>
       <button class="go big" id="run">Show my boosts</button>
     </section>
     <section id="allout" hidden>
       <div class="note" id="allhead"></div>
       <div class="cum" id="allcum" hidden></div>
-      <button class="sm copybtn" id="allcopy" type="button" hidden>Copy boosts</button>
-      <div class="note copynote" data-for="allcopy">Copy boosts is for people that want to put all their boosts for a day into an album or DMs so they don't have to switch between site and Real 100 times.</div>
-      <button class="sm hidestart" id="allhidestart" type="button" aria-pressed="false">Hide games that already started</button>
-      <button class="sm simplebtn" id="allfullbtn" type="button" aria-pressed="false">View full layout</button>
-      <button class="sm simplebtn boxlinkbtn" type="button" aria-pressed="false">Whole box opens the player: off</button>
+      <!-- One tidy toolbar (Dennis, 2026-11-16: "so much text and toggles everywhere"). -->
+      <div class="tb"><button class="sm copybtn" id="allcopy" type="button" hidden title="All your boosts for the day as text, to paste into an album or DMs">Copy boosts</button><label class="bsort">Sort <select class="bsortsel"><option value="rec">Recommended</option><option value="rar">Booster rarity</option><option value="name">Name A-Z</option><option value="team">Team</option><option value="time">Game time</option><option value="proj">Projection</option><option value="rax">Avg rax</option></select></label>
+        <details class="vw"><summary>View</summary><div class="vwp">
+          <button class="sm hidestart" id="allhidestart" type="button" aria-pressed="false">Hide games that already started</button>
+          <button class="sm simplebtn" id="allfullbtn" type="button" aria-pressed="false">View full layout</button>
+          <button class="sm simplebtn boxlinkbtn" type="button" aria-pressed="false">Whole box opens the player: off</button></div></details></div>
       <div class="sum" id="allsum"></div>
-      <label class="bsort">Sort <select class="bsortsel"><option value="rec">Recommended</option><option value="rar">Booster rarity</option><option value="name">Name A-Z</option><option value="team">Team</option><option value="time">Game time</option><option value="proj">Projection</option><option value="rax">Avg rax</option></select></label>
       <div id="alllist"></div>
     </section>
     <section id="out" hidden>
       <div class="note" id="outhead"></div>
-      <button class="sm copybtn" id="copybtn" type="button" hidden>Copy boosts</button>
-      <div class="note copynote" data-for="copybtn">Copy boosts is for people that want to put all their boosts for a day into an album or DMs so they don't have to switch between site and Real 100 times.</div>
-      <button class="sm hidestart" id="hidestart" type="button" aria-pressed="false">Hide games that already started</button>
-      <label class="bsort">Sort <select class="bsortsel"><option value="rec">Recommended</option><option value="rar">Booster rarity</option><option value="name">Name A-Z</option><option value="team">Team</option><option value="time">Game time</option><option value="proj">Projection</option><option value="rax">Avg rax</option></select></label>
-      <button class="sm simplebtn" id="simplebtn" type="button" aria-pressed="false">View simple layout</button>
-      <button class="sm simplebtn boxlinkbtn" type="button" aria-pressed="false">Whole box opens the player: off</button>
+      <div class="tb"><button class="sm copybtn" id="copybtn" type="button" hidden title="All your boosts for the day as text, to paste into an album or DMs">Copy boosts</button><label class="bsort">Sort <select class="bsortsel"><option value="rec">Recommended</option><option value="rar">Booster rarity</option><option value="name">Name A-Z</option><option value="team">Team</option><option value="time">Game time</option><option value="proj">Projection</option><option value="rax">Avg rax</option></select></label>
+        <details class="vw"><summary>View</summary><div class="vwp">
+          <button class="sm hidestart" id="hidestart" type="button" aria-pressed="false">Hide games that already started</button>
+          <button class="sm simplebtn" id="simplebtn" type="button" aria-pressed="false">View simple layout</button>
+          <button class="sm simplebtn boxlinkbtn" type="button" aria-pressed="false">Whole box opens the player: off</button></div></details></div>
       <div id="simple" class="simple-list"></div>
       <div class="tot" id="tot"></div>
       <div class="sum" id="sum"></div>
@@ -286,10 +307,10 @@
   <div id="t-buys" hidden>
     <div class="bar" style="margin-bottom:10px"><div class="seg" id="subseg"></div></div>
     <section id="resell" hidden>
-      <div class="bar"><b class="h">Resell / replacements · CBB 2026-27</b></div>
+      <div class="bar"><b class="h">Resell / replacements · CBB 2026-27</b><label class="note" style="margin-left:auto">Booster on <select id="rsshare"></select></label></div>
       <p class="note" id="rsmsg" style="margin:6px 0 0">Your weakest cards and who to replace them with.</p>
       <div id="rslist" style="margin-top:10px"><p class="note">Loading…</p></div>
-      <details class="how"><summary>How this is worked out</summary><p class="note"><b>Steady rax/game</b> is his average with his best game left out, so one huge game can't carry him; buys rank on that and on how often he has a good game (CFB 20+, CBB 10+), and profits use it. Games left go by his <b>team's</b> games: a 31-game CBB / 12-game CFB regular season, less what the team has played. Postseason games (bowls, CFP) count in rax a game once played. <b>Swap</b> = new card's rax over his games left × the booster, minus 200 for the pack and the resell cost (everything your old card made past 100 rax). <b>Keep</b> = your card's rax over his games left × the booster (0 if he's out for the season). Replace only when swap beats keep.</p></details>
+      <details class="how"><summary>How this is worked out</summary><p class="note"><b>Steady rax/game</b> is his average with his best game left out, so one huge game can't carry him; buys rank on that and on how often he has a good game (CFB/NFL 20+, NBA 15+, CBB 10+, NHL 8+), and profits use it. Games left go by his <b>team's</b> games (CFB 12, NFL 17, CBB 31, NBA/NHL 82), less what the team has played. <b>Booster on</b>: football plays once a week, so every game gets a booster; CBB, NBA and NHL play too often for that, so profits count the booster on only part of his games (change it at the top). Postseason games (bowls, CFP) count in rax a game once played. <b>Swap</b> = new card's rax over his games left × the booster (on the share of games you boost), minus 200 for the pack and the resell cost (everything your old card made past 100 rax). <b>Keep</b> = your card's rax over his games left × the booster (0 if he's out for the season). Replace only when swap beats keep.</p></details>
     </section>
     <section id="legs" hidden>
       <div class="bar"><b class="h">Legendary boosts · CFB</b><div class="seg" id="legseg" style="margin-left:auto"><button data-p="daily" aria-pressed="true">Daily packs</button><button data-p="weekly" aria-pressed="false">Weekly packs</button></div></div>
@@ -583,7 +604,8 @@ function showTab(t){
   const sp = $('#sport').value;
   // The second tab's sub-pick: what each sport has.
   // CBB resell is hidden for now (Dennis, 2026-11-04): just the top 78.
-  const subs = sp === 'ncaam' ? [['top', 'Top 78 buys']] : sp === 'ncaaf' ? [['legs', 'Legendary boosts'], ['resell', 'Resell / buys']] : [];
+  // Resell / buys for every sport with game logs (2026-11-16).
+  const subs = sp === 'ncaam' ? [['resell', 'Resell / buys'], ['top', 'Top 78 buys']] : sp === 'ncaaf' ? [['resell', 'Resell / buys'], ['legs', 'Legendary boosts']] : RS_SL[sp] ? [['resell', 'Resell / buys']] : [];
   if(!subs.some(([v]) => v === subPick)) subPick = subs.length ? subs[0][0] : '';
   $('#subseg').hidden = subs.length < 2;
   $('#subseg').innerHTML = subs.map(([v, l]) => `<button data-sub="${v}" aria-pressed="${v === subPick}">${l}</button>`).join('');
@@ -591,26 +613,31 @@ function showTab(t){
   $('#cbbbuys').hidden = sv !== 'top'; $('#legs').hidden = sv !== 'legs'; $('#resell').hidden = sv !== 'resell';
   if(t === 'buys'){ if(sv === 'top') loadBuys(); else if(sv === 'legs') loadLegs(); else if(sv === 'resell') loadResell(); }
 }
+$('#rsshare').addEventListener('change', e => { const sp = $('#sport').value; try{ localStorage.setItem('rs_share_' + sp, e.target.value); }catch(e2){} loadResell(); });
 $('#subseg').addEventListener('click', e => { const b = e.target.closest('[data-sub]'); if(!b) return; subPick = b.dataset.sub; showTab('buys'); });
 // "Don't sell" / "Allow selling" on a card, then the list is worked out again.
 document.addEventListener('click', async e => { const b = e.target.closest('[data-nosell]'); if(!b) return; b.disabled = true;
   const j = await api('/api/swaps?op=nosell&page=boosts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: b.dataset.nosell, on: b.dataset.on === '1' }) });
   if(j.error){ b.disabled = false; b.textContent = j.error; return; }
-  delete rsData[$('#sport').value === 'ncaaf' ? 'ncaaf' : 'ncaam']; loadResell(); });
+  for (const k of Object.keys(rsData)) if (k.startsWith($('#sport').value + '|')) delete rsData[k]; loadResell(); });
 // --- Resell / replacements (CBB)
 const rsData = {};
+const RS_SL = { ncaaf: 'CFB 2026', nfl: 'NFL 2026', ncaam: 'CBB 2026-27', nba: 'NBA 2026-27', nhl: 'NHL 2026-27' };
+// How often a card gets a booster: every game for football; part of the games for sports that play more.
+const RS_SHARE = { ncaaf: 1, nfl: 1, ncaam: 0.4, nba: 0.25, nhl: 0.25 };
+const shareOf = sp => { try{ const v = Number(localStorage.getItem('rs_share_' + sp)); if(v > 0 && v <= 1) return v; }catch(e){} return RS_SHARE[sp] || 1; };
 async function loadResell(){
-  const sp = $('#sport').value === 'ncaaf' ? 'ncaaf' : 'ncaam', SL = sp === 'ncaaf' ? 'CFB 2026' : 'CBB 2026-27';
-  $('#resell .bar b').textContent = `Resell / ${sp === 'ncaaf' ? 'buys' : 'replacements'} · ${SL}`;
-  if(!rsData[sp]){ $('#rslist').innerHTML = '<p class="note">Working it out…</p>';
-    const j = await api('/api/swaps?op=resell&page=boosts&sport=' + sp);
+  const sp = RS_SL[$('#sport').value] ? $('#sport').value : 'ncaam', SL = RS_SL[sp], share = shareOf(sp), key = sp + '|' + share;
+  $('#resell .bar b').textContent = `Resell / buys · ${SL}`;
+  $('#rsshare').innerHTML = [[1, 'Every game'], [0.5, '1 in 2'], [0.33, '1 in 3'], [0.25, '1 in 4'], [0.15, '1 in 7']].map(([v, l]) => `<option value="${v}"${Math.abs(v - share) < 0.01 ? ' selected' : ''}>${l}</option>`).join('');
+  if(!rsData[key]){ $('#rslist').innerHTML = '<p class="note">Working it out…</p>';
+    const j = await api(`/api/swaps?op=resell&page=boosts&sport=${sp}&share=${share}`);
     if(j.error){ $('#rslist').innerHTML = `<p class="note">${esc(j.error)}</p>`; return; }
-    rsData[sp] = j; }
-  const j = rsData[sp], n = v => v == null ? '-' : Math.round(v).toLocaleString(), lk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)}</a>` : esc(t);
-  $('#rsmsg').textContent = `${j.cards.length} ${SL} cards checked` + (j.scannedAt ? ` (passes read ${new Date(j.scannedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` : '')
-    + (j.earlySeason ? `. Early season: nobody has ${j.minGames} games yet, so replacements use last season's rax a game until they do.` : '.')
-    + (!j.sells ? ` You hold ${j.held} - sells are only suggested from ${j.sellMin} passes, so here are buys instead.` : '')
-    + (j.offenseOnly ? ' Buys are offensive players only (QB, RB, WR, TE).' : '');
+    rsData[key] = j; }
+  const j = rsData[key], n = v => v == null ? '-' : Math.round(v).toLocaleString(), lk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)}</a>` : esc(t);
+  // Short (2026-11-16 clean-up): what was checked, and the one or two things that change the numbers.
+  $('#rsmsg').textContent = [`${j.cards.length} ${SL} passes` + (j.scannedAt ? ` · read ${new Date(j.scannedAt).toLocaleString('en-US', { month: 'short', day: 'numeric' })}` : ''),
+    !j.sells ? `under ${j.sellMin}, so buys only` : '', j.earlySeason ? 'early season: using last season' : '', j.offenseOnly ? 'offense only' : ''].filter(Boolean).join(' · ') + '.';
   // Consistency, in words: his plain average and how often he has a good game.
   const steadyTxt = r => `avg ${r.avg} · ${j.hitBar}+ in ${r.hitPct}% of games`;
   // A buy list with roughly what each makes over his games left, per booster.
@@ -646,7 +673,7 @@ function paintSport(){
   const all = sp === 'all';
   $('#setsplbl').hidden = !all; $('#allctl').hidden = !all;
   if(all){ $('#out').hidden = true; drawShow(); } else $('#allout').hidden = true;
-  const noBuys = all || sp === 'nfl' || sp === 'golf' || sp === 'soccer' || sp === 'nba' || sp === 'nhl';
+  const noBuys = all || sp === 'golf' || sp === 'soccer';
   $('#tab2').hidden = noBuys; $('#tab2').textContent = 'Buys';
   showTab(noBuys && curTab === 'buys' ? 'boosts' : curTab);
 }
