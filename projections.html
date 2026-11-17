@@ -83,7 +83,7 @@
   }
 </style>
 <script src="/theme.js"></script>
-<script src="/nav.js?v=3"></script>
+<script src="/nav.js?v=4"></script>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/favicon-48.png">
 <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
@@ -294,7 +294,7 @@ function draw(){
       + `<td class="prc" data-l="Projected"><span class="pr">${r.pr.toLocaleString()}</span></td>`
       + `<td class="pcc" data-l="On pace"><span class="pc">${r.pc != null ? r.pc.toLocaleString() : '–'}</span>${d != null && d !== 0 ? `<span class="sub ${d > 0 ? 'up' : 'dn'}">proj ${d > 0 ? '+' : ''}${d.toLocaleString()}</span>` : ''}</td></tr>`
       + (openId === r.i ? `<tr class="bd"><td colspan="6"><div class="bdx" id="bd-${r.i}">${bdCache.get(data.sport + ':' + r.i) || '<span class="note">Working it out…</span>'}</div></td></tr>` : '');
-  }).join('') || `<tr><td colspan="6" class="note" style="text-align:left">${who === 'mine' ? 'None of your passes for this sport - re-read your passes on Boosts or Swaps.' : 'Nobody matches.'}</td></tr>`;
+  }).join('') || `<tr><td colspan="6" class="note" style="text-align:left">${who === 'mine' ? 'None of your passes for this sport - tap Scan at the top to read your passes.' : 'Nobody matches.'}</td></tr>`;
   $('#more').hidden = list.length <= shown;
   $('#more').textContent = `Show more (${(list.length - shown).toLocaleString()} left)`;
 }

@@ -236,7 +236,7 @@
   .how>summary{font-size:13px}
 </style>
 <script src="/theme.js"></script>
-<script src="/nav.js?v=3"></script>
+<script src="/nav.js?v=4"></script>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/favicon-48.png">
 <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
@@ -257,7 +257,7 @@
     <!-- Read my passes / Read my boosters (Dennis, 2026-11-09), each opening a breakdown. -->
     <section class="reads">
       <div class="rdrow">
-        <div class="rd"><button class="rdgo" id="scan" type="button">Read my passes</button><button class="rdx" id="passx" type="button" aria-expanded="false">Breakdown <span class="chev">▾</span></button></div>
+        <div class="rd"><button class="rdx" id="passx" type="button" aria-expanded="false">Breakdown <span class="chev">▾</span></button></div>
         <div class="rd bst"><button class="rdgo" id="invgo" type="button">Read my boosters</button><button class="rdx" id="invx" type="button" aria-expanded="false">Breakdown <span class="chev">▾</span></button></div>
       </div>
       <span class="note" id="scanmsg"></span>
@@ -1127,7 +1127,7 @@ const SEAS = (sp, se) => ['ncaam', 'nba', 'nhl', 'soccer'].includes(sp) ? `${Num
 const RLBL = { R1: 'Common', R2: 'Uncommon', R3: 'Rare', R4: 'Epic', R5: 'Legendary', R6: 'Mystic', R7: 'Iconic' };
 function drawPassSum(p){
   const list = (p && p.passSummary) || [];
-  if(!list.length){ $('#passout').innerHTML = '<p class="note">No passes on file yet - enter your Real username and tap Read my passes.</p>'; return; }
+  if(!list.length){ $('#passout').innerHTML = '<p class="note">No passes on file yet - tap Scan at the top.</p>'; return; }
   const nm = sp => SP_LBL[sp] || String(sp).toUpperCase();
   $('#passout').innerHTML = `<p class="note" style="margin:0 0 8px">${(p.passCount || 0).toLocaleString()} passes${p.scannedAt ? `, read ${new Date(p.scannedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ''}.</p>`
     + `<div class="scroll"><table class="pst"><thead><tr><th>Sport</th><th>Passes</th><th>Teams</th><th>By rarity</th></tr></thead><tbody>`
@@ -1161,20 +1161,12 @@ async function fullScan(extra, onPart){
 async function resumeScan(){
   try{ const st = await api('/api/swaps?op=scanstatus' + '&page=boosts'); if(st && (st.state === 'queued' || st.state === 'running')) $('#scan').click(); }catch(e){}
 }
-$('#scan').addEventListener('click', async () => {
-  const u = $('#rsuser').value.trim();
-  if(!u){ $('#scanmsg').textContent = 'Enter your Real username first.'; rdOpen($('#passx'), $('#passbody'), 'boosts_passopen_v1', true); $('#rsuser').focus(); return; }
-  $('#scan').disabled = true; $('#scanmsg').textContent = 'Scans typically take 25 seconds, longer at high website volume';
-  let canDm = null;   // the server finishes a scan they leave, and the bot DMs them (2026-11-08)
-  const leave = () => canDm ? ' You can leave this page - we\'ll DM you on Real when your scan is complete.' : canDm === false ? ' You can leave this page - your scan keeps running and will be ready when you come back.' : '';
-  const j = await fullScan('&page=boosts', p => { if(p.dm != null) canDm = p.dm; if(p.queued){ $('#scanmsg').textContent = `You're #${p.position} in the scan line - about ${p.wait}.` + leave(); return; } $('#scanmsg').textContent = 'Scans typically take 25 seconds, longer at high website volume.' + leave() + ((p.retrying || Date.now() - scanStart > 25000) ? ' • Scan taking longer than expected, please be patient' : ''); });
-  $('#scan').disabled = false;
-  if(j.error){ $('#scanmsg').textContent = j.error; return; }
-  $('#scanmsg').textContent = j.cached ? j.note : `${(j.passes || []).length} passes read just now.` + (j.note ? ' ' + j.note : '');
+// The Scan button is beside the menu now (nav.js, 2026-11-17); when a scan finishes, refresh what this page shows.
+window.rbAfterScan = async () => {
   loadPassSum();
   for(const k of Object.keys(daysCache)) delete daysCache[k]; await drawDays();   // the days first, so the plan has one to use
   if(shown()) run();
-});
+};
 
 /* Signed out (Dennis, 2026-11-12): today's top players to boost, for
    everyone - from the projections and today's schedule. */
@@ -1210,7 +1202,6 @@ document.addEventListener('click', e => { const b = e.target.closest('[data-ptsp
   loadSet();
   $('#rsuser').value = (me.profile && me.profile.rsUser) || '';
   drawPassSum(me.profile);
-  setTimeout(resumeScan, 300);
   const p = me.profile;
   const pn = p ? (p.passCount ?? (p.passes || []).length) : 0;
   $('#scanmsg').textContent = pn

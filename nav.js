@@ -48,6 +48,8 @@
     + '.rbnav-m a{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;color:var(--ink,#e8ecf3);text-decoration:none;font:600 15px system-ui,-apple-system,sans-serif}'
     + '.rbnav-m a:hover{background:var(--panel2,#1d2433)}.rbnav-m a .d{width:7px;height:7px;border-radius:50%;background:var(--line,#2a3346);flex:none}'
     + '.rbnav-top{display:flex;justify-content:center;padding:10px 12px 0;position:relative;z-index:50}'
+    + '.rbnav-top{gap:8px;flex-wrap:wrap;align-items:center}.rbscan b{font-size:15px;line-height:1}.rbscan.on b{display:inline-block;animation:rbspin 1s linear infinite}.rbscan:disabled{opacity:.8;cursor:default}@keyframes rbspin{to{transform:rotate(360deg)}}'
+    + '.rbscan-m{flex-basis:100%;text-align:center;font:600 13px system-ui,-apple-system,sans-serif;color:var(--mute,#9aa3b5);min-height:0;padding:0 8px}.rbscan-m:empty{display:none}'
     + '.rbnav-m a.cur{color:var(--accent,#E8A33D);font-weight:800}.rbnav-m a.cur .d{background:var(--accent,#E8A33D)}.rbnav-m .s{height:1px;background:var(--line,#2a3346);margin:6px 4px}.rbnav-m a.cz{font-size:13px;color:var(--mute,#9aa3b5)}';
   document.head.appendChild(css);
 
@@ -66,7 +68,7 @@
     b.setAttribute('aria-expanded', 'true'); open = { m: m, b: b };
   }
   document.addEventListener('click', function (e) {
-    var b = e.target.closest && e.target.closest('.rbnav-b');
+    var b = e.target.closest && e.target.closest('.rbnav-b:not(.rbscan)');
     if (b) { e.preventDefault(); if (open && open.b === b) close(); else show(b); return; }
     if (open && !open.m.contains(e.target)) close();
   });
@@ -74,12 +76,53 @@
   addEventListener('resize', close); addEventListener('scroll', function (e) { if (open && !open.m.contains(e.target)) close(); }, true);
 
   // One centred bar at the very top of every page (not inside the OTD frame on the board).
+  /* Scan button beside the menu (Dennis, 2026-11-17) on Boosts, Pack data, Board (OTD), Projections and Bulk:
+     the site's one scan of your passes. Swaps keeps its own. When it finishes the page refreshes what it shows
+     (window.rbAfterScan) or reloads. */
+  var SCAN_PAGES = { '/boosts': 'boosts', '/packs': 'packs', '/board': 'board', '/projections': 'projections', '/bulk': 'bulk' };
+  var path0 = location.pathname.replace(/\.html$/, '').replace(/\/$/, '') || '/';
+  var scanPage = SCAN_PAGES[path0] || null;
   function draw() {
     if (window.top !== window || document.querySelector('.rbnav-top')) return;
     var d = document.createElement('div'); d.className = 'rbnav-top';
-    d.innerHTML = '<span class="rbnav"><button type="button" class="rbnav-b" aria-haspopup="menu" aria-expanded="false"><i></i>Menu &#9662;</button></span>';
+    d.innerHTML = '<span class="rbnav"><button type="button" class="rbnav-b" aria-haspopup="menu" aria-expanded="false"><i></i>Menu &#9662;</button></span>'
+      + (scanPage && tok ? '<button type="button" class="rbnav-b rbscan" id="rbscan"><b>&#10227;</b>Scan</button>' : '')
+      + (scanPage && tok ? '<div class="rbscan-m" id="rbscanmsg" role="status" aria-live="polite"></div>' : '');
     document.body.insertBefore(d, document.body.firstChild);
+    var b = document.getElementById('rbscan'); if (b) b.addEventListener('click', function () { runScan(); });
+    if (scanPage && tok) setTimeout(function () { fetch('/api/swaps?op=scanstatus&page=' + scanPage, { headers: { 'x-rb-token': tok } }).then(function (r) { return r.json(); })
+      .then(function (st) { if (st && (st.state === 'queued' || st.state === 'running')) runScan(); }).catch(function () {}); }, 400);
   }
+  var scanning = false;
+  function say(t) { var m = document.getElementById('rbscanmsg'); if (m) m.textContent = t || ''; }
+  function api(u) { return fetch(u, { headers: { 'x-rb-token': tok } }).then(function (r) { return r.json().catch(function () { return { error: 'Could not reach the site.' }; }); }, function () { return { error: 'Could not reach the site.' }; }); }
+  var wait = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+  async function runScan() {
+    if (scanning) return; scanning = true;
+    var b = document.getElementById('rbscan'); if (b) { b.disabled = true; b.classList.add('on'); }
+    say('Scanning your passes - usually about 25 seconds.');
+    var part = 0, j = null, waits = 0, canDm = null;
+    try {
+      for (var i = 0; i < 60; i++) {
+        j = await api('/api/swaps?op=scan&part=' + part + '&page=' + scanPage);
+        if (j && j.dm != null) canDm = j.dm;
+        if (j && j.queued) { say("You're #" + j.position + ' in the scan line - about ' + j.wait + '. ' + (canDm ? "You can leave - we'll DM you on Real when it's done." : 'You can leave - it keeps running.')); await wait(4000); i--; if (++waits > 900) { j = { error: 'The scan line is very long right now - try again later.' }; break; } continue; }
+        if (j && j.busy) { await wait(3000); i--; if (++waits > 900) { j = { error: 'Try again in a minute.' }; break; } continue; }
+        if (!j || j.error || j.done) break;
+        say('Scanning your passes - usually about 25 seconds.'); part = j.next;
+      }
+      if (!j) j = { error: 'Could not reach the site.' };
+      if (!j.error && !j.done) j = { error: 'The scan took too long - try again.' };
+    } catch (e) { j = { error: 'Could not reach the site.' }; }
+    scanning = false; if (b) { b.disabled = false; b.classList.remove('on'); }
+    if (j.error) { say(j.error); return; }
+    if (j.cached) { say(j.note || 'Using your last scan.'); return; }
+    say(((j.passes || []).length) + ' passes read just now.' + (j.note ? ' ' + j.note : ''));
+    try { window.dispatchEvent(new CustomEvent('rb-scanned', { detail: j })); } catch (e) {}
+    if (typeof window.rbAfterScan === 'function') { try { await window.rbAfterScan(j); } catch (e) {} }
+    else setTimeout(function () { location.reload(); }, 1200);
+  }
+  window.rbScan = runScan;
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', draw); else draw();
   window.rbNavDraw = draw;
 

@@ -604,7 +604,7 @@
 })();
 </script>
 <script src="/theme.js"></script>
-<script src="/nav.js?v=3"></script>
+<script src="/nav.js?v=4"></script>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/favicon-48.png">
 <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
@@ -3864,6 +3864,11 @@ function saveExcludes(list){ try{ localStorage.setItem(EXCLUDE_KEY, JSON.stringi
 function isExcluded(name, list){ return (list || loadExcludes()).some(x => samePlayer(x, name)); }
 
 $('#s-exclude').addEventListener('click', excludeManager);
+/* Scan beside the menu (nav.js, 2026-11-17): the OTD tab refreshes itself in place; anywhere else on the board
+   the page reloads so Exclude owned and the rest use the new passes. */
+window.rbAfterScan = () => { const f = document.querySelector('iframe[src="/otd-breakdown"]');
+  if(f && f.offsetParent){ try{ f.contentWindow.postMessage('rb-scanned', location.origin); }catch(e){} return; }
+  setTimeout(() => location.reload(), 1200); };
 /* Exclude owned (Dennis, 2026-11-16): leave out every player you have a pass for (from your last pass scan on
    Swaps), so you aren't told to sell the cards you're grinding. On/off is remembered on this device. */
 const EXOWN_KEY = 'ratebrd_exowned_v1', BOARD_SP = { CFB: 'ncaaf', FC: 'soccer', NFL: 'nfl', UFC: 'ufc', NHL: 'nhl', NBA: 'nba' };
