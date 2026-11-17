@@ -236,7 +236,7 @@ async function betsCall(body){ const t = ls.get('ratebrd_token_v1') || '';
 async function placeBet(gid, si, btn){
   const g0 = (J.games || []).find(x => x.id === gid); if (!g0) return; const g = derive(g0), sd = g.sides[si], u = units(g, sd);
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
-  await betsCall({ add: { gid, side: si, sport: g.sport, game: g.game, name: sd.name || sd.label, price: sd.price, fair: sd.fair, ev: sd.ev, u: u || 0, amt: bank && u ? Math.round(bank * u / 100) : 0, link: g.link } });
+  await betsCall({ add: { gid, side: si, sport: g.sport, game: g.game, name: sd.name || sd.label, teams: g.sides.map(x => x.name || x.label), start: g.start || (g.live ? new Date(Date.now() - 3600000).toISOString() : null), price: sd.price, fair: sd.fair, ev: sd.ev, u: u || 0, amt: bank && u ? Math.round(bank * u / 100) : 0, link: g.link } });
 }
 function drawBets(){
   const now = new Map((J.games || []).map(g => [g.id, derive(g)]));

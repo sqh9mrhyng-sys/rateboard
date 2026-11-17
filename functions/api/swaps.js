@@ -5958,14 +5958,37 @@ async function handle({ request, env, waitUntil }) {
       if (b.add && typeof b.add === 'object') { const a = b.add;
         l = l.filter(x => !(x.gid === Number(a.gid) && x.side === Number(a.side)));
         l.unshift({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), gid: Number(a.gid) || 0, side: Number(a.side) || 0, sport: str(a.sport), game: str(a.game), name: str(a.name),
-          price: num(a.price), fair: num(a.fair), ev: Number(a.ev) || 0, u: num(a.u), amt: num(a.amt), link: /^https:\/\/www\.realapp\.com\//.test(String(a.link || '')) ? str(a.link) : '', at: Date.now() }); }
+          price: num(a.price), fair: num(a.fair), ev: Number(a.ev) || 0, u: num(a.u), amt: num(a.amt), teams: Array.isArray(a.teams) ? a.teams.slice(0, 3).map(str) : [], start: str(a.start), link: /^https:\/\/www\.realapp\.com\//.test(String(a.link || '')) ? str(a.link) : '', at: Date.now() }); }
       if (b.set && typeof b.set === 'object') { const x = l.find(y => y.id === b.set.id); if (x) { if (b.set.pay !== undefined) { if (b.set.pay === null || b.set.pay === '') delete x.pay; else x.pay = num(b.set.pay); } if (b.set.res != null) x.auto = false; if (b.set.amt != null) x.amt = num(b.set.amt); if (b.set.price != null) x.price = num(b.set.price); if (b.set.res != null) x.res = ['won', 'lost', ''].includes(b.set.res) ? b.set.res : ''; } }
       if (b.del) l = l.filter(x => x.id !== String(b.del));
       l = l.slice(0, 300); await env.RATEBOARD_KV.put(K, JSON.stringify(l));
     }
-    // Won or lost filled in from Real's own result once the market settles (unless you set it yourself).
+    /* Won or lost filled in automatically (unless you set it yourself): from Real's own result when we
+       saw the market settle, else from ESPN's final score once the game is over (Real drops settled
+       markets from its list, so ESPN is the usual route). */
     try { const S = JSON.parse((await env.RATEBOARD_KV.get('pred_settled_v1')) || '{}') || {}; let ch = false;
-      for (const x of l) { const r = S[x.gid]; if (r && !x.res && x.auto !== false) { x.res = r.w === x.side ? 'won' : 'lost'; x.auto = true; ch = true; } }
+      const ESPN = { nhl: 'hockey/nhl', nba: 'basketball/nba', nfl: 'football/nfl', ncaaf: 'football/college-football', ufc: 'mma/ufc' };
+      const nt = t => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+      const same = (a, b) => { a = nt(a); b = nt(b); return !!a && !!b && (a === b || a.endsWith(' ' + b) || b.endsWith(' ' + a)); };
+      const boards = {};
+      // Bets saved before teams were stored: fill them from the live market list while it's still open.
+      let cur = null; for (const x of l) if (!x.res && !(x.teams || []).length) { if (!cur) { try { cur = JSON.parse((await env.RATEBOARD_KV.get('pred_ev_v1')) || '{}') || {}; } catch (e) { cur = {}; } }
+        const g = (cur.games || []).find(y => y.id === x.gid); if (g) { x.teams = g.sides.map(y => y.name || y.label); x.start = g.start || x.start || new Date(x.at - 3600000).toISOString(); ch = true; } }
+      for (const x of l) {
+        if (x.res || x.auto === false) continue;
+        const r = S[x.gid]; if (r) { x.res = r.w === x.side ? 'won' : 'lost'; x.auto = true; ch = true; continue; }
+        const st = Date.parse(x.start || 0); if (!ESPN[x.sport] || !Array.isArray(x.teams) || !Number.isFinite(st) || Date.now() - st < 2 * 3600000 || Date.now() - st > 4 * 86400000) continue;
+        const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(st)).replace(/-/g, ''), bk = `${x.sport}_${day}`;
+        if (!(bk in boards)) { const ck = 'pred_espn_' + bk; let d = null; try { d = JSON.parse((await env.RATEBOARD_KV.get(ck)) || 'null'); } catch (e) {}
+          if (!d) { try { const rr = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${ESPN[x.sport]}/scoreboard?dates=${day}${x.sport === 'ncaaf' ? '&groups=80&limit=300' : ''}`); const j = rr.ok ? await rr.json() : null;
+              d = ((j && j.events) || []).map(ev => { const c = (ev.competitions || [])[0] || {}; return { done: !!(c.status && c.status.type && c.status.type.completed) || !!(ev.status && ev.status.type && ev.status.type.completed), t: (c.competitors || []).map(k => ({ n: [k.team && k.team.displayName, k.team && k.team.shortDisplayName, k.athlete && k.athlete.displayName].filter(Boolean), w: !!k.winner })) }; });
+              await env.RATEBOARD_KV.put(ck, JSON.stringify(d), { expirationTtl: 600 }); } catch (e) { d = []; } }
+          boards[bk] = d; }
+        const ev = (boards[bk] || []).find(e => e.done && x.teams.filter(t => !/^(draw|tie)$/i.test(t)).every(t => e.t.some(k => k.n.some(n => same(n, t)))));
+        if (!ev) continue;
+        const me = x.teams[x.side], win = ev.t.find(k => k.w);
+        x.res = /^(draw|tie)$/i.test(me) ? (win ? 'lost' : 'won') : (win && win.n.some(n => same(n, me)) ? 'won' : 'lost'); x.auto = true; ch = true;
+      }
       if (ch) await env.RATEBOARD_KV.put(K, JSON.stringify(l)); } catch (e) {}
     return json({ bets: l });
   }
