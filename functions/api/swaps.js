@@ -582,10 +582,18 @@ async function addNote(db, key, kind, text) {
   try { if (!key) return; await db.prepare(NOTE_DDL).run();
     await db.prepare('INSERT INTO user_notes (key, ts, kind, text) VALUES (?, ?, ?, ?)').bind(String(key).toLowerCase(), Date.now(), kind, String(text).slice(0, 1500)).run(); } catch (e) {}
   // Every note also goes out as a push to browsers the member turned on (2026-11-16). Never waits or throws.
-  if (PUSH_ENV) pushTo(PUSH_ENV, db, key, { title: PUSH_TITLE[kind] || 'Rax Academy', body: String(text).slice(0, 180), url: '/notifications', tag: 'note-' + kind }).catch(() => {});
+  if (PUSH_ENV) pushIf(PUSH_ENV, db, key, p => !(p.notes && p.notes.on === false), { title: PUSH_TITLE[kind] || 'Rax Academy', body: String(text).slice(0, 180), url: '/notifications', tag: 'note-' + kind }).catch(() => {});
 }
 /* Push notifications (2026-11-16). PUSH_ENV is the latest env this module saw (requests and ticks set it). */
 let PUSH_ENV = null;
+/* What each member wants pushed (Dennis, 2026-11-16, the Notifications page): swaps (warnings, swap time,
+   confirm times), boost reminders per sport with how many hours before that day's first game (up to 36),
+   and messages to them (replies, moderation - on unless turned off). Swaps and boosts are off until they
+   activate them. KV per member. */
+const PUSH_PREF = k => 'push_prefs_v1_' + String(k || '').toLowerCase();
+async function pushPrefs(env, key) { try { return JSON.parse((await env.RATEBOARD_KV.get(PUSH_PREF(key))) || '{}') || {}; } catch (e) { return {}; } }
+async function pushIf(env, db, key, test, msg) { try { const p = await pushPrefs(env, key); if (test(p)) await pushTo(env, db, key, msg); } catch (e) {} }
+const BOOST_PUSH_SP = { nfl: 'NFL', ncaaf: 'CFB', nba: 'NBA', ncaam: 'CBB', nhl: 'NHL' };
 const PUSH_TITLE = { mod: 'Swaps moderation', reply: 'Reply from Dennis', swap: 'Swaps', news: "What's new" };
 /* What's new on the site, newest first - shown to everyone on Notifications. */
 const SITE_NEWS = [
@@ -2021,7 +2029,7 @@ async function runDms(env, db, auth, rows, max, force) {
   const send = async (who, text, kind) => {
     // A push too, for browsers the member turned on (2026-11-16); the DM still goes out as before.
     if (kind === 'warn' || kind === 'contact') { try { const first = String((Array.isArray(text) ? text[0] : text) || ''), link = (first.match(/https:\/\/raxacademy\.app\/\S+/) || [])[0];
-      pushTo(env, db, who, { title: kind === 'warn' ? 'Swaps in 30 minutes' : 'Your swaps are live', body: first.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 170), url: link ? link.replace('https://raxacademy.app', '') : '/swaps', tag: 'swap-' + kind, urgent: true }).catch(() => {}); } catch (e) {} }
+      pushIf(env, db, who, p => p.swaps && p.swaps.on && (kind === 'warn' ? p.swaps.warn !== false : p.swaps.live !== false), { title: kind === 'warn' ? 'Swaps in 30 minutes' : 'Your swaps are live', body: first.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 170), url: link ? link.replace('https://raxacademy.app', '') : '/swaps', tag: 'swap-' + kind, urgent: true }).catch(() => {}); } catch (e) {} }
     const me = await member(who);
     if (!me || !me.hashId) { notes.push(`${who}: never verified`); await botFail(db, kind, `${who}: never verified`); return false; }
     try {
@@ -2940,6 +2948,7 @@ async function confirmPrompts(env, db, auth) {
     try { const ch = await dmChannel(db, auth, u.hashId, u.rsUser, env);
       await dmSendRetry(auth, ch, fitOne(`You have the selected times ${times} - you have until ${by} to confirm, go on https://raxacademy.app/swaps and click "Confirm set times" on the top of the page`));
       await stat(db, 'dm_confirm_prompt'); sent++;
+      pushIf(env, db, u.key, p => p.swaps && p.swaps.on && p.swaps.confirm !== false, { title: 'Confirm your swap times', body: `Your times today: ${times}. Confirm by ${by}.`, url: '/swaps', tag: 'swap-confirm', urgent: true }).catch(() => {});
       try { await db.prepare('UPDATE bot_once SET ok=2 WHERE campaign=? AND key=?').bind('cprompt_' + day, String(u.key).toLowerCase()).run(); } catch (e) {} }   // 2 = the DM went
     catch (e) { failed++; await botFail(db, 'dm_confirm_prompt', `${u.key}: ${e.message || e}`);
       // Tried again next minute - there's an hour to get them all out - unless Real won't let the bot message them at all.
@@ -3136,8 +3145,39 @@ async function dmTick(env) {
   } } catch (e) { await botFail(db, 'dm_purge', e.message); }
   return out;
 }
+/* Boost reminders (2026-11-16): for each member who turned them on, a push N hours (they pick, up to 36)
+   before the first game of each day in each sport they chose. First-game times come from ESPN's
+   scoreboards for today and tomorrow (ET), read every 30 minutes. Each reminder goes once. */
+async function boostReminders(env, db) {
+  let ix = []; try { ix = JSON.parse((await env.RATEBOARD_KV.get('push_boost_users_v1')) || '[]') || []; } catch (e) {}
+  if (!ix.length) return;
+  const now = Date.now();
+  const lk = Number(await env.RATEBOARD_KV.get('push_boost_lock')) || 0; if (now - lk < 55000) return; await env.RATEBOARD_KV.put('push_boost_lock', String(now));
+  let fg = null; try { fg = JSON.parse((await env.RATEBOARD_KV.get('push_firstgame_v1')) || 'null'); } catch (e) {}
+  if (!fg || now - fg.at > 30 * 60000) {
+    const days = [0, 1, 2].map(i => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(now + i * 86400000)).replace(/-/g, ''));
+    fg = { at: now, m: {} };
+    for (const sp of Object.keys(BOOST_PUSH_SP)) for (const d of days) {
+      try { const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${ESPN_PATH[sp]}/scoreboard?dates=${d}${sp === 'ncaaf' ? '&groups=80&limit=300' : sp === 'ncaam' ? '&groups=50&limit=400' : ''}`);
+        const j = r.ok ? await r.json() : null; const ts = ((j && j.events) || []).map(e => Date.parse(e.date)).filter(Number.isFinite);
+        if (ts.length) fg.m[`${sp}|${d}`] = Math.min(...ts); } catch (e) {} }
+    try { await env.RATEBOARD_KV.put('push_firstgame_v1', JSON.stringify(fg), { expirationTtl: 86400 }); } catch (e) {}
+  }
+  let sent = {}; try { sent = JSON.parse((await env.RATEBOARD_KV.get('push_boost_sent_v1')) || '{}') || {}; } catch (e) {}
+  let ch = false;
+  for (const who of ix) {
+    const p = await pushPrefs(env, who); if (!(p.boosts && p.boosts.on)) continue;
+    for (const [sp, x] of Object.entries(p.boosts.sports || {})) { if (!x.on) continue;
+      for (const [k, t] of Object.entries(fg.m)) { if (!k.startsWith(sp + '|') || t <= now) continue;
+        if (now < t - (Number(x.hours) || 2) * 3600000) continue;
+        const sk = `${who}|${k}`; if (sent[sk]) continue; sent[sk] = now; ch = true;
+        const tm = new Date(t).toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit' });
+        await pushTo(env, db, who, { title: `Boost reminder · ${BOOST_PUSH_SP[sp]}`, body: `First ${BOOST_PUSH_SP[sp]} game ${tm} ET - set your boosters.`, url: '/boosts', tag: 'boost-' + sp }); } } }
+  if (ch) { for (const k of Object.keys(sent)) if (now - sent[k] > 3 * 86400000) delete sent[k]; try { await env.RATEBOARD_KV.put('push_boost_sent_v1', JSON.stringify(sent)); } catch (e) {} }
+}
 export async function swapTick(env) {
   PUSH_ENV = env;
+  boostReminders(env, env.RATEBOARD_DB).catch(() => {});   // not awaited: never holds up the swap DMs
   TICK_T0 = Date.now();
   if (!DM_ON) return null;
   const db = env.RATEBOARD_DB, auth = swapToken(env);
@@ -6129,6 +6169,19 @@ async function handle({ request, env, waitUntil }) {
   }
   /* Push notifications (2026-11-16): the public key, turning a browser on or off, a test, and status. */
   if (op === 'pushkey') return json({ key: (await vapidKeys(env)).pub });
+  if (op === 'pushprefs') {
+    if (!acc.who) return json({ error: 'Sign in first.' }, 401);
+    const who = String(acc.who).toLowerCase(); let p = await pushPrefs(env, who);
+    if (request.method === 'POST') { let b = {}; try { b = await request.json(); } catch (e) {}
+      const bool = v => v === true || v === false ? v : undefined, clean = {};
+      const sw = b.swaps || {}; clean.swaps = { on: !!sw.on, warn: bool(sw.warn) ?? true, live: bool(sw.live) ?? true, confirm: bool(sw.confirm) ?? true };
+      const bo = b.boosts || {}, sps = {}; for (const k of Object.keys(BOOST_PUSH_SP)) { const x = (bo.sports || {})[k] || {}; const h = Math.max(0.25, Math.min(36, Number(x.hours) || 2)); sps[k] = { on: !!x.on, hours: Math.round(h * 4) / 4 }; }
+      clean.boosts = { on: !!bo.on, sports: sps }; clean.notes = { on: (b.notes || {}).on !== false };
+      p = clean; await env.RATEBOARD_KV.put(PUSH_PREF(who), JSON.stringify(p));
+      // Who has boost reminders on, so the minute job doesn't read every member.
+      try { const ix = new Set(JSON.parse((await env.RATEBOARD_KV.get('push_boost_users_v1')) || '[]')); if (clean.boosts.on && Object.values(sps).some(x => x.on)) ix.add(who); else ix.delete(who); await env.RATEBOARD_KV.put('push_boost_users_v1', JSON.stringify([...ix])); } catch (e) {} }
+    return json({ prefs: p, sports: BOOST_PUSH_SP });
+  }
   if (op === 'pushsub' || op === 'pushunsub' || op === 'pushtest' || op === 'pushstatus') {
     if (!acc.who) return json({ error: 'Sign in first.' }, 401);
     const who = String(acc.who).toLowerCase(); await db.prepare(PUSH_DDL).run();
