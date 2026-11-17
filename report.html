@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Report a user - Rax Academy</title>
+<title>Report - Rax Academy</title>
 <style>
   :root{--bg:#141925;--panel:#1d2433;--panel2:#262f42;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;--good:#3fbf7f;--bad:#e5534b}
   *{box-sizing:border-box}
@@ -29,8 +29,16 @@
 </head>
 <body><div class="wrap">
 <a href="/" class="back">← Home</a>
-<h1>Report a user</h1>
-<p class="lead">Scammed, fake screenshots, didn't send? Tell me who and what happened. Reports go to the admin only - nothing is shared with the person you report.</p>
+<h1>Report</h1>
+<div class="kinds" id="mode" style="margin-bottom:14px"><button type="button" data-m="user" aria-pressed="true">A user<small>Scammed, fake screenshots, didn't send</small></button><button type="button" data-m="issue" aria-pressed="false">An issue<small>Something on the site is wrong or broken</small></button></div>
+<p class="lead" id="lead">Tell me who and what happened. Reports go to the admin only - nothing is shared with the person you report.</p>
+<form class="card" id="fi" hidden>
+  <div class="f"><label for="ip">Where</label><select id="ip"><option>Home</option><option>Board</option><option>Swaps</option><option>Boosts/Buys</option><option>Pack data</option><option>Projections</option><option>Bulk ratings</option><option>Drafts</option><option>Predictions</option><option>Tag finder</option><option>OTD / Game data</option><option>Notifications</option><option>Something else</option></select></div>
+  <div class="f"><label for="it">What's wrong, in one line</label><input id="it" maxlength="120" autocomplete="off" placeholder="e.g. my swaps page won't load" required></div>
+  <div class="f"><label for="id">Any detail (optional)</label><textarea id="id" maxlength="1000" placeholder="What you tapped, what you expected, what happened instead."></textarea></div>
+  <button class="go" id="igo">Send issue</button>
+  <p class="msg" id="imsg"></p>
+</form>
 <form class="card" id="f">
   <div class="f" style="position:relative"><label for="who">Their Real username</label><input id="who" placeholder="e.g. somebody123" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="60" required><div class="sug" id="sug" hidden></div><p class="note" id="whonote" style="margin:6px 0 0"></p></div>
   <div class="f"><label for="why">What happened</label><textarea id="why" maxlength="1000" placeholder="What you agreed, what they did, when. Links to screenshots or comments help." required></textarea></div>
@@ -44,6 +52,17 @@ const tok = () => { try { return localStorage.getItem('ratebrd_token_v1') || '';
 if (!tok()) location.href = '/?next=' + encodeURIComponent(location.pathname);
 async function send(body){ const r = await fetch('/api/kv', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-rb-token': tok() }, body: JSON.stringify(body) }); const j = await r.json().catch(() => ({})); if (r.status === 401) { location.href = '/?next=' + encodeURIComponent(location.pathname); return null; } return r.ok ? j : { error: j.error || 'Could not send. Try again.' }; }
 const p = new URLSearchParams(location.search).get('u'); if (p) $('#who').value = p;
+// A user or an issue (Dennis, 2026-11-16). Issues go to the admin's request list as "Something's broken".
+const setMode = m => { document.querySelectorAll('#mode button').forEach(x => x.setAttribute('aria-pressed', x.dataset.m === m)); $('#f').hidden = m !== 'user'; $('#fi').hidden = m !== 'issue';
+  $('#lead').textContent = m === 'user' ? 'Tell me who and what happened. Reports go to the admin only - nothing is shared with the person you report.' : 'Tell me what is broken or wrong and where. I read every one of these.'; };
+$('#mode').addEventListener('click', e => { const b = e.target.closest('[data-m]'); if (b) setMode(b.dataset.m); });
+if (new URLSearchParams(location.search).get('t') === 'issue') setMode('issue');
+$('#fi').addEventListener('submit', async e => { e.preventDefault();
+  const title = $('#it').value.trim(); if (title.length < 4) { $('#imsg').className = 'msg bad'; $('#imsg').textContent = 'Give it a line I can read at a glance.'; return; }
+  $('#igo').disabled = true; $('#imsg').className = 'msg'; $('#imsg').textContent = 'Sending…';
+  const j = await send({ op: 'featureRequest2', kind: 'bug', title: `[${$('#ip').value}] ${title}`.slice(0, 120), detail: $('#id').value.trim() }); if (!j) return;
+  if (j.error) { $('#igo').disabled = false; $('#imsg').className = 'msg bad'; $('#imsg').textContent = j.error; return; }
+  $('#fi').innerHTML = '<div class="done"><b>Issue sent - thanks</b><span class="note">I\'ll take a look. Replies show up under Notifications.</span><p><a href="/" style="color:var(--accent)">Back to Home</a></p></div>'; });
 // Suggestions as you type, so the right person gets reported.
 let sT = 0, picked = '';
 const hl = (u, q) => { const i = u.toLowerCase().indexOf(q.toLowerCase()); const e = x => x.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); return i < 0 ? e(u) : e(u.slice(0, i)) + '<b>' + e(u.slice(i, i + q.length)) + '</b>' + e(u.slice(i + q.length)); };
