@@ -71,6 +71,8 @@
   .bp{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:0 14px 10px}
 .lad{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center} .lad>span:not(.upto){font-size:12px;color:var(--mute);background:var(--panel2);border-radius:999px;padding:2px 8px} .lad>span.on{color:var(--good);background:rgba(63,191,127,.14)} .lad b{color:inherit}
   .lg{width:28px;height:28px;object-fit:contain;flex:none;margin-top:1px}
+.bf{display:flex;gap:8px;align-items:flex-end;padding:0 14px 12px;flex-wrap:wrap} .bf label{font-size:12px;color:var(--mute);font-weight:700} .bf input{display:block;width:96px;margin-top:3px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;font-size:16px}
+  .bfx{background:none;border:0;color:var(--mute);font-size:16px;cursor:pointer;padding:6px}
   .upto{font-size:12px;color:var(--mute)} .upto b{color:var(--ink)}
   .place{white-space:nowrap;align-self:flex-start}
   .place,.bact button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 10px;font:inherit;font-size:13px;font-weight:800;cursor:pointer}
@@ -118,7 +120,7 @@
 <p><b>Long shots are capped</b> because they lose most of the time even with a big edge: under 20% on Real it's 0.5u max, under 35% 1u, under 50% 1.5u, and favorites can go up to 2u.</p>
 <p>Example with 5,000 rax: 1u = 50 rax. A favorite at 60% with a 70% fair price is Kelly 25% → 2u → <b>100 rax</b>. An underdog at 15% with a 20% fair price is Kelly 6% → capped 0.5u → <b>25 rax</b>.</p>
 <h2>Placing a bet</h2>
-<p>Every side shows a <b>unit ladder</b>, like <b>0.5u under 50% · 1u under 47% · 2u under 44%</b>: the size to bet at each Real price, from the same rule as above. Live prices swing between refreshes, so if Real jumps to 46% you already know it's a 1u bet without waiting. The size the current price earns is lit green. <b>+EV up to X%</b> is the highest price that's still worth a bet at all; above it, skip. Once you buy, tap <b>Bet placed</b>: the game leaves Markets and shows in <b>My bets</b> with the amount filled in from your units. Change the amount if you put in something different; the payout (amount ÷ the price you paid) updates with it. The payout can be changed too if Real paid something different (clear it to go back to auto). When the market settles on Real it's marked Won or Lost for you; you can still tap Won or Lost yourself.</p>
+<p>Every side shows a <b>unit ladder</b>, like <b>0.5u under 50% · 1u under 47% · 2u under 44%</b>: the size to bet at each Real price, from the same rule as above. Live prices swing between refreshes, so if Real jumps to 46% you already know it's a 1u bet without waiting. The size the current price earns is lit green. <b>+EV up to X%</b> is the highest price that's still worth a bet at all; above it, skip. Once you buy, tap <b>Bet placed</b>, put in the Real % you actually got and the rax you bet (both filled in for you), and tap <b>Enter</b>: the game leaves Markets and shows in <b>My bets</b>. Change the amount if you put in something different; the payout (amount ÷ the price you paid) updates with it. The payout can be changed too if Real paid something different (clear it to go back to auto). When the market settles on Real it's marked Won or Lost for you; you can still tap Won or Lost yourself.</p>
 <h2>Step 5 - When not to trust it</h2>
 <p><b>Thin odds</b>: during a game, if fewer than 3 books have a line, or the newest line is over a minute old, the EV is greyed out and gets no unit size - books freeze their lines in blowouts and late in games, so a huge EV there is usually just an old line. Open <b>Book breakdown</b> to see every book's % and how old its line is.</p>
 <p><b>Hidden games</b>: the <b>+EV</b> tab shows only games with a bet to make, best EV first, and leaves out games where a side's fair % is under 7% (basically decided). <b>All</b> shows every open market. Locked markets are always hidden.</p>
@@ -131,6 +133,7 @@
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const ls = { get: k => { try{ return localStorage.getItem(k); }catch(e){ return null; } }, set: (k, v) => { try{ localStorage.setItem(k, v); }catch(e){} } };
+const pw = v => v == null ? '-' : Math.round(v * 100) + '%';   // Real shows whole percents
 const pc = v => v == null ? '-' : (Math.round(v * 1000) / 10).toFixed(1) + '%';
 const SPN = { nhl: 'NHL', nba: 'NBA', nfl: 'NFL', ncaaf: 'CFB', ufc: 'UFC', soccer: 'FC' };
 let J = null, chip = ls.get('pred_chip') || '';
@@ -235,9 +238,9 @@ function card(g){
       <div class="meta"><span class="tag">${esc(SPN[g.sport] || g.sport)}</span>${when(g)}${thin(g) && bkOf(g).length ? '<span class="tag lock" title="Too few books or lines too old to trust the EV">Thin odds</span>' : ''}${g.volume ? `<span class="tag">${esc(g.volume)} vol</span>` : ''}</div></div>
       ${c ? (units(g, bestS) ? `<span class="u">${esc(bestS.label)} +${pc(bestS.ev)} · ${units(g, bestS)}u</span>` : '') : g.link ? `<a class="go" href="${esc(g.link)}" target="_blank" rel="noopener">Predict ↗</a>` : ''}</div>
     ${c ? '' : g.sides.map((s, si) => { const u = units(g, s); return `<div class="sd"><span class="t">${s.logo ? `<img class="lg" src="${esc(s.logo)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('i'),{className:'dot'}))">` : `<i class="dot" style="background:${esc(s.color || '#555')};margin-top:5px"></i>`}<span>${esc(s.name || s.label)}<small class="fr">Fair <b>${pc(s.fair)}</b></small>${(g.refs || []).length ? `<small class="ref">${g.refs.map(r => `${esc(r.src)} ${pc(r.p[si])}`).join(' · ')}</small>` : ''}</span></span>
-      <span class="c">Real<b>${pc(s.price)}</b></span>
+      <span class="c">Real<b>${pw(s.price)}</b></span>
       <span class="ev ${s.ev == null || thin(g) ? 'nil' : s.ev > 0 ? 'pos' : 'neg'}">${s.ev == null ? '-' : (s.ev > 0 ? '+' : '') + pc(s.ev)}<small>EV</small>${u ? `<span class="u">${u}u</span>${bank ? `<span class="rx">${Math.round(bank * u / 100).toLocaleString()} rax</span>` : ''}` : ''}</span></div>${(() => { const L = ladder(g, s); if (!L.length && !u) return '';
-      return `<div class="bp"><span class="lad">${L.length ? L.map(([uu, q]) => `<span class="${s.price <= q ? 'on' : ''}"><b>${uu}u</b> under ${pc(q)}</span>`).join('') : ''}<span class="upto">+EV up to <b>${pc(s.fair / (1 + MIN_EV_U))}</b></span></span>${u ? `<button class="place" data-g="${g.id}" data-s="${si}">Bet placed</button>` : ''}</div>`; })()}`; }).join('')}${c ? '' : `
+      return `<div class="bp"><span class="lad">${L.length ? L.filter(([, q]) => Math.floor(q * 100) >= 1).map(([uu, q]) => `<span class="${Math.round(s.price * 100) <= Math.floor(q * 100) ? 'on' : ''}"><b>${uu}u</b> at ${Math.floor(q * 100)}% or less</span>`).join('') : ''}<span class="upto">+EV up to <b>${Math.floor(s.fair / (1 + MIN_EV_U) * 100)}%</b></span></span>${u ? `<button class="place" data-g="${g.id}" data-s="${si}">Bet placed</button>` : ''}</div>${betForm && betForm.gid === g.id && betForm.si === si ? `<form class="bf" data-g="${g.id}" data-s="${si}"><label>Real %<input name="pct" type="number" inputmode="numeric" min="1" max="99" step="1" value="${betForm.pct}" required></label><label>Rax bet<input name="amt" type="number" inputmode="numeric" min="1" step="1" value="${betForm.amt}" required></label><button type="submit" class="place">Enter</button><button type="button" class="bfx" aria-label="Cancel">✕</button></form>` : ''}`; })()}`; }).join('')}${c ? '' : `
     <div class="ft"><span class="srcs">${srcs.length ? 'Fair from <b>' + srcs.map(x => x.books ? `<span title="${esc(x.books.join(', '))}">${esc(x.src)}</span>` : esc(x.src)).join('</b>, <b>') + '</b>' : 'No sportsbook odds for this game'}</span>${(() => { const h = g.hist || []; if (h.length < 2) return ''; const v = h[h.length - 1], sd = g.sides.reduce((a, x) => Math.abs((x.price ?? 9) - v) < Math.abs((a.price ?? 9) - v) ? x : a, g.sides[0]); return `<span class="src" title="Real's price for ${esc(sd.name || sd.label)}, last few hours">${esc(sd.label)} ${spark(h)}</span>`; })()}</div>${breakdown(g)}`}</div>`;
 }
 function drawBooks(){
@@ -249,10 +252,15 @@ function drawBooks(){
 async function betsCall(body){ const t = ls.get('ratebrd_token_v1') || '';
   try { const j = await (await fetch('/api/swaps?op=predbets', body ? { method: 'POST', headers: { 'content-type': 'application/json', ...(t ? { 'x-rb-token': t } : {}) }, body: JSON.stringify(body) } : { headers: t ? { 'x-rb-token': t } : {} })).json(); if (j.bets) BETS = j.bets; } catch (e) {}
   if (J && J.games) { draw(); drawBets(); } }
-async function placeBet(gid, si, btn){
+let betForm = null;   // { gid, si, pct, amt } while the entry box is open
+function openBetForm(gid, si){ const g0 = (J.games || []).find(x => x.id === gid); if (!g0) return; const g = derive(g0), sd = g.sides[si], u = units(g, sd);
+  betForm = { gid, si, pct: Math.round(sd.price * 100), amt: bank && u ? Math.round(bank * u / 100) : '' }; draw();
+  const f = document.querySelector('form.bf input[name="pct"]'); if (f) f.focus(); }
+async function placeBet(gid, si, btn, pct, amt){
   const g0 = (J.games || []).find(x => x.id === gid); if (!g0) return; const g = derive(g0), sd = g.sides[si], u = units(g, sd);
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
-  await betsCall({ add: { gid, side: si, sport: g.sport, game: g.game, name: sd.name || sd.label, logo: sd.logo || '', teams: g.sides.map(x => x.name || x.label), start: g.start || (g.live ? new Date(Date.now() - 3600000).toISOString() : null), price: sd.price, fair: sd.fair, ev: sd.ev, u: u || 0, amt: bank && u ? Math.round(bank * u / 100) : 0, link: g.link } });
+  await betsCall({ add: { gid, side: si, sport: g.sport, game: g.game, name: sd.name || sd.label, logo: sd.logo || '', teams: g.sides.map(x => x.name || x.label), start: g.start || (g.live ? new Date(Date.now() - 3600000).toISOString() : null), price: pct / 100, fair: sd.fair, ev: sd.fair != null ? sd.fair / (pct / 100) - 1 : sd.ev, u: unitsAt(sd.fair, pct / 100) || u || 0, amt, link: g.link } });
+  betForm = null;
 }
 function drawBets(){
   const now = new Map((J.games || []).map(g => [g.id, derive(g)]));
@@ -264,7 +272,7 @@ function drawBets(){
   const row = b => { const g = now.get(b.gid), sd = g && g.sides[b.side], auto = b.price > 0 ? (b.amt || 0) / b.price : 0, pay = b.pay != null ? b.pay : auto;
     const st = b.res ? `<span class="tag ${b.res === 'won' ? 'won' : 'lost'}">${b.res === 'won' ? 'Won' : 'Lost'}${b.auto ? ' · auto' : ''}</span>` : !g ? '<span class="tag">Waiting for result</span>' : g.live ? '<span class="tag live">● LIVE</span>' : when(g);
     return `<div class="g bet"><div class="gh">${b.logo ? `<img class="lg" src="${esc(b.logo)}" alt="" loading="lazy" style="margin-right:8px">` : ''}<div style="min-width:0;flex:1"><span class="nm">${esc(b.name)}</span><div class="meta"><span class="tag">${esc(SPN[b.sport] || b.sport)}</span>${st}<span class="note">${esc(b.game)}</span></div></div>${b.link ? `<a class="go" href="${esc(b.link)}" target="_blank" rel="noopener">Open ↗</a>` : ''}</div>
-      <div class="bgrid"><span class="c">Bought at<b>${pc(b.price)}</b></span><span class="c">Real now<b>${sd ? pc(sd.price) : '-'}</b></span><span class="c">Fair now<b>${sd ? pc(sd.fair) : '-'}</b></span><span class="c">EV then<b class="${b.ev > 0 ? 'pos' : 'neg'}">${b.ev > 0 ? '+' : ''}${pc(b.ev)}</b></span></div>
+      <div class="bgrid"><span class="c">Bought at<b>${pw(b.price)}</b></span><span class="c">Real now<b>${sd ? pw(sd.price) : '-'}</b></span><span class="c">Fair now<b>${sd ? pc(sd.fair) : '-'}</b></span><span class="c">EV then<b class="${b.ev > 0 ? 'pos' : 'neg'}">${b.ev > 0 ? '+' : ''}${pc(b.ev)}</b></span></div>
       <div class="bamt"><label>Amount placed <input type="number" inputmode="numeric" min="0" step="1" value="${b.amt || ''}" placeholder="rax" data-amt="${esc(b.id)}"></label>
         <label class="payl">${b.res === 'won' ? 'Paid out' : 'Pays'} <input type="number" inputmode="numeric" min="0" step="1" value="${Math.round(pay)}" data-pay="${esc(b.id)}"><small>${b.pay != null ? `<a href="#" data-payauto="${esc(b.id)}">auto (${Math.round(auto).toLocaleString()})</a>` : 'auto'} · ${b.res === 'lost' ? `-${Math.round(b.amt || 0).toLocaleString()}` : `+${Math.round(pay - (b.amt || 0)).toLocaleString()}`} profit</small></label></div>
       <div class="bact">${b.res ? `<button data-res="${esc(b.id)}" data-v="">Undo result</button>` : `<button data-res="${esc(b.id)}" data-v="won">Won</button><button data-res="${esc(b.id)}" data-v="lost">Lost</button>`}<button data-del="${esc(b.id)}" class="del">Remove</button></div></div>`; };
@@ -272,6 +280,7 @@ function drawBets(){
     + (done.length ? '<div class="sph"><span>Settled</span></div>' + done.map(row).join('') : '');
 }
 function draw(){
+  const ae = document.activeElement; if (ae && ae.closest && ae.closest('form.bf')) { tick(); return; }
   const bg = betGids(), games = (J.games || []).filter(g => !g.locked && !bg.has(g.id)).map(derive);
   const sps = SP_ORDER.filter(sp => games.some(g => g.sport === sp));
   $('#chips').innerHTML = ['', '_ev', ...(sps.length > 1 ? sps : [])].map(s => `<button data-c="${s}" aria-pressed="${chip === s}">${s === '_best' ? 'Best EV' : s === '_ev' ? '+EV' : s ? SPN[s] || s : 'All'}</button>`).join('');
@@ -300,7 +309,13 @@ $('#chips').addEventListener('click', e => { const b = e.target.closest('[data-c
 $('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if(!b) return; for (const x of document.querySelectorAll('#tabs button')) x.setAttribute('aria-pressed', x === b); $('#vm').hidden = b.dataset.t !== 'm'; $('#vg').hidden = b.dataset.t !== 'g'; $('#va').hidden = b.dataset.t !== 'a'; if (b.dataset.t === 'a') accLoad(); $('#vb').hidden = b.dataset.t !== 'b'; if (b.dataset.t === 'b') drawBets(); });
 $('#list').addEventListener('click', e => {
   const c = e.target.closest('[data-cl]'); if (c) { const id = c.dataset.cl; collapsed.has(id) ? collapsed.delete(id) : collapsed.add(id); ls.set('pred_collapsed2', JSON.stringify([...collapsed])); draw(); return; }
-  const b = e.target.closest('.place'); if (b) placeBet(Number(b.dataset.g), Number(b.dataset.s), b); });
+  const x = e.target.closest('.bfx'); if (x) { betForm = null; draw(); return; }
+  const b = e.target.closest('button.place[data-g]'); if (b) openBetForm(Number(b.dataset.g), Number(b.dataset.s)); });
+$('#list').addEventListener('input', e => { const f = e.target.closest('form.bf'); if (f && betForm) betForm[e.target.name] = e.target.value; });
+$('#list').addEventListener('submit', e => { const f = e.target.closest('form.bf'); if (!f) return; e.preventDefault();
+  const pct = Number(f.pct.value), amt = Number(f.amt.value); if (!(pct > 0 && pct < 100) || !(amt > 0)) return;
+  const btn = f.querySelector('button[type=submit]'); btn.disabled = true; btn.textContent = 'Saving…';
+  placeBet(Number(f.dataset.g), Number(f.dataset.s), null, pct, amt); });
 let amtT = 0;
 $('#blist').addEventListener('input', e => { const i = e.target.closest('[data-amt]'); if (!i) return; clearTimeout(amtT);
   const b = BETS.find(x => x.id === i.dataset.amt); if (b) { b.amt = Number(i.value) || 0; const pi = i.closest('.bamt').querySelector('[data-pay]'); if (pi && b.pay == null && b.price > 0) pi.value = Math.round(b.amt / b.price); }
