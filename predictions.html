@@ -52,7 +52,7 @@
   .bkr em{font-style:normal;font-size:11px;color:var(--accent)} .bkr .ag{color:var(--mute);font-weight:600}
   .bkh{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute);border-top:0;margin-top:6px} .bkh span{font-weight:800!important}
   .bkr.old{opacity:.55} .bkr em.off{color:var(--bad);display:block} .bkr.tot{background:rgba(232,163,61,.06)} .bkr.ref2{color:var(--mute)}
-  .tabs{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;margin:10px 0 4px} .tabs button{flex:1 0 auto;font-size:14px;white-space:nowrap;padding:8px 10px!important;background:var(--panel);color:var(--mute);border:1px solid var(--line);border-radius:10px;padding:8px;font:inherit;font-weight:800;cursor:pointer}
+  .tabs{display:grid;grid-template-columns:repeat(var(--tc,2),1fr);gap:6px;margin:10px 0 4px} .tabs button{font-size:14px;white-space:nowrap;padding:9px 6px!important;background:var(--panel);color:var(--mute);border:1px solid var(--line);border-radius:10px;padding:8px;font:inherit;font-weight:800;cursor:pointer}
   .tabs button[aria-pressed="true"]{color:var(--ink);border-color:var(--accent);background:var(--panel2)}
   .bank{display:block;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:10px 0 0}
   .bank span{display:block;font-size:13px;font-weight:700;margin-bottom:6px} .bank small{display:block;font-size:12px;color:var(--mute);margin-top:4px}
@@ -90,6 +90,7 @@
   .rp{border-left:3px solid var(--accent);padding:4px 10px;margin:8px 0 0;font-size:13px;background:rgba(232,163,61,.06);border-radius:0 8px 8px 0} .rp small{display:block;color:var(--mute);font-size:11px}
   .fbact{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px} .fbact button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 10px;font:inherit;font-size:12px;font-weight:800;cursor:pointer} .fbact .del{color:var(--bad);margin-left:auto}
   .fbr{display:flex;gap:6px;margin-top:8px} .fbr input{flex:1;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;font-size:15px}
+.slp{display:block;font-size:10px;color:var(--mute);text-transform:none;letter-spacing:0;font-weight:600;margin-top:2px}
   .upto{font-size:12px;color:var(--mute)} .upto b{color:var(--ink)}
   .place{white-space:nowrap;align-self:flex-start}
   .place,.bact button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 10px;font:inherit;font-size:13px;font-weight:800;cursor:pointer}
@@ -130,7 +131,7 @@
 <div id="blist"></div></div>
 <div id="vr" hidden>
 <div class="keep" style="display:block"><b>Arbitrage</b><p class="note" style="margin:4px 0 8px">After you've placed a bet, buying the other side at a low enough price locks in a profit whichever way the game goes. Only options with at least <b>10% guaranteed profit</b> after slippage are shown as ready.</p>
-<label style="font-size:13px;font-weight:700">Slippage (points Real's price moves against you as you buy) <input id="slip" type="number" inputmode="decimal" min="0" max="10" step="0.5" style="width:70px;margin-left:6px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:4px 6px;font:inherit"></label></div>
+<p class="note" style="margin:0 0 8px">Slippage is worked out for you on each hedge: how far your own buy pushes Real's price (bigger buys on thinner markets move it more) plus how much the line has been swinging lately.</p><label style="font-size:13px;font-weight:700">Extra cushion (points, optional) <input id="slip" type="number" inputmode="decimal" min="0" max="10" step="0.5" style="width:70px;margin-left:6px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:4px 6px;font:inherit"></label></div>
 <div id="rlist"></div></div>
 <div id="vf" hidden>
 <form class="guide fbf" id="fbform">
@@ -162,7 +163,7 @@
 <h2>Placing a bet</h2>
 <p>Every side shows a <b>unit ladder</b>, like <b>0.5u under 50% · 1u under 47% · 2u under 44%</b>: the size to bet at each Real price, from the same rule as above. Live prices swing between refreshes, so if Real jumps to 46% you already know it's a 1u bet without waiting. The size the current price earns is lit green. <b>+EV up to X%</b> is the highest price that's still worth a bet at all; above it, skip. Once you buy, tap <b>Bet placed</b>, put in the Real % you actually got and the rax you bet (both filled in for you), and tap <b>Enter</b>: the game leaves Markets and shows in <b>My bets</b>. Change the amount if you put in something different; the payout (amount ÷ the price you paid) updates with it. The payout can be changed too if Real paid something different (clear it to go back to auto). When the market settles on Real it's marked Won or Lost for you; you can still tap Won or Lost yourself.</p>
 <div id="garb" hidden><h2>Arbitrage (locking in profit)</h2>
-<p>Once you hold a side, Real's price often swings the other way during a game. If you then buy the <b>other side</b> so both sides pay the same, you win the same amount whichever team wins. Example: 300 rax on a team at 30% pays 1,000. If the other side drops to 55%, buying it for 570 rax also pays 1,000 - you've staked 870 total and get 1,000 back either way: <b>+130 locked (15%)</b>. The Arbitrage tab works this out for every open bet, adds slippage (how many points Real's price moves against you as you buy - 2 by default, change it there), and only calls it ready at <b>10%+ guaranteed profit</b>. It also shows the price the other side has to reach. After you buy, tap <b>Hedge placed</b> and it shows as locked.</p></div>
+<p>Once you hold a side, Real's price often swings the other way during a game. If you then buy the <b>other side</b> so both sides pay the same, you win the same amount whichever team wins. Example: 300 rax on a team at 30% pays 1,000. If the other side drops to 55%, buying it for 570 rax also pays 1,000 - you've staked 870 total and get 1,000 back either way: <b>+130 locked (15%)</b>. The Arbitrage tab works this out for every open bet, adds slippage worked out per hedge (how far your buy pushes Real's price for that market's volume, plus how much the line has been swinging; you can add an extra cushion), and only calls it ready at <b>10%+ guaranteed profit</b>. It also shows the price the other side has to reach. After you buy, tap <b>Hedge placed</b> and it shows as locked.</p></div>
 <h2>Step 5 - When not to trust it</h2>
 <p><b>Thin odds</b>: during a game, if fewer than 3 books have a line, or the newest line is over a minute old, the EV is greyed out and gets no unit size - books freeze their lines in blowouts and late in games, so a huge EV there is usually just an old line. Open <b>Book breakdown</b> to see every book's % and how old its line is.</p>
 <p><b>Hidden games</b>: the <b>+EV</b> tab shows only games with a bet to make, best EV first, and leaves out games where a side's fair % is under 7% (basically decided). <b>All</b> shows every open market. Locked markets are always hidden.</p>
@@ -319,7 +320,20 @@ async function placeBet(gid, si, btn, pct, amt){
    P x its price; profit = P - your amount - those. Slippage: each other side is priced that many
    points worse, since buying pushes Real's price up. Ready when profit >= 10% of everything staked. */
 const ARB_MIN = 0.10;
-let slip = Number(ls.get('pred_slip')); if (!Number.isFinite(slip) || ls.get('pred_slip') == null) slip = 2;
+let slip = Number(ls.get('pred_slip2')); if (!Number.isFinite(slip) || ls.get('pred_slip2') == null) slip = 0;   // extra cushion on top of the estimate
+/* Estimated slippage in points (2026-11-16, Dennis: "account for it with line movements and amount"):
+   - size: your buy moves the price about 1 point per 0.25% of the market's volume you spend (a 500 rax buy
+     on a 185k market ~1 pt; on a 3.7m market ~0.05 pt), capped at 10;
+   - swings: the market's typical move between its price-history points (about 16 min apart), scaled to
+     the minute or so a buy takes, more while the game is live;
+   - plus your own cushion. */
+const volNum = v => { const m = String(v || '').trim().match(/^([\d.]+)\s*([kmb])?/i); if (!m) return 0; return Number(m[1]) * ({ k: 1e3, m: 1e6, b: 1e9 }[(m[2] || '').toLowerCase()] || 1); };
+function slipFor(g, stake){
+  const V = volNum(g.volume), size = V > 0 ? Math.min(10, stake / (V * 0.0025)) : 2;
+  const h = g.hist || []; let mv = 0; if (h.length > 2) { let t = 0; for (let k = 1; k < h.length; k++) t += Math.abs(h[k] - h[k - 1]); mv = t / (h.length - 1) * 100 / 4; }
+  const swing = Math.max(g.live ? 0.5 : 0.2, mv * (g.live ? 1.5 : 1));
+  return { size, swing, total: size + swing + slip };
+}
 const payOfB = b => b.pay != null ? b.pay : b.price > 0 ? (b.amt || 0) / b.price : 0;
 function arbOf(b){
   const g0 = (J.games || []).find(x => x.id === b.gid); if (!g0 || b.res || !(b.amt > 0)) return null;
@@ -329,10 +343,12 @@ function arbOf(b){
   if (mine.some(x => x.side !== b.side)) { const staked = mine.reduce((a, x) => a + (x.amt || 0), 0), pays = g.sides.map((_, i) => mine.filter(x => x.side === i).reduce((a, x) => a + payOfB(x), 0));
     const worst = Math.min(...pays) - staked; return { hedged: true, g, worst, best: Math.max(...pays) - staked, staked }; }
   if (others.some(x => !(x.sd.price > 0))) return null;
-  const legs = others.map(x => { const q = Math.min(0.99, x.sd.price + slip / 100); return { i: x.i, name: x.sd.name || x.sd.label, logo: x.sd.logo, now: x.sd.price, q, stake: P * q }; });
+  // Stake and slippage depend on each other: settle them in a few passes.
+  const legs = others.map(x => { let q = x.sd.price, sl = null; for (let k = 0; k < 4; k++) { sl = slipFor(g, P * q); q = Math.min(0.99, x.sd.price + sl.total / 100); }
+    return { i: x.i, name: x.sd.name || x.sd.label, logo: x.sd.logo, now: x.sd.price, q, stake: P * q, sl }; });
   const total = b.amt + legs.reduce((a, l) => a + l.stake, 0), profit = P - total, pct = profit / total;
   // Highest price (before slippage) on the other side that still clears 10%: needs sum(q) <= (P - 1.1 x amount) / (1.1 x P).
-  const room = (P - (1 + ARB_MIN) * b.amt) / ((1 + ARB_MIN) * P), other = legs.length === 1 ? Math.floor((room - slip / 100) * 100) : null;
+  const room = (P - (1 + ARB_MIN) * b.amt) / ((1 + ARB_MIN) * P), other = legs.length === 1 ? Math.floor((room - legs[0].sl.total / 100) * 100) : null;
   return { g, P, legs, total, profit, pct, ready: pct >= ARB_MIN, target: other };
 }
 function arbLine(b){ if (!J || !J.owner) return ''; const a = arbOf(b); if (!a) return '';
@@ -348,7 +364,7 @@ function drawArb(){
   rows.sort((x, y) => (y.a.ready - x.a.ready) || ((y.a.pct || -9) - (x.a.pct || -9)));
   $('#rlist').innerHTML = rows.length ? rows.map(({ b, a }) => `<div class="g${a.ready && !a.hedged ? ' hot' : ''}"><div class="gh"><div style="min-width:0;flex:1"><span class="nm">${esc(b.game)}</span>
       <div class="meta"><span class="tag">${esc(SPN[b.sport] || b.sport)}</span>${a.g.live ? '<span class="tag live">● LIVE</span>' : when(a.g)}<span class="note">You have ${esc(b.name)} · ${Math.round(b.amt).toLocaleString()} rax at ${pw(b.price)} · pays ${Math.round(a.P || payOfB(b)).toLocaleString()}</span></div></div>${b.link ? `<a class="go" href="${esc(b.link)}" target="_blank" rel="noopener">Open ↗</a>` : ''}</div>
-      ${a.hedged ? arbLine(b) : `<div class="bgrid">${a.legs.map(l => `<span class="c">${esc(l.name)} now<b>${pw(l.now)}</b></span><span class="c">Buy (with slip)<b>${Math.round(l.stake).toLocaleString()} rax</b></span>`).join('')}<span class="c">Locked profit<b class="${a.profit >= 0 ? 'pos' : 'neg'}">${a.profit >= 0 ? '+' : ''}${Math.round(a.profit).toLocaleString()}</b></span><span class="c">Return<b class="${a.ready ? 'pos' : 'neg'}">${Math.round(a.pct * 100)}%</b></span></div>
+      ${a.hedged ? arbLine(b) : `<div class="bgrid">${a.legs.map(l => `<span class="c">${esc(l.name)} now<b>${pw(l.now)}</b></span><span class="c">Buy<b>${Math.round(l.stake).toLocaleString()} rax</b><small class="slp">fill ≈${Math.round(l.q * 100)}% · slip ${l.sl.total.toFixed(1)} pts (${l.sl.size.toFixed(1)} size + ${l.sl.swing.toFixed(1)} swings${slip ? ` + ${slip}` : ''})</small></span>`).join('')}<span class="c">Locked profit<b class="${a.profit >= 0 ? 'pos' : 'neg'}">${a.profit >= 0 ? '+' : ''}${Math.round(a.profit).toLocaleString()}</b></span><span class="c">Return<b class="${a.ready ? 'pos' : 'neg'}">${Math.round(a.pct * 100)}%</b></span></div>
       ${arbLine(b)}${a.legs.length === 1 ? `<form class="bf" data-hedge="${esc(b.id)}" data-g="${b.gid}" data-s="${a.legs[0].i}"><label>Real %<input name="pct" type="number" inputmode="numeric" min="1" max="99" step="1" value="${Math.round(a.legs[0].now * 100)}"></label><label>Rax bet<input name="amt" type="number" inputmode="numeric" min="1" step="1" value="${Math.round(a.legs[0].stake)}"></label><button type="submit" class="place">Hedge placed</button></form>` : ''}`}</div>`).join('')
     : '<div class="empty">No open bets to hedge. Place a bet first - it shows here with the price the other side has to reach.</div>';
 }
@@ -415,7 +431,7 @@ function draw(){
   const ended = (J.games || []).filter(g => g.locked && !bg.has(g.id) && (!chip || chip === '_ev' || g.sport === chip)).map(derive).sort(stable);
   if (ended.length && chip !== '_ev') html += `<details class="endbox"${endOpen ? ' open' : ''}><summary class="sph"><span>Locked &amp; ended</span><span class="note">${ended.length} game${ended.length === 1 ? '' : 's'} · log a bet you made</span></summary>${ended.map(endCard).join('')}</details>`;
   $('#list').innerHTML = html;
-  $('#tabs [data-t="a"]').hidden = !J.owner; $('#tabs [data-t="r"]').hidden = !J.owner; $('#garb').hidden = !J.owner;
+  $('#tabs [data-t="a"]').hidden = !J.owner; { const n = [...document.querySelectorAll('#tabs button')].filter(x => !x.hidden).length; $('#tabs').style.setProperty('--tc', n <= 4 ? 2 : 3); } $('#tabs [data-t="r"]').hidden = !J.owner; $('#garb').hidden = !J.owner;
   tick();
 }
 document.addEventListener('toggle', e => { const d = e.target; if(!d.matches || !d.matches('details.bd')) return; d.open ? openBd.add(d.dataset.bd) : openBd.delete(d.dataset.bd); }, true);
@@ -431,7 +447,7 @@ $('#list').addEventListener('submit', e => { const f = e.target.closest('form.bf
   const btn = f.querySelector('button[type=submit]'); btn.disabled = true; btn.textContent = 'Saving…';
   placeBet(Number(f.dataset.g), Number(f.dataset.s), null, pct, amt); });
 $('#slip').value = slip;
-$('#slip').addEventListener('input', e => { slip = Math.max(0, Number(e.target.value) || 0); ls.set('pred_slip', String(slip)); drawArb(); });
+$('#slip').addEventListener('input', e => { slip = Math.max(0, Number(e.target.value) || 0); ls.set('pred_slip2', String(slip)); drawArb(); });
 $('#rlist').addEventListener('submit', e => { const f = e.target.closest('form[data-hedge]'); if (!f) return; e.preventDefault();
   const pct = Number(f.pct.value), amt = Number(f.amt.value); if (!(pct > 0 && pct < 100) || !(amt > 0)) return;
   f.querySelector('button').disabled = true; placeBet(Number(f.dataset.g), Number(f.dataset.s), null, pct, amt); });

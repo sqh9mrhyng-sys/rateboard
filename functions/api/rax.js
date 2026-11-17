@@ -8902,7 +8902,10 @@ export async function onRequestGet(ctx) {
       let swaps = false, otd = false;
       try { if (a.who) { const sa = await swapAccess(env, request); swaps = sa.swaps; otd = sa.otd; } } catch (e) {}
       let pack = !!a.admin; try { if (!pack && a.who) pack = await packAllowed(env, a.who); } catch (e) {}
-      return json({ signedIn: !!a.who, access: a.ok, admin: a.admin, swaps, otd, pack,
+      // Predictions box on Home (2026-11-16): Dennis and the members he gave access.
+      let pred = String(a.who || '').toLowerCase() === 'dennis';
+      try { if (!pred && a.who) pred = (JSON.parse((await env.RATEBOARD_KV.get('pred_access_v1')) || '[]') || []).includes(String(a.who).toLowerCase()); } catch (e) {}
+      return json({ signedIn: !!a.who, access: a.ok, admin: a.admin, swaps, otd, pack, pred,
         ...(await (async () => { if (a.admin) return { puller: true, grant: { all: true, queue: [], pull: [], players: [] } };
           const g = a.who ? await pullGrantFor(env, a.who) : null; return { puller: !!g, grant: g }; })()) });
     }
