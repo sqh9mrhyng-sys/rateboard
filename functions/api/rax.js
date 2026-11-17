@@ -712,7 +712,7 @@ async function predOdds(env) {
         for (const e of await r.json()) { const books = [], refs = [], isLive = Date.parse(e.commence_time) <= Date.now();
           for (const bk of (e.bookmakers || [])) { const mk0 = (bk.markets || []).find(x => x.key === 'h2h') || {}, ou = mk0.outcomes || [];
             // A line that hasn't moved in a while is stale: 3 min while live, 90 min before.
-            const upd = Date.parse(mk0.last_update || bk.last_update || 0); if (!Number.isFinite(upd) || Date.now() - upd > (isLive ? 3 : 90) * 60000) continue;
+            const upd = Date.parse(mk0.last_update || bk.last_update || 0); if (!Number.isFinite(upd) || Date.now() - upd > (isLive ? 2 : 90) * 60000) continue;
             if (ou.length >= 2 && ou.every(x => x.price > 1)) (PRED_REF[bk.key] ? refs : books).push({ key: bk.key, title: bk.title, u: upd, raw: Object.fromEntries(ou.map(x => [x.name, x.price])), p: devig(ou.map(x => [x.name, x.price])) }); }
           if (!books.length && !refs.length) continue;
           const names = Object.keys((books[0] || refs[0]).p);
