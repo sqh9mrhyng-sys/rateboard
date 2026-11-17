@@ -93,7 +93,7 @@
 <h2>Step 1 - Real's price</h2>
 <p>On a Real game market each side has a %. That % is what you pay: a side at <b>40%</b> costs 40 to win 100 (your 40 back plus 60). The lower the %, the bigger the payout and the less likely it is to hit.</p>
 <h2>Step 2 - The fair price</h2>
-<p>Sportsbooks build a margin into their odds (both sides add up to more than 100%). We take that margin out of each book so its two sides add up to exactly 100%, then average the books: <b>Pinnacle (counts double), BetMGM, Novig, DraftKings, FanDuel, Kalshi and Caesars</b>. That average is the <b>fair %</b> - the best guess at the real chance. It shows under each team's name. Polymarket shows for comparison but isn't in the average.</p>
+<p>Sportsbooks build a margin into their odds (both sides add up to more than 100%). We take that margin out of each book so its two sides add up to exactly 100%, then average the books: <b>Pinnacle (counts double, before the game only - its live line lags), BetMGM, Novig, DraftKings, FanDuel, Kalshi and Caesars</b>. That average is the <b>fair %</b> - the best guess at the real chance. It shows under each team's name. Polymarket shows for comparison but isn't in the average.</p>
 <h2>Step 3 - The edge</h2>
 <p>EV = fair % ÷ Real's % - 1. If a team is <b>50% fair</b> but Real sells it at <b>40%</b>, EV = 50 ÷ 40 - 1 = <b>+25%</b>. If Real's % is higher than fair, EV is negative and you skip it.</p>
 <h2>Step 4 - Units (how much to bet)</h2>
@@ -179,7 +179,8 @@ let offBooks = new Set(JSON.parse(ls.get('pred_off_books') || '[]')), showPoly =
 let collapsed = new Set(JSON.parse(ls.get('pred_collapsed') || '[]'));
 const allBooks = () => [...new Set((J.games || []).flatMap(g => (g.sources || []).flatMap(x => (x.bk || []).map(b => b.t))))].sort();
 function derive(g){
-  const all = (g.sources || []).flatMap(x => x.bk || []).filter(b => !offBooks.has(b.t)).map(b => ({ ...b, out: false }));
+  // Pinnacle is pregame only (Dennis, 2026-11-16): its live line lags, so it drops out once the game starts.
+  const all = (g.sources || []).flatMap(x => x.bk || []).filter(b => !offBooks.has(b.t) && !(g.live && b.t === 'Pinnacle')).map(b => ({ ...b, out: false }));
   /* Off-market lines (2026-11-16: Pinnacle live at 34% while every other book had 55%): with 3+ books,
      a book more than 8 points from the middle of the others is left out of the fair %. */
   if (all.length >= 3) for (const b of all) { const o = all.filter(x => x !== b).map(x => x.p[0]).sort((a, c) => a - c);
@@ -206,7 +207,7 @@ function card(g){
 }
 function drawBooks(){
   const bks = allBooks();
-  $('#books').innerHTML = bks.map(t => `<label class="bkc"><input type="checkbox" data-bk="${esc(t)}"${offBooks.has(t) ? '' : ' checked'}> ${esc(t)}${t === 'Pinnacle' ? ' <em>×2</em>' : ''}</label>`).join('')
+  $('#books').innerHTML = bks.map(t => `<label class="bkc"><input type="checkbox" data-bk="${esc(t)}"${offBooks.has(t) ? '' : ' checked'}> ${esc(t)}${t === 'Pinnacle' ? ' <em>×2, pregame only</em>' : ''}</label>`).join('')
     + `<label class="bkc ref"><input type="checkbox" id="poly"${showPoly ? ' checked' : ''}> Polymarket <em>compare only</em></label>`;
   $('#bksum').textContent = offBooks.size ? `${bks.filter(t => !offBooks.has(t)).length} of ${bks.length} books` : 'All books';
 }
