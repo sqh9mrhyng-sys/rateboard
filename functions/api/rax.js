@@ -635,7 +635,7 @@ async function draftProbe(env) {
 const PRED_SPORTS = ['nhl', 'nba', 'nfl'];
 const normTeam = t => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
 const ESPN_PATH_PRED = { nhl: 'hockey/nhl', nba: 'basketball/nba', nfl: 'football/nfl' };
-const decOf = ml => { const m = Number(ml); return !Number.isFinite(m) || m === 0 ? null : m > 0 ? 1 + m / 100 : 1 + 100 / -m; };
+const decOf = ml => { const m = Number(String(ml == null ? '' : ml).replace(/^EVEN$/i, '100')); return !Number.isFinite(m) || m === 0 ? null : m > 0 ? 1 + m / 100 : 1 + 100 / -m; };
 /* Odds, every minute (2026-11-16, "multiple sources"): ESPN's moneylines (free, every minute) and
    The Odds API (Pinnacle, else the EU books' average) paced to its credits. Each saved as
    [{home, away, pHome}] per sport, margin taken out. */
@@ -647,8 +647,8 @@ async function predOdds(env) {
   for (const sp of open) {
     try { const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${ESPN_PATH_PRED[sp]}/scoreboard`); const d = r.ok ? await r.json() : null; const games = [];
       for (const ev of ((d && d.events) || [])) { const c = (ev.competitions || [])[0] || {}, od = (c.odds || [])[0], h = (c.competitors || []).find(x => x.homeAway === 'home'), w = (c.competitors || []).find(x => x.homeAway === 'away');
-        if (!od || !h || !w) continue; const dh = decOf(od.homeTeamOdds && od.homeTeamOdds.moneyLine), dw = decOf(od.awayTeamOdds && od.awayTeamOdds.moneyLine); if (!dh || !dw) continue;
-        games.push({ home: h.team && h.team.displayName, away: w.team && w.team.displayName, pHome: (1 / dh) / (1 / dh + 1 / dw), src: (od.provider && od.provider.name) || 'ESPN' }); }
+        if (!od || !h || !w) continue; const ml = od.moneyline || {}, mlOf = x => x && ((x.close && x.close.odds) || (x.open && x.open.odds)); const dh = decOf(mlOf(ml.home) || (od.homeTeamOdds && od.homeTeamOdds.moneyLine)), dw = decOf(mlOf(ml.away) || (od.awayTeamOdds && od.awayTeamOdds.moneyLine)); if (!dh || !dw) continue;
+        games.push({ home: h.team && h.team.displayName, away: w.team && w.team.displayName, pHome: (1 / dh) / (1 / dh + 1 / dw), src: `${(od.provider && od.provider.name) || 'ESPN'} (ESPN)` }); }
       o.espn[sp] = { at: Date.now(), games }; } catch (e) { o.errs.push(`${sp} espn ${e.message}`); }
   }
   // The Odds API: as often as the credits allow to the end of the month (at least 2 minutes apart).
@@ -8707,7 +8707,7 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predDiag: await kvj('pred_diag_v1'), predLock: await env.RATEBOARD_KV.get('pred_real_lock'), predEv: await (async () => { const x = await kvj('pred_ev_v1'); return x ? { srcs: (x.games || []).map(g => (g.sources || []).length).join(','), at: x.at, n: (x.games || []).length, matched: (x.games || []).filter(g => g.src).length, errs: x.errs, credits: x.credits } : null; })(), draftTest: await (async () => { let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get('draft_contests_v1')) || '[]'); } catch (e) {}
+    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predEv: await (async () => { const x = await kvj('pred_ev_v1'); return x ? { srcs: (x.games || []).map(g => (g.sources || []).length).join(','), at: x.at, n: (x.games || []).length,  errs: x.errs, credits: x.credits } : null; })(), draftTest: await (async () => { let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get('draft_contests_v1')) || '[]'); } catch (e) {}
       const out = []; for (const c of l.filter(c => c.type === 'sport').slice(-30)) { const x = await kvj(`draft_v1_sport_${c.id}`);
         out.push({ id: c.id, sport: c.sport, day: c.day, n: x && x.players && x.players.length, teams: x && x.players ? [...new Set(x.players.map(p => p.team))].join(' ') : null }); }
       return { n: l.length, games: l.filter(c => c.type === 'game').length, gameDays: l.filter(c => c.type === 'game').map(c => `${c.id}:${c.sport}:${c.day}`).join(' '), sport: out }; })(), modVoid: await kvj('mod_void_1115_n'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
