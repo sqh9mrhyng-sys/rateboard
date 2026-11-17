@@ -140,6 +140,9 @@
   body.h-lad.h-bet .bp, body.h-books.h-chart .ft{display:none}
   body.h-real .sd{grid-template-columns:1fr 104px}
   #bsum .pp{display:block;font-size:13px;font-weight:800;margin-top:2px} #bsum .pp.pos{color:var(--good)} #bsum .pp.neg{color:var(--bad)}
+  .bank{border-radius:12px 12px 0 0;border-bottom:0;padding-bottom:8px}
+  .upick{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--panel);border:1px solid var(--line);border-top:0;border-radius:0 0 12px 12px;padding:0 12px 10px;margin:0}
+  .upick label{font-size:13px;font-weight:700} .upick select{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;font-size:15px} .upick small{font-size:12px;color:var(--mute)}
 </style>
 <script src="/theme.js"></script>
 <script src="/nav.js?v=3"></script>
@@ -156,7 +159,8 @@
 <div class="top"><h1>Predictions EV</h1><span class="pulse" id="pulse"><i></i><span id="ago">-</span></span></div>
 <div class="tabs" id="tabs"><button data-t="m" aria-pressed="true">Markets</button><button data-t="b" aria-pressed="false">My bets <span id="bn"></span></button><button data-t="r" aria-pressed="false" hidden>Arbitrage <span id="rn"></span></button><button data-t="f" aria-pressed="false">Request/Report <span id="fn"></span></button><button data-t="g" aria-pressed="false">Guide</button><button data-t="a" aria-pressed="false" hidden>Access</button></div>
 <div id="vm">
-<label class="bank"><span>Enter your rax amount for custom recommendations</span><input id="bank" type="number" inputmode="numeric" min="0" step="100" placeholder="e.g. 5000"><small id="banknote">1u = 1% of your rax</small></label>
+<label class="bank"><span>Enter your rax amount for custom recommendations</span><input id="bank" type="number" inputmode="numeric" min="0" step="100" placeholder="e.g. 5000"></label>
+<div class="upick"><label for="upct">Unit size</label><select id="upct"><option value="0.5">0.5% of rax</option><option value="1">1% of rax</option><option value="1.5">1.5% of rax</option><option value="2">2% of rax</option><option value="2.5">2.5% of rax</option><option value="3">3% of rax</option><option value="3.5">3.5% of rax</option><option value="4">4% of rax</option></select><small id="banknote">1u = 1% of your rax</small></div>
 <div class="sum" id="sum"></div>
 <div class="bar"><div class="chips" id="chips"></div><button class="vbtn" id="vbtn" type="button" aria-expanded="false" aria-controls="vpanel">View: <b id="vname">Full</b> &#9662;</button></div>
 <div class="vpanel" id="vpanel" hidden>
@@ -205,7 +209,7 @@
 <h2>Step 3 - The edge</h2>
 <p>EV = fair % ÷ Real's % - 1. If a team is <b>50% fair</b> but Real sells it at <b>40%</b>, EV = 50 ÷ 40 - 1 = <b>+25%</b>. If Real's % is higher than fair, EV is negative and you skip it.</p>
 <h2>Step 4 - Units (how much to bet)</h2>
-<p>A <b>unit (u)</b> is 1% of your rax. Enter your rax at the top and every recommendation shows the exact rax to put on it. Sizes come from the Kelly formula, which sizes a bet by how big the edge is compared with how much you'd lose: Kelly % = (fair - Real) ÷ (1 - Real). We bet a tenth of that (much safer than full Kelly), so a 10% Kelly bet = 1u. Sizes run from 0.5u to 2u in half-unit steps (rounded down).</p>
+<p>A <b>unit (u)</b> is 1% of your rax by default - pick 0.5% to 4% under Unit size if you want bigger or smaller bets. Enter your rax at the top and every recommendation shows the exact rax to put on it. Sizes come from the Kelly formula, which sizes a bet by how big the edge is compared with how much you'd lose: Kelly % = (fair - Real) ÷ (1 - Real). We bet a tenth of that (much safer than full Kelly), so a 10% Kelly bet = 1u. Sizes run from 0.5u to 2u in half-unit steps (rounded down).</p>
 <p><b>Long shots are capped</b> because they lose most of the time even with a big edge: under 20% on Real it's 0.5u max, under 35% 1u, under 50% 1.5u, and favorites can go up to 2u.</p>
 <p>Example with 5,000 rax: 1u = 50 rax. A favorite at 60% with a 70% fair price is Kelly 25% → 2u → <b>100 rax</b>. An underdog at 15% with a 20% fair price is Kelly 6% → capped 0.5u → <b>25 rax</b>.</p>
 <h2>Slippage</h2>
@@ -235,6 +239,8 @@ const SPN = { nhl: 'NHL', nba: 'NBA', nfl: 'NFL', ncaaf: 'CFB', ufc: 'UFC', socc
 let J = null, chip = ls.get('pred_chip') || '';
 const MIN_FAIR = 0.07, MIN_EV_U = 0.02;
 let bank = Number(ls.get('pred_bank')) || 0;
+// Unit size (Dennis, 2026-11-17): 1u = 0.5% to 4% of your rax, 1% unless you pick another. Saved on this device.
+let UP = Number(ls.get('pred_upct')); if (!(UP >= 0.5 && UP <= 4)) UP = 1;
 /* Thin odds: a live game priced from fewer than 3 books, or whose newest line is over 60 s old.
    Its EV is greyed out and kept out of the counts at the top. */
 const bkOf = g => (g.sources || []).flatMap(x => x.bk || []).filter(b => !b.out);
@@ -253,13 +259,13 @@ const movePts = (g, stake) => Math.min(15, (SLIP_1K[g.sport] ?? SLIP_DEF) * (sta
 const fillAt = (g, q, stake) => Math.min(0.99, q + movePts(g, stake) / 200);
 const upTo = sd => Math.floor(sd.fair / (1 + MIN_EV_U) * 100);
 // EV after slippage on the stake we recommend (2026-11-17: shown as the EV itself, not a second line).
-const evNet = (g, sd, u) => sd.ev == null ? null : bank && u ? sd.fair / fillAt(g, sd.price, bank * u / 100) - 1 : sd.ev;
+const evNet = (g, sd, u) => sd.ev == null ? null : bank && u ? sd.fair / fillAt(g, sd.price, bank * u * UP / 100) - 1 : sd.ev;
 const units = (g, sd) => { if (thin(g) || sd.ev == null || sd.ev < MIN_EV_U || sd.fair < MIN_FAIR || !(sd.price > 0 && sd.price < 1)) return null;
   // Real shows whole %, so never call a bet at a shown price above the "+EV up to" line (2026-11-17).
   if (Math.round(sd.price * 100) > upTo(sd)) return null;
   let u = unitsAt(sd.fair, sd.price) || null;
   // With a rax amount entered, size down until the bet is still worth it at the price you'd actually get.
-  while (u && bank) { const q = fillAt(g, sd.price, bank * u / 100); if (sd.fair / q - 1 >= MIN_EV_U && unitsAt(sd.fair, q) >= u) break; u = u > 0.5 ? u - 0.5 : null; }
+  while (u && bank) { const q = fillAt(g, sd.price, bank * u * UP / 100); if (sd.fair / q - 1 >= MIN_EV_U && unitsAt(sd.fair, q) >= u) break; u = u > 0.5 ? u - 0.5 : null; }
   return u; };
 /* Unit ladder (members, 2026-11-16: "0.5u under 50%, 1u under 47%, 2u under 44%"): for each side, the
    Real price you'd have to get for each size, from the same sizing rule. Live prices swing between
@@ -360,7 +366,7 @@ function card(g){
       ${c ? (units(g, bestS) ? `<span class="u">${esc(bestS.label)} +${pc(evNet(g, bestS, units(g, bestS)))} · ${units(g, bestS)}u</span>` : '') : g.link ? `<a class="go" href="${esc(g.link)}" target="_blank" rel="noopener">Predict ↗</a>` : ''}</div>
     ${c ? '' : g.sides.map((s, si) => { const u = units(g, s); return `<div class="sd"><span class="t">${logo(s)}<span>${esc(s.name || s.label)}<small class="fr">Fair <b>${pc(s.fair)}</b></small>${(g.refs || []).length ? `<small class="ref">${g.refs.map(r => `${esc(r.src)} ${pc(r.p[si])}`).join(' · ')}</small>` : ''}</span></span>
       <span class="c">Real<b>${pw(s.price)}</b></span>
-      <span class="ev ${s.ev == null || thin(g) ? 'nil' : evNet(g, s, u) > 0 ? 'pos' : 'neg'}"${bank && u ? ` title="After slippage on your ${Math.round(bank * u / 100).toLocaleString()} rax (about ${movePts(g, bank * u / 100).toFixed(1)} points)"` : ''}>${s.ev == null ? '-' : (evNet(g, s, u) > 0 ? '+' : '') + pc(evNet(g, s, u))}<small>EV</small>${u ? `<span class="u">${u}u</span>${bank ? `<span class="rx">${Math.round(bank * u / 100).toLocaleString()} rax</span>` : ''}` : ''}</span></div>${(() => { const L = ladder(g, s); if (!L.length && !u) return '';
+      <span class="ev ${s.ev == null || thin(g) ? 'nil' : evNet(g, s, u) > 0 ? 'pos' : 'neg'}"${bank && u ? ` title="After slippage on your ${Math.round(bank * u * UP / 100).toLocaleString()} rax (about ${movePts(g, bank * u * UP / 100).toFixed(1)} points)"` : ''}>${s.ev == null ? '-' : (evNet(g, s, u) > 0 ? '+' : '') + pc(evNet(g, s, u))}<small>EV</small>${u ? `<span class="u">${u}u</span>${bank ? `<span class="rx">${Math.round(bank * u * UP / 100).toLocaleString()} rax</span>` : ''}` : ''}</span></div>${(() => { const L = ladder(g, s); if (!L.length && !u) return '';
       return `<div class="bp"><span class="lad">${L.length ? L.filter(([, q]) => Math.floor(q * 100) >= 1).map(([uu, q]) => `<span class="${Math.round(s.price * 100) <= Math.floor(q * 100) ? 'on' : ''}"><b>${uu}u</b> at ${Math.floor(q * 100)}% or less</span>`).join('') : ''}<span class="upto">+EV up to <b>${upTo(s)}%</b></span></span>${u ? `<button class="place" data-g="${g.id}" data-s="${si}">Bet placed</button>` : ''}</div>${betForm && betForm.gid === g.id && betForm.si === si ? `<form class="bf" data-g="${g.id}" data-s="${si}"><label>Real %<input name="pct" type="number" inputmode="numeric" min="1" max="99" step="1" value="${betForm.pct}" required></label><label>Rax bet<input name="amt" type="number" inputmode="numeric" min="1" step="1" value="${betForm.amt}" required></label><button type="submit" class="place">Enter</button><button type="button" class="bfx" aria-label="Cancel">✕</button></form>` : ''}`; })()}`; }).join('')}${c ? '' : `
     <div class="ft"><span class="srcs">${srcs.length ? 'Fair from <b>' + srcs.map(x => x.books ? `<span title="${esc(x.books.join(', '))}">${esc(x.src)}</span>` : esc(x.src)).join('</b>, <b>') + '</b>' : 'No sportsbook odds for this game'}</span>${(() => { const h = g.hist || []; if (h.length < 2) return ''; const v = h[h.length - 1], sd = g.sides.reduce((a, x) => Math.abs((x.price ?? 9) - v) < Math.abs((a.price ?? 9) - v) ? x : a, g.sides[0]); return `<span class="src" title="Real's price for ${esc(sd.name || sd.label)}, last few hours">${esc(sd.label)} ${spark(h)}</span>`; })()}</div>${breakdown(g)}`}</div>`;
 }
@@ -375,7 +381,7 @@ async function betsCall(body){ const t = ls.get('ratebrd_token_v1') || '';
   if (J && J.games) { draw(); drawBets(); drawArb(); } }
 let betForm = null;   // { gid, si, pct, amt } while the entry box is open
 function openBetForm(gid, si){ const g0 = (J.games || []).find(x => x.id === gid); if (!g0) return; const g = derive(g0), sd = g.sides[si], u = units(g, sd);
-  betForm = { gid, si, pct: Math.round(sd.price * 100), amt: bank && u ? Math.round(bank * u / 100) : '' }; draw();
+  betForm = { gid, si, pct: Math.round(sd.price * 100), amt: bank && u ? Math.round(bank * u * UP / 100) : '' }; draw();
   const f = document.querySelector('form.bf input[name="pct"]'); if (f) f.focus(); }
 async function placeBet(gid, si, btn, pct, amt){
   const g0 = (J.games || []).find(x => x.id === gid); if (!g0) return; const g = derive(g0), sd = g.sides[si], u = units(g, sd);
@@ -601,7 +607,9 @@ $('#vpanel').addEventListener('click', e => { const b = e.target.closest('[data-
 $('#vpanel').addEventListener('change', e => { const k = e.target.dataset.vp; if (!k) return; const h = new Set(VIEW.hide); e.target.checked ? h.delete(k) : h.add(k); VIEW.hide = [...h]; applyView(); });
 applyView();
 if (bank) $('#bank').value = bank;
-const bankNote = () => { $('#banknote').textContent = bank ? `1u = ${Math.round(bank / 100).toLocaleString()} rax (1% of ${bank.toLocaleString()})` : '1u = 1% of your rax'; };
+const bankNote = () => { $('#banknote').textContent = bank ? `1u = ${Math.round(bank * UP / 100).toLocaleString()} rax (${UP}% of ${bank.toLocaleString()})` : `1u = ${UP}% of your rax`; };
+$('#upct').value = String(UP);
+$('#upct').addEventListener('change', e => { UP = Number(e.target.value) || 1; ls.set('pred_upct', String(UP)); bankNote(); if (J && J.games) draw(); });
 bankNote();
 $('#bank').addEventListener('input', e => { bank = Math.max(0, Number(e.target.value) || 0); ls.set('pred_bank', String(bank)); bankNote(); if (J && J.games) draw(); });
 betsCall(); load(); setInterval(load, 10000); setInterval(() => { const a = document.activeElement; if (!(a && a.dataset && (a.dataset.amt || a.dataset.pay))) betsCall(); }, 60000); setInterval(tick, 1000);
