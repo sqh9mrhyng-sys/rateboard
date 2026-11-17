@@ -633,13 +633,10 @@ async function draftProbe(env) {
    rax returns on average). Saved in KV for the page. The API key lives only in the server's
    settings (ODDS_API_KEY). */
 const PRED_SPORTS = ['nhl', 'nba', 'nfl', 'ncaaf', 'ufc', 'soccer'];
-/* The books (Dennis, 2026-11-16: US books only, DraftKings, Pinnacle, FanDuel; bet365 isn't on
-   The Odds API for US sports). Every 10 books cost 1 credit a call. Weight in the fair price:
-   Pinnacle 3, Novig (exchange) 2, BetOnline 1.5, the rest 1. Kalshi and Polymarket are shown
-   beside it for comparison, never mixed into the fair price. */
-const PRED_BOOKS = ['pinnacle', 'draftkings', 'fanduel', 'betmgm', 'williamhill_us', 'fanatics', 'espnbet', 'betonlineag', 'novig', 'betrivers', 'kalshi', 'polymarket'];
-// Every book counts the same, Kalshi included (Dennis, 2026-11-16); Polymarket stays a comparison only.
-const PRED_W = {};
+/* The books (Dennis, 2026-11-16): Pinnacle, BetMGM, Novig, DraftKings, FanDuel, Kalshi and Caesars,
+   Pinnacle counting double. Polymarket comes along as a comparison only. 8 books = 1 credit a call. */
+const PRED_BOOKS = ['pinnacle', 'betmgm', 'novig', 'draftkings', 'fanduel', 'kalshi', 'williamhill_us', 'polymarket'];
+const PRED_W = { pinnacle: 2 };
 const PRED_REF = { polymarket: 1 };
 const normTeam = t => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 const ESPN_PATH_PRED = { nhl: 'hockey/nhl', nba: 'basketball/nba', nfl: 'football/nfl', ncaaf: 'football/college-football' };
@@ -696,13 +693,13 @@ async function predOdds(env) {
   o.keys = [...keys];
   // Within this minute: pull each sport whenever it's due (checked every 10 s).
   const t0 = Date.now();
-  while (Date.now() - t0 < 50000) {
+  while (Date.now() - t0 < 54000) {
     for (const k of keys) {
       // The free events list, every 10 min, gives the start times.
       if (!o.ev[k] || Date.now() - o.ev[k].at > 10 * 60000) { try { const ev = await (await api(`sports/${k}/events`)).json(); if (Array.isArray(ev)) o.ev[k] = { at: Date.now(), list: ev.map(e => ({ s: e.commence_time })) }; } catch (e) {} }
       const now = Date.now(), starts = ((o.ev[k] || {}).list || []).map(e => Date.parse(e.s)).filter(Number.isFinite);
       const live = starts.some(s => s <= now && now < s + predLen(k) * 3600000), soon = starts.some(s => s > now && s - now < 2 * 3600000);
-      const every = live ? 40000 : soon ? 60000 : 300000;
+      const every = live ? 20000 : soon ? 60000 : 300000;   // live every 20 s (the API refreshes every 40 s; 20 s halves the wait)
       if (o.due[k] && now - o.due[k] < every) continue;
       o.due[k] = now;
       try { const r = await api(`sports/${k}/odds`, `&bookmakers=${PRED_BOOKS.join(',')}&markets=h2h&oddsFormat=decimal`);
@@ -724,7 +721,7 @@ async function predOdds(env) {
       await sleep(300);
     }
     o.lock = Date.now(); await save();
-    await sleep(10000);
+    await sleep(5000);
   }
   o.lock = 0; await save();
 }
@@ -762,9 +759,10 @@ async function predReal(env) {
         const refs = found.filter(f => f.ref), fnd = found.filter(f => !f.ref);
         let wt = 0; const sum = oc.map(() => 0); for (const f of fnd) { const w0 = 1; wt += w0; f.p.forEach((v, i) => { sum[i] += w0 * v; }); }
         const fair = wt ? sum.map(v => v / wt) : oc.map(() => null), st = (found.find(f => f.start) || {}).start || null;
+        const oddsAt = sp === 'soccer' ? Math.max(0, ...(odds.keys || []).filter(k => /^soccer_/.test(k)).map(k => ((odds.api || {})[k] || {}).at || 0)) : (((odds.api || {})[ODDS_SPORT[sp]] || {}).at || null);
         const hist = (m.probabilityHistory || []).slice(-24).map(h => Math.round(h.pA * 1000) / 1000);
         out.games.push({ sport: sp, id: m.id, game: (m.gameDisplay || {}).display || oc.map(x => x.label).join(' vs '), path: (m.gameDisplay || {}).path || null,
-          link: `https://www.realapp.com/${routeId([36, 0, 0, Number(m.id)])}`, locked: !!m.isLocked, volume: m.volumeDisplay || null, start: st, live: !!(found.find(f => f.live)), hist,
+          link: `https://www.realapp.com/${routeId([36, 0, 0, Number(m.id)])}`, locked: !!m.isLocked, volume: m.volumeDisplay || null, start: st, oddsAt, live: !!(found.find(f => f.live)), hist,
           sources: fnd.map(f => ({ src: f.src, p: f.p.map(v => Math.round(v * 1000) / 1000), books: f.books, bk: f.bk })), refs: refs.map(f => ({ src: f.src, p: f.p.map(v => Math.round(v * 1000) / 1000) })),
           sides: oc.map((x, i) => ({ key: x.key, label: x.label, color: x.backgroundColor || null, price: x.probability, fair: fair[i], ev: fair[i] != null && x.probability > 0 ? fair[i] / x.probability - 1 : null })) });
       }

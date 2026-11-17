@@ -39,6 +39,7 @@
   .dot{width:10px;height:10px;border-radius:3px;flex:none;border:1px solid rgba(255,255,255,.2)}
   .sd .c{text-align:right;font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em} .sd .c b{display:block;color:var(--ink);font-size:15px;text-transform:none;letter-spacing:0}
   .ev{text-align:right;font-weight:900;font-size:17px} .ev small{display:block;font-size:10px;color:var(--mute);font-weight:700;letter-spacing:.04em}
+  .ev .u{display:inline-block;margin-top:3px;font-size:12px;font-weight:900;padding:1px 7px;border-radius:999px;background:rgba(63,191,127,.16);color:var(--good)}
   .pos{color:var(--good)} .neg{color:var(--bad)} .nil{color:var(--mute)}
   .ft{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 14px 10px;border-top:1px solid var(--line);background:rgba(0,0,0,.12)}
   .srcs{font-size:12px;color:var(--mute)} .srcs b{color:var(--ink);font-weight:700}
@@ -60,7 +61,7 @@
 <div class="top"><div><h1>Predictions EV</h1><p class="note">Real's game markets against sportsbook odds with the margin taken out. EV is what 1 rax returns on average.</p></div>
 <span class="pulse" id="pulse"><i></i><span id="ago">-</span></span></div>
 <div class="sum" id="sum"></div>
-<div class="bar"><div class="chips" id="chips"></div><button class="tog" id="plus" aria-pressed="false">+EV only</button></div>
+<div class="bar"><div class="chips" id="chips"></div><button class="tog" id="plus" aria-pressed="false">Show all</button></div>
 <div id="list"></div>
 <p class="note" id="foot"></p>
 </div>
@@ -70,12 +71,18 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const ls = { get: k => { try{ return localStorage.getItem(k); }catch(e){ return null; } }, set: (k, v) => { try{ localStorage.setItem(k, v); }catch(e){} } };
 const pc = v => v == null ? '-' : (Math.round(v * 1000) / 10).toFixed(1) + '%';
 const SPN = { nhl: 'NHL', nba: 'NBA', nfl: 'NFL', ncaaf: 'CFB', ufc: 'UFC', soccer: 'FC' };
-let J = null, chip = ls.get('pred_chip') || '', plus = ls.get('pred_plus') === '1';
+let J = null, chip = ls.get('pred_chip') || '', showAll = ls.get('pred_all') === '1';
+const MIN_EV = 0.07;
 /* Thin odds: a live game priced from fewer than 3 books, or whose newest line is over 60 s old.
    Its EV is greyed out and kept out of the counts at the top. */
 const bkOf = g => (g.sources || []).flatMap(x => x.bk || []);
 const thin = g => { const b = bkOf(g); if (!b.length) return true; if (!g.live) return b.length < 2; const newest = Math.max(...b.map(x => x.u || 0)); return b.length < 3 || Date.now() - newest > 60000; };
 const best = g => thin(g) ? -9 : Math.max(...g.sides.map(s => s.ev ?? -9));
+/* Unit size (Dennis, 2026-11-16): a tenth of the Kelly stake, so 10% Kelly = 1u, rounded to 0.25u,
+   0.25-2u. Long shots are capped: under 20% on Real 0.5u, under 35% 1u, under 50% 1.5u. */
+const units = (g, sd) => { if (thin(g) || sd.ev == null || sd.ev < MIN_EV || !(sd.price > 0 && sd.price < 1)) return null;
+  const f = (sd.fair - sd.price) / (1 - sd.price), cap = sd.price < 0.2 ? 0.5 : sd.price < 0.35 ? 1 : sd.price < 0.5 ? 1.5 : 2;
+  return Math.max(0.25, Math.min(cap, Math.round(f * 10 * 4) / 4)); };
 const rawBest = g => Math.max(...g.sides.map(s => s.ev ?? -9));
 function spark(h){
   if(!h || h.length < 2) return '';
@@ -96,7 +103,7 @@ function breakdown(g){
   const hd = head.replace('class="bkr bkh"', `class="bkr bkh" style="grid-template-columns:1fr repeat(${g.sides.length},minmax(56px,auto)) 44px"`);
   return `<details class="bd" data-bd="${g.id}"${openBd.has(String(g.id)) ? ' open' : ''}><summary>Book breakdown (${bks.length})</summary>${hd}
     ${sorted.map(b => row(`${esc(b.t)}${b.w !== 1 ? ` <em>×${b.w}</em>` : ''}`, b.p, b.d, age(b.u), age(b.u) && (Date.now() - b.u) > 120000 ? 'old' : '')).join('')}
-    ${row('<b>Fair (average)</b>', g.sides.map(s => s.fair), null, '', 'tot')}
+    ${row('<b>Fair</b>', g.sides.map(s => s.fair), null, '', 'tot')}
     ${row('<b>Real</b>', g.sides.map(s => s.price), null, '', 'tot')}
     ${(g.refs || []).map(r => row(`${esc(r.src)} <em>ref</em>`, r.p, null, '', 'ref2')).join('')}
     <p class="note" style="margin:6px 0 0">% is each book's chance with its margin taken out; small number is its American odds. Age is how long since that book last moved the line. Books older than 2 min (live) or 90 min (pregame) are already left out.</p></details>`;
@@ -116,35 +123,38 @@ async function load(){
 function tick(){
   if(!J || !J.at) return;
   const s = Math.max(0, Math.round((Date.now() - J.at) / 1000));
-  $('#ago').textContent = s < 60 ? `Updated ${s}s ago` : `Updated ${Math.round(s / 60)} min ago`;
+  const oa = Math.max(0, ...(J.games || []).map(g => g.oddsAt || 0)), os = oa ? Math.max(0, Math.round((Date.now() - oa) / 1000)) : null;
+  $('#ago').textContent = `Real ${s < 60 ? s + 's' : Math.round(s / 60) + 'm'} ago${os != null ? ` · Books ${os < 90 ? os + 's' : Math.round(os / 60) + 'm'} ago` : ''}`;
   $('#pulse').classList.toggle('stale', s > 60);
 }
 function draw(){
   const games = J.games || [];
   const sps = [...new Set(games.map(g => g.sport))];
   $('#chips').innerHTML = sps.length > 1 ? ['', ...sps].map(s => `<button data-c="${s}" aria-pressed="${chip === s}">${s ? SPN[s] || s : 'All'}</button>`).join('') : '';
-  $('#plus').setAttribute('aria-pressed', plus);
-  const pos = games.filter(g => best(g) > 0), top = games.reduce((a, g) => Math.max(a, best(g)), -9);
-  $('#sum').innerHTML = `<div><b>${games.length}</b><span>open markets</span></div><div><b class="pos">${pos.length}</b><span>with a +EV side</span></div><div><b class="${top > 0 ? 'pos' : 'nil'}">${top > -9 ? (top > 0 ? '+' : '') + pc(top) : '-'}</b><span>best edge</span></div>`;
-  const l = games.filter(g => (!chip || g.sport === chip) && (!plus || best(g) > 0)).sort((a, b) => (b.live - a.live) || (best(b) - best(a)) || (rawBest(b) - rawBest(a)));
+  $('#plus').setAttribute('aria-pressed', showAll); $('#plus').textContent = showAll ? 'Hide under 7% EV' : 'Show all';
+  const pos = games.filter(g => best(g) >= MIN_EV), top = games.reduce((a, g) => Math.max(a, best(g)), -9);
+  $('#sum').innerHTML = `<div><b>${games.length}</b><span>open markets</span></div><div><b class="pos">${pos.length}</b><span>with 7%+ EV</span></div><div><b class="${top > 0 ? 'pos' : 'nil'}">${top > -9 ? (top > 0 ? '+' : '') + pc(top) : '-'}</b><span>best edge</span></div>`;
+  const l = games.filter(g => (!chip || g.sport === chip) && (showAll || best(g) >= MIN_EV)).sort((a, b) => (b.live - a.live) || (best(b) - best(a)) || (rawBest(b) - rawBest(a)));
   $('#list').innerHTML = l.map(g => {
     const srcs = g.sources || [];
-    return `<div class="g${best(g) > 0.02 ? ' hot' : ''}">
+    return `<div class="g${best(g) >= MIN_EV ? ' hot' : ''}">
     <div class="gh"><div style="min-width:0">
       ${g.path ? `<a class="nm" href="https://www.realapp.com${esc(g.path)}" target="_blank" rel="noopener">${esc(g.game)}</a>` : `<span class="nm">${esc(g.game)}</span>`}
       <div class="meta"><span class="tag">${esc(SPN[g.sport] || g.sport)}</span>${when(g)}${g.locked ? '<span class="tag lock">Locked</span>' : ''}${thin(g) && bkOf(g).length ? '<span class="tag lock" title="Too few books or lines too old to trust the EV">Thin odds</span>' : ''}${g.volume ? `<span class="tag">${esc(g.volume)} vol</span>` : ''}</div></div>
       ${g.link ? `<a class="go" href="${esc(g.link)}" target="_blank" rel="noopener">Predict ↗</a>` : ''}</div>
     ${g.sides.map((s, si) => `<div class="sd"><span class="t"><i class="dot" style="background:${esc(s.color || '#555')}"></i><span>${esc(s.label)}${(g.refs || []).length ? `<small class="ref">${g.refs.map(r => `${esc(r.src)} ${pc(r.p[si])}`).join(' · ')}</small>` : ''}</span></span>
       <span class="c">Real<b>${pc(s.price)}</b></span><span class="c">Fair<b>${pc(s.fair)}</b></span>
-      <span class="ev ${s.ev == null || thin(g) ? 'nil' : s.ev > 0 ? 'pos' : 'neg'}">${s.ev == null ? '-' : (s.ev > 0 ? '+' : '') + pc(s.ev)}<small>EV</small></span></div>`).join('')}
+      <span class="ev ${s.ev == null || thin(g) ? 'nil' : s.ev > 0 ? 'pos' : 'neg'}">${s.ev == null ? '-' : (s.ev > 0 ? '+' : '') + pc(s.ev)}<small>EV</small>${units(g, s) ? `<span class="u">${units(g, s)}u</span>` : ''}</span></div>`).join('')}
     <div class="ft"><span class="srcs">${srcs.length ? 'Fair from <b>' + srcs.map(x => x.books ? `<span title="${esc(x.books.join(', '))}">${esc(x.src)}</span>` : esc(x.src)).join('</b>, <b>') + '</b>' : 'No sportsbook odds found for this game yet'}</span>${(() => { const h = g.hist || []; if (h.length < 2) return ''; const v = h[h.length - 1], sd = g.sides.reduce((a, x) => Math.abs((x.price ?? 9) - v) < Math.abs((a.price ?? 9) - v) ? x : a, g.sides[0]); return `<span class="src" title="Real's price for ${esc(sd.label)}, last few hours">${esc(sd.label)} ${spark(h)}</span>`; })()}</div>${breakdown(g)}</div>`;
-  }).join('') || `<div class="empty">${plus ? 'No +EV sides right now.' : 'No open game markets on Real right now.'}</div>`;
-  $('#foot').textContent = `Real's prices refresh every 10 s. Sportsbook odds: every 5 min, every minute in the 2 hours before a game, every 40 s while it's live. Fair price: the equal-weight average of DraftKings, FanDuel, BetMGM, Caesars, Fanatics, theScore Bet, BetRivers, BetOnline, Novig, Pinnacle and Kalshi, margins removed, stale lines dropped. Polymarket shown for comparison only.${J.credits != null ? ` ${Number(J.credits).toLocaleString()} odds credits left.` : ''}`;
+  }).join('') || `<div class="empty">${!showAll && games.length ? `No sides with 7%+ EV right now - <a href="#" id="sa">show all ${games.length}</a>.` : 'No open game markets on Real right now.'}</div>`;
+  $('#foot').textContent = `Real's prices refresh every 10 s. Sportsbook odds: every 20 s while a game is live, every minute in the 2 hours before, every 5 min otherwise. Fair price: Pinnacle (counts double), BetMGM, Novig, DraftKings, FanDuel, Kalshi and Caesars, margins removed, stale lines dropped. Polymarket shown for comparison. Units: 10% of a full Kelly bet = 1u, long shots capped at 0.5u. Sides under 7% EV are hidden unless you tap Show all.${J.credits != null ? ` ${Number(J.credits).toLocaleString()} odds credits left.` : ''}`;
   tick();
 }
 document.addEventListener('toggle', e => { const d = e.target; if(!d.matches || !d.matches('details.bd')) return; d.open ? openBd.add(d.dataset.bd) : openBd.delete(d.dataset.bd); }, true);
 $('#chips').addEventListener('click', e => { const b = e.target.closest('[data-c]'); if(!b) return; chip = b.dataset.c; ls.set('pred_chip', chip); draw(); });
-$('#plus').addEventListener('click', () => { plus = !plus; ls.set('pred_plus', plus ? '1' : '0'); draw(); });
+const flip = () => { showAll = !showAll; ls.set('pred_all', showAll ? '1' : '0'); draw(); };
+$('#plus').addEventListener('click', flip);
+$('#list').addEventListener('click', e => { if (e.target.id === 'sa') { e.preventDefault(); flip(); } });
 load(); setInterval(load, 10000); setInterval(tick, 1000);
 </script>
 </body>
