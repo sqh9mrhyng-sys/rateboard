@@ -16,9 +16,9 @@
 .act{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin:0 0 16px}
   .ag{border-top:1px solid var(--line);padding:10px 0} .ag:first-of-type{border-top:0}
   .ah{display:flex;align-items:center;gap:8px} .ah b{flex:1;font-size:16px}
-  .ax{background:none;border:0;color:var(--mute);font-size:16px;width:22px;cursor:pointer;padding:0} .ax[aria-expanded="true"]{color:var(--ink)}
+  .ax{background:var(--bg);border:1px solid var(--line);border-radius:8px;color:var(--ink);font-size:20px;line-height:1;width:34px;height:34px;cursor:pointer;padding:0;flex:none} .ax[aria-expanded="true"]{color:var(--ink)}
   .aon{font:inherit;font-weight:800;font-size:13px;border-radius:999px;padding:6px 14px;cursor:pointer;background:none;color:var(--ink);border:1px solid var(--line)} .aon.on{background:rgba(63,191,127,.15);color:var(--good);border-color:rgba(63,191,127,.5)}
-  .ab{margin:8px 0 0 30px} .ar{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;font-size:14px} .ar input[type=checkbox]{width:20px;height:20px;accent-color:var(--accent)}
+  .ab{margin:8px 0 0 42px} .ar.sub2{padding-left:14px;color:var(--mute);font-size:13px} .ar select{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 6px;font:inherit;font-size:13px} .bs.all{border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:4px} .bs input[type=checkbox]{width:20px!important;height:20px!important;flex:none;accent-color:var(--accent)} .ar{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;font-size:14px} .ar input[type=checkbox]{width:20px;height:20px;accent-color:var(--accent)}
   .bs{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:14px} .bs b{width:44px} .bs select{margin-left:auto;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 6px;font:inherit;font-size:14px}
   .ab.off{opacity:.45;pointer-events:none}
   .note{color:var(--mute);font-size:14px}
@@ -57,12 +57,16 @@
   <div class="ag" data-g="swaps"><div class="ah"><button class="ax" data-x="swaps" aria-expanded="false">▸</button><b>Swaps</b><button class="aon" data-on="swaps">Activate</button></div>
     <div class="ab" hidden>
       <label class="ar"><span>Warning 30 minutes before your swaps</span><input type="checkbox" data-k="swaps.warn"></label>
+      <label class="ar sub2"><span>Also send the warning DM on Real</span><input type="checkbox" data-k="swaps.dmWarn"></label>
       <label class="ar"><span>At swap time, when your swaps are live</span><input type="checkbox" data-k="swaps.live"></label>
-      <label class="ar"><span>Reminder to confirm your set times</span><input type="checkbox" data-k="swaps.confirm"></label></div></div>
+      <label class="ar sub2"><span>Also send the swap DM on Real</span><input type="checkbox" data-k="swaps.dmLive"></label>
+      <label class="ar"><span>Reminder to confirm your set times</span><input type="checkbox" data-k="swaps.confirm"></label>
+      <label class="ar sub2"><span>When</span><select data-cl="1"><option value="0">With the morning DM</option><option value="15">15 min before the deadline</option><option value="30">30 min before the deadline</option><option value="60">1 hour before the deadline</option><option value="120">2 hours before the deadline</option><option value="240">4 hours before the deadline</option></select></label>
+      <p class="note" style="margin:6px 0 0">With a DM turned off you only get the notification - if it can't reach any of your devices, the DM goes anyway so you never miss a swap.</p></div></div>
   <div class="ag" data-g="boosts"><div class="ah"><button class="ax" data-x="boosts" aria-expanded="false">▸</button><b>Boosts</b><button class="aon" data-on="boosts">Activate</button></div>
-    <div class="ab" hidden><p class="note" style="margin:4px 0 6px">A reminder to boost before the first game of the day, per sport. Pick how long before (up to 36 hours).</p><div id="bsp"></div></div></div>
-  <div class="ag" data-g="notes"><div class="ah"><span class="ax" style="visibility:hidden">▸</span><b>Messages to you</b><button class="aon" data-on="notes">Activate</button></div>
-    <p class="note" style="margin:4px 0 0 30px">Replies from Dennis, moderation updates and request answers.</p></div>
+    <div class="ab" hidden><p class="note" style="margin:4px 0 6px">A reminder to boost before the first game of the day. Pick how long before (up to 36 hours).</p><div id="bsp"></div></div></div>
+  <div class="ag" data-g="notes"><div class="ah"><span class="ax" style="visibility:hidden"></span><b>Messages to you</b><button class="aon" data-on="notes">Activate</button></div>
+    <p class="note" style="margin:4px 0 0 42px">Replies from Dennis, moderation updates and request answers.</p></div>
   <p class="note" id="amsg" style="margin:8px 0 0"></p>
 </div>
 <p class="note" id="msg">Loading…</p>
@@ -84,21 +88,26 @@ const $ = s => document.querySelector(s);
   const call = async body => { const r = await fetch('/api/swaps?op=pushprefs', body ? { method: 'POST', headers: { 'content-type': 'application/json', 'x-rb-token': tok() }, body: JSON.stringify(body) } : { headers: { 'x-rb-token': tok() } }); return r.json().catch(() => ({ error: 'Could not reach the site.' })); };
   let j = await call(); if (j.error) return;
   let P = j.prefs || {}; const SP = j.sports || {};
-  P.swaps = Object.assign({ on: false, warn: true, live: true, confirm: true }, P.swaps || {});
-  P.boosts = Object.assign({ on: false, sports: {} }, P.boosts || {}); P.notes = Object.assign({ on: true }, P.notes || {});
+  P.swaps = Object.assign({ on: false, warn: true, live: true, confirm: true, dmWarn: true, dmLive: true, confirmLead: 0 }, P.swaps || {});
+  P.boosts = Object.assign({ on: false, sports: {}, all: false, allHours: 2 }, P.boosts || {}); P.notes = Object.assign({ on: true }, P.notes || {});
   const HRS = [0.5, 1, 2, 3, 4, 6, 8, 12, 18, 24, 30, 36], hl = h => h < 1 ? '30 min' : h + (h === 1 ? ' hour' : ' hours');
   const draw = () => {
     for (const g of ['swaps', 'boosts', 'notes']) { const b = document.querySelector(`[data-on="${g}"]`); b.textContent = P[g].on ? 'Active ✓' : 'Activate'; b.classList.toggle('on', !!P[g].on);
       const body = document.querySelector(`.ag[data-g="${g}"] .ab`); if (body) body.classList.toggle('off', !P[g].on); }
     document.querySelectorAll('[data-k]').forEach(i => { const [g, k] = i.dataset.k.split('.'); i.checked = P[g][k] !== false; });
-    $('#bsp').innerHTML = Object.entries(SP).map(([k, l]) => { const x = P.boosts.sports[k] || { on: false, hours: 2 };
-      return `<div class="bs"><input type="checkbox" data-bs="${k}"${x.on ? ' checked' : ''} style="width:20px;height:20px;accent-color:var(--accent)"><b>${l}</b><select data-bh="${k}">${HRS.map(h => `<option value="${h}"${Math.abs(h - (x.hours || 2)) < 0.01 ? ' selected' : ''}>${hl(h)} before</option>`).join('')}</select></div>`; }).join('');
+    const opt = v => HRS.map(h => `<option value="${h}"${Math.abs(h - (v || 2)) < 0.01 ? ' selected' : ''}>${hl(h)} before</option>`).join('');
+    const sel = document.querySelector('[data-cl]'); if (sel) sel.value = String(P.swaps.confirmLead || 0);
+    // All: one time for every sport and one reminder before the day's first game (opens All sports).
+    $('#bsp').innerHTML = `<div class="bs all"><input type="checkbox" data-ball="1"${P.boosts.all ? ' checked' : ''} style="width:20px;height:20px;accent-color:var(--accent)"><b style="width:auto">All</b><span class="note" style="font-size:12px">one reminder, same time</span><select data-bah="1">${opt(P.boosts.allHours)}</select></div>`
+      + Object.entries(SP).map(([k, l]) => { const x = P.boosts.sports[k] || { on: false, hours: 2 };
+      return `<div class="bs"><input type="checkbox" data-bs="${k}"${x.on ? ' checked' : ''} style="width:20px;height:20px;accent-color:var(--accent)"><b>${l}</b><select data-bh="${k}"${P.boosts.all ? ' disabled' : ''}>${opt(x.hours)}</select></div>`; }).join('');
   };
   let saveT = 0;
   const save = () => { clearTimeout(saveT); saveT = setTimeout(async () => { const r = await call(P); $('#amsg').textContent = r.error ? r.error : 'Saved.' + (typeof Notification !== 'undefined' && Notification.permission !== 'granted' ? ' Turn on push notifications above for this device to get them.' : ''); }, 300); };
   $('#act').hidden = false; draw();
   $('#act').addEventListener('click', e => {
     const x = e.target.closest('[data-x]'); if (x) { const b = document.querySelector(`.ag[data-g="${x.dataset.x}"] .ab`); b.hidden = !b.hidden; x.setAttribute('aria-expanded', String(!b.hidden)); x.textContent = b.hidden ? '▸' : '▾'; return; }
+    if (e.target.closest('label') && e.target.tagName === 'SELECT') return;
     const o = e.target.closest('[data-on]'); if (o) { const g = o.dataset.on; P[g].on = !P[g].on;
       // Activating opens the details the first time, so the choices are seen.
       if (P[g].on && g !== 'notes') { const b = document.querySelector(`.ag[data-g="${g}"] .ab`), xb = document.querySelector(`[data-x="${g}"]`); if (b && b.hidden) { b.hidden = false; xb.setAttribute('aria-expanded', 'true'); xb.textContent = '▾'; } }
@@ -106,6 +115,9 @@ const $ = s => document.querySelector(s);
   $('#act').addEventListener('change', e => { const i = e.target;
     if (i.dataset.k) { const [g, k] = i.dataset.k.split('.'); P[g][k] = i.checked; save(); }
     if (i.dataset.bs) { const k = i.dataset.bs; P.boosts.sports[k] = Object.assign({ hours: 2 }, P.boosts.sports[k] || {}, { on: i.checked }); save(); }
+    if (i.dataset.ball) { P.boosts.all = i.checked; if (i.checked) for (const k of Object.keys(SP)) { P.boosts.sports[k] = Object.assign({}, P.boosts.sports[k] || {}, { on: true, hours: P.boosts.allHours }); } draw(); save(); }
+    if (i.dataset.bah) { P.boosts.allHours = Number(i.value); for (const k of Object.keys(SP)) P.boosts.sports[k] = Object.assign({ on: !!(P.boosts.sports[k] || {}).on }, P.boosts.sports[k] || {}, { hours: Number(i.value) }); draw(); save(); }
+    if (i.dataset.cl) { P.swaps.confirmLead = Number(i.value); save(); }
     if (i.dataset.bh) { const k = i.dataset.bh; P.boosts.sports[k] = Object.assign({ on: true }, P.boosts.sports[k] || {}, { hours: Number(i.value) }); draw(); save(); } });
 })();
 /* Push notifications (2026-11-16). iPhone: only from the Home Screen app (iOS 16.4+). Elsewhere: straight from the browser. */

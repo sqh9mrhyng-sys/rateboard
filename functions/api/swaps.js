@@ -2027,9 +2027,14 @@ async function runDms(env, db, auth, rows, max, force) {
   };
   const unclaim = async (list, col) => { for (const x of list) { await db.prepare(`UPDATE swap_matches SET ${col + x.side}=NULL WHERE id=? AND ${col + x.side}=?`).bind(x.m.id, now).run(); x.m[col + x.side] = null; } };
   const send = async (who, text, kind) => {
-    // A push too, for browsers the member turned on (2026-11-16); the DM still goes out as before.
+    /* A push too, for browsers the member turned on (2026-11-16). If they chose notifications only for this
+       one (no DM) and a push actually reached a device, the DM is skipped; if no push got through, the DM
+       still goes so they never miss their swaps. */
     if (kind === 'warn' || kind === 'contact') { try { const first = String((Array.isArray(text) ? text[0] : text) || ''), link = (first.match(/https:\/\/raxacademy\.app\/\S+/) || [])[0];
-      pushIf(env, db, who, p => p.swaps && p.swaps.on && (kind === 'warn' ? p.swaps.warn !== false : p.swaps.live !== false), { title: kind === 'warn' ? 'Swaps in 30 minutes' : 'Your swaps are live', body: first.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 170), url: link ? link.replace('https://raxacademy.app', '') : '/swaps', tag: 'swap-' + kind, urgent: true }).catch(() => {}); } catch (e) {} }
+      const pp = await pushPrefs(env, who), sw = pp.swaps || {}, want = sw.on && (kind === 'warn' ? sw.warn !== false : sw.live !== false), noDm = want && (kind === 'warn' ? sw.dmWarn === false : sw.dmLive === false);
+      if (want) { const msg = { title: kind === 'warn' ? 'Swaps in 30 minutes' : 'Your swaps are live', body: first.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 170), url: link ? link.replace('https://raxacademy.app', '') : '/swaps', tag: 'swap-' + kind, urgent: true };
+        if (noDm) { const n = await pushTo(env, db, who, msg); if (n > 0) { await stat(db, 'push_instead_' + kind); return true; } }
+        else pushTo(env, db, who, msg).catch(() => {}); } } catch (e) {} }
     const me = await member(who);
     if (!me || !me.hashId) { notes.push(`${who}: never verified`); await botFail(db, kind, `${who}: never verified`); return false; }
     try {
@@ -2948,7 +2953,7 @@ async function confirmPrompts(env, db, auth) {
     try { const ch = await dmChannel(db, auth, u.hashId, u.rsUser, env);
       await dmSendRetry(auth, ch, fitOne(`You have the selected times ${times} - you have until ${by} to confirm, go on https://raxacademy.app/swaps and click "Confirm set times" on the top of the page`));
       await stat(db, 'dm_confirm_prompt'); sent++;
-      pushIf(env, db, u.key, p => p.swaps && p.swaps.on && p.swaps.confirm !== false, { title: 'Confirm your swap times', body: `Your times today: ${times}. Confirm by ${by}.`, url: '/swaps', tag: 'swap-confirm', urgent: true }).catch(() => {});
+      pushIf(env, db, u.key, p => p.swaps && p.swaps.on && p.swaps.confirm !== false && !(Number(p.swaps.confirmLead) > 0), { title: 'Confirm your swap times', body: `Your times today: ${times}. Confirm by ${by}.`, url: '/swaps', tag: 'swap-confirm', urgent: true }).catch(() => {});
       try { await db.prepare('UPDATE bot_once SET ok=2 WHERE campaign=? AND key=?').bind('cprompt_' + day, String(u.key).toLowerCase()).run(); } catch (e) {} }   // 2 = the DM went
     catch (e) { failed++; await botFail(db, 'dm_confirm_prompt', `${u.key}: ${e.message || e}`);
       // Tried again next minute - there's an hour to get them all out - unless Real won't let the bot message them at all.
@@ -3167,16 +3172,51 @@ async function boostReminders(env, db) {
   let ch = false;
   for (const who of ix) {
     const p = await pushPrefs(env, who); if (!(p.boosts && p.boosts.on)) continue;
+    // "All": one reminder before the earliest first game across the sports picked, to the All sports list.
+    if (p.boosts.all) {
+      const on = Object.entries(p.boosts.sports || {}).filter(([, x]) => x.on).map(([sp]) => sp), byDay = {};
+      for (const [k, t] of Object.entries(fg.m)) { const [sp, d] = k.split('|'); if (on.includes(sp) && (!byDay[d] || t < byDay[d].t)) byDay[d] = { t, sp }; }
+      for (const [d, { t, sp }] of Object.entries(byDay)) { if (t <= now || now < t - (Number(p.boosts.allHours) || 2) * 3600000) continue;
+        const sk = `${who}|all|${d}`; if (sent[sk]) continue; sent[sk] = now; ch = true;
+        const tm = new Date(t).toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit' });
+        await pushTo(env, db, who, { title: 'Boost reminder', body: `First game ${tm} ET (${BOOST_PUSH_SP[sp]}) - set your boosters.`, url: '/boosts?sport=all', tag: 'boost-all' }); }
+      continue;
+    }
     for (const [sp, x] of Object.entries(p.boosts.sports || {})) { if (!x.on) continue;
       for (const [k, t] of Object.entries(fg.m)) { if (!k.startsWith(sp + '|') || t <= now) continue;
         if (now < t - (Number(x.hours) || 2) * 3600000) continue;
         const sk = `${who}|${k}`; if (sent[sk]) continue; sent[sk] = now; ch = true;
         const tm = new Date(t).toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit' });
-        await pushTo(env, db, who, { title: `Boost reminder · ${BOOST_PUSH_SP[sp]}`, body: `First ${BOOST_PUSH_SP[sp]} game ${tm} ET - set your boosters.`, url: '/boosts', tag: 'boost-' + sp }); } } }
+        await pushTo(env, db, who, { title: `Boost reminder · ${BOOST_PUSH_SP[sp]}`, body: `First ${BOOST_PUSH_SP[sp]} game ${tm} ET - set your boosters.`, url: '/boosts?sport=' + sp, tag: 'boost-' + sp }); } } }
   if (ch) { for (const k of Object.keys(sent)) if (now - sent[k] > 3 * 86400000) delete sent[k]; try { await env.RATEBOARD_KV.put('push_boost_sent_v1', JSON.stringify(sent)); } catch (e) {} }
+}
+/* Confirm reminders at the member's own timing (2026-11-16): N minutes before their confirm deadline
+   (30 minutes before their first swap time today), if they haven't confirmed. Opens /swaps. */
+async function confirmReminders(env, db) {
+  let ix = []; try { ix = JSON.parse((await env.RATEBOARD_KV.get('push_confirm_users_v1')) || '[]') || []; } catch (e) {}
+  const now = Date.now(); if (!ix.length || now < CONFIRM_SHOW_AT) return;
+  const lk = Number(await env.RATEBOARD_KV.get('push_confirm_lock')) || 0; if (now - lk < 55000) return; await env.RATEBOARD_KV.put('push_confirm_lock', String(now));
+  const day = confirmDayNow(now); if (!confirmOn(day)) return;
+  const start = swapDayStart(now + 30 * 60000);
+  let sent = {}; try { sent = JSON.parse((await env.RATEBOARD_KV.get('push_confirm_sent_v1')) || '{}') || {}; } catch (e) {}
+  let ch = false;
+  for (const who of ix) {
+    const sk = `${who}|${day}`; if (sent[sk]) continue;
+    const p = await pushPrefs(env, who), lead = Number((p.swaps || {}).confirmLead) || 0; if (!(p.swaps && p.swaps.on && p.swaps.confirm !== false && lead > 0)) continue;
+    const u = await db.prepare('SELECT key, slots, sched, confirmDay FROM swap_users WHERE LOWER(key)=?').bind(who).first(); if (!u || isConfirmed(u, day)) continue;
+    const pend = ((await db.prepare(`SELECT a, b, slot, createdAt, dueAt FROM swap_matches WHERE status IN ('pending','warned') AND (a=?1 OR b=?1) AND dueAt >= ?2 AND dueAt < ?3`).bind(u.key, start, start + 24 * 3600000).all()).results) || [];
+    const hrs = [...new Set([...hoursToday(u, start), ...pend.map(m => sideDue(m))])].filter(t => t > now).sort((a, b) => a - b);
+    if (!hrs.length) continue;
+    const by = hrs[0] - 30 * 60000; if (now >= by || now < by - lead * 60000) continue;
+    sent[sk] = now; ch = true;
+    const tz = tzOf(u), z = tz ? '' : ' ET';
+    await pushTo(env, db, who, { title: 'Confirm your swap times', body: `Your times today: ${hrs.map(t => hLabel(t, tz)).join(', ')}${z}. Confirm by ${hLabel(by, tz)}${z}.`, url: '/swaps', tag: 'swap-confirm', urgent: true });
+  }
+  if (ch) { for (const k of Object.keys(sent)) if (now - sent[k] > 3 * 86400000) delete sent[k]; try { await env.RATEBOARD_KV.put('push_confirm_sent_v1', JSON.stringify(sent)); } catch (e) {} }
 }
 export async function swapTick(env) {
   PUSH_ENV = env;
+  confirmReminders(env, env.RATEBOARD_DB).catch(() => {});   // not awaited, like boostReminders
   boostReminders(env, env.RATEBOARD_DB).catch(() => {});   // not awaited: never holds up the swap DMs
   TICK_T0 = Date.now();
   if (!DM_ON) return null;
@@ -6174,12 +6214,13 @@ async function handle({ request, env, waitUntil }) {
     const who = String(acc.who).toLowerCase(); let p = await pushPrefs(env, who);
     if (request.method === 'POST') { let b = {}; try { b = await request.json(); } catch (e) {}
       const bool = v => v === true || v === false ? v : undefined, clean = {};
-      const sw = b.swaps || {}; clean.swaps = { on: !!sw.on, warn: bool(sw.warn) ?? true, live: bool(sw.live) ?? true, confirm: bool(sw.confirm) ?? true };
+      const sw = b.swaps || {}; clean.swaps = { on: !!sw.on, warn: bool(sw.warn) ?? true, live: bool(sw.live) ?? true, confirm: bool(sw.confirm) ?? true, dmWarn: bool(sw.dmWarn) ?? true, dmLive: bool(sw.dmLive) ?? true, confirmLead: [0, 15, 30, 60, 120, 240].includes(Number(sw.confirmLead)) ? Number(sw.confirmLead) : 0 };
       const bo = b.boosts || {}, sps = {}; for (const k of Object.keys(BOOST_PUSH_SP)) { const x = (bo.sports || {})[k] || {}; const h = Math.max(0.25, Math.min(36, Number(x.hours) || 2)); sps[k] = { on: !!x.on, hours: Math.round(h * 4) / 4 }; }
-      clean.boosts = { on: !!bo.on, sports: sps }; clean.notes = { on: (b.notes || {}).on !== false };
+      clean.boosts = { on: !!bo.on, sports: sps, all: !!bo.all, allHours: Math.round(Math.max(0.25, Math.min(36, Number(bo.allHours) || 2)) * 4) / 4 }; clean.notes = { on: (b.notes || {}).on !== false };
       p = clean; await env.RATEBOARD_KV.put(PUSH_PREF(who), JSON.stringify(p));
       // Who has boost reminders on, so the minute job doesn't read every member.
-      try { const ix = new Set(JSON.parse((await env.RATEBOARD_KV.get('push_boost_users_v1')) || '[]')); if (clean.boosts.on && Object.values(sps).some(x => x.on)) ix.add(who); else ix.delete(who); await env.RATEBOARD_KV.put('push_boost_users_v1', JSON.stringify([...ix])); } catch (e) {} }
+      try { const ix = new Set(JSON.parse((await env.RATEBOARD_KV.get('push_boost_users_v1')) || '[]')); if (clean.boosts.on && Object.values(sps).some(x => x.on)) ix.add(who); else ix.delete(who); await env.RATEBOARD_KV.put('push_boost_users_v1', JSON.stringify([...ix])); } catch (e) {}
+      try { const ix = new Set(JSON.parse((await env.RATEBOARD_KV.get('push_confirm_users_v1')) || '[]')); if (clean.swaps.on && clean.swaps.confirm && clean.swaps.confirmLead > 0) ix.add(who); else ix.delete(who); await env.RATEBOARD_KV.put('push_confirm_users_v1', JSON.stringify([...ix])); } catch (e) {} }
     return json({ prefs: p, sports: BOOST_PUSH_SP });
   }
   if (op === 'pushsub' || op === 'pushunsub' || op === 'pushtest' || op === 'pushstatus') {

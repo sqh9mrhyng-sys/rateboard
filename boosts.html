@@ -578,6 +578,9 @@ $('#mode').addEventListener('change', () => { saveMode(setSp(), $('#mode').value
 // A new day re-runs the plan, so what's shown (and copied) is always that day's.
 $('#day').addEventListener('change', () => { dayBySport[$('#sport').value] = $('#day').value; if(shown()) run(); });
 try{ const s = JSON.parse(localStorage.getItem('boosts_pick_v1') || '{}'); if(s.sport && [...$('#sport').options].some(o => o.value === s.sport)) $('#sport').value = s.sport; }catch(e){}
+// Opened from a boost reminder (?sport=nba or ?sport=all, 2026-11-16): that list, shown straight away.
+const URL_SPORT = new URLSearchParams(location.search).get('sport');
+if(URL_SPORT && [...$('#sport').options].some(o => o.value === URL_SPORT)) $('#sport').value = URL_SPORT;
 loadSet();
 drawDays(); golfLook();
 
@@ -1198,6 +1201,7 @@ document.addEventListener('click', e => { const b = e.target.closest('[data-ptsp
   }
   if(me.error){ $('#lock').hidden = false; $('#lockmsg').textContent = /sign in/i.test(me.error) ? 'Sign in first.' : me.error; if(/sign in/i.test(me.error)){ $('#signinbtn').hidden = false; $('#signinhint').hidden = false; pubTop(); } return; }
   $('#main').hidden = false;
+  if(URL_SPORT && $('#sport').value === URL_SPORT){ try{ paintSport(); }catch(e){} setTimeout(() => { const r = $('#run'); if(r && !r.disabled) r.click(); }, 1500); }
   // The extra settings are only offered to the accounts that have them.
   if(me.boostModes){
     $('#mode').innerHTML = '<option value="balanced">Balanced</option><option value="heavy">Heavy Legendary</option><option value="saver">Boost saver</option><option value="custom">Custom</option>';
