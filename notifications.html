@@ -11,6 +11,8 @@
   .wrap{max-width:760px;margin:0 auto;padding:20px 16px 40px}
   a{color:var(--accent)}
   h1{font-size:26px;margin:8px 0 2px} h2{font-size:18px;margin:26px 0 8px}
+.push{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin:0 0 16px} .ph{display:flex;justify-content:space-between;align-items:center;gap:8px} .pst{font-size:12px;font-weight:800;padding:2px 9px;border-radius:999px;background:#2a3348;color:var(--mute)} .pst.on{background:rgba(63,191,127,.15);color:var(--good)}
+  .pbtns{display:flex;gap:8px;flex-wrap:wrap} .pbtns button{font:inherit;font-weight:800;font-size:14px;border-radius:10px;padding:10px 14px;cursor:pointer} .pgo{background:var(--accent);color:#1a1205;border:0} .psec{background:none;color:var(--ink);border:1px solid var(--line)}
   .note{color:var(--mute);font-size:14px}
   .top{display:flex;justify-content:space-between;align-items:center;gap:10px}
   .item{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:8px 0;white-space:pre-line}
@@ -24,10 +26,23 @@
   .empty{color:var(--mute);font-size:14px;padding:6px 2px}
 </style>
 <script src="/theme.js"></script>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Rax Academy">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#141925">
 </head>
 <body><div class="wrap">
 <div class="top"><a href="/" style="text-decoration:none;color:var(--ink);font-weight:900;font-size:20px">Rax Academy</a><a href="/">Back to home</a></div>
 <h1>Notifications</h1>
+<div class="push" id="push" hidden>
+  <div class="ph"><b>Push notifications</b><span class="pst" id="pst"></span></div>
+  <p class="note" id="pmsg" style="margin:6px 0 10px"></p>
+  <div class="pbtns"><button class="pgo" id="pon" hidden>Turn on notifications</button><button class="psec" id="ptest" hidden>Send me a test</button><button class="psec" id="poff" hidden>Turn off on this device</button></div>
+  <ol class="note" id="pios" hidden style="margin:8px 0 0;padding-left:20px"><li>Tap the <b>Share</b> button in Safari (the square with the arrow).</li><li>Tap <b>Add to Home Screen</b>, then <b>Add</b>.</li><li>Open <b>Rax Academy</b> from your Home Screen and come back to this page.</li></ol>
+</div>
 <p class="note" id="msg">Loading…</p>
 <div id="body" hidden>
   <h2>Messages to you</h2><div id="notes"></div>
@@ -39,6 +54,46 @@
 </div>
 <script>
 const $ = s => document.querySelector(s);
+/* Push notifications (2026-11-16). iPhone: only from the Home Screen app (iOS 16.4+). Elsewhere: straight from the browser. */
+(() => {
+  const tok = () => { try{ return localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){ return ''; } };
+  const call = async (op, body) => { const r = await fetch('/api/swaps?op=' + op, body ? { method: 'POST', headers: { 'content-type': 'application/json', 'x-rb-token': tok() }, body: JSON.stringify(body) } : { headers: { 'x-rb-token': tok() } }); return r.json().catch(() => ({ error: 'Could not reach the site.' })); };
+  const ios = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const standalone = window.navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+  const ok = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  const msg = t => { $('#pmsg').textContent = t; }, state = (on, t) => { $('#pst').textContent = t; $('#pst').classList.toggle('on', on); };
+  const b64 = s => { const p = '='.repeat((4 - s.length % 4) % 4), r = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from([...r].map(c => c.charCodeAt(0))); };
+  if (!tok()) return;
+  $('#push').hidden = false;
+  if (ios && !standalone) { state(false, 'Off'); msg('On iPhone, notifications only work from the Home Screen app:'); $('#pios').hidden = false; return; }
+  if (!ok) { state(false, 'Not supported'); msg(ios ? 'Update to iOS 16.4 or newer to get notifications.' : "This browser can't receive notifications."); return; }
+  let reg = null;
+  const paint = async () => {
+    reg = reg || await navigator.serviceWorker.register('/sw.js');
+    const sub = await reg.pushManager.getSubscription();
+    const perm = Notification.permission;
+    if (perm === 'denied') { state(false, 'Blocked'); msg(ios ? 'Notifications are blocked. Turn them on in Settings > Notifications > Rax Academy.' : 'Notifications are blocked for this site - allow them in your browser settings.'); $('#pon').hidden = true; $('#ptest').hidden = true; $('#poff').hidden = true; return; }
+    $('#pon').hidden = !!sub; $('#ptest').hidden = !sub; $('#poff').hidden = !sub;
+    state(!!sub, sub ? 'On' : 'Off');
+    msg(sub ? "You'll get swap alerts, replies from Dennis and moderation updates on this device." : "Get swap alerts (30 min before and when they're live), replies and moderation updates on this device.");
+  };
+  $('#pon').addEventListener('click', async () => {
+    $('#pon').disabled = true; msg('Asking your browser…');
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') { $('#pon').disabled = false; return paint(); }
+      reg = reg || await navigator.serviceWorker.register('/sw.js'); await navigator.serviceWorker.ready;
+      const k = await call('pushkey'); if (!k.key) throw new Error(k.error || 'no key');
+      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(k.key) });
+      const r = await call('pushsub', { sub: sub.toJSON() }); if (r.error) throw new Error(r.error);
+      await call('pushtest', {});
+    } catch (e) { msg('Could not turn them on: ' + (e.message || e)); $('#pon').disabled = false; return; }
+    $('#pon').disabled = false; paint();
+  });
+  $('#ptest').addEventListener('click', async () => { $('#ptest').disabled = true; const r = await call('pushtest', {}); $('#ptest').disabled = false; msg(r.error ? r.error : r.sent ? 'Test sent - it should pop up in a few seconds.' : 'Nothing was delivered - try turning notifications off and on again.'); });
+  $('#poff').addEventListener('click', async () => { const sub = reg && await reg.pushManager.getSubscription(); if (sub) { await call('pushunsub', { endpoint: sub.endpoint }); await sub.unsubscribe(); } paint(); });
+  paint().catch(e => { state(false, 'Off'); msg('Could not start notifications here: ' + (e.message || e)); });
+})();
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const ls = { get: k => { try{ return localStorage.getItem(k); }catch(e){ return null; } }, set: (k, v) => { try{ localStorage.setItem(k, v); }catch(e){} } };
 const when = ts => new Date(ts).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });

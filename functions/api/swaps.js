@@ -13,6 +13,7 @@ const ET_DAY_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_Yor
    (RS_SWAP_TOKEN, or any other RS_*TOKEN that isn't the board's or the
    market's), never the board's main key.
    ------------------------------------------------------------------------- */
+import { pushTo, vapidKeys, PUSH_DDL } from '../../lib/webpush.js';
 import { isAdminRequest, sessionKey, forbidden, allow, clientIp, touchSeen, ADMINS, etDay } from '../../lib/auth.js';
 import { watchEnv, noteSlowRequest } from '../../lib/dbwatch.js';
 
@@ -580,7 +581,12 @@ const NOTE_DDL = 'CREATE TABLE IF NOT EXISTS user_notes (id INTEGER PRIMARY KEY 
 async function addNote(db, key, kind, text) {
   try { if (!key) return; await db.prepare(NOTE_DDL).run();
     await db.prepare('INSERT INTO user_notes (key, ts, kind, text) VALUES (?, ?, ?, ?)').bind(String(key).toLowerCase(), Date.now(), kind, String(text).slice(0, 1500)).run(); } catch (e) {}
+  // Every note also goes out as a push to browsers the member turned on (2026-11-16). Never waits or throws.
+  if (PUSH_ENV) pushTo(PUSH_ENV, db, key, { title: PUSH_TITLE[kind] || 'Rax Academy', body: String(text).slice(0, 180), url: '/notifications', tag: 'note-' + kind }).catch(() => {});
 }
+/* Push notifications (2026-11-16). PUSH_ENV is the latest env this module saw (requests and ticks set it). */
+let PUSH_ENV = null;
+const PUSH_TITLE = { mod: 'Swaps moderation', reply: 'Reply from Dennis', swap: 'Swaps', news: "What's new" };
 /* What's new on the site, newest first - shown to everyone on Notifications. */
 const SITE_NEWS = [
   ['2026-11-13', 'Only here to sell 160s? You can now also opt in to buy niche players for others, at the hours you sell 160s.'],
@@ -2013,6 +2019,9 @@ async function runDms(env, db, auth, rows, max, force) {
   };
   const unclaim = async (list, col) => { for (const x of list) { await db.prepare(`UPDATE swap_matches SET ${col + x.side}=NULL WHERE id=? AND ${col + x.side}=?`).bind(x.m.id, now).run(); x.m[col + x.side] = null; } };
   const send = async (who, text, kind) => {
+    // A push too, for browsers the member turned on (2026-11-16); the DM still goes out as before.
+    if (kind === 'warn' || kind === 'contact') { try { const first = String((Array.isArray(text) ? text[0] : text) || ''), link = (first.match(/https:\/\/raxacademy\.app\/\S+/) || [])[0];
+      pushTo(env, db, who, { title: kind === 'warn' ? 'Swaps in 30 minutes' : 'Your swaps are live', body: first.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 170), url: link ? link.replace('https://raxacademy.app', '') : '/swaps', tag: 'swap-' + kind, urgent: true }).catch(() => {}); } catch (e) {} }
     const me = await member(who);
     if (!me || !me.hashId) { notes.push(`${who}: never verified`); await botFail(db, kind, `${who}: never verified`); return false; }
     try {
@@ -3128,6 +3137,7 @@ async function dmTick(env) {
   return out;
 }
 export async function swapTick(env) {
+  PUSH_ENV = env;
   TICK_T0 = Date.now();
   if (!DM_ON) return null;
   const db = env.RATEBOARD_DB, auth = swapToken(env);
@@ -5336,6 +5346,7 @@ async function tagViewOp(env, db, url, acc, waitUntil) {
   }
 export async function onRequest(ctx) {
   const t0 = Date.now();
+  PUSH_ENV = ctx.env;
   try { await perfOnlyRefresh(ctx.env); } catch (e) {}
   try { const m = []; m.t = t0; MARKS.set(ctx.request, m); } catch (e) {}
   try { const r = await handle(Object.assign({}, ctx, { env: watchEnv(ctx.env, ctx.request, ctx.waitUntil) }));
@@ -6115,6 +6126,26 @@ async function handle({ request, env, waitUntil }) {
       BULK_MEMO.inj = JSON.stringify(inj); BULK_MEMO.injAt = Date.now();
     }
     return new Response(BULK_MEMO.text + `,"inj":${BULK_MEMO.inj},"signedIn":${acc.who ? 'true' : 'false'},"grind":${String(acc.who || '').toLowerCase() === 'dennis' ? 'true' : 'false'},"mine":${JSON.stringify(mine)}}`, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
+  }
+  /* Push notifications (2026-11-16): the public key, turning a browser on or off, a test, and status. */
+  if (op === 'pushkey') return json({ key: (await vapidKeys(env)).pub });
+  if (op === 'pushsub' || op === 'pushunsub' || op === 'pushtest' || op === 'pushstatus') {
+    if (!acc.who) return json({ error: 'Sign in first.' }, 401);
+    const who = String(acc.who).toLowerCase(); await db.prepare(PUSH_DDL).run();
+    let b = {}; if (request.method === 'POST') { try { b = await request.json(); } catch (e) {} }
+    if (op === 'pushsub') {
+      const sub = b.sub || {}, ep = String(sub.endpoint || ''), k = sub.keys || {};
+      if (!/^https:\/\//.test(ep) || !k.p256dh || !k.auth) return json({ error: 'That browser did not give a usable subscription.' }, 400);
+      if (!(await allow(url.origin, 'pushsub:' + who, 20, 3600))) return json({ error: 'Too many tries - wait a bit.' }, 429);
+      await db.prepare('INSERT INTO push_subs (endpoint, key, p256dh, auth, at, ua, fails) VALUES (?, ?, ?, ?, ?, ?, 0) ON CONFLICT(endpoint) DO UPDATE SET key=excluded.key, p256dh=excluded.p256dh, auth=excluded.auth, at=excluded.at, ua=excluded.ua, fails=0')
+        .bind(ep.slice(0, 600), who, String(k.p256dh).slice(0, 200), String(k.auth).slice(0, 100), Date.now(), String(request.headers.get('user-agent') || '').slice(0, 160)).run();
+    }
+    if (op === 'pushunsub') await db.prepare('DELETE FROM push_subs WHERE endpoint=? AND key=?').bind(String(b.endpoint || ''), who).run();
+    let sent = null;
+    if (op === 'pushtest') { if (!(await allow(url.origin, 'pushtest:' + who, 6, 600))) return json({ error: 'A few tests is plenty - try again in a few minutes.' }, 429);
+      sent = await pushTo(env, db, who, { title: 'Rax Academy', body: 'Notifications are working. You\'ll get swap alerts and replies here.', url: '/notifications', tag: 'test' }); }
+    const n = await db.prepare('SELECT COUNT(*) AS n FROM push_subs WHERE key=?').bind(who).first();
+    return json({ ok: true, devices: Number(n && n.n) || 0, sent });
   }
   if (op === 'notifs') {
     if (!acc.who) return forbidden('Sign in first (raxacademy.app).');
