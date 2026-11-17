@@ -2818,6 +2818,11 @@ async function predAsk(env, db, auth) {
     try { const cur = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (cur) for (const f of ['sent', 'noChat', 'notFound', 'failed']) st[f] = [...new Set([...(cur[f] || []), ...st[f]])]; } catch (e) {}
     await env.RATEBOARD_KV.put(K, JSON.stringify(st), { expirationTtl: 3 * 86400 }); await sleep(400);
   }
+  // Once everyone is handled, one line in the bot log (Admin) with who wasn't reached.
+  if (st.sent.length + st.noChat.length + st.notFound.length + st.failed.length >= PREDASK_USERS.length && !st.logged) {
+    const c = await db.prepare('INSERT OR IGNORE INTO dm_once (k, at) VALUES (?, ?)').bind('predask:logged', Date.now()).run();
+    if (c && c.meta && c.meta.changes) { st.logged = true; await env.RATEBOARD_KV.put(K, JSON.stringify(st), { expirationTtl: 3 * 86400 });
+      try { await db.prepare("INSERT INTO bot_log (at, kind, msg) VALUES (?, 'predask', ?)").bind(Date.now(), `Predictions feedback DM: sent ${st.sent.length}` + (st.noChat.length ? ` · no chat with the bot: @${st.noChat.join(', @')}` : '') + (st.notFound.length ? ` · not on the site: @${st.notFound.join(', @')}` : '') + (st.failed.length ? ` · failed: ${st.failed.join('; ')}` : '')).run(); } catch (e) {} } }
 }
 async function pushPromo(env, db, auth) {
   if (Date.now() >= PROMO_STOP) return;
