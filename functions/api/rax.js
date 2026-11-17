@@ -634,50 +634,78 @@ async function draftProbe(env) {
    settings (ODDS_API_KEY). */
 const PRED_SPORTS = ['nhl', 'nba', 'nfl'];
 const normTeam = t => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
-async function predTick(env) {
-  const key = env.ODDS_API_KEY, tok = env.RS_AUTH_TOKEN; if (!key || !tok) return;
-  const K = 'pred_ev_v1';
-  let old = null; try { old = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
-  /* Paced to the credits left (2026-11-16: the key had 495, not millions): each run costs one
-     credit a sport with markets open, so the gap between runs stretches to make what's left last
-     to the end of the month - every 2 minutes at the least. */
-  const monthEnd = (() => { const d = new Date(); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1); })();
-  const left = old && old.credits != null ? Number(old.credits) : null, perRun = Math.max(1, (old && old.perRun) || 3);
-  const gap = left != null && Number.isFinite(left) ? Math.max(110000, (monthEnd - Date.now()) / Math.max(1, left / perRun)) : 110000;
-  if (old && Date.now() - old.at < gap) return;
-  if (old && old.lock && Date.now() - old.lock < 90000) return;
-  await env.RATEBOARD_KV.put(K, JSON.stringify({ ...(old || {}), lock: Date.now() }));
-  const out = { at: Date.now(), games: [], credits: old && old.credits, errs: [], perRun: 0 };
-  for (const sp of PRED_SPORTS) {
-    let mk = [];
-    try { const r = await fetch(`https://web.realapp.com/predictions/gamemarkets/${sp}`, { headers: rsHeaders(tok) }); if (r.ok) mk = ((await r.json()) || {}).gameMarkets || []; else out.errs.push(`${sp} real ${r.status}`); } catch (e) { out.errs.push(`${sp} real ${e.message}`); }
-    mk = mk.filter(m => !m.isSettled && Array.isArray(m.outcomes) && m.outcomes.length === 2);
-    if (!mk.length) continue;
-    await sleep(1000);
-    let ev = [];
-    try { const r = await fetch(`https://api.the-odds-api.com/v4/sports/${ODDS_SPORT[sp]}/odds?regions=eu&markets=h2h&oddsFormat=decimal&apiKey=${encodeURIComponent(key)}`);
-      out.perRun++; out.credits = r.headers.get('x-requests-remaining') || out.credits; if (r.ok) ev = await r.json(); else out.errs.push(`${sp} odds ${r.status}`); } catch (e) { out.errs.push(`${sp} odds ${e.message}`); }
-    const names = ODDS_TEAMS[sp] || {};
-    const nick = code => { const n = names[code]; return n ? normTeam(n).split(' ').pop() : null; };
-    for (const m of mk) {
-      const [a, b] = m.outcomes, na = nick(a.key), nb = nick(b.key);
-      const g = na && nb ? ev.find(e => { const h = normTeam(e.home_team), w = normTeam(e.away_team); return (h.endsWith(na) && w.endsWith(nb)) || (h.endsWith(nb) && w.endsWith(na)); }) : null;
-      let fair = null, books = 0, src = null;
-      if (g) {
-        const one = bk => { const o = ((bk.markets || []).find(x => x.key === 'h2h') || {}).outcomes || []; const pa = o.find(x => normTeam(x.name).endsWith(na)), pb = o.find(x => normTeam(x.name).endsWith(nb));
-          if (!pa || !pb || !(pa.price > 1) || !(pb.price > 1)) return null; const ia = 1 / pa.price, ib = 1 / pb.price; return ia / (ia + ib); };
-        const pin = (g.bookmakers || []).find(bk => bk.key === 'pinnacle'), pv = pin ? one(pin) : null;
-        const all = (g.bookmakers || []).map(one).filter(v => v != null); books = all.length;
-        if (pv != null) { fair = pv; src = 'Pinnacle'; } else if (all.length) { fair = all.reduce((t, v) => t + v, 0) / all.length; src = `${all.length} books`; }
-      }
-      const side = (o, f) => ({ key: o.key, label: o.label, price: o.probability, fair: f, ev: f != null && o.probability > 0 ? f / o.probability - 1 : null });
-      out.games.push({ sport: sp, id: m.id, game: (m.gameDisplay || {}).display || `${a.key} vs ${b.key}`, path: (m.gameDisplay || {}).path || null, locked: !!m.isLocked, volume: m.volumeDisplay || null,
-        start: g ? g.commence_time : null, src, books, sides: [side(a, fair), side(b, fair != null ? 1 - fair : null)] });
-    }
-    await sleep(1000);
+const ESPN_PATH_PRED = { nhl: 'hockey/nhl', nba: 'basketball/nba', nfl: 'football/nfl' };
+const decOf = ml => { const m = Number(ml); return !Number.isFinite(m) || m === 0 ? null : m > 0 ? 1 + m / 100 : 1 + 100 / -m; };
+/* Odds, every minute (2026-11-16, "multiple sources"): ESPN's moneylines (free, every minute) and
+   The Odds API (Pinnacle, else the EU books' average) paced to its credits. Each saved as
+   [{home, away, pHome}] per sport, margin taken out. */
+async function predOdds(env) {
+  const K = 'pred_odds_v1'; let o = {}; try { o = JSON.parse((await env.RATEBOARD_KV.get(K)) || '{}') || {}; } catch (e) {}
+  if (o.lock && Date.now() - o.lock < 50000) return; o.lock = Date.now(); await env.RATEBOARD_KV.put(K, JSON.stringify(o));
+  o.espn = o.espn || {}; o.api = o.api || {}; o.errs = [];
+  const open = o.openSports || PRED_SPORTS;
+  for (const sp of open) {
+    try { const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${ESPN_PATH_PRED[sp]}/scoreboard`); const d = r.ok ? await r.json() : null; const games = [];
+      for (const ev of ((d && d.events) || [])) { const c = (ev.competitions || [])[0] || {}, od = (c.odds || [])[0], h = (c.competitors || []).find(x => x.homeAway === 'home'), w = (c.competitors || []).find(x => x.homeAway === 'away');
+        if (!od || !h || !w) continue; const dh = decOf(od.homeTeamOdds && od.homeTeamOdds.moneyLine), dw = decOf(od.awayTeamOdds && od.awayTeamOdds.moneyLine); if (!dh || !dw) continue;
+        games.push({ home: h.team && h.team.displayName, away: w.team && w.team.displayName, pHome: (1 / dh) / (1 / dh + 1 / dw), src: (od.provider && od.provider.name) || 'ESPN' }); }
+      o.espn[sp] = { at: Date.now(), games }; } catch (e) { o.errs.push(`${sp} espn ${e.message}`); }
   }
-  await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 3600 });
+  // The Odds API: as often as the credits allow to the end of the month (at least 2 minutes apart).
+  const key = env.ODDS_API_KEY;
+  if (key) { const monthEnd = (() => { const d = new Date(); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1); })();
+    const left = o.credits != null ? Number(o.credits) : null, per = Math.max(1, open.length);
+    const gap = left != null && Number.isFinite(left) ? Math.max(110000, (monthEnd - Date.now()) / Math.max(1, left / per)) : 110000;
+    if (!o.apiAt || Date.now() - o.apiAt >= gap) { o.apiAt = Date.now();
+      for (const sp of open) { try { const r = await fetch(`https://api.the-odds-api.com/v4/sports/${ODDS_SPORT[sp]}/odds?regions=eu&markets=h2h&oddsFormat=decimal&apiKey=${encodeURIComponent(key)}`);
+          o.credits = r.headers.get('x-requests-remaining') || o.credits; if (!r.ok) { o.errs.push(`${sp} odds ${r.status}`); continue; }
+          const games = [];
+          for (const e of await r.json()) { const one = bk => { const ou = ((bk.markets || []).find(x => x.key === 'h2h') || {}).outcomes || []; const ph = ou.find(x => x.name === e.home_team), pw = ou.find(x => x.name === e.away_team);
+              return ph && pw && ph.price > 1 && pw.price > 1 ? (1 / ph.price) / (1 / ph.price + 1 / pw.price) : null; };
+            const pin = (e.bookmakers || []).find(b => b.key === 'pinnacle'), pv = pin ? one(pin) : null, all = (e.bookmakers || []).map(one).filter(v => v != null);
+            if (pv != null) games.push({ home: e.home_team, away: e.away_team, pHome: pv, src: 'Pinnacle', start: e.commence_time });
+            if (all.length) games.push({ home: e.home_team, away: e.away_team, pHome: all.reduce((t, v) => t + v, 0) / all.length, src: `${all.length} books`, start: e.commence_time }); }
+          o.api[sp] = { at: Date.now(), games }; } catch (e) { o.errs.push(`${sp} odds ${e.message}`); } await sleep(500); } } }
+  o.lock = 0; await env.RATEBOARD_KV.put(K, JSON.stringify(o));
 }
+/* Real's markets every 10 seconds (Dennis, 2026-11-16), turn about between account 1 and account 2
+   (the bot's account is left out: if Real slows it down, swap DMs stop). Six reads a minute of each
+   sport, EV worked out against every odds source and saved for the page. */
+async function predReal(env) {
+  const toks = [env.RS_AUTH_TOKEN, env.RS_MARKET_TOKEN].filter(t => typeof t === 'string' && t.length > 20); if (!toks.length) return;
+  const LK = 'pred_real_lock'; const lk = Number(await env.RATEBOARD_KV.get(LK)) || 0; if (Date.now() - lk < 55000) return; await env.RATEBOARD_KV.put(LK, String(Date.now()));
+  let ti = 0;
+  for (let round = 0; round < 6; round++) {
+    const t0 = Date.now();
+    let odds = {}; try { odds = JSON.parse((await env.RATEBOARD_KV.get('pred_odds_v1')) || '{}') || {}; } catch (e) {}
+    const out = { at: Date.now(), games: [], credits: odds.credits || null, errs: [...(odds.errs || [])] }, openSports = [];
+    for (const sp of PRED_SPORTS) {
+      let mk = [];
+      try { const r = await fetch(`https://web.realapp.com/predictions/gamemarkets/${sp}`, { headers: rsHeaders(toks[ti++ % toks.length]) }); if (r.ok) mk = ((await r.json()) || {}).gameMarkets || []; else out.errs.push(`${sp} real ${r.status}`); } catch (e) { out.errs.push(`${sp} real ${e.message}`); }
+      mk = mk.filter(m => !m.isSettled && Array.isArray(m.outcomes) && m.outcomes.length === 2);
+      if (mk.length) openSports.push(sp);
+      const names = ODDS_TEAMS[sp] || {}, nick = code => { const n = names[code]; return n ? normTeam(n).split(' ').pop() : null; };
+      const srcs = [...(((odds.api || {})[sp] || {}).games || []), ...(((odds.espn || {})[sp] || {}).games || [])];
+      for (const m of mk) {
+        const [a, b] = m.outcomes, na = nick(a.key), nb = nick(b.key), found = [];
+        for (const g of srcs) { const h = normTeam(g.home), w = normTeam(g.away);
+          if (na && nb && h.endsWith(na) && w.endsWith(nb)) found.push({ src: g.src, pA: g.pHome, start: g.start });
+          else if (na && nb && h.endsWith(nb) && w.endsWith(na)) found.push({ src: g.src, pA: 1 - g.pHome, start: g.start }); }
+        // The fair chance: Pinnacle counts double when it's there, then everything else once.
+        let wt = 0, sum = 0; for (const f of found) { const w0 = f.src === 'Pinnacle' ? 2 : 1; wt += w0; sum += w0 * f.pA; }
+        const fair = wt ? sum / wt : null, start = (found.find(f => f.start) || {}).start || null;
+        const side = (o, f) => ({ key: o.key, label: o.label, price: o.probability, fair: f, ev: f != null && o.probability > 0 ? f / o.probability - 1 : null });
+        out.games.push({ sport: sp, id: m.id, game: (m.gameDisplay || {}).display || `${a.key} vs ${b.key}`, path: (m.gameDisplay || {}).path || null, locked: !!m.isLocked, volume: m.volumeDisplay || null, start,
+          sources: found.map(f => ({ src: f.src, a: Math.round(f.pA * 1000) / 1000 })), sides: [side(a, fair), side(b, fair != null ? 1 - fair : null)] });
+      }
+    }
+    if (openSports.join() !== (odds.openSports || []).join()) { try { const o2 = JSON.parse((await env.RATEBOARD_KV.get('pred_odds_v1')) || '{}') || {}; o2.openSports = openSports; await env.RATEBOARD_KV.put('pred_odds_v1', JSON.stringify(o2)); } catch (e) {} }
+    await env.RATEBOARD_KV.put('pred_ev_v1', JSON.stringify(out), { expirationTtl: 3600 });
+    const wait = 10000 - (Date.now() - t0); if (round < 5 && wait > 0) await sleep(wait);
+  }
+  await env.RATEBOARD_KV.put(LK, '0');
+}
+async function predTick(env) { await Promise.all([predOdds(env).catch(() => {}), predReal(env).catch(() => {})]); }
 
 /* One-off (2026-11-16): the shape of Real's prediction markets (NHL), read once on account 1. */
 async function predProbe2(env) {
@@ -8678,7 +8706,7 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predEv: await (async () => { const x = await kvj('pred_ev_v1'); return x ? { perRun: x.perRun, at: x.at, n: (x.games || []).length, matched: (x.games || []).filter(g => g.src).length, errs: x.errs, credits: x.credits } : null; })(), draftTest: await (async () => { let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get('draft_contests_v1')) || '[]'); } catch (e) {}
+    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predEv: await (async () => { const x = await kvj('pred_ev_v1'); return x ? { srcs: (x.games || []).map(g => (g.sources || []).length).join(','), at: x.at, n: (x.games || []).length, matched: (x.games || []).filter(g => g.src).length, errs: x.errs, credits: x.credits } : null; })(), draftTest: await (async () => { let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get('draft_contests_v1')) || '[]'); } catch (e) {}
       const out = []; for (const c of l.filter(c => c.type === 'sport').slice(-30)) { const x = await kvj(`draft_v1_sport_${c.id}`);
         out.push({ id: c.id, sport: c.sport, day: c.day, n: x && x.players && x.players.length, teams: x && x.players ? [...new Set(x.players.map(p => p.team))].join(' ') : null }); }
       return { n: l.length, games: l.filter(c => c.type === 'game').length, gameDays: l.filter(c => c.type === 'game').map(c => `${c.id}:${c.sport}:${c.day}`).join(' '), sport: out }; })(), modVoid: await kvj('mod_void_1115_n'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];

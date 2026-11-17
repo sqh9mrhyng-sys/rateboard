@@ -43,7 +43,7 @@ async function load(){
   if(J.error){ $('#msg').innerHTML = /sign in/i.test(J.error) ? 'Sign in first - <a href="/?next=/predictions">sign in</a>.' : esc(J.error); return; }
   if(!J.keySet){ $('#msg').textContent = 'The Odds API key isn\'t on the server yet.'; return; }
   const m = J.at ? Math.round((Date.now() - J.at) / 60000) : null;
-  $('#msg').textContent = `EV per rax on Real's game markets vs sportsbook odds (margin removed). Updated ${m == null ? '-' : m < 1 ? 'just now' : m + ' min ago'}${J.credits != null ? ` · ${J.credits} odds credits left` : ''}.`;
+  $('#msg').textContent = `EV per rax on Real's game markets vs sportsbook odds (margin removed). Updated ${J.at ? Math.max(0, Math.round((Date.now() - J.at) / 1000)) + 's ago' : '-'}${J.credits != null ? ` · ${J.credits} odds credits left` : ''}.`;
   draw();
 }
 function draw(){
@@ -52,12 +52,12 @@ function draw(){
   const best = g => Math.max(...g.sides.map(s => s.ev ?? -9));
   const l = J.games.filter(g => !chip || g.sport === chip).sort((a, b) => best(b) - best(a));
   $('#list').innerHTML = l.map(g => `<div class="g"><div class="gh"><b>${g.path ? `<a href="https://www.realapp.com${esc(g.path)}" target="_blank" rel="noopener">${esc(g.game)}</a>` : esc(g.game)}</b>
-    <span class="note">${esc(SPN[g.sport] || g.sport)}${g.start ? ' · ' + new Date(g.start).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : ''}${g.locked ? ' · locked' : ''}${g.src ? ' · ' + esc(g.src) : ' · no odds found'}</span></div>
+    <span class="note">${esc(SPN[g.sport] || g.sport)}${g.start ? ' · ' + new Date(g.start).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : ''}${g.locked ? ' · locked' : ''}${(g.sources || []).length ? ' · ' + g.sources.map(x => esc(x.src)).join(', ') : ' · no odds found'}</span></div>
     ${g.sides.map(s => `<div class="sd"><span class="t">${esc(s.label)}</span><span class="c">Real<b>${pc(s.price)}</b></span><span class="c">Fair<b>${pc(s.fair)}</b></span><span class="ev ${s.ev > 0 ? 'pos' : 'neg'}">${s.ev == null ? '-' : (s.ev > 0 ? '+' : '') + pc(s.ev)}</span></div>`).join('')}</div>`).join('')
     || '<div class="empty">No open game markets on Real right now for NHL, NBA or NFL.</div>';
 }
 $('#chips').addEventListener('click', e => { const b = e.target.closest('[data-c]'); if(!b) return; chip = b.dataset.c; ls.set('pred_chip', chip); draw(); });
-load(); setInterval(load, 60000);
+load(); setInterval(load, 10000);
 </script>
 </body>
 </html>
