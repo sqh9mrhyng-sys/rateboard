@@ -3242,11 +3242,17 @@ async function boostReminders(env, db) {
   }
   let sent = {}; try { sent = JSON.parse((await env.RATEBOARD_KV.get('push_boost_sent_v1')) || '{}') || {}; } catch (e) {}
   let ch = false;
+  /* Only sports they can boost (member feedback, 2026-11-17: a CFB reminder with no CFB passes): a sport
+     counts when their last scan has a current-season player pass in it. No scan on file = remind as before. */
+  const heldSp = async who => { try { const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(who).first();
+    if (!u || !u.passes) return null; const P = parse(u.passes, []); if (!P.length) return null;
+    return new Set(P.filter(x => x.kind !== 'team' && BOOST_SEASON[x.sport] && Number(x.season) === BOOST_SEASON[x.sport][0]).map(x => x.sport)); } catch (e) { return null; } };
   for (const who of ix) {
     const p = await pushPrefs(env, who); if (!(p.boosts && p.boosts.on)) continue;
+    const held = await heldSp(who), canSp = sp => !held || held.has(sp);
     // "All": one reminder before the earliest first game across the sports picked, to the All sports list.
     if (p.boosts.all) {
-      const on = Object.entries(p.boosts.sports || {}).filter(([, x]) => x.on).map(([sp]) => sp), byDay = {};
+      const on = Object.entries(p.boosts.sports || {}).filter(([, x]) => x.on).map(([sp]) => sp).filter(canSp), byDay = {};
       for (const [k, t] of Object.entries(fg.m)) { const [sp, d] = k.split('|'); if (on.includes(sp) && (!byDay[d] || t < byDay[d].t)) byDay[d] = { t, sp }; }
       for (const [d, { t, sp }] of Object.entries(byDay)) { if (t <= now || now < t - (Number(p.boosts.allHours) || 2) * 3600000) continue;
         const sk = `${who}|all|${d}`; if (sent[sk]) continue; sent[sk] = now; ch = true;
@@ -3254,7 +3260,7 @@ async function boostReminders(env, db) {
         await pushTo(env, db, who, { title: 'Boost reminder', body: `First game ${tm} ET (${BOOST_PUSH_SP[sp]}) - set your boosters.`, url: '/boosts?sport=all', tag: 'boost-all' }); }
       continue;
     }
-    for (const [sp, x] of Object.entries(p.boosts.sports || {})) { if (!x.on) continue;
+    for (const [sp, x] of Object.entries(p.boosts.sports || {})) { if (!x.on || !canSp(sp)) continue;
       for (const [k, t] of Object.entries(fg.m)) { if (!k.startsWith(sp + '|') || t <= now) continue;
         if (now < t - (Number(x.hours) || 2) * 3600000) continue;
         const sk = `${who}|${k}`; if (sent[sk]) continue; sent[sk] = now; ch = true;
@@ -7543,7 +7549,10 @@ async function handle({ request, env, waitUntil }) {
     // year (2026 = 26-27), basketball and hockey the end year (2027 = 26-27), the rest the calendar year.
     const now0 = new Date(), y0 = now0.getUTCFullYear(), m0 = now0.getUTCMonth();
     const cur = sp => /^(nfl|ncaaf)$/.test(sp) ? (m0 >= 6 ? y0 : y0 - 1) : /^(nba|ncaam|nhl)$/.test(sp) ? (m0 >= 8 ? y0 + 1 : y0) : sp === 'soccer' ? (m0 >= 6 ? y0 + 1 : y0) : y0;
-    const out = {}; for (const p0 of parse(u.passes, [])) { const [sp, se] = String(p0.key || '').split(':'); if (!sp || !p0.name || Number(se) !== cur(sp)) continue; (out[sp] = out[sp] || []).push(p0.name); }
+    /* The same current seasons the Boosts page uses (2026-11-17: FC read as 2027 and left out 0 passes - Real's
+       current FC season is 2026 (2025-26), plus MLS on 2025; NHL is keyed 2026 for 26-27 like football). */
+    const curs = sp => sp === 'soccer' ? [FC_SEASON[0], FC_MLS_SEASON] : BOOST_SEASON[sp] ? [BOOST_SEASON[sp][0]] : [cur(sp)];
+    const out = {}; for (const p0 of parse(u.passes, [])) { const [sp, se] = String(p0.key || '').split(':'); if (!sp || !p0.name || !curs(sp).includes(Number(se))) continue; (out[sp] = out[sp] || []).push(p0.name); }
     return json({ sports: out, at: u.scannedAt || null });
   }
   if (op === 'membersearch') {
