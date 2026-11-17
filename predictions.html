@@ -75,6 +75,7 @@
   .bgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:4px 14px 8px;border-top:1px solid var(--line)} .bgrid .c{text-align:left}
   .bamt{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 14px;border-top:1px solid var(--line)}
   .bamt label{font-size:12px;color:var(--mute);font-weight:700} .bamt input{display:block;width:120px;margin-top:3px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;font-size:16px}
+.payl{font-size:12px;color:var(--mute);font-weight:700;text-align:right} .payl input{display:block;width:120px;margin:3px 0 0 auto;background:var(--bg);color:var(--good);font-weight:800;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;font-size:16px;text-align:right} .payl small{display:block;font-size:11px;margin-top:3px;color:var(--good)} .payl small a{color:var(--accent)}
   .bamt .c small{display:block;font-size:11px;color:var(--good);text-transform:none}
   .bact{display:flex;gap:6px;padding:0 14px 12px} .bact .del{margin-left:auto;color:var(--bad)}
   .tag.won{background:rgba(63,191,127,.16);color:var(--good)} .tag.lost{background:rgba(229,83,75,.16);color:var(--bad)}
@@ -114,7 +115,7 @@
 <p><b>Long shots are capped</b> because they lose most of the time even with a big edge: under 20% on Real it's 0.5u max, under 35% 1u, under 50% 1.5u, and favorites can go up to 2u.</p>
 <p>Example with 5,000 rax: 1u = 50 rax. A favorite at 60% with a 70% fair price is Kelly 25% → 2u → <b>100 rax</b>. An underdog at 15% with a 20% fair price is Kelly 6% → capped 0.5u → <b>25 rax</b>.</p>
 <h2>Placing a bet</h2>
-<p>Each bet shows <b>+EV up to X%</b>: the highest price on Real where it's still worth it (the fair %). If Real moves past that before you buy, skip it. Once you buy, tap <b>Bet placed</b>: the game leaves Markets and shows in <b>My bets</b> with the amount filled in from your units. Change the amount if you put in something different; the payout (amount ÷ the price you paid) updates with it. When it's over, tap Won or Lost to keep your profit total.</p>
+<p>Each bet shows <b>+EV up to X%</b>: the highest price on Real where it's still worth it (the fair %). If Real moves past that before you buy, skip it. Once you buy, tap <b>Bet placed</b>: the game leaves Markets and shows in <b>My bets</b> with the amount filled in from your units. Change the amount if you put in something different; the payout (amount ÷ the price you paid) updates with it. The payout can be changed too if Real paid something different (clear it to go back to auto). When the market settles on Real it's marked Won or Lost for you; you can still tap Won or Lost yourself.</p>
 <h2>Step 5 - When not to trust it</h2>
 <p><b>Thin odds</b>: during a game, if fewer than 3 books have a line, or the newest line is over a minute old, the EV is greyed out and gets no unit size - books freeze their lines in blowouts and late in games, so a huge EV there is usually just an old line. Open <b>Book breakdown</b> to see every book's % and how old its line is.</p>
 <p><b>Hidden games</b>: the <b>+EV</b> tab shows only games with a bet to make, best EV first, and leaves out games where a side's fair % is under 7% (basically decided). <b>All</b> shows every open market. Locked markets are always hidden.</p>
@@ -179,7 +180,7 @@ async function load(){
   try{ const t = ls.get('ratebrd_token_v1') || ''; J = await (await fetch('/api/swaps?op=predev', { headers: t ? { 'x-rb-token': t } : {} })).json(); }catch(e){ J = { error: 'Could not reach the site.' }; }
   if(J.error){ $('#list').innerHTML = `<div class="empty">${/sign in/i.test(J.error) ? 'Sign in first - <a href="/?next=/predictions">sign in</a>.' : esc(J.error)}</div>`; return; }
   if(!J.keySet){ $('#list').innerHTML = '<div class="empty">The Odds API key isn\'t on the server yet.</div>'; return; }
-  draw(); if (!$('#vb').hidden && !(document.activeElement && document.activeElement.dataset && document.activeElement.dataset.amt)) drawBets(); else $('#bn').textContent = BETS.filter(b => !b.res).length ? `(${BETS.filter(b => !b.res).length})` : '';
+  draw(); if (!$('#vb').hidden && !(document.activeElement && document.activeElement.dataset && (document.activeElement.dataset.amt || document.activeElement.dataset.pay))) drawBets(); else $('#bn').textContent = BETS.filter(b => !b.res).length ? `(${BETS.filter(b => !b.res).length})` : '';
 }
 function tick(){
   if(!J || !J.at) return;
@@ -241,15 +242,15 @@ function drawBets(){
   const now = new Map((J.games || []).map(g => [g.id, derive(g)]));
   const act = BETS.filter(b => !b.res), done = BETS.filter(b => b.res);
   $('#bn').textContent = act.length ? `(${act.length})` : '';
-  const staked = act.reduce((a, b) => a + (b.amt || 0), 0), pot = act.reduce((a, b) => a + (b.price > 0 ? (b.amt || 0) / b.price : 0), 0);
-  const pl = done.reduce((a, b) => a + (b.res === 'won' ? (b.price > 0 ? (b.amt || 0) / b.price : 0) - (b.amt || 0) : -(b.amt || 0)), 0);
+  const staked = act.reduce((a, b) => a + (b.amt || 0), 0), payOf = b => b.pay != null ? b.pay : b.price > 0 ? (b.amt || 0) / b.price : 0, pot = act.reduce((a, b) => a + payOf(b), 0);
+  const pl = done.reduce((a, b) => a + (b.res === 'won' ? payOf(b) - (b.amt || 0) : -(b.amt || 0)), 0);
   $('#bsum').innerHTML = `<div><b>${Math.round(staked).toLocaleString()}</b><span>rax in play</span></div><div><b class="pos">${Math.round(pot).toLocaleString()}</b><span>potential payout</span></div><div><b class="${pl >= 0 ? 'pos' : 'neg'}">${pl >= 0 ? '+' : ''}${Math.round(pl).toLocaleString()}</b><span>settled profit</span></div>`;
-  const row = b => { const g = now.get(b.gid), sd = g && g.sides[b.side], pay = b.price > 0 ? (b.amt || 0) / b.price : 0;
-    const st = b.res ? `<span class="tag ${b.res === 'won' ? 'won' : 'lost'}">${b.res === 'won' ? 'Won' : 'Lost'}</span>` : !g ? '<span class="tag">Finished - mark it</span>' : g.live ? '<span class="tag live">● LIVE</span>' : when(g);
+  const row = b => { const g = now.get(b.gid), sd = g && g.sides[b.side], auto = b.price > 0 ? (b.amt || 0) / b.price : 0, pay = b.pay != null ? b.pay : auto;
+    const st = b.res ? `<span class="tag ${b.res === 'won' ? 'won' : 'lost'}">${b.res === 'won' ? 'Won' : 'Lost'}${b.auto ? ' · auto' : ''}</span>` : !g ? '<span class="tag">Waiting for result</span>' : g.live ? '<span class="tag live">● LIVE</span>' : when(g);
     return `<div class="g bet"><div class="gh"><div style="min-width:0;flex:1"><span class="nm">${esc(b.name)}</span><div class="meta"><span class="tag">${esc(SPN[b.sport] || b.sport)}</span>${st}<span class="note">${esc(b.game)}</span></div></div>${b.link ? `<a class="go" href="${esc(b.link)}" target="_blank" rel="noopener">Open ↗</a>` : ''}</div>
       <div class="bgrid"><span class="c">Bought at<b>${pc(b.price)}</b></span><span class="c">Real now<b>${sd ? pc(sd.price) : '-'}</b></span><span class="c">Fair now<b>${sd ? pc(sd.fair) : '-'}</b></span><span class="c">EV then<b class="${b.ev > 0 ? 'pos' : 'neg'}">${b.ev > 0 ? '+' : ''}${pc(b.ev)}</b></span></div>
       <div class="bamt"><label>Amount placed <input type="number" inputmode="numeric" min="0" step="1" value="${b.amt || ''}" placeholder="rax" data-amt="${esc(b.id)}"></label>
-        <span class="c">${b.res === 'won' ? 'Paid out' : 'Pays'}<b class="pos">${Math.round(pay).toLocaleString()} rax</b><small>${b.res ? '' : `+${Math.round(pay - (b.amt || 0)).toLocaleString()} profit`}</small></span></div>
+        <label class="payl">${b.res === 'won' ? 'Paid out' : 'Pays'} <input type="number" inputmode="numeric" min="0" step="1" value="${Math.round(pay)}" data-pay="${esc(b.id)}"><small>${b.pay != null ? `<a href="#" data-payauto="${esc(b.id)}">auto (${Math.round(auto).toLocaleString()})</a>` : 'auto'} · ${b.res === 'lost' ? `-${Math.round(b.amt || 0).toLocaleString()}` : `+${Math.round(pay - (b.amt || 0)).toLocaleString()}`} profit</small></label></div>
       <div class="bact">${b.res ? `<button data-res="${esc(b.id)}" data-v="">Undo result</button>` : `<button data-res="${esc(b.id)}" data-v="won">Won</button><button data-res="${esc(b.id)}" data-v="lost">Lost</button>`}<button data-del="${esc(b.id)}" class="del">Remove</button></div></div>`; };
   $('#blist').innerHTML = (act.length ? '<div class="sph"><span>Active</span></div>' + act.map(row).join('') : '<div class="empty">No active bets. Tap "Bet placed" on a side in Markets and it moves here.</div>')
     + (done.length ? '<div class="sph"><span>Settled</span></div>' + done.map(row).join('') : '');
@@ -286,9 +287,13 @@ $('#list').addEventListener('click', e => {
   const b = e.target.closest('.place'); if (b) placeBet(Number(b.dataset.g), Number(b.dataset.s), b); });
 let amtT = 0;
 $('#blist').addEventListener('input', e => { const i = e.target.closest('[data-amt]'); if (!i) return; clearTimeout(amtT);
-  const b = BETS.find(x => x.id === i.dataset.amt); if (b) { b.amt = Number(i.value) || 0; const pay = i.closest('.bamt').querySelector('.c b'); if (pay && b.price > 0) pay.textContent = Math.round(b.amt / b.price).toLocaleString() + ' rax'; }
+  const b = BETS.find(x => x.id === i.dataset.amt); if (b) { b.amt = Number(i.value) || 0; const pi = i.closest('.bamt').querySelector('[data-pay]'); if (pi && b.pay == null && b.price > 0) pi.value = Math.round(b.amt / b.price); }
   amtT = setTimeout(() => betsCall({ set: { id: i.dataset.amt, amt: Number(i.value) || 0 } }), 800); });
-$('#blist').addEventListener('click', e => { const r = e.target.closest('[data-res]'), d = e.target.closest('[data-del]');
+let payT = 0;
+$('#blist').addEventListener('input', e => { const i = e.target.closest('[data-pay]'); if (!i) return; clearTimeout(payT);
+  payT = setTimeout(() => betsCall({ set: { id: i.dataset.pay, pay: i.value === '' ? null : Number(i.value) || 0 } }), 800); });
+$('#blist').addEventListener('click', e => { const pa = e.target.closest('[data-payauto]'); if (pa) { e.preventDefault(); betsCall({ set: { id: pa.dataset.payauto, pay: null } }); return; }
+  const r = e.target.closest('[data-res]'), d = e.target.closest('[data-del]');
   if (r) betsCall({ set: { id: r.dataset.res, res: r.dataset.v } }); if (d) betsCall({ del: d.dataset.del }); });
 $('#books').addEventListener('change', e => { const t = e.target; if (t.id === 'poly') { showPoly = t.checked; ls.set('pred_poly', showPoly ? '1' : '0'); } else if (t.dataset.bk) { t.checked ? offBooks.delete(t.dataset.bk) : offBooks.add(t.dataset.bk); ls.set('pred_off_books', JSON.stringify([...offBooks])); } $('#bksum').textContent = offBooks.size ? `${allBooks().filter(x => !offBooks.has(x)).length} of ${allBooks().length} books` : 'All books'; draw(); });
 // Access (Dennis only, until public).
@@ -305,7 +310,7 @@ if (bank) $('#bank').value = bank;
 const bankNote = () => { $('#banknote').textContent = bank ? `1u = ${Math.round(bank / 100).toLocaleString()} rax (1% of ${bank.toLocaleString()})` : '1u = 1% of your rax'; };
 bankNote();
 $('#bank').addEventListener('input', e => { bank = Math.max(0, Number(e.target.value) || 0); ls.set('pred_bank', String(bank)); bankNote(); if (J && J.games) draw(); });
-betsCall(); load(); setInterval(load, 10000); setInterval(tick, 1000);
+betsCall(); load(); setInterval(load, 10000); setInterval(() => { const a = document.activeElement; if (!(a && a.dataset && (a.dataset.amt || a.dataset.pay))) betsCall(); }, 60000); setInterval(tick, 1000);
 </script>
 </body>
 </html>
