@@ -139,6 +139,7 @@
   body.h-books .ft .srcs, body.h-books .bd, body.h-chart .ft .src, body.h-bet .bp .place, body.h-chips .gh .meta{display:none}
   body.h-lad.h-bet .bp, body.h-books.h-chart .ft{display:none}
   body.h-real .sd{grid-template-columns:1fr 104px}
+  #bsum .pp{display:block;font-size:13px;font-weight:800;margin-top:2px} #bsum .pp.pos{color:var(--good)} #bsum .pp.neg{color:var(--bad)}
 </style>
 <script src="/theme.js"></script>
 <script src="/nav.js?v=3"></script>
@@ -444,7 +445,7 @@ function drawBets(){
       const v = [...per.values()]; hi += Math.max(...v); lo += per.size >= n && l[0].gid > 0 ? Math.min(...v) : 0; }
     return { hi, lo }; })(), pot = potG.hi;
   const pl = done.reduce((a, b) => a + (b.res === 'won' ? payOf(b) - (b.amt || 0) : -(b.amt || 0)), 0);
-  $('#bsum').innerHTML = `<div><b>${Math.round(staked).toLocaleString()}</b><span>rax in play</span></div><div><b class="pos">${Math.round(pot).toLocaleString()}</b><span>potential payout${potG.lo > 0 ? ` · ${Math.round(potG.lo).toLocaleString()} guaranteed` : ''}</span></div><div><b class="${pl >= 0 ? 'pos' : 'neg'}">${pl >= 0 ? '+' : ''}${Math.round(pl).toLocaleString()}</b><span>settled profit</span></div>`;
+  $('#bsum').innerHTML = `<div><b>${Math.round(staked).toLocaleString()}</b><span>rax in play</span></div><div><b class="pos">${Math.round(pot).toLocaleString()}</b><span>potential payout</span><small class="pp ${pot - staked >= 0 ? 'pos' : 'neg'}">${pot - staked >= 0 ? '+' : ''}${Math.round(pot - staked).toLocaleString()} rax profit</small>${potG.lo > 0 ? `<span>${Math.round(potG.lo).toLocaleString()} guaranteed</span>` : ''}</div><div><b class="${pl >= 0 ? 'pos' : 'neg'}">${pl >= 0 ? '+' : ''}${Math.round(pl).toLocaleString()}</b><span>settled profit</span></div>`;
   const row = b => { const g = now.get(b.gid), sd = g && g.sides[b.side], auto = b.price > 0 ? (b.amt || 0) / b.price : 0, pay = b.pay != null ? b.pay : auto;
     const st = b.res ? `<span class="tag ${b.res === 'won' ? 'won' : 'lost'}">${b.res === 'won' ? 'Won' : 'Lost'}${b.auto ? ' · auto' : ''}</span>` : !g || g.ended ? `<span class="tag">${b.custom ? 'Custom' : 'Waiting for result'}</span>` : g.live ? '<span class="tag live">● LIVE</span>' : when(g);
     return `<div class="g bet"><div class="gh"><span style="margin-right:10px;display:inline-flex">${logo({ logo: b.logo, name: (b.name || '').replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() })}</span><div style="min-width:0;flex:1"><span class="nm">${esc(b.name)}</span><div class="meta"><span class="tag">${esc(SPN[b.sport] || b.sport)}</span>${st}<span class="note">${esc(b.game)}</span></div></div>${b.link ? `<a class="go" href="${esc(b.link)}" target="_blank" rel="noopener">Open ↗</a>` : ''}</div>
@@ -576,7 +577,7 @@ $('#va').addEventListener('click', async e => { const b = e.target.closest('butt
 
 /* Card view (Dennis, 2026-11-17). Full = everything; Clean = the game and EV only; Custom = pick. */
 const VIEW_PARTS = [['fair', 'Fair %'], ['real', "Real's price"], ['poly', 'Polymarket'], ['lad', 'Unit ladder'], ['slip', 'After slippage'], ['books', 'Books & breakdown'], ['chart', 'Price chart'], ['bet', 'Bet placed button'], ['chips', 'Sport, time & volume']];
-let VIEW = { mode: 'full', hide: [] }; try { VIEW = Object.assign(VIEW, JSON.parse(ls.get('pred_view_v1') || '{}') || {}); } catch (e) {}
+let VIEW = { mode: 'clean', hide: [] };   // Clean unless the member picked another (Dennis, 2026-11-17) try { VIEW = Object.assign(VIEW, JSON.parse(ls.get('pred_view_v1') || '{}') || {}); } catch (e) {}
 VIEW.hide = (VIEW.hide || []).filter(k => k !== 'units');   // units & rax always show (Dennis, 2026-11-17)
 function applyView(){
   const hide = VIEW.mode === 'clean' ? VIEW_PARTS.map(p => p[0]) : VIEW.mode === 'custom' ? VIEW.hide : [];
