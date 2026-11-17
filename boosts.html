@@ -236,6 +236,7 @@
   .how>summary{font-size:13px}
 </style>
 <script src="/theme.js"></script>
+<script src="/nav.js"></script>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/favicon-48.png">
 <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
@@ -246,9 +247,9 @@
 <meta name="theme-color" content="#141925">
 </head>
 <body>
-<div class="lock" id="lock" hidden><h1>Boosts &amp; Buys <span class="beta">BETA</span></h1><p class="note" id="lockmsg">Checking…</p><p id="signinbtn" hidden><a class="btn" href="/?next=/boosts" style="display:inline-block;padding:10px 14px;border-radius:9px;background:#E8A33D;color:#141925;font-weight:700;text-decoration:none">Sign in</a></p><p class="note" id="signinhint" hidden>Sign in to get booster picks for the cards you own. Opened this from inside Real? Use the browser you signed in with.</p><div id="pubtop" hidden></div><p><a href="/">Back to home</a></p></div>
+<div class="lock" id="lock" hidden><h1>Boosts &amp; Buys <span class="beta">BETA</span></h1><p class="note" id="lockmsg">Checking…</p><p id="signinbtn" hidden><a class="btn" href="/?next=/boosts" style="display:inline-block;padding:10px 14px;border-radius:9px;background:#E8A33D;color:#141925;font-weight:700;text-decoration:none">Sign in</a></p><p class="note" id="signinhint" hidden>Sign in to get booster picks for the cards you own. Opened this from inside Real? Use the browser you signed in with.</p><div id="pubtop" hidden></div><p><span data-nav></span></p></div>
 <div class="wrap" id="main" hidden>
-  <header><h1>Boosts &amp; Buys</h1><span class="beta">BETA</span><a href="/" style="margin-left:auto">Back to home</a></header>
+  <header><h1>Boosts &amp; Buys</h1><span class="beta">BETA</span><span data-nav style="margin-left:auto"></span></header>
   <div class="tabsrow"><div class="sportcol"><div class="seg allseg" id="allseg"><button data-s="all" aria-pressed="false">All</button></div><div class="seg" id="sportseg"><button data-s="ncaam" aria-pressed="true">CBB</button><button data-s="ncaaf" aria-pressed="false">CFB</button><button data-s="nfl" aria-pressed="false">NFL</button><button data-s="nba" aria-pressed="false">NBA</button><button data-s="nhl" aria-pressed="false">NHL</button><button data-s="golf" aria-pressed="false">Golf</button><button data-s="soccer" aria-pressed="false">FC</button></div></div>
   <div class="seg" id="tab"><button data-t="boosts" aria-pressed="true">Boosts</button><button data-t="buys" aria-pressed="false" id="tab2">Buys</button><button data-t="top" aria-pressed="false">Top players</button></div></div>
 

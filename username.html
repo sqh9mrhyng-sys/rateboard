@@ -22,6 +22,7 @@
   .ok{color:var(--ok)} .bad{color:var(--bad)}
 </style>
 <script src="/theme.js"></script>
+<script src="/nav.js"></script>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/favicon-48.png">
 <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
@@ -33,8 +34,7 @@
 </head>
 <body>
 <div class="wrap">
-  <header><h1>Link your Real account</h1><a href="/swaps" id="backlink" style="margin-left:auto">Back to Swaps</a></header>
-  <script>try{ if(/^https?:\/\/[^/]+\/?(\?|#|$)/.test(document.referrer)){ const b = document.getElementById('backlink'); b.href = '/'; b.textContent = 'Back to home'; } }catch(e){}</script>
+  <header><h1>Link your Real account</h1><span data-nav style="margin-left:auto"></span></header>
   <p class="note" id="who">Checking…</p>
   <div id="main" hidden>
     <section>

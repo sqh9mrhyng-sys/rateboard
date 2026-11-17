@@ -195,6 +195,7 @@
   .pkdd button:hover{background:var(--panel2)}
 </style>
 <script src="/theme.js"></script>
+<script src="/nav.js"></script>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/favicon-48.png">
 <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
@@ -205,11 +206,11 @@
 <meta name="theme-color" content="#141925">
 </head>
 <body>
-<div class="lock" id="lock" hidden><h1>Swaps <span style="font-size:11px;font-weight:800;padding:2px 7px;border-radius:6px;background:var(--accent);color:#141925;vertical-align:middle">BETA</span></h1><p class="note" id="lockmsg">Checking…</p><p id="probox" hidden><button class="primary" id="procheck">Pro check</button></p><p class="note" id="rnhint" hidden>Is your Real username different from your board username? <a href="/username">Link your Real account</a> first.</p><p id="signinbtn" hidden><a class="btn" href="/?next=/swaps" style="display:inline-block;padding:10px 14px;border-radius:9px;background:#E8A33D;color:#141925;font-weight:700;text-decoration:none">Sign in</a></p><p class="note" id="signinhint" hidden>Signed in already? Open the board once - it will ask for your password one more time, then this page works. Opened this from inside Real? Use the browser you signed in with.</p><p><a href="/">Back to home</a></p></div>
+<div class="lock" id="lock" hidden><h1>Swaps <span style="font-size:11px;font-weight:800;padding:2px 7px;border-radius:6px;background:var(--accent);color:#141925;vertical-align:middle">BETA</span></h1><p class="note" id="lockmsg">Checking…</p><p id="probox" hidden><button class="primary" id="procheck">Pro check</button></p><p class="note" id="rnhint" hidden>Is your Real username different from your board username? <a href="/username">Link your Real account</a> first.</p><p id="signinbtn" hidden><a class="btn" href="/?next=/swaps" style="display:inline-block;padding:10px 14px;border-radius:9px;background:#E8A33D;color:#141925;font-weight:700;text-decoration:none">Sign in</a></p><p class="note" id="signinhint" hidden>Signed in already? Open the board once - it will ask for your password one more time, then this page works. Opened this from inside Real? Use the browser you signed in with.</p><p><span data-nav></span></p></div>
 <div class="lock" id="banbox" hidden style="max-width:520px"><h1>Swaps</h1><div id="banbody"></div></div>
 <div class="wrap" id="main" hidden>
   <div id="modnote" hidden style="margin:10px 0;padding:10px 12px;border-radius:10px;border:1px solid #ffc95a55;background:#ffc95a14;font-size:14px"></div>
-  <header class="hd3"><h1>Swaps <span class="beta">BETA</span></h1><span data-acct></span><a href="/">Back to home</a></header>
+  <header class="hd3"><h1>Swaps <span class="beta">BETA</span></h1><span data-acct></span><span data-nav></span></header>
   <div class="confbox" id="confbox" hidden><button type="button" class="confbtn" id="confbtn">CONFIRM TIMES FOR TODAY</button><p class="note" id="confmsg" style="margin:6px 2px 0"></p></div>
   <a class="hourgo" id="hourgo" href="#" hidden>Open your swap page <span>buy list, offers, packs today, players &amp; hours →</span></a>
   <div class="topbtns"><button class="tb rep" id="repopen">Report</button><button class="tb what" id="whatopen">What are swaps?</button></div>
@@ -1308,7 +1309,7 @@ function showBan(m){
       : (rq && rq.status === 'declined' ? `<p class="note">Your last unban request was declined${rq.answer ? ': ' + esc(rq.answer) : '.'}</p>` : '')
       + `<p style="text-align:left;margin-bottom:4px"><b>Request an unban</b></p><textarea id="unbantx" maxlength="1000" rows="4" style="width:100%;box-sizing:border-box" placeholder="What happened, and why you should get Swaps back"></textarea>
          <p><button class="primary" id="unbango">Send request</button></p><p class="note" id="unbanmsg"></p>`)
-    + '<p><a href="/">Back to home</a></p>';
+    + '<p><span data-nav></span></p>'; setTimeout(() => window.rbNavDraw && rbNavDraw(), 0);
   const go = $('#unbango'); if(!go) return;
   go.addEventListener('click', async () => {
     go.disabled = true; $('#unbanmsg').textContent = 'Sending…';

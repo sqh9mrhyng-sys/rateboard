@@ -356,6 +356,8 @@ function openUI(){
     <h3>Home layout</h3><label class="tg">Compact - two boxes a line<input type="checkbox" id="ui-compact"${UI.compact ? ' checked' : ''}></label><label class="tg">Hide descriptions - names only<input type="checkbox" id="ui-short"${UI.short ? ' checked' : ''}></label>
     <h3>Show on Home</h3><p class="note" style="margin:0 0 4px">Untick a page to hide its box. It's still in the menu and at its link.</p>
     ${pages.map(([h, t]) => `<label class="tg">${esc(t)}<input type="checkbox" data-page="${esc(h)}"${(UI.hidden || []).includes(h) ? '' : ' checked'}></label>`).join('')}
+    <h3 id="ui-menu">Show in the menu</h3><p class="note" style="margin:0 0 4px">The Menu dropdown at the top of every other page. Untick a page to leave it out; Home always stays.</p>
+    ${PAGES.filter(p => p[0] !== '/' && canOpen(p)).map(([h, t]) => `<label class="tg">${esc(t)}<input type="checkbox" data-navpage="${esc(h)}"${(UI.navHidden || []).includes(h) ? '' : ' checked'}></label>`).join('')}
     <p class="note" style="margin:14px 0 0">Saved to your account, so it follows you to other devices.</p></div>`;
   document.body.appendChild(el);
   el.addEventListener('click', e => { if(e.target === el || e.target.closest('[data-close]')) el.remove();
@@ -367,6 +369,7 @@ function openUI(){
     if(window.rbApplyTheme) rbApplyTheme('custom', c); const sw = el.querySelector('[data-theme="custom"] i'); if(sw && window.rbCustomTheme){ const t = rbCustomTheme(c); sw.innerHTML = `<b style="background:${t.bg};border:1px solid #555"></b><b style="background:${t.tile}"></b><b style="background:${t.accent}"></b>`; }
     clearTimeout(cwT); cwT = setTimeout(() => saveUI({ custom: c }), 600); });
   el.addEventListener('change', e => { if(e.target.id === 'ui-compact') saveUI({ compact: e.target.checked }); if(e.target.id === 'ui-short') saveUI({ short: e.target.checked });
+    if(e.target.dataset.navpage){ const h = new Set(UI.navHidden || []); e.target.checked ? h.delete(e.target.dataset.navpage) : h.add(e.target.dataset.navpage); saveUI({ navHidden: [...h] }); }
     if(e.target.dataset.page){ const h = new Set(UI.hidden || []); e.target.checked ? h.delete(e.target.dataset.page) : h.add(e.target.dataset.page); saveUI({ hidden: [...h] }); } });
 }
 $('#uibtn').addEventListener('click', openUI);
@@ -393,6 +396,8 @@ $('#uibtn').addEventListener('click', openUI);
   drawNav();
   // The account's saved look, from the server (it follows them to other devices).
   api('/api/kv', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'uiPrefs' }) }).then(r => { if(r && r.prefs){ UI = r.prefs; ls.set('rb_ui_v1', JSON.stringify(UI)); if(window.rbApplyTheme) rbApplyTheme(UI.theme || '', UI.custom); drawNav(); } });
+  // "Customize this menu" in the page menu lands here (2026-11-17): open the UI panel at that section.
+  if(/[?&]ui=menu\b/.test(location.search)){ try{ history.replaceState(null, '', '/'); }catch(e){} openUI(); setTimeout(() => { const h = document.getElementById('ui-menu'); if(h) h.scrollIntoView({ block: 'start' }); }, 60); }
   $('#lock').classList.add('hide'); $('#page').classList.remove('hide');
   // Unseen notifications: a count on the Notifications box (cleared when the page is opened).
   try{ const n = await api('/api/swaps?op=notifs'); const seen = Number(ls.get('rb_notifs_seen_v1') || 0);

@@ -36,6 +36,7 @@
   .empty{color:var(--mute);font-size:14px;padding:6px 2px}
 </style>
 <script src="/theme.js"></script>
+<script src="/nav.js"></script>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/favicon-48.png">
 <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
@@ -46,7 +47,7 @@
 <meta name="theme-color" content="#141925">
 </head>
 <body><div class="wrap">
-<div class="top"><a href="/" style="text-decoration:none;color:var(--ink);font-weight:900;font-size:20px">Rax Academy</a><a href="/">Back to home</a></div>
+<div class="top"><a href="/" style="text-decoration:none;color:var(--ink);font-weight:900;font-size:20px">Rax Academy</a><span data-nav></span></div>
 <h1>Notifications</h1>
 <div class="push" id="push" hidden>
   <div class="ph"><b>Push notifications</b><span class="pst" id="pst"></span></div>
@@ -187,7 +188,25 @@ const SEEN = 'rb_notifs_seen_v1', seen = Number(ls.get(SEEN) || 0);
     + `<b>${m.banned ? 'Your Swaps access is removed.' : m.strikes ? `${m.strikes} of ${m.max} strikes.` : (m.events || []).length ? 'A warning, no strikes.' : 'No warnings or strikes.'}</b>`
     + (m.events || []).map(e => `<div class="note">${e.kind === 'warn' ? 'Warning' : 'Strike ' + e.n} - swap at ${esc(e.when)}</div>`).join('')
     + (m.banned ? `<div class="note" style="margin-top:6px">You can ask for Swaps back on <a href="/swaps">the Swaps page</a>.${m.request ? ' Your request: ' + esc(m.request.status) + (m.request.answer ? ' - ' + esc(m.request.answer) : '') : ''}</div>` : '') + '</div>';
-  $('#reports').innerHTML = (j.reports || []).map(r => `<div class="item"><div class="meta"><span>${esc(r.what)}${r.about ? ' about @' + esc(r.about) : ''}</span><span>${when(r.ts)}</span></div>${r.detail ? `<div class="note">${esc(r.detail)}</div>` : ''}${pill(r.status)}${r.canTake ? ` <button class="tkb" data-take="${r.id}">Take back</button>` : ''}</div>`).join('') || '<div class="empty">You haven\'t reported anyone.</div>';
+  // Hide reports (2026-11-17): a Hide button on each, kept on the account; "Show hidden" brings them back.
+  let UIP = {}; try{ UIP = JSON.parse(ls.get('rb_ui_v1') || '{}') || {}; }catch(e){}
+  let hideReps = new Set(UIP.hideReps || []), showHid = false;
+  const rkey = r => String(r.id || '') + ':' + r.ts;
+  const drawReps = () => {
+    const all = j.reports || [], vis = all.filter(r => showHid || !hideReps.has(rkey(r))), nh = all.filter(r => hideReps.has(rkey(r))).length;
+    $('#reports').innerHTML = vis.map(r => { const h = hideReps.has(rkey(r)); return `<div class="item"${h ? ' style="opacity:.6"' : ''}><div class="meta"><span>${esc(r.what)}${r.about ? ' about @' + esc(r.about) : ''}</span><span>${when(r.ts)}</span></div>${r.detail ? `<div class="note">${esc(r.detail)}</div>` : ''}${pill(r.status)}${r.canTake ? ` <button class="tkb" data-take="${r.id}">Take back</button>` : ''} <button class="tkb" data-hide="${esc(rkey(r))}">${h ? 'Unhide' : 'Hide'}</button></div>`; }).join('')
+      || (all.length ? '<div class="empty">All your reports are hidden.</div>' : '<div class="empty">You haven\'t reported anyone.</div>');
+    if(nh) $('#reports').insertAdjacentHTML('beforeend', `<button class="tkb" id="rep-showhid" style="margin:8px 0 0">${showHid ? 'Hide them again' : `Show hidden (${nh})`}</button>`);
+  };
+  const saveHid = () => { UIP.hideReps = [...hideReps]; ls.set('rb_ui_v1', JSON.stringify(UIP));
+    fetch('/api/kv', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-rb-token': ls.get('ratebrd_token_v1') || '' }, body: JSON.stringify({ op: 'uiPrefs', set: { hideReps: [...hideReps] } }) }).catch(() => {}); };
+  drawReps();
+  $('#reports').addEventListener('click', e => {
+    if(e.target.id === 'rep-showhid'){ showHid = !showHid; drawReps(); return; }
+    const b = e.target.closest('[data-hide]'); if(!b) return; const k = b.dataset.hide;
+    hideReps.has(k) ? hideReps.delete(k) : hideReps.add(k); saveHid(); drawReps(); });
+  fetch('/api/kv', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-rb-token': ls.get('ratebrd_token_v1') || '' }, body: JSON.stringify({ op: 'uiPrefs' }) }).then(r => r.json()).then(p => {
+    if(p && p.prefs){ const n = new Set(p.prefs.hideReps || []); if([...n].join() !== [...hideReps].join()){ hideReps = n; UIP.hideReps = [...n]; ls.set('rb_ui_v1', JSON.stringify(UIP)); drawReps(); } } }).catch(() => {});
   $('#features').innerHTML = (j.features || []).map(f => `<div class="item"><div class="meta"><span>${esc(f.title)}</span><span>${when(f.ts)}</span></div>${pill(f.status)}</div>`).join('') || '<div class="empty">No feature requests yet - send one from Home.</div>';
   $('#news').innerHTML = (j.news || []).map(n => `<div class="item${isNew(n.ts)}"><div class="meta"><span>New</span><span>${day(n.ts)}</span></div>${esc(n.text)}</div>`).join('');
   ls.set(SEEN, String(Date.now()));
@@ -197,6 +216,7 @@ const SEEN = 'rb_notifs_seen_v1', seen = Number(ls.get(SEEN) || 0);
     b.disabled = true; b.textContent = 'Taking back…';
     let r = {}; try{ const t = ls.get('ratebrd_token_v1') || ''; r = await (await fetch('/api/swaps?op=reporttakeback', { method: 'POST', headers: { 'content-type': 'application/json', 'x-rb-token': t }, body: JSON.stringify({ id: Number(b.dataset.take) }) })).json(); }catch(x){ r = { error: 'Could not reach the site.' }; }
     if(r.error){ b.textContent = r.error; return; }
+    { const rr = (j.reports || []).find(x => String(x.id) === b.dataset.take); if(rr){ rr.canTake = false; rr.status = 'Taken back'; } }
     b.outerHTML = `<span class="note">Taken back${r.removed ? ` - their ${r.removed === 'warn' ? 'warning' : 'strike'} is removed` : ''}.</span>`; });
 })();
 </script>

@@ -80,6 +80,7 @@
   #toast.show{opacity:1}
 </style>
 <script src="/theme.js"></script>
+<script src="/nav.js"></script>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/favicon-48.png">
 <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
@@ -93,7 +94,7 @@
 <div class="wrap">
   <header>
     <h1>Admin</h1>
-    <span class="links"><a href="/">Home</a><a href="/board">Board</a><a href="/board#otd">OTD</a><a href="/board#gamedata">Game data</a><a href="/swaps">Swaps</a><a href="/bulk">Bulk</a><a href="/predictions">Predictions</a></span>
+    <span data-nav></span>
   </header>
 
   <section id="lock" class="hide"><p id="lockmsg">Checking your sign-in…</p><p class="note"><a href="/?next=/admin">Sign in</a> with an admin account.</p></section>
