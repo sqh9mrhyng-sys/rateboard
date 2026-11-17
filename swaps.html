@@ -17,9 +17,7 @@
   .confbtn.done{background:var(--panel2);color:var(--ok);border:1px solid var(--ok);font-size:15px;letter-spacing:0}
   .confbox{margin:0 0 12px}
   /* Top right, small and in the theme (Dennis, 2026-11-17). */
-  .hourgo{grid-column:3;justify-self:end;display:inline-block;padding:6px 11px;border-radius:999px;background:var(--panel);border:1px solid var(--line);color:var(--accent);font-weight:800;font-size:13px;text-decoration:none;white-space:nowrap}
   .hourgo[hidden]{display:none} .hourgo:hover{border-color:var(--accent)}
-  .hourgo span{display:block;font-weight:600;font-size:12.5px;opacity:.8;margin-top:2px}
   h1{font-size:20px;margin:0;font-weight:800}
   h2{font-size:16px;margin:0 0 6px}
   a{color:var(--accent)}
@@ -199,6 +197,21 @@
   .cdone{display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:12px;background:var(--panel);border:1px solid #3fbf7f66;color:var(--ink);font-weight:800;font-size:15px;text-decoration:none}
   .cdone[hidden]{display:none} .cdone .ck{display:inline-flex;width:24px;height:24px;border-radius:50%;background:#3fbf7f;color:#0e1a12;align-items:center;justify-content:center;font-size:14px} .cdone b{margin-left:auto;color:var(--accent)}
   .cok{margin:6px 2px 0;font-weight:700} .cok.good{color:#3fbf7f} .cok.bad{color:#ffc95a}
+
+  /* Top of the page (2026-11-17) */
+  header.swhd{display:flex!important;align-items:center;justify-content:space-between;gap:12px;margin:4px 0 14px}
+  header.swhd h1{font-size:28px;letter-spacing:-.02em;margin:0} header.swhd [data-acct]:empty{display:none}
+  .hourgo{display:grid;grid-template-columns:auto auto;grid-template-rows:auto auto;column-gap:10px;align-items:center;padding:8px 12px;border-radius:12px;background:var(--panel);border:1px solid var(--line);color:var(--ink);text-decoration:none;box-shadow:0 2px 10px rgba(0,0,0,.15)}
+  .hourgo[hidden]{display:none} .hourgo:hover{border-color:var(--accent)}
+  .hourgo .hg1{font-weight:800;font-size:14px;color:var(--accent)} .hourgo .hg2{grid-row:2;font-size:11.5px;color:var(--mute)} .hourgo b{grid-row:1/3;grid-column:2;font-size:18px;color:var(--accent)}
+  .herefor{display:grid!important;grid-template-columns:1fr 1fr;gap:6px;margin:0 0 14px}
+  .herefor button{padding:11px;font-weight:800;border-radius:10px}
+  .herefor button[aria-pressed="true"]{background:var(--accent);color:#141925;border-color:var(--accent)}
+  details.recb summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center} details.recb summary::-webkit-details-marker{display:none}
+  details.recb summary::after{content:'▾';color:var(--mute)} details.recb:not([open]) summary::after{content:'▸'}
+  .belowtg{display:block;width:100%;margin:12px 0;background:var(--panel);border:1px dashed var(--line);color:var(--mute);font-weight:800;padding:10px;border-radius:10px}
+  #below[hidden]{display:none}
+  .cdone .n{flex:none;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--ok,#3fbf7f);color:#141925;font-size:13px;font-weight:800}
 </style>
 <script src="/theme.js"></script>
 <script src="/nav.js?v=4"></script>
@@ -216,7 +229,7 @@
 <div class="lock" id="banbox" hidden style="max-width:520px"><h1>Swaps</h1><div id="banbody"></div></div>
 <div class="wrap" id="main" hidden>
   <div id="modnote" hidden style="margin:10px 0;padding:10px 12px;border-radius:10px;border:1px solid #ffc95a55;background:#ffc95a14;font-size:14px"></div>
-  <header class="hd3"><h1>Swaps</h1><span data-acct></span><a class="hourgo" id="hourgo" href="#" hidden>Open your swap page →</a></header>
+  <header class="hd3 swhd"><h1>Swaps</h1><span data-acct></span><a class="hourgo" id="hourgo" href="#" hidden><span class="hg1">Your swap page</span><span class="hg2">Buy list, offers &amp; hours</span><b>→</b></a></header>
   <div class="confbox" id="confbox" hidden><button type="button" class="confbtn" id="confbtn">CONFIRM TIMES FOR TODAY</button><p class="note" id="confmsg" style="margin:6px 2px 0"></p></div>
   <div class="topbtns"><button class="tb rep" id="repopen">Report</button><button class="tb what" id="whatopen">What are swaps?</button></div>
   <div class="repbox" id="repbox" hidden>
@@ -236,8 +249,10 @@
     <p class="note">A swap usually costs about <b>241 rax</b>. A legendary pass costs <b>9,200 at most</b> - top players make that back, or you resell.</p>
   </div>
   <p class="note acct">Real account <b id="rstop"></b> · <a href="/username">change</a></p>
+  <!-- What they're here for (Dennis, 2026-11-17): swaps, or only selling 160s - the 160 path hides the swap-only steps. -->
+  <div class="seg herefor" id="herefor" role="radiogroup" aria-label="What you're here for"><button type="button" data-hf="swaps">Swap packs</button><button type="button" data-hf="160">Just sell 160s</button></div>
 
-  <section id="s1">
+  <section id="s1" class="step">
     <h2><span class="n">1</span>Message the bot</h2>
     <div id="s1how">
       <p class="note">On Real, DM <b>@raxacademy.app</b> the word <b>#packswap</b>, then tap Check.</p>
@@ -247,9 +262,9 @@
     <div class="note" id="connmsg"></div>
   </section>
 
-  <section id="s2">
+  <section id="s2" class="step">
     <!-- Once a comment is saved, step 2 is one line (Dennis, 2026-11-17). -->
-    <a class="cdone" id="cdone" href="#" target="_blank" rel="noopener" hidden><span class="ck">✓</span> 1 comment on the swap post <b>→</b></a>
+    <a class="cdone" id="cdone" href="#" target="_blank" rel="noopener" hidden><span class="n">2</span><span class="ck">✓</span> 1 comment on the swap post <b>→</b></a>
     <div id="s2how">
     <h2><span class="n">2</span>Comment on the swap post</h2>
     <p class="note">Comment the player you want, then paste your comment's link here. Partners get it in their DM.</p>
@@ -259,7 +274,7 @@
     </div>
   </section>
 
-  <section>
+  <section class="step" id="spass">
     <h2><span class="n">3</span>Your passes</h2>
     <p class="note">Tick a box to keep that player out of swaps. Passes set untouchable on Real are kept automatically.</p>
     <div class="bar"><span class="note" hidden><span class="who" id="rsuser"></span></span><button class="primary wide" id="scan">Scan my passes</button></div>
@@ -271,17 +286,17 @@
       <p class="note sub" style="margin:4px 0 0">Resets when the swap day ends (7am ET). Your other sports keep swapping.</p></div>
     <div class="psum" id="psum" hidden style="margin-bottom:8px"><span id="psumtxt"></span><button id="ptoggle" class="sm">Done - collapse</button></div>
     <div class="bar" id="pctl" hidden>
-      <select id="pview" aria-label="View"><option value="all">All passes</option><option value="season">By season</option></select>
+      <select id="pview" aria-label="View"><option value="all">All passes</option><option value="season">By season</option><option value="locked">Your locked passes</option></select>
       <select id="psport" aria-label="Sport"><option value="">Every sport</option><option value="nba">NBA</option><option value="ncaam">CBB</option><option value="nfl">NFL</option><option value="ncaaf">CFB</option><option value="nhl">NHL</option><option value="mlb">MLB</option><option value="wnba">WNBA</option><option value="golf">Golf</option></select>
       <select id="prar" aria-label="Rarity"><option value="">Every rarity</option><option value="0">General</option><option value="1">Common</option><option value="2">Uncommon</option><option value="3">Rare</option><option value="4">Epic</option><option value="5">Legendary</option><option value="6">Mystic</option><option value="7">Iconic</option></select>
       <select id="psort" aria-label="Sort"><option value="rating">Highest rating</option><option value="low">Lowest rating</option><option value="name">Name</option></select>
       <input id="pq" placeholder="Find a player" autocomplete="off">
     </div>
     <div id="passes"></div>
-    <div class="recb" id="recb" hidden><b>Recommended buys for swaps</b><p class="note" id="recbnote" style="margin:2px 0 6px"></p><div id="recblist"></div></div>
+    <details class="recb" id="recb" hidden open><summary><b>Recommended buys for swaps</b></summary><p class="note" id="recbnote" style="margin:2px 0 6px"></p><div id="recblist"></div></details>
   </section>
 
-  <section>
+  <section class="step" id="swho">
     <h2><span class="n">4</span>Who you want</h2>
     <div id="wbody">
     <p class="note">Up to <b>10</b> of your passes. Top pick goes first.</p>
@@ -298,7 +313,7 @@
     </div>
   </section>
 
-  <section>
+  <section class="step" id="swhen">
     <h2><span class="n">5</span>When you can swap</h2>
     <p class="swapnote">You will get a DM 30 mins before this time with the players you're swapping. You're expected to have the packs by the time you selected - the idea is to speed swaps up for everyone and not need communication.</p>
     <div class="seg modeseg" id="hmode"><button data-m="daily">Every day</button><button data-m="weekly">By weekday</button><button data-m="date">One day</button></div>
@@ -309,7 +324,7 @@
     <p class="note sub">Every hour you pick counts the same. Number = people on that hour. Your time (<span id="tz"></span>). Saves as you tap.</p>
   </section>
 
-  <section>
+  <section class="step" id="s160sec">
     <h2><span class="n">6</span>160s / Niche <span class="opt">optional</span></h2>
     <p class="note">For packs that couldn't be matched in a swap. Both sides opt in.</p>
     <label class="o160"><input type="checkbox" id="s160"><span><b>Sell 160s</b><span class="sub">When you have a 160 the buyer takes all cards for minimum, you send 160 back on a random unowned card.</span></span></label>
@@ -329,7 +344,7 @@
     <p class="note sub" id="n160">Tap Save to keep changes. 160s use the same hours and limits as your swaps.</p>
   </section>
 
-  <section>
+  <section class="step" id="slim">
     <h2><span class="n">7</span>Limits <span class="opt">optional</span></h2>
     <div class="field"><label for="daycap">Swaps per day <span class="opt">all players</span></label>
       <input id="daycap" type="number" inputmode="numeric" min="1" step="1" placeholder="No limit"></div>
@@ -346,7 +361,7 @@
   </section>
 
   <!-- Blacklist (Dennis, 2026-11-11): members you never want to be matched with. -->
-  <section>
+  <section class="step" id="sbl">
     <h2><span class="n">8</span>Blacklist <span class="opt">optional</span></h2>
     <p class="note sub">Pick members you don't want to swap with. You won't be matched with them - swaps, 160s or niche - until you take them off. Upcoming ones not yet messaged are called off when you save.</p>
     <div class="field" style="position:relative"><label for="blq">Add a member</label>
@@ -356,9 +371,11 @@
   </section>
 
   <div class="savebar"><button class="primary big" id="save">Save my swap</button><span class="note" id="savemsg"></span></div>
-  <div class="bar two"><button id="pauseall">Pause all</button><button id="endall" class="danger">End all</button></div>
+  <div class="bar"><button id="pauseall" class="wide">Pause swaps</button></div>
   <span class="note" id="pausemsg"></span>
-  <p class="note sub"><b>Pause</b> = no new matches, and calls off every swap, 160 and niche buy not yet messaged (ones already messaged, or under 35 minutes away, still go ahead). <b>End all</b> = the same. Save to start again.</p>
+  <p class="note sub"><b>Pause swaps</b> = no new matches, and calls off every swap, 160 and niche buy not yet messaged (ones already messaged, or under 35 minutes away, still go ahead). Tap Save my swap to start again.</p>
+  <button type="button" class="belowtg" id="belowtg" aria-expanded="true">Hide everything below ▴</button>
+  <div id="below">
   <div class="bar"><button id="whynot" class="ghost">Why haven't I matched?</button></div>
   <div class="note" id="whyout"></div>
   <div class="saved" id="saved" hidden role="dialog" aria-modal="true" aria-labelledby="savedh"><div class="card"><div class="tick">✓</div><div class="big1" id="savedh">SAVED</div><div class="big2">YOU WILL RECEIVE A DM LATER</div><p class="note extra" id="savedx" hidden></p><button class="primary" id="savedok">Got it</button></div></div>
@@ -411,6 +428,7 @@
       <pre id="praw">Nothing fetched yet.</pre>
     </details>
   </section>
+  </div><!-- #below -->
 </div>
 <script>
 (() => {
@@ -747,12 +765,14 @@ function drawPasses(){
   if(!prof.passes.length){ $('#passes').innerHTML = prof.scannedAt ? '<p class="note">No player passes found.</p>' : ''; return; }
   const view = $('#pview').value, rar = $('#prar').value, psp = $('#psport').value, sort = $('#psort').value, q = $('#pq').value.trim().toLowerCase();
   let list = prof.passes.filter(p => !NO_SWAP.has(p.sport) && !isTeam(p) && !offSeason(p) && (!psp || p.sport === psp) && (rar === '' || String(tierOf(p)) === rar) && (!q || String(p.name || '').toLowerCase().includes(q)));
+  // Your locked passes (2026-11-17): ticked to keep, or untouchable on Real.
+  if(view === 'locked') list = list.filter(p => keep.has(p.key) || (!!p.untouchable && !(prof.touch || []).includes(p.key)));
   const cmp = sort === 'name' ? (a, b) => String(a.name).localeCompare(String(b.name))
     : sort === 'low' ? (a, b) => (a.rating || 0) - (b.rating || 0) : (a, b) => (b.rating || 0) - (a.rating || 0);
   list.sort(cmp);
   if(!list.length){ $('#passes').innerHTML = '<p class="note">No passes match.</p>'; return; }
-  if(view === 'all'){
-    $('#passes').innerHTML = `<p class="note">${list.length} passes</p>` + list.slice(0, 400).map(p => passRow(p, keep, true)).join('')
+  if(view === 'all' || view === 'locked'){
+    $('#passes').innerHTML = `<p class="note">${list.length} ${view === 'locked' ? 'locked ' : ''}passes</p>` + list.slice(0, 400).map(p => passRow(p, keep, true)).join('')
       + (list.length > 400 ? `<p class="note">Showing the top 400 of ${list.length} - pick a sport, a rarity or "By season", or search a name, to see the rest.</p>` : '');
     return;
   }
@@ -971,7 +991,7 @@ $('#pauseall').addEventListener('click', async () => {
   $('#pausemsg').innerHTML += (j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} called off.` : '')
     + (j.late ? ` <b>${j.late} swap${j.late === 1 ? ' was' : 's were'} already messaged or under 35 minutes away, so ${j.late === 1 ? 'it still goes' : 'they still go'} ahead - do ${j.late === 1 ? 'it' : 'them'}.</b>` : '');
 });
-$('#endall').addEventListener('click', async e => {
+if(document.getElementById('endall')) $('#endall').addEventListener('click', async e => {
   const b = e.currentTarget;
   if(b.dataset.armed !== '1'){ b.dataset.armed = '1'; b.textContent = 'Tap again to end all'; setTimeout(() => { b.dataset.armed = ''; b.textContent = 'End all swaps'; }, 4000); return; }
   b.dataset.armed = ''; b.textContent = 'End all swaps';
@@ -986,6 +1006,28 @@ function showSaved(extra){
 }
 /* 160s (2026-11-08): sell / buy opt-ins, and step 4's "only here to do 160s"
    (no swaps, no picks - step 4 folds to one button to go back to swaps). */
+/* Step numbers follow what's on screen (2026-11-17): a finished step 1 and the folded step 2 keep the rest
+   counting from where they are, so a verified member sees steps 1 to 7. */
+function renumber(){
+  let n = 0;
+  for(const sec of document.querySelectorAll('section.step')){
+    if(sec.hidden) continue; n++;
+    sec.querySelectorAll('.n').forEach(x => { x.textContent = n; });
+  }
+}
+document.addEventListener('click', e => { const b = e.target.closest('[data-hf]'); if(!b) return;
+  const want = b.dataset.hf === '160'; if(!!prof.only160 === want) return;
+  prof.only160 = want; if(want) prof.s160 = true; draw160();
+  if(want) $('#s160sec').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  $('#savemsg').textContent = want ? 'Pick your time(s) to sell, then tap Save my swap.' : 'Pick who you want and your hours, then tap Save my swap.'; });
+/* Everything under Pause swaps folds with one tap, remembered on this phone (2026-11-17). */
+function paintBelow(open){ $('#below').hidden = !open; $('#belowtg').setAttribute('aria-expanded', String(open)); $('#belowtg').textContent = open ? 'Hide everything below ▴' : 'Show your swaps & more ▾'; }
+setTimeout(() => { let o = true; try{ o = localStorage.getItem('swaps_below_open') !== '0'; }catch(e){} paintBelow(o);
+  $('#belowtg').addEventListener('click', () => { const o2 = $('#below').hidden; paintBelow(o2); try{ localStorage.setItem('swaps_below_open', o2 ? '1' : '0'); }catch(e){} });
+  // Recommended buys open or folded as last left.
+  try{ if(localStorage.getItem('swaps_recb_open') === '0') $('#recb').open = false; }catch(e){}
+  $('#recb').addEventListener('toggle', () => { try{ localStorage.setItem('swaps_recb_open', $('#recb').open ? '1' : '0'); }catch(e){} });
+}, 0);
 function draw160(){
   const only = !!prof.only160;
   $('#wbody').hidden = only; $('#w160').hidden = !only;
@@ -995,6 +1037,12 @@ function draw160(){
   $('#nicheopts').hidden = !$('#nichein').checked; { const l = prof.nicheLim || {}; $('#nicheh').value = l.h || 1; $('#niched').value = l.d || 2; }
   $('#s160').closest('.o160').classList.toggle('dis', only); $('#b160').closest('.o160').classList.toggle('dis', only);
   drawSell();
+  // Just selling 160s (2026-11-17): the swap-only steps go away and the 160 step is the one to fill in.
+  $('#swho').hidden = only; $('#swhen').hidden = only;
+  $('#b160').closest('.o160').hidden = only; { const o = $('#s160sec .opt'); if(o) o.hidden = only; }
+  document.querySelectorAll('[data-hf]').forEach(b => b.setAttribute('aria-pressed', String((b.dataset.hf === '160') === only)));
+  $('#only160on').closest('.bar').hidden = true;
+  renumber();
   $('#n160').textContent = only ? 'Only here for 160s: you sell 160s at the time(s) you pick above. Buying needs players picked, so it\'s off.' : 'Tap Save to keep changes. 160s use the same hours and limits as your swaps.';
 }
 $('#only160on').addEventListener('click', () => { prof.only160 = true; prof.s160 = true; draw160(); $('#savemsg').textContent = 'Tap Save to keep it.'; });
@@ -1233,7 +1281,7 @@ $('#repsend').addEventListener('click', async () => {
    pasting, a line says whether the link is right. */
 function paintComment(saved){
   const ok = SWAP_COMMENT_RE.test(saved || '');
-  $('#cdone').hidden = !ok; $('#s2how').hidden = ok; if(ok) $('#cdone').href = saved; $('#s2').classList.toggle('done', ok);
+  $('#cdone').hidden = !ok; $('#s2how').hidden = ok; if(ok) $('#cdone').href = saved; $('#s2').classList.toggle('done', ok); renumber();
 }
 function liveComment(){
   const v = $('#clink').value.trim(), m = $('#cok');
@@ -1256,6 +1304,7 @@ function paintConn(ok){
   $('#connect').style.display = ok ? 'none' : '';
   $('#s1how').hidden = !!ok; $('#s1').classList.toggle('ok', !!ok);
   $('#s1').hidden = !!ok;   // done: step 1 goes away (Dennis, 2026-11-17)
+  renumber();
 }
 $('#copytag').addEventListener('click', async () => {
   let ok = false; try{ await navigator.clipboard.writeText('#packswap'); ok = true; }catch(e){}
