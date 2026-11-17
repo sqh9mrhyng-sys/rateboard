@@ -675,6 +675,10 @@ async function predReal(env) {
   const toks = [env.RS_AUTH_TOKEN, env.RS_MARKET_TOKEN].filter(t => typeof t === 'string' && t.length > 20); if (!toks.length) return;
   const LK = 'pred_real_lock'; const lk = Number(await env.RATEBOARD_KV.get(LK)) || 0; if (Date.now() - lk < 55000) return; await env.RATEBOARD_KV.put(LK, String(Date.now()));
   let ti = 0;
+  if (!(await env.RATEBOARD_KV.get('pred_probe_v2'))) { const pr = {};
+    for (const sp of ['ncaaf', 'cfb', 'ufc', 'mma', 'soccer', 'fc', 'ncaam', 'mlb']) { try { const r = await fetch(`https://web.realapp.com/predictions/gamemarkets/${sp}`, { headers: rsHeaders(toks[ti++ % toks.length]) });
+      const j = r.ok ? await r.json() : null; const l = (j && j.gameMarkets) || []; pr[sp] = { st: r.status, n: l.length, keys: j ? Object.keys(j) : [], one: l[0] ? JSON.stringify({ ...l[0], probabilityHistory: undefined, ruleSections: undefined }).slice(0, 900) : null }; } catch (e) { pr[sp] = { e: e.message }; } await sleep(1500); }
+    await env.RATEBOARD_KV.put('pred_probe_v2', JSON.stringify(pr)); }
   for (let round = 0; round < 6; round++) {
     const t0 = Date.now();
     let odds = {}; try { odds = JSON.parse((await env.RATEBOARD_KV.get('pred_odds_v1')) || '{}') || {}; } catch (e) {}
@@ -682,7 +686,6 @@ async function predReal(env) {
     for (const sp of PRED_SPORTS) {
       let mk = [];
       try { const r = await fetch(`https://web.realapp.com/predictions/gamemarkets/${sp}`, { headers: rsHeaders(toks[ti++ % toks.length]) }); if (r.ok) mk = ((await r.json()) || {}).gameMarkets || []; else out.errs.push(`${sp} real ${r.status}`); } catch (e) { out.errs.push(`${sp} real ${e.message}`); }
-      if (mk[0] && sp === 'nhl') out.raw = JSON.stringify(mk[0]).slice(0, 1500);
       mk = mk.filter(m => !m.isSettled && Array.isArray(m.outcomes) && m.outcomes.length === 2);
       if (mk.length) openSports.push(sp);
       const names = ODDS_TEAMS[sp] || {}, nick = code => { const n = names[code]; return n ? normTeam(n).split(' ').pop() : null; };
@@ -8708,7 +8711,7 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predEv: await (async () => { const x = await kvj('pred_ev_v1'); return x ? { raw: x.raw, ids: (x.games || []).map(g => g.id).join(','), srcs: (x.games || []).map(g => (g.sources || []).length).join(','), at: x.at, n: (x.games || []).length,  errs: x.errs, credits: x.credits } : null; })(), draftTest: await (async () => { let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get('draft_contests_v1')) || '[]'); } catch (e) {}
+    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predEv: await (async () => { const x = await kvj('pred_ev_v1'); return x ? { probe: await kvj('pred_probe_v2'), srcs: (x.games || []).map(g => (g.sources || []).length).join(','), at: x.at, n: (x.games || []).length,  errs: x.errs, credits: x.credits } : null; })(), draftTest: await (async () => { let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get('draft_contests_v1')) || '[]'); } catch (e) {}
       const out = []; for (const c of l.filter(c => c.type === 'sport').slice(-30)) { const x = await kvj(`draft_v1_sport_${c.id}`);
         out.push({ id: c.id, sport: c.sport, day: c.day, n: x && x.players && x.players.length, teams: x && x.players ? [...new Set(x.players.map(p => p.team))].join(' ') : null }); }
       return { n: l.length, games: l.filter(c => c.type === 'game').length, gameDays: l.filter(c => c.type === 'game').map(c => `${c.id}:${c.sport}:${c.day}`).join(' '), sport: out }; })(), modVoid: await kvj('mod_void_1115_n'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
