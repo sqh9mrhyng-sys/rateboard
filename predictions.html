@@ -179,7 +179,7 @@
 <div id="vb" hidden><label class="keep"><input type="checkbox" id="keepb"> Keep games I bet on in Markets (marked as taken)</label><div class="sum" id="bsum"></div>
 <details class="bkbox" id="cbox"><summary>+ Add a custom bet</summary><p class="note" style="margin:6px 0">For a bet that isn't on the Markets tab. Add the opponent and sport and it'll be marked Won or Lost from ESPN's final score; otherwise mark it yourself.</p>
 <form id="cform" class="bf" style="padding:0 0 6px"><label>Your pick<input name="name" required maxlength="60" placeholder="e.g. Utah Mammoth" style="width:150px"></label><label>Opponent<input name="opp" maxlength="60" placeholder="optional" style="width:150px"></label>
-<label>Sport<select name="sport" style="display:block;margin-top:3px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 8px;font:inherit;font-size:16px"><option value="nba">NBA</option><option value="nhl">NHL</option><option value="nfl">NFL</option><option value="ncaaf">CFB</option><option value="ufc">UFC</option><option value="soccer">FC</option><option value="other">Other</option></select></label>
+<label>Sport<select name="sport" style="display:block;margin-top:3px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 8px;font:inherit;font-size:16px"><option value="nba">NBA</option><option value="nhl">NHL</option><option value="nfl">NFL</option><option value="ncaaf">CFB</option><option value="ncaam">CBB</option><option value="ufc">UFC</option><option value="soccer">FC</option><option value="other">Other</option></select></label>
 <label>Real %<input name="pct" type="number" inputmode="numeric" min="1" max="99" step="1" required></label><label>Rax bet<input name="amt" type="number" inputmode="numeric" min="1" step="1" required></label><button type="submit" class="place">Add bet</button></form></details>
 <div id="blist"></div></div>
 <div id="vr" hidden>
@@ -235,7 +235,7 @@ const pc = v => v == null ? '-' : (Math.round(v * 1000) / 10).toFixed(1) + '%';
 /* Team badge (2026-11-17): the logo in a round frame; with no logo, the team's colour with its short name. */
 const logo = (s, cls = '') => s.logo ? `<span class="lgw ${cls}"><img class="lg" src="${esc(s.logo)}" alt="" loading="lazy" onerror="this.parentNode.classList.add('nol');this.remove()"><em>${esc(String(s.key || s.label || '').slice(0, 4))}</em></span>`
   : `<span class="lgw nol ${cls}" style="--tc:${esc(s.color || '#4a5468')}"><em>${esc(String(s.key || s.label || s.name || '').slice(0, 4))}</em></span>`;
-const SPN = { nhl: 'NHL', nba: 'NBA', nfl: 'NFL', ncaaf: 'CFB', ufc: 'UFC', soccer: 'FC' };
+const SPN = { nhl: 'NHL', nba: 'NBA', nfl: 'NFL', ncaaf: 'CFB', ncaam: 'CBB', ufc: 'UFC', soccer: 'FC' };
 let J = null, chip = ls.get('pred_chip') || '';
 const MIN_FAIR = 0.07, MIN_EV_U = 0.02;
 let bank = Number(ls.get('pred_bank')) || 0;
@@ -346,7 +346,7 @@ function derive(g){
     return { ...s, fair, ev: fair != null && s.price > 0 ? fair / s.price - 1 : null }; });
   return { ...g, sides, sources: all.length ? [{ src: `${bk.length} book${bk.length === 1 ? '' : 's'}`, books: bk.map(b => b.t), bk: all }] : [], refs: showPoly ? g.refs : [] };
 }
-const SP_ORDER = ['nfl', 'ncaaf', 'nba', 'nhl', 'soccer', 'ufc'];
+const SP_ORDER = ['nfl', 'ncaaf', 'nba', 'ncaam', 'nhl', 'soccer', 'ufc'];
 const stable = (a, b) => (SP_ORDER.indexOf(a.sport) - SP_ORDER.indexOf(b.sport)) || ((Date.parse(a.start) || 0) - (Date.parse(b.start) || 0)) || (a.id - b.id);
 let endOpen = false;
 document.addEventListener('toggle', e => { if (e.target.classList && e.target.classList.contains('endbox')) endOpen = e.target.open; }, true);

@@ -234,6 +234,8 @@
   .allctl .note{font-size:12px}
   .allctl .chips button{padding:4px 10px;font-size:12px}
   .how>summary{font-size:13px}
+  /* Passes box gone (Dennis, 2026-11-17): Scan is at the top now; Read my boosters takes the whole row. */
+  .rdrow>.rd[hidden]{display:none} .rdrow{grid-template-columns:1fr !important} #scanmsg[hidden]{display:none !important}
 </style>
 <script src="/theme.js"></script>
 <script src="/nav.js?v=4"></script>
@@ -257,10 +259,10 @@
     <!-- Read my passes / Read my boosters (Dennis, 2026-11-09), each opening a breakdown. -->
     <section class="reads">
       <div class="rdrow">
-        <div class="rd"><button class="rdx" id="passx" type="button" aria-expanded="false">Breakdown <span class="chev">▾</span></button></div>
+        <div class="rd" hidden><button class="rdx" id="passx" type="button" aria-expanded="false">Breakdown <span class="chev">▾</span></button></div>
         <div class="rd bst"><button class="rdgo" id="invgo" type="button">Read my boosters</button><button class="rdx" id="invx" type="button" aria-expanded="false">Breakdown <span class="chev">▾</span></button></div>
       </div>
-      <span class="note" id="scanmsg"></span>
+      <span class="note" id="scanmsg" hidden></span>
       <div class="rdb" id="passbody" hidden>
         <label class="note">Real username <input id="rsuser" placeholder="Real username" autocomplete="off"></label>
         <div id="passout"></div>

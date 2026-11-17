@@ -636,17 +636,17 @@ async function draftProbe(env) {
    alone when it's there, else the average of all). EV = fair chance / Real's price - 1 (what a
    rax returns on average). Saved in KV for the page. The API key lives only in the server's
    settings (ODDS_API_KEY). */
-const PRED_SPORTS = ['nhl', 'nba', 'nfl', 'ncaaf', 'ufc', 'soccer'];
+const PRED_SPORTS = ['nhl', 'nba', 'nfl', 'ncaaf', 'ncaam', 'ufc', 'soccer'];   // CBB added 2026-11-17
 /* The books (Dennis, 2026-11-16): Pinnacle, BetMGM, Novig, DraftKings, FanDuel, Kalshi and Caesars,
    Pinnacle counting double. Polymarket comes along as a comparison only. 8 books = 1 credit a call. */
 const PRED_BOOKS = ['pinnacle', 'betmgm', 'novig', 'draftkings', 'fanduel', 'kalshi', 'williamhill_us', 'polymarket'];
 const PRED_W = { pinnacle: 2 };
 const PRED_REF = { polymarket: 1 };
 const normTeam = t => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
-const ESPN_PATH_PRED = { nhl: 'hockey/nhl', nba: 'basketball/nba', nfl: 'football/nfl', ncaaf: 'football/college-football' };
+const ESPN_PATH_PRED = { nhl: 'hockey/nhl', nba: 'basketball/nba', nfl: 'football/nfl', ncaaf: 'football/college-football', ncaam: 'basketball/mens-college-basketball' };
 const decOf = ml => { const m = Number(String(ml == null ? '' : ml).replace(/^EVEN$/i, '100')); return !Number.isFinite(m) || m === 0 ? null : m > 0 ? 1 + m / 100 : 1 + 100 / -m; };
 // How long a game runs, for knowing when it's live (hours).
-const PRED_LEN = { icehockey_nhl: 3, basketball_nba: 2.75, americanfootball_nfl: 3.75, americanfootball_ncaaf: 4, mma_mixed_martial_arts: 6 };
+const PRED_LEN = { icehockey_nhl: 3, basketball_nba: 2.75, americanfootball_nfl: 3.75, americanfootball_ncaaf: 4, basketball_ncaab: 2.25, mma_mixed_martial_arts: 6 };
 const predLen = k => PRED_LEN[k] || (/^soccer/.test(k) ? 2.25 : 3);
 // A side's price with the margin taken out: {name: chance}.
 const devig = pairs => { const t = pairs.reduce((a, [, d]) => a + 1 / d, 0); const o = {}; for (const [n, d] of pairs) o[n] = (1 / d) / t; return o; };
@@ -677,7 +677,7 @@ async function predOdds(env) {
          2026-11-17), so ask for today and tomorrow by Eastern date. */
       const ymd = t => new Date(t).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }).replace(/-/g, '');
       const evs = [], seenEv = new Set();
-      for (const dt of [ymd(Date.now()), ymd(Date.now() + 86400000)]) { try { const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${ESPN_PATH_PRED[sp]}/scoreboard?dates=${dt}${sp === 'ncaaf' ? '&groups=80&limit=300' : ''}`); const d = r.ok ? await r.json() : null;
+      for (const dt of [ymd(Date.now()), ymd(Date.now() + 86400000)]) { try { const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${ESPN_PATH_PRED[sp]}/scoreboard?dates=${dt}${sp === 'ncaaf' ? '&groups=80&limit=300' : sp === 'ncaam' ? '&groups=50&limit=400' : ''}`); const d = r.ok ? await r.json() : null;
         for (const ev of ((d && d.events) || [])) if (!seenEv.has(ev.id)) { seenEv.add(ev.id); evs.push(ev); } } catch (e) {} }
       const games = [];
       for (const ev of evs) { const c = (ev.competitions || [])[0] || {}, od = (c.odds || [])[0], h = (c.competitors || []).find(x => x.homeAway === 'home'), w = (c.competitors || []).find(x => x.homeAway === 'away');
