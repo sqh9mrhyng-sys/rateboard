@@ -73,6 +73,7 @@
   .sheet .x{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:6px 12px;font-weight:700}
   .thm{display:grid;grid-template-columns:repeat(4,1fr);gap:8px} .thm button{border:2px solid var(--line);border-radius:12px;padding:10px 4px 8px;background:var(--panel2);font-size:12px;font-weight:700}
   .thm button[aria-pressed="true"]{border-color:var(--accent)} .thm i{display:flex;justify-content:center;gap:3px;margin-bottom:6px} .thm i b{width:14px;height:14px;border-radius:50%;display:block}
+  .nvb{display:flex;align-items:center;gap:6px} .nvb button{width:34px;height:30px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);font-size:13px;cursor:pointer;padding:0} .nvb button:disabled{opacity:.3;cursor:default} .nvb input{margin-left:6px}
   .tg{display:flex;justify-content:space-between;align-items:center;padding:10px 2px;border-top:1px solid var(--line);font-weight:700} .tg input{width:22px;height:22px;accent-color:var(--accent)} .tg input.cw{width:52px;height:34px;padding:0;border:1px solid var(--line);border-radius:8px;background:none;cursor:pointer}
   .hsign{display:flex;flex-direction:column;gap:10px;text-align:left}
   .hsign input{font:inherit;font-size:16px;padding:12px 14px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
@@ -344,6 +345,17 @@ $('#hs-rcopy').addEventListener('click', async () => {
 const THEME_NAMES = { custom: 'Your own', '': 'Classic', midnight: 'Midnight', ocean: 'Ocean', forest: 'Forest', plum: 'Plum', crimson: 'Crimson', slate: 'Slate' };
 async function saveUI(part){ Object.assign(UI, part); ls.set('rb_ui_v1', JSON.stringify(UI)); drawNav();
   await api('/api/kv', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'uiPrefs', set: part }) }); }
+// The page menu's order and pages (2026-11-17): arrows move a page, the tick shows or hides it.
+function navOrdered(){
+  const list = PAGES.filter(p => p[0] !== '/' && canOpen(p)); let o = UI.navOrder || [];
+  if(!o.length){ try{ o = JSON.parse(ls.get(ORDER) || '[]') || []; }catch(e){} }
+  const pos = (h, i) => { const k = o.indexOf(h); return k < 0 ? 1e3 + i : k; };
+  return list.map((p, i) => [p, pos(p[0], i)]).sort((a, b) => a[1] - b[1]).map(x => x[0]);
+}
+function navRows(){
+  const l = navOrdered();
+  return l.map(([h, t], i) => `<div class="tg nvr"><span>${esc(t)}</span><span class="nvb"><button type="button" data-nmove="-1" data-nh="${esc(h)}" aria-label="Move ${esc(t)} up"${i ? '' : ' disabled'}>&#9650;</button><button type="button" data-nmove="1" data-nh="${esc(h)}" aria-label="Move ${esc(t)} down"${i < l.length - 1 ? '' : ' disabled'}>&#9660;</button><input type="checkbox" data-navpage="${esc(h)}"${(UI.navHidden || []).includes(h) ? '' : ' checked'} aria-label="Show ${esc(t)} in the menu"></span></div>`).join('');
+}
 function openUI(){
   const T = window.RB_THEMES || {}, cls = { '': { bg: '#141925', accent: '#E8A33D', tile: '#3d6fd6' } };
   const pages = PAGES.filter(p => p[0] !== '/' && p[0] !== '/notifications' && canOpen(p));
@@ -356,11 +368,13 @@ function openUI(){
     <h3>Home layout</h3><label class="tg">Compact - two boxes a line<input type="checkbox" id="ui-compact"${UI.compact ? ' checked' : ''}></label><label class="tg">Hide descriptions - names only<input type="checkbox" id="ui-short"${UI.short ? ' checked' : ''}></label>
     <h3>Show on Home</h3><p class="note" style="margin:0 0 4px">Untick a page to hide its box. It's still in the menu and at its link.</p>
     ${pages.map(([h, t]) => `<label class="tg">${esc(t)}<input type="checkbox" data-page="${esc(h)}"${(UI.hidden || []).includes(h) ? '' : ' checked'}></label>`).join('')}
-    <h3 id="ui-menu">Show in the menu</h3><p class="note" style="margin:0 0 4px">The Menu dropdown at the top of every other page. Untick a page to leave it out; Home always stays.</p>
-    ${PAGES.filter(p => p[0] !== '/' && canOpen(p)).map(([h, t]) => `<label class="tg">${esc(t)}<input type="checkbox" data-navpage="${esc(h)}"${(UI.navHidden || []).includes(h) ? '' : ' checked'}></label>`).join('')}
+    <h3 id="ui-menu">Show in the menu</h3><p class="note" style="margin:0 0 4px">The Menu at the top of every other page. Use the arrows to move a page, untick it to leave it out. Home always stays first.</p>
+    <div id="ui-navlist">${navRows()}</div>
     <p class="note" style="margin:14px 0 0">Saved to your account, so it follows you to other devices.</p></div>`;
   document.body.appendChild(el);
   el.addEventListener('click', e => { if(e.target === el || e.target.closest('[data-close]')) el.remove();
+    const mv = e.target.closest('[data-nmove]'); if(mv){ const o = navOrdered().map(p => p[0]), i = o.indexOf(mv.dataset.nh), j = i + Number(mv.dataset.nmove);
+      if(i >= 0 && j >= 0 && j < o.length){ [o[i], o[j]] = [o[j], o[i]]; saveUI({ navOrder: o }); const box = el.querySelector('#ui-navlist'); box.innerHTML = navRows(); const nb = box.querySelector(`[data-nh="${CSS.escape(mv.dataset.nh)}"][data-nmove="${mv.dataset.nmove}"]`); if(nb && !nb.disabled) nb.focus(); } return; }
     const b = e.target.closest('[data-theme]'); if(b){ const k = b.dataset.theme; el.querySelectorAll('[data-theme]').forEach(x => x.setAttribute('aria-pressed', x === b)); if(window.rbApplyTheme) rbApplyTheme(k, UI.custom); el.querySelector('#ui-own').hidden = k !== 'custom'; saveUI({ theme: k }); }
     if(e.target.id === 'ui-reset'){ const c = { bg: '#141925', tile: '#3d6fd6', accent: '#E8A33D' }; el.querySelectorAll('.cw').forEach(x => { x.value = c[x.dataset.c]; }); UI.custom = c; if(window.rbApplyTheme) rbApplyTheme('custom', c); saveUI({ custom: c }); } });
   // Colour wheel: shows as you drag, saves when you let go.
@@ -396,8 +410,8 @@ $('#uibtn').addEventListener('click', openUI);
   drawNav();
   // The account's saved look, from the server (it follows them to other devices).
   api('/api/kv', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'uiPrefs' }) }).then(r => { if(r && r.prefs){ UI = r.prefs; ls.set('rb_ui_v1', JSON.stringify(UI)); if(window.rbApplyTheme) rbApplyTheme(UI.theme || '', UI.custom); drawNav(); } });
-  // "Customize this menu" in the page menu lands here (2026-11-17): open the UI panel at that section.
-  if(/[?&]ui=menu\b/.test(location.search)){ try{ history.replaceState(null, '', '/'); }catch(e){} openUI(); setTimeout(() => { const h = document.getElementById('ui-menu'); if(h) h.scrollIntoView({ block: 'start' }); }, 60); }
+  // "Customize this menu" in the page menu lands here (2026-11-17): opens the UI panel.
+  if(/[?&]ui=/.test(location.search)){ try{ history.replaceState(null, '', '/'); }catch(e){} openUI(); }
   $('#lock').classList.add('hide'); $('#page').classList.remove('hide');
   // Unseen notifications: a count on the Notifications box (cleared when the page is opened).
   try{ const n = await api('/api/swaps?op=notifs'); const seen = Number(ls.get('rb_notifs_seen_v1') || 0);
