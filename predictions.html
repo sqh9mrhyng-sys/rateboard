@@ -334,9 +334,16 @@ function drawBets(){
   const now = new Map((J.games || []).map(g => [g.id, derive(g)]));
   const act = BETS.filter(b => !b.res), done = BETS.filter(b => b.res);
   $('#bn').textContent = act.length ? `(${act.length})` : '';
-  const staked = act.reduce((a, b) => a + (b.amt || 0), 0), payOf = b => b.pay != null ? b.pay : b.price > 0 ? (b.amt || 0) / b.price : 0, pot = act.reduce((a, b) => a + payOf(b), 0);
+  const staked = act.reduce((a, b) => a + (b.amt || 0), 0), payOf = b => b.pay != null ? b.pay : b.price > 0 ? (b.amt || 0) / b.price : 0, potG = (() => {
+    /* Only one side of a game can win (2026-11-16: two-sided bets were being added together). Per game:
+       best case = the side that pays most, guaranteed = the side that pays least (0 unless every side is covered). */
+    const by = new Map(); for (const b of act) { const k = b.gid > 0 ? 'g' + b.gid : 'i' + b.id; if (!by.has(k)) by.set(k, []); by.get(k).push(b); }
+    let hi = 0, lo = 0; for (const l of by.values()) { const g = now.get(l[0].gid), n = g ? g.sides.length : 2, per = new Map();
+      for (const b of l) per.set(b.side, (per.get(b.side) || 0) + payOf(b));
+      const v = [...per.values()]; hi += Math.max(...v); lo += per.size >= n && l[0].gid > 0 ? Math.min(...v) : 0; }
+    return { hi, lo }; })(), pot = potG.hi;
   const pl = done.reduce((a, b) => a + (b.res === 'won' ? payOf(b) - (b.amt || 0) : -(b.amt || 0)), 0);
-  $('#bsum').innerHTML = `<div><b>${Math.round(staked).toLocaleString()}</b><span>rax in play</span></div><div><b class="pos">${Math.round(pot).toLocaleString()}</b><span>potential payout</span></div><div><b class="${pl >= 0 ? 'pos' : 'neg'}">${pl >= 0 ? '+' : ''}${Math.round(pl).toLocaleString()}</b><span>settled profit</span></div>`;
+  $('#bsum').innerHTML = `<div><b>${Math.round(staked).toLocaleString()}</b><span>rax in play</span></div><div><b class="pos">${Math.round(pot).toLocaleString()}</b><span>potential payout${potG.lo > 0 ? ` · ${Math.round(potG.lo).toLocaleString()} guaranteed` : ''}</span></div><div><b class="${pl >= 0 ? 'pos' : 'neg'}">${pl >= 0 ? '+' : ''}${Math.round(pl).toLocaleString()}</b><span>settled profit</span></div>`;
   const row = b => { const g = now.get(b.gid), sd = g && g.sides[b.side], auto = b.price > 0 ? (b.amt || 0) / b.price : 0, pay = b.pay != null ? b.pay : auto;
     const st = b.res ? `<span class="tag ${b.res === 'won' ? 'won' : 'lost'}">${b.res === 'won' ? 'Won' : 'Lost'}${b.auto ? ' · auto' : ''}</span>` : !g || g.ended ? `<span class="tag">${b.custom ? 'Custom' : 'Waiting for result'}</span>` : g.live ? '<span class="tag live">● LIVE</span>' : when(g);
     return `<div class="g bet"><div class="gh">${b.logo ? `<img class="lg" src="${esc(b.logo)}" alt="" loading="lazy" style="margin-right:8px">` : ''}<div style="min-width:0;flex:1"><span class="nm">${esc(b.name)}</span><div class="meta"><span class="tag">${esc(SPN[b.sport] || b.sport)}</span>${st}<span class="note">${esc(b.game)}</span></div></div>${b.link ? `<a class="go" href="${esc(b.link)}" target="_blank" rel="noopener">Open ↗</a>` : ''}</div>
