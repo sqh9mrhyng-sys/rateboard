@@ -216,6 +216,11 @@
         <p class="note" style="margin:0 0 8px">Swaps reports, board member reports and feature requests. When the sender has a chat with the bot, your reply and the outcome are sent to them on Real.</p>
         <div class="bar"><select id="ib-f"><option value="">All</option><option value="swap">Swaps reports</option><option value="board">Board reports</option><option value="feature">Feature requests</option></select><button id="ib-load" class="sm">Refresh</button></div>
         <div id="ib-list" class="note">Loading…</div></section>
+      <!-- Push notifications (Dennis, 2026-11-17): who has them on. -->
+      <section><h2>Push notifications <span class="note" id="pu-n"></span></h2>
+        <p class="note" style="margin:0 0 8px">Members with notifications on for at least one device, newest first.</p>
+        <div class="bar"><button id="pu-load" class="sm">Refresh</button><input id="pu-q" placeholder="Filter by username" autocomplete="off" style="flex:1"></div>
+        <div id="pu-list" class="note">Loading…</div></section>
       <section><h2>Moderation <span class="note" id="md-n"></span></h2>
         <p class="note" style="margin:0 0 8px">Automatic, every 10 minutes: only a reporter's first report on someone counts, and only if they really had a swap or 160 together that wasn't called off. 1st counted report = warning; every report after = a strike, but all reports on one swap time make one strike. 3 strikes takes Swaps away (nothing else). Approving an unban gives Swaps back and clears their record.</p>
         <div class="bar"><button id="md-load" class="sm">Refresh</button><button id="md-dry" class="sm">Preview a run</button><button id="md-run" class="sm">Run now</button><span class="note" id="md-msg"></span></div>
@@ -824,6 +829,19 @@ async function loadTop(){
   $('#ts-list').innerHTML = j.rows.length ? '<ol style="margin:0;padding-left:22px">' + j.rows.slice(0, 15).map(r => `<li><b>@${esc(r.rsUser)}</b> - ${r.n.toLocaleString()} swap${r.n === 1 ? '' : 's'}</li>`).join('') + '</ol>' : 'No swaps yet.';
 }
 $('#ts-load').addEventListener('click', loadTop); $('#ts-days').addEventListener('change', loadTop);
+/* ---------- push notifications ---------- */
+let PU = [];
+const puAgo = t => { const m = Math.round((Date.now() - t) / 60000); return m < 60 ? m + 'm ago' : m < 2880 ? Math.round(m / 60) + 'h ago' : Math.round(m / 1440) + 'd ago'; };
+function drawPush(){
+  const q = $('#pu-q').value.trim().toLowerCase(), l = PU.filter(r => !q || String(r.who).toLowerCase().includes(q));
+  $('#pu-n').textContent = PU.length ? `${PU.length} member${PU.length === 1 ? '' : 's'} · ${PU.reduce((t, r) => t + r.devices, 0)} devices` : '';
+  $('#pu-list').innerHTML = l.length ? `<table style="width:100%;border-collapse:collapse;font-size:13px"><tr style="text-align:left;color:var(--mute)"><th>Member</th><th>Devices</th><th>Swaps</th><th>Boosts</th><th>Messages</th><th>On since</th></tr>`
+    + l.map(r => `<tr style="border-top:1px solid var(--line)"><td style="padding:6px 4px"><b>@${esc(r.who)}</b></td><td>${r.devices} <span class="note">${esc(r.kinds.join(', '))}</span></td><td>${r.swaps ? '✓' + (r.noDm ? ' <span class="note">no DMs</span>' : '') : '-'}</td><td>${r.boosts ? esc(r.boosts) : '-'}</td><td>${r.notes ? '✓' : '-'}</td><td class="note">${puAgo(r.first)}</td></tr>`).join('') + '</table>'
+    : PU.length ? 'No one matches.' : 'Nobody has turned notifications on yet.';
+}
+async function loadPush(){ const j = await api('/api/swaps?op=pushusers'); if (j.error) { $('#pu-list').textContent = j.error; return; } PU = j.rows || []; drawPush(); }
+$('#pu-load').addEventListener('click', loadPush); $('#pu-q').addEventListener('input', drawPush);
+setTimeout(loadPush, 300);
 /* ---------- moderation ---------- */
 /* Appeals and held reports (2026-11-16). */
 async function loadAppeals(){

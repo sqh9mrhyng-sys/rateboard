@@ -7641,6 +7641,23 @@ async function handle({ request, env, waitUntil }) {
     const rows = ((await db.prepare("SELECT a.*, u.rsUser FROM mod_appeals a LEFT JOIN swap_users u ON u.key = a.key ORDER BY CASE WHEN a.status='open' THEN 0 ELSE 1 END, a.id DESC LIMIT 60").all()).results) || [];
     return json({ rows: rows.map(r => ({ ...r, when: modTime(r.period) })) });
   }
+  /* Who has push notifications on (Dennis, 2026-11-17, Admin): members with at least one device, how many,
+     when they turned it on, and which kinds they have on. */
+  if (op === 'pushusers') {
+    if (!acc.admin) return forbidden('Admin only.');
+    await db.prepare(PUSH_DDL).run();
+    const rows = ((await db.prepare('SELECT key, COUNT(*) AS n, MIN(at) AS first, MAX(at) AS last, GROUP_CONCAT(ua, ' + "'|'" + ') AS uas FROM push_subs GROUP BY key ORDER BY last DESC').all()).results) || [];
+    const out = [];
+    for (const r of rows.slice(0, 1000)) {
+      const p = await pushPrefs(env, r.key), u = await db.prepare('SELECT rsUser FROM swap_users WHERE key=?').bind(r.key).first().catch(() => null);
+      const sw = p.swaps || {}, bo = p.boosts || {};
+      const dev = String(r.uas || '').split('|').map(x => /iPhone|iPad/.test(x) ? 'iPhone' : /Android/.test(x) ? 'Android' : /Mac/.test(x) ? 'Mac' : /Windows/.test(x) ? 'PC' : 'Other');
+      out.push({ who: (u && u.rsUser) || r.key, devices: Number(r.n) || 0, kinds: [...new Set(dev)], first: r.first, last: r.last,
+        swaps: !!sw.on, boosts: !!bo.on ? (bo.all ? 'all' : Object.entries(bo.sports || {}).filter(([, x]) => x.on).map(([k]) => BOOST_PUSH_SP[k]).join(', ') || 'none') : '', notes: !p.notes || p.notes.on !== false,
+        noDm: !!sw.on && (sw.dmWarn === false || sw.dmLive === false) });
+    }
+    return json({ rows: out });
+  }
   if (op === 'modheld') {
     if (!acc.admin) return forbidden('Admin only.');
     if (request.method === 'POST') { let b = {}; try { b = await request.json(); } catch (e) {}
