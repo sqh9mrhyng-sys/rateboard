@@ -73,6 +73,8 @@
   .lg{width:28px;height:28px;object-fit:contain;flex:none;margin-top:1px}
 .bf{display:flex;gap:8px;align-items:flex-end;padding:0 14px 12px;flex-wrap:wrap} .bf label{font-size:12px;color:var(--mute);font-weight:700} .bf input{display:block;width:96px;margin-top:3px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;font-size:16px}
   .bfx{background:none;border:0;color:var(--mute);font-size:16px;cursor:pointer;padding:6px}
+.keep{display:flex;gap:8px;align-items:center;font-size:14px;font-weight:700;margin:10px 0 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+  .tk{background:rgba(232,163,61,.12);color:var(--accent);font-size:12px;font-weight:800;padding:6px 14px;border-bottom:1px solid var(--line)} .g.taken{border-color:rgba(232,163,61,.45)}
   .upto{font-size:12px;color:var(--mute)} .upto b{color:var(--ink)}
   .place{white-space:nowrap;align-self:flex-start}
   .place,.bact button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 10px;font:inherit;font-size:13px;font-weight:800;cursor:pointer}
@@ -104,7 +106,7 @@
 <p class="note">Only you and the members below can see this page. This tab goes away when it's public.</p>
 <input id="aq" type="search" placeholder="Search a member by username" autocomplete="off" style="width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;font-size:16px">
 <div id="ares"></div><h2>Has access</h2><div id="alist"><p class="note">Loading…</p></div></section></div>
-<div id="vb" hidden><div class="sum" id="bsum"></div><div id="blist"></div></div>
+<div id="vb" hidden><label class="keep"><input type="checkbox" id="keepb"> Keep games I bet on in Markets (marked as taken)</label><div class="sum" id="bsum"></div><div id="blist"></div></div>
 <div id="vg" hidden>
 <section class="guide">
 <h2>What EV means</h2>
@@ -212,7 +214,8 @@ function tick(){
 let offBooks = new Set(JSON.parse(ls.get('pred_off_books') || '[]')), showPoly = ls.get('pred_poly') !== '0';
 let collapsed = new Set(JSON.parse(ls.get('pred_collapsed2') || '[]'));
 let BETS = [];
-const betGids = () => new Set(BETS.filter(b => !b.res).map(b => b.gid));
+let keepBets = ls.get('pred_keepbets') === '1';
+const betGids = () => keepBets ? new Set() : new Set(BETS.filter(b => !b.res).map(b => b.gid));
 const allBooks = () => [...new Set((J.games || []).flatMap(g => (g.sources || []).flatMap(x => (x.bk || []).map(b => b.t))))].sort();
 function derive(g){
   // Pinnacle is pregame only (Dennis, 2026-11-16): its live line lags, so it drops out once the game starts.
@@ -232,7 +235,8 @@ const stable = (a, b) => (SP_ORDER.indexOf(a.sport) - SP_ORDER.indexOf(b.sport))
 function card(g){
   const srcs = g.sources || [];
   const c = collapsed.has(String(g.id)), bestS = g.sides.reduce((a, x) => (x.ev ?? -9) > (a.ev ?? -9) ? x : a, g.sides[0]);
-  return `<div class="g${g.sides.some(s => units(g, s)) ? ' hot' : ''}${c ? ' col' : ''}">
+  const took = BETS.filter(b => !b.res && b.gid === g.id);
+  return `<div class="g${g.sides.some(s => units(g, s)) ? ' hot' : ''}${c ? ' col' : ''}${took.length ? ' taken' : ''}">${took.length ? `<div class="tk">✓ You took ${took.map(b => `${esc(b.name)} at ${pw(b.price)}${b.amt ? ` · ${Math.round(b.amt).toLocaleString()} rax` : ''}`).join(', ')}</div>` : ''}
     <div class="gh"><button class="cl" data-cl="${g.id}" aria-label="${c ? 'Expand' : 'Collapse'}">${c ? '▸' : '▾'}</button><div style="min-width:0;flex:1">
       ${g.path ? `<a class="nm" href="https://www.realapp.com${esc(g.path)}" target="_blank" rel="noopener">${esc(g.game)}</a>` : `<span class="nm">${esc(g.game)}</span>`}
       <div class="meta"><span class="tag">${esc(SPN[g.sport] || g.sport)}</span>${when(g)}${thin(g) && bkOf(g).length ? '<span class="tag lock" title="Too few books or lines too old to trust the EV">Thin odds</span>' : ''}${g.volume ? `<span class="tag">${esc(g.volume)} vol</span>` : ''}</div></div>
@@ -316,6 +320,8 @@ $('#list').addEventListener('submit', e => { const f = e.target.closest('form.bf
   const pct = Number(f.pct.value), amt = Number(f.amt.value); if (!(pct > 0 && pct < 100) || !(amt > 0)) return;
   const btn = f.querySelector('button[type=submit]'); btn.disabled = true; btn.textContent = 'Saving…';
   placeBet(Number(f.dataset.g), Number(f.dataset.s), null, pct, amt); });
+$('#keepb').checked = keepBets;
+$('#keepb').addEventListener('change', e => { keepBets = e.target.checked; ls.set('pred_keepbets', keepBets ? '1' : '0'); if (J && J.games) draw(); });
 let amtT = 0;
 $('#blist').addEventListener('input', e => { const i = e.target.closest('[data-amt]'); if (!i) return; clearTimeout(amtT);
   const b = BETS.find(x => x.id === i.dataset.amt); if (b) { b.amt = Number(i.value) || 0; const pi = i.closest('.bamt').querySelector('[data-pay]'); if (pi && b.pay == null && b.price > 0) pi.value = Math.round(b.amt / b.price); }
