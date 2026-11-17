@@ -529,7 +529,11 @@ async function bulkTick(env) {
         const med = a => { const x = a.slice().sort((p, q) => p - q), m = x.length >> 1; return x.length % 2 ? x[m] : (x[m - 1] + x[m]) / 2; };
         const live = ((await db.prepare("SELECT * FROM bulk_listings WHERE endsAt > ? AND rating > 0").bind(Date.now()).all()).results) || [];
         const cand = live.filter(x => !/mystic|iconic/i.test(x.rarity || '')).map(x => { const a = by.get(`${x.sport}:${x.season}:${x.playerId}`), p = x.buyNow ?? x.curBid ?? x.minBid;
-          return a && a.length >= 5 && p != null ? { x, gain: med(a) * x.rating * 0.9 - p } : null; }).filter(c => c && c.gain >= 100).sort((a, b) => b.gain - a.gain).slice(0, 8);
+          return a && a.length >= 5 && p != null ? { x, gain: med(a) * x.rating * 0.9 - p } : null; }).filter(c => c && c.gain >= 100)
+          /* Oldest-checked first (2026-11-17: a Messi bought 7 hours earlier still showed - the same top 8 by
+             profit were re-read every time, so deals further down were never checked). A bought listing drops
+             out of the page walks, so its seenAt goes stale and it comes up first. */
+          .sort((a, b) => (a.x.seenAt || 0) - (b.x.seenAt || 0)).slice(0, 12);
         for (const { x } of cand) { if (stop) break;
           // Read on its own (a 403/404 here means the listing is gone, not that account 2 is refused).
           await sleep(BULK_GAP); let r = null;
