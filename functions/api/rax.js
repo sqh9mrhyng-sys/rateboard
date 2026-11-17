@@ -669,8 +669,14 @@ async function predOdds(env) {
   // ESPN, every minute: moneylines, and team codes -> names (college has no fixed list).
   o.abbr = o.abbr || {};
   for (const sp of Object.keys(ESPN_PATH_PRED)) { if (!(real[sp] || []).length) continue;
-    try { const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${ESPN_PATH_PRED[sp]}/scoreboard${sp === 'ncaaf' ? '?groups=80&limit=300' : ''}`); const d = r.ok ? await r.json() : null; const games = [];
-      for (const ev of ((d && d.events) || [])) { const c = (ev.competitions || [])[0] || {}, od = (c.odds || [])[0], h = (c.competitors || []).find(x => x.homeAway === 'home'), w = (c.competitors || []).find(x => x.homeAway === 'away');
+    try { /* ESPN's plain scoreboard can still be on yesterday early in the morning (no games = no logos,
+         2026-11-17), so ask for today and tomorrow by Eastern date. */
+      const ymd = t => new Date(t).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }).replace(/-/g, '');
+      const evs = [], seenEv = new Set();
+      for (const dt of [ymd(Date.now()), ymd(Date.now() + 86400000)]) { try { const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${ESPN_PATH_PRED[sp]}/scoreboard?dates=${dt}${sp === 'ncaaf' ? '&groups=80&limit=300' : ''}`); const d = r.ok ? await r.json() : null;
+        for (const ev of ((d && d.events) || [])) if (!seenEv.has(ev.id)) { seenEv.add(ev.id); evs.push(ev); } } catch (e) {} }
+      const games = [];
+      for (const ev of evs) { const c = (ev.competitions || [])[0] || {}, od = (c.odds || [])[0], h = (c.competitors || []).find(x => x.homeAway === 'home'), w = (c.competitors || []).find(x => x.homeAway === 'away');
         if (!h || !w) continue;
         for (const t of [h, w]) if (t.team && t.team.abbreviation) o.abbr[`${sp}:${t.team.abbreviation}`] = [t.team.displayName, t.team.shortDisplayName, t.team.location].filter(Boolean);
         o.logo = o.logo || {}; for (const t of [h, w]) if (t.team && t.team.logo) { o.logo[`${sp}:${t.team.abbreviation}`] = t.team.logo; o.logo[`${sp}:${normTeam(t.team.displayName)}`] = t.team.logo; }
