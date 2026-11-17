@@ -751,7 +751,7 @@ async function predReal(env) {
       }
       const names = ODDS_TEAMS[sp] || {}, abbr = odds.abbr || {};
       const aliasOf = oc => [oc.key, oc.label, names[oc.key], ...(abbr[`${sp}:${oc.key}`] || [])].filter(Boolean);
-      open[sp] = (mk || []).map(m => ({ id: m.id, sides: m.outcomes.map(oc => ({ label: oc.label, al: aliasOf(oc) })) }));
+      open[sp] = (mk || []).filter(m => !m.isLocked).map(m => ({ id: m.id, sides: m.outcomes.map(oc => ({ label: oc.label, al: aliasOf(oc) })) }));
       const srcs = [];
       if (sp === 'soccer') { for (const k of (odds.keys || []).filter(k => /^soccer_/.test(k))) srcs.push(...(((odds.api || {})[k] || {}).games || [])); }
       else srcs.push(...(((odds.api || {})[ODDS_SPORT[sp]] || {}).games || []));
@@ -778,7 +778,7 @@ async function predReal(env) {
        (none open and none merely locked), stop reading odds and Real until 7:15am ET. A trading day
        runs 7:15am ET to 7:15am ET. */
     if (round === 0) { try { const P = JSON.parse((await env.RATEBOARD_KV.get('pred_pause_v1')) || '{}') || {}, td = predTradingDay(Date.now()), nOpen = out.games.filter(g => !g.locked).length, nAny = out.games.length;
-      if (nOpen) P.seen = td;
+      if (nAny) P.seen = td;   // any market today, locked ones too, arms the pause
       if (!nAny && P.seen === td) { P.until = predNext715(Date.now()); P.at = Date.now(); }
       await env.RATEBOARD_KV.put('pred_pause_v1', JSON.stringify(P)); } catch (e) {} }
     await env.RATEBOARD_KV.put('pred_real_open', JSON.stringify(open), { expirationTtl: 3600 });
@@ -791,6 +791,8 @@ async function predReal(env) {
         if (!ids.has(g.id) && Date.now() - g.seen > 30000) out.games.push({ ...g, ended: true, locked: true, live: false, sides: g.sides.map(x => ({ ...x, ev: null })) }); }
       if (round === 0 || round === 3) await env.RATEBOARD_KV.put('pred_recent_v1', JSON.stringify(R), { expirationTtl: 86400 }); } catch (e) {}
     await env.RATEBOARD_KV.put('pred_ev_v1', JSON.stringify(out), { expirationTtl: 3600 });
+    // Nothing open to bet on (only locked markets left): one read a minute is enough.
+    if (!out.games.some(g => !g.locked && !g.ended)) break;
     const wait = 10000 - (Date.now() - t0); if (round < 5 && wait > 0) await sleep(wait);
   }
   await env.RATEBOARD_KV.put(LK, '0');
