@@ -4326,6 +4326,7 @@ const FEATURE_KINDS = [
 ];
 
 function featureForm(){
+  location.href = '/feature'; return;
   if(!me) return toast('Sign in first so I know who asked.');
   const box = modal('Request a feature', `
     <p class="note">Tell me what you want and why. I read every one of these.</p>
@@ -4517,6 +4518,8 @@ $('#open-bell').addEventListener('click', alertsPanel);
 
 
 function reportUser(target){
+  // Its own page now (2026-11-16); the old form saved through an admin-only write.
+  location.href = '/report' + (target ? '?u=' + encodeURIComponent(target) : ''); return;
   const box = modal('Report a user', `
     <div><label for="r-who">Username</label><input id="r-who" class="field" value="${esc(target)}" placeholder="Who are you reporting?"></div>
     <div><label for="r-why">What happened</label><textarea id="r-why" class="field" rows="4" placeholder="Scammed, fake screenshots, didn't pay…"></textarea></div>
