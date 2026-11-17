@@ -77,7 +77,7 @@
 <div id="vm">
 <label class="bank"><span>Enter your rax amount for custom recommendations</span><input id="bank" type="number" inputmode="numeric" min="0" step="100" placeholder="e.g. 5000"><small id="banknote">1u = 1% of your rax</small></label>
 <div class="sum" id="sum"></div>
-<div class="bar"><div class="chips" id="chips"></div><button class="tog" id="plus" aria-pressed="false">Show all</button></div>
+<div class="bar"><div class="chips" id="chips"></div></div>
 <details class="bkbox" id="bkbox"><summary>Sportsbooks: <span id="bksum">All books</span></summary><p class="note" style="margin:6px 0">The fair % uses only the books you tick (saved on this device).</p><div id="books"></div></details>
 <div id="list"></div>
 </div>
@@ -102,7 +102,7 @@
 <p>Example with 5,000 rax: 1u = 50 rax. A favorite at 60% with a 70% fair price is Kelly 25% → 2u → <b>100 rax</b>. An underdog at 15% with a 20% fair price is Kelly 6% → capped 0.5u → <b>25 rax</b>.</p>
 <h2>Step 5 - When not to trust it</h2>
 <p><b>Thin odds</b>: during a game, if fewer than 3 books have a line, or the newest line is over a minute old, the EV is greyed out and gets no unit size - books freeze their lines in blowouts and late in games, so a huge EV there is usually just an old line. Open <b>Book breakdown</b> to see every book's % and how old its line is.</p>
-<p><b>Hidden games</b>: games where a side's fair % is under 7% (basically decided) are hidden - tap Show all to see them. Locked markets are always hidden.</p>
+<p><b>Hidden games</b>: the <b>+EV</b> tab shows only games with a bet to make, and leaves out games where a side's fair % is under 7% (basically decided). <b>All</b> shows every open market. Locked markets are always hidden.</p>
 <h2>Step 6 - Staying disciplined</h2>
 <p>Bet the size it says, not more because you feel sure. Big edges on long shots still lose most of the time; the point is that over a few hundred bets the +EV ones come out ahead. Real's prices update every 10 seconds and live sportsbook odds every 20 seconds, so check the timers at the top before you bet.</p>
 </section>
@@ -114,7 +114,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const ls = { get: k => { try{ return localStorage.getItem(k); }catch(e){ return null; } }, set: (k, v) => { try{ localStorage.setItem(k, v); }catch(e){} } };
 const pc = v => v == null ? '-' : (Math.round(v * 1000) / 10).toFixed(1) + '%';
 const SPN = { nhl: 'NHL', nba: 'NBA', nfl: 'NFL', ncaaf: 'CFB', ufc: 'UFC', soccer: 'FC' };
-let J = null, chip = ls.get('pred_chip') || '', showAll = ls.get('pred_all') === '1';
+let J = null, chip = ls.get('pred_chip') || '';
 const MIN_FAIR = 0.07, MIN_EV_U = 0.02;
 let bank = Number(ls.get('pred_bank')) || 0;
 /* Thin odds: a live game priced from fewer than 3 books, or whose newest line is over 60 s old.
@@ -208,12 +208,12 @@ function drawBooks(){
 function draw(){
   const games = (J.games || []).filter(g => !g.locked).map(derive);
   const sps = SP_ORDER.filter(sp => games.some(g => g.sport === sp));
-  $('#chips').innerHTML = ['', '_best', ...(sps.length > 1 ? sps : [])].map(s => `<button data-c="${s}" aria-pressed="${chip === s}">${s === '_best' ? 'Best EV' : s ? SPN[s] || s : 'All'}</button>`).join('');
-  $('#plus').setAttribute('aria-pressed', showAll); $('#plus').textContent = showAll ? 'Hide under 7% fair' : 'Show all';
+  $('#chips').innerHTML = ['', '_ev', '_best', ...(sps.length > 1 ? sps : [])].map(s => `<button data-c="${s}" aria-pressed="${chip === s}">${s === '_best' ? 'Best EV' : s === '_ev' ? '+EV' : s ? SPN[s] || s : 'All'}</button>`).join('');
   const pos = games.filter(g => g.sides.some(s => units(g, s))), top = games.reduce((a, g) => Math.max(a, best(g)), -9);
   $('#sum').innerHTML = `<div><b>${games.length}</b><span>open markets</span></div><div><b class="pos">${pos.length}</b><span>bets to make</span></div><div><b class="${top > 0 ? 'pos' : 'nil'}">${top > -9 ? (top > 0 ? '+' : '') + pc(top) : '-'}</b><span>best edge</span></div>`;
   if (!$('#bkbox').open) drawBooks();
-  const vis = games.filter(g => showAll || !decided(g));
+  /* All: every open market. +EV: games that aren't decided (no side under 7% fair) and have a bet to make. */
+  const vis = chip === '_ev' ? games.filter(g => !decided(g) && g.sides.some(s => units(g, s))) : games;
   let html;
   if (chip === '_best') {
     // Best EV: every game with a usable edge, highest first.
@@ -221,10 +221,10 @@ function draw(){
     html = l.map(card).join('') || '<div class="empty">No sides with a usable edge right now.</div>';
   } else {
     // Fixed order (sport, start time, game) so cards don't jump when prices refresh.
-    html = (chip ? [chip] : sps).map(sp => { const l = vis.filter(g => g.sport === sp).sort(stable); if (!l.length) return '';
+    html = (chip && chip !== '_ev' ? [chip] : sps).map(sp => { const l = vis.filter(g => g.sport === sp).sort(stable); if (!l.length) return '';
       const n = l.filter(g => g.sides.some(s => units(g, s))).length, c = collapsed.has(sp);
       return `<button class="sph" data-sp="${sp}" aria-expanded="${!c}"><span>${c ? '▸' : '▾'} ${esc(SPN[sp] || sp)}</span><span class="note">${l.length} game${l.length === 1 ? '' : 's'}${n ? ` · <b class="pos">${n} bet${n === 1 ? '' : 's'}</b>` : ''}</span></button>${c ? '' : l.map(card).join('')}`; }).join('');
-    html = html || `<div class="empty">${!showAll && games.length ? `Every open game is basically decided - <a href="#" id="sa">show all ${games.length}</a>.` : 'No open game markets on Real right now.'}</div>`;
+    html = html || `<div class="empty">${chip === '_ev' && games.length ? 'No +EV bets right now.' : 'No open game markets on Real right now.'}</div>`;
   }
   $('#list').innerHTML = html;
   $('#tabs [data-t="a"]').hidden = !J.owner;
@@ -232,9 +232,6 @@ function draw(){
 }
 document.addEventListener('toggle', e => { const d = e.target; if(!d.matches || !d.matches('details.bd')) return; d.open ? openBd.add(d.dataset.bd) : openBd.delete(d.dataset.bd); }, true);
 $('#chips').addEventListener('click', e => { const b = e.target.closest('[data-c]'); if(!b) return; chip = b.dataset.c; ls.set('pred_chip', chip); draw(); });
-const flip = () => { showAll = !showAll; ls.set('pred_all', showAll ? '1' : '0'); draw(); };
-$('#plus').addEventListener('click', flip);
-$('#list').addEventListener('click', e => { if (e.target.id === 'sa') { e.preventDefault(); flip(); } });
 $('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if(!b) return; for (const x of document.querySelectorAll('#tabs button')) x.setAttribute('aria-pressed', x === b); $('#vm').hidden = b.dataset.t !== 'm'; $('#vg').hidden = b.dataset.t !== 'g'; $('#va').hidden = b.dataset.t !== 'a'; if (b.dataset.t === 'a') accLoad(); });
 $('#list').addEventListener('click', e => { const h = e.target.closest('.sph'); if(!h) return; const sp = h.dataset.sp; collapsed.has(sp) ? collapsed.delete(sp) : collapsed.add(sp); ls.set('pred_collapsed', JSON.stringify([...collapsed])); draw(); });
 $('#books').addEventListener('change', e => { const t = e.target; if (t.id === 'poly') { showPoly = t.checked; ls.set('pred_poly', showPoly ? '1' : '0'); } else if (t.dataset.bk) { t.checked ? offBooks.delete(t.dataset.bk) : offBooks.add(t.dataset.bk); ls.set('pred_off_books', JSON.stringify([...offBooks])); } $('#bksum').textContent = offBooks.size ? `${allBooks().filter(x => !offBooks.has(x)).length} of ${allBooks().length} books` : 'All books'; draw(); });
