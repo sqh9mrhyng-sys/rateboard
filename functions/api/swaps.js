@@ -2788,6 +2788,35 @@ const siteDm = (pre, n, link, sum, extra, b160 = 0) => { const cost = n * 241 + 
    first few all come back "missing", the read-back can't see links and the
    check stops instead of sending everyone a repeat. */
 const AUDIT_DUE = Date.UTC(2026, 10, 5, 17, 0, 0);
+/* One-off (Dennis, 2026-11-17, his wording): everyone in the 4:00pm Eastern run (21:00 UTC) gets a DM about
+   push notifications. Only to chats the bot already has, and it stops for good at 3:30pm Eastern, when that
+   run's warning DMs start - whoever isn't reached by then is skipped. Hard end date, so it can never rerun. */
+const PROMO_DUE = Date.UTC(2026, 10, 17, 21, 0, 0), PROMO_STOP = PROMO_DUE - 30 * 60000;
+const PROMO_TEXT = 'Tired of inconsistent times from the bot, or missing the notification because it becomes 1 of 50 for real? Push notifications available for swaps now! Follow instructions on https://raxacademy.app/notifications to activate';
+async function pushPromo(env, db, auth) {
+  if (Date.now() >= PROMO_STOP) return;
+  const K = 'dm_promo_' + PROMO_DUE;
+  let st = null; try { st = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
+  st = st || { done: [], sent: 0, skipped: 0, failed: 0, startedAt: Date.now() };
+  const save = () => env.RATEBOARD_KV.put(K, JSON.stringify(st), { expirationTtl: 3 * 86400 });
+  const ms = ((await db.prepare("SELECT * FROM swap_matches WHERE dueAt BETWEEN ? AND ? AND status NOT IN ('cancelled','cancelling','cleared')").bind(PROMO_DUE - 3600000, PROMO_DUE + 3600000).all()).results) || [];
+  const who = new Set(); for (const m of ms) for (const side of ['A', 'B']) if (sideDue(m) === PROMO_DUE) who.add(String(side === 'A' ? m.a : m.b));
+  st.total = who.size;
+  for (const k of [...who].sort()) {
+    if (Date.now() >= PROMO_STOP) break;
+    if (TICK_T0 && tickLeft() - dmWaitAhead() < 9000) break;
+    if (st.done.includes(k)) continue;
+    st.done.push(k);   // marked first: a send that errors is never retried, so nobody gets it twice
+    try {
+      const me = await loadMember(db, k);
+      const had = me && me.hashId ? await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=?').bind(me.hashId).first() : null;
+      if (!had || !had.channelId) { st.skipped++; await save(); continue; }
+      await dmSendRetry(auth, had.channelId, PROMO_TEXT, 3); st.sent++; await stat(db, 'dm_promo');
+    } catch (e) { st.failed++; }
+    await save(); await sleep(400);
+  }
+  await save();
+}
 async function auditHour(env, db, auth) {
   if (Date.now() > AUDIT_DUE + 86400000) return;   // never again (it re-ran a week later, 2026-11-12)
   const K = 'dm_audit_' + AUDIT_DUE;
@@ -3150,6 +3179,7 @@ async function dmTick(env) {
   // auditHour was a one-off for Nov 5's 8:00 run; it ran again on Nov 12 when its saved state expired and resent week-old swaps. Off for good.
   // try { await auditHour(env, db, auth); } catch (e) { await botFail(db, 'dm_audit', e.message); }
   try { await fixHourDms(env, db, auth); } catch (e) { await botFail(db, 'dm_fix', e.message); }
+  try { await pushPromo(env, db, auth); } catch (e) { await botFail(db, 'dm_promo', e.message); }
   /* Dennis, 2026-11-12: once the 10:00am Alaska swap DMs are out, everything
      still waiting in the resend lines is deleted, so nobody gets an old message. */
   try { if (Date.now() >= Date.UTC(2026, 10, 12, 19, 8) && !(await env.RATEBOARD_KV.get('dm_purge_1112'))) {
