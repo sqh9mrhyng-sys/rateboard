@@ -779,6 +779,8 @@ async function predReal(env) {
        runs 7:15am ET to 7:15am ET. */
     if (round === 0) { try { const P = JSON.parse((await env.RATEBOARD_KV.get('pred_pause_v1')) || '{}') || {}, td = predTradingDay(Date.now()), nOpen = out.games.filter(g => !g.locked).length, nAny = out.games.length;
       if (nAny) P.seen = td;   // any market today, locked ones too, arms the pause
+      // Markets seen earlier this trading day (kept in the ended-games list) count too.
+      if (!P.seen || P.seen !== td) { try { const R = JSON.parse((await env.RATEBOARD_KV.get('pred_recent_v1')) || '{}') || {}; if (Object.values(R).some(g => predTradingDay(g.seen) === td)) P.seen = td; } catch (e) {} }
       if (!nAny && P.seen === td) { P.until = predNext715(Date.now()); P.at = Date.now(); }
       await env.RATEBOARD_KV.put('pred_pause_v1', JSON.stringify(P)); } catch (e) {} }
     await env.RATEBOARD_KV.put('pred_real_open', JSON.stringify(open), { expirationTtl: 3600 });
