@@ -5944,6 +5944,27 @@ async function handle({ request, env, waitUntil }) {
     for (const k of l) { let r = null; try { r = await db.prepare('SELECT key, rsUser FROM swap_users WHERE LOWER(key)=?').bind(k).first(); } catch (e) {} rows.push({ key: k, rsUser: (r && r.rsUser) || k }); }
     return json({ rows });
   }
+  /* Your placed bets (2026-11-16): kept per member on the server so they follow you between devices.
+     POST {add: {...}} / {set: {id, amt}} / {del: id}. At most 300 kept. */
+  if (op === 'predbets') {
+    const who = String(acc.who || '').toLowerCase();
+    if (!who) return json({ error: 'Sign in first.' }, 401);
+    if (who !== 'dennis' && !(await predAcc()).includes(who)) return forbidden('Predictions is invite-only for now.');
+    const K = 'pred_bets_v1_' + who; let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get(K)) || '[]') || []; } catch (e) {}
+    if (request.method === 'POST') {
+      let b = {}; try { b = await request.json(); } catch (e) {}
+      const num = v => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : 0; };
+      const str = v => String(v == null ? '' : v).slice(0, 120);
+      if (b.add && typeof b.add === 'object') { const a = b.add;
+        l = l.filter(x => !(x.gid === Number(a.gid) && x.side === Number(a.side)));
+        l.unshift({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), gid: Number(a.gid) || 0, side: Number(a.side) || 0, sport: str(a.sport), game: str(a.game), name: str(a.name),
+          price: num(a.price), fair: num(a.fair), ev: Number(a.ev) || 0, u: num(a.u), amt: num(a.amt), link: /^https:\/\/www\.realapp\.com\//.test(String(a.link || '')) ? str(a.link) : '', at: Date.now() }); }
+      if (b.set && typeof b.set === 'object') { const x = l.find(y => y.id === b.set.id); if (x) { if (b.set.amt != null) x.amt = num(b.set.amt); if (b.set.price != null) x.price = num(b.set.price); if (b.set.res != null) x.res = ['won', 'lost', ''].includes(b.set.res) ? b.set.res : ''; } }
+      if (b.del) l = l.filter(x => x.id !== String(b.del));
+      l = l.slice(0, 300); await env.RATEBOARD_KV.put(K, JSON.stringify(l));
+    }
+    return json({ bets: l });
+  }
   if (op === 'predev') {
     const who = String(acc.who || '').toLowerCase();
     if (!who) return json({ error: 'Sign in first.' }, 401);
