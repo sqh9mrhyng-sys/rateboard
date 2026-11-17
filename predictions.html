@@ -135,7 +135,7 @@
   .vseg button{background:none;border:0;color:var(--mute);font:inherit;font-weight:800;font-size:14px;padding:8px;border-radius:8px;cursor:pointer}
   .vseg button[aria-pressed="true"]{background:var(--panel2);color:var(--ink);box-shadow:inset 0 0 0 1px var(--accent)}
   #vopts[hidden]{display:none} #vopts{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px} #vopts label{display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:14px;cursor:pointer}
-  body.h-fair .sd .fr, body.h-poly .sd .ref, body.h-real .sd .c, body.h-lad .bp .lad, body.h-units .ev .u, body.h-units .ev .rx, body.h-slip .ev .sl,
+  body.h-fair .sd .fr, body.h-poly .sd .ref, body.h-real .sd .c, body.h-lad .bp .lad, body.h-slip .ev .sl,
   body.h-books .ft .srcs, body.h-books .bd, body.h-chart .ft .src, body.h-bet .bp .place, body.h-chips .gh .meta{display:none}
   body.h-lad.h-bet .bp, body.h-books.h-chart .ft{display:none}
   body.h-real .sd{grid-template-columns:1fr 104px}
@@ -575,8 +575,9 @@ $('#va').addEventListener('click', async e => { const b = e.target.closest('butt
   await accLoad(b.dataset.add ? '&add=' + encodeURIComponent(b.dataset.add) : '&del=' + encodeURIComponent(b.dataset.del)); if (b.dataset.add) { $('#aq').value = ''; $('#ares').innerHTML = ''; } });
 
 /* Card view (Dennis, 2026-11-17). Full = everything; Clean = the game and EV only; Custom = pick. */
-const VIEW_PARTS = [['fair', 'Fair %'], ['real', "Real's price"], ['poly', 'Polymarket'], ['lad', 'Unit ladder'], ['units', 'Units & rax'], ['slip', 'After slippage'], ['books', 'Books & breakdown'], ['chart', 'Price chart'], ['bet', 'Bet placed button'], ['chips', 'Sport, time & volume']];
+const VIEW_PARTS = [['fair', 'Fair %'], ['real', "Real's price"], ['poly', 'Polymarket'], ['lad', 'Unit ladder'], ['slip', 'After slippage'], ['books', 'Books & breakdown'], ['chart', 'Price chart'], ['bet', 'Bet placed button'], ['chips', 'Sport, time & volume']];
 let VIEW = { mode: 'full', hide: [] }; try { VIEW = Object.assign(VIEW, JSON.parse(ls.get('pred_view_v1') || '{}') || {}); } catch (e) {}
+VIEW.hide = (VIEW.hide || []).filter(k => k !== 'units');   // units & rax always show (Dennis, 2026-11-17)
 function applyView(){
   const hide = VIEW.mode === 'clean' ? VIEW_PARTS.map(p => p[0]) : VIEW.mode === 'custom' ? VIEW.hide : [];
   for (const [k] of VIEW_PARTS) document.body.classList.toggle('h-' + k, hide.includes(k));
