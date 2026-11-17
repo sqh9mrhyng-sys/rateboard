@@ -1886,6 +1886,16 @@ async function loadMember(db, k) {
 }
 // The line for one side of a match. What they buy is the player their
 // PARTNER asked for, on their own pass of that player.
+/* Player names for push notifications (Dennis, 2026-11-17): a DM shows a Real player link as his name,
+   a notification can't, so each link is remembered with the name to put in its place. */
+const PLAYER_NAMES = new Map();
+function nameUrl(k, ...owners) { const u = playerUrl(k); if (!u) return; for (const w of owners) { const p = w && (w.passes || []).find(x => x.key === k);
+  if (p && p.name && !/^player$/i.test(p.name)) { PLAYER_NAMES.set(u, p.name); if (PLAYER_NAMES.size > 5000) PLAYER_NAMES.delete(PLAYER_NAMES.keys().next().value); return; } } }
+function pushText(t) {
+  return String(t || '').replace(/,?\s*all details on\s+https?:\/\/\S+/i, '. Tap for the details.')
+    .replace(/https:\/\/www\.realapp\.com\/\S+/g, u => PLAYER_NAMES.get(u.replace(/[.,]$/, '')) || 'a player')
+    .replace(/https?:\/\/\S+/g, '').replace(/\s*\n+\s*/g, '\n').replace(/[ \t]+/g, ' ').trim().slice(0, 400);
+}
 async function sideLines(member, m, side) {
   const o = await member(side === 'A' ? m.b : m.a), me = await member(side === 'A' ? m.a : m.b);
   if (!o || !me) return null;
@@ -1894,7 +1904,7 @@ async function sideLines(member, m, side) {
     // What to buy; the player they receive goes at the top of its own message instead of on every line.
     buy: `${playerUrl(gets) || playerName(me, gets)} ${String(gets).split(':')[1]} - ${passUrl(me, gets) || '(pass link not found)'}`,
     recvKey: side === 'A' ? m.aGets : m.bGets,
-    recv: (() => { const k = side === 'A' ? m.aGets : m.bGets; return `${playerUrl(k) || playerName(me, k)} ${String(k).split(':')[1]}`; })(),
+    recv: (() => { const k = side === 'A' ? m.aGets : m.bGets; nameUrl(k, o, me); return `${playerUrl(k) || playerName(me, k)} ${String(k).split(':')[1]}`; })(),
     // @partner - their comment | the player you give (with season) / your card of him (Dennis, 2026-11-04).
     contact: `@${o.rsUser} - ${o.comment || '(no comment link)'} | ${playerUrl(gets) || playerName(me, gets)} ${String(gets).split(':')[1]} / ${passUrl(me, gets) || '(card link not found)'}`
   };
@@ -2032,7 +2042,7 @@ async function runDms(env, db, auth, rows, max, force) {
        still goes so they never miss their swaps. */
     if (kind === 'warn' || kind === 'contact') { try { const first = String((Array.isArray(text) ? text[0] : text) || ''), link = (first.match(/https:\/\/raxacademy\.app\/\S+/) || [])[0];
       const pp = await pushPrefs(env, who), sw = pp.swaps || {}, want = sw.on && (kind === 'warn' ? sw.warn !== false : sw.live !== false), noDm = want && (kind === 'warn' ? sw.dmWarn === false : sw.dmLive === false);
-      if (want) { const msg = { title: kind === 'warn' ? 'Swaps in 30 minutes' : 'Your swaps are live', body: first.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 170), url: link ? link.replace('https://raxacademy.app', '') : '/swaps', tag: 'swap-' + kind, urgent: true };
+      if (want) { const msg = { title: kind === 'warn' ? 'Swaps in 30 minutes' : 'Your swaps are live', body: pushText(first), url: link ? link.replace('https://raxacademy.app', '') : '/swaps', tag: 'swap-' + kind, urgent: true };
         if (noDm) { const n = await pushTo(env, db, who, msg); if (n > 0) { await stat(db, 'push_instead_' + kind); return true; } }
         else pushTo(env, db, who, msg).catch(() => {}); } } catch (e) {} }
     const me = await member(who);
