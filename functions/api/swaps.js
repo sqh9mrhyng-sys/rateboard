@@ -1705,7 +1705,7 @@ export async function draftScan(env) {
 }
 /* Real's own link codes (hashids, salt 'routing', min length 11): a player is
    [2, sport code, 0, id], a pass is [18, 0, 0, passId]. */
-function routeId(numbers) {
+export function routeId(numbers) {
   const ALPHA0 = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890', SEPS0 = 'cfhistuCFHISTU';
   const salt = Array.from('routing'), minLength = 11;
   const shuffle = (alpha, sl) => { if (!sl.length) return alpha; const t = alpha.slice();
@@ -5915,7 +5915,7 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'predev') {
     if (String(acc.who || '').toLowerCase() !== 'dennis') return forbidden('Only Dennis can open this page for now.');
     let x = null; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_ev_v1')) || 'null'); } catch (e) {}
-    return json(x ? { at: x.at, games: x.games || [], credits: x.credits || null, errs: x.errs || [], keySet: !!env.ODDS_API_KEY } : { at: null, games: [], keySet: !!env.ODDS_API_KEY });
+    return json(x ? { at: x.at, games: x.games || [], credits: x.credits || null, used: x.used || null, errs: x.errs || [], keySet: !!env.ODDS_API_KEY } : { at: null, games: [], keySet: !!env.ODDS_API_KEY });
   }
   // Bulk ratings (Dennis only, 2026-11-15): live listings, every ended one (history), his passes, and pack plays.
   /* Bulk ratings (open to everyone, 2026-11-15): live listings, ended ones (history),
