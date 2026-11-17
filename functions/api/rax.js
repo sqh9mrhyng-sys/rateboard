@@ -638,8 +638,9 @@ const PRED_SPORTS = ['nhl', 'nba', 'nfl', 'ncaaf', 'ufc', 'soccer'];
    Pinnacle 3, Novig (exchange) 2, BetOnline 1.5, the rest 1. Kalshi and Polymarket are shown
    beside it for comparison, never mixed into the fair price. */
 const PRED_BOOKS = ['pinnacle', 'draftkings', 'fanduel', 'betmgm', 'williamhill_us', 'fanatics', 'espnbet', 'betonlineag', 'novig', 'betrivers', 'kalshi', 'polymarket'];
-const PRED_W = { pinnacle: 3, novig: 2, betonlineag: 1.5 };
-const PRED_REF = { kalshi: 1, polymarket: 1 };
+// Every book counts the same, Kalshi included (Dennis, 2026-11-16); Polymarket stays a comparison only.
+const PRED_W = {};
+const PRED_REF = { polymarket: 1 };
 const normTeam = t => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 const ESPN_PATH_PRED = { nhl: 'hockey/nhl', nba: 'basketball/nba', nfl: 'football/nfl', ncaaf: 'football/college-football' };
 const decOf = ml => { const m = Number(String(ml == null ? '' : ml).replace(/^EVEN$/i, '100')); return !Number.isFinite(m) || m === 0 ? null : m > 0 ? 1 + m / 100 : 1 + 100 / -m; };
