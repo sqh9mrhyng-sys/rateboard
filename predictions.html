@@ -126,6 +126,19 @@
   .ft{background:rgba(0,0,0,.16)}
   @media(max-width:520px){.sd{grid-template-columns:1fr 50px 84px;gap:6px}.bp{padding-left:14px}.lgw{width:34px;height:34px}.lgw .lg{width:27px;height:27px}.gh .nm{font-size:16px}}
   .ev .sl{display:block;order:9;font-size:11px;font-weight:700;color:var(--mute);text-transform:none;letter-spacing:0;white-space:nowrap;margin-top:2px}
+
+  /* Card view (Dennis, 2026-11-17): Full, Clean (game and EV only) or Custom, saved on this device. */
+  .vbtn{margin-left:auto;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:999px;padding:7px 13px;font:inherit;font-size:14px;cursor:pointer;white-space:nowrap}
+  .vbtn b{color:var(--accent)} .vbtn[aria-expanded="true"]{border-color:var(--accent)}
+  .vpanel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;margin:8px 0 4px}
+  .vseg{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:3px}
+  .vseg button{background:none;border:0;color:var(--mute);font:inherit;font-weight:800;font-size:14px;padding:8px;border-radius:8px;cursor:pointer}
+  .vseg button[aria-pressed="true"]{background:var(--panel2);color:var(--ink);box-shadow:inset 0 0 0 1px var(--accent)}
+  #vopts[hidden]{display:none} #vopts{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px} #vopts label{display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:14px;cursor:pointer}
+  body.h-fair .sd .fr, body.h-poly .sd .ref, body.h-real .sd .c, body.h-lad .bp .lad, body.h-units .ev .u, body.h-units .ev .rx, body.h-slip .ev .sl,
+  body.h-books .ft .srcs, body.h-books .bd, body.h-chart .ft .src, body.h-bet .bp .place, body.h-chips .gh .meta{display:none}
+  body.h-lad.h-bet .bp, body.h-books.h-chart .ft{display:none}
+  body.h-real .sd{grid-template-columns:1fr 104px}
 </style>
 <script src="/theme.js"></script>
 <script src="/nav.js?v=3"></script>
@@ -144,7 +157,12 @@
 <div id="vm">
 <label class="bank"><span>Enter your rax amount for custom recommendations</span><input id="bank" type="number" inputmode="numeric" min="0" step="100" placeholder="e.g. 5000"><small id="banknote">1u = 1% of your rax</small></label>
 <div class="sum" id="sum"></div>
-<div class="bar"><div class="chips" id="chips"></div></div>
+<div class="bar"><div class="chips" id="chips"></div><button class="vbtn" id="vbtn" type="button" aria-expanded="false" aria-controls="vpanel">View: <b id="vname">Full</b> &#9662;</button></div>
+<div class="vpanel" id="vpanel" hidden>
+  <div class="vseg" role="radiogroup" aria-label="Card view"><button type="button" data-vm="full">Full</button><button type="button" data-vm="clean">Clean</button><button type="button" data-vm="custom">Custom</button></div>
+  <p class="note" id="vnote" style="margin:8px 0 0"></p>
+  <div id="vopts" hidden></div>
+</div>
 <details class="bkbox" id="bkbox"><summary>Sportsbooks: <span id="bksum">All books</span></summary><p class="note" style="margin:6px 0">The fair % uses only the books you tick (saved on this device).</p><div id="books"></div></details>
 <div id="list"></div>
 </div>
@@ -555,6 +573,24 @@ $('#aq').addEventListener('input', e => { clearTimeout(aqT); const q = e.target.
     $('#ares').innerHTML = (j.rows || []).map(r => `<div class="ar"><span>@${esc(r.rsUser)}</span><button data-add="${esc(r.key)}">Give access</button></div>`).join('') || '<p class="note">No member found.</p>'; }, 300); });
 $('#va').addEventListener('click', async e => { const b = e.target.closest('button[data-add],button[data-del]'); if(!b) return; b.disabled = true;
   await accLoad(b.dataset.add ? '&add=' + encodeURIComponent(b.dataset.add) : '&del=' + encodeURIComponent(b.dataset.del)); if (b.dataset.add) { $('#aq').value = ''; $('#ares').innerHTML = ''; } });
+
+/* Card view (Dennis, 2026-11-17). Full = everything; Clean = the game and EV only; Custom = pick. */
+const VIEW_PARTS = [['fair', 'Fair %'], ['real', "Real's price"], ['poly', 'Polymarket'], ['lad', 'Unit ladder'], ['units', 'Units & rax'], ['slip', 'After slippage'], ['books', 'Books & breakdown'], ['chart', 'Price chart'], ['bet', 'Bet placed button'], ['chips', 'Sport, time & volume']];
+let VIEW = { mode: 'full', hide: [] }; try { VIEW = Object.assign(VIEW, JSON.parse(ls.get('pred_view_v1') || '{}') || {}); } catch (e) {}
+function applyView(){
+  const hide = VIEW.mode === 'clean' ? VIEW_PARTS.map(p => p[0]) : VIEW.mode === 'custom' ? VIEW.hide : [];
+  for (const [k] of VIEW_PARTS) document.body.classList.toggle('h-' + k, hide.includes(k));
+  $('#vname').textContent = { full: 'Full', clean: 'Clean', custom: 'Custom' }[VIEW.mode] || 'Full';
+  document.querySelectorAll('[data-vm]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.vm === VIEW.mode)));
+  $('#vnote').textContent = VIEW.mode === 'full' ? 'Everything on every card.' : VIEW.mode === 'clean' ? 'Just the game and the EV on each side.' : 'Untick what you don\'t want to see.';
+  $('#vopts').hidden = VIEW.mode !== 'custom';
+  $('#vopts').innerHTML = VIEW_PARTS.map(([k, t]) => `<label><input type="checkbox" data-vp="${k}"${VIEW.hide.includes(k) ? '' : ' checked'}> ${esc(t)}</label>`).join('');
+  try { ls.set('pred_view_v1', JSON.stringify(VIEW)); } catch (e) {}
+}
+$('#vbtn').addEventListener('click', () => { const p = $('#vpanel'); p.hidden = !p.hidden; $('#vbtn').setAttribute('aria-expanded', String(!p.hidden)); });
+$('#vpanel').addEventListener('click', e => { const b = e.target.closest('[data-vm]'); if (b) { VIEW.mode = b.dataset.vm; applyView(); } });
+$('#vpanel').addEventListener('change', e => { const k = e.target.dataset.vp; if (!k) return; const h = new Set(VIEW.hide); e.target.checked ? h.delete(k) : h.add(k); VIEW.hide = [...h]; applyView(); });
+applyView();
 if (bank) $('#bank').value = bank;
 const bankNote = () => { $('#banknote').textContent = bank ? `1u = ${Math.round(bank / 100).toLocaleString()} rax (1% of ${bank.toLocaleString()})` : '1u = 1% of your rax'; };
 bankNote();
