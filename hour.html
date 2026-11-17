@@ -58,7 +58,7 @@
   .andr{margin-top:12px;border-style:dashed}
   .topbtns{margin-top:10px;display:flex;gap:8px}
   .topbtns .btn{cursor:pointer;font:inherit;font-weight:700;font-size:13.5px}
-  .pkadd{display:flex;gap:8px} .pkadd select{flex:1;min-width:0;font:inherit;padding:9px 10px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
+  .pkadd{display:flex;gap:8px} .pkadd[hidden]{display:none} .pkadd select{flex:1;min-width:0;font:inherit;padding:9px 10px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
   .pkadd .btn{cursor:pointer;font:inherit;font-weight:800}
   #pklist .hm-i{align-items:center}
   .tbtn{font:inherit;font-weight:800;color:var(--accent);background:none;border:0;padding:0;cursor:pointer;text-align:left}
@@ -125,7 +125,10 @@
   .phgrid button.on{background:var(--accent);border-color:var(--accent);color:#141925;font-weight:800}
   .phgrid button .ord{position:absolute;top:2px;right:5px;font-size:9.5px;font-weight:800}
   #con.new{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 35%,transparent)}
-.stg{display:grid;grid-template-columns:repeat(4,1fr);gap:8px} .stg div{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px} .stg b{display:block;font-size:16px;color:var(--ink)} .stg b.bad{color:#e5534b} .stg span{font-size:11px;color:var(--mute)}
+.pksearch{position:relative;margin:0 0 6px} .pksearch input{width:100%;box-sizing:border-box;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:11px 12px;font:inherit;font-size:16px}
+  .pksug{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:30;background:var(--panel2);border:1px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:0 12px 28px rgba(0,0,0,.45)}
+  .pksug button{display:block;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line);color:var(--ink);font:inherit;font-size:15px;padding:11px 12px;cursor:pointer} .pksug button:first-child{border-top:0} .pksug b{color:var(--accent)}
+  .stg{display:grid;grid-template-columns:repeat(4,1fr);gap:8px} .stg div{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px} .stg b{display:block;font-size:16px;color:var(--ink)} .stg b.bad{color:#e5534b} .stg span{font-size:11px;color:var(--mute)}
   @media(max-width:520px){.stg{grid-template-columns:repeat(2,1fr)}}
   .spl{margin-top:10px} .spl div{display:grid;grid-template-columns:28px 1fr 34px;gap:8px;align-items:center;font-size:12px;margin:3px 0} .spl i{display:block;height:8px;border-radius:4px;background:#F5B83D;min-width:2px} .spl b{text-align:right;color:var(--ink)}
   .tl{display:inline-block;font-size:10.5px;font-weight:800;letter-spacing:.03em;padding:1px 7px;border-radius:999px;vertical-align:1px;text-transform:uppercase}
@@ -160,8 +163,9 @@
     <section id="mystats"><h2>Your stats</h2><div id="stbox" class="note">Loading…</div></section>
     <section><h2>Your grinds today</h2><p class="note" style="margin:0 0 6px">Packs coming to you today (7am to 7am ET) for each player you're swapping for.</p><div id="pkgrinds"></div></section>
     <section><h2>Packs used today</h2>
-      <p class="note" style="margin:0 0 8px">Every pass that's gone out (or is scheduled to) in a swap today, plus any you add. Add one you used yourself and it won't be given in a swap again today - swaps already scheduled with it still go ahead.</p>
-      <div class="pkadd"><select id="pkadd"></select><button class="btn go" id="pkaddbtn" type="button">Add</button></div>
+      <p class="note" style="margin:0 0 8px">Search a pass you used yourself and tap it - it won't be given in a swap again today (swaps already scheduled still go ahead).</p>
+      <div class="pksearch"><input id="pkq" type="search" placeholder="Search a pass you used today…" autocomplete="off" autocapitalize="off" spellcheck="false"><div class="pksug" id="pksug" hidden></div></div>
+      <div class="pkadd" hidden><select id="pkadd"></select><button class="btn go" id="pkaddbtn" type="button">Add</button></div>
       <p class="note" id="pkmsg" style="margin:6px 0 0"></p>
       <div id="pklist"></div></section>
   </div>
@@ -336,10 +340,22 @@ function paintPk(j){
     || '<p class="note">No packs used yet today.</p>';
   $('#pkgrinds').innerHTML = (j.grinds || []).map(g => `<div class="hm-i"><span><b>${esc(g.name)}</b>${g.picked ? '' : '<span class="sub">no longer picked</span>'}</span><span><b class="gn">${g.done + g.left}</b> <span class="note">pack${g.done + g.left === 1 ? '' : 's'}${g.left ? ` (${g.left} still to come)` : ''}</span></span></div>`).join('')
     || '<p class="note">No players picked.</p>';
+  PKOPTS = j.options || [];
   $('#pkadd').innerHTML = '<option value="">Add a pass you used today…</option>' + (j.options || []).map(p => `<option value="${esc(p.key)}">${esc(p.name)}</option>`).join('');
 }
 async function loadPk(){ $('#pklist').innerHTML = '<p class="note">Loading…</p>'; try{ paintPk(await (await fetch(pkUrl())).json()); }catch(e){ $('#pklist').innerHTML = '<p class="note">Could not reach the board.</p>'; } }
 const pkPost = async body => { try{ const j = await (await fetch(pkUrl(), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).json(); paintPk(j); return j; }catch(e){ return { error: 'Could not reach the board.' }; } };
+// Search with suggestions as you type (Dennis, 2026-11-16); tap one to add it.
+let PKOPTS = [];
+const pkHl = (n, q) => { const i = n.toLowerCase().indexOf(q.toLowerCase()); return i < 0 ? esc(n) : esc(n.slice(0, i)) + '<b>' + esc(n.slice(i, i + q.length)) + '</b>' + esc(n.slice(i + q.length)); };
+$('#pkq').addEventListener('input', () => { const q = $('#pkq').value.trim().toLowerCase();
+  if(q.length < 1){ $('#pksug').hidden = true; return; }
+  const hits = PKOPTS.filter(o => o.name.toLowerCase().includes(q)).sort((a, b) => (a.name.toLowerCase().startsWith(q) ? 0 : 1) - (b.name.toLowerCase().startsWith(q) ? 0 : 1) || a.name.localeCompare(b.name)).slice(0, 8);
+  $('#pksug').innerHTML = hits.length ? hits.map(o => `<button type="button" data-pkpick="${esc(o.key)}">${pkHl(o.name, q)}</button>`).join('') : '<div class="note" style="padding:10px 12px">No pass by that name</div>';
+  $('#pksug').hidden = false; });
+$('#pksug').addEventListener('click', async e => { const b = e.target.closest('[data-pkpick]'); if(!b) return; $('#pksug').hidden = true; $('#pkq').value = '';
+  const j = await pkPost({ key: b.dataset.pkpick }); $('#pkmsg').textContent = j.error || 'Added - it won\'t be given in a swap again today.'; });
+document.addEventListener('click', e => { if(!e.target.closest('.pksearch')) $('#pksug').hidden = true; });
 $('#pkaddbtn').addEventListener('click', async () => { const k = $('#pkadd').value; if(!k) return; const j = await pkPost({ key: k }); $('#pkmsg').textContent = j.error || 'Added - it won\'t be given in a swap again today.'; });
 $('#pklist').addEventListener('click', async e => { const b = e.target.closest('[data-unpk]'); if(!b) return; const j = await pkPost({ key: b.dataset.unpk, remove: true }); $('#pkmsg').textContent = j.error || 'Removed.'; });
 /* The top buttons: back to /swaps, and your players & hours. */
