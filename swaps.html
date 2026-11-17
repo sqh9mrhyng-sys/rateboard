@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Swaps (beta)</title>
+<title>Swaps</title>
 <style>
   :root{--bg:#141925;--panel:#1d2433;--panel2:#232b3d;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;--ok:#5fbf7a;--bad:#e5484d}
   *{box-sizing:border-box}
@@ -16,7 +16,9 @@
   .confbtn{display:block;width:100%;padding:16px 14px;border-radius:12px;border:0;background:#2FA36B;color:#fff;font:inherit;font-weight:900;font-size:18px;letter-spacing:.03em;cursor:pointer}
   .confbtn.done{background:var(--panel2);color:var(--ok);border:1px solid var(--ok);font-size:15px;letter-spacing:0}
   .confbox{margin:0 0 12px}
-  .hourgo{display:block;margin:0 0 12px;padding:13px 14px;border-radius:12px;background:#E8A33D;color:#141925;font-weight:800;font-size:16px;text-decoration:none}
+  /* Top right, small and in the theme (Dennis, 2026-11-17). */
+  .hourgo{grid-column:3;justify-self:end;display:inline-block;padding:6px 11px;border-radius:999px;background:var(--panel);border:1px solid var(--line);color:var(--accent);font-weight:800;font-size:13px;text-decoration:none;white-space:nowrap}
+  .hourgo[hidden]{display:none} .hourgo:hover{border-color:var(--accent)}
   .hourgo span{display:block;font-weight:600;font-size:12.5px;opacity:.8;margin-top:2px}
   h1{font-size:20px;margin:0;font-weight:800}
   h2{font-size:16px;margin:0 0 6px}
@@ -193,6 +195,10 @@
   .pkdd{position:absolute;z-index:20;left:0;right:0;top:100%;margin-top:4px;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.45);max-height:300px;overflow-y:auto}
   .pkdd button{display:block;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);border-radius:0;padding:10px 12px;color:var(--ink);font-size:14px}
   .pkdd button:hover{background:var(--panel2)}
+  #s2.done{background:none;border:0;padding:0;box-shadow:none}
+  .cdone{display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:12px;background:var(--panel);border:1px solid #3fbf7f66;color:var(--ink);font-weight:800;font-size:15px;text-decoration:none}
+  .cdone[hidden]{display:none} .cdone .ck{display:inline-flex;width:24px;height:24px;border-radius:50%;background:#3fbf7f;color:#0e1a12;align-items:center;justify-content:center;font-size:14px} .cdone b{margin-left:auto;color:var(--accent)}
+  .cok{margin:6px 2px 0;font-weight:700} .cok.good{color:#3fbf7f} .cok.bad{color:#ffc95a}
 </style>
 <script src="/theme.js"></script>
 <script src="/nav.js?v=4"></script>
@@ -206,13 +212,12 @@
 <meta name="theme-color" content="#141925">
 </head>
 <body>
-<div class="lock" id="lock" hidden><h1>Swaps <span style="font-size:11px;font-weight:800;padding:2px 7px;border-radius:6px;background:var(--accent);color:#141925;vertical-align:middle">BETA</span></h1><p class="note" id="lockmsg">Checking…</p><p id="probox" hidden><button class="primary" id="procheck">Pro check</button></p><p class="note" id="rnhint" hidden>Is your Real username different from your board username? <a href="/username">Link your Real account</a> first.</p><p id="signinbtn" hidden><a class="btn" href="/?next=/swaps" style="display:inline-block;padding:10px 14px;border-radius:9px;background:#E8A33D;color:#141925;font-weight:700;text-decoration:none">Sign in</a></p><p class="note" id="signinhint" hidden>Signed in already? Open the board once - it will ask for your password one more time, then this page works. Opened this from inside Real? Use the browser you signed in with.</p></div>
+<div class="lock" id="lock" hidden><h1>Swaps</h1><p class="note" id="lockmsg">Checking…</p><p id="probox" hidden><button class="primary" id="procheck">Pro check</button></p><p class="note" id="rnhint" hidden>Is your Real username different from your board username? <a href="/username">Link your Real account</a> first.</p><p id="signinbtn" hidden><a class="btn" href="/?next=/swaps" style="display:inline-block;padding:10px 14px;border-radius:9px;background:#E8A33D;color:#141925;font-weight:700;text-decoration:none">Sign in</a></p><p class="note" id="signinhint" hidden>Signed in already? Open the board once - it will ask for your password one more time, then this page works. Opened this from inside Real? Use the browser you signed in with.</p></div>
 <div class="lock" id="banbox" hidden style="max-width:520px"><h1>Swaps</h1><div id="banbody"></div></div>
 <div class="wrap" id="main" hidden>
   <div id="modnote" hidden style="margin:10px 0;padding:10px 12px;border-radius:10px;border:1px solid #ffc95a55;background:#ffc95a14;font-size:14px"></div>
-  <header class="hd3"><h1>Swaps <span class="beta">BETA</span></h1><span data-acct></span></header>
+  <header class="hd3"><h1>Swaps</h1><span data-acct></span><a class="hourgo" id="hourgo" href="#" hidden>Open your swap page →</a></header>
   <div class="confbox" id="confbox" hidden><button type="button" class="confbtn" id="confbtn">CONFIRM TIMES FOR TODAY</button><p class="note" id="confmsg" style="margin:6px 2px 0"></p></div>
-  <a class="hourgo" id="hourgo" href="#" hidden>Open your swap page <span>buy list, offers, packs today, players &amp; hours →</span></a>
   <div class="topbtns"><button class="tb rep" id="repopen">Report</button><button class="tb what" id="whatopen">What are swaps?</button></div>
   <div class="repbox" id="repbox" hidden>
     <div class="bar" style="margin-top:0"><button class="primary" id="rk-user">Wrong usage</button><button id="rk-problem">A problem</button><button id="rk-refund">Called-off swap</button></div>
@@ -230,7 +235,6 @@
     <p>You want JSN cards, someone else wants Gibbs cards. You buy a Gibbs pack, they buy a JSN pack, then you each offer on the 3 cards the other one pulled. The fastest way on the app to grind a player.</p>
     <p class="note">A swap usually costs about <b>241 rax</b>. A legendary pass costs <b>9,200 at most</b> - top players make that back, or you resell.</p>
   </div>
-  <div class="psa">⚠️ Scam someone through swaps (auction groups included) and you're banned from the site and the group. No warnings.</div>
   <p class="note acct">Real account <b id="rstop"></b> · <a href="/username">change</a></p>
 
   <section id="s1">
@@ -243,11 +247,16 @@
     <div class="note" id="connmsg"></div>
   </section>
 
-  <section>
+  <section id="s2">
+    <!-- Once a comment is saved, step 2 is one line (Dennis, 2026-11-17). -->
+    <a class="cdone" id="cdone" href="#" target="_blank" rel="noopener" hidden><span class="ck">✓</span> 1 comment on the swap post <b>→</b></a>
+    <div id="s2how">
     <h2><span class="n">2</span>Comment on the swap post</h2>
     <p class="note">Comment the player you want, then paste your comment's link here. Partners get it in their DM.</p>
     <div class="bar"><a class="btn" href="https://www.realapp.com/9DHKtlFNQA4" target="_blank" rel="noopener">Open the swap post</a></div>
     <div class="bar"><input id="clink" placeholder="Paste your comment link" autocomplete="off" inputmode="url"></div>
+    <p class="note cok" id="cok" hidden></p>
+    </div>
   </section>
 
   <section>
@@ -543,6 +552,7 @@ function paintConfirm(j, times){
   $('#confbox').hidden = false;
   const b = $('#confbtn'), m = $('#confmsg'), starts = j.confirmStarts || '2026-11-07', early = (j.swapToday || '') < starts;
   const fmt = t => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(':00', '');
+  if(j.confirmedToday){ $('#confbox').hidden = true; return; }   // confirmed: the box goes away for the day (Dennis, 2026-11-17)
   if(j.confirmedToday){ b.textContent = '✓ Times confirmed for today'; b.classList.add('done');
     m.textContent = times && times.length ? `Today: ${times.map(fmt).join(', ')}. Confirm again tomorrow after 3am Alaska (7am ET).` : 'Confirm again tomorrow after 3am Alaska (7am ET).'; }
   else { b.textContent = 'CONFIRM TIMES FOR TODAY'; b.classList.remove('done');
@@ -1032,6 +1042,7 @@ $('#save').addEventListener('click', async () => {
   const extra = (j.late ? ' Too late to change swaps already warned - please do them at :00.' : '') + (j.calledOff ? ` ${j.calledOff} upcoming swap${j.calledOff === 1 ? '' : 's'} for a player or hour you removed ${j.calledOff === 1 ? 'is' : 'are'} called off - you'll both get a message.` : '');
   $('#savemsg').textContent = j.error ? j.error : '';
   if(!j.error) showSaved(extra.trim());
+  if(!j.error) paintComment($('#clink').value.trim());
   if(!j.error){ savedWants = new Set(prof.wants); prof.active = true; paintPaused(); loadHourCounts(); loadWantCounts(); loadSwaps(); }
   try{ localStorage.setItem('ratebrd_swapnames', JSON.stringify(wantNames)); }catch(e){}
 });
@@ -1218,6 +1229,20 @@ $('#repsend').addEventListener('click', async () => {
   if(j.error){ $('#repmsg').textContent = j.error; return; }
   $('#repmsg').textContent = 'Sent - thanks. Dennis reads every one.'; $('#repd').value = ''; $('#rept').value = '';
 });
+/* Step 2 (Dennis, 2026-11-17): a saved comment link folds the step to one line that opens it; while
+   pasting, a line says whether the link is right. */
+function paintComment(saved){
+  const ok = SWAP_COMMENT_RE.test(saved || '');
+  $('#cdone').hidden = !ok; $('#s2how').hidden = ok; if(ok) $('#cdone').href = saved; $('#s2').classList.toggle('done', ok);
+}
+function liveComment(){
+  const v = $('#clink').value.trim(), m = $('#cok');
+  if(!v){ m.hidden = true; return; }
+  m.hidden = false; const ok = SWAP_COMMENT_RE.test(v);
+  m.className = 'note cok ' + (ok ? 'good' : 'bad');
+  m.textContent = ok ? '✓ That\'s your comment link - tap Save at the bottom to keep it.' : 'That isn\'t a link to a comment under the swap post yet. On Real, open your comment, tap Share, copy the link and paste it here.';
+}
+setTimeout(() => { const c = document.getElementById('clink'); if(c) c.addEventListener('input', liveComment); }, 0);
 const SWAP_COMMENT_RE = /^https:\/\/(www\.)?realapp\.com\/0VH8Fy0KQ01CBqj5\/[0-9A-Za-z]{4,}([\/?#].*)?$/;
 $('#whynot').addEventListener('click', async () => {
   $('#whynot').disabled = true; $('#whyout').textContent = 'Checking…';
@@ -1230,6 +1255,7 @@ function paintConn(ok){
   $('#connmsg').innerHTML = ok ? '✅ Verified - DMs come from <b>@raxacademy.app</b>.' : '';
   $('#connect').style.display = ok ? 'none' : '';
   $('#s1how').hidden = !!ok; $('#s1').classList.toggle('ok', !!ok);
+  $('#s1').hidden = !!ok;   // done: step 1 goes away (Dennis, 2026-11-17)
 }
 $('#copytag').addEventListener('click', async () => {
   let ok = false; try{ await navigator.clipboard.writeText('#packswap'); ok = true; }catch(e){}
@@ -1352,6 +1378,7 @@ async function showModNote(){
   drawCaps();
   draw160();
   $('#clink').value = (j.profile && j.profile.comment) || '';
+  paintComment((j.profile && j.profile.comment) || '');
   if(prof.passes.length && prof.keep.length) collapsed = true;   // back again with picks made: start folded
   // Folded or open as they last left it, on this phone (2026-11-11).
   try{ const f = localStorage.getItem('swaps_passes_folded'); if(f != null) collapsed = f === '1'; }catch(e){}
