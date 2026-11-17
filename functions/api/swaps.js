@@ -2804,7 +2804,7 @@ async function predAsk(env, db, auth) {
   const K = 'dm_predask_v1';
   let st = null; try { st = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
   st = st || { sent: [], noChat: [], notFound: [], failed: [] };
-  if (st.sent.length + st.noChat.length + st.notFound.length + st.failed.length >= PREDASK_USERS.length) return;
+  if (st.logged) return;
   await db.prepare('CREATE TABLE IF NOT EXISTS dm_once (k TEXT PRIMARY KEY, at INTEGER)').run();
   for (const u of PREDASK_USERS) {
     if (TICK_T0 && tickLeft() - dmWaitAhead() < 9000) break;
