@@ -102,7 +102,7 @@
 <p>Example with 5,000 rax: 1u = 50 rax. A favorite at 60% with a 70% fair price is Kelly 25% → 2u → <b>100 rax</b>. An underdog at 15% with a 20% fair price is Kelly 6% → capped 0.5u → <b>25 rax</b>.</p>
 <h2>Step 5 - When not to trust it</h2>
 <p><b>Thin odds</b>: during a game, if fewer than 3 books have a line, or the newest line is over a minute old, the EV is greyed out and gets no unit size - books freeze their lines in blowouts and late in games, so a huge EV there is usually just an old line. Open <b>Book breakdown</b> to see every book's % and how old its line is.</p>
-<p><b>Hidden games</b>: the <b>+EV</b> tab shows only games with a bet to make, and leaves out games where a side's fair % is under 7% (basically decided). <b>All</b> shows every open market. Locked markets are always hidden.</p>
+<p><b>Hidden games</b>: the <b>+EV</b> tab shows only games with a bet to make, best EV first, and leaves out games where a side's fair % is under 7% (basically decided). <b>All</b> shows every open market. Locked markets are always hidden.</p>
 <h2>Step 6 - Staying disciplined</h2>
 <p>Bet the size it says, not more because you feel sure. Big edges on long shots still lose most of the time; the point is that over a few hundred bets the +EV ones come out ahead. Real's prices update every 10 seconds and live sportsbook odds every 20 seconds, so check the timers at the top before you bet.</p>
 </section>
@@ -208,20 +208,19 @@ function drawBooks(){
 function draw(){
   const games = (J.games || []).filter(g => !g.locked).map(derive);
   const sps = SP_ORDER.filter(sp => games.some(g => g.sport === sp));
-  $('#chips').innerHTML = ['', '_ev', '_best', ...(sps.length > 1 ? sps : [])].map(s => `<button data-c="${s}" aria-pressed="${chip === s}">${s === '_best' ? 'Best EV' : s === '_ev' ? '+EV' : s ? SPN[s] || s : 'All'}</button>`).join('');
+  $('#chips').innerHTML = ['', '_ev', ...(sps.length > 1 ? sps : [])].map(s => `<button data-c="${s}" aria-pressed="${chip === s}">${s === '_best' ? 'Best EV' : s === '_ev' ? '+EV' : s ? SPN[s] || s : 'All'}</button>`).join('');
   const pos = games.filter(g => g.sides.some(s => units(g, s))), top = games.reduce((a, g) => Math.max(a, best(g)), -9);
   $('#sum').innerHTML = `<div><b>${games.length}</b><span>open markets</span></div><div><b class="pos">${pos.length}</b><span>bets to make</span></div><div><b class="${top > 0 ? 'pos' : 'nil'}">${top > -9 ? (top > 0 ? '+' : '') + pc(top) : '-'}</b><span>best edge</span></div>`;
   if (!$('#bkbox').open) drawBooks();
   /* All: every open market. +EV: games that aren't decided (no side under 7% fair) and have a bet to make. */
   const vis = chip === '_ev' ? games.filter(g => !decided(g) && g.sides.some(s => units(g, s))) : games;
   let html;
-  if (chip === '_best') {
-    // Best EV: every game with a usable edge, highest first.
-    const l = vis.filter(g => best(g) > 0).sort((a, b) => best(b) - best(a) || stable(a, b));
-    html = l.map(card).join('') || '<div class="empty">No sides with a usable edge right now.</div>';
+  if (chip === '_ev') {
+    // +EV: games with a bet to make (not decided), best EV first.
+    html = vis.slice().sort((a, b) => best(b) - best(a) || stable(a, b)).map(card).join('') || '<div class="empty">No +EV bets right now.</div>';
   } else {
     // Fixed order (sport, start time, game) so cards don't jump when prices refresh.
-    html = (chip && chip !== '_ev' ? [chip] : sps).map(sp => { const l = vis.filter(g => g.sport === sp).sort(stable); if (!l.length) return '';
+    html = (chip ? [chip] : sps).map(sp => { const l = vis.filter(g => g.sport === sp).sort(stable); if (!l.length) return '';
       const n = l.filter(g => g.sides.some(s => units(g, s))).length, c = collapsed.has(sp);
       return `<button class="sph" data-sp="${sp}" aria-expanded="${!c}"><span>${c ? '▸' : '▾'} ${esc(SPN[sp] || sp)}</span><span class="note">${l.length} game${l.length === 1 ? '' : 's'}${n ? ` · <b class="pos">${n} bet${n === 1 ? '' : 's'}</b>` : ''}</span></button>${c ? '' : l.map(card).join('')}`; }).join('');
     html = html || `<div class="empty">${chip === '_ev' && games.length ? 'No +EV bets right now.' : 'No open game markets on Real right now.'}</div>`;
