@@ -768,7 +768,17 @@ const BOSS_KEY = 'swap_boss_v1';
    member's score is their average, pulled toward RATE_PRIOR until they have a
    few ratings. Anyone spamming 1 stars loses rating, and none of their
    ratings count. */
-const RATE_PRIOR = 3.5, RATE_PRIOR_N = 3;
+const RATE_PRIOR = 3.5, RATE_PRIOR_N = 10;
+/* Swap Score (Dennis, 2026-11-16: "quantity of swaps + rating combined", "99/100 5 stars should be
+   higher than 5/5"). 0-100:
+   - Stars, 60 pts: the average pulled toward 3.5 as if everyone starts with 10 votes of 3.5, so
+     it takes many ratings to get near 5 (100 votes, 99 fives -> 4.86 stars; 5 fives -> 4.0).
+     3.5 or less is 0 pts, 5.0 is 60.
+   - Swaps, 40 pts: grows quickly at first and slows down (log), full at 500 swaps all time
+     (200 for the month board, 60 for the week). */
+const SWAPS_FULL = { all: 500, month: 200, week: 60 };
+const starScore = (sum, n) => (Number(sum || 0) + RATE_PRIOR * RATE_PRIOR_N) / (Number(n || 0) + RATE_PRIOR_N);
+const swapScore = (sum, n, t, per = 'all') => 60 * Math.max(0, Math.min(1, (starScore(sum, n) - 3.5) / 1.5)) + 40 * Math.min(1, Math.log1p(t || 0) / Math.log1p(SWAPS_FULL[per] || 500));
 const RL_MIN = 10;   // votes to be ranked on the rating leaderboard
 const RATE_ON_MEMBERS = 10, RATE_ON_VOTES = 20;
 // Ratings off entirely until the next swap day starts, 3am Alaska Sat Nov 7 (Dennis, 2026-11-06).
@@ -792,12 +802,17 @@ async function ratingScores(db) {
    time has passed and that went ahead for them. Stars are the weighted score
    (pulled toward 3.5 until a member has a few ratings), so 99 fives and a
    four beat four fives. Worked out at most every 30 minutes. */
-const TRUST_KEY = 'swap_trust_v3';
-/* Swap tags (Dennis, 2026-11-15), by swaps done: New up to 30, Rising 31-60,
-   Trusted 61-150, Vet 151-300, Legend 300+. The three with the most swaps show
-   🐐 / 🥈 / 🥉 instead, and Dennis shows Owner. lvl is the level (used for the
-   small matching edge); lv is the tag shown. */
-const trustOf = trades => trades > 300 ? 'legend' : trades > 150 ? 'vet' : trades > 60 ? 'trusted' : trades > 30 ? 'rising' : 'new';
+const TRUST_KEY = 'swap_trust_v4';
+/* Swap tags (Dennis, 2026-11-16 rework): by Swap Score, with a floor of swaps and stars for each,
+   so a few perfect ratings or lots of swaps with poor ratings can't jump the line:
+     Rising   score 50+, 31+ swaps
+     Trusted  score 65+, 60+ swaps, 4.3+ stars
+     Vet      score 75+, 150+ swaps, 4.5+ stars
+     Legend   score 82+, 300+ swaps, 4.6+ stars
+   The three best scores (Trusted or better) show 🐐 / 🥈 / 🥉, and Dennis shows Owner.
+   Stars here are the pulled-toward-3.5 stars (starScore). */
+const trustOf = (t, sc, st) => sc >= 82 && t >= 300 && st >= 4.6 ? 'legend' : sc >= 75 && t >= 150 && st >= 4.5 ? 'vet' : sc >= 65 && t >= 60 && st >= 4.3 ? 'trusted' : sc >= 50 && t > 30 ? 'rising' : 'new';
+const TAG_RANK = { new: 0, rising: 1, trusted: 2, vet: 3, legend: 4 };
 const TAG_OWNER = 'dennis';
 async function tradeCounts(db, since = 0) {
   const now = Date.now(), out = new Map();
@@ -814,10 +829,10 @@ async function trustMap(env, db) {
     await db.prepare(RATE_DDL).run(); await db.prepare(RATE_BLOCK_DDL).run();
     const tc = await tradeCounts(db);
     const rs = ((await db.prepare('SELECT ratee, SUM(stars) AS s, COUNT(*) AS n FROM swap_ratings WHERE rater NOT IN (SELECT key FROM swap_rate_block) GROUP BY ratee').all()).results) || [];
-    const sc = new Map(rs.map(r => [String(r.ratee), [(Number(r.s) + RATE_PRIOR * RATE_PRIOR_N) / (Number(r.n) + RATE_PRIOR_N), Number(r.n)]]));
-    for (const k of new Set([...tc.keys(), ...sc.keys()])) { const t = tc.get(k) || 0, [score, n] = sc.get(k) || [RATE_PRIOR, 0];
-      m[k] = { t, s: Math.round(score * 100) / 100, n, lvl: trustOf(t), lv: trustOf(t) }; }
-    const top = Object.entries(m).filter(([k, v]) => k.toLowerCase() !== TAG_OWNER && v.t > 0).sort((a, b) => b[1].t - a[1].t).slice(0, 3);
+    const sc = new Map(rs.map(r => [String(r.ratee), [Number(r.s), Number(r.n)]]));
+    for (const k of new Set([...tc.keys(), ...sc.keys()])) { const t = tc.get(k) || 0, [sum, n] = sc.get(k) || [0, 0], st = starScore(sum, n), pts = swapScore(sum, n, t);
+      m[k] = { t, s: Math.round(st * 100) / 100, n, pts: Math.round(pts * 10) / 10, lvl: trustOf(t, pts, st), lv: trustOf(t, pts, st) }; }
+    const top = Object.entries(m).filter(([k, v]) => k.toLowerCase() !== TAG_OWNER && TAG_RANK[v.lvl] >= 2).sort((a, b) => b[1].pts - a[1].pts || b[1].t - a[1].t).slice(0, 3);
     top.forEach(([k], i) => { m[k].lv = ['goat', 'silver', 'bronze'][i]; });
     for (const k of Object.keys(m)) if (k.toLowerCase() === TAG_OWNER) m[k].lv = 'owner';
     await env.RATEBOARD_KV.put(TRUST_KEY, JSON.stringify({ at: Date.now(), m }), { expirationTtl: 86400 });
@@ -1070,7 +1085,10 @@ async function runMatchingInner(db, env) {
   let tmM = {}; try { if (env) tmM = await trustMap(env, db); } catch (e) {}
   // The higher the tag, the bigger the edge (Dennis, 2026-11-15): Rising < Trusted < Vet < Legend < 🥉 < 🥈 < 🐐.
   const TAG_EDGE = { owner: 0.5, goat: 0.5, silver: 0.45, bronze: 0.4, legend: 0.35, vet: 0.25, trusted: 0.15, rising: 0.05 };
-  const rs = k => (score.get(k) ?? RATE_PRIOR) + (TAG_EDGE[(tmM[k] || {}).lv] || 0);
+  /* Toss-ups go by Swap Score (2026-11-16): 0-100 shown to members, here /20 (0-5) plus the tag edge.
+     Before ratings switch on (score empty), stars stay out and only swaps and the tag count. */
+  const rs = k => { const v = tmM[k] || {}; const base = score.size ? (v.pts != null ? v.pts / 20 : (score.get(k) ?? RATE_PRIOR)) : RATE_PRIOR;
+    return base + (TAG_EDGE[v.lv] || 0); };
   // Either one has blacklisted the other: never matched - swaps, 160s or niche (2026-11-11).
   const byKey = new Map(users.map(u => [u.key, u]));
   const blocked = (a, b) => { const A = typeof a === 'string' ? byKey.get(a) : a, B = typeof b === 'string' ? byKey.get(b) : b;
@@ -5595,12 +5613,13 @@ async function handle({ request, env, waitUntil }) {
     let rows = ((await db.prepare(`SELECT r.ratee AS k, AVG(r.stars) AS avg, SUM(r.stars) AS sum, COUNT(*) AS n, u.rsUser AS rsUser, u.hashId AS hashId FROM swap_ratings r LEFT JOIN swap_users u ON u.key = r.ratee
       WHERE r.rater NOT IN (SELECT key FROM swap_rate_block) AND r.at >= ? GROUP BY r.ratee LIMIT 1000`).bind(since).all()).results) || [];
     const tm = await trustMap(env, db), tcP = since ? await tradeCounts(db, since) : null;
-    rows = rows.map(r => ({ ...r, score: (Number(r.sum) + RATE_PRIOR * RATE_PRIOR_N) / (Number(r.n) + RATE_PRIOR_N), trades: tcP ? (tcP.get(String(r.k)) || 0) : ((tm[r.k] || {}).t || 0) }))
-      /* Plain average shown and ranked (Dennis, 2026-11-15: 33 five-star votes read as 4.88).
-         Ranked once they have RL_MIN votes; fewer go below, same order. */
-      .sort((a, b) => (Number(a.n) >= RL_MIN ? 0 : 1) - (Number(b.n) >= RL_MIN ? 0 : 1) || Number(b.avg) - Number(a.avg) || b.n - a.n).slice(0, 500);
+    rows = rows.map(r => { const trades = tcP ? (tcP.get(String(r.k)) || 0) : ((tm[r.k] || {}).t || 0);
+        return { ...r, trades, score: starScore(r.sum, r.n), pts: swapScore(r.sum, r.n, trades, period) }; })
+      /* Ranked by Swap Score (Dennis, 2026-11-16): more ratings and more swaps place higher, so 99
+         fives out of 100 beat 5 out of 5. Still shown: the plain average and the vote count. */
+      .sort((a, b) => (Number(a.n) >= RL_MIN ? 0 : 1) - (Number(b.n) >= RL_MIN ? 0 : 1) || b.pts - a.pts || b.n - a.n).slice(0, 500);
     const ready = rows.filter(r => Number(r.n) >= RATE_ON_VOTES).length;
-    return json({ rlMin: RL_MIN, me: key.toLowerCase(), live: ready >= RATE_ON_MEMBERS, ready, needMembers: RATE_ON_MEMBERS, needVotes: RATE_ON_VOTES, admin: ADMINS.includes(key.toLowerCase()) || undefined, rows: rows.map(r => ({ k: r.k, user: r.rsUser || r.k, url: profileUrl(r.rsUser || r.k, r.hashId), avg: Math.round(Number(r.avg) * 100) / 100, score: Math.round(r.score * 100) / 100, votes: Number(r.n), trades: r.trades, lv: (tm[r.k] || {}).lv || 'new', mine: String(r.k).toLowerCase() === key.toLowerCase() || undefined })), period });
+    return json({ rlMin: RL_MIN, me: key.toLowerCase(), live: ready >= RATE_ON_MEMBERS, ready, needMembers: RATE_ON_MEMBERS, needVotes: RATE_ON_VOTES, admin: ADMINS.includes(key.toLowerCase()) || undefined, rows: rows.map(r => ({ k: r.k, user: r.rsUser || r.k, url: profileUrl(r.rsUser || r.k, r.hashId), avg: Math.round(Number(r.avg) * 100) / 100, score: Math.round(r.score * 100) / 100, pts: Math.round(r.pts * 10) / 10, votes: Number(r.n), trades: r.trades, lv: (tm[r.k] || {}).lv || 'new', mine: String(r.k).toLowerCase() === key.toLowerCase() || undefined })), period });
   }
   /* Admin (Dennis, 2026-11-06): every rating one member was given, who gave
      it, and changing or removing any of them by hand. */
