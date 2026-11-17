@@ -22,6 +22,7 @@
   .bs{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:14px} .bs b{width:44px} .bs select{margin-left:auto;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 6px;font:inherit;font-size:14px}
   .ab.off{opacity:.45;pointer-events:none}
   .act.locked .ag{opacity:.4;pointer-events:none} .lockmsg{display:none;margin:0 0 8px;color:var(--accent)} .act.locked .lockmsg{display:block}
+.tkb{margin-left:6px;font:inherit;font-size:12px;font-weight:800;border-radius:8px;padding:4px 10px;cursor:pointer;background:none;color:var(--ink);border:1px solid var(--line)}
   .note{color:var(--mute);font-size:14px}
   .top{display:flex;justify-content:space-between;align-items:center;gap:10px}
   .item{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:8px 0;white-space:pre-line}
@@ -73,11 +74,11 @@
 </div>
 <p class="note" id="msg">Loading…</p>
 <div id="body" hidden>
-  <h2>Messages to you</h2><div id="notes"></div>
   <h2>Your strikes</h2><div id="mod"></div>
+  <h2>Messages to you</h2><div id="notes"></div>
   <h2>Your reports</h2><div id="reports"></div>
   <h2>Your feature requests</h2><div id="features"></div>
-  <h2>What's new on the site</h2><div id="news"></div>
+  <div id="news" hidden></div>
 </div>
 </div>
 <script>
@@ -177,7 +178,7 @@ const SEEN = 'rb_notifs_seen_v1', seen = Number(ls.get(SEEN) || 0);
   try{ const t = ls.get('ratebrd_token_v1') || ''; const r = await fetch('/api/swaps?op=notifs', { headers: t ? { 'x-rb-token': t } : {} }); j = await r.json(); }
   catch(e){ j = { error: 'Could not reach the site - try again.' }; }
   if(j.error){ $('#msg').innerHTML = /sign in/i.test(j.error) ? 'Sign in first - <a href="/?next=/notifications">go to sign in</a>.' : esc(j.error); return; }
-  $('#msg').textContent = 'Replies from the site, your reports and requests, any strikes, and what\'s new.';
+  $('#msg').hidden = true;
   $('#body').hidden = false;
   const isNew = ts => ts > seen ? ' new' : '';
   $('#notes').innerHTML = (j.notes || []).map(n => `<div class="item${isNew(n.ts)}"><div class="meta"><span>${n.kind === 'mod' ? 'Swaps moderation' : 'From the site'}</span><span>${when(n.ts)}</span></div>${esc(n.text)}</div>`).join('') || '<div class="empty">No messages yet.</div>';
@@ -186,10 +187,17 @@ const SEEN = 'rb_notifs_seen_v1', seen = Number(ls.get(SEEN) || 0);
     + `<b>${m.banned ? 'Your Swaps access is removed.' : m.strikes ? `${m.strikes} of ${m.max} strikes.` : (m.events || []).length ? 'A warning, no strikes.' : 'No warnings or strikes.'}</b>`
     + (m.events || []).map(e => `<div class="note">${e.kind === 'warn' ? 'Warning' : 'Strike ' + e.n} - swap at ${esc(e.when)}</div>`).join('')
     + (m.banned ? `<div class="note" style="margin-top:6px">You can ask for Swaps back on <a href="/swaps">the Swaps page</a>.${m.request ? ' Your request: ' + esc(m.request.status) + (m.request.answer ? ' - ' + esc(m.request.answer) : '') : ''}</div>` : '') + '</div>';
-  $('#reports').innerHTML = (j.reports || []).map(r => `<div class="item"><div class="meta"><span>${esc(r.what)}${r.about ? ' about @' + esc(r.about) : ''}</span><span>${when(r.ts)}</span></div>${r.detail ? `<div class="note">${esc(r.detail)}</div>` : ''}${pill(r.status)}</div>`).join('') || '<div class="empty">You haven\'t reported anyone.</div>';
+  $('#reports').innerHTML = (j.reports || []).map(r => `<div class="item"><div class="meta"><span>${esc(r.what)}${r.about ? ' about @' + esc(r.about) : ''}</span><span>${when(r.ts)}</span></div>${r.detail ? `<div class="note">${esc(r.detail)}</div>` : ''}${pill(r.status)}${r.canTake ? ` <button class="tkb" data-take="${r.id}">Take back</button>` : ''}</div>`).join('') || '<div class="empty">You haven\'t reported anyone.</div>';
   $('#features').innerHTML = (j.features || []).map(f => `<div class="item"><div class="meta"><span>${esc(f.title)}</span><span>${when(f.ts)}</span></div>${pill(f.status)}</div>`).join('') || '<div class="empty">No feature requests yet - send one from Home.</div>';
   $('#news').innerHTML = (j.news || []).map(n => `<div class="item${isNew(n.ts)}"><div class="meta"><span>New</span><span>${day(n.ts)}</span></div>${esc(n.text)}</div>`).join('');
   ls.set(SEEN, String(Date.now()));
+  // Take back a report (2026-11-17): two taps, then it's withdrawn and any strike it gave is removed.
+  $('#reports').addEventListener('click', async e => { const b = e.target.closest('[data-take]'); if(!b) return;
+    if(!b.dataset.sure){ b.dataset.sure = '1'; b.textContent = 'Tap again to take it back'; setTimeout(() => { if(b.isConnected && !b.disabled){ delete b.dataset.sure; b.textContent = 'Take back'; } }, 4000); return; }
+    b.disabled = true; b.textContent = 'Taking back…';
+    let r = {}; try{ const t = ls.get('ratebrd_token_v1') || ''; r = await (await fetch('/api/swaps?op=reporttakeback', { method: 'POST', headers: { 'content-type': 'application/json', 'x-rb-token': t }, body: JSON.stringify({ id: Number(b.dataset.take) }) })).json(); }catch(x){ r = { error: 'Could not reach the site.' }; }
+    if(r.error){ b.textContent = r.error; return; }
+    b.outerHTML = `<span class="note">Taken back${r.removed ? ` - their ${r.removed === 'warn' ? 'warning' : 'strike'} is removed` : ''}.</span>`; });
 })();
 </script>
 </body>

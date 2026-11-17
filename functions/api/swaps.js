@@ -6249,16 +6249,49 @@ async function handle({ request, env, waitUntil }) {
     if (!acc.who) return forbidden('Sign in first (raxacademy.app).');
     const me0 = String(acc.who).toLowerCase(), out = { news: SITE_NEWS.map(([d, t]) => ({ ts: Date.parse(d + 'T20:00:00Z'), text: t })) };
     try { await db.prepare(NOTE_DDL).run(); out.notes = ((await db.prepare('SELECT ts, kind, text FROM user_notes WHERE key=? ORDER BY id DESC LIMIT 60').bind(me0).all()).results) || []; } catch (e) { out.notes = []; }
-    const ST = { open: 'Waiting for review', auto: 'Counted by moderation', closed: 'Completed', declined: 'Denied', done: 'Completed' };
+    const ST = { open: 'Waiting for review', auto: 'Counted by moderation', closed: 'Completed', declined: 'Denied', done: 'Completed', withdrawn: 'Taken back' };
+    out.news = [];   // "What's new" hidden for now (Dennis, 2026-11-17)
     try { await db.prepare(SREPORT_DDL).run();
-      out.reports = (((await db.prepare('SELECT ts, kind, target, detail, status FROM swap_reports WHERE LOWER(by_user)=? ORDER BY ts DESC LIMIT 40').bind(me0).all()).results) || [])
-        .map(r => ({ ts: r.ts, about: r.target || null, what: r.kind === 'user' ? 'Swaps report' : r.kind === 'refund' ? 'Called-off swap' : r.kind === 'late' ? 'Late heads-up' : 'Swaps problem', detail: String(r.detail || '').slice(0, 200), status: ST[r.status] || r.status })); } catch (e) { out.reports = []; }
+      out.reports = (((await db.prepare('SELECT rowid AS id, ts, kind, target, detail, status FROM swap_reports WHERE LOWER(by_user)=? ORDER BY ts DESC LIMIT 40').bind(me0).all()).results) || [])
+        .map(r => ({ id: r.id, canTake: r.kind === 'user' && !['withdrawn', 'declined'].includes(r.status), ts: r.ts, about: r.target || null, what: r.kind === 'user' ? 'Swaps report' : r.kind === 'refund' ? 'Called-off swap' : r.kind === 'late' ? 'Late heads-up' : 'Swaps problem', detail: String(r.detail || '').slice(0, 200), status: ST[r.status] || r.status })); } catch (e) { out.reports = []; }
     try { const m = JSON.parse((await env.RATEBOARD_KV.get(BOARD_KV)) || '{}') || {};
       for (const r of (m.reports || []).filter(x => String(x.by || '').toLowerCase() === me0).slice(-20)) out.reports.push({ ts: r.ts, about: r.target || null, what: 'Board report', detail: String(r.reason || '').slice(0, 200), status: ST[r.status] || r.status }); } catch (e) {}
     out.reports.sort((a, b) => b.ts - a.ts);
     try { out.features = (((await db.prepare('SELECT ts, title, status FROM features WHERE LOWER(by_user)=? ORDER BY ts DESC LIMIT 40').bind(me0).all()).results) || []).map(r => ({ ts: r.ts, title: r.title, status: ST[r.status] || r.status })); } catch (e) { out.features = []; }
     try { out.mod = await modRecord(db, acc.who); } catch (e) { out.mod = null; }
     return json(out);
+  }
+  /* Take a report back (Dennis, 2026-11-17): it stops counting, and the warning or strike it gave for that
+     swap is removed (moderation adds it again only if someone else's report still warrants it). The
+     member it was about gets a note; Swaps comes back if they drop under the strike limit. */
+  if (op === 'reporttakeback' && request.method === 'POST') {
+    if (!acc.who) return forbidden('Sign in first (raxacademy.app).');
+    const me0 = String(acc.who).toLowerCase(); let b = {}; try { b = await request.json(); } catch (e) {}
+    await db.prepare(SREPORT_DDL).run();
+    const r = await db.prepare("SELECT rowid AS id, ts, kind, target, matchId, m160, status FROM swap_reports WHERE rowid=? AND LOWER(by_user)=?").bind(Number(b.id), me0).first();
+    if (!r || r.kind !== 'user') return json({ error: 'That report was not found.' }, 404);
+    if (r.status === 'withdrawn') return json({ ok: true, already: true });
+    await db.prepare("UPDATE swap_reports SET status='withdrawn' WHERE rowid=?").bind(r.id).run();
+    let tgt = null, period = null;
+    try {
+      if (r.m160) { const x = await db.prepare('SELECT buyer, seller, dueAt FROM swap_160 WHERE id=?').bind(Number(r.m160)).first(); if (x) { tgt = String(x.buyer).toLowerCase() === me0 ? x.seller : x.buyer; period = Number(x.dueAt); } }
+      else if (r.matchId) { const m = await db.prepare('SELECT * FROM swap_matches WHERE id=?').bind(Number(r.matchId)).first(); if (m) { tgt = String(m.a).toLowerCase() === me0 ? m.b : m.a; period = Number(sideDue(m)); } }
+      else { const u = await db.prepare('SELECT key FROM swap_users WHERE LOWER(key)=? OR LOWER(rsUser)=?').bind(String(r.target || '').replace(/^@/, '').toLowerCase(), String(r.target || '').replace(/^@/, '').toLowerCase()).first();
+        if (u) { tgt = u.key; await modReady(db); const e = await db.prepare('SELECT period FROM mod_events WHERE key=? AND period <= ? AND period >= ? ORDER BY period DESC LIMIT 1').bind(u.key, Number(r.ts) + MOD_EARLY, Number(r.ts) - MOD_LOOKBACK).first(); if (e) period = Number(e.period); } }
+    } catch (e) {}
+    let removed = null;
+    if (tgt && period) {
+      await modReady(db);
+      const ev = await db.prepare('SELECT kind, n FROM mod_events WHERE key=? AND period=?').bind(tgt, period).first();
+      if (ev) {
+        await db.prepare('DELETE FROM mod_events WHERE key=? AND period=?').bind(tgt, period).run(); removed = ev.kind;
+        const st = await db.prepare('SELECT banned, resetAt FROM mod_state WHERE key=?').bind(tgt).first();
+        const left = await db.prepare("SELECT COUNT(*) AS n FROM mod_events WHERE key=? AND kind='strike' AND at >= ?").bind(tgt, Number((st && st.resetAt) || 0)).first();
+        if (st && st.banned && Number((left && left.n) || 0) < MOD_STRIKES) { await db.prepare(SBLOCK_DDL).run(); await db.prepare('DELETE FROM swap_block WHERE key=?').bind(tgt).run(); await db.prepare('UPDATE mod_state SET banned=0 WHERE key=?').bind(tgt).run(); ACCESS_MEMO.delete(tgt); }
+        await addNote(db, tgt, 'mod', `A report against you for the swap at ${modTime(period)} was taken back - that ${ev.kind === 'warn' ? 'warning' : 'strike'} is removed.`);
+      }
+    }
+    return json({ ok: true, removed });
   }
   if (op === 'modme') {
     if (!acc.who) return forbidden('Sign in first (raxacademy.app).');
