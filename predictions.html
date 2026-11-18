@@ -158,6 +158,52 @@
   #bsum[hidden],#cbox[hidden],label.keep[hidden],#bavg[hidden]{display:none!important}
   .g.focus{border-color:var(--accent)!important;box-shadow:0 0 0 2px var(--accent),0 6px 18px rgba(0,0,0,.25)!important}
   .livenote{margin:8px 0 10px;padding:10px 12px;border-radius:10px;border:1px solid #ffc95a55;background:#ffc95a12;color:#ffd98a;font-size:13.5px;font-weight:600;line-height:1.4} .livenote[hidden]{display:none}
+
+  /* ===== Look pass 2 (Dennis, 2026-11-17: "clean it up the best you can") ===== */
+  .wrap{max-width:760px}
+  .top{align-items:center;margin:6px 0 4px} h1{font-size:22px;letter-spacing:-.02em;margin:0}
+  .pulse{background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:4px 10px;font-size:11.5px}
+  .tabs{display:flex!important;gap:4px;overflow-x:auto;scrollbar-width:none;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:4px;margin:10px 0 8px}
+  .tabs::-webkit-scrollbar{display:none}
+  .tabs button{flex:1 0 auto;border:0!important;background:none!important;border-radius:9px!important;padding:8px 12px!important;font-size:13.5px!important;font-weight:700;color:var(--mute)}
+  .tabs button[aria-pressed="true"]{background:var(--panel2)!important;color:var(--ink)!important;box-shadow:inset 0 0 0 1px var(--accent)}
+  .tabs button[hidden]{display:none}
+  .setbox{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin:0 0 8px;overflow:hidden}
+  .setbox>summary{list-style:none;display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;font-size:14px}
+  .setbox>summary::-webkit-details-marker{display:none}
+  .setbox .st1{color:var(--mute);font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.05em} .setbox #setsum{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .setbox .st2{color:var(--accent);font-size:13px;font-weight:800} .setbox[open] .st2{visibility:hidden}
+  .setbox .bank{background:none;border:0;border-top:1px solid var(--line);border-radius:0;margin:0;padding:10px 12px 6px}
+  .setbox .upick{background:none;border:0;border-radius:0;padding:0 12px 12px}
+  .sum{grid-template-columns:repeat(3,1fr);gap:6px;margin:8px 0}
+  .sum>div{padding:8px 10px!important;border-radius:10px!important} .sum b{font-size:18px!important} .sum span{font-size:11.5px!important}
+  .bar{margin:8px 0 4px} .chips button{padding:5px 11px} .vbtn{padding:6px 11px;font-size:13px}
+  .bkbox{padding:7px 12px;border-radius:10px} .bkbox summary{font-size:12.5px}
+  .gh .nm{font-size:16px!important} .tag{font-size:11px}
+  .sd{padding:11px 14px} .sd .t>span:last-child{font-size:15px}
+  .go{padding:8px 13px;font-size:14px}
+  #port .sph{margin-top:2px} .psum{grid-template-columns:repeat(3,1fr);gap:6px} .psum>div{padding:8px 10px;border-radius:10px} .psum b{font-size:16px} .psum span{font-size:11.5px;line-height:1.3;display:block}
+  .psync{justify-content:space-between} .psync .note{flex:1;min-width:180px;font-size:12px}
+  .prow{padding:10px 12px;border-radius:12px} .pg{font-size:10.5px;gap:4px 6px} .pg b{font-size:13.5px}
+  .bstat{margin:4px 2px 8px}
+  .guide h2{font-size:16px;margin:16px 0 6px} .guide p{font-size:14px;line-height:1.55}
+
+  .gh .meta{flex-wrap:nowrap;overflow:hidden;gap:0;margin-top:2px}
+  .gh .meta .tag{background:none;padding:0;border-radius:0;font-size:12px;font-weight:700;letter-spacing:0;color:var(--mute);white-space:nowrap}
+  .gh .meta .tag+.tag::before{content:'·';margin:0 6px;color:var(--line)}
+  .gh .meta .tag.live,.gh .meta .tag.lock{background:#e5484d22;color:#ff6b6b;padding:1px 7px;border-radius:999px;margin-left:6px} .gh .meta .tag.lock{background:#ffc95a1c;color:#ffc95a}
+  .gh .meta .tag.live::before,.gh .meta .tag.lock::before{content:none}
+  .gh .go{padding:7px 12px;font-size:13px;border-radius:10px}
+  .bp{padding-top:0;padding-bottom:10px} .place{padding:5px 12px!important;font-size:13px!important;border-radius:9px!important}
+  .ev .rx{font-size:12px} .ev .u{font-size:12.5px;padding:1px 8px}
+  .secth,.sph{font-size:15px}
+  @media(max-width:520px){.gh{padding:12px 12px 8px}.sd{padding:10px 12px}.bp{padding-left:12px!important}.pair .lgw.sm{width:26px;height:26px}}
+  .place.inl{display:block;margin-top:6px}
+  body.h-bet .place.inl{display:none}
+  body.h-lad .bp{display:none}
+  @media(max-width:520px){.gh .meta .tag.vol{display:none}}
+  .psum b span{font-size:inherit!important} .psync label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--mute)} .psync select{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font:inherit;font-size:13px}
+  .psync{gap:8px} .psync .place{order:-1}
 </style>
 <script src="/theme.js"></script>
 <script src="/nav.js?v=5"></script>
@@ -174,10 +220,12 @@
 <div class="top"><h1>Predictions EV</h1><span class="pulse" id="pulse"><i></i><span id="ago">-</span></span></div>
 <div class="tabs" id="tabs"><button data-t="m" aria-pressed="true">Markets</button><button data-t="b" aria-pressed="false">My bets <span id="bn"></span></button><button data-t="r" aria-pressed="false" hidden>Arbitrage <span id="rn"></span></button><button data-t="f" aria-pressed="false">Request/Report <span id="fn"></span></button><button data-t="g" aria-pressed="false">Guide</button><button data-t="a" aria-pressed="false" hidden>Access</button></div>
 <div id="vm">
-<label class="bank"><span>Enter your rax amount for custom recommendations</span><input id="bank" type="number" inputmode="numeric" min="0" step="100" placeholder="e.g. 5000"></label>
+<details class="setbox" id="setbox"><summary><span class="st1">Your rax</span><b id="setsum">Set your rax for unit sizes</b><span class="st2">Edit</span></summary>
+<label class="bank"><span>Your rax (for unit sizes)</span><input id="bank" type="number" inputmode="numeric" min="0" step="100" placeholder="e.g. 5000"></label>
 <div class="upick"><label for="upct">Unit size</label><select id="upct"><option value="0.5">0.5% of rax</option><option value="1">1% of rax (recommended)</option><option value="1.5">1.5% of rax</option><option value="2">2% of rax</option><option value="2.5">2.5% of rax</option><option value="3">3% of rax</option><option value="3.5">3.5% of rax</option><option value="4">4% of rax</option></select><small id="banknote">1u = 1% of your rax</small>
 <div class="own" id="ownbuild" hidden><label>Fixed rax per unit <input id="fixu" type="number" inputmode="numeric" min="0" step="100" placeholder="off"></label>
 <label class="chk"><input type="checkbox" id="buildon"> Buy in pieces + value alerts <span class="note">recommends pieces that move Real about 1 point, and pushes you when a side is really good value (up to your full size)</span></label><label>Good value at EV ≥ <input id="goodev" type="number" inputmode="decimal" min="2" max="50" step="0.5" style="width:70px">%</label></div></div>
+</details>
 <div class="sum" id="sum"></div>
 <div class="bar"><div class="chips" id="chips"></div><button class="vbtn" id="vbtn" type="button" aria-expanded="false" aria-controls="vpanel">View: <b id="vname">Full</b> &#9662;</button></div>
 <div class="vpanel" id="vpanel" hidden>
@@ -411,12 +459,12 @@ function card(g){
   return `<div id="g-${g.id}" class="g${g.sides.some(s => units(g, s)) ? ' hot' : ''}${g.id === FOCUS.gid ? ' focus' : ''}${c ? ' col' : ''}${took.length ? ' taken' : ''}">${took.length ? `<div class="tk">✓ You took ${took.map(b => `${esc(b.name)} at ${pw(b.price)}${b.amt ? ` · ${Math.round(b.amt).toLocaleString()} rax` : ''}`).join(', ')}</div>${arbLine(took[0])}` : ''}
     <div class="gh"><button class="cl" data-cl="${g.id}" aria-label="${c ? 'Expand' : 'Collapse'}">${c ? '▸' : '▾'}</button><span class="pair">${g.sides.filter(x => !/^(draw|tie|x)$/i.test(x.label || '')).slice(0, 2).map(x => logo(x, 'sm')).join('')}</span><div style="min-width:0;flex:1">
       ${g.path ? `<a class="nm" href="https://www.realapp.com${esc(g.path)}" target="_blank" rel="noopener">${esc(g.game)}</a>` : `<span class="nm">${esc(g.game)}</span>`}
-      <div class="meta"><span class="tag">${esc(SPN[g.sport] || g.sport)}</span>${when(g)}${thin(g) && bkOf(g).length ? '<span class="tag lock" title="Too few books or lines too old to trust the EV">Thin odds</span>' : ''}${g.volume ? `<span class="tag">${esc(g.volume)} vol</span>` : ''}</div></div>
+      <div class="meta"><span class="tag">${esc(SPN[g.sport] || g.sport)}</span>${when(g)}${thin(g) && bkOf(g).length ? '<span class="tag lock" title="Too few books or lines too old to trust the EV">Thin odds</span>' : ''}${g.volume ? `<span class="tag vol">${esc(g.volume)} vol</span>` : ''}</div></div>
       ${c ? (units(g, bestS) ? `<span class="u">${esc(bestS.label)} +${pc(evNet(g, bestS, units(g, bestS)))} · ${units(g, bestS)}u</span>` : '') : g.link ? `<a class="go" href="${esc(g.link)}" target="_blank" rel="noopener">Predict ↗</a>` : ''}</div>
-    ${c ? '' : g.sides.map((s, si) => { const u = units(g, s); return `<div class="sd"><span class="t">${logo(s)}<span>${esc(s.name || s.label)}<small class="fr">Fair <b>${pc(s.fair)}</b></small>${(g.refs || []).length ? `<small class="ref">${g.refs.map(r => `${esc(r.src)} ${pc(r.p[si])}`).join(' · ')}</small>` : ''}</span></span>
+    ${c ? '' : g.sides.map((s, si) => { const u = units(g, s); return `<div class="sd"><span class="t">${logo(s)}<span>${esc(s.name || s.label)}<small class="fr">Fair <b>${pc(s.fair)}</b></small>${(g.refs || []).length ? `<small class="ref">${g.refs.map(r => `${esc(r.src)} ${pc(r.p[si])}`).join(' · ')}</small>` : ''}${u ? `<button class="place inl" data-g="${g.id}" data-s="${si}">Bet placed</button>` : ''}</span></span>
       <span class="c">Real<b>${pw(s.price)}</b></span>
-      <span class="ev ${s.ev == null || thin(g) ? 'nil' : evNet(g, s, u) > 0 ? 'pos' : 'neg'}"${stakeOf(g, s, u) > 0 ? ` title="After slippage on ${Math.round(stakeOf(g, s, u)).toLocaleString()} rax (about ${movePts(g, stakeOf(g, s, u)).toFixed(1)} points)"` : ''}>${s.ev == null ? '-' : (evNet(g, s, u) > 0 ? '+' : '') + pc(evNet(g, s, u))}<small>EV</small>${u ? `<span class="u">${u}u</span>${unitRax() > 0 ? (BUILD() ? (() => { const P = pieceNow(g, s, u); return P ? (P.done ? `<span class="rx">full size in</span>` : `<span class="rx">${P.piece ? P.piece.toLocaleString() + ' rax now' : 'wait'}</span><span class="bld">${Math.round(P.placed).toLocaleString()} / ${Math.round(P.target).toLocaleString()}</span>`) : ''; })() : `<span class="rx">${Math.round(u * unitRax()).toLocaleString()} rax</span>`) : ''}` : ''}</span></div>${(() => { const L = ladder(g, s); if (!L.length && !u) return '';
-      return `<div class="bp"><span class="lad">${L.length ? L.filter(([, q]) => Math.floor(q * 100) >= 1).map(([uu, q]) => `<span class="${Math.round(s.price * 100) <= Math.floor(q * 100) ? 'on' : ''}"><b>${uu}u</b> at ${Math.floor(q * 100)}% or less</span>`).join('') : ''}<span class="upto">+EV up to <b>${upTo(s)}%</b></span></span>${u ? `<button class="place" data-g="${g.id}" data-s="${si}">Bet placed</button>` : ''}</div>${betForm && betForm.gid === g.id && betForm.si === si ? `<form class="bf" data-g="${g.id}" data-s="${si}"><label>Real %<input name="pct" type="number" inputmode="numeric" min="1" max="99" step="1" value="${betForm.pct}" required></label><label>Rax bet<input name="amt" type="number" inputmode="numeric" min="1" step="1" value="${betForm.amt}" required></label><button type="submit" class="place">Enter</button><button type="button" class="bfx" aria-label="Cancel">✕</button></form>` : ''}`; })()}`; }).join('')}${c ? '' : `
+      <span class="ev ${s.ev == null || thin(g) ? 'nil' : evNet(g, s, u) > 0 ? 'pos' : 'neg'}"${stakeOf(g, s, u) > 0 ? ` title="After slippage on ${Math.round(stakeOf(g, s, u)).toLocaleString()} rax (about ${movePts(g, stakeOf(g, s, u)).toFixed(1)} points)"` : ''}>${s.ev == null ? '-' : (evNet(g, s, u) > 0 ? '+' : '') + pc(evNet(g, s, u))}<small>EV</small>${u ? `<span class="u">${u}u</span>${unitRax() > 0 ? (BUILD() ? (() => { const P = pieceNow(g, s, u); return P ? (P.done ? `<span class="rx">full size in</span>` : `<span class="rx">${P.piece ? P.piece.toLocaleString() + ' rax now' : 'wait'}</span>${P.placed > 0 ? `<span class="bld">${Math.round(P.placed).toLocaleString()} / ${Math.round(P.target).toLocaleString()}</span>` : ''}`) : ''; })() : `<span class="rx">${Math.round(u * unitRax()).toLocaleString()} rax</span>`) : ''}` : ''}</span></div>${(() => { const L = ladder(g, s); if (!L.length && !u) return '';
+      return `<div class="bp"><span class="lad">${L.length ? L.filter(([, q]) => Math.floor(q * 100) >= 1).map(([uu, q]) => `<span class="${Math.round(s.price * 100) <= Math.floor(q * 100) ? 'on' : ''}"><b>${uu}u</b> at ${Math.floor(q * 100)}% or less</span>`).join('') : ''}<span class="upto">+EV up to <b>${upTo(s)}%</b></span></span></div>${betForm && betForm.gid === g.id && betForm.si === si ? `<form class="bf" data-g="${g.id}" data-s="${si}"><label>Real %<input name="pct" type="number" inputmode="numeric" min="1" max="99" step="1" value="${betForm.pct}" required></label><label>Rax bet<input name="amt" type="number" inputmode="numeric" min="1" step="1" value="${betForm.amt}" required></label><button type="submit" class="place">Enter</button><button type="button" class="bfx" aria-label="Cancel">✕</button></form>` : ''}`; })()}`; }).join('')}${c ? '' : `
     <div class="ft"><span class="srcs">${srcs.length ? 'Fair from <b>' + srcs.map(x => x.books ? `<span title="${esc(x.books.join(', '))}">${esc(x.src)}</span>` : esc(x.src)).join('</b>, <b>') + '</b>' : 'No sportsbook odds for this game'}</span>${(() => { const h = g.hist || []; if (h.length < 2) return ''; const v = h[h.length - 1], sd = g.sides.reduce((a, x) => Math.abs((x.price ?? 9) - v) < Math.abs((a.price ?? 9) - v) ? x : a, g.sides[0]); return `<span class="src" title="Real's price for ${esc(sd.name || sd.label)}, last few hours">${esc(sd.label)} ${spark(h)}</span>`; })()}</div>${breakdown(g)}`}</div>`;
 }
 function drawBooks(){
@@ -437,7 +485,7 @@ function focusGo(){ if (!FOCUS.gid || FOCUS.done) return; const el = document.ge
   const t = document.querySelector('#tabs [data-t="m"]'); if (t && t.getAttribute('aria-pressed') !== 'true') t.click();
   setTimeout(() => { const e2 = document.getElementById('g-' + FOCUS.gid); if (e2) e2.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 60);
   setTimeout(() => { FOCUS.gid = null; }, 60000); }
-let PORT = null; const OPENP = new Set();
+let PORT = null, SORT_LBL = null; const OPENP = new Set();
 document.addEventListener('toggle', e => { const d = e.target; if (d && d.dataset && d.dataset.pk) { d.open ? OPENP.add(d.dataset.pk) : OPENP.delete(d.dataset.pk); } }, true);
 async function loadPort(){ if (!isOwner()) return; const t = ls.get('ratebrd_token_v1') || '';
   try { PORT = await (await fetch('/api/swaps?op=predport', { headers: t ? { 'x-rb-token': t } : {} })).json(); } catch (e) { return; } drawPort(); }
@@ -454,13 +502,15 @@ function drawPort(){
   const pf = PORT.perf || {}, pl = k => pf[k] ? `<span class="${pf[k].pnl >= 0 ? 'pos' : 'neg'}">${sg(pf[k].pnl)}</span>` : '-';
   const ago = PORT.at ? Math.max(0, Math.round((Date.now() - PORT.at) / 60000)) : null;
   box.innerHTML = `<div class="sph"><span>Your Real portfolio</span><span class="note">${ago == null ? 'never synced' : ago < 1 ? 'synced just now' : 'synced ' + (ago < 60 ? ago + ' min' : Math.round(ago / 60) + 'h') + ' ago'}${PORT.err ? ' · ' + esc(PORT.err) : ''}</span></div>
-    <div class="psync"><button type="button" id="psync" class="place">Sync from Real</button><span class="note" id="psyncmsg">${PORT.synced ? `My bets matched to Real: ${PORT.synced.updated} updated, ${PORT.synced.added} added${PORT.synced.notOnReal ? `, ${PORT.synced.notOnReal} not on Real` : ''}.` : 'Reads your open positions on Real and lines My bets up with them.'}</span></div>
+    <div class="psync"><button type="button" id="psync" class="place">Sync from Real</button><span class="note" id="psyncmsg">${PORT.synced ? `My bets matched to Real: ${PORT.synced.updated} updated, ${PORT.synced.added} added${PORT.synced.notOnReal ? `, ${PORT.synced.notOnReal} not on Real` : ''}.` : 'Pulls your open positions from Real.'}</span></div>
     <div class="psum"><div><b>${fmt(cost)}</b><span>in play · ${rows.length} position${rows.length === 1 ? '' : 's'}</span></div><div><b class="${evRax >= 0 ? 'pos' : 'neg'}">${sg(evRax)}</b><span>EV in rax now${fc ? ` (${sp(evRax / fc)})` : ''}</span></div>
       <div><b>${ir.length ? sp(evIn) : '-'}</b><span>EV when bought</span></div><div><b>${fmt(val)}</b><span>worth now · pays ${fmt(pays)}</span></div><div><b>${pl('1d')}</b><span>today</span></div><div><b>${pl('1w')}</b><span>this week</span></div></div>
     ${rows.map(r => `<div class="prow"><div class="pt">${r.g ? logo(r.g.sides[r.si] || { name: r.team }, 'sm') : logo({ name: String(r.team || '').slice(0, 3).toUpperCase() }, 'sm')}<span><b>${esc((r.g && r.g.sides[r.si] && (r.g.sides[r.si].name || r.g.sides[r.si].label)) || r.team || '')}</b><small>${esc(r.game || (r.g && r.g.game) || '')}${r.nTrades ? ` · ${r.nTrades} trade${r.nTrades === 1 ? '' : 's'}` : ''}</small></span>
       <span class="pev ${r.evNow == null ? '' : r.evNow >= 0 ? 'pos' : 'neg'}">${r.evNow == null ? '-' : sp(r.evNow)}<small>${r.evRax == null ? 'EV now' : sg(r.evRax) + ' rax'}</small></span>${r.link ? `<a class="plink" href="${esc(r.link)}" target="_blank" rel="noopener" aria-label="Open on Real">↗</a>` : ''}</div>
       <div class="pg"><span>Cost<b>${fmt(r.cost)}</b></span><span>Avg<b>${r.avg ? pc(r.avg) : '-'}</b></span><span>Real now<b>${r.price ? pw(r.price) : '-'}</b></span><span>Fair now<b>${r.fair != null ? pc(r.fair) : '-'}</b></span><span>Pays<b>${fmt(r.pays)}</b></span><span>When bought<b>${r.evIn != null ? sp(r.evIn) : '-'}</b></span></div>
       ${(r.trades || []).length ? `<details class="pbuys"${OPENP.has(r.k) ? ' open' : ''} data-pk="${esc(r.k)}"><summary>${r.trades.length} trade${r.trades.length === 1 ? '' : 's'} · tap to see each</summary>${r.trades.slice().reverse().map(x => `<div class="ptr"><span>${x.at ? new Date(x.at).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '-'}</span><span>${x.buy ? 'Bought' : 'Sold'} <b>${fmt(x.amt)}</b></span><span>at <b>${x.price ? (x.est ? '≈' : '') + pc(x.price) : '-'}</b></span><span>fair ${x.fair != null ? pc(x.fair) : '-'}${x.fairSrc === 'logged' ? '<sup title="From the bet you logged - before the site kept fair history">*</sup>' : ''}</span><span class="${x.ev == null ? '' : x.ev >= 0 ? 'pos' : 'neg'}">${x.ev != null ? sp(x.ev) : '-'}</span></div>`).join('')}</details>` : ''}</div>`).join('') || '<div class="empty">No open positions on Real.</div>'}`;
+  // Sort sits with the portfolio for you (it's below the list otherwise).
+  { const sl = SORT_LBL || (SORT_LBL = document.querySelector('.bstat label')); const ps = box.querySelector('.psync'); if (sl && ps) ps.appendChild(sl); }
 }
 document.addEventListener('click', async e => { if (e.target.id !== 'psync') return; const b = e.target; b.disabled = true; b.textContent = 'Syncing…';
   const t = ls.get('ratebrd_token_v1') || '';
@@ -604,7 +654,7 @@ function draw(){
   const ended = (J.games || []).filter(g => g.locked && !bg.has(g.id) && (!chip || chip === '_ev' || g.sport === chip)).map(derive).sort(stable);
   if (ended.length && chip !== '_ev') html += `<details class="endbox"${endOpen ? ' open' : ''}><summary class="sph"><span>Locked &amp; ended</span><span class="note">${ended.length} game${ended.length === 1 ? '' : 's'} · log a bet you made</span></summary>${ended.map(endCard).join('')}</details>`;
   $('#list').innerHTML = html;
-  $('#tabs [data-t="a"]').hidden = !J.owner; { const n = [...document.querySelectorAll('#tabs button')].filter(x => !x.hidden).length; $('#tabs').style.setProperty('--tc', n <= 4 ? 2 : 3); } $('#tabs [data-t="r"]').hidden = !J.owner; $('#garb').hidden = !J.owner;
+  $('#tabs [data-t="a"]').hidden = true;   // public now: the access list does nothing { const n = [...document.querySelectorAll('#tabs button')].filter(x => !x.hidden).length; $('#tabs').style.setProperty('--tc', n <= 4 ? 2 : 3); } $('#tabs [data-t="r"]').hidden = !J.owner; $('#garb').hidden = !J.owner;
   tick();
 }
 document.addEventListener('toggle', e => { const d = e.target; if(!d.matches || !d.matches('details.bd')) return; d.open ? openBd.add(d.dataset.bd) : openBd.delete(d.dataset.bd); }, true);
@@ -706,8 +756,9 @@ $('#vbtn').addEventListener('click', () => { const p = $('#vpanel'); p.hidden = 
 $('#vpanel').addEventListener('click', e => { const b = e.target.closest('[data-vm]'); if (b) { VIEW.mode = b.dataset.vm; applyView(); } });
 $('#vpanel').addEventListener('change', e => { const k = e.target.dataset.vp; if (!k) return; const h = new Set(VIEW.hide); e.target.checked ? h.delete(k) : h.add(k); VIEW.hide = [...h]; applyView(); });
 applyView();
-if (bank) $('#bank').value = bank;
-const bankNote = () => { $('#banknote').textContent = isOwner() && FIXU > 0 ? `1u = ${FIXU.toLocaleString()} rax (fixed)` : bank ? `1u = ${Math.round(bank * UP / 100).toLocaleString()} rax (${UP}% of ${bank.toLocaleString()})` : `1u = ${UP}% of your rax`; };
+if (bank) $('#bank').value = bank; try { if (!bank) $('#setbox').open = true; } catch (e) {}
+const setSum = () => { const el = document.getElementById('setsum'); if (!el) return; const u = unitRax(); el.textContent = bank || (isOwner() && FIXU) ? `${bank ? bank.toLocaleString() + ' rax · ' : ''}1u = ${Math.round(u).toLocaleString()} rax` : 'Set your rax for unit sizes'; };
+const bankNote = () => { setTimeout(setSum, 0); $('#banknote').textContent = isOwner() && FIXU > 0 ? `1u = ${FIXU.toLocaleString()} rax (fixed)` : bank ? `1u = ${Math.round(bank * UP / 100).toLocaleString()} rax (${UP}% of ${bank.toLocaleString()})` : `1u = ${UP}% of your rax`; };
 $('#upct').value = String(UP);
 let ownPainted = false;
 function paintOwn(){ const o = isOwner(); $('#ownbuild').hidden = !o; if (!o || ownPainted) return; ownPainted = true; $('#fixu').value = FIXU || ''; $('#buildon').checked = BUILD(); $('#goodev').value = Number(ls.get('pred_goodev')) || 6; bankNote(); saveCfg(); }
