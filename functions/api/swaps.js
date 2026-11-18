@@ -3343,13 +3343,11 @@ export async function swapTick(env) {
   if (!db || !auth) return null;
   await ready(db);
   try { await confirmBypass(env, db); } catch (e) {}
-  /* Joke (Dennis, 2026-11-17): no swaps until 5:00am Alaska (14:00 UTC Nov 18). Each minute, swaps and 160s due
-     before then that haven't been messaged are called off, the same way Pause swaps does it. Nothing else changes. */
-  if (Date.now() < Date.UTC(2026, 10, 18, 14, 0, 0)) { try { const until = Date.UTC(2026, 10, 18, 14, 0, 0), res = { n: 0, late: 0, soon: 0 };
-    const ms = ((await db.prepare("SELECT * FROM swap_matches WHERE status IN ('pending','warned') AND dueAt > ? AND dueAt < ?").bind(Date.now(), until).all()).results) || [];
-    for (const m of ms) await callOff(db, m, 'called off: no swaps tonight until 5am Alaska', res);
-    await db.prepare("UPDATE swap_160 SET status='cancelled', note='no swaps tonight until 5am Alaska' WHERE status='pending' AND warnS IS NULL AND warnB IS NULL AND dueAt > ? AND dueAt < ?").bind(Date.now(), until).run();
-    if (res.n) await stat(db, 'joke_calloff', res.n); } catch (e) {} }
+  /* Joke over (Dennis, 2026-11-17 21:36 AK): put back, once, the swaps and 160s it called off that are still ahead. */
+  try { if (!(await env.RATEBOARD_KV.get('joke_restore_1117'))) { await env.RATEBOARD_KV.put('joke_restore_1117', String(Date.now()), { expirationTtl: 7 * 86400 });
+    const a = await db.prepare("UPDATE swap_matches SET status='pending', note=NULL WHERE note='called off: no swaps tonight until 5am Alaska' AND status IN ('cancelling','cancelled') AND warnA IS NULL AND warnB IS NULL AND dueAt > ?").bind(Date.now() + 2 * 60000).run();
+    const b = await db.prepare("UPDATE swap_160 SET status='pending', note=NULL WHERE note='no swaps tonight until 5am Alaska' AND status='cancelled' AND warnS IS NULL AND warnB IS NULL AND dueAt > ?").bind(Date.now() + 2 * 60000).run();
+    await env.RATEBOARD_KV.put('joke_restore_1117', JSON.stringify({ at: Date.now(), m: (a.meta || {}).changes || 0, s: (b.meta || {}).changes || 0 }), { expirationTtl: 7 * 86400 }); } } catch (e) {}
   // Once an hour at :20 (before the :30 warnings). The claim is a database row (instant everywhere), not KV,
   // so two ticks can never both run matching in the same hour.
   const hour = new Date().toISOString().slice(0, 13);

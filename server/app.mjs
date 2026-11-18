@@ -61,7 +61,7 @@ function fileFor(p) {
   }
   return null;
 }
-const TAKEDOWN_UNTIL = Date.UTC(2026, 10, 18, 14, 0, 0);
+const TAKEDOWN_UNTIL = 0;   // joke over (2026-11-17 21:36 AK): off
 const TAKEDOWN_HTML = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Site unavailable</title>'
   + '<style>html,body{height:100%;margin:0}body{display:grid;place-items:center;background:#0f1218;color:#e8ecf3;font:16px/1.5 system-ui,-apple-system,sans-serif;text-align:center;padding:24px}h1{font-size:26px;margin:0 0 8px}p{color:#8b93a6;margin:0}</style>'
   + '</head><body><div><h1>This website has been taken down.</h1><p>raxacademy.app</p></div></body></html>';
