@@ -6179,6 +6179,20 @@ async function handle({ request, env, waitUntil }) {
   }
   /* Your placed bets (2026-11-16): kept per member on the server so they follow you between devices.
      POST {add: {...}} / {set: {id, amt}} / {del: id}. At most 300 kept. */
+  /* Build to full size (Dennis, 2026-11-17, owner only while testing): big stakes move Real's price too much
+     in one go, so a side's full size is bought in pieces before the game starts and a notification says when
+     to buy the next one. Plans: { gid, side, target (rax), unit (rax), at }. */
+  if (op === 'predbuild') {
+    const who = String(acc.who || '').toLowerCase();
+    if (who !== 'dennis') return forbidden('Not open yet.');
+    const K = 'pred_build_v1_' + who; let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get(K)) || '[]') || []; } catch (e) {}
+    if (request.method === 'POST') { let b = {}; try { b = await request.json(); } catch (e) {}
+      if (b.set) { const g = Number(b.set.gid), sd = Number(b.set.side), t = Math.max(0, Math.min(1e6, Number(b.set.target) || 0));
+        l = l.filter(x => !(x.gid === g && x.side === sd)); if (g > 0 && t > 0) l.push({ gid: g, side: sd, target: Math.round(t), unit: Math.round(Number(b.set.unit) || 0), name: String(b.set.name || '').slice(0, 80), at: Date.now() }); }
+      if (b.del) l = l.filter(x => !(x.gid === Number(b.del.gid) && x.side === Number(b.del.side)));
+      l = l.slice(-60); await env.RATEBOARD_KV.put(K, JSON.stringify(l)); }
+    return json({ plans: l });
+  }
   if (op === 'predbets') {
     const who = String(acc.who || '').toLowerCase();
     if (!who) return json({ error: 'Sign in first.' }, 401);
@@ -6189,6 +6203,21 @@ async function handle({ request, env, waitUntil }) {
       const num = v => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : 0; };
       const str = v => String(v == null ? '' : v).slice(0, 120);
       if (b.add && typeof b.add === 'object') { const a = b.add;
+        /* Stack, don't replace (Dennis, 2026-11-17): a second Bet placed on the same side adds to the open bet.
+           Price becomes the one that pays the same total (amount / sum of each buy's amount / price). */
+        const prev = Number(a.gid) > 0 ? l.find(x => x.gid === Number(a.gid) && x.side === Number(a.side) && !x.res) : null;
+        if (prev && num(a.amt) > 0 && num(a.price) > 0) {
+          const legs = prev.legs || [{ amt: prev.amt || 0, price: prev.price || 0, at: prev.at || 0 }];
+          legs.push({ amt: num(a.amt), price: num(a.price), at: Date.now() });
+          const amt = legs.reduce((t, x) => t + (x.amt || 0), 0), pays = legs.reduce((t, x) => t + (x.price > 0 ? x.amt / x.price : 0), 0);
+          const w = (k, v) => ((prev[k] || 0) * (prev.amt || 0) + (Number(v) || 0) * num(a.amt)) / Math.max(1, amt);
+          prev.fair = Math.round(w('fair', a.fair) * 1e4) / 1e4; prev.ev = Math.round(w('ev', a.ev) * 1e4) / 1e4;
+          prev.u = Math.round(((prev.u || 0) + num(a.u)) * 100) / 100; prev.amt = Math.round(amt * 100) / 100; prev.price = pays > 0 ? Math.round(amt / pays * 1e4) / 1e4 : prev.price;
+          if (prev.pay != null) prev.pay = Math.round((prev.pay + num(a.amt) / num(a.price)) * 100) / 100;
+          prev.legs = legs.slice(-40);
+          await env.RATEBOARD_KV.put(K, JSON.stringify(l.slice(0, 300)));
+          return json({ bets: l.slice(0, 300), stacked: true });
+        }
         if (Number(a.gid) > 0) l = l.filter(x => !(x.gid === Number(a.gid) && x.side === Number(a.side)));
         l.unshift({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), gid: Number(a.gid) || 0, side: Number(a.side) || 0, sport: str(a.sport), game: str(a.game), name: str(a.name),
           price: num(a.price), fair: num(a.fair), ev: Number(a.ev) || 0, u: num(a.u), amt: num(a.amt), teams: Array.isArray(a.teams) ? a.teams.slice(0, 3).map(str) : [], start: str(a.start), custom: !!a.custom, logo: /^https:\/\/a\.espncdn\.com\//.test(String(a.logo || '')) ? String(a.logo).slice(0, 300) : '', link: /^https:\/\/www\.realapp\.com\//.test(String(a.link || '')) ? str(a.link) : '', at: Date.now() }); }
@@ -6200,7 +6229,7 @@ async function handle({ request, env, waitUntil }) {
        saw the market settle, else from ESPN's final score once the game is over (Real drops settled
        markets from its list, so ESPN is the usual route). */
     try { const S = JSON.parse((await env.RATEBOARD_KV.get('pred_settled_v1')) || '{}') || {}; let ch = false;
-      const ESPN = { nhl: 'hockey/nhl', nba: 'basketball/nba', nfl: 'football/nfl', ncaaf: 'football/college-football', ufc: 'mma/ufc' };
+      const ESPN = { nhl: 'hockey/nhl', nba: 'basketball/nba', nfl: 'football/nfl', ncaaf: 'football/college-football', ncaam: 'basketball/mens-college-basketball', ufc: 'mma/ufc' };
       const nt = t => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
       const same = (a, b) => { a = nt(a); b = nt(b); return !!a && !!b && (a === b || a.endsWith(' ' + b) || b.endsWith(' ' + a)); };
       const boards = {};
@@ -6213,7 +6242,7 @@ async function handle({ request, env, waitUntil }) {
         const st = Date.parse(x.start || 0); if (!ESPN[x.sport] || !Array.isArray(x.teams) || !Number.isFinite(st) || Date.now() - st < 2 * 3600000 || Date.now() - st > 4 * 86400000) continue;
         const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(st)).replace(/-/g, ''), bk = `${x.sport}_${day}`;
         if (!(bk in boards)) { const ck = 'pred_espn_' + bk; let d = null; try { d = JSON.parse((await env.RATEBOARD_KV.get(ck)) || 'null'); } catch (e) {}
-          if (!d) { try { const rr = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${ESPN[x.sport]}/scoreboard?dates=${day}${x.sport === 'ncaaf' ? '&groups=80&limit=300' : ''}`); const j = rr.ok ? await rr.json() : null;
+          if (!d) { try { const rr = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${ESPN[x.sport]}/scoreboard?dates=${day}${x.sport === 'ncaaf' ? '&groups=80&limit=300' : x.sport === 'ncaam' ? '&groups=50&limit=400' : ''}`); const j = rr.ok ? await rr.json() : null;
               d = ((j && j.events) || []).map(ev => { const c = (ev.competitions || [])[0] || {}; return { done: !!(c.status && c.status.type && c.status.type.completed) || !!(ev.status && ev.status.type && ev.status.type.completed), t: (c.competitors || []).map(k => ({ n: [k.team && k.team.displayName, k.team && k.team.shortDisplayName, k.athlete && k.athlete.displayName].filter(Boolean), w: !!k.winner })) }; });
               await env.RATEBOARD_KV.put(ck, JSON.stringify(d), { expirationTtl: 600 }); } catch (e) { d = []; } }
           boards[bk] = d; }

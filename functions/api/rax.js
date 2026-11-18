@@ -3,6 +3,7 @@ import { draftScan, draftCheck, draftGap, swapTick, dmTickKey, boostRefresh, swa
 import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, capNow } from '../../lib/dbwatch.js';
 import { packAllowed } from './kv.js';
 import { ODDS_TEAMS, ODDS_SPORT } from '../../lib/teams.js';
+import { pushTo } from '../../lib/webpush.js';
 
 // One shared ET-day formatter: building one per call was slow and memory-hungry (2026-11-14).
 const ET_DAY_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -817,6 +818,7 @@ async function predReal(env) {
         if (!ids.has(g.id) && Date.now() - g.seen > 30000) out.games.push({ ...g, ended: true, locked: true, live: false, sides: g.sides.map(x => ({ ...x, ev: null })) }); }
       if (round === 0 || round === 3) await env.RATEBOARD_KV.put('pred_recent_v1', JSON.stringify(R), { expirationTtl: 86400 }); } catch (e) {}
     await env.RATEBOARD_KV.put('pred_ev_v1', JSON.stringify(out), { expirationTtl: 3600 });
+    try { await predBuildTick(env, out); } catch (e) {}
     // Nothing open to bet on (only locked markets left): one read a minute is enough.
     if (!out.games.some(g => !g.locked && !g.ended)) break;
     const wait = 10000 - (Date.now() - t0); if (round < 5 && wait > 0) await sleep(wait);
@@ -841,6 +843,59 @@ async function marketWipe(env) {
       for (let i = 0; i < 400; i++) { const d = await db.prepare(`DELETE FROM ${t} WHERE rowid IN (SELECT rowid FROM ${t} LIMIT 5000)`).run(); if (!d.meta || !d.meta.changes) break; await sleep(50); }
     } catch (e) { out[t] = 'err ' + e.message; } }
   await env.RATEBOARD_KV.put(K, JSON.stringify(out));
+}
+/* Build to full size (Dennis, 2026-11-17, only him while testing). Same fair % as the page: weighted books,
+   Pinnacle pregame only, a book 8+ points off the others left out. Same sizing: a tenth Kelly in half units,
+   capped for long shots, 2% minimum edge. Each piece is sized to move Real about 1 point (from the measured
+   slippage), spaced so the full size is in about 10 minutes before the start, and a push says when. */
+const PB_SLIP = { nba: 1.1, nhl: 2.3 }, PB_DEF = 2.5, PB_MIN_EV = 0.02, PB_PIECE_PTS = 1.0;
+function pbDerive(g) {
+  const all = (g.sources || []).flatMap(x => x.bk || []).filter(b => !(g.live && b.t === 'Pinnacle')).map(b => ({ ...b, out: false }));
+  if (all.length >= 3) for (const b of all) { const o = all.filter(x => x !== b).map(x => x.p[0]).sort((a, c) => a - c);
+    const med = o.length % 2 ? o[(o.length - 1) / 2] : (o[o.length / 2 - 1] + o[o.length / 2]) / 2; b.out = Math.abs(b.p[0] - med) > 0.08; }
+  const bk = all.filter(b => !b.out), wt = bk.reduce((a, b) => a + (b.w || 1), 0);
+  return { n: bk.length, fair: i => wt ? bk.reduce((a, b) => a + (b.w || 1) * (b.p[i] || 0), 0) / wt : null };
+}
+const pbUnits = (fair, q) => { if (!(q > 0 && q < 1) || fair / q - 1 < PB_MIN_EV) return 0; const f = (fair - q) / (1 - q), cap = q < 0.2 ? 0.5 : q < 0.35 ? 1 : q < 0.5 ? 1.5 : 2;
+  return Math.max(0.5, Math.min(cap, Math.floor(f * 10 * 2) / 2)); };
+async function predBuildTick(env, out) {
+  const who = 'dennis', PK = 'pred_build_v1_' + who;
+  let plans = []; try { plans = JSON.parse((await env.RATEBOARD_KV.get(PK)) || '[]') || []; } catch (e) {}
+  if (!plans.length) return;
+  let bets = []; try { bets = JSON.parse((await env.RATEBOARD_KV.get('pred_bets_v1_' + who)) || '[]') || []; } catch (e) {}
+  let st = {}; try { st = JSON.parse((await env.RATEBOARD_KV.get('pred_build_state_v1')) || '{}') || {}; } catch (e) {}
+  const now = Date.now(), keep = [], db = env.RATEBOARD_DB;
+  const send = (title, body, tag) => pushTo(env, db, who, { title, body, url: '/predictions', tag, urgent: true });
+  for (const p of plans) {
+    const k = p.gid + ':' + p.side, s0 = st[k] = st[k] || {};
+    const g = (out.games || []).find(x => x.id === p.gid);
+    const placed = bets.filter(b => b.gid === p.gid && b.side === p.side && !b.res).reduce((t, b) => t + (b.amt || 0), 0);
+    const start = g ? Date.parse(g.start || 0) : 0;
+    if (!g) { if (now - p.at < 2 * 86400000) keep.push(p); continue; }
+    if (g.locked || g.live || (start && now >= start)) { if (placed < p.target * 0.95) await send('Build closed · ' + p.name, `Game started - ${Math.round(placed).toLocaleString()} of ${p.target.toLocaleString()} rax placed.`, 'pb-' + k); delete st[k]; continue; }
+    if (placed >= p.target * 0.95 || p.target - placed < 100) { await send('Full size reached · ' + p.name, `${Math.round(placed).toLocaleString()} rax placed. Nothing more to buy.`, 'pb-' + k); delete st[k]; continue; }
+    keep.push(p);
+    const d = pbDerive(g), sd = g.sides[p.side]; if (!sd || d.n < 2) continue;
+    const fair = d.fair(p.side), q = Number(sd.price); if (!(fair > 0) || !(q > 0 && q < 1)) continue;
+    // Still worth more? Size today's edge; never past the plan.
+    const uNow = pbUnits(fair, q), target = Math.min(p.target, p.unit > 0 ? uNow * p.unit : p.target), left = target - placed;
+    if (!(uNow > 0) || Math.round(q * 100) > Math.floor(fair / (1 + PB_MIN_EV) * 100) || left < 100) { s0.waiting = true; continue; }
+    const rate = PB_SLIP[g.sport] ?? PB_DEF, cap = PB_PIECE_PTS / rate * 1000;
+    const tLeft = start ? start - 10 * 60000 - now : 3 * 3600000;
+    const pieces = Math.max(1, Math.ceil(left / cap)), gap = Math.max(8 * 60000, Math.min(30 * 60000, tLeft / pieces));
+    let piece = Math.min(left, Math.max(cap, tLeft > 0 ? left / Math.max(1, Math.floor(tLeft / gap) + 1) : left));
+    while (piece >= 100 && fair / (q + rate * piece / 1000 / 200) - 1 < PB_MIN_EV) piece = Math.floor(piece / 2);
+    if (piece < 100) { s0.waiting = true; continue; }
+    piece = Math.round(piece / 50) * 50;
+    if (s0.nextAt && now < s0.nextAt && !s0.waiting) continue;
+    if (s0.lastAt && now - s0.lastAt < 5 * 60000) continue;   // never two pushes for a side within 5 minutes
+    const ev = fair / (q + rate * piece / 1000 / 200) - 1;
+    await send('Buy more · ' + p.name, `Buy ${piece.toLocaleString()} rax at ${Math.round(q * 100)}% or less (${(ev * 100).toFixed(1)}% EV). ${Math.round(placed).toLocaleString()} of ${Math.round(target).toLocaleString()} placed${left - piece > 50 ? `, next in about ${Math.round(gap / 60000)} min` : ' - this finishes it'}.`, 'pb-' + k);
+    s0.nextAt = now + gap; s0.waiting = false; s0.lastPiece = piece; s0.lastAt = now;
+  }
+  for (const k of Object.keys(st)) if (!plans.some(p => p.gid + ':' + p.side === k)) delete st[k];
+  await env.RATEBOARD_KV.put('pred_build_state_v1', JSON.stringify(st), { expirationTtl: 3 * 86400 });
+  if (keep.length !== plans.length) await env.RATEBOARD_KV.put(PK, JSON.stringify(keep));
 }
 async function predTick(env) {
   try { const P = JSON.parse((await env.RATEBOARD_KV.get('pred_pause_v1')) || '{}') || {}; if (P.until && Date.now() < P.until) return; } catch (e) {}
