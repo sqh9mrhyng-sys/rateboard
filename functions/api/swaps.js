@@ -6639,7 +6639,14 @@ async function handle({ request, env, waitUntil }) {
           WHERE u.key=? AND json_extract(j.value, '$.key')=? LIMIT 1`).bind(k, key); })) : [];
       res.forEach((r, i) => { const p = r && r.results && r.results[0]; if (p && p.passId) cardOf.set(want[i], `https://www.realapp.com/${routeId([18, 0, 0, Number(p.passId)])}`); });
     } catch (e) {}
+    /* Swaps called off because someone ELSE didn't confirm are noise in a
+       member's history (member request 2026-11-18): drop them. Ones called
+       off for this member's own missed confirm stay, so they can see why. */
+    const meNames = [me, mine && mine.rsUser].filter(Boolean).map(x => '@' + String(x).toLowerCase());
+    const otherNoConf = (status, note) => status === 'cancelled' && /didn't confirm today/.test(String(note || ''))
+      && !String(note).toLowerCase().split(/[\s,:]+/).some(w => meNames.includes(w));
     for (const m of rows) {
+      if (otherNoConf(m.status, m.note)) continue;
       const side = m.a === me ? 'A' : 'B', ok = side === 'A' ? m.b : m.a, o = who.get(ok);
       const give = side === 'A' ? m.bGets : m.aGets, get = side === 'A' ? m.aGets : m.bGets, due = sideDue(m);
       const off = m.status === 'cancelled' || m.status === 'cancelling', done = !!m['done' + side];
@@ -6665,6 +6672,7 @@ async function handle({ request, env, waitUntil }) {
         for (const x of (((await db.prepare(`SELECT key, rsUser, hashId, comment FROM swap_users WHERE key IN (${part.map(() => '?').join(',')})`).bind(...part).all()).results) || [])) who.set(x.key, x); }
       const nameOf = new Map();
       for (const r of r1) {
+        if (otherNoConf(r.status, r.note)) continue;
         const buy = r.buyer === me, ok = buy ? r.seller : r.buyer, o = who.get(ok), off = r.status === 'cancelled', due = Number(r.dueAt);
         let nm = mine ? playerName(mine, r.pass) : r.pass;
         if (/^Player \d/.test(nm)) { if (!nameOf.has(ok)) nameOf.set(ok, await loadMember(db, ok).catch(() => null)); const om = nameOf.get(ok); if (om) nm = playerName(om, r.pass); }
