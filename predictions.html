@@ -153,6 +153,9 @@
   @media(max-width:520px){.pg{grid-template-columns:repeat(3,1fr)}}
   .tag.oreal{color:var(--good)} .tag.nreal{color:#ffc95a} .psync{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0 4px} .psync .place{padding:8px 14px}
   .pbuys{margin-top:6px;font-size:12.5px} .pbuys summary{cursor:pointer;color:var(--mute);font-weight:700} .pbuys div{padding:3px 0;border-top:1px solid var(--line)}
+  .ptr{display:grid;grid-template-columns:1.3fr 1.2fr 0.9fr 1fr 0.8fr;gap:6px;align-items:baseline} .ptr .pos{color:var(--good);font-weight:800} .ptr .neg{color:var(--bad);font-weight:800}
+  .plink{order:9;margin-left:8px;display:inline-grid;place-items:center;width:34px;height:34px;border-radius:10px;background:var(--accent);color:#141925;font-weight:900;text-decoration:none} .pt{position:relative}
+  #bsum[hidden],#cbox[hidden],label.keep[hidden],#bavg[hidden]{display:none!important}
 </style>
 <script src="/theme.js"></script>
 <script src="/nav.js?v=4"></script>
@@ -172,7 +175,7 @@
 <label class="bank"><span>Enter your rax amount for custom recommendations</span><input id="bank" type="number" inputmode="numeric" min="0" step="100" placeholder="e.g. 5000"></label>
 <div class="upick"><label for="upct">Unit size</label><select id="upct"><option value="0.5">0.5% of rax</option><option value="1">1% of rax (recommended)</option><option value="1.5">1.5% of rax</option><option value="2">2% of rax</option><option value="2.5">2.5% of rax</option><option value="3">3% of rax</option><option value="3.5">3.5% of rax</option><option value="4">4% of rax</option></select><small id="banknote">1u = 1% of your rax</small>
 <div class="own" id="ownbuild" hidden><label>Fixed rax per unit <input id="fixu" type="number" inputmode="numeric" min="0" step="100" placeholder="off"></label>
-<label class="chk"><input type="checkbox" id="buildon"> Build big bets in pieces <span class="note">notifies you when to buy more</span></label></div></div>
+<label class="chk"><input type="checkbox" id="buildon"> Buy in pieces + value alerts <span class="note">recommends pieces that move Real about 1 point, and pushes you when a side is really good value (up to your full size)</span></label><label>Good value at EV ≥ <input id="goodev" type="number" inputmode="decimal" min="2" max="50" step="0.5" style="width:70px">%</label></div></div>
 <div class="sum" id="sum"></div>
 <div class="bar"><div class="chips" id="chips"></div><button class="vbtn" id="vbtn" type="button" aria-expanded="false" aria-controls="vpanel">View: <b id="vname">Full</b> &#9662;</button></div>
 <div class="vpanel" id="vpanel" hidden>
@@ -415,7 +418,8 @@ function drawBooks(){
 /* Your Real portfolio (Dennis, 2026-11-17, owner only): your open positions straight from Real, synced each
    minute. EV now = today's fair % against the average price you got; EV when bought = the fair % at the
    moments you added rax. Value is what Real would give you for it right now. */
-let PORT = null;
+let PORT = null; const OPENP = new Set();
+document.addEventListener('toggle', e => { const d = e.target; if (d && d.dataset && d.dataset.pk) { d.open ? OPENP.add(d.dataset.pk) : OPENP.delete(d.dataset.pk); } }, true);
 async function loadPort(){ if (!isOwner()) return; const t = ls.get('ratebrd_token_v1') || '';
   try { PORT = await (await fetch('/api/swaps?op=predport', { headers: t ? { 'x-rb-token': t } : {} })).json(); } catch (e) { return; } drawPort(); }
 function drawPort(){
@@ -423,7 +427,7 @@ function drawPort(){
   const now = new Map((J && J.games || []).map(g => [g.id, derive(g)])), fmt = v => Math.round(v).toLocaleString(), sg = v => (v >= 0 ? '+' : '') + fmt(v), sp = v => (v >= 0 ? '+' : '') + pc(v);
   const rows = (PORT.pos || []).map(p => { const g = now.get(p.marketId), sd = g && p.si >= 0 ? g.sides[p.si] : null, fair = sd && !thin(g) ? sd.fair : null, avg = p.pays > 0 ? p.cost / p.pays : null;
     const plan = (PORT.plans || []).find(x => x.gid === p.marketId && x.side === p.si);
-    return { ...p, g, fair, avg, evNow: fair != null && avg ? fair / avg - 1 : null, evRax: fair != null ? p.pays * fair - p.cost : null, evIn: p.fairIn != null && avg ? p.fairIn / avg - 1 : null, plan }; });
+    return { ...p, g, fair, avg, evNow: fair != null && avg ? fair / avg - 1 : null, evRax: fair != null ? p.pays * fair - p.cost : null, evIn: p.evIn ?? null, plan }; });
   if (BSORT === 'amt') rows.sort((a, b) => b.cost - a.cost); else if (BSORT === 'ev') rows.sort((a, b) => (b.evNow ?? -9) - (a.evNow ?? -9));
   const cost = rows.reduce((t, r) => t + r.cost, 0), pays = rows.reduce((t, r) => t + r.pays, 0), val = rows.reduce((t, r) => t + (r.value || 0), 0);
   const fr = rows.filter(r => r.evRax != null), evRax = fr.reduce((t, r) => t + r.evRax, 0), fc = fr.reduce((t, r) => t + r.cost, 0);
@@ -434,11 +438,10 @@ function drawPort(){
     <div class="psync"><button type="button" id="psync" class="place">Sync from Real</button><span class="note" id="psyncmsg">${PORT.synced ? `My bets matched to Real: ${PORT.synced.updated} updated, ${PORT.synced.added} added${PORT.synced.notOnReal ? `, ${PORT.synced.notOnReal} not on Real` : ''}.` : 'Reads your open positions on Real and lines My bets up with them.'}</span></div>
     <div class="psum"><div><b>${fmt(cost)}</b><span>in play · ${rows.length} position${rows.length === 1 ? '' : 's'}</span></div><div><b class="${evRax >= 0 ? 'pos' : 'neg'}">${sg(evRax)}</b><span>EV in rax now${fc ? ` (${sp(evRax / fc)})` : ''}</span></div>
       <div><b>${ir.length ? sp(evIn) : '-'}</b><span>EV when bought</span></div><div><b>${fmt(val)}</b><span>worth now · pays ${fmt(pays)}</span></div><div><b>${pl('1d')}</b><span>today</span></div><div><b>${pl('1w')}</b><span>this week</span></div></div>
-    ${rows.map(r => `<div class="prow"><div class="pt">${r.g ? logo(r.g.sides[r.si] || { name: r.team }, 'sm') : logo({ name: String(r.team || '').slice(0, 3).toUpperCase() }, 'sm')}<span><b>${esc((r.g && r.g.sides[r.si] && (r.g.sides[r.si].name || r.g.sides[r.si].label)) || r.team || '')}</b><small>${esc(r.game || (r.g && r.g.game) || '')}${r.trades ? ` · ${r.trades} trade${r.trades === 1 ? '' : 's'}` : ''}</small></span>
-      <span class="pev ${r.evNow == null ? '' : r.evNow >= 0 ? 'pos' : 'neg'}">${r.evNow == null ? '-' : sp(r.evNow)}<small>${r.evRax == null ? 'EV now' : sg(r.evRax) + ' rax'}</small></span></div>
+    ${rows.map(r => `<div class="prow"><div class="pt">${r.g ? logo(r.g.sides[r.si] || { name: r.team }, 'sm') : logo({ name: String(r.team || '').slice(0, 3).toUpperCase() }, 'sm')}<span><b>${esc((r.g && r.g.sides[r.si] && (r.g.sides[r.si].name || r.g.sides[r.si].label)) || r.team || '')}</b><small>${esc(r.game || (r.g && r.g.game) || '')}${r.nTrades ? ` · ${r.nTrades} trade${r.nTrades === 1 ? '' : 's'}` : ''}</small></span>
+      <span class="pev ${r.evNow == null ? '' : r.evNow >= 0 ? 'pos' : 'neg'}">${r.evNow == null ? '-' : sp(r.evNow)}<small>${r.evRax == null ? 'EV now' : sg(r.evRax) + ' rax'}</small></span>${r.link ? `<a class="plink" href="${esc(r.link)}" target="_blank" rel="noopener" aria-label="Open on Real">↗</a>` : ''}</div>
       <div class="pg"><span>Cost<b>${fmt(r.cost)}</b></span><span>Avg<b>${r.avg ? pc(r.avg) : '-'}</b></span><span>Real now<b>${r.price ? pw(r.price) : '-'}</b></span><span>Fair now<b>${r.fair != null ? pc(r.fair) : '-'}</b></span><span>Pays<b>${fmt(r.pays)}</b></span><span>When bought<b>${r.evIn != null ? sp(r.evIn) : '-'}</b></span></div>
-      ${(r.buys || []).length ? `<details class="pbuys"><summary>${r.buys.length} buy${r.buys.length === 1 ? '' : 's'} seen</summary>${r.buys.slice().reverse().map(x => `<div>${new Date(x.at).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })} · <b>+${fmt(x.add)}</b> rax${x.fair != null ? ` · fair ${pc(x.fair)}` : ''}${x.real ? ` · Real ${pw(x.real)} · EV ${sp(x.fair / x.real - 1)}` : ''}${x.exact ? '' : ' <span class="note">(time of sync)</span>'}</div>`).join('')}</details>` : ''}
-      ${r.plan ? `<div class="pplan">Building to ${fmt(r.plan.target)} rax · ${fmt(Math.min(r.cost, r.plan.target))} in (${Math.round(Math.min(1, r.cost / r.plan.target) * 100)}%)</div>` : ''}</div>`).join('') || '<div class="empty">No open positions on Real.</div>'}`;
+      ${(r.trades || []).length ? `<details class="pbuys"${OPENP.has(r.k) ? ' open' : ''} data-pk="${esc(r.k)}"><summary>${r.trades.length} trade${r.trades.length === 1 ? '' : 's'} · tap to see each</summary>${r.trades.slice().reverse().map(x => `<div class="ptr"><span>${x.at ? new Date(x.at).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '-'}</span><span>${x.buy ? 'Bought' : 'Sold'} <b>${fmt(x.amt)}</b></span><span>at <b>${x.price ? pc(x.price) : '-'}</b></span><span>fair ${x.fair != null ? pc(x.fair) : '-'}${x.fairSrc === 'logged' ? '<sup title="From the bet you logged - before the site kept fair history">*</sup>' : ''}</span><span class="${x.ev == null ? '' : x.ev >= 0 ? 'pos' : 'neg'}">${x.ev != null ? sp(x.ev) : '-'}</span></div>`).join('')}</details>` : ''}</div>`).join('') || '<div class="empty">No open positions on Real.</div>'}`;
 }
 document.addEventListener('click', async e => { if (e.target.id !== 'psync') return; const b = e.target; b.disabled = true; b.textContent = 'Syncing…';
   const t = ls.get('ratebrd_token_v1') || '';
@@ -455,9 +458,6 @@ async function placeBet(gid, si, btn, pct, amt){
   const g0 = (J.games || []).find(x => x.id === gid); if (!g0) return; const g = derive(g0), sd = g.sides[si], u = units(g, sd);
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   await betsCall({ add: { gid, side: si, sport: g.sport, game: g.game, name: sd.name || sd.label, logo: sd.logo || '', teams: g.sides.map(x => x.name || x.label), start: g.start || (g.live ? new Date(Date.now() - 3600000).toISOString() : null), price: pct / 100, fair: sd.fair, ev: sd.fair != null ? sd.fair / (pct / 100) - 1 : sd.ev, u: unitsAt(sd.fair, pct / 100) || u || 0, amt, link: g.link } });
-  // Build in pieces: the side's full size is the plan; the server pushes when to buy the next piece.
-  if (BUILD() && u && unitRax() > 0) { const t = localStorage.getItem('ratebrd_token_v1') || '';
-    try { await fetch('/api/swaps?op=predbuild', { method: 'POST', headers: { 'content-type': 'application/json', ...(t ? { 'x-rb-token': t } : {}) }, body: JSON.stringify({ set: { gid, side: si, target: Math.round(u * unitRax()), unit: Math.round(unitRax()), name: sd.name || sd.label } }) }); } catch (e) {} }
   betForm = null;
 }
 /* Arbitrage (2026-11-16): after a bet on one side, buying every other side so they all pay the same
@@ -553,6 +553,9 @@ function drawBets(){
     $('#bavg').innerHTML = w.length ? `Average EV <b class="${(t ? w.reduce((a, b) => a + b.ev * (b.amt || 0), 0) / t : 0) >= 0 ? 'pos' : 'neg'}">${(x => (x >= 0 ? '+' : '') + pc(x))(t ? w.reduce((a, b) => a + b.ev * (b.amt || 0), 0) / t : w.reduce((a, b) => a + b.ev, 0) / w.length)}</b> <span class="note">by rax placed · ${(x => (x >= 0 ? '+' : '') + pc(x))(w.reduce((a, b) => a + b.ev, 0) / w.length)} per bet · ${w.length} bet${w.length === 1 ? '' : 's'}</span>` : ''; }
   // A game with any leg still open stays in Active as a whole.
   const openG = new Set(act.filter(b => b.gid > 0).map(b => b.gid)), actL = BETS.filter(b => !b.res || (b.gid > 0 && openG.has(b.gid))), doneL = BETS.filter(b => !actL.includes(b));
+  /* Owner (Dennis, 2026-11-17): the Real portfolio above is the whole picture - only settled bets stay here. */
+  const own = isOwner(); for (const el of [$('#bsum'), $('#bavg'), $('#keepb').closest('label'), document.getElementById('cbox')]) if (el) el.hidden = own;
+  if (own) { $('#blist').innerHTML = doneL.length ? '<div class="sph"><span>Settled</span></div>' + blocks(doneL) : ''; return; }
   $('#blist').innerHTML = (actL.length ? '<div class="sph"><span>Active</span></div>' + blocks(actL) : '<div class="empty">No active bets. Tap "Bet placed" on a side in Markets and it moves here.</div>')
     + (doneL.length ? '<div class="sph"><span>Settled</span></div>' + blocks(doneL) : '');
 }
@@ -687,9 +690,13 @@ if (bank) $('#bank').value = bank;
 const bankNote = () => { $('#banknote').textContent = isOwner() && FIXU > 0 ? `1u = ${FIXU.toLocaleString()} rax (fixed)` : bank ? `1u = ${Math.round(bank * UP / 100).toLocaleString()} rax (${UP}% of ${bank.toLocaleString()})` : `1u = ${UP}% of your rax`; };
 $('#upct').value = String(UP);
 let ownPainted = false;
-function paintOwn(){ const o = isOwner(); $('#ownbuild').hidden = !o; if (!o || ownPainted) return; ownPainted = true; $('#fixu').value = FIXU || ''; $('#buildon').checked = BUILD(); bankNote(); }
-$('#fixu').addEventListener('change', e => { FIXU = Math.max(0, Number(e.target.value) || 0); ls.set('pred_fixu', String(FIXU)); bankNote(); if (J && J.games) draw(); });
-$('#buildon').addEventListener('change', e => { ls.set('pred_build_on', e.target.checked ? '1' : '0'); if (J && J.games) draw(); });
+function paintOwn(){ const o = isOwner(); $('#ownbuild').hidden = !o; if (!o || ownPainted) return; ownPainted = true; $('#fixu').value = FIXU || ''; $('#buildon').checked = BUILD(); $('#goodev').value = Number(ls.get('pred_goodev')) || 6; bankNote(); saveCfg(); }
+$('#fixu').addEventListener('change', e => { FIXU = Math.max(0, Number(e.target.value) || 0); ls.set('pred_fixu', String(FIXU)); bankNote(); saveCfg(); if (J && J.games) draw(); });
+$('#buildon').addEventListener('change', e => { ls.set('pred_build_on', e.target.checked ? '1' : '0'); saveCfg(); if (J && J.games) draw(); });
+$('#goodev').addEventListener('change', e => { ls.set('pred_goodev', String(Math.max(2, Math.min(50, Number(e.target.value) || 6)))); saveCfg(); });
+// The server sends value alerts from these (unit rax, on/off, good-value EV).
+function saveCfg(){ if (!isOwner()) return; const t = ls.get('ratebrd_token_v1') || '';
+  fetch('/api/swaps?op=predcfg', { method: 'POST', headers: { 'content-type': 'application/json', ...(t ? { 'x-rb-token': t } : {}) }, body: JSON.stringify({ unit: Math.round(unitRax()) || 0, alerts: BUILD(), minEv: (Number(ls.get('pred_goodev')) || 6) / 100 }) }).catch(() => {}); }
 $('#upct').addEventListener('change', e => { UP = Number(e.target.value) || 1; ls.set('pred_upct', String(UP)); bankNote(); if (J && J.games) draw(); });
 bankNote();
 $('#bank').addEventListener('input', e => { bank = Math.max(0, Number(e.target.value) || 0); ls.set('pred_bank', String(bank)); bankNote(); if (J && J.games) draw(); });

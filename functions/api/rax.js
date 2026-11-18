@@ -858,47 +858,41 @@ function pbDerive(g) {
 }
 const pbUnits = (fair, q) => { if (!(q > 0 && q < 1) || fair / q - 1 < PB_MIN_EV) return 0; const f = (fair - q) / (1 - q), cap = q < 0.2 ? 0.5 : q < 0.35 ? 1 : q < 0.5 ? 1.5 : 2;
   return Math.max(0.5, Math.min(cap, Math.floor(f * 10 * 2) / 2)); };
+/* Value alerts (Dennis, 2026-11-17: "not on a timer - when there's really good value I should take, with the
+   limits in place"). Every 10 seconds, for every open side with solid odds: the full size is the usual sizing
+   (tenth Kelly, half units, long-shot caps) x his unit; minus what he already holds (his last Real sync or the
+   bets he logged, whichever is more). If what's left is worth buying now - a piece that moves Real about 1
+   point, still at least his "good value" EV after that move - he gets a push. A side isn't pushed again
+   unless the price gets at least a point better, the EV jumps 3 points, or 20 minutes pass and it's still there. */
 async function predBuildTick(env, out) {
-  const who = 'dennis', PK = 'pred_build_v1_' + who;
-  let plans = []; try { plans = JSON.parse((await env.RATEBOARD_KV.get(PK)) || '[]') || []; } catch (e) {}
-  if (!plans.length) return;
-  let bets = []; try { bets = JSON.parse((await env.RATEBOARD_KV.get('pred_bets_v1_' + who)) || '[]') || []; } catch (e) {}
-  let st = {}; try { st = JSON.parse((await env.RATEBOARD_KV.get('pred_build_state_v1')) || '{}') || {}; } catch (e) {}
-  let port = {}; try { port = JSON.parse((await env.RATEBOARD_KV.get('pred_port_v1')) || '{}') || {}; } catch (e) {}
-  const now = Date.now(), keep = [], db = env.RATEBOARD_DB;
-  const send = (title, body, tag) => pushTo(env, db, who, { title, body, url: '/predictions', tag, urgent: true });
-  for (const p of plans) {
-    const k = p.gid + ':' + p.side, s0 = st[k] = st[k] || {};
-    const g = (out.games || []).find(x => x.id === p.gid);
-    const logged = bets.filter(b => b.gid === p.gid && b.side === p.side && !b.res).reduce((t, b) => t + (b.amt || 0), 0);
-    // What's really on Real (his portfolio) beats what was logged, so pieces bought without tapping Bet placed count.
-    const real = ((port.pos || []).find(x => x.marketId === p.gid && x.si === p.side) || {}).cost || 0, placed = Math.max(logged, real);
-    const start = g ? Date.parse(g.start || 0) : 0;
-    if (!g) { if (now - p.at < 2 * 86400000) keep.push(p); continue; }
-    if (g.locked || g.live || (start && now >= start)) { if (placed < p.target * 0.95) await send('Build closed · ' + p.name, `Game started - ${Math.round(placed).toLocaleString()} of ${p.target.toLocaleString()} rax placed.`, 'pb-' + k); delete st[k]; continue; }
-    if (placed >= p.target * 0.95 || p.target - placed < 100) { await send('Full size reached · ' + p.name, `${Math.round(placed).toLocaleString()} rax placed. Nothing more to buy.`, 'pb-' + k); delete st[k]; continue; }
-    keep.push(p);
-    const d = pbDerive(g), sd = g.sides[p.side]; if (!sd || d.n < 2) continue;
-    const fair = d.fair(p.side), q = Number(sd.price); if (!(fair > 0) || !(q > 0 && q < 1)) continue;
-    // Still worth more? Size today's edge; never past the plan.
-    const uNow = pbUnits(fair, q), target = Math.min(p.target, p.unit > 0 ? uNow * p.unit : p.target), left = target - placed;
-    if (!(uNow > 0) || Math.round(q * 100) > Math.floor(fair / (1 + PB_MIN_EV) * 100) || left < 100) { s0.waiting = true; continue; }
-    const rate = PB_SLIP[g.sport] ?? PB_DEF, cap = PB_PIECE_PTS / rate * 1000;
-    const tLeft = start ? start - 10 * 60000 - now : 3 * 3600000;
-    const pieces = Math.max(1, Math.ceil(left / cap)), gap = Math.max(8 * 60000, Math.min(30 * 60000, tLeft / pieces));
-    let piece = Math.min(left, Math.max(cap, tLeft > 0 ? left / Math.max(1, Math.floor(tLeft / gap) + 1) : left));
-    while (piece >= 100 && fair / (q + rate * piece / 1000 / 200) - 1 < PB_MIN_EV) piece = Math.floor(piece / 2);
-    if (piece < 100) { s0.waiting = true; continue; }
-    piece = Math.round(piece / 50) * 50;
-    if (s0.nextAt && now < s0.nextAt && !s0.waiting) continue;
-    if (s0.lastAt && now - s0.lastAt < 5 * 60000) continue;   // never two pushes for a side within 5 minutes
-    const ev = fair / (q + rate * piece / 1000 / 200) - 1;
-    await send('Buy more · ' + p.name, `Buy ${piece.toLocaleString()} rax at ${Math.round(q * 100)}% or less (${(ev * 100).toFixed(1)}% EV). ${Math.round(placed).toLocaleString()} of ${Math.round(target).toLocaleString()} placed${left - piece > 50 ? `, next in about ${Math.round(gap / 60000)} min` : ' - this finishes it'}.`, 'pb-' + k);
-    s0.nextAt = now + gap; s0.waiting = false; s0.lastPiece = piece; s0.lastAt = now;
+  const who = 'dennis';
+  let cfg = {}; try { cfg = JSON.parse((await env.RATEBOARD_KV.get('pred_owner_cfg')) || '{}') || {}; } catch (e) {}
+  if (!cfg.alerts || !(cfg.unit > 0)) return;
+  const GOOD = cfg.minEv || 0.06;
+  let bets = [], port = {}, st = {};
+  try { bets = JSON.parse((await env.RATEBOARD_KV.get('pred_bets_v1_' + who)) || '[]') || []; port = JSON.parse((await env.RATEBOARD_KV.get('pred_port_v1')) || '{}') || {}; st = JSON.parse((await env.RATEBOARD_KV.get('pred_alert_state_v1')) || '{}') || {}; } catch (e) {}
+  const now = Date.now(), db = env.RATEBOARD_DB; let ch = false;
+  for (const g of (out.games || [])) {
+    if (g.locked) continue; const d = pbDerive(g); if (d.n < (g.live ? 3 : 2)) continue;
+    const start = Date.parse(g.start || 0); if (g.live && (!start || now - start > 4 * 3600000)) continue;
+    for (let si = 0; si < g.sides.length; si++) {
+      const sd = g.sides[si], fair = d.fair(si), q = Number(sd.price); if (!(fair > 0.07) || !(q > 0 && q < 1)) continue;
+      const u = pbUnits(fair, q); if (!u || Math.round(q * 100) > Math.floor(fair / (1 + PB_MIN_EV) * 100)) continue;
+      const held = Math.max(bets.filter(b => b.gid === g.id && b.side === si && !b.res).reduce((t, b) => t + (b.amt || 0), 0), ((port.pos || []).find(x => x.marketId === g.id && x.si === si) || {}).cost || 0);
+      const left = u * cfg.unit - held; if (left < 100) continue;
+      const rate = PB_SLIP[g.sport] ?? PB_DEF; let piece = Math.min(left, PB_PIECE_PTS / rate * 1000);
+      while (piece >= 100 && fair / (q + rate * piece / 1000 / 200) - 1 < GOOD) piece = Math.floor(piece / 2);
+      if (piece < 100) continue;
+      piece = Math.round(piece / 50) * 50; const evp = fair / (q + rate * piece / 1000 / 200) - 1;
+      const k = g.id + ':' + si, s0 = st[k];
+      if (s0 && !(q <= s0.q - 0.01 || evp >= s0.ev + 0.03 || now - s0.at > 20 * 60000)) continue;
+      st[k] = { at: now, q, ev: evp }; ch = true;
+      const nm = sd.name || sd.label;
+      await pushTo(env, db, who, { title: `Value · ${nm} +${(evp * 100).toFixed(1)}%`, body: `Buy ${piece.toLocaleString()} rax at ${Math.round(q * 100)}% or less (fair ${(fair * 100).toFixed(1)}%). ${held > 0 ? `${Math.round(held).toLocaleString()} of ${Math.round(u * cfg.unit).toLocaleString()} in.` : `Full size ${Math.round(u * cfg.unit).toLocaleString()} (${u}u).`}${g.live ? ' Live.' : ''}`, url: g.link || '/predictions', tag: 'pv-' + k, urgent: true });
+    }
   }
-  for (const k of Object.keys(st)) if (!plans.some(p => p.gid + ':' + p.side === k)) delete st[k];
-  await env.RATEBOARD_KV.put('pred_build_state_v1', JSON.stringify(st), { expirationTtl: 3 * 86400 });
-  if (keep.length !== plans.length) await env.RATEBOARD_KV.put(PK, JSON.stringify(keep));
+  for (const k of Object.keys(st)) if (now - st[k].at > 6 * 3600000) { delete st[k]; ch = true; }
+  if (ch) await env.RATEBOARD_KV.put('pred_alert_state_v1', JSON.stringify(st), { expirationTtl: 86400 });
 }
 /* One-off (Dennis, 2026-11-17, his OK to read his own prediction pages): which server account is his, and
    what Real's open positions and portfolio performance answers look like. Shapes and counts only; usernames
@@ -978,29 +972,35 @@ export async function predPortSync(env) {
   const num = v => { const n = Number(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return Number.isFinite(n) ? n : 0; };
   let d = null; try { const r = await fetch('https://web.realapp.com/predictions/openpositions', { headers: rsHeaders(tok) }); if (!r.ok) throw new Error('Real ' + r.status); d = await r.json(); }
   catch (e) { prev.err = String(e.message || e).slice(0, 80); await env.RATEBOARD_KV.put(K, JSON.stringify(prev)); return; }
-  let ev = {}; try { ev = JSON.parse((await env.RATEBOARD_KV.get('pred_ev_v1')) || '{}') || {}; } catch (e) {}
-  const entry = prev.entry || {}, pos = [];
-  let FH = {}; try { FH = JSON.parse((await env.RATEBOARD_KV.get('pred_fairhist_v1')) || '{}') || {}; } catch (e) {}
+  let ev = {}, FH = {}, bets = [];
+  try { ev = JSON.parse((await env.RATEBOARD_KV.get('pred_ev_v1')) || '{}') || {}; FH = JSON.parse((await env.RATEBOARD_KV.get('pred_fairhist_v1')) || '{}') || {}; bets = JSON.parse((await env.RATEBOARD_KV.get('pred_bets_v1_dennis')) || '[]') || []; } catch (e) {}
+  const tcache = prev.tcache || {}, pos = [];
   for (const p of (d.positions || [])) {
     const det = Object.fromEntries((p.details || []).map(x => [String(x.label || '').toLowerCase(), num(x.display)]));
-    const cost = det.cost || 0, pays = det.pays || 0, k = p.marketId + ':' + p.outcomeId;
+    const cost = det.cost || 0, pays = det.pays || 0, k = p.marketId + ':' + p.outcomeId, nTr = num(p.rightFooterText);
     const g = (ev.games || []).find(x => x.id === p.marketId), si = g ? g.sides.findIndex(x => x.oid === p.outcomeId || x.label === p.outcomeLabel) : -1;
     let fair = null; if (g && si >= 0) { const dd = pbDerive(g); if (dd.n >= 2) fair = dd.fair(si); }
-    const e0 = entry[k] || { cost: 0, fw: 0, unk: 0, buys: [] }; e0.buys = e0.buys || [];
-    if (cost > e0.cost + 0.5) { const add = cost - e0.cost, tl = Date.parse(p.latestLedgerTimestamp || ''), fa = si >= 0 ? fairAt(FH, p.marketId, si, tl) : null;
-      // The fair % when Real says the (latest) trade happened; else now.
-      const f0 = fa && fa.fair > 0 ? fa.fair : fair;
-      if (f0 != null) e0.fw += add * f0; else e0.unk += add;
-      e0.buys.push({ at: Number.isFinite(tl) ? tl : Date.now(), add: Math.round(add), fair: f0 != null ? Math.round(f0 * 1e4) / 1e4 : null, real: fa && fa.price ? fa.price : null, trades: num(p.rightFooterText), exact: !!fa });
-      e0.buys = e0.buys.slice(-30); e0.cost = cost; }
-    else if (cost < e0.cost - 0.5) { const f = e0.cost > 0 ? cost / e0.cost : 0; e0.fw *= f; e0.unk *= f; e0.cost = cost; }   // cashed out part
-    entry[k] = e0;
-    pos.push({ k, marketId: p.marketId, outcomeId: p.outcomeId, gameId: p.gameId, sport: p.sport, team: p.outcomeLabel, game: p.headerLabel || (p.marketDisplay || {}).display || '', si,
-      cost, pays, value: num(p.sharesValue), price: num(p.currentPriceDisplay) / 100, trades: num(p.rightFooterText), settled: !!p.isSettled, at: p.latestLedgerTimestamp || null,
-      fairIn: e0.cost - e0.unk > 0 ? e0.fw / (e0.cost - e0.unk) : null, buys: e0.buys, lastTrade: p.latestLedgerTimestamp || null });
+    /* Each trade (Dennis, 2026-11-17: Real's position page lists them): when, rax, price you got (rax / shares),
+       and the fair % at that minute from the site's fair history, so EV is per trade. Re-read only when the
+       position changed. Trades from before the fair history started use the fair % from the bet you logged. */
+    let tr = tcache[k];
+    if (p.sharedPositionId && (!tr || tr.cost !== cost || tr.n !== nTr)) {
+      try { const r = await fetch('https://web.realapp.com/predictions/position/' + encodeURIComponent(p.sharedPositionId), { headers: rsHeaders(tok) });
+        if (r.ok) { const j = await r.json(); tr = { cost, n: nTr, items: (j.items || []).map(x => ({ type: String(x.type || ''), amt: num(x.amount), shares: num(x.shares), at: Date.parse(x.transactedAt || x.createdAt || '') || null })) }; tcache[k] = tr; } } catch (e) {}
+      await new Promise(r => setTimeout(r, 400)); }
+    const logged = bets.find(b => b.gid === p.marketId && b.side === si && !b.res);
+    const trades = ((tr && tr.items) || []).map(x => { const buy = !/sell|cash/i.test(x.type), price = x.shares > 0 ? x.amt / x.shares : null;
+      const fa = si >= 0 && x.at ? fairAt(FH, p.marketId, si, x.at) : null, f = fa && fa.fair > 0 ? fa.fair : (logged && logged.fair > 0 ? logged.fair : null);
+      return { ...x, buy, price: price ? Math.round(price * 1e4) / 1e4 : null, fair: f != null ? Math.round(f * 1e4) / 1e4 : null, fairSrc: fa ? 'history' : f != null ? 'logged' : null, ev: f != null && price ? Math.round((f / price - 1) * 1e4) / 1e4 : null }; })
+      .sort((a, b) => (a.at || 0) - (b.at || 0));
+    const bt = trades.filter(x => x.buy && x.ev != null), bAmt = bt.reduce((t, x) => t + x.amt, 0);
+    pos.push({ k, marketId: p.marketId, outcomeId: p.outcomeId, gameId: p.gameId, sport: p.sport, team: p.outcomeLabel, game: (p.marketDisplay || {}).display || p.headerLabel || '', si,
+      cost, pays, value: num(p.sharesValue), price: num(p.currentPriceDisplay) / 100, nTrades: nTr, settled: !!p.isSettled, lastTrade: p.latestLedgerTimestamp || null,
+      link: p.sharedPositionId && /^\d+$/.test(String(p.sharedPositionId)) ? 'https://www.realapp.com/' + routeId([34, 0, 0, Number(p.sharedPositionId)]) : null,
+      trades, evIn: bAmt > 0 ? bt.reduce((t, x) => t + x.ev * x.amt, 0) / bAmt : null, fairNow: fair });
   }
-  for (const k of Object.keys(entry)) if (!pos.some(p => p.k === k)) delete entry[k];
-  const out = { at: Date.now(), pos, entry, perf: prev.perf || null };
+  for (const k of Object.keys(tcache)) if (!pos.some(p => p.k === k)) delete tcache[k];
+  const out = { at: Date.now(), pos, tcache, perf: prev.perf || null };
   if (!prev.perfAt || Date.now() - prev.perfAt > 10 * 60000) {
     out.perf = {}; for (const tf of ['1d', '1w']) { try { const r = await fetch('https://web.realapp.com/predictions/portfolioperformance?timeframe=' + tf, { headers: rsHeaders(tok) }); const j = await r.json(); out.perf[tf] = j.summary || null; } catch (e) {} }
     out.perfAt = Date.now(); } else out.perfAt = prev.perfAt;
@@ -1032,7 +1032,7 @@ async function predPortProbe(env) {
 }
 async function predTick(env) {
   try { const P = JSON.parse((await env.RATEBOARD_KV.get('pred_pause_v1')) || '{}') || {}; if (P.until && Date.now() < P.until) return; } catch (e) {}
-  await Promise.all([predOdds(env).catch(() => {}), predReal(env).catch(() => {}), predFairHist(env).catch(() => {}), predTradeProbe2(env).catch(() => {})]); }
+  await Promise.all([predOdds(env).catch(() => {}), predReal(env).catch(() => {}), predFairHist(env).catch(() => {})]); }
 
 /* One-off (2026-11-13): Real's own web app code, searched for how its
    Auctions "Bulk rating" view asks for listings. Only short snippets kept. */
@@ -9029,7 +9029,7 @@ async function collectorHealth(env, url) {
         if (dv < 300 || t1 - t0 > 25000 || !(v0 > 0)) continue; const dp = Math.abs(p1 - p0) * 100, bin = v0 < 10000 ? '<10k' : v0 < 30000 ? '10-30k' : v0 < 100000 ? '30-100k' : '100k+';
         const F = fit[L.sp] = fit[L.sp] || { per1k: [], k: [], bins: {} }; F.per1k.push(dp / dv * 1000); F.k.push(dp * v0 / dv); (F.bins[bin] = F.bins[bin] || []).push(dp / dv * 1000); }
       const fitOut = Object.fromEntries(Object.entries(fit).map(([sp, F]) => [sp, { n: F.per1k.length, per1kMed: med(F.per1k), kMed: med(F.k), bins: Object.fromEntries(Object.entries(F.bins).map(([b, a]) => [b, { n: a.length, per1kMed: med(a) }])) }]));
-      return { fit: fitOut, keys: await kvj('pred_mkeys_v1'), markets: Object.keys(S).length, samples: Object.values(S).reduce((a, x) => a + x.s.length, 0), eg: Object.values(S).slice(0, 2).map(x => x.s.slice(-6)) }; })(), predTrade: await kvj('diag_predtrade_v2'), predPort: await (async () => { const x = await kvj('pred_port_v1'); return x ? { at: x.at, n: (x.pos || []).length, err: x.err || null } : null; })(), predGames: await (async () => { const x = await kvj('pred_ev_v1'); const o = {}; for (const g of ((x && x.games) || [])) { const k = g.sport + (g.locked ? ':locked' : ':open'); o[k] = (o[k] || 0) + 1; } return o; })(), predLogo: await (async () => { const x = await kvj('pred_ev_v1'), od = await kvj('pred_odds_v2'); const sides = ((x && x.games) || []).flatMap(g => g.sides.map(sd => ({ sp: g.sport, k: sd.key, l: !!sd.logo }))); return { map: Object.keys((od && od.logo) || {}).length, mapKeys: Object.keys((od && od.logo) || {}).slice(0, 12), espn: Object.fromEntries(Object.entries((od && od.espn) || {}).map(([k, v]) => [k, (v.games || []).length + '@' + v.at])), withLogo: sides.filter(z => z.l).length, sides: sides.slice(0, 12) }; })(), predEv: await (async () => { const x = await kvj('pred_ev_v1'); return x ? { settledSeen: Object.keys((await kvj('pred_settled_v1')) || {}).length, books: (() => { const c = {}; for (const g of (x.games || [])) for (const f of (g.sources || [])) for (const b of (f.books || [])) c[b] = (c[b] || 0) + 1; return c; })(), keys: x.keys, used: x.used, live: (x.games || []).filter(g => g.live).length, srcs: (x.games || []).map(g => (g.sources || []).length).join(','), at: x.at, n: (x.games || []).length,  errs: x.errs, credits: x.credits } : null; })(), draftTest: await (async () => { let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get('draft_contests_v1')) || '[]'); } catch (e) {}
+      return { fit: fitOut, keys: await kvj('pred_mkeys_v1'), markets: Object.keys(S).length, samples: Object.values(S).reduce((a, x) => a + x.s.length, 0), eg: Object.values(S).slice(0, 2).map(x => x.s.slice(-6)) }; })(), predPort: await (async () => { const x = await kvj('pred_port_v1'); return x ? { at: x.at, n: (x.pos || []).length, err: x.err || null } : null; })(), predGames: await (async () => { const x = await kvj('pred_ev_v1'); const o = {}; for (const g of ((x && x.games) || [])) { const k = g.sport + (g.locked ? ':locked' : ':open'); o[k] = (o[k] || 0) + 1; } return o; })(), predLogo: await (async () => { const x = await kvj('pred_ev_v1'), od = await kvj('pred_odds_v2'); const sides = ((x && x.games) || []).flatMap(g => g.sides.map(sd => ({ sp: g.sport, k: sd.key, l: !!sd.logo }))); return { map: Object.keys((od && od.logo) || {}).length, mapKeys: Object.keys((od && od.logo) || {}).slice(0, 12), espn: Object.fromEntries(Object.entries((od && od.espn) || {}).map(([k, v]) => [k, (v.games || []).length + '@' + v.at])), withLogo: sides.filter(z => z.l).length, sides: sides.slice(0, 12) }; })(), predEv: await (async () => { const x = await kvj('pred_ev_v1'); return x ? { settledSeen: Object.keys((await kvj('pred_settled_v1')) || {}).length, books: (() => { const c = {}; for (const g of (x.games || [])) for (const f of (g.sources || [])) for (const b of (f.books || [])) c[b] = (c[b] || 0) + 1; return c; })(), keys: x.keys, used: x.used, live: (x.games || []).filter(g => g.live).length, srcs: (x.games || []).map(g => (g.sources || []).length).join(','), at: x.at, n: (x.games || []).length,  errs: x.errs, credits: x.credits } : null; })(), draftTest: await (async () => { let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get('draft_contests_v1')) || '[]'); } catch (e) {}
       const out = []; for (const c of l.filter(c => c.type === 'sport').slice(-30)) { const x = await kvj(`draft_v1_sport_${c.id}`);
         out.push({ id: c.id, sport: c.sport, day: c.day, n: x && x.players && x.players.length, teams: x && x.players ? [...new Set(x.players.map(p => p.team))].join(' ') : null }); }
       return { n: l.length, games: l.filter(c => c.type === 'game').length, gameDays: l.filter(c => c.type === 'game').map(c => `${c.id}:${c.sport}:${c.day}`).join(' '), sport: out }; })(), modVoid: await kvj('mod_void_1115_n'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];

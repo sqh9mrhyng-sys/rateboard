@@ -1723,7 +1723,7 @@ async function portToBets(env) {
     if (b) { if (Math.abs((b.amt || 0) - p.cost) > 0.5 || b.pay == null || Math.abs(b.pay - p.pays) > 0.5) { b.amt = Math.round(p.cost * 100) / 100; b.pay = Math.round(p.pays * 100) / 100; b.price = price; b.real = true; upd++; } else b.real = true; }
     else { const sd = g && g.sides[si];
       l.unshift({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), gid: p.marketId, side: si, sport: p.sport || (g && g.sport) || '', game: (g && g.game) || p.game || '', name: (sd && (sd.name || sd.label)) || p.team || '',
-        price, fair: p.fairIn || 0, ev: p.fairIn ? p.fairIn / price - 1 : 0, u: 0, amt: Math.round(p.cost * 100) / 100, pay: Math.round(p.pays * 100) / 100, teams: g ? g.sides.map(y => y.name || y.label) : [], start: (g && g.start) || '', logo: (sd && sd.logo) || '', at: Date.now(), real: true, fromReal: true }); add++; } }
+        price, fair: 0, ev: p.evIn || 0, u: 0, amt: Math.round(p.cost * 100) / 100, pay: Math.round(p.pays * 100) / 100, teams: g ? g.sides.map(y => y.name || y.label) : [], start: (g && g.start) || '', logo: (sd && sd.logo) || '', at: Date.now(), real: true, fromReal: true }); add++; } }
   let off = 0; for (const b of l) if (!b.res && !b.custom && b.gid > 0 && !seen.has(b.gid + ':' + b.side)) { if (!b.notOnReal) off++; b.notOnReal = true; } else if (b.notOnReal && seen.has(b.gid + ':' + b.side)) delete b.notOnReal;
   await env.RATEBOARD_KV.put('pred_bets_v1_dennis', JSON.stringify(l.slice(0, 300)));
   return { updated: upd, added: add, notOnReal: l.filter(b => b.notOnReal && !b.res).length };
@@ -6211,6 +6211,17 @@ async function handle({ request, env, waitUntil }) {
     let x = {}; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_port_v1')) || '{}') || {}; } catch (e) {}
     let plans = []; try { plans = JSON.parse((await env.RATEBOARD_KV.get('pred_build_v1_dennis')) || '[]') || []; } catch (e) {}
     return json({ at: x.at || null, pos: x.pos || [], perf: x.perf || null, err: x.err || null, plans, synced });
+  }
+  // Dennis's value alerts settings (owner only): unit rax, on/off, the EV that counts as really good value.
+  if (op === 'predcfg') {
+    if (String(acc.who || '').toLowerCase() !== 'dennis') return forbidden('Not open yet.');
+    let c = {}; try { c = JSON.parse((await env.RATEBOARD_KV.get('pred_owner_cfg')) || '{}') || {}; } catch (e) {}
+    if (request.method === 'POST') { let b = {}; try { b = await request.json(); } catch (e) {}
+      if (b.unit != null) c.unit = Math.max(0, Math.min(200000, Math.round(Number(b.unit) || 0)));
+      if (b.alerts != null) c.alerts = !!b.alerts;
+      if (b.minEv != null) c.minEv = Math.max(0.02, Math.min(0.5, Number(b.minEv) || 0.06));
+      await env.RATEBOARD_KV.put('pred_owner_cfg', JSON.stringify(c)); }
+    return json({ cfg: c });
   }
   if (op === 'predbuild') {
     const who = String(acc.who || '').toLowerCase();
