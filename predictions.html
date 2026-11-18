@@ -152,6 +152,7 @@
   .pg{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-top:8px;font-size:11px;color:var(--mute);text-transform:uppercase} .pg b{display:block;font-size:14px;color:var(--ink);text-transform:none} .pplan{margin-top:6px;font-size:12.5px;color:var(--accent);font-weight:700}
   @media(max-width:520px){.pg{grid-template-columns:repeat(3,1fr)}}
   .tag.oreal{color:var(--good)} .tag.nreal{color:#ffc95a} .psync{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0 4px} .psync .place{padding:8px 14px}
+  .pbuys{margin-top:6px;font-size:12.5px} .pbuys summary{cursor:pointer;color:var(--mute);font-weight:700} .pbuys div{padding:3px 0;border-top:1px solid var(--line)}
 </style>
 <script src="/theme.js"></script>
 <script src="/nav.js?v=4"></script>
@@ -436,6 +437,7 @@ function drawPort(){
     ${rows.map(r => `<div class="prow"><div class="pt">${r.g ? logo(r.g.sides[r.si] || { name: r.team }, 'sm') : logo({ name: String(r.team || '').slice(0, 3).toUpperCase() }, 'sm')}<span><b>${esc((r.g && r.g.sides[r.si] && (r.g.sides[r.si].name || r.g.sides[r.si].label)) || r.team || '')}</b><small>${esc(r.game || (r.g && r.g.game) || '')}${r.trades ? ` · ${r.trades} trade${r.trades === 1 ? '' : 's'}` : ''}</small></span>
       <span class="pev ${r.evNow == null ? '' : r.evNow >= 0 ? 'pos' : 'neg'}">${r.evNow == null ? '-' : sp(r.evNow)}<small>${r.evRax == null ? 'EV now' : sg(r.evRax) + ' rax'}</small></span></div>
       <div class="pg"><span>Cost<b>${fmt(r.cost)}</b></span><span>Avg<b>${r.avg ? pc(r.avg) : '-'}</b></span><span>Real now<b>${r.price ? pw(r.price) : '-'}</b></span><span>Fair now<b>${r.fair != null ? pc(r.fair) : '-'}</b></span><span>Pays<b>${fmt(r.pays)}</b></span><span>When bought<b>${r.evIn != null ? sp(r.evIn) : '-'}</b></span></div>
+      ${(r.buys || []).length ? `<details class="pbuys"><summary>${r.buys.length} buy${r.buys.length === 1 ? '' : 's'} seen</summary>${r.buys.slice().reverse().map(x => `<div>${new Date(x.at).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })} · <b>+${fmt(x.add)}</b> rax${x.fair != null ? ` · fair ${pc(x.fair)}` : ''}${x.real ? ` · Real ${pw(x.real)} · EV ${sp(x.fair / x.real - 1)}` : ''}${x.exact ? '' : ' <span class="note">(time of sync)</span>'}</div>`).join('')}</details>` : ''}
       ${r.plan ? `<div class="pplan">Building to ${fmt(r.plan.target)} rax · ${fmt(Math.min(r.cost, r.plan.target))} in (${Math.round(Math.min(1, r.cost / r.plan.target) * 100)}%)</div>` : ''}</div>`).join('') || '<div class="empty">No open positions on Real.</div>'}`;
 }
 document.addEventListener('click', async e => { if (e.target.id !== 'psync') return; const b = e.target; b.disabled = true; b.textContent = 'Syncing…';
