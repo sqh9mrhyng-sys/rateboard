@@ -156,6 +156,7 @@
   .ptr{display:grid;grid-template-columns:1.3fr 1.2fr 0.9fr 1fr 0.8fr;gap:6px;align-items:baseline} .ptr .pos{color:var(--good);font-weight:800} .ptr .neg{color:var(--bad);font-weight:800}
   .plink{order:9;margin-left:8px;display:inline-grid;place-items:center;width:34px;height:34px;border-radius:10px;background:var(--accent);color:#141925;font-weight:900;text-decoration:none} .pt{position:relative}
   #bsum[hidden],#cbox[hidden],label.keep[hidden],#bavg[hidden]{display:none!important}
+  .g.focus{border-color:var(--accent)!important;box-shadow:0 0 0 2px var(--accent),0 6px 18px rgba(0,0,0,.25)!important}
 </style>
 <script src="/theme.js"></script>
 <script src="/nav.js?v=4"></script>
@@ -353,7 +354,7 @@ async function load(){
   if(J.error){ $('#list').innerHTML = `<div class="empty">${/sign in/i.test(J.error) ? 'Sign in first - <a href="/?next=/predictions">sign in</a>.' : esc(J.error)}</div>`; return; }
   if(!J.keySet){ $('#list').innerHTML = '<div class="empty">The Odds API key isn\'t on the server yet.</div>'; return; }
   { const ae = document.activeElement; if (!(ae && ae.closest && ae.closest('#vr form'))) drawArb(); }
-  draw(); if (!$('#vb').hidden && !(document.activeElement && document.activeElement.dataset && (document.activeElement.dataset.amt || document.activeElement.dataset.pay))) drawBets(); else $('#bn').textContent = BETS.filter(b => !b.res).length ? `(${BETS.filter(b => !b.res).length})` : '';
+  draw(); focusGo(); if (!$('#vb').hidden && !(document.activeElement && document.activeElement.dataset && (document.activeElement.dataset.amt || document.activeElement.dataset.pay))) drawBets(); else $('#bn').textContent = BETS.filter(b => !b.res).length ? `(${BETS.filter(b => !b.res).length})` : '';
 }
 function tick(){
   if(!J || !J.at) return;
@@ -396,9 +397,9 @@ function endCard(g){
 }
 function card(g){
   const srcs = g.sources || [];
-  const c = collapsed.has(String(g.id)), bestS = g.sides.reduce((a, x) => (x.ev ?? -9) > (a.ev ?? -9) ? x : a, g.sides[0]);
+  const c = collapsed.has(String(g.id)) && g.id !== FOCUS.gid, bestS = g.sides.reduce((a, x) => (x.ev ?? -9) > (a.ev ?? -9) ? x : a, g.sides[0]);
   const took = BETS.filter(b => !b.res && b.gid === g.id);
-  return `<div class="g${g.sides.some(s => units(g, s)) ? ' hot' : ''}${c ? ' col' : ''}${took.length ? ' taken' : ''}">${took.length ? `<div class="tk">✓ You took ${took.map(b => `${esc(b.name)} at ${pw(b.price)}${b.amt ? ` · ${Math.round(b.amt).toLocaleString()} rax` : ''}`).join(', ')}</div>${arbLine(took[0])}` : ''}
+  return `<div id="g-${g.id}" class="g${g.sides.some(s => units(g, s)) ? ' hot' : ''}${g.id === FOCUS.gid ? ' focus' : ''}${c ? ' col' : ''}${took.length ? ' taken' : ''}">${took.length ? `<div class="tk">✓ You took ${took.map(b => `${esc(b.name)} at ${pw(b.price)}${b.amt ? ` · ${Math.round(b.amt).toLocaleString()} rax` : ''}`).join(', ')}</div>${arbLine(took[0])}` : ''}
     <div class="gh"><button class="cl" data-cl="${g.id}" aria-label="${c ? 'Expand' : 'Collapse'}">${c ? '▸' : '▾'}</button><span class="pair">${g.sides.filter(x => !/^(draw|tie|x)$/i.test(x.label || '')).slice(0, 2).map(x => logo(x, 'sm')).join('')}</span><div style="min-width:0;flex:1">
       ${g.path ? `<a class="nm" href="https://www.realapp.com${esc(g.path)}" target="_blank" rel="noopener">${esc(g.game)}</a>` : `<span class="nm">${esc(g.game)}</span>`}
       <div class="meta"><span class="tag">${esc(SPN[g.sport] || g.sport)}</span>${when(g)}${thin(g) && bkOf(g).length ? '<span class="tag lock" title="Too few books or lines too old to trust the EV">Thin odds</span>' : ''}${g.volume ? `<span class="tag">${esc(g.volume)} vol</span>` : ''}</div></div>
@@ -418,6 +419,15 @@ function drawBooks(){
 /* Your Real portfolio (Dennis, 2026-11-17, owner only): your open positions straight from Real, synced each
    minute. EV now = today's fair % against the average price you got; EV when bought = the fair % at the
    moments you added rax. Value is what Real would give you for it right now. */
+/* Opened from a value alert (2026-11-17): /predictions#g=<market> jumps to that game on Markets, open and
+   highlighted, even if you've already bet on it. */
+const FOCUS = { gid: null, done: false };
+function readFocus(){ const m = location.hash.match(/g=(\d+)/); FOCUS.gid = m ? Number(m[1]) : null; FOCUS.done = false; if (FOCUS.gid) chip = ''; }
+readFocus(); addEventListener('hashchange', () => { readFocus(); if (J && J.games) { draw(); focusGo(); } });
+function focusGo(){ if (!FOCUS.gid || FOCUS.done) return; const el = document.getElementById('g-' + FOCUS.gid); if (!el) return; FOCUS.done = true;
+  const t = document.querySelector('#tabs [data-t="m"]'); if (t && t.getAttribute('aria-pressed') !== 'true') t.click();
+  setTimeout(() => { const e2 = document.getElementById('g-' + FOCUS.gid); if (e2) e2.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 60);
+  setTimeout(() => { FOCUS.gid = null; }, 60000); }
 let PORT = null; const OPENP = new Set();
 document.addEventListener('toggle', e => { const d = e.target; if (d && d.dataset && d.dataset.pk) { d.open ? OPENP.add(d.dataset.pk) : OPENP.delete(d.dataset.pk); } }, true);
 async function loadPort(){ if (!isOwner()) return; const t = ls.get('ratebrd_token_v1') || '';
@@ -561,7 +571,7 @@ function drawBets(){
 }
 function draw(){
   const ae = document.activeElement; if (ae && ae.closest && ae.closest('form.bf')) { tick(); return; }
-  const bg = betGids(), games = (J.games || []).filter(g => !g.locked && !bg.has(g.id)).map(derive);
+  const bg = betGids(), games = (J.games || []).filter(g => !g.locked && (!bg.has(g.id) || g.id === FOCUS.gid)).map(derive);
   const sps = SP_ORDER.filter(sp => games.some(g => g.sport === sp));
   $('#chips').innerHTML = ['', '_ev', ...(sps.length > 1 ? sps : [])].map(s => `<button data-c="${s}" aria-pressed="${chip === s}">${s === '_best' ? 'Best EV' : s === '_ev' ? '+EV' : s ? SPN[s] || s : 'All'}</button>`).join('');
   const pos = games.filter(g => g.sides.some(s => units(g, s))), top = games.reduce((a, g) => Math.max(a, best(g)), -9);

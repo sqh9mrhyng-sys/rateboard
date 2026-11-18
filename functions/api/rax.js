@@ -892,7 +892,7 @@ async function predBuildTick(env, out) {
       const recent = Object.values(st).filter(x => now - x.at < 15 * 60000).length; if (recent >= 3) continue;
       st[k] = { at: now, q, ev: evp }; ch = true;
       const nm = sd.name || sd.label;
-      await pushTo(env, db, who, { title: `Value · ${nm} +${(evp * 100).toFixed(1)}%`, body: `Buy ${piece.toLocaleString()} rax at ${Math.round(q * 100)}% or less (fair ${(fair * 100).toFixed(1)}%). ${held > 0 ? `${Math.round(held).toLocaleString()} of ${Math.round(u * cfg.unit).toLocaleString()} in.` : `Full size ${Math.round(u * cfg.unit).toLocaleString()} (${u}u).`}${g.live ? ' Live.' : ''}`, url: (((port.pos || []).find(x => x.marketId === g.id && x.si === si) || {}).link) || g.link || '/predictions', tag: 'pv-' + k, urgent: true });
+      await pushTo(env, db, who, { title: `Value · ${nm} +${(evp * 100).toFixed(1)}%`, body: `Buy ${piece.toLocaleString()} rax at ${Math.round(q * 100)}% or less (fair ${(fair * 100).toFixed(1)}%). ${held > 0 ? `${Math.round(held).toLocaleString()} of ${Math.round(u * cfg.unit).toLocaleString()} in.` : `Full size ${Math.round(u * cfg.unit).toLocaleString()} (${u}u).`}${g.live ? ' Live.' : ''}`, url: '/predictions#g=' + g.id, tag: 'pv-' + k, urgent: true });
     }
   }
   for (const k of Object.keys(st)) if (now - st[k].at > 6 * 3600000) { delete st[k]; ch = true; }
