@@ -853,7 +853,9 @@ function pbDerive(g) {
   const all = (g.sources || []).flatMap(x => x.bk || []).filter(b => !(g.live && b.t === 'Pinnacle')).map(b => ({ ...b, out: false }));
   if (all.length >= 3) for (const b of all) { const o = all.filter(x => x !== b).map(x => x.p[0]).sort((a, c) => a - c);
     const med = o.length % 2 ? o[(o.length - 1) / 2] : (o[o.length / 2 - 1] + o[o.length / 2]) / 2; b.out = Math.abs(b.p[0] - med) > 0.08; }
-  const bk = all.filter(b => !b.out), wt = bk.reduce((a, b) => a + (b.w || 1), 0);
+  let bk = all.filter(b => !b.out);
+  if (g.live) { const now = Date.now(), fr = bk.filter(b => b.u && now - b.u <= 45000); if (fr.length >= 2) bk = fr; bk = bk.map(b => ({ ...b, w: 1 / (1 + Math.max(0, now - (b.u || now)) / 30000) })); }
+  const wt = bk.reduce((a, b) => a + (b.w || 1), 0);
   return { n: bk.length, fair: i => wt ? bk.reduce((a, b) => a + (b.w || 1) * (b.p[i] || 0), 0) / wt : null };
 }
 const pbUnits = (fair, q) => { if (!(q > 0 && q < 1) || fair / q - 1 < PB_MIN_EV) return 0; const f = (fair - q) / (1 - q), cap = q < 0.2 ? 0.5 : q < 0.35 ? 1 : q < 0.5 ? 1.5 : 2;

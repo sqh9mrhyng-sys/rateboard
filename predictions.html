@@ -337,7 +337,7 @@ function breakdown(g){
   const sorted = bks.slice().sort((a, b) => b.w - a.w || a.t.localeCompare(b.t));
   const hd = head.replace('class="bkr bkh"', `class="bkr bkh" style="grid-template-columns:1fr repeat(${g.sides.length},minmax(56px,auto)) 44px"`);
   return `<details class="bd" data-bd="${g.id}"${openBd.has(String(g.id)) ? ' open' : ''}><summary>Book breakdown (${bks.length})</summary>${hd}
-    ${sorted.map(b => row(`${esc(b.t)}${b.w !== 1 && !b.out ? ` <em>×${b.w}</em>` : ''}${b.out ? ' <em class="off">off-market, left out</em>' : ''}`, b.p, b.d, age(b.u), b.out || (age(b.u) && (Date.now() - b.u) > 120000) ? 'old' : '')).join('')}
+    ${sorted.map(b => row(`${esc(b.t)}${b.w !== 1 && !b.out ? ` <em>×${b.w}</em>` : ''}${b.stale ? ' <em class="off">line over 45 s old, left out</em>' : b.out ? ' <em class="off">off-market, left out</em>' : ''}`, b.p, b.d, age(b.u), b.out || (age(b.u) && (Date.now() - b.u) > 120000) ? 'old' : '')).join('')}
     ${row('<b>Fair</b>', g.sides.map(s => s.fair), null, '', 'tot')}
     ${row('<b>Real</b>', g.sides.map(s => s.price), null, '', 'tot')}
     ${(g.refs || []).map(r => row(`${esc(r.src)} <em>ref</em>`, r.p, null, '', 'ref2')).join('')}
@@ -380,7 +380,12 @@ function derive(g){
      a book more than 8 points from the middle of the others is left out of the fair %. */
   if (all.length >= 3) for (const b of all) { const o = all.filter(x => x !== b).map(x => x.p[0]).sort((a, c) => a - c);
     const med = o.length % 2 ? o[(o.length - 1) / 2] : (o[o.length / 2 - 1] + o[o.length / 2]) / 2; b.out = Math.abs(b.p[0] - med) > 0.08; }
-  const bk = all.filter(b => !b.out);
+  let bk = all.filter(b => !b.out);
+  /* Live (2026-11-17, "our line feels wrong"): books update 10-80 s apart and Real moves at once, so live the
+     fair % leans on the freshest lines - only books updated in the last 45 s when at least two are, each
+     counted less the older it is (a 30 s old line counts half as much as a brand-new one). */
+  if (g.live) { const now = Date.now(), fr = bk.filter(b => b.u && now - b.u <= 45000); if (fr.length >= 2) { for (const b of bk) if (!fr.includes(b)) { b.out = true; b.stale = true; } bk = fr; }
+    for (const b of bk) b.w = Math.round((b.t === 'Pinnacle' ? 2 : 1) / (1 + Math.max(0, now - (b.u || now)) / 30000) * 100) / 100; }
   const wt = bk.reduce((a, b) => a + (b.w || 1), 0);
   const sides = g.sides.map((s, i) => { const fair = wt ? bk.reduce((a, b) => a + (b.w || 1) * (b.p[i] || 0), 0) / wt : null;
     return { ...s, fair, ev: fair != null && s.price > 0 ? fair / s.price - 1 : null }; });
