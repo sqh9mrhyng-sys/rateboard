@@ -146,6 +146,11 @@
   .own{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;flex-basis:100%;border-top:1px dashed var(--line);padding-top:8px;margin-top:2px} .own input[type=number]{width:100px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit} .own .chk{display:flex;flex-wrap:wrap;gap:2px 6px;align-items:center;font-size:14px} .own .chk .note{flex-basis:100%;margin-left:24px;font-size:12px} .own[hidden]{display:none}
   .ev .bld{font-size:11px;color:var(--mute);font-weight:700}
   .bstat{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 2px 4px;font-size:14px} .bstat b{font-size:16px} .bstat select{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font:inherit;font-size:14px;margin-left:6px}
+  #port{margin-bottom:14px} .psum{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0 10px} .psum>div{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px} .psum b{display:block;font-size:18px} .psum span{font-size:12px;color:var(--mute)} .psum b .pos,.psum b.pos{color:var(--good)} .psum b .neg,.psum b.neg{color:var(--bad)}
+  .prow{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px} .pt{display:flex;align-items:center;gap:10px} .pt>span:nth-child(2){flex:1;min-width:0} .pt small{display:block;color:var(--mute);font-size:12px}
+  .pev{text-align:right;font-weight:800;font-size:17px} .pev small{display:block;font-size:11.5px;color:var(--mute);font-weight:700} .pev.pos{color:var(--good)} .pev.neg{color:var(--bad)}
+  .pg{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-top:8px;font-size:11px;color:var(--mute);text-transform:uppercase} .pg b{display:block;font-size:14px;color:var(--ink);text-transform:none} .pplan{margin-top:6px;font-size:12.5px;color:var(--accent);font-weight:700}
+  @media(max-width:520px){.pg{grid-template-columns:repeat(3,1fr)}}
 </style>
 <script src="/theme.js"></script>
 <script src="/nav.js?v=4"></script>
@@ -181,7 +186,7 @@
 <p class="note">Only you and the members below can see this page. This tab goes away when it's public.</p>
 <input id="aq" type="search" placeholder="Search a member by username" autocomplete="off" style="width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;font-size:16px">
 <div id="ares"></div><h2>Has access</h2><div id="alist"><p class="note">Loading…</p></div></section></div>
-<div id="vb" hidden><label class="keep"><input type="checkbox" id="keepb"> Keep games I bet on in Markets (marked as taken)</label><div class="sum" id="bsum"></div>
+<div id="vb" hidden><div id="port" hidden></div><label class="keep"><input type="checkbox" id="keepb"> Keep games I bet on in Markets (marked as taken)</label><div class="sum" id="bsum"></div>
 <!-- Average EV and sort (member request via Dennis, 2026-11-17). -->
 <div class="bstat"><span id="bavg"></span><label>Sort <select id="bsort"><option value="new">Newest</option><option value="amt">Most rax placed</option><option value="ev">Highest EV</option></select></label></div>
 <details class="bkbox" id="cbox"><summary>+ Add a custom bet</summary><p class="note" style="margin:6px 0">For a bet that isn't on the Markets tab. Add the opponent and sport and it'll be marked Won or Lost from ESPN's final score; otherwise mark it yourself.</p>
@@ -405,6 +410,32 @@ function drawBooks(){
     + `<label class="bkc ref"><input type="checkbox" id="poly"${showPoly ? ' checked' : ''}> Polymarket <em>compare only</em></label>`;
   $('#bksum').textContent = offBooks.size ? `${bks.filter(t => !offBooks.has(t)).length} of ${bks.length} books` : 'All books';
 }
+/* Your Real portfolio (Dennis, 2026-11-17, owner only): your open positions straight from Real, synced each
+   minute. EV now = today's fair % against the average price you got; EV when bought = the fair % at the
+   moments you added rax. Value is what Real would give you for it right now. */
+let PORT = null;
+async function loadPort(){ if (!isOwner()) return; const t = ls.get('ratebrd_token_v1') || '';
+  try { PORT = await (await fetch('/api/swaps?op=predport', { headers: t ? { 'x-rb-token': t } : {} })).json(); } catch (e) { return; } drawPort(); }
+function drawPort(){
+  const box = $('#port'); if (!PORT || PORT.error || !isOwner()) { box.hidden = true; return; } box.hidden = false;
+  const now = new Map((J && J.games || []).map(g => [g.id, derive(g)])), fmt = v => Math.round(v).toLocaleString(), sg = v => (v >= 0 ? '+' : '') + fmt(v), sp = v => (v >= 0 ? '+' : '') + pc(v);
+  const rows = (PORT.pos || []).map(p => { const g = now.get(p.marketId), sd = g && p.si >= 0 ? g.sides[p.si] : null, fair = sd && !thin(g) ? sd.fair : null, avg = p.pays > 0 ? p.cost / p.pays : null;
+    const plan = (PORT.plans || []).find(x => x.gid === p.marketId && x.side === p.si);
+    return { ...p, g, fair, avg, evNow: fair != null && avg ? fair / avg - 1 : null, evRax: fair != null ? p.pays * fair - p.cost : null, evIn: p.fairIn != null && avg ? p.fairIn / avg - 1 : null, plan }; });
+  if (BSORT === 'amt') rows.sort((a, b) => b.cost - a.cost); else if (BSORT === 'ev') rows.sort((a, b) => (b.evNow ?? -9) - (a.evNow ?? -9));
+  const cost = rows.reduce((t, r) => t + r.cost, 0), pays = rows.reduce((t, r) => t + r.pays, 0), val = rows.reduce((t, r) => t + (r.value || 0), 0);
+  const fr = rows.filter(r => r.evRax != null), evRax = fr.reduce((t, r) => t + r.evRax, 0), fc = fr.reduce((t, r) => t + r.cost, 0);
+  const ir = rows.filter(r => r.evIn != null), evIn = ir.reduce((t, r) => t + r.evIn * r.cost, 0) / Math.max(1, ir.reduce((t, r) => t + r.cost, 0));
+  const pf = PORT.perf || {}, pl = k => pf[k] ? `<span class="${pf[k].pnl >= 0 ? 'pos' : 'neg'}">${sg(pf[k].pnl)}</span>` : '-';
+  box.innerHTML = `<div class="sph"><span>Your Real portfolio</span><span class="note">${PORT.at ? 'synced ' + Math.max(0, Math.round((Date.now() - PORT.at) / 1000)) + 's ago' : ''}${PORT.err ? ' · ' + esc(PORT.err) : ''}</span></div>
+    <div class="psum"><div><b>${fmt(cost)}</b><span>in play · ${rows.length} position${rows.length === 1 ? '' : 's'}</span></div><div><b class="${evRax >= 0 ? 'pos' : 'neg'}">${sg(evRax)}</b><span>EV in rax now${fc ? ` (${sp(evRax / fc)})` : ''}</span></div>
+      <div><b>${ir.length ? sp(evIn) : '-'}</b><span>EV when bought</span></div><div><b>${fmt(val)}</b><span>worth now · pays ${fmt(pays)}</span></div><div><b>${pl('1d')}</b><span>today</span></div><div><b>${pl('1w')}</b><span>this week</span></div></div>
+    ${rows.map(r => `<div class="prow"><div class="pt">${r.g ? logo(r.g.sides[r.si] || { name: r.team }, 'sm') : logo({ name: String(r.team || '').slice(0, 3).toUpperCase() }, 'sm')}<span><b>${esc((r.g && r.g.sides[r.si] && (r.g.sides[r.si].name || r.g.sides[r.si].label)) || r.team || '')}</b><small>${esc(r.game || (r.g && r.g.game) || '')}${r.trades ? ` · ${r.trades} trade${r.trades === 1 ? '' : 's'}` : ''}</small></span>
+      <span class="pev ${r.evNow == null ? '' : r.evNow >= 0 ? 'pos' : 'neg'}">${r.evNow == null ? '-' : sp(r.evNow)}<small>${r.evRax == null ? 'EV now' : sg(r.evRax) + ' rax'}</small></span></div>
+      <div class="pg"><span>Cost<b>${fmt(r.cost)}</b></span><span>Avg<b>${r.avg ? pc(r.avg) : '-'}</b></span><span>Real now<b>${r.price ? pw(r.price) : '-'}</b></span><span>Fair now<b>${r.fair != null ? pc(r.fair) : '-'}</b></span><span>Pays<b>${fmt(r.pays)}</b></span><span>When bought<b>${r.evIn != null ? sp(r.evIn) : '-'}</b></span></div>
+      ${r.plan ? `<div class="pplan">Building to ${fmt(r.plan.target)} rax · ${fmt(Math.min(r.cost, r.plan.target))} in (${Math.round(Math.min(1, r.cost / r.plan.target) * 100)}%)</div>` : ''}</div>`).join('') || '<div class="empty">No open positions on Real.</div>'}`;
+}
+setInterval(() => { if (isOwner() && !$('#vb').hidden) loadPort(); }, 30000);
 async function betsCall(body){ const t = ls.get('ratebrd_token_v1') || '';
   try { const j = await (await fetch('/api/swaps?op=predbets', body ? { method: 'POST', headers: { 'content-type': 'application/json', ...(t ? { 'x-rb-token': t } : {}) }, body: JSON.stringify(body) } : { headers: t ? { 'x-rb-token': t } : {} })).json(); if (j.bets) BETS = j.bets; } catch (e) {}
   if (J && J.games) { draw(); drawBets(); drawArb(); } }
@@ -547,7 +578,7 @@ function draw(){
 }
 document.addEventListener('toggle', e => { const d = e.target; if(!d.matches || !d.matches('details.bd')) return; d.open ? openBd.add(d.dataset.bd) : openBd.delete(d.dataset.bd); }, true);
 $('#chips').addEventListener('click', e => { const b = e.target.closest('[data-c]'); if(!b) return; chip = b.dataset.c; ls.set('pred_chip', chip); draw(); });
-$('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if(!b) return; for (const x of document.querySelectorAll('#tabs button')) x.setAttribute('aria-pressed', x === b); $('#vm').hidden = b.dataset.t !== 'm'; $('#vg').hidden = b.dataset.t !== 'g'; $('#va').hidden = b.dataset.t !== 'a'; $('#vf').hidden = b.dataset.t !== 'f'; if (b.dataset.t === 'f') { fbCall(); } if (b.dataset.t === 'a') accLoad(); $('#vb').hidden = b.dataset.t !== 'b'; if (b.dataset.t === 'b') drawBets(); $('#vr').hidden = b.dataset.t !== 'r'; if (b.dataset.t === 'r') drawArb(); });
+$('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if(!b) return; for (const x of document.querySelectorAll('#tabs button')) x.setAttribute('aria-pressed', x === b); $('#vm').hidden = b.dataset.t !== 'm'; $('#vg').hidden = b.dataset.t !== 'g'; $('#va').hidden = b.dataset.t !== 'a'; $('#vf').hidden = b.dataset.t !== 'f'; if (b.dataset.t === 'f') { fbCall(); } if (b.dataset.t === 'a') accLoad(); $('#vb').hidden = b.dataset.t !== 'b'; if (b.dataset.t === 'b') loadPort(); if (b.dataset.t === 'b') drawBets(); $('#vr').hidden = b.dataset.t !== 'r'; if (b.dataset.t === 'r') drawArb(); });
 $('#list').addEventListener('click', e => {
   const c = e.target.closest('[data-cl]'); if (c) { const id = c.dataset.cl; collapsed.has(id) ? collapsed.delete(id) : collapsed.add(id); ls.set('pred_collapsed2', JSON.stringify([...collapsed])); draw(); return; }
   const x = e.target.closest('.bfx'); if (x) { betForm = null; draw(); return; }
@@ -599,7 +630,7 @@ $('#fblist').addEventListener('click', e => { const r = e.target.closest('[data-
 function confirm2(b){ if (b.dataset.sure) return true; b.dataset.sure = '1'; b.textContent = 'Tap again'; setTimeout(() => { if (b.isConnected) { delete b.dataset.sure; b.textContent = FB.owner ? 'Delete' : 'Withdraw'; } }, 3000); return false; }
 fbCall();
 $('#keepb').checked = keepBets;
-$('#bsort').value = BSORT; $('#bsort').addEventListener('change', e => { BSORT = e.target.value; ls.set('pred_bsort', BSORT); if (J && J.games) drawBets(); });
+$('#bsort').value = BSORT; $('#bsort').addEventListener('change', e => { BSORT = e.target.value; ls.set('pred_bsort', BSORT); if (J && J.games) { drawBets(); drawPort(); } });
 $('#keepb').addEventListener('change', e => { keepBets = e.target.checked; ls.set('pred_keepbets', keepBets ? '1' : '0'); if (J && J.games) draw(); });
 let amtT = 0;
 $('#blist').addEventListener('input', e => { const i = e.target.closest('[data-amt]'); if (!i) return; clearTimeout(amtT);

@@ -6182,6 +6182,13 @@ async function handle({ request, env, waitUntil }) {
   /* Build to full size (Dennis, 2026-11-17, owner only while testing): big stakes move Real's price too much
      in one go, so a side's full size is bought in pieces before the game starts and a notification says when
      to buy the next one. Plans: { gid, side, target (rax), unit (rax), at }. */
+  // Dennis's own Real portfolio, synced each minute from his account (owner only).
+  if (op === 'predport') {
+    if (String(acc.who || '').toLowerCase() !== 'dennis') return forbidden('Not open yet.');
+    let x = {}; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_port_v1')) || '{}') || {}; } catch (e) {}
+    let plans = []; try { plans = JSON.parse((await env.RATEBOARD_KV.get('pred_build_v1_dennis')) || '[]') || []; } catch (e) {}
+    return json({ at: x.at || null, pos: x.pos || [], perf: x.perf || null, err: x.err || null, plans });
+  }
   if (op === 'predbuild') {
     const who = String(acc.who || '').toLowerCase();
     if (who !== 'dennis') return forbidden('Not open yet.');
