@@ -204,6 +204,22 @@
   @media(max-width:520px){.gh .meta .tag.vol{display:none}}
   .psum b span{font-size:inherit!important} .psync label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--mute)} .psync select{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font:inherit;font-size:13px}
   .psync{gap:8px} .psync .place{order:-1}
+  /* My bets, tidier (2026-11-17) */
+  .keep{display:flex!important;align-items:center;gap:8px;background:none!important;border:0!important;padding:2px 2px 0!important;margin:6px 0 0!important;font-size:13px!important;color:var(--mute);font-weight:600}
+  .bstat{font-size:13px} .bstat b{font-size:15px} #bavg .note{display:block;font-size:11.5px}
+  .g.bet .gh{padding:11px 12px 8px} .g.bet .nm{font-size:15.5px} .g.bet .meta .tag{max-width:none}
+  .bgrid{padding:8px 12px!important;gap:6px!important} .bgrid .c{font-size:10.5px!important} .bgrid .c b{font-size:14px!important}
+  .bline{display:grid;grid-template-columns:1fr 1fr auto auto;gap:8px;align-items:end;padding:8px 12px 10px;border-top:1px solid var(--line)}
+  .bline label{display:flex;flex-direction:column;gap:3px;font-size:10.5px;font-weight:800;color:var(--mute);text-transform:uppercase;letter-spacing:.04em;min-width:0}
+  .bline input{width:100%;min-width:0;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;font-size:15px;font-weight:700;text-transform:none;letter-spacing:0}
+  .bprof{display:flex;flex-direction:column;align-items:flex-end;padding-bottom:3px} .bprof b{font-size:15px} .bprof small{font-size:11px;color:var(--mute)} .bprof a{color:var(--accent)}
+  .bline .lact{display:flex;gap:4px;padding-bottom:1px} .bline .lact button{width:34px;height:34px;padding:0;border-radius:8px;font-weight:800}
+  .g.bet .arbl,.g.bet .arbline{padding:6px 12px 10px;font-size:12px}
+  #cbox{margin:8px 0} #cbox summary{font-size:13px}
+  .gh .meta .tag.won,.gh .meta .tag.lost,.gh .meta .tag.oreal,.gh .meta .tag.nreal{padding:1px 7px;border-radius:999px;margin-left:6px} .gh .meta .tag.won{background:#3fbf7f22;color:var(--good)} .gh .meta .tag.lost{background:#e5484d22;color:#ff6b6b}
+  .gh .meta .tag.oreal{background:#3fbf7f18} .gh .meta .tag.nreal{background:#ffc95a18}
+  .gh .meta .tag.won::before,.gh .meta .tag.lost::before,.gh .meta .tag.oreal::before,.gh .meta .tag.nreal::before{content:none}
+  .tabs button{padding:8px 10px!important;font-size:13px!important}
 </style>
 <script src="/theme.js"></script>
 <script src="/nav.js?v=5"></script>
@@ -242,8 +258,9 @@
 <p class="note">Only you and the members below can see this page. This tab goes away when it's public.</p>
 <input id="aq" type="search" placeholder="Search a member by username" autocomplete="off" style="width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;font-size:16px">
 <div id="ares"></div><h2>Has access</h2><div id="alist"><p class="note">Loading…</p></div></section></div>
-<div id="vb" hidden><div id="port" hidden></div><label class="keep"><input type="checkbox" id="keepb"> Keep games I bet on in Markets (marked as taken)</label><div class="sum" id="bsum"></div>
+<div id="vb" hidden><div id="port" hidden></div><div class="sum" id="bsum"></div>
 <!-- Average EV and sort (member request via Dennis, 2026-11-17). -->
+<label class="keep"><input type="checkbox" id="keepb"> Keep games I bet on in Markets</label>
 <div class="bstat"><span id="bavg"></span><label>Sort <select id="bsort"><option value="new">Newest</option><option value="amt">Most rax placed</option><option value="ev">Highest EV</option></select></label></div>
 <details class="bkbox" id="cbox"><summary>+ Add a custom bet</summary><p class="note" style="margin:6px 0">For a bet that isn't on the Markets tab. Add the opponent and sport and it'll be marked Won or Lost from ESPN's final score; otherwise mark it yourself.</p>
 <form id="cform" class="bf" style="padding:0 0 6px"><label>Your pick<input name="name" required maxlength="60" placeholder="e.g. Utah Mammoth" style="width:150px"></label><label>Opponent<input name="opp" maxlength="60" placeholder="optional" style="width:150px"></label>
@@ -598,11 +615,13 @@ function drawBets(){
   $('#bsum').innerHTML = `<div><b>${Math.round(staked).toLocaleString()}</b><span>rax in play</span></div><div><b class="pos">${Math.round(pot).toLocaleString()}</b><span>potential payout</span><small class="pp ${pot - staked >= 0 ? 'pos' : 'neg'}">${pot - staked >= 0 ? '+' : ''}${Math.round(pot - staked).toLocaleString()} rax profit</small>${potG.lo > 0 ? `<span>${Math.round(potG.lo).toLocaleString()} guaranteed</span>` : ''}</div><div><b class="${pl >= 0 ? 'pos' : 'neg'}">${pl >= 0 ? '+' : ''}${Math.round(pl).toLocaleString()}</b><span>settled profit</span></div>`;
   const row = b => { const g = now.get(b.gid), sd = g && g.sides[b.side], auto = b.price > 0 ? (b.amt || 0) / b.price : 0, pay = b.pay != null ? b.pay : auto;
     const st = b.res ? `<span class="tag ${b.res === 'won' ? 'won' : 'lost'}">${b.res === 'won' ? 'Won' : 'Lost'}${b.auto ? ' · auto' : ''}</span>` : !g || g.ended ? `<span class="tag">${b.custom ? 'Custom' : 'Waiting for result'}</span>` : g.live ? '<span class="tag live">● LIVE</span>' : when(g);
-    return `<div class="g bet"><div class="gh"><span style="margin-right:10px;display:inline-flex">${logo({ logo: b.logo, name: (b.name || '').replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() })}</span><div style="min-width:0;flex:1"><span class="nm">${esc(b.name)}</span><div class="meta"><span class="tag">${esc(SPN[b.sport] || b.sport)}</span>${st}${b.res ? '' : b.notOnReal ? '<span class="tag nreal">not on Real</span>' : b.real ? '<span class="tag oreal">✓ matches Real</span>' : ''}<span class="note">${esc(b.game)}</span></div></div>${b.link ? `<a class="go" href="${esc(b.link)}" target="_blank" rel="noopener">Open ↗</a>` : ''}</div>
+    return `<div class="g bet"><div class="gh"><span style="margin-right:10px;display:inline-flex">${logo({ logo: b.logo, name: (b.name || '').replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() })}</span><div style="min-width:0;flex:1"><span class="nm">${esc(b.name)}</span><div class="meta"><span class="tag">${esc(SPN[b.sport] || b.sport)}</span>${st}${b.res ? '' : b.notOnReal ? '<span class="tag nreal">not on Real</span>' : b.real ? '<span class="tag oreal">✓ matches Real</span>' : ''}<span class="tag">${esc(b.game)}</span></div></div>${b.link ? `<a class="go" href="${esc(b.link)}" target="_blank" rel="noopener">Open ↗</a>` : ''}</div>
       <div class="bgrid"><span class="c">Bought at<b>${pw(b.price)}</b></span><span class="c">Real now<b>${sd ? pw(sd.price) : '-'}</b></span><span class="c">Fair now<b>${sd ? pc(sd.fair) : '-'}</b></span>${b.custom ? '<span class="c">EV then<b>-</b></span>' : `<span class="c">EV then<b class="${b.ev > 0 ? 'pos' : 'neg'}">${b.ev > 0 ? '+' : ''}${pc(b.ev)}</b></span>`}</div>
-      <div class="bamt"><label>Amount placed <input type="number" inputmode="numeric" min="0" step="1" value="${b.amt || ''}" placeholder="rax" data-amt="${esc(b.id)}"></label>
-        <label class="payl">${b.res === 'won' ? 'Paid out' : 'Pays'} <input type="number" inputmode="numeric" min="0" step="1" value="${Math.round(pay)}" data-pay="${esc(b.id)}"><small>${b.pay != null ? `<a href="#" data-payauto="${esc(b.id)}">auto (${Math.round(auto).toLocaleString()})</a>` : 'auto'} · ${b.res === 'lost' ? `-${Math.round(b.amt || 0).toLocaleString()}` : `+${Math.round(pay - (b.amt || 0)).toLocaleString()}`} profit</small></label></div>
-      ${b.res ? '' : arbLine(b)}<div class="bact">${b.res ? `<button data-res="${esc(b.id)}" data-v="">Undo result</button>` : `<button data-res="${esc(b.id)}" data-v="won">Won</button><button data-res="${esc(b.id)}" data-v="lost">Lost</button>`}<button data-del="${esc(b.id)}" class="del">Remove</button></div></div>`; };
+      <div class="bline"><label>Placed<input type="number" inputmode="numeric" min="0" step="1" value="${b.amt || ''}" placeholder="rax" data-amt="${esc(b.id)}"></label>
+        <label>${b.res === 'won' ? 'Paid out' : 'Pays'}<input type="number" inputmode="numeric" min="0" step="1" value="${Math.round(pay)}" data-pay="${esc(b.id)}"></label>
+        <span class="bprof"><b class="${b.res === 'lost' ? 'neg' : 'pos'}">${b.res === 'lost' ? `-${Math.round(b.amt || 0).toLocaleString()}` : `+${Math.round(pay - (b.amt || 0)).toLocaleString()}`}</b><small>${b.pay != null ? `<a href="#" data-payauto="${esc(b.id)}" title="Back to the automatic payout (${Math.round(auto).toLocaleString()})">auto</a>` : 'profit'}</small></span>
+        <span class="lact">${b.res ? `<button data-res="${esc(b.id)}" data-v="" title="Undo result">↺</button>` : `<button data-res="${esc(b.id)}" data-v="won" title="Mark won">W</button><button data-res="${esc(b.id)}" data-v="lost" title="Mark lost">L</button>`}<button data-del="${esc(b.id)}" class="del" title="Remove">✕</button></span></div>
+      ${b.res ? '' : arbLine(b)}</div>`; };
   /* Two or more bets on one game (both sides): one "Arbitrage bet" block with totals (Dennis, 2026-11-16). */
   const groupRow = l => { const b0 = l[0], g = now.get(b0.gid), placed = l.reduce((a, b) => a + (b.amt || 0), 0), settled = l.every(b => b.res);
     const paid = l.filter(b => b.res === 'won').reduce((a, b) => a + payOf(b), 0), pays = l.map(b => payOf(b)), lo = Math.min(...pays), hi = Math.max(...pays);
