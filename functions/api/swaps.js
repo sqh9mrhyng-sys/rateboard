@@ -3005,6 +3005,16 @@ function hoursToday(u, start) {   // the swap times (UTC ms) this member has pic
 /* Adding a time once the day's confirm DMs have started (2:30am Alaska)
    counts as confirming for that swap day (Dennis, 2026-11-07): they just
    chose it, so there's nothing to confirm. */
+/* Confirm bypass (Dennis, 2026-11-17: a member who sleeps through the confirm window): members Dennis adds in
+   Admin count as confirmed every swap day - their confirm day is filled in each minute, so no prompt, no
+   reminder and nothing called off for not confirming. */
+const CONF_BYPASS_KV = 'confirm_bypass_v1';
+async function bypassList(env) { try { return JSON.parse((await env.RATEBOARD_KV.get(CONF_BYPASS_KV)) || '[]') || []; } catch (e) { return []; } }
+async function confirmBypass(env, db) {
+  const l = await bypassList(env); if (!l.length) return;
+  const day = confirmDayNow();
+  await db.prepare(`UPDATE swap_users SET confirmDay=? WHERE LOWER(key) IN (${l.map(() => '?').join(',')}) AND (confirmDay IS NULL OR confirmDay <> ?)`).bind(day, ...l.map(x => x.k), day).run();
+}
 async function autoConfirm(db, key, before, after) {
   const now = Date.now(), day = confirmDayNow(now);
   if (now < CONFIRM_SHOW_AT || !confirmOn(day)) return false;
@@ -3332,6 +3342,7 @@ export async function swapTick(env) {
   const db = env.RATEBOARD_DB, auth = swapToken(env);
   if (!db || !auth) return null;
   await ready(db);
+  try { await confirmBypass(env, db); } catch (e) {}
   // Once an hour at :20 (before the :30 warnings). The claim is a database row (instant everywhere), not KV,
   // so two ticks can never both run matching in the same hour.
   const hour = new Date().toISOString().slice(0, 13);
@@ -7639,6 +7650,19 @@ async function handle({ request, env, waitUntil }) {
     const curs = sp => sp === 'soccer' ? [FC_SEASON[0], FC_MLS_SEASON] : BOOST_SEASON[sp] ? [BOOST_SEASON[sp][0]] : [cur(sp)];
     const out = {}; for (const p0 of parse(u.passes, [])) { const [sp, se] = String(p0.key || '').split(':'); if (!sp || !p0.name || !curs(sp).includes(Number(se))) continue; (out[sp] = out[sp] || []).push(p0.name); }
     return json({ sports: out, at: u.scannedAt || null });
+  }
+  if (op === 'confbypass') {
+    if (!acc.admin) return forbidden('Admin only.');
+    let l = await bypassList(env);
+    if (request.method === 'POST') { let b = {}; try { b = await request.json(); } catch (e) {}
+      if (b.add) { const q = String(b.add).trim().replace(/^@/, '').toLowerCase();
+        const u = await db.prepare('SELECT key, rsUser FROM swap_users WHERE LOWER(rsUser)=? OR LOWER(key)=? LIMIT 1').bind(q, q).first();
+        if (!u) return json({ error: 'No member with that username.', rows: l });
+        if (!l.some(x => x.k === String(u.key).toLowerCase())) l.push({ k: String(u.key).toLowerCase(), u: u.rsUser || u.key, at: Date.now() }); }
+      if (b.del) l = l.filter(x => x.k !== String(b.del).toLowerCase());
+      await env.RATEBOARD_KV.put(CONF_BYPASS_KV, JSON.stringify(l));
+      try { await confirmBypass(env, db); } catch (e) {} }
+    return json({ rows: l });
   }
   if (op === 'membersearch') {
     if (!acc.who) return json({ error: 'Sign in first.' }, 401);

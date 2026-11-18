@@ -216,6 +216,11 @@
         <p class="note" style="margin:0 0 8px">Swaps reports, board member reports and feature requests. When the sender has a chat with the bot, your reply and the outcome are sent to them on Real.</p>
         <div class="bar"><select id="ib-f"><option value="">All</option><option value="swap">Swaps reports</option><option value="board">Board reports</option><option value="feature">Feature requests</option></select><button id="ib-load" class="sm">Refresh</button></div>
         <div id="ib-list" class="note">Loading…</div></section>
+      <!-- Confirm bypass (Dennis, 2026-11-17): members who never have to confirm their times. -->
+      <section><h2>Confirm bypass <span class="note" id="cb-n"></span></h2>
+        <p class="note" style="margin:0 0 8px">These members count as confirmed every day - no confirm prompt, no reminders, and their swaps are never called off for not confirming.</p>
+        <div class="bar"><input id="cb-q" placeholder="Real username" autocomplete="off" style="flex:1"><button id="cb-add" class="sm">Add</button><span class="note" id="cb-m"></span></div>
+        <div id="cb-list" class="note">Loading…</div></section>
       <!-- Push notifications (Dennis, 2026-11-17): who has them on. -->
       <section><h2>Push notifications <span class="note" id="pu-n"></span></h2>
         <p class="note" style="margin:0 0 8px">Members with notifications on for at least one device, newest first.</p>
@@ -829,6 +834,15 @@ async function loadTop(){
   $('#ts-list').innerHTML = j.rows.length ? '<ol style="margin:0;padding-left:22px">' + j.rows.slice(0, 15).map(r => `<li><b>@${esc(r.rsUser)}</b> - ${r.n.toLocaleString()} swap${r.n === 1 ? '' : 's'}</li>`).join('') + '</ol>' : 'No swaps yet.';
 }
 $('#ts-load').addEventListener('click', loadTop); $('#ts-days').addEventListener('change', loadTop);
+/* ---------- confirm bypass ---------- */
+function drawBypass(j){ const l = j.rows || []; $('#cb-n').textContent = l.length ? `${l.length}` : '';
+  $('#cb-list').innerHTML = l.length ? l.map(x => `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)"><b>@${esc(x.u)}</b><button class="sm" data-cbdel="${esc(x.k)}">Remove</button></div>`).join('') : 'Nobody yet.'; }
+async function loadBypass(body){ const j = await api('/api/swaps?op=confbypass', body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : undefined);
+  $('#cb-m').textContent = j.error || ''; drawBypass(j); }
+$('#cb-add').addEventListener('click', () => { const v = $('#cb-q').value.trim(); if (!v) return; loadBypass({ add: v }); $('#cb-q').value = ''; });
+$('#cb-q').addEventListener('keydown', e => { if (e.key === 'Enter') $('#cb-add').click(); });
+$('#cb-list').addEventListener('click', e => { const b = e.target.closest('[data-cbdel]'); if (b) loadBypass({ del: b.dataset.cbdel }); });
+setTimeout(() => loadBypass(), 300);
 /* ---------- push notifications ---------- */
 let PU = [];
 const puAgo = t => { const m = Math.round((Date.now() - t) / 60000); return m < 60 ? m + 'm ago' : m < 2880 ? Math.round(m / 60) + 'h ago' : Math.round(m / 1440) + 'd ago'; };
