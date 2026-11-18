@@ -24,3 +24,6 @@
   var p = {}; try { p = JSON.parse(localStorage.getItem('rb_ui_v1') || '{}') || {}; } catch (e) {}
   if (p.theme) window.rbApplyTheme(p.theme, p.custom);
 })();
+// A tapped notification asks an open window to go to its page (see sw.js, 2026-11-17). On every page, Home too.
+try { if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', function (e) { var u = e.data && e.data.rbGo; if (!u) return;
+  try { var t = new URL(u, location.href); if (t.origin !== location.origin) return; if (t.href !== location.href) location.href = t.href; } catch (x) {} }); } catch (e) {}

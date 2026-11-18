@@ -7,11 +7,19 @@ self.addEventListener('push', e => {
   e.waitUntil(self.registration.showNotification(d.title || 'Rax Academy', {
     body: d.body || '', tag: d.tag || undefined, renotify: !!d.tag, icon: '/img/icon-192.png', badge: '/img/icon-192.png', data: { url: d.url || '/notifications' } }));
 });
+/* Tap -> the page the notification is about (2026-11-17: with the app already open, iOS only brought the open
+   window forward and stayed on whatever page it was on). An open window is sent to the page (navigate, or a
+   message the page acts on); only with no window open is a new one opened. */
 self.addEventListener('notificationclick', e => {
   e.notification.close();
   const url = new URL((e.notification.data && e.notification.data.url) || '/', self.location.origin).href;
-  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
-    for (const c of list) if (c.url === url && 'focus' in c) return c.focus();
+  e.waitUntil((async () => {
+    const list = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const c = list.find(x => x.url === url) || list.find(x => new URL(x.url).origin === self.location.origin);
+    if (c) {
+      if (c.url !== url) { try { c.postMessage({ rbGo: url }); } catch (x) {} try { if ('navigate' in c) await c.navigate(url); } catch (x) {} }
+      try { return await c.focus(); } catch (x) {}
+    }
     return self.clients.openWindow(url);
-  }));
+  })());
 });
