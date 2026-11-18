@@ -224,6 +224,12 @@
   .bdone{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;align-items:center;padding:8px 12px 10px;border-top:1px solid var(--line)}
   .bdone>span:not(.lact){display:flex;flex-direction:column;font-size:10.5px;font-weight:800;color:var(--mute);text-transform:uppercase;letter-spacing:.04em} .bdone b{font-size:15px;color:var(--ink);text-transform:none;letter-spacing:0} .bdone b.pos{color:var(--good)} .bdone b.neg{color:var(--bad)}
   .bdone .lact button{width:30px;height:30px;padding:0;border-radius:8px;font-size:13px}
+  /* Markets top row (2026-11-18): open markets on the left half, Books and View on the right. */
+  .mrow{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:stretch;margin:8px 0}
+  .mrow .sum{display:block!important;margin:0} .mrow .sum>div{height:100%;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center}
+  .mrow .sum em{font-style:normal;font-weight:800}
+  .mbtn{display:flex;flex-direction:column;gap:6px} .mbtn .vbtn{margin:0;width:100%;text-align:left;display:flex;justify-content:space-between;align-items:center;border-radius:10px}
+  #bkbox>summary{display:none} #bkbox:not([open]){display:none}
 </style>
 <script src="/theme.js"></script>
 <script src="/nav.js?v=5"></script>
@@ -246,8 +252,8 @@
 <div class="own" id="ownbuild" hidden><label>Fixed rax per unit <input id="fixu" type="number" inputmode="numeric" min="0" step="100" placeholder="off"></label>
 <label class="chk"><input type="checkbox" id="buildon"> Buy in pieces + value alerts <span class="note">recommends pieces that move Real about 1 point, and pushes you when a side is really good value (up to your full size)</span></label><label>Good value at EV ≥ <input id="goodev" type="number" inputmode="decimal" min="2" max="50" step="0.5" style="width:70px">%</label></div></div>
 </details>
-<div class="sum" id="sum"></div>
-<div class="bar"><div class="chips" id="chips"></div><button class="vbtn" id="vbtn" type="button" aria-expanded="false" aria-controls="vpanel">View: <b id="vname">Full</b> &#9662;</button></div>
+<div class="mrow"><div class="sum" id="sum"></div><div class="mbtn"><button type="button" class="vbtn" id="bkbtn" aria-expanded="false" aria-controls="bkbox">Books: <b id="bkname">All</b> &#9662;</button><button class="vbtn" id="vbtn" type="button" aria-expanded="false" aria-controls="vpanel">View: <b id="vname">Full</b> &#9662;</button></div></div>
+<div class="bar"><div class="chips" id="chips"></div></div>
 <div class="vpanel" id="vpanel" hidden>
   <div class="vseg" role="radiogroup" aria-label="Card view"><button type="button" data-vm="full">Full</button><button type="button" data-vm="clean">Clean</button><button type="button" data-vm="custom">Custom</button></div>
   <p class="note" id="vnote" style="margin:8px 0 0"></p>
@@ -493,6 +499,7 @@ function drawBooks(){
   $('#books').innerHTML = bks.map(t => `<label class="bkc"><input type="checkbox" data-bk="${esc(t)}"${offBooks.has(t) ? '' : ' checked'}> ${esc(t)}${t === 'Pinnacle' ? ' <em>×2, pregame only</em>' : ''}</label>`).join('')
     + `<label class="bkc ref"><input type="checkbox" id="poly"${showPoly ? ' checked' : ''}> Polymarket <em>compare only</em></label>`;
   $('#bksum').textContent = offBooks.size ? `${bks.filter(t => !offBooks.has(t)).length} of ${bks.length} books` : 'All books';
+  { const n = document.getElementById('bkname'); if (n) n.textContent = offBooks.size ? `${bks.filter(t => !offBooks.has(t)).length}/${bks.length}` : 'All'; }
 }
 /* Your Real portfolio (Dennis, 2026-11-17, owner only): your open positions straight from Real, synced each
    minute. EV now = today's fair % against the average price you got; EV when bought = the fair % at the
@@ -620,13 +627,12 @@ function drawBets(){
   const row = b => { const g = now.get(b.gid), sd = g && g.sides[b.side], auto = b.price > 0 ? (b.amt || 0) / b.price : 0, pay = b.pay != null ? b.pay : auto;
     const st = b.res ? `<span class="tag ${b.res === 'won' ? 'won' : 'lost'}">${b.res === 'won' ? 'Won' : 'Lost'}${b.auto ? ' · auto' : ''}</span>` : !g || g.ended ? `<span class="tag">${b.custom ? 'Custom' : 'Waiting for result'}</span>` : g.live ? '<span class="tag live">● LIVE</span>' : when(g);
     return `<div class="g bet"><div class="gh"><span style="margin-right:10px;display:inline-flex">${logo({ logo: b.logo, name: (b.name || '').replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() })}</span><div style="min-width:0;flex:1"><span class="nm">${esc(b.name)}</span><div class="meta"><span class="tag">${esc(SPN[b.sport] || b.sport)}</span>${st}${b.res ? '' : b.notOnReal ? '<span class="tag nreal">not on Real</span>' : b.real ? '<span class="tag oreal">✓ matches Real</span>' : ''}<span class="tag">${esc(b.game)}</span></div></div>${b.link ? `<a class="go" href="${esc(b.link)}" target="_blank" rel="noopener">Open ↗</a>` : ''}</div>
-      ${b.res ? `<div class="bdone"><span>Placed<b>${Math.round(b.amt || 0).toLocaleString()}</b></span><span>${b.res === 'won' ? 'Paid out' : 'Paid out'}<b>${b.res === 'won' ? Math.round(pay).toLocaleString() : '0'}</b></span><span>Profit<b class="${b.res === 'won' ? 'pos' : 'neg'}">${b.res === 'won' ? '+' + Math.round(pay - (b.amt || 0)).toLocaleString() : '-' + Math.round(b.amt || 0).toLocaleString()}</b></span><span class="lact"><button data-res="${esc(b.id)}" data-v="" title="Undo result">↺</button><button data-del="${esc(b.id)}" class="del" title="Remove">✕</button></span></div></div>` : `
-      <div class="bgrid"><span class="c">Bought at<b>${pw(b.price)}</b></span><span class="c">Real now<b>${sd ? pw(sd.price) : '-'}</b></span><span class="c">Fair now<b>${sd ? pc(sd.fair) : '-'}</b></span>${b.custom ? '<span class="c">EV then<b>-</b></span>' : `<span class="c">EV then<b class="${b.ev > 0 ? 'pos' : 'neg'}">${b.ev > 0 ? '+' : ''}${pc(b.ev)}</b></span>`}</div>
+      ${b.res ? '' : `      <div class="bgrid"><span class="c">Bought at<b>${pw(b.price)}</b></span><span class="c">Real now<b>${sd ? pw(sd.price) : '-'}</b></span><span class="c">Fair now<b>${sd ? pc(sd.fair) : '-'}</b></span>${b.custom ? '<span class="c">EV then<b>-</b></span>' : `<span class="c">EV then<b class="${b.ev > 0 ? 'pos' : 'neg'}">${b.ev > 0 ? '+' : ''}${pc(b.ev)}</b></span>`}</div>`}
       <div class="bline"><label>Placed<input type="number" inputmode="numeric" min="0" step="1" value="${b.amt || ''}" placeholder="rax" data-amt="${esc(b.id)}"></label>
         <label>${b.res === 'won' ? 'Paid out' : 'Pays'}<input type="number" inputmode="numeric" min="0" step="1" value="${Math.round(pay)}" data-pay="${esc(b.id)}"></label>
         <span class="bprof"><b class="${b.res === 'lost' ? 'neg' : 'pos'}">${b.res === 'lost' ? `-${Math.round(b.amt || 0).toLocaleString()}` : `+${Math.round(pay - (b.amt || 0)).toLocaleString()}`}</b><small>${b.pay != null ? `<a href="#" data-payauto="${esc(b.id)}" title="Back to the automatic payout (${Math.round(auto).toLocaleString()})">auto</a>` : 'profit'}</small></span>
         <span class="lact">${b.res ? `<button data-res="${esc(b.id)}" data-v="" title="Undo result">↺</button>` : `<button data-res="${esc(b.id)}" data-v="won" title="Mark won">W</button><button data-res="${esc(b.id)}" data-v="lost" title="Mark lost">L</button>`}<button data-del="${esc(b.id)}" class="del" title="Remove">✕</button></span></div>
-      ${arbLine(b)}</div>`}`; };
+      ${b.res ? '' : arbLine(b)}</div>`; };
   /* Two or more bets on one game (both sides): one "Arbitrage bet" block with totals (Dennis, 2026-11-16). */
   const groupRow = l => { const b0 = l[0], g = now.get(b0.gid), placed = l.reduce((a, b) => a + (b.amt || 0), 0), settled = l.every(b => b.res);
     const paid = l.filter(b => b.res === 'won').reduce((a, b) => a + payOf(b), 0), pays = l.map(b => payOf(b)), lo = Math.min(...pays), hi = Math.max(...pays);
@@ -658,7 +664,7 @@ function draw(){
   const sps = SP_ORDER.filter(sp => games.some(g => g.sport === sp));
   $('#chips').innerHTML = ['', '_ev', ...(sps.length > 1 ? sps : [])].map(s => `<button data-c="${s}" aria-pressed="${chip === s}">${s === '_best' ? 'Best EV' : s === '_ev' ? '+EV' : s ? SPN[s] || s : 'All'}</button>`).join('');
   const pos = games.filter(g => g.sides.some(s => units(g, s))), top = games.reduce((a, g) => Math.max(a, best(g)), -9);
-  $('#sum').innerHTML = `<div><b>${games.length}</b><span>open markets</span></div><div><b class="pos">${pos.length}</b><span>bets to make</span></div><div><b class="${top > 0 ? 'pos' : 'nil'}">${top > -9 ? (top > 0 ? '+' : '') + pc(top) : '-'}</b><span>best edge</span></div>`;
+  $('#sum').innerHTML = `<div><b>${games.length}</b><span>open markets${pos.length ? ` · <em class="pos">${pos.length} to bet</em>` : ''}</span></div>`;
   if (!$('#bkbox').open) drawBooks();
   /* All: every open market. +EV: games that aren't decided (no side under 7% fair) and have a bet to make. */
   const vis = chip === '_ev' ? games.filter(g => !decided(g) && g.sides.some(s => units(g, s))) : games;
@@ -747,6 +753,7 @@ $('#blist').addEventListener('input', e => { const i = e.target.closest('[data-p
 $('#blist').addEventListener('click', e => { const pa = e.target.closest('[data-payauto]'); if (pa) { e.preventDefault(); betsCall({ set: { id: pa.dataset.payauto, pay: null } }); return; }
   const r = e.target.closest('[data-res]'), d = e.target.closest('[data-del]');
   if (r) betsCall({ set: { id: r.dataset.res, res: r.dataset.v } }); if (d) betsCall({ del: d.dataset.del }); });
+$('#bkbtn').addEventListener('click', () => { const d = $('#bkbox'); d.open = !d.open; $('#bkbtn').setAttribute('aria-expanded', String(d.open)); if (d.open) { $('#vpanel').hidden = true; $('#vbtn').setAttribute('aria-expanded', 'false'); } });
 $('#books').addEventListener('change', e => { const t = e.target; if (t.id === 'poly') { showPoly = t.checked; ls.set('pred_poly', showPoly ? '1' : '0'); } else if (t.dataset.bk) { t.checked ? offBooks.delete(t.dataset.bk) : offBooks.add(t.dataset.bk); ls.set('pred_off_books', JSON.stringify([...offBooks])); } $('#bksum').textContent = offBooks.size ? `${allBooks().filter(x => !offBooks.has(x)).length} of ${allBooks().length} books` : 'All books'; draw(); });
 // Access (Dennis only, until public).
 const api = async q => { const t = ls.get('ratebrd_token_v1') || ''; return (await fetch('/api/swaps?' + q, { headers: t ? { 'x-rb-token': t } : {} })).json(); };
@@ -776,7 +783,7 @@ function applyView(){
   $('#vopts').innerHTML = VIEW_PARTS.map(([k, t]) => `<label><input type="checkbox" data-vp="${k}"${VIEW.hide.includes(k) ? '' : ' checked'}> ${esc(t)}</label>`).join('');
   try { ls.set('pred_view_v1', JSON.stringify(VIEW)); } catch (e) {}
 }
-$('#vbtn').addEventListener('click', () => { const p = $('#vpanel'); p.hidden = !p.hidden; $('#vbtn').setAttribute('aria-expanded', String(!p.hidden)); });
+$('#vbtn').addEventListener('click', () => { const p = $('#vpanel'); p.hidden = !p.hidden; $('#vbtn').setAttribute('aria-expanded', String(!p.hidden)); if (!p.hidden) { $('#bkbox').open = false; $('#bkbtn').setAttribute('aria-expanded', 'false'); } });
 $('#vpanel').addEventListener('click', e => { const b = e.target.closest('[data-vm]'); if (b) { VIEW.mode = b.dataset.vm; applyView(); } });
 $('#vpanel').addEventListener('change', e => { const k = e.target.dataset.vp; if (!k) return; const h = new Set(VIEW.hide); e.target.checked ? h.delete(k) : h.add(k); VIEW.hide = [...h]; applyView(); });
 applyView();
