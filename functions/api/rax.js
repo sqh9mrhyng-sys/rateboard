@@ -869,6 +869,8 @@ async function predBuildTick(env, out) {
   let cfg = {}; try { cfg = JSON.parse((await env.RATEBOARD_KV.get('pred_owner_cfg')) || '{}') || {}; } catch (e) {}
   if (!cfg.alerts || !(cfg.unit > 0)) return;
   const GOOD = cfg.minEv || 0.06;
+  // One-time (2026-11-17): forget the sides flagged during the live flood so real pregame value alerts again.
+  try { if (!(await env.RATEBOARD_KV.get('pred_alert_reset_1117'))) { await env.RATEBOARD_KV.delete('pred_alert_state_v1'); await env.RATEBOARD_KV.put('pred_alert_reset_1117', '1', { expirationTtl: 7 * 86400 }); } } catch (e) {}
   let bets = [], port = {}, st = {};
   try { bets = JSON.parse((await env.RATEBOARD_KV.get('pred_bets_v1_' + who)) || '[]') || []; port = JSON.parse((await env.RATEBOARD_KV.get('pred_port_v1')) || '{}') || {}; st = JSON.parse((await env.RATEBOARD_KV.get('pred_alert_state_v1')) || '{}') || {}; } catch (e) {}
   const now = Date.now(), db = env.RATEBOARD_DB; let ch = false;
