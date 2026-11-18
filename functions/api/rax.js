@@ -903,13 +903,30 @@ async function predBuildTick(env, out) {
 /* One-off (Dennis, 2026-11-17, his OK to read his own prediction pages): which server account is his, and
    what Real's open positions and portfolio performance answers look like. Shapes and counts only; usernames
    are only compared with 'dennis', never kept. */
+/* One-off (2026-11-17): how Real's web app asks for a prediction position's trades (for when each buy
+   happened). Paths and short snippets from its public JS only. */
+async function predJsProbe(env) {
+  const K = 'diag_predjs_1117';
+  try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1 }), { expirationTtl: 86400 }); } catch (e) { return; }
+  const out = { at: Date.now(), n: 0, hits: [] };
+  try { const seen = new Set(), queue = [];
+    for (const u of ['https://web.realapp.com/', 'https://www.realapp.com/']) { try { const t = await (await fetch(u, { headers: { 'user-agent': 'Mozilla/5.0' } })).text();
+      for (const m of t.matchAll(/(?:src|href)="([^"]+\.js[^"]*)"/g)) { const v = new URL(m[1], u).href; if (!seen.has(v)) { seen.add(v); queue.push(v); } } } catch (e) {} }
+    while (queue.length && out.n < 80) { const u = queue.shift(); out.n++;
+      try { const t = await (await fetch(u)).text();
+        for (const m of t.matchAll(/["'`]([a-zA-Z0-9_./${}:-]*predictions?\/[a-zA-Z0-9_./${}:?=&-]*)["'`]/g)) { const i = m.index;
+          if (out.hits.length < 150 && !out.hits.some(h => h.s === m[1])) out.hits.push({ s: m[1].slice(0, 120), ctx: t.slice(Math.max(0, i - 90), i + 140).replace(/\s+/g, ' ') }); }
+        for (const m of t.matchAll(/["'`]([^"'`]*\.js)["'`]/g)) { if (/chunk|static|assets|_next/.test(m[1])) { try { const v = new URL(m[1], u).href; if (!seen.has(v) && seen.size < 500) { seen.add(v); queue.push(v); } } catch (e) {} } } } catch (e) {} }
+    out.done = 1; } catch (e) { out.err = String(e.message || e).slice(0, 120); }
+  await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 86400 });
+}
 /* Dennis's Real portfolio (2026-11-17, his OK: read his own account's open predictions - account 1 is his).
    Once a minute: every open position (cost, payout, current value, trades) is kept in KV, private - never on
    the health page. Each time a position's cost goes up, the fair % at that moment is noted against the new
    rax, so "EV when bought" is known even though Real only gives the average price. Weekly P&L every 10 min. */
-async function predPortSync(env) {
+export async function predPortSync(env) {
   const tok = env.RS_AUTH_TOKEN; if (!tok) return;
-  const K = 'pred_port_v1', LK = 'pred_port_lock'; const lk = Number(await env.RATEBOARD_KV.get(LK)) || 0; if (Date.now() - lk < 55000) return; await env.RATEBOARD_KV.put(LK, String(Date.now()));
+  const K = 'pred_port_v1', LK = 'pred_port_lock'; const lk = Number(await env.RATEBOARD_KV.get(LK)) || 0; if (Date.now() - lk < 15000) return; await env.RATEBOARD_KV.put(LK, String(Date.now()));
   let prev = {}; try { prev = JSON.parse((await env.RATEBOARD_KV.get(K)) || '{}') || {}; } catch (e) {}
   const num = v => { const n = Number(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return Number.isFinite(n) ? n : 0; };
   let d = null; try { const r = await fetch('https://web.realapp.com/predictions/openpositions', { headers: rsHeaders(tok) }); if (!r.ok) throw new Error('Real ' + r.status); d = await r.json(); }
@@ -962,7 +979,7 @@ async function predPortProbe(env) {
 }
 async function predTick(env) {
   try { const P = JSON.parse((await env.RATEBOARD_KV.get('pred_pause_v1')) || '{}') || {}; if (P.until && Date.now() < P.until) return; } catch (e) {}
-  await Promise.all([predOdds(env).catch(() => {}), predReal(env).catch(() => {}), predPortSync(env).catch(() => {})]); }
+  await Promise.all([predOdds(env).catch(() => {}), predReal(env).catch(() => {}), predJsProbe(env).catch(() => {})]); }
 
 /* One-off (2026-11-13): Real's own web app code, searched for how its
    Auctions "Bulk rating" view asks for listings. Only short snippets kept. */
@@ -8959,7 +8976,7 @@ async function collectorHealth(env, url) {
         if (dv < 300 || t1 - t0 > 25000 || !(v0 > 0)) continue; const dp = Math.abs(p1 - p0) * 100, bin = v0 < 10000 ? '<10k' : v0 < 30000 ? '10-30k' : v0 < 100000 ? '30-100k' : '100k+';
         const F = fit[L.sp] = fit[L.sp] || { per1k: [], k: [], bins: {} }; F.per1k.push(dp / dv * 1000); F.k.push(dp * v0 / dv); (F.bins[bin] = F.bins[bin] || []).push(dp / dv * 1000); }
       const fitOut = Object.fromEntries(Object.entries(fit).map(([sp, F]) => [sp, { n: F.per1k.length, per1kMed: med(F.per1k), kMed: med(F.k), bins: Object.fromEntries(Object.entries(F.bins).map(([b, a]) => [b, { n: a.length, per1kMed: med(a) }])) }]));
-      return { fit: fitOut, keys: await kvj('pred_mkeys_v1'), markets: Object.keys(S).length, samples: Object.values(S).reduce((a, x) => a + x.s.length, 0), eg: Object.values(S).slice(0, 2).map(x => x.s.slice(-6)) }; })(), predPort: await (async () => { const x = await kvj('pred_port_v1'); return x ? { at: x.at, n: (x.pos || []).length, err: x.err || null } : null; })(), predGames: await (async () => { const x = await kvj('pred_ev_v1'); const o = {}; for (const g of ((x && x.games) || [])) { const k = g.sport + (g.locked ? ':locked' : ':open'); o[k] = (o[k] || 0) + 1; } return o; })(), predLogo: await (async () => { const x = await kvj('pred_ev_v1'), od = await kvj('pred_odds_v2'); const sides = ((x && x.games) || []).flatMap(g => g.sides.map(sd => ({ sp: g.sport, k: sd.key, l: !!sd.logo }))); return { map: Object.keys((od && od.logo) || {}).length, mapKeys: Object.keys((od && od.logo) || {}).slice(0, 12), espn: Object.fromEntries(Object.entries((od && od.espn) || {}).map(([k, v]) => [k, (v.games || []).length + '@' + v.at])), withLogo: sides.filter(z => z.l).length, sides: sides.slice(0, 12) }; })(), predEv: await (async () => { const x = await kvj('pred_ev_v1'); return x ? { settledSeen: Object.keys((await kvj('pred_settled_v1')) || {}).length, books: (() => { const c = {}; for (const g of (x.games || [])) for (const f of (g.sources || [])) for (const b of (f.books || [])) c[b] = (c[b] || 0) + 1; return c; })(), keys: x.keys, used: x.used, live: (x.games || []).filter(g => g.live).length, srcs: (x.games || []).map(g => (g.sources || []).length).join(','), at: x.at, n: (x.games || []).length,  errs: x.errs, credits: x.credits } : null; })(), draftTest: await (async () => { let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get('draft_contests_v1')) || '[]'); } catch (e) {}
+      return { fit: fitOut, keys: await kvj('pred_mkeys_v1'), markets: Object.keys(S).length, samples: Object.values(S).reduce((a, x) => a + x.s.length, 0), eg: Object.values(S).slice(0, 2).map(x => x.s.slice(-6)) }; })(), predJs: await (async () => { const x = await kvj('diag_predjs_1117'); return x && x.hits ? { n: x.n, hits: x.hits.map(h => h.s) } : x; })(), predPort: await (async () => { const x = await kvj('pred_port_v1'); return x ? { at: x.at, n: (x.pos || []).length, err: x.err || null } : null; })(), predGames: await (async () => { const x = await kvj('pred_ev_v1'); const o = {}; for (const g of ((x && x.games) || [])) { const k = g.sport + (g.locked ? ':locked' : ':open'); o[k] = (o[k] || 0) + 1; } return o; })(), predLogo: await (async () => { const x = await kvj('pred_ev_v1'), od = await kvj('pred_odds_v2'); const sides = ((x && x.games) || []).flatMap(g => g.sides.map(sd => ({ sp: g.sport, k: sd.key, l: !!sd.logo }))); return { map: Object.keys((od && od.logo) || {}).length, mapKeys: Object.keys((od && od.logo) || {}).slice(0, 12), espn: Object.fromEntries(Object.entries((od && od.espn) || {}).map(([k, v]) => [k, (v.games || []).length + '@' + v.at])), withLogo: sides.filter(z => z.l).length, sides: sides.slice(0, 12) }; })(), predEv: await (async () => { const x = await kvj('pred_ev_v1'); return x ? { settledSeen: Object.keys((await kvj('pred_settled_v1')) || {}).length, books: (() => { const c = {}; for (const g of (x.games || [])) for (const f of (g.sources || [])) for (const b of (f.books || [])) c[b] = (c[b] || 0) + 1; return c; })(), keys: x.keys, used: x.used, live: (x.games || []).filter(g => g.live).length, srcs: (x.games || []).map(g => (g.sources || []).length).join(','), at: x.at, n: (x.games || []).length,  errs: x.errs, credits: x.credits } : null; })(), draftTest: await (async () => { let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get('draft_contests_v1')) || '[]'); } catch (e) {}
       const out = []; for (const c of l.filter(c => c.type === 'sport').slice(-30)) { const x = await kvj(`draft_v1_sport_${c.id}`);
         out.push({ id: c.id, sport: c.sport, day: c.day, n: x && x.players && x.players.length, teams: x && x.players ? [...new Set(x.players.map(p => p.team))].join(' ') : null }); }
       return { n: l.length, games: l.filter(c => c.type === 'game').length, gameDays: l.filter(c => c.type === 'game').map(c => `${c.id}:${c.sport}:${c.day}`).join(' '), sport: out }; })(), modVoid: await kvj('mod_void_1115_n'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
