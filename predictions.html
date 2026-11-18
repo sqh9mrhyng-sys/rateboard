@@ -157,6 +157,7 @@
   .plink{order:9;margin-left:8px;display:inline-grid;place-items:center;width:34px;height:34px;border-radius:10px;background:var(--accent);color:#141925;font-weight:900;text-decoration:none} .pt{position:relative}
   #bsum[hidden],#cbox[hidden],label.keep[hidden],#bavg[hidden]{display:none!important}
   .g.focus{border-color:var(--accent)!important;box-shadow:0 0 0 2px var(--accent),0 6px 18px rgba(0,0,0,.25)!important}
+  .livenote{margin:8px 0 10px;padding:10px 12px;border-radius:10px;border:1px solid #ffc95a55;background:#ffc95a12;color:#ffd98a;font-size:13.5px;font-weight:600;line-height:1.4} .livenote[hidden]{display:none}
 </style>
 <script src="/theme.js"></script>
 <script src="/nav.js?v=4"></script>
@@ -185,6 +186,7 @@
   <div id="vopts" hidden></div>
 </div>
 <details class="bkbox" id="bkbox"><summary>Sportsbooks: <span id="bksum">All books</span></summary><p class="note" style="margin:6px 0">The fair % uses only the books you tick (saved on this device).</p><div id="books"></div></details>
+<p class="livenote" id="livenote" hidden>In-game lines are extremely volatile, and late in games the jumps are too severe to consistently snipe great EV. Pregame predictions are recommended when available.</p>
 <div id="list"></div>
 </div>
 <div id="va" hidden><section class="guide">
@@ -230,6 +232,8 @@
 <p>A <b>unit (u)</b> is 1% of your rax by default - pick 0.5% to 4% under Unit size if you want bigger or smaller bets. Enter your rax at the top and every recommendation shows the exact rax to put on it. Sizes come from the Kelly formula, which sizes a bet by how big the edge is compared with how much you'd lose: Kelly % = (fair - Real) ÷ (1 - Real). We bet a tenth of that (much safer than full Kelly), so a 10% Kelly bet = 1u. Sizes run from 0.5u to 2u in half-unit steps (rounded down).</p>
 <p><b>Long shots are capped</b> because they lose most of the time even with a big edge: under 20% on Real it's 0.5u max, under 35% 1u, under 50% 1.5u, and favorites can go up to 2u.</p>
 <p>Example with 5,000 rax: 1u = 50 rax. A favorite at 60% with a 70% fair price is Kelly 25% → 2u → <b>100 rax</b>. An underdog at 15% with a 20% fair price is Kelly 6% → capped 0.5u → <b>25 rax</b>.</p>
+<h2>Live games</h2>
+<p>In-game lines are extremely volatile, and late in games the jumps are too severe to consistently snipe great EV. Pregame predictions are recommended when available. Sportsbooks update their live lines 10-80 seconds apart while Real moves instantly, so live EV is noisier than pregame.</p>
 <h2>Slippage</h2>
 <p>Real takes no fee - both sides always add up to 100%. The only cost is that your own bet moves the price as it goes in, so you get a slightly worse price than the one shown. From watching Real's markets, 1,000 rax moves an NBA market about 1.1 points and an NHL market about 2.3, and on average you pay about half of that move. Enter your rax amount at the top and the EV shown for each bet already takes slippage off, and the unit size steps down if a bigger bet would eat the edge.</p>
 <h2>Placing a bet</h2>
@@ -584,6 +588,7 @@ function draw(){
   if (!$('#bkbox').open) drawBooks();
   /* All: every open market. +EV: games that aren't decided (no side under 7% fair) and have a bet to make. */
   const vis = chip === '_ev' ? games.filter(g => !decided(g) && g.sides.some(s => units(g, s))) : games;
+  $('#livenote').hidden = !vis.some(g => g.live);   // note shows whenever a live game is listed (Dennis, 2026-11-17)
   let html;
   if (chip === '_ev') {
     // +EV: games with a bet to make (not decided), best EV first.
