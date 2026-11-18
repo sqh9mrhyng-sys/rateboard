@@ -61,6 +61,10 @@ function fileFor(p) {
   }
   return null;
 }
+const TAKEDOWN_UNTIL = Date.UTC(2026, 10, 18, 14, 0, 0);
+const TAKEDOWN_HTML = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Site unavailable</title>'
+  + '<style>html,body{height:100%;margin:0}body{display:grid;place-items:center;background:#0f1218;color:#e8ecf3;font:16px/1.5 system-ui,-apple-system,sans-serif;text-align:center;padding:24px}h1{font-size:26px;margin:0 0 8px}p{color:#8b93a6;margin:0}</style>'
+  + '</head><body><div><h1>This website has been taken down.</h1><p>raxacademy.app</p></div></body></html>';
 function serveStatic(req) {
   const u = new URL(req.url);
   if (u.pathname.endsWith('.html')) {   // Cloudflare Pages drops .html from addresses
@@ -69,6 +73,13 @@ function serveStatic(req) {
   }
   const f = fileFor(u.pathname) || fileFor('/index.html');   // no 404 page: Pages serves the front page
   const ext = path.extname(f).toLowerCase();
+  /* Joke (Dennis, 2026-11-17): every page shows "taken down" until 5:00am Alaska (14:00 UTC Nov 18). Nothing
+     else changes and the site's data and API keep running. Dennis gets in with /?peek=rax (remembered). */
+  if (ext === '.html' && Date.now() < TAKEDOWN_UNTIL) {
+    const ck = String(req.headers.get('cookie') || '');
+    if (u.searchParams.get('peek') === 'rax') return new Response(null, { status: 302, headers: { location: u.pathname, 'set-cookie': 'rb_peek=1; Path=/; Max-Age=43200; SameSite=Lax; Secure' } });
+    if (!/(?:^|;\s*)rb_peek=1/.test(ck)) return new Response(req.method === 'HEAD' ? null : TAKEDOWN_HTML, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+  }
   const body = fs.readFileSync(f);
   return new Response(req.method === 'HEAD' ? null : body, { status: 200, headers: {
     'content-type': TYPES[ext] || 'application/octet-stream',

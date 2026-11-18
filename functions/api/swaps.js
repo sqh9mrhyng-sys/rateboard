@@ -3343,6 +3343,13 @@ export async function swapTick(env) {
   if (!db || !auth) return null;
   await ready(db);
   try { await confirmBypass(env, db); } catch (e) {}
+  /* Joke (Dennis, 2026-11-17): no swaps until 5:00am Alaska (14:00 UTC Nov 18). Each minute, swaps and 160s due
+     before then that haven't been messaged are called off, the same way Pause swaps does it. Nothing else changes. */
+  if (Date.now() < Date.UTC(2026, 10, 18, 14, 0, 0)) { try { const until = Date.UTC(2026, 10, 18, 14, 0, 0), res = { n: 0, late: 0, soon: 0 };
+    const ms = ((await db.prepare("SELECT * FROM swap_matches WHERE status IN ('pending','warned') AND dueAt > ? AND dueAt < ?").bind(Date.now(), until).all()).results) || [];
+    for (const m of ms) await callOff(db, m, 'called off: no swaps tonight until 5am Alaska', res);
+    await db.prepare("UPDATE swap_160 SET status='cancelled', note='no swaps tonight until 5am Alaska' WHERE status='pending' AND warnS IS NULL AND warnB IS NULL AND dueAt > ? AND dueAt < ?").bind(Date.now(), until).run();
+    if (res.n) await stat(db, 'joke_calloff', res.n); } catch (e) {} }
   // Once an hour at :20 (before the :30 warnings). The claim is a database row (instant everywhere), not KV,
   // so two ticks can never both run matching in the same hour.
   const hour = new Date().toISOString().slice(0, 13);
