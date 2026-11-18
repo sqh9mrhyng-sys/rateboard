@@ -900,6 +900,18 @@ async function predBuildTick(env, out) {
 /* One-off (Dennis, 2026-11-17, his OK to read his own prediction pages): which server account is his, and
    what Real's open positions and portfolio performance answers look like. Shapes and counts only; usernames
    are only compared with 'dennis', never kept. */
+async function predPortProbe2(env) {
+  const K = 'diag_predport_v2'; try { if (await env.RATEBOARD_KV.get(K)) return; } catch (e) { return; }
+  await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1 }), { expirationTtl: 600 });
+  const mask = v => String(v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : v).replace(/\d/g, '9').slice(0, 160);
+  let out = { at: Date.now() };
+  try { const r = await fetch('https://web.realapp.com/predictions/openpositions', { headers: rsHeaders(env.RS_AUTH_TOKEN) }); const d = await r.json();
+    const p0 = (d.positions || []).slice(0, 2);
+    out.eg = p0.map(p => ({ marketType: p.marketType, sharesValueDisplay: mask(p.sharesValueDisplay), currentPriceDisplay: mask(p.currentPriceDisplay), details: (p.details || []).map(x => Object.fromEntries(Object.entries(x).map(([k, v]) => [k, /label|title|name/i.test(k) && typeof v === 'string' ? v : mask(v)]))),
+      left: mask(p.leftFooterText), right: mask(p.rightFooterText), header: typeof p.headerLabel, outcomeLabel: typeof p.outcomeLabel, path: mask(p.marketDisplay && p.marketDisplay.path) }));
+  } catch (e) { out.err = String(e.message || e).slice(0, 100); }
+  await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 7 * 86400 });
+}
 async function predPortProbe(env) {
   const K = 'diag_predport_v1'; try { if (await env.RATEBOARD_KV.get(K)) return; } catch (e) { return; }
   await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1 }), { expirationTtl: 600 });
@@ -914,7 +926,7 @@ async function predPortProbe(env) {
 }
 async function predTick(env) {
   try { const P = JSON.parse((await env.RATEBOARD_KV.get('pred_pause_v1')) || '{}') || {}; if (P.until && Date.now() < P.until) return; } catch (e) {}
-  await Promise.all([predOdds(env).catch(() => {}), predReal(env).catch(() => {}), predPortProbe(env).catch(() => {})]); }
+  await Promise.all([predOdds(env).catch(() => {}), predReal(env).catch(() => {}), predPortProbe(env).catch(() => {}), predPortProbe2(env).catch(() => {})]); }
 
 /* One-off (2026-11-13): Real's own web app code, searched for how its
    Auctions "Bulk rating" view asks for listings. Only short snippets kept. */
@@ -8911,7 +8923,7 @@ async function collectorHealth(env, url) {
         if (dv < 300 || t1 - t0 > 25000 || !(v0 > 0)) continue; const dp = Math.abs(p1 - p0) * 100, bin = v0 < 10000 ? '<10k' : v0 < 30000 ? '10-30k' : v0 < 100000 ? '30-100k' : '100k+';
         const F = fit[L.sp] = fit[L.sp] || { per1k: [], k: [], bins: {} }; F.per1k.push(dp / dv * 1000); F.k.push(dp * v0 / dv); (F.bins[bin] = F.bins[bin] || []).push(dp / dv * 1000); }
       const fitOut = Object.fromEntries(Object.entries(fit).map(([sp, F]) => [sp, { n: F.per1k.length, per1kMed: med(F.per1k), kMed: med(F.k), bins: Object.fromEntries(Object.entries(F.bins).map(([b, a]) => [b, { n: a.length, per1kMed: med(a) }])) }]));
-      return { fit: fitOut, keys: await kvj('pred_mkeys_v1'), markets: Object.keys(S).length, samples: Object.values(S).reduce((a, x) => a + x.s.length, 0), eg: Object.values(S).slice(0, 2).map(x => x.s.slice(-6)) }; })(), predPortProbe: await kvj('diag_predport_v1'), predGames: await (async () => { const x = await kvj('pred_ev_v1'); const o = {}; for (const g of ((x && x.games) || [])) { const k = g.sport + (g.locked ? ':locked' : ':open'); o[k] = (o[k] || 0) + 1; } return o; })(), predLogo: await (async () => { const x = await kvj('pred_ev_v1'), od = await kvj('pred_odds_v2'); const sides = ((x && x.games) || []).flatMap(g => g.sides.map(sd => ({ sp: g.sport, k: sd.key, l: !!sd.logo }))); return { map: Object.keys((od && od.logo) || {}).length, mapKeys: Object.keys((od && od.logo) || {}).slice(0, 12), espn: Object.fromEntries(Object.entries((od && od.espn) || {}).map(([k, v]) => [k, (v.games || []).length + '@' + v.at])), withLogo: sides.filter(z => z.l).length, sides: sides.slice(0, 12) }; })(), predEv: await (async () => { const x = await kvj('pred_ev_v1'); return x ? { settledSeen: Object.keys((await kvj('pred_settled_v1')) || {}).length, books: (() => { const c = {}; for (const g of (x.games || [])) for (const f of (g.sources || [])) for (const b of (f.books || [])) c[b] = (c[b] || 0) + 1; return c; })(), keys: x.keys, used: x.used, live: (x.games || []).filter(g => g.live).length, srcs: (x.games || []).map(g => (g.sources || []).length).join(','), at: x.at, n: (x.games || []).length,  errs: x.errs, credits: x.credits } : null; })(), draftTest: await (async () => { let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get('draft_contests_v1')) || '[]'); } catch (e) {}
+      return { fit: fitOut, keys: await kvj('pred_mkeys_v1'), markets: Object.keys(S).length, samples: Object.values(S).reduce((a, x) => a + x.s.length, 0), eg: Object.values(S).slice(0, 2).map(x => x.s.slice(-6)) }; })(), predPortProbe: await kvj('diag_predport_v2'), predGames: await (async () => { const x = await kvj('pred_ev_v1'); const o = {}; for (const g of ((x && x.games) || [])) { const k = g.sport + (g.locked ? ':locked' : ':open'); o[k] = (o[k] || 0) + 1; } return o; })(), predLogo: await (async () => { const x = await kvj('pred_ev_v1'), od = await kvj('pred_odds_v2'); const sides = ((x && x.games) || []).flatMap(g => g.sides.map(sd => ({ sp: g.sport, k: sd.key, l: !!sd.logo }))); return { map: Object.keys((od && od.logo) || {}).length, mapKeys: Object.keys((od && od.logo) || {}).slice(0, 12), espn: Object.fromEntries(Object.entries((od && od.espn) || {}).map(([k, v]) => [k, (v.games || []).length + '@' + v.at])), withLogo: sides.filter(z => z.l).length, sides: sides.slice(0, 12) }; })(), predEv: await (async () => { const x = await kvj('pred_ev_v1'); return x ? { settledSeen: Object.keys((await kvj('pred_settled_v1')) || {}).length, books: (() => { const c = {}; for (const g of (x.games || [])) for (const f of (g.sources || [])) for (const b of (f.books || [])) c[b] = (c[b] || 0) + 1; return c; })(), keys: x.keys, used: x.used, live: (x.games || []).filter(g => g.live).length, srcs: (x.games || []).map(g => (g.sources || []).length).join(','), at: x.at, n: (x.games || []).length,  errs: x.errs, credits: x.credits } : null; })(), draftTest: await (async () => { let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get('draft_contests_v1')) || '[]'); } catch (e) {}
       const out = []; for (const c of l.filter(c => c.type === 'sport').slice(-30)) { const x = await kvj(`draft_v1_sport_${c.id}`);
         out.push({ id: c.id, sport: c.sport, day: c.day, n: x && x.players && x.players.length, teams: x && x.players ? [...new Set(x.players.map(p => p.team))].join(' ') : null }); }
       return { n: l.length, games: l.filter(c => c.type === 'game').length, gameDays: l.filter(c => c.type === 'game').map(c => `${c.id}:${c.sport}:${c.day}`).join(' '), sport: out }; })(), modVoid: await kvj('mod_void_1115_n'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];
