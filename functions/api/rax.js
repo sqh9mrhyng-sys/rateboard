@@ -873,8 +873,9 @@ async function predBuildTick(env, out) {
   try { bets = JSON.parse((await env.RATEBOARD_KV.get('pred_bets_v1_' + who)) || '[]') || []; port = JSON.parse((await env.RATEBOARD_KV.get('pred_port_v1')) || '{}') || {}; st = JSON.parse((await env.RATEBOARD_KV.get('pred_alert_state_v1')) || '{}') || {}; } catch (e) {}
   const now = Date.now(), db = env.RATEBOARD_DB; let ch = false;
   for (const g of (out.games || [])) {
-    if (g.locked) continue; const d = pbDerive(g); if (d.n < (g.live ? 3 : 2)) continue;
-    const start = Date.parse(g.start || 0); if (g.live && (!start || now - start > 4 * 3600000)) continue;
+    // Pregame only (2026-11-17: live lines lag and sent a flood of 'value' that wasn't there).
+    if (g.locked || g.live) continue; const d = pbDerive(g); if (d.n < 2) continue;
+    const start = Date.parse(g.start || 0); if (start && now >= start) continue;
     for (let si = 0; si < g.sides.length; si++) {
       const sd = g.sides[si], fair = d.fair(si), q = Number(sd.price); if (!(fair > 0.07) || !(q > 0 && q < 1)) continue;
       const u = pbUnits(fair, q); if (!u || Math.round(q * 100) > Math.floor(fair / (1 + PB_MIN_EV) * 100)) continue;
@@ -885,10 +886,13 @@ async function predBuildTick(env, out) {
       if (piece < 100) continue;
       piece = Math.round(piece / 50) * 50; const evp = fair / (q + rate * piece / 1000 / 200) - 1;
       const k = g.id + ':' + si, s0 = st[k];
-      if (s0 && !(q <= s0.q - 0.01 || evp >= s0.ev + 0.03 || now - s0.at > 20 * 60000)) continue;
+      // Quieter (2026-11-17, "it's sending a lot"): a side again only if the price is 2+ points better or 45 min
+      // passed; and never more than 3 alerts in any 15 minutes overall.
+      if (s0 && !(q <= s0.q - 0.02 || now - s0.at > 45 * 60000)) continue;
+      const recent = Object.values(st).filter(x => now - x.at < 15 * 60000).length; if (recent >= 3) continue;
       st[k] = { at: now, q, ev: evp }; ch = true;
       const nm = sd.name || sd.label;
-      await pushTo(env, db, who, { title: `Value · ${nm} +${(evp * 100).toFixed(1)}%`, body: `Buy ${piece.toLocaleString()} rax at ${Math.round(q * 100)}% or less (fair ${(fair * 100).toFixed(1)}%). ${held > 0 ? `${Math.round(held).toLocaleString()} of ${Math.round(u * cfg.unit).toLocaleString()} in.` : `Full size ${Math.round(u * cfg.unit).toLocaleString()} (${u}u).`}${g.live ? ' Live.' : ''}`, url: g.link || '/predictions', tag: 'pv-' + k, urgent: true });
+      await pushTo(env, db, who, { title: `Value · ${nm} +${(evp * 100).toFixed(1)}%`, body: `Buy ${piece.toLocaleString()} rax at ${Math.round(q * 100)}% or less (fair ${(fair * 100).toFixed(1)}%). ${held > 0 ? `${Math.round(held).toLocaleString()} of ${Math.round(u * cfg.unit).toLocaleString()} in.` : `Full size ${Math.round(u * cfg.unit).toLocaleString()} (${u}u).`}${g.live ? ' Live.' : ''}`, url: (((port.pos || []).find(x => x.marketId === g.id && x.si === si) || {}).link) || g.link || '/predictions', tag: 'pv-' + k, urgent: true });
     }
   }
   for (const k of Object.keys(st)) if (now - st[k].at > 6 * 3600000) { delete st[k]; ch = true; }
