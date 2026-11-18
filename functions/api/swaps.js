@@ -16,6 +16,7 @@ const ET_DAY_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_Yor
 import { pushTo, vapidKeys, PUSH_DDL } from '../../lib/webpush.js';
 import { isAdminRequest, sessionKey, forbidden, allow, clientIp, touchSeen, ADMINS, etDay } from '../../lib/auth.js';
 import { watchEnv, noteSlowRequest } from '../../lib/dbwatch.js';
+import { predPortSync } from './rax.js';   // Dennis's portfolio sync (circular import is fine: called at run time only)
 
 /* Adding a column that already exists just errors (and is ignored). Each
    ALTER is tried once per server instance, not on every request. */
@@ -1711,6 +1712,21 @@ export async function realWait(env, name, maxMs = 15 * 60000) {
   if (Date.now() - last < maxMs && await realBusy(env)) return true;
   try { await env.RATEBOARD_KV.put(k, String(Date.now()), { expirationTtl: 86400 }); } catch (e) {}
   return false;
+}
+async function portToBets(env) {
+  let x = {}, l = [], ev = {}; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_port_v1')) || '{}') || {}; l = JSON.parse((await env.RATEBOARD_KV.get('pred_bets_v1_dennis')) || '[]') || []; ev = JSON.parse((await env.RATEBOARD_KV.get('pred_ev_v1')) || '{}') || {}; } catch (e) { return null; }
+  let upd = 0, add = 0; const seen = new Set();
+  for (const p of (x.pos || [])) { if (p.settled || !(p.cost > 0) || !(p.pays > 0)) continue;
+    const g = (ev.games || []).find(y => y.id === p.marketId), si = p.si >= 0 ? p.si : -1; if (si < 0) continue;
+    seen.add(p.marketId + ':' + si);
+    const price = Math.round(p.cost / p.pays * 1e4) / 1e4, b = l.find(y => y.gid === p.marketId && y.side === si && !y.res);
+    if (b) { if (Math.abs((b.amt || 0) - p.cost) > 0.5 || b.pay == null || Math.abs(b.pay - p.pays) > 0.5) { b.amt = Math.round(p.cost * 100) / 100; b.pay = Math.round(p.pays * 100) / 100; b.price = price; b.real = true; upd++; } else b.real = true; }
+    else { const sd = g && g.sides[si];
+      l.unshift({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), gid: p.marketId, side: si, sport: p.sport || (g && g.sport) || '', game: (g && g.game) || p.game || '', name: (sd && (sd.name || sd.label)) || p.team || '',
+        price, fair: p.fairIn || 0, ev: p.fairIn ? p.fairIn / price - 1 : 0, u: 0, amt: Math.round(p.cost * 100) / 100, pay: Math.round(p.pays * 100) / 100, teams: g ? g.sides.map(y => y.name || y.label) : [], start: (g && g.start) || '', logo: (sd && sd.logo) || '', at: Date.now(), real: true, fromReal: true }); add++; } }
+  let off = 0; for (const b of l) if (!b.res && !b.custom && b.gid > 0 && !seen.has(b.gid + ':' + b.side)) { if (!b.notOnReal) off++; b.notOnReal = true; } else if (b.notOnReal && seen.has(b.gid + ':' + b.side)) delete b.notOnReal;
+  await env.RATEBOARD_KV.put('pred_bets_v1_dennis', JSON.stringify(l.slice(0, 300)));
+  return { updated: upd, added: add, notOnReal: l.filter(b => b.notOnReal && !b.res).length };
 }
 export async function draftScan(env) {
   if (await realWait(env, 'draft', 40 * 60000)) return;
@@ -6182,12 +6198,19 @@ async function handle({ request, env, waitUntil }) {
   /* Build to full size (Dennis, 2026-11-17, owner only while testing): big stakes move Real's price too much
      in one go, so a side's full size is bought in pieces before the game starts and a notification says when
      to buy the next one. Plans: { gid, side, target (rax), unit (rax), at }. */
-  // Dennis's own Real portfolio, synced each minute from his account (owner only).
+  /* My bets lines up with Real (Dennis, 2026-11-17): after a sync, each open position is his bet on that side -
+     amount = Real's cost, pays = Real's payout, price = cost / payout. A position with no bet logged is added;
+     a logged open bet on a game Real shows no position for is left alone and flagged. */
+  // Dennis's own Real portfolio, fetched from his account when he taps Sync (owner only).
   if (op === 'predport') {
     if (String(acc.who || '').toLowerCase() !== 'dennis') return forbidden('Not open yet.');
+    // Only fetched when he taps Sync (Dennis, 2026-11-17: "don't pull my portfolio unless I ask").
+    let synced = null;
+    if (request.method === 'POST') { try { await predPortSync(env); } catch (e) {}
+      synced = await portToBets(env); }
     let x = {}; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_port_v1')) || '{}') || {}; } catch (e) {}
     let plans = []; try { plans = JSON.parse((await env.RATEBOARD_KV.get('pred_build_v1_dennis')) || '[]') || []; } catch (e) {}
-    return json({ at: x.at || null, pos: x.pos || [], perf: x.perf || null, err: x.err || null, plans });
+    return json({ at: x.at || null, pos: x.pos || [], perf: x.perf || null, err: x.err || null, plans, synced });
   }
   if (op === 'predbuild') {
     const who = String(acc.who || '').toLowerCase();
