@@ -878,7 +878,10 @@ async function predBuildTick(env, out) {
     // Pregame only (2026-11-17: live lines lag and sent a flood of 'value' that wasn't there).
     if (g.locked || g.live) continue; const d = pbDerive(g); if (d.n < 2) continue;
     const start = Date.parse(g.start || 0); if (start && now >= start) continue;
+    // Holding one side of a game, never suggest another side of it (Dennis, 2026-11-17).
+    const heldSides = new Set([...bets.filter(b => b.gid === g.id && !b.res && (b.amt || 0) > 0).map(b => b.side), ...(port.pos || []).filter(x => x.marketId === g.id && x.cost > 0).map(x => x.si)]);
     for (let si = 0; si < g.sides.length; si++) {
+      if (heldSides.size && !heldSides.has(si)) continue;
       const sd = g.sides[si], fair = d.fair(si), q = Number(sd.price); if (!(fair > 0.07) || !(q > 0 && q < 1)) continue;
       const u = pbUnits(fair, q); if (!u || Math.round(q * 100) > Math.floor(fair / (1 + PB_MIN_EV) * 100)) continue;
       const held = Math.max(bets.filter(b => b.gid === g.id && b.side === si && !b.res).reduce((t, b) => t + (b.amt || 0), 0), ((port.pos || []).find(x => x.marketId === g.id && x.si === si) || {}).cost || 0);
@@ -978,7 +981,8 @@ export async function predPortSync(env) {
   const num = v => { const n = Number(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return Number.isFinite(n) ? n : 0; };
   let d = null; try { const r = await fetch('https://web.realapp.com/predictions/openpositions', { headers: rsHeaders(tok) }); if (!r.ok) throw new Error('Real ' + r.status); d = await r.json(); }
   catch (e) { prev.err = String(e.message || e).slice(0, 80); await env.RATEBOARD_KV.put(K, JSON.stringify(prev)); return; }
-  let ev = {}, FH = {}, bets = [];
+  let ev = {}, FH = {}, bets = [], SL = {};
+  try { SL = JSON.parse((await env.RATEBOARD_KV.get('pred_slip_v1')) || '{}') || {}; } catch (e) {}
   try { ev = JSON.parse((await env.RATEBOARD_KV.get('pred_ev_v1')) || '{}') || {}; FH = JSON.parse((await env.RATEBOARD_KV.get('pred_fairhist_v1')) || '{}') || {}; bets = JSON.parse((await env.RATEBOARD_KV.get('pred_bets_v1_dennis')) || '[]') || []; } catch (e) {}
   const tcache = prev.tcache || {}, pos = [];
   for (const p of (d.positions || [])) {
@@ -995,9 +999,18 @@ export async function predPortSync(env) {
         if (r.ok) { const j = await r.json(); tr = { cost, n: nTr, items: (j.items || []).map(x => ({ type: String(x.type || ''), amt: num(x.amount), shares: num(x.shares), at: Date.parse(x.transactedAt || x.createdAt || '') || null })) }; tcache[k] = tr; } } catch (e) {}
       await new Promise(r => setTimeout(r, 400)); }
     const logged = bets.find(b => b.gid === p.marketId && b.side === si && !b.res);
-    const trades = ((tr && tr.items) || []).map(x => { const buy = !/sell|cash/i.test(x.type), price = x.shares > 0 ? x.amt / x.shares : null;
+    /* Price of each trade (2026-11-17: Real's "shares" on a trade row isn't in a unit we can use - it gave
+       prices over 100%). Instead: Real's own price for that side at that minute (from the 10-second reads the
+       site keeps) plus half of the trade's measured slippage, then all buys scaled together so they pay out
+       exactly what Real says the position pays. */
+    const SLs = (SL[p.marketId] || {}).s || [], rate = PB_SLIP[p.sport] ?? PB_DEF;
+    const realAt = t => { if (!SLs.length || !t) return null; let b = null; for (const x of SLs) { if (x[0] <= t + 15000) b = x; else break; } b = b || SLs[0]; if (Math.abs(b[0] - t) > 30 * 60000) return null; return si === 0 ? b[2] : si === 1 && g && g.sides.length === 2 ? 1 - b[2] : null; };
+    const raw = ((tr && tr.items) || []).map(x => { const r0 = realAt(x.at); return r0 ? Math.min(0.99, r0 + rate * x.amt / 1000 / 200) : null; });
+    const buysAll = ((tr && tr.items) || []).every(x => !/sell|cash/i.test(x.type)), est = raw.every(v => v) && buysAll && pays > 0;
+    const scale = est ? ((tr.items.reduce((t, x, i) => t + x.amt / raw[i], 0)) / pays) : 1;
+    const trades = ((tr && tr.items) || []).map((x, i) => { const buy = !/sell|cash/i.test(x.type), price = est ? Math.min(0.99, raw[i] * scale) : (buysAll && tr.items.length === 1 && pays > 0 ? cost / pays : null);
       const fa = si >= 0 && x.at ? fairAt(FH, p.marketId, si, x.at) : null, f = fa && fa.fair > 0 ? fa.fair : (logged && logged.fair > 0 ? logged.fair : null);
-      return { ...x, buy, price: price ? Math.round(price * 1e4) / 1e4 : null, fair: f != null ? Math.round(f * 1e4) / 1e4 : null, fairSrc: fa ? 'history' : f != null ? 'logged' : null, ev: f != null && price ? Math.round((f / price - 1) * 1e4) / 1e4 : null }; })
+      return { ...x, buy, est: !!est && tr.items.length > 1, price: price ? Math.round(price * 1e4) / 1e4 : null, fair: f != null ? Math.round(f * 1e4) / 1e4 : null, fairSrc: fa ? 'history' : f != null ? 'logged' : null, ev: f != null && price ? Math.round((f / price - 1) * 1e4) / 1e4 : null }; })
       .sort((a, b) => (a.at || 0) - (b.at || 0));
     const bt = trades.filter(x => x.buy && x.ev != null), bAmt = bt.reduce((t, x) => t + x.amt, 0);
     pos.push({ k, marketId: p.marketId, outcomeId: p.outcomeId, gameId: p.gameId, sport: p.sport, team: p.outcomeLabel, game: (p.marketDisplay || {}).display || p.headerLabel || '', si,
