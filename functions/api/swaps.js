@@ -1254,6 +1254,7 @@ async function runMatchingInner(db, env) {
    Swaps already keeps as hashId. Each member's chat is remembered, so the bot
    never opens a second one with the same person. */
 const DM_ON = true;
+const DM_STOP = true;   // EMERGENCY STOP (Dennis, 2026-11-19 07:27 AK): no bot DMs at all until he says
 const DM_DDL = `CREATE TABLE IF NOT EXISTS swap_dm (hashId TEXT PRIMARY KEY, userName TEXT, channelId INTEGER, openedAt INTEGER)`;
 
 async function dmChannel(db, auth, hashId, userName, env) {
@@ -1302,6 +1303,7 @@ async function botFail(db, kind, msg) {
 
 // A send that waits and tries again when Real is busy (429) or hiccups (5xx).
 async function dmSendRetry(auth, channelId, text, prio = 2) {
+  if (DM_STOP) throw new Error('DMs stopped (emergency stop)');
   let last;
   for (const wait of [0, 2500, 6000]) {
     if (wait) await sleep(wait);
@@ -1406,6 +1408,7 @@ async function dmPace(prio = 2) {
   const t = Date.now(), at = Math.max(t, dmNextAt); dmNextAt = at + DM_GAP_MS; if (at > t) await sleep(at - t);
 }
 async function dmSend(auth, channelId, text, prio = 2) {
+  if (DM_STOP) throw new Error('DMs stopped (emergency stop)');
   await dmPace(prio);
   const res = await fetch(`https://web.realapp.com/messages/channels/${channelId}/messages`, {
     method: 'POST', headers: { ...rsHeaders(auth), 'content-type': 'application/json' },
