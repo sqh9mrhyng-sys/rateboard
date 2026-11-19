@@ -6224,8 +6224,11 @@ async function handle({ request, env, waitUntil }) {
     if (!pw || !predPortTok(env, pw)) return forbidden('Not open yet.');
     // Only fetched when they tap Sync (Dennis, 2026-11-17: "don't pull my portfolio unless I ask").
     let synced = null;
-    if (request.method === 'POST') { try { await predPortSync(env, pw); } catch (e) {}
-      synced = await portToBets(env, pw); }
+    if (request.method === 'POST') {
+      /* Linked members sync on their own every 2 min while Predictions is open (2026-11-18);
+         at most one Real read per 90 s each, however many tabs. Dennis still syncs only on tap. */
+      let last = 0; if (pw !== 'dennis') { try { last = (JSON.parse((await env.RATEBOARD_KV.get('pred_port_v1_' + pw)) || '{}') || {}).at || 0; } catch (e) {} }
+      if (Date.now() - last > 90000) { try { await predPortSync(env, pw); } catch (e) {} synced = await portToBets(env, pw); } }
     let x = {}; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_port_v1' + (pw === 'dennis' ? '' : '_' + pw))) || '{}') || {}; } catch (e) {}
     let plans = []; try { plans = JSON.parse((await env.RATEBOARD_KV.get('pred_build_v1_' + pw)) || '[]') || []; } catch (e) {}
     return json({ at: x.at || null, pos: x.pos || [], perf: x.perf || null, err: x.err || null, plans, synced });

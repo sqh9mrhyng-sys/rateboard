@@ -432,7 +432,7 @@ function when(g){
 async function load(){
   try{ const t = ls.get('ratebrd_token_v1') || ''; J = await (await fetch('/api/swaps?op=predev', { headers: t ? { 'x-rb-token': t } : {} })).json(); }catch(e){ J = { error: 'Could not reach the site.' }; }
   if(J.error){ $('#list').innerHTML = `<div class="empty">${/sign in/i.test(J.error) ? 'Sign in first - <a href="/?next=/predictions">sign in</a>.' : esc(J.error)}</div>`; return; }
-  applyMe(J.me);
+  applyMe(J.me); autoPort();
   if(!J.keySet){ $('#list').innerHTML = '<div class="empty">The Odds API key isn\'t on the server yet.</div>'; return; }
   { const ae = document.activeElement; if (!(ae && ae.closest && ae.closest('#vr form'))) drawArb(); }
   draw(); focusGo(); if (!$('#vb').hidden && !(document.activeElement && document.activeElement.dataset && (document.activeElement.dataset.amt || document.activeElement.dataset.pay))) drawBets(); else $('#bn').textContent = BETS.filter(b => !b.res).length ? `(${BETS.filter(b => !b.res).length})` : '';
@@ -517,6 +517,13 @@ function focusGo(){ if (!FOCUS.gid || FOCUS.done) return; const el = document.ge
   setTimeout(() => { FOCUS.gid = null; }, 60000); }
 let PORT = null, SORT_LBL = null; const OPENP = new Set();
 document.addEventListener('toggle', e => { const d = e.target; if (d && d.dataset && d.dataset.pk) { d.open ? OPENP.add(d.dataset.pk) : OPENP.delete(d.dataset.pk); } }, true);
+/* Linked members (not Dennis): synced from Real on their own every 2 min while the page is open. */
+let autoAt = 0;
+async function autoPort(){
+  if (!J || !J.port || J.owner || document.hidden || Date.now() - autoAt < 120000) return; autoAt = Date.now();
+  const t = ls.get('ratebrd_token_v1') || '';
+  try { const r = await (await fetch('/api/swaps?op=predport', { method: 'POST', headers: t ? { 'x-rb-token': t } : {} })).json(); if (r && !r.error) { PORT = r; await betsCall(null); drawPort(); } } catch (e) {}
+}
 async function loadPort(){ if (!hasPort()) return; const t = ls.get('ratebrd_token_v1') || '';
   try { PORT = await (await fetch('/api/swaps?op=predport', { headers: t ? { 'x-rb-token': t } : {} })).json(); } catch (e) { return; } drawPort(); }
 function drawPort(){
