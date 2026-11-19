@@ -819,6 +819,7 @@ async function predReal(env) {
       if (round === 0 || round === 3) await env.RATEBOARD_KV.put('pred_recent_v1', JSON.stringify(R), { expirationTtl: 86400 }); } catch (e) {}
     await env.RATEBOARD_KV.put('pred_ev_v1', JSON.stringify(out), { expirationTtl: 3600 });
     try { await predBuildTick(env, out); } catch (e) {}
+    try { await predMemberAlerts(env, out); } catch (e) {}
     // Nothing open to bet on (only locked markets left): one read a minute is enough.
     if (!out.games.some(g => !g.locked && !g.ended)) break;
     const wait = 10000 - (Date.now() - t0); if (round < 5 && wait > 0) await sleep(wait);
@@ -904,6 +905,64 @@ async function predBuildTick(env, out) {
   }
   for (const k of Object.keys(st)) if (now - st[k].at > 6 * 3600000) { delete st[k]; ch = true; }
   if (ch) await env.RATEBOARD_KV.put('pred_alert_state_v1', JSON.stringify(st), { expirationTtl: 86400 });
+}
+/* Members' own Predictions alerts (2026-11-18, for linked members; settings on their Notifications tab).
+   Kinds, each on/off with its own numbers:
+     ev   - big value: a side at or above their EV (after slippage on 1 unit) and fair %
+     add  - add more: a side they already hold is back at or above their EV
+     sell - over fair: Real's price on a side they hold is N+ points above fair (and above what they paid)
+     start- starting soon: a side they hold still +EV 15 min before the game (one per game)
+   Pregame only (live lines lag). A side repeats only when EV is 2+ points better or 45 min passed; at most
+   `cap` alerts per hour each. Positions come from their last Real sync and the bets they logged. */
+export const PU_DEF = { ev: { on: true, minEv: 0.10, minFair: 0.30 }, add: { on: true, minEv: 0.05 }, sell: { on: false, pts: 5 }, start: { on: false }, cap: 6 };
+async function predMemberAlerts(env, out) {
+  let A = {}; try { A = JSON.parse((await env.RATEBOARD_KV.get('pred_ualert_v1')) || '{}') || {}; } catch (e) {}
+  const users = Object.keys(A).filter(w => A[w] && A[w].enabled); if (!users.length) return;
+  const LK = 'pred_ualert_lock'; const lk = Number(await env.RATEBOARD_KV.get(LK)) || 0; if (Date.now() - lk < 8000) return; await env.RATEBOARD_KV.put(LK, String(Date.now()));
+  let ST = {}; try { ST = JSON.parse((await env.RATEBOARD_KV.get('pred_ualert_state_v1')) || '{}') || {}; } catch (e) {}
+  const now = Date.now(), db = env.RATEBOARD_DB, D = new Map();
+  const der = g => { if (!D.has(g.id)) D.set(g.id, pbDerive(g)); return D.get(g.id); };
+  const games = (out.games || []).filter(g => !g.locked && !g.live && !g.ended && !(Date.parse(g.start || 0) && now >= Date.parse(g.start)));
+  const pct = v => (v * 100).toFixed(1) + '%';
+  for (const who of users) {
+    const c = { ...PU_DEF, ...A[who], ev: { ...PU_DEF.ev, ...(A[who].ev || {}) }, add: { ...PU_DEF.add, ...(A[who].add || {}) }, sell: { ...PU_DEF.sell, ...(A[who].sell || {}) }, start: { ...PU_DEF.start, ...(A[who].start || {}) } };
+    let me = {}, bets = [], port = {};
+    try { me = JSON.parse((await env.RATEBOARD_KV.get('pred_me_v1_' + who)) || '{}') || {}; bets = JSON.parse((await env.RATEBOARD_KV.get('pred_bets_v1_' + who)) || '[]') || []; port = JSON.parse((await env.RATEBOARD_KV.get('pred_port_v1_' + who)) || '{}') || {}; } catch (e) {}
+    const unit = (Number(me.bank) || 0) * (Number(me.upct) || 1) / 100;
+    const st = ST[who] = ST[who] || {};
+    const sent = () => Object.values(st).filter(x => now - x.at < 3600000).length;
+    const held = (gid, si) => { const p = (port.pos || []).find(x => x.marketId === gid && x.si === si && x.cost > 0);
+      const lb = bets.filter(b => b.gid === gid && b.side === si && !b.res && (b.amt || 0) > 0);
+      const cost = Math.max(p ? p.cost : 0, lb.reduce((t, b) => t + (b.amt || 0), 0)), pays = p ? p.pays : lb.reduce((t, b) => t + (b.pay || ((b.amt || 0) / (b.price || 1))), 0);
+      return cost > 0 ? { cost, avg: pays > 0 ? cost / pays : null } : null; };
+    const fire = async (k, ev, msg) => {
+      const s0 = st[k]; if (s0 && !(ev >= (s0.ev || 0) + 0.02 || now - s0.at > 45 * 60000)) return;
+      if (sent() >= (c.cap || 6)) return;
+      st[k] = { at: now, ev }; await pushTo(env, db, who, { ...msg, urgent: true });
+    };
+    for (const g of games) {
+      const d = der(g); if (d.n < 2) continue;
+      const hs = g.sides.map((_, si) => held(g.id, si)), holdAny = hs.some(Boolean);
+      for (let si = 0; si < g.sides.length; si++) {
+        const sd = g.sides[si], fair = d.fair(si), q = Number(sd.price); if (!(fair > 0.05) || !(q > 0 && q < 1)) continue;
+        const rate = PB_SLIP[g.sport] ?? PB_DEF, evp = fair / (q + (unit > 0 ? rate * unit / 1000 / 200 : 0)) - 1, nm = sd.name || sd.label, h = hs[si];
+        const url = '/predictions#g=' + g.id, tag = k => 'pu-' + k + '-' + g.id + '-' + si;
+        // Holding one side of a game: never pushed toward another side of it.
+        if (c.ev.on && !holdAny && evp >= c.ev.minEv && fair >= c.ev.minFair)
+          await fire('ev:' + g.id + ':' + si, evp, { title: `Big value · ${nm} +${(evp * 100).toFixed(1)}%`, body: `${g.game}: Real ${Math.round(q * 100)}%, fair ${pct(fair)}.${unit > 0 ? ` 1u = ${Math.round(unit).toLocaleString()} rax.` : ''}`, url, tag: tag('ev') });
+        if (c.add.on && h && evp >= c.add.minEv)
+          await fire('add:' + g.id + ':' + si, evp, { title: `Add more · ${nm} +${(evp * 100).toFixed(1)}%`, body: `You hold ${Math.round(h.cost).toLocaleString()} rax${h.avg ? ` at ${Math.round(h.avg * 100)}%` : ''}. Real ${Math.round(q * 100)}% now, fair ${pct(fair)}.`, url, tag: tag('add') });
+        if (c.sell.on && h && q - fair >= c.sell.pts / 100 && (!h.avg || q > h.avg))
+          await fire('sell:' + g.id + ':' + si, q - fair, { title: `Over fair · ${nm}`, body: `Real ${Math.round(q * 100)}% is ${Math.round((q - fair) * 100)} pts over fair ${pct(fair)}${h.avg ? ` (you paid ${Math.round(h.avg * 100)}%)` : ''}. Selling may be worth it.`, url, tag: tag('sell') });
+        const t0 = Date.parse(g.start || 0);
+        if (c.start.on && h && t0 && t0 - now < 15 * 60000 && evp > 0.02 && !st['start:' + g.id])
+          await fire('start:' + g.id, evp, { title: `Starting soon · ${nm} still +${(evp * 100).toFixed(1)}%`, body: `${g.game} starts in ${Math.max(1, Math.round((t0 - now) / 60000))} min. Last chance to add before it goes live.`, url, tag: tag('start') });
+      }
+    }
+    for (const k of Object.keys(st)) if (now - st[k].at > 12 * 3600000) delete st[k];
+  }
+  for (const w of Object.keys(ST)) if (!users.includes(w)) delete ST[w];
+  await env.RATEBOARD_KV.put('pred_ualert_state_v1', JSON.stringify(ST), { expirationTtl: 86400 });
 }
 /* One-off (Dennis, 2026-11-17, his OK to read his own prediction pages): which server account is his, and
    what Real's open positions and portfolio performance answers look like. Shapes and counts only; usernames

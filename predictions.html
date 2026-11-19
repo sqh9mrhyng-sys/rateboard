@@ -141,6 +141,13 @@
   body.h-real .sd{grid-template-columns:1fr 104px}
   #bsum .pp{display:block;font-size:13px;font-weight:800;margin-top:2px} #bsum .pp.pos{color:var(--good)} #bsum .pp.neg{color:var(--bad)}
   .bank{border-radius:12px 12px 0 0;border-bottom:0;padding-bottom:8px}
+  .nal{display:flex;flex-direction:column;gap:10px} .nbox,.nmain{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .nrow{display:flex;gap:12px;align-items:flex-start;cursor:pointer} .nrow input[type=checkbox]{width:20px;height:20px;margin-top:2px;flex:none;accent-color:var(--accent)}
+  .nrow b{display:block;font-size:15px} .nrow small{display:block;color:var(--mute);font-size:13px;line-height:1.35;margin-top:2px}
+  .nnum{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0 0 32px} .nnum label{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--mute)}
+  .nnum input{width:80px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 8px;font:inherit;font-size:16px}
+  .nbox.off .nnum{opacity:.45} .ndev{font-size:13.5px;color:var(--mute);display:flex;gap:10px;align-items:center;flex-wrap:wrap} .ndev a{color:var(--accent)}
+  .ndev button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:999px;padding:6px 12px;font:inherit;font-size:13px;cursor:pointer}
   .upick{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--panel);border:1px solid var(--line);border-top:0;border-radius:0 0 12px 12px;padding:0 12px 10px;margin:0}
   .upick label{font-size:13px;font-weight:700} .upick select{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;font-size:15px} .upick small{font-size:12px;color:var(--mute)}
   .own{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;flex-basis:100%;border-top:1px dashed var(--line);padding-top:8px;margin-top:2px} .own input[type=number]{width:100px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit} .own .chk{display:flex;flex-wrap:wrap;gap:2px 6px;align-items:center;font-size:14px} .own .chk .note{flex-basis:100%;margin-left:24px;font-size:12px} .own[hidden]{display:none}
@@ -244,7 +251,7 @@
 </head>
 <body><div class="wrap">
 <div class="top"><h1>Predictions EV</h1><span class="pulse" id="pulse"><i></i><span id="ago">-</span></span></div>
-<div class="tabs" id="tabs"><button data-t="m" aria-pressed="true">Markets</button><button data-t="b" aria-pressed="false">My bets <span id="bn"></span></button><button data-t="r" aria-pressed="false" hidden>Arbitrage <span id="rn"></span></button><button data-t="f" aria-pressed="false">Request/Report <span id="fn"></span></button><button data-t="g" aria-pressed="false">Guide</button><button data-t="a" aria-pressed="false" hidden>Access</button></div>
+<div class="tabs" id="tabs"><button data-t="m" aria-pressed="true">Markets</button><button data-t="b" aria-pressed="false">My bets <span id="bn"></span></button><button data-t="r" aria-pressed="false" hidden>Arbitrage <span id="rn"></span></button><button data-t="f" aria-pressed="false">Request/Report <span id="fn"></span></button><button data-t="n" aria-pressed="false" hidden>Alerts</button><button data-t="g" aria-pressed="false">Guide</button><button data-t="a" aria-pressed="false" hidden>Access</button></div>
 <div id="vm">
 <details class="setbox" id="setbox"><summary><span class="st1">Your rax</span><b id="setsum">Set your rax for unit sizes</b><span class="st2">Edit</span></summary>
 <label class="bank"><span>Your rax (for unit sizes)</span><input id="bank" type="number" inputmode="numeric" min="0" step="100" placeholder="e.g. 5000"></label>
@@ -281,6 +288,20 @@
 <div class="keep" style="display:block"><b>Arbitrage</b><p class="note" style="margin:4px 0 8px">After you've placed a bet, buying the other side at a low enough price locks in a profit whichever way the game goes. Only options with at least <b>10% guaranteed profit</b> after slippage are shown as ready.</p>
 <p class="note" style="margin:0 0 8px">Slippage is worked out for you on each hedge: how far your own buy pushes Real's price (measured from Real: about 1.1 points per 1,000 rax in NBA and 2.3 in NHL, whatever the market's volume) plus how much the line has been swinging lately.</p><label style="font-size:13px;font-weight:700">Extra cushion (points, optional) <input id="slip" type="number" inputmode="decimal" min="0" max="10" step="0.5" style="width:70px;margin-left:6px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:4px 6px;font:inherit"></label></div>
 <div id="rlist"></div></div>
+<div id="vn" hidden><section class="nal">
+<label class="nrow nmain"><input type="checkbox" id="na-on"><span><b>Alerts on</b><small>Push notifications for the markets below. Pregame only - live lines move too fast to trust.</small></span></label>
+<div class="ndev" id="na-dev"></div>
+<div class="nbox"><label class="nrow"><input type="checkbox" id="na-ev"><span><b>Big value</b><small>Any side whose EV (after slippage on 1 unit) reaches your number, with a fair % you trust.</small></span></label>
+  <div class="nnum"><label>EV at least<span><input type="number" id="na-evmin" min="2" max="100" step="1"> %</span></label><label>Fair % at least<span><input type="number" id="na-evfair" min="0" max="95" step="1"> %</span></label></div></div>
+<div class="nbox"><label class="nrow"><input type="checkbox" id="na-add"><span><b>Add more</b><small>A side you already hold is back at this EV - time to put more on.</small></span></label>
+  <div class="nnum"><label>EV at least<span><input type="number" id="na-addmin" min="1" max="100" step="1"> %</span></label></div></div>
+<div class="nbox"><label class="nrow"><input type="checkbox" id="na-sell"><span><b>Over fair</b><small>Real's price on a side you hold is this many points over fair (and over what you paid) - selling may be worth it.</small></span></label>
+  <div class="nnum"><label>Points over fair<span><input type="number" id="na-sellpts" min="1" max="30" step="1"> pts</span></label></div></div>
+<div class="nbox"><label class="nrow"><input type="checkbox" id="na-start"><span><b>Starting soon</b><small>15 minutes before a game you hold starts, if your side is still +EV - last chance to add.</small></span></label></div>
+<div class="nbox"><div class="nnum"><label>Most alerts per hour<span><input type="number" id="na-cap" min="1" max="20" step="1"></span></label></div>
+  <p class="note">A side won't repeat unless its EV gets 2+ points better or 45 minutes pass. You're never pushed toward the other side of a game you hold. "Hold" means your synced Real positions plus bets you logged.</p></div>
+<p class="note" id="na-msg"></p>
+</section></div>
 <div id="vf" hidden>
 <form class="guide fbf" id="fbform">
   <h2 style="margin-top:12px">Request or report</h2>
@@ -432,7 +453,7 @@ function when(g){
 async function load(){
   try{ const t = ls.get('ratebrd_token_v1') || ''; J = await (await fetch('/api/swaps?op=predev', { headers: t ? { 'x-rb-token': t } : {} })).json(); }catch(e){ J = { error: 'Could not reach the site.' }; }
   if(J.error){ $('#list').innerHTML = `<div class="empty">${/sign in/i.test(J.error) ? 'Sign in first - <a href="/?next=/predictions">sign in</a>.' : esc(J.error)}</div>`; return; }
-  applyMe(J.me); autoPort();
+  applyMe(J.me); autoPort(); $('#tabs [data-t="n"]').hidden = !(J.port && !J.owner);
   if(!J.keySet){ $('#list').innerHTML = '<div class="empty">The Odds API key isn\'t on the server yet.</div>'; return; }
   { const ae = document.activeElement; if (!(ae && ae.closest && ae.closest('#vr form'))) drawArb(); }
   draw(); focusGo(); if (!$('#vb').hidden && !(document.activeElement && document.activeElement.dataset && (document.activeElement.dataset.amt || document.activeElement.dataset.pay))) drawBets(); else $('#bn').textContent = BETS.filter(b => !b.res).length ? `(${BETS.filter(b => !b.res).length})` : '';
@@ -524,6 +545,26 @@ async function autoPort(){
   const t = ls.get('ratebrd_token_v1') || '';
   try { const r = await (await fetch('/api/swaps?op=predport', { method: 'POST', headers: t ? { 'x-rb-token': t } : {} })).json(); if (r && !r.error) { PORT = r; await betsCall(null); drawPort(); } } catch (e) {}
 }
+/* Alerts tab (2026-11-18): linked members set their own push alerts; the server sends them. */
+const NA_DEF = { enabled: false, cap: 6, ev: { on: true, minEv: 0.10, minFair: 0.30 }, add: { on: true, minEv: 0.05 }, sell: { on: false, pts: 5 }, start: { on: false } };
+let NA = null, naT = null;
+const naCall = async body => { const t = ls.get('ratebrd_token_v1') || ''; return (await fetch('/api/swaps?op=predalerts', body ? { method: 'POST', headers: { 'content-type': 'application/json', ...(t ? { 'x-rb-token': t } : {}) }, body: JSON.stringify(body) } : { headers: t ? { 'x-rb-token': t } : {} })).json(); };
+function naPaint(j){
+  const c = NA = { ...NA_DEF, ...(j.cfg || {}) }; ['ev', 'add', 'sell', 'start'].forEach(k => c[k] = { ...NA_DEF[k], ...(c[k] || {}) });
+  $('#na-on').checked = !!c.enabled; $('#na-ev').checked = c.ev.on; $('#na-evmin').value = Math.round(c.ev.minEv * 100); $('#na-evfair').value = Math.round(c.ev.minFair * 100);
+  $('#na-add').checked = c.add.on; $('#na-addmin').value = Math.round(c.add.minEv * 100); $('#na-sell').checked = c.sell.on; $('#na-sellpts').value = c.sell.pts; $('#na-start').checked = c.start.on; $('#na-cap').value = c.cap;
+  naDev(j.devices); naOff();
+}
+function naDev(n){ $('#na-dev').innerHTML = n ? `<span>✓ Notifications on for ${n} device${n === 1 ? '' : 's'}</span><button type="button" id="na-test">Send a test</button>` : `<span>No device has notifications on yet.</span><a href="/notifications">Turn them on here</a>`; }
+function naOff(){ for (const [box, on] of [['na-ev', 'ev'], ['na-add', 'add'], ['na-sell', 'sell']]) $('#' + box).closest('.nbox').classList.toggle('off', !$('#' + box).checked); for (const b of document.querySelectorAll('#vn .nbox')) b.style.opacity = $('#na-on').checked ? '' : '.55'; }
+async function naLoad(){ $('#na-msg').textContent = ''; try { const j = await naCall(); if (j.error) { $('#na-msg').textContent = j.error; return; } naPaint(j); } catch (e) { $('#na-msg').textContent = 'Could not load your alerts.'; } }
+function naSave(){ naOff(); clearTimeout(naT); naT = setTimeout(async () => { const v = id => Number($('#' + id).value);
+  const cfg = { enabled: $('#na-on').checked, cap: v('na-cap') || 6, ev: { on: $('#na-ev').checked, minEv: (v('na-evmin') || 10) / 100, minFair: (v('na-evfair') || 0) / 100 },
+    add: { on: $('#na-add').checked, minEv: (v('na-addmin') || 5) / 100 }, sell: { on: $('#na-sell').checked, pts: v('na-sellpts') || 5 }, start: { on: $('#na-start').checked } };
+  try { const j = await naCall({ cfg }); $('#na-msg').textContent = j.error ? j.error : '✓ Saved'; if (!j.error) naDev(j.devices); } catch (e) { $('#na-msg').textContent = 'Could not save - try again.'; } }, 600); }
+document.addEventListener('change', e => { if (e.target.closest && e.target.closest('#vn') && e.target.matches('input')) naSave(); });
+document.addEventListener('click', async e => { if (e.target.id !== 'na-test') return; e.target.disabled = true; const j = await naCall({ test: 1 }).catch(() => ({}));
+  $('#na-msg').textContent = j.sent ? 'Test sent - check your notifications.' : (j.error || 'Nothing was sent - turn notifications on for this device first.'); e.target.disabled = false; });
 async function loadPort(){ if (!hasPort()) return; const t = ls.get('ratebrd_token_v1') || '';
   try { PORT = await (await fetch('/api/swaps?op=predport', { headers: t ? { 'x-rb-token': t } : {} })).json(); } catch (e) { return; } drawPort(); }
 function drawPort(){
@@ -701,7 +742,7 @@ function draw(){
 }
 document.addEventListener('toggle', e => { const d = e.target; if(!d.matches || !d.matches('details.bd')) return; d.open ? openBd.add(d.dataset.bd) : openBd.delete(d.dataset.bd); }, true);
 $('#chips').addEventListener('click', e => { if (e.target.closest('[data-pre]')) { preOnly = !preOnly; ls.set('pred_pre', preOnly ? '1' : '0'); draw(); return; } const b = e.target.closest('[data-c]'); if(!b) return; chip = b.dataset.c; ls.set('pred_chip', chip); draw(); });
-$('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if(!b) return; for (const x of document.querySelectorAll('#tabs button')) x.setAttribute('aria-pressed', x === b); $('#vm').hidden = b.dataset.t !== 'm'; $('#vg').hidden = b.dataset.t !== 'g'; $('#va').hidden = b.dataset.t !== 'a'; $('#vf').hidden = b.dataset.t !== 'f'; if (b.dataset.t === 'f') { fbCall(); } if (b.dataset.t === 'a') accLoad(); $('#vb').hidden = b.dataset.t !== 'b'; if (b.dataset.t === 'b') loadPort(); if (b.dataset.t === 'b') drawBets(); $('#vr').hidden = b.dataset.t !== 'r'; if (b.dataset.t === 'r') drawArb(); });
+$('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if(!b) return; for (const x of document.querySelectorAll('#tabs button')) x.setAttribute('aria-pressed', x === b); $('#vm').hidden = b.dataset.t !== 'm'; $('#vg').hidden = b.dataset.t !== 'g'; $('#va').hidden = b.dataset.t !== 'a'; $('#vf').hidden = b.dataset.t !== 'f'; if (b.dataset.t === 'f') { fbCall(); } if (b.dataset.t === 'a') accLoad(); $('#vb').hidden = b.dataset.t !== 'b'; if (b.dataset.t === 'b') loadPort(); if (b.dataset.t === 'b') drawBets(); $('#vr').hidden = b.dataset.t !== 'r'; if (b.dataset.t === 'r') drawArb(); $('#vn').hidden = b.dataset.t !== 'n'; if (b.dataset.t === 'n') naLoad(); });
 $('#list').addEventListener('click', e => {
   const c = e.target.closest('[data-cl]'); if (c) { const id = c.dataset.cl; collapsed.has(id) ? collapsed.delete(id) : collapsed.add(id); ls.set('pred_collapsed2', JSON.stringify([...collapsed])); draw(); return; }
   const x = e.target.closest('.bfx'); if (x) { betForm = null; draw(); return; }

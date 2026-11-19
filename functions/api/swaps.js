@@ -6233,6 +6233,29 @@ async function handle({ request, env, waitUntil }) {
     let plans = []; try { plans = JSON.parse((await env.RATEBOARD_KV.get('pred_build_v1_' + pw)) || '[]') || []; } catch (e) {}
     return json({ at: x.at || null, pos: x.pos || [], perf: x.perf || null, err: x.err || null, plans, synced });
   }
+  /* Predictions alerts for linked members (2026-11-18): their Notifications tab reads and saves these;
+     rax.js predMemberAlerts sends them. */
+  if (op === 'predalerts') {
+    const who = String(acc.who || '').toLowerCase(); if (!who) return json({ error: 'Sign in first.' }, 401);
+    if (who === 'dennis' || !predPortTok(env, who)) return forbidden('Not open yet.');
+    let A = {}; try { A = JSON.parse((await env.RATEBOARD_KV.get('pred_ualert_v1')) || '{}') || {}; } catch (e) {}
+    const num = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : d; };
+    if (request.method === 'POST') {
+      if (!(await allow(url.origin, 'predalerts:' + who, 40, 600))) return json({ error: 'Too many saves - wait a minute.' }, 429);
+      let b = {}; try { b = await request.json(); } catch (e) {}
+      if (b.test) { const n = await pushTo(env, db, who, { title: 'Test · Predictions alerts', body: 'Alerts reach this device.', url: '/predictions', tag: 'pu-test' });
+        return json({ ok: true, sent: n }); }
+      const c = b.cfg || {};
+      A[who] = { enabled: !!c.enabled, cap: Math.round(num(c.cap, 1, 20, 6)),
+        ev: { on: !!(c.ev && c.ev.on), minEv: num(c.ev && c.ev.minEv, 0.02, 1, 0.10), minFair: num(c.ev && c.ev.minFair, 0, 0.95, 0.30) },
+        add: { on: !!(c.add && c.add.on), minEv: num(c.add && c.add.minEv, 0.01, 1, 0.05) },
+        sell: { on: !!(c.sell && c.sell.on), pts: num(c.sell && c.sell.pts, 1, 30, 5) },
+        start: { on: !!(c.start && c.start.on) }, at: Date.now() };
+      await env.RATEBOARD_KV.put('pred_ualert_v1', JSON.stringify(A));
+    }
+    const dv = await db.prepare(PUSH_DDL).run().then(() => db.prepare('SELECT COUNT(*) AS n FROM push_subs WHERE key=?').bind(who).first()).catch(() => null);
+    return json({ cfg: A[who] || null, devices: Number(dv && dv.n) || 0 });
+  }
   /* A member's rax and unit size, kept on the server so the site and the home-screen app
      (separate browser storage) agree (member report 2026-11-18). */
   if (op === 'predme') {
