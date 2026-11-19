@@ -343,6 +343,7 @@ let UP = Number(ls.get('pred_upct')); if (!(UP >= 0.5 && UP <= 4)) UP = 1;
    is in by the start, with a push telling you when to buy the next piece. Bets on the same side stack. */
 let FIXU = Number(ls.get('pred_fixu')) || 0;
 const isOwner = () => !!(J && J.owner);
+const hasPort = () => !!(J && (J.owner || J.port));   // own Real portfolio sync (Dennis + members with a token on the server)
 const unitRax = () => isOwner() && FIXU > 0 ? FIXU : bank * UP / 100;
 const BUILD = () => isOwner() && ls.get('pred_build_on') === '1';
 const PIECE_PTS = 1.0;
@@ -515,10 +516,10 @@ function focusGo(){ if (!FOCUS.gid || FOCUS.done) return; const el = document.ge
   setTimeout(() => { FOCUS.gid = null; }, 60000); }
 let PORT = null, SORT_LBL = null; const OPENP = new Set();
 document.addEventListener('toggle', e => { const d = e.target; if (d && d.dataset && d.dataset.pk) { d.open ? OPENP.add(d.dataset.pk) : OPENP.delete(d.dataset.pk); } }, true);
-async function loadPort(){ if (!isOwner()) return; const t = ls.get('ratebrd_token_v1') || '';
+async function loadPort(){ if (!hasPort()) return; const t = ls.get('ratebrd_token_v1') || '';
   try { PORT = await (await fetch('/api/swaps?op=predport', { headers: t ? { 'x-rb-token': t } : {} })).json(); } catch (e) { return; } drawPort(); }
 function drawPort(){
-  const box = $('#port'); if (!PORT || PORT.error || !isOwner()) { box.hidden = true; return; } box.hidden = false;
+  const box = $('#port'); if (!PORT || PORT.error || !hasPort()) { box.hidden = true; return; } box.hidden = false;
   const now = new Map((J && J.games || []).map(g => [g.id, derive(g)])), fmt = v => Math.round(v).toLocaleString(), sg = v => (v >= 0 ? '+' : '') + fmt(v), sp = v => (v >= 0 ? '+' : '') + pc(v);
   const rows = (PORT.pos || []).map(p => { const g = now.get(p.marketId), sd = g && p.si >= 0 ? g.sides[p.si] : null, fair = sd && !thin(g) ? sd.fair : null, avg = p.pays > 0 ? p.cost / p.pays : null;
     const plan = (PORT.plans || []).find(x => x.gid === p.marketId && x.side === p.si);

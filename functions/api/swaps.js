@@ -16,7 +16,7 @@ const ET_DAY_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_Yor
 import { pushTo, vapidKeys, PUSH_DDL } from '../../lib/webpush.js';
 import { isAdminRequest, sessionKey, forbidden, allow, clientIp, touchSeen, ADMINS, etDay } from '../../lib/auth.js';
 import { watchEnv, noteSlowRequest } from '../../lib/dbwatch.js';
-import { predPortSync } from './rax.js';   // Dennis's portfolio sync (circular import is fine: called at run time only)
+import { predPortSync, predPortTok } from './rax.js';   // Dennis's portfolio sync (circular import is fine: called at run time only)
 
 /* Adding a column that already exists just errors (and is ignored). Each
    ALTER is tried once per server instance, not on every request. */
@@ -1713,8 +1713,8 @@ export async function realWait(env, name, maxMs = 15 * 60000) {
   try { await env.RATEBOARD_KV.put(k, String(Date.now()), { expirationTtl: 86400 }); } catch (e) {}
   return false;
 }
-async function portToBets(env) {
-  let x = {}, l = [], ev = {}; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_port_v1')) || '{}') || {}; l = JSON.parse((await env.RATEBOARD_KV.get('pred_bets_v1_dennis')) || '[]') || []; ev = JSON.parse((await env.RATEBOARD_KV.get('pred_ev_v1')) || '{}') || {}; } catch (e) { return null; }
+async function portToBets(env, who = 'dennis') {
+  let x = {}, l = [], ev = {}; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_port_v1' + (who === 'dennis' ? '' : '_' + who))) || '{}') || {}; l = JSON.parse((await env.RATEBOARD_KV.get('pred_bets_v1_' + who)) || '[]') || []; ev = JSON.parse((await env.RATEBOARD_KV.get('pred_ev_v1')) || '{}') || {}; } catch (e) { return null; }
   let upd = 0, add = 0; const seen = new Set();
   for (const p of (x.pos || [])) { if (p.settled || !(p.cost > 0) || !(p.pays > 0)) continue;
     const g = (ev.games || []).find(y => y.id === p.marketId), si = p.si >= 0 ? p.si : -1; if (si < 0) continue;
@@ -1725,7 +1725,7 @@ async function portToBets(env) {
       l.unshift({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), gid: p.marketId, side: si, sport: p.sport || (g && g.sport) || '', game: (g && g.game) || p.game || '', name: (sd && (sd.name || sd.label)) || p.team || '',
         price, fair: 0, ev: p.evIn || 0, u: 0, amt: Math.round(p.cost * 100) / 100, pay: Math.round(p.pays * 100) / 100, teams: g ? g.sides.map(y => y.name || y.label) : [], start: (g && g.start) || '', logo: (sd && sd.logo) || '', at: Date.now(), real: true, fromReal: true }); add++; } }
   let off = 0; for (const b of l) if (!b.res && !b.custom && b.gid > 0 && !seen.has(b.gid + ':' + b.side)) { if (!b.notOnReal) off++; b.notOnReal = true; } else if (b.notOnReal && seen.has(b.gid + ':' + b.side)) delete b.notOnReal;
-  await env.RATEBOARD_KV.put('pred_bets_v1_dennis', JSON.stringify(l.slice(0, 300)));
+  await env.RATEBOARD_KV.put('pred_bets_v1_' + who, JSON.stringify(l.slice(0, 300)));
   return { updated: upd, added: add, notOnReal: l.filter(b => b.notOnReal && !b.res).length };
 }
 export async function draftScan(env) {
@@ -6219,13 +6219,15 @@ async function handle({ request, env, waitUntil }) {
      a logged open bet on a game Real shows no position for is left alone and flagged. */
   // Dennis's own Real portfolio, fetched from his account when he taps Sync (owner only).
   if (op === 'predport') {
-    if (String(acc.who || '').toLowerCase() !== 'dennis') return forbidden('Not open yet.');
-    // Only fetched when he taps Sync (Dennis, 2026-11-17: "don't pull my portfolio unless I ask").
+    /* Dennis, plus members whose own Real token Dennis put in .env (2026-11-18). */
+    const pw = String(acc.who || '').toLowerCase();
+    if (!pw || !predPortTok(env, pw)) return forbidden('Not open yet.');
+    // Only fetched when they tap Sync (Dennis, 2026-11-17: "don't pull my portfolio unless I ask").
     let synced = null;
-    if (request.method === 'POST') { try { await predPortSync(env); } catch (e) {}
-      synced = await portToBets(env); }
-    let x = {}; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_port_v1')) || '{}') || {}; } catch (e) {}
-    let plans = []; try { plans = JSON.parse((await env.RATEBOARD_KV.get('pred_build_v1_dennis')) || '[]') || []; } catch (e) {}
+    if (request.method === 'POST') { try { await predPortSync(env, pw); } catch (e) {}
+      synced = await portToBets(env, pw); }
+    let x = {}; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_port_v1' + (pw === 'dennis' ? '' : '_' + pw))) || '{}') || {}; } catch (e) {}
+    let plans = []; try { plans = JSON.parse((await env.RATEBOARD_KV.get('pred_build_v1_' + pw)) || '[]') || []; } catch (e) {}
     return json({ at: x.at || null, pos: x.pos || [], perf: x.perf || null, err: x.err || null, plans, synced });
   }
   // Dennis's value alerts settings (owner only): unit rax, on/off, the EV that counts as really good value.
@@ -6342,8 +6344,8 @@ async function handle({ request, env, waitUntil }) {
     if (!who) return json({ error: 'Sign in first.' }, 401);
     if (!PRED_PUBLIC && who !== 'dennis' && !(await predAcc()).includes(who)) return forbidden('Predictions is invite-only for now - ask Dennis for access.');
     let x = null; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_ev_v1')) || 'null'); } catch (e) {}
-    const owner = who === 'dennis' || undefined;
-    return json(x ? { owner, at: x.at, games: x.games || [], credits: x.credits || null, used: x.used || null, errs: x.errs || [], keySet: !!env.ODDS_API_KEY } : { owner, at: null, games: [], keySet: !!env.ODDS_API_KEY });
+    const owner = who === 'dennis' || undefined, port = !!predPortTok(env, who) || undefined;
+    return json(x ? { owner, port, at: x.at, games: x.games || [], credits: x.credits || null, used: x.used || null, errs: x.errs || [], keySet: !!env.ODDS_API_KEY } : { owner, port, at: null, games: [], keySet: !!env.ODDS_API_KEY });
   }
   // Bulk ratings (Dennis only, 2026-11-15): live listings, every ended one (history), his passes, and pack plays.
   /* Bulk ratings (open to everyone, 2026-11-15): live listings, ended ones (history),

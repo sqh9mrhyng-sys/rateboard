@@ -37,7 +37,10 @@ const env = {
   RS_AUTH_TOKEN: process.env.RS_AUTH_TOKEN,
   RS_MARKET_TOKEN: process.env.RS_MARKET_TOKEN,
   RS_SWAP_TOKEN: process.env.RS_SWAP_TOKEN,
-  ODDS_API_KEY: process.env.ODDS_API_KEY,   // The Odds API (Dennis, 2026-11-16) - typed into /opt/rax/.env, never in the code
+  ODDS_API_KEY: process.env.ODDS_API_KEY,
+  /* Members' own Real tokens for their Predictions portfolio sync (2026-11-18): Dennis types
+     RS_AUTH_TOKEN_<SITEUSERNAME>=... into /opt/rax/.env. Read-only use (open positions, their trades). */
+  RS_USER_TOKENS: Object.fromEntries(Object.entries(process.env).filter(([k, v]) => /^RS_AUTH_TOKEN_./.test(k) && v).map(([k, v]) => [k.slice(14).toLowerCase(), v])),   // The Odds API (Dennis, 2026-11-16) - typed into /opt/rax/.env, never in the code
 };
 
 const mod = async f => import(pathToFileURL(path.join(ROOT, 'functions', f)).href);

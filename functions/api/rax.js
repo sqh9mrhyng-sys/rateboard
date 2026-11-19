@@ -976,16 +976,17 @@ async function predFairHist(env) {
 }
 const fairAt = (H, mid, si, t) => { const h = H[mid]; if (!h || !h.length || !Number.isFinite(t)) return null; let best = null; for (const x of h) { if (x[0] <= t + 30000) best = x; else break; }
   if (!best) best = h[0]; return Math.abs(best[0] - t) < 20 * 60000 ? { fair: best[1][si], price: best[2] ? best[2][si] : null, at: best[0] } : null; };
-export async function predPortSync(env) {
-  const tok = env.RS_AUTH_TOKEN; if (!tok) return;
-  const K = 'pred_port_v1', LK = 'pred_port_lock'; const lk = Number(await env.RATEBOARD_KV.get(LK)) || 0; if (Date.now() - lk < 15000) return; await env.RATEBOARD_KV.put(LK, String(Date.now()));
+export const predPortTok = (env, who) => who === 'dennis' ? env.RS_AUTH_TOKEN : ((env.RS_USER_TOKENS || {})[String(who || '').toLowerCase().replace(/[^a-z0-9]/g, '_')] || null);
+export async function predPortSync(env, who = 'dennis') {
+  const tok = predPortTok(env, who); if (!tok) return;
+  const sfx = who === 'dennis' ? '' : '_' + who, K = 'pred_port_v1' + sfx, LK = 'pred_port_lock' + sfx; const lk = Number(await env.RATEBOARD_KV.get(LK)) || 0; if (Date.now() - lk < 15000) return; await env.RATEBOARD_KV.put(LK, String(Date.now()));
   let prev = {}; try { prev = JSON.parse((await env.RATEBOARD_KV.get(K)) || '{}') || {}; } catch (e) {}
   const num = v => { const n = Number(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return Number.isFinite(n) ? n : 0; };
   let d = null; try { const r = await fetch('https://web.realapp.com/predictions/openpositions', { headers: rsHeaders(tok) }); if (!r.ok) throw new Error('Real ' + r.status); d = await r.json(); }
   catch (e) { prev.err = String(e.message || e).slice(0, 80); await env.RATEBOARD_KV.put(K, JSON.stringify(prev)); return; }
   let ev = {}, FH = {}, bets = [], SL = {};
   try { SL = JSON.parse((await env.RATEBOARD_KV.get('pred_slip_v1')) || '{}') || {}; } catch (e) {}
-  try { ev = JSON.parse((await env.RATEBOARD_KV.get('pred_ev_v1')) || '{}') || {}; FH = JSON.parse((await env.RATEBOARD_KV.get('pred_fairhist_v1')) || '{}') || {}; bets = JSON.parse((await env.RATEBOARD_KV.get('pred_bets_v1_dennis')) || '[]') || []; } catch (e) {}
+  try { ev = JSON.parse((await env.RATEBOARD_KV.get('pred_ev_v1')) || '{}') || {}; FH = JSON.parse((await env.RATEBOARD_KV.get('pred_fairhist_v1')) || '{}') || {}; bets = JSON.parse((await env.RATEBOARD_KV.get('pred_bets_v1_' + who)) || '[]') || []; } catch (e) {}
   const tcache = prev.tcache || {}, pos = [];
   for (const p of (d.positions || [])) {
     const det = Object.fromEntries((p.details || []).map(x => [String(x.label || '').toLowerCase(), num(x.display)]));
