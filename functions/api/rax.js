@@ -469,6 +469,9 @@ const BULK_HOURS = [12, 24, 48, 72];
 async function bulkTick(env) {
   const tok = env.RS_MARKET_TOKEN, db = env.RATEBOARD_DB; if (!BULK_ON || !tok || !db) return;
   if (await realWait(env, 'bulk')) return;   // scans first (2026-11-17), at most 15 minutes
+  /* CBB market sweep first (2026-11-19): both run on account 2, so bulk waits while a sweep is mid-way
+     (state touched in the last 2 minutes), and carries on between sweeps. */
+  try { const ms = JSON.parse((await env.RATEBOARD_KV.get(MARKET_KEY)) || '{}') || {}; if (ms.cur && ms.at && Date.now() - Date.parse(ms.at) < 120000) return; } catch (e) {}
   const SK = 'bulk_state_v2';
   let st = {}; try { st = JSON.parse((await env.RATEBOARD_KV.get(SK)) || '{}') || {}; } catch (e) {}
   if (st.pauseUntil && Date.now() < st.pauseUntil) return;
@@ -1441,7 +1444,7 @@ const MARKET_DDL = `CREATE TABLE IF NOT EXISTS market_v2 (
   entityId INTEGER, label TEXT, rarity INTEGER, prestige INTEGER, value REAL, mint INTEGER,
   listingType TEXT, status TEXT, minBid REAL, buyNow REAL, curBid REAL, bids INTEGER,
   seller TEXT, cardId TEXT, createdAt TEXT, endsAt TEXT, seenAt INTEGER)`;
-const MARKET_KEY = 'market_pull_v7';
+const MARKET_KEY = 'market_pull_v8';   // v8 2026-11-19: fresh state for the CBB-only restart
 /* Whose card a listing is. UFC cards are filed as plays: entityId is the
    fight moment and playerId is empty, and the fighter is the card's teamId
    (Jon Jones is team 549, which is also what his Real link carries). So UFC
@@ -1464,12 +1467,13 @@ const MARKET_SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'ncaam', 'nhl', 'soccer', '
    just for this, so throttling or a ban lands there and never on the key the
    rest of the board runs on. Without that secret the pull does nothing - it
    never falls back to the main key. */
-const MARKET_ON = false;          // off 2026-11-13: account 2 is for bulk-rating auctions only now (Dennis)           // back on 2026-11-02 after Cloudflare replied; held to the daily job budget (lib/dbwatch.js)
+const MARKET_ON = true;   // back 2026-11-19 for CBB only (Dennis: "CBB cards came out"), on account 2 beside bulk
+// was: const MARKET_ON = false;          // off 2026-11-13: account 2 is for bulk-rating auctions only now (Dennis)           // back on 2026-11-02 after Cloudflare replied; held to the daily job budget (lib/dbwatch.js)
 /* Manual only (Dennis, 2026-11-02): nothing is pulled on its own. A season
    runs only when it's queued (the queue button on /market, market=front) and
    a single player only through "Pull this player now" (market=pullplayer).
    Set false to go back to the automatic rounds. */
-const MARKET_MANUAL = true;
+const MARKET_MANUAL = false;   // 2026-11-19: CBB sweeps on its own, resting MARKET_REST_MS between sweeps
 const MRECENT_KEY = 'mrecent_v1';
 // Members (besides admins) who can queue market seasons and pull single players.
 const MARKET_PULLERS = new Set(['quas23']);
@@ -1518,7 +1522,8 @@ const MARKET_TICK_MS = 55000;       // longest a slice runs in one collector cal
 /* Each sport-season is pulled whole and then replaces that season's last
    snapshot, so what /market shows for a season is exactly what was up when
    it was last pulled. The order seasons come round in is marketNext's. */
-const MARKET_ONLY = [];
+const MARKET_ONLY = ['ncaam:2027'];   // CBB 2026-27 only (2026-11-19)
+const MARKET_REST_MS = 2 * 3600000;   // a finished sweep waits 2 h before the next
 const MSEAS_DDL = `CREATE TABLE IF NOT EXISTS market_seasons (job TEXT PRIMARY KEY,
   startedAt INTEGER, doneAt INTEGER, listings INTEGER, minutes REAL, front INTEGER)`;
 /* Only seasons Real actually has, in Real's own numbering: NBA and CBB go by
@@ -1578,6 +1583,9 @@ async function marketNext(db, st) {
     st.round = (st.round || 0) + 1;
     st.roundOld = withCards;
   }
+  /* Rest between sweeps (2026-11-19): a season pulled less than MARKET_REST_MS ago waits. */
+  const nx = st.roundQ[0], mr = nx && m.get(nx);
+  if (mr && mr.doneAt && Date.now() - mr.doneAt < MARKET_REST_MS) return null;
   return st.roundQ.shift();
 }
 
@@ -9217,7 +9225,7 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), pushStats: await kvj('push_stats'), staleClear: await kvj('stale_clear_1119_n'), modVoid1119: await kvj('mod_void_1119_n'), swapsHold: await (async () => { const h = await kvj('swaps_hold'); return h ? { at: h.at, off: h.off || 0, off160: h.off160 || 0, last: h.last || null, probe: h.probe || null } : { lifted: Number(await env.RATEBOARD_KV.get('swaps_hold_lifted')) || null }; })(), dfs: await (async () => { const o = await kvj('dfs_props_v1'); if (!o) return null; const evs = Object.values(o.ev || {}); const bks = {}; let props = 0;
+    oneOffsRun: await kvj(ONE_OFF_KEY), cbbMarket: await (async () => { const st = await kvj(MARKET_KEY); if (!st) return null; const l = st.lanes || {}; return { cur: st.cur || null, at: st.at || null, windowsDone: Object.values(l).filter(x => x.done).length, rows: Object.values(l).reduce((a, x) => a + (x.rows || 0), 0), pages: Object.values(l).reduce((a, x) => a + (x.pages || 0), 0), errs: Object.values(l).map(x => x.err).filter(Boolean).slice(0, 3), last: st.last || null, cool: st.coolUntil || null, pause: st.pause || null, idle: !!st.idle }; })(), pushStats: await kvj('push_stats'), staleClear: await kvj('stale_clear_1119_n'), modVoid1119: await kvj('mod_void_1119_n'), swapsHold: await (async () => { const h = await kvj('swaps_hold'); return h ? { at: h.at, off: h.off || 0, off160: h.off160 || 0, last: h.last || null, probe: h.probe || null } : { lifted: Number(await env.RATEBOARD_KV.get('swaps_hold_lifted')) || null }; })(), dfs: await (async () => { const o = await kvj('dfs_props_v1'); if (!o) return null; const evs = Object.values(o.ev || {}); const bks = {}; let props = 0;
       for (const v of evs) for (const m of Object.values(v.props || {})) for (const pl of Object.values(m)) { props++; for (const b of Object.keys(pl)) bks[b] = (bks[b] || 0) + 1; }
       return { events: (o.events || []).length, pulled: evs.length, props, books: bks, kalshi: o.kalshi, lastPull: o.lastPull, used: o.used, credits: o.credits, errs: o.errs }; })(), oddsCredits: await (async () => { const o = await kvj('pred_odds_v2'); if (!o) return null; const d = ET_DAY_FMT.format(new Date()), today = o.clog && o.clog[d] != null ? (Number(o.used) || 0) - o.clog[d] : null; return { remaining: Number(o.credits) || null, used: Number(o.used) || null, today, budget: PRED_DAY_BUDGET, fast: today == null || today < PRED_DAY_BUDGET, log: o.clog || null }; })(), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predPause: await kvj('pred_pause_v1'), marketWipe: await kvj('oneoff_market_wipe_1116'), predStore: await (async () => { const o = {}; for (const k of ['pred_ev_v1', 'pred_recent_v1', 'pred_odds_v2', 'pred_real_open', 'bulk_state_v2']) { const v = await env.RATEBOARD_KV.get(k); o[k] = v ? v.length : 0; }
       try { for (const t of ['bulk_listings', 'bulk_results']) { const r = await env.RATEBOARD_DB.prepare(`SELECT COUNT(*) AS n FROM ${t}`).first().catch(() => null); o[t] = r ? r.n : null; } } catch (e) {} return o; })(), realBusy: await realBusy(env), dmPredAsk: await (async () => { const x = await kvj('dm_predask_v1'); return x ? { sent: (x.sent || []).length, noChat: (x.noChat || []).length, notFound: (x.notFound || []).length, failed: (x.failed || []).length } : null; })(), dmPromo: await (async () => { const x = await kvj('dm_promo_' + Date.UTC(2026, 10, 17, 21, 0, 0)); return x ? { total: x.total, sent: x.sent, skipped: x.skipped, failed: x.failed, startedAt: x.startedAt } : null; })(), predSlip: await (async () => { try { if (!((await kvj('pred_mkeys_v1')) || {}).px) await env.RATEBOARD_KV.delete('pred_mkeys_v1'); } catch (e) {} const S = (await kvj('pred_slip_v1')) || {}; const fit = {}; const med = a => { const b = a.slice().sort((x, y) => x - y); return b.length ? b[Math.floor(b.length / 2)] : null; };
