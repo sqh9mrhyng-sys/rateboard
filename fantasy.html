@@ -46,7 +46,17 @@
   .pbar ul{list-style:none;margin:8px 0 0;padding:0;max-height:30vh;overflow:auto} .pbar li{display:flex;justify-content:space-between;gap:8px;font-size:13.5px;padding:4px 0;border-top:1px solid var(--line)}
   .pbar li button{background:none;border:0;color:var(--mute);font-size:16px;cursor:pointer}
   .pbar input{width:76px;padding:5px 7px} .pbar .lines{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;margin-top:6px}
-  .pbar[hidden]{display:none} body.haspar .wrap{padding-bottom:260px}
+  .pbar[hidden]{display:none} body.haspar .wrap{padding-bottom:300px}
+  .pbar .row{flex-wrap:nowrap} .pbar h4 small{display:block;font-size:12px;color:var(--mute);font-weight:600}
+  .pctl{display:flex;align-items:center;gap:6px} .pctl label{display:flex;align-items:center;gap:4px;background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:0 8px;color:var(--mute);font-size:14px}
+  .pctl label input{border:0;background:none;width:52px;padding:6px 0;font-size:16px;color:var(--ink)}
+  .ib{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:9px;width:36px;height:34px;font-size:15px;cursor:pointer;display:grid;place-items:center}
+  .tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px} .tiles.two{grid-template-columns:1fr 1fr}
+  .tile{background:var(--panel2);border-radius:10px;padding:7px 10px;min-width:0} .tile span{display:block;font-size:10.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tile b{display:block;font-size:17px;margin-top:1px} .tile.big b{font-size:21px} .tile input{width:100%;background:var(--bg);border:1px solid var(--accent);border-radius:7px;padding:3px 6px;font-size:16px;font-weight:800;color:var(--ink);margin-top:2px}
+  .pfoot{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:7px;font-size:12.5px;color:var(--mute)} .pfoot b{color:var(--ink)}
+  .warn{background:rgba(229,83,75,.14);color:#f08a84;border-radius:999px;padding:2px 9px;font-weight:700;font-size:12px}
+  .psec{font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);margin-top:10px}
   .empty{color:var(--mute);text-align:center;padding:30px 10px}
   button.sm{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:6px 11px;font:inherit;font-size:13px;font-weight:700;cursor:pointer}
   @media(max-width:520px){ .num{min-width:52px} .num b{font-size:15px} }
@@ -94,7 +104,7 @@
   </div>
 </div>
 <div class="pbar" id="pbar" hidden><div class="in">
-  <div class="row"><h4 id="ph"></h4><div class="k">Stake <input id="stake" type="number" min="1" step="1"> <button class="sm" id="pclr">Clear</button> <button class="sm" id="ptog">Show</button></div></div>
+  <div class="row"><h4 id="ph"></h4><div class="pctl"><label>$<input id="stake" type="number" min="1" step="1" inputmode="decimal" aria-label="Stake"></label><button class="ib" id="ptog" aria-label="Show picks" title="Show picks">☰</button><button class="ib" id="pclr" aria-label="Clear" title="Clear">✕</button></div></div>
   <div id="psum"></div><ul id="plist" hidden></ul>
 </div></div>
 <script>
@@ -175,7 +185,7 @@ function drawPicks(){
     return `<div class="pk ${LOCK.has(p.key) ? 'sel' : ''} ${OPEN.has(p.key) ? 'open' : ''}" data-k="${esc(p.key)}">
       <input type="checkbox" class="ck" data-sel="${esc(p.key)}" ${LOCK.has(p.key) ? 'checked' : ''} aria-label="Add to parlay">
       <div class="who"><b>${esc(p.pl)}<span class="app">${p.app === 'underdog' ? 'Underdog' : 'Kalshi'}</span></b><span>${esc(MK[p.mk] ? MK[p.mk][0] : p.mk)} <b style="display:inline;color:var(--ink)">${p.L}</b> <span class="side ${p.side}">${sideTxt}</span> · ${esc(p.game)}</span>${ud}</div>
-      <div class="num">Fair<b>${(p.fair * 100).toFixed(1)}%</b></div>
+      <div class="num">Fair hit<b>${(p.fair * 100).toFixed(1)}%</b></div>
       <div class="num">${p.app === 'kalshi' ? 'EV' : 'Edge'}<b class="${p.edge >= 0 ? 'pos' : 'neg'}">${p.edge >= 0 ? '+' : ''}${(p.edge * 100).toFixed(1)}%</b></div>
       <div class="books">${p.app === 'kalshi' ? `Kalshi ${(p.price * 100).toFixed(0)}¢ · ` : ''}Books (${p.n}, avg line ${p.cons.toFixed(1)}): ${esc(bl)}</div></div>`; }).join('');
 }
@@ -212,26 +222,29 @@ function drawPar(){
   const stake = Math.max(1, Number($('#stake').value) || Number(ls.get('dfs_stake')) || 10); if (!$('#stake').value) $('#stake').value = stake;
   const ud = sel.filter(p => p.app === 'underdog'), ka = sel.filter(p => p.app === 'kalshi'), n = ud.length;
   const money = v => (v >= 0 ? '+' : '-') + '$' + Math.abs(v).toFixed(2), pct = v => (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%';
-  $('#ph').textContent = `Parlay · ${sel.length} pick${sel.length === 1 ? '' : 's'}`;
+  const tile = (l, v, c = '', big = false) => `<div class="tile${big ? ' big' : ''}"><span>${l}</span><b class="${c}">${v}</b></div>`, cl = v => v >= 0 ? 'pos' : 'neg';
+  const app = ka.length && n ? 'Underdog + Kalshi' : ka.length ? 'Kalshi' : 'Underdog';
+  $('#ph').innerHTML = `${sel.length} pick${sel.length === 1 ? '' : 's'}<small>${app}${new Set(sel.map(p => p.id)).size < sel.length ? ' · same game' : ''}</small>`;
   let h = '';
-  if (n) { const all = ud.reduce((t, p) => t * p.fair, 1), fairX = 1 / all, dupe = new Set(ud.map(p => p.pl)).size < n;
+  if (n) { const all = ud.reduce((t, p) => t * p.fair, 1), dupe = new Set(ud.map(p => p.pl)).size < n;
     const std = PAY.std[n], evS = std ? std * all - 1 : null, flex = PAY.flex[n] ? slipEv('flex', n, ud.map(p => p.fair)) : null;
-    h += `<div class="lines"><div class="k">Underdog ${n}-pick${std ? ` pays <b>${std}x</b>` : ' <b>no Standard payout</b>'}</div><div class="k">Fair payout <b>${fairX.toFixed(2)}x</b> (all hit ${(all * 100).toFixed(1)}%)</div>
-      ${std ? `<div class="k">Standard EV <b class="${evS >= 0 ? 'pos' : 'neg'}">${pct(evS)}</b></div><div class="k">Expected profit <b class="${evS >= 0 ? 'pos' : 'neg'}">${money(stake * evS)}</b></div>` : ''}
-      ${flex != null ? `<div class="k">Flex EV <b class="${flex >= 0 ? 'pos' : 'neg'}">${pct(flex)}</b></div><div class="k">Flex expected profit <b class="${flex >= 0 ? 'pos' : 'neg'}">${money(stake * flex)}</b></div>` : ''}</div>
-      ${dupe ? '<div class="k neg">Two picks on one player - Underdog won’t take that.</div>' : ''}${n > 5 && !std ? '' : ''}`; }
-  if (ka.length === 1) h += `<div class="k" style="margin-top:6px">Kalshi: expected profit on $${stake} <b class="${ka[0].ev >= 0 ? 'pos' : 'neg'}">${money(stake * ka[0].ev)}</b></div>`;
-  if (ka.length > 1) {
-    /* Kalshi combo (2026-11-18): Kalshi quotes a combo price in the app, not in its public data, so type in what
-       it would pay back for the stake; it's compared to the fair payout. */
-    const all = ka.reduce((t, p) => t * p.fair, 1), fairPay = stake / all, back = Number($('#kpay') ? $('#kpay').value : 0) || Number(ls.get('dfs_kpay_' + ka.length)) || 0;
-    const sameGame = new Set(ka.map(p => p.id)).size < ka.length, sep = ka.reduce((t, p) => t + stake * p.ev, 0);
-    const ev = back > 0 ? all * back / stake - 1 : null;
-    h += `<div class="k" style="margin-top:8px"><b>Kalshi combo</b> · all hit ${(all * 100).toFixed(1)}% · fair pays <b>$${fairPay.toFixed(2)}</b> on $${stake}</div>
-      <div class="lines"><div class="k">Kalshi pays $ <input id="kpay" type="number" step="0.01" min="0" value="${back || ''}" placeholder="20.85" style="width:84px"></div>
-      <div class="k">${ev != null ? `Combo EV <b class="${ev >= 0 ? 'pos' : 'neg'}">${pct(ev)}</b> · expected profit <b class="${ev >= 0 ? 'pos' : 'neg'}">${money(stake * ev)}</b>` : 'Type what Kalshi pays to see EV'}</div></div>
-      <div class="k">As separate contracts ($${stake} each): expected profit <b class="${sep >= 0 ? 'pos' : 'neg'}">${money(sep)}</b>${sameGame ? ' · <span class="neg">same game: legs can move together, so the fair % is rougher</span>' : ''}</div>`; }
-  if (gone) h += `<div class="k">${gone} checked pick${gone === 1 ? ' is' : 's are'} no longer in the latest pull.</div>`;
+    if (ka.length) h += '<div class="psec">Underdog</div>';
+    h += `<div class="tiles">${tile('Proj. fair hit', (all * 100).toFixed(1) + '%')}${tile('Fair payout', (1 / all).toFixed(2) + 'x')}${tile('Underdog pays', std ? std + 'x' : '-')}</div>`;
+    if (std) h += `<div class="tiles two">${tile('Standard EV', pct(evS), cl(evS), true)}${tile('Expected profit', money(stake * evS), cl(evS), true)}</div>`;
+    if (flex != null) h += `<div class="tiles two">${tile('Flex EV', pct(flex), cl(flex))}${tile('Flex profit', money(stake * flex), cl(flex))}</div>`;
+    if (dupe) h += `<div class="pfoot"><span class="warn">Two picks on one player - Underdog won't take it</span></div>`; }
+  if (ka.length) { if (n) h += '<div class="psec">Kalshi</div>';
+    const all = ka.reduce((t, p) => t * p.fair, 1), sameGame = new Set(ka.map(p => p.id)).size < ka.length, sep = ka.reduce((t, p) => t + stake * p.ev, 0);
+    if (ka.length === 1) { const p = ka[0];
+      h += `<div class="tiles">${tile('Proj. fair hit', (p.fair * 100).toFixed(1) + '%')}${tile('Kalshi price', (p.price * 100).toFixed(0) + '¢')}${tile('Fair price', (p.fair * 100).toFixed(0) + '¢')}</div>
+        <div class="tiles two">${tile('EV after fee', pct(p.ev), cl(p.ev), true)}${tile('Expected profit', money(stake * p.ev), cl(p.ev), true)}</div>`; }
+    else {
+      /* Kalshi combo (2026-11-18): the combo price only shows in Kalshi's app, so it's typed in. */
+      const back = Number($('#kpay') ? $('#kpay').value : 0) || Number(ls.get('dfs_kpay_' + ka.length)) || 0, ev = back > 0 ? all * back / stake - 1 : null;
+      h += `<div class="tiles">${tile('Proj. fair hit', (all * 100).toFixed(1) + '%')}${tile('Fair payout', '$' + (stake / all).toFixed(2))}<div class="tile"><span>Kalshi pays $</span><input id="kpay" type="number" step="0.01" min="0" inputmode="decimal" value="${back || ''}" placeholder="from app"></div></div>
+        <div class="tiles two">${ev != null ? tile('Combo EV', pct(ev), cl(ev), true) + tile('Expected profit', money(stake * ev), cl(ev), true) : tile('Combo EV', '-', '', true) + tile('Expected profit', '-', '', true)}</div>
+        <div class="pfoot">As ${ka.length} separate $${stake} bets: <b class="${cl(sep)}">${money(sep)}</b>${sameGame ? '<span class="warn">Same game - legs can move together</span>' : ''}</div>`; } }
+  if (gone) h += `<div class="pfoot">${gone} checked pick${gone === 1 ? ' is' : 's are'} no longer in the latest pull.</div>`;
   const keep = document.activeElement && document.activeElement.id === 'kpay';
   if (!keep) $('#psum').innerHTML = h; else { const t = document.createElement('div'); t.innerHTML = h; const cur = $('#kpay'); const nk = t.querySelector('#kpay'); if (nk) nk.replaceWith(cur); $('#psum').replaceChildren(...t.childNodes); cur.focus(); }
   $('#plist').innerHTML = sel.map(p => `<li><span><b>${esc(p.pl)}</b> ${p.app === 'underdog' ? (p.side === 'o' ? 'Higher' : 'Lower') : (p.side === 'o' ? 'Yes' : 'No')} ${p.L} ${esc(MK[p.mk] ? MK[p.mk][0] : p.mk)} <span class="note">${p.app === 'underdog' ? 'UD' : 'Kalshi'} · fair ${(p.fair * 100).toFixed(1)}%${p.udP ? ` vs UD ${(100 / p.udP).toFixed(1)}%` : p.price ? ` vs ${(p.price * 100).toFixed(0)}¢` : ''}</span></span><button data-rm="${esc(p.key)}" aria-label="Remove">×</button></li>`).join('');
@@ -240,7 +253,7 @@ const saveSel = () => ls.set('dfs_sel', [...LOCK].join('|'));
 $('#stake').addEventListener('input', () => { ls.set('dfs_stake', $('#stake').value); drawPar(); });
 $('#psum').addEventListener('input', e => { if (e.target.id !== 'kpay') return; const n = [...LOCK].map(k => PICKS.get(k)).filter(p => p && p.app === 'kalshi').length; ls.set('dfs_kpay_' + n, e.target.value); drawPar(); });
 $('#pclr').addEventListener('click', () => { LOCK.clear(); saveSel(); drawAll(); });
-$('#ptog').addEventListener('click', e => { const l = $('#plist'); l.hidden = !l.hidden; e.target.textContent = l.hidden ? 'Show' : 'Hide'; });
+$('#ptog').addEventListener('click', () => { const l = $('#plist'); l.hidden = !l.hidden; });
 $('#plist').addEventListener('click', e => { const b = e.target.closest('[data-rm]'); if (!b) return; LOCK.delete(b.dataset.rm); saveSel(); drawAll(); });
 async function load(pull){
   let j; try { if (pull) { const t = ls.get('ratebrd_token_v1') || ''; j = await (await fetch('/api/swaps?op=dfs', { method: 'POST', headers: t ? { 'x-rb-token': t } : {} })).json(); } else j = await api('op=dfs'); } catch (e) { $('#stat').textContent = 'Could not load.'; return; }
