@@ -141,13 +141,19 @@ function buildPicks(){
     for (const [mk, players] of Object.entries(ev.props || {})) for (const [pl, books] of Object.entries(players)) {
       const refs = Object.entries(books).filter(([b, x]) => W[b] && x.L != null && x.o > 1 && x.u > 1).map(([b, x]) => { const io = 1 / x.o, iu = 1 / x.u; return { b, L: x.L, p: io / (io + iu), w: W[b] }; });
       if (refs.length < 2) continue;
-      for (const app of APPS) { const a = books[app]; if (!a || a.L == null) continue;
-        let fo = 0, wt = 0; for (const r of refs) { fo += moveLine(mk, r.L, r.p, a.L) * r.w; wt += r.w; } fo /= wt;
+      /* Lines to beat: Underdog's one line, and every Kalshi strike (15+, 20+, ...) - Kalshi's own data, at the ask. */
+      const lines = [];
+      if (books.underdog && books.underdog.L != null) lines.push({ app: 'underdog', L: books.underdog.L, a: books.underdog });
+      for (const k of (books.kalshi_lines || [])) lines.push({ app: 'kalshi', L: k.L, k });
+      for (const ln of lines) { const app = ln.app, a = ln.a || {};
+        let fo = 0, wt = 0; for (const r of refs) { fo += moveLine(mk, r.L, r.p, ln.L) * r.w; wt += r.w; } fo /= wt;
         const cons = refs.reduce((t, r) => t + r.L * r.w, 0) / wt;
         for (const side of ['o', 'u']) { const fair = side === 'o' ? fo : 1 - fo;
-          let price = null, ev = null;
-          if (app === 'kalshi') { if (!(a[side] > 1)) continue; price = 1 / a[side]; ev = fair / (price + 0.07 * price * (1 - price)) - 1; }
-          const o1 = { key: [id, mk, pl, app, side].join('|'), id, game: g.game, start: g.start, mk, pl, app, side, L: a.L, fair, price, ev, cons, n: refs.length, refs, link: a.link, udP: app === 'underdog' && a[side] > 1 ? a[side] : null };
+          let price = null, ev = null, spread = null;
+          if (app === 'kalshi') { price = side === 'o' ? ln.k.yA : ln.k.nA; if (!(price > 0.01 && price < 0.99)) continue;
+            const bid = side === 'o' ? ln.k.yB : ln.k.nB; spread = bid > 0 ? price - bid : null;
+            ev = fair / (price + 0.07 * price * (1 - price)) - 1; }
+          const o1 = { key: [id, mk, pl, app, side, ln.L].join('|'), id, game: g.game, start: g.start, mk, pl, app, side, L: ln.L, fair, price, spread, ev, cons, n: refs.length, refs, link: a.link, udP: app === 'underdog' && a[side] > 1 ? a[side] : null };
           out.push(o1); PICKS.set(o1.key, o1); } } } }
   return out;
 }
@@ -163,9 +169,9 @@ function drawPicks(){
   P = P.filter(p => min < -0.5 || p.edge > min).sort((a, b) => b.edge - a.edge);
   if (!P.length) { $('#picks').innerHTML = `<div class="empty">${D && Object.keys(D.ev || {}).length ? 'No picks match - try "Any edge".' : 'Pulling props… the first games show within a couple of minutes.'}</div>`; return; }
   $('#picks').innerHTML = P.slice(0, 200).map(p => {
-    const sideTxt = p.app === 'underdog' ? (p.side === 'o' ? 'Higher' : 'Lower') : (p.side === 'o' ? 'Yes / Over' : 'No / Under');
+    const sideTxt = p.app === 'underdog' ? (p.side === 'o' ? 'Higher' : 'Lower') : (p.side === 'o' ? `Yes ${Math.ceil(p.L)}+` : `No ${Math.ceil(p.L)}+`);
     const bl = p.refs.map(r => `${BN[r.b] || r.b} ${r.L} (${(p.side === 'o' ? r.p : 1 - r.p) * 100 >> 0}%)`).join(' · ');
-    const ud = p.app === 'underdog' && p.udP ? `<div class="ud">UD ${p.udP.toFixed(2)} (${(100 / p.udP).toFixed(1)}%) · fair <b>${(1 / p.fair).toFixed(2)}</b></div>` : p.app === 'kalshi' ? `<div class="ud">Kalshi ${(p.price * 100).toFixed(0)}¢ (${(1 / p.price).toFixed(2)}) · fair <b>${(1 / p.fair).toFixed(2)}</b></div>` : `<div class="ud">Fair odds <b>${(1 / p.fair).toFixed(2)}</b></div>`;
+    const ud = p.app === 'underdog' && p.udP ? `<div class="ud">UD ${p.udP.toFixed(2)} (${(100 / p.udP).toFixed(1)}%) · fair <b>${(1 / p.fair).toFixed(2)}</b></div>` : p.app === 'kalshi' ? `<div class="ud">Kalshi ${(p.price * 100).toFixed(0)}¢ ask${p.spread != null ? ` (spread ${(p.spread * 100).toFixed(0)}¢)` : ''} · fair <b>${(p.fair * 100).toFixed(0)}¢</b></div>` : `<div class="ud">Fair odds <b>${(1 / p.fair).toFixed(2)}</b></div>`;
     return `<div class="pk ${LOCK.has(p.key) ? 'sel' : ''} ${OPEN.has(p.key) ? 'open' : ''}" data-k="${esc(p.key)}">
       <input type="checkbox" class="ck" data-sel="${esc(p.key)}" ${LOCK.has(p.key) ? 'checked' : ''} aria-label="Add to parlay">
       <div class="who"><b>${esc(p.pl)}<span class="app">${p.app === 'underdog' ? 'Underdog' : 'Kalshi'}</span></b><span>${esc(MK[p.mk] ? MK[p.mk][0] : p.mk)} <b style="display:inline;color:var(--ink)">${p.L}</b> <span class="side ${p.side}">${sideTxt}</span> · ${esc(p.game)}</span>${ud}</div>

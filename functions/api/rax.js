@@ -1167,6 +1167,9 @@ async function predPortProbe(env) {
 export const DFS_BOOKS = ['pinnacle', 'fanduel', 'draftkings', 'betmgm', 'williamhill_us', 'betonlineag', 'lowvig', 'novig', 'underdog', 'kalshi'];
 const DFS_MARKETS = ['player_points', 'player_rebounds', 'player_assists', 'player_threes', 'player_points_rebounds_assists', 'player_points_rebounds', 'player_points_assists', 'player_rebounds_assists', 'player_blocks', 'player_steals', 'player_blocks_steals', 'player_turnovers'];
 const DFS_DAY_BUDGET = 30000;
+// Kalshi NBA prop series -> our stat keys (series that don't exist just come back empty).
+const KALSHI_NBA = { KXNBAPTS: 'player_points', KXNBAREB: 'player_rebounds', KXNBAAST: 'player_assists', KXNBA3PT: 'player_threes', KXNBA3PM: 'player_threes',
+  KXNBAPRA: 'player_points_rebounds_assists', KXNBABLK: 'player_blocks', KXNBASTL: 'player_steals' };
 /* Pulls only when Dennis taps Pull on the page (2026-11-18: "only pull when I click the pull button"). One pull =
    every NBA game still to start, about one credit per stat returned per game. */
 export async function dfsPull(env) {
@@ -1196,6 +1199,25 @@ export async function dfsPull(env) {
         o.ev[e.id] = { at: Date.now(), cost: c, props: P };
       } catch (err) { o.errs.push(String(err.message || err).slice(0, 80)); } }
   } catch (err) { o.errs.push(String(err.message || err).slice(0, 80)); }
+  /* Kalshi's own player props (2026-11-18: The Odds API returns none for Kalshi). Kalshi's public market data is
+     free and needs no account. Each strike ("15+ points") is its own line; yes = over, no = under, at the ask. */
+  try {
+    const norm = x => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\b(jr|sr|ii|iii|iv)\b/g, '').replace(/[^a-z]/g, '');
+    const idx = {}; for (const [eid, v] of Object.entries(o.ev)) for (const [mk, pls] of Object.entries(v.props || {})) for (const pl of Object.keys(pls)) { idx[mk + '|' + norm(pl)] = [eid, pl]; delete pls[pl].kalshi_lines; }
+    o.kalshi = {};
+    for (const [ser, mk] of Object.entries(KALSHI_NBA)) { let cur = '', n = 0, hit = 0;
+      for (let pg = 0; pg < 6; pg++) {
+        const r = await fetch(`https://api.elections.kalshi.com/trade-api/v2/markets?series_ticker=${ser}&status=open&limit=1000${cur ? '&cursor=' + encodeURIComponent(cur) : ''}`);
+        if (!r.ok) { if (r.status !== 404) o.errs.push(`Kalshi ${ser} ${r.status}`); break; }
+        const d = await r.json();
+        for (const m of (d.markets || [])) { n++;
+          const nm = String(m.title || '').split(':')[0].trim(), L = Number(m.floor_strike); if (!nm || !Number.isFinite(L) || m.strike_type !== 'greater') continue;
+          const at = idx[mk + '|' + norm(nm)]; if (!at) continue; hit++;
+          const yA = Number(m.yes_ask_dollars), nA = Number(m.no_ask_dollars), yB = Number(m.yes_bid_dollars), nB = Number(m.no_bid_dollars);
+          (o.ev[at[0]].props[mk][at[1]].kalshi_lines = o.ev[at[0]].props[mk][at[1]].kalshi_lines || []).push({ L, yA, nA, yB, nB, tk: m.ticker }); }
+        cur = d.cursor; if (!cur || !(d.markets || []).length) break; }
+      o.kalshi[ser] = { markets: n, matched: hit }; }
+  } catch (err) { o.errs.push('Kalshi ' + String(err.message || err).slice(0, 60)); }
   o.lastPull = { at: Date.now(), cost }; delete o.lock; await env.RATEBOARD_KV.put(K, JSON.stringify(o));
   return { ok: true, cost };
 }
@@ -9194,7 +9216,7 @@ async function collectorHealth(env, url) {
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
     oneOffsRun: await kvj(ONE_OFF_KEY), dfs: await (async () => { const o = await kvj('dfs_props_v1'); if (!o) return null; const evs = Object.values(o.ev || {}); const bks = {}; let props = 0;
       for (const v of evs) for (const m of Object.values(v.props || {})) for (const pl of Object.values(m)) { props++; for (const b of Object.keys(pl)) bks[b] = (bks[b] || 0) + 1; }
-      return { events: (o.events || []).length, pulled: evs.length, props, books: bks, lastPull: o.lastPull, used: o.used, credits: o.credits, errs: o.errs }; })(), oddsCredits: await (async () => { const o = await kvj('pred_odds_v2'); if (!o) return null; const d = ET_DAY_FMT.format(new Date()), today = o.clog && o.clog[d] != null ? (Number(o.used) || 0) - o.clog[d] : null; return { remaining: Number(o.credits) || null, used: Number(o.used) || null, today, budget: PRED_DAY_BUDGET, fast: today == null || today < PRED_DAY_BUDGET, log: o.clog || null }; })(), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predPause: await kvj('pred_pause_v1'), marketWipe: await kvj('oneoff_market_wipe_1116'), predStore: await (async () => { const o = {}; for (const k of ['pred_ev_v1', 'pred_recent_v1', 'pred_odds_v2', 'pred_real_open', 'bulk_state_v2']) { const v = await env.RATEBOARD_KV.get(k); o[k] = v ? v.length : 0; }
+      return { events: (o.events || []).length, pulled: evs.length, props, books: bks, kalshi: o.kalshi, lastPull: o.lastPull, used: o.used, credits: o.credits, errs: o.errs }; })(), oddsCredits: await (async () => { const o = await kvj('pred_odds_v2'); if (!o) return null; const d = ET_DAY_FMT.format(new Date()), today = o.clog && o.clog[d] != null ? (Number(o.used) || 0) - o.clog[d] : null; return { remaining: Number(o.credits) || null, used: Number(o.used) || null, today, budget: PRED_DAY_BUDGET, fast: today == null || today < PRED_DAY_BUDGET, log: o.clog || null }; })(), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predPause: await kvj('pred_pause_v1'), marketWipe: await kvj('oneoff_market_wipe_1116'), predStore: await (async () => { const o = {}; for (const k of ['pred_ev_v1', 'pred_recent_v1', 'pred_odds_v2', 'pred_real_open', 'bulk_state_v2']) { const v = await env.RATEBOARD_KV.get(k); o[k] = v ? v.length : 0; }
       try { for (const t of ['bulk_listings', 'bulk_results']) { const r = await env.RATEBOARD_DB.prepare(`SELECT COUNT(*) AS n FROM ${t}`).first().catch(() => null); o[t] = r ? r.n : null; } } catch (e) {} return o; })(), realBusy: await realBusy(env), dmPredAsk: await (async () => { const x = await kvj('dm_predask_v1'); return x ? { sent: (x.sent || []).length, noChat: (x.noChat || []).length, notFound: (x.notFound || []).length, failed: (x.failed || []).length } : null; })(), dmPromo: await (async () => { const x = await kvj('dm_promo_' + Date.UTC(2026, 10, 17, 21, 0, 0)); return x ? { total: x.total, sent: x.sent, skipped: x.skipped, failed: x.failed, startedAt: x.startedAt } : null; })(), predSlip: await (async () => { try { if (!((await kvj('pred_mkeys_v1')) || {}).px) await env.RATEBOARD_KV.delete('pred_mkeys_v1'); } catch (e) {} const S = (await kvj('pred_slip_v1')) || {}; const fit = {}; const med = a => { const b = a.slice().sort((x, y) => x - y); return b.length ? b[Math.floor(b.length / 2)] : null; };
       for (const L of Object.values(S)) for (let i = 1; i < L.s.length; i++) { const [t0, v0, p0] = L.s[i - 1], [t1, v1, p1] = L.s[i], dv = v1 - v0;
         if (dv < 300 || t1 - t0 > 25000 || !(v0 > 0)) continue; const dp = Math.abs(p1 - p0) * 100, bin = v0 < 10000 ? '<10k' : v0 < 30000 ? '10-30k' : v0 < 100000 ? '30-100k' : '100k+';
