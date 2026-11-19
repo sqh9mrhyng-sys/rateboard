@@ -165,7 +165,7 @@ function drawPicks(){
   $('#picks').innerHTML = P.slice(0, 200).map(p => {
     const sideTxt = p.app === 'underdog' ? (p.side === 'o' ? 'Higher' : 'Lower') : (p.side === 'o' ? 'Yes / Over' : 'No / Under');
     const bl = p.refs.map(r => `${BN[r.b] || r.b} ${r.L} (${(p.side === 'o' ? r.p : 1 - r.p) * 100 >> 0}%)`).join(' · ');
-    const ud = p.app === 'underdog' && p.udP ? `<div class="ud">Underdog odds ${p.udP.toFixed(2)} (${(100 / p.udP).toFixed(1)}%) · fair odds <b>${(1 / p.fair).toFixed(2)}</b></div>` : p.app === 'kalshi' ? `<div class="ud">Kalshi ${(p.price * 100).toFixed(0)}¢ (${(1 / p.price).toFixed(2)}) · fair odds <b>${(1 / p.fair).toFixed(2)}</b></div>` : `<div class="ud">Fair odds <b>${(1 / p.fair).toFixed(2)}</b></div>`;
+    const ud = p.app === 'underdog' && p.udP ? `<div class="ud">UD ${p.udP.toFixed(2)} (${(100 / p.udP).toFixed(1)}%) · fair <b>${(1 / p.fair).toFixed(2)}</b></div>` : p.app === 'kalshi' ? `<div class="ud">Kalshi ${(p.price * 100).toFixed(0)}¢ (${(1 / p.price).toFixed(2)}) · fair <b>${(1 / p.fair).toFixed(2)}</b></div>` : `<div class="ud">Fair odds <b>${(1 / p.fair).toFixed(2)}</b></div>`;
     return `<div class="pk ${LOCK.has(p.key) ? 'sel' : ''} ${OPEN.has(p.key) ? 'open' : ''}" data-k="${esc(p.key)}">
       <input type="checkbox" class="ck" data-sel="${esc(p.key)}" ${LOCK.has(p.key) ? 'checked' : ''} aria-label="Add to parlay">
       <div class="who"><b>${esc(p.pl)}<span class="app">${p.app === 'underdog' ? 'Underdog' : 'Kalshi'}</span></b><span>${esc(MK[p.mk] ? MK[p.mk][0] : p.mk)} <b style="display:inline;color:var(--ink)">${p.L}</b> <span class="side ${p.side}">${sideTxt}</span> · ${esc(p.game)}</span>${ud}</div>
