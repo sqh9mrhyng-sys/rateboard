@@ -1254,7 +1254,10 @@ async function runMatchingInner(db, env) {
    Swaps already keeps as hashId. Each member's chat is remembered, so the bot
    never opens a second one with the same person. */
 const DM_ON = true;
-const DM_STOP = true;   // EMERGENCY STOP (Dennis, 2026-11-19 07:27 AK): no bot DMs at all until he says
+/* Stop switch (Dennis, 2026-11-19 07:27 AK emergency stop): no bot DMs at all while the swaps hold is on. It's set
+   from KV each tick, and comes off by itself once the hold lifts (Real accepts the bot again, checked twice, or
+   a new RS_SWAP_TOKEN). */
+let DM_STOP = false;
 const DM_DDL = `CREATE TABLE IF NOT EXISTS swap_dm (hashId TEXT PRIMARY KEY, userName TEXT, channelId INTEGER, openedAt INTEGER)`;
 
 async function dmChannel(db, auth, hashId, userName, env) {
@@ -3343,6 +3346,7 @@ async function confirmReminders(env, db) {
     if (!hrs.length) continue;
     const by = hrs[0] - 30 * 60000; if (now >= by || now < by - lead * 60000) continue;
     sent[sk] = now; ch = true;
+    try { await env.RATEBOARD_KV.put('push_confirm_sent_v1', JSON.stringify(sent)); } catch (e) {}   // saved before the push, so a later error can't repeat it next minute
     const tz = tzOf(u), z = tz ? '' : ' ET';
     await pushTo(env, db, who, { title: 'Confirm your swap times', body: `Your times today: ${hrs.map(t => hLabel(t, tz)).join(', ')}${z}. Confirm by ${hLabel(by, tz)}${z}.`, url: '/swaps', tag: 'swap-confirm', urgent: true });
   }
@@ -3350,8 +3354,9 @@ async function confirmReminders(env, db) {
 }
 export async function swapTick(env) {
   PUSH_ENV = env;
-  confirmReminders(env, env.RATEBOARD_DB).catch(() => {});   // not awaited, like boostReminders
-  boostReminders(env, env.RATEBOARD_DB).catch(() => {});   // not awaited: never holds up the swap DMs
+  try { DM_STOP = !!(await env.RATEBOARD_KV.get('swaps_hold')); } catch (e) { DM_STOP = true; }
+  if (!DM_STOP) { confirmReminders(env, env.RATEBOARD_DB).catch(() => {});   // not awaited, like boostReminders
+    boostReminders(env, env.RATEBOARD_DB).catch(() => {}); }   // not awaited: never holds up the swap DMs (and not while the bot is down)
   TICK_T0 = Date.now();
   if (!DM_ON) return null;
   const db = env.RATEBOARD_DB, auth = swapToken(env);
