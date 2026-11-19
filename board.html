@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Rate Board — CFB / FC / NFL / UFC / NHL card offers</title>
+<title>Rate Board — CFB / FC / NFL / UFC / NHL / NBA / CBB card offers</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800&display=swap" rel="stylesheet">
@@ -35,6 +35,7 @@
   [data-sport="NFL"]{ --accent:#7E9BFF; }
   [data-sport="UFC"]{ --accent:#E5484D; }
   [data-sport="NHL"]{ --accent:#6FC3E8; }
+  [data-sport="CBB"]{ --accent:#F08A3C; }
 
   *{box-sizing:border-box}
   html,body{margin:0;padding:0}
@@ -620,7 +621,7 @@
 <!-- ============ LOGIN GATE ============ -->
 <div id="gate" class="gate hide">
   <h1>Board</h1>
-  <p class="sub">Standing buy offers for CFB, FC, NFL, UFC and NHL cards. Post what you'll pay, or scan your stats and see who's paying most.</p>
+  <p class="sub">Standing buy offers for CFB, FC, NFL, UFC, NHL, NBA and CBB cards. Post what you'll pay, or scan your stats and see who's paying most.</p>
   <div class="panel">
     <div class="panel-bd stack">
       <div id="g-saved" class="hide"></div>
@@ -679,6 +680,7 @@
         <option value="UFC">UFC</option>
         <option value="NHL">NHL</option>
         <option value="NBA">NBA</option>
+        <option value="CBB">College basketball</option>
       </select>
       <span class="caret">▾</span>
     </div>
@@ -1115,7 +1117,7 @@ function applyAdminVisibility(){
   if(banner) banner.classList.toggle('hide', !previewMember);
   applyGameDataVisibility();
 }
-const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL', UFC:'UFC', NHL:'NHL', NBA:'NBA' };
+const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL', UFC:'UFC', NHL:'NHL', NBA:'NBA', CBB:'College basketball' };
 
 // The post buyers must comment under before they can post a buy offer —
 // this is the link shown to them and where "this post" points.
@@ -2992,10 +2994,10 @@ $('#b-rate').addEventListener('change', () => {
    running season are pulled once and kept, so typing a name costs nothing;
    anyone outside that list is looked up on demand.
    ========================================================= */
-const BOARD_TO_DATA = { CFB:'ncaaf', FC:'soccer', NFL:'nfl', NHL:'nhl', NBA:'nba' };
+const BOARD_TO_DATA = { CFB:'ncaaf', FC:'soccer', NFL:'nfl', NHL:'nhl', NBA:'nba', CBB:'ncaam' };
 /* Basketball names a season for the year it ends, so the one being played
    now is 2027 where football's and hockey's is 2026. */
-const DATA_SEASON = { ncaaf:2026, soccer:2026, nfl:2026, nhl:2026, nba:2027 };
+const DATA_SEASON = { ncaaf:2026, soccer:2026, nfl:2026, nhl:2026, nba:2027, ncaam:2027 };
 
 // Everything collected here is thrown away after an hour, so a board left open
 // all day still picks up the overnight scans instead of showing yesterday's
@@ -3149,7 +3151,7 @@ $('#b-guide-toggle').addEventListener('click', () => {
 /* =========================================================
    Sport + mode
    ========================================================= */
-const PLAYER_EXAMPLES = { CFB:'Julian Sayin', FC:'Lamine Yamal', NFL:'Josh Allen', UFC:'Jon Jones', NHL:'Connor McDavid', NBA:'Nikola Jokic' };
+const PLAYER_EXAMPLES = { CFB:'Julian Sayin', FC:'Lamine Yamal', NFL:'Josh Allen', UFC:'Jon Jones', NHL:'Connor McDavid', NBA:'Nikola Jokic', CBB:'Dior Johnson' };
 function updatePlayerPlaceholder(){
   $('#b-player').placeholder = 'e.g. ' + (PLAYER_EXAMPLES[sport] || '');
   $('#b-season-wrap').classList.toggle('hide', sport !== 'FC');
@@ -3871,7 +3873,7 @@ window.rbAfterScan = () => { const f = document.querySelector('iframe[src="/otd-
   setTimeout(() => location.reload(), 1200); };
 /* Exclude owned (Dennis, 2026-11-16): leave out every player you have a pass for (from your last pass scan on
    Swaps), so you aren't told to sell the cards you're grinding. On/off is remembered on this device. */
-const EXOWN_KEY = 'ratebrd_exowned_v1', BOARD_SP = { CFB: 'ncaaf', FC: 'soccer', NFL: 'nfl', UFC: 'ufc', NHL: 'nhl', NBA: 'nba' };
+const EXOWN_KEY = 'ratebrd_exowned_v1', BOARD_SP = { CFB: 'ncaaf', FC: 'soccer', NFL: 'nfl', UFC: 'ufc', NHL: 'nhl', NBA: 'nba', CBB: 'ncaam' };
 let ownedCache = null;
 async function ownedPassNames(){
   let on = false; try{ on = localStorage.getItem(EXOWN_KEY) === '1'; }catch(e){}
@@ -8679,7 +8681,7 @@ async function adminPanel(){
    Results feed straight into showMatches() so the UX is identical
    to the screenshot path.
    ========================================================= */
-const RS_LOOKUP_SPORTS = ['FC', 'CFB', 'NFL', 'NHL', 'UFC', 'NBA'];
+const RS_LOOKUP_SPORTS = ['FC', 'CFB', 'NFL', 'NHL', 'UFC', 'NBA', 'CBB'];
 function rsLookupVisible(){ return RS_LOOKUP_SPORTS.includes(sport); }
 
 function updateRsLookupVisibility(){

@@ -32,6 +32,7 @@ const SPORT_CONFIG = {
   // Basketball names a season for the year it ends, so the one being played
   // now is 2027 while football's and hockey's is 2026.
   NBA: { rs: 'nba',    season: '2027', entity: 'player' },
+  CBB: { rs: 'ncaam',  season: '2027', entity: 'player' },   // college basketball (2026-11-18)
 };
 const PAGE_SIZE   = 20;
 const CHUNK_PAGES = 15; // 15 pages × 20 players = 300 players per invocation
