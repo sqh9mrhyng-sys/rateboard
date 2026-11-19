@@ -3373,6 +3373,15 @@ export async function swapTick(env) {
     const b = await db.prepare(`UPDATE swap_160 SET status='cancelled', note=? WHERE status IN ('pending','warned','sending') AND dueAt <= ?`).bind(note, cut).run().catch(() => null);
     let q = null; try { await db.prepare(DMQ_DDL).run(); q = await db.prepare('DELETE FROM dm_retry').run(); } catch (e) {}
     await env.RATEBOARD_KV.put('stale_clear_1119_n', JSON.stringify({ at: Date.now(), m: (a.meta || {}).changes || 0, s: ((b || {}).meta || {}).changes || 0, q: ((q || {}).meta || {}).changes || 0 }), { expirationTtl: 30 * 86400 }); } } catch (e) {}
+  /* Fix (2026-11-19 09:06 AK, pollo: all-time swap counts fell): the late-DM clear-out also hit old, finished swaps -
+     they sit as 'warned'/'sending' once their DMs went - so the leaderboards lost them. Every one due before the
+     outage that had a DM go out is put back as 'sent' (sent is never messaged again); unmessaged ones stay off. */
+  try { if (!(await env.RATEBOARD_KV.get('stale_undo_1119'))) { await env.RATEBOARD_KV.put('stale_undo_1119', String(Date.now()), { expirationTtl: 30 * 86400 });
+    const cut = Date.UTC(2026, 10, 19, 11, 55), nt = 'called off: the swap bot was down - not sent late';
+    const a = await db.prepare(`UPDATE swap_matches SET status='sent', note=NULL WHERE note=? AND status='cancelled' AND dueAt < ? AND (warnA IS NOT NULL OR warnB IS NOT NULL OR doneA IS NOT NULL OR doneB IS NOT NULL)`).bind(nt, cut).run();
+    const b = await db.prepare(`UPDATE swap_160 SET status='sent', note=NULL WHERE note=? AND status='cancelled' AND dueAt < ? AND (warnS IS NOT NULL OR warnB IS NOT NULL)`).bind(nt, cut).run().catch(() => null);
+    const left = await db.prepare(`SELECT COUNT(*) AS n FROM swap_matches WHERE note=? AND dueAt < ?`).bind(nt, cut).first();
+    await env.RATEBOARD_KV.put('stale_undo_1119_n', JSON.stringify({ at: Date.now(), m: (a.meta || {}).changes || 0, s: ((b || {}).meta || {}).changes || 0, stillOff: left ? left.n : null }), { expirationTtl: 30 * 86400 }); } } catch (e) { try { await env.RATEBOARD_KV.put('stale_undo_1119_n', JSON.stringify({ err: String(e.message || e).slice(0, 160) }), { expirationTtl: 86400 }); } catch (x) {} }
   /* One-off (2026-11-19 08:35 AK): today's swaps after the bot came back that repeat a swap from the bot-down hours
      (same two members, same cards, same swap day) are called off - those were done by hand. Same for 160s. */
   try { if (!(await env.RATEBOARD_KV.get('repeat_clear_1119'))) { await env.RATEBOARD_KV.put('repeat_clear_1119', String(Date.now()), { expirationTtl: 30 * 86400 });
