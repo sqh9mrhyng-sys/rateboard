@@ -6862,7 +6862,7 @@ async function handleGet({ request, env, waitUntil }) {
     }
     name = name || pname || null;
     for (let k = 0; k < stmts.length; k += 50) await db.batch(stmts.slice(k, k + 50));
-    try { await env.RATEBOARD_KV.delete((sport === 'ufc' ? 'msnap_v2_' : 'msnap_v1_') + `${sport}:${Number(season)}`); } catch (e) {}
+    try { await env.RATEBOARD_KV.delete((sport === 'ufc' ? 'msnap_v2_' : 'msnap_v3_') + `${sport}:${Number(season)}`); } catch (e) {}
     /* Recents: what this pull found, kept so it's still there after leaving
        the page. Worked out from the listings just fetched (no regrouping),
        plus the player's rax for the season from the game log. */
