@@ -195,6 +195,7 @@
   .pkdd button:hover{background:var(--panel2)}
   #s2.done{background:none;border:0;padding:0;box-shadow:none}
   .cdone{display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:12px;background:var(--panel);border:1px solid #3fbf7f66;color:var(--ink);font-weight:800;font-size:15px;text-decoration:none}
+  .cchg{display:block;margin:6px 0 0 auto;background:none;border:0;color:var(--mute,#9aa3b2);font:inherit;font-size:13px;text-decoration:underline;cursor:pointer;padding:4px 2px} .cchg[hidden]{display:none}
   .cdone[hidden]{display:none} .cdone .ck{display:inline-flex;width:24px;height:24px;border-radius:50%;background:#3fbf7f;color:#0e1a12;align-items:center;justify-content:center;font-size:14px} .cdone b{margin-left:auto;color:var(--accent)}
   .cok{margin:6px 2px 0;font-weight:700} .cok.good{color:#3fbf7f} .cok.bad{color:#ffc95a}
 
@@ -265,6 +266,7 @@
   <section id="s2" class="step">
     <!-- Once a comment is saved, step 2 is one line (Dennis, 2026-11-17). -->
     <a class="cdone" id="cdone" href="#" target="_blank" rel="noopener" hidden><span class="n">2</span><span class="ck">✓</span> 1 comment on the swap post <b>→</b></a>
+    <button type="button" class="cchg" id="cchg" hidden>Use a different comment</button>
     <div id="s2how">
     <h2><span class="n">2</span>Comment on the swap post</h2>
     <p class="note">Comment the player you want, then paste your comment's link here. Partners get it in their DM.</p>
@@ -1281,7 +1283,7 @@ $('#repsend').addEventListener('click', async () => {
    pasting, a line says whether the link is right. */
 function paintComment(saved){
   const ok = SWAP_COMMENT_RE.test(saved || '');
-  $('#cdone').hidden = !ok; $('#s2how').hidden = ok; if(ok) $('#cdone').href = saved; $('#s2').classList.toggle('done', ok); renumber();
+  $('#cdone').hidden = !ok; $('#cchg').hidden = !ok; $('#s2how').hidden = ok; if(ok) $('#cdone').href = saved; $('#s2').classList.toggle('done', ok); renumber();
 }
 function liveComment(){
   const v = $('#clink').value.trim(), m = $('#cok');
@@ -1291,6 +1293,10 @@ function liveComment(){
   m.textContent = ok ? '✓ That\'s your comment link - tap Save at the bottom to keep it.' : 'That isn\'t a link to a comment under the swap post yet. On Real, open your comment, tap Share, copy the link and paste it here.';
 }
 setTimeout(() => { const c = document.getElementById('clink'); if(c) c.addEventListener('input', liveComment); }, 0);
+/* Changing a saved comment (member report 2026-11-18: the step was stuck on the first one). */
+$('#cchg').addEventListener('click', () => { $('#cdone').hidden = true; $('#cchg').hidden = true; $('#s2how').hidden = false; $('#s2').classList.remove('done');
+  const c = $('#clink'); liveComment(); c.focus(); c.select();   // pasting replaces the old link; tap Save to keep it
+  $('#cok').hidden = false; $('#cok').className = 'note cok'; $('#cok').textContent = 'Paste your new comment link over the old one, then tap Save at the bottom.'; });
 const SWAP_COMMENT_RE = /^https:\/\/(www\.)?realapp\.com\/0VH8Fy0KQ01CBqj5\/[0-9A-Za-z]{4,}([\/?#].*)?$/;
 $('#whynot').addEventListener('click', async () => {
   $('#whynot').disabled = true; $('#whyout').textContent = 'Checking…';
