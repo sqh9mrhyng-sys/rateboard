@@ -7011,6 +7011,21 @@ async function handle({ request, env, waitUntil }) {
     return json({ rows, checked: check });
   }
   // "check": puts the chat at the top of the bot's DMs, so the whole conversation is easy to find on Real.
+  /* Why isn't a member getting swap DMs? (2026-11-18) Admin only: one look at everything that decides it. */
+  if (op === 'dmdiag') {
+    const n = String(url.searchParams.get('who') || '').trim().replace(/^@/, '').toLowerCase(); if (!n) return json({ error: 'Type a username.' }, 400);
+    const w = await whoIs(db, n); if (!w || !w.key) return json({ error: 'No member with that name.' }, 404);
+    const key = String(w.key).toLowerCase(), out = { key: w.key, rsUser: w.rsUser || null, verified: !!w.hashId, chat: !!w.channelId, active: w.swapper ? 1 : 0, banned: !!w.banned, restricted: !!w.restricted };
+    try { await db.prepare(DM403_DDL).run(); const r = await db.prepare('SELECT n, first, last FROM dm_403 WHERE key=?').bind(key).first(); out.blocked = r || null; } catch (e) {}
+    try { const pp = await pushPrefs(env, key); out.push = pp.swaps || null; } catch (e) {}
+    try { await db.prepare(PUSH_DDL).run(); out.devices = Number(((await db.prepare('SELECT COUNT(*) AS n FROM push_subs WHERE key=?').bind(key).first()) || {}).n) || 0; } catch (e) {}
+    try { await matchCols(db); out.swaps = (((await db.prepare(`SELECT id, a, b, dueAt, status, note, warnA, warnB, doneA, doneB FROM swap_matches WHERE (LOWER(a)=? OR LOWER(b)=?) AND COALESCE(dueAt, createdAt) > ? ORDER BY COALESCE(dueAt, createdAt) DESC LIMIT 12`)
+      .bind(key, key, Date.now() - 3 * 86400000).all()).results) || []).map(m => { const s = String(m.a).toLowerCase() === key ? 'A' : 'B';
+        return { id: m.id, due: m.dueAt, status: m.status, note: m.note || null, warned: m['warn' + s] || null, live: m['done' + s] || null }; }); } catch (e) { out.swapsErr = String(e.message || e).slice(0, 80); }
+    try { await botTables(db); out.log = (((await db.prepare(`SELECT at, kind, msg FROM bot_log WHERE LOWER(msg) LIKE ? ORDER BY at DESC LIMIT 15`).bind('%' + String(w.rsUser || key).toLowerCase() + '%').all()).results) || []); } catch (e) {}
+    try { const ys = await whyNotFull(db, env, w.key); out.why = ys.why || []; } catch (e) {}
+    return json(out);
+  }
   if (op === 'dmcheck' && request.method === 'POST') {
     let b = {}; try { b = await request.json(); } catch (e) {}
     const who = await whoIs(db, b.who);

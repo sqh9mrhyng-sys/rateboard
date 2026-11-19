@@ -236,6 +236,10 @@
         <p class="note" style="margin:0 0 8px">Last 30 days. "Told to buy" means they got the warning or contact DM, so they may have bought the pack. Send the rax on Real, then tap <b>Mark refunded</b> (tap again to undo). <span class="pill off">reported</span> = they've filed a called-off report for it.</p>
         <div class="bar"><label class="note"><input type="checkbox" id="co-told" checked> only people told to buy</label><button id="co-load" class="sm">Refresh</button></div>
         <div id="co-list" class="note">Loading…</div></section>
+      <section><h2>Why no swap DMs?</h2>
+        <p class="note" style="margin:0 0 8px">Type a member's name: their DM link, whether Real is blocking the bot, their notification settings, their last 3 days of swaps and the bot's log lines about them.</p>
+        <div class="bar"><input id="dd-who" placeholder="username" autocomplete="off" style="max-width:220px"><button id="dd-go" class="sm">Check</button></div>
+        <div id="dd-out" class="note"></div></section>
       <section><h2>Bot messages <span class="note" id="bm-n"></span></h2>
         <p class="note" style="margin:0 0 8px">Everyone you've messaged through the bot. <b>Check replies</b> reads their chats on Real (up to 25). <b>Check</b> sends them "check", which puts the chat at the top of the bot's DMs so you can read the whole conversation there.</p>
         <div class="bar"><button id="bm-load" class="sm">Load</button><button id="bm-check" class="sm">Check replies</button></div>
@@ -821,6 +825,20 @@ async function loadBotMsgs(check){
       ${x.lastTheirs ? `<div style="margin-top:4px">Them (${esc(when(x.lastTheirs.at))}): "${esc(x.lastTheirs.text)}"</div>` : ''}</div>`).join('') || 'No bot messages sent yet.';
 }
 $('#bm-load').addEventListener('click', () => loadBotMsgs(false));
+async function dmDiag(){
+  const who = $('#dd-who').value.trim(); if(!who) return; $('#dd-out').textContent = 'Checking…';
+  const j = await api('/api/swaps?op=dmdiag&who=' + encodeURIComponent(who));
+  if(j.error){ $('#dd-out').textContent = j.error; return; }
+  const t = ts => ts ? new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '-';
+  const yes = (ok, a, b) => `<span class="pill ${ok ? 'on' : 'off'}">${esc(ok ? a : b)}</span>`, p = j.push || {};
+  const pushLine = !p.on ? 'Swap notifications off - DMs always go.' : `Swap notifications on · warning DM ${p.dmWarn === false ? '<b>off</b>' : 'on'} · swap-time DM ${p.dmLive === false ? '<b>off</b>' : 'on'}${(p.dmWarn === false || p.dmLive === false) && !j.devices ? ' · <b>no device registered, so DMs still go</b>' : ''}`;
+  $('#dd-out').innerHTML = `<div class="ucard"><div class="top"><b>@${esc(j.rsUser || j.key)}</b>${yes(j.verified, 'verified', 'not verified')}${yes(j.chat, 'bot chat open', 'no bot chat')}${j.blocked ? yes(false, '', `Real blocked the bot ${j.blocked.n}x (last ${t(j.blocked.last)})`) : yes(true, 'not blocked', '')}${j.banned ? yes(false, '', 'banned') : ''}${j.active === 0 ? yes(false, '', 'not an active swapper') : ''}${j.restricted ? yes(false, '', 'restricted') : ''}</div>
+    <div style="margin-top:6px">${pushLine} · ${j.devices} device${j.devices === 1 ? '' : 's'} with notifications</div>
+    ${(j.why || []).length ? `<div style="margin-top:6px"><b>Why not matched:</b> ${j.why.map(esc).join(' · ')}</div>` : ''}
+    <div style="margin-top:8px"><b>Swaps, last 3 days</b>${(j.swaps || []).map(s => `<div>#${s.id} · ${esc(t(s.due))} · ${esc(s.status)} · warned ${esc(t(s.warned))} · live DM ${esc(t(s.live))}${s.note ? ' · ' + esc(s.note) : ''}</div>`).join('') || '<div>None.</div>'}</div>
+    <div style="margin-top:8px"><b>Bot log</b>${(j.log || []).map(l => `<div>${esc(t(l.at))} · ${esc(l.kind)} · ${esc(l.msg)}</div>`).join('') || '<div>Nothing about them.</div>'}</div></div>`;
+}
+$('#dd-go').addEventListener('click', dmDiag); $('#dd-who').addEventListener('keydown', e => { if(e.key === 'Enter') dmDiag(); });
 $('#bm-check').addEventListener('click', () => loadBotMsgs(true));
 $('#bm-list').addEventListener('click', async e => { const b = e.target.closest('[data-chk]'); if(!b) return; b.disabled = true;
   const j = await api('/api/swaps?op=dmcheck', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ who: b.dataset.chk }) });
