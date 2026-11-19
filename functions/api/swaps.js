@@ -16,7 +16,7 @@ const ET_DAY_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_Yor
 import { pushTo, vapidKeys, PUSH_DDL } from '../../lib/webpush.js';
 import { isAdminRequest, sessionKey, forbidden, allow, clientIp, touchSeen, ADMINS, etDay } from '../../lib/auth.js';
 import { watchEnv, noteSlowRequest } from '../../lib/dbwatch.js';
-import { predPortSync, predPortTok } from './rax.js';   // Dennis's portfolio sync (circular import is fine: called at run time only)
+import { predPortSync, predPortTok, dfsPull } from './rax.js';   // Dennis's portfolio sync (circular import is fine: called at run time only)
 
 /* Adding a column that already exists just errors (and is ignored). Each
    ALTER is tried once per server instance, not on every request. */
@@ -6274,10 +6274,10 @@ async function handle({ request, env, waitUntil }) {
   /* Fantasy optimizer data (2026-11-18): Dennis only. Opening the page also keeps the prop pulls running (3 h). */
   if (op === 'dfs') {
     if (String(acc.who || '').toLowerCase() !== 'dennis') return forbidden('Not open yet.');
-    await env.RATEBOARD_KV.put('dfs_seen', String(Date.now()));
+    let pulled = null; if (request.method === 'POST') pulled = await dfsPull(env);
     let o = {}; try { o = JSON.parse((await env.RATEBOARD_KV.get('dfs_props_v1')) || '{}') || {}; } catch (e) {}
     const day = ET_DAY_FMT.format(new Date());
-    return json({ at: Date.now(), events: o.events || [], ev: o.ev || {}, every: o.every || null, usedToday: (o.used || {})[day] || 0, budget: 30000, credits: o.credits || null, errs: o.errs || [] });
+    return json({ at: Date.now(), pulled, lastPull: o.lastPull || null, events: o.events || [], ev: o.ev || {}, usedToday: (o.used || {})[day] || 0, budget: 30000, credits: o.credits || null, errs: o.errs || [] });
   }
   if (op === 'lastalert') {
     const who = String(acc.who || '').toLowerCase(); if (!who) return json({});
