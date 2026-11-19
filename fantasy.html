@@ -135,7 +135,7 @@ const SLIPS = [['std', 2], ['std', 3], ['std', 4], ['std', 5], ['flex', 3], ['fl
 const slipName = (t, n) => `${n}-pick ${t === 'std' ? 'Standard' : 'Flex'}`;
 
 function buildPicks(){
-  const out = []; if (!D) return out;
+  const out = []; if (!D) return out; PICKS.clear();
   const evName = id => { const e = (D.events || []).find(x => x.id === id); return e ? { game: `${e.away} @ ${e.home}`, start: e.start } : { game: '', start: null }; };
   for (const [id, ev] of Object.entries(D.ev || {})) { const g = evName(id); if (g.start && Date.parse(g.start) <= Date.now()) continue;
     for (const [mk, players] of Object.entries(ev.props || {})) for (const [pl, books] of Object.entries(players)) {
@@ -220,14 +220,25 @@ function drawPar(){
       ${std ? `<div class="k">Standard EV <b class="${evS >= 0 ? 'pos' : 'neg'}">${pct(evS)}</b></div><div class="k">Expected profit <b class="${evS >= 0 ? 'pos' : 'neg'}">${money(stake * evS)}</b></div>` : ''}
       ${flex != null ? `<div class="k">Flex EV <b class="${flex >= 0 ? 'pos' : 'neg'}">${pct(flex)}</b></div><div class="k">Flex expected profit <b class="${flex >= 0 ? 'pos' : 'neg'}">${money(stake * flex)}</b></div>` : ''}</div>
       ${dupe ? '<div class="k neg">Two picks on one player - Underdog won’t take that.</div>' : ''}${n > 5 && !std ? '' : ''}`; }
-  if (ka.length) { const tot = ka.reduce((t, p) => t + stake * p.ev, 0);
-    h += `<div class="k" style="margin-top:6px">Kalshi (each its own contract, $${stake} each): expected profit <b class="${tot >= 0 ? 'pos' : 'neg'}">${money(tot)}</b></div>`; }
+  if (ka.length === 1) h += `<div class="k" style="margin-top:6px">Kalshi: expected profit on $${stake} <b class="${ka[0].ev >= 0 ? 'pos' : 'neg'}">${money(stake * ka[0].ev)}</b></div>`;
+  if (ka.length > 1) {
+    /* Kalshi combo (2026-11-18): Kalshi quotes a combo price in the app, not in its public data, so type in what
+       it would pay back for the stake; it's compared to the fair payout. */
+    const all = ka.reduce((t, p) => t * p.fair, 1), fairPay = stake / all, back = Number($('#kpay') ? $('#kpay').value : 0) || Number(ls.get('dfs_kpay_' + ka.length)) || 0;
+    const sameGame = new Set(ka.map(p => p.id)).size < ka.length, sep = ka.reduce((t, p) => t + stake * p.ev, 0);
+    const ev = back > 0 ? all * back / stake - 1 : null;
+    h += `<div class="k" style="margin-top:8px"><b>Kalshi combo</b> · all hit ${(all * 100).toFixed(1)}% · fair pays <b>$${fairPay.toFixed(2)}</b> on $${stake}</div>
+      <div class="lines"><div class="k">Kalshi pays $ <input id="kpay" type="number" step="0.01" min="0" value="${back || ''}" placeholder="20.85" style="width:84px"></div>
+      <div class="k">${ev != null ? `Combo EV <b class="${ev >= 0 ? 'pos' : 'neg'}">${pct(ev)}</b> · expected profit <b class="${ev >= 0 ? 'pos' : 'neg'}">${money(stake * ev)}</b>` : 'Type what Kalshi pays to see EV'}</div></div>
+      <div class="k">As separate contracts ($${stake} each): expected profit <b class="${sep >= 0 ? 'pos' : 'neg'}">${money(sep)}</b>${sameGame ? ' · <span class="neg">same game: legs can move together, so the fair % is rougher</span>' : ''}</div>`; }
   if (gone) h += `<div class="k">${gone} checked pick${gone === 1 ? ' is' : 's are'} no longer in the latest pull.</div>`;
-  $('#psum').innerHTML = h;
+  const keep = document.activeElement && document.activeElement.id === 'kpay';
+  if (!keep) $('#psum').innerHTML = h; else { const t = document.createElement('div'); t.innerHTML = h; const cur = $('#kpay'); const nk = t.querySelector('#kpay'); if (nk) nk.replaceWith(cur); $('#psum').replaceChildren(...t.childNodes); cur.focus(); }
   $('#plist').innerHTML = sel.map(p => `<li><span><b>${esc(p.pl)}</b> ${p.app === 'underdog' ? (p.side === 'o' ? 'Higher' : 'Lower') : (p.side === 'o' ? 'Yes' : 'No')} ${p.L} ${esc(MK[p.mk] ? MK[p.mk][0] : p.mk)} <span class="note">${p.app === 'underdog' ? 'UD' : 'Kalshi'} · fair ${(p.fair * 100).toFixed(1)}%${p.udP ? ` vs UD ${(100 / p.udP).toFixed(1)}%` : p.price ? ` vs ${(p.price * 100).toFixed(0)}¢` : ''}</span></span><button data-rm="${esc(p.key)}" aria-label="Remove">×</button></li>`).join('');
 }
 const saveSel = () => ls.set('dfs_sel', [...LOCK].join('|'));
 $('#stake').addEventListener('input', () => { ls.set('dfs_stake', $('#stake').value); drawPar(); });
+$('#psum').addEventListener('input', e => { if (e.target.id !== 'kpay') return; const n = [...LOCK].map(k => PICKS.get(k)).filter(p => p && p.app === 'kalshi').length; ls.set('dfs_kpay_' + n, e.target.value); drawPar(); });
 $('#pclr').addEventListener('click', () => { LOCK.clear(); saveSel(); drawAll(); });
 $('#ptog').addEventListener('click', e => { const l = $('#plist'); l.hidden = !l.hidden; e.target.textContent = l.hidden ? 'Show' : 'Hide'; });
 $('#plist').addEventListener('click', e => { const b = e.target.closest('[data-rm]'); if (!b) return; LOCK.delete(b.dataset.rm); saveSel(); drawAll(); });
@@ -240,6 +251,7 @@ async function load(pull){
   $('#stat').innerHTML = `${last ? 'Pulled <span id="age"></span>' : 'Not pulled yet'}${lp && lp.cost ? ' · ' + lp.cost + ' credits' : ''}<br>${(j.usedToday || 0).toLocaleString()} / ${(j.budget || 30000).toLocaleString()} credits today${j.pulled && j.pulled.error ? '<br><span class="neg">' + esc(j.pulled.error) + '</span>' : ''}`; ageTick();
   const games = (j.events || []).filter(e => Date.parse(e.start) > Date.now());
   const gv = $('#gm').value; $('#gm').innerHTML = '<option value="">Every game</option>' + games.map(e => `<option value="${esc(e.id)}" ${gv === e.id ? 'selected' : ''}>${esc(e.away)} @ ${esc(e.home)} · ${new Date(e.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</option>`).join('');
+  buildPicks(); if (PICKS.size) { let ch = false; for (const k of [...LOCK]) if (!PICKS.has(k)) { LOCK.delete(k); ch = true; } if (ch) saveSel(); }   // drop checked picks the latest pull no longer has
   drawAll();
 }
 $('#mk').innerHTML += Object.entries(MK).map(([k, v]) => `<option value="${k}">${v[0]}</option>`).join('');
