@@ -14,6 +14,10 @@ self.addEventListener('notificationclick', e => {
   e.notification.close();
   const url = new URL((e.notification.data && e.notification.data.url) || '/', self.location.origin).href;
   e.waitUntil((async () => {
+    /* Also left where the page can read it (2026-11-18: iOS still landed on the wrong page when the app
+       was in the background - the message/navigate went to a window that wasn't awake yet). Every page
+       checks this when it loads or comes back on screen (theme.js), then clears it. */
+    try { const c = await caches.open('rb-nav'); await c.put('/__rbnav', new Response(JSON.stringify({ url, at: Date.now() }))); } catch (x) {}
     const list = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     const c = list.find(x => x.url === url) || list.find(x => new URL(x.url).origin === self.location.origin);
     if (c) {

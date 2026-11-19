@@ -25,5 +25,19 @@
   if (p.theme) window.rbApplyTheme(p.theme, p.custom);
 })();
 // A tapped notification asks an open window to go to its page (see sw.js, 2026-11-17). On every page, Home too.
+/* Same page, other spot (or the same game again): no reload happens, so the page is told the hash changed. */
+function rbGo(u) {
+  try { var t = new URL(u, location.href); if (t.origin !== location.origin) return;
+    if (t.pathname.replace(/\.html$/, '') === location.pathname.replace(/\.html$/, '') && t.search === location.search) {
+      if (t.hash !== location.hash) location.hash = t.hash; else window.dispatchEvent(new HashChangeEvent('hashchange')); }
+    else location.href = t.href; } catch (x) {}
+}
+function rbNavCheck() {
+  try { if (!window.caches) return; caches.open('rb-nav').then(function (c) { return c.match('/__rbnav').then(function (r) { if (!r) return;
+    return r.json().then(function (j) { c.delete('/__rbnav'); if (j && j.url && Date.now() - j.at < 120000) rbGo(j.url); }); }); }).catch(function () {}); } catch (x) {}
+}
 try { if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', function (e) { var u = e.data && e.data.rbGo; if (!u) return;
-  try { var t = new URL(u, location.href); if (t.origin !== location.origin) return; if (t.href !== location.href) location.href = t.href; } catch (x) {} }); } catch (e) {}
+  try { caches.open('rb-nav').then(function (c) { c.delete('/__rbnav'); }); } catch (x) {} rbGo(u); }); } catch (e) {}
+rbNavCheck();
+document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') rbNavCheck(); });
+window.addEventListener('pageshow', rbNavCheck);
