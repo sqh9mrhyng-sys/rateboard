@@ -995,7 +995,7 @@ async function runMatchingInner(db, env) {
   // 160s already made: the seller's pack is given, the buyer's received.
   try { await drop160Held(db, ((await db.prepare(`SELECT * FROM swap_160 WHERE status='pending' AND warnS IS NULL AND dueAt > ?`).bind(Date.now()).all()).results) || []); } catch (e) {}
   let live160 = [];
-  try { live160 = ((await db.prepare(`SELECT buyer, seller, pass, dueAt, createdAt, status, warnS, kind FROM swap_160 WHERE createdAt > ? AND (status <> 'cancelled' OR warnS IS NOT NULL)`).bind(Date.now() - 2 * 86400000).all()).results) || []; } catch (e) {}
+  try { live160 = ((await db.prepare(`SELECT buyer, seller, pass, dueAt, createdAt, status, warnS, kind, note FROM swap_160 WHERE createdAt > ? AND (status <> 'cancelled' OR warnS IS NOT NULL OR note LIKE 'called off: the swap bot%')`).bind(Date.now() - 2 * 86400000).all()).results) || []; } catch (e) {}
   for (const r of live160) { const d = swapDay(Number(r.dueAt));
     if (!given.has(`${r.seller}|${r.pass}|${d}`)) giveSeason(r.seller, r.pass, d);
     given.add(`${r.seller}|${r.pass}|${d}`);
