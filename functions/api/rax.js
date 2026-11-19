@@ -8783,7 +8783,7 @@ async function buildMarketView(env, sport, season) {
                     }).sort((a, b) => b.n - a.n) };
 }
 async function marketView(env, waitUntil, sport, season) {
-  const db = env.RATEBOARD_DB, job = `${sport}:${Number(season)}`, KEY = (sport === 'ufc' ? 'msnap_v2_' : 'msnap_v1_') + job, LOCK = 'msnap_lock_' + job;
+  const db = env.RATEBOARD_DB, job = `${sport}:${Number(season)}`, KEY = (sport === 'ufc' ? 'msnap_v2_' : 'msnap_v3_') + job, LOCK = 'msnap_lock_' + job;
   let c = null;
   try { c = JSON.parse((await env.RATEBOARD_KV.get(KEY)) || 'null'); } catch (e) {}
   let doneAt = 0;
