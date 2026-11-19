@@ -6258,6 +6258,19 @@ async function handle({ request, env, waitUntil }) {
   }
   /* The last Predictions alert sent to this member (2026-11-18): when a tapped notification only brings the
      app forward (iOS), the page asks for it and opens that game. */
+  /* Test alert (2026-11-18): a real-looking value alert for an open pregame game, sent through the same path,
+     so a tap can be checked any time. Signed-in members with Predictions alerts only. */
+  if (op === 'predtestalert' && request.method === 'POST') {
+    const who = String(acc.who || '').toLowerCase(); if (!who || (who !== 'dennis' && !predPortTok(env, who))) return forbidden('Not open yet.');
+    if (!(await allow(url.origin, 'predtest:' + who, 6, 600))) return json({ error: 'A few tests is plenty - try again in a few minutes.' }, 429);
+    let x = {}; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_ev_v1')) || '{}') || {}; } catch (e) {}
+    const g = (x.games || []).find(y => !y.locked && !y.live && y.sides && y.sides.length) || (x.games || []).find(y => !y.locked && y.sides && y.sides.length);
+    if (!g) return json({ error: 'No open market to test with right now.' });
+    const sd = g.sides[0], q = Math.round((Number(sd.price) || 0.5) * 100), u = `/predictions#g=${g.id}&s=0&a=500&q=${q}`, now = Date.now();
+    const n = await pushTo(env, db, who, { title: `Test alert · ${sd.name || sd.label}`, body: `Tap me - this should open ${g.game} with the bet on top.`, url: u, tag: 'pv-test', urgent: true });
+    try { await env.RATEBOARD_KV.put('pred_lastalert_' + who, JSON.stringify({ url: u, at: now }), { expirationTtl: 3600 }); } catch (e) {}
+    return json({ ok: true, sent: n });
+  }
   if (op === 'lastalert') {
     const who = String(acc.who || '').toLowerCase(); if (!who) return json({});
     let x = null; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_lastalert_' + who)) || 'null'); } catch (e) {}

@@ -262,7 +262,7 @@
 <label class="bank"><span>Your rax (for unit sizes)</span><input id="bank" type="number" inputmode="numeric" min="0" step="100" placeholder="e.g. 5000"></label>
 <div class="upick"><label for="upct">Unit size</label><select id="upct"><option value="0.5">0.5% of rax</option><option value="1">1% of rax (recommended)</option><option value="1.5">1.5% of rax</option><option value="2">2% of rax</option><option value="2.5">2.5% of rax</option><option value="3">3% of rax</option><option value="3.5">3.5% of rax</option><option value="4">4% of rax</option></select><small id="banknote">1u = 1% of your rax</small>
 <div class="own" id="ownbuild" hidden><label>Fixed rax per unit <input id="fixu" type="number" inputmode="numeric" min="0" step="100" placeholder="off"></label>
-<label class="chk"><input type="checkbox" id="buildon"> Buy in pieces + value alerts <span class="note">recommends pieces that move Real about 1 point, and pushes you when a side is really good value (up to your full size)</span></label><label>Good value at EV ≥ <input id="goodev" type="number" inputmode="decimal" min="2" max="50" step="0.5" style="width:70px">%</label></div></div>
+<div class="tbtn"><button type="button" id="tstalert" class="sm">Send a test alert</button> <span class="note" id="tstmsg">close the app after it arrives, then tap it</span></div><label class="chk"><input type="checkbox" id="buildon"> Buy in pieces + value alerts <span class="note">recommends pieces that move Real about 1 point, and pushes you when a side is really good value (up to your full size)</span></label><label>Good value at EV ≥ <input id="goodev" type="number" inputmode="decimal" min="2" max="50" step="0.5" style="width:70px">%</label></div></div>
 </details>
 <div class="mrow"><div class="sum" id="sum"></div><div class="mbtn"><button type="button" class="vbtn" id="bkbtn" aria-expanded="false" aria-controls="bkbox">Books: <b id="bkname">All</b> &#9662;</button><button class="vbtn" id="vbtn" type="button" aria-expanded="false" aria-controls="vpanel">View: <b id="vname">Full</b> &#9662;</button></div></div>
 <div class="bar"><div class="chips" id="chips"></div></div>
@@ -557,6 +557,9 @@ function drawFocus(){
     ${card(g)}`;
 }
 document.addEventListener('click', e => { if (e.target.closest('[data-fbx]')) closeFocus(); });
+document.addEventListener('click', async e => { if (!e.target.closest('#tstalert, #na-test2')) return; const b = e.target; b.disabled = true; const t = ls.get('ratebrd_token_v1') || '';
+  let j = {}; try { j = await (await fetch('/api/swaps?op=predtestalert', { method: 'POST', headers: t ? { 'x-rb-token': t } : {} })).json(); } catch (x) {}
+  const m = document.getElementById(b.id === 'tstalert' ? 'tstmsg' : 'na-msg'); if (m) m.textContent = j.error || (j.sent ? 'Sent - leave the app, then tap the notification.' : 'Nothing reached a device - turn notifications on first.'); b.disabled = false; });
 readFocus(); addEventListener('hashchange', () => { readFocus(); if (J && J.games) { draw(); focusGo(); } });
 function focusGo(){ if (!FOCUS.gid || FOCUS.done || !J) return; FOCUS.done = true;
   const t = document.querySelector('#tabs [data-t="m"]'); if (t && t.getAttribute('aria-pressed') !== 'true') t.click();
@@ -580,7 +583,7 @@ function naPaint(j){
   $('#na-add').checked = c.add.on; $('#na-addmin').value = Math.round(c.add.minEv * 100); $('#na-sell').checked = c.sell.on; $('#na-sellpts').value = c.sell.pts; $('#na-start').checked = c.start.on; $('#na-cap').value = c.cap;
   naDev(j.devices); naOff();
 }
-function naDev(n){ $('#na-dev').innerHTML = n ? `<span>✓ Notifications on for ${n} device${n === 1 ? '' : 's'}</span><button type="button" id="na-test">Send a test</button>` : `<span>No device has notifications on yet.</span><a href="/notifications">Turn them on here</a>`; }
+function naDev(n){ $('#na-dev').innerHTML = n ? `<span>✓ Notifications on for ${n} device${n === 1 ? '' : 's'}</span><button type="button" id="na-test">Send a test</button><button type="button" id="na-test2">Test an alert tap</button>` : `<span>No device has notifications on yet.</span><a href="/notifications">Turn them on here</a>`; }
 function naOff(){ for (const [box, on] of [['na-ev', 'ev'], ['na-add', 'add'], ['na-sell', 'sell']]) $('#' + box).closest('.nbox').classList.toggle('off', !$('#' + box).checked); for (const b of document.querySelectorAll('#vn .nbox')) b.style.opacity = $('#na-on').checked ? '' : '.55'; }
 async function naLoad(){ $('#na-msg').textContent = ''; try { const j = await naCall(); if (j.error) { $('#na-msg').textContent = j.error; return; } naPaint(j); } catch (e) { $('#na-msg').textContent = 'Could not load your alerts.'; } }
 function naSave(){ naOff(); clearTimeout(naT); naT = setTimeout(async () => { const v = id => Number($('#' + id).value);
