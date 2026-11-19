@@ -304,7 +304,8 @@ const ago = iso => { if(!iso) return ''; const m = Math.round((Date.now() - Date
 const endsIn = iso => { const m = Math.round((Date.parse(iso) - Date.now()) / 60000);
   if(m < 60) return `${Math.max(0, m)}m`; const h = Math.floor(m / 60); return h < 48 ? `${h}h ${m % 60}m` : `${Math.round(h / 24)}d`; };
 
-let data = null, status = null, pick = 'favs', rarF = '', sortK = 'n', shown = 60, open = null;
+let data = null, status = null, pick = 'ncaam:2027',   // CBB 2026-27 by default (2026-11-19: CBB-only market)
+  rarF = '', sortK = 'n', shown = 60, open = null;
 let favSet = new Set(), me = null;
 const keyOf = r => `${r.sport}:${r.season}:${r.playerId}`;
 const colsN = () => pick === 'recents' ? 6 : 5;
@@ -333,8 +334,8 @@ async function load(){
   }catch(e){ data = null; }
   if(!data){ $('#rows').innerHTML = msgRow('Could not load the market.'); return; }
   if(data.error){ $('#rows').innerHTML = msgRow(esc(data.error)); return; }
-  const opts = [];
-  ((status && status.seasons) || []).forEach(x => { if(x.listings || x.live) opts.push(x.job); });
+  const opts = ['ncaam:2027'];   // always offered, even while its first sweep is still running
+  ((status && status.seasons) || []).forEach(x => { if((x.listings || x.live) && !opts.includes(x.job)) opts.push(x.job); });
   (data.seasons || []).forEach(x => { const k = `${x.sport}:${x.season}`; if(!opts.includes(k)) opts.push(k); });
   if(pick !== 'favs' && pick !== 'recents' && !opts.includes(pick)) opts.unshift(pick);
   $('#ss').innerHTML = `<option value="favs"${pick === 'favs' ? ' selected' : ''}>★ Favorites · ${favSet.size}</option>`
