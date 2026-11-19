@@ -6271,6 +6271,14 @@ async function handle({ request, env, waitUntil }) {
     try { await env.RATEBOARD_KV.put('pred_lastalert_' + who, JSON.stringify({ url: u, at: now }), { expirationTtl: 3600 }); } catch (e) {}
     return json({ ok: true, sent: n });
   }
+  /* Fantasy optimizer data (2026-11-18): Dennis only. Opening the page also keeps the prop pulls running (3 h). */
+  if (op === 'dfs') {
+    if (String(acc.who || '').toLowerCase() !== 'dennis') return forbidden('Not open yet.');
+    await env.RATEBOARD_KV.put('dfs_seen', String(Date.now()));
+    let o = {}; try { o = JSON.parse((await env.RATEBOARD_KV.get('dfs_props_v1')) || '{}') || {}; } catch (e) {}
+    const day = ET_DAY_FMT.format(new Date());
+    return json({ at: Date.now(), events: o.events || [], ev: o.ev || {}, every: o.every || null, usedToday: (o.used || {})[day] || 0, budget: 30000, credits: o.credits || null, errs: o.errs || [] });
+  }
   if (op === 'lastalert') {
     const who = String(acc.who || '').toLowerCase(); if (!who) return json({});
     let x = null; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_lastalert_' + who)) || 'null'); } catch (e) {}

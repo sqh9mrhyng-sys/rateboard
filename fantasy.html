@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fantasy optimizer - Rax Academy</title>
+<meta name="robots" content="noindex">
+<style>
+  :root{--bg:#141925;--panel:#1d2433;--panel2:#242c3d;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;--good:#3fbf7f;--bad:#e5534b}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:820px;margin:0 auto;padding:16px 16px 48px}
+  h1{font-size:26px;margin:4px 0 2px} .note{color:var(--mute);font-size:13px}
+  .top{display:flex;justify-content:space-between;align-items:flex-end;gap:10px;flex-wrap:wrap}
+  .stat{font-size:12px;color:var(--mute);font-weight:700;text-align:right}
+  .tabs{display:flex;gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:4px;margin:14px 0 10px}
+  .tabs button{flex:1;background:none;border:0;color:var(--mute);font:inherit;font-weight:800;padding:8px;border-radius:9px;cursor:pointer}
+  .tabs button[aria-pressed="true"]{background:var(--panel2);color:var(--ink)}
+  .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px}
+  select,input{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:7px 9px;font:inherit;font-size:14px}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chips button{background:var(--panel);color:var(--mute);border:1px solid var(--line);border-radius:999px;padding:5px 12px;font:inherit;font-size:13px;font-weight:700;cursor:pointer}
+  .chips button[aria-pressed="true"]{color:var(--ink);border-color:var(--accent);background:var(--panel2)}
+  .pk{display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:6px 0}
+  .pk.sel{border-color:var(--accent)}
+  .pk .who b{display:block;font-size:15px} .pk .who span{font-size:12.5px;color:var(--mute)}
+  .side{font-weight:900;font-size:13px;padding:3px 8px;border-radius:7px;background:var(--panel2)} .side.o{color:var(--good)} .side.u{color:#7fb2ff}
+  .num{text-align:right;font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em;min-width:64px} .num b{display:block;font-size:16px;color:var(--ink);text-transform:none;letter-spacing:0}
+  .pos{color:var(--good)!important} .neg{color:var(--bad)!important}
+  .app{font-size:11px;font-weight:800;padding:2px 7px;border-radius:999px;background:var(--panel2);color:var(--accent);margin-left:6px;vertical-align:middle}
+  .books{grid-column:1/-1;font-size:12px;color:var(--mute);border-top:1px solid var(--line);padding-top:6px;margin-top:2px;display:none}
+  .pk.open .books{display:block}
+  .slip{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin:10px 0}
+  .slip h3{margin:0 0 6px;font-size:15px;display:flex;justify-content:space-between;gap:10px} .slip li{margin:3px 0;font-size:14px}
+  .slip ol{margin:4px 0 0;padding-left:20px}
+  details.set{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:10px 0}
+  details.set summary{cursor:pointer;font-weight:800}
+  .ptab{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:8px} .ptab td,.ptab th{padding:4px 6px;border-bottom:1px solid var(--line);text-align:left} .ptab input{width:64px;padding:4px 6px}
+  .empty{color:var(--mute);text-align:center;padding:30px 10px}
+  button.sm{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:6px 11px;font:inherit;font-size:13px;font-weight:700;cursor:pointer}
+  @media(max-width:520px){ .num{min-width:52px} .num b{font-size:15px} }
+</style>
+</head>
+<body>
+<script src="/theme.js"></script>
+<script src="/nav.js?v=5"></script>
+<div class="wrap">
+  <div class="top">
+    <div><h1>Fantasy optimizer</h1><div class="note">NBA props on Underdog and Kalshi, priced against the sharp books.</div></div>
+    <div class="stat" id="stat">Loading…</div>
+  </div>
+  <div class="tabs" id="tabs"><button data-t="p" aria-pressed="true">Picks</button><button data-t="s" aria-pressed="false">Slips</button><button data-t="h" aria-pressed="false">How it works</button></div>
+
+  <div id="vp">
+    <div class="bar">
+      <div class="chips" id="appc"><button data-a="" aria-pressed="true">All</button><button data-a="underdog" aria-pressed="false">Underdog</button><button data-a="kalshi" aria-pressed="false">Kalshi</button></div>
+      <select id="mk"><option value="">Every stat</option></select>
+      <select id="gm"><option value="">Every game</option></select>
+      <select id="edge"><option value="-1">Any edge</option><option value="0" selected>+ edge only</option><option value="0.02">+2% or more</option><option value="0.05">+5% or more</option></select>
+    </div>
+    <div class="note" id="bnote" style="margin-bottom:6px"></div>
+    <div id="picks"></div>
+  </div>
+
+  <div id="vs" hidden>
+    <div class="bar"><span class="note">Underdog slips from the picks with an edge, one pick per player. Tap a pick on Picks to lock it into every slip.</span></div>
+    <div id="slips"></div>
+  </div>
+
+  <div id="vh" hidden>
+    <div class="slip">
+      <p><b>Fair %.</b> Each sportsbook's over/under is de-vigged (the book's margin removed), then moved to Underdog's or Kalshi's line with a normal curve sized to the stat. The books are weighted: Pinnacle 2, FanDuel 1.5, Novig 1.2, the rest 1. A pick needs at least 2 books.</p>
+      <p><b>Underdog.</b> Every pick is compared to the breakeven of the slip type picked in Settings. For example, a 5-pick Flex needs about 54% a pick to break even with the default payouts. Slips are scored with the full payout table, partial hits included.</p>
+      <p><b>Kalshi.</b> EV = fair % / (price + Kalshi's fee) - 1. The fee is taken as 7% x price x (1 - price) per contract.</p>
+      <p><b>Data.</b> The Odds API, pregame only. Each game refreshes as often as 30,000 credits a day allows (never faster than 2 min). Pulls only run while this page was opened in the last 3 hours.</p>
+      <p class="note">Underdog's payouts change. Check them in the app and set them in Settings, since the edges depend on them.</p>
+    </div>
+    <details class="set" open><summary>Settings</summary>
+      <div class="bar" style="margin-top:8px"><label class="note">Compare Underdog picks to <select id="beType"></select></label></div>
+      <table class="ptab" id="ptab"></table>
+      <div class="bar" style="margin-top:8px"><button class="sm" id="preset">Reset to defaults</button></div>
+    </details>
+  </div>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+const ls = { get: k => { try{ return localStorage.getItem(k); }catch(e){ return null; } }, set: (k, v) => { try{ localStorage.setItem(k, v); }catch(e){} } };
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
+const api = async q => { const t = ls.get('ratebrd_token_v1') || ''; return (await fetch('/api/swaps?' + q, { headers: t ? { 'x-rb-token': t } : {} })).json(); };
+
+const MK = { player_points: ['Points', 1.2], player_rebounds: ['Rebounds', 1.05], player_assists: ['Assists', 1.0], player_threes: ['3-pointers', 0.85],
+  player_points_rebounds_assists: ['Pts+Reb+Ast', 1.3], player_points_rebounds: ['Pts+Reb', 1.25], player_points_assists: ['Pts+Ast', 1.25], player_rebounds_assists: ['Reb+Ast', 1.1],
+  player_blocks: ['Blocks', 0.85], player_steals: ['Steals', 0.85], player_blocks_steals: ['Blks+Stls', 0.9], player_turnovers: ['Turnovers', 0.85] };
+const W = { pinnacle: 2, fanduel: 1.5, novig: 1.2, draftkings: 1, betmgm: 1, williamhill_us: 1, betonlineag: 1, lowvig: 1 };
+const BN = { pinnacle: 'Pinnacle', fanduel: 'FanDuel', draftkings: 'DraftKings', betmgm: 'BetMGM', williamhill_us: 'Caesars', betonlineag: 'BetOnline', lowvig: 'LowVig', novig: 'Novig', underdog: 'Underdog', kalshi: 'Kalshi' };
+const APPS = ['underdog', 'kalshi'];
+/* Default Underdog payouts (editable - check the app). std: all must hit. flex: payout by number correct. */
+const PAY_DEF = { std: { 2: 3, 3: 6, 4: 10, 5: 20 }, flex: { 3: { 3: 3, 2: 1 }, 4: { 4: 6, 3: 1.5 }, 5: { 5: 10, 4: 2, 3: 0.4 }, 6: { 6: 25, 5: 2.6, 4: 0.25 }, 7: { 7: 40, 6: 2.75, 5: 0.5 }, 8: { 8: 80, 7: 3, 6: 1 } } };
+let PAY = (() => { try { return JSON.parse(ls.get('dfs_pay') || 'null') || PAY_DEF; } catch (e) { return PAY_DEF; } })();
+let BE_TYPE = ls.get('dfs_betype') || 'flex5';
+let D = null, APP = '', LOCK = new Set((ls.get('dfs_lock') || '').split('|').filter(Boolean)), OPEN = new Set();
+
+// Normal curve helpers
+const Phi = x => { const t = 1 / (1 + 0.2316419 * Math.abs(x)), d = 0.3989423 * Math.exp(-x * x / 2), p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274)))); return x > 0 ? 1 - p : p; };
+const PhiInv = p => { p = Math.min(0.999, Math.max(0.001, p)); let lo = -6, hi = 6; for (let i = 0; i < 60; i++) { const m = (lo + hi) / 2; if (Phi(m) < p) lo = m; else hi = m; } return (lo + hi) / 2; };
+// P(stat > line) from a book's line L with no-vig over chance pOver, moved to line T.
+function moveLine(mk, L, pOver, T){
+  if (L === T) return pOver;
+  const sd = Math.max(0.7, (MK[mk] ? MK[mk][1] : 1.1) * Math.sqrt(Math.max(L, 0.5))), mean = L + sd * PhiInv(pOver);
+  return 1 - Phi((T - mean) / sd);
+}
+// Each slip's EV with every pick at chance p (for breakevens), or with a list of chances.
+function slipEv(type, n, ps){
+  const tab = type === 'std' ? { [n]: PAY.std[n] } : PAY.flex[n]; if (!tab || tab[n] == null) return null;
+  let dp = [1]; for (const p of ps) { const nx = new Array(dp.length + 1).fill(0); dp.forEach((v, k) => { nx[k] += v * (1 - p); nx[k + 1] += v * p; }); dp = nx; }
+  let ev = 0; for (const [k, m] of Object.entries(tab)) ev += (dp[Number(k)] || 0) * Number(m); return ev - 1;
+}
+function breakeven(type, n){ let lo = 0.3, hi = 0.9; for (let i = 0; i < 50; i++) { const m = (lo + hi) / 2, e = slipEv(type, n, new Array(n).fill(m)); if (e == null) return null; if (e < 0) lo = m; else hi = m; } return (lo + hi) / 2; }
+const SLIPS = [['std', 2], ['std', 3], ['std', 4], ['std', 5], ['flex', 3], ['flex', 4], ['flex', 5], ['flex', 6], ['flex', 7], ['flex', 8]];
+const slipName = (t, n) => `${n}-pick ${t === 'std' ? 'Standard' : 'Flex'}`;
+
+function buildPicks(){
+  const out = []; if (!D) return out;
+  const evName = id => { const e = (D.events || []).find(x => x.id === id); return e ? { game: `${e.away} @ ${e.home}`, start: e.start } : { game: '', start: null }; };
+  for (const [id, ev] of Object.entries(D.ev || {})) { const g = evName(id); if (g.start && Date.parse(g.start) <= Date.now()) continue;
+    for (const [mk, players] of Object.entries(ev.props || {})) for (const [pl, books] of Object.entries(players)) {
+      const refs = Object.entries(books).filter(([b, x]) => W[b] && x.L != null && x.o > 1 && x.u > 1).map(([b, x]) => { const io = 1 / x.o, iu = 1 / x.u; return { b, L: x.L, p: io / (io + iu), w: W[b] }; });
+      if (refs.length < 2) continue;
+      for (const app of APPS) { const a = books[app]; if (!a || a.L == null) continue;
+        let fo = 0, wt = 0; for (const r of refs) { fo += moveLine(mk, r.L, r.p, a.L) * r.w; wt += r.w; } fo /= wt;
+        const cons = refs.reduce((t, r) => t + r.L * r.w, 0) / wt;
+        for (const side of ['o', 'u']) { const fair = side === 'o' ? fo : 1 - fo;
+          let price = null, ev = null;
+          if (app === 'kalshi') { if (!(a[side] > 1)) continue; price = 1 / a[side]; ev = fair / (price + 0.07 * price * (1 - price)) - 1; }
+          out.push({ key: [id, mk, pl, app, side].join('|'), id, game: g.game, start: g.start, mk, pl, app, side, L: a.L, fair, price, ev, cons, n: refs.length, refs, link: a.link }); } } } }
+  return out;
+}
+function beNow(){ const m = BE_TYPE.match(/^(std|flex)(\d)$/); return m ? breakeven(m[1], Number(m[2])) : 0.5413; }
+function edgeOf(p, be){ return p.app === 'kalshi' ? p.ev : p.fair - be; }
+
+function drawPicks(){
+  const be = beNow(), m = BE_TYPE.match(/^(std|flex)(\d)$/);
+  $('#bnote').textContent = `Underdog picks vs a ${m ? slipName(m[1], Number(m[2])) : '5-pick Flex'}: break-even ${(be * 100).toFixed(1)}% a pick (change in How it works → Settings). Kalshi shows EV after fee.`;
+  const mk = $('#mk').value, gm = $('#gm').value, min = Number($('#edge').value);
+  let P = buildPicks().filter(p => (!APP || p.app === APP) && (!mk || p.mk === mk) && (!gm || p.id === gm));
+  P.forEach(p => p.edge = edgeOf(p, be));
+  P = P.filter(p => min < -0.5 || p.edge > min).sort((a, b) => b.edge - a.edge);
+  if (!P.length) { $('#picks').innerHTML = `<div class="empty">${D && Object.keys(D.ev || {}).length ? 'No picks match - try "Any edge".' : 'Pulling props… the first games show within a couple of minutes.'}</div>`; return; }
+  $('#picks').innerHTML = P.slice(0, 200).map(p => {
+    const sideTxt = p.app === 'underdog' ? (p.side === 'o' ? 'Higher' : 'Lower') : (p.side === 'o' ? 'Yes / Over' : 'No / Under');
+    const bl = p.refs.map(r => `${BN[r.b] || r.b} ${r.L} (${(p.side === 'o' ? r.p : 1 - r.p) * 100 >> 0}%)`).join(' · ');
+    return `<div class="pk ${LOCK.has(p.key) ? 'sel' : ''} ${OPEN.has(p.key) ? 'open' : ''}" data-k="${esc(p.key)}">
+      <div class="who"><b>${esc(p.pl)}<span class="app">${p.app === 'underdog' ? 'Underdog' : 'Kalshi'}</span></b><span>${esc(MK[p.mk] ? MK[p.mk][0] : p.mk)} <b style="display:inline;color:var(--ink)">${p.L}</b> <span class="side ${p.side}">${sideTxt}</span> · ${esc(p.game)}</span></div>
+      <div class="num">Fair<b>${(p.fair * 100).toFixed(1)}%</b></div>
+      <div class="num">${p.app === 'kalshi' ? 'EV' : 'Edge'}<b class="${p.edge >= 0 ? 'pos' : 'neg'}">${p.edge >= 0 ? '+' : ''}${(p.edge * 100).toFixed(1)}%</b></div>
+      <div class="books">${p.app === 'kalshi' ? `Kalshi ${(p.price * 100).toFixed(0)}¢ · ` : ''}Books (${p.n}, avg line ${p.cons.toFixed(1)}): ${esc(bl)}${LOCK.has(p.key) ? ' · <b>locked into slips</b>' : ''} · <a href="#" data-lock="${esc(p.key)}">${LOCK.has(p.key) ? 'Unlock' : 'Lock into slips'}</a></div></div>`; }).join('');
+}
+function drawSlips(){
+  const all = buildPicks().filter(p => p.app === 'underdog');
+  const locked = all.filter(p => LOCK.has(p.key));
+  const html = [];
+  for (const [t, n] of SLIPS) { const be = breakeven(t, n); if (be == null) continue;
+    // Best n: locked picks first, then by fair %, one per player.
+    const used = new Set(locked.map(p => p.pl)), pick = locked.slice(0, n);
+    for (const p of all.filter(p => !LOCK.has(p.key)).sort((a, b) => b.fair - a.fair)) { if (pick.length >= n) break; if (used.has(p.pl)) continue; used.add(p.pl); pick.push(p); }
+    if (pick.length < n) continue;
+    const ev = slipEv(t, n, pick.map(p => p.fair));
+    html.push({ ev, h: `<div class="slip"><h3><span>${slipName(t, n)}</span><span class="${ev >= 0 ? 'pos' : 'neg'}">${ev >= 0 ? '+' : ''}${(ev * 100).toFixed(1)}% EV</span></h3>
+      <div class="note">Break-even ${(be * 100).toFixed(1)}% a pick · all hit ${(pick.reduce((t, p) => t * p.fair, 1) * 100).toFixed(1)}%</div>
+      <ol>${pick.map(p => `<li><b>${esc(p.pl)}</b> ${p.side === 'o' ? 'Higher' : 'Lower'} ${p.L} ${esc(MK[p.mk] ? MK[p.mk][0] : p.mk)} <span class="note">${(p.fair * 100).toFixed(1)}%${LOCK.has(p.key) ? ' · locked' : ''}</span></li>`).join('')}</ol></div>` }); }
+  html.sort((a, b) => b.ev - a.ev);
+  $('#slips').innerHTML = html.length ? html.map(x => x.h).join('') : '<div class="empty">Not enough Underdog picks yet.</div>';
+}
+function drawSet(){
+  $('#beType').innerHTML = SLIPS.map(([t, n]) => `<option value="${t}${n}" ${BE_TYPE === t + n ? 'selected' : ''}>${slipName(t, n)}</option>`).join('');
+  let h = '<tr><th>Slip</th><th>Pays (x entry) by number correct</th></tr>';
+  for (const n of [2, 3, 4, 5]) h += `<tr><td>${n}-pick Standard</td><td>${n}: <input data-p="std|${n}|${n}" value="${PAY.std[n] ?? ''}"></td></tr>`;
+  for (const n of [3, 4, 5, 6, 7, 8]) { const r = PAY.flex[n] || {}; h += `<tr><td>${n}-pick Flex</td><td>${Object.keys(r).sort((a, b) => b - a).map(k => `${k}: <input data-p="flex|${n}|${k}" value="${r[k]}">`).join(' ')}</td></tr>`; }
+  $('#ptab').innerHTML = h;
+}
+function drawAll(){ drawPicks(); if (!$('#vs').hidden) drawSlips(); }
+async function load(){
+  let j; try { j = await api('op=dfs'); } catch (e) { $('#stat').textContent = 'Could not load.'; return; }
+  if (j.error) { $('#stat').textContent = ''; $('#picks').innerHTML = `<div class="empty">${esc(j.error)}</div>`; return; }
+  D = j;
+  const ats = Object.values(j.ev || {}).map(v => v.at).filter(Boolean), last = ats.length ? Math.max(...ats) : null;
+  $('#stat').innerHTML = `${last ? 'Props ' + Math.max(0, Math.round((Date.now() - last) / 60000)) + ' min old' : 'Waiting for props'} · ${j.every ? 'each game every ~' + Math.round(j.every / 60) + ' min' : 'paused'}<br>${(j.usedToday || 0).toLocaleString()} / ${(j.budget || 30000).toLocaleString()} credits today`;
+  const games = (j.events || []).filter(e => Date.parse(e.start) > Date.now());
+  const gv = $('#gm').value; $('#gm').innerHTML = '<option value="">Every game</option>' + games.map(e => `<option value="${esc(e.id)}" ${gv === e.id ? 'selected' : ''}>${esc(e.away)} @ ${esc(e.home)} · ${new Date(e.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</option>`).join('');
+  drawAll();
+}
+$('#mk').innerHTML += Object.entries(MK).map(([k, v]) => `<option value="${k}">${v[0]}</option>`).join('');
+['#mk', '#gm', '#edge'].forEach(s => $(s).addEventListener('change', drawPicks));
+$('#appc').addEventListener('click', e => { const b = e.target.closest('[data-a]'); if (!b) return; APP = b.dataset.a; document.querySelectorAll('#appc button').forEach(x => x.setAttribute('aria-pressed', String(x === b))); drawPicks(); });
+$('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if (!b) return; document.querySelectorAll('#tabs button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  $('#vp').hidden = b.dataset.t !== 'p'; $('#vs').hidden = b.dataset.t !== 's'; $('#vh').hidden = b.dataset.t !== 'h'; if (b.dataset.t === 's') drawSlips(); if (b.dataset.t === 'h') drawSet(); });
+$('#picks').addEventListener('click', e => {
+  const l = e.target.closest('[data-lock]'); if (l) { e.preventDefault(); const k = l.dataset.lock; LOCK.has(k) ? LOCK.delete(k) : LOCK.add(k); ls.set('dfs_lock', [...LOCK].join('|')); drawPicks(); return; }
+  const c = e.target.closest('.pk'); if (!c) return; const k = c.dataset.k; OPEN.has(k) ? OPEN.delete(k) : OPEN.add(k); c.classList.toggle('open'); });
+$('#beType').addEventListener('change', e => { BE_TYPE = e.target.value; ls.set('dfs_betype', BE_TYPE); drawPicks(); });
+$('#ptab').addEventListener('change', e => { const i = e.target.closest('[data-p]'); if (!i) return; const [t, n, k] = i.dataset.p.split('|'), v = Number(i.value);
+  if (!(v >= 0)) return; if (t === 'std') PAY.std[n] = v; else { PAY.flex[n] = PAY.flex[n] || {}; PAY.flex[n][k] = v; } ls.set('dfs_pay', JSON.stringify(PAY)); drawPicks(); });
+$('#preset').addEventListener('click', () => { PAY = JSON.parse(JSON.stringify(PAY_DEF)); ls.set('dfs_pay', ''); drawSet(); drawPicks(); });
+load(); setInterval(() => { if (!document.hidden) load(); }, 30000);
+</script>
+</body>
+</html>

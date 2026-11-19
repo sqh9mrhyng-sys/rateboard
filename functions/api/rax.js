@@ -1161,6 +1161,51 @@ async function predPortProbe(env) {
       await new Promise(r => setTimeout(r, 1500)); } }
   await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 7 * 86400 });
 }
+/* Fantasy optimizer (2026-11-18, Dennis only): NBA player props from The Odds API - the sharp books for the
+   fair line, Underdog and Kalshi (where he plays) for the lines to beat. The 10 books below cost the same as one
+   region, so a game costs about one credit per market it returns. Budget: 30k credits a day, spread over the
+   games still to start; pregame only. Runs only while Dennis has the page open in the last 3 hours. */
+export const DFS_BOOKS = ['pinnacle', 'fanduel', 'draftkings', 'betmgm', 'williamhill_us', 'betonlineag', 'lowvig', 'novig', 'underdog', 'kalshi'];
+const DFS_MARKETS = ['player_points', 'player_rebounds', 'player_assists', 'player_threes', 'player_points_rebounds_assists', 'player_points_rebounds', 'player_points_assists', 'player_rebounds_assists', 'player_blocks', 'player_steals', 'player_blocks_steals', 'player_turnovers'];
+const DFS_DAY_BUDGET = 30000;
+async function dfsTick(env) {
+  if (!env.ODDS_API_KEY) return;
+  const seen = Number(await env.RATEBOARD_KV.get('dfs_seen').catch(() => 0)) || 0; if (Date.now() - seen > 3 * 3600000) return;
+  const K = 'dfs_props_v1'; let o = {}; try { o = JSON.parse((await env.RATEBOARD_KV.get(K)) || '{}') || {}; } catch (e) {}
+  if (o.lock && Date.now() - o.lock < 55000) return; o.lock = Date.now(); await env.RATEBOARD_KV.put(K, JSON.stringify(o));
+  const key = env.ODDS_API_KEY, api = (path, q = '') => fetch(`https://api.the-odds-api.com/v4/${path}?apiKey=${encodeURIComponent(key)}${q}`);
+  const day = ET_DAY_FMT.format(new Date()); o.used = o.used || {}; o.used[day] = o.used[day] || 0; for (const d of Object.keys(o.used).sort().slice(0, -10)) delete o.used[d];
+  o.errs = []; o.ev = o.ev || {};
+  try {
+    if (!o.evAt || Date.now() - o.evAt > 10 * 60000) { const r = await api('sports/basketball_nba/events'); const l = await r.json();   // free
+      if (Array.isArray(l)) { o.events = l.map(e => ({ id: e.id, home: e.home_team, away: e.away_team, start: e.commence_time })).filter(e => Date.parse(e.start) > Date.now() - 4 * 3600000 && Date.parse(e.start) < Date.now() + 30 * 3600000); o.evAt = Date.now(); } else o.errs.push('events ' + r.status); }
+    const now = Date.now(), pre = (o.events || []).filter(e => Date.parse(e.start) > now).sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
+    for (const id of Object.keys(o.ev)) if (!(o.events || []).some(e => e.id === id)) delete o.ev[id];   // finished games drop off
+    if (pre.length) {
+      const left = DFS_DAY_BUDGET - o.used[day], perGame = o.costAvg || DFS_MARKETS.length, hrs = Math.max(1, Math.min(20, (Date.parse(pre[pre.length - 1].start) - now) / 3600000));
+      // Even spread: refreshes the budget allows across the hours left; never faster than every 2 min (the API's prop refresh is ~1 min).
+      const every = left <= 0 ? Infinity : Math.max(120000, hrs * 3600000 / Math.max(1, left / (perGame * pre.length)));
+      o.every = every === Infinity ? null : Math.round(every / 1000);
+      let n = 0;
+      for (const e of pre) { const soon = Date.parse(e.start) - now < 3 * 3600000, ev = o.ev[e.id] || {};
+        if (every === Infinity || (ev.at && now - ev.at < (soon ? every : every * 2))) continue;
+        if (n++ >= 6) break;   // a handful a minute; the rest next minute
+        try { const r = await api(`sports/basketball_nba/events/${e.id}/odds`, `&bookmakers=${DFS_BOOKS.join(',')}&markets=${DFS_MARKETS.join(',')}&oddsFormat=decimal&includeLinks=true`);
+          const cost = Number(r.headers.get('x-requests-last')) || 0; o.used[day] += cost; o.credits = Number(r.headers.get('x-requests-remaining')) || o.credits;
+          if (cost) o.costAvg = Math.round(((o.costAvg || cost) * 4 + cost) / 5);
+          if (!r.ok) { o.errs.push(`${e.id} ${r.status}`); continue; }
+          const d = await r.json(), P = {};
+          for (const bk of (d.bookmakers || [])) for (const mk of (bk.markets || [])) for (const oc of (mk.outcomes || [])) {
+            const pl = oc.description, side = /^over/i.test(oc.name) ? 'o' : /^under/i.test(oc.name) ? 'u' : /^yes/i.test(oc.name) ? 'o' : null; if (!pl || !side || !(oc.price > 1)) continue;
+            const m = (P[mk.key] = P[mk.key] || {}), x = (m[pl] = m[pl] || {}), b = (x[bk.key] = x[bk.key] || {});
+            if (b.L != null && oc.point != null && b.L !== oc.point) { (b.alt = b.alt || []).push([oc.point, side, oc.price]); continue; }
+            b.L = oc.point ?? b.L; b[side] = oc.price; b.t = Date.parse(mk.last_update || bk.last_update || 0) || null; if (oc.link || bk.link) b.link = oc.link || mk.link || bk.link; }
+          o.ev[e.id] = { at: Date.now(), cost, props: P };
+        } catch (err) { o.errs.push(String(err.message || err).slice(0, 80)); } }
+    }
+  } catch (err) { o.errs.push(String(err.message || err).slice(0, 80)); }
+  delete o.lock; await env.RATEBOARD_KV.put(K, JSON.stringify(o));
+}
 async function predTick(env) {
   try { const P = JSON.parse((await env.RATEBOARD_KV.get('pred_pause_v1')) || '{}') || {}; if (P.until && Date.now() < P.until) return; } catch (e) {}
   await Promise.all([predOdds(env).catch(() => {}), predReal(env).catch(() => {}), predFairHist(env).catch(() => {})]); }
@@ -9154,7 +9199,9 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), oddsCredits: await (async () => { const o = await kvj('pred_odds_v2'); if (!o) return null; const d = ET_DAY_FMT.format(new Date()), today = o.clog && o.clog[d] != null ? (Number(o.used) || 0) - o.clog[d] : null; return { remaining: Number(o.credits) || null, used: Number(o.used) || null, today, budget: PRED_DAY_BUDGET, fast: today == null || today < PRED_DAY_BUDGET, log: o.clog || null }; })(), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predPause: await kvj('pred_pause_v1'), marketWipe: await kvj('oneoff_market_wipe_1116'), predStore: await (async () => { const o = {}; for (const k of ['pred_ev_v1', 'pred_recent_v1', 'pred_odds_v2', 'pred_real_open', 'bulk_state_v2']) { const v = await env.RATEBOARD_KV.get(k); o[k] = v ? v.length : 0; }
+    oneOffsRun: await kvj(ONE_OFF_KEY), dfs: await (async () => { const o = await kvj('dfs_props_v1'); if (!o) return null; const evs = Object.values(o.ev || {}); const bks = {}; let props = 0;
+      for (const v of evs) for (const m of Object.values(v.props || {})) for (const pl of Object.values(m)) { props++; for (const b of Object.keys(pl)) bks[b] = (bks[b] || 0) + 1; }
+      return { events: (o.events || []).length, pulled: evs.length, props, books: bks, every: o.every, costAvg: o.costAvg, used: o.used, credits: o.credits, errs: o.errs }; })(), oddsCredits: await (async () => { const o = await kvj('pred_odds_v2'); if (!o) return null; const d = ET_DAY_FMT.format(new Date()), today = o.clog && o.clog[d] != null ? (Number(o.used) || 0) - o.clog[d] : null; return { remaining: Number(o.credits) || null, used: Number(o.used) || null, today, budget: PRED_DAY_BUDGET, fast: today == null || today < PRED_DAY_BUDGET, log: o.clog || null }; })(), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predPause: await kvj('pred_pause_v1'), marketWipe: await kvj('oneoff_market_wipe_1116'), predStore: await (async () => { const o = {}; for (const k of ['pred_ev_v1', 'pred_recent_v1', 'pred_odds_v2', 'pred_real_open', 'bulk_state_v2']) { const v = await env.RATEBOARD_KV.get(k); o[k] = v ? v.length : 0; }
       try { for (const t of ['bulk_listings', 'bulk_results']) { const r = await env.RATEBOARD_DB.prepare(`SELECT COUNT(*) AS n FROM ${t}`).first().catch(() => null); o[t] = r ? r.n : null; } } catch (e) {} return o; })(), realBusy: await realBusy(env), dmPredAsk: await (async () => { const x = await kvj('dm_predask_v1'); return x ? { sent: (x.sent || []).length, noChat: (x.noChat || []).length, notFound: (x.notFound || []).length, failed: (x.failed || []).length } : null; })(), dmPromo: await (async () => { const x = await kvj('dm_promo_' + Date.UTC(2026, 10, 17, 21, 0, 0)); return x ? { total: x.total, sent: x.sent, skipped: x.skipped, failed: x.failed, startedAt: x.startedAt } : null; })(), predSlip: await (async () => { try { if (!((await kvj('pred_mkeys_v1')) || {}).px) await env.RATEBOARD_KV.delete('pred_mkeys_v1'); } catch (e) {} const S = (await kvj('pred_slip_v1')) || {}; const fit = {}; const med = a => { const b = a.slice().sort((x, y) => x - y); return b.length ? b[Math.floor(b.length / 2)] : null; };
       for (const L of Object.values(S)) for (let i = 1; i < L.s.length; i++) { const [t0, v0, p0] = L.s[i - 1], [t1, v1, p1] = L.s[i], dv = v1 - v0;
         if (dv < 300 || t1 - t0 > 25000 || !(v0 > 0)) continue; const dp = Math.abs(p1 - p0) * 100, bin = v0 < 10000 ? '<10k' : v0 < 30000 ? '10-30k' : v0 < 100000 ? '30-100k' : '100k+';
@@ -9233,6 +9280,7 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil(bulkTick(env).catch(() => {}));
     ctx.waitUntil(draftScan(env).catch(() => {}));
     ctx.waitUntil(predTick(env).catch(() => {}));
+    ctx.waitUntil(dfsTick(env).catch(() => {}));
     ctx.waitUntil(marketWipe(env).catch(() => {}));
     if (url.searchParams.get('ticks') === '1') return new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } });
   }
