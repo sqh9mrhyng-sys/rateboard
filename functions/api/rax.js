@@ -1508,12 +1508,12 @@ function pullAllowed(g, mk, sport, pid) {
 const MARKET_LANES = 1;
 const MARKET_WINDOW_HOURS = 12;
 const MARKET_WINDOWS = 7;           // 12h x 7 = past the 3 days a listing can run
-const MARKET_PAGES_PER_LANE = 15;   // slowed 2026-11-02 (was 40)
+const MARKET_PAGES_PER_LANE = 60;   // 2026-11-19: Real caps a page at 10 listings, so CBB needs ~6,500 pages a sweep; the 55 s tick is the real limit now   // slowed 2026-11-02 (was 40)
 /* The gap between pages. No gap at all drew "high volume" from Real, so it
    starts at 150ms (what ran for hours without one) and doubles, up to 2s,
    each time Real says it is busy; every season finished without that eases
    it back down a little. */
-const MARKET_PAUSE_MS = 600;   // slowed 2026-11-02 (was 150)
+const MARKET_PAUSE_MS = 200;   // 2026-11-19 (was 600); Real saying busy still doubles it, up to MARKET_PAUSE_MAX   // slowed 2026-11-02 (was 150)
 const MARKET_PAUSE_MAX = 2000;
 let marketPause = MARKET_PAUSE_MS;
 const MARKET_COOLDOWN_MS = 10 * 60000;
@@ -1523,7 +1523,7 @@ const MARKET_TICK_MS = 55000;       // longest a slice runs in one collector cal
    snapshot, so what /market shows for a season is exactly what was up when
    it was last pulled. The order seasons come round in is marketNext's. */
 const MARKET_ONLY = ['ncaam:2027'];   // CBB 2026-27 only (2026-11-19)
-const MARKET_REST_MS = 2 * 3600000;   // a finished sweep waits 2 h before the next
+const MARKET_REST_MS = 30 * 60000;   // a finished sweep waits 2 h before the next
 const MSEAS_DDL = `CREATE TABLE IF NOT EXISTS market_seasons (job TEXT PRIMARY KEY,
   startedAt INTEGER, doneAt INTEGER, listings INTEGER, minutes REAL, front INTEGER)`;
 /* Only seasons Real actually has, in Real's own numbering: NBA and CBB go by
