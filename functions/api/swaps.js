@@ -6230,6 +6230,17 @@ async function handle({ request, env, waitUntil }) {
     let plans = []; try { plans = JSON.parse((await env.RATEBOARD_KV.get('pred_build_v1_' + pw)) || '[]') || []; } catch (e) {}
     return json({ at: x.at || null, pos: x.pos || [], perf: x.perf || null, err: x.err || null, plans, synced });
   }
+  /* A member's rax and unit size, kept on the server so the site and the home-screen app
+     (separate browser storage) agree (member report 2026-11-18). */
+  if (op === 'predme') {
+    const who = String(acc.who || '').toLowerCase(); if (!who) return json({ error: 'Sign in first.' }, 401);
+    if (request.method !== 'POST') return json({ error: 'POST only.' }, 405);
+    if (!(await allow(url.origin, 'predme:' + who, 60, 600))) return json({ error: 'Too many saves - wait a minute.' }, 429);
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    const m = { bank: Math.max(0, Math.min(1e8, Math.round(Number(b.bank) || 0))), upct: [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4].includes(Number(b.upct)) ? Number(b.upct) : 1, at: Date.now() };
+    await env.RATEBOARD_KV.put('pred_me_v1_' + who, JSON.stringify(m));
+    return json({ ok: true, me: m });
+  }
   // Dennis's value alerts settings (owner only): unit rax, on/off, the EV that counts as really good value.
   if (op === 'predcfg') {
     if (String(acc.who || '').toLowerCase() !== 'dennis') return forbidden('Not open yet.');
@@ -6345,7 +6356,8 @@ async function handle({ request, env, waitUntil }) {
     if (!PRED_PUBLIC && who !== 'dennis' && !(await predAcc()).includes(who)) return forbidden('Predictions is invite-only for now - ask Dennis for access.');
     let x = null; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_ev_v1')) || 'null'); } catch (e) {}
     const owner = who === 'dennis' || undefined, port = !!predPortTok(env, who) || undefined;
-    return json(x ? { owner, port, at: x.at, games: x.games || [], credits: x.credits || null, used: x.used || null, errs: x.errs || [], keySet: !!env.ODDS_API_KEY } : { owner, port, at: null, games: [], keySet: !!env.ODDS_API_KEY });
+    let me; try { me = JSON.parse((await env.RATEBOARD_KV.get('pred_me_v1_' + who)) || 'null') || undefined; } catch (e) {}
+    return json(x ? { owner, port, me, at: x.at, games: x.games || [], credits: x.credits || null, used: x.used || null, errs: x.errs || [], keySet: !!env.ODDS_API_KEY } : { owner, port, me, at: null, games: [], keySet: !!env.ODDS_API_KEY });
   }
   // Bulk ratings (Dennis only, 2026-11-15): live listings, every ended one (history), his passes, and pack plays.
   /* Bulk ratings (open to everyone, 2026-11-15): live listings, ended ones (history),

@@ -432,6 +432,7 @@ function when(g){
 async function load(){
   try{ const t = ls.get('ratebrd_token_v1') || ''; J = await (await fetch('/api/swaps?op=predev', { headers: t ? { 'x-rb-token': t } : {} })).json(); }catch(e){ J = { error: 'Could not reach the site.' }; }
   if(J.error){ $('#list').innerHTML = `<div class="empty">${/sign in/i.test(J.error) ? 'Sign in first - <a href="/?next=/predictions">sign in</a>.' : esc(J.error)}</div>`; return; }
+  applyMe(J.me);
   if(!J.keySet){ $('#list').innerHTML = '<div class="empty">The Odds API key isn\'t on the server yet.</div>'; return; }
   { const ae = document.activeElement; if (!(ae && ae.closest && ae.closest('#vr form'))) drawArb(); }
   draw(); focusGo(); if (!$('#vb').hidden && !(document.activeElement && document.activeElement.dataset && (document.activeElement.dataset.amt || document.activeElement.dataset.pay))) drawBets(); else $('#bn').textContent = BETS.filter(b => !b.res).length ? `(${BETS.filter(b => !b.res).length})` : '';
@@ -803,9 +804,22 @@ $('#goodev').addEventListener('change', e => { ls.set('pred_goodev', String(Math
 // The server sends value alerts from these (unit rax, on/off, good-value EV).
 function saveCfg(){ if (!isOwner()) return; const t = ls.get('ratebrd_token_v1') || '';
   fetch('/api/swaps?op=predcfg', { method: 'POST', headers: { 'content-type': 'application/json', ...(t ? { 'x-rb-token': t } : {}) }, body: JSON.stringify({ unit: Math.round(unitRax()) || 0, alerts: BUILD(), minEv: (Number(ls.get('pred_goodev')) || 6) / 100 }) }).catch(() => {}); }
-$('#upct').addEventListener('change', e => { UP = Number(e.target.value) || 1; ls.set('pred_upct', String(UP)); bankNote(); if (J && J.games) draw(); });
+/* Rax + unit size live on the server too, so the site and the home-screen app match (2026-11-18). */
+let meT = null;
+const saveMe = () => { ls.set('pred_me_at', String(Date.now())); clearTimeout(meT); meT = setTimeout(() => { const t = ls.get('ratebrd_token_v1') || '';
+  fetch('/api/swaps?op=predme', { method: 'POST', headers: { 'content-type': 'application/json', ...(t ? { 'x-rb-token': t } : {}) }, body: JSON.stringify({ bank, upct: UP }) })
+    .then(r => r.json()).then(j => { if (j && j.me) ls.set('pred_me_at', String(j.me.at)); }).catch(() => {}); }, 800); };
+function applyMe(m){
+  const local = Number(ls.get('pred_me_at')) || 0;
+  if (!m || !m.at) { if (!local && (bank || UP !== 1)) saveMe(); return false; }   // first time: send what this device has
+  if (m.at <= local) { if (!local && (bank || UP !== 1)) saveMe(); return false; }
+  const ae = document.activeElement; if (ae && (ae.id === 'bank' || ae.id === 'upct')) return false;
+  bank = Number(m.bank) || 0; UP = Number(m.upct) || 1; ls.set('pred_bank', String(bank)); ls.set('pred_upct', String(UP)); ls.set('pred_me_at', String(m.at));
+  $('#bank').value = bank || ''; $('#upct').value = String(UP); bankNote(); return true;
+}
+$('#upct').addEventListener('change', e => { UP = Number(e.target.value) || 1; ls.set('pred_upct', String(UP)); saveMe(); bankNote(); if (J && J.games) draw(); });
 bankNote();
-$('#bank').addEventListener('input', e => { bank = Math.max(0, Number(e.target.value) || 0); ls.set('pred_bank', String(bank)); bankNote(); if (J && J.games) draw(); });
+$('#bank').addEventListener('input', e => { bank = Math.max(0, Number(e.target.value) || 0); ls.set('pred_bank', String(bank)); saveMe(); bankNote(); if (J && J.games) draw(); });
 betsCall(); load(); setInterval(load, 10000); setInterval(() => { const a = document.activeElement; if (!(a && a.dataset && (a.dataset.amt || a.dataset.pay))) betsCall(); }, 60000); setInterval(tick, 1000);
 </script>
 </body>
