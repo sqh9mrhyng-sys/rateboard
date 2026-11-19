@@ -3357,6 +3357,15 @@ export async function swapTick(env) {
   const db = env.RATEBOARD_DB, auth = swapToken(env);
   if (!db || !auth) return null;
   await ready(db);
+  /* Leave the old ones (Dennis, 2026-11-19 07:27 AK: "the old times shouldn't be sent anymore just leave them"):
+     once, every swap / 160 already due or due within 35 min that never fully went is called off, and every queued
+     DM retry is dropped, so nothing from the bot-down hours goes out late. */
+  try { if (!(await env.RATEBOARD_KV.get('stale_clear_1119'))) { await env.RATEBOARD_KV.put('stale_clear_1119', String(Date.now()), { expirationTtl: 30 * 86400 });
+    const cut = Date.now() + 35 * 60000, note = 'called off: the swap bot was down - not sent late';
+    const a = await db.prepare(`UPDATE swap_matches SET status='cancelled', note=? WHERE status IN ('pending','warned','sending') AND dueAt <= ?`).bind(note, cut).run();
+    const b = await db.prepare(`UPDATE swap_160 SET status='cancelled', note=? WHERE status IN ('pending','warned','sending') AND dueAt <= ?`).bind(note, cut).run().catch(() => null);
+    let q = null; try { await db.prepare(DMQ_DDL).run(); q = await db.prepare('DELETE FROM dm_retry').run(); } catch (e) {}
+    await env.RATEBOARD_KV.put('stale_clear_1119_n', JSON.stringify({ at: Date.now(), m: (a.meta || {}).changes || 0, s: ((b || {}).meta || {}).changes || 0, q: ((q || {}).meta || {}).changes || 0 }), { expirationTtl: 30 * 86400 }); } } catch (e) {}
   /* Bot down hold (Dennis, 2026-11-19 07:21 AK: "Stop all swaps for 8am until fixed" - Real rejects the bot's login).
      While held: no matching, no DMs, and every swap and 160 still ahead is called off. It lifts by itself as soon
      as the server has a different RS_SWAP_TOKEN (he puts a fresh one in .env and restarts). */
