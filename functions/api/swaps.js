@@ -3362,7 +3362,7 @@ export async function swapTick(env) {
     if (!(await env.RATEBOARD_KV.get('swaps_hold_set_1119'))) { await env.RATEBOARD_KV.put('swaps_hold_set_1119', '1', { expirationTtl: 30 * 86400 });
       await env.RATEBOARD_KV.put('swaps_hold', JSON.stringify({ at: Date.now(), tok, why: 'swap bot is logged out' })); }
     const hold = JSON.parse((await env.RATEBOARD_KV.get('swaps_hold')) || 'null');
-    if (hold && hold.tok !== tok) { await env.RATEBOARD_KV.delete('swaps_hold'); await db.prepare("INSERT INTO bot_log (at, kind, msg) VALUES (?, 'match', ?)").bind(Date.now(), 'hold lifted: new bot token').run().catch(() => {}); }
+    if (hold && hold.tok !== tok) { await env.RATEBOARD_KV.delete('swaps_hold'); await env.RATEBOARD_KV.put('swaps_hold_lifted', String(Date.now()), { expirationTtl: 30 * 86400 }); await db.prepare("INSERT INTO bot_log (at, kind, msg) VALUES (?, 'match', ?)").bind(Date.now(), 'hold lifted: new bot token').run().catch(() => {}); }
     else if (hold) {
       const n = Date.now(), note = 'called off: the swap bot is down - swaps resume once it is fixed';
       const a = await db.prepare(`UPDATE swap_matches SET status='cancelled', note=? WHERE status IN ('pending','warned') AND dueAt > ?`).bind(note, n - 5 * 60000).run();
@@ -3618,7 +3618,10 @@ const MOD_STRIKES = 3;
 const MOD_VOID = new Set([Date.UTC(2026, 10, 12, 18, 0, 0)]);
 /* Whole days whose reports count for nothing (Dennis, 2026-11-15: swap DMs went out
    late or not at all around 1pm ET). A report sent in the window, or about a swap in it. */
-const MOD_VOID_DAYS = [[Date.UTC(2026, 10, 15, 5, 0, 0), Date.UTC(2026, 10, 16, 5, 0, 0)]];
+const MOD_VOID_DAYS = [[Date.UTC(2026, 10, 15, 5, 0, 0), Date.UTC(2026, 10, 16, 5, 0, 0)],
+  /* Bot logged out (Dennis, 2026-11-19: "Invalidate all reports since the issue started"): from the first failed DM
+     (about 3am Alaska) until the hold lifts - the end is set from KV when the new token is in (moderate()). */
+  [Date.UTC(2026, 10, 19, 11, 55, 0), Infinity]];
 const modVoidDay = t => MOD_VOID_DAYS.some(([a, b]) => t >= a && t < b);
 const MOD_AUTO = true;   // false: the 10-minute run only previews (counts kept in KV); true: it acts
 const MOD_EARLY = 10 * 60000;          // (old) a report may come up to 10 min before the swap's time
@@ -3669,6 +3672,24 @@ async function reportBlocks(env) { try { return JSON.parse((await env.RATEBOARD_
 async function reportBlocked(env, key) { return !!(await reportBlocks(env))[String(key || '').toLowerCase()]; }
 async function moderate(env, db, dry) {
   let out0err = null;
+  try { const lifted = Number(await env.RATEBOARD_KV.get('swaps_hold_lifted')) || 0; if (lifted) MOD_VOID_DAYS[1][1] = lifted + 90 * 60000; } catch (e) {}   // swaps due up to 90 min after the fix were matched while it was down
+  // One-off: take back what the bot-down window already gave (2026-11-19).
+  if (!dry) { try { if (!(await env.RATEBOARD_KV.get('mod_void_1119'))) { await env.RATEBOARD_KV.put('mod_void_1119', String(Date.now()));
+    const a1 = MOD_VOID_DAYS[1][0];
+    const hit = ((await db.prepare('SELECT DISTINCT key FROM mod_events WHERE period >= ? OR at >= ?').bind(a1, a1).all()).results) || [];
+    await db.prepare('DELETE FROM mod_events WHERE period >= ? OR at >= ?').bind(a1, a1).run();
+    let unb = 0;
+    for (const { key } of hit) {
+      const st0 = await db.prepare('SELECT banned, resetAt FROM mod_state WHERE key=?').bind(key).first();
+      const left = await db.prepare("SELECT COUNT(*) AS n FROM mod_events WHERE key=? AND kind='strike' AND at >= ?").bind(key, Number((st0 && st0.resetAt) || 0)).first();
+      if (st0 && st0.banned && Number((left && left.n) || 0) < MOD_STRIKES) {
+        await db.prepare(SBLOCK_DDL).run(); await db.prepare('DELETE FROM swap_block WHERE key=?').bind(key).run();
+        await db.prepare('UPDATE mod_state SET banned=0 WHERE key=?').bind(key).run(); try { ACCESS_MEMO.delete(key); } catch (e) {} unb++;
+        await addNote(db, key, 'mod', "Today's Swaps reports don't count - the swap bot was logged out, so DMs didn't go. The strikes from today are removed and your Swaps access is back. Turn your swaps back on at raxacademy.app/swaps");
+      } else await addNote(db, key, 'mod', "Today's Swaps reports don't count - the swap bot was logged out, so DMs didn't go. Any warning or strike from today has been removed.");
+    }
+    await env.RATEBOARD_KV.put('mod_void_1119_n', JSON.stringify({ at: Date.now(), members: hit.length, unbanned: unb }), { expirationTtl: 14 * 86400 });
+  } } catch (e) { out0err = String(e.message || e); } }
   await modReady(db); await matchCols(db); await db.prepare(T160_DDL).run(); await db.prepare(DM_DDL).run();
   if (!dry) { try { if (!(await env.RATEBOARD_KV.get('rate_recheck_v1'))) { const f = await rateRecheck(env, db); await env.RATEBOARD_KV.put('rate_recheck_v1', JSON.stringify({ at: Date.now(), freed: f })); } } catch (e) {} }
   // One-off: take back what today's reports already gave (warnings, strikes, a ban from them).
