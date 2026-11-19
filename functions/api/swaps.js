@@ -2068,14 +2068,20 @@ async function runDms(env, db, auth, rows, max, force) {
   };
   const unclaim = async (list, col) => { for (const x of list) { await db.prepare(`UPDATE swap_matches SET ${col + x.side}=NULL WHERE id=? AND ${col + x.side}=?`).bind(x.m.id, now).run(); x.m[col + x.side] = null; } };
   const send = async (who, text, kind) => {
+    let pushN = 0;
     /* A push too, for browsers the member turned on (2026-11-16). If they chose notifications only for this
        one (no DM) and a push actually reached a device, the DM is skipped; if no push got through, the DM
        still goes so they never miss their swaps. */
     if (kind === 'warn' || kind === 'contact') { try { const first = String((Array.isArray(text) ? text[0] : text) || ''), link = (first.match(/https:\/\/raxacademy\.app\/\S+/) || [])[0];
       const pp = await pushPrefs(env, who), sw = pp.swaps || {}, want = sw.on && (kind === 'warn' ? sw.warn !== false : sw.live !== false), noDm = want && (kind === 'warn' ? sw.dmWarn === false : sw.dmLive === false);
       if (want) { const msg = { title: kind === 'warn' ? 'Swaps in 30 minutes' : 'Your swaps are live', body: pushText(first), url: link ? link.replace('https://raxacademy.app', '') : '/swaps', tag: 'swap-' + kind, urgent: true };
-        if (noDm) { const n = await pushTo(env, db, who, msg); if (n > 0) { await stat(db, 'push_instead_' + kind); return true; } }
-        else pushTo(env, db, who, msg).catch(() => {}); } } catch (e) {} }
+        /* Once per message (2026-11-19): a DM that keeps failing is retried every minute, and the push went with
+           every retry - a member got one a minute. Now the push goes once and later tries reuse its result. */
+        let h = 0; for (const c of kind + who + first) h = (h * 31 + c.charCodeAt(0)) | 0; const PK = 'swpush_' + (h >>> 0).toString(36);
+        const was = await env.RATEBOARD_KV.get(PK).catch(() => null);
+        if (was != null) pushN = Number(was) || 0;
+        else { pushN = await pushTo(env, db, who, msg).catch(() => 0); await env.RATEBOARD_KV.put(PK, String(pushN), { expirationTtl: 3 * 3600 }).catch(() => {}); }
+        if (noDm && pushN > 0) { if (was == null) await stat(db, 'push_instead_' + kind); return true; } } } catch (e) {} }
     const me = await member(who);
     if (!me || !me.hashId) { notes.push(`${who}: never verified`); await botFail(db, kind, `${who}: never verified`); return false; }
     try {
@@ -2102,6 +2108,12 @@ async function runDms(env, db, auth, rows, max, force) {
     }
     catch (e) { notes.push(`${kind} to @${me.rsUser} failed: ${String(e.message || e).slice(0, 160)}`); await botFail(db, 'dm_' + kind, `@${me.rsUser}: ${e.message || e}`);
       if (/send 403/.test(String(e.message || e))) { NO_MSG.set(who, Date.now() + 4 * 60000); await dm403(db, who, true); }   // try them again in a few minutes, not every tick
+      /* Bot's Real login rejected (401, 2026-11-19): tell Dennis once every 6 h, and when the push reached the
+         member, count it as delivered so it isn't retried all hour. */
+      if (/send 401/.test(String(e.message || e))) {
+        try { if (!(await env.RATEBOARD_KV.get('bot401_alert'))) { await env.RATEBOARD_KV.put('bot401_alert', String(Date.now()), { expirationTtl: 6 * 3600 });
+          await pushTo(env, db, 'dennis', { title: 'Swap bot is logged out', body: 'Real is rejecting the bot account (401) - swap DMs are not going out. Put a fresh RS_SWAP_TOKEN in /opt/rax/.env and restart.', url: '/admin', tag: 'bot401', urgent: true }); } } catch (x) {}
+        if (pushN > 0) { await stat(db, 'push_only_bot401_' + kind); return true; } }
       return false; }
   };
   // Soonest (or most overdue) first, so a busy hour can't leave earlier ones waiting.
