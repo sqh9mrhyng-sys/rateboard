@@ -1226,14 +1226,16 @@ async function runMatchingInner(db, env) {
   try { await alterOnce(db, 'ALTER TABLE swap_matches ADD COLUMN dueAt INTEGER'); } catch (e) {}
   const sig = (a, b, ag, bg, d) => a < b ? `${a}|${b}|${ag}|${bg}|${d}` : `${b}|${a}|${bg}|${ag}|${d}`;
   // Read again right before saving (not the copy from the start of the run).
-  const fresh = ((await db.prepare(`SELECT a, b, aGets, bGets, slot, createdAt, dueAt FROM swap_matches WHERE createdAt > ? AND status IN ('pending','sending','warned','sent')`).bind(Date.now() - 2 * 86400000).all()).results) || [];
+  /* Swaps called off while the bot was down count as done for this (2026-11-19, js4: "it's tryna get me to swap a lot of
+     people that I already did earlier" - members swapped them by hand). */
+  const fresh = ((await db.prepare(`SELECT a, b, aGets, bGets, slot, createdAt, dueAt FROM swap_matches WHERE createdAt > ? AND (status IN ('pending','sending','warned','sent') OR (status IN ('cancelled','cancelling') AND note LIKE 'called off: the swap bot%' AND dueAt < ?))`).bind(Date.now() - 2 * 86400000, Date.now()).all()).results) || [];
   const seen = new Set(fresh.map(x => sig(x.a, x.b, x.aGets, x.bGets, swapDay(sideDue(x)))));
   const ins = [];
   for (const m of made) { const k = sig(m.a, m.b, m.aGets, m.bGets, swapDay(m.due)); if (seen.has(k)) continue; seen.add(k);
     ins.push(db.prepare(`INSERT INTO swap_matches (a, b, aGets, bGets, slot, createdAt, status, dueAt) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`).bind(m.a, m.b, m.aGets, m.bGets, m.slot, now, m.due)); }
   for (let i = 0; i < ins.length; i += 50) await db.batch(ins.slice(i, i + 50));
   // The 160s: never the same buyer, seller and pass twice on one swap day.
-  { const sig1 = (b, s0, p, d) => `${b}|${s0}|${p}|${d}`, seen1 = new Set(live160.filter(r => r.status !== 'cancelled' && r.kind !== 'niche').map(r => sig1(r.buyer, r.seller, r.pass, swapDay(Number(r.dueAt)))));
+  { const sig1 = (b, s0, p, d) => `${b}|${s0}|${p}|${d}`, seen1 = new Set(live160.filter(r => (r.status !== 'cancelled' || /^called off: the swap bot/.test(r.note || '')) && r.kind !== 'niche').map(r => sig1(r.buyer, r.seller, r.pass, swapDay(Number(r.dueAt)))));
     const ins1 = [];
     for (const m of made160) { const k = sig1(m.buyer, m.seller, m.pass, swapDay(m.due)); if (seen1.has(k)) continue; seen1.add(k);
       ins1.push(db.prepare(`INSERT INTO swap_160 (buyer, seller, pass, slot, dueAt, createdAt, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')`).bind(m.buyer, m.seller, m.pass, m.slot, m.due, now)); }
@@ -3371,6 +3373,20 @@ export async function swapTick(env) {
     const b = await db.prepare(`UPDATE swap_160 SET status='cancelled', note=? WHERE status IN ('pending','warned','sending') AND dueAt <= ?`).bind(note, cut).run().catch(() => null);
     let q = null; try { await db.prepare(DMQ_DDL).run(); q = await db.prepare('DELETE FROM dm_retry').run(); } catch (e) {}
     await env.RATEBOARD_KV.put('stale_clear_1119_n', JSON.stringify({ at: Date.now(), m: (a.meta || {}).changes || 0, s: ((b || {}).meta || {}).changes || 0, q: ((q || {}).meta || {}).changes || 0 }), { expirationTtl: 30 * 86400 }); } } catch (e) {}
+  /* One-off (2026-11-19 08:35 AK): today's swaps after the bot came back that repeat a swap from the bot-down hours
+     (same two members, same cards, same swap day) are called off - those were done by hand. Same for 160s. */
+  try { if (!(await env.RATEBOARD_KV.get('repeat_clear_1119'))) { await env.RATEBOARD_KV.put('repeat_clear_1119', String(Date.now()), { expirationTtl: 30 * 86400 });
+    const n0 = Date.now(), since = n0 - 30 * 3600000;
+    const down = ((await db.prepare("SELECT a, b, aGets, bGets, slot, createdAt, dueAt FROM swap_matches WHERE status IN ('cancelled','cancelling') AND note LIKE 'called off: the swap bot%' AND dueAt > ? AND dueAt < ?").bind(since, n0).all()).results) || [];
+    const sg = (x, d) => x.a < x.b ? `${x.a}|${x.b}|${x.aGets}|${x.bGets}|${d}` : `${x.b}|${x.a}|${x.bGets}|${x.aGets}|${d}`;
+    const had = new Set(down.map(x => sg(x, swapDay(sideDue(x)))));
+    const up = ((await db.prepare("SELECT id, a, b, aGets, bGets, slot, createdAt, dueAt FROM swap_matches WHERE status IN ('pending','warned') AND dueAt >= ?").bind(n0 - 10 * 60000).all()).results) || [];
+    let off = 0; for (const x of up) if (had.has(sg(x, swapDay(sideDue(x))))) { await db.prepare("UPDATE swap_matches SET status='cancelled', note='called off: you already did this swap earlier today' WHERE id=? AND status IN ('pending','warned')").bind(x.id).run(); off++; }
+    let off1 = 0; try { const d1 = ((await db.prepare("SELECT buyer, seller, pass, dueAt FROM swap_160 WHERE status='cancelled' AND note LIKE 'called off: the swap bot%' AND dueAt > ? AND dueAt < ?").bind(since, n0).all()).results) || [];
+      const h1 = new Set(d1.map(x => `${x.buyer}|${x.seller}|${x.pass}|${swapDay(Number(x.dueAt))}`));
+      const u1 = ((await db.prepare("SELECT id, buyer, seller, pass, dueAt FROM swap_160 WHERE status IN ('pending','warned') AND dueAt >= ? AND (kind IS NULL OR kind <> 'niche')").bind(n0 - 10 * 60000).all()).results) || [];
+      for (const x of u1) if (h1.has(`${x.buyer}|${x.seller}|${x.pass}|${swapDay(Number(x.dueAt))}`)) { await db.prepare("UPDATE swap_160 SET status='cancelled', note='called off: you already did this earlier today' WHERE id=? AND status IN ('pending','warned')").bind(x.id).run(); off1++; } } catch (e) {}
+    await env.RATEBOARD_KV.put('repeat_clear_1119_n', JSON.stringify({ at: Date.now(), down: down.length, off, off160: off1 }), { expirationTtl: 30 * 86400 }); } } catch (e) { try { await env.RATEBOARD_KV.put('repeat_clear_1119_n', JSON.stringify({ err: String(e.message || e).slice(0, 120) }), { expirationTtl: 86400 }); } catch (x) {} }
   /* Bot down hold (Dennis, 2026-11-19 07:21 AK: "Stop all swaps for 8am until fixed" - Real rejects the bot's login).
      While held: no matching, no DMs, and every swap and 160 still ahead is called off. It lifts by itself as soon
      as the server has a different RS_SWAP_TOKEN (he puts a fresh one in .env and restarts). */
