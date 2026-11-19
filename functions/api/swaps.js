@@ -959,7 +959,7 @@ async function runMatchingInner(db, env) {
     }
   } catch (e) {}
   // One read of the last two days' swaps, split here into live ones and the rest.
-  const recent2d = ((await db.prepare(`SELECT a, b, aGets, bGets, slot, createdAt, dueAt, followA, followB, warnA, warnB, doneA, doneB, status FROM swap_matches WHERE createdAt > ?`).bind(Date.now() - 2 * 86400000).all()).results || []);
+  const recent2d = ((await db.prepare(`SELECT a, b, aGets, bGets, slot, createdAt, dueAt, followA, followB, warnA, warnB, doneA, doneB, status, note FROM swap_matches WHERE createdAt > ?`).bind(Date.now() - 2 * 86400000).all()).results || []);
   const LIVE_ST = new Set(['pending', 'sending', 'warned', 'sent']);
   const open = recent2d.filter(m => LIVE_ST.has(m.status));
   /* A called-off swap still uses up a pass for the day on whichever side had
@@ -986,7 +986,12 @@ async function runMatchingInner(db, env) {
   /* A called-off swap only uses up the pass of a side that had already been
      warned (told to buy - they may have bought it). Called off before any
      warning, both passes are free again the same swap day (Dennis, 2026-11-05). */
+  /* Swaps from the bot outage (2026-11-19, Dennis: "the players they gave away can't be put in swaps for rest of day"):
+     members did them by hand, so both passes count as given that swap day. */
+  const BOT_OUT_END = Date.UTC(2026, 10, 19, 16, 30);   // swaps due before the 8am hold (later ones were called off ahead of time)
+  const botDown = m => /^called off: the swap bot/.test(m.note || '') && sideDue(m) < BOT_OUT_END;
   for (const m of offTold) { const d = swapDay(sideDue(m));
+    if (botDown(m)) { given.add(`${m.b}|${m.aGets}|${d}`); giveSeason(m.b, m.aGets, d); given.add(`${m.a}|${m.bGets}|${d}`); giveSeason(m.a, m.bGets, d); continue; }
     if (m.warnB || m.doneB) { given.add(`${m.b}|${m.aGets}|${d}`); giveSeason(m.b, m.aGets, d); }
     if (m.warnA || m.doneA) { given.add(`${m.a}|${m.bGets}|${d}`); giveSeason(m.a, m.bGets, d); } }
   // Packs a member marked as used today themselves (Packs today tab): not given again this swap day.
@@ -997,6 +1002,7 @@ async function runMatchingInner(db, env) {
   let live160 = [];
   try { live160 = ((await db.prepare(`SELECT buyer, seller, pass, dueAt, createdAt, status, warnS, kind, note FROM swap_160 WHERE createdAt > ? AND (status <> 'cancelled' OR warnS IS NOT NULL OR note LIKE 'called off: the swap bot%')`).bind(Date.now() - 2 * 86400000).all()).results) || []; } catch (e) {}
   for (const r of live160) { const d = swapDay(Number(r.dueAt));
+    if (r.status === 'cancelled' && /^called off: the swap bot/.test(r.note || '') && Number(r.dueAt) >= BOT_OUT_END) continue;
     if (!given.has(`${r.seller}|${r.pass}|${d}`)) giveSeason(r.seller, r.pass, d);
     given.add(`${r.seller}|${r.pass}|${d}`);
     if (r.status !== 'cancelled') bump(recv, `${r.buyer}|${r.pass}|${d}`); }
@@ -3382,6 +3388,20 @@ export async function swapTick(env) {
     const b = await db.prepare(`UPDATE swap_160 SET status='sent', note=NULL WHERE note=? AND status='cancelled' AND dueAt < ? AND (warnS IS NOT NULL OR warnB IS NOT NULL)`).bind(nt, cut).run().catch(() => null);
     const left = await db.prepare(`SELECT COUNT(*) AS n FROM swap_matches WHERE note=? AND dueAt < ?`).bind(nt, cut).first();
     await env.RATEBOARD_KV.put('stale_undo_1119_n', JSON.stringify({ at: Date.now(), m: (a.meta || {}).changes || 0, s: ((b || {}).meta || {}).changes || 0, stillOff: left ? left.n : null }), { expirationTtl: 30 * 86400 }); } } catch (e) { try { await env.RATEBOARD_KV.put('stale_undo_1119_n', JSON.stringify({ err: String(e.message || e).slice(0, 160) }), { expirationTtl: 86400 }); } catch (x) {} }
+  /* One-off (2026-11-19 11:03 AK): swaps still ahead today where someone would give a pass they already gave by hand
+     during the bot outage (swaps due before the 8am hold) are called off. Same for 160s they'd sell. */
+  try { if (!(await env.RATEBOARD_KV.get('outgive_clear_1119'))) { await env.RATEBOARD_KV.put('outgive_clear_1119', String(Date.now()), { expirationTtl: 30 * 86400 });
+    const n0 = Date.now(), END = Date.UTC(2026, 10, 19, 16, 30), since = n0 - 30 * 3600000, blk = new Set();
+    for (const x of (((await db.prepare("SELECT a, b, aGets, bGets, slot, createdAt, dueAt FROM swap_matches WHERE status IN ('cancelled','cancelling') AND note LIKE 'called off: the swap bot%' AND dueAt > ? AND dueAt < ?").bind(since, END).all()).results) || [])) {
+      const d = swapDay(sideDue(x)); blk.add(`${x.b}|${x.aGets}|${d}`); blk.add(`${x.a}|${x.bGets}|${d}`); }
+    try { for (const x of (((await db.prepare("SELECT seller, pass, dueAt FROM swap_160 WHERE status='cancelled' AND note LIKE 'called off: the swap bot%' AND dueAt > ? AND dueAt < ?").bind(since, END).all()).results) || [])) blk.add(`${x.seller}|${x.pass}|${swapDay(Number(x.dueAt))}`); } catch (e) {}
+    let off = 0, off1 = 0;
+    for (const x of (((await db.prepare("SELECT id, a, b, aGets, bGets, slot, createdAt, dueAt FROM swap_matches WHERE status='pending' AND warnA IS NULL AND warnB IS NULL AND dueAt > ?").bind(n0 + 30 * 60000).all()).results) || [])) {
+      const d = swapDay(sideDue(x)), who = blk.has(`${x.b}|${x.aGets}|${d}`) ? x.b : blk.has(`${x.a}|${x.bGets}|${d}`) ? x.a : null;
+      if (who) { await db.prepare("UPDATE swap_matches SET status='cancelled', note=? WHERE id=? AND status='pending'").bind(`called off: @${who} already gave that pass today`, x.id).run(); off++; } }
+    try { for (const x of (((await db.prepare("SELECT id, seller, pass, dueAt FROM swap_160 WHERE status='pending' AND warnS IS NULL AND warnB IS NULL AND dueAt > ?").bind(n0 + 30 * 60000).all()).results) || []))
+      if (blk.has(`${x.seller}|${x.pass}|${swapDay(Number(x.dueAt))}`)) { await db.prepare("UPDATE swap_160 SET status='cancelled', note=? WHERE id=? AND status='pending'").bind(`called off: @${x.seller} already gave that pass today`, x.id).run(); off1++; } } catch (e) {}
+    await env.RATEBOARD_KV.put('outgive_clear_1119_n', JSON.stringify({ at: Date.now(), blocked: blk.size, off, off160: off1 }), { expirationTtl: 30 * 86400 }); } } catch (e) { try { await env.RATEBOARD_KV.put('outgive_clear_1119_n', JSON.stringify({ err: String(e.message || e).slice(0, 160) }), { expirationTtl: 86400 }); } catch (x) {} }
   /* One-off (2026-11-19 08:35 AK): today's swaps after the bot came back that repeat a swap from the bot-down hours
      (same two members, same cards, same swap day) are called off - those were done by hand. Same for 160s. */
   try { if (!(await env.RATEBOARD_KV.get('repeat_clear_1119'))) { await env.RATEBOARD_KV.put('repeat_clear_1119', String(Date.now()), { expirationTtl: 30 * 86400 });
