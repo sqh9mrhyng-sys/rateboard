@@ -979,7 +979,10 @@ async function predMemberAlerts(env, out) {
     try { me = JSON.parse((await env.RATEBOARD_KV.get('pred_me_v1_' + who)) || '{}') || {}; bets = JSON.parse((await env.RATEBOARD_KV.get('pred_bets_v1_' + who)) || '[]') || []; port = JSON.parse((await env.RATEBOARD_KV.get('pred_port_v1_' + who)) || '{}') || {}; } catch (e) {}
     const unit = (Number(me.bank) || 0) * (Number(me.upct) || 1) / 100;
     const st = ST[who] = ST[who] || {};
-    const sent = () => Object.values(st).filter(x => now - x.at < 3600000).length;
+    /* Per-hour cap counts every alert sent (2026-11-19: it counted alerted sides, so a side alerted twice in an hour
+       counted once and members went past their cap). */
+    st._log = (Array.isArray(st._log) ? st._log : []).filter(t => now - t < 3600000);
+    const sent = () => st._log.length;
     const held = (gid, si) => { const p = (port.pos || []).find(x => x.marketId === gid && x.si === si && x.cost > 0);
       const lb = bets.filter(b => b.gid === gid && b.side === si && !b.res && (b.amt || 0) > 0);
       const cost = Math.max(p ? p.cost : 0, lb.reduce((t, b) => t + (b.amt || 0), 0)), pays = p ? p.pays : lb.reduce((t, b) => t + (b.pay || ((b.amt || 0) / (b.price || 1))), 0);
@@ -987,7 +990,7 @@ async function predMemberAlerts(env, out) {
     const fire = async (k, ev, msg) => {
       const s0 = st[k]; if (s0 && !(ev >= (s0.ev || 0) + 0.02 || now - s0.at > 45 * 60000)) return;
       if (sent() >= (c.cap || 6)) return;
-      st[k] = { at: now, ev }; await pushTo(env, db, who, { ...msg, urgent: true });
+      st[k] = { at: now, ev }; st._log.push(now); await pushTo(env, db, who, { ...msg, urgent: true });
       try { await env.RATEBOARD_KV.put('pred_lastalert_' + who, JSON.stringify({ url: msg.url, at: now }), { expirationTtl: 3600 }); } catch (e) {}
     };
     for (const g of games) {
@@ -1009,7 +1012,7 @@ async function predMemberAlerts(env, out) {
           await fire('start:' + g.id, evp, { title: `Starting soon · ${nm} still +${(evp * 100).toFixed(1)}%`, body: `${g.game} starts in ${Math.max(1, Math.round((t0 - now) / 60000))} min. Last chance to add before it goes live.`, url: U('add', unit), tag: tag('start') });
       }
     }
-    for (const k of Object.keys(st)) if (now - st[k].at > 12 * 3600000) delete st[k];
+    for (const k of Object.keys(st)) if (k !== '_log' && now - st[k].at > 12 * 3600000) delete st[k];
   }
   for (const w of Object.keys(ST)) if (!users.includes(w)) delete ST[w];
   await env.RATEBOARD_KV.put('pred_ualert_state_v1', JSON.stringify(ST), { expirationTtl: 86400 });
