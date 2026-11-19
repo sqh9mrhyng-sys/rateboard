@@ -333,7 +333,7 @@ const pc = v => v == null ? '-' : (Math.round(v * 1000) / 10).toFixed(1) + '%';
 const logo = (s, cls = '') => s.logo ? `<span class="lgw ${cls}"><img class="lg" src="${esc(s.logo)}" alt="" loading="lazy" onerror="this.parentNode.classList.add('nol');this.remove()"><em>${esc(String(s.key || s.label || '').slice(0, 4))}</em></span>`
   : `<span class="lgw nol ${cls}" style="--tc:${esc(s.color || '#4a5468')}"><em>${esc(String(s.key || s.label || s.name || '').slice(0, 4))}</em></span>`;
 const SPN = { nhl: 'NHL', nba: 'NBA', nfl: 'NFL', ncaaf: 'CFB', ncaam: 'CBB', ufc: 'UFC', soccer: 'FC' };
-let J = null, chip = ls.get('pred_chip') || '';
+let J = null, chip = ls.get('pred_chip') || '', preOnly = ls.get('pred_pre') === '1';
 const MIN_FAIR = 0.07, MIN_EV_U = 0.02;
 let bank = Number(ls.get('pred_bank')) || 0;
 // Unit size (Dennis, 2026-11-17): 1u = 0.5% to 4% of your rax, 1% unless you pick another. Saved on this device.
@@ -662,12 +662,15 @@ function draw(){
   const ae = document.activeElement; if (ae && ae.closest && ae.closest('form.bf')) { tick(); return; }
   const bg = betGids(), games = (J.games || []).filter(g => !g.locked && (!bg.has(g.id) || g.id === FOCUS.gid)).map(derive);
   const sps = SP_ORDER.filter(sp => games.some(g => g.sport === sp));
-  $('#chips').innerHTML = ['', '_ev', ...(sps.length > 1 ? sps : [])].map(s => `<button data-c="${s}" aria-pressed="${chip === s}">${s === '_best' ? 'Best EV' : s === '_ev' ? '+EV' : s ? SPN[s] || s : 'All'}</button>`).join('');
+  $('#chips').innerHTML = ['', '_ev', ...(sps.length > 1 ? sps : [])].map(s => `<button data-c="${s}" aria-pressed="${chip === s}">${s === '_best' ? 'Best EV' : s === '_ev' ? '+EV' : s ? SPN[s] || s : 'All'}</button>`).join('')
+    + `<button data-pre="1" aria-pressed="${preOnly}" title="Only games that haven't started">Not started</button>`;
   const pos = games.filter(g => g.sides.some(s => units(g, s))), top = games.reduce((a, g) => Math.max(a, best(g)), -9);
   $('#sum').innerHTML = `<div><b>${games.length}</b><span>open markets${pos.length ? ` · <em class="pos">${pos.length} to bet</em>` : ''}</span></div>`;
   if (!$('#bkbox').open) drawBooks();
   /* All: every open market. +EV: games that aren't decided (no side under 7% fair) and have a bet to make. */
-  const vis = chip === '_ev' ? games.filter(g => !decided(g) && g.sides.some(s => units(g, s))) : games;
+  /* Not started (member request 2026-11-18): hides live games; stacks with the other chips. */
+  const notStarted = g => !g.live && !g.ended && !(g.start && Date.parse(g.start) <= Date.now());
+  const vis = (chip === '_ev' ? games.filter(g => !decided(g) && g.sides.some(s => units(g, s))) : games).filter(g => !preOnly || notStarted(g));
   $('#livenote').hidden = !vis.some(g => g.live);   // note shows whenever a live game is listed (Dennis, 2026-11-17)
   let html;
   if (chip === '_ev') {
@@ -678,17 +681,17 @@ function draw(){
     html = (chip ? [chip] : sps).map(sp => { const l = vis.filter(g => g.sport === sp).sort(stable); if (!l.length) return '';
       const n = l.filter(g => g.sides.some(s => units(g, s))).length;
       return `<div class="sph"><span>${esc(SPN[sp] || sp)}</span><span class="note">${l.length} game${l.length === 1 ? '' : 's'}${n ? ` · <b class="pos">${n} bet${n === 1 ? '' : 's'}</b>` : ''}</span></div>${l.map(card).join('')}`; }).join('');
-    html = html || `<div class="empty">${chip === '_ev' && games.length ? 'No +EV bets right now.' : 'No open game markets on Real right now.'}</div>`;
+    html = html || `<div class="empty">${chip === '_ev' && games.length ? 'No +EV bets right now.' : preOnly && games.length ? 'No games that haven\'t started yet.' : 'No open game markets on Real right now.'}</div>`;
   }
   // Locked and ended games (kept 24 h) at the bottom, so a bet can still be logged after the fact.
   const ended = (J.games || []).filter(g => g.locked && !bg.has(g.id) && (!chip || chip === '_ev' || g.sport === chip)).map(derive).sort(stable);
-  if (ended.length && chip !== '_ev') html += `<details class="endbox"${endOpen ? ' open' : ''}><summary class="sph"><span>Locked &amp; ended</span><span class="note">${ended.length} game${ended.length === 1 ? '' : 's'} · log a bet you made</span></summary>${ended.map(endCard).join('')}</details>`;
+  if (ended.length && chip !== '_ev' && !preOnly) html += `<details class="endbox"${endOpen ? ' open' : ''}><summary class="sph"><span>Locked &amp; ended</span><span class="note">${ended.length} game${ended.length === 1 ? '' : 's'} · log a bet you made</span></summary>${ended.map(endCard).join('')}</details>`;
   $('#list').innerHTML = html;
   $('#tabs [data-t="a"]').hidden = true;   // public now: the access list does nothing { const n = [...document.querySelectorAll('#tabs button')].filter(x => !x.hidden).length; $('#tabs').style.setProperty('--tc', n <= 4 ? 2 : 3); } $('#tabs [data-t="r"]').hidden = !J.owner; $('#garb').hidden = !J.owner;
   tick();
 }
 document.addEventListener('toggle', e => { const d = e.target; if(!d.matches || !d.matches('details.bd')) return; d.open ? openBd.add(d.dataset.bd) : openBd.delete(d.dataset.bd); }, true);
-$('#chips').addEventListener('click', e => { const b = e.target.closest('[data-c]'); if(!b) return; chip = b.dataset.c; ls.set('pred_chip', chip); draw(); });
+$('#chips').addEventListener('click', e => { if (e.target.closest('[data-pre]')) { preOnly = !preOnly; ls.set('pred_pre', preOnly ? '1' : '0'); draw(); return; } const b = e.target.closest('[data-c]'); if(!b) return; chip = b.dataset.c; ls.set('pred_chip', chip); draw(); });
 $('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if(!b) return; for (const x of document.querySelectorAll('#tabs button')) x.setAttribute('aria-pressed', x === b); $('#vm').hidden = b.dataset.t !== 'm'; $('#vg').hidden = b.dataset.t !== 'g'; $('#va').hidden = b.dataset.t !== 'a'; $('#vf').hidden = b.dataset.t !== 'f'; if (b.dataset.t === 'f') { fbCall(); } if (b.dataset.t === 'a') accLoad(); $('#vb').hidden = b.dataset.t !== 'b'; if (b.dataset.t === 'b') loadPort(); if (b.dataset.t === 'b') drawBets(); $('#vr').hidden = b.dataset.t !== 'r'; if (b.dataset.t === 'r') drawArb(); });
 $('#list').addEventListener('click', e => {
   const c = e.target.closest('[data-cl]'); if (c) { const id = c.dataset.cl; collapsed.has(id) ? collapsed.delete(id) : collapsed.add(id); ls.set('pred_collapsed2', JSON.stringify([...collapsed])); draw(); return; }
