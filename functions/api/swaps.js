@@ -3688,7 +3688,7 @@ const MOD_VOID = new Set([Date.UTC(2026, 10, 12, 18, 0, 0)]);
 const MOD_VOID_DAYS = [[Date.UTC(2026, 10, 15, 5, 0, 0), Date.UTC(2026, 10, 16, 5, 0, 0)],
   /* Bot logged out (Dennis, 2026-11-19: "Invalidate all reports since the issue started"): from the first failed DM
      (about 3am Alaska) until the hold lifts - the end is set from KV when the new token is in (moderate()). */
-  [Date.UTC(2026, 10, 19, 11, 55, 0), Infinity]];
+  [Date.UTC(2026, 10, 19, 11, 55, 0), Date.UTC(2026, 10, 20, 12, 0, 0)]];   // the whole swap day (Dennis, 11:05 AK: "make reports hold 0 value for today")
 const modVoidDay = t => MOD_VOID_DAYS.some(([a, b]) => t >= a && t < b);
 const MOD_AUTO = true;   // false: the 10-minute run only previews (counts kept in KV); true: it acts
 const MOD_EARLY = 10 * 60000;          // (old) a report may come up to 10 min before the swap's time
@@ -3739,9 +3739,9 @@ async function reportBlocks(env) { try { return JSON.parse((await env.RATEBOARD_
 async function reportBlocked(env, key) { return !!(await reportBlocks(env))[String(key || '').toLowerCase()]; }
 async function moderate(env, db, dry) {
   let out0err = null;
-  try { const lifted = Number(await env.RATEBOARD_KV.get('swaps_hold_lifted')) || 0; if (lifted) MOD_VOID_DAYS[1][1] = lifted + 90 * 60000; } catch (e) {}   // swaps due up to 90 min after the fix were matched while it was down
+
   // One-off: take back what the bot-down window already gave (2026-11-19).
-  if (!dry) { try { if (!(await env.RATEBOARD_KV.get('mod_void_1119'))) { await env.RATEBOARD_KV.put('mod_void_1119', String(Date.now()));
+  if (!dry) { try { if (!(await env.RATEBOARD_KV.get('mod_void_1119b'))) { await env.RATEBOARD_KV.put('mod_void_1119b', String(Date.now()));   // b: run again for the whole day
     const a1 = MOD_VOID_DAYS[1][0];
     const hit = ((await db.prepare('SELECT DISTINCT key FROM mod_events WHERE period >= ? OR at >= ?').bind(a1, a1).all()).results) || [];
     await db.prepare('DELETE FROM mod_events WHERE period >= ? OR at >= ?').bind(a1, a1).run();
