@@ -3363,7 +3363,12 @@ export async function swapTick(env) {
       await env.RATEBOARD_KV.put('swaps_hold', JSON.stringify({ at: Date.now(), tok, why: 'swap bot is logged out' })); }
     const hold = JSON.parse((await env.RATEBOARD_KV.get('swaps_hold')) || 'null');
     if (hold && hold.tok !== tok) { await env.RATEBOARD_KV.delete('swaps_hold'); await env.RATEBOARD_KV.put('swaps_hold_lifted', String(Date.now()), { expirationTtl: 30 * 86400 }); await db.prepare("INSERT INTO bot_log (at, kind, msg) VALUES (?, 'match', ?)").bind(Date.now(), 'hold lifted: new bot token').run().catch(() => {}); }
+    else if (hold && hold.probe && hold.probe.ok >= 2) { await env.RATEBOARD_KV.delete('swaps_hold'); await env.RATEBOARD_KV.put('swaps_hold_lifted', String(Date.now()), { expirationTtl: 30 * 86400 });
+      await db.prepare("INSERT INTO bot_log (at, kind, msg) VALUES (?, 'match', ?)").bind(Date.now(), 'hold lifted: Real accepts the bot again').run().catch(() => {}); }
     else if (hold) {
+      /* Is the bot let back in? A read-only look at its chat list every 2 min (no message sent). Two OKs in a row lift the hold. */
+      if (!hold.probe || Date.now() - hold.probe.at > 120000) { let st = 0; try { const r = await fetch('https://web.realapp.com/messages/channels', { headers: rsHeaders(auth) }); st = r.status; } catch (e) { st = -1; }
+        hold.probe = { at: Date.now(), status: st, ok: st >= 200 && st < 300 ? ((hold.probe && hold.probe.ok) || 0) + 1 : 0 }; }
       const n = Date.now(), note = 'called off: the swap bot is down - swaps resume once it is fixed';
       const a = await db.prepare(`UPDATE swap_matches SET status='cancelled', note=? WHERE status IN ('pending','warned') AND dueAt > ?`).bind(note, n - 5 * 60000).run();
       const b = await db.prepare(`UPDATE swap_160 SET status='cancelled', note=? WHERE status IN ('pending','warned') AND dueAt > ?`).bind(note, n - 5 * 60000).run().catch(() => null);
