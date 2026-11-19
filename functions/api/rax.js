@@ -1508,7 +1508,7 @@ function pullAllowed(g, mk, sport, pid) {
 const MARKET_LANES = 1;
 const MARKET_WINDOW_HOURS = 12;
 const MARKET_WINDOWS = 7;           // 12h x 7 = past the 3 days a listing can run
-const MARKET_PAGES_PER_LANE = 60;   // 2026-11-19: Real caps a page at 10 listings, so CBB needs ~6,500 pages a sweep; the 55 s tick is the real limit now   // slowed 2026-11-02 (was 40)
+const MARKET_PAGES_PER_LANE = 90;   // 2026-11-19: Real caps a page at 10 listings, so CBB needs ~6,500 pages a sweep; the 55 s tick is the real limit now   // slowed 2026-11-02 (was 40)
 /* The gap between pages. No gap at all drew "high volume" from Real, so it
    starts at 150ms (what ran for hours without one) and doubles, up to 2s,
    each time Real says it is busy; every season finished without that eases
@@ -9321,6 +9321,8 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil(bulkTick(env).catch(() => {}));
     ctx.waitUntil(draftScan(env).catch(() => {}));
     ctx.waitUntil(predTick(env).catch(() => {}));
+    // CBB market on its own minute (2026-11-19): riding the collector calls left it ~1 page a minute between their phases.
+    if (MARKET_ON && env.RS_MARKET_TOKEN) ctx.waitUntil(marketSlice(env, env.RS_MARKET_TOKEN, 50000).catch(() => {}));
     ctx.waitUntil(marketWipe(env).catch(() => {}));
     if (url.searchParams.get('ticks') === '1') return new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } });
   }
