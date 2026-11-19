@@ -53,3 +53,20 @@ document.addEventListener('visibilitychange', function () { if (document.visibil
 /* Keep the notification helper current, so tap handling updates reach phones without a reinstall. */
 try { if (navigator.serviceWorker) navigator.serviceWorker.getRegistration().then(function (r) { if (r) r.update(); }).catch(function () {}); } catch (x) {}
 window.addEventListener('pageshow', rbNavCheck);
+
+/* Real links from the home-screen app (2026-11-19: a boost opened a blank in-app browser). In the app, a link
+   opened in a new window lands in iOS's in-app viewer, which can't hand off to Real's app. A plain tap on the
+   link (same window) is what lets iOS open it in Real's app instead. */
+(function () {
+  try {
+    var app = (window.navigator && window.navigator.standalone) || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+    if (!app) return;
+    var real = function (h) { return /^https:\/\/(www\.)?(realapp\.com|realsports\.io)\//i.test(h || ''); };
+    document.addEventListener('click', function (e) {
+      var a = e.target && e.target.closest && e.target.closest('a[href]'); if (!a || !real(a.href)) return;
+      if (a.target) a.removeAttribute('target');
+    }, true);
+    var wo = window.open;
+    window.open = function (u) { if (real(String(u || ''))) { location.href = u; return null; } return wo.apply(window, arguments); };
+  } catch (x) {}
+})();
