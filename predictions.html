@@ -163,6 +163,9 @@
   .ptr{display:grid;grid-template-columns:1.3fr 1.2fr 0.9fr 1fr 0.8fr;gap:6px;align-items:baseline} .ptr .pos{color:var(--good);font-weight:800} .ptr .neg{color:var(--bad);font-weight:800}
   .plink{order:9;margin-left:8px;display:inline-grid;place-items:center;width:34px;height:34px;border-radius:10px;background:var(--accent);color:#141925;font-weight:900;text-decoration:none} .pt{position:relative}
   #bsum[hidden],#cbox[hidden],label.keep[hidden],#bavg[hidden]{display:none!important}
+  .fbx{border:2px solid var(--accent);border-radius:14px;padding:10px;margin:0 0 12px;background:var(--panel2)} .fbx .g{margin:8px 0 0}
+  .fbh{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--accent)} .fbh button{margin-left:auto;background:none;border:0;color:var(--mute);font-size:20px;line-height:1;cursor:pointer;padding:2px 6px}
+  .fbr{font-size:17px;font-weight:800;margin:6px 0 2px;line-height:1.3} .fbr .pos{color:var(--pos,#3fbf7f)} .fbs{font-size:13px;color:var(--mute)} .fbs b{color:var(--ink)}
   .g.focus{border-color:var(--accent)!important;box-shadow:0 0 0 2px var(--accent),0 6px 18px rgba(0,0,0,.25)!important}
   .livenote{margin:8px 0 10px;padding:10px 12px;border-radius:10px;border:1px solid #ffc95a55;background:#ffc95a12;color:#ffd98a;font-size:13.5px;font-weight:600;line-height:1.4} .livenote[hidden]{display:none}
 
@@ -254,6 +257,7 @@
 <div class="top"><h1>Predictions EV</h1><span class="pulse" id="pulse"><i></i><span id="ago">-</span></span></div>
 <div class="tabs" id="tabs"><button data-t="m" aria-pressed="true">Markets</button><button data-t="b" aria-pressed="false">My bets <span id="bn"></span></button><button data-t="r" aria-pressed="false" hidden>Arbitrage <span id="rn"></span></button><button data-t="f" aria-pressed="false">Request/Report <span id="fn"></span></button><button data-t="n" aria-pressed="false" hidden>Alerts</button><button data-t="g" aria-pressed="false">Guide</button><button data-t="a" aria-pressed="false" hidden>Access</button></div>
 <div id="vm">
+<div id="fbx" class="fbx" hidden></div>
 <details class="setbox" id="setbox"><summary><span class="st1">Your rax</span><b id="setsum">Set your rax for unit sizes</b><span class="st2">Edit</span></summary>
 <label class="bank"><span>Your rax (for unit sizes)</span><input id="bank" type="number" inputmode="numeric" min="0" step="100" placeholder="e.g. 5000"></label>
 <div class="upick"><label for="upct">Unit size</label><select id="upct"><option value="0.5">0.5% of rax</option><option value="1">1% of rax (recommended)</option><option value="1.5">1.5% of rax</option><option value="2">2% of rax</option><option value="2.5">2.5% of rax</option><option value="3">3% of rax</option><option value="3.5">3.5% of rax</option><option value="4">4% of rax</option></select><small id="banknote">1u = 1% of your rax</small>
@@ -454,7 +458,7 @@ function when(g){
 async function load(){
   try{ const t = ls.get('ratebrd_token_v1') || ''; J = await (await fetch('/api/swaps?op=predev', { headers: t ? { 'x-rb-token': t } : {} })).json(); }catch(e){ J = { error: 'Could not reach the site.' }; }
   if(J.error){ $('#list').innerHTML = `<div class="empty">${/sign in/i.test(J.error) ? 'Sign in first - <a href="/?next=/predictions">sign in</a>.' : esc(J.error)}</div>`; return; }
-  applyMe(J.me); autoPort(); $('#tabs [data-t="n"]').hidden = !(J.port && !J.owner); $('#tabs').classList.toggle('t5', !!(J.port && !J.owner));
+  applyMe(J.me); autoPort(); try { localStorage.setItem('rb_pred_alerts', (J.owner || J.port) ? '1' : '0'); } catch (e) {} $('#tabs [data-t="n"]').hidden = !(J.port && !J.owner); $('#tabs').classList.toggle('t5', !!(J.port && !J.owner));
   if(!J.keySet){ $('#list').innerHTML = '<div class="empty">The Odds API key isn\'t on the server yet.</div>'; return; }
   { const ae = document.activeElement; if (!(ae && ae.closest && ae.closest('#vr form'))) drawArb(); }
   draw(); focusGo(); if (!$('#vb').hidden && !(document.activeElement && document.activeElement.dataset && (document.activeElement.dataset.amt || document.activeElement.dataset.pay))) drawBets(); else $('#bn').textContent = BETS.filter(b => !b.res).length ? `(${BETS.filter(b => !b.res).length})` : '';
@@ -530,13 +534,33 @@ function drawBooks(){
    moments you added rax. Value is what Real would give you for it right now. */
 /* Opened from a value alert (2026-11-17): /predictions#g=<market> jumps to that game on Markets, open and
    highlighted, even if you've already bet on it. */
-const FOCUS = { gid: null, done: false };
-function readFocus(){ const m = location.hash.match(/g=(\d+)/); FOCUS.gid = m ? Number(m[1]) : null; FOCUS.done = false; if (FOCUS.gid) chip = ''; }
+/* 2026-11-18 (Dennis: "open that game's profile and what I'm supposed to bet"): the alert's game now sits pinned at
+   the top of Markets with the bet from the alert - side, rax, top price - and today's numbers, until closed. */
+const FOCUS = { gid: null, done: false, si: null, amt: null, q: null, kind: '', at: 0 };
+function readFocus(){ const h = location.hash, n = k => { const m = h.match(new RegExp('[#&]' + k + '=([\\w.-]+)')); return m ? m[1] : null; };
+  FOCUS.gid = Number(n('g')) || null; FOCUS.si = n('s') != null ? Number(n('s')) : null; FOCUS.amt = Number(n('a')) || null; FOCUS.q = Number(n('q')) || null; FOCUS.kind = n('k') || ''; FOCUS.at = Date.now(); FOCUS.done = false;
+  if (FOCUS.gid) chip = ''; }
+function closeFocus(){ FOCUS.gid = null; try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} $('#fbx').hidden = true; if (J && J.games) draw(); }
+function drawFocus(){
+  const box = $('#fbx'); if (!FOCUS.gid || !J) { box.hidden = true; return; }
+  const raw = (J.games || []).find(g => g.id === FOCUS.gid);
+  if (!raw) { box.hidden = false; box.innerHTML = `<div class="fbh">From your alert<button type="button" data-fbx aria-label="Close">×</button></div><div class="fbs">That market isn't open on Real anymore.</div>`; return; }
+  const g = derive(raw), si = FOCUS.si != null && g.sides[FOCUS.si] ? FOCUS.si : g.sides.reduce((b, x, i) => (x.ev ?? -9) > (g.sides[b].ev ?? -9) ? i : b, 0), sd = g.sides[si];
+  const nm = sd.name || sd.label, q = Number(sd.price), fair = sd.fair, ev = fair != null && q > 0 ? fair / q - 1 : null;
+  const top = FOCUS.q ? FOCUS.q / 100 : null, still = top == null || (q > 0 && q <= top + 0.0001), started = g.live || g.locked || (g.start && Date.parse(g.start) <= Date.now());
+  const verb = FOCUS.kind === 'sell' ? 'Think about selling' : FOCUS.kind === 'add' ? 'Add' : 'Buy';
+  const what = FOCUS.kind === 'sell' ? `${verb} <b>${esc(nm)}</b>` : `${verb} ${FOCUS.amt ? `<b>${Math.round(FOCUS.amt).toLocaleString()} rax</b> of ` : ''}<b>${esc(nm)}</b>${top ? ` at <b>${Math.round(top * 100)}%</b> or less` : ''}`;
+  box.hidden = false;
+  box.innerHTML = `<div class="fbh">From your alert<button type="button" data-fbx aria-label="Close">×</button></div>
+    <div class="fbr">${what}</div>
+    <div class="fbs">Now: Real <b>${q > 0 ? Math.round(q * 100) + '%' : '-'}</b> · fair <b>${fair != null ? (fair * 100).toFixed(1) + '%' : '-'}</b> · EV <b class="${ev != null && ev >= 0 ? 'pos' : ''}">${ev != null ? (ev >= 0 ? '+' : '') + (ev * 100).toFixed(1) + '%' : '-'}</b>${started ? ' · <b>game has started</b>' : !still && FOCUS.kind !== 'sell' ? ' · <b>price moved past the alert</b>' : ''}</div>
+    ${card(g)}`;
+}
+document.addEventListener('click', e => { if (e.target.closest('[data-fbx]')) closeFocus(); });
 readFocus(); addEventListener('hashchange', () => { readFocus(); if (J && J.games) { draw(); focusGo(); } });
-function focusGo(){ if (!FOCUS.gid || FOCUS.done) return; const el = document.getElementById('g-' + FOCUS.gid); if (!el) return; FOCUS.done = true;
+function focusGo(){ if (!FOCUS.gid || FOCUS.done || !J) return; FOCUS.done = true;
   const t = document.querySelector('#tabs [data-t="m"]'); if (t && t.getAttribute('aria-pressed') !== 'true') t.click();
-  setTimeout(() => { const e2 = document.getElementById('g-' + FOCUS.gid); if (e2) e2.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 60);
-  setTimeout(() => { FOCUS.gid = null; }, 60000); }
+  drawFocus(); setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 60); }
 let PORT = null, SORT_LBL = null; const OPENP = new Set();
 document.addEventListener('toggle', e => { const d = e.target; if (d && d.dataset && d.dataset.pk) { d.open ? OPENP.add(d.dataset.pk) : OPENP.delete(d.dataset.pk); } }, true);
 /* Linked members (not Dennis): synced from Real on their own every 2 min while the page is open. */
@@ -711,7 +735,8 @@ function drawBets(){
 }
 function draw(){
   const ae = document.activeElement; if (ae && ae.closest && ae.closest('form.bf')) { tick(); return; }
-  const bg = betGids(), games = (J.games || []).filter(g => !g.locked && (!bg.has(g.id) || g.id === FOCUS.gid)).map(derive);
+  const bg = betGids(), games = (J.games || []).filter(g => !g.locked && !bg.has(g.id) && g.id !== FOCUS.gid).map(derive);
+  drawFocus();
   const sps = SP_ORDER.filter(sp => games.some(g => g.sport === sp));
   $('#chips').innerHTML = ['', '_ev', ...(sps.length > 1 ? sps : [])].map(s => `<button data-c="${s}" aria-pressed="${chip === s}">${s === '_best' ? 'Best EV' : s === '_ev' ? '+EV' : s ? SPN[s] || s : 'All'}</button>`).join('')
     + `<button data-pre="1" aria-pressed="${preOnly}" title="Only games that haven't started">Not started</button>`;

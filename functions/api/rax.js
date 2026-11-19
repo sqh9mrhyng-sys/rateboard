@@ -900,7 +900,8 @@ async function predBuildTick(env, out) {
       const recent = Object.values(st).filter(x => now - x.at < 15 * 60000).length; if (recent >= 3) continue;
       st[k] = { at: now, q, ev: evp }; ch = true;
       const nm = sd.name || sd.label;
-      await pushTo(env, db, who, { title: `Value · ${nm} +${(evp * 100).toFixed(1)}%`, body: `Buy ${piece.toLocaleString()} rax at ${Math.round(q * 100)}% or less (fair ${(fair * 100).toFixed(1)}%). ${held > 0 ? `${Math.round(held).toLocaleString()} of ${Math.round(u * cfg.unit).toLocaleString()} in.` : `Full size ${Math.round(u * cfg.unit).toLocaleString()} (${u}u).`}${g.live ? ' Live.' : ''}`, url: '/predictions#g=' + g.id, tag: 'pv-' + k, urgent: true });
+      await pushTo(env, db, who, { title: `Value · ${nm} +${(evp * 100).toFixed(1)}%`, body: `Buy ${piece.toLocaleString()} rax at ${Math.round(q * 100)}% or less (fair ${(fair * 100).toFixed(1)}%). ${held > 0 ? `${Math.round(held).toLocaleString()} of ${Math.round(u * cfg.unit).toLocaleString()} in.` : `Full size ${Math.round(u * cfg.unit).toLocaleString()} (${u}u).`}${g.live ? ' Live.' : ''}`, url: `/predictions#g=${g.id}&s=${si}&a=${piece}&q=${Math.round(q * 100)}`, tag: 'pv-' + k, urgent: true });
+      try { await env.RATEBOARD_KV.put('pred_lastalert_' + who, JSON.stringify({ url: `/predictions#g=${g.id}&s=${si}&a=${piece}&q=${Math.round(q * 100)}`, at: now }), { expirationTtl: 3600 }); } catch (e) {}
     }
   }
   for (const k of Object.keys(st)) if (now - st[k].at > 6 * 3600000) { delete st[k]; ch = true; }
@@ -939,6 +940,7 @@ async function predMemberAlerts(env, out) {
       const s0 = st[k]; if (s0 && !(ev >= (s0.ev || 0) + 0.02 || now - s0.at > 45 * 60000)) return;
       if (sent() >= (c.cap || 6)) return;
       st[k] = { at: now, ev }; await pushTo(env, db, who, { ...msg, urgent: true });
+      try { await env.RATEBOARD_KV.put('pred_lastalert_' + who, JSON.stringify({ url: msg.url, at: now }), { expirationTtl: 3600 }); } catch (e) {}
     };
     for (const g of games) {
       const d = der(g); if (d.n < 2) continue;
@@ -946,17 +948,17 @@ async function predMemberAlerts(env, out) {
       for (let si = 0; si < g.sides.length; si++) {
         const sd = g.sides[si], fair = d.fair(si), q = Number(sd.price); if (!(fair > 0.05) || !(q > 0 && q < 1)) continue;
         const rate = PB_SLIP[g.sport] ?? PB_DEF, evp = fair / (q + (unit > 0 ? rate * unit / 1000 / 200 : 0)) - 1, nm = sd.name || sd.label, h = hs[si];
-        const url = '/predictions#g=' + g.id, tag = k => 'pu-' + k + '-' + g.id + '-' + si;
+        const U = (k, a) => `/predictions#g=${g.id}&s=${si}&k=${k}${a > 0 ? '&a=' + Math.round(a / 50) * 50 : ''}&q=${Math.round(q * 100)}`, tag = k => 'pu-' + k + '-' + g.id + '-' + si;
         // Holding one side of a game: never pushed toward another side of it.
         if (c.ev.on && !holdAny && evp >= c.ev.minEv && fair >= c.ev.minFair)
-          await fire('ev:' + g.id + ':' + si, evp, { title: `Big value · ${nm} +${(evp * 100).toFixed(1)}%`, body: `${g.game}: Real ${Math.round(q * 100)}%, fair ${pct(fair)}.${unit > 0 ? ` 1u = ${Math.round(unit).toLocaleString()} rax.` : ''}`, url, tag: tag('ev') });
+          await fire('ev:' + g.id + ':' + si, evp, { title: `Big value · ${nm} +${(evp * 100).toFixed(1)}%`, body: `${g.game}: Real ${Math.round(q * 100)}%, fair ${pct(fair)}.${unit > 0 ? ` 1u = ${Math.round(unit).toLocaleString()} rax.` : ''}`, url: U('ev', unit), tag: tag('ev') });
         if (c.add.on && h && evp >= c.add.minEv)
-          await fire('add:' + g.id + ':' + si, evp, { title: `Add more · ${nm} +${(evp * 100).toFixed(1)}%`, body: `You hold ${Math.round(h.cost).toLocaleString()} rax${h.avg ? ` at ${Math.round(h.avg * 100)}%` : ''}. Real ${Math.round(q * 100)}% now, fair ${pct(fair)}.`, url, tag: tag('add') });
+          await fire('add:' + g.id + ':' + si, evp, { title: `Add more · ${nm} +${(evp * 100).toFixed(1)}%`, body: `You hold ${Math.round(h.cost).toLocaleString()} rax${h.avg ? ` at ${Math.round(h.avg * 100)}%` : ''}. Real ${Math.round(q * 100)}% now, fair ${pct(fair)}.`, url: U('add', unit), tag: tag('add') });
         if (c.sell.on && h && q - fair >= c.sell.pts / 100 && (!h.avg || q > h.avg))
-          await fire('sell:' + g.id + ':' + si, q - fair, { title: `Over fair · ${nm}`, body: `Real ${Math.round(q * 100)}% is ${Math.round((q - fair) * 100)} pts over fair ${pct(fair)}${h.avg ? ` (you paid ${Math.round(h.avg * 100)}%)` : ''}. Selling may be worth it.`, url, tag: tag('sell') });
+          await fire('sell:' + g.id + ':' + si, q - fair, { title: `Over fair · ${nm}`, body: `Real ${Math.round(q * 100)}% is ${Math.round((q - fair) * 100)} pts over fair ${pct(fair)}${h.avg ? ` (you paid ${Math.round(h.avg * 100)}%)` : ''}. Selling may be worth it.`, url: U('sell', 0), tag: tag('sell') });
         const t0 = Date.parse(g.start || 0);
         if (c.start.on && h && t0 && t0 - now < 15 * 60000 && evp > 0.02 && !st['start:' + g.id])
-          await fire('start:' + g.id, evp, { title: `Starting soon · ${nm} still +${(evp * 100).toFixed(1)}%`, body: `${g.game} starts in ${Math.max(1, Math.round((t0 - now) / 60000))} min. Last chance to add before it goes live.`, url, tag: tag('start') });
+          await fire('start:' + g.id, evp, { title: `Starting soon · ${nm} still +${(evp * 100).toFixed(1)}%`, body: `${g.game} starts in ${Math.max(1, Math.round((t0 - now) / 60000))} min. Last chance to add before it goes live.`, url: U('add', unit), tag: tag('start') });
       }
     }
     for (const k of Object.keys(st)) if (now - st[k].at > 12 * 3600000) delete st[k];

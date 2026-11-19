@@ -6256,6 +6256,13 @@ async function handle({ request, env, waitUntil }) {
     const dv = await db.prepare(PUSH_DDL).run().then(() => db.prepare('SELECT COUNT(*) AS n FROM push_subs WHERE key=?').bind(who).first()).catch(() => null);
     return json({ cfg: A[who] || null, devices: Number(dv && dv.n) || 0 });
   }
+  /* The last Predictions alert sent to this member (2026-11-18): when a tapped notification only brings the
+     app forward (iOS), the page asks for it and opens that game. */
+  if (op === 'lastalert') {
+    const who = String(acc.who || '').toLowerCase(); if (!who) return json({});
+    let x = null; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_lastalert_' + who)) || 'null'); } catch (e) {}
+    return json(x && Date.now() - x.at < 5 * 60000 ? x : {});
+  }
   /* A member's rax and unit size, kept on the server so the site and the home-screen app
      (separate browser storage) agree (member report 2026-11-18). */
   if (op === 'predme') {
