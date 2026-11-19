@@ -8517,8 +8517,10 @@ async function handle({ request, env, waitUntil }) {
     const dayCap = CUS ? { 5: CUS.max[5] ?? Infinity, 4: CUS.max[4] ?? Infinity, 3: CUS.max[3] ?? Infinity }
       : { 5: held(5) ? Math.max(1, Math.floor(held(5) * R.cap)) : 0, 4: Infinity, 3: Infinity };
     // NBA / NHL daily most, whatever the setting (Custom can only go lower).
-    if (sp === 'nba' || sp === 'nhl') { dayCap[5] = CUS ? Math.min(dayCap[5], 1) : 0; dayCap[4] = Math.min(dayCap[4], 2);   // no Legendary on the set modes
-      dayCap[3] = Math.min(dayCap[3], inv ? Math.max(1, Math.floor(held(3) * 0.2)) : 6); }
+    /* Custom sets its own Epic and Rare maxes on NBA/NHL (2026-11-19, member: "can't get it to give me more than 2 epic
+       boosts" with Custom) - blank still means no limit. The set modes keep 2 Epic; Legendary stays at most 1. */
+    if (sp === 'nba' || sp === 'nhl') { dayCap[5] = CUS ? Math.min(dayCap[5], 1) : 0;
+      if (!CUS) { dayCap[4] = Math.min(dayCap[4], 2); dayCap[3] = Math.min(dayCap[3], inv ? Math.max(1, Math.floor(held(3) * 0.2)) : 6); } }
     const usedR = { 5: 0, 4: 0, 3: 0 };
     // Custom maxes hold even when Real won't say what boosters they have.
     const capped = !!CUS || sp === 'nba' || sp === 'nhl';
