@@ -14,12 +14,13 @@
     ['/bulk', 'Bulk ratings'],
     ['/predictions', 'Predictions', 'pred'],
     ['/fantasy', 'Fantasy optimizer', 'admin'],
+    ['/market', 'CBB market', 'admin'],
     ['/tags', 'Tag finder'],
     ['/notifications', 'Notifications'],
     ['/admin', 'Admin', 'admin']
   ];
   // Default menu order (Dennis, 2026-11-17); a member's own order from the UI panel replaces it.
-  var NAV_DEFAULT = ['/swaps', '/boosts', '/predictions', '/fantasy', '/board#otd', '/board', '/bulk', '/packs', '/projections', '/tags', '/notifications', '/board#gamedata', '/admin'];
+  var NAV_DEFAULT = ['/swaps', '/boosts', '/predictions', '/fantasy', '/market', '/board#otd', '/board', '/bulk', '/packs', '/projections', '/tags', '/notifications', '/board#gamedata', '/admin'];
   window.RB_NAV_PAGES = PAGES;
   var ls = { get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
   var ss = { get: function (k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }, set: function (k, v) { try { sessionStorage.setItem(k, v); } catch (e) {} } };
