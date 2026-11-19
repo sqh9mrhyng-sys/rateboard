@@ -3354,6 +3354,23 @@ export async function swapTick(env) {
   const db = env.RATEBOARD_DB, auth = swapToken(env);
   if (!db || !auth) return null;
   await ready(db);
+  /* Bot down hold (Dennis, 2026-11-19 07:21 AK: "Stop all swaps for 8am until fixed" - Real rejects the bot's login).
+     While held: no matching, no DMs, and every swap and 160 still ahead is called off. It lifts by itself as soon
+     as the server has a different RS_SWAP_TOKEN (he puts a fresh one in .env and restarts). */
+  try {
+    let h = 0; for (const c of String(auth)) h = (h * 31 + c.charCodeAt(0)) | 0; const tok = (h >>> 0).toString(36);
+    if (!(await env.RATEBOARD_KV.get('swaps_hold_set_1119'))) { await env.RATEBOARD_KV.put('swaps_hold_set_1119', '1', { expirationTtl: 30 * 86400 });
+      await env.RATEBOARD_KV.put('swaps_hold', JSON.stringify({ at: Date.now(), tok, why: 'swap bot is logged out' })); }
+    const hold = JSON.parse((await env.RATEBOARD_KV.get('swaps_hold')) || 'null');
+    if (hold && hold.tok !== tok) { await env.RATEBOARD_KV.delete('swaps_hold'); await db.prepare("INSERT INTO bot_log (at, kind, msg) VALUES (?, 'match', ?)").bind(Date.now(), 'hold lifted: new bot token').run().catch(() => {}); }
+    else if (hold) {
+      const n = Date.now(), note = 'called off: the swap bot is down - swaps resume once it is fixed';
+      const a = await db.prepare(`UPDATE swap_matches SET status='cancelled', note=? WHERE status IN ('pending','warned') AND dueAt > ?`).bind(note, n - 5 * 60000).run();
+      const b = await db.prepare(`UPDATE swap_160 SET status='cancelled', note=? WHERE status IN ('pending','warned') AND dueAt > ?`).bind(note, n - 5 * 60000).run().catch(() => null);
+      hold.off = (hold.off || 0) + ((a && a.meta && a.meta.changes) || 0); hold.off160 = (hold.off160 || 0) + ((b && b.meta && b.meta.changes) || 0); hold.last = n;
+      await env.RATEBOARD_KV.put('swaps_hold', JSON.stringify(hold));
+      return null; }
+  } catch (e) {}
   try { await confirmBypass(env, db); } catch (e) {}
   /* Joke over (Dennis, 2026-11-17 21:36 AK): put back, once, the swaps and 160s it called off that are still ahead. */
   try { if (!(await env.RATEBOARD_KV.get('joke_restore_1117'))) { await env.RATEBOARD_KV.put('joke_restore_1117', String(Date.now()), { expirationTtl: 7 * 86400 });
