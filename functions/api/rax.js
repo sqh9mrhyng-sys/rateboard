@@ -1884,6 +1884,7 @@ async function marketSliceHeld(env, auth, deadline) {
      the call lasts. */
   let total = 0, busy = false;
   st.idle = false;
+  if (st.pauseV !== 2) { st.pause = MARKET_PAUSE_MS; st.pauseV = 2; }   // 2026-11-19: start again from the new, shorter gap
   marketPause = Math.min(MARKET_PAUSE_MAX, Math.max(MARKET_PAUSE_MS, Number(st.pause) || MARKET_PAUSE_MS));
   if (!st.seedShort1) {          // the two seasons the short-page stop cut short go again first
     for (const j of ['nfl:2026', 'ncaaf:2026']) {
