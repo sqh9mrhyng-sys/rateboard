@@ -471,7 +471,7 @@ async function bulkTick(env) {
   if (await realWait(env, 'bulk')) return;   // scans first (2026-11-17), at most 15 minutes
   /* CBB market sweep first (2026-11-19): both run on account 2, so bulk waits while a sweep is mid-way
      (state touched in the last 2 minutes), and carries on between sweeps. */
-  try { const ms = JSON.parse((await env.RATEBOARD_KV.get(MARKET_KEY)) || '{}') || {}; if (ms.cur && ms.at && Date.now() - Date.parse(ms.at) < 120000) return; } catch (e) {}
+  // (Off again the same day: a CBB sweep runs for hours - Real hands back 10 listings a page - so bulk shares the account instead of waiting.)
   const SK = 'bulk_state_v2';
   let st = {}; try { st = JSON.parse((await env.RATEBOARD_KV.get(SK)) || '{}') || {}; } catch (e) {}
   if (st.pauseUntil && Date.now() < st.pauseUntil) return;
