@@ -820,6 +820,7 @@ async function predReal(env) {
     await env.RATEBOARD_KV.put('pred_ev_v1', JSON.stringify(out), { expirationTtl: 3600 });
     try { await predBuildTick(env, out); } catch (e) {}
     try { await predMemberAlerts(env, out); } catch (e) {}
+    try { await planDiag(env); } catch (e) {}
     // Nothing open to bet on (only locked markets left): one read a minute is enough.
     if (!out.games.some(g => !g.locked && !g.ended)) break;
     const wait = 10000 - (Date.now() - t0); if (round < 5 && wait > 0) await sleep(wait);
@@ -915,6 +916,47 @@ async function predBuildTick(env, out) {
      start- starting soon: a side they hold still +EV 15 min before the game (one per game)
    Pregame only (live lines lag). A side repeats only when EV is 2+ points better or 45 min passed; at most
    `cap` alerts per hour each. Positions come from their last Real sync and the bets they logged. */
+/* One-off (Dennis, 2026-11-18: "check swaps data for other users ... and make the plan"): how swaps really run,
+   counts only - no usernames. Per member-day volumes, how many packs of one player a member gets in a day, the
+   most-received players and how many active swappers own (and will give) them. Kept 3 days, shown on health. */
+async function planDiag(env) {
+  const K = 'diag_plan_1118'; try { if (await env.RATEBOARD_KV.get(K)) return; } catch (e) { return; }
+  await env.RATEBOARD_KV.put(K, JSON.stringify({ running: Date.now() }), { expirationTtl: 3600 });
+  const db = env.RATEBOARD_DB, out = { at: Date.now() }, since = Date.now() - 7 * 86400000, q = (a, p) => { a = a.slice().sort((x, y) => x - y); return a.length ? a[Math.min(a.length - 1, Math.floor(a.length * p))] : null; };
+  const day = t => ET_DAY_FMT.format(new Date(t || 0));
+  try {
+    const M = ((await db.prepare("SELECT a, b, aGets, bGets, dueAt, createdAt, status, note FROM swap_matches WHERE COALESCE(dueAt, createdAt) > ?").bind(since).all()).results) || [];
+    const byDay = {}, md = new Map(), mdp = new Map(), recv = new Map(), recvWho = new Map();
+    for (const m of M) { const d = day(m.dueAt || m.createdAt), off = m.status === 'cancelled' || m.status === 'cancelling';
+      const o = byDay[d] = byDay[d] || { made: 0, off: 0, offNoConfirm: 0, offOther: 0 }; o.made++; if (off) { o.off++; if (/confirm/.test(m.note || '')) o.offNoConfirm++; else o.offOther++; }
+      if (off) continue;
+      for (const [who, got] of [[m.a, m.aGets], [m.b, m.bGets]]) { const k = d + '|' + who; md.set(k, (md.get(k) || 0) + 1);
+        const k2 = k + '|' + got; mdp.set(k2, (mdp.get(k2) || 0) + 1); recv.set(got, (recv.get(got) || 0) + 1);
+        (recvWho.get(got) || recvWho.set(got, new Set()).get(got)).add(who); } }
+    out.byDay = byDay;
+    const per = [...md.values()]; out.perMemberDay = { memberDays: per.length, p50: q(per, .5), p75: q(per, .75), p90: q(per, .9), p99: q(per, .99), max: Math.max(0, ...per), n50plus: per.filter(x => x >= 50).length, n70plus: per.filter(x => x >= 70).length };
+    const pp = [...mdp.values()]; out.onePlayerDay = { p50: q(pp, .5), p90: q(pp, .9), p99: q(pp, .99), max: Math.max(0, ...pp), n40plus: pp.filter(x => x >= 40).length, n60plus: pp.filter(x => x >= 60).length };
+    // Biggest single-player days: which player, how many packs (no member named).
+    out.topPlayerDays = [...mdp.entries()].sort((a, b) => b[1] - a[1]).slice(0, 25).map(([k, n]) => [k.split('|')[0], k.split('|')[2], n]);
+    const top = [...recv.entries()].sort((a, b) => b[1] - a[1]).slice(0, 60);
+    // Who owns them: active swappers (in a swap in the last 7 days) holding the pass, and how many of those keep it.
+    const active = new Set(M.map(m => m.a).concat(M.map(m => m.b)));
+    const U = ((await db.prepare('SELECT key, passes, keep, wants, active FROM swap_users').all()).results) || [];
+    const own = new Map(), keepN = new Map(), wantN = new Map(); let nUsers = 0, nActive = 0, passCt = [];
+    const tk = new Set(top.map(t => t[0]));
+    for (const u of U) { nUsers++; const act = active.has(u.key); if (act) nActive++;
+      let ps = []; try { ps = JSON.parse(u.passes || '[]') || []; } catch (e) {} if (act) passCt.push(ps.length);
+      let kp = []; try { kp = JSON.parse(u.keep || '[]') || []; } catch (e) {} const ks = new Set(kp);
+      let ws = []; try { ws = JSON.parse(u.wants || '[]') || []; } catch (e) {} for (const w of ws) if (tk.has(w)) wantN.set(w, (wantN.get(w) || 0) + 1);
+      if (!act) continue;
+      for (const p of ps) if (p && tk.has(p.key)) { own.set(p.key, (own.get(p.key) || 0) + 1); if (ks.has(p.key)) keepN.set(p.key, (keepN.get(p.key) || 0) + 1); } }
+    out.users = { total: nUsers, active7d: nActive, passesP50: q(passCt, .5), passesP90: q(passCt, .9) };
+    out.topReceived = top.map(([k, n]) => ({ k, packs7d: n, receivers: recvWho.get(k).size, activeOwners: own.get(k) || 0, keep: keepN.get(k) || 0, wanting: wantN.get(k) || 0 }));
+    // 160s
+    try { const S = ((await db.prepare("SELECT dueAt, status FROM swap_160 WHERE dueAt > ?").bind(since).all()).results) || []; const b = {}; for (const r of S) { const d = day(Number(r.dueAt)); b[d] = b[d] || { n: 0, off: 0 }; b[d].n++; if (r.status === 'cancelled') b[d].off++; } out.s160 = b; } catch (e) {}
+  } catch (e) { out.err = String(e.message || e).slice(0, 200); }
+  await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 3 * 86400 });
+}
 export const PU_DEF = { ev: { on: true, minEv: 0.10, minFair: 0.30 }, add: { on: true, minEv: 0.05 }, sell: { on: false, pts: 5 }, start: { on: false }, cap: 6 };
 async function predMemberAlerts(env, out) {
   let A = {}; try { A = JSON.parse((await env.RATEBOARD_KV.get('pred_ualert_v1')) || '{}') || {}; } catch (e) {}
@@ -9106,7 +9148,7 @@ async function collectorHealth(env, url) {
     // Slow database calls and slow page opens (path only - no query values, no names).
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
-    oneOffsRun: await kvj(ONE_OFF_KEY), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predPause: await kvj('pred_pause_v1'), marketWipe: await kvj('oneoff_market_wipe_1116'), predStore: await (async () => { const o = {}; for (const k of ['pred_ev_v1', 'pred_recent_v1', 'pred_odds_v2', 'pred_real_open', 'bulk_state_v2']) { const v = await env.RATEBOARD_KV.get(k); o[k] = v ? v.length : 0; }
+    oneOffsRun: await kvj(ONE_OFF_KEY), planDiag: await kvj('diag_plan_1118'), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predPause: await kvj('pred_pause_v1'), marketWipe: await kvj('oneoff_market_wipe_1116'), predStore: await (async () => { const o = {}; for (const k of ['pred_ev_v1', 'pred_recent_v1', 'pred_odds_v2', 'pred_real_open', 'bulk_state_v2']) { const v = await env.RATEBOARD_KV.get(k); o[k] = v ? v.length : 0; }
       try { for (const t of ['bulk_listings', 'bulk_results']) { const r = await env.RATEBOARD_DB.prepare(`SELECT COUNT(*) AS n FROM ${t}`).first().catch(() => null); o[t] = r ? r.n : null; } } catch (e) {} return o; })(), realBusy: await realBusy(env), dmPredAsk: await (async () => { const x = await kvj('dm_predask_v1'); return x ? { sent: (x.sent || []).length, noChat: (x.noChat || []).length, notFound: (x.notFound || []).length, failed: (x.failed || []).length } : null; })(), dmPromo: await (async () => { const x = await kvj('dm_promo_' + Date.UTC(2026, 10, 17, 21, 0, 0)); return x ? { total: x.total, sent: x.sent, skipped: x.skipped, failed: x.failed, startedAt: x.startedAt } : null; })(), predSlip: await (async () => { try { if (!((await kvj('pred_mkeys_v1')) || {}).px) await env.RATEBOARD_KV.delete('pred_mkeys_v1'); } catch (e) {} const S = (await kvj('pred_slip_v1')) || {}; const fit = {}; const med = a => { const b = a.slice().sort((x, y) => x - y); return b.length ? b[Math.floor(b.length / 2)] : null; };
       for (const L of Object.values(S)) for (let i = 1; i < L.s.length; i++) { const [t0, v0, p0] = L.s[i - 1], [t1, v1, p1] = L.s[i], dv = v1 - v0;
         if (dv < 300 || t1 - t0 > 25000 || !(v0 > 0)) continue; const dp = Math.abs(p1 - p0) * 100, bin = v0 < 10000 ? '<10k' : v0 < 30000 ? '10-30k' : v0 < 100000 ? '30-100k' : '100k+';
