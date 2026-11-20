@@ -54,7 +54,7 @@ import { isViewToken } from '../lib/auth.js';
    day - link previews, crawlers and prefetches left out. */
 const PV_PAGES = { '/': 'home', '/index.html': 'home', '/board': 'board', '/board.html': 'board', '/market': 'market', '/market.html': 'market', '/swaps': 'swaps', '/swaps.html': 'swaps',
   '/hour': 'hour', '/hour.html': 'hour', '/otd': 'otd', '/otd.html': 'otd', '/boosts': 'boosts', '/boosts.html': 'boosts', '/projections': 'projections', '/projections.html': 'projections', '/tags': 'tags', '/tags.html': 'tags', '/packs': 'packs', '/packs.html': 'packs',
-  '/predictions': 'predictions', '/predictions.html': 'predictions', '/bulk': 'bulk', '/bulk.html': 'bulk', '/drafts': 'drafts', '/drafts.html': 'drafts', '/notifications': 'notifications', '/notifications.html': 'notifications' };
+  '/predictions': 'predictions', '/predictions.html': 'predictions', '/bulk': 'bulk', '/bulk.html': 'bulk', '/drafts': 'drafts', '/drafts.html': 'drafts', '/notifications': 'notifications', '/notifications.html': 'notifications', '/graphics': 'graphics', '/graphics.html': 'graphics' };
 const BOT_UA = /bot|crawl|spider|slurp|preview|facebookexternalhit|embedly|quora|whatsapp|telegram|discord|slack|twitter|headless|lighthouse|curl|wget|python|node-fetch|go-http/i;
 function pageOf(request, url) {
   if (request.method !== 'GET') return null;
