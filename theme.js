@@ -45,7 +45,11 @@ function rbNavCheck() {
 }
 /* Coming back from another app (2026-11-19): the page can wake before the tap is written down, so it looks
    again a few times over the next few seconds. */
-function rbNavSoon() { rbNavCheck(); [300, 900, 2000, 4000].forEach(function (ms) { setTimeout(rbNavCheck, ms); }); }
+function rbNavServer() {
+  try { if (!('Notification' in window) || Notification.permission !== 'granted') return; var t = localStorage.getItem('ratebrd_token_v1') || ''; if (!t) return;
+    fetch('/api/swaps?op=navtap', { headers: { 'x-rb-token': t }, cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) { if (j && j.url) rbNavOnce(j.url, j.nid); }).catch(function () {}); } catch (x) {}
+}
+function rbNavSoon() { rbNavCheck(); rbNavServer(); [300, 900, 2000, 4000].forEach(function (ms) { setTimeout(rbNavCheck, ms); }); [1200, 3000, 6000].forEach(function (ms) { setTimeout(rbNavServer, ms); }); }
 try { if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', function (e) { var u = e.data && e.data.rbGo; if (!u) return; rbNavOnce(u, e.data.id); }); } catch (e) {}
 /* Backup for alerts (2026-11-18): if the app comes back on screen within 3 minutes of a Predictions alert that
    hasn't been opened yet, open it. Only for members who get alerts (Predictions sets rb_pred_alerts). */
@@ -56,7 +60,7 @@ function rbAlertCheck() {
       var seen = Number(localStorage.getItem('rb_alert_seen')) || 0; if (j.at <= seen) return;
       localStorage.setItem('rb_alert_seen', String(j.at)); rbGo(j.url); }).catch(function () {}); } catch (x) {}
 }
-rbNavCheck(); rbAlertCheck();
+rbNavSoon(); rbAlertCheck();
 document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') { rbNavSoon(); rbAlertCheck(); } });
 window.addEventListener('focus', rbNavSoon);
 /* Keep the notification helper current, so tap handling updates reach phones without a reinstall. */
