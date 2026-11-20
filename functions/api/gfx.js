@@ -12,7 +12,7 @@
 //
 // Images live on the server's disk (DATA_DIR/gfx), never in the database. Limits: 900 KB an image,
 // 80 images a creator, 12 styles, 6 images a style.
-import { sessionKey, allow } from '../../lib/auth.js';
+import { sessionKey, allow, ADMINS } from '../../lib/auth.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -55,6 +55,8 @@ export async function onRequest(ctx) {
   }
   await prep(db);
   const me = await sessionKey(env, request); if (!me) return json({ error: 'Sign in first.' }, 401);
+  // Dennis only until he opens it up (2026-11-19).
+  if (!ADMINS.includes(String(me).toLowerCase())) return json({ error: 'Not open yet.' }, 403);
   const op = url.searchParams.get('op') || 'list';
 
   if (op === 'list') {

@@ -337,7 +337,8 @@ function drawStats() {
 async function loadBrowse() {
   $('#cards').innerHTML = `<article class="card"><div class="ch"><div class="av" style="background:var(--panel2)"></div><div class="who"><div class="shim" style="position:relative;height:18px;width:140px;border-radius:6px"></div></div></div><div class="grid">${'<div class="tile"><div class="shim"></div></div>'.repeat(3)}</div></article>`;
   if (!tok()) { $('#cards').innerHTML = `<div class="empty"><h3>Sign in to browse</h3><p>Sign in on Home, then come back here.</p><a class="btn pri" href="/">Go to Home</a></div>`; return; }
-  const j = await api('list'); if (j.error) { $('#cards').innerHTML = `<div class="empty"><h3>Couldn't load</h3>${esc(j.error)}</div>`; return; }
+  const j = await api('list'); if (j.error === 'Not open yet.') { document.querySelector('.tabbar').hidden = true; $('#stats').innerHTML = ''; $('#cards').innerHTML = `<div class="empty"><h3>Coming soon</h3><p>This page isn't open yet.</p><a class="btn pri" href="/">Go to Home</a></div>`; return; }
+  if (j.error) { $('#cards').innerHTML = `<div class="empty"><h3>Couldn't load</h3>${esc(j.error)}</div>`; return; }
   ALL = j.creators || []; ME = j.me || ''; drawStats(); drawBrowse();
 }
 $('#q').addEventListener('input', e => { F.q = e.target.value; drawBrowse(); });
