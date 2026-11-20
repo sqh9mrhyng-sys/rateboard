@@ -77,6 +77,10 @@
       <div class="bk"><span>Price</span><select data-bk="price"><option value="any">Buy now or bid</option><option value="buy">Buy now only</option><option value="bid">Current bid only</option></select></div>
       <div class="bkc" id="bksp"></div><div class="bkc" id="bkrar"></div>
       <p class="note" style="margin:6px 0 0">Nothing ticked = every sport / every rarity. At most 30 an hour; more than 4 at once come as one summary.</p></div></div>
+  <div class="ag" data-g="owner" hidden><div class="ah"><span class="ax" style="visibility:hidden"></span><b>Bot DMs on Real</b></div>
+    <div class="ab"><p class="note" style="margin:4px 0 6px">The swap bot also DMs you these, on top of the notifications.</p>
+      <label class="ar"><span>Bulk auctions in your range (with links)</span><input type="checkbox" data-k="owner.dmBulk"></label>
+      <label class="ar"><span>Value alerts (team | fair, bet link, betting ladder)</span><input type="checkbox" data-k="owner.dmEv"></label></div></div>
   <div class="ag" data-g="notes"><div class="ah"><span class="ax" style="visibility:hidden"></span><b>Messages to you</b><button class="aon" data-on="notes">Activate</button></div>
     <p class="note" style="margin:4px 0 0 42px">Replies from Dennis, moderation updates and request answers.</p></div>
   <p class="note" id="amsg" style="margin:8px 0 0"></p>
@@ -104,7 +108,8 @@ const $ = s => document.querySelector(s);
   P.boosts = Object.assign({ on: false, sports: {}, all: false, allHours: 2 }, P.boosts || {}); P.notes = Object.assign({ on: true }, P.notes || {});
   // Bulk alerts (2026-11-19): only shown to accounts the server allows (Dennis for now).
   const BULK = !!j.bulk; P.bulk = Object.assign({ on: false, min: 300, max: 400, price: 'any', sports: [], rarities: [] }, P.bulk || {});
-  if (BULK) document.querySelector('.ag[data-g="bulk"]').hidden = false;
+  P.owner = Object.assign({ dmBulk: true, dmEv: true }, P.owner || {});
+  if (BULK) { document.querySelector('.ag[data-g="bulk"]').hidden = false; document.querySelector('.ag[data-g="owner"]').hidden = false; }
   const BSP = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf', soccer: 'FC', ufc: 'UFC' }, BRAR = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Mystic', 'Iconic'];
   const HRS = [0.5, 1, 2, 3, 4, 6, 8, 12, 18, 24, 30, 36], hl = h => h < 1 ? '30 min' : h + (h === 1 ? ' hour' : ' hours');
   const draw = () => {

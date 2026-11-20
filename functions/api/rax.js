@@ -1,5 +1,5 @@
 import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS, touchSeen, userStats, sessionState } from '../../lib/auth.js';
-import { draftScan, draftCheck, draftGap, swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick, fcSchedule, whyNotFull, TAG_DEFS, scanProbe, boostProbe, wiltProbe, multProbe, untouchProbe, keepProbe, dennisProbe, pfpProbe, tzProbe, cfbPassProbe, routeId, realWait, realBusy } from './swaps.js';
+import { draftScan, draftCheck, draftGap, swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick, fcSchedule, whyNotFull, TAG_DEFS, scanProbe, boostProbe, wiltProbe, multProbe, untouchProbe, keepProbe, dennisProbe, pfpProbe, dmOwner, tzProbe, cfbPassProbe, routeId, realWait, realBusy } from './swaps.js';
 import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, capNow } from '../../lib/dbwatch.js';
 import { packAllowed } from './kv.js';
 import { ODDS_TEAMS, ODDS_SPORT } from '../../lib/teams.js';
@@ -490,6 +490,9 @@ async function bulkAlerts(env, db, L) {
     else { await pushTo(env, db, who, { title: `Bulk · ${hit.length} new auctions ${lo.toLocaleString()}–${hi >= 1e9 ? '∞' : hi.toLocaleString()} rax`,
         body: hit.slice(0, 5).map(x => `${x.name} ${x.rarity || ''} ${x.buyNow != null ? Math.round(x.buyNow) : Math.round(x.bid)}`).join(' · ').slice(0, 180), url: '/bulk', tag: 'bulk-sum' }); used++; }
     await env.RATEBOARD_KV.put(HK, String(used), { expirationTtl: 7200 }).catch(() => {});
+    // Dennis also gets them as one bot DM, every auction with its link (2026-11-19).
+    if (who === 'dennis') dmOwner(env, 'bulk', hit.slice(0, 10).map(x => `${x.name || 'Auction'}${x.rarity ? ' ' + x.rarity : ''}${x.rating ? ' ' + Math.round(x.rating) : ''} | ${pr(x)}\n${BULK_SPN[x.sport] || x.sport || ''} ${x.season || ''} · ends in ${x.endsAt ? left(x.endsAt) : '?'}\nhttps://www.realapp.com/${routeId([30, 0, 0, x.id])}`).join('\n\n')
+      + (hit.length > 10 ? `\n\n+${hit.length - 10} more on raxacademy.app/bulk` : '')).catch(() => {});
   }
 }
 async function bulkTick(env) {
@@ -906,6 +909,11 @@ function pbDerive(g) {
   const wt = bk.reduce((a, b) => a + (b.w || 1), 0);
   return { n: bk.length, fair: i => wt ? bk.reduce((a, b) => a + (b.w || 1) * (b.p[i] || 0), 0) / wt : null };
 }
+// The betting ladder (same as the alert page): for each size, the highest Real price that still earns it.
+const pbLadder = fair => { const out = new Map(); for (let q = Math.floor(fair * 1000) / 1000; q > 0.005; q -= 0.001) { const qq = Math.round(q * 1000) / 1000, u = pbUnits(fair, qq); if (u && !out.has(u)) out.set(u, qq); }
+  return [...out.entries()].sort((a, b) => a[0] - b[0]).filter(([, mq]) => Math.floor(mq * 100) >= 1); };
+const akTime = t => new Date(t).toLocaleString('en-US', { timeZone: 'America/Sitka', weekday: 'short', hour: 'numeric', minute: '2-digit' }) + ' AK';
+const amerOdds = p => p > 0 && p < 1 ? (p >= 0.5 ? '-' + Math.round(p / (1 - p) * 100) : '+' + Math.round((1 - p) / p * 100)) : '';
 const pbUnits = (fair, q) => { if (!(q > 0 && q < 1) || fair / q - 1 < PB_MIN_EV) return 0; const f = (fair - q) / (1 - q), cap = q < 0.2 ? 0.5 : q < 0.35 ? 1 : q < 0.5 ? 1.5 : 2;
   return Math.max(0.5, Math.min(cap, Math.floor(f * 10 * 2) / 2)); };
 /* Value alerts (Dennis, 2026-11-17: "not on a timer - when there's really good value I should take, with the
@@ -949,6 +957,9 @@ async function predBuildTick(env, out) {
       const nm = sd.name || sd.label;
       await pushTo(env, db, who, { title: `Value · ${nm} +${(evp * 100).toFixed(1)}%`, body: `Buy ${piece.toLocaleString()} rax at ${Math.round(q * 100)}% or less (fair ${(fair * 100).toFixed(1)}%). ${held > 0 ? `${Math.round(held).toLocaleString()} of ${Math.round(u * cfg.unit).toLocaleString()} in.` : `Full size ${Math.round(u * cfg.unit).toLocaleString()} (${u}u).`}${g.live ? ' Live.' : ''}`, url: `/predictions#g=${g.id}&s=${si}&a=${piece}&q=${Math.round(q * 100)}`, tag: 'pv-' + k, urgent: true });
       try { await env.RATEBOARD_KV.put('pred_lastalert_' + who, JSON.stringify({ url: `/predictions#g=${g.id}&s=${si}&a=${piece}&q=${Math.round(q * 100)}`, at: now }), { expirationTtl: 3600 }); } catch (e) {}
+      // The same alert as a bot DM, in the alert-page format (2026-11-19): team | fair, bet link, betting ladder.
+      const lad = pbLadder(fair).map(([uu, mq]) => `${uu}u | max ${Math.floor(mq * 100)}% | ${Math.round(uu * cfg.unit).toLocaleString()} rax`).join('\n');
+      dmOwner(env, 'ev', `${nm} | fair ${(fair * 100).toFixed(1)}% (${amerOdds(fair)})\n${g.game || ''}${start ? ' · ' + akTime(start) : ''}\nReal now ${Math.round(q * 100)}% · EV +${(evp * 100).toFixed(1)}%${held > 0 ? ` · ${Math.round(held).toLocaleString()} of ${Math.round(u * cfg.unit).toLocaleString()} in` : ''}\n${g.link ? 'Bet: ' + g.link + '\n' : ''}\nBetting ladder\n${lad || 'No size is +EV right now.'}`).catch(() => {});
     }
   }
   for (const k of Object.keys(st)) if (now - st[k].at > 6 * 3600000) { delete st[k]; ch = true; }

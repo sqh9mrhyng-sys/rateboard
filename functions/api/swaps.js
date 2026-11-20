@@ -2748,6 +2748,20 @@ const NO_MSG = new Map();   // members Real just refused a DM for -> when to try
    once a minute, so the warnings and contacts get a whole background slot to
    themselves instead of sharing one with matching and scans. The key is
    derived from the bot's token, so only the board can start it. */
+/* Bot DMs to Dennis himself (2026-11-19, "have the bot dm me the auctions and +ev ... only for my account and on
+   top of the notifications"): bulk auctions in his range and value alerts, as a DM in his chat with the bot.
+   His own switches on Notifications (Bot DMs); held while swaps are on hold; at most 40 an hour. Never throws. */
+export async function dmOwner(env, kind, text) {
+  try {
+    const db = env.RATEBOARD_DB, p = await pushPrefs(env, 'dennis'), o = p.owner || {};
+    if (kind === 'bulk' ? o.dmBulk === false : o.dmEv === false) return false;
+    if (await env.RATEBOARD_KV.get('swaps_hold')) return false;
+    const HK = 'dmowner_n_' + Math.floor(Date.now() / 3600000), n = Number(await env.RATEBOARD_KV.get(HK)) || 0; if (n >= 40) return false;
+    const who = await whoIs(db, 'dennis'), auth = swapToken(env); if (!who || !who.channelId || !auth) return false;
+    await env.RATEBOARD_KV.put(HK, String(n + 1), { expirationTtl: 7200 });
+    await dmSend(auth, who.channelId, String(text).slice(0, 1900)); await stat(db, 'dm_owner_' + kind); return true;
+  } catch (e) { try { await botFail(env.RATEBOARD_DB, 'dm_owner', String(e.message || e)); } catch (x) {} return false; }
+}
 export async function dmTickKey(env) {
   const t = swapToken(env); if (!t) return null;
   const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('dmtick|' + t));
@@ -6594,6 +6608,7 @@ async function handle({ request, env, waitUntil }) {
         clean.bulk = { on: !!bu.on, min: mn, max: mx, price: ['buy', 'bid', 'any'].includes(bu.price) ? bu.price : 'any',
           sports: (Array.isArray(bu.sports) ? bu.sports : []).filter(x => SPK.includes(x)), rarities: (Array.isArray(bu.rarities) ? bu.rarities : []).map(x => String(x).toLowerCase()).filter(x => RK.includes(x)) };
         try { const ix = new Set(JSON.parse((await env.RATEBOARD_KV.get('push_bulk_users_v1')) || '[]')); if (clean.bulk.on) ix.add(who); else ix.delete(who); await env.RATEBOARD_KV.put('push_bulk_users_v1', JSON.stringify([...ix])); } catch (e) {} }
+      if (who === 'dennis') { const o = b.owner || {}; clean.owner = { dmBulk: o.dmBulk !== false, dmEv: o.dmEv !== false }; }
       p = clean; await env.RATEBOARD_KV.put(PUSH_PREF(who), JSON.stringify(p));
       // Who has boost reminders on, so the minute job doesn't read every member.
       try { const ix = new Set(JSON.parse((await env.RATEBOARD_KV.get('push_boost_users_v1')) || '[]')); if (clean.boosts.on && Object.values(sps).some(x => x.on)) ix.add(who); else ix.delete(who); await env.RATEBOARD_KV.put('push_boost_users_v1', JSON.stringify([...ix])); } catch (e) {}
