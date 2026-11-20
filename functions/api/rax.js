@@ -9431,7 +9431,6 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil(bulkTick(env).catch(() => {}));
     ctx.waitUntil(draftScan(env).catch(() => {}));
     ctx.waitUntil(predTick(env).catch(() => {}));
-    ctx.waitUntil(testPredPushOnce(env).catch(() => {}));   // one test alert (2026-11-20)
     // CBB market on its own minute (2026-11-19): riding the collector calls left it ~1 page a minute between their phases.
     if (MARKET_ON && env.RS_MARKET_TOKEN) ctx.waitUntil(marketSlice(env, env.RS_MARKET_TOKEN, 50000).catch(() => {}));
     ctx.waitUntil(marketWipe(env).catch(() => {}));
