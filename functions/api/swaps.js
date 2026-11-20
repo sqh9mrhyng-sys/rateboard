@@ -8903,7 +8903,7 @@ export async function keepProbe(env, db) {
    Looks his account up once with his own token (account 1) and keeps the picture link in KV for the
    Graphics page. Health shows only whether it was found and the image host, not the link. */
 export async function pfpProbe(env, db) {
-  const K = 'gfx_pfp_dennis3';
+  const K = 'gfx_pfp_dennis4';
   try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1, at: Date.now() }), { expirationTtl: 3600 }); } catch (e) { return; }
   const out = { at: Date.now() };
   try {
@@ -8917,22 +8917,31 @@ export async function pfpProbe(env, db) {
       for (const k of out.fields) { const v = f[k]; if (typeof v === 'string' && /^https?:\/\//.test(v)) { out.field = k; out.url = v; break; } }
       if (!out.url && out.fields.length) { out.raw = String(f[out.fields[0]] ?? '').slice(0, 300);
         out.shape = out.raw.replace(/[a-z]/g, 'a').replace(/[A-Z]/g, 'A').replace(/[0-9]/g, '9').slice(0, 80); }
-      // avatarKey is a storage key, not a link: find how Real's web app turns it into an image link.
+      // avatarKey is a storage key, not a link: follow realapp.com's web app code to where it builds
+      // image links (media.realapp.com), then try the likely links.
       if (!out.url && out.raw) {
+        const key = out.raw, uid = f.id;
         try {
-          const BASE = 'https://www.realapp.com/';
+          const BASE = 'https://www.realapp.com/', seen = new Set(), queue = [];
           const html = await (await fetch(BASE, { headers: { 'User-Agent': rsHeaders('')['User-Agent'] } })).text();
-          out.htmlLen = html.length; out.htmlHead = html.replace(/\s+/g, ' ').slice(0, 300);
-          const js = [...new Set([...html.matchAll(/(?:src|href)=["']([^"']+\.m?js[^"']*)["']/g)].map(m => new URL(m[1], BASE).href))].slice(0, 25);
-          out.bundles = js.length; out.ctx = [];
-          for (const u of js) { const t = await (await fetch(u)).text();
-            for (const m of t.matchAll(/avatarKey|avatar_key|\/avatars?\//g)) { out.ctx.push(t.slice(Math.max(0, m.index - 220), m.index + 120)); if (out.ctx.length >= 6) break; }
-            for (const m of t.matchAll(/https:\/\/[a-z0-9.\-]*(cloudfront|imgix|cdn|images|assets|storage|s3)[a-z0-9.\-]*\.[a-z]{2,}[^"'`\s]{0,40}/gi)) { (out.hosts = out.hosts || new Set()).add(m[0]); }
-            if (out.ctx.length >= 6) break; }
-          if (out.hosts) out.hosts = [...out.hosts].slice(0, 30);
+          for (const m of html.matchAll(/(?:src|href)=["']([^"']+\.m?js[^"']*)["']/g)) queue.push(new URL(m[1], BASE).href);
+          out.ctx = []; out.files = 0;
+          while (queue.length && out.files < 60 && out.ctx.length < 8) {
+            const u = queue.shift(); if (seen.has(u)) continue; seen.add(u);
+            let t = ''; try { t = await (await fetch(u)).text(); } catch (e) { continue; } out.files++;
+            for (const m of t.matchAll(/["'`(]((?:\.{0,2}\/|https:\/\/[a-z.]*realapp\.com\/)[A-Za-z0-9_\-./]+\.js)["'`)]/g)) { try { const v = new URL(m[1], u).href; if (!seen.has(v)) queue.push(v); } catch (e) {} }
+            for (const m of t.matchAll(/avatarKey|media\.realapp\.com/g)) { out.ctx.push(t.slice(Math.max(0, m.index - 160), m.index + 160)); if (out.ctx.length >= 8) break; }
+          }
         } catch (e) { out.jsErr = String(e.message || e).slice(0, 120); }
+        out.tries = [];
+        const cands = [`avatars/${uid}/${key}`, `avatar/${uid}/${key}`, `users/${uid}/avatars/${key}`, `users/${uid}/${key}`, `avatars/${key}`, `avatar/${key}`, `profile/${uid}/${key}`, `useravatars/${uid}/${key}`];
+        for (const c of cands) for (const ext of ['', '.jpg', '.png', '.webp']) {
+          const u = 'https://media.realapp.com/' + c + ext;
+          try { const r = await fetch(u); const ty = r.headers.get('content-type') || '';
+            out.tries.push(c.replace(String(uid), '{id}').replace(key, '{key}') + ext + ' ' + r.status);
+            if (r.ok && /^image\//.test(ty)) { out.url = u; out.imgType = ty; out.host = 'media.realapp.com'; out.field = 'avatarKey'; break; } } catch (e) {}
+          if (out.url) break; }
       }
-      if (out.url) { try { const r = await fetch(out.url, { method: 'GET' }); out.imgStatus = r.status; out.imgType = r.headers.get('content-type'); out.host = new URL(out.url).host; } catch (e) { out.imgErr = String(e.message || e).slice(0, 100); } }
     }
   } catch (e) { out.err = String(e.message || e).slice(0, 150); }
   try { await env.RATEBOARD_KV.put(K, JSON.stringify(out)); } catch (e) {}
