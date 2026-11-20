@@ -33,12 +33,20 @@ function rbGo(u) {
       if (t.hash !== location.hash) location.hash = t.hash; else window.dispatchEvent(new HashChangeEvent('hashchange')); }
     else location.href = t.href; } catch (x) {}
 }
+// Each tap is acted on once (its id), whichever way it arrives first: the message or the note in the cache.
+function rbNavOnce(u, id) {
+  try { caches.open('rb-nav').then(function (c) { c.delete('/__rbnav'); }); } catch (x) {}
+  try { if (id) { if (localStorage.getItem('rb_nav_done') === id) return; localStorage.setItem('rb_nav_done', id); } } catch (x) {}
+  rbGo(u);
+}
 function rbNavCheck() {
   try { if (!window.caches) return; caches.open('rb-nav').then(function (c) { return c.match('/__rbnav').then(function (r) { if (!r) return;
-    return r.json().then(function (j) { c.delete('/__rbnav'); if (j && j.url && Date.now() - j.at < 120000) rbGo(j.url); }); }); }).catch(function () {}); } catch (x) {}
+    return r.json().then(function (j) { if (j && j.url && Date.now() - j.at < 120000) rbNavOnce(j.url, j.id); else c.delete('/__rbnav'); }); }); }).catch(function () {}); } catch (x) {}
 }
-try { if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', function (e) { var u = e.data && e.data.rbGo; if (!u) return;
-  try { caches.open('rb-nav').then(function (c) { c.delete('/__rbnav'); }); } catch (x) {} rbGo(u); }); } catch (e) {}
+/* Coming back from another app (2026-11-19): the page can wake before the tap is written down, so it looks
+   again a few times over the next few seconds. */
+function rbNavSoon() { rbNavCheck(); [300, 900, 2000, 4000].forEach(function (ms) { setTimeout(rbNavCheck, ms); }); }
+try { if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', function (e) { var u = e.data && e.data.rbGo; if (!u) return; rbNavOnce(u, e.data.id); }); } catch (e) {}
 /* Backup for alerts (2026-11-18): if the app comes back on screen within 3 minutes of a Predictions alert that
    hasn't been opened yet, open it. Only for members who get alerts (Predictions sets rb_pred_alerts). */
 function rbAlertCheck() {
@@ -49,10 +57,11 @@ function rbAlertCheck() {
       localStorage.setItem('rb_alert_seen', String(j.at)); rbGo(j.url); }).catch(function () {}); } catch (x) {}
 }
 rbNavCheck(); rbAlertCheck();
-document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') { rbNavCheck(); rbAlertCheck(); } });
+document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') { rbNavSoon(); rbAlertCheck(); } });
+window.addEventListener('focus', rbNavSoon);
 /* Keep the notification helper current, so tap handling updates reach phones without a reinstall. */
 try { if (navigator.serviceWorker) navigator.serviceWorker.getRegistration().then(function (r) { if (r) r.update(); }).catch(function () {}); } catch (x) {}
-window.addEventListener('pageshow', rbNavCheck);
+window.addEventListener('pageshow', rbNavSoon);
 
 /* Real links from the home-screen app (2026-11-19: a boost opened a blank in-app browser). In the app, a link
    opened in a new window lands in iOS's in-app viewer, which can't hand off to Real's app. A plain tap on the

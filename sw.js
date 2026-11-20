@@ -19,12 +19,18 @@ self.addEventListener('notificationclick', e => {
     /* Also left where the page can read it (2026-11-18: iOS still landed on the wrong page when the app
        was in the background - the message/navigate went to a window that wasn't awake yet). Every page
        checks this when it loads or comes back on screen (theme.js), then clears it. */
-    try { const c = await caches.open('rb-nav'); await c.put('/__rbnav', new Response(JSON.stringify({ url, at: Date.now() }))); } catch (x) {}
+    const id = Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+    try { const c = await caches.open('rb-nav'); await c.put('/__rbnav', new Response(JSON.stringify({ url, at: Date.now(), id }))); } catch (x) {}
     const list = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     const c = list.find(x => x.url === url) || list.find(x => new URL(x.url).origin === self.location.origin);
     if (c) {
-      if (c.url !== url) { try { c.postMessage({ rbGo: url }); } catch (x) {} try { if ('navigate' in c) await c.navigate(url); } catch (x) {} }
-      try { return await c.focus(); } catch (x) {}
+      if (c.url !== url) { try { c.postMessage({ rbGo: url, id }); } catch (x) {} try { if ('navigate' in c) await c.navigate(url); } catch (x) {} }
+      try { await c.focus(); } catch (x) {}
+      /* 2026-11-19 (Dennis: coming back from another app, the tap still left him where he was): a backgrounded
+         app wakes up a moment after the tap, so the message is sent again over the next few seconds. The page
+         acts on each tap once (by id). */
+      if (c.url !== url) for (const ms of [400, 1200, 2500, 4500]) { await new Promise(r => setTimeout(r, ms)); try { c.postMessage({ rbGo: url, id }); } catch (x) {} }
+      return;
     }
     return self.clients.openWindow(url);
   })());

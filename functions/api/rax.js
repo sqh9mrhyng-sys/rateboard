@@ -470,7 +470,10 @@ const BULK_HOURS = [12, 24, 48, 72];
    the member's range sends a push - buy now, current/min bid, or either. Set on Notifications (Dennis only for now).
    Up to 4 single alerts per batch, more become one summary; at most 30 an hour. */
 const BULK_SPN = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf', soccer: 'FC', ufc: 'UFC' };
+// Off 2026-11-19 11:57 PM AK (Dennis: "End the DMs and notifications it's pulling it bad").
+const BULK_ALERTS_ON = false;
 async function bulkAlerts(env, db, L) {
+  if (!BULK_ALERTS_ON) return;
   let users = []; try { users = JSON.parse((await env.RATEBOARD_KV.get('push_bulk_users_v1')) || '[]') || []; } catch (e) {}
   for (const who of users) {
     let p = {}; try { p = (JSON.parse((await env.RATEBOARD_KV.get('push_prefs_v1_' + who)) || '{}') || {}).bulk || {}; } catch (e) {}

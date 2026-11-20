@@ -2751,7 +2751,10 @@ const NO_MSG = new Map();   // members Real just refused a DM for -> when to try
 /* Bot DMs to Dennis himself (2026-11-19, "have the bot dm me the auctions and +ev ... only for my account and on
    top of the notifications"): bulk auctions in his range and value alerts, as a DM in his chat with the bot.
    His own switches on Notifications (Bot DMs); held while swaps are on hold; at most 40 an hour. Never throws. */
+// Off 2026-11-19 11:57 PM AK with the bulk alerts (Dennis: "End the DMs and notifications").
+const DM_OWNER_ON = false;
 export async function dmOwner(env, kind, text) {
+  if (!DM_OWNER_ON) return false;
   try {
     const db = env.RATEBOARD_DB, p = await pushPrefs(env, 'dennis'), o = p.owner || {};
     if (kind === 'bulk' ? o.dmBulk === false : o.dmEv === false) return false;
@@ -6613,7 +6616,7 @@ async function handle({ request, env, waitUntil }) {
       // Who has boost reminders on, so the minute job doesn't read every member.
       try { const ix = new Set(JSON.parse((await env.RATEBOARD_KV.get('push_boost_users_v1')) || '[]')); if (clean.boosts.on && Object.values(sps).some(x => x.on)) ix.add(who); else ix.delete(who); await env.RATEBOARD_KV.put('push_boost_users_v1', JSON.stringify([...ix])); } catch (e) {}
       try { const ix = new Set(JSON.parse((await env.RATEBOARD_KV.get('push_confirm_users_v1')) || '[]')); if (clean.swaps.on && clean.swaps.confirm && clean.swaps.confirmLead > 0) ix.add(who); else ix.delete(who); await env.RATEBOARD_KV.put('push_confirm_users_v1', JSON.stringify([...ix])); } catch (e) {} }
-    return json({ prefs: p, sports: BOOST_PUSH_SP, bulk: who === 'dennis' });
+    return json({ prefs: p, sports: BOOST_PUSH_SP, bulk: false });   // bulk alerts + bot DMs off (2026-11-19); was who === 'dennis'
   }
   if (op === 'pushsub' || op === 'pushunsub' || op === 'pushtest' || op === 'pushstatus') {
     if (!acc.who) return json({ error: 'Sign in first.' }, 401);
