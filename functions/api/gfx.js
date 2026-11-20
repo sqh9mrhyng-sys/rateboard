@@ -12,7 +12,7 @@
 //
 // Images live on the server's disk (DATA_DIR/gfx), never in the database. Limits: 1.5 MB an image,
 // 400 images a creator, 60 styles, 6 designs a style.
-import { sessionKey, allow, ADMINS } from '../../lib/auth.js';
+import { sessionKey, allow } from '../../lib/auth.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -66,10 +66,13 @@ export async function onRequest(ctx) {
     catch (e) { return new Response('Not found', { status: 404 }); }
   }
   await prep(db);
-  const me = await sessionKey(env, request); if (!me) return json({ error: 'Sign in first.' }, 401);
-  // Dennis only until he opens it up (2026-11-19).
-  if (!ADMINS.includes(String(me).toLowerCase())) return json({ error: 'Not open yet.' }, 403);
+  // Open to anyone with the link (2026-11-19, Dennis: "open the page where outside people can access it but only if
+  // they know the URL"): Browse needs no sign-in; making a creator profile needs a member sign-in. Not in the menu.
   const op = url.searchParams.get('op') || 'list';
+  const me = await sessionKey(env, request);
+  if (op === 'list' && !me) { const ip = request.headers.get('cf-connecting-ip') || (request.headers.get('x-forwarded-for') || '').split(',')[0].trim() || 'anon';
+    if (!(await allow(url.origin, 'gfxlist:' + ip, 120, 600))) return json({ error: 'Too many requests - try again in a few minutes.' }, 429); }
+  else if (!me) return json({ error: 'Sign in first.' }, 401);
 
   if (op === 'list') {
     const rows = ((await db.prepare('SELECT key, link, bio, open, unit, bg, styles, updatedAt FROM gfx_creators WHERE COALESCE(hidden,0)=0').all()).results) || [];
