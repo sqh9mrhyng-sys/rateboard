@@ -179,10 +179,12 @@
   .rc .ry{top:7cqw;right:7cqw;font-size:6.6cqw;font-weight:800}
   .rc .ra{top:16.4cqw;left:24.1cqw;width:51.6cqw;height:51.6cqw;border-radius:50%;overflow:hidden}
   .rc.guide .ra::after{content:"";position:absolute;inset:0;border-radius:50%;border:.6cqw dashed rgba(255,255,255,.85);pointer-events:none}
-  .rc .ra img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;transform:scale(var(--s,1));transform-origin:center;filter:drop-shadow(0 1.5cqw 2cqw rgba(0,0,0,.25))}
+  .rc .ra img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;transform:translate(var(--x,0%),var(--y,0%)) scale(var(--s,1));transform-origin:center;filter:drop-shadow(0 1.5cqw 2cqw rgba(0,0,0,.25))}
   .im .sz{position:absolute;right:4px;bottom:4px;font-size:10px;font-weight:800;padding:2px 6px;border-radius:6px;background:rgba(0,0,0,.6);color:#fff}
   .szbox{display:grid;gap:14px;max-width:360px;margin:0 auto} .szbox input[type=range]{width:100%;accent-color:var(--accent)}
   .szrow{display:flex;justify-content:space-between;align-items:center;font-weight:800}
+  .pad{display:grid;grid-template-columns:repeat(3,44px);grid-template-areas:'. u .' 'l c r' '. d .';gap:6px;justify-content:center}
+  .pad .ib{width:44px;height:44px;font-size:18px} .pad [data-mv='0,-1']{grid-area:u} .pad [data-mv='-1,0']{grid-area:l} .pad [data-mv='c']{grid-area:c} .pad [data-mv='1,0']{grid-area:r} .pad [data-mv='0,1']{grid-area:d}
   .rc .rn{top:74cqw;left:4cqw;right:4cqw;text-align:center;font-size:7cqw;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .rc .rp{top:81.5cqw;left:0;right:0;text-align:center;font-size:4.6cqw;opacity:.9}
   .rc .ro{top:90.5cqw;left:7cqw;right:7cqw;display:flex;justify-content:space-between;align-items:center}
@@ -356,9 +358,9 @@ const PFP = '<svg viewBox="0 0 24 24"><rect width="24" height="24" fill="#c9ccd3
 const GEM = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="11.6" fill="#fff"/><g stroke="#7d3486" stroke-width="1.7" fill="none" stroke-linecap="butt"><path d="M5.9 6.4 24 8.5"/><path d="M18.3 7.1 10.5 24.5"/><path d="M12 18.4 3 2.4"/></g></svg>';
 const BGS = [['swirl', 'Swirl'], ['bolt', 'Bolt'], ['hex', 'Hex'], ['shards', 'Shards'], ['rings', 'Rings'], ['camo', 'Camo'], ['stripes', 'Stripes'], ['dots', 'Dots']];
 const BGURL = b => `/img/card-bg-${BGS.some(x => x[0] === b) ? b : 'swirl'}.webp`;
-// sz: how big the design is in the circle, 50-150 (%). Anything outside the circle is cut off.
-function rcard(src, bg, sz, guide) {
-  return `<div class="rc${guide ? ' guide' : ''}" style="background-image:url(${BGURL(bg)});--s:${(sz || 100) / 100}"><div class="rk">${BALL}Player</div><div class="ry">2026-27</div>
+// sz: how big the design is in the circle, 50-150 (%); off: [x, y] shift in % of the circle. Anything outside the circle is cut off.
+function rcard(src, bg, sz, guide, off) {
+  return `<div class="rc${guide ? ' guide' : ''}" style="background-image:url(${BGURL(bg)});--s:${(sz || 100) / 100};--x:${(off && off[0]) || 0}%;--y:${(off && off[1]) || 0}%"><div class="rk">${BALL}Player</div><div class="ry">2026-27</div>
     <div class="ra">${src ? `<img loading="lazy" alt="" src="${src}">` : ''}</div><div class="rn">Example Graphic</div>
     <div class="ro"><span><i>${PFP}</i>username</span><em>2mo<b>#1</b></em></div><div class="rb"></div>
     <div class="rg"><b>0/140</b> to Iconic 2</div><div class="rx"><span>150x</span><span>${GEM}0</span></div></div>`;
@@ -375,7 +377,7 @@ function bgPicker(el, cur, withPick) {
 function tiles(c, lim) {
   const st = c.styles.slice(0, lim || 6), n = st.length;
   return `<div class="grid n${Math.min(n, 3)}">` + st.map((s, i) => `<button class="ctile" data-u="${esc(c.user)}" data-i="${i}" aria-label="${esc(s.name)} by ${esc(c.user)}">
-    ${rcard(s.imgs[0] ? (String(s.imgs[0]).startsWith('up:') ? UPV[s.imgs[0]] : IMG(s.imgs[0])) : '', bgOf(c), (s.sz || {})[s.imgs[0]])}
+    ${rcard(s.imgs[0] ? (String(s.imgs[0]).startsWith('up:') ? UPV[s.imgs[0]] : IMG(s.imgs[0])) : '', bgOf(c), (s.sz || {})[s.imgs[0]], false, (s.off || {})[s.imgs[0]])}
     <div class="tc"><b>${esc(s.name)}</b><span>${esc(price(s, c.unit))}</span></div>${s.imgs.length > 1 ? `<div class="tn">${s.imgs.length} designs</div>` : ''}</button>`).join('') + '</div>';
 }
 function card(c, i) {
@@ -423,7 +425,7 @@ function openLB(c, si, ii) {
       const o = e.target.closest('[data-si]'); if (o) openLB(LB.c, +o.dataset.si); if (e.target.closest('.nav.p')) step(-1); if (e.target.closest('.nav.n')) step(1); }); }
   document.body.style.overflow = 'hidden';
   const im = s.imgs[LB.ii], many = s.imgs.length > 1;
-  el.innerHTML = `<button class="close" aria-label="Close">✕</button><div class="lbin"><div><div class="stage" style="background:none;min-height:0;overflow:visible"><div class="lbcard">${rcard(im ? IMG(im) : '', bgOf(c), (s.sz || {})[im])}</div>
+  el.innerHTML = `<button class="close" aria-label="Close">✕</button><div class="lbin"><div><div class="stage" style="background:none;min-height:0;overflow:visible"><div class="lbcard">${rcard(im ? IMG(im) : '', bgOf(c), (s.sz || {})[im], false, (s.off || {})[im])}</div>
       ${many ? '<button class="nav p" aria-label="Previous">‹</button><button class="nav n" aria-label="Next">›</button>' : ''}</div>
       ${many ? `<div class="thumbs" style="justify-content:center">${s.imgs.map((x, i) => `<button class="chk" data-ii="${i}" aria-current="${i === LB.ii}" aria-label="Design ${i + 1}"><img src="${IMG(x)}" alt="" style="object-fit:contain"></button>`).join('')}</div>` : ''}</div>
     <div class="info"><div><h2>${esc(s.name)}</h2><div class="by">by <a href="${esc(c.link)}" target="_blank" rel="noopener">@${esc(c.user)}</a> · ${c.open ? 'taking orders' : 'not taking orders right now'}</div></div>
@@ -435,21 +437,36 @@ function openLB(c, si, ii) {
 function step(d) { const n = LB.c.styles[LB.si].imgs.length; openLB(LB.c, LB.si, (LB.ii + d + n) % n); }
 // Size a design in the circle (2026-11-19): live card preview with the circle outlined, 50-150%.
 function openSize(si, j) {
-  const s = S[si], id = s.imgs[j]; if (!id) return; s.sz = s.sz || {};
+  const s = S[si], id = s.imgs[j]; if (!id) return; s.sz = s.sz || {}; s.off = s.off || {};
   LB = { size: true }; let el = $('#lb'); if (el) el.remove();
   el = document.createElement('div'); el.id = 'lb'; el.className = 'lb'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); document.body.appendChild(el);
   document.body.style.overflow = 'hidden';
   const v = s.sz[id] || 100;
   el.innerHTML = `<button class="close" aria-label="Close">✕</button><div class="lbin" style="grid-template-columns:1fr;max-width:460px"><div class="szbox">
-      <div class="lbcard" id="szc">${rcard(IMG(id), P.bg, v, true)}</div>
+      <div class="lbcard" id="szc" style="touch-action:none">${rcard(IMG(id), P.bg, v, true, s.off[id])}</div>
       <div class="szrow"><span>Size in the circle</span><span id="szv">${v}%</span></div>
       <input type="range" id="szr" min="50" max="150" step="1" value="${v}" aria-label="Size in the circle">
+      <div class="szrow"><span>Position</span><span class="note" style="font-weight:600;font-size:13px">Drag the design, or nudge it</span></div>
+      <div class="pad"><button class="ib" data-mv="0,-1" aria-label="Move up">↑</button><button class="ib" data-mv="-1,0" aria-label="Move left">←</button><button class="ib" data-mv="c" aria-label="Center" title="Center">◎</button><button class="ib" data-mv="1,0" aria-label="Move right">→</button><button class="ib" data-mv="0,1" aria-label="Move down">↓</button></div>
       <p class="hint" style="margin:0">The dashed circle is the space your design gets on the card. Anything past it is cut off.</p>
-      <div style="display:flex;gap:10px"><button class="btn gh" id="szreset" style="flex:1">Reset to 100%</button><button class="btn pri" id="szdone" style="flex:1">Done</button></div></div></div>`;
+      <div style="display:flex;gap:10px"><button class="btn gh" id="szreset" style="flex:1">Reset</button><button class="btn pri" id="szdone" style="flex:1">Done</button></div></div></div>`;
   const set = n => { n = Math.max(50, Math.min(150, Math.round(n))); if (n === 100) delete s.sz[id]; else s.sz[id] = n; $('#szv').textContent = n + '%'; $('#szr').value = n;
     $('#szc .rc').style.setProperty('--s', n / 100); dirty(); };
   $('#szr').addEventListener('input', e => set(+e.target.value));
-  $('#szreset').onclick = () => set(100);
+  // Position: [x, y] in % of the circle, -60 to 60.
+  let off = (s.off[id] || [0, 0]).slice();
+  const place = (x, y) => { off = [Math.max(-60, Math.min(60, Math.round(x))), Math.max(-60, Math.min(60, Math.round(y)))];
+    if (!off[0] && !off[1]) delete s.off[id]; else s.off[id] = off.slice();
+    const rc = $('#szc .rc'); rc.style.setProperty('--x', off[0] + '%'); rc.style.setProperty('--y', off[1] + '%'); dirty(); };
+  el.querySelector('.pad').addEventListener('click', e => { const b = e.target.closest('[data-mv]'); if (!b) return;
+    if (b.dataset.mv === 'c') return place(0, 0); const [dx, dy] = b.dataset.mv.split(',').map(Number); place(off[0] + dx * 2, off[1] + dy * 2); });
+  const ra = $('#szc .ra'); let drag = null;
+  ra.style.cursor = 'grab';
+  ra.style.touchAction = 'none'; ra.addEventListener('dragstart', e => e.preventDefault());
+  ra.addEventListener('pointerdown', e => { e.preventDefault(); drag = { x: e.clientX, y: e.clientY, o: off.slice(), w: ra.getBoundingClientRect().width }; ra.setPointerCapture(e.pointerId); ra.style.cursor = 'grabbing'; });
+  ra.addEventListener('pointermove', e => { if (!drag) return; place(drag.o[0] + (e.clientX - drag.x) / drag.w * 100, drag.o[1] + (e.clientY - drag.y) / drag.w * 100); });
+  const up = () => { drag = null; ra.style.cursor = 'grab'; }; ra.addEventListener('pointerup', up); ra.addEventListener('pointercancel', up);
+  $('#szreset').onclick = () => { set(100); place(0, 0); };
   const done = () => { closeLB(); drawStyles(); };
   $('#szdone').onclick = done; el.addEventListener('click', e => { if (e.target === el || e.target.closest('.close')) done(); });
 }
@@ -480,8 +497,8 @@ function drawStyles() {
       <button class="ib" data-a="del" aria-label="Delete style" title="Delete style">🗑</button></div>
     <div class="row" style="grid-template-columns:1fr 1fr"><div><label class="f">Min price (rax)</label><input class="in" data-k="min" type="number" min="0" inputmode="numeric" placeholder="50" value="${s.min ?? ''}"></div>
       <div><label class="f">Max price (rax)</label><input class="in" data-k="max" type="number" min="0" inputmode="numeric" placeholder="150" value="${s.max ?? ''}"></div></div>
-    <label class="f">Designs (transparent PNG) · tap one to size it</label>
-    <div class="imgs" style="margin-top:0">${s.imgs.map((id, j) => `<div class="im chk${String(id).startsWith('up:') ? ' busy' : ''}"${String(id).startsWith('up:') ? '' : ` data-sz="${j}" role="button" tabindex="0" aria-label="Resize design ${j + 1}" style="cursor:pointer"`}>${String(id).startsWith('up:') ? `<img src="${UPV[id] || ''}" alt="">` : `<img src="${IMG(id)}" alt="">`}${j ? '' : '<span class="cv">Cover</span>'}${String(id).startsWith('up:') ? '' : `<button class="rm" data-rm="${j}" aria-label="Remove image">✕</button><span class="sz">${(s.sz || {})[id] || 100}%</span>`}</div>`).join('')}
+    <label class="f">Designs (transparent PNG) · tap one to size and move it</label>
+    <div class="imgs" style="margin-top:0">${s.imgs.map((id, j) => `<div class="im chk${String(id).startsWith('up:') ? ' busy' : ''}"${String(id).startsWith('up:') ? '' : ` data-sz="${j}" role="button" tabindex="0" aria-label="Resize design ${j + 1}" style="cursor:pointer"`}>${String(id).startsWith('up:') ? `<img src="${UPV[id] || ''}" alt="">` : `<img src="${IMG(id)}" alt="">`}${j ? '' : '<span class="cv">Cover</span>'}${String(id).startsWith('up:') ? '' : `<button class="rm" data-rm="${j}" aria-label="Remove image">✕</button><span class="sz">${(s.sz || {})[id] || 100}%${(s.off || {})[id] ? ' ✥' : ''}</span>`}</div>`).join('')}
       ${s.imgs.length < 6 ? `<button class="add" data-a="add"><span><i>＋</i>Add designs</span></button>` : ''}</div>
   </div>`).join('');
   drawPreview(); dirty();
@@ -491,7 +508,7 @@ async function loadMine() {
   const j = await api('mine'); if (j.error) { toast(j.error, true); return; }
   MINE = j; ME = j.me || ME; const c = ALL.find(x => x.user.toLowerCase() === String(ME).toLowerCase()); if (c) MINE.name = c.user;
   if (j.profile) P = { open: j.profile.open, hidden: j.profile.hidden, unit: 'rax', bio: j.profile.bio || '', bg: j.profile.bg || 'swirl' };
-  S = (j.styles || []).map(s => ({ id: s.id, name: s.name, min: s.min, max: s.max, imgs: s.imgs || [], sz: { ...(s.sz || {}) } })); if (!S.length) S = [{ id: newId(), name: '', min: 50, max: 150, imgs: [] }];
+  S = (j.styles || []).map(s => ({ id: s.id, name: s.name, min: s.min, max: s.max, imgs: s.imgs || [], sz: { ...(s.sz || {}) }, off: { ...(s.off || {}) } })); if (!S.length) S = [{ id: newId(), name: '', min: 50, max: 150, imgs: [] }];
   SAVED = snap(); drawProfile(); drawStyles();
 }
 const UPV = {};
@@ -500,7 +517,7 @@ $('#styles').addEventListener('input', e => { const k = e.target.dataset.k, st =
 let ADDTO = -1;
 $('#styles').addEventListener('click', async e => {
   const st = e.target.closest('[data-s]'); if (!st) return; const i = +st.dataset.s, s = S[i];
-  const rm = e.target.closest('[data-rm]'); if (rm) { const id = s.imgs.splice(+rm.dataset.rm, 1)[0]; if (s.sz) delete s.sz[id]; drawStyles(); api('delimg', { id }); return; }
+  const rm = e.target.closest('[data-rm]'); if (rm) { const id = s.imgs.splice(+rm.dataset.rm, 1)[0]; if (s.sz) delete s.sz[id]; if (s.off) delete s.off[id]; drawStyles(); api('delimg', { id }); return; }
   const sz = e.target.closest('[data-sz]'); if (sz) { openSize(i, +sz.dataset.sz); return; }
   const a = e.target.closest('[data-a]'); if (!a) return;
   if (a.dataset.a === 'feat') s.feat = !s.feat;
@@ -569,7 +586,7 @@ $('#save').onclick = async () => {
   $('#save').disabled = true; $('#savemsg').textContent = 'Saving…';
   const j = await api('save', { profile: P, styles: S.filter(s => s.name.trim()) }); $('#save').disabled = false;
   if (j.error) { toast(j.error, true); dirty(); return; }
-  S = j.styles.length ? j.styles.map(s => ({ id: s.id, name: s.name, min: s.min, max: s.max, imgs: s.imgs || [], sz: { ...(s.sz || {}) } })) : [{ id: newId(), name: '', min: 50, max: 150, imgs: [] }];
+  S = j.styles.length ? j.styles.map(s => ({ id: s.id, name: s.name, min: s.min, max: s.max, imgs: s.imgs || [], sz: { ...(s.sz || {}) }, off: { ...(s.off || {}) } })) : [{ id: newId(), name: '', min: 50, max: 150, imgs: [] }];
   SAVED = snap(); drawStyles(); toast(P.hidden ? 'Saved. Your card is hidden from Browse.' : 'Saved. Your card is live on Browse.'); loadBrowse();
 };
 addEventListener('beforeunload', e => { if (MINE && snap() !== SAVED) { e.preventDefault(); e.returnValue = ''; } });

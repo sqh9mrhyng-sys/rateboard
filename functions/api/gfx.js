@@ -44,7 +44,10 @@ function cleanStyles(list, mine) {
     const imgs = (Array.isArray(s.imgs) ? s.imgs : []).map(x => str(x, 40)).filter(x => mine.has(x)).slice(0, MAX_STYLE_IMGS);
     // Size of each design in the circle, 50-150 (%); 100 is left out.
     const sz = {}; if (s.sz && typeof s.sz === 'object') for (const id of imgs) { const v = Math.round(Number(s.sz[id])); if (v >= 50 && v <= 150 && v !== 100) sz[id] = v; }
-    out.push({ id: str(s.id, 20) || crypto.randomBytes(5).toString('hex'), name, min: lo, max: hi, imgs, sz });
+    // Position of each design in the circle: [x, y] in % of the circle, -60 to 60; centered is left out.
+    const off = {}; if (s.off && typeof s.off === 'object') for (const id of imgs) { const v = s.off[id]; if (Array.isArray(v)) { const x = Math.round(Number(v[0])) || 0, y = Math.round(Number(v[1])) || 0;
+      if ((x || y) && Math.abs(x) <= 60 && Math.abs(y) <= 60) off[id] = [x, y]; } }
+    out.push({ id: str(s.id, 20) || crypto.randomBytes(5).toString('hex'), name, min: lo, max: hi, imgs, sz, off });
   }
   return out;
 }
