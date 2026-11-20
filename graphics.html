@@ -179,17 +179,17 @@
   .rc .ry{top:7cqw;right:7cqw;font-size:6.6cqw;font-weight:800}
   .rc .ra{top:15.5cqw;left:12cqw;right:12cqw;height:50cqw;display:grid;place-items:center}
   .rc .ra img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 1.5cqw 2cqw rgba(0,0,0,.25))}
-  .rc .rn{top:71cqw;left:4cqw;right:4cqw;text-align:center;font-size:7cqw;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rc .rn{top:74cqw;left:4cqw;right:4cqw;text-align:center;font-size:7cqw;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .rc .rp{top:81.5cqw;left:0;right:0;text-align:center;font-size:4.6cqw;opacity:.9}
   .rc .ro{top:90.5cqw;left:7cqw;right:7cqw;display:flex;justify-content:space-between;align-items:center}
   .rc .ro span{display:flex;align-items:center;gap:2.4cqw;font-size:5.8cqw;font-weight:700}
   .rc .ro i{width:6.2cqw;height:6.2cqw;border-radius:50%;background:#c9ccd3;display:grid;place-items:center;overflow:hidden}
   .rc .ro i svg{width:100%;height:100%}
-  .rc .ro em{font-style:normal;font-size:4.6cqw;font-weight:500} .rc .ro em b{font-size:5.6cqw;font-weight:800;margin-left:1cqw}
+  .rc .ro em{font-style:normal;font-size:5cqw;font-weight:400;letter-spacing:-.01em;white-space:nowrap} .rc .ro em b{font-size:5.2cqw;font-weight:800;margin-left:1.3cqw}
   .rc .rb{top:105.5cqw;left:7cqw;right:7cqw;height:2.6cqw;border-radius:9cqw;background:rgba(255,255,255,.2)}
   .rc .rg{top:111.5cqw;left:0;right:0;text-align:center;font-size:5.6cqw;font-weight:500} .rc .rg b{font-weight:800}
-  .rc .rx{top:120.5cqw;left:0;right:0;display:flex;justify-content:center;align-items:center;gap:5cqw;font-size:6.4cqw;font-weight:800}
-  .rc .rx span{display:flex;align-items:center;gap:1.6cqw} .rc .rx svg{width:5.6cqw;height:5.6cqw}
+  .rc .rx{top:121.5cqw;left:0;right:0;display:flex;justify-content:center;align-items:center;gap:4.4cqw;font-size:5.2cqw;font-weight:800}
+  .rc .rx span{display:flex;align-items:center;gap:1.5cqw} .rc .rx svg{width:4.7cqw;height:4.7cqw}
   .grid>*{min-width:0} .grid{align-items:start}
   .ctile{border:0;background:none;padding:0;cursor:pointer;text-align:left;display:block;width:100%;transition:transform .35s cubic-bezier(.2,.8,.2,1)}
   .ctile:hover{transform:translateY(-4px)} .ctile:focus-visible{outline:2px solid var(--accent);outline-offset:4px;border-radius:14px}
@@ -337,10 +337,10 @@ addEventListener('resize', moveInd);
 /* ---------- Real card template (Iconic 1) ---------- */
 const BALL = '<svg viewBox="0 0 24 24"><g transform="rotate(-45 12 12)"><path d="M.4 12C4.6 1.6 19.4 1.6 23.6 12 19.4 22.4 4.6 22.4.4 12Z" fill="#fff"/><g stroke="#9a4a9e" stroke-linecap="butt"><path d="M5.4 3v18M18.6 3v18" stroke-width="2"/><path d="M9.7 9.9v4.2M12 9.9v4.2M14.3 9.9v4.2" stroke-width="1.3" stroke-linecap="round"/></g></g></svg>';
 const PFP = '<svg viewBox="0 0 24 24"><rect width="24" height="24" fill="#c9ccd3"/><circle cx="12" cy="9.5" r="4.2" fill="#8d929c"/><path d="M3.5 24c.8-5 4.4-7.5 8.5-7.5s7.7 2.5 8.5 7.5z" fill="#8d929c"/></svg>';
-const GEM = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="11.5" fill="#fff"/><g stroke="#7d3486" stroke-width="2.1" fill="none" stroke-linejoin="miter"><path d="M.5 8.3H19.4"/><path d="M12 20.6 6.1 8.3"/><path d="M12 20.6 19.2 1.9"/></g></svg>';
+const GEM = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="11.6" fill="#fff"/><g stroke="#7d3486" stroke-width="1.7" fill="none" stroke-linecap="butt"><path d="M5.9 6.4 24 8.5"/><path d="M18.3 7.1 10.5 24.5"/><path d="M12 18.4 3 2.4"/></g></svg>';
 function rcard(src) {
   return `<div class="rc"><div class="rk">${BALL}Player</div><div class="ry">2026-27</div>
-    <div class="ra">${src ? `<img loading="lazy" alt="" src="${src}">` : ''}</div><div class="rn">Example Graphic</div><div class="rp">DB</div>
+    <div class="ra">${src ? `<img loading="lazy" alt="" src="${src}">` : ''}</div><div class="rn">Example Graphic</div>
     <div class="ro"><span><i>${PFP}</i>username</span><em>2mo<b>#1</b></em></div><div class="rb"></div>
     <div class="rg"><b>0/140</b> to Iconic 2</div><div class="rx"><span>150x</span><span>${GEM}0</span></div></div>`;
 }
