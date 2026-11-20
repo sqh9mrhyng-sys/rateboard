@@ -8903,7 +8903,7 @@ export async function keepProbe(env, db) {
    Looks his account up once with his own token (account 1) and keeps the picture link in KV for the
    Graphics page. Health shows only whether it was found and the image host, not the link. */
 export async function pfpProbe(env, db) {
-  const K = 'gfx_pfp_dennis';
+  const K = 'gfx_pfp_dennis2';
   try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1, at: Date.now() }), { expirationTtl: 3600 }); } catch (e) { return; }
   const out = { at: Date.now() };
   try {
@@ -8915,7 +8915,21 @@ export async function pfpProbe(env, db) {
     if (f) {
       out.fields = Object.keys(f).filter(k => /image|pic|avatar|photo/i.test(k));
       for (const k of out.fields) { const v = f[k]; if (typeof v === 'string' && /^https?:\/\//.test(v)) { out.field = k; out.url = v; break; } }
-      if (!out.url && out.fields.length) out.raw = String(JSON.stringify(f[out.fields[0]])).slice(0, 200);
+      if (!out.url && out.fields.length) { out.raw = String(f[out.fields[0]] ?? '').slice(0, 300);
+        out.shape = out.raw.replace(/[a-z]/g, 'a').replace(/[A-Z]/g, 'A').replace(/[0-9]/g, '9').slice(0, 80); }
+      // avatarKey is a storage key, not a link: find how Real's web app turns it into an image link.
+      if (!out.url && out.raw) {
+        try {
+          const html = await (await fetch('https://realsports.io/', { headers: { 'User-Agent': rsHeaders('')['User-Agent'] } })).text();
+          const js = [...html.matchAll(/src="([^"]+\.js)"/g)].map(m => new URL(m[1], 'https://realsports.io/').href).slice(0, 12);
+          out.bundles = js.length; out.ctx = [];
+          for (const u of js) { const t = await (await fetch(u)).text();
+            for (const m of t.matchAll(/avatarKey/g)) { out.ctx.push(t.slice(Math.max(0, m.index - 220), m.index + 120)); if (out.ctx.length >= 6) break; }
+            for (const m of t.matchAll(/https:\/\/[a-z0-9.\-]*(cloudfront|imgix|cdn|images|assets|storage|s3)[a-z0-9.\-]*\.[a-z]{2,}[^"'`\s]{0,40}/gi)) { (out.hosts = out.hosts || new Set()).add(m[0]); }
+            if (out.ctx.length >= 6) break; }
+          if (out.hosts) out.hosts = [...out.hosts].slice(0, 30);
+        } catch (e) { out.jsErr = String(e.message || e).slice(0, 120); }
+      }
       if (out.url) { try { const r = await fetch(out.url, { method: 'GET' }); out.imgStatus = r.status; out.imgType = r.headers.get('content-type'); out.host = new URL(out.url).host; } catch (e) { out.imgErr = String(e.message || e).slice(0, 100); } }
     }
   } catch (e) { out.err = String(e.message || e).slice(0, 150); }
