@@ -4,6 +4,7 @@ self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
 self.addEventListener('push', e => {
   let d = {}; try { d = e.data ? e.data.json() : {}; } catch (x) { d = { body: e.data ? e.data.text() : '' }; }
+  if (d.nid) fetch('/api/swaps?op=navtap', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ nid: d.nid, how: 'recv' }), keepalive: true }).catch(() => {});   // diagnostics (2026-11-20)
   e.waitUntil(self.registration.showNotification(d.title || 'Rax Academy', {
     body: d.body || '', tag: d.tag || undefined, renotify: !!d.tag, icon: '/img/icon-192.png', badge: '/img/icon-192.png', data: { url: d.url || '/notifications', nid: d.nid || null } }));
 });

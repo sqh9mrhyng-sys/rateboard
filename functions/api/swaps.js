@@ -2769,14 +2769,14 @@ export async function dmOwner(env, kind, text) {
    09:05 UTC, to check the tap opens the alert after switching apps. Not saved as his last alert, so
    only the tap itself can take him there. */
 export async function testPredPushOnce(env) {
-  const K = 'oneoff_testpush_1120b'; if (Date.now() < 1795165860000) return;
+  const K = 'oneoff_testpush_1120c'; if (Date.now() < 1795166160000) return;
   try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, String(Date.now()), { expirationTtl: 7 * 86400 }); } catch (e) { return; }
   let x = {}; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_ev_v1')) || '{}') || {}; } catch (e) {}
   const g = (x.games || []).find(y => !y.locked && !y.live && y.sides && y.sides.length) || (x.games || []).find(y => !y.locked && y.sides && y.sides.length);
   const db = env.RATEBOARD_DB;
   if (!g) { await pushTo(env, db, 'dennis', { title: 'Test alert', body: 'No open market right now - tap me, this should open Predictions.', url: '/predictions', tag: 'pv-test', urgent: true }); return; }
   const sd = g.sides[0], q = Math.round((Number(sd.price) || 0.5) * 100);
-  const n = await pushTo(env, db, 'dennis', { title: `Value · ${sd.name || sd.label} (test)`, body: `Test 2 - tap me. This should open ${g.game} with the bet on top.`, url: `/predictions#g=${g.id}&s=0&a=500&q=${q}`, tag: 'pv-test', urgent: true });
+  const n = await pushTo(env, db, 'dennis', { title: `Value · ${sd.name || sd.label} (test)`, body: `Test 3 - tap me. This should open ${g.game} with the bet on top.`, url: `/predictions#g=${g.id}&s=0&a=500&q=${q}`, tag: 'pv-test', urgent: true });
   try { await env.RATEBOARD_KV.put(K, JSON.stringify({ at: Date.now(), sent: n, game: g.game }), { expirationTtl: 7 * 86400 }); } catch (e) {}
 }
 export async function dmTickKey(env) {
@@ -6433,14 +6433,19 @@ async function handle({ request, env, waitUntil }) {
     const kv = env.RATEBOARD_KV, log = async ev => { try { const l = JSON.parse((await kv.get('navdiag')) || '[]'); l.push([Date.now(), ev]); await kv.put('navdiag', JSON.stringify(l.slice(-30)), { expirationTtl: 86400 }); } catch (e) {} };
     if (request.method === 'POST') { let b = {}; try { b = await request.json(); } catch (e) {}
       const nid = String(b.nid || '').replace(/[^a-f0-9]/g, '').slice(0, 12); if (!nid) { await log('tap-noid'); return json({}); }
+      if (b.how === 'recv') { await log('recv'); return json({ ok: true }); }
       let p = null; try { p = JSON.parse((await kv.get('navpend_' + nid)) || 'null'); } catch (e) {}
       if (!p) { await log('tap-unknown'); return json({}); }
       await kv.put('navtap_' + p.who, JSON.stringify({ url: p.url, at: Date.now(), nid }), { expirationTtl: 300 });
       await log('tap ' + (b.how || '') + ' c' + (b.n ?? '?')); return json({ ok: true }); }
     const who = String(acc.who || '').toLowerCase(); if (!who) return json({});
     let x = null; try { x = JSON.parse((await env.RATEBOARD_KV.get('navtap_' + who)) || 'null'); } catch (e) {}
-    if (!x || Date.now() - x.at > 90000) return json({});
-    await env.RATEBOARD_KV.delete('navtap_' + who); await log('served'); return json(x);
+    if (x && Date.now() - x.at <= 90000) { await env.RATEBOARD_KV.delete('navtap_' + who); await env.RATEBOARD_KV.delete('navsent_' + who); await log('served-tap'); return json(x); }
+    /* No tap reached us: the app coming back within 2.5 minutes of a notification goes to it - on iPhone the tap
+       handler doesn't run when the app was in the background (2026-11-20 tests). Once per notification. */
+    let s2 = null; try { s2 = JSON.parse((await env.RATEBOARD_KV.get('navsent_' + who)) || 'null'); } catch (e) {}
+    if (s2 && Date.now() - s2.at <= 150000) { await env.RATEBOARD_KV.delete('navsent_' + who); await log('served-recent'); return json(s2); }
+    return json({});
   }
   if (op === 'lastalert') {
     const who = String(acc.who || '').toLowerCase(); if (!who) return json({});
