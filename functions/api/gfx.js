@@ -67,7 +67,7 @@ export async function onRequest(ctx) {
       // Best 3-6: the ones they starred first, then the ones with the most examples.
       st = st.filter(s => s.imgs && s.imgs.length).sort((a, b) => (b.feat - a.feat) || (b.imgs.length - a.imgs.length)).slice(0, 6);
       const name = rs[String(r.key).toLowerCase()] || r.key;
-      return { user: name, link: 'https://www.realapp.com/u/' + encodeURIComponent(name), bio: r.bio || '', open: !!r.open, unit: r.unit || 'rax', styles: st, updatedAt: r.updatedAt }; })
+      return { user: name, link: 'https://www.realapp.com/u/' + encodeURIComponent(name), bio: r.bio || '', open: !!r.open, unit: 'rax', styles: st, updatedAt: r.updatedAt }; })
       .filter(c => c.styles.length).sort((a, b) => (b.open - a.open) || (b.updatedAt - a.updatedAt));
     return json({ creators, me });
   }
@@ -104,7 +104,7 @@ export async function onRequest(ctx) {
     const p = b.profile || {}, styles = cleanStyles(b.styles, mine), now = Date.now();
     await db.prepare(`INSERT INTO gfx_creators (key, link, bio, open, hidden, unit, styles, updatedAt, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(key) DO UPDATE SET link=excluded.link, bio=excluded.bio, open=excluded.open, hidden=excluded.hidden, unit=excluded.unit, styles=excluded.styles, updatedAt=excluded.updatedAt`)
-      .bind(me, realLink(p.link), str(p.bio, 280), p.open === false ? 0 : 1, p.hidden ? 1 : 0, p.unit === 'usd' ? 'usd' : 'rax', JSON.stringify(styles), now, now).run();
+      .bind(me, realLink(p.link), str(p.bio, 280), p.open === false ? 0 : 1, p.hidden ? 1 : 0, 'rax', JSON.stringify(styles), now, now).run();
     // Images uploaded over an hour ago that no style uses any more are deleted, so they don't count against the limit.
     const used = new Set(styles.flatMap(s => s.imgs));
     const old = ((await db.prepare('SELECT id FROM gfx_imgs WHERE key=? AND at<?').bind(me, now - 3600e3).all()).results || []).filter(x => !used.has(x.id));

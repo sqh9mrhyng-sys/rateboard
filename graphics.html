@@ -188,9 +188,7 @@
 <div class="glow" aria-hidden="true"><i></i><i></i></div>
 <div class="wrap">
   <header class="hero">
-    <div class="eyebrow"><b></b>Rax Academy studio</div>
     <h1><span>Graphics</span></h1>
-    <p class="sub">Find a designer for your Real posts, or put your own styles in front of every member.</p>
     <div class="stats" id="stats"></div>
   </header>
 
@@ -220,7 +218,6 @@
           <p class="hint">Members see your Real username with a link to your profile, so they can message you there.</p>
           <div class="sw"><div><b>Open for orders</b><span>Shows a green Open badge on your card.</span></div><button class="tg" id="popen" role="switch" aria-checked="true" aria-label="Open for orders"></button></div>
           <div class="sw"><div><b>Show me on Browse</b><span>Turn off to take your card down without losing anything.</span></div><button class="tg" id="pshow" role="switch" aria-checked="true" aria-label="Show me on Browse"></button></div>
-          <div class="sw"><div><b>Prices in</b><span>Used for every style.</span></div><div class="seg" id="punit"><button data-v="rax" aria-pressed="true">Rax</button><button data-v="usd" aria-pressed="false">$ USD</button></div></div>
           <label class="f" for="pbio">Short bio</label>
           <textarea class="in" id="pbio" maxlength="280" placeholder="What you make, how fast you deliver, how to order"></textarea>
         </div>
@@ -339,7 +336,7 @@ async function loadBrowse() {
   if (!tok()) { $('#cards').innerHTML = `<div class="empty"><h3>Sign in to browse</h3><p>Sign in on Home, then come back here.</p><a class="btn pri" href="/">Go to Home</a></div>`; return; }
   const j = await api('list'); if (j.error === 'Not open yet.') { document.querySelector('.tabbar').hidden = true; $('#stats').innerHTML = ''; $('#cards').innerHTML = `<div class="empty"><h3>Coming soon</h3><p>This page isn't open yet.</p><a class="btn pri" href="/">Go to Home</a></div>`; return; }
   if (j.error) { $('#cards').innerHTML = `<div class="empty"><h3>Couldn't load</h3>${esc(j.error)}</div>`; return; }
-  ALL = j.creators || []; ME = j.me || ''; drawStats(); drawBrowse();
+  ALL = (j.creators || []).map(c => ({ ...c, unit: 'rax' })); ME = j.me || ''; drawStats(); drawBrowse();
 }
 $('#q').addEventListener('input', e => { F.q = e.target.value; drawBrowse(); });
 const seg = (id, key, after) => $(id).addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return;
@@ -386,7 +383,6 @@ function drawPreview() {
 }
 function drawProfile() {
   $('#popen').setAttribute('aria-checked', P.open); $('#pshow').setAttribute('aria-checked', !P.hidden); $('#pbio').value = P.bio;
-  $('#punit').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === P.unit));
 }
 function drawStyles() {
   $('#styles').innerHTML = S.map((s, i) => `<div class="st${s.feat ? ' feat' : ''}" data-s="${i}">
@@ -407,7 +403,7 @@ async function loadMine() {
   if (MINE || !tok()) { if (!tok()) $('#styles').innerHTML = '<p class="hint">Sign in on Home first.</p>'; return; }
   const j = await api('mine'); if (j.error) { toast(j.error, true); return; }
   MINE = j; ME = j.me || ME; const c = ALL.find(x => x.user.toLowerCase() === String(ME).toLowerCase()); if (c) MINE.name = c.user;
-  if (j.profile) P = { open: j.profile.open, hidden: j.profile.hidden, unit: j.profile.unit || 'rax', bio: j.profile.bio || '' };
+  if (j.profile) P = { open: j.profile.open, hidden: j.profile.hidden, unit: 'rax', bio: j.profile.bio || '' };
   S = (j.styles || []).map(s => ({ ...s })); if (!S.length) S = [{ id: newId(), name: '', min: null, max: null, turn: '', desc: '', imgs: [], feat: true }];
   SAVED = snap(); drawProfile(); drawStyles();
 }
@@ -461,7 +457,6 @@ async function addFiles(files) {
 }
 $('#popen').onclick = () => { P.open = !P.open; drawProfile(); drawPreview(); dirty(); };
 $('#pshow').onclick = () => { P.hidden = !P.hidden; drawProfile(); drawPreview(); dirty(); };
-$('#punit').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; P.unit = b.dataset.v; drawProfile(); drawStyles(); });
 $('#pbio').addEventListener('input', e => { P.bio = e.target.value; drawPreview(); dirty(); });
 $('#undo').onclick = () => { const o = JSON.parse(SAVED); P = o.P; S = o.S; drawProfile(); drawStyles(); };
 $('#save').onclick = async () => {
