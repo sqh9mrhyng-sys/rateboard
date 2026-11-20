@@ -72,11 +72,11 @@
   <div class="ag" data-g="boosts"><div class="ah"><button class="ax" data-x="boosts" aria-expanded="false">▸</button><b>Boosts</b><button class="aon" data-on="boosts">Activate</button></div>
     <div class="ab" hidden><p class="note" style="margin:4px 0 6px">A reminder to boost before the first game of the day. Pick how long before (up to 36 hours).</p><div id="bsp"></div></div></div>
   <div class="ag" data-g="bulk" hidden><div class="ah"><button class="ax" data-x="bulk" aria-expanded="false">▸</button><b>Bulk notifications</b><button class="aon" data-on="bulk">Activate</button></div>
-    <div class="ab" hidden><p class="note" style="margin:4px 0 8px">A notification when a new bulk auction goes up in your price range. Tap it to open the auction on Real.</p>
-      <div class="bk"><label>From <input type="number" min="0" inputmode="numeric" data-bk="min"></label><label>to <input type="number" min="0" inputmode="numeric" data-bk="max"></label><span>rax</span></div>
-      <div class="bk"><span>Price</span><select data-bk="price"><option value="any">Buy now or bid</option><option value="buy">Buy now only</option><option value="bid">Current bid only</option></select></div>
+    <div class="ab" hidden><p class="note" style="margin:4px 0 8px">Brand-new listings only (just put up, not ones ending with bids), with a buy now well under the usual price for that player - from recent bulk sales, else the same rarity's.</p>
+      <div class="bk"><span>At least</span><select data-bk="cut"><option value="10">10%</option><option value="15">15%</option><option value="20">20%</option><option value="25">25%</option><option value="30">30%</option><option value="40">40%</option><option value="50">50%</option></select><span>under usual</span></div>
+      <div class="bk"><label>Buy now from <input type="number" min="0" inputmode="numeric" data-bk="min" placeholder="any"></label><label>to <input type="number" min="0" inputmode="numeric" data-bk="max" placeholder="any"></label><span>rax</span></div>
       <div class="bkc" id="bksp"></div><div class="bkc" id="bkrar"></div>
-      <p class="note" style="margin:6px 0 0">Nothing ticked = every sport / every rarity. At most 30 an hour; more than 4 at once come as one summary.</p></div></div>
+      <p class="note" style="margin:6px 0 0">Nothing ticked = every sport / every rarity. Tap a notification to see the deal and open it on Real. At most 30 an hour.</p></div></div>
   <div class="ag" data-g="owner" hidden><div class="ah"><span class="ax" style="visibility:hidden"></span><b>Bot DMs on Real</b></div>
     <div class="ab"><p class="note" style="margin:4px 0 6px">The swap bot also DMs you these, on top of the notifications.</p>
       <label class="ar"><span>Bulk auctions in your range (with links)</span><input type="checkbox" data-k="owner.dmBulk"></label>
@@ -107,9 +107,9 @@ const $ = s => document.querySelector(s);
   P.swaps = Object.assign({ on: false, warn: true, live: true, confirm: true, dmWarn: true, dmLive: true, confirmLead: 0 }, P.swaps || {});
   P.boosts = Object.assign({ on: false, sports: {}, all: false, allHours: 2 }, P.boosts || {}); P.notes = Object.assign({ on: true }, P.notes || {});
   // Bulk alerts (2026-11-19): only shown to accounts the server allows (Dennis for now).
-  const BULK = !!j.bulk; P.bulk = Object.assign({ on: false, min: 300, max: 400, price: 'any', sports: [], rarities: [] }, P.bulk || {});
+  const BULK = !!j.bulk; P.bulk = Object.assign({ on: false, min: 0, max: 0, cut: 25, sports: [], rarities: [] }, P.bulk || {}); if (P.bulk.max >= 10000000) P.bulk.max = 0;
   P.owner = Object.assign({ dmBulk: true, dmEv: true }, P.owner || {});
-  if (BULK) { document.querySelector('.ag[data-g="bulk"]').hidden = false; document.querySelector('.ag[data-g="owner"]').hidden = false; }
+  if (BULK) document.querySelector('.ag[data-g="bulk"]').hidden = false;   // bot DMs stay off (2026-11-19)
   const BSP = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf', soccer: 'FC', ufc: 'UFC' }, BRAR = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Mystic', 'Iconic'];
   const HRS = [0.5, 1, 2, 3, 4, 6, 8, 12, 18, 24, 30, 36], hl = h => h < 1 ? '30 min' : h + (h === 1 ? ' hour' : ' hours');
   const draw = () => {
@@ -118,7 +118,7 @@ const $ = s => document.querySelector(s);
     document.querySelectorAll('[data-k]').forEach(i => { const [g, k] = i.dataset.k.split('.'); i.checked = P[g][k] !== false; });
     const opt = v => HRS.map(h => `<option value="${h}"${Math.abs(h - (v || 2)) < 0.01 ? ' selected' : ''}>${hl(h)} before</option>`).join('');
     const sel = document.querySelector('[data-cl]'); if (sel) sel.value = String(P.swaps.confirmLead || 0);
-    if (BULK) { for (const k of ['min', 'max', 'price']) { const el = document.querySelector(`[data-bk="${k}"]`); if (el !== document.activeElement) el.value = P.bulk[k]; }
+    if (BULK) { for (const k of ['min', 'max', 'cut']) { const el = document.querySelector(`[data-bk="${k}"]`); if (el !== document.activeElement) el.value = k === 'cut' ? P.bulk.cut : (P.bulk[k] || ''); }
       $('#bksp').innerHTML = Object.entries(BSP).map(([k, l]) => `<label><input type="checkbox" data-bks="${k}"${P.bulk.sports.includes(k) ? ' checked' : ''}>${l}</label>`).join('');
       $('#bkrar').innerHTML = BRAR.map(r => `<label><input type="checkbox" data-bkr="${r.toLowerCase()}"${P.bulk.rarities.includes(r.toLowerCase()) ? ' checked' : ''}>${r}</label>`).join(''); }
     // All: one time for every sport and one reminder before the day's first game (opens All sports).
@@ -145,7 +145,7 @@ const $ = s => document.querySelector(s);
     if (i.dataset.ball) { P.boosts.all = i.checked; if (i.checked) for (const k of Object.keys(SP)) { P.boosts.sports[k] = Object.assign({}, P.boosts.sports[k] || {}, { on: true, hours: P.boosts.allHours }); } draw(); save(); }
     if (i.dataset.bah) { P.boosts.allHours = Number(i.value); for (const k of Object.keys(SP)) P.boosts.sports[k] = Object.assign({ on: !!(P.boosts.sports[k] || {}).on }, P.boosts.sports[k] || {}, { hours: Number(i.value) }); draw(); save(); }
     if (i.dataset.cl) { P.swaps.confirmLead = Number(i.value); save(); }
-    if (i.dataset.bk) { const k = i.dataset.bk; P.bulk[k] = k === 'price' ? i.value : (i.value === '' ? 0 : Math.max(0, Math.round(+i.value))); save(); }
+    if (i.dataset.bk) { const k = i.dataset.bk; P.bulk[k] = k === 'cut' ? Number(i.value) : (i.value === '' ? 0 : Math.max(0, Math.round(+i.value))); save(); }
     if (i.dataset.bks) { const s = new Set(P.bulk.sports); i.checked ? s.add(i.dataset.bks) : s.delete(i.dataset.bks); P.bulk.sports = [...s]; save(); }
     if (i.dataset.bkr) { const s = new Set(P.bulk.rarities); i.checked ? s.add(i.dataset.bkr) : s.delete(i.dataset.bkr); P.bulk.rarities = [...s]; save(); }
     if (i.dataset.bh) { const k = i.dataset.bh; P.boosts.sports[k] = Object.assign({ on: true }, P.boosts.sports[k] || {}, { hours: Number(i.value) }); draw(); save(); } });

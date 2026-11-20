@@ -6640,9 +6640,9 @@ async function handle({ request, env, waitUntil }) {
       clean.boosts = { on: !!bo.on, sports: sps, all: !!bo.all, allHours: Math.round(Math.max(0.25, Math.min(36, Number(bo.allHours) || 2)) * 4) / 4 }; clean.notes = { on: (b.notes || {}).on !== false };
       // Bulk alerts: Dennis only for now (2026-11-19).
       if (who === 'dennis') { const bu = b.bulk || {}, n = v => { const x = Math.round(Number(v)); return Number.isFinite(x) && x >= 0 ? Math.min(x, 10000000) : null; };
-        let mn = n(bu.min) ?? 300, mx = n(bu.max) ?? 400; if (mx < mn) [mn, mx] = [mx, mn];
+        let mn = n(bu.min) ?? 0, mx = n(bu.max) ?? 0; if (!mx) mx = 10000000; if (mx < mn) [mn, mx] = [mx, mn];
         const SPK = ['nba', 'ncaam', 'nfl', 'ncaaf', 'nhl', 'mlb', 'wnba', 'golf', 'soccer', 'ufc'], RK = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mystic', 'iconic'];
-        clean.bulk = { on: !!bu.on, min: mn, max: mx, price: ['buy', 'bid', 'any'].includes(bu.price) ? bu.price : 'any',
+        clean.bulk = { on: !!bu.on, min: mn, max: mx, cut: [10, 15, 20, 25, 30, 40, 50].includes(Number(bu.cut)) ? Number(bu.cut) : 25, price: 'buy',
           sports: (Array.isArray(bu.sports) ? bu.sports : []).filter(x => SPK.includes(x)), rarities: (Array.isArray(bu.rarities) ? bu.rarities : []).map(x => String(x).toLowerCase()).filter(x => RK.includes(x)) };
         try { const ix = new Set(JSON.parse((await env.RATEBOARD_KV.get('push_bulk_users_v1')) || '[]')); if (clean.bulk.on) ix.add(who); else ix.delete(who); await env.RATEBOARD_KV.put('push_bulk_users_v1', JSON.stringify([...ix])); } catch (e) {} }
       if (who === 'dennis') { const o = b.owner || {}; clean.owner = { dmBulk: o.dmBulk !== false, dmEv: o.dmEv !== false }; }
@@ -6650,7 +6650,7 @@ async function handle({ request, env, waitUntil }) {
       // Who has boost reminders on, so the minute job doesn't read every member.
       try { const ix = new Set(JSON.parse((await env.RATEBOARD_KV.get('push_boost_users_v1')) || '[]')); if (clean.boosts.on && Object.values(sps).some(x => x.on)) ix.add(who); else ix.delete(who); await env.RATEBOARD_KV.put('push_boost_users_v1', JSON.stringify([...ix])); } catch (e) {}
       try { const ix = new Set(JSON.parse((await env.RATEBOARD_KV.get('push_confirm_users_v1')) || '[]')); if (clean.swaps.on && clean.swaps.confirm && clean.swaps.confirmLead > 0) ix.add(who); else ix.delete(who); await env.RATEBOARD_KV.put('push_confirm_users_v1', JSON.stringify([...ix])); } catch (e) {} }
-    return json({ prefs: p, sports: BOOST_PUSH_SP, bulk: false });   // bulk alerts + bot DMs off (2026-11-19); was who === 'dennis'
+    return json({ prefs: p, sports: BOOST_PUSH_SP, bulk: who === 'dennis' });   // cheap new bulk listings (2026-11-20); bot DMs stay off
   }
   if (op === 'pushsub' || op === 'pushunsub' || op === 'pushtest' || op === 'pushstatus') {
     if (!acc.who) return json({ error: 'Sign in first.' }, 401);

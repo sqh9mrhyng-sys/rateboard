@@ -56,6 +56,7 @@
 <meta name="theme-color" content="#141925">
 </head>
 <body><div class="wrap">
+<div id="deal" hidden></div>
 <p class="note" id="msg">Loading…</p>
 <div class="seg" id="seg" hidden>
   <button data-v="deals" aria-pressed="true">Deals</button>
@@ -342,6 +343,24 @@ $('#list').addEventListener('click', e => {
   if(e.target.closest('a') || e.target.closest('.kids')) return;
   const g = e.target.closest('.grp'); if(g) g.classList.toggle('open');
 });
+/* A cheap-listing notification lands here (2026-11-20): the deal on top with a button to open it on Real
+   (a tap, so iPhone hands it to Real's app). Everything it shows comes in the link. */
+function showDeal(){
+  const h = new URLSearchParams(location.hash.slice(1)), id = Number(h.get('deal')), box = $('#deal');
+  if(!id){ box.hidden = true; return; }
+  const p = Number(h.get('p')), v = Number(h.get('v')), off = v > 0 ? Math.round((1 - p / v) * 100) : null, e = Number(h.get('e'));
+  const left = e ? (m => m >= 60 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : m + 'm')(Math.max(0, Math.round((e - Date.now()) / 60000))) : '';
+  box.hidden = false;
+  box.innerHTML = `<div style="border:1px solid var(--accent);border-radius:16px;padding:14px 16px;margin:0 0 14px;background:var(--panel)">
+    <div class="note" style="text-transform:uppercase;letter-spacing:.06em;font-weight:800;font-size:11px">Cheap new listing</div>
+    <div style="font-size:19px;font-weight:800;margin:4px 0 2px">${esc(h.get('n') || 'Auction')}</div>
+    <div class="note">${esc(h.get('s') || '')}${left ? ' · ends in ' + left : ''}</div>
+    <div style="margin:8px 0 12px;font-size:15px">Buy now <b>${p.toLocaleString()} rax</b>${v ? ` · usually ~${v.toLocaleString()}` : ''}${off != null ? ` · <b style="color:var(--good)">${off}% under</b>` : ''}</div>
+    <a href="${esc(aUrl({ id }))}" style="display:block;text-align:center;background:var(--accent);color:#1a1205;font-weight:800;border-radius:12px;padding:12px;text-decoration:none">Open the auction on Real →</a>
+    <button type="button" id="dealx" style="display:block;margin:10px auto 0;background:none;border:0;color:var(--mute);font:inherit;font-size:13px;cursor:pointer">Close</button></div>`;
+  $('#dealx').onclick = () => { history.replaceState(null, '', location.pathname); box.hidden = true; };
+}
+showDeal(); window.addEventListener('hashchange', showDeal);
 load();
 </script>
 </body>

@@ -470,32 +470,42 @@ const BULK_HOURS = [12, 24, 48, 72];
    the member's range sends a push - buy now, current/min bid, or either. Set on Notifications (Dennis only for now).
    Up to 4 single alerts per batch, more become one summary; at most 30 an hour. */
 const BULK_SPN = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf', soccer: 'FC', ufc: 'UFC' };
-// Off 2026-11-19 11:57 PM AK (Dennis: "End the DMs and notifications it's pulling it bad").
-const BULK_ALERTS_ON = false;
+/* Bulk deal alerts (2026-11-20, Dennis: "notifications for brand new listings that are really cheap ... not listings
+   about to end because there's a bid on it"). Only listings just put up (their end time is 12/24/48/72 hours out,
+   give or take the 5-minute watch), with a buy now at least his % under the usual price: the median rax per rating
+   point of that player and season's sales in the last 30 days (3+ sales), else the same rarity's (8+), times the
+   listing's rating. Optional rax range, sports and rarities. Push only (bot DMs stay off); at most 30 an hour.
+   (The first version, 2026-11-19, also caught old listings seen for the first time near their end - turned off.) */
+const BULK_ALERTS_ON = true;
 async function bulkAlerts(env, db, L) {
   if (!BULK_ALERTS_ON) return;
+  const now = Date.now(), isNew = x => x.endsAt && BULK_HOURS.some(h => { const d = h * 3600000 - (x.endsAt - now); return d >= -2 * 60000 && d <= (BULK_EVERY + 5) * 60000; });
+  L = L.filter(x => isNew(x) && x.buyNow > 0 && x.rating > 0); if (!L.length) return;
   let users = []; try { users = JSON.parse((await env.RATEBOARD_KV.get('push_bulk_users_v1')) || '[]') || []; } catch (e) {}
+  if (!users.length) return;
+  // The usual price of each listing.
+  const med = a => { const x = a.slice().sort((p, q) => p - q), m = x.length >> 1; return x.length % 2 ? x[m] : (x[m - 1] + x[m]) / 2; };
+  for (const x of L) {
+    try { const a = ((await db.prepare("SELECT price, rating FROM bulk_results WHERE sport=? AND season=? AND playerId=? AND price IS NOT NULL AND rating > 0 AND endsAt > ?").bind(x.sport, x.season, x.playerId, now - 30 * 86400000).all()).results || []).map(r => r.price / r.rating);
+      if (a.length >= 3) { x.usual = med(a) * x.rating; x.basis = a.length + ' sales'; continue; }
+      const fam = String(x.rarity || '').replace(/\s*\d+$/, '');
+      const b = ((await db.prepare("SELECT price, rating FROM bulk_results WHERE sport=? AND season=? AND rarity LIKE ? AND price IS NOT NULL AND rating > 0 AND endsAt > ? LIMIT 400").bind(x.sport, x.season, fam + '%', now - 30 * 86400000).all()).results || []).map(r => r.price / r.rating);
+      if (b.length >= 8) { x.usual = med(b) * x.rating; x.basis = 'same rarity'; } } catch (e) {} }
   for (const who of users) {
     let p = {}; try { p = (JSON.parse((await env.RATEBOARD_KV.get('push_prefs_v1_' + who)) || '{}') || {}).bulk || {}; } catch (e) {}
     if (!p.on) continue;
-    const lo = Number(p.min) || 0, hi = Number(p.max) || 1e9, inR = v => v != null && v >= lo && v <= hi, sps = Array.isArray(p.sports) && p.sports.length ? new Set(p.sports) : null;
-    const rars = Array.isArray(p.rarities) && p.rarities.length ? new Set(p.rarities.map(r => r.toLowerCase())) : null;
-    const hit = L.filter(x => (!sps || sps.has(x.sport)) && (!rars || [...rars].some(f => String(x.rarity || '').toLowerCase().startsWith(f)))
-      && (p.price === 'buy' ? inR(x.buyNow) : p.price === 'bid' ? inR(x.bid) : inR(x.buyNow) || inR(x.bid)));
+    const cut = Math.max(5, Math.min(80, Number(p.cut) || 25)) / 100, lo = Number(p.min) || 0, hi = Number(p.max) || 1e9;
+    const sps = Array.isArray(p.sports) && p.sports.length ? new Set(p.sports) : null, rars = Array.isArray(p.rarities) && p.rarities.length ? p.rarities.map(r => r.toLowerCase()) : null;
+    const hit = L.filter(x => x.usual > 0 && x.buyNow <= x.usual * (1 - cut) && x.buyNow >= lo && x.buyNow <= hi
+      && (!sps || sps.has(x.sport)) && (!rars || rars.some(f => String(x.rarity || '').toLowerCase().startsWith(f)))).sort((a, b) => b.usual - b.buyNow - (a.usual - a.buyNow));
     if (!hit.length) continue;
-    const HK = 'bulkpush_n_' + who + '_' + Math.floor(Date.now() / 3600000); let used = Number(await env.RATEBOARD_KV.get(HK)) || 0; if (used >= 30) continue;
-    const left = h => { const m = Math.max(0, Math.round((h - Date.now()) / 60000)); return m >= 60 ? Math.floor(m / 60) + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '') : m + 'm'; };
-    const pr = x => [x.buyNow != null ? `Buy now ${Math.round(x.buyNow).toLocaleString()}` : '', x.bid != null ? `bid ${Math.round(x.bid).toLocaleString()}` : ''].filter(Boolean).join(' · ') + ' rax';
-    if (hit.length <= 4) for (const x of hit) {
-      await pushTo(env, db, who, { title: `Bulk · ${x.name || 'Auction'}${x.rarity ? ' ' + x.rarity : ''}${x.rating ? ' ' + Math.round(x.rating) : ''}`,
-        body: `${pr(x)} · ${BULK_SPN[x.sport] || x.sport || ''} ${x.season || ''} · ends in ${x.endsAt ? left(x.endsAt) : '?'}`, url: `https://www.realapp.com/${routeId([30, 0, 0, x.id])}`, tag: 'bulk-' + x.id });
-      used++; }
-    else { await pushTo(env, db, who, { title: `Bulk · ${hit.length} new auctions ${lo.toLocaleString()}–${hi >= 1e9 ? '∞' : hi.toLocaleString()} rax`,
-        body: hit.slice(0, 5).map(x => `${x.name} ${x.rarity || ''} ${x.buyNow != null ? Math.round(x.buyNow) : Math.round(x.bid)}`).join(' · ').slice(0, 180), url: '/bulk', tag: 'bulk-sum' }); used++; }
+    const HK = 'bulkpush_n_' + who + '_' + Math.floor(now / 3600000); let used = Number(await env.RATEBOARD_KV.get(HK)) || 0;
+    for (const x of hit) { if (used >= 30) break;
+      const off = Math.round((1 - x.buyNow / x.usual) * 100), nm = `${x.name || 'Auction'}${x.rarity ? ' ' + x.rarity : ''}${x.rating ? ' ' + Math.round(x.rating) : ''}`;
+      const q = new URLSearchParams({ deal: x.id, n: nm, p: Math.round(x.buyNow), v: Math.round(x.usual), s: `${BULK_SPN[x.sport] || x.sport || ''} ${x.season || ''}`.trim(), e: x.endsAt });
+      await pushTo(env, db, who, { title: `Cheap bulk · ${nm} · ${off}% under`, body: `Buy now ${Math.round(x.buyNow).toLocaleString()} rax (usually ~${Math.round(x.usual).toLocaleString()}, ${x.basis}) · ${BULK_SPN[x.sport] || x.sport || ''} ${x.season || ''} · just listed`,
+        url: '/bulk#' + q.toString(), tag: 'bulk-' + x.id }); used++; }
     await env.RATEBOARD_KV.put(HK, String(used), { expirationTtl: 7200 }).catch(() => {});
-    // Dennis also gets them as one bot DM, every auction with its link (2026-11-19).
-    if (who === 'dennis') dmOwner(env, 'bulk', hit.slice(0, 10).map(x => `${x.name || 'Auction'}${x.rarity ? ' ' + x.rarity : ''}${x.rating ? ' ' + Math.round(x.rating) : ''} | ${pr(x)}\n${BULK_SPN[x.sport] || x.sport || ''} ${x.season || ''} · ends in ${x.endsAt ? left(x.endsAt) : '?'}\nhttps://www.realapp.com/${routeId([30, 0, 0, x.id])}`).join('\n\n')
-      + (hit.length > 10 ? `\n\n+${hit.length - 10} more on raxacademy.app/bulk` : '')).catch(() => {});
   }
 }
 async function bulkTick(env) {
@@ -538,7 +548,7 @@ async function bulkTick(env) {
           String((e.firstName && e.lastName ? e.firstName + ' ' + e.lastName : '') || c.label || e.displayName || '').slice(0, 80),
           b.rarityLabel || x.rarity || null, num(c.boostValue), b.multiplier != null ? String(b.multiplier) : null, num(x.buyNowPrice), num(x.minBidPrice), num(x.currentBidAmount),
           Number(x.numBids) || 0, num(x.value), Array.isArray(x.linkedCardIds) ? x.linkedCardIds.length : null, c.serialNumber != null ? String(c.serialNumber) : null, x.userId != null ? String(x.userId) : null, now));
-      if (known && !known.has(Number(x.id))) fresh.push({ id: Number(x.id), endsAt: Date.parse(x.endsAt) || null, sport: x.sport || c.sport || null, season: Number(x.season || c.season) || null,
+      if (known && !known.has(Number(x.id))) fresh.push({ id: Number(x.id), endsAt: Date.parse(x.endsAt) || null, sport: x.sport || c.sport || null, season: Number(x.season || c.season) || null, playerId: Number(x.playerId || x.entityId) || null,
         name: String((e.firstName && e.lastName ? e.firstName + ' ' + e.lastName : '') || c.label || e.displayName || '').slice(0, 80), rarity: b.rarityLabel || x.rarity || null, rating: num(c.boostValue),
         buyNow: num(x.buyNowPrice), bid: num(x.currentBidAmount) ?? num(x.minBidPrice) }); }
     if (stmts.length) await db.batch(stmts);
