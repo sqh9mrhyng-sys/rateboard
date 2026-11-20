@@ -241,6 +241,20 @@
   .mrow .sum em{font-style:normal;font-weight:800}
   .mbtn{display:flex;flex-direction:column;gap:6px} .mbtn .vbtn{margin:0;width:100%;text-align:left;display:flex;justify-content:space-between;align-items:center;border-radius:10px}
   #bkbox>summary{display:none} #bkbox:not([open]){display:none}
+  /* Alert page (2026-11-19): a notification opens just the bet - the rest of the page hides until "All markets". */
+  body.alertmode .wrap > :not(#alertv):not(.top) {display:none!important}
+  #alertv{margin:6px 0 20px} .al{background:var(--panel);border:2px solid var(--accent);border-radius:16px;padding:16px}
+  .al .ah{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--accent)}
+  .al .ah button{margin-left:auto;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:999px;padding:6px 12px;font:inherit;font-size:13px;font-weight:700;text-transform:none;letter-spacing:0;cursor:pointer}
+  .al .team{font-size:26px;font-weight:900;margin:12px 0 2px;line-height:1.15} .al .team span{font-size:18px;font-weight:700;color:var(--mute)}
+  .al .gm{color:var(--mute);font-size:13.5px} .al .now{margin-top:8px;font-size:14px;color:var(--mute)} .al .now b{color:var(--ink)}
+  .al .bet{display:block;text-align:center;margin:14px 0 4px;background:var(--accent);color:#1a1205;border-radius:12px;padding:13px;font-weight:900;font-size:17px;text-decoration:none}
+  .al .lh{margin:16px 0 6px;font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--mute)}
+  .al table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums} .al td{padding:9px 6px;border-top:1px solid var(--line);font-size:16px}
+  .al td:first-child{font-weight:900;width:22%} .al td:nth-child(2){width:36%} .al td:last-child{text-align:right;font-weight:800}
+  .al tr.on td{color:var(--good)} .al tr.on td:first-child::after{content:' ✓';font-size:13px}
+  .al .warn{margin-top:10px;background:rgba(229,83,75,.14);color:#f08a84;border-radius:10px;padding:8px 10px;font-size:13.5px;font-weight:700}
+  .al .foot{margin-top:10px;font-size:12.5px;color:var(--mute)}
 </style>
 <script src="/theme.js"></script>
 <script src="/nav.js?v=5"></script>
@@ -255,6 +269,7 @@
 </head>
 <body><div class="wrap">
 <div class="top"><h1>Predictions EV</h1><span class="pulse" id="pulse"><i></i><span id="ago">-</span></span></div>
+<div id="alertv" hidden></div>
 <div class="tabs" id="tabs"><button data-t="m" aria-pressed="true">Markets</button><button data-t="b" aria-pressed="false">My bets <span id="bn"></span></button><button data-t="r" aria-pressed="false" hidden>Arbitrage <span id="rn"></span></button><button data-t="f" aria-pressed="false">Request/Report <span id="fn"></span></button><button data-t="n" aria-pressed="false" hidden>Alerts</button><button data-t="g" aria-pressed="false">Guide</button><button data-t="a" aria-pressed="false" hidden>Access</button></div>
 <div id="vm">
 <div id="fbx" class="fbx" hidden></div>
@@ -541,8 +556,32 @@ function readFocus(){ const h = location.hash, n = k => { const m = h.match(new 
   FOCUS.gid = Number(n('g')) || null; FOCUS.si = n('s') != null ? Number(n('s')) : null; FOCUS.amt = Number(n('a')) || null; FOCUS.q = Number(n('q')) || null; FOCUS.kind = n('k') || ''; FOCUS.at = Date.now(); FOCUS.done = false;
   if (FOCUS.gid) chip = ''; }
 function closeFocus(){ FOCUS.gid = null; try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} $('#fbx').hidden = true; if (J && J.games) draw(); }
+function drawAlert(raw){
+  /* The alert page (Dennis, 2026-11-19): *team to take* | fair odds, the bet link, then the betting ladder -
+     #u | max % | how much rax - for as many sizes as the edge supports. */
+  const v = $('#alertv'); document.body.classList.add('alertmode'); v.hidden = false;
+  if (!raw) { v.innerHTML = `<div class="al"><div class="ah">Value alert<button type="button" data-fbx>All markets</button></div><div class="team">That market isn't open on Real anymore.</div></div>`; return; }
+  const g = derive(raw), si = FOCUS.si != null && g.sides[FOCUS.si] ? FOCUS.si : g.sides.reduce((b, x, i) => (x.ev ?? -9) > (g.sides[b].ev ?? -9) ? i : b, 0), sd = g.sides[si];
+  const nm = sd.name || sd.label, q = Number(sd.price), fair = sd.fair, ur = unitRax(), started = g.live || g.locked || (g.start && Date.parse(g.start) <= Date.now());
+  const L = ladder(g, sd).filter(([, mq]) => Math.floor(mq * 100) >= 1);
+  const rows = L.map(([u, mq]) => { const mx = Math.floor(mq * 100), on = q > 0 && Math.round(q * 100) <= mx;
+    return `<tr class="${on ? 'on' : ''}"><td>${u}u</td><td>max ${mx}%</td><td>${ur > 0 ? Math.round(u * ur).toLocaleString() + ' rax' : '-'}</td></tr>`; }).join('');
+  const ev = fair != null && q > 0 ? fair / q - 1 : null;
+  v.innerHTML = `<div class="al">
+    <div class="ah">${FOCUS.kind === 'sell' ? 'Over fair' : FOCUS.kind === 'add' ? 'Add more' : 'Value alert'}<button type="button" data-fbx>All markets</button></div>
+    <div class="team">${esc(nm)} <span>| fair ${fair != null ? (fair * 100).toFixed(1) + '%' : '-'}${fair ? ' (' + amer(1 / fair) + ')' : ''}</span></div>
+    <div class="gm">${esc(g.game || '')}${g.start ? ' · ' + new Date(g.start).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : ''}</div>
+    <div class="now">Real now <b>${q > 0 ? Math.round(q * 100) + '%' : '-'}</b>${ev != null ? ` · EV <b class="${ev >= 0 ? 'pos' : 'neg'}">${ev >= 0 ? '+' : ''}${(ev * 100).toFixed(1)}%</b>` : ''}</div>
+    ${started ? '<div class="warn">This game has started - prices move fast now.</div>' : ''}
+    ${g.link ? `<a class="bet" href="${esc(g.link)}" target="_blank" rel="noopener">Bet ${esc(nm)} on Real →</a>` : ''}
+    <div class="lh">Betting ladder</div>
+    ${rows ? `<table>${rows}</table>` : '<div class="foot">No size is +EV at any price right now.</div>'}
+    <div class="foot">${ur > 0 ? `1u = ${Math.round(ur).toLocaleString()} rax.` : 'Set your rax on Predictions to see rax amounts.'} Bet each size only while Real's price is at or under its max %. Green rows are good at the price right now.</div>
+  </div>`;
+}
 function drawFocus(){
-  const box = $('#fbx'); if (!FOCUS.gid || !J) { box.hidden = true; return; }
+  const box = $('#fbx'); if (!FOCUS.gid || !J) { box.hidden = true; $('#alertv').hidden = true; document.body.classList.remove('alertmode'); return; }
+  drawAlert((J.games || []).find(g => g.id === FOCUS.gid) || null);
   const raw = (J.games || []).find(g => g.id === FOCUS.gid);
   if (!raw) { box.hidden = false; box.innerHTML = `<div class="fbh">From your alert<button type="button" data-fbx aria-label="Close">×</button></div><div class="fbs">That market isn't open on Real anymore.</div>`; return; }
   const g = derive(raw), si = FOCUS.si != null && g.sides[FOCUS.si] ? FOCUS.si : g.sides.reduce((b, x, i) => (x.ev ?? -9) > (g.sides[b].ev ?? -9) ? i : b, 0), sd = g.sides[si];
