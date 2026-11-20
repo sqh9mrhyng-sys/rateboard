@@ -2765,6 +2765,20 @@ export async function dmOwner(env, kind, text) {
     await dmSend(auth, who.channelId, String(text).slice(0, 1900)); await stat(db, 'dm_owner_' + kind); return true;
   } catch (e) { try { await botFail(env.RATEBOARD_DB, 'dm_owner', String(e.message || e)); } catch (x) {} return false; }
 }
+/* One test value alert for Dennis (2026-11-20, "Send a fake prediction notification and we'll try"): sent once at
+   09:05 UTC, to check the tap opens the alert after switching apps. Not saved as his last alert, so
+   only the tap itself can take him there. */
+export async function testPredPushOnce(env) {
+  const K = 'oneoff_testpush_1120'; if (Date.now() < 1795165500000) return;
+  try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, String(Date.now()), { expirationTtl: 7 * 86400 }); } catch (e) { return; }
+  let x = {}; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_ev_v1')) || '{}') || {}; } catch (e) {}
+  const g = (x.games || []).find(y => !y.locked && !y.live && y.sides && y.sides.length) || (x.games || []).find(y => !y.locked && y.sides && y.sides.length);
+  const db = env.RATEBOARD_DB;
+  if (!g) { await pushTo(env, db, 'dennis', { title: 'Test alert', body: 'No open market right now - tap me, this should open Predictions.', url: '/predictions', tag: 'pv-test', urgent: true }); return; }
+  const sd = g.sides[0], q = Math.round((Number(sd.price) || 0.5) * 100);
+  const n = await pushTo(env, db, 'dennis', { title: `Value · ${sd.name || sd.label} (test)`, body: `Test - tap me. This should open ${g.game} with the bet on top.`, url: `/predictions#g=${g.id}&s=0&a=500&q=${q}`, tag: 'pv-test', urgent: true });
+  try { await env.RATEBOARD_KV.put(K, JSON.stringify({ at: Date.now(), sent: n, game: g.game }), { expirationTtl: 7 * 86400 }); } catch (e) {}
+}
 export async function dmTickKey(env) {
   const t = swapToken(env); if (!t) return null;
   const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('dmtick|' + t));
