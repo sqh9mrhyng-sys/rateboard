@@ -8899,6 +8899,29 @@ export async function keepProbe(env, db) {
 }
 
 /* One-off (2026-11-12 08:50 AK): Dennis got a "You have 6 swaps" DM with no swaps active. His own swaps around now (counts and times only). */
+/* Dennis's own Real profile picture (2026-11-19, Dennis: "my real pfp, check if you can fetch it").
+   Looks his account up once with his own token (account 1) and keeps the picture link in KV for the
+   Graphics page. Health shows only whether it was found and the image host, not the link. */
+export async function pfpProbe(env, db) {
+  const K = 'gfx_pfp_dennis';
+  try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1, at: Date.now() }), { expirationTtl: 3600 }); } catch (e) { return; }
+  const out = { at: Date.now() };
+  try {
+    const u = await db.prepare("SELECT rsUser FROM swap_users WHERE key='dennis'").first();
+    const name = (u && u.rsUser) || 'dennis';
+    const d = await rsGetJson(`https://web.realapp.com/searchusers?query=${encodeURIComponent(name)}`, env.RS_AUTH_TOKEN);
+    const f = ((d && d.users) || []).find(x => String(x.userName || '').toLowerCase() === String(name).toLowerCase());
+    out.matched = !!f;
+    if (f) {
+      out.fields = Object.keys(f).filter(k => /image|pic|avatar|photo/i.test(k));
+      for (const k of out.fields) { const v = f[k]; if (typeof v === 'string' && /^https?:\/\//.test(v)) { out.field = k; out.url = v; break; } }
+      if (!out.url && out.fields.length) out.raw = String(JSON.stringify(f[out.fields[0]])).slice(0, 200);
+      if (out.url) { try { const r = await fetch(out.url, { method: 'GET' }); out.imgStatus = r.status; out.imgType = r.headers.get('content-type'); out.host = new URL(out.url).host; } catch (e) { out.imgErr = String(e.message || e).slice(0, 100); } }
+    }
+  } catch (e) { out.err = String(e.message || e).slice(0, 150); }
+  try { await env.RATEBOARD_KV.put(K, JSON.stringify(out)); } catch (e) {}
+}
+
 export async function dennisProbe(env, db) {
   const K = 'diag_dennis_1112b';
   try { if (await env.RATEBOARD_KV.get(K)) return; } catch (e) { return; }
