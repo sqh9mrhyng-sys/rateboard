@@ -376,11 +376,12 @@
   <div class="bar"><button id="pauseall" class="wide">Pause swaps</button></div>
   <span class="note" id="pausemsg"></span>
   <p class="note sub"><b>Pause swaps</b> = no new matches, and calls off every swap, 160 and niche buy not yet messaged (ones already messaged, or under 35 minutes away, still go ahead). Tap Save my swap to start again.</p>
+  <!-- Outside "Show your swaps & more" so the Saved popup shows even when that part is folded (member report 2026-11-20). -->
+  <div class="saved" id="saved" hidden role="dialog" aria-modal="true" aria-labelledby="savedh"><div class="card"><div class="tick">✓</div><div class="big1" id="savedh">SAVED</div><div class="big2">YOU WILL RECEIVE A DM LATER</div><p class="note extra" id="savedx" hidden></p><button class="primary" id="savedok">Got it</button></div></div>
   <button type="button" class="belowtg" id="belowtg" aria-expanded="true">Hide everything below ▴</button>
   <div id="below">
   <div class="bar"><button id="whynot" class="ghost">Why haven't I matched?</button></div>
   <div class="note" id="whyout"></div>
-  <div class="saved" id="saved" hidden role="dialog" aria-modal="true" aria-labelledby="savedh"><div class="card"><div class="tick">✓</div><div class="big1" id="savedh">SAVED</div><div class="big2">YOU WILL RECEIVE A DM LATER</div><p class="note extra" id="savedx" hidden></p><button class="primary" id="savedok">Got it</button></div></div>
   <section id="mysw">
     <h2>Your swaps</h2>
     <div class="stabs"><button id="tabup" class="on">Scheduled</button><button id="tabpast">Previous</button><button id="tabpacks">Packs today</button></div>
