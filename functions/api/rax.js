@@ -1527,7 +1527,7 @@ const MARKET_SPORTS = ['nfl', 'ncaaf', 'mlb', 'nba', 'ncaam', 'nhl', 'soccer', '
    just for this, so throttling or a ban lands there and never on the key the
    rest of the board runs on. Without that secret the pull does nothing - it
    never falls back to the main key. */
-const MARKET_ON = true;   // back 2026-11-19 for CBB only (Dennis: "CBB cards came out"), on account 2 beside bulk
+const MARKET_ON = false;   // off 2026-11-19 8pm AK (Dennis: "Stop CBB market pull"); was on for CBB only earlier that day
 // was: const MARKET_ON = false;          // off 2026-11-13: account 2 is for bulk-rating auctions only now (Dennis)           // back on 2026-11-02 after Cloudflare replied; held to the daily job budget (lib/dbwatch.js)
 /* Manual only (Dennis, 2026-11-02): nothing is pulled on its own. A season
    runs only when it's queued (the queue button on /market, market=front) and
