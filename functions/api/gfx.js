@@ -24,7 +24,10 @@ const DDL = [
   'CREATE TABLE IF NOT EXISTS gfx_imgs (id TEXT PRIMARY KEY, key TEXT, bytes INTEGER, type TEXT, at INTEGER)'
 ];
 let ready = false;
-async function prep(db) { if (ready) return; for (const d of DDL) await db.prepare(d).run(); ready = true; }
+async function prep(db) { if (ready) return; for (const d of DDL) await db.prepare(d).run();
+  try { await db.prepare('ALTER TABLE gfx_creators ADD COLUMN bg TEXT').run(); } catch (e) {}   // card background (2026-11-19)
+  ready = true; }
+const BGS = ['swirl', 'bolt', 'hex', 'shards', 'rings', 'camo', 'stripes', 'dots'];
 const json = (o, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
 const str = (v, n) => String(v ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, n);
 const num = v => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= 0 && n <= 10000000 ? n : null; };
@@ -60,22 +63,22 @@ export async function onRequest(ctx) {
   const op = url.searchParams.get('op') || 'list';
 
   if (op === 'list') {
-    const rows = ((await db.prepare('SELECT key, link, bio, open, unit, styles, updatedAt FROM gfx_creators WHERE COALESCE(hidden,0)=0').all()).results) || [];
+    const rows = ((await db.prepare('SELECT key, link, bio, open, unit, bg, styles, updatedAt FROM gfx_creators WHERE COALESCE(hidden,0)=0').all()).results) || [];
     // Their Real username (from Swaps sign-up) for the profile link; the board name if they never signed up.
     const rs = {}; try { for (const u of ((await db.prepare('SELECT key, rsUser FROM swap_users WHERE rsUser IS NOT NULL').all()).results || [])) rs[String(u.key).toLowerCase()] = u.rsUser; } catch (e) {}
     const creators = rows.map(r => { let st = []; try { st = JSON.parse(r.styles || '[]') || []; } catch (e) {}
       // Up to 6 styles, in the order the creator put them.
       st = st.filter(s => s.imgs && s.imgs.length).slice(0, 6);
       const name = rs[String(r.key).toLowerCase()] || r.key;
-      return { user: name, link: 'https://www.realapp.com/u/' + encodeURIComponent(name), bio: r.bio || '', open: !!r.open, unit: 'rax', styles: st, updatedAt: r.updatedAt }; })
+      return { user: name, link: 'https://www.realapp.com/u/' + encodeURIComponent(name), bio: r.bio || '', open: !!r.open, unit: 'rax', bg: r.bg || 'swirl', styles: st, updatedAt: r.updatedAt }; })
       .filter(c => c.styles.length).sort((a, b) => (b.open - a.open) || (b.updatedAt - a.updatedAt));
     return json({ creators, me });
   }
   if (op === 'mine') {
-    const r = await db.prepare('SELECT link, bio, open, hidden, unit, styles FROM gfx_creators WHERE key=?').bind(me).first();
+    const r = await db.prepare('SELECT link, bio, open, hidden, unit, bg, styles FROM gfx_creators WHERE key=?').bind(me).first();
     const imgs = ((await db.prepare('SELECT id FROM gfx_imgs WHERE key=? ORDER BY at').bind(me).all()).results || []).map(x => x.id);
     let styles = []; try { styles = JSON.parse((r && r.styles) || '[]') || []; } catch (e) {}
-    return json({ me, profile: r ? { link: r.link || '', bio: r.bio || '', open: !!r.open, hidden: !!r.hidden, unit: r.unit || 'rax' } : null, styles, imgs });
+    return json({ me, profile: r ? { link: r.link || '', bio: r.bio || '', open: !!r.open, hidden: !!r.hidden, unit: r.unit || 'rax', bg: r.bg || 'swirl' } : null, styles, imgs });
   }
   if (request.method !== 'POST') return json({ error: 'POST only.' }, 405);
   let b = {}; try { b = await request.json(); } catch (e) { return json({ error: 'Bad request.' }, 400); }
@@ -102,9 +105,9 @@ export async function onRequest(ctx) {
     if (!(await allow(url.origin, 'gfxsave:' + me, 60, 600))) return json({ error: 'Too many saves - wait a minute.' }, 429);
     const mine = new Set(((await db.prepare('SELECT id FROM gfx_imgs WHERE key=?').bind(me).all()).results || []).map(x => x.id));
     const p = b.profile || {}, styles = cleanStyles(b.styles, mine), now = Date.now();
-    await db.prepare(`INSERT INTO gfx_creators (key, link, bio, open, hidden, unit, styles, updatedAt, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(key) DO UPDATE SET link=excluded.link, bio=excluded.bio, open=excluded.open, hidden=excluded.hidden, unit=excluded.unit, styles=excluded.styles, updatedAt=excluded.updatedAt`)
-      .bind(me, realLink(p.link), str(p.bio, 40), p.open === false ? 0 : 1, p.hidden ? 1 : 0, 'rax', JSON.stringify(styles), now, now).run();
+    await db.prepare(`INSERT INTO gfx_creators (key, link, bio, open, hidden, unit, bg, styles, updatedAt, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET link=excluded.link, bio=excluded.bio, open=excluded.open, hidden=excluded.hidden, unit=excluded.unit, bg=excluded.bg, styles=excluded.styles, updatedAt=excluded.updatedAt`)
+      .bind(me, realLink(p.link), str(p.bio, 40), p.open === false ? 0 : 1, p.hidden ? 1 : 0, 'rax', BGS.includes(p.bg) ? p.bg : 'swirl', JSON.stringify(styles), now, now).run();
     // Images uploaded over an hour ago that no style uses any more are deleted, so they don't count against the limit.
     const used = new Set(styles.flatMap(s => s.imgs));
     const old = ((await db.prepare('SELECT id FROM gfx_imgs WHERE key=? AND at<?').bind(me, now - 3600e3).all()).results || []).filter(x => !used.has(x.id));
