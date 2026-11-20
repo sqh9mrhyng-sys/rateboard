@@ -49,7 +49,9 @@ function cleanStyles(list, mine) {
     // Position of each design in the circle: [x, y] in % of the circle, -60 to 60; centered is left out.
     const off = {}; if (s.off && typeof s.off === 'object') for (const id of imgs) { const v = s.off[id]; if (Array.isArray(v)) { const x = Math.round(Number(v[0])) || 0, y = Math.round(Number(v[1])) || 0;
       if ((x || y) && Math.abs(x) <= 60 && Math.abs(y) <= 60) off[id] = [x, y]; } }
-    out.push({ id: str(s.id, 20) || crypto.randomBytes(5).toString('hex'), name, min: lo, max: hi, imgs, sz, off });
+    // Card look of each design (rarity:background), picked per design (2026-11-19).
+    const lk = {}; if (s.lk && typeof s.lk === 'object') for (const id of imgs) if (s.lk[id]) lk[id] = look(s.lk[id]);
+    out.push({ id: str(s.id, 20) || crypto.randomBytes(5).toString('hex'), name, min: lo, max: hi, imgs, sz, off, lk });
   }
   return out;
 }

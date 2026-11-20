@@ -172,6 +172,12 @@
   .im.busy{cursor:default} .im.busy::after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.16) 50%,transparent 70%);background-size:300% 100%;animation:sh 1.1s linear infinite}
   .add{aspect-ratio:4/5;border-radius:10px;border:1.5px dashed var(--line);background:none;color:var(--mute);cursor:pointer;display:grid;place-items:center;font-size:11.5px;font-weight:700;text-align:center;line-height:1.3}
   .add:hover,.add.drag{border-color:var(--accent);color:var(--accent)} .add i{display:block;font-style:normal;font-size:20px}
+  .st.mini{display:flex;align-items:center;gap:8px;padding:8px 10px 8px 8px}
+  .st.mini .mth{flex:none;width:46px;border:0;padding:0;background:none;cursor:pointer} .st.mini .mth .rc{filter:none}
+  .st.mini .mtx{flex:1;min-width:0;text-align:left;border:0;background:none;padding:0 4px;cursor:pointer}
+  .st.mini .mtx b{display:block;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis} .st.mini .mtx span{font-size:12.5px;color:var(--mute)}
+  .stf{display:flex;justify-content:flex-end;margin-top:12px} .stf .btn{min-width:140px}
+  #szl .bgp button i{width:36px;height:47px}
   .newst{width:100%;padding:14px;border-radius:14px;border:1.5px dashed var(--line);background:none;color:var(--mute);font-weight:800;cursor:pointer}
   .newst:hover{border-color:var(--accent);color:var(--accent)}
   .chk{background-color:#262b36;background-image:linear-gradient(45deg,#313744 25%,transparent 25%,transparent 75%,#313744 75%),linear-gradient(45deg,#313744 25%,transparent 25%,transparent 75%,#313744 75%);background-size:12px 12px;background-position:0 0,6px 6px}
@@ -245,14 +251,9 @@
           <p class="hint" style="margin-top:6px;font-size:12.5px">Hours you're normally available to make graphics.</p>
         </div>
         <div class="sec">
-          <h3>Card look</h3>
-          <p class="hint">The card members see your designs on first. They can try other looks.</p>
-          <div id="plook"></div>
-        </div>
-        <div class="sec">
           <h3>Styles</h3>
           <p class="hint">Each style you sell, with its price range and designs. Browse shows your first 6, so put your best on top.</p>
-          <div class="tip"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.5"/></svg><span>Upload PNGs with a <b>transparent background</b>. Tap a design to size and move it in the card's circle.</span></div>
+          <div class="tip"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.5"/></svg><span>Upload PNGs with a <b>transparent background</b>. Tap a design to pick its card, size and spot in the circle.</span></div>
           <div id="styles"></div>
           <button class="newst" id="addst">＋ Add a style</button>
         </div>
@@ -299,13 +300,12 @@ const ICON = {
   right: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>',
   center: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/></svg>',
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
+  edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16v4Z"/><path d="m13.5 6.5 4 4"/></svg>',
   x: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>'
 };
 const price = s => { const lo = s.min, hi = s.max; if (lo == null && hi == null) return 'Ask';
   if (lo != null && hi != null && lo !== hi) return lo.toLocaleString() + '–' + hi.toLocaleString() + ' rax';
   return (hi == null ? 'from ' : '') + (lo ?? hi).toLocaleString() + ' rax'; };
-function av(name) { let h = 0; for (const c of String(name)) h = (h * 31 + c.charCodeAt(0)) >>> 0; const a = h % 360, b = (a + 48) % 360;
-  return `<div class="av" style="background:linear-gradient(135deg,hsl(${a} 70% 52%),hsl(${b} 75% 40%))">${esc(String(name).slice(0, 1).toUpperCase())}</div>`; }
 
 /* ---------- Tabs (Creator can be hidden; remembered on this device) ---------- */
 let TAB = 'b';
@@ -354,6 +354,8 @@ function rcard(d) {
     <div class="rg"><b>${R.prog}</b> to ${R.next}</div><div class="rx"><span>${R.mult}</span><span>${GEM(R.ic2)}0</span></div></div>`;
 }
 const srcOf = id => String(id).startsWith('up:') ? UPV[id] : IMG(id);
+// Each design has its own card look; on Browse a viewer can try one look on every card instead.
+const lookFor = (c, s, id) => (!c.own && F.look) || (s.lk || {})[id] || c.bg || 'iconic:swirl';
 const designCard = (s, id, lk, guide) => rcard({ src: id ? srcOf(id) : '', look: lk, sz: (s.sz || {})[id], off: (s.off || {})[id], guide });
 // Look picker: rarity tabs + that rarity's backgrounds. withPick adds "Creator's pick" (Browse).
 function lookPicker(el, cur, withPick, onPick) {
@@ -368,14 +370,13 @@ function lookPicker(el, cur, withPick, onPick) {
 
 /* ---------- Browse ---------- */
 let ALL = [], ME = '', F = { q: '', open: false, sort: 'top', look: ls.get('rb_gfx_look') || '' };
-const lookOf = c => c.forceLook || F.look || c.bg || 'iconic:swirl';
 function tiles(c) {
   return `<div class="grid">` + c.styles.slice(0, 6).map((s, i) => `<button class="ctile" data-u="${esc(c.user)}" data-i="${i}" aria-label="${esc(s.name)} by ${esc(c.user)}">
-    ${designCard(s, s.imgs[0], lookOf(c))}
-    <div class="tc"><b>${esc(s.name)}</b><span>${esc(price(s))}</span></div>${s.imgs.length > 1 ? `<div class="tn">${s.imgs.length} designs</div>` : ''}</button>`).join('') + '</div>';
+    ${designCard(s, s.imgs[0], lookFor(c, s, s.imgs[0]))}
+    <div class="tc"><b>${esc(s.name)}</b><span>${esc(price(s))}</span></div>${s.imgs.length > 1 ? `<div class="tn">+${s.imgs.length - 1} more design${s.imgs.length > 2 ? 's' : ''}</div>` : ''}</button>`).join('') + '</div>';
 }
 function card(c, i) {
-  return `<article class="card" style="animation-delay:${Math.min(i, 8) * 50}ms"><div class="ch">${av(c.user)}
+  return `<article class="card" style="animation-delay:${Math.min(i, 8) * 50}ms"><div class="ch">
     <div class="who"><a class="nm" href="${esc(c.link)}" target="_blank" rel="noopener">@${esc(c.user)}${ICON.out}</a><div class="sub">${c.bio ? 'Usually available ' + esc(c.bio) : c.styles.length + ' style' + (c.styles.length === 1 ? '' : 's')}</div></div>
     ${c.open ? '<span class="pill on">Open</span>' : '<span class="pill off">Closed</span>'}</div>${tiles(c)}</article>`;
 }
@@ -408,7 +409,7 @@ $('#fsort').onchange = e => { F.sort = e.target.value; drawBrowse(); };
 // Card look for every card on Browse (remembered on this device); "Creator's pick" shows each creator's own.
 $('#flook').onclick = () => {
   const sh = document.createElement('div'); sh.className = 'sheet';
-  sh.innerHTML = `<div role="dialog" aria-modal="true" aria-label="Card look"><h3>Card look <button class="close" style="position:static">${ICON.x}</button></h3><p class="hint" style="margin:-6px 0 14px">Try every creator's designs on the card you like.</p><div id="flp"></div></div>`;
+  sh.innerHTML = `<div role="dialog" aria-modal="true" aria-label="Card look"><h3>Card look <button class="close" style="position:static">${ICON.x}</button></h3><p class="hint" style="margin:-6px 0 14px">Creator's pick shows each design on the card its creator chose. Or try every design on one look.</p><div id="flp"></div></div>`;
   document.body.appendChild(sh);
   lookPicker($('#flp'), F.look, true, v => { F.look = v; ls.set('rb_gfx_look', v); drawBrowse(); });
   sh.addEventListener('click', e => { if (e.target === sh || e.target.closest('.close')) sh.remove(); });
@@ -427,7 +428,7 @@ function modal(html, one) {
 function openLB(c, si, ii) {
   const s = c.styles[si]; if (!s) return; LB = { c, si, ii: ii || 0 };
   const id = s.imgs[LB.ii], many = s.imgs.length > 1;
-  const el = modal(`<div><div class="stage">${designCard(s, id, lookOf(c))}
+  const el = modal(`<div><div class="stage">${designCard(s, id, lookFor(c, s, id))}
         ${many ? `<button class="nav p" aria-label="Previous">${ICON.left}</button><button class="nav n" aria-label="Next">${ICON.right}</button>` : ''}</div>
       ${many ? `<div class="dots">${s.imgs.map((x, i) => `<button data-ii="${i}" aria-current="${i === LB.ii}" aria-label="Design ${i + 1}"></button>`).join('')}</div>` : ''}</div>
     <div class="info"><div><h2>${esc(s.name)}</h2><div class="by">by <a href="${esc(c.link)}" target="_blank" rel="noopener">@${esc(c.user)}</a> · ${c.open ? 'taking orders' : 'not taking orders'}</div></div>
@@ -444,9 +445,11 @@ addEventListener('keydown', e => { if (!LB) return; if (e.key === 'Escape') retu
 // Size and move a design in the circle: 50-150 %, shifted up to 60 % of the circle each way. Drag or nudge.
 function openSize(si, j) {
   const s = S[si], id = s.imgs[j]; if (!id) return; s.sz = s.sz || {}; s.off = s.off || {}; LB = { edit: true };
+  s.lk = s.lk || {}; if (!s.lk[id]) s.lk[id] = dlook(s, id);
   const v = s.sz[id] || 100; let off = (s.off[id] || [0, 0]).slice();
-  const el = modal(`<div class="szc" id="szc">${designCard(s, id, P.bg, true)}</div>
-    <div class="ctl"><div class="top"><span>Size</span><span id="szv">${v}%</span></div>
+  const el = modal(`<div class="szc" id="szc"></div>
+    <div class="ctl"><div class="top"><span>Card look</span></div><div id="szl"></div>
+      <div class="top" style="margin-top:4px"><span>Size</span><span id="szv">${v}%</span></div>
       <input type="range" id="szr" min="50" max="150" value="${v}" aria-label="Size in the circle">
       <div class="top" style="margin-top:4px"><span>Position</span><span class="hint" style="font-weight:600">Drag the design or nudge it</span></div>
       <div class="pad"><button class="ib" data-mv="0,-1" aria-label="Up">${ICON.up}</button><button class="ib" data-mv="-1,0" aria-label="Left">${ICON.left}</button><button class="ib" data-mv="c" aria-label="Center">${ICON.center}</button><button class="ib" data-mv="1,0" aria-label="Right">${ICON.right}</button><button class="ib" data-mv="0,1" aria-label="Down">${ICON.down}</button></div>
@@ -459,11 +462,14 @@ function openSize(si, j) {
   $('#szr').oninput = e => set(+e.target.value);
   el.querySelector('.pad').onclick = e => { const b = e.target.closest('[data-mv]'); if (!b) return; if (b.dataset.mv === 'c') return place(0, 0);
     const [dx, dy] = b.dataset.mv.split(',').map(Number); place(off[0] + dx * 2, off[1] + dy * 2); };
-  const ra = $('#szc .ra'); let drag = null; ra.style.cursor = 'grab'; ra.style.touchAction = 'none';
+  let drag = null;
+  const paint = () => { $('#szc').innerHTML = designCard(s, id, s.lk[id], true); const ra = $('#szc .ra'); ra.style.cursor = 'grab'; ra.style.touchAction = 'none';
   ra.addEventListener('dragstart', e => e.preventDefault());
   ra.addEventListener('pointerdown', e => { e.preventDefault(); drag = { x: e.clientX, y: e.clientY, o: off.slice(), w: ra.getBoundingClientRect().width }; ra.setPointerCapture(e.pointerId); ra.style.cursor = 'grabbing'; });
   ra.addEventListener('pointermove', e => { if (drag) place(drag.o[0] + (e.clientX - drag.x) / drag.w * 100, drag.o[1] + (e.clientY - drag.y) / drag.w * 100); });
-  const up = () => { drag = null; ra.style.cursor = 'grab'; }; ra.addEventListener('pointerup', up); ra.addEventListener('pointercancel', up);
+  const up = () => { drag = null; ra.style.cursor = 'grab'; }; ra.addEventListener('pointerup', up); ra.addEventListener('pointercancel', up); };
+  paint();
+  lookPicker($('#szl'), s.lk[id], false, v2 => { s.lk[id] = v2; LASTLOOK = v2; ls.set('rb_gfx_lastlook', v2); paint(); dirty(); });
   $('#szreset').onclick = () => { set(100); place(0, 0); };
   el.onclick = e => { if (e.target === el || e.target.closest('.close') || e.target.closest('#szdone')) closeLB(); };
 }
@@ -473,9 +479,13 @@ let MINE = null, SAVED = '', P = { open: true, hidden: false, bio: '', bg: 'icon
 const snap = () => JSON.stringify({ P, S });
 const dirty = () => { if (!MINE) return; const d = snap() !== SAVED; $('#savebar').classList.toggle('show', d || !!busy); if (d || busy) $('#savemsg').textContent = busy ? 'Uploading…' : 'Unsaved changes'; };
 const newId = () => Math.random().toString(16).slice(2, 12);
-const blank = () => ({ id: newId(), name: '', min: 50, max: 150, imgs: [], sz: {}, off: {} });
-const clean = l => l.map(s => ({ id: s.id, name: s.name, min: s.min, max: s.max, imgs: s.imgs || [], sz: { ...(s.sz || {}) }, off: { ...(s.off || {}) } }));
-function previewCreator() { return { user: (MINE && MINE.name) || ME || 'you', link: '#', bio: P.bio, open: P.open, forceLook: P.bg, styles: S.filter(s => s.name && s.imgs.length).slice(0, 6) }; }
+const blank = () => ({ id: newId(), name: '', min: 50, max: 150, imgs: [], sz: {}, off: {}, lk: {} });
+const clean = l => l.map(s => ({ id: s.id, name: s.name, min: s.min, max: s.max, imgs: s.imgs || [], sz: { ...(s.sz || {}) }, off: { ...(s.off || {}) }, lk: { ...(s.lk || {}) } }));
+// New designs start on the last look the creator picked (this device), else their old profile look.
+let LASTLOOK = ls.get('rb_gfx_lastlook') || '';
+const dlook = (s, id) => (s.lk || {})[id] || P.bg || 'iconic:swirl';
+const newLook = () => LASTLOOK || P.bg || 'iconic:swirl';
+function previewCreator() { return { user: (MINE && MINE.name) || ME || 'you', link: '#', bio: P.bio, open: P.open, own: true, bg: P.bg, styles: S.filter(s => s.name && s.imgs.length).slice(0, 6) }; }
 function drawPreview() {
   const c = previewCreator();
   $('#preview').innerHTML = c.styles.length ? card(c, 0) + (P.hidden ? '<p class="hint" style="margin:10px 4px">Hidden from Browse right now.</p>' : '')
@@ -484,19 +494,27 @@ function drawPreview() {
 function drawProfile() {
   $('#popen').setAttribute('aria-checked', P.open); $('#pshow').setAttribute('aria-checked', !P.hidden);
   const m = String(P.bio || '').match(/^(.+?) – (.+?) ET$/); $('#pfrom').value = m ? m[1] : ''; $('#pto').value = m ? m[2] : '';
-  lookPicker($('#plook'), P.bg, false, v => { P.bg = v; drawPreview(); dirty(); });
 }
+// Styles are collapsed once saved; the one being made is open, with its own Save button.
+const OPEN = new Set();
 function drawStyles() {
-  $('#styles').innerHTML = S.map((s, i) => `<div class="st" data-s="${i}">
-    <div class="sth"><input class="in" data-k="name" maxlength="40" placeholder="Style name" value="${esc(s.name)}" aria-label="Style name">
+  $('#styles').innerHTML = S.map((s, i) => !OPEN.has(s.id) ? `<div class="st mini" data-s="${i}">
+      <button class="mth" data-a="edit" aria-label="Edit ${esc(s.name || 'style')}">${s.imgs[0] ? designCard(s, s.imgs[0], dlook(s, s.imgs[0])) : ''}</button>
+      <button class="mtx" data-a="edit"><b>${esc(s.name || 'Untitled style')}</b><span>${esc(price(s))} · ${s.imgs.length} design${s.imgs.length === 1 ? '' : 's'}</span></button>
       <button class="ib" data-a="up" ${i ? '' : 'disabled'} aria-label="Move up">${ICON.up}</button><button class="ib" data-a="down" ${i < S.length - 1 ? '' : 'disabled'} aria-label="Move down">${ICON.down}</button>
+      <button class="ib" data-a="edit" aria-label="Edit">${ICON.edit}</button></div>`
+  : `<div class="st" data-s="${i}">
+    <div class="sth"><input class="in" data-k="name" maxlength="40" placeholder="Style name" value="${esc(s.name)}" aria-label="Style name">
+      ${s.name.trim() || s.imgs.length ? `<button class="ib" data-a="up" ${i ? '' : 'disabled'} aria-label="Move up">${ICON.up}</button><button class="ib" data-a="down" ${i < S.length - 1 ? '' : 'disabled'} aria-label="Move down">${ICON.down}</button>` : ''}
       <button class="ib" data-a="del" aria-label="Delete style">${ICON.trash}</button></div>
     <div class="prices"><input class="in" data-k="min" type="number" min="0" inputmode="numeric" placeholder="50" value="${s.min ?? ''}" aria-label="Min price"><span>to</span><input class="in" data-k="max" type="number" min="0" inputmode="numeric" placeholder="150" value="${s.max ?? ''}" aria-label="Max price"><span>rax</span></div>
     <div class="imgs">${s.imgs.map((id, j) => { const up = String(id).startsWith('up:');
       return `<div class="im chk${up ? ' busy' : ''}"${up ? '' : ` data-sz="${j}" role="button" tabindex="0" aria-label="Size and move design ${j + 1}"`}><img src="${srcOf(id) || ''}" alt="">
         ${up ? '' : `<button class="rm" data-rm="${j}" aria-label="Remove design">${ICON.x}</button>${!j || (s.sz || {})[id] || (s.off || {})[id] ? `<span class="tag${j ? '' : ' cv'}">${[j ? '' : 'Cover', (s.sz || {})[id] ? s.sz[id] + '%' : '', (s.off || {})[id] ? 'moved' : ''].filter(Boolean).join(' · ')}</span>` : ''}`}</div>`; }).join('')}
       ${s.imgs.length < 6 ? `<button class="add" data-a="add"><span><i>＋</i>Design</span></button>` : ''}</div>
+    <div class="stf"><button class="btn pri" data-a="save">Save style</button></div>
   </div>`).join('');
+  $('#addst').hidden = S.some(s => OPEN.has(s.id) && !s.name.trim() && !s.imgs.length);
   drawPreview(); dirty();
 }
 async function loadMine() {
@@ -504,7 +522,7 @@ async function loadMine() {
   const j = await api('mine'); if (j.error) { toast(j.error, true); return; }
   MINE = j; ME = j.me || ME; const c = ALL.find(x => x.user.toLowerCase() === String(ME).toLowerCase()); if (c) MINE.name = c.user;
   if (j.profile) P = { open: j.profile.open, hidden: j.profile.hidden, bio: j.profile.bio || '', bg: look(j.profile.bg) };
-  S = clean(j.styles || []); if (!S.length) S = [blank()];
+  S = clean(j.styles || []); const b = blank(); S.push(b); OPEN.add(b.id);
   SAVED = snap(); drawProfile(); drawStyles();
 }
 const UPV = {};
@@ -516,9 +534,11 @@ $('#styles').addEventListener('click', e => {
   const rm = e.target.closest('[data-rm]'); if (rm) { const id = s.imgs.splice(+rm.dataset.rm, 1)[0]; delete s.sz[id]; delete s.off[id]; drawStyles(); api('delimg', { id }); return; }
   const sz = e.target.closest('[data-sz]'); if (sz) return openSize(i, +sz.dataset.sz);
   const a = e.target.closest('[data-a]'); if (!a) return;
+  if (a.dataset.a === 'edit') { OPEN.add(s.id); drawStyles(); return; }
+  if (a.dataset.a === 'save') return saveStyle(s);
   if (a.dataset.a === 'up') [S[i - 1], S[i]] = [S[i], S[i - 1]];
   if (a.dataset.a === 'down') [S[i + 1], S[i]] = [S[i], S[i + 1]];
-  if (a.dataset.a === 'del') { if ((s.name || s.imgs.length) && !confirm(`Delete "${s.name || 'this style'}"?`)) return; S.splice(i, 1); }
+  if (a.dataset.a === 'del') { if ((s.name || s.imgs.length) && !confirm(`Delete "${s.name || 'this style'}"?`)) return; S.splice(i, 1); OPEN.delete(s.id); if (!S.some(x => OPEN.has(x.id))) { const b = blank(); S.push(b); OPEN.add(b.id); } }
   if (a.dataset.a === 'add') { ADDTO = i; $('#file').value = ''; $('#file').click(); return; }
   drawStyles();
 });
@@ -528,7 +548,7 @@ $('#styles').addEventListener('dragover', e => { const a = e.target.closest('.ad
 $('#styles').addEventListener('dragleave', e => { const a = e.target.closest('.add'); if (a) a.classList.remove('drag'); });
 $('#styles').addEventListener('drop', e => { const a = e.target.closest('.add'); if (!a) return; e.preventDefault(); ADDTO = +a.closest('[data-s]').dataset.s; addFiles([...e.dataTransfer.files]); });
 $('#file').addEventListener('change', e => addFiles([...e.target.files]));
-$('#addst').onclick = () => { S.push(blank()); drawStyles();
+$('#addst').onclick = () => { const b = blank(); S.push(b); OPEN.add(b.id); drawStyles();
   const l = document.querySelectorAll('#styles .st'), last = l[l.length - 1]; last.scrollIntoView({ behavior: 'smooth', block: 'center' }); last.querySelector('input').focus({ preventScroll: true }); };
 
 // Designs are shrunk on the phone before upload, keeping the transparent background: empty edges cut off,
@@ -557,9 +577,9 @@ const b64 = blob => new Promise(ok => { const r = new FileReader(); r.onload = (
 async function addFiles(files) {
   const s = S[ADDTO]; if (!s) return; files = files.filter(f => /^image\//.test(f.type)).slice(0, 6 - s.imgs.length);
   await Promise.all(files.map(async f => {
-    const tmp = 'up:' + newId(); UPV[tmp] = URL.createObjectURL(f); s.imgs.push(tmp); busy++; drawStyles();
+    const tmp = 'up:' + newId(); UPV[tmp] = URL.createObjectURL(f); s.imgs.push(tmp); busy++; drawStyles(); s.lk = s.lk || {};
     try { const b = await shrink(f); const j = b ? await api('upload', { data: await b64(b) }) : { error: "Couldn't read that image." };
-      const at = s.imgs.indexOf(tmp); if (j.ok) { if (at >= 0) s.imgs[at] = j.id; } else { if (at >= 0) s.imgs.splice(at, 1); toast(j.error, true); } }
+      const at = s.imgs.indexOf(tmp); if (j.ok) { if (at >= 0) { s.imgs[at] = j.id; s.lk[j.id] = newLook(); } } else { if (at >= 0) s.imgs.splice(at, 1); toast(j.error, true); } }
     catch (e) { const at = s.imgs.indexOf(tmp); if (at >= 0) s.imgs.splice(at, 1); toast("Couldn't upload that image.", true); }
     finally { busy--; URL.revokeObjectURL(UPV[tmp]); delete UPV[tmp]; drawStyles(); }
   }));
@@ -572,15 +592,27 @@ for (const id of ['#pfrom', '#pto']) $(id).innerHTML = '<option value="">Not set
 const setAvail = () => { const f = $('#pfrom').value, t = $('#pto').value; P.bio = f && t ? `${f} – ${t} ET` : ''; drawPreview(); dirty(); };
 $('#pfrom').onchange = setAvail; $('#pto').onchange = setAvail;
 $('#undo').onclick = () => { const o = JSON.parse(SAVED); P = o.P; S = o.S; drawProfile(); drawStyles(); };
-$('#save').onclick = async () => {
-  if (busy) { toast('Wait for the designs to finish uploading.'); return; }
-  if (S.find(s => !s.name.trim() && s.imgs.length)) { toast('Give every style a name.', true); return; }
+async function saveAll(done) {
+  if (busy) { toast('Wait for the designs to finish uploading.'); return false; }
+  if (S.find(s => !s.name.trim() && s.imgs.length)) { toast('Give every style a name.', true); return false; }
   $('#save').disabled = true; $('#savemsg').textContent = 'Saving…';
   const j = await api('save', { profile: P, styles: S.filter(s => s.name.trim()) }); $('#save').disabled = false;
-  if (j.error) { toast(j.error, true); dirty(); return; }
-  S = j.styles.length ? clean(j.styles) : [blank()];
-  SAVED = snap(); drawStyles(); toast(P.hidden ? 'Saved. Your card is hidden from Browse.' : 'Saved. Your card is live on Browse.'); loadBrowse();
-};
+  if (j.error) { toast(j.error, true); dirty(); return false; }
+  // Keep open styles open (saved ids stay the same), and keep the blank one being started.
+  const blanks = S.filter(s => !s.name.trim() && !s.imgs.length);
+  S = clean(j.styles).concat(blanks); if (done) done();
+  if (!S.some(s => OPEN.has(s.id))) { const b = blank(); S.push(b); OPEN.add(b.id); }
+  SAVED = snap(); drawStyles(); loadBrowse(); return true;
+}
+// "Save style": saves, folds that style up, and opens a fresh one for the next design.
+async function saveStyle(s) {
+  if (!s.name.trim()) { toast('Give this style a name.', true); return; }
+  if (!s.imgs.length) { toast('Add at least one design.', true); return; }
+  const ok = await saveAll(() => { OPEN.delete(s.id); if (!S.some(x => !x.name.trim() && !x.imgs.length)) { const b = blank(); S.push(b); OPEN.add(b.id); } });
+  if (ok) { toast(`Saved "${s.name.trim()}". On to the next one.`); const l = document.querySelectorAll('#styles .st:not(.mini)'); const last = l[l.length - 1];
+    if (last) { last.scrollIntoView({ behavior: 'smooth', block: 'center' }); } }
+}
+$('#save').onclick = async () => { if (await saveAll()) toast(P.hidden ? 'Saved. Your card is hidden from Browse.' : 'Saved. Your card is live on Browse.'); };
 addEventListener('beforeunload', e => { if (MINE && snap() !== SAVED) { e.preventDefault(); e.returnValue = ''; } });
 
 /* ---------- Start ---------- */
