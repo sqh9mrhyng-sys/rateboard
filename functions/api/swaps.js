@@ -8903,7 +8903,7 @@ export async function keepProbe(env, db) {
    Looks his account up once with his own token (account 1) and keeps the picture link in KV for the
    Graphics page. Health shows only whether it was found and the image host, not the link. */
 export async function pfpProbe(env, db) {
-  const K = 'gfx_pfp_dennis2';
+  const K = 'gfx_pfp_dennis3';
   try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: 1, at: Date.now() }), { expirationTtl: 3600 }); } catch (e) { return; }
   const out = { at: Date.now() };
   try {
@@ -8920,11 +8920,13 @@ export async function pfpProbe(env, db) {
       // avatarKey is a storage key, not a link: find how Real's web app turns it into an image link.
       if (!out.url && out.raw) {
         try {
-          const html = await (await fetch('https://realsports.io/', { headers: { 'User-Agent': rsHeaders('')['User-Agent'] } })).text();
-          const js = [...html.matchAll(/src="([^"]+\.js)"/g)].map(m => new URL(m[1], 'https://realsports.io/').href).slice(0, 12);
+          const BASE = 'https://www.realapp.com/';
+          const html = await (await fetch(BASE, { headers: { 'User-Agent': rsHeaders('')['User-Agent'] } })).text();
+          out.htmlLen = html.length; out.htmlHead = html.replace(/\s+/g, ' ').slice(0, 300);
+          const js = [...new Set([...html.matchAll(/(?:src|href)=["']([^"']+\.m?js[^"']*)["']/g)].map(m => new URL(m[1], BASE).href))].slice(0, 25);
           out.bundles = js.length; out.ctx = [];
           for (const u of js) { const t = await (await fetch(u)).text();
-            for (const m of t.matchAll(/avatarKey/g)) { out.ctx.push(t.slice(Math.max(0, m.index - 220), m.index + 120)); if (out.ctx.length >= 6) break; }
+            for (const m of t.matchAll(/avatarKey|avatar_key|\/avatars?\//g)) { out.ctx.push(t.slice(Math.max(0, m.index - 220), m.index + 120)); if (out.ctx.length >= 6) break; }
             for (const m of t.matchAll(/https:\/\/[a-z0-9.\-]*(cloudfront|imgix|cdn|images|assets|storage|s3)[a-z0-9.\-]*\.[a-z]{2,}[^"'`\s]{0,40}/gi)) { (out.hosts = out.hosts || new Set()).add(m[0]); }
             if (out.ctx.length >= 6) break; }
           if (out.hosts) out.hosts = [...out.hosts].slice(0, 30);
