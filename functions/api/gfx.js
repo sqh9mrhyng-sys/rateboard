@@ -10,15 +10,15 @@
 //   POST /api/gfx?op=delimg          {id} delete one of your images
 //   GET  /api/gfx?img=<id>           an image (public, cached for good - ids never change)
 //
-// Images live on the server's disk (DATA_DIR/gfx), never in the database. Limits: 900 KB an image,
-// 80 images a creator, 12 styles, 6 images a style.
+// Images live on the server's disk (DATA_DIR/gfx), never in the database. Limits: 1.5 MB an image,
+// 400 images a creator, 60 styles, 6 designs a style.
 import { sessionKey, allow, ADMINS } from '../../lib/auth.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
 const DIR = path.join(process.env.DATA_DIR || '/opt/rax/data', 'gfx');
-const MAX_BYTES = 900 * 1024, MAX_IMGS = 80, MAX_STYLES = 12, MAX_STYLE_IMGS = 6;
+const MAX_BYTES = 1500 * 1024, MAX_IMGS = 400, MAX_STYLES = 60, MAX_STYLE_IMGS = 6;   // styles: no real limit (Dennis, 2026-11-19)
 const DDL = [
   'CREATE TABLE IF NOT EXISTS gfx_creators (key TEXT PRIMARY KEY, link TEXT, bio TEXT, open INTEGER DEFAULT 1, hidden INTEGER DEFAULT 0, unit TEXT, styles TEXT, updatedAt INTEGER, createdAt INTEGER)',
   'CREATE TABLE IF NOT EXISTS gfx_imgs (id TEXT PRIMARY KEY, key TEXT, bytes INTEGER, type TEXT, at INTEGER)'
@@ -39,7 +39,7 @@ function cleanStyles(list, mine) {
     const name = str(s && s.name, 40); if (!name) continue;
     let lo = num(s.min), hi = num(s.max); if (lo != null && hi != null && hi < lo) [lo, hi] = [hi, lo];
     const imgs = (Array.isArray(s.imgs) ? s.imgs : []).map(x => str(x, 40)).filter(x => mine.has(x)).slice(0, MAX_STYLE_IMGS);
-    out.push({ id: str(s.id, 20) || crypto.randomBytes(5).toString('hex'), name, desc: str(s.desc, 220), min: lo, max: hi, turn: str(s.turn, 30), imgs, feat: !!s.feat });
+    out.push({ id: str(s.id, 20) || crypto.randomBytes(5).toString('hex'), name, min: lo, max: hi, imgs });
   }
   return out;
 }
@@ -64,8 +64,8 @@ export async function onRequest(ctx) {
     // Their Real username (from Swaps sign-up) for the profile link; the board name if they never signed up.
     const rs = {}; try { for (const u of ((await db.prepare('SELECT key, rsUser FROM swap_users WHERE rsUser IS NOT NULL').all()).results || [])) rs[String(u.key).toLowerCase()] = u.rsUser; } catch (e) {}
     const creators = rows.map(r => { let st = []; try { st = JSON.parse(r.styles || '[]') || []; } catch (e) {}
-      // Best 3-6: the ones they starred first, then the ones with the most examples.
-      st = st.filter(s => s.imgs && s.imgs.length).sort((a, b) => (b.feat - a.feat) || (b.imgs.length - a.imgs.length)).slice(0, 6);
+      // Up to 6 styles, in the order the creator put them.
+      st = st.filter(s => s.imgs && s.imgs.length).slice(0, 6);
       const name = rs[String(r.key).toLowerCase()] || r.key;
       return { user: name, link: 'https://www.realapp.com/u/' + encodeURIComponent(name), bio: r.bio || '', open: !!r.open, unit: 'rax', styles: st, updatedAt: r.updatedAt }; })
       .filter(c => c.styles.length).sort((a, b) => (b.open - a.open) || (b.updatedAt - a.updatedAt));
@@ -104,7 +104,7 @@ export async function onRequest(ctx) {
     const p = b.profile || {}, styles = cleanStyles(b.styles, mine), now = Date.now();
     await db.prepare(`INSERT INTO gfx_creators (key, link, bio, open, hidden, unit, styles, updatedAt, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(key) DO UPDATE SET link=excluded.link, bio=excluded.bio, open=excluded.open, hidden=excluded.hidden, unit=excluded.unit, styles=excluded.styles, updatedAt=excluded.updatedAt`)
-      .bind(me, realLink(p.link), str(p.bio, 280), p.open === false ? 0 : 1, p.hidden ? 1 : 0, 'rax', JSON.stringify(styles), now, now).run();
+      .bind(me, realLink(p.link), str(p.bio, 40), p.open === false ? 0 : 1, p.hidden ? 1 : 0, 'rax', JSON.stringify(styles), now, now).run();
     // Images uploaded over an hour ago that no style uses any more are deleted, so they don't count against the limit.
     const used = new Set(styles.flatMap(s => s.imgs));
     const old = ((await db.prepare('SELECT id FROM gfx_imgs WHERE key=? AND at<?').bind(me, now - 3600e3).all()).results || []).filter(x => !used.has(x.id));
