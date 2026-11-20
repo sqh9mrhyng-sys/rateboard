@@ -13,6 +13,8 @@ self.addEventListener('push', e => {
 self.addEventListener('notificationclick', e => {
   e.notification.close();
   const url = new URL((e.notification.data && e.notification.data.url) || '/', self.location.origin).href;
+  // Another site (a Real auction link, 2026-11-19): opened on its own, the app stays where it was.
+  if (new URL(url).origin !== self.location.origin) { e.waitUntil(self.clients.openWindow(url)); return; }
   e.waitUntil((async () => {
     /* Also left where the page can read it (2026-11-18: iOS still landed on the wrong page when the app
        was in the background - the message/navigate went to a window that wasn't awake yet). Every page

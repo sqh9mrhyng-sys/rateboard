@@ -21,6 +21,8 @@
   .ab{margin:8px 0 0 42px} .ar.sub2{padding-left:14px;color:var(--mute);font-size:13px} .ar select{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 6px;font:inherit;font-size:13px} .bs.all{border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:4px} .bs input[type=checkbox]{width:20px!important;height:20px!important;flex:none;accent-color:var(--accent)} .ar{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;font-size:14px} .ar input[type=checkbox]{width:20px;height:20px;accent-color:var(--accent)}
   .bs{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:14px} .bs b{width:44px} .bs select{margin-left:auto;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 6px;font:inherit;font-size:14px}
   .ab.off{opacity:.45;pointer-events:none}
+  .bk{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:5px 0;font-size:14px} .bk input,.bk select{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;font-size:14px} .bk input{width:90px}
+  .bkc{display:flex;flex-wrap:wrap;gap:6px;padding:5px 0} .bkc label{display:inline-flex;align-items:center;gap:5px;font-size:13px;padding:4px 9px;border:1px solid var(--line);border-radius:999px;cursor:pointer} .bkc input{accent-color:var(--accent)}
   .act.locked .ag{opacity:.4;pointer-events:none} .lockmsg{display:none;margin:0 0 8px;color:var(--accent)} .act.locked .lockmsg{display:block}
 .tkb{margin-left:6px;font:inherit;font-size:12px;font-weight:800;border-radius:8px;padding:4px 10px;cursor:pointer;background:none;color:var(--ink);border:1px solid var(--line)}
   .note{color:var(--mute);font-size:14px}
@@ -69,6 +71,12 @@
       <p class="note" style="margin:6px 0 0">With a DM turned off you only get the notification - if it can't reach any of your devices, the DM goes anyway so you never miss a swap.</p></div></div>
   <div class="ag" data-g="boosts"><div class="ah"><button class="ax" data-x="boosts" aria-expanded="false">▸</button><b>Boosts</b><button class="aon" data-on="boosts">Activate</button></div>
     <div class="ab" hidden><p class="note" style="margin:4px 0 6px">A reminder to boost before the first game of the day. Pick how long before (up to 36 hours).</p><div id="bsp"></div></div></div>
+  <div class="ag" data-g="bulk" hidden><div class="ah"><button class="ax" data-x="bulk" aria-expanded="false">▸</button><b>Bulk notifications</b><button class="aon" data-on="bulk">Activate</button></div>
+    <div class="ab" hidden><p class="note" style="margin:4px 0 8px">A notification when a new bulk auction goes up in your price range. Tap it to open the auction on Real.</p>
+      <div class="bk"><label>From <input type="number" min="0" inputmode="numeric" data-bk="min"></label><label>to <input type="number" min="0" inputmode="numeric" data-bk="max"></label><span>rax</span></div>
+      <div class="bk"><span>Price</span><select data-bk="price"><option value="any">Buy now or bid</option><option value="buy">Buy now only</option><option value="bid">Current bid only</option></select></div>
+      <div class="bkc" id="bksp"></div><div class="bkc" id="bkrar"></div>
+      <p class="note" style="margin:6px 0 0">Nothing ticked = every sport / every rarity. At most 30 an hour; more than 4 at once come as one summary.</p></div></div>
   <div class="ag" data-g="notes"><div class="ah"><span class="ax" style="visibility:hidden"></span><b>Messages to you</b><button class="aon" data-on="notes">Activate</button></div>
     <p class="note" style="margin:4px 0 0 42px">Replies from Dennis, moderation updates and request answers.</p></div>
   <p class="note" id="amsg" style="margin:8px 0 0"></p>
@@ -94,13 +102,20 @@ const $ = s => document.querySelector(s);
   let P = j.prefs || {}; const SP = j.sports || {};
   P.swaps = Object.assign({ on: false, warn: true, live: true, confirm: true, dmWarn: true, dmLive: true, confirmLead: 0 }, P.swaps || {});
   P.boosts = Object.assign({ on: false, sports: {}, all: false, allHours: 2 }, P.boosts || {}); P.notes = Object.assign({ on: true }, P.notes || {});
+  // Bulk alerts (2026-11-19): only shown to accounts the server allows (Dennis for now).
+  const BULK = !!j.bulk; P.bulk = Object.assign({ on: false, min: 300, max: 400, price: 'any', sports: [], rarities: [] }, P.bulk || {});
+  if (BULK) document.querySelector('.ag[data-g="bulk"]').hidden = false;
+  const BSP = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf', soccer: 'FC', ufc: 'UFC' }, BRAR = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Mystic', 'Iconic'];
   const HRS = [0.5, 1, 2, 3, 4, 6, 8, 12, 18, 24, 30, 36], hl = h => h < 1 ? '30 min' : h + (h === 1 ? ' hour' : ' hours');
   const draw = () => {
-    for (const g of ['swaps', 'boosts', 'notes']) { const b = document.querySelector(`[data-on="${g}"]`); b.textContent = P[g].on ? 'Active ✓' : 'Activate'; b.classList.toggle('on', !!P[g].on);
+    for (const g of ['swaps', 'boosts', 'notes', 'bulk']) { const b = document.querySelector(`[data-on="${g}"]`); b.textContent = P[g].on ? 'Active ✓' : 'Activate'; b.classList.toggle('on', !!P[g].on);
       const body = document.querySelector(`.ag[data-g="${g}"] .ab`); if (body) body.classList.toggle('off', !P[g].on); }
     document.querySelectorAll('[data-k]').forEach(i => { const [g, k] = i.dataset.k.split('.'); i.checked = P[g][k] !== false; });
     const opt = v => HRS.map(h => `<option value="${h}"${Math.abs(h - (v || 2)) < 0.01 ? ' selected' : ''}>${hl(h)} before</option>`).join('');
     const sel = document.querySelector('[data-cl]'); if (sel) sel.value = String(P.swaps.confirmLead || 0);
+    if (BULK) { for (const k of ['min', 'max', 'price']) { const el = document.querySelector(`[data-bk="${k}"]`); if (el !== document.activeElement) el.value = P.bulk[k]; }
+      $('#bksp').innerHTML = Object.entries(BSP).map(([k, l]) => `<label><input type="checkbox" data-bks="${k}"${P.bulk.sports.includes(k) ? ' checked' : ''}>${l}</label>`).join('');
+      $('#bkrar').innerHTML = BRAR.map(r => `<label><input type="checkbox" data-bkr="${r.toLowerCase()}"${P.bulk.rarities.includes(r.toLowerCase()) ? ' checked' : ''}>${r}</label>`).join(''); }
     // All: one time for every sport and one reminder before the day's first game (opens All sports).
     $('#bsp').innerHTML = `<div class="bs all"><input type="checkbox" data-ball="1"${P.boosts.all ? ' checked' : ''} style="width:20px;height:20px;accent-color:var(--accent)"><b style="width:auto">All</b><span class="note" style="font-size:12px">one reminder, same time</span><select data-bah="1">${opt(P.boosts.allHours)}</select></div>`
       + Object.entries(SP).map(([k, l]) => { const x = P.boosts.sports[k] || { on: false, hours: 2 };
@@ -125,6 +140,9 @@ const $ = s => document.querySelector(s);
     if (i.dataset.ball) { P.boosts.all = i.checked; if (i.checked) for (const k of Object.keys(SP)) { P.boosts.sports[k] = Object.assign({}, P.boosts.sports[k] || {}, { on: true, hours: P.boosts.allHours }); } draw(); save(); }
     if (i.dataset.bah) { P.boosts.allHours = Number(i.value); for (const k of Object.keys(SP)) P.boosts.sports[k] = Object.assign({ on: !!(P.boosts.sports[k] || {}).on }, P.boosts.sports[k] || {}, { hours: Number(i.value) }); draw(); save(); }
     if (i.dataset.cl) { P.swaps.confirmLead = Number(i.value); save(); }
+    if (i.dataset.bk) { const k = i.dataset.bk; P.bulk[k] = k === 'price' ? i.value : (i.value === '' ? 0 : Math.max(0, Math.round(+i.value))); save(); }
+    if (i.dataset.bks) { const s = new Set(P.bulk.sports); i.checked ? s.add(i.dataset.bks) : s.delete(i.dataset.bks); P.bulk.sports = [...s]; save(); }
+    if (i.dataset.bkr) { const s = new Set(P.bulk.rarities); i.checked ? s.add(i.dataset.bkr) : s.delete(i.dataset.bkr); P.bulk.rarities = [...s]; save(); }
     if (i.dataset.bh) { const k = i.dataset.bh; P.boosts.sports[k] = Object.assign({ on: true }, P.boosts.sports[k] || {}, { hours: Number(i.value) }); draw(); save(); } });
 })();
 /* Push notifications (2026-11-16). iPhone: only from the Home Screen app (iOS 16.4+). Elsewhere: straight from the browser. */

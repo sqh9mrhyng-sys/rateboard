@@ -466,6 +466,32 @@ const BULK_RES_DDL = `CREATE TABLE IF NOT EXISTS bulk_results (id INTEGER PRIMAR
   rarity TEXT, rating REAL, mult TEXT, buyNow REAL, minBid REAL, price REAL, bids INTEGER, how TEXT, lastSeenBid REAL, lastSeenAt INTEGER, savedAt INTEGER)`;
 const BULK_GAP = 10000, BULK_FULL_PER_MIN = 6, BULK_EVERY = 5, BULK_ON = true;
 const BULK_HOURS = [12, 24, 48, 72];
+/* Bulk alerts (2026-11-19, Dennis: "I wanna know what 300-400 rax auctions go up"): a new listing whose price is in
+   the member's range sends a push - buy now, current/min bid, or either. Set on Notifications (Dennis only for now).
+   Up to 4 single alerts per batch, more become one summary; at most 30 an hour. */
+const BULK_SPN = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf', soccer: 'FC', ufc: 'UFC' };
+async function bulkAlerts(env, db, L) {
+  let users = []; try { users = JSON.parse((await env.RATEBOARD_KV.get('push_bulk_users_v1')) || '[]') || []; } catch (e) {}
+  for (const who of users) {
+    let p = {}; try { p = (JSON.parse((await env.RATEBOARD_KV.get('push_prefs_v1_' + who)) || '{}') || {}).bulk || {}; } catch (e) {}
+    if (!p.on) continue;
+    const lo = Number(p.min) || 0, hi = Number(p.max) || 1e9, inR = v => v != null && v >= lo && v <= hi, sps = Array.isArray(p.sports) && p.sports.length ? new Set(p.sports) : null;
+    const rars = Array.isArray(p.rarities) && p.rarities.length ? new Set(p.rarities.map(r => r.toLowerCase())) : null;
+    const hit = L.filter(x => (!sps || sps.has(x.sport)) && (!rars || [...rars].some(f => String(x.rarity || '').toLowerCase().startsWith(f)))
+      && (p.price === 'buy' ? inR(x.buyNow) : p.price === 'bid' ? inR(x.bid) : inR(x.buyNow) || inR(x.bid)));
+    if (!hit.length) continue;
+    const HK = 'bulkpush_n_' + who + '_' + Math.floor(Date.now() / 3600000); let used = Number(await env.RATEBOARD_KV.get(HK)) || 0; if (used >= 30) continue;
+    const left = h => { const m = Math.max(0, Math.round((h - Date.now()) / 60000)); return m >= 60 ? Math.floor(m / 60) + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '') : m + 'm'; };
+    const pr = x => [x.buyNow != null ? `Buy now ${Math.round(x.buyNow).toLocaleString()}` : '', x.bid != null ? `bid ${Math.round(x.bid).toLocaleString()}` : ''].filter(Boolean).join(' · ') + ' rax';
+    if (hit.length <= 4) for (const x of hit) {
+      await pushTo(env, db, who, { title: `Bulk · ${x.name || 'Auction'}${x.rarity ? ' ' + x.rarity : ''}${x.rating ? ' ' + Math.round(x.rating) : ''}`,
+        body: `${pr(x)} · ${BULK_SPN[x.sport] || x.sport || ''} ${x.season || ''} · ends in ${x.endsAt ? left(x.endsAt) : '?'}`, url: `https://www.realapp.com/${routeId([30, 0, 0, x.id])}`, tag: 'bulk-' + x.id });
+      used++; }
+    else { await pushTo(env, db, who, { title: `Bulk · ${hit.length} new auctions ${lo.toLocaleString()}–${hi >= 1e9 ? '∞' : hi.toLocaleString()} rax`,
+        body: hit.slice(0, 5).map(x => `${x.name} ${x.rarity || ''} ${x.buyNow != null ? Math.round(x.buyNow) : Math.round(x.bid)}`).join(' · ').slice(0, 180), url: '/bulk', tag: 'bulk-sum' }); used++; }
+    await env.RATEBOARD_KV.put(HK, String(used), { expirationTtl: 7200 }).catch(() => {});
+  }
+}
 async function bulkTick(env) {
   const tok = env.RS_MARKET_TOKEN, db = env.RATEBOARD_DB; if (!BULK_ON || !tok || !db) return;
   if (await realWait(env, 'bulk')) return;   // scans first (2026-11-17), at most 15 minutes
@@ -495,13 +521,22 @@ async function bulkTick(env) {
   };
   const save = async L => {
     const now = Date.now(), stmts = [];
+    // New listings (not seen before), for bulk alerts - only once the first full scan is done, so it doesn't fire for everything.
+    let known = null;
+    if (st.fullDone && L.length) { try { const ids = L.map(x => Number(x.id)).filter(Boolean), q = ids.map(() => '?').join(',');
+      known = new Set(((await db.prepare(`SELECT id FROM bulk_listings WHERE id IN (${q}) UNION SELECT id FROM bulk_results WHERE id IN (${q})`).bind(...ids, ...ids).all()).results || []).map(r => Number(r.id))); } catch (e) { known = null; } }
+    const fresh = [];
     for (const x of L) { const c = x.card || {}, e = c.entity || {}, b = c.boostInfo || {};
       stmts.push(db.prepare(`INSERT OR REPLACE INTO bulk_listings (id, endsAt, sport, season, playerId, name, rarity, rating, mult, buyNow, minBid, curBid, bids, value, cards, serial, seller, seenAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
         .bind(Number(x.id), Date.parse(x.endsAt) || null, x.sport || c.sport || null, Number(x.season || c.season) || null, Number(x.playerId || x.entityId) || null,
           String((e.firstName && e.lastName ? e.firstName + ' ' + e.lastName : '') || c.label || e.displayName || '').slice(0, 80),
           b.rarityLabel || x.rarity || null, num(c.boostValue), b.multiplier != null ? String(b.multiplier) : null, num(x.buyNowPrice), num(x.minBidPrice), num(x.currentBidAmount),
-          Number(x.numBids) || 0, num(x.value), Array.isArray(x.linkedCardIds) ? x.linkedCardIds.length : null, c.serialNumber != null ? String(c.serialNumber) : null, x.userId != null ? String(x.userId) : null, now)); }
+          Number(x.numBids) || 0, num(x.value), Array.isArray(x.linkedCardIds) ? x.linkedCardIds.length : null, c.serialNumber != null ? String(c.serialNumber) : null, x.userId != null ? String(x.userId) : null, now));
+      if (known && !known.has(Number(x.id))) fresh.push({ id: Number(x.id), endsAt: Date.parse(x.endsAt) || null, sport: x.sport || c.sport || null, season: Number(x.season || c.season) || null,
+        name: String((e.firstName && e.lastName ? e.firstName + ' ' + e.lastName : '') || c.label || e.displayName || '').slice(0, 80), rarity: b.rarityLabel || x.rarity || null, rating: num(c.boostValue),
+        buyNow: num(x.buyNowPrice), bid: num(x.currentBidAmount) ?? num(x.minBidPrice) }); }
     if (stmts.length) await db.batch(stmts);
+    if (fresh.length) await bulkAlerts(env, db, fresh).catch(() => {});
   };
   const page = async cursor => { const r = await get(`cardmarketplacelistings?${cursor ? 'beforeEndsAt=' + encodeURIComponent(cursor) + '&' : ''}${base}`);
     if (!r || r.status !== 200) return null; const L = (r.d && r.d.listings) || []; if (r.d && r.d.listingCount != null) st.count = r.d.listingCount; await save(L); return L; };
