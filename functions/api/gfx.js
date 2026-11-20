@@ -42,7 +42,9 @@ function cleanStyles(list, mine) {
     const name = str(s && s.name, 40); if (!name) continue;
     let lo = num(s.min), hi = num(s.max); if (lo != null && hi != null && hi < lo) [lo, hi] = [hi, lo];
     const imgs = (Array.isArray(s.imgs) ? s.imgs : []).map(x => str(x, 40)).filter(x => mine.has(x)).slice(0, MAX_STYLE_IMGS);
-    out.push({ id: str(s.id, 20) || crypto.randomBytes(5).toString('hex'), name, min: lo, max: hi, imgs });
+    // Size of each design in the circle, 50-150 (%); 100 is left out.
+    const sz = {}; if (s.sz && typeof s.sz === 'object') for (const id of imgs) { const v = Math.round(Number(s.sz[id])); if (v >= 50 && v <= 150 && v !== 100) sz[id] = v; }
+    out.push({ id: str(s.id, 20) || crypto.randomBytes(5).toString('hex'), name, min: lo, max: hi, imgs, sz });
   }
   return out;
 }
