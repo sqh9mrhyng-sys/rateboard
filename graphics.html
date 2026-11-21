@@ -163,6 +163,7 @@
   .sth .in{font-weight:700;font-size:16px}
   .prices{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;color:var(--mute);font-weight:700}
   .prices .in{width:92px;text-align:center;padding:8px}
+  .prices{flex-wrap:wrap} .askp{color:var(--ink);font-weight:700;font-size:14px;padding:8px 0} .nset{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--mute);font-weight:700;cursor:pointer} .nset input{accent-color:var(--accent);width:16px;height:16px}
   .imgs{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin-top:10px}
   .im{position:relative;aspect-ratio:4/5;border-radius:10px;overflow:hidden;cursor:pointer;border:1px solid var(--line)}
   .im img{width:100%;height:100%;object-fit:contain;display:block}
@@ -303,7 +304,7 @@ const ICON = {
   edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16v4Z"/><path d="m13.5 6.5 4 4"/></svg>',
   x: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>'
 };
-const price = s => { const lo = s.min, hi = s.max; if (lo == null && hi == null) return 'Ask';
+const price = s => { const lo = s.min, hi = s.max; if (lo == null && hi == null) return 'Ask for price';
   if (lo != null && hi != null && lo !== hi) return lo.toLocaleString() + '–' + hi.toLocaleString() + ' rax';
   return (hi == null ? 'from ' : '') + (lo ?? hi).toLocaleString() + ' rax'; };
 
@@ -506,7 +507,8 @@ function drawStyles() {
     <div class="sth"><input class="in" data-k="name" maxlength="40" placeholder="Style name" value="${esc(s.name)}" aria-label="Style name">
       ${s.name.trim() || s.imgs.length ? `<button class="ib" data-a="up" ${i ? '' : 'disabled'} aria-label="Move up">${ICON.up}</button><button class="ib" data-a="down" ${i < S.length - 1 ? '' : 'disabled'} aria-label="Move down">${ICON.down}</button>` : ''}
       <button class="ib" data-a="del" aria-label="Delete style">${ICON.trash}</button></div>
-    <div class="prices"><input class="in" data-k="min" type="number" min="0" inputmode="numeric" placeholder="50" value="${s.min ?? ''}" aria-label="Min price"><span>to</span><input class="in" data-k="max" type="number" min="0" inputmode="numeric" placeholder="150" value="${s.max ?? ''}" aria-label="Max price"><span>rax</span></div>
+    <div class="prices">${(s.min == null && s.max == null) ? `<span class="askp">Price: ask me</span>` : `<input class="in" data-k="min" type="number" min="0" inputmode="numeric" placeholder="50" value="${s.min ?? ''}" aria-label="Min price"><span>to</span><input class="in" data-k="max" type="number" min="0" inputmode="numeric" placeholder="150" value="${s.max ?? ''}" aria-label="Max price"><span>rax</span>`}
+      <label class="nset"><input type="checkbox" data-a="ask"${(s.min == null && s.max == null) ? ' checked' : ''}>No set price</label></div>
     <div class="imgs">${s.imgs.map((id, j) => { const up = String(id).startsWith('up:');
       return `<div class="im chk${up ? ' busy' : ''}"${up ? '' : ` data-sz="${j}" role="button" tabindex="0" aria-label="Size and move design ${j + 1}"`}><img src="${srcOf(id) || ''}" alt="">
         ${up ? '' : `<button class="rm" data-rm="${j}" aria-label="Remove design">${ICON.x}</button>${!j || (s.sz || {})[id] || (s.off || {})[id] ? `<span class="tag${j ? '' : ' cv'}">${[j ? '' : 'Cover', (s.sz || {})[id] ? s.sz[id] + '%' : '', (s.off || {})[id] ? 'moved' : ''].filter(Boolean).join(' · ')}</span>` : ''}`}</div>`; }).join('')}
@@ -535,6 +537,8 @@ $('#styles').addEventListener('click', e => {
   const sz = e.target.closest('[data-sz]'); if (sz) return openSize(i, +sz.dataset.sz);
   const a = e.target.closest('[data-a]'); if (!a) return;
   if (a.dataset.a === 'edit') { OPEN.add(s.id); drawStyles(); return; }
+  // "No set price" (Dennis, 2026-11-20): the style shows "Ask" instead of a range; unticking brings back 50-150.
+  if (a.dataset.a === 'ask') { if (a.checked) { s.min = null; s.max = null; } else { s.min = 50; s.max = 150; } drawStyles(); return; }
   if (a.dataset.a === 'save') return saveStyle(s);
   if (a.dataset.a === 'up') [S[i - 1], S[i]] = [S[i], S[i - 1]];
   if (a.dataset.a === 'down') [S[i + 1], S[i]] = [S[i], S[i + 1]];
