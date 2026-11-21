@@ -510,37 +510,6 @@ async function bulkAlerts(env, db, L) {
 }
 
 
-/* One-off (2026-11-20, Dennis: "if you had the best 2 collectible players everyday per sport what could you get
-   from OTD in a year"): for every date of the year and every sport, the 2 best games on that date across every
-   season in the game log (+ the best 3rd one across sports, for the spare claim). Base rax, before multipliers.
-   Shown on health once, then removed. */
-async function otdMaxOnce(env) {
-  const K = 'otdmax_1120'; try { if (await env.RATEBOARD_KV.get(K)) return; await env.RATEBOARD_KV.put(K, JSON.stringify({ running: Date.now() }), { expirationTtl: 3 * 86400 }); } catch (e) { return; }
-  const db = env.RATEBOARD_DB, out = { at: Date.now(), sports: {}, days: {} };
-  try {
-    const r = (await db.prepare(`SELECT sport, d, season, playerId, player, rax, rn FROM (
-        SELECT sport, substr(day, 6, 5) AS d, season, playerId, player, rax,
-          ROW_NUMBER() OVER (PARTITION BY sport, substr(day, 6, 5) ORDER BY rax DESC) AS rn
-        FROM gamelog WHERE rax > 0 AND day IS NOT NULL AND sport != 'ufc') WHERE rn <= 3`).all()).results || [];
-    const top = {};
-    for (const x of r) {
-      const S = out.sports[x.sport] || (out.sports[x.sport] = { top2: 0, days: new Set(), third: 0, seasons: new Set(), best: {} });
-      S.seasons.add(x.season);
-      const D = out.days[x.d] || (out.days[x.d] = { top2: 0, spare: 0 });
-      if (x.rn <= 2) { S.top2 += x.rax; S.days.add(x.d); D.top2 += x.rax; const k = `${x.player} ${x.season}`; S.best[k] = (S.best[k] || 0) + x.rax; }
-      else D.spare = Math.max(D.spare, x.rax);
-    }
-    for (const S of Object.values(out.sports)) { S.days = S.days.size; S.seasons = [...S.seasons].sort((a, b) => a - b);
-      S.best = Object.entries(S.best).sort((a, b) => b[1] - a[1]).slice(0, 8); }
-    out.rows = r.length;
-    out.total = Object.values(out.days).reduce((a, d) => a + d.top2, 0);
-    out.spare = Object.values(out.days).reduce((a, d) => a + d.spare, 0);
-    out.nDays = Object.keys(out.days).length;
-    const mon = {}; for (const [d, v] of Object.entries(out.days)) { const m = d.slice(0, 2); mon[m] = (mon[m] || 0) + v.top2; } out.months = mon;
-    delete out.days;
-  } catch (e) { out.err = String(e.message || e).slice(0, 300); }
-  try { await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 3 * 86400 }); } catch (e) {}
-}
 async function bulkTick(env) {
   const tok = env.RS_MARKET_TOKEN, db = env.RATEBOARD_DB; if (!BULK_ON || !tok || !db) return;
   if (await realWait(env, 'bulk')) return;   // scans first (2026-11-17), at most 15 minutes
@@ -9396,7 +9365,6 @@ async function collectorHealth(env, url) {
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
     navDiag: await kvj('navdiag'),
-    otdMax: await kvj('otdmax_1120'),
     oneOffsRun: await kvj(ONE_OFF_KEY), outgive: await kvj('outgive_clear_1119_n'), staleUndo: await kvj('stale_undo_1119_n'), repeatClear: await kvj('repeat_clear_1119_n'), mktProbe: await kvj('market_page_probe_1119b'), cbbMarket: await (async () => { const st = await kvj(MARKET_KEY); if (!st) return null; const l = st.lanes || {}; return { cur: st.cur || null, at: st.at || null, windowsDone: Object.values(l).filter(x => x.done).length, rows: Object.values(l).reduce((a, x) => a + (x.rows || 0), 0), pages: Object.values(l).reduce((a, x) => a + (x.pages || 0), 0), errs: Object.values(l).map(x => x.err).filter(Boolean).slice(0, 3), last: st.last || null, cool: st.coolUntil || null, pause: st.pause || null, idle: !!st.idle }; })(), pushStats: await kvj('push_stats'), staleClear: await kvj('stale_clear_1119_n'), modVoid1119: await kvj('mod_void_1119_n'), swapsHold: await (async () => { const h = await kvj('swaps_hold'); return h ? { at: h.at, off: h.off || 0, off160: h.off160 || 0, last: h.last || null, probe: h.probe || null } : { lifted: Number(await env.RATEBOARD_KV.get('swaps_hold_lifted')) || null }; })(), dfs: await (async () => { const o = await kvj('dfs_props_v1'); if (!o) return null; const evs = Object.values(o.ev || {}); const bks = {}; let props = 0;
       for (const v of evs) for (const m of Object.values(v.props || {})) for (const pl of Object.values(m)) { props++; for (const b of Object.keys(pl)) bks[b] = (bks[b] || 0) + 1; }
       return { events: (o.events || []).length, pulled: evs.length, props, books: bks, kalshi: o.kalshi, lastPull: o.lastPull, used: o.used, credits: o.credits, errs: o.errs }; })(), oddsCredits: await (async () => { const o = await kvj('pred_odds_v2'); if (!o) return null; const d = ET_DAY_FMT.format(new Date()), today = o.clog && o.clog[d] != null ? (Number(o.used) || 0) - o.clog[d] : null; return { remaining: Number(o.credits) || null, used: Number(o.used) || null, today, budget: PRED_DAY_BUDGET, fast: today == null || today < PRED_DAY_BUDGET, log: o.clog || null }; })(), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predPause: await kvj('pred_pause_v1'), marketWipe: await kvj('oneoff_market_wipe_1116'), predStore: await (async () => { const o = {}; for (const k of ['pred_ev_v1', 'pred_recent_v1', 'pred_odds_v2', 'pred_real_open', 'bulk_state_v2']) { const v = await env.RATEBOARD_KV.get(k); o[k] = v ? v.length : 0; }
@@ -9478,7 +9446,6 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil(bulkTick(env).catch(() => {}));
     ctx.waitUntil(draftScan(env).catch(() => {}));
     ctx.waitUntil(predTick(env).catch(() => {}));
-    ctx.waitUntil(otdMaxOnce(env).catch(() => {}));   // one-off OTD max (2026-11-20)
     // CBB market on its own minute (2026-11-19): riding the collector calls left it ~1 page a minute between their phases.
     if (MARKET_ON && env.RS_MARKET_TOKEN) ctx.waitUntil(marketSlice(env, env.RS_MARKET_TOKEN, 50000).catch(() => {}));
     ctx.waitUntil(marketWipe(env).catch(() => {}));
