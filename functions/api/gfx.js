@@ -11,14 +11,14 @@
 //   GET  /api/gfx?img=<id>           an image (public, cached for good - ids never change)
 //
 // Images live on the server's disk (DATA_DIR/gfx), never in the database. Limits: 1.5 MB an image,
-// 400 images a creator, 60 styles, 6 designs a style.
+// 400 images a creator, 60 styles, 50 designs a style (the 6 limit removed 2026-11-20).
 import { sessionKey, allow } from '../../lib/auth.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
 const DIR = path.join(process.env.DATA_DIR || '/opt/rax/data', 'gfx');
-const MAX_BYTES = 1500 * 1024, MAX_IMGS = 400, MAX_STYLES = 60, MAX_STYLE_IMGS = 6;   // styles: no real limit (Dennis, 2026-11-19)
+const MAX_BYTES = 1500 * 1024, MAX_IMGS = 400, MAX_STYLES = 60, MAX_STYLE_IMGS = 50;   // styles: no real limit (Dennis, 2026-11-19)
 const DDL = [
   'CREATE TABLE IF NOT EXISTS gfx_creators (key TEXT PRIMARY KEY, link TEXT, bio TEXT, open INTEGER DEFAULT 1, hidden INTEGER DEFAULT 0, unit TEXT, styles TEXT, updatedAt INTEGER, createdAt INTEGER)',
   'CREATE TABLE IF NOT EXISTS gfx_imgs (id TEXT PRIMARY KEY, key TEXT, bytes INTEGER, type TEXT, at INTEGER)'
@@ -79,8 +79,8 @@ export async function onRequest(ctx) {
     // Their Real username (from Swaps sign-up) for the profile link; the board name if they never signed up.
     const rs = {}; try { for (const u of ((await db.prepare('SELECT key, rsUser FROM swap_users WHERE rsUser IS NOT NULL').all()).results || [])) rs[String(u.key).toLowerCase()] = u.rsUser; } catch (e) {}
     const creators = rows.map(r => { let st = []; try { st = JSON.parse(r.styles || '[]') || []; } catch (e) {}
-      // Up to 6 styles, in the order the creator put them.
-      st = st.filter(s => s.imgs && s.imgs.length).slice(0, 6);
+      // Every style with a design, in the creator's order (6 limit removed 2026-11-20).
+      st = st.filter(s => s.imgs && s.imgs.length).slice(0, MAX_STYLES);
       const name = rs[String(r.key).toLowerCase()] || r.key;
       return { user: name, link: 'https://www.realapp.com/u/' + encodeURIComponent(name), bio: r.bio || '', open: !!r.open, unit: 'rax', bg: look(r.bg), styles: st, updatedAt: r.updatedAt }; })
       .filter(c => c.styles.length).sort((a, b) => (b.open - a.open) || (b.updatedAt - a.updatedAt));

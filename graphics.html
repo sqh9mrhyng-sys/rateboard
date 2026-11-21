@@ -253,7 +253,7 @@
         </div>
         <div class="sec">
           <h3>Styles</h3>
-          <p class="hint">Each style you sell, with its price range and designs. Browse shows your first 6, so put your best on top.</p>
+          <p class="hint">Each style you sell, with its price range and designs. Browse shows them in this order, so put your best on top.</p>
           <div class="tip"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.5"/></svg><span>Upload PNGs with a <b>transparent background</b>. Tap a design to pick its card, size and spot in the circle.</span></div>
           <div id="styles"></div>
           <button class="newst" id="addst">＋ Add a style</button>
@@ -372,7 +372,7 @@ function lookPicker(el, cur, withPick, onPick) {
 /* ---------- Browse ---------- */
 let ALL = [], ME = '', F = { q: '', open: false, sort: 'top', look: ls.get('rb_gfx_look') || '' };
 function tiles(c) {
-  return `<div class="grid">` + c.styles.slice(0, 6).map((s, i) => `<button class="ctile" data-u="${esc(c.user)}" data-i="${i}" aria-label="${esc(s.name)} by ${esc(c.user)}">
+  return `<div class="grid">` + c.styles.map((s, i) => `<button class="ctile" data-u="${esc(c.user)}" data-i="${i}" aria-label="${esc(s.name)} by ${esc(c.user)}">
     ${designCard(s, s.imgs[0], lookFor(c, s, s.imgs[0]))}
     <div class="tc"><b>${esc(s.name)}</b><span>${esc(price(s))}</span></div>${s.imgs.length > 1 ? `<div class="tn">+${s.imgs.length - 1} more design${s.imgs.length > 2 ? 's' : ''}</div>` : ''}</button>`).join('') + '</div>';
 }
@@ -485,7 +485,7 @@ const clean = l => l.map(s => ({ id: s.id, name: s.name, min: s.min, max: s.max,
 let LASTLOOK = ls.get('rb_gfx_lastlook') || '';
 const dlook = (s, id) => (s.lk || {})[id] || P.bg || 'iconic:swirl';
 const newLook = () => LASTLOOK || P.bg || 'iconic:swirl';
-function previewCreator() { return { user: (MINE && MINE.name) || ME || 'you', link: '#', bio: P.bio, open: P.open, own: true, bg: P.bg, styles: S.filter(s => s.name && s.imgs.length).slice(0, 6) }; }
+function previewCreator() { return { user: (MINE && MINE.name) || ME || 'you', link: '#', bio: P.bio, open: P.open, own: true, bg: P.bg, styles: S.filter(s => s.name && s.imgs.length) }; }
 function drawPreview() {
   const c = previewCreator();
   $('#preview').innerHTML = c.styles.length ? card(c, 0) + (P.hidden ? '<p class="hint" style="margin:10px 4px">Hidden from Browse right now.</p>' : '')
@@ -512,7 +512,7 @@ function drawStyles() {
     <div class="imgs">${s.imgs.map((id, j) => { const up = String(id).startsWith('up:');
       return `<div class="im chk${up ? ' busy' : ''}"${up ? '' : ` data-sz="${j}" role="button" tabindex="0" aria-label="Size and move design ${j + 1}"`}><img src="${srcOf(id) || ''}" alt="">
         ${up ? '' : `<button class="rm" data-rm="${j}" aria-label="Remove design">${ICON.x}</button>${!j || (s.sz || {})[id] || (s.off || {})[id] ? `<span class="tag${j ? '' : ' cv'}">${[j ? '' : 'Cover', (s.sz || {})[id] ? s.sz[id] + '%' : '', (s.off || {})[id] ? 'moved' : ''].filter(Boolean).join(' · ')}</span>` : ''}`}</div>`; }).join('')}
-      ${s.imgs.length < 6 ? `<button class="add" data-a="add"><span><i>＋</i>Design</span></button>` : ''}</div>
+      ${s.imgs.length < 50 ? `<button class="add" data-a="add"><span><i>＋</i>Design</span></button>` : ''}</div>
     <div class="stf"><button class="btn pri" data-a="save">Save style</button></div>
   </div>`).join('');
   $('#addst').hidden = S.some(s => OPEN.has(s.id) && !s.name.trim() && !s.imgs.length);
@@ -579,7 +579,7 @@ async function shrink(file) {
 }
 const b64 = blob => new Promise(ok => { const r = new FileReader(); r.onload = () => ok(String(r.result)); r.readAsDataURL(blob); });
 async function addFiles(files) {
-  const s = S[ADDTO]; if (!s) return; files = files.filter(f => /^image\//.test(f.type)).slice(0, 6 - s.imgs.length);
+  const s = S[ADDTO]; if (!s) return; files = files.filter(f => /^image\//.test(f.type)).slice(0, 50 - s.imgs.length);
   await Promise.all(files.map(async f => {
     const tmp = 'up:' + newId(); UPV[tmp] = URL.createObjectURL(f); s.imgs.push(tmp); busy++; drawStyles(); s.lk = s.lk || {};
     try { const b = await shrink(f); const j = b ? await api('upload', { data: await b64(b) }) : { error: "Couldn't read that image." };
