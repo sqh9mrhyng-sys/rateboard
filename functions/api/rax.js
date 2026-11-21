@@ -864,10 +864,13 @@ async function predReal(env) {
        (none open and none merely locked), stop reading odds and Real until 7:15am ET. A trading day
        runs 7:15am ET to 7:15am ET. */
     if (round === 0) { try { const P = JSON.parse((await env.RATEBOARD_KV.get('pred_pause_v1')) || '{}') || {}, td = predTradingDay(Date.now()), nOpen = out.games.filter(g => !g.locked).length, nAny = out.games.length;
-      if (nAny) P.seen = td;   // any market today, locked ones too, arms the pause
-      // Markets seen earlier this trading day (kept in the ended-games list) count too.
-      if (!P.seen || P.seen !== td) { try { const R = JSON.parse((await env.RATEBOARD_KV.get('pred_recent_v1')) || '{}') || {}; if (Object.values(R).some(g => predTradingDay(g.seen) === td)) P.seen = td; } catch (e) {} }
-      if (!nAny && P.seen === td) { P.until = predNext715(Date.now()); P.at = Date.now(); }
+      /* Fix 2026-11-20 (Dennis: "Predictions has been down all day"): the pause armed at 8:31am ET from games in
+         the ended-games list (their last-seen time is today) and from last night's markets still listed locked, so
+         it paused until tomorrow before today's markets opened. Now only a market open for betting this trading
+         day arms it. Pauses from before this fix (no v: 2) are ignored. */
+      if (P.v !== 2) { delete P.seen; delete P.until; P.v = 2; }
+      if (nOpen) P.seen = td;
+      if (!nAny && P.seen === td) { P.until = predNext715(Date.now()); P.at = Date.now(); P.v = 2; }
       await env.RATEBOARD_KV.put('pred_pause_v1', JSON.stringify(P)); } catch (e) {} }
     await env.RATEBOARD_KV.put('pred_real_open', JSON.stringify(open), { expirationTtl: 3600 });
     /* Ended games stay listed for 24 hours (members, 2026-11-16: "markets available after the game" so a
@@ -1348,7 +1351,7 @@ export async function dfsPull(env) {
   return { ok: true, cost };
 }
 async function predTick(env) {
-  try { const P = JSON.parse((await env.RATEBOARD_KV.get('pred_pause_v1')) || '{}') || {}; if (P.until && Date.now() < P.until) return; } catch (e) {}
+  try { const P = JSON.parse((await env.RATEBOARD_KV.get('pred_pause_v1')) || '{}') || {}; if (P.v === 2 && P.until && Date.now() < P.until) return; } catch (e) {}
   await Promise.all([predOdds(env).catch(() => {}), predReal(env).catch(() => {}), predFairHist(env).catch(() => {})]); }
 
 /* One-off (2026-11-13): Real's own web app code, searched for how its
