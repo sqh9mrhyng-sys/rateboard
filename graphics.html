@@ -6,7 +6,7 @@
 <title>Graphics - Rax Academy</title>
 <meta name="robots" content="noindex">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <style>
   /* Graphics (2026-11-19, cleaned up the same night). Colours follow the member's theme from theme.js. */
   :root{--bg:#10141d;--panel:#171d29;--panel2:#1f2635;--line:#2a3346;--ink:#f1eee8;--mute:#98a1b3;--accent:#E8A33D;--tile:#3d6fd6;--good:#46c98a;--bad:#e5534b;
@@ -15,9 +15,8 @@
   body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;min-height:100vh;overflow-x:hidden}
   a{color:inherit} button,input,select{font:inherit;color:inherit} [hidden]{display:none!important}
   .glow{position:fixed;inset:0;pointer-events:none;z-index:0;overflow:hidden}
-  .glow i{position:absolute;border-radius:50%;filter:blur(100px)}
-  .glow i:nth-child(1){width:480px;height:480px;background:var(--accent);top:-280px;left:-160px;opacity:.16}
-  .glow i:nth-child(2){width:440px;height:440px;background:var(--tile);top:-240px;right:-180px;opacity:.2}
+  /* Soft colour at the top: plain gradients (a blur filter here made scrolling lag on phones, 2026-11-20). */
+  .glow{background:radial-gradient(520px 340px at 0% -8%,color-mix(in srgb,var(--accent) 13%,transparent),transparent 70%),radial-gradient(520px 360px at 100% -10%,color-mix(in srgb,var(--tile) 16%,transparent),transparent 70%)} .glow i{display:none}
   .wrap{position:relative;z-index:1;max-width:1040px;margin:0 auto;padding:12px 16px 120px}
 
   /* Header + tabs */
@@ -27,7 +26,7 @@
   .stats{display:flex;justify-content:center;gap:6px;margin-top:12px;flex-wrap:wrap;font-size:13px;color:var(--mute)}
   .stats span{padding:4px 10px;border-radius:999px;background:color-mix(in srgb,var(--panel) 80%,transparent);border:1px solid var(--line)} .stats b{color:var(--ink);font-weight:800}
   .tabbar{position:sticky;top:8px;z-index:20;display:flex;justify-content:center;margin:18px 0 20px}
-  .tabs{position:relative;display:inline-flex;padding:4px;border-radius:999px;background:color-mix(in srgb,var(--panel) 82%,transparent);border:1px solid var(--line);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:0 10px 28px -14px rgba(0,0,0,.7)}
+  .tabs{position:relative;display:inline-flex;padding:4px;border-radius:999px;background:color-mix(in srgb,var(--panel) 96%,transparent);border:1px solid var(--line);box-shadow:0 10px 28px -14px rgba(0,0,0,.7)}
   .tabs .ind{position:absolute;top:4px;bottom:4px;left:0;width:0;border-radius:999px;background:var(--panel2);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 40%,transparent);transition:transform .35s var(--ease),width .35s var(--ease)}
   .tabs button{position:relative;z-index:1;border:0;background:none;padding:8px 18px;border-radius:999px;font-weight:700;font-size:14.5px;color:var(--mute);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
   .tabs button[aria-selected="true"]{color:var(--ink)}
@@ -103,13 +102,13 @@
 
   /* Real card template (Iconic, Mystic, Legendary). Sizes in cqw so it scales with the tile. */
   .rc{container-type:inline-size;position:relative;width:100%;aspect-ratio:684/900;color:#fff;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;
-    background:center/100% 100% no-repeat;filter:drop-shadow(0 12px 20px rgba(0,0,0,.4))}
+    background:center/100% 100% no-repeat}
   .rc>*{position:absolute}
   .rc .rk{top:7.5cqw;left:7cqw;display:flex;align-items:center;gap:2cqw;font-size:5.4cqw;font-weight:500}
   .rc .rk svg{width:6.4cqw;height:6.4cqw}
   .rc .ry{top:7cqw;right:7cqw;font-size:6.6cqw;font-weight:800}
   .rc .ra{top:16.4cqw;left:24.1cqw;width:51.6cqw;height:51.6cqw;border-radius:50%;overflow:hidden}
-  .rc .ra img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;transform:translate(var(--x,0%),var(--y,0%)) scale(var(--s,1));filter:drop-shadow(0 1.5cqw 2cqw rgba(0,0,0,.25))}
+  .rc .ra img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;transform:translate(var(--x,0%),var(--y,0%)) scale(var(--s,1))}
   .rc.guide .ra::after{content:"";position:absolute;inset:0;border-radius:50%;border:.6cqw dashed rgba(255,255,255,.85);pointer-events:none}
   .rc .rn{top:74cqw;left:4cqw;right:4cqw;text-align:center;font-size:7cqw;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .rc .ro{top:90.5cqw;left:7cqw;right:7cqw;display:flex;justify-content:space-between;align-items:center}
@@ -291,7 +290,8 @@ const api = async (op, body) => {
   const r = await fetch('/api/gfx?op=' + op, body ? { method: 'POST', headers: { 'content-type': 'application/json', 'x-rb-token': tok() }, body: JSON.stringify(body) } : { headers: { 'x-rb-token': tok() } });
   const j = await r.json().catch(() => ({ error: 'Something went wrong.' })); if (!r.ok && !j.error) j.error = 'Something went wrong.'; return j;
 };
-const IMG = id => '/api/gfx?img=' + encodeURIComponent(id);
+// t: the small copy (tiles, rows, thumbnails); full size only where a design is shown big (2026-11-20, speed).
+const IMG = (id, t) => '/api/gfx?img=' + encodeURIComponent(id) + (t ? '&t=1' : '');
 const toast = (m, bad) => { const t = document.createElement('div'); t.className = 'toast' + (bad ? ' bad' : ''); t.textContent = m; document.body.appendChild(t); setTimeout(() => t.remove(), 2600); };
 const ICON = {
   out: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M7 17 17 7M8 7h9v9"/></svg>',
@@ -350,14 +350,14 @@ function rcard(d) {
   const [r] = look(d.look).split(':'), R = RAR[r], off = d.off || [0, 0];
   return `<div class="rc${d.guide ? ' guide' : ''}" style="background-image:url(${LOOKURL(d.look)});--s:${(d.sz || 100) / 100};--x:${off[0] || 0}%;--y:${off[1] || 0}%">
     <div class="rk">${BALL(R.ic)}Player</div><div class="ry">2026-27</div>
-    <div class="ra">${d.src ? `<img loading="lazy" alt="" draggable="false" src="${d.src}">` : ''}</div><div class="rn">Example Graphic</div>
+    <div class="ra">${d.src ? `<img loading="lazy" decoding="async" alt="" draggable="false" src="${d.src}">` : ''}</div><div class="rn">Example Graphic</div>
     <div class="ro"><span><i>${PFP}</i>username</span><em>2mo<b>#1</b></em></div><div class="rb"></div>
     <div class="rg"><b>${R.prog}</b> to ${R.next}</div><div class="rx"><span>${R.mult}</span><span>${GEM(R.ic2)}0</span></div></div>`;
 }
-const srcOf = id => String(id).startsWith('up:') ? UPV[id] : IMG(id);
+const srcOf = (id, big) => String(id).startsWith('up:') ? UPV[id] : IMG(id, !big);
 // Each design has its own card look; on Browse a viewer can try one look on every card instead.
 const lookFor = (c, s, id) => (!c.own && F.look) || (s.lk || {})[id] || c.bg || 'iconic:swirl';
-const designCard = (s, id, lk, guide) => rcard({ src: id ? srcOf(id) : '', look: lk, sz: (s.sz || {})[id], off: (s.off || {})[id], guide });
+const designCard = (s, id, lk, guide, big) => rcard({ src: id ? srcOf(id, big) : '', look: lk, sz: (s.sz || {})[id], off: (s.off || {})[id], guide });
 // Look picker: rarity tabs + that rarity's backgrounds. withPick adds "Creator's pick" (Browse).
 function lookPicker(el, cur, withPick, onPick) {
   const pick = withPick && !cur, [r, b] = look(cur || 'iconic:swirl').split(':');
@@ -428,7 +428,7 @@ function modal(html, one) {
 function openLB(c, si, ii) {
   const s = c.styles[si]; if (!s) return; LB = { c, si, ii: ii || 0 };
   const id = s.imgs[LB.ii], many = s.imgs.length > 1;
-  const el = modal(`<div><div class="stage">${designCard(s, id, lookFor(c, s, id))}
+  const el = modal(`<div><div class="stage">${designCard(s, id, lookFor(c, s, id), false, true)}
         ${many ? `<button class="nav p" aria-label="Previous">${ICON.left}</button><button class="nav n" aria-label="Next">${ICON.right}</button>` : ''}</div>
       ${many ? `<div class="dots">${s.imgs.map((x, i) => `<button data-ii="${i}" aria-current="${i === LB.ii}" aria-label="Design ${i + 1}"></button>`).join('')}</div>` : ''}</div>
     <div class="info"><div><h2>${esc(s.name)}</h2><div class="by">by <a href="${esc(c.link)}" target="_blank" rel="noopener">@${esc(c.user)}</a> · ${c.open ? 'taking orders' : 'not taking orders'}</div></div>
@@ -463,7 +463,7 @@ function openSize(si, j) {
   el.querySelector('.pad').onclick = e => { const b = e.target.closest('[data-mv]'); if (!b) return; if (b.dataset.mv === 'c') return place(0, 0);
     const [dx, dy] = b.dataset.mv.split(',').map(Number); place(off[0] + dx * 2, off[1] + dy * 2); };
   let drag = null;
-  const paint = () => { $('#szc').innerHTML = designCard(s, id, s.lk[id], true); const ra = $('#szc .ra'); ra.style.cursor = 'grab'; ra.style.touchAction = 'none';
+  const paint = () => { $('#szc').innerHTML = designCard(s, id, s.lk[id], true, true); const ra = $('#szc .ra'); ra.style.cursor = 'grab'; ra.style.touchAction = 'none';
   ra.addEventListener('dragstart', e => e.preventDefault());
   ra.addEventListener('pointerdown', e => { e.preventDefault(); drag = { x: e.clientX, y: e.clientY, o: off.slice(), w: ra.getBoundingClientRect().width }; ra.setPointerCapture(e.pointerId); ra.style.cursor = 'grabbing'; });
   ra.addEventListener('pointermove', e => { if (drag) place(drag.o[0] + (e.clientX - drag.x) / drag.w * 100, drag.o[1] + (e.clientY - drag.y) / drag.w * 100); });
@@ -510,7 +510,7 @@ function drawStyles() {
     <div class="prices">${(s.min == null && s.max == null) ? `<span class="askp">Price: ask me</span>` : `<input class="in" data-k="min" type="number" min="0" inputmode="numeric" placeholder="50" value="${s.min ?? ''}" aria-label="Min price"><span>to</span><input class="in" data-k="max" type="number" min="0" inputmode="numeric" placeholder="150" value="${s.max ?? ''}" aria-label="Max price"><span>rax</span>`}
       <label class="nset"><input type="checkbox" data-a="ask"${(s.min == null && s.max == null) ? ' checked' : ''}>No set price</label></div>
     <div class="imgs">${s.imgs.map((id, j) => { const up = String(id).startsWith('up:');
-      return `<div class="im chk${up ? ' busy' : ''}"${up ? '' : ` data-sz="${j}" role="button" tabindex="0" aria-label="Size and move design ${j + 1}"`}><img src="${srcOf(id) || ''}" alt="">
+      return `<div class="im chk${up ? ' busy' : ''}"${up ? '' : ` data-sz="${j}" role="button" tabindex="0" aria-label="Size and move design ${j + 1}"`}><img loading="lazy" decoding="async" src="${srcOf(id) || ''}" alt="">
         ${up ? '' : `<button class="rm" data-rm="${j}" aria-label="Remove design">${ICON.x}</button>${!j || (s.sz || {})[id] || (s.off || {})[id] ? `<span class="tag${j ? '' : ' cv'}">${[j ? '' : 'Cover', (s.sz || {})[id] ? s.sz[id] + '%' : '', (s.off || {})[id] ? 'moved' : ''].filter(Boolean).join(' · ')}</span>` : ''}`}</div>`; }).join('')}
       ${s.imgs.length < 50 ? `<button class="add" data-a="add"><span><i>＋</i>Design</span></button>` : ''}</div>
     <div class="stf"><button class="btn pri" data-a="save">Save style</button></div>
@@ -525,6 +525,7 @@ async function loadMine() {
   MINE = j; ME = j.me || ME; const c = ALL.find(x => x.user.toLowerCase() === String(ME).toLowerCase()); if (c) MINE.name = c.user;
   if (j.profile) P = { open: j.profile.open, hidden: j.profile.hidden, bio: j.profile.bio || '', bg: look(j.profile.bg) };
   S = clean(j.styles || []); const b = blank(); S.push(b); OPEN.add(b.id);
+  if ((j.noThumb || []).length) setTimeout(() => backfillThumbs(j.noThumb), 1500);
   SAVED = snap(); drawProfile(); drawStyles();
 }
 const UPV = {};
@@ -566,23 +567,33 @@ async function shrink(file) {
       for (let yy = 0; yy < H; yy++) for (let xx = 0; xx < W; xx++) if (d[(yy * W + xx) * 4 + 3] > 8) { if (xx < l) l = xx; if (xx > r) r = xx; if (yy < t) t = yy; bm = yy; }
       if (r >= 0 && (l > 2 || t > 2 || r < W - 3 || bm < H - 3)) { const o = document.createElement('canvas'); o.width = r - l + 1; o.height = bm - t + 1; o.getContext('2d').drawImage(c, -l, -t);
         img = await new Promise(ok => { const i = new Image(); i.onload = () => ok(i); i.src = o.toDataURL('image/png'); }); } } catch (e) {}
-    let side = Math.min(1200, Math.max(img.naturalWidth, img.naturalHeight)), b = null;
-    for (let n = 0; n < 6; n++) {
-      const k = side / Math.max(img.naturalWidth, img.naturalHeight), w = Math.round(img.naturalWidth * k), h = Math.round(img.naturalHeight * k);
-      const cv = document.createElement('canvas'); cv.width = w; cv.height = h; cv.getContext('2d').drawImage(img, 0, 0, w, h);
-      const blob = (t, q) => new Promise(ok => cv.toBlob(ok, t, q));
-      b = await blob('image/webp', 0.9); if (!b || b.type !== 'image/webp') b = await blob('image/png');
-      if (b && b.size <= 1400 * 1024) return b; side = Math.round(side * 0.78);
-    }
-    return b;
+    // Full size up to 900 px (it never shows bigger), plus a 360 px copy for tiles.
+    return { main: await encodeAt(img, 900, 900 * 1024), thumb: await encodeAt(img, 360, 380 * 1024) };
   } finally { URL.revokeObjectURL(url); }
+}
+async function encodeAt(img, max, limit) {
+  let side = Math.min(max, Math.max(img.naturalWidth, img.naturalHeight)), b = null;
+  for (let n = 0; n < 6; n++) {
+    const k = side / Math.max(img.naturalWidth, img.naturalHeight), w = Math.max(1, Math.round(img.naturalWidth * k)), h = Math.max(1, Math.round(img.naturalHeight * k));
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h; cv.getContext('2d').drawImage(img, 0, 0, w, h);
+    const blob = (t, q) => new Promise(ok => cv.toBlob(ok, t, q));
+    b = await blob('image/webp', 0.88); if (!b || b.type !== 'image/webp') b = await blob('image/png');
+    if (b && b.size <= limit) return b; side = Math.round(side * 0.8);
+  }
+  return b;
+}
+// Small copies for designs uploaded before they existed: made on this phone, one at a time, when the Creator tab opens.
+async function backfillThumbs(ids) {
+  for (const id of ids) { try {
+    const img = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = IMG(id); });
+    const t = await encodeAt(img, 360, 380 * 1024); if (t) await api('thumb', { id, data: await b64(t) }); } catch (e) {} }
 }
 const b64 = blob => new Promise(ok => { const r = new FileReader(); r.onload = () => ok(String(r.result)); r.readAsDataURL(blob); });
 async function addFiles(files) {
   const s = S[ADDTO]; if (!s) return; files = files.filter(f => /^image\//.test(f.type)).slice(0, 50 - s.imgs.length);
   await Promise.all(files.map(async f => {
     const tmp = 'up:' + newId(); UPV[tmp] = URL.createObjectURL(f); s.imgs.push(tmp); busy++; drawStyles(); s.lk = s.lk || {};
-    try { const b = await shrink(f); const j = b ? await api('upload', { data: await b64(b) }) : { error: "Couldn't read that image." };
+    try { const b = await shrink(f); const j = b && b.main ? await api('upload', { data: await b64(b.main), thumb: b.thumb ? await b64(b.thumb) : null }) : { error: "Couldn't read that image." };
       const at = s.imgs.indexOf(tmp); if (j.ok) { if (at >= 0) { s.imgs[at] = j.id; s.lk[j.id] = newLook(); } } else { if (at >= 0) s.imgs.splice(at, 1); toast(j.error, true); } }
     catch (e) { const at = s.imgs.indexOf(tmp); if (at >= 0) s.imgs.splice(at, 1); toast("Couldn't upload that image.", true); }
     finally { busy--; URL.revokeObjectURL(UPV[tmp]); delete UPV[tmp]; drawStyles(); }

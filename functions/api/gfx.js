@@ -38,6 +38,7 @@ const sniff = b => b.length > 12 && b.toString('ascii', 0, 4) === 'RIFF' && b.to
 // Profile links: realapp.com/u/<Real username>. A pasted link (kept for later) must be on Real's own domains.
 const realLink = v => { const s = str(v, 200); return /^https:\/\/(www\.)?(realapp\.com|realsports\.io)\/[A-Za-z0-9/_\-@.?=&]+$/.test(s) ? s : ''; };
 
+const thumbBuf = v => { if (!v) return null; try { const t = Buffer.from(String(v).replace(/^data:[^,]+,/, ''), 'base64'); return sniff(t) && t.length <= 400 * 1024 ? t : null; } catch (e) { return null; } };
 function cleanStyles(list, mine) {
   const out = [];
   for (const s of (Array.isArray(list) ? list : []).slice(0, MAX_STYLES)) {
@@ -62,7 +63,9 @@ export async function onRequest(ctx) {
   const img = url.searchParams.get('img');
   if (img) {
     if (!/^[a-f0-9]{24}$/.test(img)) return new Response('Not found', { status: 404 });
-    try { const b = fs.readFileSync(path.join(DIR, img)); return new Response(b, { headers: { 'content-type': sniff(b) || 'application/octet-stream', 'cache-control': 'public, max-age=31536000, immutable' } }); }
+    // &t=1: the small copy for tiles (2026-11-20 - full iPhone PNGs were ~1 MB each and made Browse slow), if there is one.
+    let f = path.join(DIR, img); if (url.searchParams.get('t') && fs.existsSync(f + '_t')) f += '_t';
+    try { const b = fs.readFileSync(f); return new Response(b, { headers: { 'content-type': sniff(b) || 'application/octet-stream', 'cache-control': 'public, max-age=31536000, immutable' } }); }
     catch (e) { return new Response('Not found', { status: 404 }); }
   }
   await prep(db);
@@ -90,7 +93,8 @@ export async function onRequest(ctx) {
     const r = await db.prepare('SELECT link, bio, open, hidden, unit, bg, styles FROM gfx_creators WHERE key=?').bind(me).first();
     const imgs = ((await db.prepare('SELECT id FROM gfx_imgs WHERE key=? ORDER BY at').bind(me).all()).results || []).map(x => x.id);
     let styles = []; try { styles = JSON.parse((r && r.styles) || '[]') || []; } catch (e) {}
-    return json({ me, profile: r ? { link: r.link || '', bio: r.bio || '', open: !!r.open, hidden: !!r.hidden, unit: r.unit || 'rax', bg: look(r.bg) } : null, styles, imgs });
+    return json({ me, profile: r ? { link: r.link || '', bio: r.bio || '', open: !!r.open, hidden: !!r.hidden, unit: r.unit || 'rax', bg: look(r.bg) } : null, styles, imgs,
+      noThumb: imgs.filter(id => !fs.existsSync(path.join(DIR, id + '_t'))) });
   }
   if (request.method !== 'POST') return json({ error: 'POST only.' }, 405);
   let b = {}; try { b = await request.json(); } catch (e) { return json({ error: 'Bad request.' }, 400); }
@@ -104,13 +108,21 @@ export async function onRequest(ctx) {
     if (buf.length > MAX_BYTES) return json({ error: 'That image is too big even after shrinking - try a smaller one.' }, 400);
     const id = crypto.randomBytes(12).toString('hex');
     fs.mkdirSync(DIR, { recursive: true }); fs.writeFileSync(path.join(DIR, id), buf);
+    const tb = thumbBuf(b.thumb); if (tb) fs.writeFileSync(path.join(DIR, id + '_t'), tb);
     await db.prepare('INSERT INTO gfx_imgs (id, key, bytes, type, at) VALUES (?, ?, ?, ?, ?)').bind(id, me, buf.length, type, Date.now()).run();
     return json({ ok: true, id });
+  }
+  // The small copy of one of your images, made by your phone (for images uploaded before small copies existed).
+  if (op === 'thumb') {
+    const id = str(b.id, 40); const r = await db.prepare('SELECT id FROM gfx_imgs WHERE id=? AND key=?').bind(id, me).first();
+    if (!r) return json({ error: 'Not your image.' }, 404);
+    const tb = thumbBuf(b.data); if (!tb) return json({ error: 'Bad image.' }, 400);
+    fs.writeFileSync(path.join(DIR, id + '_t'), tb); return json({ ok: true });
   }
   if (op === 'delimg') {
     const id = str(b.id, 40); const r = await db.prepare('SELECT id FROM gfx_imgs WHERE id=? AND key=?').bind(id, me).first();
     if (!r) return json({ error: 'Not your image.' }, 404);
-    await db.prepare('DELETE FROM gfx_imgs WHERE id=?').bind(id).run(); try { fs.unlinkSync(path.join(DIR, id)); } catch (e) {}
+    await db.prepare('DELETE FROM gfx_imgs WHERE id=?').bind(id).run(); try { fs.unlinkSync(path.join(DIR, id)); fs.rmSync(path.join(DIR, id + '_t'), { force: true }); } catch (e) {}
     return json({ ok: true });
   }
   if (op === 'save') {
@@ -123,7 +135,7 @@ export async function onRequest(ctx) {
     // Images uploaded over an hour ago that no style uses any more are deleted, so they don't count against the limit.
     const used = new Set(styles.flatMap(s => s.imgs));
     const old = ((await db.prepare('SELECT id FROM gfx_imgs WHERE key=? AND at<?').bind(me, now - 3600e3).all()).results || []).filter(x => !used.has(x.id));
-    for (const x of old) { await db.prepare('DELETE FROM gfx_imgs WHERE id=?').bind(x.id).run(); try { fs.unlinkSync(path.join(DIR, x.id)); } catch (e) {} }
+    for (const x of old) { await db.prepare('DELETE FROM gfx_imgs WHERE id=?').bind(x.id).run(); try { fs.unlinkSync(path.join(DIR, x.id)); fs.rmSync(path.join(DIR, x.id + '_t'), { force: true }); } catch (e) {} }
     return json({ ok: true, styles, linkOk: !p.link || !!realLink(p.link) });
   }
   return json({ error: 'Unknown op.' }, 400);
