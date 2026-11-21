@@ -497,7 +497,7 @@ const allBooks = () => [...new Set((J.games || []).flatMap(g => (g.sources || []
 function derive(g){
   if (!ownPainted && J && J.owner) setTimeout(paintOwn, 0);
   // Pinnacle is pregame only (Dennis, 2026-11-16): its live line lags, so it drops out once the game starts.
-  const all = (g.sources || []).flatMap(x => x.bk || []).filter(b => !offBooks.has(b.t) && !(g.live && b.t === 'Pinnacle')).map(b => ({ ...b, out: false }));
+  const all = (g.sources || []).flatMap(x => x.bk || []).filter(b => !offBooks.has(b.t) && !(g.live && b.t === 'Pinnacle' && g.sport !== 'soccer')).map(b => ({ ...b, w0: b.w || 1, out: false }));   // FC keeps Pinnacle live (2026-11-21)
   /* Off-market lines (2026-11-16: Pinnacle live at 34% while every other book had 55%): with 3+ books,
      a book more than 8 points from the middle of the others is left out of the fair %. */
   if (all.length >= 3) for (const b of all) { const o = all.filter(x => x !== b).map(x => x.p[0]).sort((a, c) => a - c);
@@ -507,7 +507,7 @@ function derive(g){
      fair % leans on the freshest lines - only books updated in the last 45 s when at least two are, each
      counted less the older it is (a 30 s old line counts half as much as a brand-new one). */
   if (g.live) { const now = Date.now(), fr = bk.filter(b => b.u && now - b.u <= 45000); if (fr.length >= 2) { for (const b of bk) if (!fr.includes(b)) { b.out = true; b.stale = true; } bk = fr; }
-    for (const b of bk) b.w = Math.round((b.t === 'Pinnacle' ? 2 : 1) / (1 + Math.max(0, now - (b.u || now)) / 30000) * 100) / 100; }
+    for (const b of bk) b.w = Math.round(b.w0 / (1 + Math.max(0, now - (b.u || now)) / 30000) * 100) / 100; }   // each book's own weight (sharp books count more), less the older its line
   const wt = bk.reduce((a, b) => a + (b.w || 1), 0);
   const sides = g.sides.map((s, i) => { const fair = wt ? bk.reduce((a, b) => a + (b.w || 1) * (b.p[i] || 0), 0) / wt : null;
     return { ...s, fair, ev: fair != null && s.price > 0 ? fair / s.price - 1 : null }; });

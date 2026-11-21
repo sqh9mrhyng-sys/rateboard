@@ -699,7 +699,19 @@ const PRED_SPORTS = ['nhl', 'nba', 'nfl', 'ncaaf', 'ncaam', 'ufc', 'soccer'];   
 /* The books (Dennis, 2026-11-16): Pinnacle, BetMGM, Novig, DraftKings, FanDuel, Kalshi and Caesars,
    Pinnacle counting double. Polymarket comes along as a comparison only. 8 books = 1 credit a call. */
 const PRED_BOOKS = ['pinnacle', 'betmgm', 'novig', 'draftkings', 'fanduel', 'kalshi', 'williamhill_us', 'polymarket'];
+/* More books, per sport (Dennis, 2026-11-21: "We have so much unused usage... if that means using more sports
+   books to be more accurate, do it"; live FC felt late on US books alone). Sharp prices count more: Pinnacle,
+   the exchanges (Betfair, Matchbook, Smarkets, ProphetX) and the low-margin offshore books. Every 10 books is
+   1 credit a pull, so these are 2 credits. FC leans on Betfair and the UK/EU books, the sharpest soccer markets. */
+const PRED_BOOKS_US = ['pinnacle', 'betfair_ex_uk', 'matchbook', 'smarkets', 'prophetx', 'novig', 'kalshi', 'lowvig', 'betonlineag',
+  'draftkings', 'fanduel', 'betmgm', 'williamhill_us', 'espnbet', 'betrivers', 'fanatics', 'hardrockbet', 'bovada', 'polymarket'];
+const PRED_BOOKS_SOC = ['pinnacle', 'betfair_ex_uk', 'matchbook', 'smarkets', 'williamhill', 'marathonbet', 'sport888', 'betway', 'unibet_uk', 'paddypower',
+  'onexbet', 'novig', 'kalshi', 'draftkings', 'fanduel', 'betmgm', 'williamhill_us', 'lowvig', 'polymarket'];
+const predBooks = k => (/^soccer_/.test(k) ? PRED_BOOKS_SOC : PRED_BOOKS_US);
 const PRED_W = { pinnacle: 2 };
+const PRED_W_SOC = { betfair_ex_uk: 3, pinnacle: 2, matchbook: 1.5, smarkets: 1.5 };
+const PRED_W_US = { pinnacle: 2, betfair_ex_uk: 1.5, prophetx: 1.25, lowvig: 1.25, betonlineag: 1.25 };
+const predW = (k, bk) => ((/^soccer_/.test(k) ? PRED_W_SOC : PRED_W_US)[bk] || 1);
 const PRED_REF = { polymarket: 1 };
 const normTeam = t => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 const ESPN_PATH_PRED = { nhl: 'hockey/nhl', nba: 'basketball/nba', nfl: 'football/nfl', ncaaf: 'football/college-football', ncaam: 'basketball/mens-college-basketball' };
@@ -728,7 +740,7 @@ const ESPN_SOCCER = ['eng.1', 'eng.2', 'esp.1', 'ita.1', 'ger.1', 'fra.1', 'usa.
    starts within 2 hours, every minute in the last 2 hours, every 40 s while a game is on (the
    API's own refresh rate). Only sports and soccer leagues with an open Real market are pulled.
    ESPN's DraftKings line comes along free each minute. */
-const PRED_DAY_BUDGET = 15000;
+const PRED_DAY_BUDGET = 60000;   // 2026-11-21: was 15k; the plan is ~165k a day, ~15k was used
 async function predOdds(env) {
   const K = 'pred_odds_v2'; let o = {}; try { o = JSON.parse((await env.RATEBOARD_KV.get(K)) || '{}') || {}; } catch (e) {}
   if (o.lock && Date.now() - o.lock < 58000) return; o.lock = Date.now(); await env.RATEBOARD_KV.put(K, JSON.stringify(o));
@@ -790,7 +802,7 @@ async function predOdds(env) {
       const every = fast ? (live ? 13000 : soon ? 30000 : 60000) : (live ? 20000 : soon ? 60000 : 300000);
       if (o.due[k] && now - o.due[k] < every) continue;
       o.due[k] = now;
-      try { const r = await api(`sports/${k}/odds`, `&bookmakers=${PRED_BOOKS.join(',')}&markets=h2h&oddsFormat=decimal`);
+      try { const r = await api(`sports/${k}/odds`, `&bookmakers=${predBooks(k).join(',')}&markets=h2h&oddsFormat=decimal`);
         o.credits = r.headers.get('x-requests-remaining') || o.credits; o.used = r.headers.get('x-requests-used') || o.used;
         { const d = ET_DAY_FMT.format(new Date()); o.clog = o.clog || {}; if (!o.clog[d]) { o.clog[d] = Number(o.used) || 0; const ks = Object.keys(o.clog).sort(); while (ks.length > 40) delete o.clog[ks.shift()]; } }   // credits used at each day's first pull, for the pace
         if (!r.ok) { o.errs.push(`${k} odds ${r.status}`); continue; }
@@ -799,13 +811,13 @@ async function predOdds(env) {
           for (const bk of (e.bookmakers || [])) { const mk0 = (bk.markets || []).find(x => x.key === 'h2h') || {}, ou = mk0.outcomes || [];
             // A line that hasn't moved in a while is stale: 3 min while live, 90 min before.
             const upd = Date.parse(mk0.last_update || bk.last_update || 0); if (!Number.isFinite(upd) || Date.now() - upd > (isLive ? 2 : 90) * 60000) continue;
-            if (isLive && bk.key === 'pinnacle') continue;   // pregame only: its live line lags (Dennis, 2026-11-16)
+            if (isLive && bk.key === 'pinnacle' && !/^soccer_/.test(k)) continue;   // pregame only on US sports: its live line lags there (Dennis, 2026-11-16); its soccer line is the sharpest
             if (ou.length >= 2 && ou.every(x => x.price > 1)) (PRED_REF[bk.key] ? refs : books).push({ key: bk.key, title: bk.title, u: upd, raw: Object.fromEntries(ou.map(x => [x.name, x.price])), p: devig(ou.map(x => [x.name, x.price])) }); }
           if (!books.length && !refs.length) continue;
           const names = Object.keys((books[0] || refs[0]).p);
-          if (books.length) { const fair = {}; let wt = 0; for (const b of books) wt += PRED_W[b.key] || 1;
-            for (const n of names) fair[n] = books.reduce((a, b) => a + (PRED_W[b.key] || 1) * (b.p[n] || 0), 0) / wt;
-            games.push({ names, p: fair, src: books.length === 1 ? books[0].title : `${books.length} books`, start: e.commence_time, live: isLive, books: books.map(b => b.title), bk: books.map(b => ({ t: b.title, w: PRED_W[b.key] || 1, u: b.u, p: b.p, d: b.raw })) }); }
+          if (books.length) { const fair = {}; let wt = 0; for (const b of books) wt += predW(k, b.key);
+            for (const n of names) fair[n] = books.reduce((a, b) => a + predW(k, b.key) * (b.p[n] || 0), 0) / wt;
+            games.push({ names, p: fair, src: books.length === 1 ? books[0].title : `${books.length} books`, start: e.commence_time, live: isLive, books: books.map(b => b.title), bk: books.map(b => ({ t: b.title, w: predW(k, b.key), u: b.u, p: b.p, d: b.raw })) }); }
           for (const b of refs) games.push({ names, p: b.p, src: b.title, ref: true, start: e.commence_time, live: isLive }); }
         o.api[k] = { at: Date.now(), games, live, every }; } catch (e) { o.errs.push(`${k} odds ${e.message}`); }
       await sleep(300);
