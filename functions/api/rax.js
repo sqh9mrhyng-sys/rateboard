@@ -829,6 +829,7 @@ async function predOdds(env) {
 }
 /* Real's markets every 10 seconds, taking turns between account 1 and account 2 (the bot's account
    stays out so swap DMs never get slowed). Sports with nothing open are checked once a minute. */
+let predSlipTbl = false;
 async function predReal(env) {
   const toks = [env.RS_AUTH_TOKEN, env.RS_MARKET_TOKEN].filter(t => typeof t === 'string' && t.length > 20); if (!toks.length) return;
   const LK = 'pred_real_lock'; const lk = Number(await env.RATEBOARD_KV.get(LK)) || 0; if (Date.now() - lk < 55000) return; await env.RATEBOARD_KV.put(LK, String(Date.now()));
@@ -837,6 +838,7 @@ async function predReal(env) {
     const t0 = Date.now();
     let odds = {}; try { odds = JSON.parse((await env.RATEBOARD_KV.get('pred_odds_v2')) || '{}') || {}; } catch (e) {}
     const out = { at: Date.now(), games: [], credits: odds.credits || null, used: odds.used || null, keys: odds.keys || [], errs: [...(odds.errs || [])] }, open = {};
+    const slipRows = [];   // this round's price/volume steps, saved to pred_slip_log below
     for (const sp of PRED_SPORTS) {
       let mk = prevMk[sp];
       if (round === 0 || (prevMk[sp] || []).length) {
@@ -857,7 +859,8 @@ async function predReal(env) {
             const d = String(m.volumeDisplay || '').replace(/,/g, '').match(/([\d.]+)\s*([kKmM]?)/); return d ? Number(d[1]) * (/k/i.test(d[2]) ? 1e3 : /m/i.test(d[2]) ? 1e6 : 1) : null; };
           for (const m of mk) { if (m.isLocked) continue; const v = volOf(m), p0 = Number((m.outcomes[0] || {}).probability); if (!(v >= 0) || !(p0 > 0)) continue;
             const L = SL[m.id] = SL[m.id] || { sp, s: [] }, last = L.s[L.s.length - 1];
-            if (!last || last[1] !== v || Math.abs(last[2] - p0) > 1e-6) { L.s.push([Date.now(), v, Math.round(p0 * 1e5) / 1e5]); ch = true; }
+            if (!last || last[1] !== v || Math.abs(last[2] - p0) > 1e-6) { L.s.push([Date.now(), v, Math.round(p0 * 1e5) / 1e5]); ch = true;
+              if (last) slipRows.push({ at: Date.now(), sp, mid: Number(m.id), vol: v, p: p0, dv: v - last[1], dp: Math.round((p0 - last[2]) * 1e5) / 1e5, gap: Date.now() - last[0], vd: String(m.volumeDisplay || '').slice(0, 16) }); }
             L.s = L.s.filter(x => Date.now() - x[0] < 12 * 3600000).slice(-1500); }
           for (const k of Object.keys(SL)) if (!SL[k].s.length || Date.now() - SL[k].s[SL[k].s.length - 1][0] > 14 * 3600000) { delete SL[k]; ch = true; }
           if (ch) await env.RATEBOARD_KV.put('pred_slip_v1', JSON.stringify(SL), { expirationTtl: 86400 }); } catch (e) {}
@@ -891,6 +894,18 @@ async function predReal(env) {
           sides: oc.map((x, i) => ({ oid: x.id, key: x.key, label: x.label, logo: ((odds.logo || {})[`${sp}:${x.key}`]) || ((odds.logo || {})[`${sp}:${normTeam((found[0] && found[0].names[i]) || names[x.key] || '')}`]) || null, name: (((found[0] && found[0].names[i]) || names[x.key] || ((odds.abbr || {})[`${sp}:${x.key}`] || [])[0] || '') + (orDraw(x.label) ? ' or Draw' : '')) || names[x.key] || ((odds.abbr || {})[`${sp}:${x.key}`] || [])[0] || x.label, color: x.backgroundColor || null, price: x.probability, fair: fair[i], ev: fair[i] != null && x.probability > 0 ? fair[i] / x.probability - 1 : null })) });
       }
     }
+    /* Whole-day slippage log (Dennis, 2026-11-21: "Start tracking how slippage moves over the entire day today and
+       we'll start to include it in recommended rax to place"). Every step in a market's volume or price, kept in the
+       database (not the 12-hour window above) with the sport, the market's volume, live or not, minutes to the start
+       and the fair % then, so the move per rax can be fitted by sport, volume and time of day. */
+    if (slipRows.length) { try { const db = env.RATEBOARD_DB, gm = new Map(out.games.map(g => [Number(g.id), g]));
+      if (!predSlipTbl) { await db.prepare('CREATE TABLE IF NOT EXISTS pred_slip_log (at INTEGER, day TEXT, sport TEXT, mid INTEGER, vol REAL, vd TEXT, p REAL, dv REAL, dp REAL, gap INTEGER, live INTEGER, mins INTEGER, fair REAL)').run();
+        await db.prepare('CREATE INDEX IF NOT EXISTS pred_slip_log_day ON pred_slip_log(day, sport)').run(); predSlipTbl = true; }
+      const day = ET_DAY_FMT.format(new Date());
+      for (const r of slipRows) { const g = gm.get(r.mid) || {}, st = Date.parse(g.start || ''), f0 = ((g.sides || [])[0] || {}).fair;
+        await db.prepare('INSERT INTO pred_slip_log (at, day, sport, mid, vol, vd, p, dv, dp, gap, live, mins, fair) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+          .bind(r.at, day, r.sp, r.mid, r.vol, r.vd, r.p, r.dv, r.dp, r.gap, g.live ? 1 : 0, Number.isFinite(st) ? Math.round((r.at - st) / 60000) : null, f0 != null ? Math.round(f0 * 1e4) / 1e4 : null).run(); }
+    } catch (e) { out.errs.push('slip log ' + String(e.message || e).slice(0, 80)); } }
     /* Overnight pause (Dennis, 2026-11-16): once every market that was open this trading day has closed
        (none open and none merely locked), stop reading odds and Real until 7:15am ET. A trading day
        runs 7:15am ET to 7:15am ET. */
@@ -9398,7 +9413,9 @@ async function collectorHealth(env, url) {
     oneOffsRun: await kvj(ONE_OFF_KEY), outgive: await kvj('outgive_clear_1119_n'), staleUndo: await kvj('stale_undo_1119_n'), repeatClear: await kvj('repeat_clear_1119_n'), mktProbe: await kvj('market_page_probe_1119b'), cbbMarket: await (async () => { const st = await kvj(MARKET_KEY); if (!st) return null; const l = st.lanes || {}; return { cur: st.cur || null, at: st.at || null, windowsDone: Object.values(l).filter(x => x.done).length, rows: Object.values(l).reduce((a, x) => a + (x.rows || 0), 0), pages: Object.values(l).reduce((a, x) => a + (x.pages || 0), 0), errs: Object.values(l).map(x => x.err).filter(Boolean).slice(0, 3), last: st.last || null, cool: st.coolUntil || null, pause: st.pause || null, idle: !!st.idle }; })(), pushStats: await kvj('push_stats'), staleClear: await kvj('stale_clear_1119_n'), modVoid1119: await kvj('mod_void_1119_n'), swapsHold: await (async () => { const h = await kvj('swaps_hold'); return h ? { at: h.at, off: h.off || 0, off160: h.off160 || 0, last: h.last || null, probe: h.probe || null } : { lifted: Number(await env.RATEBOARD_KV.get('swaps_hold_lifted')) || null }; })(), dfs: await (async () => { const o = await kvj('dfs_props_v1'); if (!o) return null; const evs = Object.values(o.ev || {}); const bks = {}; let props = 0;
       for (const v of evs) for (const m of Object.values(v.props || {})) for (const pl of Object.values(m)) { props++; for (const b of Object.keys(pl)) bks[b] = (bks[b] || 0) + 1; }
       return { events: (o.events || []).length, pulled: evs.length, props, books: bks, kalshi: o.kalshi, lastPull: o.lastPull, used: o.used, credits: o.credits, errs: o.errs }; })(), oddsCredits: await (async () => { const o = await kvj('pred_odds_v2'); if (!o) return null; const d = ET_DAY_FMT.format(new Date()), today = o.clog && o.clog[d] != null ? (Number(o.used) || 0) - o.clog[d] : null; return { remaining: Number(o.credits) || null, used: Number(o.used) || null, today, budget: PRED_DAY_BUDGET, fast: today == null || today < PRED_DAY_BUDGET, log: o.clog || null }; })(), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predPause: await kvj('pred_pause_v1'), marketWipe: await kvj('oneoff_market_wipe_1116'), predStore: await (async () => { const o = {}; for (const k of ['pred_ev_v1', 'pred_recent_v1', 'pred_odds_v2', 'pred_real_open', 'bulk_state_v2']) { const v = await env.RATEBOARD_KV.get(k); o[k] = v ? v.length : 0; }
-      try { for (const t of ['bulk_listings', 'bulk_results']) { const r = await env.RATEBOARD_DB.prepare(`SELECT COUNT(*) AS n FROM ${t}`).first().catch(() => null); o[t] = r ? r.n : null; } } catch (e) {} return o; })(), realBusy: await realBusy(env), dmPredAsk: await (async () => { const x = await kvj('dm_predask_v1'); return x ? { sent: (x.sent || []).length, noChat: (x.noChat || []).length, notFound: (x.notFound || []).length, failed: (x.failed || []).length } : null; })(), dmPromo: await (async () => { const x = await kvj('dm_promo_' + Date.UTC(2026, 10, 17, 21, 0, 0)); return x ? { total: x.total, sent: x.sent, skipped: x.skipped, failed: x.failed, startedAt: x.startedAt } : null; })(), predSlip: await (async () => { try { if (!((await kvj('pred_mkeys_v1')) || {}).px) await env.RATEBOARD_KV.delete('pred_mkeys_v1'); } catch (e) {} const S = (await kvj('pred_slip_v1')) || {}; const fit = {}; const med = a => { const b = a.slice().sort((x, y) => x - y); return b.length ? b[Math.floor(b.length / 2)] : null; };
+      try { for (const t of ['bulk_listings', 'bulk_results']) { const r = await env.RATEBOARD_DB.prepare(`SELECT COUNT(*) AS n FROM ${t}`).first().catch(() => null); o[t] = r ? r.n : null; } } catch (e) {} return o; })(), realBusy: await realBusy(env), dmPredAsk: await (async () => { const x = await kvj('dm_predask_v1'); return x ? { sent: (x.sent || []).length, noChat: (x.noChat || []).length, notFound: (x.notFound || []).length, failed: (x.failed || []).length } : null; })(), dmPromo: await (async () => { const x = await kvj('dm_promo_' + Date.UTC(2026, 10, 17, 21, 0, 0)); return x ? { total: x.total, sent: x.sent, skipped: x.skipped, failed: x.failed, startedAt: x.startedAt } : null; })(), predSlipDay: await (async () => { try { const day = ET_DAY_FMT.format(new Date()), db = env.RATEBOARD_DB;
+        const r = (await db.prepare("SELECT sport, live, COUNT(*) AS n, COUNT(DISTINCT mid) AS m, SUM(CASE WHEN dv > 0 THEN dv ELSE 0 END) AS vol, MIN(at) AS t0, MAX(at) AS t1 FROM pred_slip_log WHERE day=? GROUP BY sport, live").bind(day).all()).results || [];
+        return { day, rows: r }; } catch (e) { return { err: String(e.message || e).slice(0, 80) }; } })(), predSlip: await (async () => { try { if (!((await kvj('pred_mkeys_v1')) || {}).px) await env.RATEBOARD_KV.delete('pred_mkeys_v1'); } catch (e) {} const S = (await kvj('pred_slip_v1')) || {}; const fit = {}; const med = a => { const b = a.slice().sort((x, y) => x - y); return b.length ? b[Math.floor(b.length / 2)] : null; };
       for (const L of Object.values(S)) for (let i = 1; i < L.s.length; i++) { const [t0, v0, p0] = L.s[i - 1], [t1, v1, p1] = L.s[i], dv = v1 - v0;
         if (dv < 300 || t1 - t0 > 25000 || !(v0 > 0)) continue; const dp = Math.abs(p1 - p0) * 100, bin = v0 < 10000 ? '<10k' : v0 < 30000 ? '10-30k' : v0 < 100000 ? '30-100k' : '100k+';
         const F = fit[L.sp] = fit[L.sp] || { per1k: [], k: [], bins: {} }; F.per1k.push(dp / dv * 1000); F.k.push(dp * v0 / dv); (F.bins[bin] = F.bins[bin] || []).push(dp / dv * 1000); }
