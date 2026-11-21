@@ -79,6 +79,8 @@
   .pill{flex:none;font-size:12px;font-weight:800;padding:4px 10px;border-radius:999px;display:inline-flex;align-items:center;gap:6px}
   .pill.on{background:color-mix(in srgb,var(--good) 15%,transparent);color:var(--good)} .pill.on::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
   .pill.off{color:var(--mute);border:1px solid var(--line)}
+  .ch .fold{width:32px;height:32px;border-radius:9px} .card.folded .ch{margin-bottom:8px}
+  .foldln{width:100%;border:1px dashed var(--line);background:none;color:var(--mute);font-weight:700;font-size:13px;padding:9px;border-radius:11px;cursor:pointer} .foldln:hover{color:var(--ink);border-color:var(--accent)}
   .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:start}
   .ctile{border:0;background:none;padding:0;cursor:pointer;text-align:left;display:block;width:100%;transition:transform .3s var(--ease)}
   .ctile:hover{transform:translateY(-3px)} .ctile:focus-visible{outline:2px solid var(--accent);outline-offset:4px;border-radius:12px}
@@ -110,7 +112,8 @@
   .rc .ra{top:16.4cqw;left:24.1cqw;width:51.6cqw;height:51.6cqw;border-radius:50%;overflow:hidden}
   .rc .ra img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;transform:translate(var(--x,0%),var(--y,0%)) scale(var(--s,1))}
   .rc.guide .ra::after{content:"";position:absolute;inset:0;border-radius:50%;border:.6cqw dashed rgba(255,255,255,.85);pointer-events:none}
-  .rc .rn{top:74cqw;left:4cqw;right:4cqw;text-align:center;font-size:7cqw;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rc .rn{top:71cqw;left:4cqw;right:4cqw;text-align:center;font-size:7cqw;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rc .rp{top:81.5cqw;left:4cqw;right:4cqw;text-align:center;font-size:4.6cqw;opacity:.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .rc .ro{top:90.5cqw;left:7cqw;right:7cqw;display:flex;justify-content:space-between;align-items:center}
   .rc .ro span{display:flex;align-items:center;gap:2.4cqw;font-size:5.8cqw;font-weight:700}
   .rc .ro i{width:6.2cqw;height:6.2cqw;border-radius:50%;overflow:hidden} .rc .ro i svg{width:100%;height:100%;display:block}
@@ -350,14 +353,16 @@ function rcard(d) {
   const [r] = look(d.look).split(':'), R = RAR[r], off = d.off || [0, 0];
   return `<div class="rc${d.guide ? ' guide' : ''}" style="background-image:url(${LOOKURL(d.look)});--s:${(d.sz || 100) / 100};--x:${off[0] || 0}%;--y:${off[1] || 0}%">
     <div class="rk">${BALL(R.ic)}Player</div><div class="ry">2026-27</div>
-    <div class="ra">${d.src ? `<img loading="lazy" decoding="async" alt="" draggable="false" src="${d.src}">` : ''}</div><div class="rn">Example Graphic</div>
+    <div class="ra">${d.src ? `<img loading="lazy" decoding="async" alt="" draggable="false" src="${d.src}">` : ''}</div><div class="rn">${esc(d.title || 'Example Graphic')}</div><div class="rp">${esc(d.sub || '')}</div>
     <div class="ro"><span><i>${PFP}</i>username</span><em>2mo<b>#1</b></em></div><div class="rb"></div>
     <div class="rg"><b>${R.prog}</b> to ${R.next}</div><div class="rx"><span>${R.mult}</span><span>${GEM(R.ic2)}0</span></div></div>`;
 }
 const srcOf = (id, big) => String(id).startsWith('up:') ? UPV[id] : IMG(id, !big);
 // Each design has its own card look; on Browse a viewer can try one look on every card instead.
 const lookFor = (c, s, id) => (!c.own && F.look) || (s.lk || {})[id] || c.bg || 'iconic:swirl';
-const designCard = (s, id, lk, guide, big) => rcard({ src: id ? srcOf(id, big) : '', look: lk, sz: (s.sz || {})[id], off: (s.off || {})[id], guide });
+// The card shows the style's name where the player's name goes, and its price where the position goes (2026-11-20).
+const priceShort = s => s.min == null && s.max == null ? 'Ask for price' : s.min != null && s.max != null && s.min !== s.max ? `${s.min.toLocaleString()}-${s.max.toLocaleString()}` : String((s.min ?? s.max).toLocaleString());
+const designCard = (s, id, lk, guide, big) => rcard({ title: s.name || 'Style name', sub: priceShort(s), src: id ? srcOf(id, big) : '', look: lk, sz: (s.sz || {})[id], off: (s.off || {})[id], guide });
 // Look picker: rarity tabs + that rarity's backgrounds. withPick adds "Creator's pick" (Browse).
 function lookPicker(el, cur, withPick, onPick) {
   const pick = withPick && !cur, [r, b] = look(cur || 'iconic:swirl').split(':');
@@ -374,12 +379,16 @@ let ALL = [], ME = '', F = { q: '', open: false, sort: 'top', look: ls.get('rb_g
 function tiles(c) {
   return `<div class="grid">` + c.styles.map((s, i) => `<button class="ctile" data-u="${esc(c.user)}" data-i="${i}" aria-label="${esc(s.name)} by ${esc(c.user)}">
     ${designCard(s, s.imgs[0], lookFor(c, s, s.imgs[0]))}
-    <div class="tc"><b>${esc(s.name)}</b><span>${esc(price(s))}</span></div>${s.imgs.length > 1 ? `<div class="tn">+${s.imgs.length - 1} more design${s.imgs.length > 2 ? 's' : ''}</div>` : ''}</button>`).join('') + '</div>';
+    ${s.imgs.length > 1 ? `<div class="tn" style="margin-top:6px">+${s.imgs.length - 1} more design${s.imgs.length > 2 ? 's' : ''}</div>` : ''}</button>`).join('') + '</div>';
 }
+// Fold a creator's styles away on Browse (Dennis, 2026-11-20); remembered on this device.
+let FOLD = new Set(); try { FOLD = new Set(JSON.parse(ls.get('rb_gfx_fold') || '[]')); } catch (e) {}
 function card(c, i) {
-  return `<article class="card" style="animation-delay:${Math.min(i, 8) * 50}ms"><div class="ch">
+  const fold = !c.own && FOLD.has(c.user);
+  return `<article class="card${fold ? ' folded' : ''}" style="animation-delay:${Math.min(i, 8) * 50}ms"><div class="ch">
     <div class="who"><a class="nm" href="${esc(c.link)}" target="_blank" rel="noopener">@${esc(c.user)}${ICON.out}</a><div class="sub">${c.bio ? 'Usually available ' + esc(c.bio) : c.styles.length + ' style' + (c.styles.length === 1 ? '' : 's')}</div></div>
-    ${c.open ? '<span class="pill on">Open</span>' : '<span class="pill off">Closed</span>'}</div>${tiles(c)}</article>`;
+    ${c.open ? '<span class="pill on">Open</span>' : '<span class="pill off">Closed</span>'}${c.own ? '' : `<button class="ib fold" data-fold="${esc(c.user)}" aria-expanded="${!fold}" aria-label="${fold ? 'Show' : 'Hide'} @${esc(c.user)}'s styles">${fold ? ICON.down : ICON.up}</button>`}</div>
+    ${fold ? `<button class="foldln" data-fold="${esc(c.user)}">${c.styles.length} style${c.styles.length === 1 ? '' : 's'} hidden · show</button>` : tiles(c)}</article>`;
 }
 function drawBrowse() {
   const q = F.q.trim().toLowerCase(), minOf = c => Math.min(...c.styles.map(s => s.min ?? s.max ?? 1e9));
@@ -414,6 +423,8 @@ $('#flook').onclick = () => {
   lookPicker($('#flp'), F.look, true, v => { F.look = v; ls.set('rb_gfx_look', v); drawBrowse(); });
   sh.addEventListener('click', e => { if (e.target === sh || e.target.closest('.close')) sh.remove(); });
 };
+document.addEventListener('click', e => { const f = e.target.closest('[data-fold]'); if (!f) return; const u = f.dataset.fold;
+  FOLD.has(u) ? FOLD.delete(u) : FOLD.add(u); ls.set('rb_gfx_fold', JSON.stringify([...FOLD])); drawBrowse(); });
 document.addEventListener('click', e => { const t = e.target.closest('.ctile[data-u]'); if (!t) return;
   const src = t.closest('#preview') ? previewCreator() : ALL.find(c => c.user === t.dataset.u); if (src) openLB(src, +t.dataset.i); });
 
