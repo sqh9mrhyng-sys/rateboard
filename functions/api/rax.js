@@ -770,7 +770,7 @@ async function predOdds(env) {
     if (!o.soccerAt || Date.now() - o.soccerAt > 30 * 60000) { o.soccerAt = Date.now(); o.soccerKeys = [];
       try { const all = await (await api('sports')).json(); const sk = (Array.isArray(all) ? all : []).filter(x => /^soccer_/.test(x.key) && x.active && !x.has_outrights).map(x => x.key);
         for (const k of sk) { try { const ev = await (await api(`sports/${k}/events`)).json();
-            if ((Array.isArray(ev) ? ev : []).some(e => (real.soccer || []).some(m => m.sides.filter(s => !isDraw(s.label)).every(s => { const al = [...(s.al || []), ...(o.abbr[`soccer:${String(s.label || '').split(' ')[0]}`] || [])]; return sideHits(al, e.home_team) || sideHits(al, e.away_team); })))) o.soccerKeys.push(k);
+            if ((Array.isArray(ev) ? ev : []).some(e => (real.soccer || []).some(m => m.sides.filter(s => !isDraw(s.label)).every(s => { const cd = String(s.label || '').split(' ')[0], al = [...(s.al || []), ...(o.abbr[`soccer:${cd}`] || []), ODDS_TEAMS.soccer[cd]].filter(Boolean); return sideHits(al, e.home_team) || sideHits(al, e.away_team); })))) o.soccerKeys.push(k);
             if (Array.isArray(ev)) o.ev[k] = { at: Date.now(), list: ev.map(e => ({ s: e.commence_time })) }; } catch (e) {} await sleep(250); } } catch (e) { o.errs.push(`soccer list ${e.message}`); } }
     for (const k of (o.soccerKeys || [])) keys.add(k);
   }
@@ -876,7 +876,7 @@ async function predReal(env) {
         out.games.push({ sport: sp, id: m.id, game: (m.gameDisplay || {}).display || oc.map(x => x.label).join(' vs '), path: (m.gameDisplay || {}).path || null,
           link: `https://www.realapp.com/${routeId([36, 0, 0, Number(m.id)])}`, locked: !!m.isLocked, volume: m.volumeDisplay || null, start: st, oddsAt, live: !!(found.find(f => f.live)), hist,
           sources: fnd.map(f => ({ src: f.src, p: f.p.map(v => Math.round(v * 1000) / 1000), books: f.books, bk: f.bk })), refs: refs.map(f => ({ src: f.src, p: f.p.map(v => Math.round(v * 1000) / 1000) })),
-          sides: oc.map((x, i) => ({ oid: x.id, key: x.key, label: x.label, logo: ((odds.logo || {})[`${sp}:${x.key}`]) || ((odds.logo || {})[`${sp}:${normTeam((found[0] && found[0].names[i]) || names[x.key] || '')}`]) || null, name: ((found[0] && found[0].names[i]) ? found[0].names[i] + (orDraw(x.label) ? ' or Draw' : '') : '') || names[x.key] || ((odds.abbr || {})[`${sp}:${x.key}`] || [])[0] || x.label, color: x.backgroundColor || null, price: x.probability, fair: fair[i], ev: fair[i] != null && x.probability > 0 ? fair[i] / x.probability - 1 : null })) });
+          sides: oc.map((x, i) => ({ oid: x.id, key: x.key, label: x.label, logo: ((odds.logo || {})[`${sp}:${x.key}`]) || ((odds.logo || {})[`${sp}:${normTeam((found[0] && found[0].names[i]) || names[x.key] || '')}`]) || null, name: (((found[0] && found[0].names[i]) || names[x.key] || ((odds.abbr || {})[`${sp}:${x.key}`] || [])[0] || '') + (orDraw(x.label) ? ' or Draw' : '')) || names[x.key] || ((odds.abbr || {})[`${sp}:${x.key}`] || [])[0] || x.label, color: x.backgroundColor || null, price: x.probability, fair: fair[i], ev: fair[i] != null && x.probability > 0 ? fair[i] / x.probability - 1 : null })) });
       }
     }
     /* Overnight pause (Dennis, 2026-11-16): once every market that was open this trading day has closed
