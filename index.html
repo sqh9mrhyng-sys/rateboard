@@ -178,6 +178,7 @@ const PAGES = [
   ['/projections', 'Projections', 'Projected rax for the rest of the regular season'],
   ['/bulk', 'Bulk ratings', 'Bulk auction prices, history, passes worth grinding and what yours are worth'],   // everyone (2026-11-15)
   ['/predictions', 'Predictions', 'Real\'s game markets against the sportsbooks - EV, unit sizes and your bets', 'pred'],
+  ['/graphics', 'Graphics', 'Card graphics from creators - browse designs, or sell your own'],   // everyone (2026-11-21)
   ['/tags', 'Tag finder', 'Every game that earned a performance tag'],
   ['/notifications', 'Notifications', 'Replies to you, your reports and requests, strikes, and what\'s new'],   // 2026-11-12
   ['/admin', 'Admin', 'Users, reports, traffic and sponsors', 'admin']
@@ -185,7 +186,7 @@ const PAGES = [
 // A colour for each page's box.
 // Each page's own colour (2026-11-09: brighter, and themed - swaps the two-way cyan, boosts fire, packs Legendary purple, projections growth green).
 const LOOK = { '/board': '#ffb020', '/board#gamedata': '#3b9eff', '/board#otd': '#ffd60a', '/packs': '#b06bff', '/market': '#14d6b0', '/swaps': '#22d3ee', '/boosts': '#ff5a36',
-  '/projections': '#34d67a', '/predictions': '#3fbf7f', '/bulk': '#8b5cf6', '/notifications': '#f2c94c', '/tags': '#ff4fb0', '/otd': '#ffd60a', '/admin': '#c3cbdb' };
+  '/projections': '#34d67a', '/predictions': '#3fbf7f', '/bulk': '#8b5cf6', '/notifications': '#f2c94c', '/tags': '#ff4fb0', '/graphics': '#ff7ad9', '/otd': '#ffd60a', '/admin': '#c3cbdb' };
 // Pages behind access only show to those who have it (Dennis opened Home to everyone, 2026-11-09).
 let ACC = {};
 // Look settings (theme, hidden boxes, compact), cached here and kept per account on the server.
@@ -346,7 +347,7 @@ const THEME_NAMES = { custom: 'Your own', '': 'Classic', midnight: 'Midnight', o
 async function saveUI(part){ Object.assign(UI, part); ls.set('rb_ui_v1', JSON.stringify(UI)); drawNav();
   await api('/api/kv', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'uiPrefs', set: part }) }); }
 // The page menu's order and pages (2026-11-17): arrows move a page, the tick shows or hides it.
-const NAV_DEFAULT = ['/swaps', '/boosts', '/predictions', '/board#otd', '/board', '/bulk', '/packs', '/projections', '/tags', '/notifications', '/board#gamedata', '/admin'];
+const NAV_DEFAULT = ['/swaps', '/boosts', '/predictions', '/board#otd', '/board', '/bulk', '/packs', '/projections', '/graphics', '/tags', '/notifications', '/board#gamedata', '/admin'];
 function navOrdered(){
   const list = PAGES.filter(p => p[0] !== '/' && canOpen(p)); const o = (UI.navOrder && UI.navOrder.length) ? UI.navOrder : NAV_DEFAULT;
   const pos = (h, i) => { const k = o.indexOf(h); return k < 0 ? 1e3 + i : k; };

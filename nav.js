@@ -15,7 +15,7 @@
     ['/predictions', 'Predictions', 'pred'],
     ['/fantasy', 'Fantasy optimizer', 'admin'],
     ['/market', 'CBB market', 'admin'],
-    ['/graphics', 'Graphics', 'admin'],
+    ['/graphics', 'Graphics'],   // everyone (2026-11-21)
     ['/tags', 'Tag finder'],
     ['/notifications', 'Notifications'],
     ['/admin', 'Admin', 'admin']
