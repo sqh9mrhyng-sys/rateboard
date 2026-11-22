@@ -968,11 +968,11 @@ const PB_SLIP0 = { nba: 1.0, ncaam: 1.0, nhl: 2.0, soccer: 1.8, ufc: 1.9 }, PB_D
 /* Slippage, fitted from the log (Dennis, 2026-11-22: "Apply the slippage to recommended bets so people are getting
    the absolute most EV possible and continue tracking"). Every hour: the median price move per 1,000 rax of each
    sport's pregame bets over the last 7 days of pred_slip_log (single steps of up to 20k rax, under 2 minutes apart),
-   once a sport has 100+ of them; until then the full-day study's numbers above (Nov 21: NBA/CBB ~1, NHL ~2, FC ~1.8,
+   once a sport has 100+ of them and they are not too spread out (p75 over 3x the median, like CFB on Nov 21, keeps the default); until then the full-day study's numbers above (Nov 21: NBA/CBB ~1, NHL ~2, FC ~1.8,
    UFC ~1.9; CFB and NFL not enough yet, so 2.5). The page and the alerts both read pred_slipfit_v1. */
 let PB_SLIP = { ...PB_SLIP0 }, PB_SLIP_AT = 0;
 async function loadSlipFit(env) { if (Date.now() - PB_SLIP_AT < 5 * 60000) return PB_SLIP; PB_SLIP_AT = Date.now();
-  try { const f = JSON.parse((await env.RATEBOARD_KV.get('pred_slipfit_v1')) || 'null'); if (f && f.s) { PB_SLIP = { ...PB_SLIP0 }; for (const [k, v] of Object.entries(f.s)) if (v && v.n >= 100 && v.m > 0.2 && v.m < 6) PB_SLIP[k] = v.m; } } catch (e) {}
+  try { const f = JSON.parse((await env.RATEBOARD_KV.get('pred_slipfit_v1')) || 'null'); if (f && f.s) { PB_SLIP = { ...PB_SLIP0 }; for (const [k, v] of Object.entries(f.s)) if (v && v.n >= 100 && v.m > 0.2 && v.m < 6 && !(v.p75 > 3 * v.m)) PB_SLIP[k] = v.m; } } catch (e) {}
   return PB_SLIP; }
 async function predSlipFit(env) {
   const K = 'pred_slipfit_v1'; let f = null; try { f = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}

@@ -426,7 +426,7 @@ const SLIP_0 = { nba: 1.0, ncaam: 1.0, nhl: 2.0, soccer: 1.8, ufc: 1.9 }, SLIP_D
 /* Fitted every hour from the slippage log (2026-11-22): each sport's median pregame move per 1,000 rax over the last
    7 days, once it has 100+ bets; until then the Nov 21 full-day study above. Sent with the games (slipFit). */
 let SLIP_1K = { ...SLIP_0 };
-function setSlipFit(f){ SLIP_1K = { ...SLIP_0 }; if (f && f.s) for (const [k, v] of Object.entries(f.s)) if (v && v.n >= 100 && v.m > 0.2 && v.m < 6) SLIP_1K[k] = v.m; }
+function setSlipFit(f){ SLIP_1K = { ...SLIP_0 }; if (f && f.s) for (const [k, v] of Object.entries(f.s)) if (v && v.n >= 100 && v.m > 0.2 && v.m < 6 && !(v.p75 > 3 * v.m)) SLIP_1K[k] = v.m; }
 const movePts = (g, stake) => Math.min(15, (SLIP_1K[g.sport] ?? SLIP_DEF) * (stake || 0) / 1000);
 const fillAt = (g, q, stake) => Math.min(0.99, q + movePts(g, stake) / 200);
 const upTo = sd => Math.floor(sd.fair / (1 + MIN_EV_U) * 100);
