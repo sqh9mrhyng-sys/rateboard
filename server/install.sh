@@ -74,13 +74,13 @@ OnCalendar=*-*-* *:*:30
 WantedBy=timers.target
 UNIT
 
-# Nightly database backup (kept 14 days), at 4:10am Alaska (13:10 UTC) - a quiet time.
+# Nightly database backup (kept 7 days: the site prunes older ones itself, 2026-11-21), at 4:10am Alaska (13:10 UTC) - a quiet time.
 cat > /opt/rax/backup.sh <<'BK'
 #!/bin/bash
 D=$(date -u +%Y%m%d)
 sqlite3 /opt/rax/data/rateboard.db ".backup /opt/rax/backups/rateboard-$D.db" && gzip -f /opt/rax/backups/rateboard-$D.db
 sqlite3 /opt/rax/data/kv.db ".backup /opt/rax/backups/kv-$D.db" && gzip -f /opt/rax/backups/kv-$D.db
-find /opt/rax/backups -name '*.gz' -mtime +14 -delete
+find /opt/rax/backups -name '*.gz' -mtime +7 -delete
 BK
 chmod +x /opt/rax/backup.sh
 echo '10 13 * * * root /opt/rax/backup.sh' > /etc/cron.d/rax-backup
