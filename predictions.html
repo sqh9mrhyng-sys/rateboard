@@ -308,7 +308,7 @@
 <div id="blist"></div></div>
 <div id="vr" hidden>
 <div class="keep" style="display:block"><b>Arbitrage</b><p class="note" style="margin:4px 0 8px">After you've placed a bet, buying the other side at a low enough price locks in a profit whichever way the game goes. Only options with at least <b>10% guaranteed profit</b> after slippage are shown as ready.</p>
-<p class="note" style="margin:0 0 8px">Slippage is worked out for you on each hedge: how far your own buy pushes Real's price (measured from Real: about 1.1 points per 1,000 rax in NBA and 2.3 in NHL, whatever the market's volume) plus how much the line has been swinging lately.</p><label style="font-size:13px;font-weight:700">Extra cushion (points, optional) <input id="slip" type="number" inputmode="decimal" min="0" max="10" step="0.5" style="width:70px;margin-left:6px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:4px 6px;font:inherit"></label></div>
+<p class="note" style="margin:0 0 8px">Slippage is worked out for you on each hedge: how far your own buy pushes Real's price (measured from Real and updated every hour: about 1 point per 1,000 rax in NBA and CBB, 2 in NHL, 1.8 in FC and 1.9 in UFC, whatever the market's volume) plus how much the line has been swinging lately.</p><label style="font-size:13px;font-weight:700">Extra cushion (points, optional) <input id="slip" type="number" inputmode="decimal" min="0" max="10" step="0.5" style="width:70px;margin-left:6px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:4px 6px;font:inherit"></label></div>
 <div id="rlist"></div></div>
 <div id="vn" hidden><section class="nal">
 <label class="nrow nmain"><input type="checkbox" id="na-on"><span><b>Alerts on</b><small>Push notifications for the markets below. Pregame only - live lines move too fast to trust.</small></span></label>
@@ -353,7 +353,7 @@
 <h2>Live games</h2>
 <p>In-game lines are extremely volatile, and late in games the jumps are too severe to consistently snipe great EV. Pregame predictions are recommended when available. Sportsbooks update their live lines 10-80 seconds apart while Real moves instantly, so live EV is noisier than pregame.</p>
 <h2>Slippage</h2>
-<p>Real takes no fee - both sides always add up to 100%. The only cost is that your own bet moves the price as it goes in, so you get a slightly worse price than the one shown. From watching Real's markets, 1,000 rax moves an NBA market about 1.1 points and an NHL market about 2.3, and on average you pay about half of that move. Enter your rax amount at the top and the EV shown for each bet already takes slippage off, and the unit size steps down if a bigger bet would eat the edge.</p>
+<p>Real takes no fee - both sides always add up to 100%. The only cost is that your own bet moves the price as it goes in, so you get a slightly worse price than the one shown. From every bet on Real's markets (tracked all day, refitted every hour), 1,000 rax moves NBA and CBB about 1 point, NHL about 2, FC about 1.8 and UFC about 1.9 - CFB and NFL use a cautious 2.5 until there's enough data - and on average you pay about half of that move. Enter your rax amount at the top and the EV shown for each bet already takes slippage off, and the size is the one that earns the most rax after slippage (never more than the Kelly size).</p>
 <h2>Placing a bet</h2>
 <p>Every side shows a <b>unit ladder</b>, like <b>0.5u under 50% · 1u under 47% · 2u under 44%</b>: the size to bet at each Real price, from the same rule as above. Live prices swing between refreshes, so if Real jumps to 46% you already know it's a 1u bet without waiting. The size the current price earns is lit green. <b>+EV up to X%</b> is the highest price that's still worth a bet at all; above it, skip. Once you buy, tap <b>Bet placed</b>, put in the Real % you actually got and the rax you bet (both filled in for you), and tap <b>Enter</b>: the game leaves Markets and shows in <b>My bets</b>. Change the amount if you put in something different; the payout (amount ÷ the price you paid) updates with it. The payout can be changed too if Real paid something different (clear it to go back to auto). When the market settles on Real it's marked Won or Lost for you; you can still tap Won or Lost yourself.</p>
 <div id="garb" hidden><h2>Arbitrage (locking in profit)</h2>
@@ -422,7 +422,11 @@ const decided = g => g.sides.some(s => s.fair != null && s.fair < MIN_FAIR);
    your own bet moving the price. From every 10-second read of Real (volume jump vs price move, pregame),
    1,000 rax moves NBA about 1.1 points and NHL about 2.3, whatever the market's volume. Other sports
    aren't measured yet, so they get a cautious 2.5. Your average fill is about halfway along that move. */
-const SLIP_1K = { nba: 1.1, nhl: 2.3 }, SLIP_DEF = 2.5;
+const SLIP_0 = { nba: 1.0, ncaam: 1.0, nhl: 2.0, soccer: 1.8, ufc: 1.9 }, SLIP_DEF = 2.5;
+/* Fitted every hour from the slippage log (2026-11-22): each sport's median pregame move per 1,000 rax over the last
+   7 days, once it has 100+ bets; until then the Nov 21 full-day study above. Sent with the games (slipFit). */
+let SLIP_1K = { ...SLIP_0 };
+function setSlipFit(f){ SLIP_1K = { ...SLIP_0 }; if (f && f.s) for (const [k, v] of Object.entries(f.s)) if (v && v.n >= 100 && v.m > 0.2 && v.m < 6) SLIP_1K[k] = v.m; }
 const movePts = (g, stake) => Math.min(15, (SLIP_1K[g.sport] ?? SLIP_DEF) * (stake || 0) / 1000);
 const fillAt = (g, q, stake) => Math.min(0.99, q + movePts(g, stake) / 200);
 const upTo = sd => Math.floor(sd.fair / (1 + MIN_EV_U) * 100);
@@ -434,6 +438,12 @@ const units = (g, sd) => { if (thin(g) || sd.ev == null || sd.ev < MIN_EV_U || s
   let u = unitsAt(sd.fair, sd.price) || null;
   // With a rax amount entered, size down until the bet is still worth it at the price you'd actually get.
   while (u && unitRax() > 0 && !BUILD()) { const q = fillAt(g, sd.price, u * unitRax()); if (sd.fair / q - 1 >= MIN_EV_U && unitsAt(sd.fair, q) >= u) break; u = u > 0.5 ? u - 0.5 : null; }
+  /* Most EV (Dennis, 2026-11-22: "so people are getting the absolute most EV possible"): past a point each extra rax
+     pushes the price enough to lower the total EV, so of the sizes up to the Kelly one, take the one that earns the
+     most rax after slippage. */
+  if (u && unitRax() > 0 && !BUILD()) { let bu = u, be = -1;
+    for (let x = u; x >= 0.5; x -= 0.5) { const st = x * unitRax(), e = st * (sd.fair / fillAt(g, sd.price, st) - 1); if (e > be + 1e-9) { be = e; bu = x; } }
+    u = bu; }
   return u; };
 /* Unit ladder (members, 2026-11-16: "0.5u under 50%, 1u under 47%, 2u under 44%"): for each side, the
    Real price you'd have to get for each size, from the same sizing rule. Live prices swing between
@@ -481,6 +491,7 @@ function when(g){
 }
 async function load(){
   try{ const t = ls.get('ratebrd_token_v1') || ''; J = await (await fetch('/api/swaps?op=predev', { headers: t ? { 'x-rb-token': t } : {} })).json(); }catch(e){ J = { error: 'Could not reach the site.' }; }
+  try{ setSlipFit(J && J.slipFit); }catch(e){}
   if(J.error){ $('#list').innerHTML = `<div class="empty">${/sign in/i.test(J.error) ? 'Sign in first - <a href="/?next=/predictions">sign in</a>.' : esc(J.error)}</div>`; return; }
   applyMe(J.me); autoPort(); try { localStorage.setItem('rb_pred_alerts', (J.owner || J.port) ? '1' : '0'); } catch (e) {} $('#tabs [data-t="n"]').hidden = !(J.port && !J.owner); $('#tabs').classList.toggle('t5', !!(J.port && !J.owner));
   if(!J.keySet){ $('#list').innerHTML = '<div class="empty">The Odds API key isn\'t on the server yet.</div>'; return; }

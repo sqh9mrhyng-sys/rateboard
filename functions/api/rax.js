@@ -934,6 +934,7 @@ async function predReal(env) {
     try { await recDiag(env); } catch (e) {}
     try { await cbbAgg(env); } catch (e) {}
     try { await diskTidy(env); } catch (e) {}
+    try { await predSlipFit(env); } catch (e) {}
     // Nothing open to bet on (only locked markets left): one read a minute is enough.
     if (!out.games.some(g => !g.locked && !g.ended)) break;
     const wait = 10000 - (Date.now() - t0); if (round < 5 && wait > 0) await sleep(wait);
@@ -963,7 +964,25 @@ async function marketWipe(env) {
    Pinnacle pregame only, a book 8+ points off the others left out. Same sizing: a tenth Kelly in half units,
    capped for long shots, 2% minimum edge. Each piece is sized to move Real about 1 point (from the measured
    slippage), spaced so the full size is in about 10 minutes before the start, and a push says when. */
-const PB_SLIP = { nba: 1.1, nhl: 2.3 }, PB_DEF = 2.5, PB_MIN_EV = 0.02, PB_PIECE_PTS = 1.0;
+const PB_SLIP0 = { nba: 1.0, ncaam: 1.0, nhl: 2.0, soccer: 1.8, ufc: 1.9 }, PB_DEF = 2.5, PB_MIN_EV = 0.02, PB_PIECE_PTS = 1.0;
+/* Slippage, fitted from the log (Dennis, 2026-11-22: "Apply the slippage to recommended bets so people are getting
+   the absolute most EV possible and continue tracking"). Every hour: the median price move per 1,000 rax of each
+   sport's pregame bets over the last 7 days of pred_slip_log (single steps of up to 20k rax, under 2 minutes apart),
+   once a sport has 100+ of them; until then the full-day study's numbers above (Nov 21: NBA/CBB ~1, NHL ~2, FC ~1.8,
+   UFC ~1.9; CFB and NFL not enough yet, so 2.5). The page and the alerts both read pred_slipfit_v1. */
+let PB_SLIP = { ...PB_SLIP0 }, PB_SLIP_AT = 0;
+async function loadSlipFit(env) { if (Date.now() - PB_SLIP_AT < 5 * 60000) return PB_SLIP; PB_SLIP_AT = Date.now();
+  try { const f = JSON.parse((await env.RATEBOARD_KV.get('pred_slipfit_v1')) || 'null'); if (f && f.s) { PB_SLIP = { ...PB_SLIP0 }; for (const [k, v] of Object.entries(f.s)) if (v && v.n >= 100 && v.m > 0.2 && v.m < 6) PB_SLIP[k] = v.m; } } catch (e) {}
+  return PB_SLIP; }
+async function predSlipFit(env) {
+  const K = 'pred_slipfit_v1'; let f = null; try { f = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
+  if (f && Date.now() - f.at < 3600000) return;
+  const rows = env.RATEBOARD_DB.raw.prepare("SELECT sport, ABS(dp) * 100 / (dv / 1000.0) AS r FROM pred_slip_log WHERE at > ? AND live = 0 AND dv > 0 AND dv <= 20000 AND gap <= 120000 AND dp <> 0").all(Date.now() - 7 * 86400000);
+  const by = {}; for (const x of rows) (by[x.sport] = by[x.sport] || []).push(x.r);
+  const out = { at: Date.now(), s: {} };
+  for (const [sp, l] of Object.entries(by)) { l.sort((a, b) => a - b); const q = t => l[Math.min(l.length - 1, Math.floor(t * l.length))]; out.s[sp] = { m: Math.round(q(0.5) * 100) / 100, p25: Math.round(q(0.25) * 100) / 100, p75: Math.round(q(0.75) * 100) / 100, n: l.length }; }
+  await env.RATEBOARD_KV.put(K, JSON.stringify(out)); PB_SLIP_AT = 0;
+}
 function pbDerive(g) {
   const all = (g.sources || []).flatMap(x => x.bk || []).filter(b => !(g.live && b.t === 'Pinnacle')).map(b => ({ ...b, out: false }));
   if (all.length >= 3) for (const b of all) { const o = all.filter(x => x !== b).map(x => x.p[0]).sort((a, c) => a - c);
@@ -987,6 +1006,7 @@ const pbUnits = (fair, q) => { if (!(q > 0 && q < 1) || fair / q - 1 < PB_MIN_EV
    point, still at least his "good value" EV after that move - he gets a push. A side isn't pushed again
    unless the price gets at least a point better, the EV jumps 3 points, or 20 minutes pass and it's still there. */
 async function predBuildTick(env, out) {
+  await loadSlipFit(env);
   const who = 'dennis';
   let cfg = {}; try { cfg = JSON.parse((await env.RATEBOARD_KV.get('pred_owner_cfg')) || '{}') || {}; } catch (e) {}
   if (!cfg.alerts || !(cfg.unit > 0)) return;
@@ -1154,6 +1174,7 @@ async function planDiag(env) {
 }
 export const PU_DEF = { ev: { on: true, minEv: 0.10, minFair: 0.30 }, add: { on: true, minEv: 0.05 }, sell: { on: false, pts: 5 }, start: { on: false }, cap: 6 };
 async function predMemberAlerts(env, out) {
+  await loadSlipFit(env);
   let A = {}; try { A = JSON.parse((await env.RATEBOARD_KV.get('pred_ualert_v1')) || '{}') || {}; } catch (e) {}
   const users = Object.keys(A).filter(w => A[w] && A[w].enabled); if (!users.length) return;
   const LK = 'pred_ualert_lock'; const lk = Number(await env.RATEBOARD_KV.get(LK)) || 0; if (Date.now() - lk < 8000) return; await env.RATEBOARD_KV.put(LK, String(Date.now()));
@@ -1279,6 +1300,7 @@ const fairAt = (H, mid, si, t) => { const h = H[mid]; if (!h || !h.length || !Nu
   if (!best) best = h[0]; return Math.abs(best[0] - t) < 20 * 60000 ? { fair: best[1][si], price: best[2] ? best[2][si] : null, at: best[0] } : null; };
 export const predPortTok = (env, who) => who === 'dennis' ? env.RS_AUTH_TOKEN : ((env.RS_USER_TOKENS || {})[String(who || '').toLowerCase().replace(/[^a-z0-9]/g, '_')] || null);
 export async function predPortSync(env, who = 'dennis') {
+  await loadSlipFit(env);
   const tok = predPortTok(env, who); if (!tok) return;
   const sfx = who === 'dennis' ? '' : '_' + who, K = 'pred_port_v1' + sfx, LK = 'pred_port_lock' + sfx; const lk = Number(await env.RATEBOARD_KV.get(LK)) || 0; if (Date.now() - lk < 15000) return; await env.RATEBOARD_KV.put(LK, String(Date.now()));
   let prev = {}; try { prev = JSON.parse((await env.RATEBOARD_KV.get(K)) || '{}') || {}; } catch (e) {}
@@ -9429,7 +9451,7 @@ async function collectorHealth(env, url) {
     navDiag: await kvj('navdiag'),
     oneOffsRun: await kvj(ONE_OFF_KEY), outgive: await kvj('outgive_clear_1119_n'), staleUndo: await kvj('stale_undo_1119_n'), repeatClear: await kvj('repeat_clear_1119_n'), mktProbe: await kvj('market_page_probe_1119b'), cbbMarket: await (async () => { const st = await kvj(MARKET_KEY); if (!st) return null; const l = st.lanes || {}; return { cur: st.cur || null, at: st.at || null, windowsDone: Object.values(l).filter(x => x.done).length, rows: Object.values(l).reduce((a, x) => a + (x.rows || 0), 0), pages: Object.values(l).reduce((a, x) => a + (x.pages || 0), 0), errs: Object.values(l).map(x => x.err).filter(Boolean).slice(0, 3), last: st.last || null, cool: st.coolUntil || null, pause: st.pause || null, idle: !!st.idle }; })(), pushStats: await kvj('push_stats'), staleClear: await kvj('stale_clear_1119_n'), modVoid1119: await kvj('mod_void_1119_n'), swapsHold: await (async () => { const h = await kvj('swaps_hold'); return h ? { at: h.at, off: h.off || 0, off160: h.off160 || 0, last: h.last || null, probe: h.probe || null } : { lifted: Number(await env.RATEBOARD_KV.get('swaps_hold_lifted')) || null }; })(), dfs: await (async () => { const o = await kvj('dfs_props_v1'); if (!o) return null; const evs = Object.values(o.ev || {}); const bks = {}; let props = 0;
       for (const v of evs) for (const m of Object.values(v.props || {})) for (const pl of Object.values(m)) { props++; for (const b of Object.keys(pl)) bks[b] = (bks[b] || 0) + 1; }
-      return { events: (o.events || []).length, pulled: evs.length, props, books: bks, kalshi: o.kalshi, lastPull: o.lastPull, used: o.used, credits: o.credits, errs: o.errs }; })(), oddsCredits: await (async () => { const o = await kvj('pred_odds_v2'); if (!o) return null; const d = ET_DAY_FMT.format(new Date()), today = o.clog && o.clog[d] != null ? (Number(o.used) || 0) - o.clog[d] : null; return { remaining: Number(o.credits) || null, used: Number(o.used) || null, today, budget: PRED_DAY_BUDGET, fast: today == null || today < PRED_DAY_BUDGET, log: o.clog || null }; })(), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predPause: await kvj('pred_pause_v1'), diskTidy: await kvj('disk_tidy_last'), marketWipe: await kvj('oneoff_market_wipe_1116'), predStore: await (async () => { const o = {}; for (const k of ['pred_ev_v1', 'pred_recent_v1', 'pred_odds_v2', 'pred_real_open', 'bulk_state_v2']) { const v = await env.RATEBOARD_KV.get(k); o[k] = v ? v.length : 0; }
+      return { events: (o.events || []).length, pulled: evs.length, props, books: bks, kalshi: o.kalshi, lastPull: o.lastPull, used: o.used, credits: o.credits, errs: o.errs }; })(), oddsCredits: await (async () => { const o = await kvj('pred_odds_v2'); if (!o) return null; const d = ET_DAY_FMT.format(new Date()), today = o.clog && o.clog[d] != null ? (Number(o.used) || 0) - o.clog[d] : null; return { remaining: Number(o.credits) || null, used: Number(o.used) || null, today, budget: PRED_DAY_BUDGET, fast: today == null || today < PRED_DAY_BUDGET, log: o.clog || null }; })(), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predPause: await kvj('pred_pause_v1'), predSlipFit: await kvj('pred_slipfit_v1'), diskTidy: await kvj('disk_tidy_last'), marketWipe: await kvj('oneoff_market_wipe_1116'), predStore: await (async () => { const o = {}; for (const k of ['pred_ev_v1', 'pred_recent_v1', 'pred_odds_v2', 'pred_real_open', 'bulk_state_v2']) { const v = await env.RATEBOARD_KV.get(k); o[k] = v ? v.length : 0; }
       try { for (const t of ['bulk_listings', 'bulk_results']) { const r = await env.RATEBOARD_DB.prepare(`SELECT COUNT(*) AS n FROM ${t}`).first().catch(() => null); o[t] = r ? r.n : null; } } catch (e) {} return o; })(), realBusy: await realBusy(env), dmPredAsk: await (async () => { const x = await kvj('dm_predask_v1'); return x ? { sent: (x.sent || []).length, noChat: (x.noChat || []).length, notFound: (x.notFound || []).length, failed: (x.failed || []).length } : null; })(), dmPromo: await (async () => { const x = await kvj('dm_promo_' + Date.UTC(2026, 10, 17, 21, 0, 0)); return x ? { total: x.total, sent: x.sent, skipped: x.skipped, failed: x.failed, startedAt: x.startedAt } : null; })(), predSlipDay: await (async () => { try { const day = ET_DAY_FMT.format(new Date()), db = env.RATEBOARD_DB;
         const r = (await db.prepare("SELECT sport, live, COUNT(*) AS n, COUNT(DISTINCT mid) AS m, SUM(CASE WHEN dv > 0 THEN dv ELSE 0 END) AS vol, MIN(at) AS t0, MAX(at) AS t1 FROM pred_slip_log WHERE day=? GROUP BY sport, live").bind(day).all()).results || [];
         return { day, rows: r }; } catch (e) { return { err: String(e.message || e).slice(0, 80) }; } })(), predSlip: await (async () => { try { if (!((await kvj('pred_mkeys_v1')) || {}).px) await env.RATEBOARD_KV.delete('pred_mkeys_v1'); } catch (e) {} const S = (await kvj('pred_slip_v1')) || {}; const fit = {}; const med = a => { const b = a.slice().sort((x, y) => x - y); return b.length ? b[Math.floor(b.length / 2)] : null; };

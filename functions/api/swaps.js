@@ -6579,7 +6579,8 @@ async function handle({ request, env, waitUntil }) {
     let x = null; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_ev_v1')) || 'null'); } catch (e) {}
     const owner = who === 'dennis' || undefined, port = !!predPortTok(env, who) || undefined;
     let me; try { me = JSON.parse((await env.RATEBOARD_KV.get('pred_me_v1_' + who)) || 'null') || undefined; } catch (e) {}
-    return json(x ? { owner, port, me, at: x.at, games: x.games || [], credits: x.credits || null, used: x.used || null, errs: x.errs || [], keySet: !!env.ODDS_API_KEY } : { owner, port, me, at: null, games: [], keySet: !!env.ODDS_API_KEY });
+    let slipFit = null; try { slipFit = JSON.parse((await env.RATEBOARD_KV.get('pred_slipfit_v1')) || 'null'); } catch (e) {}
+    return json(x ? { owner, port, me, slipFit, at: x.at, games: x.games || [], credits: x.credits || null, used: x.used || null, errs: x.errs || [], keySet: !!env.ODDS_API_KEY } : { owner, port, me, at: null, games: [], keySet: !!env.ODDS_API_KEY });
   }
   // Bulk ratings (Dennis only, 2026-11-15): live listings, every ended one (history), his passes, and pack plays.
   /* Bulk ratings (open to everyone, 2026-11-15): live listings, ended ones (history),
