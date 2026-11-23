@@ -909,7 +909,7 @@ async function predReal(env) {
           for (const g of ssrcs) { const mp = oc.map(x => g.names.find(n => hit(x, n))); if (mp.some(x => !x) || mp[0] === mp[1]) continue; ev = g; map = mp; break; }
           const bk = [];
           if (ev) for (const b of ev.bk) { const a = spAt(sp, b.p[map[0]], b.pt[map[0]], L[0], ev.live); if (!a || !(a.p > 0 && a.p < 1)) continue;
-            bk.push({ t: b.t + (a.exact ? '' : ` (${b.pt[map[0]] > 0 ? '+' : ''}${b.pt[map[0]]})`), w: (b.w || 1) * (a.exact ? 1 : 0.5), u: b.u, p: [Math.round(a.p * 1000) / 1000, Math.round((1 - a.p) * 1000) / 1000], d: a.exact ? [b.d[map[0]], b.d[map[1]]] : [null, null], x: a.exact ? 1 : 0 }); }
+            bk.push({ t: b.t, ln: a.exact ? null : b.pt[map[0]], w: (b.w || 1) * (a.exact ? 1 : 0.5), u: b.u, p: [Math.round(a.p * 1000) / 1000, Math.round((1 - a.p) * 1000) / 1000], d: a.exact ? [b.d[map[0]], b.d[map[1]]] : [null, null], x: a.exact ? 1 : 0 }); }
           // Needs a real anchor: at least one book at Real's exact line, or three nearby ones.
           const okBk = bk.some(b => b.x) || bk.length >= 3 ? bk : [];
           const wt = okBk.reduce((a, b) => a + b.w, 0), fair = wt ? [0, 1].map(i => okBk.reduce((a, b) => a + b.w * b.p[i], 0) / wt) : [null, null];
