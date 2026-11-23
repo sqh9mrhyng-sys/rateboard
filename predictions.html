@@ -555,7 +555,7 @@ function tick(){
   if(!J || !J.at) return;
   const s = Math.max(0, Math.round((Date.now() - J.at) / 1000));
   const oa = Math.max(0, ...(J.games || []).map(g => g.oddsAt || 0)), os = oa ? Math.max(0, Math.round((Date.now() - oa) / 1000)) : null;
-  $('#ago').textContent = `Real ${s < 60 ? s + 's' : Math.round(s / 60) + 'm'}${os != null ? ` · Books ${os < 90 ? os + 's' : Math.round(os / 60) + 'm'}` : ''}`; $('#pulse').title = 'How long ago Real\'s prices and the sportsbook odds were read';
+  $('#ago').textContent = (J.errs || []).some(e => / real 40[13]/.test(String(e))) ? 'Real: login rejected' : `Real ${s < 60 ? s + 's' : Math.round(s / 60) + 'm'}${os != null ? ` · Books ${os < 90 ? os + 's' : Math.round(os / 60) + 'm'}` : ''}`; $('#pulse').title = 'How long ago Real\'s prices and the sportsbook odds were read';
   $('#pulse').classList.toggle('stale', s > 60);
 }
 /* Your own books (2026-11-16): the fair % is worked out again in the page from only the books you
@@ -950,7 +950,7 @@ function draw(){
     html = (chip ? [chip] : sps).map(sp => { const l = vis.filter(g => g.sport === sp).sort(stable); if (!l.length) return '';
       const n = l.filter(g => g.sides.some(s => stillToBet(g, s))).length;
       return `<div class="sph"><span>${esc(SPN[sp] || sp)}</span><span class="note">${l.length} game${l.length === 1 ? '' : 's'}${n ? ` · <b class="pos">${n} bet${n === 1 ? '' : 's'}</b>` : ''}</span></div>${l.map(card).join('')}`; }).join('');
-    html = html || `<div class="empty">${chip === '_ev' && games.length ? 'No +EV bets right now.' : preOnly && games.length ? 'No games that haven\'t started yet.' : 'No open game markets on Real right now.'}</div>`;
+    html = html || `<div class="empty">${chip === '_ev' && games.length ? 'No +EV bets right now.' : preOnly && games.length ? 'No games that haven\'t started yet.' : (J.errs || []).some(e => / real 40[13]/.test(String(e))) ? 'Real is turning away the site\'s login right now, so its markets can\'t be read. They\'ll show up here again as soon as it\'s fixed.' : 'No open game markets on Real right now.'}</div>`;
   }
   // Locked and ended games (kept 24 h) at the bottom, so a bet can still be logged after the fact.
   const ended = (J.games || []).filter(g => g.locked && !bg.has(g.id) && (!chip || chip === '_ev' || g.sport === chip)).map(derive).sort(stable);
