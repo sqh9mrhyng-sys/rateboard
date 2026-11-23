@@ -326,7 +326,8 @@
 <div class="ndev" id="na-dev"></div>
 <div class="vseg nmode" role="radiogroup" aria-label="Alert style"><button type="button" data-nm="simple">Simple</button><button type="button" data-nm="custom">Custom</button></div>
 <div class="nbox" id="na-simple"><p class="note" style="margin:0"><b>Simple</b> picks good settings for you. <b>Big value</b> alerts scale with the odds - the less likely a side, the bigger the edge it needs:</p>
-  <table class="ntier"><tr><th>Fair %</th><th>EV needed</th></tr><tr><td>60%+</td><td>6%</td></tr><tr><td>50-60%</td><td>8%</td></tr><tr><td>40-50%</td><td>10%</td></tr><tr><td>30-40%</td><td>14%</td></tr><tr><td>20-30%</td><td>25%</td></tr><tr><td>14-20%</td><td>60%</td></tr><tr><td>Under 14%</td><td>never</td></tr></table>
+  <table class="ntier"><tr><th>Fair %</th><th>EV needed</th></tr><tr><td>60%+</td><td>6%</td></tr><tr><td>50-60%</td><td>8%</td></tr><tr><td>40-50%</td><td>10%</td></tr><tr><td>30-40%</td><td>14%</td></tr><tr><td>20-30%</td><td>25%</td></tr><tr><td>14-20%</td><td>60%</td></tr><tr><td>7-14%</td><td>90%, and only with an hour+ before the game</td></tr><tr><td>Under 7%</td><td>never</td></tr></table>
+  <p class="note" style="margin:8px 0 0">Long shots are sized small: fair under 14% is 0.25u at most, under 10% is 0.1u.</p>
   <p class="note" style="margin:8px 0 0">Also on: <b>Add more</b> (only when you should buy more of a side you hold), <b>Steady value</b> and <b>Starting soon</b>. Over fair is off. Pick Custom to set each one yourself.</p></div>
 <div id="na-custom">
 <div class="nbox"><label class="nrow"><input type="checkbox" id="na-ev"><span><b>Big value</b><small>Any side whose EV (after slippage on 1 unit) reaches your number, with a fair % you trust.</small></span></label>
@@ -367,7 +368,7 @@
 <p>EV = fair % ÷ Real's % - 1. If a team is <b>50% fair</b> but Real sells it at <b>40%</b>, EV = 50 ÷ 40 - 1 = <b>+25%</b>. If Real's % is higher than fair, EV is negative and you skip it.</p>
 <h2>Step 4 - Units (how much to bet)</h2>
 <p>A <b>unit (u)</b> is 1% of your rax by default - pick 0.5% to 4% under Unit size if you want bigger or smaller bets. Enter your rax at the top and every recommendation shows the exact rax to put on it. Sizes come from the Kelly formula, which sizes a bet by how big the edge is compared with how much you'd lose: Kelly % = (fair - Real) ÷ (1 - Real). We bet a tenth of that (much safer than full Kelly), so a 10% Kelly bet = 1u. Sizes run from 0.5u to 2u in half-unit steps (rounded down).</p>
-<p><b>Long shots are capped</b> because they lose most of the time even with a big edge: under 20% on Real it's 0.5u max, under 35% 1u, under 50% 1.5u, and favorites can go up to 2u.</p>
+<p><b>Long shots are capped</b> because they lose most of the time even with a big edge: fair under 10% is 0.1u max, fair under 14% 0.25u, under 20% on Real it's 0.5u max, under 35% 1u, under 50% 1.5u, and favorites can go up to 2u.</p>
 <p>Example with 5,000 rax: 1u = 50 rax. A favorite at 60% with a 70% fair price is Kelly 25% → 2u → <b>100 rax</b>. An underdog at 15% with a 20% fair price is Kelly 6% → capped 0.5u → <b>25 rax</b>.</p>
 <h2>Live games</h2>
 <p>In-game lines are extremely volatile, and late in games the jumps are too severe to consistently snipe great EV. Pregame predictions are recommended when available. Sportsbooks update their live lines 10-80 seconds apart while Real moves instantly, so live EV is noisier than pregame.</p>
@@ -492,7 +493,9 @@ const units = (g, sd) => { if (thin(g) || sd.ev == null || sd.ev < MIN_EV_U || s
    refreshes, so this says what to do at any price. Shown for both sides, so you can snipe either way. */
 const unitsAt = (fair, q) => { if (!(q > 0 && q < 1) || fair / q - 1 < MIN_EV_U) return 0; const f = (fair - q) / (1 - q), cap = q < 0.2 ? 0.5 : q < 0.35 ? 1 : q < 0.5 ? 1.5 : 2;
   // Half-unit steps (members asked for 0.5u / 1.5u), rounded down, at least 0.5u.
-  return Math.max(0.5, Math.min(cap, Math.floor(f * 10 * 2) / 2)); };
+  const u = Math.max(0.5, Math.min(cap, Math.floor(f * 10 * 2) / 2));
+  // Long shots by fair % (Dennis, 2026-11-23): fair under 14% at most 0.25u, under 10% at most 0.1u.
+  return fair < 0.10 ? Math.min(u, 0.1) : fair < 0.14 ? Math.min(u, 0.25) : u; };
 function ladder(g, sd){
   if (thin(g) || sd.fair == null || sd.fair < MIN_FAIR) return [];
   const out = new Map();

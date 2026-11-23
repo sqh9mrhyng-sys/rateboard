@@ -997,8 +997,9 @@ const pbLadder = fair => { const out = new Map(); for (let q = Math.floor(fair *
   return [...out.entries()].sort((a, b) => a[0] - b[0]).filter(([, mq]) => Math.floor(mq * 100) >= 1); };
 const akTime = t => new Date(t).toLocaleString('en-US', { timeZone: 'America/Sitka', weekday: 'short', hour: 'numeric', minute: '2-digit' }) + ' AK';
 const amerOdds = p => p > 0 && p < 1 ? (p >= 0.5 ? '-' + Math.round(p / (1 - p) * 100) : '+' + Math.round((1 - p) / p * 100)) : '';
+/* Long shots by fair % (Dennis, 2026-11-23): fair under 14% at most 0.25u, under 10% at most 0.1u. */
 const pbUnits = (fair, q) => { if (!(q > 0 && q < 1) || fair / q - 1 < PB_MIN_EV) return 0; const f = (fair - q) / (1 - q), cap = q < 0.2 ? 0.5 : q < 0.35 ? 1 : q < 0.5 ? 1.5 : 2;
-  return Math.max(0.5, Math.min(cap, Math.floor(f * 10 * 2) / 2)); };
+  const u = Math.max(0.5, Math.min(cap, Math.floor(f * 10 * 2) / 2)); return fair < 0.10 ? Math.min(u, 0.1) : fair < 0.14 ? Math.min(u, 0.25) : u; };
 /* Already holding a side (Dennis, 2026-11-23: "only recommend more if the site means it - they have massive units
    so they're buying more now, or the odds are so good they should add more units"). What you hold counts at what
    it would cost to buy the same payout at today's price (payout x Real now), so a position bought cheaper already
@@ -1200,7 +1201,10 @@ export const PU_DEF = { ev: { on: true, minEv: 0.10, minFair: 0.30 }, add: { on:
    fair % is the least certain: fair 60%+ needs 6% EV, 50-60% 8%, 40-50% 10%, 30-40% 14%, 20-30% 25%, 14-20% 60%,
    nothing under 14%. Plus Add more (5%, only when they should buy more), Steady value (6%) and Starting soon; Over
    fair off. Their own most-per-hour stays. Settings saved before Simple existed (no mode) stay Custom. */
-export const PU_SIMPLE_TIERS = [[0.60, 0.06], [0.50, 0.08], [0.40, 0.10], [0.30, 0.14], [0.20, 0.25], [0.14, 0.60]];
+/* Under 14% (Dennis, 2026-11-23): still alerted, but only at 90%+ EV, 7%+ fair and with at least an hour before
+   the game - so a game that's basically decided or stale can't look like value. */
+export const PU_SIMPLE_TIERS = [[0.60, 0.06], [0.50, 0.08], [0.40, 0.10], [0.30, 0.14], [0.20, 0.25], [0.14, 0.60], [0.07, 0.90]];
+export const PU_LONG_MIN_LEFT = 60 * 60000;
 export const puSimpleMinEv = f => { for (const [lo, ev] of PU_SIMPLE_TIERS) if (f >= lo) return ev; return null; };
 async function predMemberAlerts(env, out) {
   await loadSlipFit(env);
@@ -1276,7 +1280,7 @@ async function predMemberAlerts(env, out) {
         const rate = PB_SLIP[g.sport] ?? PB_DEF, evp = fair / (q + (unit > 0 ? rate * unit / 1000 / 200 : 0)) - 1, nm = sd.name || sd.label, h = hs[si];
         const U = (k, a) => `/predictions#g=${g.id}&s=${si}&k=${k}${a > 0 ? '&a=' + Math.round(a / 50) * 50 : ''}&q=${Math.round(q * 100)}`, tag = k => 'pu-' + k + '-' + g.id + '-' + si;
         // Holding one side of a game: never pushed toward another side of it.
-        const evNeed = c.ev.tier ? puSimpleMinEv(fair) : c.ev.minEv;
+        const t0e = Date.parse(g.start || 0), evNeed = c.ev.tier ? (fair < 0.14 && !(t0e && t0e - now >= PU_LONG_MIN_LEFT) ? null : puSimpleMinEv(fair)) : c.ev.minEv;
         if (c.ev.on && !holdAny && evNeed != null && evp >= evNeed && (c.ev.tier || fair >= c.ev.minFair))
           await fire('ev:' + g.id + ':' + si, evp, { title: `Big value · ${nm} +${(evp * 100).toFixed(1)}%`, body: `${g.game}: Real ${Math.round(q * 100)}%, fair ${pct(fair)}.${unit > 0 ? ` 1u = ${Math.round(unit).toLocaleString()} rax.` : ''}`, url: U('ev', unit), tag: tag('ev') });
         if (c.add.on && h) { const N = pbAddNeed(fair, q, unit, rate, h.pays, c.add.minEv);
