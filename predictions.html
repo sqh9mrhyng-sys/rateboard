@@ -137,7 +137,7 @@
   .vseg button[aria-pressed="true"]{background:var(--panel2);color:var(--ink);box-shadow:inset 0 0 0 1px var(--accent)}
   #vopts[hidden]{display:none} #vopts{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px} #vopts label{display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:14px;cursor:pointer}
   body.h-fair .sd .fr, body.h-poly .sd .ref, body.h-real .sd .c, body.h-lad .bp .lad,
-  body.h-books .ft .srcs, body.h-books .bd, body.h-chart .ft .src, body.h-bet .bp .place, body.h-chips .gh .meta{display:none}
+  body.h-books .ft .srcs, body.h-books .bd, body.h-chart .ft .src, body.h-bet .bp .place, body.h-chips .gh .meta, body.h-avg .sd .x3{display:none}
   body.h-lad.h-bet .bp, body.h-books.h-chart .ft{display:none}
   body.h-real .sd{grid-template-columns:1fr 104px}
   #bsum .pp{display:block;font-size:13px;font-weight:800;margin-top:2px} #bsum .pp.pos{color:var(--good)} #bsum .pp.neg{color:var(--bad)}
@@ -333,7 +333,7 @@
   <div class="nnum"><label>Points over fair<span><input type="number" id="na-sellpts" min="1" max="30" step="1"> pts</span></label></div></div>
 <div class="nbox"><label class="nrow"><input type="checkbox" id="na-start"><span><b>Starting soon</b><small>15 minutes before a game you hold starts, if your side is still +EV - last chance to add.</small></span></label></div>
 <div class="nbox"><div class="nnum"><label>Most alerts per hour<span><input type="number" id="na-cap" min="1" max="20" step="1"></span></label></div>
-  <p class="note">A side won't repeat unless its EV gets 2+ points better or 45 minutes pass. You're never pushed toward the other side of a game you hold. "Hold" means your synced Real positions plus bets you logged. To keep everyone's price good, a buy alert goes to 3 members at a time; if it's still good value 90 seconds later, the next 3 get it.</p></div>
+  <p class="note">You hear about a game once. The only repeat is Add more, when the price calls for a bigger size than you hold (at least half a unit more than the last alert said, or you bought since and it still calls for more). Alerts are shared out so every member gets about the same number a day across as many games as possible. You're never pushed toward the other side of a game you hold. "Hold" means your synced Real positions plus bets you logged. To keep everyone's price good, a buy alert goes to 3 members at a time; if it's still good value 90 seconds later, the next 3 get it.</p></div>
 <p class="note" id="na-msg"></p>
 </section></div>
 <div id="vf" hidden>
@@ -1018,10 +1018,10 @@ $('#va').addEventListener('click', async e => { const b = e.target.closest('butt
   await accLoad(b.dataset.add ? '&add=' + encodeURIComponent(b.dataset.add) : '&del=' + encodeURIComponent(b.dataset.del)); if (b.dataset.add) { $('#aq').value = ''; $('#ares').innerHTML = ''; } });
 
 /* Card view (Dennis, 2026-11-17). Full = everything; Clean = the game and EV only; Custom = pick. */
-const VIEW_PARTS = [['fair', 'Fair %'], ['real', "Real's price"], ['poly', 'Polymarket'], ['lad', 'Unit ladder'], ['books', 'Books & breakdown'], ['chart', 'Price chart'], ['bet', 'Bet placed button'], ['chips', 'Sport, time & volume']];
+const VIEW_PARTS = [['fair', 'Fair %'], ['real', "Real's price"], ['poly', 'Polymarket'], ['lad', 'Unit ladder'], ['books', 'Books & breakdown'], ['chart', 'Price chart'], ['bet', 'Bet placed button'], ['chips', 'Sport, time & volume'], ['avg', '3-hour average']];
 /* Clean (Dennis, 2026-11-17): fair %, Real's price, units & rax, the Bet placed button and the sport/time/volume
    tags stay; Polymarket, the ladder, books and the chart go. */
-const CLEAN_HIDE = ['poly', 'lad', 'books', 'chart'];
+const CLEAN_HIDE = ['poly', 'lad', 'books', 'chart', 'avg'];   // 3h average: Full and Custom only (Dennis, 2026-11-23)
 let VIEW = { mode: 'clean', hide: [] };   // Clean unless the member picked another (Dennis, 2026-11-17) try { VIEW = Object.assign(VIEW, JSON.parse(ls.get('pred_view_v1') || '{}') || {}); } catch (e) {}
 VIEW.hide = (VIEW.hide || []).filter(k => k !== 'units');   // units & rax always show (Dennis, 2026-11-17)
 function applyView(){
@@ -1029,7 +1029,7 @@ function applyView(){
   for (const [k] of VIEW_PARTS) document.body.classList.toggle('h-' + k, hide.includes(k));
   $('#vname').textContent = { full: 'Full', clean: 'Clean', custom: 'Custom' }[VIEW.mode] || 'Full';
   document.querySelectorAll('[data-vm]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.vm === VIEW.mode)));
-  $('#vnote').textContent = VIEW.mode === 'full' ? 'Everything on every card.' : VIEW.mode === 'clean' ? 'Fair %, Real\'s price, EV, units and the Bet placed button. No ladder, books or chart.' : 'Untick what you don\'t want to see.';
+  $('#vnote').textContent = VIEW.mode === 'full' ? 'Everything on every card.' : VIEW.mode === 'clean' ? 'Fair %, Real\'s price, EV, units and the Bet placed button. No ladder, books, chart or 3-hour average.' : 'Untick what you don\'t want to see.';
   $('#vopts').hidden = VIEW.mode !== 'custom';
   $('#vopts').innerHTML = VIEW_PARTS.map(([k, t]) => `<label><input type="checkbox" data-vp="${k}"${VIEW.hide.includes(k) ? '' : ' checked'}> ${esc(t)}</label>`).join('');
   try { ls.set('pred_view_v1', JSON.stringify(VIEW)); } catch (e) {}

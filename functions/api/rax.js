@@ -1215,6 +1215,14 @@ async function predMemberAlerts(env, out) {
   const W = ST._wave = (ST._wave && typeof ST._wave === 'object') ? ST._wave : {};
   for (const k of Object.keys(W)) { W[k] = (W[k] || []).filter(t => now - t < WAVE_MS); if (!W[k].length) delete W[k]; }
   for (let i = users.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [users[i], users[j]] = [users[j], users[i]]; }
+  /* Fair shares (Dennis, 2026-11-23: "try to get each user roughly the same amount of notifications a day and the
+     reach of each user to as many games as possible"): members with the fewest alerts today (Alaska day) go first,
+     ties shuffled, and each member gets at most one alert per run (every ~10 s), so a burst of good games is
+     spread across members instead of the first few getting all of them. A member is told about a game once; the
+     only repeat is Add more when the size the price earns really calls for more (see fire). Dennis: never limited. */
+  const akDay = new Date(now - 9 * 3600000).toISOString().slice(0, 10);
+  const today = w => { const x = ST[w] && ST[w]._day; return x && x.d === akDay ? x.n : 0; };
+  users.sort((a, b) => today(a) - today(b));
   for (const who of users) {
     const c = { ...PU_DEF, ...A[who], ev: { ...PU_DEF.ev, ...(A[who].ev || {}) }, add: { ...PU_DEF.add, ...(A[who].add || {}) }, sell: { ...PU_DEF.sell, ...(A[who].sell || {}) }, start: { ...PU_DEF.start, ...(A[who].start || {}) }, steady: { ...PU_DEF.steady, ...(A[who].steady || {}) } };
     let me = {}, bets = [], port = {};
@@ -1226,14 +1234,31 @@ async function predMemberAlerts(env, out) {
     st._log = (Array.isArray(st._log) ? st._log : []).filter(t => now - t < 3600000);
     const sent = () => st._log.length;
     const held = (gid, si) => pbHeld(bets, port, gid, si);
-    const fire = async (k, ev, msg) => {
-      const s0 = st[k]; if (s0 && !(ev >= (s0.ev || 0) + 0.02 || now - s0.at > 45 * 60000)) return;
-      if (sent() >= (c.cap || 6)) return;
-      const side = /^(ev|add|start|steady):/.test(k) ? k.replace(/^(ev|add|start|steady):/, '').split(':').slice(0, 2).join(':') : null, boss = who === 'dennis';
+    st._g = (st._g && typeof st._g === 'object') ? st._g : {};
+    if (!st._day || st._day.d !== akDay) st._day = { d: akDay, n: 0 };
+    const C = [], boss = who === 'dennis';
+    const fire = async (k, ev, msg, meta = {}) => {
+      const kind = k.split(':')[0], gid = k.split(':')[1], s0 = st[k];
+      if (kind === 'add' || kind === 'start') {
+        /* Add more again only when the need really grew: half a unit more than last time, or they bought since and
+           the price still calls for more - and not within 20 minutes either way. */
+        if (s0 && !(now - s0.at > 20 * 60000 && ((meta.more || 0) >= (s0.more || 0) + (meta.unit || 0) / 2 || (meta.cost || 0) > (s0.cost || 0) + 1))) return;
+      } else if (kind === 'sell' ? s0 : (st._g[gid] || s0)) return;   // one alert per game (Big value / Steady); Over fair once per side
+      const side = /^(ev|add|start|steady):/.test(k) ? k.replace(/^(ev|add|start|steady):/, '').split(':').slice(0, 2).join(':') : null;
       if (side && !boss && (W[side] || []).length >= WAVE_N) return;   // this wave is full: maybe the next one
-      if (side && !boss) (W[side] = W[side] || []).push(now);
-      st[k] = { at: now, ev }; st._log.push(now); await pushTo(env, db, who, { ...msg, urgent: true });
-      try { await env.RATEBOARD_KV.put('pred_lastalert_' + who, JSON.stringify({ url: msg.url, at: now }), { expirationTtl: 3600 }); } catch (e) {}
+      C.push({ k, ev, msg, meta, gid, side });
+    };
+    // Sends the best one (most EV) this run - all of them for Dennis.
+    const flush = async () => {
+      C.sort((a, b) => b.ev - a.ev);
+      for (const x of C) {
+        if (sent() >= (c.cap || 6)) break;
+        if (x.side && !boss) { if ((W[x.side] || []).length >= WAVE_N) continue; (W[x.side] = W[x.side] || []).push(now); }
+        st[x.k] = { at: now, ev: x.ev, more: x.meta.more || 0, cost: x.meta.cost || 0 }; st._g[x.gid] = now; st._log.push(now); st._day.n++;
+        await pushTo(env, db, who, { ...x.msg, urgent: true });
+        try { await env.RATEBOARD_KV.put('pred_lastalert_' + who, JSON.stringify({ url: x.msg.url, at: now }), { expirationTtl: 3600 }); } catch (e) {}
+        if (!boss) break;
+      }
     };
     for (const g of games) {
       const d = der(g); if (d.n < 2) continue;
@@ -1246,7 +1271,7 @@ async function predMemberAlerts(env, out) {
         if (c.ev.on && !holdAny && evp >= c.ev.minEv && fair >= c.ev.minFair)
           await fire('ev:' + g.id + ':' + si, evp, { title: `Big value · ${nm} +${(evp * 100).toFixed(1)}%`, body: `${g.game}: Real ${Math.round(q * 100)}%, fair ${pct(fair)}.${unit > 0 ? ` 1u = ${Math.round(unit).toLocaleString()} rax.` : ''}`, url: U('ev', unit), tag: tag('ev') });
         if (c.add.on && h) { const N = pbAddNeed(fair, q, unit, rate, h.pays, c.add.minEv);
-          if (N) await fire('add:' + g.id + ':' + si, N.ev, { ...pbHoldLines(h, nm, q, fair, N.more, N.ev), url: U('add', N.more), tag: tag('add') }); }
+          if (N) await fire('add:' + g.id + ':' + si, N.ev, { ...pbHoldLines(h, nm, q, fair, N.more, N.ev), url: U('add', N.more), tag: tag('add') }, { more: N.more, cost: h.cost, unit }); }
         if (c.sell.on && h && q - fair >= c.sell.pts / 100 && (!h.avg || q > h.avg))
           await fire('sell:' + g.id + ':' + si, q - fair, { title: `Over fair · ${nm}`, body: `Real ${Math.round(q * 100)}% is ${Math.round((q - fair) * 100)} pts over fair ${pct(fair)}${h.avg ? ` (you paid ${Math.round(h.avg * 100)}%)` : ''}. Selling may be worth it.`, url: U('sell', 0), tag: tag('sell') });
         /* Steady value (quas23's idea, 2026-11-23): Real's 3-hour average sits under the 3-hour average fair by the
@@ -1255,11 +1280,13 @@ async function predMemberAlerts(env, out) {
         if (c.steady.on && !holdAny && a3 && a3[2] >= 150 && a3[1] / a3[0] - 1 >= c.steady.minEv && evp >= 0.02 && fair >= c.ev.minFair && !(st[sk] && now - st[sk].at < A3_MS))
           await fire(sk, a3[1] / a3[0] - 1, { title: `Steady value · ${nm} +${((a3[1] / a3[0] - 1) * 100).toFixed(1)}% for ${Math.round(a3[2] / 60 * 10) / 10}h`, body: `${g.game}: over the last ${Math.round(a3[2] / 60 * 10) / 10} hours Real averaged ${pct(a3[0])}, fair ${pct(a3[1])}. Now Real ${Math.round(q * 100)}%, EV +${(evp * 100).toFixed(1)}%.`, url: U('ev', unit), tag: tag('steady') });
         const t0 = Date.parse(g.start || 0);
-        if (c.start.on && h && t0 && t0 - now < 15 * 60000 && evp > 0.02 && !st['start:' + g.id + ':' + si])
-          await fire('start:' + g.id + ':' + si, evp, { title: `Starting soon · ${nm} still +${(evp * 100).toFixed(1)}%`, body: `${g.game} starts in ${Math.max(1, Math.round((t0 - now) / 60000))} min. Last chance to add before it goes live.`, url: U('add', unit), tag: tag('start') });
+        if (c.start.on && h && t0 && t0 - now < 15 * 60000 && !st['start:' + g.id + ':' + si]) { const N = pbAddNeed(fair, q, unit, rate, h.pays, 0.02);
+          if (N) await fire('start:' + g.id + ':' + si, N.ev, { title: `Starting soon · buy ${N.more.toLocaleString()} more • ${nm} +${(N.ev * 100).toFixed(1)}%`, body: `${g.game} starts in ${Math.max(1, Math.round((t0 - now) / 60000))} min.\n${pbHoldLines(h, nm, q, fair, N.more, N.ev).body}`, url: U('add', N.more), tag: tag('start') }, { more: N.more, cost: h.cost, unit }); }
       }
     }
-    for (const k of Object.keys(st)) if (k !== '_log' && now - st[k].at > 12 * 3600000) delete st[k];
+    await flush();
+    for (const k of Object.keys(st)) if (!k.startsWith('_') && now - st[k].at > 24 * 3600000) delete st[k];
+    for (const k of Object.keys(st._g)) if (now - st._g[k] > 24 * 3600000) delete st._g[k];
   }
   for (const w of Object.keys(ST)) if (w !== '_wave' && !users.includes(w)) delete ST[w];
   await env.RATEBOARD_KV.put('pred_ualert_state_v1', JSON.stringify(ST), { expirationTtl: 86400 });
