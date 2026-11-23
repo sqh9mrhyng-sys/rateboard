@@ -219,6 +219,15 @@
   <p class="note" style="margin-top:14px">Something wrong? Report it on <a href="/swaps">raxacademy.app/swaps</a>.</p>
 </div>
 <script>
+/* Opened from the menu (Dennis, 2026-11-23: "point it at something everyone can use"): no personal link, so a
+   signed-in member is sent to their own signed page (next swap time, else the latest one); signed out goes to Swaps. */
+(function(){ const p = new URLSearchParams(location.search); if (p.get('u') && p.get('t')) return;
+  document.documentElement.style.visibility = 'hidden';
+  let t = ''; try { t = localStorage.getItem('ratebrd_token_v1') || ''; } catch (e) {}
+  const out = () => location.replace('/swaps');
+  if (!t) return out();
+  fetch('/api/swaps?op=myhour', { headers: { 'x-rb-token': t } }).then(r => r.json()).then(j => { if (j && j.url) location.replace(j.url + (p.get('v') ? '&v=' + encodeURIComponent(p.get('v')) : '')); else out(); }).catch(out);
+})();
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const q = new URLSearchParams(location.search), key = `hour_done_${q.get('u')}_${q.get('d')}`;
