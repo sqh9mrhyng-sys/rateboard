@@ -246,6 +246,8 @@ const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${
   try{ const r = await fetch(`/api/swaps?op=hourview&u=${encodeURIComponent(q.get('u') || '')}&d=${encodeURIComponent(q.get('d') || '')}&t=${encodeURIComponent(q.get('t') || '')}`); j = await r.json(); }
   catch(e){ $('#sub').textContent = 'Could not reach the board - try again.'; return; }
   if(j.error){ $('#sub').textContent = j.error; return; }
+  // Done ticks the server has (either member ticked Done on their page) show ticked here too (2026-11-23).
+  window.HSW = j.swaps || []; HSW.forEach((x, i) => { if (x.mDone) { done['c' + i] = true; done['d' + i] = true; } });
   const when = new Date(Number(j.due)).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   const live = j.swaps.filter(x => !x.off), sell160 = j.sell160 || [], buy160 = j.buy160 || [], n160 = sell160.length + buy160.length, nW = n160 + (j.nicheBuy || []).length + (j.nicheGet || []).length;
   $('#h').innerHTML = `@${esc(j.user)} · <button class="tbtn" id="tbtn" aria-expanded="false">${esc(when)} <span class="car">▾</span></button>`;
@@ -605,6 +607,10 @@ document.addEventListener('click', async e => {
   catch(err){ msg.textContent = 'Could not reach the board - try again.'; sd.disabled = false; }
 });
 document.addEventListener('change', e => { const k = e.target.dataset.k; if(!k) return; done[k] = e.target.checked; try{ localStorage.setItem(key, JSON.stringify(done)); }catch(err){}
+  /* Done tells the server (2026-11-23): no DMs for that swap to either of you, and Swaps shows it done. */
+  { const mm = /^d(\d+)$/.exec(k), x = mm && window.HSW && HSW[Number(mm[1])];
+    if (x && x.id) fetch('/api/swaps?op=hourmark', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ u: q.get('u'), d: q.get('d'), t: q.get('t'), id: x.id, done: e.target.checked }) })
+      .then(r => r.json()).then(r => { if (r && r.error) { const n = document.getElementById('sub'); if (n) n.textContent = r.error; } }).catch(() => {}); }
   // Offered and Done both ticked: that partner's row greys out (still usable).
   const row = e.target.closest('[data-row]'); if(row){ const i = row.dataset.row; row.classList.toggle('both', !!(done['c' + i] && done['d' + i])); if($('#donebottom').checked && window.drawCon) drawCon(); }
   const r1 = e.target.closest('[data-r160]'); if(r1){ const v = r1.dataset.r160, id = v.slice(1); r1.classList.toggle('both', v[0] === 's' ? !!(done['sq' + id] && done['sr' + id]) : !!(done['bo' + id] && done['bk' + id])); } });

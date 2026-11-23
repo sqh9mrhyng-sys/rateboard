@@ -1955,7 +1955,8 @@ async function sideLines(member, m, side) {
   };
 }
 async function matchCols(db) {
-  for (const c of ['warnA', 'warnB', 'doneA', 'doneB', 'followA', 'followB', 'dueAt']) { try { await alterOnce(db, `ALTER TABLE swap_matches ADD COLUMN ${c} INTEGER`); } catch (e) {} }
+  for (const c of ['warnA', 'warnB', 'doneA', 'doneB', 'followA', 'followB', 'dueAt', 'mDoneAt']) { try { await alterOnce(db, `ALTER TABLE swap_matches ADD COLUMN ${c} INTEGER`); } catch (e) {} }
+  try { await alterOnce(db, 'ALTER TABLE swap_matches ADD COLUMN mDoneBy TEXT'); } catch (e) {}
   try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN comment TEXT'); } catch (e) {}
   /* Niche players (Dennis, 2026-11-09): niche = { passKey: { n, at } } - how many
      people a member asked to buy a player few active swappers own; nicheIn = they
@@ -5871,6 +5872,30 @@ async function handle({ request, env, waitUntil }) {
     hours.sort((a, b) => b.due - a.due);
     return json({ hours, now: Date.now() });
   }
+  /* Done on the swap page (Dennis, 2026-11-23: domo06 swapped early and ticked Done, then still got the DM and
+     Swaps still listed it). Ticking Done now tells the server: the swap counts as finished for both members - no
+     heads-up or contact DM goes to either side, and Swaps shows it done. Unticking (before the hour is over) puts
+     it back. POST { u, d, t, id, done }. */
+  if (op === 'hourmark' && request.method === 'POST') {
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    const key = String(b.u || ''), due = Number(b.d), id = Number(b.id);
+    if (!key || !due || !id || String(b.t || '') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
+    await matchCols(db);
+    const m = await db.prepare("SELECT * FROM swap_matches WHERE id=? AND dueAt=? AND (LOWER(a)=? OR LOWER(b)=?)").bind(id, due, key.toLowerCase(), key.toLowerCase()).first();
+    if (!m) return json({ error: 'That swap is not on this page.' }, 404);
+    if (['cancelled', 'cleared'].includes(m.status)) return json({ error: 'That swap was called off.' }, 409);
+    const now = Date.now();
+    if (b.done) {
+      if (!m.mDoneAt) await db.prepare(`UPDATE swap_matches SET mDoneAt=?, mDoneBy=?, warnA=COALESCE(warnA, ?), warnB=COALESCE(warnB, ?), doneA=COALESCE(doneA, ?), doneB=COALESCE(doneB, ?), status='sent', sentAt=? WHERE id=?`)
+        .bind(now, key.toLowerCase(), now, now, now, now, now, id).run();
+    } else if (m.mDoneAt) {
+      if (now > due + 3600000) return json({ error: 'That hour is over.' }, 409);
+      const t = m.mDoneAt, back = c => m[c] === t ? null : m[c];
+      await db.prepare(`UPDATE swap_matches SET mDoneAt=NULL, mDoneBy=NULL, warnA=?, warnB=?, doneA=?, doneB=?, status=?, sentAt=NULL WHERE id=?`)
+        .bind(back('warnA'), back('warnB'), back('doneA'), back('doneB'), (back('warnA') || back('warnB') || back('doneA') || back('doneB')) ? 'warned' : 'pending', id).run();
+    }
+    return json({ ok: true });
+  }
   if (op === 'hourview') {
     const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));
     if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
@@ -5886,7 +5911,7 @@ async function handle({ request, env, waitUntil }) {
       const recv = side === 'A' ? m.aGets : m.bGets, give = side === 'A' ? m.bGets : m.aGets;
       out.push({ id: m.id, partnerKey: side === 'A' ? m.b : m.a, status: m.status, partner: o && o.rsUser, partnerUrl: o ? profileUrl(o.rsUser, o.hashId) : null, comment: (o && o.comment) || null,
         receive: playerName(me, recv), receiveUrl: playerUrl(recv),
-        give: playerName(me, give), giveUrl: playerUrl(give), yourCard: me ? passUrl(me, give) : null, off: m.status === 'cancelling' });
+        give: playerName(me, give), giveUrl: playerUrl(give), yourCard: me ? passUrl(me, give) : null, off: m.status === 'cancelling', mDone: !!m.mDoneAt });
     }
     // Their ratings of these partners (the swap page shows the stars they gave).
     let rated = {}, canRate = true;
