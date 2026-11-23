@@ -146,6 +146,7 @@
   .rlper button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#141925}
 </style>
 <script src="/theme.js"></script>
+<script src="/nav.js?v=6"></script>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/favicon-48.png">
 <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
@@ -222,11 +223,17 @@
 /* Opened from the menu (Dennis, 2026-11-23: "point it at something everyone can use"): no personal link, so a
    signed-in member is sent to their own signed page (next swap time, else the latest one); signed out goes to Swaps. */
 (function(){ const p = new URLSearchParams(location.search); if (p.get('u') && p.get('t')) return;
-  document.documentElement.style.visibility = 'hidden';
-  let t = ''; try { t = localStorage.getItem('ratebrd_token_v1') || ''; } catch (e) {}
-  const out = () => location.replace('/swaps');
+  /* 2026-11-23: no longer hides the page while it looks up the link (a slow answer left a blank grey screen in
+     the home-screen app). It says what it's doing and gives up to Swaps after 5 seconds. */
+  window.RB_HOUR_REDIRECT = true;
+  const say = () => { const e = document.getElementById('sub'); if (e) e.textContent = 'Opening your swaps page…'; };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', say); else say();
+  let t = '', gone = false; try { t = localStorage.getItem('ratebrd_token_v1') || ''; } catch (e) {}
+  const go = u => { if (gone) return; gone = true; location.replace(u); };
+  const out = () => go('/swaps');
   if (!t) return out();
-  fetch('/api/swaps?op=myhour', { headers: { 'x-rb-token': t } }).then(r => r.json()).then(j => { if (j && j.url) location.replace(j.url + (p.get('v') ? '&v=' + encodeURIComponent(p.get('v')) : '')); else out(); }).catch(out);
+  setTimeout(out, 5000);
+  fetch('/api/swaps?op=myhour', { headers: { 'x-rb-token': t }, cache: 'no-store' }).then(r => r.json()).then(j => { if (j && j.url) go(j.url + (p.get('v') ? '&v=' + encodeURIComponent(p.get('v')) : '')); else out(); }).catch(out);
 })();
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -234,6 +241,7 @@ const q = new URLSearchParams(location.search), key = `hour_done_${q.get('u')}_$
 let done = {}; try{ done = JSON.parse(localStorage.getItem(key) || '{}') || {}; }catch(e){}
 const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)}</a>` : esc(t);
 (async () => {
+  if (window.RB_HOUR_REDIRECT) return;
   let j;
   try{ const r = await fetch(`/api/swaps?op=hourview&u=${encodeURIComponent(q.get('u') || '')}&d=${encodeURIComponent(q.get('d') || '')}&t=${encodeURIComponent(q.get('t') || '')}`); j = await r.json(); }
   catch(e){ $('#sub').textContent = 'Could not reach the board - try again.'; return; }

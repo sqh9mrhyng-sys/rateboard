@@ -96,3 +96,27 @@ window.addEventListener('pageshow', rbNavSoon);
   addEventListener('pagehide', mark); document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') mark(); });
   addEventListener('hashchange', function () { if (!/[#&]g=/.test(location.hash)) mark(); });
 })();
+
+/* Grey/blank screens in the home-screen app (Dennis, 2026-11-23). The app has no back button, so a page with no
+   menu was a dead end you could only leave by force-closing. Any page without the menu gets a small Home button
+   in the app. A page brought back from iOS's back cache is also made visible again and, if it's been away over
+   10 minutes, reloaded so it isn't stale or half-drawn. */
+(function () {
+  var app = false; try { app = window.navigator.standalone === true || matchMedia('(display-mode: standalone)').matches; } catch (e) {}
+  var left = 0;
+  addEventListener('pagehide', function () { left = Date.now(); });
+  addEventListener('pageshow', function (e) {
+    try { document.documentElement.style.visibility = ''; } catch (x) {}
+    if (e.persisted && left && Date.now() - left > 600000) location.reload();
+  });
+  if (!app || window.top !== window) return;
+  function home() {
+    if ((location.pathname.replace(/\.html$/, '').replace(/\/$/, '') || '/') === '/') return;
+    if (document.querySelector('.rbnav-top') || document.getElementById('rbhome')) return;
+    var a = document.createElement('a'); a.id = 'rbhome'; a.href = '/'; a.textContent = '⌂ Home';
+    a.style.cssText = 'position:fixed;left:12px;bottom:calc(12px + env(safe-area-inset-bottom));z-index:9999;padding:9px 14px;border-radius:999px;background:var(--panel2,#1d2433);color:var(--ink,#e8ecf3);border:1px solid var(--line,#2a3346);font:700 14px system-ui,-apple-system,sans-serif;text-decoration:none;box-shadow:0 6px 18px rgba(0,0,0,.4)';
+    document.body.appendChild(a);
+  }
+  function later() { setTimeout(home, 1500); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', later); else later();
+})();
