@@ -1114,7 +1114,7 @@ async function predBuildTick(env, out) {
       st[k] = { at: now, q, ev: evp }; ch = true;
       const nm = sd.name || sd.label;
       await pushTo(env, db, who, H ? { ...pbHoldLines(H, nm, q, fair, piece, evp), url: `/predictions#g=${g.id}&s=${si}&a=${piece}&q=${Math.round(q * 100)}`, tag: 'pv-' + k, urgent: true } : { title: `Value · ${nm} +${(evp * 100).toFixed(1)}%`, body: `Buy ${piece.toLocaleString()} rax at ${Math.round(q * 100)}% or less (fair ${(fair * 100).toFixed(1)}%). ${held > 0 ? `${Math.round(held).toLocaleString()} of ${Math.round(u * cfg.unit).toLocaleString()} in.` : `Full size ${Math.round(u * cfg.unit).toLocaleString()} (${u}u).`}${g.live ? ' Live.' : ''}`, url: `/predictions#g=${g.id}&s=${si}&a=${piece}&q=${Math.round(q * 100)}`, tag: 'pv-' + k, urgent: true });
-      try { await env.RATEBOARD_KV.put('pred_lastalert_' + who, JSON.stringify({ url: `/predictions#g=${g.id}&s=${si}&a=${piece}&q=${Math.round(q * 100)}`, at: now }), { expirationTtl: 3600 }); } catch (e) {}
+      try { await env.RATEBOARD_KV.put('pred_lastalert_' + who, JSON.stringify({ url: `/predictions#g=${g.id}&s=${si}&a=${piece}&q=${Math.round(q * 100)}`, at: now, title: `${nm} +${(evp * 100).toFixed(1)}%` }), { expirationTtl: 3600 }); } catch (e) {}
       // The same alert as a bot DM, in the alert-page format (2026-11-19): team | fair, bet link, betting ladder.
       const lad = pbLadder(fair).map(([uu, mq]) => `${uu}u | max ${Math.floor(mq * 100)}% | ${Math.round(uu * cfg.unit).toLocaleString()} rax`).join('\n');
       dmOwner(env, 'ev', `${nm} | fair ${(fair * 100).toFixed(1)}% (${amerOdds(fair)})\n${g.game || ''}${start ? ' · ' + akTime(start) : ''}\nReal now ${Math.round(q * 100)}% · EV +${(evp * 100).toFixed(1)}%${held > 0 ? ` · ${Math.round(held).toLocaleString()} of ${Math.round(u * cfg.unit).toLocaleString()} in` : ''}\n${g.link ? 'Bet: ' + g.link + '\n' : ''}\nBetting ladder\n${lad || 'No size is +EV right now.'}`).catch(() => {});
@@ -1332,7 +1332,7 @@ async function predMemberAlerts(env, out) {
         if (x.side && !boss) { if ((W[x.side] || []).length >= WAVE_N) continue; (W[x.side] = W[x.side] || []).push(now); }
         st[x.k] = { at: now, ev: x.ev, more: x.meta.more || 0, cost: x.meta.cost || 0 }; st._g[x.gid] = now; st._log.push(now); st._day.n++;
         await pushTo(env, db, who, { ...x.msg, urgent: true });
-        try { await env.RATEBOARD_KV.put('pred_lastalert_' + who, JSON.stringify({ url: x.msg.url, at: now }), { expirationTtl: 3600 }); } catch (e) {}
+        try { await env.RATEBOARD_KV.put('pred_lastalert_' + who, JSON.stringify({ url: x.msg.url, at: now, title: x.msg.title }), { expirationTtl: 3600 }); } catch (e) {}
         if (!boss) break;
       }
     };

@@ -53,13 +53,32 @@ function rbNavSoon() { rbNavCheck(); rbNavServer(); [300, 900, 2000, 4000].forEa
 try { if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', function (e) { var u = e.data && e.data.rbGo; if (!u) return; rbNavOnce(u, e.data.id); }); } catch (e) {}
 /* Backup for alerts (2026-11-18): if the app comes back on screen within 3 minutes of a Predictions alert that
    hasn't been opened yet, open it. Only for members who get alerts (Predictions sets rb_pred_alerts). */
-function rbAlertCheck() {
+/* 2026-11-23 (zachery via Dennis: "when a new big EV comes up it immediately kicks you off the screen for the
+   previous one"): while you're looking at an alert, a newer one never takes over the screen - a bar at the top
+   offers it instead, and you open it when you're done. Predictions also checks every 20 seconds while it's open,
+   and that check only ever shows the bar. */
+function rbOnAlert() { return /\/predictions/.test(location.pathname) && /[#&]g=\d/.test(location.hash); }
+function rbAlertBar(j) {
+  try { var old = document.getElementById('rbalert'); if (old) old.remove();
+    var d = document.createElement('div'); d.id = 'rbalert';
+    d.style.cssText = 'position:fixed;left:10px;right:10px;top:calc(8px + env(safe-area-inset-top));z-index:10001;display:flex;gap:8px;align-items:center;padding:10px 12px;border-radius:12px;background:var(--panel,#161c28);color:var(--ink,#e8ecf3);border:1px solid var(--accent,#E8A33D);font:600 14px system-ui,-apple-system,sans-serif;box-shadow:0 10px 28px rgba(0,0,0,.55)';
+    var bs = 'border-radius:9px;padding:8px 12px;font:800 14px system-ui,-apple-system,sans-serif;border:1px solid var(--accent,#E8A33D)';
+    d.innerHTML = '<span style="flex:1;min-width:0"><small style="display:block;font-size:11px;font-weight:800;color:var(--accent,#E8A33D);text-transform:uppercase;letter-spacing:.04em">New alert</small><span data-t style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span></span><button type="button" data-a="view" style="' + bs + ';background:var(--accent,#E8A33D);color:#141925">View</button><button type="button" data-a="x" aria-label="Dismiss" style="' + bs + ';background:none;color:var(--ink,#e8ecf3);border-color:var(--line,#2a3346)">&times;</button>';
+    d.querySelector('[data-t]').textContent = j.title || 'A new value alert';
+    d.addEventListener('click', function (e) { var b = e.target.closest('button'); if (!b) return; d.remove(); if (b.dataset.a === 'view') rbGo(j.url); });
+    document.body.appendChild(d); } catch (x) {}
+}
+function rbAlertCheck(barOnly) {
   try { if (localStorage.getItem('rb_pred_alerts') !== '1') return; var t = localStorage.getItem('ratebrd_token_v1') || '';
-    fetch('/api/swaps?op=lastalert', { headers: t ? { 'x-rb-token': t } : {} }).then(function (r) { return r.json(); }).then(function (j) {
+    fetch('/api/swaps?op=lastalert', { headers: t ? { 'x-rb-token': t } : {}, cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
       if (!j || !j.url || !j.at || Date.now() - j.at > 180000) return;
       var seen = Number(localStorage.getItem('rb_alert_seen')) || 0; if (j.at <= seen) return;
-      localStorage.setItem('rb_alert_seen', String(j.at)); rbGo(j.url); }).catch(function () {}); } catch (x) {}
+      localStorage.setItem('rb_alert_seen', String(j.at));
+      var cur = (location.hash.match(/[#&]g=(\d+)/) || [])[1], nu = (String(j.url).match(/[#&]g=(\d+)/) || [])[1];
+      if (cur && nu && cur === nu && /\/predictions/.test(location.pathname)) return;   // already looking at that game
+      if (barOnly || rbOnAlert()) rbAlertBar(j); else rbGo(j.url); }).catch(function () {}); } catch (x) {}
 }
+setInterval(function () { if (document.visibilityState === 'visible' && /\/predictions/.test(location.pathname)) rbAlertCheck(true); }, 20000);
 rbNavSoon(); rbAlertCheck();
 document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') { rbNavSoon(); rbAlertCheck(); } });
 window.addEventListener('focus', rbNavSoon);
