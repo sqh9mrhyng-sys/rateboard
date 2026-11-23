@@ -755,7 +755,7 @@ const ESPN_SOCCER = ['eng.1', 'eng.2', 'esp.1', 'ita.1', 'ger.1', 'fra.1', 'usa.
    starts within 2 hours, every minute in the last 2 hours, every 40 s while a game is on (the
    API's own refresh rate). Only sports and soccer leagues with an open Real market are pulled.
    ESPN's DraftKings line comes along free each minute. */
-const PRED_DAY_BUDGET = 60000;   // 2026-11-21: was 15k; the plan is ~165k a day, ~15k was used
+const PRED_DAY_BUDGET = 130000;   // 2026-11-21: was 15k; the plan is ~165k a day, ~15k was used
 async function predOdds(env) {
   const K = 'pred_odds_v2'; let o = {}; try { o = JSON.parse((await env.RATEBOARD_KV.get(K)) || '{}') || {}; } catch (e) {}
   if (o.lock && Date.now() - o.lock < 58000) return; o.lock = Date.now(); await env.RATEBOARD_KV.put(K, JSON.stringify(o));
@@ -816,7 +816,7 @@ async function predOdds(env) {
          shows ~7 s late on average), last 2 h every 30 s and earlier every 60 s (pregame refresh ~60 s).
          Budget: 15k credits a day (~5x the old ~3k pace, ~9% of the 5M month); past it, back to the old pace. */
       const dayUsed = (Number(o.used) || 0) - ((o.clog || {})[ET_DAY_FMT.format(new Date())] ?? (Number(o.used) || 0)), fast = dayUsed < PRED_DAY_BUDGET;
-      const every = fast ? (live ? 13000 : soon ? 30000 : 60000) : (live ? 20000 : soon ? 60000 : 300000);
+      const every = fast ? (live ? 13000 : soon ? 20000 : 30000) : (live ? 20000 : soon ? 60000 : 300000);   // pregame 30 s, last 2 h 20 s (Dennis, 2026-11-23: "why is the odds from over a minute ago"; was 60/30)
       if (o.due[k] && now - o.due[k] < every) continue;
       o.due[k] = now;
       /* Spreads (Dennis, 2026-11-23: Real added spread markets): asked for only while Real has a spread market open
