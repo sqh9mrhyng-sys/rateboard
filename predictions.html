@@ -75,7 +75,7 @@
 .bf{display:flex;gap:8px;align-items:flex-end;padding:0 14px 12px;flex-wrap:wrap} .bf label{font-size:12px;color:var(--mute);font-weight:700} .bf input{display:block;width:96px;margin-top:3px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;font-size:16px}
   .bfx{background:none;border:0;color:var(--mute);font-size:16px;cursor:pointer;padding:6px}
 .keep{display:flex;gap:8px;align-items:center;font-size:14px;font-weight:700;margin:10px 0 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
-  .tk{background:rgba(232,163,61,.12);color:var(--accent);font-size:12px;font-weight:800;padding:6px 14px;border-bottom:1px solid var(--line)} .g.taken{border-color:rgba(232,163,61,.45)}
+  .tk{background:rgba(232,163,61,.12);color:var(--ink);font-size:12.5px;font-weight:600;line-height:1.45;padding:6px 14px;border-bottom:1px solid var(--line)} .g.taken{border-color:rgba(232,163,61,.45)} .tk b{font-weight:800} .tk>div+div{margin-top:3px}
 .arb{font-size:12px;font-weight:700;color:var(--mute);padding:6px 14px;border-top:1px solid var(--line)} .arb.ok{color:var(--good);background:rgba(63,191,127,.08)}
 .endbox{margin-top:8px} .endbox>summary{cursor:pointer;list-style:none} .endbox>summary::-webkit-details-marker{display:none}
 .atot{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:8px 14px;border-top:1px solid var(--line);background:rgba(232,163,61,.06)} .atot .c{text-align:left;font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em} .atot .c b{display:block;font-size:17px;color:var(--ink);text-transform:none;letter-spacing:0} .atot .c b.pos{color:var(--good)} .atot .c b.neg{color:var(--bad)}
@@ -264,6 +264,7 @@
   .alh2{margin-top:12px;font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--mute)} .alh2 span{color:var(--ink);text-transform:none;letter-spacing:0;font-size:13px}
   .alf{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px} .alf label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:var(--mute)}
   .alf input{width:100%;min-width:0;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:9px 8px;font:inherit;font-size:16px;font-weight:700}
+  .ahl{margin-top:6px;font-size:14px;line-height:1.45} .achk{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px} .achk button{border:1px solid var(--accent);background:var(--panel2);color:var(--ink);border-radius:9px;padding:8px 12px;font:700 14px inherit;font-family:inherit} .hld{margin:10px 0 0;padding:10px 12px;border-radius:10px;background:var(--panel2);font-size:14px;line-height:1.45}
   .alp{margin-top:10px;font-size:14px;color:var(--mute)} .alp b{font-size:16px}
   .alsave{margin-top:10px;width:100%;background:var(--panel2);color:var(--ink);border:1px solid var(--accent);border-radius:12px;padding:11px;font:inherit;font-weight:800;cursor:pointer} .alsave:disabled{opacity:.45;cursor:default}
 </style>
@@ -416,8 +417,31 @@ function pieceNow(g, sd, u){
    place more because the odds are good enough at that time"): the size the price earns now, less what's already on
    that side. Only more when that's at least half a unit (a better price than when you bought earns a bigger size). */
 const sideIx = (g, sd) => g.sides.indexOf(sd) >= 0 ? g.sides.indexOf(sd) : sd._i;
-const addMore = (g, sd, u) => { const placed = placedOn(g.id, sideIx(g, sd)), ur = unitRax(); if (!(placed > 0)) return null;
-  const target = u && ur > 0 ? u * ur : 0, more = Math.max(0, target - placed); return { placed, more: ur > 0 && more >= ur / 2 ? Math.round(more / 50) * 50 : 0 }; };
+/* What you hold on a side (2026-11-23): your synced Real position, or the bets you logged if they add up to more.
+   evIn = EV when you bought it. */
+let PORT = null;
+const heldOf = (gid, si) => { const p = PORT && !PORT.error ? (PORT.pos || []).find(x => x.marketId === gid && x.si === si && x.cost > 0) : null;
+  const lb = (BETS || []).filter(b => b.gid === gid && b.side === si && !b.res && (b.amt || 0) > 0), lc = lb.reduce((t, b) => t + b.amt, 0);
+  const lp = lb.reduce((t, b) => t + (b.pay || (b.price > 0 ? b.amt / b.price : 0)), 0), fe = lb.filter(b => b.fair > 0 && b.price > 0);
+  const evL = fe.length ? fe.reduce((t, b) => t + (b.fair / b.price - 1) * b.amt, 0) / fe.reduce((t, b) => t + b.amt, 0) : null;
+  const H = p && p.cost >= lc ? { cost: p.cost, pays: p.pays, evIn: p.evIn != null ? p.evIn : evL, real: true } : { cost: lc, pays: lp, evIn: evL, real: false };
+  return H.cost > 0 ? { ...H, avg: H.pays > 0 ? H.cost / H.pays : null } : null; };
+/* More only when the site means it (Dennis, 2026-11-23): what you hold counts at what the same payout costs at
+   today's price, so a side bought cheaper already covers more. For each size today's price earns, the extra is
+   checked on its own after its slippage - still +EV and the fill price still earns that size - and the size with
+   the most EV in rax wins. Nothing under half a unit. Same rule as the server's Add more alerts. */
+const addMore = (g, sd, u) => { const H = heldOf(g.id, sideIx(g, sd)); if (!H) return null; const ur = unitRax(), placed = H.cost;
+  if (!u || !(ur > 0) || !(sd.price > 0 && sd.price < 1)) return { placed, more: 0 };
+  const have = H.pays * sd.price; let best = null;
+  for (let x = unitsAt(sd.fair, sd.price); x >= 0.5; x -= 0.5) { const add = x * ur - have; if (add < ur / 2) break;
+    const qf = fillAt(g, sd.price, add), ev = sd.fair / qf - 1; if (ev < MIN_EV_U || unitsAt(sd.fair, qf) < x) continue;
+    if (!best || add * ev > best.add * best.ev) best = { add, ev, x }; }
+  return { placed, more: best ? Math.round(best.add / 50) * 50 : 0, ev: best ? best.ev : null, units: best ? best.x : null }; };
+/* Held summary (2026-11-23): profit if it wins, the EV you got, projected rax at today's fair. */
+function heldHtml(g, si, H){ const sd = g.sides[si], f = sd && sd.fair, fmt = v => Math.round(v).toLocaleString(), sg = v => (v >= 0 ? '+' : '') + fmt(v), cl = v => v >= 0 ? 'pos' : 'neg';
+  const evGot = H.evIn != null ? H.evIn : f > 0 && H.avg ? f / H.avg - 1 : null, proj = f > 0 ? H.pays * f - H.cost : null, prof = H.pays - H.cost;
+  return `<b>${fmt(H.cost)} rax</b> on ${esc(sd ? sd.name || sd.label : '')}${H.avg ? ` at ${(H.avg * 100).toFixed(1)}%` : ''} · Profit if it wins: <b class="${cl(prof)}">${sg(prof)} rax</b>`
+    + `${evGot != null ? ` · EV you got: <b class="${cl(evGot)}">${evGot >= 0 ? '+' : ''}${(evGot * 100).toFixed(1)}%</b>` : ''}${proj != null ? ` · Projected: <b class="${cl(proj)}">${sg(proj)} rax</b>` : ''}`; }
 const stillToBet = (g, sd) => { const u = units(g, sd); if (!u) return false; if (BUILD()) return true; const A = addMore(g, sd, u); return !A || A.more > 0; };
 const stakeOf = (g, sd, u) => { if (!u || !(unitRax() > 0)) return 0; if (!BUILD()) return u * unitRax(); const p = pieceNow(g, sd, u); return p ? p.piece : 0; };
 /* Thin odds: a live game priced from fewer than 3 books, or whose newest line is over 60 s old.
@@ -564,8 +588,8 @@ function xtra(g, si){ const e = (J && J.gx && J.gx[g.id]) || null; if (!e) retur
 function card(g){
   const srcs = g.sources || [];
   const c = collapsed.has(String(g.id)) && g.id !== FOCUS.gid, bestS = g.sides.reduce((a, x) => (x.ev ?? -9) > (a.ev ?? -9) ? x : a, g.sides[0]);
-  const took = BETS.filter(b => !b.res && b.gid === g.id);
-  return `<div id="g-${g.id}" class="g${g.sides.some(s => stillToBet(g, s)) ? ' hot' : ''}${g.id === FOCUS.gid ? ' focus' : ''}${c ? ' col' : ''}${took.length ? ' taken' : ''}">${took.length ? `<div class="tk">✓ You took ${took.map(b => `${esc(b.name)} at ${pw(b.price)}${b.amt ? ` · ${Math.round(b.amt).toLocaleString()} rax` : ''}`).join(', ')}</div>${arbLine(took[0])}` : ''}
+  const took = BETS.filter(b => !b.res && b.gid === g.id), hsd = g.sides.map((x, i) => [i, heldOf(g.id, i)]).filter(([, H]) => H);
+  return `<div id="g-${g.id}" class="g${g.sides.some(s => stillToBet(g, s)) ? ' hot' : ''}${g.id === FOCUS.gid ? ' focus' : ''}${c ? ' col' : ''}${took.length || hsd.length ? ' taken' : ''}">${took.length || hsd.length ? `<div class="tk">${hsd.length ? hsd.map(([i, H]) => `<div>✓ ${heldHtml(g, i, H)}</div>`).join('') : `✓ You took ${took.map(b => `${esc(b.name)} at ${pw(b.price)}${b.amt ? ` · ${Math.round(b.amt).toLocaleString()} rax` : ''}`).join(', ')}`}</div>${took.length ? arbLine(took[0]) : ''}` : ''}
     <div class="gh"><button class="cl" data-cl="${g.id}" aria-label="${c ? 'Expand' : 'Collapse'}">${c ? '▸' : '▾'}</button><span class="pair">${g.sides.filter(x => !/^(draw|tie|x)$/i.test(x.label || '')).slice(0, 2).map(x => logo(x, 'sm')).join('')}</span><div style="min-width:0;flex:1">
       ${g.path ? `<a class="nm" href="https://www.realapp.com${esc(g.path)}" target="_blank" rel="noopener">${esc(g.game)}</a>` : `<span class="nm">${esc(g.game)}</span>`}
       <div class="meta"><span class="tag">${esc(SPN[g.sport] || g.sport)}</span>${when(g)}${thin(g) && bkOf(g).length ? '<span class="tag lock" title="Too few books or lines too old to trust the EV">Thin odds</span>' : ''}${g.volume ? `<span class="tag vol">${esc(g.volume)} vol</span>` : ''}</div></div>
@@ -617,10 +641,11 @@ function alpLine(a, pay, fair){
   return h;
 }
 function afHtml(g, si, sd){
-  const tot = g.sides.map((x, i) => [x, placedOn(g.id, i)]).filter(([, a]) => a > 0);
-  const logged = tot.length ? tot.map(([x, a]) => `<b>${Math.round(a).toLocaleString()} rax</b>${g.sides.length > 1 ? ` on ${esc(x.name || x.label)}` : ''}`).join(' · ') : '<b>0 rax</b>';
+  const hs = g.sides.map((x, i) => [i, heldOf(g.id, i)]).filter(([, H]) => H), tot = hs.reduce((t, [, H]) => t + H.cost, 0);
+  const logged = `<b>${Math.round(tot).toLocaleString()} rax</b>${hs.length ? hs.map(([i, H]) => `<div class="ahl">${heldHtml(g, i, H)}</div>`).join('') : ''}`;
+  const chk = hasPort() ? `<div class="achk"><button type="button" id="af-check">Check my bets</button><span class="note" id="af-chkmsg">${PORT && PORT.at ? `Real checked ${Math.max(0, Math.round((Date.now() - PORT.at) / 60000))} min ago` : ''}</span></div>` : '';
   const a = Number(AF.amt), pay = Number(AF.pay), prof = a > 0 && pay > 0 ? pay - a : null;
-  return `<div class="alog" id="alog"><div class="alh">Currently logged rax on game: ${logged}</div>
+  return `<div class="alog" id="alog">${chk}<div class="alh">${hasPort() ? 'You have on this game' : 'Currently logged rax on game'}: ${logged}</div>
     <div class="alh2">Log another bet placed: <span>${esc(sd.name || sd.label)}</span></div>
     <div class="alf"><label>Rax placed<input id="af-amt" type="number" inputmode="decimal" min="0" step="10" value="${esc(String(AF.amt))}" placeholder="0"></label>
       <label>Price %<input id="af-pct" type="number" inputmode="decimal" min="1" max="99" step="0.1" value="${esc(String(AF.pct))}"></label>
@@ -638,6 +663,10 @@ document.addEventListener('input', e => { const id = e.target.id; if (!/^af-(amt
   else if (k === 'pay') { const a = Number(AF.amt), py = Number(AF.pay); if (a > 0 && py > 0) AF.pct = Math.round(a / py * 1000) / 10; }
   else afFill(q);
   afPaint(); });
+document.addEventListener('click', async e => { if (e.target.id !== 'af-check') return; const b = e.target; b.disabled = true; b.textContent = 'Checking Real…';
+  const t = ls.get('ratebrd_token_v1') || '';
+  try { const r = await (await fetch('/api/swaps?op=predport', { method: 'POST', headers: t ? { 'x-rb-token': t } : {} })).json(); if (r && !r.error) PORT = r; } catch (err) {}
+  await betsCall(null); drawPort(); drawFocus(); });
 document.addEventListener('click', async e => { if (e.target.id !== 'af-save') return; const a = Number(AF.amt), pc = Number(AF.pct); if (!(a > 0 && pc > 0 && pc < 100)) return;
   await placeBet(AF.gid, AF.si, e.target, pc, a); Object.assign(AF, { amt: '', pct: '', pay: '', edited: '' });
   const m = document.getElementById('af-msg'); if (m) m.textContent = '✓ Logged'; drawFocus(); });
@@ -663,6 +692,8 @@ function drawAlert(raw){
     <div class="gm">${esc(g.game || '')}${g.start ? ' · ' + new Date(g.start).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : ''}</div>
     <div class="now">Real now <b>${q > 0 ? Math.round(q * 100) + '%' : '-'}</b>${ev != null ? ` · EV <b class="${ev >= 0 ? 'pos' : 'neg'}">${ev >= 0 ? '+' : ''}${(ev * 100).toFixed(1)}%</b>` : ''}</div>
     ${xtra(g, si) ? `<div class="xx">${xtra(g, si)}</div>` : ''}
+    ${(() => { const H = heldOf(g.id, si); if (!H) return ''; const A = addMore(g, sd, units(g, sd)), f = v => Math.round(v).toLocaleString();
+      return `<div class="hld">${A && A.more ? `You hold ${f(H.cost)} rax · <b class="pos">buy ${f(A.more)} more now</b>${A.ev != null ? ` (+${(A.ev * 100).toFixed(1)}% EV on the extra)` : ''}` : `You hold ${f(H.cost)} rax · <b>no more at this price</b> - what you have already covers the size Real's price earns.`}</div>`; })()}
     ${started ? '<div class="warn">This game has started - prices move fast now.</div>' : ''}
     ${g.link ? `<a class="bet" href="${esc(g.link)}" target="_blank" rel="noopener">Bet ${esc(nm)} on Real →</a>` : ''}
     <div class="lh">Betting ladder</div>
@@ -695,7 +726,7 @@ readFocus(); addEventListener('hashchange', () => { readFocus(); if (J && J.game
 function focusGo(){ if (!FOCUS.gid || FOCUS.done || !J) return; FOCUS.done = true;
   const t = document.querySelector('#tabs [data-t="m"]'); if (t && t.getAttribute('aria-pressed') !== 'true') t.click();
   drawFocus(); setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 60); }
-let PORT = null, SORT_LBL = null; const OPENP = new Set();
+let SORT_LBL = null; const OPENP = new Set();
 document.addEventListener('toggle', e => { const d = e.target; if (d && d.dataset && d.dataset.pk) { d.open ? OPENP.add(d.dataset.pk) : OPENP.delete(d.dataset.pk); } }, true);
 /* Linked members (not Dennis): synced from Real on their own every 2 min while the page is open. */
 let autoAt = 0;

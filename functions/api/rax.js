@@ -999,6 +999,26 @@ const akTime = t => new Date(t).toLocaleString('en-US', { timeZone: 'America/Sit
 const amerOdds = p => p > 0 && p < 1 ? (p >= 0.5 ? '-' + Math.round(p / (1 - p) * 100) : '+' + Math.round((1 - p) / p * 100)) : '';
 const pbUnits = (fair, q) => { if (!(q > 0 && q < 1) || fair / q - 1 < PB_MIN_EV) return 0; const f = (fair - q) / (1 - q), cap = q < 0.2 ? 0.5 : q < 0.35 ? 1 : q < 0.5 ? 1.5 : 2;
   return Math.max(0.5, Math.min(cap, Math.floor(f * 10 * 2) / 2)); };
+/* Already holding a side (Dennis, 2026-11-23: "only recommend more if the site means it - they have massive units
+   so they're buying more now, or the odds are so good they should add more units"). What you hold counts at what
+   it would cost to buy the same payout at today's price (payout x Real now), so a position bought cheaper already
+   covers more. For each total size the price earns (most first), the extra rax is checked on its own after its
+   slippage: still at least minEv, and the price you'd fill at still earns that size. The size with the most EV in
+   rax wins; nothing unless the extra is at least half a unit. Same rule as the Predictions page. */
+const pbHeld = (bets, port, gid, si) => { const p = ((port && port.pos) || []).find(x => x.marketId === gid && x.si === si && x.cost > 0);
+  const lb = (bets || []).filter(b => b.gid === gid && b.side === si && !b.res && (b.amt || 0) > 0);
+  const lc = lb.reduce((t, b) => t + b.amt, 0), lp = lb.reduce((t, b) => t + (b.pay || (b.price > 0 ? b.amt / b.price : 0)), 0);
+  const fe = lb.filter(b => b.fair > 0 && b.price > 0), evL = fe.length ? fe.reduce((t, b) => t + (b.fair / b.price - 1) * b.amt, 0) / fe.reduce((t, b) => t + b.amt, 0) : null;
+  const use = p && p.cost >= lc ? { cost: p.cost, pays: p.pays, evIn: p.evIn != null ? p.evIn : evL } : { cost: lc, pays: lp, evIn: evL };
+  return use.cost > 0 ? { ...use, avg: use.pays > 0 ? use.cost / use.pays : null } : null; };
+const pbAddNeed = (fair, q, unit, rate, heldPays, minEv) => { if (!(unit > 0) || !(q > 0 && q < 1)) return null;
+  const u0 = pbUnits(fair, q); if (!u0) return null; const have = (heldPays || 0) * q; let best = null;
+  for (let x = u0; x >= 0.5; x -= 0.5) { const add = x * unit - have; if (add < unit / 2) break;
+    const qf = Math.min(0.99, q + rate * add / 1000 / 200), ev = fair / qf - 1; if (ev < Math.max(PB_MIN_EV, minEv || 0) || pbUnits(fair, qf) < x) continue;
+    if (!best || add * ev > best.add * best.ev) best = { add, ev, units: x }; }
+  return best ? { more: Math.round(best.add / 50) * 50, ev: best.ev, units: best.units, have } : null; };
+const pbHoldLines = (h, nm, q, fair, more, ev) => ({ title: `Buy ${more.toLocaleString()} more • ${nm} +${(ev * 100).toFixed(1)}%`,
+  body: `You hold ${Math.round(h.cost).toLocaleString()}${h.avg ? ` at ${Math.round(h.avg * 100)}%` : ''}${h.evIn != null ? `/${h.evIn >= 0 ? '+' : ''}${(h.evIn * 100).toFixed(1)}% EV` : ''}\nReal ${Math.round(q * 100)}% now | fair ${(fair * 100).toFixed(1)}% now\nYou should buy ${more.toLocaleString()} more rn` });
 /* Value alerts (Dennis, 2026-11-17: "not on a timer - when there's really good value I should take, with the
    limits in place"). Every 10 seconds, for every open side with solid odds: the full size is the usual sizing
    (tenth Kelly, half units, long-shot caps) x his unit; minus what he already holds (his last Real sync or the
@@ -1026,9 +1046,11 @@ async function predBuildTick(env, out) {
       if (heldSides.size && !heldSides.has(si)) continue;
       const sd = g.sides[si], fair = d.fair(si), q = Number(sd.price); if (!(fair > 0.07) || !(q > 0 && q < 1)) continue;
       const u = pbUnits(fair, q); if (!u || Math.round(q * 100) > Math.floor(fair / (1 + PB_MIN_EV) * 100)) continue;
-      const held = Math.max(bets.filter(b => b.gid === g.id && b.side === si && !b.res).reduce((t, b) => t + (b.amt || 0), 0), ((port.pos || []).find(x => x.marketId === g.id && x.si === si) || {}).cost || 0);
-      const left = u * cfg.unit - held; if (left < 100) continue;
-      const rate = PB_SLIP[g.sport] ?? PB_DEF; let piece = Math.min(left, PB_PIECE_PTS / rate * 1000);
+      const H = pbHeld(bets, port, g.id, si), held = H ? H.cost : 0, rate = PB_SLIP[g.sport] ?? PB_DEF;
+      let left = u * cfg.unit - held;
+      if (H) { const N = pbAddNeed(fair, q, cfg.unit, rate, H.pays, GOOD); if (!N) continue; left = N.more; }
+      if (left < 100) continue;
+      let piece = Math.min(left, PB_PIECE_PTS / rate * 1000);
       while (piece >= 100 && fair / (q + rate * piece / 1000 / 200) - 1 < GOOD) piece = Math.floor(piece / 2);
       if (piece < 100) continue;
       piece = Math.round(piece / 50) * 50; const evp = fair / (q + rate * piece / 1000 / 200) - 1;
@@ -1039,7 +1061,7 @@ async function predBuildTick(env, out) {
       const recent = Object.values(st).filter(x => now - x.at < 15 * 60000).length; if (recent >= 3) continue;
       st[k] = { at: now, q, ev: evp }; ch = true;
       const nm = sd.name || sd.label;
-      await pushTo(env, db, who, { title: `Value · ${nm} +${(evp * 100).toFixed(1)}%`, body: `Buy ${piece.toLocaleString()} rax at ${Math.round(q * 100)}% or less (fair ${(fair * 100).toFixed(1)}%). ${held > 0 ? `${Math.round(held).toLocaleString()} of ${Math.round(u * cfg.unit).toLocaleString()} in.` : `Full size ${Math.round(u * cfg.unit).toLocaleString()} (${u}u).`}${g.live ? ' Live.' : ''}`, url: `/predictions#g=${g.id}&s=${si}&a=${piece}&q=${Math.round(q * 100)}`, tag: 'pv-' + k, urgent: true });
+      await pushTo(env, db, who, H ? { ...pbHoldLines(H, nm, q, fair, piece, evp), url: `/predictions#g=${g.id}&s=${si}&a=${piece}&q=${Math.round(q * 100)}`, tag: 'pv-' + k, urgent: true } : { title: `Value · ${nm} +${(evp * 100).toFixed(1)}%`, body: `Buy ${piece.toLocaleString()} rax at ${Math.round(q * 100)}% or less (fair ${(fair * 100).toFixed(1)}%). ${held > 0 ? `${Math.round(held).toLocaleString()} of ${Math.round(u * cfg.unit).toLocaleString()} in.` : `Full size ${Math.round(u * cfg.unit).toLocaleString()} (${u}u).`}${g.live ? ' Live.' : ''}`, url: `/predictions#g=${g.id}&s=${si}&a=${piece}&q=${Math.round(q * 100)}`, tag: 'pv-' + k, urgent: true });
       try { await env.RATEBOARD_KV.put('pred_lastalert_' + who, JSON.stringify({ url: `/predictions#g=${g.id}&s=${si}&a=${piece}&q=${Math.round(q * 100)}`, at: now }), { expirationTtl: 3600 }); } catch (e) {}
       // The same alert as a bot DM, in the alert-page format (2026-11-19): team | fair, bet link, betting ladder.
       const lad = pbLadder(fair).map(([uu, mq]) => `${uu}u | max ${Math.floor(mq * 100)}% | ${Math.round(uu * cfg.unit).toLocaleString()} rax`).join('\n');
@@ -1203,10 +1225,7 @@ async function predMemberAlerts(env, out) {
        counted once and members went past their cap). */
     st._log = (Array.isArray(st._log) ? st._log : []).filter(t => now - t < 3600000);
     const sent = () => st._log.length;
-    const held = (gid, si) => { const p = (port.pos || []).find(x => x.marketId === gid && x.si === si && x.cost > 0);
-      const lb = bets.filter(b => b.gid === gid && b.side === si && !b.res && (b.amt || 0) > 0);
-      const cost = Math.max(p ? p.cost : 0, lb.reduce((t, b) => t + (b.amt || 0), 0)), pays = p ? p.pays : lb.reduce((t, b) => t + (b.pay || ((b.amt || 0) / (b.price || 1))), 0);
-      return cost > 0 ? { cost, avg: pays > 0 ? cost / pays : null } : null; };
+    const held = (gid, si) => pbHeld(bets, port, gid, si);
     const fire = async (k, ev, msg) => {
       const s0 = st[k]; if (s0 && !(ev >= (s0.ev || 0) + 0.02 || now - s0.at > 45 * 60000)) return;
       if (sent() >= (c.cap || 6)) return;
@@ -1226,8 +1245,8 @@ async function predMemberAlerts(env, out) {
         // Holding one side of a game: never pushed toward another side of it.
         if (c.ev.on && !holdAny && evp >= c.ev.minEv && fair >= c.ev.minFair)
           await fire('ev:' + g.id + ':' + si, evp, { title: `Big value · ${nm} +${(evp * 100).toFixed(1)}%`, body: `${g.game}: Real ${Math.round(q * 100)}%, fair ${pct(fair)}.${unit > 0 ? ` 1u = ${Math.round(unit).toLocaleString()} rax.` : ''}`, url: U('ev', unit), tag: tag('ev') });
-        if (c.add.on && h && evp >= c.add.minEv)
-          await fire('add:' + g.id + ':' + si, evp, { title: `Add more · ${nm} +${(evp * 100).toFixed(1)}%`, body: `You hold ${Math.round(h.cost).toLocaleString()} rax${h.avg ? ` at ${Math.round(h.avg * 100)}%` : ''}. Real ${Math.round(q * 100)}% now, fair ${pct(fair)}.`, url: U('add', unit), tag: tag('add') });
+        if (c.add.on && h) { const N = pbAddNeed(fair, q, unit, rate, h.pays, c.add.minEv);
+          if (N) await fire('add:' + g.id + ':' + si, N.ev, { ...pbHoldLines(h, nm, q, fair, N.more, N.ev), url: U('add', N.more), tag: tag('add') }); }
         if (c.sell.on && h && q - fair >= c.sell.pts / 100 && (!h.avg || q > h.avg))
           await fire('sell:' + g.id + ':' + si, q - fair, { title: `Over fair · ${nm}`, body: `Real ${Math.round(q * 100)}% is ${Math.round((q - fair) * 100)} pts over fair ${pct(fair)}${h.avg ? ` (you paid ${Math.round(h.avg * 100)}%)` : ''}. Selling may be worth it.`, url: U('sell', 0), tag: tag('sell') });
         /* Steady value (quas23's idea, 2026-11-23): Real's 3-hour average sits under the 3-hour average fair by the
