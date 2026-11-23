@@ -135,6 +135,7 @@
   .vseg{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:3px}
   .vseg button{background:none;border:0;color:var(--mute);font:inherit;font-weight:800;font-size:14px;padding:8px;border-radius:8px;cursor:pointer}
   .vseg button[aria-pressed="true"]{background:var(--panel2);color:var(--ink);box-shadow:inset 0 0 0 1px var(--accent)}
+  .nmode{grid-template-columns:1fr 1fr;margin:10px 0} #na-simple[hidden],#na-custom[hidden]{display:none} .ntier{border-collapse:collapse;margin:8px 0 0;font-size:14px} .ntier th,.ntier td{text-align:left;padding:3px 14px 3px 0} .ntier th{color:var(--mute);font-size:12px;text-transform:uppercase}
   #vopts[hidden]{display:none} #vopts{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px} #vopts label{display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:14px;cursor:pointer}
   body.h-fair .sd .fr, body.h-poly .sd .ref, body.h-real .sd .c, body.h-lad .bp .lad,
   body.h-books .ft .srcs, body.h-books .bd, body.h-chart .ft .src, body.h-bet .bp .place, body.h-chips .gh .meta, body.h-avg .sd .x3{display:none}
@@ -323,6 +324,11 @@
 <div id="vn" hidden><section class="nal">
 <label class="nrow nmain"><input type="checkbox" id="na-on"><span><b>Alerts on</b><small>Push notifications for the markets below. Pregame only - live lines move too fast to trust.</small></span></label>
 <div class="ndev" id="na-dev"></div>
+<div class="vseg nmode" role="radiogroup" aria-label="Alert style"><button type="button" data-nm="simple">Simple</button><button type="button" data-nm="custom">Custom</button></div>
+<div class="nbox" id="na-simple"><p class="note" style="margin:0"><b>Simple</b> picks good settings for you. <b>Big value</b> alerts scale with the odds - the less likely a side, the bigger the edge it needs:</p>
+  <table class="ntier"><tr><th>Fair %</th><th>EV needed</th></tr><tr><td>60%+</td><td>6%</td></tr><tr><td>50-60%</td><td>8%</td></tr><tr><td>40-50%</td><td>10%</td></tr><tr><td>30-40%</td><td>14%</td></tr><tr><td>20-30%</td><td>25%</td></tr><tr><td>14-20%</td><td>60%</td></tr><tr><td>Under 14%</td><td>never</td></tr></table>
+  <p class="note" style="margin:8px 0 0">Also on: <b>Add more</b> (only when you should buy more of a side you hold), <b>Steady value</b> and <b>Starting soon</b>. Over fair is off. Pick Custom to set each one yourself.</p></div>
+<div id="na-custom">
 <div class="nbox"><label class="nrow"><input type="checkbox" id="na-ev"><span><b>Big value</b><small>Any side whose EV (after slippage on 1 unit) reaches your number, with a fair % you trust.</small></span></label>
   <div class="nnum"><label>EV at least<span><input type="number" id="na-evmin" min="2" max="100" step="1"> %</span></label><label>Fair % at least<span><input type="number" id="na-evfair" min="0" max="95" step="1"> %</span></label></div></div>
 <div class="nbox"><label class="nrow"><input type="checkbox" id="na-steady"><span><b>Steady value</b><small>Real's average price over the last 3 hours sits under the 3-hour average fair - good value that has held for hours, not a one-time spike. Only while it's still +EV now; once per side every 3 hours.</small></span></label>
@@ -332,6 +338,7 @@
 <div class="nbox"><label class="nrow"><input type="checkbox" id="na-sell"><span><b>Over fair</b><small>Real's price on a side you hold is this many points over fair (and over what you paid) - selling may be worth it.</small></span></label>
   <div class="nnum"><label>Points over fair<span><input type="number" id="na-sellpts" min="1" max="30" step="1"> pts</span></label></div></div>
 <div class="nbox"><label class="nrow"><input type="checkbox" id="na-start"><span><b>Starting soon</b><small>15 minutes before a game you hold starts, if your side is still +EV - last chance to add.</small></span></label></div>
+</div>
 <div class="nbox"><div class="nnum"><label>Most alerts per hour<span><input type="number" id="na-cap" min="1" max="20" step="1"></span></label></div>
   <p class="note">You hear about a game once. The only repeat is Add more, when the price calls for a bigger size than you hold (at least half a unit more than the last alert said, or you bought since and it still calls for more). Alerts are shared out so every member gets about the same number a day across as many games as possible. You're never pushed toward the other side of a game you hold. "Hold" means your synced Real positions plus bets you logged. To keep everyone's price good, a buy alert goes to 3 members at a time; if it's still good value 90 seconds later, the next 3 get it.</p></div>
 <p class="note" id="na-msg"></p>
@@ -736,21 +743,26 @@ async function autoPort(){
   try { const r = await (await fetch('/api/swaps?op=predport', { method: 'POST', headers: t ? { 'x-rb-token': t } : {} })).json(); if (r && !r.error) { PORT = r; await betsCall(null); drawPort(); } } catch (e) {}
 }
 /* Alerts tab (2026-11-18): linked members set their own push alerts; the server sends them. */
-const NA_DEF = { enabled: false, cap: 6, ev: { on: true, minEv: 0.10, minFair: 0.30 }, add: { on: true, minEv: 0.05 }, sell: { on: false, pts: 5 }, start: { on: false }, steady: { on: true, minEv: 0.06 } };
+const NA_DEF = { enabled: false, mode: 'simple', cap: 10, ev: { on: true, minEv: 0.10, minFair: 0.30 }, add: { on: true, minEv: 0.05 }, sell: { on: false, pts: 5 }, start: { on: false }, steady: { on: true, minEv: 0.06 } };
 let NA = null, naT = null;
 const naCall = async body => { const t = ls.get('ratebrd_token_v1') || ''; return (await fetch('/api/swaps?op=predalerts', body ? { method: 'POST', headers: { 'content-type': 'application/json', ...(t ? { 'x-rb-token': t } : {}) }, body: JSON.stringify(body) } : { headers: t ? { 'x-rb-token': t } : {} })).json(); };
 function naPaint(j){
   const c = NA = { ...NA_DEF, ...(j.cfg || {}) }; ['ev', 'add', 'sell', 'start', 'steady'].forEach(k => c[k] = { ...NA_DEF[k], ...(c[k] || {}) });
+  if (j.cfg && !j.cfg.mode) c.mode = 'custom';   // saved before Simple existed: keep their own settings
+  naMode();
   $('#na-on').checked = !!c.enabled; $('#na-ev').checked = c.ev.on; $('#na-evmin').value = Math.round(c.ev.minEv * 100); $('#na-evfair').value = Math.round(c.ev.minFair * 100);
   $('#na-add').checked = c.add.on; $('#na-addmin').value = Math.round(c.add.minEv * 100); $('#na-sell').checked = c.sell.on; $('#na-sellpts').value = c.sell.pts; $('#na-start').checked = c.start.on; $('#na-steady').checked = c.steady.on; $('#na-steadymin').value = Math.round(c.steady.minEv * 100); $('#na-cap').value = c.cap;
   naDev(j.devices); naOff();
 }
 function naDev(n){ $('#na-dev').innerHTML = n ? `<span>✓ Notifications on for ${n} device${n === 1 ? '' : 's'}</span><button type="button" id="na-test">Send a test</button><button type="button" id="na-test2">Test an alert tap</button>` : `<span>No device has notifications on yet.</span><a href="/notifications">Turn them on here</a>`; }
+function naMode(){ const m = (NA && NA.mode) || 'simple'; document.querySelectorAll('[data-nm]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.nm === m)));
+  $('#na-simple').hidden = m !== 'simple'; $('#na-custom').hidden = m !== 'custom'; }
+document.addEventListener('click', e => { const b = e.target.closest('[data-nm]'); if (!b || !NA) return; NA.mode = b.dataset.nm; naMode(); naSave(); });
 function naOff(){ for (const [box, on] of [['na-ev', 'ev'], ['na-add', 'add'], ['na-sell', 'sell'], ['na-steady', 'steady']]) $('#' + box).closest('.nbox').classList.toggle('off', !$('#' + box).checked); for (const b of document.querySelectorAll('#vn .nbox')) b.style.opacity = $('#na-on').checked ? '' : '.55'; }
 function isApp(){ try { return !!(matchMedia('(display-mode: standalone)').matches || navigator.standalone); } catch (e) { return false; } }
 async function naLoad(){ $('#na-msg').textContent = ''; try { const j = await naCall(); if (j.error) { $('#na-msg').textContent = j.error; return; } naPaint(j); } catch (e) { $('#na-msg').textContent = 'Could not load your alerts.'; } }
 function naSave(){ naOff(); clearTimeout(naT); naT = setTimeout(async () => { const v = id => Number($('#' + id).value);
-  const cfg = { enabled: $('#na-on').checked, cap: v('na-cap') || 6, ev: { on: $('#na-ev').checked, minEv: (v('na-evmin') || 10) / 100, minFair: (v('na-evfair') || 0) / 100 },
+  const cfg = { enabled: $('#na-on').checked, mode: (NA && NA.mode) || 'simple', cap: v('na-cap') || 10, ev: { on: $('#na-ev').checked, minEv: (v('na-evmin') || 10) / 100, minFair: (v('na-evfair') || 0) / 100 },
     add: { on: $('#na-add').checked, minEv: (v('na-addmin') || 5) / 100 }, sell: { on: $('#na-sell').checked, pts: v('na-sellpts') || 5 }, start: { on: $('#na-start').checked }, steady: { on: $('#na-steady').checked, minEv: (v('na-steadymin') || 6) / 100 } };
   try { const j = await naCall({ cfg }); $('#na-msg').textContent = j.error ? j.error : '✓ Saved'; if (!j.error) naDev(j.devices); } catch (e) { $('#na-msg').textContent = 'Could not save - try again.'; } }, 600); }
 document.addEventListener('change', e => { if (e.target.closest && e.target.closest('#vn') && e.target.matches('input')) naSave(); });

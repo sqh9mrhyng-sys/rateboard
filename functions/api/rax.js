@@ -1194,7 +1194,14 @@ async function planDiag(env) {
   } catch (e) { out.err = String(e.message || e).slice(0, 200); }
   await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 3 * 86400 });
 }
-export const PU_DEF = { ev: { on: true, minEv: 0.10, minFair: 0.30 }, add: { on: true, minEv: 0.05 }, sell: { on: false, pts: 5 }, start: { on: false }, steady: { on: true, minEv: 0.06 }, cap: 6 };
+export const PU_DEF = { ev: { on: true, minEv: 0.10, minFair: 0.30 }, add: { on: true, minEv: 0.05 }, sell: { on: false, pts: 5 }, start: { on: false }, steady: { on: true, minEv: 0.06 }, cap: 10 };
+/* Simple alerts (Dennis, 2026-11-23: "Simple just activates notifications, they don't gotta do all the weird stuff").
+   Big value scaled to the odds - long shots need a much bigger edge, since they lose most of the time and their
+   fair % is the least certain: fair 60%+ needs 6% EV, 50-60% 8%, 40-50% 10%, 30-40% 14%, 20-30% 25%, 14-20% 60%,
+   nothing under 14%. Plus Add more (5%, only when they should buy more), Steady value (6%) and Starting soon; Over
+   fair off. Their own most-per-hour stays. Settings saved before Simple existed (no mode) stay Custom. */
+export const PU_SIMPLE_TIERS = [[0.60, 0.06], [0.50, 0.08], [0.40, 0.10], [0.30, 0.14], [0.20, 0.25], [0.14, 0.60]];
+export const puSimpleMinEv = f => { for (const [lo, ev] of PU_SIMPLE_TIERS) if (f >= lo) return ev; return null; };
 async function predMemberAlerts(env, out) {
   await loadSlipFit(env);
   let A = {}; try { A = JSON.parse((await env.RATEBOARD_KV.get('pred_ualert_v1')) || '{}') || {}; } catch (e) {}
@@ -1225,6 +1232,7 @@ async function predMemberAlerts(env, out) {
   users.sort((a, b) => today(a) - today(b));
   for (const who of users) {
     const c = { ...PU_DEF, ...A[who], ev: { ...PU_DEF.ev, ...(A[who].ev || {}) }, add: { ...PU_DEF.add, ...(A[who].add || {}) }, sell: { ...PU_DEF.sell, ...(A[who].sell || {}) }, start: { ...PU_DEF.start, ...(A[who].start || {}) }, steady: { ...PU_DEF.steady, ...(A[who].steady || {}) } };
+    if (A[who].mode === 'simple') Object.assign(c, { ev: { on: true, tier: true, minEv: 0.06, minFair: 0.30 }, add: { on: true, minEv: 0.05 }, steady: { on: true, minEv: 0.06 }, start: { on: true }, sell: { on: false, pts: 5 } });
     let me = {}, bets = [], port = {};
     try { me = JSON.parse((await env.RATEBOARD_KV.get('pred_me_v1_' + who)) || '{}') || {}; bets = JSON.parse((await env.RATEBOARD_KV.get('pred_bets_v1_' + who)) || '[]') || []; port = JSON.parse((await env.RATEBOARD_KV.get('pred_port_v1_' + who)) || '{}') || {}; } catch (e) {}
     const unit = (Number(me.bank) || 0) * (Number(me.upct) || 1) / 100;
@@ -1268,7 +1276,8 @@ async function predMemberAlerts(env, out) {
         const rate = PB_SLIP[g.sport] ?? PB_DEF, evp = fair / (q + (unit > 0 ? rate * unit / 1000 / 200 : 0)) - 1, nm = sd.name || sd.label, h = hs[si];
         const U = (k, a) => `/predictions#g=${g.id}&s=${si}&k=${k}${a > 0 ? '&a=' + Math.round(a / 50) * 50 : ''}&q=${Math.round(q * 100)}`, tag = k => 'pu-' + k + '-' + g.id + '-' + si;
         // Holding one side of a game: never pushed toward another side of it.
-        if (c.ev.on && !holdAny && evp >= c.ev.minEv && fair >= c.ev.minFair)
+        const evNeed = c.ev.tier ? puSimpleMinEv(fair) : c.ev.minEv;
+        if (c.ev.on && !holdAny && evNeed != null && evp >= evNeed && (c.ev.tier || fair >= c.ev.minFair))
           await fire('ev:' + g.id + ':' + si, evp, { title: `Big value · ${nm} +${(evp * 100).toFixed(1)}%`, body: `${g.game}: Real ${Math.round(q * 100)}%, fair ${pct(fair)}.${unit > 0 ? ` 1u = ${Math.round(unit).toLocaleString()} rax.` : ''}`, url: U('ev', unit), tag: tag('ev') });
         if (c.add.on && h) { const N = pbAddNeed(fair, q, unit, rate, h.pays, c.add.minEv);
           if (N) await fire('add:' + g.id + ':' + si, N.ev, { ...pbHoldLines(h, nm, q, fair, N.more, N.ev), url: U('add', N.more), tag: tag('add') }, { more: N.more, cost: h.cost, unit }); }

@@ -6395,7 +6395,7 @@ async function handle({ request, env, waitUntil }) {
       if (b.test) { const n = await pushTo(env, db, who, { title: 'Test · Predictions alerts', body: 'Alerts reach this device.', url: '/predictions', tag: 'pu-test' });
         return json({ ok: true, sent: n }); }
       const c = b.cfg || {};
-      A[who] = { enabled: !!c.enabled, cap: Math.round(num(c.cap, 1, 20, 6)),
+      A[who] = { enabled: !!c.enabled, mode: c.mode === 'custom' ? 'custom' : 'simple', cap: Math.round(num(c.cap, 1, 20, 10)),
         ev: { on: !!(c.ev && c.ev.on), minEv: num(c.ev && c.ev.minEv, 0.02, 1, 0.10), minFair: num(c.ev && c.ev.minFair, 0, 0.95, 0.30) },
         add: { on: !!(c.add && c.add.on), minEv: num(c.add && c.add.minEv, 0.01, 1, 0.05) },
         sell: { on: !!(c.sell && c.sell.on), pts: num(c.sell && c.sell.pts, 1, 30, 5) },
