@@ -257,6 +257,8 @@
   .al tr.on td{color:var(--good)} .al tr.on td:first-child::after{content:' ✓';font-size:13px}
   .al .warn{margin-top:10px;background:rgba(229,83,75,.14);color:#f08a84;border-radius:10px;padding:8px 10px;font-size:13.5px;font-weight:700}
   .al .foot{margin-top:10px;font-size:12.5px;color:var(--mute)}
+  small.x3,small.xt{display:block;font-size:11.5px;color:var(--mute);font-weight:600;margin-top:1px} small.x3.up,small.xt.up{color:var(--good)}
+  .al .xx{margin-top:6px} .al .xx small{font-size:13px}
   .aback{display:inline-block;margin:0 0 10px;background:none;border:0;padding:4px 0;color:var(--mute);font:inherit;font-size:14.5px;font-weight:700;text-decoration:none;cursor:pointer}
   .alog{margin-top:16px;border-top:1px solid var(--line);padding-top:14px} .alh{font-size:14px;color:var(--mute)} .alh b{color:var(--ink)}
   .alh2{margin-top:12px;font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--mute)} .alh2 span{color:var(--ink);text-transform:none;letter-spacing:0;font-size:13px}
@@ -322,6 +324,8 @@
 <div class="ndev" id="na-dev"></div>
 <div class="nbox"><label class="nrow"><input type="checkbox" id="na-ev"><span><b>Big value</b><small>Any side whose EV (after slippage on 1 unit) reaches your number, with a fair % you trust.</small></span></label>
   <div class="nnum"><label>EV at least<span><input type="number" id="na-evmin" min="2" max="100" step="1"> %</span></label><label>Fair % at least<span><input type="number" id="na-evfair" min="0" max="95" step="1"> %</span></label></div></div>
+<div class="nbox"><label class="nrow"><input type="checkbox" id="na-steady"><span><b>Steady value</b><small>Real's average price over the last 3 hours sits under the 3-hour average fair - good value that has held for hours, not a one-time spike. Only while it's still +EV now; once per side every 3 hours.</small></span></label>
+  <div class="nnum"><label>3-hour EV at least<span><input type="number" id="na-steadymin" min="2" max="100" step="1"> %</span></label></div></div>
 <div class="nbox"><label class="nrow"><input type="checkbox" id="na-add"><span><b>Add more</b><small>A side you already hold is back at this EV - time to put more on.</small></span></label>
   <div class="nnum"><label>EV at least<span><input type="number" id="na-addmin" min="1" max="100" step="1"> %</span></label></div></div>
 <div class="nbox"><label class="nrow"><input type="checkbox" id="na-sell"><span><b>Over fair</b><small>Real's price on a side you hold is this many points over fair (and over what you paid) - selling may be worth it.</small></span></label>
@@ -551,6 +555,12 @@ function endCard(g){
     ${g.sides.map((s, si) => `<div class="sd"><span class="t">${logo(s)}<span>${esc(s.name || s.label)}<small class="fr">Fair <b>${pc(s.fair)}</b></small></span></span><span class="c">Last<b>${pw(s.price)}</b></span><span class="ev nil"><button class="place" data-g="${g.id}" data-s="${si}">Log bet</button></span></div>
       ${betForm && betForm.gid === g.id && betForm.si === si ? `<form class="bf" data-g="${g.id}" data-s="${si}"><label>Avg %<input name="pct" type="number" inputmode="numeric" min="1" max="99" step="1" value="${betForm.pct}" required></label><label>Rax bet<input name="amt" type="number" inputmode="numeric" min="1" step="1" value="${betForm.amt}" required></label><button type="submit" class="place">Enter</button><button type="button" class="bfx" aria-label="Cancel">✕</button></form>` : ''}`).join('')}</div>`;
 }
+/* quas23's ideas (2026-11-23), under each side's fair: the 3-hour average (Real vs fair, so a good price that
+   has held shows apart from a spike), and how Real priced this team before its last games (needs 3+). */
+function xtra(g, si){ const e = (J && J.gx && J.gx[g.id]) || null; if (!e) return ''; let o = '';
+  const a = (e.a3 || [])[si]; if (a && a[2] >= 60) { const ed = a[1] / a[0] - 1; o += `<small class="x3${ed >= 0.03 ? ' up' : ''}">${a[2] >= 170 ? '3h' : Math.round(a[2] / 6) / 10 + 'h'} avg: Real ${(a[0] * 100).toFixed(1)}% · fair ${(a[1] * 100).toFixed(1)}%</small>`; }
+  const t = (e.th || [])[si]; if (t && Math.abs(t[0]) >= 1) o += `<small class="xt${t[0] > 0 ? ' up' : ''}">Last ${t[1]}: Real priced them ${Math.abs(t[0]).toFixed(1)} pts ${t[0] > 0 ? 'under' : 'over'} fair</small>`;
+  return o; }
 function card(g){
   const srcs = g.sources || [];
   const c = collapsed.has(String(g.id)) && g.id !== FOCUS.gid, bestS = g.sides.reduce((a, x) => (x.ev ?? -9) > (a.ev ?? -9) ? x : a, g.sides[0]);
@@ -560,7 +570,7 @@ function card(g){
       ${g.path ? `<a class="nm" href="https://www.realapp.com${esc(g.path)}" target="_blank" rel="noopener">${esc(g.game)}</a>` : `<span class="nm">${esc(g.game)}</span>`}
       <div class="meta"><span class="tag">${esc(SPN[g.sport] || g.sport)}</span>${when(g)}${thin(g) && bkOf(g).length ? '<span class="tag lock" title="Too few books or lines too old to trust the EV">Thin odds</span>' : ''}${g.volume ? `<span class="tag vol">${esc(g.volume)} vol</span>` : ''}</div></div>
       ${c ? (units(g, bestS) ? `<span class="u">${esc(bestS.label)} +${pc(evNet(g, bestS, units(g, bestS)))} · ${units(g, bestS)}u</span>` : '') : g.link ? `<a class="go" href="${esc(g.link)}" target="_blank" rel="noopener">Predict ↗</a>` : ''}</div>
-    ${c ? '' : g.sides.map((s, si) => { const u = units(g, s); return `<div class="sd"><span class="t">${logo(s)}<span>${esc(s.name || s.label)}<small class="fr">Fair <b>${pc(s.fair)}</b></small>${(g.refs || []).length ? `<small class="ref">${g.refs.map(r => `${esc(r.src)} ${pc(r.p[si])}`).join(' · ')}</small>` : ''}${u ? `<button class="place inl" data-g="${g.id}" data-s="${si}">Bet placed</button>` : ''}</span></span>
+    ${c ? '' : g.sides.map((s, si) => { const u = units(g, s); return `<div class="sd"><span class="t">${logo(s)}<span>${esc(s.name || s.label)}<small class="fr">Fair <b>${pc(s.fair)}</b></small>${xtra(g, si)}${(g.refs || []).length ? `<small class="ref">${g.refs.map(r => `${esc(r.src)} ${pc(r.p[si])}`).join(' · ')}</small>` : ''}${u ? `<button class="place inl" data-g="${g.id}" data-s="${si}">Bet placed</button>` : ''}</span></span>
       <span class="c">Real<b>${pw(s.price)}</b></span>
       <span class="ev ${s.ev == null || thin(g) ? 'nil' : evNet(g, s, u) > 0 ? 'pos' : 'neg'}"${stakeOf(g, s, u) > 0 ? ` title="After slippage on ${Math.round(stakeOf(g, s, u)).toLocaleString()} rax (about ${movePts(g, stakeOf(g, s, u)).toFixed(1)} points)"` : ''}>${s.ev == null ? '-' : (evNet(g, s, u) > 0 ? '+' : '') + pc(evNet(g, s, u))}<small>EV</small>${u ? `<span class="u${!BUILD() && addMore(g, s, u) && !addMore(g, s, u).more ? ' off' : ''}">${u}u</span>${unitRax() > 0 ? (BUILD() ? (() => { const P = pieceNow(g, s, u); return P ? (P.done ? `<span class="rx">full size in</span>` : `<span class="rx">${P.piece ? P.piece.toLocaleString() + ' rax now' : 'wait'}</span>${P.placed > 0 ? `<span class="bld">${Math.round(P.placed).toLocaleString()} / ${Math.round(P.target).toLocaleString()}</span>` : ''}`) : ''; })() : (() => { const A = addMore(g, s, u); if (!A) return `<span class="rx">${Math.round(u * unitRax()).toLocaleString()} rax</span>`;
         return A.more ? `<span class="rx">add ${A.more.toLocaleString()} rax</span><span class="bld">${Math.round(A.placed).toLocaleString()} already placed</span>` : `<span class="rx done">${Math.round(A.placed).toLocaleString()} placed · no more</span>`; })()) : ''}` : (() => { const A = !BUILD() && addMore(g, s, null); return A ? `<span class="rx done">${Math.round(A.placed).toLocaleString()} placed · no more</span>` : ''; })()}</span></div>${(() => { const L = ladder(g, s); if (!L.length && !u) return '';
@@ -641,6 +651,7 @@ function drawAlert(raw){
     <div class="team">${esc(nm)} <span>| fair ${fair != null ? (fair * 100).toFixed(1) + '%' : '-'}${fair ? ' (' + amer(1 / fair) + ')' : ''}</span></div>
     <div class="gm">${esc(g.game || '')}${g.start ? ' · ' + new Date(g.start).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : ''}</div>
     <div class="now">Real now <b>${q > 0 ? Math.round(q * 100) + '%' : '-'}</b>${ev != null ? ` · EV <b class="${ev >= 0 ? 'pos' : 'neg'}">${ev >= 0 ? '+' : ''}${(ev * 100).toFixed(1)}%</b>` : ''}</div>
+    ${xtra(g, si) ? `<div class="xx">${xtra(g, si)}</div>` : ''}
     ${started ? '<div class="warn">This game has started - prices move fast now.</div>' : ''}
     ${g.link ? `<a class="bet" href="${esc(g.link)}" target="_blank" rel="noopener">Bet ${esc(nm)} on Real →</a>` : ''}
     <div class="lh">Betting ladder</div>
@@ -683,22 +694,22 @@ async function autoPort(){
   try { const r = await (await fetch('/api/swaps?op=predport', { method: 'POST', headers: t ? { 'x-rb-token': t } : {} })).json(); if (r && !r.error) { PORT = r; await betsCall(null); drawPort(); } } catch (e) {}
 }
 /* Alerts tab (2026-11-18): linked members set their own push alerts; the server sends them. */
-const NA_DEF = { enabled: false, cap: 6, ev: { on: true, minEv: 0.10, minFair: 0.30 }, add: { on: true, minEv: 0.05 }, sell: { on: false, pts: 5 }, start: { on: false } };
+const NA_DEF = { enabled: false, cap: 6, ev: { on: true, minEv: 0.10, minFair: 0.30 }, add: { on: true, minEv: 0.05 }, sell: { on: false, pts: 5 }, start: { on: false }, steady: { on: true, minEv: 0.06 } };
 let NA = null, naT = null;
 const naCall = async body => { const t = ls.get('ratebrd_token_v1') || ''; return (await fetch('/api/swaps?op=predalerts', body ? { method: 'POST', headers: { 'content-type': 'application/json', ...(t ? { 'x-rb-token': t } : {}) }, body: JSON.stringify(body) } : { headers: t ? { 'x-rb-token': t } : {} })).json(); };
 function naPaint(j){
-  const c = NA = { ...NA_DEF, ...(j.cfg || {}) }; ['ev', 'add', 'sell', 'start'].forEach(k => c[k] = { ...NA_DEF[k], ...(c[k] || {}) });
+  const c = NA = { ...NA_DEF, ...(j.cfg || {}) }; ['ev', 'add', 'sell', 'start', 'steady'].forEach(k => c[k] = { ...NA_DEF[k], ...(c[k] || {}) });
   $('#na-on').checked = !!c.enabled; $('#na-ev').checked = c.ev.on; $('#na-evmin').value = Math.round(c.ev.minEv * 100); $('#na-evfair').value = Math.round(c.ev.minFair * 100);
-  $('#na-add').checked = c.add.on; $('#na-addmin').value = Math.round(c.add.minEv * 100); $('#na-sell').checked = c.sell.on; $('#na-sellpts').value = c.sell.pts; $('#na-start').checked = c.start.on; $('#na-cap').value = c.cap;
+  $('#na-add').checked = c.add.on; $('#na-addmin').value = Math.round(c.add.minEv * 100); $('#na-sell').checked = c.sell.on; $('#na-sellpts').value = c.sell.pts; $('#na-start').checked = c.start.on; $('#na-steady').checked = c.steady.on; $('#na-steadymin').value = Math.round(c.steady.minEv * 100); $('#na-cap').value = c.cap;
   naDev(j.devices); naOff();
 }
 function naDev(n){ $('#na-dev').innerHTML = n ? `<span>✓ Notifications on for ${n} device${n === 1 ? '' : 's'}</span><button type="button" id="na-test">Send a test</button><button type="button" id="na-test2">Test an alert tap</button>` : `<span>No device has notifications on yet.</span><a href="/notifications">Turn them on here</a>`; }
-function naOff(){ for (const [box, on] of [['na-ev', 'ev'], ['na-add', 'add'], ['na-sell', 'sell']]) $('#' + box).closest('.nbox').classList.toggle('off', !$('#' + box).checked); for (const b of document.querySelectorAll('#vn .nbox')) b.style.opacity = $('#na-on').checked ? '' : '.55'; }
+function naOff(){ for (const [box, on] of [['na-ev', 'ev'], ['na-add', 'add'], ['na-sell', 'sell'], ['na-steady', 'steady']]) $('#' + box).closest('.nbox').classList.toggle('off', !$('#' + box).checked); for (const b of document.querySelectorAll('#vn .nbox')) b.style.opacity = $('#na-on').checked ? '' : '.55'; }
 function isApp(){ try { return !!(matchMedia('(display-mode: standalone)').matches || navigator.standalone); } catch (e) { return false; } }
 async function naLoad(){ $('#na-msg').textContent = ''; try { const j = await naCall(); if (j.error) { $('#na-msg').textContent = j.error; return; } naPaint(j); } catch (e) { $('#na-msg').textContent = 'Could not load your alerts.'; } }
 function naSave(){ naOff(); clearTimeout(naT); naT = setTimeout(async () => { const v = id => Number($('#' + id).value);
   const cfg = { enabled: $('#na-on').checked, cap: v('na-cap') || 6, ev: { on: $('#na-ev').checked, minEv: (v('na-evmin') || 10) / 100, minFair: (v('na-evfair') || 0) / 100 },
-    add: { on: $('#na-add').checked, minEv: (v('na-addmin') || 5) / 100 }, sell: { on: $('#na-sell').checked, pts: v('na-sellpts') || 5 }, start: { on: $('#na-start').checked } };
+    add: { on: $('#na-add').checked, minEv: (v('na-addmin') || 5) / 100 }, sell: { on: $('#na-sell').checked, pts: v('na-sellpts') || 5 }, start: { on: $('#na-start').checked }, steady: { on: $('#na-steady').checked, minEv: (v('na-steadymin') || 6) / 100 } };
   try { const j = await naCall({ cfg }); $('#na-msg').textContent = j.error ? j.error : '✓ Saved'; if (!j.error) naDev(j.devices); } catch (e) { $('#na-msg').textContent = 'Could not save - try again.'; } }, 600); }
 document.addEventListener('change', e => { if (e.target.closest && e.target.closest('#vn') && e.target.matches('input')) naSave(); });
 document.addEventListener('click', async e => { if (e.target.id !== 'na-test') return; e.target.disabled = true; const j = await naCall({ test: 1 }).catch(() => ({}));

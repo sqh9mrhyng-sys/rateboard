@@ -6399,7 +6399,7 @@ async function handle({ request, env, waitUntil }) {
         ev: { on: !!(c.ev && c.ev.on), minEv: num(c.ev && c.ev.minEv, 0.02, 1, 0.10), minFair: num(c.ev && c.ev.minFair, 0, 0.95, 0.30) },
         add: { on: !!(c.add && c.add.on), minEv: num(c.add && c.add.minEv, 0.01, 1, 0.05) },
         sell: { on: !!(c.sell && c.sell.on), pts: num(c.sell && c.sell.pts, 1, 30, 5) },
-        start: { on: !!(c.start && c.start.on) }, at: Date.now() };
+        start: { on: !!(c.start && c.start.on) }, steady: { on: c.steady ? !!c.steady.on : true, minEv: num(c.steady && c.steady.minEv, 0.02, 1, 0.06) }, at: Date.now() };
       await env.RATEBOARD_KV.put('pred_ualert_v1', JSON.stringify(A));
     }
     const dv = await db.prepare(PUSH_DDL).run().then(() => db.prepare('SELECT COUNT(*) AS n FROM push_subs WHERE key=?').bind(who).first()).catch(() => null);
@@ -6581,7 +6581,8 @@ async function handle({ request, env, waitUntil }) {
     const owner = who === 'dennis' || undefined, port = !!predPortTok(env, who) || undefined;
     let me; try { me = JSON.parse((await env.RATEBOARD_KV.get('pred_me_v1_' + who)) || 'null') || undefined; } catch (e) {}
     let slipFit = null; try { slipFit = JSON.parse((await env.RATEBOARD_KV.get('pred_slipfit_v1')) || 'null'); } catch (e) {}
-    return json(x ? { owner, port, me, slipFit, at: x.at, games: x.games || [], credits: x.credits || null, used: x.used || null, errs: x.errs || [], keySet: !!env.ODDS_API_KEY } : { owner, port, me, at: null, games: [], keySet: !!env.ODDS_API_KEY });
+    let gx = null; try { gx = JSON.parse((await env.RATEBOARD_KV.get('pred_gamextra_v1')) || 'null'); } catch (e) {}   // 3-hour averages and team history (2026-11-23)
+    return json(x ? { owner, port, me, slipFit, gx, at: x.at, games: x.games || [], credits: x.credits || null, used: x.used || null, errs: x.errs || [], keySet: !!env.ODDS_API_KEY } : { owner, port, me, at: null, games: [], keySet: !!env.ODDS_API_KEY });
   }
   // Bulk ratings (Dennis only, 2026-11-15): live listings, every ended one (history), his passes, and pack plays.
   /* Bulk ratings (open to everyone, 2026-11-15): live listings, ended ones (history),

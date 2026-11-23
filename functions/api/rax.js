@@ -1172,7 +1172,7 @@ async function planDiag(env) {
   } catch (e) { out.err = String(e.message || e).slice(0, 200); }
   await env.RATEBOARD_KV.put(K, JSON.stringify(out), { expirationTtl: 3 * 86400 });
 }
-export const PU_DEF = { ev: { on: true, minEv: 0.10, minFair: 0.30 }, add: { on: true, minEv: 0.05 }, sell: { on: false, pts: 5 }, start: { on: false }, cap: 6 };
+export const PU_DEF = { ev: { on: true, minEv: 0.10, minFair: 0.30 }, add: { on: true, minEv: 0.05 }, sell: { on: false, pts: 5 }, start: { on: false }, steady: { on: true, minEv: 0.06 }, cap: 6 };
 async function predMemberAlerts(env, out) {
   await loadSlipFit(env);
   let A = {}; try { A = JSON.parse((await env.RATEBOARD_KV.get('pred_ualert_v1')) || '{}') || {}; } catch (e) {}
@@ -1188,12 +1188,13 @@ async function predMemberAlerts(env, out) {
      one side goes to at most 3 members per 90 seconds, so the first ones in don't push the price to -EV for
      everyone after them. 90 s later, if it's still good, the next 3 - members not yet told about it. Dennis is
      never limited or counted. Who goes first is shuffled each run. Over fair (selling) alerts aren't limited. */
+  let GX = {}; try { GX = JSON.parse((await env.RATEBOARD_KV.get('pred_gamextra_v1')) || '{}') || {}; } catch (e) {}
   const WAVE_N = 3, WAVE_MS = 90000;
   const W = ST._wave = (ST._wave && typeof ST._wave === 'object') ? ST._wave : {};
   for (const k of Object.keys(W)) { W[k] = (W[k] || []).filter(t => now - t < WAVE_MS); if (!W[k].length) delete W[k]; }
   for (let i = users.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [users[i], users[j]] = [users[j], users[i]]; }
   for (const who of users) {
-    const c = { ...PU_DEF, ...A[who], ev: { ...PU_DEF.ev, ...(A[who].ev || {}) }, add: { ...PU_DEF.add, ...(A[who].add || {}) }, sell: { ...PU_DEF.sell, ...(A[who].sell || {}) }, start: { ...PU_DEF.start, ...(A[who].start || {}) } };
+    const c = { ...PU_DEF, ...A[who], ev: { ...PU_DEF.ev, ...(A[who].ev || {}) }, add: { ...PU_DEF.add, ...(A[who].add || {}) }, sell: { ...PU_DEF.sell, ...(A[who].sell || {}) }, start: { ...PU_DEF.start, ...(A[who].start || {}) }, steady: { ...PU_DEF.steady, ...(A[who].steady || {}) } };
     let me = {}, bets = [], port = {};
     try { me = JSON.parse((await env.RATEBOARD_KV.get('pred_me_v1_' + who)) || '{}') || {}; bets = JSON.parse((await env.RATEBOARD_KV.get('pred_bets_v1_' + who)) || '[]') || []; port = JSON.parse((await env.RATEBOARD_KV.get('pred_port_v1_' + who)) || '{}') || {}; } catch (e) {}
     const unit = (Number(me.bank) || 0) * (Number(me.upct) || 1) / 100;
@@ -1209,7 +1210,7 @@ async function predMemberAlerts(env, out) {
     const fire = async (k, ev, msg) => {
       const s0 = st[k]; if (s0 && !(ev >= (s0.ev || 0) + 0.02 || now - s0.at > 45 * 60000)) return;
       if (sent() >= (c.cap || 6)) return;
-      const side = /^(ev|add|start):/.test(k) ? k.replace(/^(ev|add|start):/, '').split(':').slice(0, 2).join(':') : null, boss = who === 'dennis';
+      const side = /^(ev|add|start|steady):/.test(k) ? k.replace(/^(ev|add|start|steady):/, '').split(':').slice(0, 2).join(':') : null, boss = who === 'dennis';
       if (side && !boss && (W[side] || []).length >= WAVE_N) return;   // this wave is full: maybe the next one
       if (side && !boss) (W[side] = W[side] || []).push(now);
       st[k] = { at: now, ev }; st._log.push(now); await pushTo(env, db, who, { ...msg, urgent: true });
@@ -1229,6 +1230,11 @@ async function predMemberAlerts(env, out) {
           await fire('add:' + g.id + ':' + si, evp, { title: `Add more · ${nm} +${(evp * 100).toFixed(1)}%`, body: `You hold ${Math.round(h.cost).toLocaleString()} rax${h.avg ? ` at ${Math.round(h.avg * 100)}%` : ''}. Real ${Math.round(q * 100)}% now, fair ${pct(fair)}.`, url: U('add', unit), tag: tag('add') });
         if (c.sell.on && h && q - fair >= c.sell.pts / 100 && (!h.avg || q > h.avg))
           await fire('sell:' + g.id + ':' + si, q - fair, { title: `Over fair · ${nm}`, body: `Real ${Math.round(q * 100)}% is ${Math.round((q - fair) * 100)} pts over fair ${pct(fair)}${h.avg ? ` (you paid ${Math.round(h.avg * 100)}%)` : ''}. Selling may be worth it.`, url: U('sell', 0), tag: tag('sell') });
+        /* Steady value (quas23's idea, 2026-11-23): Real's 3-hour average sits under the 3-hour average fair by the
+           member's number, and the side is still +EV now - not a one-time spike. Once per side every 3 hours. */
+        const a3 = ((GX[g.id] || {}).a3 || [])[si], sk = 'steady:' + g.id + ':' + si;
+        if (c.steady.on && !holdAny && a3 && a3[2] >= 150 && a3[1] / a3[0] - 1 >= c.steady.minEv && evp >= 0.02 && fair >= c.ev.minFair && !(st[sk] && now - st[sk].at < A3_MS))
+          await fire(sk, a3[1] / a3[0] - 1, { title: `Steady value · ${nm} +${((a3[1] / a3[0] - 1) * 100).toFixed(1)}% for ${Math.round(a3[2] / 60 * 10) / 10}h`, body: `${g.game}: over the last ${Math.round(a3[2] / 60 * 10) / 10} hours Real averaged ${pct(a3[0])}, fair ${pct(a3[1])}. Now Real ${Math.round(q * 100)}%, EV +${(evp * 100).toFixed(1)}%.`, url: U('ev', unit), tag: tag('steady') });
         const t0 = Date.parse(g.start || 0);
         if (c.start.on && h && t0 && t0 - now < 15 * 60000 && evp > 0.02 && !st['start:' + g.id + ':' + si])
           await fire('start:' + g.id + ':' + si, evp, { title: `Starting soon · ${nm} still +${(evp * 100).toFixed(1)}%`, body: `${g.game} starts in ${Math.max(1, Math.round((t0 - now) / 60000))} min. Last chance to add before it goes live.`, url: U('add', unit), tag: tag('start') });
@@ -1307,6 +1313,36 @@ async function predFairHist(env) {
     (H[g.id] = H[g.id] || []).push([now, f, p]); }
   for (const k of Object.keys(H)) { H[k] = H[k].filter(x => now - x[0] < 24 * 3600000); if (!H[k].length) delete H[k]; }
   await env.RATEBOARD_KV.put('pred_fairhist_v1', JSON.stringify(H), { expirationTtl: 2 * 86400 });
+  try { await predTeamTrack(env, ev, H, now); } catch (e) {}
+}
+/* quas23's ideas (Dennis, 2026-11-23):
+   1. Rolling average: each open side's average Real price and fair over the last 3 hours, from the per-minute
+      history above - so a good price that has held for hours shows apart from a one-time spike ("Steady value").
+   2. Last 10 games: when a game starts, each team's last pregame Real price and fair are kept; a team Real keeps
+      pricing under (or over) fair shows on its card. Builds up from 2026-11-23 on.
+   Saved small for the page and the alerts: pred_gamextra_v1 { id: { a3: [[price, fair, minutes]], th: [[pts, n]] } }. */
+const TEAM_KEEP = 20, A3_MS = 3 * 3600000;
+async function predTeamTrack(env, ev, H, now) {
+  let S = {}, T = {}; try { S = JSON.parse((await env.RATEBOARD_KV.get('pred_seen_v1')) || '{}') || {}; T = JSON.parse((await env.RATEBOARD_KV.get('pred_teamhist_v1')) || '{}') || {}; } catch (e) {}
+  const tk = (sp, n) => `${sp}|${String(n || '').toLowerCase().trim()}`, draw = n => /^(draw|tie|x)$/i.test(String(n || '').trim());
+  for (const g of (ev.games || [])) { if (!g.start) continue; const o = S[g.id] || {}; S[g.id] = { sp: g.sport, n: g.sides.map(x => x.name || x.label), st: g.start, rec: o.rec || 0 }; }
+  // Started games: their last pregame minute, once.
+  for (const [id, o] of Object.entries(S)) { const st = Date.parse(o.st || 0); if (o.rec || !st || now < st) continue; o.rec = 1;
+    const h = (H[id] || []).filter(x => x[0] < st && st - x[0] < 30 * 60000); const last = h[h.length - 1]; if (!last) continue;
+    (o.n || []).forEach((nm, i) => { if (draw(nm)) return; const p = last[2] && last[2][i], f = last[1] && last[1][i]; if (!(p > 0 && f > 0)) return;
+      const k = tk(o.sp, nm); T[k] = [...(T[k] || []).filter(x => x.id !== Number(id)), { id: Number(id), at: st, p, f }].slice(-TEAM_KEEP); }); }
+  for (const id of Object.keys(S)) if (now - Date.parse(S[id].st || 0) > 7 * 86400000) delete S[id];
+  // What the page and the alerts read.
+  const X = {};
+  for (const g of (ev.games || [])) { const h = (H[g.id] || []).filter(x => now - x[0] < A3_MS); const e = {};
+    if (h.length >= 30) e.a3 = g.sides.map((_, i) => { const r = h.filter(x => x[1][i] > 0 && x[2] && x[2][i] > 0); if (r.length < 30) return null;
+      return [Math.round(r.reduce((t, x) => t + x[2][i], 0) / r.length * 1e4) / 1e4, Math.round(r.reduce((t, x) => t + x[1][i], 0) / r.length * 1e4) / 1e4, Math.round((now - r[0][0]) / 60000)]; });
+    e.th = g.sides.map(x => { const l = (T[tk(g.sport, x.name || x.label)] || []).filter(y => y.id !== g.id).slice(-10); if (l.length < 3) return null;
+      return [Math.round(l.reduce((t, y) => t + (y.f - y.p), 0) / l.length * 1000) / 10, l.length]; });
+    if (e.a3 || e.th.some(Boolean)) X[g.id] = e; }
+  await env.RATEBOARD_KV.put('pred_seen_v1', JSON.stringify(S), { expirationTtl: 8 * 86400 });
+  await env.RATEBOARD_KV.put('pred_teamhist_v1', JSON.stringify(T));
+  await env.RATEBOARD_KV.put('pred_gamextra_v1', JSON.stringify(X), { expirationTtl: 3600 });
 }
 const fairAt = (H, mid, si, t) => { const h = H[mid]; if (!h || !h.length || !Number.isFinite(t)) return null; let best = null; for (const x of h) { if (x[0] <= t + 30000) best = x; else break; }
   if (!best) best = h[0]; return Math.abs(best[0] - t) < 20 * 60000 ? { fair: best[1][si], price: best[2] ? best[2][si] : null, at: best[0] } : null; };
