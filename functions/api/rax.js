@@ -749,7 +749,7 @@ async function predOdds(env) {
   let real = {}; try { real = JSON.parse((await env.RATEBOARD_KV.get('pred_real_open')) || '{}') || {}; } catch (e) {}
   const key = env.ODDS_API_KEY, api = (path, q = '') => fetch(`https://api.the-odds-api.com/v4/${path}?apiKey=${encodeURIComponent(key)}${q}`);
   // ESPN, every minute: moneylines, and team codes -> names (college has no fixed list).
-  o.abbr = o.abbr || {};
+  o.abbr = o.abbr || {}; const LC = {};   // live game clocks for long-shot in-game alerts (2026-11-23)
   for (const sp of Object.keys(ESPN_PATH_PRED)) { if (!(real[sp] || []).length) continue;
     try { /* ESPN's plain scoreboard can still be on yesterday early in the morning (no games = no logos,
          2026-11-17), so ask for today and tomorrow by Eastern date. */
@@ -757,16 +757,18 @@ async function predOdds(env) {
       const evs = [], seenEv = new Set();
       for (const dt of [ymd(Date.now()), ymd(Date.now() + 86400000)]) { try { const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${ESPN_PATH_PRED[sp]}/scoreboard?dates=${dt}${sp === 'ncaaf' ? '&groups=80&limit=300' : sp === 'ncaam' ? '&groups=50&limit=400' : ''}`); const d = r.ok ? await r.json() : null;
         for (const ev of ((d && d.events) || [])) if (!seenEv.has(ev.id)) { seenEv.add(ev.id); evs.push(ev); } } catch (e) {} }
-      const games = [];
+      const games = [], LIVE = [];
       for (const ev of evs) { const c = (ev.competitions || [])[0] || {}, od = (c.odds || [])[0], h = (c.competitors || []).find(x => x.homeAway === 'home'), w = (c.competitors || []).find(x => x.homeAway === 'away');
         if (!h || !w) continue;
         for (const t of [h, w]) if (t.team && t.team.abbreviation) o.abbr[`${sp}:${t.team.abbreviation}`] = [t.team.displayName, t.team.shortDisplayName, t.team.location].filter(Boolean);
         o.logo = o.logo || {}; for (const t of [h, w]) if (t.team && t.team.logo) { o.logo[`${sp}:${t.team.abbreviation}`] = t.team.logo; o.logo[`${sp}:${normTeam(t.team.displayName)}`] = t.team.logo; }
+        { const stt = ev.status || {}; if (stt.type && stt.type.state === 'in') LIVE.push({ n: [normTeam(h.team.displayName), normTeam(w.team.displayName)], ab: [h.team.abbreviation, w.team.abbreviation], per: Number(stt.period) || 0, clk: Number(stt.clock) || 0 }); }
         if (!od) continue; const ml = od.moneyline || {}, mlOf = x => x && ((x.close && x.close.odds) || (x.open && x.open.odds));
         const dh = decOf(mlOf(ml.home) || (od.homeTeamOdds && od.homeTeamOdds.moneyLine)), dw = decOf(mlOf(ml.away) || (od.awayTeamOdds && od.awayTeamOdds.moneyLine)); if (!dh || !dw) continue;
         games.push({ names: [h.team.displayName, w.team.displayName], p: devig([[h.team.displayName, dh], [w.team.displayName, dw]]), src: `${(od.provider && od.provider.name) || 'ESPN'} (ESPN)`, start: ev.date }); }
-      o.espn[sp] = { at: Date.now(), games }; } catch (e) { o.errs.push(`${sp} espn ${e.message}`); }
+      o.espn[sp] = { at: Date.now(), games }; LC[sp] = { at: Date.now(), live: LIVE }; } catch (e) { o.errs.push(`${sp} espn ${e.message}`); }
   }
+  try { await env.RATEBOARD_KV.put('pred_liveclock_v1', JSON.stringify(LC), { expirationTtl: 3600 }); } catch (e) {}
   // FC club codes -> names (ESPN's team lists, every 6 hours, only while Real has an FC market open).
   if ((real.soccer || []).length && (!o.socAbbrAt || Date.now() - o.socAbbrAt > 6 * 3600000)) { o.socAbbrAt = Date.now();
     for (const lg of ESPN_SOCCER) { try { const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/${lg}/teams`); const d = r.ok ? await r.json() : null;
@@ -1204,7 +1206,13 @@ export const PU_DEF = { ev: { on: true, minEv: 0.10, minFair: 0.30 }, add: { on:
 /* Under 14% (Dennis, 2026-11-23): still alerted, but only at 90%+ EV, 7%+ fair and with at least an hour before
    the game - so a game that's basically decided or stale can't look like value. */
 export const PU_SIMPLE_TIERS = [[0.60, 0.06], [0.50, 0.08], [0.40, 0.10], [0.30, 0.14], [0.20, 0.25], [0.14, 0.60], [0.07, 0.90]];
-export const PU_LONG_MIN_LEFT = 60 * 60000;
+/* In-game long shots (Dennis, 2026-11-23: "in game, like at least 10 mins left in a basketball game"): a side at 7-14%
+   fair can alert during the game at 90%+ EV, only with enough game clock left - so a game that's all but over can't
+   look like value - and only when 3+ books have a line from the last minute. Clock from ESPN's scoreboard (every
+   minute), so only NBA, college basketball, NHL, NFL and college football. Game minutes left at least: */
+const PU_LIVE_LEFT = { nba: 10, ncaam: 8, nhl: 10, nfl: 10, ncaaf: 10 };
+const PU_REG = { nba: [4, 12], ncaam: [2, 20], nhl: [3, 20], nfl: [4, 15], ncaaf: [4, 15] };
+const puLeftMin = (sp, per, clkSec) => { const r = PU_REG[sp]; if (!r || !per) return null; return per > r[0] ? clkSec / 60 : (r[0] - per) * r[1] + clkSec / 60; };
 export const puSimpleMinEv = f => { for (const [lo, ev] of PU_SIMPLE_TIERS) if (f >= lo) return ev; return null; };
 async function predMemberAlerts(env, out) {
   await loadSlipFit(env);
@@ -1215,6 +1223,13 @@ async function predMemberAlerts(env, out) {
   const now = Date.now(), db = env.RATEBOARD_DB, D = new Map();
   const der = g => { if (!D.has(g.id)) D.set(g.id, pbDerive(g)); return D.get(g.id); };
   const games = (out.games || []).filter(g => !g.locked && !g.live && !g.ended && !(Date.parse(g.start || 0) && now >= Date.parse(g.start)));
+  { let LC = {}; try { LC = JSON.parse((await env.RATEBOARD_KV.get('pred_liveclock_v1')) || '{}') || {}; } catch (e) {}
+    for (const g of (out.games || [])) { if (!g.live || g.locked || g.ended) continue; const L = LC[g.sport]; if (!L || now - L.at > 3 * 60000 || !PU_LIVE_LEFT[g.sport]) continue;
+      const bk = (g.sources || []).flatMap(x => x.bk || []).filter(b => !b.out), newest = bk.length ? Math.max(...bk.map(b => b.u || 0)) : 0; if (bk.length < 3 || now - newest > 60000) continue;
+      const nn = g.sides.map(x => normTeam(x.name || '')), lb = g.sides.map(x => String(x.label || '').toUpperCase());
+      const m = (L.live || []).find(x => x.n.some(t => nn.includes(t)) || x.ab.some(a => lb.includes(String(a || '').toUpperCase()))); if (!m) continue;
+      const left = puLeftMin(g.sport, m.per, m.clk); if (left == null) continue; const adj = left - (now - L.at) / 60000;   // the clock has run since ESPN was read
+      if (adj >= PU_LIVE_LEFT[g.sport]) games.push({ ...g, _left: adj }); } }
   const pct = v => (v * 100).toFixed(1) + '%';
   /* Waves (Dennis, 2026-11-23: "only send 3 people the same notification... you can send the same game to other
      users after 90 seconds... NEVER LIMIT MY NOTIFICATIONS"): a buy alert (Big value, Add more, Starting soon) for
@@ -1280,7 +1295,11 @@ async function predMemberAlerts(env, out) {
         const rate = PB_SLIP[g.sport] ?? PB_DEF, evp = fair / (q + (unit > 0 ? rate * unit / 1000 / 200 : 0)) - 1, nm = sd.name || sd.label, h = hs[si];
         const U = (k, a) => `/predictions#g=${g.id}&s=${si}&k=${k}${a > 0 ? '&a=' + Math.round(a / 50) * 50 : ''}&q=${Math.round(q * 100)}`, tag = k => 'pu-' + k + '-' + g.id + '-' + si;
         // Holding one side of a game: never pushed toward another side of it.
-        const t0e = Date.parse(g.start || 0), evNeed = c.ev.tier ? (fair < 0.14 && !(t0e && t0e - now >= PU_LONG_MIN_LEFT) ? null : puSimpleMinEv(fair)) : c.ev.minEv;
+        if (g._left != null) {   // in game: Simple long shots only
+          if (c.ev.tier && c.ev.on && !holdAny && fair >= 0.07 && fair < 0.14 && evp >= 0.90)
+            await fire('ev:' + g.id + ':' + si, evp, { title: `Live long shot · ${nm} +${(evp * 100).toFixed(0)}%`, body: `${g.game}: about ${Math.floor(g._left)} min left. Real ${Math.round(q * 100)}%, fair ${pct(fair)}.\nSmall only: ${fair < 0.10 ? '0.1u' : '0.25u'} at most${unit > 0 ? ` (${Math.round((fair < 0.10 ? 0.1 : 0.25) * unit).toLocaleString()} rax)` : ''}.`, url: U('ev', (fair < 0.10 ? 0.1 : 0.25) * unit), tag: tag('ev') });
+          continue; }
+        const evNeed = c.ev.tier ? puSimpleMinEv(fair) : c.ev.minEv;
         if (c.ev.on && !holdAny && evNeed != null && evp >= evNeed && (c.ev.tier || fair >= c.ev.minFair))
           await fire('ev:' + g.id + ':' + si, evp, { title: `Big value · ${nm} +${(evp * 100).toFixed(1)}%`, body: `${g.game}: Real ${Math.round(q * 100)}%, fair ${pct(fair)}.${unit > 0 ? ` 1u = ${Math.round(unit).toLocaleString()} rax.` : ''}`, url: U('ev', unit), tag: tag('ev') });
         if (c.add.on && h) { const N = pbAddNeed(fair, q, unit, rate, h.pays, c.add.minEv);
