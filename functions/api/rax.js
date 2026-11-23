@@ -919,7 +919,7 @@ async function predReal(env) {
           out.games.push({ sport: sp, id: m.id, kind: 'spread', line: L[0], game: ((m.gameDisplay || {}).display || oc.map(x => x.key).join(' vs ')) + ' · Spread', path: (m.gameDisplay || {}).path || null,
             link: `https://www.realapp.com/${routeId([36, 0, 0, Number(m.id)])}`, locked: !!m.isLocked, volume: m.volumeDisplay || null, start: ev ? ev.start : null, oddsAt, live: !!(ev && ev.live), hist,
             sources: okBk.length ? [{ src: okBk.length === 1 ? okBk[0].t : `${okBk.length} books`, p: fair.map(v => Math.round(v * 1000) / 1000), books: okBk.map(b => b.t), bk: okBk }] : [], refs: [],
-            sides: oc.map((x, i) => ({ oid: x.id, key: x.key, label: x.label, logo: ((odds.logo || {})[`${sp}:${x.key}`]) || ((odds.logo || {})[`${sp}:${normTeam(tn(i))}`]) || null, name: `${tn(i)} ${fmtL(L[i])}`, color: x.backgroundColor || null, price: x.probability, fair: fair[i], ev: fair[i] != null && x.probability > 0 ? fair[i] / x.probability - 1 : null })) });
+            sides: oc.map((x, i) => ({ oid: x.id, key: x.key, label: x.label, logo: ((odds.logo || {})[`${sp}:${x.key}`]) || ((odds.logo || {})[`${sp}:${normTeam(tn(i))}`]) || null, name: `${fmtL(L[i])} ${tn(i)}`, color: x.backgroundColor || null, price: x.probability, fair: fair[i], ev: fair[i] != null && x.probability > 0 ? fair[i] / x.probability - 1 : null })) });
           continue;
         }
         const oc = m.outcomes, found = [];
