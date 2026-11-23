@@ -964,9 +964,13 @@ async function predReal(env) {
          the ended-games list (their last-seen time is today) and from last night's markets still listed locked, so
          it paused until tomorrow before today's markets opened. Now only a market open for betting this trading
          day arms it. Pauses from before this fix (no v: 2) are ignored. */
-      if (P.v !== 2) { delete P.seen; delete P.until; P.v = 2; }
+      /* Fix 2026-11-23: Real rejected the site's logins for a while (401), every market read came back empty, and
+         that looked like "everything has closed" - so it paused until tomorrow morning in the middle of the day.
+         A round where any Real read failed never arms the pause. Pauses from before this fix (no v: 3) are ignored. */
+      if (P.v !== 3) { delete P.until; P.v = 3; }
       if (nOpen) P.seen = td;
-      if (!nAny && P.seen === td) { P.until = predNext715(Date.now()); P.at = Date.now(); P.v = 2; }
+      const realFail = out.errs.some(e => / real /.test(String(e)));
+      if (!nAny && P.seen === td && !realFail) { P.until = predNext715(Date.now()); P.at = Date.now(); P.v = 3; }
       await env.RATEBOARD_KV.put('pred_pause_v1', JSON.stringify(P)); } catch (e) {} }
     await env.RATEBOARD_KV.put('pred_real_open', JSON.stringify(open), { expirationTtl: 3600 });
     /* Ended games stay listed for 24 hours (members, 2026-11-16: "markets available after the game" so a
@@ -1612,7 +1616,7 @@ export async function dfsPull(env) {
   return { ok: true, cost };
 }
 async function predTick(env) {
-  try { const P = JSON.parse((await env.RATEBOARD_KV.get('pred_pause_v1')) || '{}') || {}; if (P.v === 2 && P.until && Date.now() < P.until) return; } catch (e) {}
+  try { const P = JSON.parse((await env.RATEBOARD_KV.get('pred_pause_v1')) || '{}') || {}; if (P.v === 3 && P.until && Date.now() < P.until) return; } catch (e) {}
   await Promise.all([predOdds(env).catch(() => {}), predReal(env).catch(() => {}), predFairHist(env).catch(() => {})]); }
 
 /* One-off (2026-11-13): Real's own web app code, searched for how its
