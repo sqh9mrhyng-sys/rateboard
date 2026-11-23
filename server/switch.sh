@@ -7,6 +7,12 @@ grep -q '^RS_AUTH_TOKEN=.\+' /opt/rax/.env || { echo "Type the tokens first: nan
 grep -q '^RS_SWAP_TOKEN=.\+' /opt/rax/.env || { echo "RS_SWAP_TOKEN is empty: nano /opt/rax/.env"; exit 1; }
 sed -i 's/^NO_CRON=.*/NO_CRON=0/' /opt/rax/.env
 cat > /etc/caddy/Caddyfile <<'CADDY'
+{
+	servers {
+		protocols h1 h2
+	}
+}
+
 raxacademy.app, www.raxacademy.app, test.raxacademy.app {
 	encode gzip
 	reverse_proxy 127.0.0.1:8787
