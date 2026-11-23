@@ -871,7 +871,7 @@ async function predReal(env) {
       let mk = prevMk[sp];
       if (round === 0 || (prevMk[sp] || []).length) {
         mk = [];
-        try { const r = await fetch(`https://web.realapp.com/predictions/gamemarkets/${sp}`, { headers: rsHeaders(toks[ti++ % toks.length]) }); if (r.ok) mk = ((await r.json()) || {}).gameMarkets || []; else out.errs.push(`${sp} real ${r.status}`); } catch (e) { out.errs.push(`${sp} real ${e.message}`); }
+        try { const tix = ti++ % toks.length; const r = await fetch(`https://web.realapp.com/predictions/gamemarkets/${sp}`, { headers: rsHeaders(toks[tix]) }); if (r.ok) mk = ((await r.json()) || {}).gameMarkets || []; else out.errs.push(`${sp} real ${r.status} (account ${toks[tix] === env.RS_AUTH_TOKEN ? 1 : 2})`); } catch (e) { out.errs.push(`${sp} real ${e.message}`); }
         // Results for placed bets (2026-11-16): which side won each settled market, kept a week.
         const st = mk.filter(m => m.isSettled && Array.isArray(m.outcomes) && m.outcomes.some(o => o.isWinner));
         if (st.length) { try { const S = JSON.parse((await env.RATEBOARD_KV.get('pred_settled_v1')) || '{}') || {}; let ch = false;
