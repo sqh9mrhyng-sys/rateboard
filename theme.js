@@ -83,3 +83,16 @@ window.addEventListener('pageshow', rbNavSoon);
     window.open = function (u) { if (real(String(u || ''))) { location.href = u; return null; } return wo.apply(window, arguments); };
   } catch (x) {}
 })();
+/* Where you were (Dennis, 2026-11-23: a notification's page gets "back to *where they were*"): the last page you
+   had open, saved as you leave it or open it. An alert page itself (#g=) is never saved. */
+(function () {
+  function mark() { try { if (/[#&]g=/.test(location.hash)) return; var p = location.pathname.replace(/\.html$/, '') || '/';
+    localStorage.setItem('rb_prev_page', JSON.stringify({ p: p + location.search + location.hash, t: document.title || '', at: Date.now() })); } catch (e) {} }
+  window.rbPrevPage = function () { try { var x = JSON.parse(localStorage.getItem('rb_prev_page') || 'null'); if (!x || !x.p) return null;
+    var path = String(x.p).split('?')[0], base = path.split('#')[0], L = window.RB_NAV_PAGES || [], hit = null;
+    for (var i = 0; i < L.length; i++) if (L[i][0] === path) hit = L[i][1]; if (!hit) for (var j = 0; j < L.length; j++) if (L[j][0] === base) hit = L[j][1];
+    return { href: x.p, name: hit || String(x.t || '').split(/ [-–·|] /)[0] || 'previous page', same: base === location.pathname.replace(/\.html$/, '') }; } catch (e) { return null; } };
+  if (document.readyState === 'complete') mark(); else addEventListener('load', mark);
+  addEventListener('pagehide', mark); document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') mark(); });
+  addEventListener('hashchange', function () { if (!/[#&]g=/.test(location.hash)) mark(); });
+})();

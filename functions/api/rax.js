@@ -1183,6 +1183,15 @@ async function predMemberAlerts(env, out) {
   const der = g => { if (!D.has(g.id)) D.set(g.id, pbDerive(g)); return D.get(g.id); };
   const games = (out.games || []).filter(g => !g.locked && !g.live && !g.ended && !(Date.parse(g.start || 0) && now >= Date.parse(g.start)));
   const pct = v => (v * 100).toFixed(1) + '%';
+  /* Waves (Dennis, 2026-11-23: "only send 3 people the same notification... you can send the same game to other
+     users after 90 seconds... NEVER LIMIT MY NOTIFICATIONS"): a buy alert (Big value, Add more, Starting soon) for
+     one side goes to at most 3 members per 90 seconds, so the first ones in don't push the price to -EV for
+     everyone after them. 90 s later, if it's still good, the next 3 - members not yet told about it. Dennis is
+     never limited or counted. Who goes first is shuffled each run. Over fair (selling) alerts aren't limited. */
+  const WAVE_N = 3, WAVE_MS = 90000;
+  const W = ST._wave = (ST._wave && typeof ST._wave === 'object') ? ST._wave : {};
+  for (const k of Object.keys(W)) { W[k] = (W[k] || []).filter(t => now - t < WAVE_MS); if (!W[k].length) delete W[k]; }
+  for (let i = users.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [users[i], users[j]] = [users[j], users[i]]; }
   for (const who of users) {
     const c = { ...PU_DEF, ...A[who], ev: { ...PU_DEF.ev, ...(A[who].ev || {}) }, add: { ...PU_DEF.add, ...(A[who].add || {}) }, sell: { ...PU_DEF.sell, ...(A[who].sell || {}) }, start: { ...PU_DEF.start, ...(A[who].start || {}) } };
     let me = {}, bets = [], port = {};
@@ -1200,6 +1209,9 @@ async function predMemberAlerts(env, out) {
     const fire = async (k, ev, msg) => {
       const s0 = st[k]; if (s0 && !(ev >= (s0.ev || 0) + 0.02 || now - s0.at > 45 * 60000)) return;
       if (sent() >= (c.cap || 6)) return;
+      const side = /^(ev|add|start):/.test(k) ? k.replace(/^(ev|add|start):/, '').split(':').slice(0, 2).join(':') : null, boss = who === 'dennis';
+      if (side && !boss && (W[side] || []).length >= WAVE_N) return;   // this wave is full: maybe the next one
+      if (side && !boss) (W[side] = W[side] || []).push(now);
       st[k] = { at: now, ev }; st._log.push(now); await pushTo(env, db, who, { ...msg, urgent: true });
       try { await env.RATEBOARD_KV.put('pred_lastalert_' + who, JSON.stringify({ url: msg.url, at: now }), { expirationTtl: 3600 }); } catch (e) {}
     };
@@ -1218,13 +1230,13 @@ async function predMemberAlerts(env, out) {
         if (c.sell.on && h && q - fair >= c.sell.pts / 100 && (!h.avg || q > h.avg))
           await fire('sell:' + g.id + ':' + si, q - fair, { title: `Over fair · ${nm}`, body: `Real ${Math.round(q * 100)}% is ${Math.round((q - fair) * 100)} pts over fair ${pct(fair)}${h.avg ? ` (you paid ${Math.round(h.avg * 100)}%)` : ''}. Selling may be worth it.`, url: U('sell', 0), tag: tag('sell') });
         const t0 = Date.parse(g.start || 0);
-        if (c.start.on && h && t0 && t0 - now < 15 * 60000 && evp > 0.02 && !st['start:' + g.id])
-          await fire('start:' + g.id, evp, { title: `Starting soon · ${nm} still +${(evp * 100).toFixed(1)}%`, body: `${g.game} starts in ${Math.max(1, Math.round((t0 - now) / 60000))} min. Last chance to add before it goes live.`, url: U('add', unit), tag: tag('start') });
+        if (c.start.on && h && t0 && t0 - now < 15 * 60000 && evp > 0.02 && !st['start:' + g.id + ':' + si])
+          await fire('start:' + g.id + ':' + si, evp, { title: `Starting soon · ${nm} still +${(evp * 100).toFixed(1)}%`, body: `${g.game} starts in ${Math.max(1, Math.round((t0 - now) / 60000))} min. Last chance to add before it goes live.`, url: U('add', unit), tag: tag('start') });
       }
     }
     for (const k of Object.keys(st)) if (k !== '_log' && now - st[k].at > 12 * 3600000) delete st[k];
   }
-  for (const w of Object.keys(ST)) if (!users.includes(w)) delete ST[w];
+  for (const w of Object.keys(ST)) if (w !== '_wave' && !users.includes(w)) delete ST[w];
   await env.RATEBOARD_KV.put('pred_ualert_state_v1', JSON.stringify(ST), { expirationTtl: 86400 });
 }
 /* One-off (Dennis, 2026-11-17, his OK to read his own prediction pages): which server account is his, and

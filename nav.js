@@ -9,6 +9,7 @@
     ['/board#gamedata', 'Game data', 'admin'],
     ['/packs', 'Pack data'],
     ['/swaps', 'Swaps'],
+    ['/hour', 'Your swaps page', null, '/swaps'],   // always right under Swaps (Dennis, 2026-11-23); hide it on Home's UI tab
     ['/boosts', 'Boosts/Buys'],
     ['/projections', 'Projections'],
     ['/bulk', 'Bulk ratings'],
@@ -38,8 +39,11 @@
     var u = ui(), hid = u.navHidden || [], o = (u.navOrder && u.navOrder.length) ? u.navOrder : NAV_DEFAULT;
     var rest = PAGES.slice(1).filter(function (p) { return canOpen(p) && hid.indexOf(p[0]) < 0; });
     var pos = function (h, i) { var k = o.indexOf(h); return k < 0 ? 1e3 + i : k; };
+    var subs = rest.filter(function (p) { return p[3]; }); rest = rest.filter(function (p) { return !p[3]; });
     rest = rest.map(function (p, i) { return [p, pos(p[0], i)]; }).sort(function (a, b) { return a[1] - b[1]; }).map(function (x) { return x[0]; });
-    return [PAGES[0]].concat(rest);
+    // Sub-pages ride directly under their parent, wherever it's moved to (and go when it's hidden).
+    var out = []; rest.forEach(function (p) { out.push(p); subs.forEach(function (sp) { if (sp[3] === p[0]) out.push(sp); }); });
+    return [PAGES[0]].concat(out);
   }
   function here(h) { var p = location.pathname.replace(/\.html$/, '').replace(/\/$/, '') || '/', hh = location.hash;
     if (h.indexOf('#') > 0) return p + hh === h; if (h === '/board' && /^#(otd|gamedata)/.test(hh) && p === '/board') return false; return p === h; }
@@ -53,7 +57,7 @@
     + '.rbnav-top{display:flex;justify-content:center;padding:10px 12px 0;position:relative;z-index:50}'
     + '.rbnav-top{gap:8px;flex-wrap:wrap;align-items:center}.rbscan b{font-size:15px;line-height:1}.rbscan.on b{display:inline-block;animation:rbspin 1s linear infinite}.rbscan:disabled{opacity:.8;cursor:default}@keyframes rbspin{to{transform:rotate(360deg)}}'
     + '.rbscan-m{flex-basis:100%;text-align:center;font:600 13px system-ui,-apple-system,sans-serif;color:var(--mute,#9aa3b5);min-height:0;padding:0 8px}.rbscan-m:empty{display:none}'
-    + '.rbnav-m a.cur{color:var(--accent,#E8A33D);font-weight:800}.rbnav-m a.cur .d{background:var(--accent,#E8A33D)}.rbnav-m .s{height:1px;background:var(--line,#2a3346);margin:6px 4px}.rbnav-m a.cz{font-size:13px;color:var(--mute,#9aa3b5)}';
+    + '.rbnav-m a.cur{color:var(--accent,#E8A33D);font-weight:800}.rbnav-m a.cur .d{background:var(--accent,#E8A33D)}.rbnav-m .s{height:1px;background:var(--line,#2a3346);margin:6px 4px}.rbnav-m a.cz{font-size:13px;color:var(--mute,#9aa3b5)}.rbnav-m a.sub{padding:7px 12px 7px 30px;font-size:14px;color:var(--mute,#9aa3b5)}.rbnav-m a.sub .d{width:5px;height:5px}.rbnav-m a.sub.cur{color:var(--accent,#E8A33D)}';
   document.head.appendChild(css);
 
   var open = null;
@@ -61,7 +65,7 @@
   function show(b) {
     close();
     var m = document.createElement('div'); m.className = 'rbnav-m'; m.setAttribute('role', 'menu');
-    m.innerHTML = list().map(function (p) { var c = here(p[0]); return '<a role="menuitem" href="' + esc(p[0]) + '"' + (c ? ' class="cur" aria-current="page"' : '') + '><span class="d"></span>' + esc(p[1]) + '</a>' + (p[0] === '/' ? '<div class="s"></div>' : ''); }).join('')
+    m.innerHTML = list().map(function (p) { var c = here(p[0]), cl = (c ? 'cur' : '') + (p[3] ? ' sub' : ''); return '<a role="menuitem" href="' + esc(p[0]) + '"' + (cl.trim() ? ' class="' + cl.trim() + '"' : '') + (c ? ' aria-current="page"' : '') + '><span class="d"></span>' + esc(p[1]) + '</a>' + (p[0] === '/' ? '<div class="s"></div>' : ''); }).join('')
       + '<div class="s"></div><a role="menuitem" class="cz" href="/?ui=1">Customize this menu</a>';
     document.body.appendChild(m);
     var r = b.getBoundingClientRect(), w = m.offsetWidth;

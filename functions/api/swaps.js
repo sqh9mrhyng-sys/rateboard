@@ -6385,7 +6385,8 @@ async function handle({ request, env, waitUntil }) {
      rax.js predMemberAlerts sends them. */
   if (op === 'predalerts') {
     const who = String(acc.who || '').toLowerCase(); if (!who) return json({ error: 'Sign in first.' }, 401);
-    if (who === 'dennis' || !predPortTok(env, who)) return forbidden('Not open yet.');
+    // Everyone with Predictions now (Dennis, 2026-11-23: "On EV page add the notifications tab"); holdings come from synced positions or logged bets.
+    if (!PRED_PUBLIC && who !== 'dennis' && !(await predAcc()).includes(who)) return forbidden('Predictions is invite-only for now - ask Dennis for access.');
     let A = {}; try { A = JSON.parse((await env.RATEBOARD_KV.get('pred_ualert_v1')) || '{}') || {}; } catch (e) {}
     const num = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : d; };
     if (request.method === 'POST') {

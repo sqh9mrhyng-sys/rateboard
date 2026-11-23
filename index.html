@@ -81,6 +81,7 @@
   .hsign button:disabled{opacity:.6}
   .lock{max-width:460px;margin:14vh auto;text-align:center;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}
   .acct .who .lbl{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+  .nvsub{padding-left:26px;opacity:.9;font-size:13px}
 </style>
 <script src="/theme.js"></script>
 <link rel="manifest" href="/manifest.webmanifest">
@@ -355,7 +356,9 @@ function navOrdered(){
 }
 function navRows(){
   const l = navOrdered();
-  return l.map(([h, t], i) => `<div class="tg nvr"><span>${esc(t)}</span><span class="nvb"><button type="button" data-nmove="-1" data-nh="${esc(h)}" aria-label="Move ${esc(t)} up"${i ? '' : ' disabled'}>&#9650;</button><button type="button" data-nmove="1" data-nh="${esc(h)}" aria-label="Move ${esc(t)} down"${i < l.length - 1 ? '' : ' disabled'}>&#9660;</button><input type="checkbox" data-navpage="${esc(h)}"${(UI.navHidden || []).includes(h) ? '' : ' checked'} aria-label="Show ${esc(t)} in the menu"></span></div>`).join('');
+  // "Your swaps page" sits under Swaps in the menu (2026-11-23): no arrows, just its show/hide tick.
+  const sub = h => h === '/swaps' ? `<div class="tg nvr nvsub"><span>↳ Your swaps page</span><span class="nvb"><input type="checkbox" data-navpage="/hour"${(UI.navHidden || []).includes('/hour') ? '' : ' checked'} aria-label="Show Your swaps page in the menu"></span></div>` : '';
+  return l.map(([h, t], i) => `<div class="tg nvr"><span>${esc(t)}</span><span class="nvb"><button type="button" data-nmove="-1" data-nh="${esc(h)}" aria-label="Move ${esc(t)} up"${i ? '' : ' disabled'}>&#9650;</button><button type="button" data-nmove="1" data-nh="${esc(h)}" aria-label="Move ${esc(t)} down"${i < l.length - 1 ? '' : ' disabled'}>&#9660;</button><input type="checkbox" data-navpage="${esc(h)}"${(UI.navHidden || []).includes(h) ? '' : ' checked'} aria-label="Show ${esc(t)} in the menu"></span></div>`+ sub(h)).join('');
 }
 function openUI(){
   const T = window.RB_THEMES || {}, cls = { '': { bg: '#141925', accent: '#E8A33D', tile: '#3d6fd6' } };

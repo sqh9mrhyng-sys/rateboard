@@ -257,9 +257,16 @@
   .al tr.on td{color:var(--good)} .al tr.on td:first-child::after{content:' ✓';font-size:13px}
   .al .warn{margin-top:10px;background:rgba(229,83,75,.14);color:#f08a84;border-radius:10px;padding:8px 10px;font-size:13.5px;font-weight:700}
   .al .foot{margin-top:10px;font-size:12.5px;color:var(--mute)}
+  .aback{display:inline-block;margin:0 0 10px;background:none;border:0;padding:4px 0;color:var(--mute);font:inherit;font-size:14.5px;font-weight:700;text-decoration:none;cursor:pointer}
+  .alog{margin-top:16px;border-top:1px solid var(--line);padding-top:14px} .alh{font-size:14px;color:var(--mute)} .alh b{color:var(--ink)}
+  .alh2{margin-top:12px;font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--mute)} .alh2 span{color:var(--ink);text-transform:none;letter-spacing:0;font-size:13px}
+  .alf{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px} .alf label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:var(--mute)}
+  .alf input{width:100%;min-width:0;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:9px 8px;font:inherit;font-size:16px;font-weight:700}
+  .alp{margin-top:10px;font-size:14px;color:var(--mute)} .alp b{font-size:16px}
+  .alsave{margin-top:10px;width:100%;background:var(--panel2);color:var(--ink);border:1px solid var(--accent);border-radius:12px;padding:11px;font:inherit;font-weight:800;cursor:pointer} .alsave:disabled{opacity:.45;cursor:default}
 </style>
 <script src="/theme.js"></script>
-<script src="/nav.js?v=5"></script>
+<script src="/nav.js?v=6"></script>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/favicon-48.png">
 <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
@@ -272,7 +279,7 @@
 <body><div class="wrap">
 <div class="top"><h1>Predictions EV</h1><span class="pulse" id="pulse"><i></i><span id="ago">-</span></span></div>
 <div id="alertv" hidden></div>
-<div class="tabs" id="tabs"><button data-t="m" aria-pressed="true">Markets</button><button data-t="b" aria-pressed="false">My bets <span id="bn"></span></button><button data-t="r" aria-pressed="false" hidden>Arbitrage <span id="rn"></span></button><button data-t="f" aria-pressed="false">Request/Report <span id="fn"></span></button><button data-t="n" aria-pressed="false" hidden>Alerts</button><button data-t="g" aria-pressed="false">Guide</button><button data-t="a" aria-pressed="false" hidden>Access</button></div>
+<div class="tabs" id="tabs"><button data-t="m" aria-pressed="true">Markets</button><button data-t="b" aria-pressed="false">My bets <span id="bn"></span></button><button data-t="r" aria-pressed="false" hidden>Arbitrage <span id="rn"></span></button><button data-t="f" aria-pressed="false">Request/Report <span id="fn"></span></button><button data-t="n" aria-pressed="false" hidden>Notifications</button><button data-t="g" aria-pressed="false">Guide</button><button data-t="a" aria-pressed="false" hidden>Access</button></div>
 <div id="vm">
 <div id="fbx" class="fbx" hidden></div>
 <details class="setbox" id="setbox"><summary><span class="st1">Your rax</span><b id="setsum">Set your rax for unit sizes</b><span class="st2">Edit</span></summary>
@@ -321,7 +328,7 @@
   <div class="nnum"><label>Points over fair<span><input type="number" id="na-sellpts" min="1" max="30" step="1"> pts</span></label></div></div>
 <div class="nbox"><label class="nrow"><input type="checkbox" id="na-start"><span><b>Starting soon</b><small>15 minutes before a game you hold starts, if your side is still +EV - last chance to add.</small></span></label></div>
 <div class="nbox"><div class="nnum"><label>Most alerts per hour<span><input type="number" id="na-cap" min="1" max="20" step="1"></span></label></div>
-  <p class="note">A side won't repeat unless its EV gets 2+ points better or 45 minutes pass. You're never pushed toward the other side of a game you hold. "Hold" means your synced Real positions plus bets you logged.</p></div>
+  <p class="note">A side won't repeat unless its EV gets 2+ points better or 45 minutes pass. You're never pushed toward the other side of a game you hold. "Hold" means your synced Real positions plus bets you logged. To keep everyone's price good, a buy alert goes to 3 members at a time; if it's still good value 90 seconds later, the next 3 get it.</p></div>
 <p class="note" id="na-msg"></p>
 </section></div>
 <div id="vf" hidden>
@@ -493,7 +500,9 @@ async function load(){
   try{ const t = ls.get('ratebrd_token_v1') || ''; J = await (await fetch('/api/swaps?op=predev', { headers: t ? { 'x-rb-token': t } : {} })).json(); }catch(e){ J = { error: 'Could not reach the site.' }; }
   try{ setSlipFit(J && J.slipFit); }catch(e){}
   if(J.error){ $('#list').innerHTML = `<div class="empty">${/sign in/i.test(J.error) ? 'Sign in first - <a href="/?next=/predictions">sign in</a>.' : esc(J.error)}</div>`; return; }
-  applyMe(J.me); autoPort(); try { localStorage.setItem('rb_pred_alerts', (J.owner || J.port) ? '1' : '0'); } catch (e) {} $('#tabs [data-t="n"]').hidden = !(J.port && !J.owner); $('#tabs').classList.toggle('t5', !!(J.port && !J.owner));
+  applyMe(J.me); autoPort(); try { localStorage.setItem('rb_pred_alerts', (J.owner || J.port) ? '1' : '0'); } catch (e) {} /* Notifications tab (Dennis, 2026-11-23): everyone, but only inside the installed web app - push alerts only
+     reach a phone from there. */
+  const nOn = !!(J && !J.error && isApp()); $('#tabs [data-t="n"]').hidden = !nOn; $('#tabs').classList.toggle('t5', nOn);
   if(!J.keySet){ $('#list').innerHTML = '<div class="empty">The Odds API key isn\'t on the server yet.</div>'; return; }
   { const ae = document.activeElement; if (!(ae && ae.closest && ae.closest('#vr form'))) drawArb(); }
   draw(); focusGo(); if (!$('#vb').hidden && !(document.activeElement && document.activeElement.dataset && (document.activeElement.dataset.amt || document.activeElement.dataset.pay))) drawBets(); else $('#bn').textContent = BETS.filter(b => !b.res).length ? `(${BETS.filter(b => !b.res).length})` : '';
@@ -577,18 +586,57 @@ function readFocus(){ const h = location.hash, n = k => { const m = h.match(new 
   FOCUS.gid = Number(n('g')) || null; FOCUS.si = n('s') != null ? Number(n('s')) : null; FOCUS.amt = Number(n('a')) || null; FOCUS.q = Number(n('q')) || null; FOCUS.kind = n('k') || ''; FOCUS.at = Date.now(); FOCUS.done = false;
   if (FOCUS.gid) chip = ''; }
 function closeFocus(){ FOCUS.gid = null; try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} $('#fbx').hidden = true; if (J && J.games) draw(); }
+/* Alert page additions (Dennis, 2026-11-23): "Back to <where you were>" at the top left; what you've already
+   logged on this game; and "Log another bet placed": enter the rax, the % fills from Real's price now and the
+   payout from that (rax / %), with the profit if it wins. Change the payout and the % follows (rax / payout),
+   or change the % and the payout follows. The form keeps what you typed through the page's refreshes. */
+const AF = { gid: null, si: null, amt: '', pct: '', pay: '', edited: '' };
+function afFill(q){ const a = Number(AF.amt);
+  if (AF.edited !== 'pct' && AF.edited !== 'pay' && q > 0) AF.pct = Math.round(q * 1000) / 10;
+  if (AF.edited !== 'pay') AF.pay = a > 0 && Number(AF.pct) > 0 ? Math.round(a / (Number(AF.pct) / 100) * 10) / 10 : '';
+  else AF.pct = a > 0 && Number(AF.pay) > 0 ? Math.round(a / Number(AF.pay) * 1000) / 10 : AF.pct; }
+function afHtml(g, si, sd){
+  const tot = g.sides.map((x, i) => [x, placedOn(g.id, i)]).filter(([, a]) => a > 0);
+  const logged = tot.length ? tot.map(([x, a]) => `<b>${Math.round(a).toLocaleString()} rax</b>${g.sides.length > 1 ? ` on ${esc(x.name || x.label)}` : ''}`).join(' · ') : '<b>0 rax</b>';
+  const a = Number(AF.amt), pay = Number(AF.pay), prof = a > 0 && pay > 0 ? pay - a : null;
+  return `<div class="alog" id="alog"><div class="alh">Currently logged rax on game: ${logged}</div>
+    <div class="alh2">Log another bet placed: <span>${esc(sd.name || sd.label)}</span></div>
+    <div class="alf"><label>Rax placed<input id="af-amt" type="number" inputmode="decimal" min="0" step="10" value="${esc(String(AF.amt))}" placeholder="0"></label>
+      <label>Price %<input id="af-pct" type="number" inputmode="decimal" min="1" max="99" step="0.1" value="${esc(String(AF.pct))}"></label>
+      <label>Payout<input id="af-pay" type="number" inputmode="decimal" min="0" step="1" value="${esc(String(AF.pay))}"></label></div>
+    <div class="alp">${prof != null ? `Profit if it wins: <b class="${prof >= 0 ? 'pos' : 'neg'}">${prof >= 0 ? '+' : ''}${Math.round(prof).toLocaleString()} rax</b>` : 'Enter the rax you placed.'}</div>
+    <button type="button" class="alsave" id="af-save"${a > 0 && Number(AF.pct) > 0 ? '' : ' disabled'}>Log this bet</button><span class="note" id="af-msg"></span></div>`;
+}
+function afPaint(){ const a = Number(AF.amt), pay = Number(AF.pay), prof = a > 0 && pay > 0 ? pay - a : null, box = document.getElementById('alog'); if (!box) return;
+  const P = box.querySelector('.alp'); if (P) P.innerHTML = prof != null ? `Profit if it wins: <b class="${prof >= 0 ? 'pos' : 'neg'}">${prof >= 0 ? '+' : ''}${Math.round(prof).toLocaleString()} rax</b>` : 'Enter the rax you placed.';
+  for (const k of ['pct', 'pay']) { const el = document.getElementById('af-' + k); if (el && document.activeElement !== el) el.value = AF[k]; }
+  const b = document.getElementById('af-save'); if (b) b.disabled = !(a > 0 && Number(AF.pct) > 0); }
+document.addEventListener('input', e => { const id = e.target.id; if (!/^af-(amt|pct|pay)$/.test(id)) return; const k = id.slice(3); AF[k] = e.target.value;
+  if (k !== 'amt') AF.edited = k; const g0 = (J.games || []).find(x => x.id === AF.gid), q = g0 ? Number((derive(g0).sides[AF.si] || {}).price) : 0;
+  if (k === 'pct') { const a = Number(AF.amt), pc = Number(AF.pct); AF.pay = a > 0 && pc > 0 ? Math.round(a / (pc / 100) * 10) / 10 : ''; AF.edited = 'pct'; }
+  else if (k === 'pay') { const a = Number(AF.amt), py = Number(AF.pay); if (a > 0 && py > 0) AF.pct = Math.round(a / py * 1000) / 10; }
+  else afFill(q);
+  afPaint(); });
+document.addEventListener('click', async e => { if (e.target.id !== 'af-save') return; const a = Number(AF.amt), pc = Number(AF.pct); if (!(a > 0 && pc > 0 && pc < 100)) return;
+  await placeBet(AF.gid, AF.si, e.target, pc, a); Object.assign(AF, { amt: '', pct: '', pay: '', edited: '' });
+  const m = document.getElementById('af-msg'); if (m) m.textContent = '✓ Logged'; drawFocus(); });
 function drawAlert(raw){
   /* The alert page (Dennis, 2026-11-19): *team to take* | fair odds, the bet link, then the betting ladder -
      #u | max % | how much rax - for as many sizes as the edge supports. */
   const v = $('#alertv'); document.body.classList.add('alertmode'); v.hidden = false;
-  if (!raw) { v.innerHTML = `<div class="al"><div class="ah">Value alert<button type="button" data-fbx>All markets</button></div><div class="team">That market isn't open on Real anymore.</div></div>`; return; }
+  // Typing in the log form: leave the page as it is until they're done (the refresh would wipe the box).
+  if (document.activeElement && document.activeElement.closest && document.activeElement.closest('#alog')) return;
+  const PV = window.rbPrevPage ? window.rbPrevPage() : null;
+  const back = PV && !PV.same ? `<a class="aback" href="${esc(PV.href)}">← Back to ${esc(PV.name)}</a>` : `<button type="button" class="aback" data-fbx>← Back to ${esc(PV && PV.name || 'Predictions')}</button>`;
+  if (!raw) { v.innerHTML = back + `<div class="al"><div class="ah">Value alert<button type="button" data-fbx>All markets</button></div><div class="team">That market isn't open on Real anymore.</div></div>`; return; }
   const g = derive(raw), si = FOCUS.si != null && g.sides[FOCUS.si] ? FOCUS.si : g.sides.reduce((b, x, i) => (x.ev ?? -9) > (g.sides[b].ev ?? -9) ? i : b, 0), sd = g.sides[si];
   const nm = sd.name || sd.label, q = Number(sd.price), fair = sd.fair, ur = unitRax(), started = g.live || g.locked || (g.start && Date.parse(g.start) <= Date.now());
   const L = ladder(g, sd).filter(([, mq]) => Math.floor(mq * 100) >= 1);
   const rows = L.map(([u, mq]) => { const mx = Math.floor(mq * 100), on = q > 0 && Math.round(q * 100) <= mx;
     return `<tr class="${on ? 'on' : ''}"><td>${u}u</td><td>max ${mx}%</td><td>${ur > 0 ? Math.round(u * ur).toLocaleString() + ' rax' : '-'}</td></tr>`; }).join('');
   const ev = fair != null && q > 0 ? fair / q - 1 : null;
-  v.innerHTML = `<div class="al">
+  if (AF.gid !== g.id || AF.si !== si) Object.assign(AF, { gid: g.id, si, amt: '', pct: '', pay: '', edited: '' }); afFill(q);
+  v.innerHTML = back + `<div class="al">
     <div class="ah">${FOCUS.kind === 'sell' ? 'Over fair' : FOCUS.kind === 'add' ? 'Add more' : 'Value alert'}<button type="button" data-fbx>All markets</button></div>
     <div class="team">${esc(nm)} <span>| fair ${fair != null ? (fair * 100).toFixed(1) + '%' : '-'}${fair ? ' (' + amer(1 / fair) + ')' : ''}</span></div>
     <div class="gm">${esc(g.game || '')}${g.start ? ' · ' + new Date(g.start).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : ''}</div>
@@ -598,6 +646,7 @@ function drawAlert(raw){
     <div class="lh">Betting ladder</div>
     ${rows ? `<table>${rows}</table>` : '<div class="foot">No size is +EV at any price right now.</div>'}
     <div class="foot">${ur > 0 ? `1u = ${Math.round(ur).toLocaleString()} rax.` : 'Set your rax on Predictions to see rax amounts.'} Bet each size only while Real's price is at or under its max %. Green rows are good at the price right now.</div>
+    ${afHtml(g, si, sd)}
   </div>`;
 }
 function drawFocus(){
@@ -645,6 +694,7 @@ function naPaint(j){
 }
 function naDev(n){ $('#na-dev').innerHTML = n ? `<span>✓ Notifications on for ${n} device${n === 1 ? '' : 's'}</span><button type="button" id="na-test">Send a test</button><button type="button" id="na-test2">Test an alert tap</button>` : `<span>No device has notifications on yet.</span><a href="/notifications">Turn them on here</a>`; }
 function naOff(){ for (const [box, on] of [['na-ev', 'ev'], ['na-add', 'add'], ['na-sell', 'sell']]) $('#' + box).closest('.nbox').classList.toggle('off', !$('#' + box).checked); for (const b of document.querySelectorAll('#vn .nbox')) b.style.opacity = $('#na-on').checked ? '' : '.55'; }
+function isApp(){ try { return !!(matchMedia('(display-mode: standalone)').matches || navigator.standalone); } catch (e) { return false; } }
 async function naLoad(){ $('#na-msg').textContent = ''; try { const j = await naCall(); if (j.error) { $('#na-msg').textContent = j.error; return; } naPaint(j); } catch (e) { $('#na-msg').textContent = 'Could not load your alerts.'; } }
 function naSave(){ naOff(); clearTimeout(naT); naT = setTimeout(async () => { const v = id => Number($('#' + id).value);
   const cfg = { enabled: $('#na-on').checked, cap: v('na-cap') || 6, ev: { on: $('#na-ev').checked, minEv: (v('na-evmin') || 10) / 100, minFair: (v('na-evfair') || 0) / 100 },
