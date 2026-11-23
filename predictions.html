@@ -605,6 +605,17 @@ function afFill(q){ const a = Number(AF.amt);
   if (AF.edited !== 'pct' && AF.edited !== 'pay' && q > 0) AF.pct = Math.round(q * 1000) / 10;
   if (AF.edited !== 'pay') AF.pay = a > 0 && Number(AF.pct) > 0 ? Math.round(a / (Number(AF.pct) / 100) * 10) / 10 : '';
   else AF.pct = a > 0 && Number(AF.pay) > 0 ? Math.round(a / Number(AF.pay) * 1000) / 10 : AF.pct; }
+/* Profit line (Dennis, 2026-11-23): profit if it wins, the EV you got at that payout (against fair now) and the
+   projected profit (fair x payout - rax placed), all on one line. */
+const sgn = (v, d) => `${v >= 0 ? '+' : ''}${d}`;
+function alpLine(a, pay, fair){
+  if (!(a > 0 && pay > 0)) return 'Enter the rax you placed.';
+  const prof = pay - a, cl = v => v >= 0 ? 'pos' : 'neg';
+  let h = `Profit if it wins: <b class="${cl(prof)}">${sgn(prof, Math.round(prof).toLocaleString())} rax</b>`;
+  if (fair > 0 && fair < 1) { const ev = fair * pay / a - 1, ep = fair * pay - a;
+    h += ` · EV you got: <b class="${cl(ev)}">${sgn(ev, (ev * 100).toFixed(1))}%</b> · Projected profit: <b class="${cl(ep)}">${sgn(ep, Math.round(ep).toLocaleString())} rax</b>`; }
+  return h;
+}
 function afHtml(g, si, sd){
   const tot = g.sides.map((x, i) => [x, placedOn(g.id, i)]).filter(([, a]) => a > 0);
   const logged = tot.length ? tot.map(([x, a]) => `<b>${Math.round(a).toLocaleString()} rax</b>${g.sides.length > 1 ? ` on ${esc(x.name || x.label)}` : ''}`).join(' · ') : '<b>0 rax</b>';
@@ -614,11 +625,11 @@ function afHtml(g, si, sd){
     <div class="alf"><label>Rax placed<input id="af-amt" type="number" inputmode="decimal" min="0" step="10" value="${esc(String(AF.amt))}" placeholder="0"></label>
       <label>Price %<input id="af-pct" type="number" inputmode="decimal" min="1" max="99" step="0.1" value="${esc(String(AF.pct))}"></label>
       <label>Payout<input id="af-pay" type="number" inputmode="decimal" min="0" step="1" value="${esc(String(AF.pay))}"></label></div>
-    <div class="alp">${prof != null ? `Profit if it wins: <b class="${prof >= 0 ? 'pos' : 'neg'}">${prof >= 0 ? '+' : ''}${Math.round(prof).toLocaleString()} rax</b>` : 'Enter the rax you placed.'}</div>
+    <div class="alp">${alpLine(a, pay, sd.fair)}</div>
     <button type="button" class="alsave" id="af-save"${a > 0 && Number(AF.pct) > 0 ? '' : ' disabled'}>Log this bet</button><span class="note" id="af-msg"></span></div>`;
 }
 function afPaint(){ const a = Number(AF.amt), pay = Number(AF.pay), prof = a > 0 && pay > 0 ? pay - a : null, box = document.getElementById('alog'); if (!box) return;
-  const P = box.querySelector('.alp'); if (P) P.innerHTML = prof != null ? `Profit if it wins: <b class="${prof >= 0 ? 'pos' : 'neg'}">${prof >= 0 ? '+' : ''}${Math.round(prof).toLocaleString()} rax</b>` : 'Enter the rax you placed.';
+  const P = box.querySelector('.alp'); if (P) { const g0 = (J.games || []).find(x => x.id === AF.gid), f = g0 ? Number((derive(g0).sides[AF.si] || {}).fair) : NaN; P.innerHTML = alpLine(a, pay, f); }
   for (const k of ['pct', 'pay']) { const el = document.getElementById('af-' + k); if (el && document.activeElement !== el) el.value = AF[k]; }
   const b = document.getElementById('af-save'); if (b) b.disabled = !(a > 0 && Number(AF.pct) > 0); }
 document.addEventListener('input', e => { const id = e.target.id; if (!/^af-(amt|pct|pay)$/.test(id)) return; const k = id.slice(3); AF[k] = e.target.value;
