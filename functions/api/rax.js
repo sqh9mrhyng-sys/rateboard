@@ -9586,7 +9586,7 @@ async function collectorHealth(env, url) {
         const F = fit[L.sp] = fit[L.sp] || { per1k: [], k: [], bins: {} }; F.per1k.push(dp / dv * 1000); F.k.push(dp * v0 / dv); (F.bins[bin] = F.bins[bin] || []).push(dp / dv * 1000); }
       const fitOut = Object.fromEntries(Object.entries(fit).map(([sp, F]) => [sp, { n: F.per1k.length, per1kMed: med(F.per1k), kMed: med(F.k), bins: Object.fromEntries(Object.entries(F.bins).map(([b, a]) => [b, { n: a.length, per1kMed: med(a) }])) }]));
       return { fit: fitOut, keys: await kvj('pred_mkeys_v1'), markets: Object.keys(S).length, samples: Object.values(S).reduce((a, x) => a + x.s.length, 0), eg: Object.values(S).slice(0, 2).map(x => x.s.slice(-6)) }; })(), predLinked: await (async () => {   // linked members' Real sync - no names (2026-11-23)
-        const T = env.RS_USER_TOKENS || {}, keys = Object.keys(T).sort(); let users = {}; try { const v = await kvj('ratebrd_market_v1'); users = (typeof v === 'string' ? JSON.parse(v) : v || {}).users || {}; } catch (e) {}
+        const T = env.RS_USER_TOKENS || {}, keys = Object.keys(T).sort(); let users = {}; try { for (const r of ((await env.RATEBOARD_DB.prepare('SELECT key FROM users').all()).results || [])) users[r.key] = 1; } catch (e) {}
         const ul = new Set(Object.keys(users).map(k => k.toLowerCase().replace(/[^a-z0-9]/g, '_')));
         let A = {}; try { A = (await kvj('pred_ualert_v1')) || {}; } catch (e) {}
         const out = []; for (const k of keys) { const site = [...Object.keys(users)].find(u => u.toLowerCase().replace(/[^a-z0-9]/g, '_') === k); const x = await kvj('pred_port_v1_' + k) || (site ? await kvj('pred_port_v1_' + site.toLowerCase()) : null);
