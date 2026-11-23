@@ -2144,7 +2144,7 @@ async function runDms(env, db, auth, rows, max, force) {
     const warnHours = new Map();
     // From :25 (35 minutes before the hour).
     // Past :55 the contact message carries it instead.
-    for (const x of list) if (!x.m['warn' + x.side] && (force || (now >= x.due - 30 * 60000 && now < x.due - 10 * 60000))) { const k = force ? 'now' : x.due; (warnHours.get(k) || warnHours.set(k, []).get(k)).push(x); }
+    for (const x of list) if (!x.m['warn' + x.side] && (force || (now >= x.due - 30 * 60000 && now < x.due - 5 * 60000))) { const k = force ? 'now' : x.due; (warnHours.get(k) || warnHours.set(k, []).get(k)).push(x); }
     let warnFail = false;
     for (const [, wh0] of warnHours) {
       if (sent >= max || Date.now() - now > RUN_MS || (TICK_T0 && !force && tickLeft() - dmWaitAhead() < 6000)) break;   // never past the tick's time
@@ -2165,9 +2165,8 @@ async function runDms(env, db, auth, rows, max, force) {
     if (warnFail) return;
     // 2-4. contact: one per swap hour that has come.
     const byHour = new Map();
-    /* From :50 (10 minutes before the hour; was :55): a big hour's swap DMs
-       finish around the hour instead of 15-20 minutes after it (2026-11-13). */
-    for (const x of list) if (!x.m['done' + x.side] && now >= x.due - 10 * 60000) { const k = force ? 'now' : x.due; (byHour.get(k) || byHour.set(k, []).get(k)).push(x); }
+    /* From :55 (Dennis, 2026-11-23: "change it to :55 and DMs also don't start till :55"; was :50 since 11-13). */
+    for (const x of list) if (!x.m['done' + x.side] && now >= x.due - 5 * 60000) { const k = force ? 'now' : x.due; (byHour.get(k) || byHour.set(k, []).get(k)).push(x); }
     for (const [, hr0] of byHour) {
       if (sent >= max || Date.now() - now > RUN_MS || (TICK_T0 && !force && tickLeft() - dmWaitAhead() < 6000)) break;   // never past the tick's time
       const noWarn = hr0.filter(x => !x.m['warn' + x.side]);
