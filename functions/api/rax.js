@@ -728,6 +728,21 @@ function sideHits(aliases, name) {
     if (a === n || n.endsWith(' ' + a) || a.endsWith(' ' + n) || (a.length >= 5 && (n.includes(a) || a.includes(n)))) return true; }
   return false;
 }
+/* Spread markets (Dennis, 2026-11-23). Real's sides read "SAS -10.5" / "SAC +10.5". A book at the same line gives the
+   fair % directly (its two prices with the margin taken out). A book at a nearby line is moved to Real's line with
+   the usual model - the final margin is roughly normal around the book's implied margin, with the sport's spread
+   (NBA 12 points, college basketball 10.5, NFL 13.3, college football 15.5) - but only pregame, only within 2.5
+   points, and it counts half as much. Hockey and soccer lines (1.5 goals) only ever use the exact line. */
+const SPREAD_SD = { nba: 12, ncaam: 10.5, nfl: 13.3, ncaaf: 15.5 };
+const spLine = lbl => { const m = String(lbl || '').match(/([+-])\s?(\d+(?:\.\d+)?)\s*$/); return m ? Number(m[1] + m[2]) : (/\b(pk|pick|even)\b\s*$/i.test(String(lbl || '')) ? 0 : null); };
+const isTotalMk = m => (m.outcomes || []).some(x => /\b(over|under)\b/i.test(String(x.label || '') + ' ' + String(x.key || '')));
+const isSpreadMk = m => !isTotalMk(m) && (m.outcomes || []).length === 2 && m.outcomes.every(x => spLine(x.label) != null);
+const normCdf = x => { const t = 1 / (1 + 0.2316419 * Math.abs(x)), d = 0.3989423 * Math.exp(-x * x / 2); const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274)))); return x > 0 ? 1 - p : p; };
+const normInv = p => { p = Math.min(0.999, Math.max(0.001, p)); let lo = -4, hi = 4; for (let i = 0; i < 40; i++) { const mid = (lo + hi) / 2; if (normCdf(mid) < p) lo = mid; else hi = mid; } return (lo + hi) / 2; };
+// A book's fair chance for a side at its own line, moved to Real's line; null when it can't be used.
+const spAt = (sp, p0, bookPt, realPt, live) => { if (Math.abs(bookPt - realPt) < 0.01) return { p: p0, exact: true };
+  const sd = SPREAD_SD[sp]; if (!sd || live || Math.abs(bookPt - realPt) > 2.5) return null;
+  return { p: normCdf(normInv(p0) + (realPt - bookPt) / sd), exact: false }; };
 const isDraw = s => /^(draw|tie|x)$/i.test(String(s || '').trim());
 /* UFC and FC (Dennis, 2026-11-21: "Add UFC and FC to predictions"). Real's UFC sides are the fighters'
    initials ("KV"), so a book's fighter name counts when its first and last initials match. Real's FC
@@ -804,12 +819,23 @@ async function predOdds(env) {
       const every = fast ? (live ? 13000 : soon ? 30000 : 60000) : (live ? 20000 : soon ? 60000 : 300000);
       if (o.due[k] && now - o.due[k] < every) continue;
       o.due[k] = now;
-      try { const r = await api(`sports/${k}/odds`, `&bookmakers=${predBooks(k).join(',')}&markets=h2h&oddsFormat=decimal`);
+      /* Spreads (Dennis, 2026-11-23: Real added spread markets): asked for only while Real has a spread market open
+         in that sport (it doubles the credits for the pull). Each book's own line and prices are kept. */
+      const wantSp = Object.entries(real._spread || {}).some(([sp, on]) => on && (ODDS_SPORT[sp] === k || (sp === 'soccer' && /^soccer_/.test(k))));
+      try { const r = await api(`sports/${k}/odds`, `&bookmakers=${predBooks(k).join(',')}&markets=h2h${wantSp ? ',spreads' : ''}&oddsFormat=decimal`);
         o.credits = r.headers.get('x-requests-remaining') || o.credits; o.used = r.headers.get('x-requests-used') || o.used;
         { const d = ET_DAY_FMT.format(new Date()); o.clog = o.clog || {}; if (!o.clog[d]) { o.clog[d] = Number(o.used) || 0; const ks = Object.keys(o.clog).sort(); while (ks.length > 40) delete o.clog[ks.shift()]; } }   // credits used at each day's first pull, for the pace
         if (!r.ok) { o.errs.push(`${k} odds ${r.status}`); continue; }
-        const games = [];
+        const games = [], spreads = [];
         for (const e of await r.json()) { const books = [], refs = [], isLive = Date.parse(e.commence_time) <= Date.now();
+          { const sb = [];
+            for (const bk of (e.bookmakers || [])) { const ms = (bk.markets || []).find(x => x.key === 'spreads'), ou = (ms && ms.outcomes) || [];
+              if (ou.length !== 2 || !ou.every(x => x.price > 1 && Number.isFinite(Number(x.point)))) continue;
+              const upd = Date.parse(ms.last_update || bk.last_update || 0); if (!Number.isFinite(upd) || Date.now() - upd > (isLive ? 2 : 90) * 60000) continue;
+              if (isLive && bk.key === 'pinnacle' && !/^soccer_/.test(k)) continue;
+              if (PRED_REF[bk.key]) continue;
+              sb.push({ t: bk.title, w: predW(k, bk.key), u: upd, pt: Object.fromEntries(ou.map(x => [x.name, Number(x.point)])), d: Object.fromEntries(ou.map(x => [x.name, x.price])), p: devig(ou.map(x => [x.name, x.price])) }); }
+            if (sb.length) spreads.push({ names: [e.home_team, e.away_team].filter(Boolean), start: e.commence_time, live: isLive, bk: sb }); }
           for (const bk of (e.bookmakers || [])) { const mk0 = (bk.markets || []).find(x => x.key === 'h2h') || {}, ou = mk0.outcomes || [];
             // A line that hasn't moved in a while is stale: 3 min while live, 90 min before.
             const upd = Date.parse(mk0.last_update || bk.last_update || 0); if (!Number.isFinite(upd) || Date.now() - upd > (isLive ? 2 : 90) * 60000) continue;
@@ -821,7 +847,7 @@ async function predOdds(env) {
             for (const n of names) fair[n] = books.reduce((a, b) => a + predW(k, b.key) * (b.p[n] || 0), 0) / wt;
             games.push({ names, p: fair, src: books.length === 1 ? books[0].title : `${books.length} books`, start: e.commence_time, live: isLive, books: books.map(b => b.title), bk: books.map(b => ({ t: b.title, w: predW(k, b.key), u: b.u, p: b.p, d: b.raw })) }); }
           for (const b of refs) games.push({ names, p: b.p, src: b.title, ref: true, start: e.commence_time, live: isLive }); }
-        o.api[k] = { at: Date.now(), games, live, every }; } catch (e) { o.errs.push(`${k} odds ${e.message}`); }
+        o.api[k] = { at: Date.now(), games, spreads, live, every }; } catch (e) { o.errs.push(`${k} odds ${e.message}`); }
       await sleep(300);
     }
     o.lock = Date.now(); await save();
@@ -851,12 +877,8 @@ async function predReal(env) {
         if (st.length) { try { const S = JSON.parse((await env.RATEBOARD_KV.get('pred_settled_v1')) || '{}') || {}; let ch = false;
           for (const m of st) { const w = m.outcomes.findIndex(o => o.isWinner); if (S[m.id] == null || S[m.id].w !== w) { S[m.id] = { w, at: Date.now() }; ch = true; } }
           if (ch) { for (const k of Object.keys(S)) if (Date.now() - S[k].at > 7 * 86400000) delete S[k]; await env.RATEBOARD_KV.put('pred_settled_v1', JSON.stringify(S)); } } catch (e) {} }
-        /* Spreads (Dennis, 2026-11-23: Real added them; they were being priced as moneylines - faulty alerts). Only
-           plain win markets until spreads get their own fair: any market whose outcomes carry a line (-5.5, +3) or
-           whose type/title says spread/handicap/total is skipped. */
-        const isLine = m => /spread|handicap|total|over|under|point/i.test(String(m.marketType || m.type || m.kind || '') + ' ' + String(m.title || m.name || ''))
-          || (m.outcomes || []).some(x => /(^|\s)[+-]\s?\d+(\.\d+)?(\s|$)|\d+\.5\b|\b(over|under)\b/i.test(String(x.label || '') + ' ' + String(x.key || '') + ' ' + String(x.line ?? x.spread ?? x.handicap ?? '')) || x.line != null || x.spread != null || x.handicap != null);
-        mk = mk.filter(m => !m.isSettled && Array.isArray(m.outcomes) && m.outcomes.length >= 2 && !isLine(m)); prevMk[sp] = mk;
+        // Totals (over/under) aren't priced yet, so they're skipped; spreads get their own fair below (2026-11-23).
+        mk = mk.filter(m => !m.isSettled && Array.isArray(m.outcomes) && m.outcomes.length >= 2 && !isTotalMk(m) && !(m.outcomes.some(x => spLine(x.label) != null) && !isSpreadMk(m))); prevMk[sp] = mk;
         /* Slippage study (Dennis, 2026-11-17): how far Real's price moves per rax bet. Every read keeps each
            open market's volume and price when either changed (2 hours a market), so the move per rax can be
            measured from real bets instead of guessed. Field names are kept once to find Real's raw volume. */
@@ -874,11 +896,32 @@ async function predReal(env) {
       }
       const names = ODDS_TEAMS[sp] || {}, abbr = odds.abbr || {};
       const aliasOf = oc => [oc.key, oc.label, names[oc.key], ...(abbr[`${sp}:${oc.key}`] || [])].filter(Boolean);
-      open[sp] = (mk || []).filter(m => !m.isLocked).map(m => ({ id: m.id, sides: m.outcomes.map(oc => ({ label: oc.label, al: aliasOf(oc) })) }));
+      open[sp] = (mk || []).filter(m => !m.isLocked && !isSpreadMk(m)).map(m => ({ id: m.id, sides: m.outcomes.map(oc => ({ label: oc.label, al: aliasOf(oc) })) }));
+      open._spread = open._spread || {}; open._spread[sp] = (mk || []).some(m => !m.isLocked && isSpreadMk(m));
+      const ssrcs = sp === 'soccer' ? (odds.keys || []).filter(k => /^soccer_/.test(k)).flatMap(k => ((odds.api || {})[k] || {}).spreads || []) : (((odds.api || {})[ODDS_SPORT[sp]] || {}).spreads || []);
       const srcs = [];
       if (sp === 'soccer') { for (const k of (odds.keys || []).filter(k => /^soccer_/.test(k))) srcs.push(...(((odds.api || {})[k] || {}).games || [])); }
       else srcs.push(...(((odds.api || {})[ODDS_SPORT[sp]] || {}).games || []));
       for (const m of (mk || [])) {
+        if (isSpreadMk(m)) {
+          const oc = m.outcomes, L = oc.map(x => spLine(x.label)), hit = (x, n) => sideHits(aliasOf(x), n);
+          let ev = null, map = null;
+          for (const g of ssrcs) { const mp = oc.map(x => g.names.find(n => hit(x, n))); if (mp.some(x => !x) || mp[0] === mp[1]) continue; ev = g; map = mp; break; }
+          const bk = [];
+          if (ev) for (const b of ev.bk) { const a = spAt(sp, b.p[map[0]], b.pt[map[0]], L[0], ev.live); if (!a || !(a.p > 0 && a.p < 1)) continue;
+            bk.push({ t: b.t + (a.exact ? '' : ` (${b.pt[map[0]] > 0 ? '+' : ''}${b.pt[map[0]]})`), w: (b.w || 1) * (a.exact ? 1 : 0.5), u: b.u, p: [Math.round(a.p * 1000) / 1000, Math.round((1 - a.p) * 1000) / 1000], d: a.exact ? [b.d[map[0]], b.d[map[1]]] : [null, null], x: a.exact ? 1 : 0 }); }
+          // Needs a real anchor: at least one book at Real's exact line, or three nearby ones.
+          const okBk = bk.some(b => b.x) || bk.length >= 3 ? bk : [];
+          const wt = okBk.reduce((a, b) => a + b.w, 0), fair = wt ? [0, 1].map(i => okBk.reduce((a, b) => a + b.w * b.p[i], 0) / wt) : [null, null];
+          const oddsAt = sp === 'soccer' ? Math.max(0, ...(odds.keys || []).filter(k => /^soccer_/.test(k)).map(k => ((odds.api || {})[k] || {}).at || 0)) : (((odds.api || {})[ODDS_SPORT[sp]] || {}).at || null);
+          const hist = (m.probabilityHistory || []).slice(-24).map(h => Math.round(h.pA * 1000) / 1000), tn = i => (map && map[i]) || names[oc[i].key] || ((odds.abbr || {})[`${sp}:${oc[i].key}`] || [])[0] || oc[i].key || '';
+          const fmtL = v => (v > 0 ? '+' : '') + v;
+          out.games.push({ sport: sp, id: m.id, kind: 'spread', line: L[0], game: ((m.gameDisplay || {}).display || oc.map(x => x.key).join(' vs ')) + ' · Spread', path: (m.gameDisplay || {}).path || null,
+            link: `https://www.realapp.com/${routeId([36, 0, 0, Number(m.id)])}`, locked: !!m.isLocked, volume: m.volumeDisplay || null, start: ev ? ev.start : null, oddsAt, live: !!(ev && ev.live), hist,
+            sources: okBk.length ? [{ src: okBk.length === 1 ? okBk[0].t : `${okBk.length} books`, p: fair.map(v => Math.round(v * 1000) / 1000), books: okBk.map(b => b.t), bk: okBk }] : [], refs: [],
+            sides: oc.map((x, i) => ({ oid: x.id, key: x.key, label: x.label, logo: ((odds.logo || {})[`${sp}:${x.key}`]) || ((odds.logo || {})[`${sp}:${normTeam(tn(i))}`]) || null, name: `${tn(i)} ${fmtL(L[i])}`, color: x.backgroundColor || null, price: x.probability, fair: fair[i], ev: fair[i] != null && x.probability > 0 ? fair[i] / x.probability - 1 : null })) });
+          continue;
+        }
         const oc = m.outcomes, found = [];
         for (const g of srcs) {
           const hit = (x, n) => sideHits(aliasOf(x), n) || (sp === 'ufc' && /^[A-Z]{2,3}$/.test(String(x.key || '')) && ufcIni(n) === String(x.key).toUpperCase());
@@ -1047,6 +1090,7 @@ async function predBuildTick(env, out) {
   for (const g of (out.games || [])) {
     // Pregame only (2026-11-17: live lines lag and sent a flood of 'value' that wasn't there).
     if (g.locked || g.live) continue; const d = pbDerive(g); if (d.n < 2) continue;
+    if (g.kind === 'spread' && (g.sources || []).flatMap(x => x.bk || []).filter(b => b.x).length < 2) continue;
     const start = Date.parse(g.start || 0); if (start && now >= start) continue;
     // Holding one side of a game, never suggest another side of it (Dennis, 2026-11-17).
     const heldSides = new Set([...bets.filter(b => b.gid === g.id && !b.res && (b.amt || 0) > 0).map(b => b.side), ...(port.pos || []).filter(x => x.marketId === g.id && x.cost > 0).map(x => x.si)]);
@@ -1294,6 +1338,7 @@ async function predMemberAlerts(env, out) {
     };
     for (const g of games) {
       const d = der(g); if (d.n < 2) continue;
+      if (g.kind === 'spread' && (g.sources || []).flatMap(x => x.bk || []).filter(b => b.x).length < 2) continue;
       const hs = g.sides.map((_, si) => held(g.id, si)), holdAny = hs.some(Boolean);
       for (let si = 0; si < g.sides.length; si++) {
         const sd = g.sides[si], fair = d.fair(si), q = Number(sd.price); if (!(fair > 0.05) || !(q > 0 && q < 1)) continue;
@@ -1408,7 +1453,7 @@ const TEAM_KEEP = 20, A3_MS = 3 * 3600000;
 async function predTeamTrack(env, ev, H, now) {
   let S = {}, T = {}; try { S = JSON.parse((await env.RATEBOARD_KV.get('pred_seen_v1')) || '{}') || {}; T = JSON.parse((await env.RATEBOARD_KV.get('pred_teamhist_v1')) || '{}') || {}; } catch (e) {}
   const tk = (sp, n) => `${sp}|${String(n || '').toLowerCase().trim()}`, draw = n => /^(draw|tie|x)$/i.test(String(n || '').trim());
-  for (const g of (ev.games || [])) { if (!g.start) continue; const o = S[g.id] || {}; S[g.id] = { sp: g.sport, n: g.sides.map(x => x.name || x.label), st: g.start, rec: o.rec || 0 }; }
+  for (const g of (ev.games || [])) { if (!g.start || g.kind) continue; const o = S[g.id] || {}; S[g.id] = { sp: g.sport, n: g.sides.map(x => x.name || x.label), st: g.start, rec: o.rec || 0 }; }
   // Started games: their last pregame minute, once.
   for (const [id, o] of Object.entries(S)) { const st = Date.parse(o.st || 0); if (o.rec || !st || now < st) continue; o.rec = 1;
     const h = (H[id] || []).filter(x => x[0] < st && st - x[0] < 30 * 60000); const last = h[h.length - 1]; if (!last) continue;
@@ -9596,7 +9641,10 @@ async function collectorHealth(env, url) {
         let A = {}; try { A = (await kvj('pred_ualert_v1')) || {}; } catch (e) {}
         const out = []; for (const k of keys) { const site = [...Object.keys(users)].find(u => u.toLowerCase().replace(/[^a-z0-9]/g, '_') === k); const x = await kvj('pred_port_v1_' + k) || (site ? await kvj('pred_port_v1_' + site.toLowerCase()) : null);
           out.push({ siteAccount: ul.has(k), synced: !!(x && x.at), minsAgo: x && x.at ? Math.round((Date.now() - x.at) / 60000) : null, positions: x && x.pos ? x.pos.length : null, err: (x && x.err) || null, alerts: !!(site && A[site.toLowerCase()] && A[site.toLowerCase()].enabled), tokenLen: String(T[k] || '').length }); }
-        return { n: keys.length, siteUsers: Object.keys(users).length, list: out }; })(), predPort: await (async () => { const x = await kvj('pred_port_v1'); return x ? { at: x.at, n: (x.pos || []).length, err: x.err || null } : null; })(), predLiveBooks: await (async () => { const x = await kvj('pred_ev_v1'); return ((x && x.games) || []).filter(g => g.live).slice(0, 6).map(g => ({ game: g.game, real: g.sides.map(sd => sd.price), at: x.at, books: (g.sources || []).flatMap(z => z.bk || []).map(b => ({ t: b.t, p: b.p, ageS: b.u ? Math.round((x.at - b.u) / 1000) : null })) })); })(), jokeRestore: await kvj('joke_restore_1117'), predGames: await (async () => { const x = await kvj('pred_ev_v1'); const o = {}; for (const g of ((x && x.games) || [])) { const k = g.sport + (g.locked ? ':locked' : ':open'); o[k] = (o[k] || 0) + 1; } return o; })(), predLogo: await (async () => { const x = await kvj('pred_ev_v1'), od = await kvj('pred_odds_v2'); const sides = ((x && x.games) || []).flatMap(g => g.sides.map(sd => ({ sp: g.sport, k: sd.key, l: !!sd.logo }))); return { map: Object.keys((od && od.logo) || {}).length, mapKeys: Object.keys((od && od.logo) || {}).slice(0, 12), espn: Object.fromEntries(Object.entries((od && od.espn) || {}).map(([k, v]) => [k, (v.games || []).length + '@' + v.at])), withLogo: sides.filter(z => z.l).length, sides: sides.slice(0, 12) }; })(), predEv: await (async () => { const x = await kvj('pred_ev_v1'); return x ? { settledSeen: Object.keys((await kvj('pred_settled_v1')) || {}).length, books: (() => { const c = {}; for (const g of (x.games || [])) for (const f of (g.sources || [])) for (const b of (f.books || [])) c[b] = (c[b] || 0) + 1; return c; })(), keys: x.keys, used: x.used, live: (x.games || []).filter(g => g.live).length, srcs: (x.games || []).map(g => (g.sources || []).length).join(','), at: x.at, n: (x.games || []).length,  errs: x.errs, credits: x.credits } : null; })(), draftTest: await (async () => { let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get('draft_contests_v1')) || '[]'); } catch (e) {}
+        return { n: keys.length, siteUsers: Object.keys(users).length, list: out }; })(), predPort: await (async () => { const x = await kvj('pred_port_v1'); return x ? { at: x.at, n: (x.pos || []).length, err: x.err || null } : null; })(), predLiveBooks: await (async () => { const x = await kvj('pred_ev_v1'); return ((x && x.games) || []).filter(g => g.live).slice(0, 6).map(g => ({ game: g.game, real: g.sides.map(sd => sd.price), at: x.at, books: (g.sources || []).flatMap(z => z.bk || []).map(b => ({ t: b.t, p: b.p, ageS: b.u ? Math.round((x.at - b.u) / 1000) : null })) })); })(), jokeRestore: await kvj('joke_restore_1117'), predSpread: await (async () => { const x = await kvj('pred_ev_v1'), g = ((x && x.games) || []).filter(v => v.kind === 'spread' && !v.locked), bk = v => (v.sources || []).flatMap(q => q.bk || []);   // counts only (2026-11-23)
+        const pr = g.filter(v => v.sides[0].fair != null), evs = pr.flatMap(v => v.sides.map(q => q.ev)).filter(v => v != null);
+        return { open: g.length, priced: pr.length, alertable: g.filter(v => bk(v).filter(b => b.x).length >= 2).length, books: pr.map(v => bk(v).length).sort((a, b) => a - b)[Math.floor(pr.length / 2)] ?? null, exact: pr.map(v => bk(v).filter(b => b.x).length).sort((a, b) => a - b)[Math.floor(pr.length / 2)] ?? null,
+          evMax: evs.length ? Math.round(Math.max(...evs) * 1000) / 10 : null, evOver10: evs.filter(v => v > 0.10).length, bySport: g.reduce((a, v) => (a[v.sport] = (a[v.sport] || 0) + 1, a), {}) }; })(), predGames: await (async () => { const x = await kvj('pred_ev_v1'); const o = {}; for (const g of ((x && x.games) || [])) { const k = g.sport + (g.locked ? ':locked' : ':open'); o[k] = (o[k] || 0) + 1; } return o; })(), predLogo: await (async () => { const x = await kvj('pred_ev_v1'), od = await kvj('pred_odds_v2'); const sides = ((x && x.games) || []).flatMap(g => g.sides.map(sd => ({ sp: g.sport, k: sd.key, l: !!sd.logo }))); return { map: Object.keys((od && od.logo) || {}).length, mapKeys: Object.keys((od && od.logo) || {}).slice(0, 12), espn: Object.fromEntries(Object.entries((od && od.espn) || {}).map(([k, v]) => [k, (v.games || []).length + '@' + v.at])), withLogo: sides.filter(z => z.l).length, sides: sides.slice(0, 12) }; })(), predEv: await (async () => { const x = await kvj('pred_ev_v1'); return x ? { settledSeen: Object.keys((await kvj('pred_settled_v1')) || {}).length, books: (() => { const c = {}; for (const g of (x.games || [])) for (const f of (g.sources || [])) for (const b of (f.books || [])) c[b] = (c[b] || 0) + 1; return c; })(), keys: x.keys, used: x.used, live: (x.games || []).filter(g => g.live).length, srcs: (x.games || []).map(g => (g.sources || []).length).join(','), at: x.at, n: (x.games || []).length,  errs: x.errs, credits: x.credits } : null; })(), draftTest: await (async () => { let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get('draft_contests_v1')) || '[]'); } catch (e) {}
       const out = []; for (const c of l.filter(c => c.type === 'sport').slice(-30)) { const x = await kvj(`draft_v1_sport_${c.id}`);
         out.push({ id: c.id, sport: c.sport, day: c.day, n: x && x.players && x.players.length, teams: x && x.players ? [...new Set(x.players.map(p => p.team))].join(' ') : null }); }
       return { n: l.length, games: l.filter(c => c.type === 'game').length, gameDays: l.filter(c => c.type === 'game').map(c => `${c.id}:${c.sport}:${c.day}`).join(' '), sport: out }; })(), modVoid: await kvj('mod_void_1115_n'), botFails6h: await (async () => { try { const rows = ((await env.RATEBOARD_DB.prepare('SELECT at, kind, msg FROM bot_log WHERE at > ? ORDER BY at').bind(Date.now() - 6 * 3600000).all()).results) || [];

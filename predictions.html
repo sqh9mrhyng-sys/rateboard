@@ -363,6 +363,7 @@
 <p>On a Real game market each side has a %. That % is what you pay: a side at <b>40%</b> costs 40 to win 100 (your 40 back plus 60). The lower the %, the bigger the payout and the less likely it is to hit.</p>
 <h2>Step 2 - The fair price</h2>
 <p>Sportsbooks build a margin into their odds (both sides add up to more than 100%). We take that margin out of each book so its two sides add up to exactly 100%, then average the books: <b>Pinnacle (counts double, before the game only - its live line lags), BetMGM, Novig, DraftKings, FanDuel, Kalshi and Caesars</b>. That average is the <b>fair %</b> - the best guess at the real chance. It shows under each team's name. Polymarket shows for comparison but isn't in the average.</p>
+<p><b>Spreads:</b> a spread market ("SAS -10.5") is priced from the books' spread odds at that same line. A book at a nearby line (within 2.5 points, before the game only) is moved to Real's line and counts half. Alerts need at least two books at the exact line.</p>
 <h2>Step 3 - The edge</h2>
 <p>EV = fair % ÷ Real's % - 1. If a team is <b>50% fair</b> but Real sells it at <b>40%</b>, EV = 50 ÷ 40 - 1 = <b>+25%</b>. If Real's % is higher than fair, EV is negative and you skip it.</p>
 <h2>Step 4 - Units (how much to bet)</h2>
@@ -584,7 +585,7 @@ const stable = (a, b) => (SP_ORDER.indexOf(a.sport) - SP_ORDER.indexOf(b.sport))
 let endOpen = false;
 document.addEventListener('toggle', e => { if (e.target.classList && e.target.classList.contains('endbox')) endOpen = e.target.open; }, true);
 function endCard(g){
-  return `<div class="g"><div class="gh"><div style="min-width:0;flex:1"><span class="nm">${esc(g.game)}</span><div class="meta"><span class="tag">${esc(SPN[g.sport] || g.sport)}</span><span class="tag lock">${g.ended ? 'Ended' : 'Locked'}</span></div></div></div>
+  return `<div class="g"><div class="gh"><div style="min-width:0;flex:1"><span class="nm">${esc(g.game)}</span><div class="meta"><span class="tag">${esc(SPN[g.sport] || g.sport)}</span>${g.kind === 'spread' ? '<span class="tag" title="Fair % from books at this exact spread; books at a nearby line are moved to it and count half">Spread</span>' : ''}<span class="tag lock">${g.ended ? 'Ended' : 'Locked'}</span></div></div></div>
     ${g.sides.map((s, si) => `<div class="sd"><span class="t">${logo(s)}<span>${esc(s.name || s.label)}<small class="fr">Fair <b>${pc(s.fair)}</b></small></span></span><span class="c">Last<b>${pw(s.price)}</b></span><span class="ev nil"><button class="place" data-g="${g.id}" data-s="${si}">Log bet</button></span></div>
       ${betForm && betForm.gid === g.id && betForm.si === si ? `<form class="bf" data-g="${g.id}" data-s="${si}"><label>Avg %<input name="pct" type="number" inputmode="numeric" min="1" max="99" step="1" value="${betForm.pct}" required></label><label>Rax bet<input name="amt" type="number" inputmode="numeric" min="1" step="1" value="${betForm.amt}" required></label><button type="submit" class="place">Enter</button><button type="button" class="bfx" aria-label="Cancel">✕</button></form>` : ''}`).join('')}</div>`;
 }
