@@ -138,7 +138,7 @@
   .nmode{grid-template-columns:1fr 1fr;margin:10px 0} #na-simple[hidden],#na-custom[hidden]{display:none} .nth{font-size:12px;font-weight:800;color:var(--mute);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px} .ntg{display:grid;grid-template-columns:auto auto auto auto;gap:4px 14px;font-size:14px;justify-content:start} .ntg span{color:var(--mute);white-space:nowrap} .ntg b{white-space:nowrap} .nft{margin:8px 0 0;font-size:12.5px;color:var(--mute);line-height:1.45} .ncap label{display:flex;align-items:center;justify-content:space-between;gap:10px;font-weight:700;font-size:14px} .ncap input{width:70px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 8px;font:inherit;font-size:16px}
   #vopts[hidden]{display:none} #vopts{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px} #vopts label{display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:14px;cursor:pointer}
   body.h-fair .sd .fr, body.h-poly .sd .ref, body.h-real .sd .c, body.h-lad .bp .lad,
-  body.h-books .ft .srcs, body.h-books .bd, body.h-chart .ft .src, body.h-bet .bp .place, body.h-chips .gh .meta, body.h-avg .sd .x3{display:none}
+  body.h-books .ft .srcs, body.h-books .bd, body.h-chart .ft .src, body.h-bet .bp .place, body.h-chips .gh .meta, body.h-avg .sd .x3, body.h-avg .sd .xt{display:none}
   body.h-lad.h-bet .bp, body.h-books.h-chart .ft{display:none}
   body.h-real .sd{grid-template-columns:1fr 104px}
   #bsum .pp{display:block;font-size:13px;font-weight:800;margin-top:2px} #bsum .pp.pos{color:var(--good)} #bsum .pp.neg{color:var(--bad)}
@@ -176,6 +176,11 @@
   .wrap{max-width:760px}
   .top{align-items:center;margin:6px 0 4px} h1{font-size:22px;letter-spacing:-.02em;margin:0}
   .pulse{background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:4px 10px;font-size:11.5px}
+  /* Cleanup (Dennis, 2026-11-23: "it's getting out of hand"). */
+  .top{flex-wrap:nowrap} .top h1{white-space:nowrap} .sd .t>span:last-child{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.25} .sd .t>span:last-child>small{white-space:normal}
+  .gh .meta{flex-wrap:wrap!important;overflow:visible!important;row-gap:0} .tabs.t5 button{flex:1 1 0;min-width:0} .psync .note:empty{display:none}
+  .ppos{margin:8px 0 10px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px} .ppos>summary{cursor:pointer;font-size:13px;font-weight:700;color:var(--mute)} .ppos[open]>summary{margin-bottom:8px}
+  @media(max-width:520px){h1{font-size:20px!important} .pulse{padding:4px 8px;font-size:11px}}
   .pwrap{display:inline-flex;align-items:center;gap:6px} .rfr{width:30px;height:30px;border-radius:50%;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:16px;line-height:1;padding:0;cursor:pointer;display:grid;place-items:center} .rfr b{display:block} .rfr.on b{animation:rfspin .8s linear infinite} @keyframes rfspin{to{transform:rotate(360deg)}}
   .tabs.t5 button{font-size:12.5px;padding:8px 3px!important;flex:1 0 auto} .tabs.t5{gap:2px}
   .tabs{display:flex!important;gap:4px;overflow-x:auto;scrollbar-width:none;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:4px;margin:10px 0 8px}
@@ -284,7 +289,7 @@
 <body><div class="wrap">
 <div class="top"><h1>Predictions EV</h1><span class="pwrap"><span class="pulse" id="pulse"><i></i><span id="ago">-</span></span><button type="button" id="rfr" class="rfr" aria-label="Refresh" title="Refresh"><b>&#8635;</b></button></span></div>
 <div id="alertv" hidden></div>
-<div class="tabs" id="tabs"><button data-t="m" aria-pressed="true">Markets</button><button data-t="b" aria-pressed="false">My bets <span id="bn"></span></button><button data-t="r" aria-pressed="false" hidden>Arbitrage <span id="rn"></span></button><button data-t="f" aria-pressed="false">Request/Report <span id="fn"></span></button><button data-t="n" aria-pressed="false" hidden>Notifications</button><button data-t="g" aria-pressed="false">Guide</button><button data-t="a" aria-pressed="false" hidden>Access</button></div>
+<div class="tabs" id="tabs"><button data-t="m" aria-pressed="true">Markets</button><button data-t="b" aria-pressed="false">My bets <span id="bn"></span></button><button data-t="r" aria-pressed="false" hidden>Arbitrage <span id="rn"></span></button><button data-t="f" aria-pressed="false">Report <span id="fn"></span></button><button data-t="n" aria-pressed="false" hidden>Alerts</button><button data-t="g" aria-pressed="false">Guide</button><button data-t="a" aria-pressed="false" hidden>Access</button></div>
 <div id="vm">
 <div id="fbx" class="fbx" hidden></div>
 <details class="setbox" id="setbox"><summary><span class="st1">Your rax</span><b id="setsum">Set your rax for unit sizes</b><span class="st2">Edit</span></summary>
@@ -550,7 +555,7 @@ function tick(){
   if(!J || !J.at) return;
   const s = Math.max(0, Math.round((Date.now() - J.at) / 1000));
   const oa = Math.max(0, ...(J.games || []).map(g => g.oddsAt || 0)), os = oa ? Math.max(0, Math.round((Date.now() - oa) / 1000)) : null;
-  $('#ago').textContent = `Real ${s < 60 ? s + 's' : Math.round(s / 60) + 'm'} ago${os != null ? ` · Books ${os < 90 ? os + 's' : Math.round(os / 60) + 'm'} ago` : ''}`;
+  $('#ago').textContent = `Real ${s < 60 ? s + 's' : Math.round(s / 60) + 'm'}${os != null ? ` · Books ${os < 90 ? os + 's' : Math.round(os / 60) + 'm'}` : ''}`; $('#pulse').title = 'How long ago Real\'s prices and the sportsbook odds were read';
   $('#pulse').classList.toggle('stale', s > 60);
 }
 /* Your own books (2026-11-16): the fair % is worked out again in the page from only the books you
@@ -657,7 +662,7 @@ function afHtml(g, si, sd){
   const chk = hasPort() ? `<div class="achk"><button type="button" id="af-check">Check my bets</button><span class="note" id="af-chkmsg">${PORT && PORT.at ? `Real checked ${Math.max(0, Math.round((Date.now() - PORT.at) / 60000))} min ago` : ''}</span></div>` : '';
   const a = Number(AF.amt), pay = Number(AF.pay), prof = a > 0 && pay > 0 ? pay - a : null;
   return `<div class="alog" id="alog">${chk}<div class="alh">${hasPort() ? 'You have on this game' : 'Currently logged rax on game'}: ${logged}</div>
-    <div class="alh2">Log another bet placed: <span>${esc(sd.name || sd.label)}</span></div>
+    <div class="alh2">Log a bet on <span>${esc(sd.name || sd.label)}</span></div>
     <div class="alf"><label>Rax placed<input id="af-amt" type="number" inputmode="decimal" min="0" step="10" value="${esc(String(AF.amt))}" placeholder="0"></label>
       <label>Price %<input id="af-pct" type="number" inputmode="decimal" min="1" max="99" step="0.1" value="${esc(String(AF.pct))}"></label>
       <label>Payout<input id="af-pay" type="number" inputmode="decimal" min="0" step="1" value="${esc(String(AF.pay))}"></label></div>
@@ -709,7 +714,7 @@ function drawAlert(raw){
     ${g.link ? `<a class="bet" href="${esc(g.link)}" target="_blank" rel="noopener">Bet ${esc(nm)} on Real →</a>` : ''}
     <div class="lh">Betting ladder</div>
     ${rows ? `<table>${rows}</table>` : '<div class="foot">No size is +EV at any price right now.</div>'}
-    <div class="foot">${ur > 0 ? `1u = ${Math.round(ur).toLocaleString()} rax.` : 'Set your rax on Predictions to see rax amounts.'} Bet each size only while Real's price is at or under its max %. Green rows are good at the price right now.</div>
+    <div class="foot">${ur > 0 ? `1u = ${Math.round(ur).toLocaleString()} rax.` : 'Set your rax on Predictions to see rax amounts.'} Green rows are good at Real's price right now.</div>
     ${afHtml(g, si, sd)}
   </div>`;
 }
@@ -787,13 +792,13 @@ function drawPort(){
   const pf = PORT.perf || {}, pl = k => pf[k] ? `<span class="${pf[k].pnl >= 0 ? 'pos' : 'neg'}">${sg(pf[k].pnl)}</span>` : '-';
   const ago = PORT.at ? Math.max(0, Math.round((Date.now() - PORT.at) / 60000)) : null;
   box.innerHTML = `<div class="sph"><span>Your Real portfolio</span><span class="note">${ago == null ? 'never synced' : ago < 1 ? 'synced just now' : 'synced ' + (ago < 60 ? ago + ' min' : Math.round(ago / 60) + 'h') + ' ago'}${PORT.err ? ' · ' + esc(PORT.err) : ''}</span></div>
-    <div class="psync"><button type="button" id="psync" class="place">Sync from Real</button><span class="note" id="psyncmsg">${PORT.synced ? `My bets matched to Real: ${PORT.synced.updated} updated, ${PORT.synced.added} added${PORT.synced.notOnReal ? `, ${PORT.synced.notOnReal} not on Real` : ''}.` : 'Pulls your open positions from Real.'}</span></div>
-    <div class="psum"><div><b>${fmt(cost)}</b><span>in play · ${rows.length} position${rows.length === 1 ? '' : 's'}</span></div><div><b class="${evRax >= 0 ? 'pos' : 'neg'}">${sg(evRax)}</b><span>EV in rax now${fc ? ` (${sp(evRax / fc)})` : ''}</span></div>
-      <div><b>${ir.length ? sp(evIn) : '-'}</b><span>EV when bought</span></div><div><b>${fmt(val)}</b><span>worth now · pays ${fmt(pays)}</span></div><div><b>${pl('1d')}</b><span>today</span></div><div><b>${pl('1w')}</b><span>this week</span></div></div>
+    <div class="psync"><button type="button" id="psync" class="place">Sync from Real</button><span class="note" id="psyncmsg">${PORT.synced ? `My bets matched to Real: ${PORT.synced.updated} updated, ${PORT.synced.added} added${PORT.synced.notOnReal ? `, ${PORT.synced.notOnReal} not on Real` : ''}.` : ''}</span></div>
+    <div class="psum"><div><b class="${evRax >= 0 ? 'pos' : 'neg'}">${sg(evRax)}</b><span>EV now${fc ? ` (${sp(evRax / fc)})` : ''}</span></div><div><b>${pl('1d')}</b><span>today</span></div><div><b>${pl('1w')}</b><span>this week</span></div></div>
+    <details class="ppos"${OPENP.has('_pos') ? ' open' : ''} data-pk="_pos"><summary>${rows.length} position${rows.length === 1 ? '' : 's'} on Real · worth ${fmt(val)} · bought at ${ir.length ? sp(evIn) : '-'} EV</summary>
     ${rows.map(r => `<div class="prow"><div class="pt">${r.g ? logo(r.g.sides[r.si] || { name: r.team }, 'sm') : logo({ name: String(r.team || '').slice(0, 3).toUpperCase() }, 'sm')}<span><b>${esc((r.g && r.g.sides[r.si] && (r.g.sides[r.si].name || r.g.sides[r.si].label)) || r.team || '')}</b><small>${esc(r.game || (r.g && r.g.game) || '')}${r.nTrades ? ` · ${r.nTrades} trade${r.nTrades === 1 ? '' : 's'}` : ''}</small></span>
       <span class="pev ${r.evNow == null ? '' : r.evNow >= 0 ? 'pos' : 'neg'}">${r.evNow == null ? '-' : sp(r.evNow)}<small>${r.evRax == null ? 'EV now' : sg(r.evRax) + ' rax'}</small></span>${r.link ? `<a class="plink" href="${esc(r.link)}" target="_blank" rel="noopener" aria-label="Open on Real">↗</a>` : ''}</div>
       <div class="pg"><span>Cost<b>${fmt(r.cost)}</b></span><span>Avg<b>${r.avg ? pc(r.avg) : '-'}</b></span><span>Real now<b>${r.price ? pw(r.price) : '-'}</b></span><span>Fair now<b>${r.fair != null ? pc(r.fair) : '-'}</b></span><span>Pays<b>${fmt(r.pays)}</b></span><span>When bought<b>${r.evIn != null ? sp(r.evIn) : '-'}</b></span></div>
-      ${(r.trades || []).length ? `<details class="pbuys"${OPENP.has(r.k) ? ' open' : ''} data-pk="${esc(r.k)}"><summary>${r.trades.length} trade${r.trades.length === 1 ? '' : 's'} · tap to see each</summary>${r.trades.slice().reverse().map(x => `<div class="ptr"><span>${x.at ? new Date(x.at).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '-'}</span><span>${x.buy ? 'Bought' : 'Sold'} <b>${fmt(x.amt)}</b></span><span>at <b>${x.price ? (x.est ? '≈' : '') + pc(x.price) : '-'}</b></span><span>fair ${x.fair != null ? pc(x.fair) : '-'}${x.fairSrc === 'logged' ? '<sup title="From the bet you logged - before the site kept fair history">*</sup>' : ''}</span><span class="${x.ev == null ? '' : x.ev >= 0 ? 'pos' : 'neg'}">${x.ev != null ? sp(x.ev) : '-'}</span></div>`).join('')}</details>` : ''}</div>`).join('') || '<div class="empty">No open positions on Real.</div>'}`;
+      ${(r.trades || []).length ? `<details class="pbuys"${OPENP.has(r.k) ? ' open' : ''} data-pk="${esc(r.k)}"><summary>${r.trades.length} trade${r.trades.length === 1 ? '' : 's'} · tap to see each</summary>${r.trades.slice().reverse().map(x => `<div class="ptr"><span>${x.at ? new Date(x.at).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '-'}</span><span>${x.buy ? 'Bought' : 'Sold'} <b>${fmt(x.amt)}</b></span><span>at <b>${x.price ? (x.est ? '≈' : '') + pc(x.price) : '-'}</b></span><span>fair ${x.fair != null ? pc(x.fair) : '-'}${x.fairSrc === 'logged' ? '<sup title="From the bet you logged - before the site kept fair history">*</sup>' : ''}</span><span class="${x.ev == null ? '' : x.ev >= 0 ? 'pos' : 'neg'}">${x.ev != null ? sp(x.ev) : '-'}</span></div>`).join('')}</details>` : ''}</div>`).join('') || '<div class="empty">No open positions on Real.</div>'}</details>`;
   // Sort sits with the portfolio for you (it's below the list otherwise).
   { const sl = SORT_LBL || (SORT_LBL = document.querySelector('.bstat label')); const ps = box.querySelector('.psync'); if (sl && ps) ps.appendChild(sl); }
 }
@@ -1034,7 +1039,7 @@ $('#va').addEventListener('click', async e => { const b = e.target.closest('butt
   await accLoad(b.dataset.add ? '&add=' + encodeURIComponent(b.dataset.add) : '&del=' + encodeURIComponent(b.dataset.del)); if (b.dataset.add) { $('#aq').value = ''; $('#ares').innerHTML = ''; } });
 
 /* Card view (Dennis, 2026-11-17). Full = everything; Clean = the game and EV only; Custom = pick. */
-const VIEW_PARTS = [['fair', 'Fair %'], ['real', "Real's price"], ['poly', 'Polymarket'], ['lad', 'Unit ladder'], ['books', 'Books & breakdown'], ['chart', 'Price chart'], ['bet', 'Bet placed button'], ['chips', 'Sport, time & volume'], ['avg', '3-hour average']];
+const VIEW_PARTS = [['fair', 'Fair %'], ['real', "Real's price"], ['poly', 'Polymarket'], ['lad', 'Unit ladder'], ['books', 'Books & breakdown'], ['chart', 'Price chart'], ['bet', 'Bet placed button'], ['chips', 'Sport, time & volume'], ['avg', '3-hour average & team history']];
 /* Clean (Dennis, 2026-11-17): fair %, Real's price, units & rax, the Bet placed button and the sport/time/volume
    tags stay; Polymarket, the ladder, books and the chart go. */
 const CLEAN_HIDE = ['poly', 'lad', 'books', 'chart', 'avg'];   // 3h average: Full and Custom only (Dennis, 2026-11-23)
