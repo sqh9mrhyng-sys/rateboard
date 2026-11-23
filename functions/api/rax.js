@@ -851,7 +851,12 @@ async function predReal(env) {
         if (st.length) { try { const S = JSON.parse((await env.RATEBOARD_KV.get('pred_settled_v1')) || '{}') || {}; let ch = false;
           for (const m of st) { const w = m.outcomes.findIndex(o => o.isWinner); if (S[m.id] == null || S[m.id].w !== w) { S[m.id] = { w, at: Date.now() }; ch = true; } }
           if (ch) { for (const k of Object.keys(S)) if (Date.now() - S[k].at > 7 * 86400000) delete S[k]; await env.RATEBOARD_KV.put('pred_settled_v1', JSON.stringify(S)); } } catch (e) {} }
-        mk = mk.filter(m => !m.isSettled && Array.isArray(m.outcomes) && m.outcomes.length >= 2); prevMk[sp] = mk;
+        /* Spreads (Dennis, 2026-11-23: Real added them; they were being priced as moneylines - faulty alerts). Only
+           plain win markets until spreads get their own fair: any market whose outcomes carry a line (-5.5, +3) or
+           whose type/title says spread/handicap/total is skipped. */
+        const isLine = m => /spread|handicap|total|over|under|point/i.test(String(m.marketType || m.type || m.kind || '') + ' ' + String(m.title || m.name || ''))
+          || (m.outcomes || []).some(x => /(^|\s)[+-]\s?\d+(\.\d+)?(\s|$)|\d+\.5\b|\b(over|under)\b/i.test(String(x.label || '') + ' ' + String(x.key || '') + ' ' + String(x.line ?? x.spread ?? x.handicap ?? '')) || x.line != null || x.spread != null || x.handicap != null);
+        mk = mk.filter(m => !m.isSettled && Array.isArray(m.outcomes) && m.outcomes.length >= 2 && !isLine(m)); prevMk[sp] = mk;
         /* Slippage study (Dennis, 2026-11-17): how far Real's price moves per rax bet. Every read keeps each
            open market's volume and price when either changed (2 hours a market), so the move per rax can be
            measured from real bets instead of guessed. Field names are kept once to find Real's raw volume. */
