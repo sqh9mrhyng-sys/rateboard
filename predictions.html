@@ -176,6 +176,7 @@
   .wrap{max-width:760px}
   .top{align-items:center;margin:6px 0 4px} h1{font-size:22px;letter-spacing:-.02em;margin:0}
   .pulse{background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:4px 10px;font-size:11.5px}
+  .pwrap{display:inline-flex;align-items:center;gap:6px} .rfr{width:30px;height:30px;border-radius:50%;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:16px;line-height:1;padding:0;cursor:pointer;display:grid;place-items:center} .rfr b{display:block} .rfr.on b{animation:rfspin .8s linear infinite} @keyframes rfspin{to{transform:rotate(360deg)}}
   .tabs.t5 button{font-size:12.5px;padding:8px 3px!important;flex:1 0 auto} .tabs.t5{gap:2px}
   .tabs{display:flex!important;gap:4px;overflow-x:auto;scrollbar-width:none;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:4px;margin:10px 0 8px}
   .tabs::-webkit-scrollbar{display:none}
@@ -281,7 +282,7 @@
 <meta name="theme-color" content="#141925">
 </head>
 <body><div class="wrap">
-<div class="top"><h1>Predictions EV</h1><span class="pulse" id="pulse"><i></i><span id="ago">-</span></span></div>
+<div class="top"><h1>Predictions EV</h1><span class="pwrap"><span class="pulse" id="pulse"><i></i><span id="ago">-</span></span><button type="button" id="rfr" class="rfr" aria-label="Refresh" title="Refresh"><b>&#8635;</b></button></span></div>
 <div id="alertv" hidden></div>
 <div class="tabs" id="tabs"><button data-t="m" aria-pressed="true">Markets</button><button data-t="b" aria-pressed="false">My bets <span id="bn"></span></button><button data-t="r" aria-pressed="false" hidden>Arbitrage <span id="rn"></span></button><button data-t="f" aria-pressed="false">Request/Report <span id="fn"></span></button><button data-t="n" aria-pressed="false" hidden>Notifications</button><button data-t="g" aria-pressed="false">Guide</button><button data-t="a" aria-pressed="false" hidden>Access</button></div>
 <div id="vm">
@@ -535,7 +536,7 @@ function when(g){
   return `<span class="tag">${esc(d.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }))}</span>`;
 }
 async function load(){
-  try{ const t = ls.get('ratebrd_token_v1') || ''; J = await (await fetch('/api/swaps?op=predev', { headers: t ? { 'x-rb-token': t } : {} })).json(); }catch(e){ J = { error: 'Could not reach the site.' }; }
+  try{ const t = ls.get('ratebrd_token_v1') || ''; J = await (await fetch('/api/swaps?op=predev', { headers: t ? { 'x-rb-token': t } : {}, cache: 'no-store' })).json(); }catch(e){ J = { error: 'Could not reach the site.' }; }
   try{ setSlipFit(J && J.slipFit); }catch(e){}
   if(J.error){ $('#list').innerHTML = `<div class="empty">${/sign in/i.test(J.error) ? 'Sign in first - <a href="/?next=/predictions">sign in</a>.' : esc(J.error)}</div>`; return; }
   applyMe(J.me); autoPort(); try { localStorage.setItem('rb_pred_alerts', (J.owner || J.port) ? '1' : '0'); } catch (e) {} /* Notifications tab (Dennis, 2026-11-23): everyone, but only inside the installed web app - push alerts only
@@ -1081,6 +1082,11 @@ function applyMe(m){
 $('#upct').addEventListener('change', e => { UP = Number(e.target.value) || 1; ls.set('pred_upct', String(UP)); saveMe(); bankNote(); if (J && J.games) draw(); });
 bankNote();
 $('#bank').addEventListener('input', e => { bank = Math.max(0, Number(e.target.value) || 0); ls.set('pred_bank', String(bank)); saveMe(); bankNote(); if (J && J.games) draw(); });
+/* Refresh (Dennis, 2026-11-23): pulls the server's latest saved numbers right now and redraws everything, for when
+   the page has drifted or stopped updating. */
+$('#rfr').addEventListener('click', async () => { const b = $('#rfr'); if (b.classList.contains('on')) return; b.classList.add('on');
+  try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); await Promise.all([load(), betsCall(null)]); if (hasPort()) await loadPort(); drawFocus(); } catch (e) {}
+  setTimeout(() => b.classList.remove('on'), 400); });
 betsCall(); load(); setInterval(load, 10000); setInterval(() => { const a = document.activeElement; if (!(a && a.dataset && (a.dataset.amt || a.dataset.pay))) betsCall(); }, 60000); setInterval(tick, 1000);
 </script>
 </body>
