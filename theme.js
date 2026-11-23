@@ -120,3 +120,40 @@ window.addEventListener('pageshow', rbNavSoon);
   function later() { setTimeout(home, 1500); }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', later); else later();
 })();
+
+/* Stuck page changes in the home-screen app (Dennis, 2026-11-23: tapped Board from the menu on Admin and the
+   screen froze). iOS keeps showing the old page until the new one arrives, and the app has no reload button,
+   so a slow or dropped load looked like a freeze. If a tapped page hasn't opened after 7 seconds, a bar offers
+   Try again or Stay here. */
+(function () {
+  var app = false; try { app = window.navigator.standalone === true || matchMedia('(display-mode: standalone)').matches; } catch (e) {}
+  if (!app || window.top !== window) return;
+  var timer = null, bar = null;
+  function clear() { clearTimeout(timer); timer = null; if (bar) { bar.remove(); bar = null; } }
+  function show(href, name) {
+    if (bar) bar.remove();
+    bar = document.createElement('div');
+    bar.style.cssText = 'position:fixed;left:12px;right:12px;bottom:calc(14px + env(safe-area-inset-bottom));z-index:10000;display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:12px 14px;border-radius:12px;background:var(--panel,#161c28);color:var(--ink,#e8ecf3);border:1px solid var(--accent,#E8A33D);font:600 14px system-ui,-apple-system,sans-serif;box-shadow:0 10px 28px rgba(0,0,0,.5)';
+    var bs = 'border:1px solid var(--line,#2a3346);background:var(--panel2,#1d2433);color:var(--ink,#e8ecf3);border-radius:9px;padding:8px 12px;font:700 14px system-ui,-apple-system,sans-serif';
+    bar.innerHTML = '<span style="flex:1 1 160px"></span><button type="button" data-a="retry" style="' + bs + ';border-color:var(--accent,#E8A33D)">Try again</button><button type="button" data-a="stay" style="' + bs + '">Stay here</button>';
+    bar.firstChild.textContent = (name ? name : 'That page') + ' is taking a while to open.';
+    bar.addEventListener('click', function (e) {
+      var a = e.target.closest('button'); if (!a) return;
+      if (a.dataset.a === 'retry') { clear(); try { window.stop(); } catch (x) {} go(href, name); }
+      else { clear(); try { window.stop(); } catch (x) {} }
+    });
+    document.body.appendChild(bar);
+  }
+  function go(href, name) { clearTimeout(timer); timer = setTimeout(function () { show(href, name); }, 7000); location.href = href; }
+  document.addEventListener('click', function (e) {
+    if (e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey) return;
+    var a = e.target.closest && e.target.closest('a[href]'); if (!a || a.target === '_blank' || a.hasAttribute('download')) return;
+    var u; try { u = new URL(a.getAttribute('href'), location.href); } catch (x) { return; }
+    if (u.origin !== location.origin) return;
+    if (u.pathname === location.pathname && u.search === location.search) return;   // same page (hash links)
+    var name = (a.textContent || '').trim().slice(0, 40);
+    clearTimeout(timer); timer = setTimeout(function () { show(u.href, name); }, 7000);
+  });
+  addEventListener('pagehide', clear);
+  addEventListener('pageshow', clear);
+})();
