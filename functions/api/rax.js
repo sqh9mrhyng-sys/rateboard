@@ -936,6 +936,7 @@ async function predReal(env) {
     try { await recDiag(env); } catch (e) {}
     try { await cbbAgg(env); } catch (e) {}
     try { await diskTidy(env); } catch (e) {}
+    try { await linkCheckOnce(env); } catch (e) {}
     try { await predSlipFit(env); } catch (e) {}
     // Nothing open to bet on (only locked markets left): one read a minute is enough.
     if (!out.games.some(g => !g.locked && !g.ended)) break;
@@ -1158,6 +1159,16 @@ async function cbbAgg(env) {
     const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, ak, body), ek = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, pk, raw);
     await env.RATEBOARD_KV.put(K, JSON.stringify({ k: b64(ek), iv: b64(iv), ct: b64(ct) }), { expirationTtl: 86400 });
   } catch (e) { await env.RATEBOARD_KV.put(K, JSON.stringify({ err: 'encrypt: ' + String(e.message || e).slice(0, 120) }), { expirationTtl: 3600 }); }
+}
+/* One-off check (Dennis, 2026-11-23: "make sure his account is hooked up correctly"): a linked member who has never
+   synced gets one Real portfolio read now, so a bad token shows up as an error on health before he notices. */
+async function linkCheckOnce(env) {
+  const K = 'diag_linkcheck_1123'; try { if (await env.RATEBOARD_KV.get(K)) return; } catch (e) { return; }
+  await env.RATEBOARD_KV.put(K, '1', { expirationTtl: 86400 });
+  const T = env.RS_USER_TOKENS || {}; let rows = []; try { rows = (await env.RATEBOARD_DB.prepare('SELECT key FROM users').all()).results || []; } catch (e) { return; }
+  for (const k of Object.keys(T)) { const r = rows.find(x => String(x.key).toLowerCase().replace(/[^a-z0-9]/g, '_') === k); if (!r) continue;
+    const who = String(r.key).toLowerCase(); if (await env.RATEBOARD_KV.get('pred_port_v1_' + who)) continue;
+    try { await predPortSync(env, who); } catch (e) {} }
 }
 async function planDiag(env) {
   const K = 'diag_plan_1118'; try { if (await env.RATEBOARD_KV.get(K)) return; } catch (e) { return; }
