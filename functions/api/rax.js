@@ -743,6 +743,12 @@ const normInv = p => { p = Math.min(0.999, Math.max(0.001, p)); let lo = -4, hi 
 const spAt = (sp, p0, bookPt, realPt, live) => { if (Math.abs(bookPt - realPt) < 0.01) return { p: p0, exact: true };
   const sd = SPREAD_SD[sp]; if (!sd || live || Math.abs(bookPt - realPt) > 2.5) return null;
   return { p: normCdf(normInv(p0) + (realPt - bookPt) / sd), exact: false }; };
+/* Club codes Real uses that no list knows (Dennis, 2026-11-24: "why is there no fair odds" on BVB @ ARS, AVL @ GS,
+   POR @ FEY...). A soccer market can also be matched when one side is recognised and the other side's code fits the
+   opponent's name in that game - its letters appear in order ("GS" in Galatasaray, "POR" in FC Porto, "BOD" in
+   Bodo/Glimt) - as long as that points at one opponent only. */
+const socPlain = v => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ø/gi, 'o').replace(/æ/gi, 'ae').replace(/ß/g, 'ss').toLowerCase();
+const socCompat = (code, name) => { const c = socPlain(code).replace(/[^a-z0-9]/g, ''), n = socPlain(name).replace(/[^a-z0-9]/g, ''); if (c.length < 2) return false; let i = 0; for (const ch of n) { if (ch === c[i]) i++; if (i === c.length) return true; } return false; };
 const isDraw = s => /^(draw|tie|x)$/i.test(String(s || '').trim());
 /* UFC and FC (Dennis, 2026-11-21: "Add UFC and FC to predictions"). Real's UFC sides are the fighters'
    initials ("KV"), so a book's fighter name counts when its first and last initials match. Real's FC
@@ -799,7 +805,10 @@ async function predOdds(env) {
     if (!o.soccerAt || Date.now() - o.soccerAt > 30 * 60000) { o.soccerAt = Date.now(); o.soccerKeys = [];
       try { const all = await (await api('sports')).json(); const sk = (Array.isArray(all) ? all : []).filter(x => /^soccer_/.test(x.key) && x.active && !x.has_outrights).map(x => x.key);
         for (const k of sk) { try { const ev = await (await api(`sports/${k}/events`)).json();
-            if ((Array.isArray(ev) ? ev : []).some(e => (real.soccer || []).some(m => m.sides.filter(s => !isDraw(s.label)).every(s => { const cd = String(s.label || '').split(' ')[0], al = [...(s.al || []), ...(o.abbr[`soccer:${cd}`] || []), ODDS_TEAMS.soccer[cd]].filter(Boolean); return sideHits(al, e.home_team) || sideHits(al, e.away_team); })))) o.soccerKeys.push(k);
+            if ((Array.isArray(ev) ? ev : []).some(e => (real.soccer || []).some(m => { const sd = m.sides.filter(s => !isDraw(s.label)), tm = [e.home_team, e.away_team];
+              const hitOf = s => { const cd = String(s.label || '').split(' ')[0], al = [...(s.al || []), ...(o.abbr[`soccer:${cd}`] || []), ODDS_TEAMS.soccer[cd]].filter(Boolean); return tm.find(n => sideHits(al, n)) || null; };
+              const h = sd.map(hitOf); if (h.every(Boolean)) return true;
+              return sd.length === 2 && h.filter(Boolean).length === 1 && (() => { const j = h[0] ? 1 : 0, other = tm.find(n => n !== h[1 - j]); return !!other && socCompat(String(sd[j].label || '').split(' ')[0], other); })(); }))) o.soccerKeys.push(k);
             if (Array.isArray(ev)) o.ev[k] = { at: Date.now(), list: ev.map(e => ({ s: e.commence_time })) }; } catch (e) {} await sleep(250); } } catch (e) { o.errs.push(`soccer list ${e.message}`); } }
     for (const k of (o.soccerKeys || [])) keys.add(k);
   }
@@ -922,16 +931,21 @@ async function predReal(env) {
             sides: oc.map((x, i) => ({ oid: x.id, key: x.key, label: x.label, logo: ((odds.logo || {})[`${sp}:${x.key}`]) || ((odds.logo || {})[`${sp}:${normTeam(tn(i))}`]) || null, name: `${fmtL(L[i])} ${tn(i)}`, color: x.backgroundColor || null, price: x.probability, fair: fair[i], ev: fair[i] != null && x.probability > 0 ? fair[i] / x.probability - 1 : null })) });
           continue;
         }
-        const oc = m.outcomes, found = [];
+        const oc = m.outcomes, found = [], inferred = new Set();
         for (const g of srcs) {
           const hit = (x, n) => sideHits(aliasOf(x), n) || (sp === 'ufc' && /^[A-Z]{2,3}$/.test(String(x.key || '')) && ufcIni(n) === String(x.key).toUpperCase());
           const map = oc.map(x => isDraw(x.label) || isDraw(x.key) ? g.names.find(isDraw) : g.names.find(n => !isDraw(n) && hit(x, n)));
+          if (sp === 'soccer' && map.some(x => !x)) {   // one side recognised, the other side's code fits the opponent
+            const nd = oc.map((x, i) => i).filter(i => !(isDraw(oc[i].label) || isDraw(oc[i].key))), tm = g.names.filter(n => !isDraw(n));
+            if (nd.length === 2 && tm.length === 2) { const j = !map[nd[0]] && map[nd[1]] ? nd[0] : !map[nd[1]] && map[nd[0]] ? nd[1] : -1, k = j === nd[0] ? nd[1] : nd[0];
+              if (j >= 0) { const other = tm.find(n => n !== map[k]); if (other && socCompat(String(oc[j].key || oc[j].label || '').split(' ')[0], other)) { map[j] = other; inferred.add(other); } } } }
           if (map.some(x => !x) || new Set(map).size !== map.length) continue;
           // "X Win or Draw": X's chance plus the draw's (and the price for both together).
           const dn = g.names.find(isDraw), pOf = (P, n, i) => (P[n] || 0) + (orDraw(oc[i].label) && dn ? (P[dn] || 0) : 0);
           const dOf = (D, n, i) => orDraw(oc[i].label) && dn && D[n] > 1 && D[dn] > 1 ? Math.round(1 / (1 / D[n] + 1 / D[dn]) * 1000) / 1000 : D[n];
           found.push({ names: map, src: g.src, p: map.map((n, i) => pOf(g.p, n, i)), start: g.start, live: g.live, books: g.books, ref: g.ref, bk: (g.bk || []).map(b => ({ t: b.t, w: b.w, u: b.u, p: map.map((n, i) => Math.round(pOf(b.p, n, i) * 1000) / 1000), d: map.map((n, i) => dOf(b.d, n, i)) })) });
         }
+        if (inferred.size > 1) found.length = 0;   // the code fits more than one opponent: don't guess
         // Fair chance: Pinnacle counts double when it's there, every other source once.
         const refs = found.filter(f => f.ref), fnd = found.filter(f => !f.ref);
         let wt = 0; const sum = oc.map(() => 0); for (const f of fnd) { const w0 = 1; wt += w0; f.p.forEach((v, i) => { sum[i] += w0 * v; }); }
@@ -941,7 +955,7 @@ async function predReal(env) {
         out.games.push({ sport: sp, id: m.id, game: (m.gameDisplay || {}).display || oc.map(x => x.label).join(' vs '), path: (m.gameDisplay || {}).path || null,
           link: `https://www.realapp.com/${routeId([36, 0, 0, Number(m.id)])}`, locked: !!m.isLocked, volume: m.volumeDisplay || null, start: st, oddsAt, live: !!(found.find(f => f.live)), hist,
           sources: fnd.map(f => ({ src: f.src, p: f.p.map(v => Math.round(v * 1000) / 1000), books: f.books, bk: f.bk })), refs: refs.map(f => ({ src: f.src, p: f.p.map(v => Math.round(v * 1000) / 1000) })),
-          sides: oc.map((x, i) => ({ oid: x.id, key: x.key, label: x.label, logo: ((odds.logo || {})[`${sp}:${x.key}`]) || ((odds.logo || {})[`${sp}:${normTeam((found[0] && found[0].names[i]) || names[x.key] || '')}`]) || null, name: (((found[0] && found[0].names[i]) || names[x.key] || ((odds.abbr || {})[`${sp}:${x.key}`] || [])[0] || '') + (orDraw(x.label) ? ' or Draw' : '')) || names[x.key] || ((odds.abbr || {})[`${sp}:${x.key}`] || [])[0] || x.label, color: x.backgroundColor || null, price: x.probability, fair: fair[i], ev: fair[i] != null && x.probability > 0 ? fair[i] / x.probability - 1 : null })) });
+          sides: oc.map((x, i) => ({ oid: x.id, key: x.key, label: x.label, logo: (sp === 'soccer' && found[0] && (odds.logo || {})[`${sp}:${normTeam(found[0].names[i] || '')}`]) || ((odds.logo || {})[`${sp}:${x.key}`]) || ((odds.logo || {})[`${sp}:${normTeam((found[0] && found[0].names[i]) || names[x.key] || '')}`]) || null, name: (((found[0] && found[0].names[i]) || names[x.key] || ((odds.abbr || {})[`${sp}:${x.key}`] || [])[0] || '') + (orDraw(x.label) ? ' or Draw' : '')) || names[x.key] || ((odds.abbr || {})[`${sp}:${x.key}`] || [])[0] || x.label, color: x.backgroundColor || null, price: x.probability, fair: fair[i], ev: fair[i] != null && x.probability > 0 ? fair[i] / x.probability - 1 : null })) });
       }
     }
     /* Whole-day slippage log (Dennis, 2026-11-21: "Start tracking how slippage moves over the entire day today and
