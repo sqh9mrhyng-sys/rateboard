@@ -316,8 +316,12 @@ async function dhFixTick(env) {
    again instead of skipping him. Old seasons that earn no rax on Real are left out.
    Progress in health (dhFix2). */
 const DH2_KEY = 'dhfix_v2';
+/* Two accounts (Dennis, 07:46 AK: "don't use the swaps account but use the other account"): the board account and
+   account 2 take turns; one that gets a 429 rests 2 minutes while the other carries on. */
+const DH2_COOL = new Map();
 async function dhFix2Tick(env) {
-  const db = env.RATEBOARD_DB, auth = env.RS_AUTH_TOKEN; if (!db || !auth) return;
+  const db = env.RATEBOARD_DB, toks = [env.RS_AUTH_TOKEN, env.RS_MARKET_TOKEN].filter(t => typeof t === 'string' && t.length > 20); if (!db || !toks.length) return;
+  const tokNow = () => toks.find(t => !(DH2_COOL.get(t) > Date.now()));
   let st = null; try { st = JSON.parse((await env.RATEBOARD_KV.get(DH2_KEY)) || 'null'); } catch (e) {}
   if (st && st.done) return;
   if (st && st.lock > Date.now()) return;
@@ -333,7 +337,8 @@ async function dhFix2Tick(env) {
   const touched = new Set(st.seasons);
   const t0 = Date.now(); let r429 = 0;
   while (Date.now() - t0 < 48000 && st.pos < st.q.length) {
-    const [sp, se, id, days] = st.q[st.pos], want = new Set(days.split(','));
+    const [sp, se, id, days] = st.q[st.pos], want = new Set(days.split(',')), auth = tokNow();
+    if (!auth) break;   // both accounts resting
     try {
       const d = await rsGet(`https://web.realapp.com/userpassearnings/${sp}/season/${se}/entity/player/${id}`, auth);
       const stmts = [];
@@ -343,7 +348,7 @@ async function dhFix2Tick(env) {
       st.pos++; r429 = 0;
     } catch (e) {
       // 429: Real wants a breather - the minute ends and the same player is tried first next minute (2026-11-25: retrying at once kept the account blocked).
-      if (/\b429\b/.test(String(e.message || e))) { st.r429 = (st.r429 || 0) + 1; break; }
+      if (/\b429\b/.test(String(e.message || e))) { st.r429 = (st.r429 || 0) + 1; DH2_COOL.set(auth, Date.now() + 120000); continue; }
       st.errs++; st.pos++;   // anything else: move on
     }
     await sleep(350);   // ~100 a minute: the first try at full speed (186 in a minute) got the account blocked

@@ -264,7 +264,7 @@
   .opt .spf{margin:12px 0 0}
   .calb{position:relative;display:inline-flex;align-items:center;gap:8px;margin-top:12px;border:1px solid var(--line);background:var(--panel2);border-radius:99px;padding:8px 14px;color:var(--ink);font-size:14px}
   .calb svg{color:var(--accent)} .calb i{color:var(--mute);font-style:normal;font-size:11px}
-  .calb select{position:absolute;inset:0;opacity:0;width:100%;font-size:16px}
+  .calb input{position:absolute;inset:0;opacity:0;width:100%;font-size:16px;cursor:pointer}
   .ar .acts2{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
   .ar .addlo{border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--ink);border-radius:9px;padding:6px 10px;font-weight:800;font-size:12.5px;white-space:nowrap}
   .ar .addlo:disabled{border-color:var(--line);background:none;color:var(--mute)}
@@ -388,8 +388,8 @@
           <label class="opf"><span>Rax to spend</span><input id="op-bud" inputmode="numeric" placeholder="50,000" autocomplete="off"></label>
           <label class="opf"><span>Price</span><select id="op-way"><option value="best">Cheapest way</option><option value="pad">Pack a day · 200</option><option value="swaps">Swaps · 241</option><option value="bulk">Loose/Bulk</option></select></label>
         </div>
-        <label class="calb" title="Timeframe for the profit"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 10h18M8 3v4M16 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><b id="op-tfl">Next 12 months</b><i>&#9662;</i>
-          <select id="op-tf" aria-label="Timeframe for the profit"><option value="30">Next month</option><option value="91">Next 3 months</option><option value="182">Next 6 months</option><option value="365">Next 12 months</option><option value="730">Next 2 years</option><option value="1095">Next 3 years</option></select></label>
+        <label class="calb" title="Profit up to this day"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 10h18M8 3v4M16 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><b id="op-tfl">Next 12 months</b><i>&#9662;</i>
+          <input type="date" id="op-tf" aria-label="Count profit up to this day"></label>
         <div class="spf" id="op-sp" role="group" aria-label="Sports"></div>
         <button type="button" id="op-go" class="nlgo">Find the best upgrades</button>
       </div>
@@ -889,12 +889,16 @@ async function ensureMkt() { if (Date.now() - MKT_AT < 30 * 60000) return;
     const all = fc.map(o => Number(o.rate)).sort((a, b) => a - b); if (all.length) MKT['*fc'] = all[Math.floor(all.length / 2)]; MKT_AT = Date.now(); } catch (e) {} }
 const pairOf = r => `${r.sport}:${r.season}`;
 // { cost } when priced, { why } when it can't be, {} while its pack data is still loading.
+const BULK_MAX_NEED = 100, BULK_MIN_SALES = 10;
 function costOf(sp, se, id, name, from, lv, mode0) {
   const L = ladderFor(sp), l = Math.min(lv, L.length - 1), need = Math.max(0, (l < 0 ? 0 : L[l][2]) - (Number(from) || 0)), mode = mode0 || $('#ed-cost').value;
   if (mode === 'custom') return CUSTOM == null ? { why: 'Set a rate' } : { cost: Math.round(need * CUSTOM) };
+  /* Loose/Bulk only where it can be trusted (Dennis, 2026-11-25): 100 rating or less, and a player sold often - 10+ sales
+     in 30 days. A few sales say nothing about buying thousands of rating, and a season's median says nothing about him. */
   if (mode === 'bulk') { if (!BK) return {}; if (BK.err) return { why: 'Bulk data didn\'t load' };
-    const p = BK.pl[`${sp}:${se}:${id}`]; if (p) return { cost: Math.round(need * p[0]), rate: p[0], n: p[1] };
-    const m = BK.ss[`${sp}:${se}`]; return m ? { cost: Math.round(need * m), rate: m, est: true } : { why: 'No bulk sales' }; }
+    if (need > BULK_MAX_NEED) return { why: 'Over 100 rating for bulk' };
+    const p = BK.pl[`${sp}:${se}:${id}`]; if (!p) return { why: 'No bulk sales' }; if (p[1] < BULK_MIN_SALES) return { why: `Only ${p[1]} bulk sale${p[1] === 1 ? '' : 's'}` };
+    return { cost: Math.round(need * p[0]), rate: p[0], n: p[1] }; }
   if (sp === 'ufc') return { why: 'No price' };
   if (sp === 'soccer') { const ppr = MKT[normName(name)] ?? MKT['*fc']; return ppr == null ? (MKT_AT ? { why: 'No FC offers' } : {}) : { cost: Math.round(need * ppr) }; }
   if (!packDone.has(`${sp}:${se}`)) return {};
@@ -1102,7 +1106,7 @@ function opInit() {
   $('#op-lo').value = LOADS.some(l => l.id === cur) ? cur : 'acct';
   if (!$('#op-bud').value) $('#op-bud').value = ls.get('otd_op_bud_v1') || '';
   $('#op-way').value = ls.get('otd_op_way_v1') || 'best';
-  $('#op-tf').value = ls.get('otd_op_tf_v1') || '365'; $('#op-tfl').textContent = $('#op-tf').selectedOptions[0].text;
+  { const t = new Date(); $('#op-tf').min = dayStr(t); const sv = ls.get('otd_op_tf_v2'); $('#op-tf').value = sv && sv >= dayStr(t) ? sv : tfDefault(); $('#op-tfl').textContent = tfLabel(); }
   $('#op-sp').innerHTML = `<button type="button" data-ops="all" aria-pressed="${!SPF.some(k => OPH.has(k))}">All</button>` + SPF.map(k => `<button type="button" data-ops="${k}" aria-pressed="${!OPH.has(k)}">${esc(SPORT[k])}</button>`).join('');
   if (!OPRES) $('#op-out').innerHTML = '<section><div class="card state"><b>Set a budget</b><span class="note">Enter the rax you want to spend and tap Find. Your loadout is weighed day by day, after the daily limit and caps.</span></div></section>';
 }
@@ -1115,7 +1119,7 @@ $('#op-bud').addEventListener('keydown', e => { if (e.key === 'Enter') $('#op-go
 const opMsg = t => { $('#op-out').innerHTML = `<section><div class="card state note" id="op-prog">${esc(t)}</div></section>`; };
 $('#op-go').addEventListener('click', () => optimize());
 async function optimize() {
-  const n = ++opN, budget = Number(String($('#op-bud').value).replace(/[^0-9]/g, '')) || 0, way = $('#op-way').value, W = Number($('#op-tf').value) || 365;
+  const n = ++opN, budget = Number(String($('#op-bud').value).replace(/[^0-9]/g, '')) || 0, way = $('#op-way').value, W = tfDays();
   if (!(budget > 0)) { toast('Enter the rax to spend'); $('#op-bud').focus(); return; }
   if (!ACCT.length) { toast('Scan your passes first'); return; }
   const loId = $('#op-lo').value, lo0 = LOADS.find(l => l.id === loId) || null;
@@ -1173,6 +1177,14 @@ async function optimize() {
         // That player's other moves start from his new level: weigh them again.
         for (const m of M) if (m.c.key === k) m.r = Infinity;
       }
+      /* One row per player (2026-11-25: a player taken New → Mystic early and Mystic → Iconic later read as if you
+         already held him at Mystic): his moves are joined - where he started, where he ends, their costs and gains added. */
+      const byK = new Map(), merged = [];
+      for (const x of steps) { const k = x.c.key, m = byK.get(k);
+        if (!m) { const y = { ...x, ways: new Set([x.way]) }; byK.set(k, y); merged.push(y); }
+        else { m.to = x.to; m.cost += x.cost; m.g += x.g; m.packs = (m.packs || 0) + (x.packs || 0) || undefined; m.ways.add(x.way); } }
+      for (const m of merged) m.way = [...m.ways].join(' + ');
+      steps.length = 0; steps.push(...merged);
       let after = winTot(compose(OP));
       if (W > 365) { const yearAdds = after - before, stepSum = steps.reduce((t, x) => t + x.g, 0); after = before * (W / 365) + Math.max(yearAdds, stepSum); }
       const before2 = W > 365 ? before * (W / 365) : before;
@@ -1181,8 +1193,14 @@ async function optimize() {
     drawOpt();
   } finally { if (n === opN) $('#op-go').disabled = false; }
 }
-const TFN = { 30: 'next month', 91: 'next 3 months', 182: 'next 6 months', 365: 'a year', 730: 'next 2 years', 1095: 'next 3 years' };
-const tfSuffix = W => W === 365 ? 'a year' : 'in the ' + (TFN[W] || W + ' days');
+/* Timeframe (Dennis, 2026-11-25: "adjustable to the day"): the calendar picks the last day counted; 12 months ahead to
+   start with. Days from today through that day. */
+const dayStr = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const tfDefault = () => { const d = new Date(); d.setHours(12); d.setDate(d.getDate() + 364); return dayStr(d); };
+function tfDays() { const v = $('#op-tf').value || tfDefault(), t = new Date(); t.setHours(12, 0, 0, 0); const e = new Date(v + 'T12:00:00');
+  return Math.max(1, Math.min(1825, Math.round((e - t) / 864e5) + 1)); }
+const tfLabel = () => { const v = $('#op-tf').value; if (!v || v === tfDefault()) return 'Next 12 months'; return 'Through ' + new Date(v + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); };
+const tfSuffix = W => W === 365 ? 'a year' : `in ${fmt(W)} day${W === 1 ? '' : 's'}`;
 function drawOpt() {
   const R0 = OPRES; if (!R0) return; const W = R0.W || 365, srt = ls.get('otd_op_sort_v1') || 'order';
   const order = R0.steps.map((x, i) => ({ ...x, i }));
@@ -1210,7 +1228,7 @@ async function opAdd(i) { const R0 = OPRES, x = R0 && R0.steps[i]; if (!x) retur
   const out = list.map(l => l.id === lo.id ? lo : l); if (!out.some(l => l.id === lo.id)) out.push(lo);
   if (await saveLoads(out)) { x.added = true; drawLoSel(); drawOpt(); toast(`Added to "${lo.name}"`); } }
 $('#op-out').addEventListener('change', e => { if (e.target.id === 'op-sort') { ls.set('otd_op_sort_v1', e.target.value); drawOpt(); } });
-$('#op-tf').addEventListener('change', e => { ls.set('otd_op_tf_v1', e.target.value); $('#op-tfl').textContent = e.target.selectedOptions[0].text; if (OPRES) optimize(); });
+$('#op-tf').addEventListener('change', e => { ls.set('otd_op_tf_v2', e.target.value); $('#op-tfl').textContent = tfLabel(); if (OPRES) optimize(); });
 $('#op-out').addEventListener('click', async e => { const a = e.target.closest('[data-opadd]'); if (a) { a.disabled = true; return opAdd(Number(a.dataset.opadd)); }
   if (!e.target.closest('#op-save') || !OPRES) return;
   const R0 = OPRES, id = Math.random().toString(36).slice(2, 10), name = `Optimized · ${fmt(R0.budget)}`;
