@@ -8230,7 +8230,7 @@ async function handle({ request, env, waitUntil }) {
     const all = await boostOutList(env);
     if (request.method === 'POST') {
       let b = {}; try { b = await request.json(); } catch (e) {}
-      const sp = ['ncaaf', 'ncaam', 'nfl', 'soccer'].includes(b.sport) ? b.sport : null;
+      const sp = ['ncaaf', 'ncaam', 'nfl', 'soccer', 'nba', 'nhl'].includes(b.sport) ? b.sport : null;   // NBA, NHL added 2026-11-25
       if (!sp) return json({ error: 'Pick a sport.' }, 400);
       all[sp] = all[sp] || {};
       if (b.remove) delete all[sp][String(b.remove)];
@@ -8246,7 +8246,7 @@ async function handle({ request, env, waitUntil }) {
       try { await env.RATEBOARD_KV.put(`proj_force_v1_${sp}`, String(Date.now()), { expirationTtl: 7 * 86400 }); } catch (e) {}
     }
     const today = etDay(Date.now());
-    return json({ today, sports: Object.fromEntries(['ncaaf', 'ncaam', 'nfl', 'soccer'].map(sp => [sp, Object.entries(all[sp] || {})
+    return json({ today, sports: Object.fromEntries(['ncaaf', 'ncaam', 'nfl', 'soccer', 'nba', 'nhl'].map(sp => [sp, Object.entries(all[sp] || {})
       .map(([key, v]) => ({ key, ...v, expired: !!(v.until && v.until < today) })).sort((a, b) => a.name.localeCompare(b.name))])) });
   }
   /* Admin: give a member Dennis's own priority (level 2) until a time. */

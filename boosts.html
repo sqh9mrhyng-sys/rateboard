@@ -236,6 +236,7 @@
   .how>summary{font-size:13px}
   /* Passes box gone (Dennis, 2026-11-17): Scan is at the top now; Read my boosters takes the whole row. */
   .rdrow>.rd[hidden]{display:none} .rdrow{grid-template-columns:1fr !important} #scanmsg[hidden]{display:none !important}
+  .bout{flex:none;margin-left:6px;border:1px solid var(--bad,#e5484d);color:var(--bad,#e5484d);background:none;border-radius:8px;padding:4px 8px;font-weight:800;font-size:12px}
 </style>
 <script src="/theme.js"></script>
 <script src="/nav.js?v=9"></script>
@@ -835,7 +836,7 @@ async function run(){
     const nm = u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.name)}</a>` : esc(r.name);
     const one = o => esc(o.label) + (o.avg != null ? ` <span class="note">${o.avg}/${o.gain}</span>` : '');
     return cutRow + `<tr class="${r.skip ? 'skip' : ''}${r.belowCut ? ' below' : ''}${r.boost && r.best && doneSet.has(doneKey(r)) ? ' boosted' : ''}"${u ? ` data-href="${esc(u)}"` : ''}><td data-l="Rarity">${r.boost ? `<span class="b ${r.boost}">${LBL[r.boost]}</span>` : '<span class="b none">None</span>'}</td>
-      <td data-l="Player" class="pc">${nm}${r.noData ? ' <span class="note">*not enough data*</span>' : ''}<span class="sub">${esc([r.pos, r.team].filter(Boolean).join(' · '))}${r.basis ? ' · ' + esc(r.basis) : ''}</span>${(r.flags || []).map(f => `<span class="flag">⚠ ${esc(f)}</span>`).join('')}</td>
+      <td data-l="Player" class="pc">${nm}${outBtn(sp, r)}${r.noData ? ' <span class="note">*not enough data*</span>' : ''}<span class="sub">${esc([r.pos, r.team].filter(Boolean).join(' · '))}${r.basis ? ' · ' + esc(r.basis) : ''}</span>${(r.flags || []).map(f => `<span class="flag">⚠ ${esc(f)}</span>`).join('')}</td>
       <td data-l="Boost" class="${r.boost && r.best ? 'bcell' : ''}" style="text-align:left;white-space:normal">${r.boost && r.best ? `<b>${one(r.best)}</b>${r.alt ? `<span class="sub">or ${one(r.alt)}</span>` : ''}<button class="bdone${doneSet.has(doneKey(r)) ? ' on' : ''}" data-done="${esc(doneKey(r))}" aria-label="Boosted" title="Mark as boosted"></button>` : '<span class="note">–</span>'}</td>
       <td data-l="${golf ? 'Event' : 'Game'}" style="text-align:left">${golf ? esc(r.opp) : `${r.home ? 'vs' : '@'} ${esc(r.opp)}`}<span class="sub">${golf && r.at ? 'Starts ' + new Date(r.at).toLocaleDateString('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' }) : tm(r.at)}${fc && FC_LG[r.lg] ? ' · ' + FC_LG[r.lg] : ''}</span>${fc ? luChip(r) : ''}</td>
       <td data-l="${golf ? 'Form' : 'Avg rax'}">${r.avg != null ? r.avg + `<span class="sub">${r.games} ${golf ? 'event' : 'game'}${r.games === 1 ? '' : 's'}${r.avgLast != null ? (golf ? ' · here ' : ' · last yr ') + r.avgLast : ''}</span>` : r.avgLast != null ? `–<span class="sub">${golf ? 'here' : 'last yr'} ${r.avgLast}</span>` : '–'}</td>
@@ -1009,7 +1010,7 @@ async function runAll(reuse){
         <td data-l="Proj w/ boost"><b>${r.withBoost != null ? Math.round(wbC(r)).toLocaleString() : (projC(r) ?? '–')}</b>${r.withBoost != null ? `<span class="sub">${wbTxt(r)}</span>` : ''}</td></tr>`; }).join('') + '</tbody></table></div>' : '';
   $('#alllist').innerHTML = full ? full + (quiet.length ? `<div class="allnone">${quiet.map(esc).join('<br>')}</div>` : '') : (copyRows.length ? '<div class="allsp">' + copyRows.map(([sp, r, j, x]) => {
       const [dk, done] = dOf(sp, x), u = passUrl(sp, r, j), k = doneKey(r), on = done.has(k);
-      return `<div class="srow${on ? ' boosted' : ''}"${u ? ` data-href="${esc(u)}"` : ''}><span class="snm">${u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.name)}</a>` : esc(r.name)}</span><span class="smeta"><span class="spl">${x.lbl}</span><span class="b ${r.boost}">${LBL[r.boost]}</span><b class="sat">${esc(r.best.label)}</b>${r.withBoost != null ? `<span class="note">${Math.round(r.withBoost)} proj</span>` : ''}${(r.flags || []).length ? `<span class="flag" style="display:inline">⚠ ${esc(r.flags[0])}</span>` : ''}</span><button class="bdone${on ? ' on' : ''}" data-alldone="${esc(dk)}" data-done="${esc(k)}" aria-label="Boosted" title="Mark as boosted"></button></div>`; }).join('') + '</div>' : '')
+      return `<div class="srow${on ? ' boosted' : ''}"${u ? ` data-href="${esc(u)}"` : ''}><span class="snm">${u ? `<a href="${u}" target="_blank" rel="noopener">${esc(r.name)}</a>` : esc(r.name)}</span><span class="smeta"><span class="spl">${x.lbl}</span><span class="b ${r.boost}">${LBL[r.boost]}</span><b class="sat">${esc(r.best.label)}</b>${r.withBoost != null ? `<span class="note">${Math.round(r.withBoost)} proj</span>` : ''}${(r.flags || []).length ? `<span class="flag" style="display:inline">⚠ ${esc(r.flags[0])}</span>` : ''}</span>${outBtn(sp, r)}<button class="bdone${on ? ' on' : ''}" data-alldone="${esc(dk)}" data-done="${esc(k)}" aria-label="Boosted" title="Mark as boosted"></button></div>`; }).join('') + '</div>' : '')
     + (quiet.length ? `<div class="allnone">${quiet.map(esc).join('<br>')}</div>` : '');
   allCum = res; drawCum();
   paintHide(res.reduce((t, x) => t + ((x.j && x.j.started) || 0), 0));
@@ -1056,6 +1057,19 @@ document.querySelectorAll('.hidestart').forEach(b => b.addEventListener('click',
 paintHide();
 // FC: competition names and the lineup chip on each row.
 const FC_LG = { 'eng.1': 'Premier League', 'eng.2': 'Championship', 'esp.1': 'La Liga', 'ita.1': 'Serie A', 'ger.1': 'Bundesliga', 'fra.1': 'Ligue 1', 'mex.1': 'Liga MX', 'uefa.champions': 'Champions League', 'uefa.europa': 'Europa League', 'uefa.nations': 'Nations League', 'fifa.worldq.uefa': 'WC qualifier', 'fifa.world': 'World Cup' };
+/* "Out" for Dennis (2026-11-25: Kane was injured and ESPN still had him Active): one tap puts the player on the hand-set
+   injury list for his sport (the same list as Admin › Boosts injuries) and the boosts are worked out again. */
+const BADMIN = () => { try { return !!JSON.parse(sessionStorage.getItem('rb_nav_acc_v1') || '{}').acc.admin; } catch (e) { return false; } };
+const OUT_SP = ['ncaaf', 'ncaam', 'nfl', 'soccer', 'nba', 'nhl'];
+const outBtn = (sp, r) => BADMIN() && OUT_SP.includes(sp) && r && r.name ? `<button class="bout" data-markout="${esc(sp)}" data-name="${esc(r.name)}" title="Mark ${esc(r.name)} out">Out</button>` : '';
+document.addEventListener('click', async e => { const b = e.target.closest('[data-markout]'); if(!b) return; e.preventDefault(); e.stopPropagation();
+  if(!b.dataset.sure){ b.dataset.sure = '1'; b.textContent = 'Sure?'; setTimeout(() => { if(b.isConnected){ delete b.dataset.sure; b.textContent = 'Out'; } }, 3000); return; }
+  b.disabled = true; b.textContent = '…';
+  const t = localStorage.getItem('ratebrd_token_v1') || '';
+  const j = await (await fetch('/api/swaps?op=boostout', { method: 'POST', headers: { 'content-type': 'application/json', 'x-rb-token': t }, body: JSON.stringify({ sport: b.dataset.markout, name: b.dataset.name, status: 'Out', note: 'Marked out on Boosts' }) })).json().catch(() => ({ error: 'Could not reach the site.' }));
+  if(j.error){ b.textContent = 'Failed'; b.title = j.error; return; }
+  b.textContent = 'Out ✓';
+  if(lastOne && !$('#out').hidden){ redrawOnly = false; $('#run').click(); } if(allLast && !$('#allout').hidden) runAll(true); }, true);
 function luChip(r){
   const k = { start: ['ok', 'Starting' + (r.form ? ' · ' + r.form : '')], bench: ['bad', 'On the bench'], out: ['bad', 'Not in squad'], tbd: ['mute', 'Lineup not out yet'] }[r.lu] || ['mute', ''];
   return k[1] ? `<span class="lu lu-${k[0]}">${esc(k[1])}</span>` : '';

@@ -1087,6 +1087,11 @@ async function predReal(env) {
     try { await env.RATEBOARD_KV.delete('diag_dhprobe_1125'); } catch (e) {}
     try { await env.RATEBOARD_KV.delete('diag_dhcount_1125'); } catch (e) {}
     try { await env.RATEBOARD_KV.delete('diag_drai_1125'); await env.RATEBOARD_KV.delete('diag_drai2_1125'); } catch (e) {}
+    /* One-off (Dennis, 2026-11-25 08:33 AK: "Kane is injured"): ESPN still lists him Active (hamstring - Bayern say he's
+       out for the time being), so he goes on the FC hand list; Dennis takes him off in Admin when he's back. */
+    try { if (!(await env.RATEBOARD_KV.get('kane_out_1125'))) { const K = 'boostout_v1'; const all = JSON.parse((await env.RATEBOARD_KV.get(K)) || '{}') || {};
+      all.soccer = all.soccer || {}; all.soccer.harrykane = { name: 'Harry Kane', status: 'Out', note: 'Hamstring - Bayern: out for the time being', until: '', at: Date.now() };
+      await env.RATEBOARD_KV.put(K, JSON.stringify(all)); await env.RATEBOARD_KV.put('kane_out_1125', '1', { expirationTtl: 30 * 86400 }); } } catch (e) {}
     try { await predSlipFit(env); } catch (e) {}
     // Nothing open to bet on (only locked markets left): one read a minute is enough.
     if (!out.games.some(g => !g.locked && !g.ended)) break;
