@@ -2,6 +2,7 @@ import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS, touchSe
 import { draftScan, draftCheck, draftGap, swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick, fcSchedule, whyNotFull, TAG_DEFS, scanProbe, boostProbe, wiltProbe, multProbe, untouchProbe, keepProbe, dennisProbe, pfpProbe, dmOwner, testPredPushOnce, tzProbe, cfbPassProbe, routeId, realWait, realBusy } from './swaps.js';
 import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, capNow } from '../../lib/dbwatch.js';
 import { packAllowed } from './kv.js';
+import { testerPagesFor } from '../../lib/testers.js';
 import { ODDS_TEAMS, ODDS_SPORT } from '../../lib/teams.js';
 import { pushTo } from '../../lib/webpush.js';
 
@@ -9779,7 +9780,8 @@ export async function onRequestGet(ctx) {
       // Predictions box on Home (2026-11-16): Dennis and the members he gave access.
       let pred = !!a.who;   // open to every signed-in member (Dennis, 2026-11-17)
       try { if (!pred && a.who) pred = (JSON.parse((await env.RATEBOARD_KV.get('pred_access_v1')) || '[]') || []).includes(String(a.who).toLowerCase()); } catch (e) {}
-      return json({ signedIn: !!a.who, access: a.ok, admin: a.admin, owner: String(a.who || '').toLowerCase() === 'dennis', swaps, otd, pack, pred,
+      let tests = []; try { tests = await testerPagesFor(env, a.who); } catch (e) {}
+      return json({ signedIn: !!a.who, access: a.ok, admin: a.admin, owner: String(a.who || '').toLowerCase() === 'dennis', tests, swaps, otd, pack, pred,
         ...(await (async () => { if (a.admin) return { puller: true, grant: { all: true, queue: [], pull: [], players: [] } };
           const g = a.who ? await pullGrantFor(env, a.who) : null; return { puller: !!g, grant: g }; })()) });
     }

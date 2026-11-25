@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Testers - Rax Academy</title>
+<!-- Testers (Dennis, 2026-11-25): Dennis only. Pages still being built are his alone; here he opens one to chosen
+     members. They see it in their menu and can use it; nobody else can. -->
+<style>
+  :root{--bg:#141925;--panel:#1d2433;--panel2:#232b3d;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;--ok:#5fbf7a;--bad:#e5484d}
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  [hidden]{display:none!important}
+  button,input{font:inherit;color:inherit}
+  button{cursor:pointer;-webkit-tap-highlight-color:transparent}
+  .wrap{max-width:640px;margin:0 auto;padding:14px 16px calc(40px + env(safe-area-inset-bottom))}
+  h1{font-size:24px;line-height:1.1;margin:6px 0 4px;font-weight:800;letter-spacing:-.02em}
+  .lead{color:var(--mute);font-size:13.5px;margin:0 0 16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;margin-bottom:14px}
+  .ph{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 16px 10px}
+  .ph h2{font-size:17px;margin:0;font-weight:800}
+  .ph a{color:var(--accent);font-size:13px;font-weight:700;text-decoration:none}
+  .ph small{color:var(--mute);font-size:12.5px}
+  .add{position:relative;padding:0 16px 12px}
+  .add input{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:16px}
+  .add input:focus{outline:none;border-color:var(--accent)}
+  .sug{position:absolute;left:16px;right:16px;top:calc(100% - 8px);z-index:5;background:var(--panel2);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 12px 30px rgba(0,0,0,.4)}
+  .sug button{display:flex;justify-content:space-between;gap:10px;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line);padding:11px 12px;font-weight:700}
+  .sug button:first-child{border-top:0}
+  .sug button span{color:var(--mute);font-weight:600;font-size:13px}
+  .sug .none{padding:11px 12px;color:var(--mute);font-size:13.5px}
+  .u{display:flex;align-items:center;justify-content:space-between;gap:10px;border-top:1px solid var(--line);padding:11px 12px 11px 16px}
+  .u b{font-weight:700}
+  .u span{color:var(--mute);font-size:12.5px;margin-left:6px}
+  .u button{border:1px solid var(--line);background:var(--panel2);color:var(--bad);border-radius:9px;padding:6px 12px;font-weight:800;font-size:13px}
+  .empty{border-top:1px solid var(--line);padding:14px 16px;color:var(--mute);font-size:13.5px}
+  .msg{text-align:center;color:var(--mute);padding:40px 10px}
+  .toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:var(--bg);font-weight:800;border-radius:99px;padding:10px 18px;z-index:99}
+</style>
+<script src="/theme.js"></script>
+<script src="/nav.js?v=8"></script>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/img/favicon-48.png">
+<link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Rax Academy">
+<meta name="theme-color" content="#141925">
+</head>
+<body>
+<div class="wrap">
+  <h1>Testers</h1>
+  <p class="lead">Pages still being built are only yours. Add a member here and the page shows in their menu.</p>
+  <div id="list"><div class="msg">Loading…</div></div>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const tok = () => { try { return localStorage.getItem('ratebrd_token_v1') || ''; } catch (e) { return ''; } };
+async function api(u, body) {
+  try { const r = await fetch(u, { method: body ? 'POST' : 'GET', headers: Object.assign({ 'x-rb-token': tok() }, body ? { 'content-type': 'application/json' } : {}), body: body ? JSON.stringify(body) : undefined });
+    const j = await r.json().catch(() => ({})); if (!r.ok && !j.error) j.error = 'Error ' + r.status; return j; } catch (e) { return { error: 'Could not reach the site.' }; } }
+function toast(t) { const d = document.createElement('div'); d.className = 'toast'; d.textContent = t; document.body.appendChild(d); setTimeout(() => d.remove(), 2000); }
+let PAGES = [];
+function draw() {
+  $('#list').innerHTML = PAGES.map(p => `<div class="card" data-page="${esc(p.path)}">
+    <div class="ph"><h2>${esc(p.title)}</h2><small>${p.users.length} tester${p.users.length === 1 ? '' : 's'} · <a href="${esc(p.path)}">Open</a></small></div>
+    <div class="add"><input type="search" placeholder="Add a member - site or Real name" autocomplete="off" aria-label="Add a tester to ${esc(p.title)}"><div class="sug" hidden></div></div>
+    ${p.users.length ? p.users.map(u => `<div class="u"><div><b>${esc(u.name)}</b>${u.name.toLowerCase() !== u.key ? `<span>${esc(u.key)}</span>` : ''}</div><button type="button" data-del="${esc(u.key)}">Remove</button></div>`).join('') : '<div class="empty">No testers yet.</div>'}
+  </div>`).join('') || '<div class="msg">No pages to test right now.</div>';
+}
+async function load() { const j = await api('/api/swaps?op=testers');
+  if (j.error) { if (/only dennis|sign in/i.test(j.error)) { location.replace('/'); return; } $('#list').innerHTML = `<div class="msg">${esc(j.error)}</div>`; return; }
+  PAGES = j.pages || []; draw(); }
+async function change(page, body) { const j = await api('/api/swaps?op=testers', Object.assign({ page }, body));
+  if (j.error) return toast(j.error); PAGES = j.pages || PAGES; draw(); toast(body.add ? 'Added' : 'Removed'); }
+let qT = null, qN = 0;
+$('#list').addEventListener('input', e => { const inp = e.target.closest('.add input'); if (!inp) return; const box = inp.nextElementSibling, q = inp.value.trim(), n = ++qN;
+  clearTimeout(qT); if (q.length < 2) { box.hidden = true; return; }
+  qT = setTimeout(async () => { const j = await api('/api/swaps?op=testers&q=' + encodeURIComponent(q)); if (n !== qN) return;
+    const pg = PAGES.find(p => p.path === inp.closest('[data-page]').dataset.page), have = new Set((pg ? pg.users : []).map(u => u.key));
+    const us = (j.users || []).filter(u => !have.has(u.key));
+    box.innerHTML = us.length ? us.map(u => `<button type="button" data-add="${esc(u.key)}">${esc(u.name)}${u.name.toLowerCase() !== u.key ? `<span>${esc(u.key)}</span>` : ''}</button>`).join('') : '<div class="none">No member matches.</div>';
+    box.hidden = false; }, 200); });
+$('#list').addEventListener('click', e => { const page = (e.target.closest('[data-page]') || {}).dataset?.page; if (!page) return;
+  const a = e.target.closest('[data-add]'); if (a) return change(page, { add: a.dataset.add });
+  const d = e.target.closest('[data-del]'); if (d) { if (!d.dataset.sure) { d.dataset.sure = '1'; d.textContent = 'Tap again'; setTimeout(() => { if (d.isConnected) { delete d.dataset.sure; d.textContent = 'Remove'; } }, 3000); return; } return change(page, { del: d.dataset.del }); } });
+document.addEventListener('click', e => { if (!e.target.closest('.add')) document.querySelectorAll('.sug').forEach(b => b.hidden = true); });
+load();
+</script>
+</body>
+</html>

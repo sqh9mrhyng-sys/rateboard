@@ -241,7 +241,7 @@
   @media(min-width:640px){.tiles{grid-template-columns:repeat(4,1fr)} .hero .v{font-size:46px}}
 </style>
 <script src="/theme.js"></script>
-<script src="/nav.js?v=7"></script>
+<script src="/nav.js?v=8"></script>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/favicon-48.png">
 <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
@@ -358,6 +358,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const fmt = n => n == null || !Number.isFinite(n) ? '-' : Math.round(n).toLocaleString();
 const short = n => { n = Math.round(n || 0); return n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + 'M' : n >= 1e4 ? Math.round(n / 1e3) + 'k' : n >= 1e3 ? (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'k' : String(n); };
 const api = async u => { try { const r = await fetch(u); const j = await r.json().catch(() => ({})); if (!r.ok && !j.error) j.error = 'Error ' + r.status; return j; } catch (e) { return { error: 'Could not reach the site.' }; } };
+const tkh = () => { const x = (() => { try { return localStorage.getItem('ratebrd_token_v1') || ''; } catch (e) { return ''; } })(); let h = 5381; for (let i = 0; i < x.length; i++) h = ((h << 5) + h + x.charCodeAt(i)) | 0; return String(h); };
 const ls = { get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } };
 
 const SPORT = { nba: 'NBA', nfl: 'NFL', ncaaf: 'CFB', ncaam: 'CBB', mlb: 'MLB', nhl: 'NHL', soccer: 'FC', wnba: 'WNBA', golf: 'Golf', ufc: 'UFC' };
@@ -619,7 +620,7 @@ async function loadAll(fresh) {
   if (!had) skeleton();
   const g = await api('/api/swaps?op=games' + (fresh ? '&fresh=1' : ''));
   if (g.error) { if (!had) state(`<section><div class="card state"><b>Couldn't load your passes</b><span class="note">${esc(g.error)}</span><br><button type="button" id="retry">Try again</button></div></section>`); return; }
-  try { localStorage.setItem(CK, JSON.stringify({ who: WHO, at: Date.now(), g: { passes: g.passes, games: g.games, pending: g.pending || 0 } })); } catch (e) { try { localStorage.removeItem(CK); } catch (x) {} }
+  try { localStorage.setItem(CK, JSON.stringify({ who: WHO, tk: tkh(), at: Date.now(), g: { passes: g.passes, games: g.games, pending: g.pending || 0 } })); } catch (e) { try { localStorage.removeItem(CK); } catch (x) {} }
   if (!had || sigOf(had) !== sigOf(g)) show(g);
 }
 /* ---------- Loadouts (Dennis, 2026-11-25) ----------
@@ -954,13 +955,14 @@ $('#b-state').addEventListener('click', e => { if (e.target.closest('#retry')) l
 window.rbAfterScan = async () => { await loadAll(true); };
 
 (async () => {
-  // Opened here before on this device: draw from the saved copy at once, and check the account alongside.
-  let early = false; try { const c = JSON.parse(ls.get(CK) || 'null'); if (c && c.who === 'dennis' && c.g && ls.get('ratebrd_token_v1')) { WHO = 'dennis'; early = true; $('#app').hidden = false; show(c.g); } } catch (e) {}
+  // Opened here before on this device by this account: draw from the saved copy at once, and check the account alongside.
+  let early = false; try { const c = JSON.parse(ls.get(CK) || 'null'); if (c && c.who && c.tk === tkh() && c.g && ls.get('ratebrd_token_v1')) { WHO = c.who; early = true; $('#app').hidden = false; show(c.g); } } catch (e) {}
   let me = await api('/api/swaps?op=me&page=boosts');
   for (let i = 0; i < 2 && me.error && /sign in/i.test(me.error) && ls.get('ratebrd_token_v1'); i++) { await new Promise(r => setTimeout(r, 1200 * (i + 1))); me = await api('/api/swaps?op=me&page=boosts'); }
-  // Private to Dennis for now (2026-11-25): everyone else gets the OTD screen on the Board, as before.
-  if (me.error && early && !/sign in/i.test(me.error)) me = { key: 'dennis' };   // the site hiccuped: keep what's on screen
-  if (me.error || String(me.key || '').toLowerCase() !== 'dennis') { try { localStorage.removeItem(CK); } catch (e) {} location.replace('/board#otd'); return; }
+  /* Dennis and the testers he picks on the Testers page (2026-11-25); everyone else gets the OTD screen on the Board. */
+  if (me.error && early && !/sign in/i.test(me.error)) me = { key: WHO, tests: ['/otd'] };   // the site hiccuped: keep what's on screen
+  if (me.error || !(me.tests || []).includes('/otd')) { try { localStorage.removeItem(CK); } catch (e) {} location.replace('/board#otd'); return; }
+  if (early && WHO !== String(me.key).toLowerCase()) { try { localStorage.removeItem(CK); } catch (e) {} location.reload(); return; }
   WHO = String(me.key).toLowerCase(); $('#app').hidden = false;
   const t = ls.get('otd_tab_v1'); if (t === 'l' || t === 'o') { const b = document.querySelector(`#tabs button[data-tab="${t}"]`); if (b) b.click(); }
   loadLoads();

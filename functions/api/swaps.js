@@ -16,6 +16,7 @@ const ET_DAY_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_Yor
 import { pushTo, vapidKeys, PUSH_DDL } from '../../lib/webpush.js';
 import { isAdminRequest, sessionKey, forbidden, allow, clientIp, touchSeen, ADMINS, etDay } from '../../lib/auth.js';
 import { watchEnv, noteSlowRequest } from '../../lib/dbwatch.js';
+import { TESTER_PAGES, TESTER_KV, testerMap, testerPagesFor } from '../../lib/testers.js';
 import { predPortSync, predPortTok, dfsPull } from './rax.js';   // Dennis's portfolio sync (circular import is fine: called at run time only)
 
 /* Adding a column that already exists just errors (and is ignored). Each
@@ -7079,6 +7080,27 @@ async function handle({ request, env, waitUntil }) {
     return json({ at: c.at, active: c.active, under: NICHE_UNDER, n: c.at ? out : {}, ready: !!c.at });
   }
   // Blacklist search (2026-11-11): swappers whose name starts with what's typed, as they type.
+  /* Testers page (Dennis only, 2026-11-25): who can open each page still being built. GET lists them with Real names;
+     ?q= finds members by site or Real name; POST {page, add} / {page, del} changes a list. */
+  if (op === 'testers') {
+    if (String(me || '').toLowerCase() !== 'dennis') return forbidden('Only Dennis can open this.');
+    const q = String(url.searchParams.get('q') || '').trim().toLowerCase().replace(/^@/, '').slice(0, 30);
+    if (q) { const like = q.replace(/[%_]/g, '') + '%';
+      const r = ((await db.prepare(`SELECT key, rsUser FROM swap_users WHERE LOWER(key) LIKE ? OR LOWER(rsUser) LIKE ? ORDER BY key LIMIT 10`).bind(like, like).all()).results) || [];
+      return json({ users: r.filter(x => String(x.key).toLowerCase() !== 'dennis').map(x => ({ key: String(x.key).toLowerCase(), name: x.rsUser || x.key })) }); }
+    const m = await testerMap(env);
+    if (request.method === 'POST') { let b = {}; try { b = await request.json(); } catch (e) {}
+      const pg = String(b.page || ''); if (!TESTER_PAGES[pg]) return json({ error: 'Unknown page.' }, 400);
+      const add = String(b.add || '').trim().toLowerCase().slice(0, 60), del = String(b.del || '').trim().toLowerCase();
+      let l = m[pg] || [];
+      if (add) { const u = await db.prepare('SELECT key FROM swap_users WHERE LOWER(key)=?').bind(add).first(); if (!u) return json({ error: 'No member called ' + add + '.' }, 400); if (!l.includes(add)) l = l.concat(add); }
+      if (del) l = l.filter(k => k !== del);
+      m[pg] = l; await env.RATEBOARD_KV.put(TESTER_KV, JSON.stringify(m)); }
+    const keys = [...new Set(Object.values(m).flat())], names = {};
+    for (let i = 0; i < keys.length; i += 50) { const part = keys.slice(i, i + 50);
+      for (const x of (((await db.prepare(`SELECT key, rsUser FROM swap_users WHERE LOWER(key) IN (${part.map(() => '?').join(',')})`).bind(...part).all()).results) || [])) names[String(x.key).toLowerCase()] = x.rsUser || x.key; }
+    return json({ pages: Object.entries(TESTER_PAGES).map(([path, title]) => ({ path, title, users: (m[path] || []).map(k => ({ key: k, name: names[k] || k })) })) });
+  }
   if (op === 'usersearch') {
     const q = String(url.searchParams.get('q') || '').trim().toLowerCase().replace(/^@/, '').slice(0, 30);
     if (q.length < 1) return json({ users: [] });
@@ -7390,7 +7412,7 @@ async function handle({ request, env, waitUntil }) {
      rax (up to 300) - the pool "best players to add" picks from. Names from
      the search index. Reads the shared saved season (otdSeason), not the log. */
   if (op === 'otdpool') {
-    if (!acc.admin) return forbidden('OTD Optimization is off for now.');
+    if (!acc.admin && !(await testerPagesFor(env, me)).includes('/otd')) return forbidden('OTD Optimization is off for now.');
     const sp = String(url.searchParams.get('sport') || ''), se = Number(url.searchParams.get('season'));
     if (!/^[a-z]+$/.test(sp) || !(se > 2000)) return json({ error: 'Pick a sport and season.' }, 400);
     if (!acc.admin && !(await allow(url.origin, 'otdpool:' + me, 30, 600))) return json({ error: 'Too many loads - wait a few minutes.' }, 429);
@@ -7416,7 +7438,7 @@ async function handle({ request, env, waitUntil }) {
      pick. Kept on the server so they're the same on every device. Dennis only for now. GET lists them; POST { loadouts }
      replaces the list (up to 30 loadouts, 80 added players each). */
   if (op === 'otdloadouts') {
-    if (String(me || '').toLowerCase() !== 'dennis') return forbidden('Not open yet.');
+    if (!(await testerPagesFor(env, me)).includes('/otd')) return forbidden('Not open yet.');
     const K = 'otd_loadouts_v1_' + String(me).toLowerCase();
     if (request.method === 'POST') {
       let b = {}; try { b = await request.json(); } catch (e) {}
@@ -7494,7 +7516,7 @@ async function handle({ request, env, waitUntil }) {
     const lowP = u && !lite && url.searchParams.get('page') !== 'packs' ? await (async () => { try { return [...await lowPlays(env, db, parse(u.passes, []).filter(p => p.kind !== 'team').map(p => p.key))]; } catch (e) { return []; } })() : [];
     mark(request, 'plays');
     const cDay = confirmDayNow();
-    return json({ confirmShow: Date.now() >= CONFIRM_SHOW_AT, confirmedToday: !!(u && u.confirmDay === cDay), confirmStarts: CONFIRM_FROM_DAY, swapToday: cDay, key: me, admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
+    return json({ confirmShow: Date.now() >= CONFIRM_SHOW_AT, confirmedToday: !!(u && u.confirmDay === cDay), confirmStarts: CONFIRM_FROM_DAY, swapToday: cDay, key: me, tests: await testerPagesFor(env, me), admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
       keep: parse(u.keep, []), touch: parse(u.touch, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: lite ? [] : parse(u.passes, []), passCount: (() => { try { return parse(u.passes, []).length; } catch (e) { return 0; } })(), passSummary: lite ? passSummary(parse(u.passes, [])) : undefined, lowPlays: lowP, scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {}, b160: !!u.b160, s160: !!u.s160, only160: !!u.only160, nicheIn: !!u.nicheIn, niche: parse(u.niche, {}) || {}, nicheLim: nicheLim(u), blist: parse(u.blist, []) || [], lock1: parse(u.lock1, []) || [], noSp: Object.entries(parse(u.noSp, {}) || {}).filter(([, d]) => d === swapDay(Date.now())).map(([sp]) => sp), sell160m: u.sell160m || null, sell160h: parse(u.sell160h, []) } : null, real: realN });
   }
 
