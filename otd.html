@@ -262,6 +262,13 @@
   .opf span{color:var(--mute);font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.05em}
   .opf input,.opf select{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 10px;font-size:16px;font-weight:800;color:var(--ink);min-width:0}
   .opt .spf{margin:12px 0 0}
+  .calb{position:relative;display:inline-flex;align-items:center;gap:8px;margin-top:12px;border:1px solid var(--line);background:var(--panel2);border-radius:99px;padding:8px 14px;color:var(--ink);font-size:14px}
+  .calb svg{color:var(--accent)} .calb i{color:var(--mute);font-style:normal;font-size:11px}
+  .calb select{position:absolute;inset:0;opacity:0;width:100%;font-size:16px}
+  .ar .acts2{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+  .ar .addlo{border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--ink);border-radius:9px;padding:6px 10px;font-weight:800;font-size:12.5px;white-space:nowrap}
+  .ar .addlo:disabled{border-color:var(--line);background:none;color:var(--mute)}
+  .sh select.srt{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:6px 8px;font-size:13px;font-weight:800;color:var(--accent)}
   .opt .nlgo{margin-top:14px}
   .ops{padding:16px}
   .ops .st{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
@@ -379,8 +386,10 @@
         <label class="lsel"><span>Loadout</span><select id="op-lo" aria-label="Loadout to improve"></select></label>
         <div class="opr">
           <label class="opf"><span>Rax to spend</span><input id="op-bud" inputmode="numeric" placeholder="50,000" autocomplete="off"></label>
-          <label class="opf"><span>Price</span><select id="op-way"><option value="best">Cheapest way</option><option value="pad">Pack a day · 200</option><option value="swaps">Swaps · 241</option><option value="bulk">Bulk data</option></select></label>
+          <label class="opf"><span>Price</span><select id="op-way"><option value="best">Cheapest way</option><option value="pad">Pack a day · 200</option><option value="swaps">Swaps · 241</option><option value="bulk">Loose/Bulk</option></select></label>
         </div>
+        <label class="calb" title="Timeframe for the profit"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 10h18M8 3v4M16 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><b id="op-tfl">Next 12 months</b><i>&#9662;</i>
+          <select id="op-tf" aria-label="Timeframe for the profit"><option value="30">Next month</option><option value="91">Next 3 months</option><option value="182">Next 6 months</option><option value="365">Next 12 months</option><option value="730">Next 2 years</option><option value="1095">Next 3 years</option></select></label>
         <div class="spf" id="op-sp" role="group" aria-label="Sports"></div>
         <button type="button" id="op-go" class="nlgo">Find the best upgrades</button>
       </div>
@@ -915,21 +924,25 @@ function edYear() { const k = JSON.stringify([S.claims, ED.base, ED.adds.map(x =
   const by = new Map(); for (const D of y.days) { const k2 = String(D.date.getMonth() + 1).padStart(2, '0') + '-' + String(D.date.getDate()).padStart(2, '0'); if (!by.has(k2)) by.set(k2, D); }
   EDY = { by, list, idx: new Map(list.map((p, i) => [p.key, i])) }; EDK = k; return EDY; }
 // One of your passes taken to level lv: day by day, its claims at the new multiplier (and its new cap) against the rest.
-function quickUp(key, lv) { const Y = edYear(), i = Y.idx.get(key); if (i == null) return null; const p = Y.list[i], L = ladderOf(p), l = Math.min(lv, L.length - 1), now = levelIdx(p.rating, p);
+/* W (Optimized's timeframe, 2026-11-25): only the first W days count; past 365 the year is run again, each pass using
+   up what's left of the pass's cap. */
+function quickUp(key, lv, W = 365) { const Y = edYear(), i = Y.idx.get(key); if (i == null) return null; const p = Y.list[i], L = ladderOf(p), l = Math.min(lv, L.length - 1), now = levelIdx(p.rating, p);
   if (l <= now) return null; const mult = L[l][1]; let cap = capOf(p, l) - (Number(p.earned) || 0), gain = 0;
   const gs = (G[key] || []).slice().sort((a, b) => { const da = Y.by.get(a[0]), db = Y.by.get(b[0]); return (da ? da.n : 999) - (db ? db.n : 999); });
-  for (const [d, base] of gs) { if (cap <= 0) break; const D = Y.by.get(d), rax = Math.min(base * mult, cap); if (!(rax > 0)) continue;
+  for (let yr = 0; yr * 365 < W && cap > 0; yr++) { const lim = Math.min(365, W - yr * 365);
+  for (const [d, base] of gs) { if (cap <= 0) break; const D = Y.by.get(d); if (D && D.n >= lim) continue; const rax = Math.min(base * mult, cap); if (!(rax > 0)) continue;
     if (!D) { gain += rax; cap -= rax; continue; }
     const lst = D.won.concat(D.lost).filter(o => o.i !== i).map(o => ({ i: o.i, sport: o.sport, rax: o.rax })), me = { i, sport: p.sport, rax }; lst.push(me);
-    const sc = scoreDay(lst, S.claims); gain += sc.earned - D.earned; if (sc.won.includes(me)) cap -= rax; }
+    const sc = scoreDay(lst, S.claims); gain += sc.earned - D.earned; if (sc.won.includes(me)) cap -= rax; } }
   return gain; }
-function quickGain(sp, se, games, lv) {
+function quickGain(sp, se, games, lv, W = 365) {
   const L = ladderFor(sp), l = Math.min(lv, L.length - 1), mult = l < 0 ? 1 : L[l][1]; let cap = capOf({ sport: sp, season: se, kind: 'player' }, l), gain = 0;
   const Y = edYear(), gs = (games || []).slice().sort((a, b) => { const da = Y.by.get(a[0]), db = Y.by.get(b[0]); return (da ? da.n : 999) - (db ? db.n : 999); });
-  for (const [d, base] of gs) { if (cap <= 0) break; const D = Y.by.get(d); const rax = Math.min(base * mult, cap); if (!(rax > 0)) continue;
+  for (let yr = 0; yr * 365 < W && cap > 0; yr++) { const lim = Math.min(365, W - yr * 365);
+  for (const [d, base] of gs) { if (cap <= 0) break; const D = Y.by.get(d); if (D && D.n >= lim) continue; const rax = Math.min(base * mult, cap); if (!(rax > 0)) continue;
     if (!D) { gain += rax; cap -= rax; continue; }
     const lst = D.won.concat(D.lost).map(o => ({ i: o.i, sport: o.sport, rax: o.rax })), me = { i: -1, sport: sp, rax }; lst.push(me);
-    const sc = scoreDay(lst, S.claims), g = sc.earned - D.earned; if (g > 0) { gain += g; if (sc.won.includes(me)) cap -= rax; } }
+    const sc = scoreDay(lst, S.claims), g = sc.earned - D.earned; if (g > 0) { gain += g; if (sc.won.includes(me)) cap -= rax; } } }
   return gain; }
 const edLv = () => Number($('#ed-lv').value) || 0;
 function resRow(r, i) { const k = `${r.sport}:${r.season}:${r.id}`, held = baseOf(ED).find(p => p.key === k), inEd = ED.adds.some(x => `${x.sport}:${x.season}:${x.id}` === k), lv = edLv();
@@ -1089,6 +1102,7 @@ function opInit() {
   $('#op-lo').value = LOADS.some(l => l.id === cur) ? cur : 'acct';
   if (!$('#op-bud').value) $('#op-bud').value = ls.get('otd_op_bud_v1') || '';
   $('#op-way').value = ls.get('otd_op_way_v1') || 'best';
+  $('#op-tf').value = ls.get('otd_op_tf_v1') || '365'; $('#op-tfl').textContent = $('#op-tf').selectedOptions[0].text;
   $('#op-sp').innerHTML = `<button type="button" data-ops="all" aria-pressed="${!SPF.some(k => OPH.has(k))}">All</button>` + SPF.map(k => `<button type="button" data-ops="${k}" aria-pressed="${!OPH.has(k)}">${esc(SPORT[k])}</button>`).join('');
   if (!OPRES) $('#op-out').innerHTML = '<section><div class="card state"><b>Set a budget</b><span class="note">Enter the rax you want to spend and tap Find. Your loadout is weighed day by day, after the daily limit and caps.</span></div></section>';
 }
@@ -1101,7 +1115,7 @@ $('#op-bud').addEventListener('keydown', e => { if (e.key === 'Enter') $('#op-go
 const opMsg = t => { $('#op-out').innerHTML = `<section><div class="card state note" id="op-prog">${esc(t)}</div></section>`; };
 $('#op-go').addEventListener('click', () => optimize());
 async function optimize() {
-  const n = ++opN, budget = Number(String($('#op-bud').value).replace(/[^0-9]/g, '')) || 0, way = $('#op-way').value;
+  const n = ++opN, budget = Number(String($('#op-bud').value).replace(/[^0-9]/g, '')) || 0, way = $('#op-way').value, W = Number($('#op-tf').value) || 365;
   if (!(budget > 0)) { toast('Enter the rax to spend'); $('#op-bud').focus(); return; }
   if (!ACCT.length) { toast('Scan your passes first'); return; }
   const loId = $('#op-lo').value, lo0 = LOADS.find(l => l.id === loId) || null;
@@ -1126,12 +1140,14 @@ async function optimize() {
     if (C.some(r => r.sport === 'soccer')) await ensureMkt();
     if (n !== opN) return;
     const price = (r, from, lv) => { let best = null; for (const w of ways) { const c = costOf(r.sport, r.season, r.id, r.name, from, lv, w); if (c.cost != null && c.cost > 0 && (!best || c.cost < best.cost)) best = { ...c, way: w }; } return best; };
-    const WN = { pad: 'Pack a day', swaps: 'Swaps', bulk: 'Bulk' };
+    const WN = { pad: 'Pack a day', swaps: 'Swaps', bulk: 'Loose/Bulk' };
     const keepED = ED, keepEDK = EDK, keepEDY = EDY; ED = OP; EDK = '';
     const steps = []; let left = budget;
     // Moves: [candidate, level]. Their last ratio is kept, so only the most promising are weighed again each round.
     let M = []; for (const c of C) for (const lv of RAR_LV) M.push({ c, lv, r: Infinity });
-    const before = totalOf(compose(OP)).total;
+    // Totals over the timeframe: up to a year exactly, day by day; past a year, the year's total plus what the upgrades add after it.
+    const winTot = list => { const keep = P; P = list; build(); const y = scanYear(S.claims); P = keep; build(); return y.days.reduce((t, D) => t + (D.n < Math.min(W, 365) ? D.earned : 0), 0); };
+    const before = winTot(compose(OP));
     try {
       for (let pick = 0; pick < 150 && left > 0; pick++) {
         opMsg(`Weighing upgrades… ${steps.length} picked so far`);
@@ -1144,7 +1160,7 @@ async function optimize() {
           if (m.lv >= L.length || m.lv <= cur) { m.r = -1; continue; }
           const c = price(m.c, p ? p.rating : 0, m.lv); if (!c) { m.r = -1; continue; }
           if (c.cost > left) { m.r = 0; continue; }
-          const g = p ? (quickUp(m.c.key, m.lv) || 0) : quickGain(m.c.sport, m.c.season, G[m.c.key], m.lv);
+          const g = p ? (quickUp(m.c.key, m.lv, W) || 0) : quickGain(m.c.sport, m.c.season, G[m.c.key], m.lv, W);
           m.r = g > 0 ? g / c.cost : -1; m.g = g; m.cost = c;
           if (m.r > 0 && (!best || m.r > best.r)) best = m;
         }
@@ -1157,28 +1173,46 @@ async function optimize() {
         // That player's other moves start from his new level: weigh them again.
         for (const m of M) if (m.c.key === k) m.r = Infinity;
       }
-      const after = totalOf(compose(OP)).total;
-      OPRES = { OP, steps, budget, spent: budget - left, before, after, lo: lo0 };
+      let after = winTot(compose(OP));
+      if (W > 365) { const yearAdds = after - before, stepSum = steps.reduce((t, x) => t + x.g, 0); after = before * (W / 365) + Math.max(yearAdds, stepSum); }
+      const before2 = W > 365 ? before * (W / 365) : before;
+      OPRES = { OP, steps, budget, spent: budget - left, before: before2, after, lo: lo0, W };
     } finally { ED = keepED; EDK = keepEDK; EDY = keepEDY; }
     drawOpt();
   } finally { if (n === opN) $('#op-go').disabled = false; }
 }
+const TFN = { 30: 'next month', 91: 'next 3 months', 182: 'next 6 months', 365: 'a year', 730: 'next 2 years', 1095: 'next 3 years' };
+const tfSuffix = W => W === 365 ? 'a year' : 'in the ' + (TFN[W] || W + ' days');
 function drawOpt() {
-  const R0 = OPRES; if (!R0) return;
+  const R0 = OPRES; if (!R0) return; const W = R0.W || 365, srt = ls.get('otd_op_sort_v1') || 'order';
+  const order = R0.steps.map((x, i) => ({ ...x, i }));
+  if (srt === 'cost') order.sort((a, b) => b.cost - a.cost); else if (srt === 'profit') order.sort((a, b) => (b.g - b.cost) - (a.g - a.cost)); else if (srt === 'gain') order.sort((a, b) => b.g - a.g);
   const d = R0.after - R0.before, sg = v => (v >= 0 ? '+' : '') + fmt(v);
   if (!R0.steps.length) { $('#op-out').innerHTML = '<section><div class="card state"><b>Nothing fits</b><span class="note">No upgrade at that budget adds rax to this loadout - try a bigger budget or more sports.</span></div></section>'; return; }
-  $('#op-out').innerHTML = `<section><div class="card ops"><div class="k">With these upgrades</div><div class="v">${fmt(R0.after)}<small>a year</small></div>
+  $('#op-out').innerHTML = `<section><div class="card ops"><div class="k">With these upgrades</div><div class="v">${fmt(R0.after)}<small>${esc(tfSuffix(W))}</small></div>
       <div class="note" style="margin-top:4px">${esc(R0.lo ? R0.lo.name : 'Your account')} ${fmt(R0.before)} · <b class="${d >= 0 ? 'pos' : 'neg'}">${sg(d)}</b></div>
       <div class="st"><div><div class="k">Spend</div><b>${fmt(R0.spent)}</b></div><div><div class="k">Adds</div><b class="pos">${sg(d)}</b></div><div><div class="k">Profit</div><b class="${d - R0.spent >= 0 ? 'pos' : 'neg'}">${sg(d - R0.spent)}</b></div></div>
       <div class="opa"><button type="button" class="pri" id="op-save">Save as a loadout</button></div></div></section>
-    <section><div class="sh"><h2>Best order</h2><span>${R0.steps.length} upgrade${R0.steps.length === 1 ? '' : 's'} · of ${fmt(R0.budget)}</span></div>
-    <div class="card" style="overflow:hidden">${R0.steps.map((x, i) => `<div class="ar"><div><div class="n">${i + 1}. ${profName(x.c)}</div>
+    <section><div class="sh"><h2>${R0.steps.length} upgrade${R0.steps.length === 1 ? '' : 's'}</h2><select id="op-sort" class="srt" aria-label="Sort">${[['order', 'Best order'], ['cost', 'Highest cost'], ['profit', 'Highest profit'], ['gain', 'Highest increase']].map(([v, t]) => `<option value="${v}"${v === srt ? ' selected' : ''}>${t}</option>`).join('')}</select></div>
+    <div class="card" style="overflow:hidden">${order.map(x => `<div class="ar"><div><div class="n">${x.i + 1}. ${profName(x.c)}</div>
       <div class="m"><span>${esc(SPORT[x.c.sport] || x.c.sport)} ${esc(seasonLbl(x.c.sport, x.c.season))}</span><span class="up2">${esc(x.from < 0 ? 'New' : rarName(x.c.sport, x.from))} → ${esc(rarName(x.c.sport, x.to))}</span></div>
-      <div class="mo">Cost ${fmt(x.cost)} · ${esc(x.way)}${x.packs ? ` · ${fmt(x.packs)} pack${x.packs === 1 ? '' : 's'}` : ''}</div></div>
-      <div class="num"><b class="pos">+${fmt(x.g)}</b><small>a year</small></div><div></div></div>`).join('')}</div>
-    <p class="note" style="margin:8px 2px 0">Each one is weighed with the ones above it already done, so they're best taken in this order.</p></section>`;
+      <div class="mo">Cost ${fmt(x.cost)} · ${esc(x.way)}${x.packs ? ` · ${fmt(x.packs)} pack${x.packs === 1 ? '' : 's'}` : ''} · <b class="${x.g - x.cost >= 0 ? 'pos' : 'neg'}">${x.g - x.cost >= 0 ? '+' : ''}${fmt(x.g - x.cost)}</b> profit</div></div>
+      <div class="acts2"><div class="num"><b class="pos">+${fmt(x.g)}</b><small>${esc(tfSuffix(W))}</small></div><button type="button" class="addlo" data-opadd="${x.i}"${x.added ? ' disabled' : ''}>${x.added ? 'Added ✓' : '+ Loadout'}</button></div><div></div></div>`).join('')}</div>
+    <p class="note" style="margin:8px 2px 0">Numbered in the best order: each one is weighed with the ones before it already done.</p></section>`;
 }
-$('#op-out').addEventListener('click', async e => { if (!e.target.closest('#op-save') || !OPRES) return;
+/* "+ Loadout" (Dennis, 2026-11-25): puts that one upgrade into a loadout you can keep editing - the loadout picked above,
+   or, from Your account, one called "Optimized account" (made the first time). */
+async function opAdd(i) { const R0 = OPRES, x = R0 && R0.steps[i]; if (!x) return;
+  let lo = R0.lo ? LOADS.find(l => l.id === R0.lo.id) : LOADS.find(l => l.name === 'Optimized account' && l.base === 'acct');
+  const list = LOADS.slice(); if (!lo) { lo = { id: Math.random().toString(36).slice(2, 10), name: 'Optimized account', base: 'acct', adds: [] }; list.push(lo); }
+  lo = { ...lo, adds: lo.adds.map(a => ({ ...a })) }; const k = x.c.key, ex = lo.adds.find(a => `${a.sport}:${a.season}:${a.id}` === k);
+  if (ex) ex.lv = Math.max(ex.lv, x.to); else lo.adds.unshift({ sport: x.c.sport, season: x.c.season, id: x.c.id, name: x.c.name, team: x.c.team || '', lv: x.to, up: baseOf(lo).some(q => q.key === k) });
+  const out = list.map(l => l.id === lo.id ? lo : l); if (!out.some(l => l.id === lo.id)) out.push(lo);
+  if (await saveLoads(out)) { x.added = true; drawLoSel(); drawOpt(); toast(`Added to "${lo.name}"`); } }
+$('#op-out').addEventListener('change', e => { if (e.target.id === 'op-sort') { ls.set('otd_op_sort_v1', e.target.value); drawOpt(); } });
+$('#op-tf').addEventListener('change', e => { ls.set('otd_op_tf_v1', e.target.value); $('#op-tfl').textContent = e.target.selectedOptions[0].text; if (OPRES) optimize(); });
+$('#op-out').addEventListener('click', async e => { const a = e.target.closest('[data-opadd]'); if (a) { a.disabled = true; return opAdd(Number(a.dataset.opadd)); }
+  if (!e.target.closest('#op-save') || !OPRES) return;
   const R0 = OPRES, id = Math.random().toString(36).slice(2, 10), name = `Optimized · ${fmt(R0.budget)}`;
   const lo = { id, name, base: R0.OP.base, adds: R0.OP.adds }; if (await saveLoads(LOADS.concat(lo))) { drawLoSel(); toast(`Saved as "${name}"`); } });
 try { LOADS = JSON.parse(ls.get('otd_loads_v1') || '[]') || []; } catch (e) { LOADS = []; }
