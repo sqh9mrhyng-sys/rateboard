@@ -4036,9 +4036,6 @@ export async function otdBackground(env) {
         const u = await db.prepare('SELECT passes FROM swap_users WHERE LOWER(key)=?').bind(who).first(); if (!u) continue;
         await otdGamesFor(env, db, who, parse(u.passes, []), '', true); st.users++; } catch (e) {} }
   } catch (e) { st.err = String(e.message || e).slice(0, 120); }
-  // Counts only (2026-11-25): how UFC passes are filed, so they can be counted right.
-  try { const u = await db.prepare("SELECT passes FROM swap_users WHERE LOWER(key)='dennis'").first(); const ps = parse(u && u.passes, []); const uf = ps.filter(p => p.sport === 'ufc');
-    st.ufc = { passes: uf.length, kinds: [...new Set(uf.map(p => p.kind || 'none'))], seasons: [...new Set(uf.map(p => p.season))], rows: ((await db.prepare("SELECT COUNT(*) n FROM swap_teamrax WHERE sport='ufc'").first()) || {}).n || 0, log: ((await db.prepare("SELECT COUNT(*) n FROM gamelog WHERE sport='ufc'").first()) || {}).n || 0 }; } catch (e) { st.ufcErr = String(e.message || e).slice(0, 80); }
   st.ms = Date.now() - t0; try { await env.RATEBOARD_KV.put('otd_bg_last', JSON.stringify(st), { expirationTtl: 86400 }); } catch (e) {}
 }
 export async function otdSeason(env, db, sp, se, force) {
