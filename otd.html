@@ -168,6 +168,11 @@
   .cmp .v{font-size:20px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
   .cmp .d{grid-column:1/-1;border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:2px}
   .cmp .d>div{white-space:nowrap}
+  .dr2{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+  .tg2{display:flex;gap:6px}
+  .tg2 button{border:1px solid var(--line);background:var(--panel2);color:var(--mute);border-radius:99px;padding:6px 11px;font-weight:800;font-size:12.5px;white-space:nowrap}
+  .tg2 button[aria-pressed="true"]{border-color:var(--accent);color:var(--ink);background:color-mix(in srgb,var(--accent) 14%,var(--panel2))}
+  .tg2 button[aria-pressed="true"]::before{content:'\2713  ';color:var(--accent)}
   .cmp .d b{font-size:24px;font-weight:800;font-variant-numeric:tabular-nums}
   .cmp .d span{color:var(--mute);font-size:12.5px}
   .ar{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;border-top:1px solid var(--line);padding:10px 14px}
@@ -617,7 +622,9 @@ async function drawEd() {
   await ensureGames(ED.adds);
   const base = accTot != null ? accTot : totalOf(ACCT).total, all = compose(ED), r = totalOf(all), d = r.total - base;
   $('#ed-cmp').innerHTML = `<div><div class="k">Your account</div><div class="v">${fmt(base)}</div></div><div><div class="k">This loadout</div><div class="v">${fmt(r.total)}</div></div>
-    <div class="d"><div><b class="${d >= 0 ? 'pos' : 'neg'}">${d >= 0 ? '+' : ''}${fmt(d)}</b> <span>a year</span></div><span>${base ? (d >= 0 ? '+' : '') + (d / base * 100).toFixed(1) + '%' : ''} · after the daily limit and caps</span></div>`;
+    <div class="d"><div class="dr2"><div><b class="${d >= 0 ? 'pos' : 'neg'}">${d >= 0 ? '+' : ''}${fmt(d)}</b> <span>a year</span></div>
+      <div class="tg2" role="group" aria-label="Sports to suggest">${[['ufc', 'Show UFC'], ['soccer', 'Show FC']].map(([k, t]) => `<button type="button" data-sh="${k}" aria-pressed="${!HIDE.has(k)}">${t}</button>`).join('')}</div></div>
+      <span>${base ? (d >= 0 ? '+' : '') + (d / base * 100).toFixed(1) + '%' : ''} · after the daily limit and caps</span></div>`;
   // What each added player adds on its own, with everything else in the loadout in place.
   const gains = ED.adds.map((x, i) => { const others = { adds: ED.adds.filter((_, j) => j !== i) }; return r.total - totalOf(compose(others)).total; });
   const L = sp => ladderFor(sp).map((l, k) => `<option value="${k}">${esc(l[0])} · ${l[1]}x</option>`).join('');
@@ -636,6 +643,10 @@ $('#ed-lv').addEventListener('change', e => ls.set(LV_KEY, e.target.value));
    the level picked: day by day, what the day's claims would be with him in, after the daily limit and his own cap.
    With nothing typed, the top players of the seasons you hold (and this season's) are weighed and the best shown. */
 let qT = null, qN = 0, EDY = null, EDK = '';
+/* Show UFC / Show FC (Dennis, 2026-11-25): neither has packs, so some people won't upgrade or add them - turned off,
+   they're left out of suggestions and search. Remembered. */
+const HIDE = new Set((() => { try { return JSON.parse(ls.get('otd_hide_sp_v1') || '[]') || []; } catch (e) { return []; } })());
+const shown = r => !HIDE.has(r.sport);
 function edYear() { const k = JSON.stringify([S.claims, ED.adds.map(x => [x.sport, x.season, x.id, x.lv, !!x.up])]); if (EDK === k && EDY) return EDY;
   const keep = P, list = compose(ED); P = list; build(); const y = scanYear(S.claims); P = keep; build();
   const by = new Map(); for (const D of y.days) { const k2 = String(D.date.getMonth() + 1).padStart(2, '0') + '-' + String(D.date.getDate()).padStart(2, '0'); if (!by.has(k2)) by.set(k2, D); }
@@ -676,7 +687,7 @@ async function runSearch(q) { const n = ++qN;
   $('#ed-res').hidden = false; $('#ed-res').innerHTML = '<div class="state note">Searching…</div>';
   const j = await api('/api/swaps?op=search&q=' + encodeURIComponent(q)); if (n !== qN) return;
   if (j.error) return showRes([], esc(j.error));
-  const rows = (j.rows || []).filter(r => r.sport !== 'golf').map(r => ({ sport: r.sport, season: Number(r.season), id: Number(r.playerId), name: r.player, team: r.team || '' }));
+  const rows = (j.rows || []).filter(r => r.sport !== 'golf' && shown(r)).map(r => ({ sport: r.sport, season: Number(r.season), id: Number(r.playerId), name: r.player, team: r.team || '' }));
   await gamesFor(rows); if (n !== qN) return;
   const lv = edLv(), Y = edYear(); for (const r of rows) { const k = `${r.sport}:${r.season}:${r.id}`; r.gain = ACCT.some(p => p.key === k) ? quickUp(k, lv) : quickGain(r.sport, r.season, G[k], lv); }
   const open = r => !ED.adds.some(x => `${x.sport}:${x.season}:${x.id}` === `${r.sport}:${r.season}:${r.id}`) && r.gain != null;
@@ -696,9 +707,9 @@ async function suggest() { const n = ++qN; $('#ed-res').hidden = false;
   if (n !== qN) return;
   const lv = edLv(), ub = r => { const L = ladderFor(r.sport), l = Math.min(lv, L.length - 1); return Math.min(r.tot * (l < 0 ? 1 : L[l][1]), capOf({ sport: r.sport, season: r.season, kind: 'player' }, l)); };
   const inEd = new Set(ED.adds.map(x => `${x.sport}:${x.season}:${x.id}`));
-  const ups = ACCT.filter(p => !isTeam(p) && p.sport !== 'golf' && !inEd.has(p.key) && Math.min(lv, ladderFor(p.sport).length - 1) > levelIdx(p.rating, p) && (G[p.key] || []).length)
+  const ups = ACCT.filter(p => !isTeam(p) && p.sport !== 'golf' && shown(p) && !inEd.has(p.key) && Math.min(lv, ladderFor(p.sport).length - 1) > levelIdx(p.rating, p) && (G[p.key] || []).length)
     .map(p => { const L = ladderFor(p.sport), l = Math.min(lv, L.length - 1); return { sport: p.sport, season: Number(p.season), id: Number(p.id), name: p.name || 'Player ' + p.id, team: '', up: true, ub: Math.min((G[p.key] || []).reduce((t, x) => t + x[1], 0) * L[l][1], capOf(p, l) - (Number(p.earned) || 0)) }; });
-  const cand = POOL.filter(notMine).map(r => (r.ub = ub(r), r)).concat(ups).sort((a, b) => b.ub - a.ub).slice(0, 2000);
+  const cand = POOL.filter(r => notMine(r) && shown(r)).map(r => (r.ub = ub(r), r)).concat(ups).sort((a, b) => b.ub - a.ub).slice(0, 2000);
   // Weighed in slices so the page never locks up.
   for (let i = 0; i < cand.length; i += 150) { for (const r of cand.slice(i, i + 150)) r.gain = r.up ? (quickUp(`${r.sport}:${r.season}:${r.id}`, lv) || 0) : quickGain(r.sport, r.season, G[`${r.sport}:${r.season}:${r.id}`], lv); await new Promise(r => setTimeout(r, 0)); if (n !== qN) return; }
   cand.sort((a, b) => b.gain - a.gain);
@@ -712,6 +723,8 @@ $('#ed-res').addEventListener('click', async e => { const b = e.target.closest('
   b.outerHTML = `<span class="held">${up ? 'Upgraded' : 'Added'}</span>`; await drawEd(); runSearch($('#ed-q').value.trim()); });
 $('#ed-adds').addEventListener('change', e => { const s = e.target.closest('[data-lv]'); if (!s) return; ED.adds[Number(s.dataset.lv)].lv = Number(s.value); ED.dirty = true; drawEd(); });
 $('#ed-adds').addEventListener('click', e => { const b = e.target.closest('[data-rm]'); if (!b) return; ED.adds.splice(Number(b.dataset.rm), 1); ED.dirty = true; drawEd().then(() => runSearch($('#ed-q').value.trim())); });
+$('#ed-cmp').addEventListener('click', e => { const b = e.target.closest('[data-sh]'); if (!b) return; const k = b.dataset.sh; HIDE.has(k) ? HIDE.delete(k) : HIDE.add(k);
+  ls.set('otd_hide_sp_v1', JSON.stringify([...HIDE])); b.setAttribute('aria-pressed', String(!HIDE.has(k))); runSearch($('#ed-q').value.trim()); });
 $('#ed-name').addEventListener('input', () => { ED.name = $('#ed-name').value; edDirty(true); });
 $('#ed-back').addEventListener('click', () => { if (ED && ED.dirty && ED.adds.length && !confirmLeave()) return; ED = null; drawLoadouts(); });
 function confirmLeave() { const b = $('#ed-back'); if (b.dataset.sure) { delete b.dataset.sure; return true; } b.dataset.sure = '1'; toast('Not saved - tap again to leave'); setTimeout(() => { delete b.dataset.sure; }, 3000); return false; }
