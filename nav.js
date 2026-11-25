@@ -6,6 +6,7 @@
     ['/', 'Home'],
     ['/board', 'Board'],
     ['/board#otd', 'OTD'],
+    ['/otd', 'OTD breakdown', 'owner', '/board#otd'],   // Dennis only for now (2026-11-25); rides under OTD
     ['/board#gamedata', 'Game data', 'admin'],
     ['/packs', 'Pack data'],
     ['/swaps', 'Swaps'],
@@ -33,7 +34,7 @@
   var tkey = (function (x) { var h = 5381; for (var i = 0; i < x.length; i++) h = ((h << 5) + h + x.charCodeAt(i)) | 0; return String(h); })(tok);
   var ACC = {}, fresh = false; try { var c = JSON.parse(ss.get('rb_nav_acc_v1') || 'null'); if (c && c.t === tkey && Date.now() - c.at < 10 * 60e3) { ACC = c.acc || {}; fresh = true; } } catch (e) {}
   var ui = function () { try { return JSON.parse(ls.get('rb_ui_v1') || '{}') || {}; } catch (e) { return {}; } };
-  var canOpen = function (p) { return !p[2] || (p[2] === 'pred' ? !!ACC.pred : !!ACC.admin); };
+  var canOpen = function (p) { return !p[2] || (p[2] === 'pred' ? !!ACC.pred : p[2] === 'owner' ? !!ACC.owner : !!ACC.admin); };
 
   function list() {
     var u = ui(), hid = u.navHidden || [], o = (u.navOrder && u.navOrder.length) ? u.navOrder : NAV_DEFAULT;
@@ -86,7 +87,7 @@
   /* Scan button beside the menu (Dennis, 2026-11-17) on Boosts, Pack data, Board (OTD), Projections and Bulk:
      the site's one scan of your passes. Swaps keeps its own. When it finishes the page refreshes what it shows
      (window.rbAfterScan) or reloads. */
-  var SCAN_PAGES = { '/boosts': 'boosts', '/packs': 'packs', '/board': 'board', '/projections': 'projections', '/bulk': 'bulk' };
+  var SCAN_PAGES = { '/boosts': 'boosts', '/packs': 'packs', '/board': 'board', '/projections': 'projections', '/bulk': 'bulk', '/otd': 'otd' };
   var path0 = location.pathname.replace(/\.html$/, '').replace(/\/$/, '') || '/';
   var scanPage = SCAN_PAGES[path0] || null;
   function draw() {
@@ -136,7 +137,7 @@
   // Access (for Predictions / Admin) and the latest menu settings, once every 10 minutes per tab.
   if (tok && !fresh) {
     fetch('/api/rax?market=me', { headers: { 'x-rb-token': tok } }).then(function (r) { return r.json(); }).then(function (j) {
-      if (!j || !j.signedIn) return; ACC = { admin: !!j.admin, pred: !!j.pred }; ss.set('rb_nav_acc_v1', JSON.stringify({ at: Date.now(), t: tkey, acc: ACC }));
+      if (!j || !j.signedIn) return; ACC = { admin: !!j.admin, pred: !!j.pred, owner: !!j.owner }; ss.set('rb_nav_acc_v1', JSON.stringify({ at: Date.now(), t: tkey, acc: ACC }));
     }).catch(function () {});
     fetch('/api/kv', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-rb-token': tok }, body: JSON.stringify({ op: 'uiPrefs' }) }).then(function (r) { return r.json(); }).then(function (j) {
       if (j && j.prefs) { var u = ui(); u.navHidden = j.prefs.navHidden || []; u.navOrder = j.prefs.navOrder || []; u.hideReps = j.prefs.hideReps || []; ls.set('rb_ui_v1', JSON.stringify(u)); }

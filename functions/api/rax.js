@@ -9758,7 +9758,7 @@ export async function onRequestGet(ctx) {
       // Predictions box on Home (2026-11-16): Dennis and the members he gave access.
       let pred = !!a.who;   // open to every signed-in member (Dennis, 2026-11-17)
       try { if (!pred && a.who) pred = (JSON.parse((await env.RATEBOARD_KV.get('pred_access_v1')) || '[]') || []).includes(String(a.who).toLowerCase()); } catch (e) {}
-      return json({ signedIn: !!a.who, access: a.ok, admin: a.admin, swaps, otd, pack, pred,
+      return json({ signedIn: !!a.who, access: a.ok, admin: a.admin, owner: String(a.who || '').toLowerCase() === 'dennis', swaps, otd, pack, pred,
         ...(await (async () => { if (a.admin) return { puller: true, grant: { all: true, queue: [], pull: [], players: [] } };
           const g = a.who ? await pullGrantFor(env, a.who) : null; return { puller: !!g, grant: g }; })()) });
     }

@@ -1,5 +1,467 @@
-<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>OTD - Rax Academy</title>
-<!-- The OTD optimization page was removed (Dennis, 2026-11-12). OTD now lives at /board#otd. -->
-<script>location.replace('/board#otd');</script>
-<p style="font:16px system-ui;padding:24px">OTD has moved to <a href="/board#otd">OTD</a>.</p>
+<!-- OTD (Dennis, 2026-11-25): Breakdown / Loadouts / Optimized. Private to Dennis for now - everyone else is sent
+     to the OTD screen on the Board, as before. Breakdown: every pass's on-this-day claims for the next 12 months
+     after the daily claim limit and all-time caps - sports ranked, a calendar you can sort by best and worst
+     days, and every pass ranked. -->
+<style>
+  :root{--bg:#141925;--panel:#1d2433;--panel2:#232b3d;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;--ok:#5fbf7a;--bad:#e5484d}
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  [hidden]{display:none!important}
+  button,input,select{font:inherit;color:inherit}
+  button{cursor:pointer;-webkit-tap-highlight-color:transparent}
+  .wrap{max-width:860px;margin:0 auto;padding:14px 16px calc(40px + env(safe-area-inset-bottom))}
+  .hd{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:6px 0 12px}
+  h1{font-size:24px;line-height:1.1;margin:0;font-weight:800;letter-spacing:-.02em}
+  .hd small{color:var(--mute);font-size:12.5px;text-align:right}
+  .tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:4px;position:sticky;top:8px;z-index:20;box-shadow:0 8px 24px rgba(0,0,0,.28)}
+  .tabs button{border:1px solid transparent;background:none;border-radius:10px;padding:10px 6px;font-weight:700;font-size:14px;color:var(--mute);min-width:0}
+  .tabs button[aria-pressed="true"]{background:var(--panel2);color:var(--ink);border-color:var(--accent)}
+  section{margin-top:18px}
+  .sh{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 2px 10px}
+  h2{font-size:16px;margin:0;font-weight:800;letter-spacing:-.01em}
+  .sh span{color:var(--mute);font-size:12.5px;text-align:right}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px}
+  .note{color:var(--mute);font-size:13px}
+  .pos{color:var(--ok)} .neg{color:var(--bad)}
+
+  /* Hero */
+  .hero{padding:18px 18px 14px;background:linear-gradient(160deg,color-mix(in srgb,var(--accent) 14%,var(--panel)),var(--panel) 62%)}
+  .hero .k{font-size:11.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+  .hero .v{font-size:40px;line-height:1.05;font-weight:800;letter-spacing:-.03em;margin-top:4px;font-variant-numeric:tabular-nums}
+  .hero .v small{font-size:15px;font-weight:700;color:var(--mute);letter-spacing:0;margin-left:6px}
+  .hero .s{color:var(--mute);font-size:13.5px;margin-top:4px}
+  .spark{display:grid;grid-template-columns:repeat(12,1fr);gap:5px;align-items:end;height:64px;margin-top:16px}
+  .spark i{display:block;border-radius:4px 4px 2px 2px;background:color-mix(in srgb,var(--accent) 55%,var(--panel2));min-height:3px}
+  .spark i.top{background:var(--accent)}
+  .sparkl{display:grid;grid-template-columns:repeat(12,1fr);gap:5px;margin-top:5px;font-size:10px;color:var(--mute);text-align:center;text-transform:uppercase;letter-spacing:.03em}
+  .seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:4px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:4px}
+  .seg button{border:1px solid transparent;background:none;border-radius:9px;padding:8px 8px;font-weight:700;font-size:13.5px;color:var(--mute);min-width:0;white-space:nowrap}
+  .seg button[aria-pressed="true"]{background:var(--panel);color:var(--ink);border-color:var(--accent)}
+  .claims{margin-top:14px}
+  .claims p{margin:8px 2px 0}
+  .tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:10px}
+  .tile{padding:12px 14px;min-width:0}
+  .tile .k{color:var(--mute);font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+  .tile .v{font-size:21px;font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tile .s{color:var(--mute);font-size:12.5px;line-height:1.3;min-height:16px}
+
+  /* Sports ranked */
+  .sports{overflow:hidden}
+  .sp{display:grid;grid-template-columns:28px 1fr auto;gap:10px;align-items:center;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line);padding:12px 14px}
+  .sp:first-child{border-top:0}
+  .sp[aria-pressed="true"]{background:color-mix(in srgb,var(--accent) 9%,transparent)}
+  .sp .r{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--panel2);font-size:12px;font-weight:800;color:var(--mute)}
+  .sp:first-child .r{background:var(--accent);color:#141925}
+  .sp .n{font-weight:800;font-size:15px}
+  .sp .m{color:var(--mute);font-size:12.5px;line-height:1.35}
+  .sp .bar{height:6px;border-radius:99px;background:var(--panel2);margin-top:6px;overflow:hidden}
+  .sp .bar i{display:block;height:100%;border-radius:99px;background:var(--accent)}
+  .sp .x{text-align:right;font-variant-numeric:tabular-nums}
+  .sp .x b{display:block;font-size:16px;font-weight:800;letter-spacing:-.01em}
+  .sp .x span{color:var(--mute);font-size:12px}
+  .sp>div{min-width:0}
+
+  /* Calendar */
+  .ctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+  .ctl .seg{flex:1 1 220px}
+  .chips{display:flex;gap:6px;overflow-x:auto;padding:2px 2px 8px;margin:0 -2px;scrollbar-width:none}
+  .chips::-webkit-scrollbar{display:none}
+  .chips button{flex:0 0 auto;border:1px solid var(--line);background:var(--panel);border-radius:99px;padding:6px 12px;font-weight:700;font-size:13px;color:var(--mute)}
+  .chips button[aria-pressed="true"]{border-color:var(--accent);color:var(--ink);background:var(--panel2)}
+  .months{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
+  .month{padding:12px 12px 10px}
+  .month h3{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;margin:0 2px 8px;font-weight:800}
+  .month h3 span{color:var(--mute);font-weight:700;font-size:12px;font-variant-numeric:tabular-nums}
+  .dow,.grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
+  .dow{font-size:9.5px;color:var(--mute);text-align:center;text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px}
+  .day{border:0;border-radius:7px;padding:4px 0 3px;text-align:center;background:var(--panel2);min-height:38px;display:flex;flex-direction:column;justify-content:center;gap:1px;min-width:0}
+  .day u{text-decoration:none;font-size:10px;opacity:.75;line-height:1}
+  .day b{font-size:10.5px;font-weight:800;line-height:1.1;font-variant-numeric:tabular-nums}
+  .day.e{opacity:.38;cursor:default}
+  .day.pad{visibility:hidden}
+  .day.dk{color:#141925}
+  .day.sel{outline:2px solid var(--ink);outline-offset:1px}
+  .day.td{box-shadow:inset 0 0 0 1.5px var(--ink)}
+  .legend{display:flex;align-items:center;gap:6px;justify-content:flex-end;color:var(--mute);font-size:11.5px;margin-top:10px}
+  .legend i{width:16px;height:10px;border-radius:3px;display:block}
+  .dl{overflow:hidden}
+  .dr{display:grid;grid-template-columns:28px 1fr auto;gap:10px;align-items:center;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line);padding:11px 14px}
+  .dr:first-child{border-top:0}
+  .dr .r{font-size:12px;font-weight:800;color:var(--mute);text-align:center;font-variant-numeric:tabular-nums}
+  .dr .n{font-weight:700}
+  .dr .m{color:var(--mute);font-size:12.5px;line-height:1.35}
+  .dr .bar{height:5px;border-radius:99px;background:var(--panel2);margin-top:5px;overflow:hidden}
+  .dr .bar i{display:block;height:100%;border-radius:99px;background:var(--accent)}
+  .dr .x{text-align:right;font-weight:800;font-size:15px;font-variant-numeric:tabular-nums}
+  .dr .x span{display:block;color:var(--mute);font-size:11.5px;font-weight:600}
+  .dr>div{min-width:0}
+  .more{display:block;width:100%;border:0;border-top:1px solid var(--line);background:none;padding:12px;font-weight:700;color:var(--accent)}
+
+  /* Passes */
+  .find{display:flex;gap:8px;margin-bottom:10px}
+  .find input{flex:1;min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:16px}
+  .find select{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 10px;font-size:14px;font-weight:700;max-width:46%}
+  .pr{display:grid;grid-template-columns:28px 1fr auto;gap:10px;align-items:center;border-top:1px solid var(--line);padding:11px 14px}
+  .pr:first-child{border-top:0}
+  .pr .r{font-size:12px;font-weight:800;color:var(--mute);text-align:center;font-variant-numeric:tabular-nums}
+  .pr .n{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pr .m{color:var(--mute);font-size:12.5px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:2px}
+  .pr .x{text-align:right;font-weight:800;font-size:15px;font-variant-numeric:tabular-nums}
+  .pr .x span{display:block;color:var(--mute);font-size:11.5px;font-weight:600}
+  .pr>div{min-width:0}
+  .tag{display:inline-block;padding:1px 7px;border-radius:6px;font-size:11px;font-weight:800;color:#10131b;white-space:nowrap}
+  .flag{font-size:11px;font-weight:800;border-radius:6px;padding:1px 6px;border:1px solid currentColor;white-space:nowrap}
+  .flag.b{color:var(--bad)} .flag.w{color:#ffc95a}
+
+  /* Day sheet */
+  .shade{position:fixed;inset:0;background:rgba(8,10,16,.6);z-index:60;display:flex;align-items:flex-end;justify-content:center}
+  .sheet{background:var(--panel);border:1px solid var(--line);border-bottom:0;border-radius:18px 18px 0 0;width:100%;max-width:560px;max-height:82vh;display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom)}
+  .sheet header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 16px 12px;border-bottom:1px solid var(--line)}
+  .sheet h3{margin:0;font-size:17px;font-weight:800}
+  .sheet header p{margin:2px 0 0}
+  .sheet header button{border:1px solid var(--line);background:var(--panel2);border-radius:10px;width:36px;height:36px;font-size:18px;line-height:1;flex:0 0 auto}
+  .sheet .body{overflow:auto;-webkit-overflow-scrolling:touch}
+  .sheet h4{margin:0;padding:10px 16px 6px;font-size:11.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--mute)}
+  .cl{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:9px 16px;border-top:1px solid var(--line)}
+  .cl .n{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cl .m{color:var(--mute);font-size:12.5px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:2px}
+  .cl .x{font-weight:800;font-variant-numeric:tabular-nums}
+  .cl.lost .n,.cl.lost .x{color:var(--mute);text-decoration:line-through}
+  .cl>div{min-width:0}
+
+  /* States */
+  .state{padding:28px 18px;text-align:center}
+  .state b{display:block;font-size:17px;margin-bottom:4px}
+  .state button{margin-top:14px;background:var(--accent);color:#141925;border:0;border-radius:12px;padding:11px 18px;font-weight:800}
+  .sk{border-radius:16px;background:linear-gradient(100deg,var(--panel) 30%,var(--panel2) 50%,var(--panel) 70%);background-size:300% 100%;animation:sk 1.2s linear infinite}
+  @keyframes sk{from{background-position:100% 0}to{background-position:0 0}}
+  @media (prefers-reduced-motion:reduce){.sk{animation:none}}
+  .soon{padding:34px 20px;text-align:center}
+  .soon i{display:grid;place-items:center;width:52px;height:52px;margin:0 auto 12px;border-radius:16px;background:color-mix(in srgb,var(--accent) 18%,var(--panel2));color:var(--accent);font-style:normal;font-size:24px}
+  .soon b{display:block;font-size:18px}
+  .soon p{margin:6px auto 0;max-width:360px}
+  @media(min-width:640px){.tiles{grid-template-columns:repeat(4,1fr)} .hero .v{font-size:46px}}
+</style>
+<script src="/theme.js"></script>
+<script src="/nav.js?v=7"></script>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/img/favicon-48.png">
+<link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Rax Academy">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#141925">
+</head>
+<body>
+<div class="wrap" id="app" hidden>
+  <div class="hd"><h1>OTD</h1><small id="hdnote"></small></div>
+  <div class="tabs" role="tablist" id="tabs">
+    <button data-tab="b" aria-pressed="true">Breakdown</button><button data-tab="l" aria-pressed="false">Loadouts</button><button data-tab="o" aria-pressed="false">Optimized</button>
+  </div>
+
+  <div id="t-b">
+    <div id="b-state"></div>
+    <div id="b-main" hidden>
+      <section style="margin-top:14px">
+        <div class="card hero">
+          <div class="k">Next 12 months</div>
+          <div class="v"><span id="h-total">-</span><small>rax</small></div>
+          <div class="s" id="h-sub"></div>
+          <div class="spark" id="h-spark" aria-hidden="true"></div>
+          <div class="sparkl" id="h-sparkl" aria-hidden="true"></div>
+        </div>
+        <div class="claims">
+          <div class="seg" id="claims" role="radiogroup" aria-label="Claims a day"><button data-c="2">2 a day</button><button data-c="3">2 a day + 1</button></div>
+          <p class="note" id="claimsnote"></p>
+        </div>
+        <div class="tiles">
+          <div class="card tile"><div class="k">Lost to the limit</div><div class="v" id="t-lost">-</div><div class="s" id="t-lost-s"></div></div>
+          <div class="card tile"><div class="k">Passes claiming</div><div class="v" id="t-pass">-</div><div class="s" id="t-pass-s"></div></div>
+          <div class="card tile"><div class="k">Days with a claim</div><div class="v" id="t-days">-</div><div class="s" id="t-days-s"></div></div>
+          <div class="card tile"><div class="k">Best day</div><div class="v" id="t-best">-</div><div class="s" id="t-best-s"></div></div>
+        </div>
+      </section>
+
+      <section>
+        <div class="sh"><h2>Sports, best to worst</h2><span>Tap one to filter the page</span></div>
+        <div class="card sports" id="sports"></div>
+      </section>
+
+      <section id="calsec">
+        <div class="sh"><h2>Calendar</h2><span id="calnote"></span></div>
+        <div class="chips" id="chips"></div>
+        <div class="ctl">
+          <div class="seg" id="calview"><button data-v="cal">Calendar</button><button data-v="best">Best days</button><button data-v="worst">Worst days</button><button data-v="lost">Most lost</button></div>
+        </div>
+        <div id="cal"></div>
+      </section>
+
+      <section>
+        <div class="sh"><h2>Passes</h2><span id="pnote"></span></div>
+        <div class="find"><input id="pq" type="search" placeholder="Search a player" autocomplete="off" aria-label="Search a player">
+          <select id="psort" aria-label="Sort passes"><option value="won">Most claimed</option><option value="lost">Most lost</option><option value="lvl">Highest level</option><option value="games">Most games</option><option value="name">Name</option></select></div>
+        <div class="card" id="plist" style="overflow:hidden"></div>
+        <p class="note" style="margin:10px 2px 0">UFC isn't counted here yet - its claim data isn't reliable enough.</p>
+      </section>
+    </div>
+  </div>
+
+  <div id="t-l" hidden><section><div class="card soon"><i>&#9776;</i><b>Loadouts</b><p class="note">Next up. Breakdown is finished first - this tab is ready for it.</p></div></section></div>
+  <div id="t-o" hidden><section><div class="card soon"><i>&#9733;</i><b>Optimized</b><p class="note">Next up. Breakdown is finished first - this tab is ready for it.</p></div></section></div>
+</div>
+<div class="shade" id="shade" hidden><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="dtitle">
+  <header><div><h3 id="dtitle"></h3><p class="note" id="dsub"></p></div><button type="button" id="dclose" aria-label="Close">&times;</button></header>
+  <div class="body" id="dbody"></div>
+</div></div>
+
+<script>
+(() => { const real = window.fetch.bind(window);
+  window.fetch = (u, o = {}) => { let t = ''; try { t = localStorage.getItem('ratebrd_token_v1') || ''; } catch (e) {}
+    if (t && typeof u === 'string' && u.startsWith('/api/')) o = Object.assign({}, o, { headers: Object.assign({}, o.headers || {}, { 'x-rb-token': t }) });
+    return real(u, o); }; })();
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmt = n => n == null || !Number.isFinite(n) ? '-' : Math.round(n).toLocaleString();
+const short = n => { n = Math.round(n || 0); return n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + 'M' : n >= 1e4 ? Math.round(n / 1e3) + 'k' : n >= 1e3 ? (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'k' : String(n); };
+const api = async u => { try { const r = await fetch(u); const j = await r.json().catch(() => ({})); if (!r.ok && !j.error) j.error = 'Error ' + r.status; return j; } catch (e) { return { error: 'Could not reach the site.' }; } };
+const ls = { get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } };
+
+const SPORT = { nba: 'NBA', nfl: 'NFL', ncaaf: 'CFB', ncaam: 'CBB', mlb: 'MLB', nhl: 'NHL', soccer: 'FC', wnba: 'WNBA', golf: 'Golf' };
+const START = { nfl: 1, nhl: 1, ncaaf: 1, soccer: 1 };
+const seasonLbl = (sp, se) => { se = Number(se); return START[sp] ? `${se}-${String(se + 1).slice(2)}` : (sp === 'nba' || sp === 'ncaam') ? `${se - 1}-${String(se).slice(2)}` : String(se); };
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/* Levels, claim multipliers and all-time caps: the same tables as the OTD screen on the Board. */
+const LEVELS = [
+  ['Common', 2, 10, 1], ['Uncommon', 3, 30, 2], ['Rare', 4, 80, 3], ['Epic', 10, 180, 4],
+  ['Legendary 1', 25, 380, 5], ['Legendary 2', 28, 520, 5], ['Legendary 3', 32, 720, 5], ['Legendary 4', 35, 1000, 5], ['Legendary 5', 40, 1180, 5],
+  ['Mystic 1', 75, 1380, 6], ['Mystic 2', 79, 1560, 6], ['Mystic 3', 83, 1760, 6], ['Mystic 4', 87, 1980, 6], ['Mystic 5', 91, 2220, 6],
+  ['Mystic 6', 95, 2480, 6], ['Mystic 7', 98, 2760, 6], ['Mystic 8', 101, 3000, 6], ['Mystic 9', 103, 3180, 6], ['Mystic 10', 105, 3250, 6],
+  ['Iconic 1', 150, 3380, 7], ['Iconic 2', 153, 3820, 7], ['Iconic 3', 156, 4320, 7], ['Iconic 4', 159, 4920, 7], ['Iconic 5', 163, 5620, 7],
+  ['Iconic 6', 167, 6420, 7], ['Iconic 7', 171, 7320, 7], ['Iconic 8', 175, 8320, 7], ['Iconic 9', 180, 9420, 7], ['Iconic 10', 185, 10620, 7],
+  ['Iconic 11', 190, 12000, 7], ['Iconic 12', 196, 13600, 7], ['Iconic 13', 202, 15400, 7], ['Iconic 14', 208, 17500, 7], ['Iconic 15', 214, 19900, 7],
+  ['Iconic 16', 220, 22700, 7], ['Iconic 17', 226, 26000, 7], ['Iconic 18', 233, 29000, 7], ['Iconic 19', 240, 34500, 7], ['Iconic 20', 250, 40000, 7]
+];
+const RC = { 1: '#4f9ee8', 2: '#5fbf7a', 3: '#f0913a', 4: '#e5484d', 5: '#a77bf0', 6: '#f2c14e', 7: '#e0559c' };
+const CAP = { 'General': 0, 'Common': 1000, 'Uncommon': 1500, 'Rare': 2000, 'Epic': 5000,
+  'Legendary 1': 12500, 'Legendary 2': 14000, 'Legendary 3': 16000, 'Legendary 4': 17500, 'Legendary 5': 20000,
+  'Mystic 1': 37500, 'Mystic 2': 39500, 'Mystic 3': 41500, 'Mystic 4': 43500, 'Mystic 5': 45500,
+  'Mystic 6': 47500, 'Mystic 7': 49000, 'Mystic 8': 50500, 'Mystic 9': 51500, 'Mystic 10': 52500 };
+const LIVE = new Set(['nba:2027', 'ncaam:2027', 'nfl:2026', 'ncaaf:2026', 'nhl:2026']);
+const TEAM_LEVELS = [['Common', 1.2, 30, 1], ['Uncommon', 1.4, 90, 2], ['Rare', 1.6, 240, 3], ['Epic', 2, 540, 4], ['Legendary', 2.5, 1140, 5], ['Mystic', 4, 4140, 6], ['Iconic', 6, 10140, 7]];
+const TEAM_CAP = { 0: 0, 1: 1500, 2: 2500, 3: 4000, 4: 6000, 5: 12000, 6: 24000, 7: 128000 };
+const isTeam = p => p && p.kind === 'team';
+const ladderOf = p => isTeam(p) ? TEAM_LEVELS : LEVELS;
+function capOf(p, k) {
+  if (LIVE.has(`${p.sport}:${p.season}`)) return Infinity;
+  const L = ladderOf(p), name = k < 0 ? 'General' : L[k][0], tier = k < 0 ? 0 : L[k][3];
+  if (isTeam(p)) return TEAM_CAP[tier] ?? 0;
+  if (tier === 7) return Infinity;
+  return CAP[name] ?? 0;
+}
+const levelIdx = (r, p) => { let k = -1; ladderOf(p).forEach((l, i) => { if (Number(r) >= l[2]) k = i; }); return k; };
+const tag = p => { const L = ladderOf(p), i = p.lv; return i < 0 ? '<span class="tag" style="background:#8a93a6">General · 1x</span>' : `<span class="tag" style="background:${RC[L[i][3]]}">${esc(L[i][0])} · ${L[i][1]}x</span>`; };
+const sub = p => `${isTeam(p) ? 'Team · ' : ''}${esc(SPORT[p.sport] || p.sport)} · ${esc(seasonLbl(p.sport, p.season))}`;
+
+let P = [], G = {}, byDay = new Map(), Y = null;
+const S = { claims: ls.get('otd_claims_v1') === '2' ? 2 : 3, sport: null, view: 'cal', sel: null, showDays: 30, showPass: 40, q: '', psort: 'won' };
+
+// One day's claims: two per sport, then (with + 1) the best one left over across every sport.
+function scoreDay(list, claims) {
+  const by = new Map(); let total = 0;
+  for (const r of list) { total += r.rax; if (!by.has(r.sport)) by.set(r.sport, []); by.get(r.sport).push(r); }
+  let earned = 0; const spare = [], won = [];
+  for (const arr of by.values()) { arr.sort((a, b) => b.rax - a.rax); arr.forEach((r, n) => { if (n < 2) { earned += r.rax; won.push(r); } else spare.push(r); }); }
+  if (claims >= 3 && spare.length) { spare.sort((a, b) => b.rax - a.rax); earned += spare[0].rax; won.push(spare[0]); spare[0].extra = true; }
+  return { earned, total, won };
+}
+function build() {
+  byDay = new Map();
+  P.forEach((p, i) => {
+    p.lv = levelIdx(p.rating, p);
+    p.capLeft = capOf(p, p.lv) - (Number(p.earned) || 0);
+    p.mult = p.capLeft <= 0 ? 0 : (Number(p.mult) || (p.lv >= 0 ? ladderOf(p)[p.lv][1] : 1));   // at its all-time cap: claims nothing more
+    p.games = G[p.key] || [];
+    for (const [d, rax] of p.games) { if (!byDay.has(d)) byDay.set(d, []); byDay.get(d).push({ i, sport: p.sport, base: rax }); }
+  });
+}
+/* The next 12 months, day by day from today: each pass's all-time cap is used up as it claims, so one that reaches
+   its cap partway through stops claiming from that day on. */
+function scanYear(claims) {
+  const rem = P.map(p => p.capLeft == null || p.capLeft === Infinity ? Infinity : Math.max(0, p.capLeft));
+  const per = P.map(() => ({ won: 0, lost: 0, days: 0, capHit: null })), days = [];
+  const t = new Date(); t.setHours(12, 0, 0, 0);
+  for (let n = 0; n < 365; n++, t.setDate(t.getDate() + 1)) {
+    const k = String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0');
+    const lst = (byDay.get(k) || []).map(r => ({ i: r.i, sport: r.sport, rax: Math.min(r.base * P[r.i].mult, rem[r.i]) })).filter(r => r.rax > 0);
+    const s = lst.length ? scoreDay(lst, claims) : { earned: 0, total: 0, won: [] }, won = new Set(s.won);
+    const D = { n, date: new Date(t), earned: s.earned, lostRax: s.total - s.earned, won: s.won, lost: lst.filter(r => !won.has(r)), by: {}, byLost: {} };
+    for (const r of lst) { const pp = per[r.i];
+      if (won.has(r)) { pp.won += r.rax; pp.days++; D.by[r.sport] = (D.by[r.sport] || 0) + r.rax;
+        if (rem[r.i] !== Infinity) { rem[r.i] -= r.rax; if (rem[r.i] <= 0.0001 && !pp.capHit) pp.capHit = new Date(t); } }
+      else { pp.lost += r.rax; D.byLost[r.sport] = (D.byLost[r.sport] || 0) + r.rax; } }
+    days.push(D);
+  }
+  return { days, per };
+}
+// A day's numbers for the sport picked (or every sport).
+const dv = D => S.sport ? (D.by[S.sport] || 0) : D.earned;
+const dl = D => S.sport ? (D.byLost[S.sport] || 0) : D.lostRax;
+
+function compute() { Y = scanYear(S.claims); draw(); }
+function draw() { drawHero(); drawSports(); drawChips(); drawCal(); drawPasses(); }
+
+function drawHero() {
+  const days = Y.days, total = days.reduce((t, D) => t + D.earned, 0), lost = days.reduce((t, D) => t + D.lostRax, 0), on = days.filter(D => D.earned > 0);
+  $('#h-total').textContent = fmt(total);
+  $('#h-sub').textContent = total ? `About ${fmt(total / 365)} a day · ${fmt(total / 12)} a month` : 'Nothing to claim in the next 12 months yet.';
+  // Twelve bars, one per month starting with this one.
+  const m = []; for (const D of days) { const k = D.date.getFullYear() * 12 + D.date.getMonth(); let e = m.find(x => x.k === k); if (!e) m.push(e = { k, mo: D.date.getMonth(), v: 0 }); e.v += D.earned; }
+  const mm = m.slice(0, 12), mx = Math.max(1, ...mm.map(x => x.v));
+  $('#h-spark').innerHTML = mm.map(x => `<i class="${x.v === mx && x.v > 0 ? 'top' : ''}" style="height:${Math.max(4, Math.round(x.v / mx * 100))}%" title="${MON[x.mo]}: ${fmt(x.v)}"></i>`).join('');
+  $('#h-sparkl').innerHTML = mm.map(x => `<span>${MON[x.mo][0]}</span>`).join('');
+  document.querySelectorAll('#claims button').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.c) === S.claims)));
+  $('#claimsnote').textContent = S.claims === 3 ? 'Two claims per sport each day, plus the best one left over across every sport.' : 'Two claims per sport each day. Anything past that is lost.';
+  $('#t-lost').textContent = fmt(lost); $('#t-lost-s').textContent = total + lost ? `${Math.round(lost / (total + lost) * 100)}% of everything claimable` : '';
+  const claiming = Y.per.filter(x => x.won > 0).length, capped = P.filter(p => p.capLeft !== Infinity && p.capLeft <= 0 && p.games.length).length;
+  $('#t-pass').textContent = fmt(claiming); $('#t-pass-s').textContent = `of ${fmt(P.length)}${capped ? ` · ${fmt(capped)} at their cap` : ''}`;
+  $('#t-days').textContent = fmt(on.length); $('#t-days-s').textContent = `${fmt(365 - on.length)} empty day${365 - on.length === 1 ? '' : 's'}`;
+  const best = on.slice().sort((a, b) => b.earned - a.earned)[0];
+  $('#t-best').textContent = best ? fmt(best.earned) : '-'; $('#t-best-s').textContent = best ? best.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '';
+  $('#hdnote').textContent = `${fmt(P.length)} passes`;
+}
+
+function sportRows() {
+  const m = new Map();
+  const g = sp => { if (!m.has(sp)) m.set(sp, { sp, won: 0, lost: 0, days: 0, passes: 0, claiming: 0 }); return m.get(sp); };
+  for (const D of Y.days) { for (const [sp, v] of Object.entries(D.by)) { const e = g(sp); e.won += v; e.days++; } for (const [sp, v] of Object.entries(D.byLost)) g(sp).lost += v; }
+  P.forEach((p, i) => { const e = g(p.sport); e.passes++; if (Y.per[i].won > 0) e.claiming++; });
+  return [...m.values()].sort((a, b) => b.won - a.won || b.passes - a.passes);
+}
+function drawSports() {
+  const rows = sportRows(), mx = Math.max(1, ...rows.map(r => r.won)), total = rows.reduce((t, r) => t + r.won, 0);
+  $('#sports').innerHTML = rows.map((r, i) => `<button type="button" class="sp" data-sp="${esc(r.sp)}" aria-pressed="${S.sport === r.sp}">
+    <span class="r">${i + 1}</span>
+    <div><div class="n">${esc(SPORT[r.sp] || r.sp)}</div><div class="m">${fmt(r.claiming)} of ${fmt(r.passes)} pass${r.passes === 1 ? '' : 'es'} claiming · ${fmt(r.days)} day${r.days === 1 ? '' : 's'}${r.lost > 0 ? ` · ${fmt(r.lost)} lost` : ''}</div><div class="bar"><i style="width:${Math.round(r.won / mx * 100)}%"></i></div></div>
+    <div class="x"><b>${fmt(r.won)}</b><span>${total ? Math.round(r.won / total * 100) : 0}%</span></div></button>`).join('') || '<div class="state note">No sports yet.</div>';
+}
+function drawChips() {
+  const rows = sportRows();
+  $('#chips').innerHTML = `<button type="button" data-sp="" aria-pressed="${!S.sport}">All sports</button>` + rows.map(r => `<button type="button" data-sp="${esc(r.sp)}" aria-pressed="${S.sport === r.sp}">${esc(SPORT[r.sp] || r.sp)}</button>`).join('');
+}
+
+function heat(v, mx) { if (!(v > 0)) return ['', false]; const f = Math.sqrt(v / mx), pct = Math.round(14 + f * 86); return [`background:color-mix(in srgb,var(--accent) ${pct}%,var(--panel2))`, pct >= 58]; }
+function drawCal() {
+  document.querySelectorAll('#calview button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === S.view)));
+  const days = Y.days, mx = Math.max(1, ...days.map(dv)), spn = S.sport ? (SPORT[S.sport] || S.sport) : null;
+  if (S.view === 'cal') {
+    $('#calnote').textContent = spn ? `${spn} only · tap a day` : 'Tap a day for its claims';
+    const months = []; for (const D of days) { const k = D.date.getFullYear() * 12 + D.date.getMonth(); let e = months.find(x => x.k === k); if (!e) months.push(e = { k, y: D.date.getFullYear(), mo: D.date.getMonth(), days: [] }); e.days.push(D); }
+    $('#cal').innerHTML = `<div class="months">${months.map(m => {
+      // Days of the month before today (first month) or after the year ends (last month) are shown faded.
+      const start = new Date(m.y, m.mo, 1).getDay(), dim = new Date(m.y, m.mo + 1, 0).getDate(), byD = new Map(m.days.map(D => [D.date.getDate(), D]));
+      let h = ''; for (let i = 0; i < start; i++) h += '<span class="day pad"></span>';
+      for (let d = 1; d <= dim; d++) { const D = byD.get(d); if (!D) { h += `<span class="day e"><u>${d}</u><b>&nbsp;</b></span>`; continue; }
+        const v = dv(D), [bg, dk] = heat(v, mx);
+        h += v > 0 || D.lost.length ? `<button type="button" class="day${dk ? ' dk' : ''}${D.n === 0 ? ' td' : ''}${S.sel === D.n ? ' sel' : ''}" data-n="${D.n}" style="${bg}" aria-label="${MON[m.mo]} ${d}: ${fmt(v)} rax"><u>${d}</u><b>${v > 0 ? short(v) : '&nbsp;'}</b></button>`
+          : `<span class="day e${D.n === 0 ? ' td' : ''}"><u>${d}</u><b>&nbsp;</b></span>`; }
+      return `<div class="card month"><h3>${MON[m.mo]} ${m.y}<span>${fmt(m.days.reduce((t, D) => t + dv(D), 0))}</span></h3><div class="dow"><span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span></div><div class="grid">${h}</div></div>`; }).join('')}</div>
+      <div class="legend">Less <i style="background:color-mix(in srgb,var(--accent) 14%,var(--panel2))"></i><i style="background:color-mix(in srgb,var(--accent) 45%,var(--panel2))"></i><i style="background:color-mix(in srgb,var(--accent) 75%,var(--panel2))"></i><i style="background:var(--accent)"></i> More</div>`;
+    return;
+  }
+  const val = S.view === 'lost' ? dl : dv;
+  let rows = days.filter(D => S.view === 'lost' ? dl(D) > 0 : dv(D) > 0);
+  rows.sort((a, b) => S.view === 'worst' ? val(a) - val(b) || a.n - b.n : val(b) - val(a) || a.n - b.n);
+  const empty = days.filter(D => !(dv(D) > 0)).length, rmx = Math.max(1, ...rows.map(val));
+  $('#calnote').textContent = (spn ? spn + ' · ' : '') + (S.view === 'best' ? 'Biggest days first' : S.view === 'worst' ? `Smallest days first${empty ? ` · ${fmt(empty)} empty` : ''}` : 'Days that lose the most to the limit');
+  const shown = rows.slice(0, S.showDays);
+  $('#cal').innerHTML = rows.length ? `<div class="card dl">${shown.map((D, i) => { const w = S.sport ? D.won.filter(r => r.sport === S.sport) : D.won;
+    return `<button type="button" class="dr" data-n="${D.n}"><span class="r">${i + 1}</span>
+      <div><div class="n">${D.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}${D.n === 0 ? ' · today' : ''}</div><div class="m">${S.view === 'lost' ? `${fmt(dv(D))} claimed · ${fmt((S.sport ? D.lost.filter(r => r.sport === S.sport) : D.lost).length)} missed` : `${w.length} claim${w.length === 1 ? '' : 's'}${dl(D) > 0 ? ` · ${fmt(dl(D))} lost` : ''}`}</div><div class="bar"><i style="width:${Math.max(2, Math.round(val(D) / rmx * 100))}%${S.view === 'lost' ? ';background:var(--bad)' : ''}"></i></div></div>
+      <div class="x">${fmt(val(D))}<span>${S.view === 'lost' ? 'lost' : 'rax'}</span></div></button>`; }).join('')}
+    ${rows.length > shown.length ? `<button type="button" class="more" id="moredays">Show ${fmt(Math.min(60, rows.length - shown.length))} more of ${fmt(rows.length)}</button>` : ''}</div>`
+    : `<div class="card state"><b>${S.view === 'lost' ? 'Nothing lost' : 'No claims'}</b><span class="note">${S.view === 'lost' ? `No day goes over the limit${spn ? ' for ' + spn : ''}.` : `No days with a claim${spn ? ' for ' + spn : ''} in the next 12 months.`}</span></div>`;
+}
+
+function drawPasses() {
+  const q = S.q.trim().toLowerCase();
+  let rows = P.map((p, i) => ({ p, ...Y.per[i] })).filter(r => (!S.sport || r.p.sport === S.sport) && (!q || String(r.p.name || '').toLowerCase().includes(q)));
+  const key = { won: r => r.won, lost: r => r.lost, lvl: r => (r.p.lv < 0 ? -1 : ladderOf(r.p)[r.p.lv][1]), games: r => r.p.games.length }[S.psort];
+  rows.sort(S.psort === 'name' ? (a, b) => String(a.p.name || '').localeCompare(String(b.p.name || '')) : (a, b) => key(b) - key(a) || b.won - a.won || String(a.p.name || '').localeCompare(String(b.p.name || '')));
+  const capped = p => p.capLeft !== Infinity && p.capLeft <= 0;
+  const flag = r => capped(r.p) ? '<span class="flag b">Capped</span>'
+    : r.capHit ? `<span class="flag b">Hits cap ${r.capHit.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>`
+    : r.lost > 0 && r.lost >= (r.won + r.lost) * 0.25 ? `<span class="flag w">Clashes · ${Math.round(r.lost / (r.won + r.lost) * 100)}% lost</span>`
+    : !r.p.games.length ? '<span class="flag w">No games on file</span>' : '';
+  $('#pnote').textContent = `${fmt(rows.length)}${S.sport ? ' ' + (SPORT[S.sport] || S.sport) : ''} pass${rows.length === 1 ? '' : 'es'}`;
+  const shown = rows.slice(0, S.showPass);
+  $('#plist').innerHTML = rows.length ? shown.map((r, i) => `<div class="pr"><span class="r">${i + 1}</span>
+    <div><div class="n">${esc(r.p.name || 'Player ' + r.p.id)}</div><div class="m"><span>${sub(r.p)}</span>${tag(r.p)}${flag(r)}</div></div>
+    <div class="x">${fmt(r.won)}<span>${r.lost > 0 ? `${fmt(r.lost)} lost` : `${fmt(r.days)} day${r.days === 1 ? '' : 's'}`}</span></div></div>`).join('')
+    + (rows.length > shown.length ? `<button type="button" class="more" id="morepass">Show all ${fmt(rows.length)}</button>` : '')
+    : `<div class="state"><b>No passes found</b><span class="note">${q ? 'Nothing matches that search.' : 'No passes in this sport.'}</span></div>`;
+}
+
+function openDay(n) {
+  const D = Y.days[n]; if (!D) return; S.sel = n;
+  const row = (r, lost) => { const p = P[r.i]; return `<div class="cl${lost ? ' lost' : ''}"><div><div class="n">${esc(p.name || 'Player ' + p.id)}</div><div class="m"><span>${sub(p)}</span>${tag(p)}${r.extra && !lost ? '<span class="flag w">+1 claim</span>' : ''}</div></div><div class="x">${fmt(r.rax)}</div></div>`; };
+  const won = D.won.slice().sort((a, b) => b.rax - a.rax), lost = D.lost.slice().sort((a, b) => b.rax - a.rax);
+  $('#dtitle').textContent = D.date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  $('#dsub').textContent = `${fmt(D.earned)} rax from ${won.length} claim${won.length === 1 ? '' : 's'}${D.lostRax > 0 ? ` · ${fmt(D.lostRax)} lost to the limit` : ''}`;
+  $('#dbody').innerHTML = (won.length ? `<h4>Claimed</h4>${won.map(r => row(r, false)).join('')}` : '<div class="state note">Nothing to claim this day.</div>')
+    + (lost.length ? `<h4>Over the limit</h4>${lost.map(r => row(r, true)).join('')}` : '');
+  $('#shade').hidden = false; document.body.style.overflow = 'hidden'; $('#dclose').focus();
+  document.querySelectorAll('#cal .day.sel').forEach(x => x.classList.remove('sel')); const c = document.querySelector(`#cal .day[data-n="${n}"]`); if (c) c.classList.add('sel');
+}
+function closeDay() { $('#shade').hidden = true; document.body.style.overflow = ''; }
+
+function setSport(sp) { S.sport = sp || null; S.showDays = 30; S.showPass = 40; drawSports(); drawChips(); drawCal(); drawPasses(); }
+$('#claims').addEventListener('click', e => { const b = e.target.closest('button[data-c]'); if (!b) return; S.claims = Number(b.dataset.c); ls.set('otd_claims_v1', String(S.claims)); compute(); });
+$('#sports').addEventListener('click', e => { const b = e.target.closest('.sp'); if (!b) return; setSport(S.sport === b.dataset.sp ? null : b.dataset.sp); if (S.sport) $('#calsec').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+$('#chips').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setSport(b.dataset.sp); });
+$('#calview').addEventListener('click', e => { const b = e.target.closest('button[data-v]'); if (!b) return; S.view = b.dataset.v; S.showDays = 30; drawCal(); });
+$('#cal').addEventListener('click', e => { if (e.target.closest('#moredays')) { S.showDays += 60; drawCal(); return; } const b = e.target.closest('[data-n]'); if (b) openDay(Number(b.dataset.n)); });
+$('#plist').addEventListener('click', e => { if (e.target.closest('#morepass')) { S.showPass = 1e9; drawPasses(); } });
+$('#pq').addEventListener('input', e => { S.q = e.target.value; S.showPass = 40; drawPasses(); });
+$('#psort').addEventListener('change', e => { S.psort = e.target.value; S.showPass = 40; drawPasses(); });
+$('#dclose').addEventListener('click', closeDay);
+$('#shade').addEventListener('click', e => { if (e.target === $('#shade')) closeDay(); });
+addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#shade').hidden) closeDay(); });
+$('#tabs').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (!b) return;
+  document.querySelectorAll('#tabs button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  for (const k of ['b', 'l', 'o']) $('#t-' + k).hidden = k !== b.dataset.tab; ls.set('otd_tab_v1', b.dataset.tab); scrollTo(0, 0); });
+
+function state(html) { $('#b-main').hidden = true; $('#b-state').innerHTML = html; }
+const skeleton = () => state('<section style="margin-top:14px"><div class="sk" style="height:206px"></div><div class="sk" style="height:46px;margin-top:14px"></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px"><div class="sk" style="height:78px"></div><div class="sk" style="height:78px"></div><div class="sk" style="height:78px"></div><div class="sk" style="height:78px"></div></div><div class="sk" style="height:260px;margin-top:18px"></div><p class="note" style="text-align:center;margin-top:12px">Loading every game for your passes…</p></section>');
+async function loadAll() {
+  skeleton();
+  const g = await api('/api/swaps?op=games');
+  if (g.error) return state(`<section><div class="card state"><b>Couldn't load your passes</b><span class="note">${esc(g.error)}</span><br><button type="button" id="retry">Try again</button></div></section>`);
+  P = (g.passes || []).filter(p => p.sport !== 'ufc'); G = g.games || {};
+  for (const p of P) if (!p.key) p.key = `${p.sport}:${p.season}:${p.id}`;
+  if (!P.length) return state(`<section><div class="card state"><b>No passes yet</b><span class="note">Scan your passes and your full OTD breakdown shows up here.</span><br><button type="button" id="scanbtn">Scan my passes</button></div></section>`);
+  build(); $('#b-state').innerHTML = ''; $('#b-main').hidden = false; compute();
+}
+$('#b-state').addEventListener('click', e => { if (e.target.closest('#retry')) loadAll(); if (e.target.closest('#scanbtn') && window.rbScan) window.rbScan(); });
+// The Scan button beside the menu (nav.js): when a scan finishes, everything here is worked out again.
+window.rbAfterScan = async () => { await loadAll(); };
+
+(async () => {
+  let me = await api('/api/swaps?op=me');
+  for (let i = 0; i < 2 && me.error && /sign in/i.test(me.error) && ls.get('ratebrd_token_v1'); i++) { await new Promise(r => setTimeout(r, 1200 * (i + 1))); me = await api('/api/swaps?op=me'); }
+  // Private to Dennis for now (2026-11-25): everyone else gets the OTD screen on the Board, as before.
+  if (me.error || String(me.key || '').toLowerCase() !== 'dennis') { location.replace('/board#otd'); return; }
+  $('#app').hidden = false;
+  const t = ls.get('otd_tab_v1'); if (t === 'l' || t === 'o') { const b = document.querySelector(`#tabs button[data-tab="${t}"]`); if (b) b.click(); }
+  await loadAll();
+})();
+</script>
+</body>
+</html>
