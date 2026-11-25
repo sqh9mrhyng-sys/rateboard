@@ -1097,7 +1097,7 @@ function pageGo(){
 /* Market data lives on /market and is only for accounts Dennis has given it
    to. The server decides, from the sign-in token; this only asks once per
    sign-in so the picker knows whether to offer it. */
-let marketAccess = false, marketAsked = '', swapsAccess = false, otdAccess = false, otdBreak = false;
+let marketAccess = false, marketAsked = '', swapsAccess = false, otdAccess = false, otdBreak = false, otdOpt = false;
 function checkMarketAccess(){
   let t = ''; try{ t = localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){}
   if(!t){ marketAccess = false; swapsAccess = false; otdAccess = false; marketAsked = ''; return; }
@@ -1109,7 +1109,7 @@ function checkMarketAccess(){
     swapsAccess = !!(j && j.swaps);
     otdAccess = !!(j && j.otd);
     // OTD breakdown: Dennis and his testers get a button to it on the OTD screen (2026-11-25).
-    otdBreak = !!(j && (j.owner || (j.tests || []).includes('/otd'))); const ob = document.getElementById('og-top'); if(ob) ob.classList.toggle('hide', !otdBreak);
+    otdBreak = !!(j && j.signedIn); otdOpt = !!(j && (j.owner || (j.tests || []).includes('/otd-opt'))); const ob = document.getElementById('og-top'); if(ob) ob.classList.toggle('hide', !otdBreak); const oo = document.getElementById('og-opt'); if(oo) oo.classList.toggle('hide', !otdOpt);
     if(was !== [marketAccess, swapsAccess, otdAccess].join('|')) applyGameDataVisibility();
   }).catch(() => { marketAsked = ''; });
 }
@@ -5080,7 +5080,7 @@ async function cbbPanel(){
   const tabsOk = dataTabs().filter(t => cbView === 'otd' ? CB_OTD_TABS.includes(t) : !CB_OTD_TABS.includes(t));
   if(!tabsOk.includes(st.mode)) st.mode = tabsOk[0] || 'pack';
   const box = pageShell(only ? 'Pack data' : cbView === 'otd' ? 'OTD' : 'Game data', `
-    ${cbView === 'otd' ? `<div class="seg ogtop${otdBreak ? '' : ' hide'}" id="og-top"><a href="/otd?tab=b">Breakdown</a><a href="/otd?tab=l">Loadouts</a><a href="/otd?tab=o">Optimized</a></div>` : ''}
+    ${cbView === 'otd' ? `<div class="seg ogtop${otdBreak ? '' : ' hide'}" id="og-top"><a href="/otd?tab=b">Breakdown</a><a href="/otd?tab=l">Loadouts</a><a href="/otd?tab=o" id="og-opt" class="${otdOpt ? '' : 'hide'}">Optimized</a></div>` : ''}
     <div class="seg seg-tabs" role="group" aria-label="View">
       <button data-cm="players" aria-pressed="${st.mode === 'players' ? 'true' : 'false'}">By player</button>
       <button data-cm="games" aria-pressed="${st.mode === 'games' ? 'true' : 'false'}">Every game</button>

@@ -64,7 +64,7 @@ function toast(t) { const d = document.createElement('div'); d.className = 'toas
 let PAGES = [];
 function draw() {
   $('#list').innerHTML = PAGES.map(p => `<div class="card" data-page="${esc(p.path)}">
-    <div class="ph"><h2>${esc(p.title)}</h2><small>${p.users.length} tester${p.users.length === 1 ? '' : 's'} · <a href="${esc(p.path)}">Open</a></small></div>
+    <div class="ph"><h2>${esc(p.title)}</h2><small>${p.users.length} tester${p.users.length === 1 ? '' : 's'} · <a href="${esc(p.href || p.path)}">Open</a></small></div>
     <div class="add"><input type="search" placeholder="Add a member - site or Real name" autocomplete="off" aria-label="Add a tester to ${esc(p.title)}"><div class="sug" hidden></div></div>
     ${p.users.length ? p.users.map(u => `<div class="u"><div><b>${esc(u.name)}</b>${u.name.toLowerCase() !== u.key ? `<span>${esc(u.key)}</span>` : ''}</div><button type="button" data-del="${esc(u.key)}">Remove</button></div>`).join('') : '<div class="empty">No testers yet.</div>'}
   </div>`).join('') || '<div class="msg">No pages to test right now.</div>';

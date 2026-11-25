@@ -16,7 +16,7 @@ const ET_DAY_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_Yor
 import { pushTo, vapidKeys, PUSH_DDL } from '../../lib/webpush.js';
 import { isAdminRequest, sessionKey, forbidden, allow, clientIp, touchSeen, ADMINS, etDay } from '../../lib/auth.js';
 import { watchEnv, noteSlowRequest } from '../../lib/dbwatch.js';
-import { TESTER_PAGES, TESTER_KV, testerMap, testerPagesFor } from '../../lib/testers.js';
+import { TESTER_PAGES, TESTER_LINKS, TESTER_KV, testerMap, testerPagesFor } from '../../lib/testers.js';
 import { predPortSync, predPortTok, dfsPull } from './rax.js';   // Dennis's portfolio sync (circular import is fine: called at run time only)
 
 /* Adding a column that already exists just errors (and is ignored). Each
@@ -6882,7 +6882,8 @@ async function handle({ request, env, waitUntil }) {
   const packCall = url.searchParams.get('page') === 'packs' && ['me', 'scan', 'scanstatus'].includes(op) && !!acc.who;
   /* Testers (2026-11-25): members Dennis added on the Testers page get what the OTD page needs, whatever else they
      have. Only looked up for those calls. */
-  const testCall = !!acc.who && TEST_OTD_OPS.has(op) && (await testerPagesFor(env, acc.who)).includes('/otd');
+  // OTD breakdown is public (2026-11-25): everything its page needs is open to every signed-in member.
+  const testCall = !!acc.who && TEST_OTD_OPS.has(op);
   if (testCall) { /* allowed */ }
   else if (!acc.ok && !boostCall && !packCall) return forbidden(acc.who ? 'Your account does not have this page yet.' : 'Sign in first (raxacademy.app).');
   if (!testCall && !acc.admin && !boostCall && !packCall && !((acc.swaps && MEMBER_OPS.has(op)) || (acc.otd && OTD_OPS.has(op)))) return forbidden('Your account does not have this.');
@@ -7114,7 +7115,7 @@ async function handle({ request, env, waitUntil }) {
     const keys = [...new Set(Object.values(m).flat())], names = {};
     for (let i = 0; i < keys.length; i += 50) { const part = keys.slice(i, i + 50);
       for (const x of (((await db.prepare(`SELECT key, rsUser FROM swap_users WHERE LOWER(key) IN (${part.map(() => '?').join(',')})`).bind(...part).all()).results) || [])) names[String(x.key).toLowerCase()] = x.rsUser || x.key; }
-    return json({ pages: Object.entries(TESTER_PAGES).map(([path, title]) => ({ path, title, users: (m[path] || []).map(k => ({ key: k, name: names[k] || k })) })) });
+    return json({ pages: Object.entries(TESTER_PAGES).map(([path, title]) => ({ path, title, href: TESTER_LINKS[path] || path, users: (m[path] || []).map(k => ({ key: k, name: names[k] || k })) })) });
   }
   if (op === 'usersearch') {
     const q = String(url.searchParams.get('q') || '').trim().toLowerCase().replace(/^@/, '').slice(0, 30);
@@ -7427,7 +7428,7 @@ async function handle({ request, env, waitUntil }) {
      rax (up to 300) - the pool "best players to add" picks from. Names from
      the search index. Reads the shared saved season (otdSeason), not the log. */
   if (op === 'otdpool') {
-    if (!acc.admin && !(await testerPagesFor(env, me)).includes('/otd')) return forbidden('OTD Optimization is off for now.');
+    if (!me) return forbidden('Sign in first.');
     const sp = String(url.searchParams.get('sport') || ''), se = Number(url.searchParams.get('season'));
     if (!/^[a-z]+$/.test(sp) || !(se > 2000)) return json({ error: 'Pick a sport and season.' }, 400);
     if (!acc.admin && !(await allow(url.origin, 'otdpool:' + me, 150, 600))) return json({ error: 'Too many loads - wait a few minutes.' }, 429);   // 150 (was 30): suggestions read ~35 seasons
@@ -7453,7 +7454,7 @@ async function handle({ request, env, waitUntil }) {
      pick. Kept on the server so they're the same on every device. Dennis only for now. GET lists them; POST { loadouts }
      replaces the list (up to 30 loadouts, 80 added players each). */
   if (op === 'otdloadouts') {
-    if (!(await testerPagesFor(env, me)).includes('/otd')) return forbidden('Not open yet.');
+    if (!me) return forbidden('Sign in first.');
     const K = 'otd_loadouts_v1_' + String(me).toLowerCase();
     if (request.method === 'POST') {
       let b = {}; try { b = await request.json(); } catch (e) {}

@@ -688,7 +688,10 @@ $('#psort').addEventListener('change', e => { S.psort = e.target.value; S.showPa
 $('#dclose').addEventListener('click', closeDay);
 $('#shade').addEventListener('click', e => { if (e.target === $('#shade')) closeDay(); });
 addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#shade').hidden) closeDay(); if (e.key === 'Escape' && !$('#nlshade').hidden) nlClose(); });
-function goTab(t) { const b = document.querySelector(`#tabs button[data-tab="${t}"]`); if (!b) return;
+let OPT_OK = false;
+function showOpt() { const b = document.querySelector('#tabs [data-tab="o"]'); b.hidden = !OPT_OK; b.parentElement.classList.toggle('three', OPT_OK);
+  if (!OPT_OK && !$('#t-o').hidden) goTab('b'); }
+function goTab(t) { if (t === 'o' && !OPT_OK) t = 'b'; const b = document.querySelector(`#tabs button[data-tab="${t}"]`); if (!b) return;
   document.querySelectorAll('#tabs button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
   for (const k of ['b', 'l', 'o']) $('#t-' + k).hidden = k !== t; ls.set('otd_tab_v1', t); scrollTo(0, 0);
   if (t === 'l' && !ED) drawLoadouts(); if (t === 'o') opInit(); }
@@ -1272,10 +1275,12 @@ window.rbAfterScan = async () => { await loadAll(true); };
   let me = await api('/api/swaps?op=me&page=boosts');
   for (let i = 0; i < 2 && me.error && /sign in/i.test(me.error) && ls.get('ratebrd_token_v1'); i++) { await new Promise(r => setTimeout(r, 1200 * (i + 1))); me = await api('/api/swaps?op=me&page=boosts'); }
   /* Dennis and the testers he picks on the Testers page (2026-11-25); everyone else gets the OTD screen on the Board. */
-  if (me.error && early && !/sign in/i.test(me.error)) me = { key: WHO, tests: ['/otd'] };   // the site hiccuped: keep what's on screen
-  if (me.error || !((me.tests || []).includes('/otd') || String(me.key || '').toLowerCase() === 'dennis')) { try { localStorage.removeItem(CK); } catch (e) {} location.replace('/board#otd'); return; }
+  if (me.error && early && !/sign in/i.test(me.error)) me = { key: WHO, tests: [] };   // the site hiccuped: keep what's on screen
+  // Public (Dennis, 2026-11-25): every signed-in member. Optimized stays for testers (the Testers page, "OTD Optimized").
+  if (me.error || !me.key) { try { localStorage.removeItem(CK); } catch (e) {} location.replace('/board#otd'); return; }
   if (early && WHO !== String(me.key).toLowerCase()) { try { localStorage.removeItem(CK); } catch (e) {} location.reload(); return; }
   WHO = String(me.key).toLowerCase(); $('#app').hidden = false;
+  OPT_OK = WHO === 'dennis' || (me.tests || []).includes('/otd-opt'); showOpt();
   const t = new URLSearchParams(location.search).get('tab') || ls.get('otd_tab_v1'); if (t === 'l' || t === 'o') { const b = document.querySelector(`#tabs button[data-tab="${t}"]`); if (b) b.click(); }
   loadLoads();
   await loadAll();
