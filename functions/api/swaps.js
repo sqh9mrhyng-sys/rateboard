@@ -7412,6 +7412,25 @@ async function handle({ request, env, waitUntil }) {
   }
   /* OTD optimiser: every game of every pass the member holds, as
      [MM-DD, rax] pairs, one query per sport-season. */
+  /* OTD loadouts (Dennis, 2026-11-25): saved sets of players added on top of your scanned passes, each at a level you
+     pick. Kept on the server so they're the same on every device. Dennis only for now. GET lists them; POST { loadouts }
+     replaces the list (up to 30 loadouts, 80 added players each). */
+  if (op === 'otdloadouts') {
+    if (String(me || '').toLowerCase() !== 'dennis') return forbidden('Not open yet.');
+    const K = 'otd_loadouts_v1_' + String(me).toLowerCase();
+    if (request.method === 'POST') {
+      let b = {}; try { b = await request.json(); } catch (e) {}
+      const clean = (Array.isArray(b.loadouts) ? b.loadouts : []).slice(0, 30).map(l => ({
+        id: String(l.id || '').replace(/[^a-z0-9]/gi, '').slice(0, 24) || Math.random().toString(36).slice(2, 10),
+        name: String(l.name || 'Loadout').replace(/[<>]/g, '').slice(0, 40) || 'Loadout', at: Date.now(),
+        adds: (Array.isArray(l.adds) ? l.adds : []).slice(0, 80).map(x => ({ sport: String(x.sport || '').replace(/[^a-z]/g, '').slice(0, 10), season: Number(x.season) || 0, id: Number(x.id) || 0,
+          name: String(x.name || '').replace(/[<>]/g, '').slice(0, 60), team: String(x.team || '').replace(/[<>]/g, '').slice(0, 40), lv: Math.max(-1, Math.min(39, Number(x.lv) || 0)) })).filter(x => x.sport && x.season > 2000 && x.id > 0) }));
+      await env.RATEBOARD_KV.put(K, JSON.stringify(clean));
+      return json({ ok: true, loadouts: clean });
+    }
+    let L = []; try { L = JSON.parse((await env.RATEBOARD_KV.get(K)) || '[]') || []; } catch (e) {}
+    return json({ loadouts: L });
+  }
   if (op === 'games') {
     const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
     const passes = parse(u && u.passes, []);

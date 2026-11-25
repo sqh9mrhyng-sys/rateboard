@@ -144,6 +144,49 @@
   .sk{border-radius:16px;background:linear-gradient(100deg,var(--panel) 30%,var(--panel2) 50%,var(--panel) 70%);background-size:300% 100%;animation:sk 1.2s linear infinite}
   @keyframes sk{from{background-position:100% 0}to{background-position:0 0}}
   @media (prefers-reduced-motion:reduce){.sk{animation:none}}
+  /* Loadouts */
+  .lsel{display:flex;align-items:center;gap:10px;margin-top:10px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:6px 6px 6px 14px}
+  .lsel span{color:var(--mute);font-size:12.5px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;flex:0 0 auto}
+  .lsel select{flex:1;min-width:0;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:9px 10px;font-weight:800;font-size:15px;color:var(--ink)}
+  .lc{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;width:100%;text-align:left;padding:14px 16px;margin-top:10px;background:var(--panel);border:1px solid var(--line);border-radius:16px}
+  .lc[aria-current="true"]{border-color:var(--accent)}
+  .lc .n{font-weight:800;font-size:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .lc .m{color:var(--mute);font-size:12.5px;margin-top:2px}
+  .lc .x{text-align:right;font-variant-numeric:tabular-nums}
+  .lc .x b{display:block;font-size:17px;font-weight:800}
+  .lc .x span{font-size:12.5px;font-weight:800}
+  .lc>div{min-width:0}
+  .chip{font-size:10.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;border-radius:6px;padding:2px 6px;background:var(--panel2);color:var(--mute)}
+  .chip.on{background:var(--accent);color:#141925}
+  .newlo{display:block;width:100%;margin-top:10px;border:1.5px dashed var(--line);background:none;border-radius:16px;padding:14px;font-weight:800;color:var(--accent)}
+  .back{border:0;background:none;color:var(--accent);font-weight:800;padding:4px 0;font-size:15px}
+  .nm{display:block;width:100%;margin:8px 0 10px;background:none;border:0;border-bottom:1px solid var(--line);padding:6px 2px;font-size:22px;font-weight:800;letter-spacing:-.01em;border-radius:0}
+  .nm:focus{outline:none;border-bottom-color:var(--accent)}
+  .cmp{padding:14px 16px;display:grid;grid-template-columns:1fr 1fr;gap:10px 14px}
+  .cmp .k{color:var(--mute);font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.05em}
+  .cmp .v{font-size:20px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+  .cmp .d{grid-column:1/-1;border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:2px}
+  .cmp .d>div{white-space:nowrap}
+  .cmp .d b{font-size:24px;font-weight:800;font-variant-numeric:tabular-nums}
+  .cmp .d span{color:var(--mute);font-size:12.5px}
+  .ar{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;border-top:1px solid var(--line);padding:10px 14px}
+  .ar:first-child{border-top:0}
+  .ar .n{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ar .m{color:var(--mute);font-size:12.5px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:2px}
+  .ar>div{min-width:0}
+  .ar .acts{display:flex;gap:6px;align-items:center}
+  .ar select{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:6px 6px;font-size:13px;font-weight:700;max-width:132px}
+  .ar .add{background:var(--accent);color:#141925;border:0;border-radius:9px;padding:7px 12px;font-weight:800}
+  .ar .held{color:var(--mute);font-size:12.5px;font-weight:700}
+  .ar .rm{border:1px solid var(--line);background:var(--panel2);border-radius:9px;width:32px;height:32px;font-size:16px;line-height:1}
+  .gain{font-weight:800;font-variant-numeric:tabular-nums;font-size:13px}
+  #lo-ed{padding-bottom:96px}
+  .edbar{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;gap:8px;max-width:860px;margin:0 auto;padding:14px 16px calc(12px + env(safe-area-inset-bottom));background:linear-gradient(transparent,var(--bg) 26%)}
+  .edbar button{flex:1;border-radius:12px;padding:12px 10px;font-weight:800;white-space:nowrap;font-size:14.5px;border:1px solid var(--line);background:var(--panel2);min-width:0}
+  .edbar .pri{background:var(--accent);color:#141925;border-color:var(--accent);flex:1.3}
+  .edbar .pri:disabled{opacity:.5}
+  .toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:var(--bg);font-weight:800;font-size:14px;padding:9px 16px;border-radius:99px;z-index:70;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+  .flag.a{color:var(--accent)}
   .soon{padding:34px 20px;text-align:center}
   .soon i{display:grid;place-items:center;width:52px;height:52px;margin:0 auto 12px;border-radius:16px;background:color-mix(in srgb,var(--accent) 18%,var(--panel2));color:var(--accent);font-style:normal;font-size:24px}
   .soon b{display:block;font-size:18px}
@@ -178,6 +221,7 @@
           <div class="spark" id="h-spark" aria-hidden="true"></div>
           <div class="sparkl" id="h-sparkl" aria-hidden="true"></div>
         </div>
+        <label class="lsel"><span>Showing</span><select id="losel" aria-label="Which loadout to show"></select></label>
         <div class="claims">
           <div class="seg" id="claims" role="radiogroup" aria-label="Claims a day"><button data-c="2">2 a day</button><button data-c="3">2 a day + 1</button></div>
           <p class="note" id="claimsnote"></p>
@@ -214,7 +258,27 @@
     </div>
   </div>
 
-  <div id="t-l" hidden><section><div class="card soon"><i>&#9776;</i><b>Loadouts</b><p class="note">Next up. Breakdown is finished first - this tab is ready for it.</p></div></section></div>
+  <div id="t-l" hidden>
+    <div id="lo-list"></div>
+    <div id="lo-ed" hidden>
+      <section style="margin-top:14px">
+        <button type="button" class="back" id="ed-back">&#8249; Loadouts</button>
+        <input id="ed-name" class="nm" maxlength="40" placeholder="Name this loadout" aria-label="Loadout name">
+        <div class="card cmp" id="ed-cmp"></div>
+      </section>
+      <section>
+        <div class="sh"><h2>Add players</h2><span>Any sport or season</span></div>
+        <div class="find"><input id="ed-q" type="search" placeholder="Search a player" autocomplete="off" aria-label="Search a player to add">
+          <select id="ed-lv" aria-label="Level for new players"></select></div>
+        <div class="card" id="ed-res" style="overflow:hidden" hidden></div>
+      </section>
+      <section>
+        <div class="sh"><h2>In this loadout</h2><span id="ed-n"></span></div>
+        <div class="card" id="ed-adds" style="overflow:hidden"></div>
+      </section>
+      <div class="edbar"><button type="button" id="ed-del" class="ghost" hidden>Delete</button><button type="button" id="ed-show" class="ghost">View in Breakdown</button><button type="button" id="ed-save" class="pri">Save loadout</button></div>
+    </div>
+  </div>
   <div id="t-o" hidden><section><div class="card soon"><i>&#9733;</i><b>Optimized</b><p class="note">Next up. Breakdown is finished first - this tab is ready for it.</p></div></section></div>
 </div>
 <div class="shade" id="shade" hidden><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="dtitle">
@@ -298,6 +362,7 @@ const pname = p => { const t = esc(p.name || 'Player ' + p.id), u = passLink(p);
 const sub = p => `${isTeam(p) ? 'Team · ' : ''}${esc(SPORT[p.sport] || p.sport)} · ${esc(seasonLbl(p.sport, p.season))}`;
 
 let P = [], G = {}, byDay = new Map(), Y = null, WHO = '', PEND = 0, pendT = null;
+let ACCT = [], LOADS = [], ACTIVE = ls.get('otd_active_v1') || 'acct', ED = null;
 const S = { claims: ls.get('otd_claims_v1') === '2' ? 2 : 3, sport: null, view: 'cal', sel: null, showDays: 30, showPass: 40, q: '', psort: 'won' };
 
 // One day's claims: two per sport, then (with + 1) the best one left over across every sport.
@@ -430,7 +495,7 @@ function drawPasses() {
   $('#pnote').textContent = `${fmt(rows.length)}${S.sport ? ' ' + (SPORT[S.sport] || S.sport) : ''} pass${rows.length === 1 ? '' : 'es'}`;
   const shown = rows.slice(0, S.showPass);
   $('#plist').innerHTML = rows.length ? shown.map((r, i) => `<div class="pr"><span class="r">${i + 1}</span>
-    <div><div class="n">${pname(r.p)}</div><div class="m"><span>${sub(r.p)}</span>${tag(r.p)}${flag(r)}</div></div>
+    <div><div class="n">${pname(r.p)}</div><div class="m"><span>${sub(r.p)}</span>${tag(r.p)}${r.p.added ? '<span class="flag a">Added</span>' : ''}${flag(r)}</div></div>
     <div class="x">${fmt(r.won)}<span>${r.lost > 0 ? `${fmt(r.lost)} lost` : `${fmt(r.days)} day${r.days === 1 ? '' : 's'}`}</span></div></div>`).join('')
     + (rows.length > shown.length ? `<button type="button" class="more" id="morepass">Show all ${fmt(rows.length)}</button>` : '')
     : `<div class="state"><b>No passes found</b><span class="note">${q ? 'Nothing matches that search.' : 'No passes in this sport.'}</span></div>`;
@@ -450,7 +515,7 @@ function openDay(n) {
 function closeDay() { $('#shade').hidden = true; document.body.style.overflow = ''; }
 
 function setSport(sp) { S.sport = sp || null; S.showDays = 30; S.showPass = 40; drawSports(); drawChips(); drawCal(); drawPasses(); }
-$('#claims').addEventListener('click', e => { const b = e.target.closest('button[data-c]'); if (!b) return; S.claims = Number(b.dataset.c); ls.set('otd_claims_v1', String(S.claims)); compute(); });
+$('#claims').addEventListener('click', e => { const b = e.target.closest('button[data-c]'); if (!b) return; S.claims = Number(b.dataset.c); ls.set('otd_claims_v1', String(S.claims)); compute(); accTot = null; });
 $('#sports').addEventListener('click', e => { const b = e.target.closest('.sp'); if (!b) return; setSport(S.sport === b.dataset.sp ? null : b.dataset.sp); if (S.sport) $('#calsec').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
 $('#chips').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setSport(b.dataset.sp); });
 $('#calview').addEventListener('click', e => { const b = e.target.closest('button[data-v]'); if (!b) return; S.view = b.dataset.v; S.showDays = 30; drawCal(); });
@@ -463,7 +528,7 @@ $('#shade').addEventListener('click', e => { if (e.target === $('#shade')) close
 addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#shade').hidden) closeDay(); });
 $('#tabs').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (!b) return;
   document.querySelectorAll('#tabs button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
-  for (const k of ['b', 'l', 'o']) $('#t-' + k).hidden = k !== b.dataset.tab; ls.set('otd_tab_v1', b.dataset.tab); scrollTo(0, 0); });
+  for (const k of ['b', 'l', 'o']) $('#t-' + k).hidden = k !== b.dataset.tab; ls.set('otd_tab_v1', b.dataset.tab); scrollTo(0, 0); if (b.dataset.tab === 'l' && !ED) drawLoadouts(); });
 
 function state(html) { $('#b-main').hidden = true; $('#b-state').innerHTML = html; }
 const skeleton = () => state('<section style="margin-top:14px"><div class="sk" style="height:206px"></div><div class="sk" style="height:46px;margin-top:14px"></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px"><div class="sk" style="height:78px"></div><div class="sk" style="height:78px"></div><div class="sk" style="height:78px"></div><div class="sk" style="height:78px"></div></div><div class="sk" style="height:260px;margin-top:18px"></div><p class="note" style="text-align:center;margin-top:12px">Loading every game for your passes…</p></section>');
@@ -471,10 +536,12 @@ const skeleton = () => state('<section style="margin-top:14px"><div class="sk" s
    then quietly checks the server for anything newer. The server keeps its own copy too (6 hours). */
 const CK = 'otd_games_cache_v2';
 function show(g) {
-  P = (g.passes || []).map(p => ({ ...p })); G = g.games || {}; PEND = g.pending || 0;
-  for (const p of P) if (!p.key) p.key = `${p.sport}:${p.season}:${p.id}`;
-  if (!P.length) return state(`<section><div class="card state"><b>No passes yet</b><span class="note">Scan your passes and your full OTD breakdown shows up here.</span><br><button type="button" id="scanbtn">Scan my passes</button></div></section>`);
-  build(); $('#b-state').innerHTML = ''; $('#b-main').hidden = false; compute();
+  ACCT = (g.passes || []).map(p => ({ ...p })); G = Object.assign({}, G, g.games || {}); PEND = g.pending || 0;
+  for (const p of ACCT) if (!p.key) p.key = `${p.sport}:${p.season}:${p.id}`;
+  P = compose(activeLo());
+  if (!ACCT.length) return state(`<section><div class="card state"><b>No passes yet</b><span class="note">Scan your passes and your full OTD breakdown shows up here.</span><br><button type="button" id="scanbtn">Scan my passes</button></div></section>`);
+  build(); $('#b-state').innerHTML = ''; $('#b-main').hidden = false; compute(); drawLoSel(); if (!$('#t-l').hidden) drawLoadouts();
+  if (activeLo()) ensureGames(activeLo().adds).then(n => { if (n) applyActive(); });
   // Team or UFC numbers still being fetched in the background: say so, and look again in a minute.
   $('#pendnote').hidden = !PEND; $('#pendnote').textContent = PEND ? `Still fetching ${PEND} team/UFC pass${PEND === 1 ? '' : 'es'} from Real - they'll fill in on their own.` : '';
   clearTimeout(pendT); if (PEND) pendT = setTimeout(() => loadAll(), 60000);
@@ -489,6 +556,107 @@ async function loadAll(fresh) {
   try { localStorage.setItem(CK, JSON.stringify({ who: WHO, at: Date.now(), g: { passes: g.passes, games: g.games, pending: g.pending || 0 } })); } catch (e) { try { localStorage.removeItem(CK); } catch (x) {} }
   if (!had || sigOf(had) !== sigOf(g)) show(g);
 }
+/* ---------- Loadouts (Dennis, 2026-11-25) ----------
+   "Your account" is always first: your scanned passes, live - it changes when you scan. A loadout is your account
+   plus players you add, each at a level you pick. Every number is worked out the same way as the Breakdown (the
+   daily claim limit, all-time caps, overlaps), so "+X a year" is what the loadout really adds. Saved on the server. */
+const LV_KEY = 'otd_addlv_v1';
+const ladderFor = sp => sp === 'ufc' ? UFC_LEVELS : LEVELS;
+const lvName = (sp, lv) => lv < 0 ? 'General · 1x' : `${ladderFor(sp)[lv][0]} · ${ladderFor(sp)[lv][1]}x`;
+const activeLo = () => ACTIVE === 'acct' ? null : LOADS.find(l => l.id === ACTIVE) || null;
+function addPass(x) { const L = ladderFor(x.sport), lv = Math.min(x.lv, L.length - 1);
+  return { sport: x.sport, season: x.season, id: x.id, key: `${x.sport}:${x.season}:${x.id}`, name: x.name, kind: 'player', rating: lv < 0 ? 0 : L[lv][2], earned: 0, added: true, passId: null }; }
+function compose(lo) { const held = new Set(ACCT.map(p => p.key)); return ACCT.concat(((lo && lo.adds) || []).filter(x => !held.has(`${x.sport}:${x.season}:${x.id}`)).map(addPass)); }
+// Games for added players: fetched once per player-season and kept with the rest.
+async function ensureGames(adds) {
+  const need = {}; for (const x of adds || []) { const k = `${x.sport}:${x.season}:${x.id}`; if (!G[k]) (need[`${x.sport}|${x.season}`] = need[`${x.sport}|${x.season}`] || []).push(x.id); }
+  let n = 0;
+  await Promise.all(Object.entries(need).map(async ([g, ids]) => { const [sp, se] = g.split('|');
+    const j = await api(`/api/swaps?op=otdpool&sport=${sp}&season=${se}&ids=${ids.join(',')}`);
+    for (const id of ids) { G[`${sp}:${se}:${id}`] = (j.games || {})[id] || []; n++; } }));
+  return n;
+}
+// The 12-month total for any set of passes (the Breakdown's own numbers are put back after).
+function totalOf(list) { const keep = P; P = list; build(); const r = scanYear(S.claims); P = keep; build();
+  return { total: r.days.reduce((t, D) => t + D.earned, 0), lost: r.days.reduce((t, D) => t + D.lostRax, 0), per: r.per }; }
+function applyActive() { P = compose(activeLo()); build(); compute(); drawLoSel(); }
+function drawLoSel() {
+  const o = [`<option value="acct">Your account</option>`].concat(LOADS.map(l => `<option value="${esc(l.id)}">${esc(l.name)}</option>`));
+  $('#losel').innerHTML = o.join(''); if (!activeLo()) ACTIVE = 'acct'; $('#losel').value = ACTIVE;
+}
+$('#losel').addEventListener('change', async e => { ACTIVE = e.target.value; ls.set('otd_active_v1', ACTIVE); const lo = activeLo(); if (lo) await ensureGames(lo.adds); applyActive(); });
+
+let accTot = null;
+async function drawLoadouts() {
+  $('#lo-ed').hidden = true; $('#lo-list').hidden = false;
+  if (!ACCT.length) { $('#lo-list').innerHTML = '<section><div class="card state"><b>No passes yet</b><span class="note">Scan your passes first - your account is the start of every loadout.</span></div></section>'; return; }
+  accTot = totalOf(ACCT).total;
+  await ensureGames(LOADS.flatMap(l => l.adds));
+  const row = (id, name, meta, tot, d) => `<button type="button" class="lc" data-lo="${esc(id)}" aria-current="${ACTIVE === id}"><div><div class="n">${esc(name)}${ACTIVE === id ? '<span class="chip on">Showing</span>' : ''}</div><div class="m">${meta}</div></div><div class="x"><b>${fmt(tot)}</b>${d == null ? '<span class="note">a year</span>' : `<span class="${d >= 0 ? 'pos' : 'neg'}">${d >= 0 ? '+' : ''}${fmt(d)}</span>`}</div></button>`;
+  $('#lo-list').innerHTML = `<section style="margin-top:14px"><div class="sh"><h2>Loadouts</h2><span>Tap one to add players</span></div>`
+    + row('acct', 'Your account', `Live from your last scan · ${fmt(ACCT.length)} passes`, accTot, null)
+    + LOADS.map(l => { const t = totalOf(compose(l)).total; return row(l.id, l.name, `Your account + ${l.adds.length} player${l.adds.length === 1 ? '' : 's'}`, t, t - accTot); }).join('')
+    + `<button type="button" class="newlo" id="lo-new">+ New loadout</button></section>`;
+}
+$('#lo-list').addEventListener('click', e => { if (e.target.closest('#lo-new')) return openEd(null); const b = e.target.closest('[data-lo]'); if (!b) return; openEd(b.dataset.lo === 'acct' ? null : LOADS.find(l => l.id === b.dataset.lo)); });
+
+function openEd(lo) {
+  ED = lo ? { id: lo.id, name: lo.name, adds: lo.adds.map(x => ({ ...x })), saved: true } : { id: null, name: '', adds: [], saved: false };
+  $('#lo-list').hidden = true; $('#lo-ed').hidden = false; $('#ed-name').value = ED.name; $('#ed-q').value = ''; $('#ed-res').hidden = true;
+  $('#ed-del').hidden = !ED.id; scrollTo(0, 0); drawEd();
+}
+function edDirty(v) { ED.dirty = v !== false; $('#ed-save').disabled = !ED.adds.length || (!ED.dirty && !!ED.id); $('#ed-save').textContent = ED.id ? (ED.dirty ? 'Save changes' : 'Saved') : 'Save loadout'; }
+async function drawEd() {
+  await ensureGames(ED.adds);
+  const base = accTot != null ? accTot : totalOf(ACCT).total, all = compose(ED), r = totalOf(all), d = r.total - base;
+  $('#ed-cmp').innerHTML = `<div><div class="k">Your account</div><div class="v">${fmt(base)}</div></div><div><div class="k">This loadout</div><div class="v">${fmt(r.total)}</div></div>
+    <div class="d"><div><b class="${d >= 0 ? 'pos' : 'neg'}">${d >= 0 ? '+' : ''}${fmt(d)}</b> <span>a year</span></div><span>${base ? (d >= 0 ? '+' : '') + (d / base * 100).toFixed(1) + '%' : ''} · after the daily limit and caps</span></div>`;
+  // What each added player adds on its own, with everything else in the loadout in place.
+  const gains = ED.adds.map((x, i) => { const others = { adds: ED.adds.filter((_, j) => j !== i) }; return r.total - totalOf(compose(others)).total; });
+  const L = sp => ladderFor(sp).map((l, k) => `<option value="${k}">${esc(l[0])} · ${l[1]}x</option>`).join('');
+  $('#ed-n').textContent = ED.adds.length ? `${ED.adds.length} added` : '';
+  $('#ed-adds').innerHTML = ED.adds.length ? ED.adds.map((x, i) => `<div class="ar"><div><div class="n">${esc(x.name)}</div><div class="m"><span>${esc(SPORT[x.sport] || x.sport)} · ${esc(seasonLbl(x.sport, x.season))}${x.team ? ' · ' + esc(x.team) : ''}</span><span class="gain ${gains[i] > 0 ? 'pos' : ''}">${gains[i] > 0 ? '+' : ''}${fmt(gains[i])} a year</span>${!(G[`${x.sport}:${x.season}:${x.id}`] || []).length ? '<span class="flag w">No games on file</span>' : ''}</div></div>
+      <div class="acts"><select data-lv="${i}" aria-label="Level for ${esc(x.name)}">${L(x.sport).replace(`value="${x.lv}"`, `value="${x.lv}" selected`)}</select><button type="button" class="rm" data-rm="${i}" aria-label="Remove ${esc(x.name)}">&times;</button></div></div>`).join('')
+    : '<div class="state note">Search above to add players. Each one shows what it adds to your year.</div>';
+  edDirty(!!ED.dirty);
+}
+// Level for new players, remembered.
+$('#ed-lv').innerHTML = LEVELS.map((l, k) => `<option value="${k}">New at ${esc(l[0])}</option>`).join(''); $('#ed-lv').value = ls.get(LV_KEY) || '9';
+$('#ed-lv').addEventListener('change', e => ls.set(LV_KEY, e.target.value));
+let qT = null, qN = 0;
+$('#ed-q').addEventListener('input', e => { clearTimeout(qT); const q = e.target.value.trim(); if (q.length < 2) { $('#ed-res').hidden = true; return; }
+  qT = setTimeout(async () => { const n = ++qN, j = await api('/api/swaps?op=search&q=' + encodeURIComponent(q)); if (n !== qN) return;
+    const held = new Set(ACCT.map(p => p.key)), inEd = new Set(ED.adds.map(x => `${x.sport}:${x.season}:${x.id}`)), rows = (j.rows || []).filter(r => r.sport !== 'golf').slice(0, 12);
+    $('#ed-res').hidden = false;
+    $('#ed-res').innerHTML = rows.length ? rows.map((r, i) => { const k = `${r.sport}:${r.season}:${r.playerId}`;
+      return `<div class="ar"><div><div class="n">${esc(r.player)}</div><div class="m"><span>${esc(SPORT[r.sport] || r.sport)} · ${esc(seasonLbl(r.sport, r.season))}${r.team ? ' · ' + esc(r.team) : ''}</span>${r.games ? `<span>${fmt(r.games)} games</span>` : ''}</div></div>
+        <div class="acts">${held.has(k) ? '<span class="held">You hold this</span>' : inEd.has(k) ? '<span class="held">Added</span>' : `<button type="button" class="add" data-add="${i}">Add</button>`}</div></div>`; }).join('')
+      : `<div class="state note">${j.error ? esc(j.error) : 'No players found.'}</div>`;
+    $('#ed-res')._rows = rows; }, 250); });
+$('#ed-res').addEventListener('click', async e => { const b = e.target.closest('[data-add]'); if (!b) return; const r = ($('#ed-res')._rows || [])[Number(b.dataset.add)]; if (!r) return;
+  const L = ladderFor(r.sport), lv = Math.min(Number($('#ed-lv').value) || 0, L.length - 1);
+  ED.adds.unshift({ sport: r.sport, season: Number(r.season), id: Number(r.playerId), name: r.player, team: r.team || '', lv }); ED.dirty = true;
+  b.outerHTML = '<span class="held">Added</span>'; await drawEd(); });
+$('#ed-adds').addEventListener('change', e => { const s = e.target.closest('[data-lv]'); if (!s) return; ED.adds[Number(s.dataset.lv)].lv = Number(s.value); ED.dirty = true; drawEd(); });
+$('#ed-adds').addEventListener('click', e => { const b = e.target.closest('[data-rm]'); if (!b) return; ED.adds.splice(Number(b.dataset.rm), 1); ED.dirty = true; drawEd(); });
+$('#ed-name').addEventListener('input', () => { ED.name = $('#ed-name').value; edDirty(true); });
+$('#ed-back').addEventListener('click', () => { if (ED && ED.dirty && ED.adds.length && !confirmLeave()) return; ED = null; drawLoadouts(); });
+function confirmLeave() { const b = $('#ed-back'); if (b.dataset.sure) { delete b.dataset.sure; return true; } b.dataset.sure = '1'; toast('Not saved - tap again to leave'); setTimeout(() => { delete b.dataset.sure; }, 3000); return false; }
+function toast(t) { const d = document.createElement('div'); d.className = 'toast'; d.textContent = t; document.body.appendChild(d); setTimeout(() => d.remove(), 2200); }
+async function saveLoads(list) { const j = await api2('/api/swaps?op=otdloadouts', { loadouts: list }); if (j.error) { toast(j.error); return false; } LOADS = j.loadouts || list; return true; }
+const api2 = async (u, body) => { try { const r = await fetch(u, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); const j = await r.json().catch(() => ({})); if (!r.ok && !j.error) j.error = 'Error ' + r.status; return j; } catch (e) { return { error: 'Could not reach the site.' }; } };
+$('#ed-save').addEventListener('click', async () => { if (!ED.adds.length) return; const b = $('#ed-save'); b.disabled = true; b.textContent = 'Saving…';
+  const name = (ED.name || '').trim() || `Loadout ${LOADS.length + 1}`, id = ED.id || Math.random().toString(36).slice(2, 10);
+  const lo = { id, name, adds: ED.adds }, list = ED.id ? LOADS.map(l => l.id === id ? lo : l) : LOADS.concat(lo);
+  if (await saveLoads(list)) { ED.id = id; ED.name = name; $('#ed-name').value = name; $('#ed-del').hidden = false; ED.dirty = false; edDirty(false); drawLoSel(); toast('Saved'); if (ACTIVE === id) applyActive(); }
+  else edDirty(true); });
+$('#ed-show').addEventListener('click', async () => {
+  // Shows what's on screen: a saved loadout, or this draft once it's saved.
+  if (!ED.id || ED.dirty) { if (!ED.adds.length) { ACTIVE = 'acct'; } else { $('#ed-save').click(); await new Promise(r => setTimeout(r, 400)); if (!ED.id) return; ACTIVE = ED.id; } } else ACTIVE = ED.id;
+  ls.set('otd_active_v1', ACTIVE); const lo = activeLo(); if (lo) await ensureGames(lo.adds); applyActive(); document.querySelector('#tabs [data-tab="b"]').click(); });
+$('#ed-del').addEventListener('click', async () => { const b = $('#ed-del'); if (!b.dataset.sure) { b.dataset.sure = '1'; b.textContent = 'Tap to delete'; setTimeout(() => { delete b.dataset.sure; b.textContent = 'Delete'; }, 3000); return; }
+  if (await saveLoads(LOADS.filter(l => l.id !== ED.id))) { if (ACTIVE === ED.id) { ACTIVE = 'acct'; ls.set('otd_active_v1', 'acct'); applyActive(); } drawLoSel(); toast('Deleted'); ED = null; drawLoadouts(); } });
+async function loadLoads() { const j = await api('/api/swaps?op=otdloadouts'); if (!j.error) { LOADS = j.loadouts || []; drawLoSel(); const lo = activeLo(); if (lo && ACCT.length) { await ensureGames(lo.adds); applyActive(); } } }
 $('#b-state').addEventListener('click', e => { if (e.target.closest('#retry')) loadAll(); if (e.target.closest('#scanbtn') && window.rbScan) window.rbScan(); });
 // The Scan button beside the menu (nav.js): when a scan finishes, everything here is worked out again.
 window.rbAfterScan = async () => { await loadAll(true); };
@@ -503,6 +671,7 @@ window.rbAfterScan = async () => { await loadAll(true); };
   if (me.error || String(me.key || '').toLowerCase() !== 'dennis') { try { localStorage.removeItem(CK); } catch (e) {} location.replace('/board#otd'); return; }
   WHO = String(me.key).toLowerCase(); $('#app').hidden = false;
   const t = ls.get('otd_tab_v1'); if (t === 'l' || t === 'o') { const b = document.querySelector(`#tabs button[data-tab="${t}"]`); if (b) b.click(); }
+  loadLoads();
   await loadAll();
 })();
 </script>
