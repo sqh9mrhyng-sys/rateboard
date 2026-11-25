@@ -207,6 +207,11 @@
   .edfoot button{flex:1;border-radius:12px;padding:12px 10px;font-weight:800;font-size:14.5px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
   .edfoot #ed-del{flex:0 0 auto;padding:12px 18px;color:var(--bad)}
   .rate{padding:12px 14px;margin-bottom:10px}
+  .sh select.srt{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:6px 8px;font-size:13px;font-weight:800;color:var(--accent)}
+  .spf{display:flex;gap:6px;overflow-x:auto;margin:0 0 10px;padding-bottom:2px;scrollbar-width:none}
+  .spf::-webkit-scrollbar{display:none}
+  .spf button{flex:none;border:1px solid var(--line);background:var(--panel);color:var(--mute);border-radius:99px;padding:6px 12px;font-weight:800;font-size:13px}
+  .spf button[aria-pressed="true"]{border-color:var(--accent);color:var(--ink);background:color-mix(in srgb,var(--accent) 14%,var(--panel))}
   .rate label{display:flex;align-items:center;justify-content:space-between;gap:10px;font-weight:700;font-size:14px}
   .rate input{width:110px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:16px;font-weight:800;text-align:right;color:var(--ink)}
   .rate textarea{width:100%;min-height:110px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px;font:15px/1.4 ui-monospace,Menlo,monospace;color:var(--ink);resize:vertical}
@@ -310,10 +315,11 @@
         <div class="card" id="ed-adds" style="overflow:hidden"></div>
       </section>
       <section>
-        <div class="sh"><h2>Add players</h2></div>
+        <div class="sh"><h2>Add players</h2><select id="ed-sort" class="srt" aria-label="Order"><option value="gain">Best first</option><option value="profit">Most profit</option></select></div>
         <div class="find two"><input id="ed-q" type="search" placeholder="Search a player" autocomplete="off" aria-label="Search a player to add">
           <select id="ed-lv" aria-label="Level for new players"></select>
           <select id="ed-cost" aria-label="How you get rating"></select></div>
+        <div class="spf" id="ed-sp" role="group" aria-label="Sports"></div>
         <div class="card rate" id="ed-rate" hidden></div>
         <div class="card" id="ed-res" style="overflow:hidden" hidden></div>
       </section>
@@ -732,11 +738,11 @@ function loadBulk() { if (BKP) return BKP;
     const pl = {}; for (const [k, v] of Object.entries(by)) { const m = bMed(v), use = v.length >= 5 && m ? v.filter(x => x <= 2 * m && x >= 0.5 * m) : v; pl[k] = [use.reduce((t, x) => t + x, 0) / use.length, v.length]; }
     BK = { pl, ss: Object.fromEntries(Object.entries(ss).map(([k, v]) => [k, bMed(v)])), n: Object.keys(pl).length }; return BK; })();
   return BKP; }
-const costLabel = () => { const v = $('#ed-cost').value; return v === 'custom' ? (CUSTOM ? `${+CUSTOM.toFixed(3)} rax per rating` : 'Custom rate not set') : v === 'bulk' ? 'Bulk sales, past 30 days' : `${costPick()[1]} prices`; };
-function drawRate() { const v = $('#ed-cost').value, el = $('#ed-rate'); el.hidden = v !== 'custom'; if (v === 'bulk') loadBulk().then(() => { reprice(); if (ED) drawEd(); });
+const costLabel = () => { const v = $('#ed-cost').value; return v === 'custom' ? (CUSTOM ? `${+CUSTOM.toFixed(3)} rax per rating` : 'Custom rate not set') : v === 'bulk' ? 'Bulk sales, past 30 days' : `${costPick()[1]} · ${costPick()[2]} a pack`; };
+function drawRate() { const v = $('#ed-cost').value, el = $('#ed-rate'); el.hidden = v !== 'custom'; if (v === 'bulk') loadBulk().then(() => { priceMoved(); if (ED) drawEd(); });
   if (el.hidden) return;
   el.innerHTML = `<label for="ed-rt">Rax for 1 rating<input id="ed-rt" inputmode="decimal" placeholder="3 or 3/1" value="${esc(ls.get('otd_cost_custom_v1') || '')}"></label><p>Each player's cost is the rating he needs × this.</p>`; }
-let rateT = null; const rateChanged = () => { clearTimeout(rateT); rateT = setTimeout(() => { reprice(); if (ED) drawEd(); }, 350); };
+let rateT = null; const rateChanged = () => { clearTimeout(rateT); rateT = setTimeout(() => { priceMoved(); if (ED) drawEd(); }, 350); };
 $('#ed-rate').addEventListener('input', e => {
   if (e.target.id === 'ed-rt') { ls.set('otd_cost_custom_v1', e.target.value); CUSTOM = rateOf(e.target.value); rateChanged(); } });
 const PACK = {}, PLAYS = {}, MKT = {}; let MKT_AT = 0;
@@ -790,6 +796,10 @@ let qT = null, qN = 0, EDY = null, EDK = '';
    they're left out of suggestions and search. Remembered. */
 const HIDE = new Set((() => { try { return JSON.parse(ls.get('otd_hide_sp_v1') || '[]') || []; } catch (e) { return []; } })());
 const shown = r => !HIDE.has(r.sport);
+/* Sport filter (Dennis, 2026-11-25: "add filter for each sport"): each sport on or off for suggestions and search,
+   remembered. All turns every one back on. */
+const SPF = ['nba', 'nfl', 'mlb', 'nhl', 'ncaam', 'ncaaf', 'wnba', 'ufc', 'soccer'];
+function drawSpf() { $('#ed-sp').innerHTML = `<button type="button" data-spf="all" aria-pressed="${!SPF.some(k => HIDE.has(k))}">All</button>` + SPF.map(k => `<button type="button" data-spf="${k}" aria-pressed="${!HIDE.has(k)}">${esc(SPORT[k])}</button>`).join(''); }
 function edYear() { const k = JSON.stringify([S.claims, ED.base, ED.adds.map(x => [x.sport, x.season, x.id, x.lv, !!x.up])]); if (EDK === k && EDY) return EDY;
   const keep = P, list = compose(ED); P = list; build(); const y = scanYear(S.claims); P = keep; build();
   const by = new Map(); for (const D of y.days) { const k2 = String(D.date.getMonth() + 1).padStart(2, '0') + '-' + String(D.date.getDate()).padStart(2, '0'); if (!by.has(k2)) by.set(k2, D); }
@@ -818,28 +828,39 @@ function resRow(r, i) { const k = `${r.sport}:${r.season}:${r.id}`, held = baseO
   return `<div class="ar"><div><div class="n">${esc(r.name)}</div><div class="m"><span>${esc(SPORT[r.sport] || r.sport)} ${esc(seasonLbl(r.sport, r.season))}${r.team ? ' · ' + esc(r.team) : ''}</span>${up}</div>${live ? moneyHtml(r.gain, r.c) : ''}</div>
     ${live ? numHtml(r.gain) : '<div></div>'}<div>${inEd ? `<span class="held">${held ? 'Upgraded' : 'Added'}</span>` : held ? (canUp ? `<button type="button" class="add" data-add="${i}">Upgrade</button>` : '<span class="held">Have it</span>') : `<button type="button" class="add" data-add="${i}">Add</button>`}</div></div>`; }
 const SHUT_KEY = 'otd_res_shut_v1';
-/* Header of the list: what it is, Show UFC / Show FC (neither has packs), and the collapse arrow. */
-const rhHtml = note => `<div class="rh"><span>${note}</span>${[['ufc', 'UFC'], ['soccer', 'FC']].map(([k, t]) => `<button type="button" class="pill" data-sh="${k}" aria-pressed="${!HIDE.has(k)}" aria-label="Show ${t}">${t}</button>`).join('')}<button type="button" class="col" data-col aria-label="Show or hide these players" aria-expanded="${ls.get(SHUT_KEY) !== '1'}">&#9662;</button></div>`;
+/* Header of the list: what it is and the collapse arrow. */
+const rhHtml = note => `<div class="rh"><span>${note}</span><button type="button" class="col" data-col aria-label="Show or hide these players" aria-expanded="${ls.get(SHUT_KEY) !== '1'}">&#9662;</button></div>`;
 function showRes(rows, note, body) { const el = $('#ed-res'); el.hidden = false; el._rows = rows; el.classList.toggle('shut', ls.get(SHUT_KEY) === '1');
   el.innerHTML = rhHtml(note) + (body || (rows.length ? rows.map(resRow).join('') : '<div class="state note">No players found.</div>')); }
-/* Best first: the top 15 by what they add to this loadout, shown at once; their costs fill in when the pack data for
-   their seasons has loaded (kept 12 hours). */
+// Pack data, FC offers or Bulk sales - whatever the price picked needs - for these players.
+async function loadPrices(list) { const mode = $('#ed-cost').value;
+  if (mode === 'custom') return; if (mode === 'bulk') return void await loadBulk();
+  const pend = list.map(pairOf).filter(pr => !NO_PACKS.has(pr.split(':')[0]) && !packDone.has(pr)), fc = list.some(r => r.sport === 'soccer') && !MKT_AT;
+  if (pend.length || fc) await Promise.all([ensurePack(pend, (i, t) => { const p = $('#ed-prog'); if (p) p.textContent = `Loading pack prices · ${Math.round(i / t * 100)}%`; }), fc ? ensureMkt() : null]); }
+const pricesReady = list => { const mode = $('#ed-cost').value; return mode === 'custom' || (mode === 'bulk' ? !!BK : !list.some(r => !NO_PACKS.has(r.sport) && !packDone.has(pairOf(r))) && !(list.some(r => r.sport === 'soccer') && !MKT_AT)); };
+/* Best first: the top 15 by what they add to this loadout. Most profit (back, 2026-11-25): the 300 that add the most are
+   priced, ordered by what they add minus their cost, and the best 25 of those worked out in full. Either way the top
+   25 get the full count (the whole year again with him in, after your passes and everything already added), so the
+   number shown is exactly what adding him does to this loadout. */
 async function finish(n, all, head) {
-  const el = $('#ed-res'); el._all = all; el._head = head;
+  const el = $('#ed-res'); el._all = all; el._head = head; const prof = $('#ed-sort').value === 'profit';
   const open = r => !ED.adds.some(x => `${x.sport}:${x.season}:${x.id}` === `${r.sport}:${r.season}:${r.id}`) && r.gain != null;
-  all.sort((a, b) => (open(b) - open(a)) || (b.gain || 0) - (a.gain || 0));
-  /* The quick estimate ranks everyone; the top 25 are then worked out in full (the whole year again with him in, after
-     your passes and everything already added), so the number shown is exactly what adding him does to this loadout. */
-  const lv = edLv(), cur = totalOf(compose(ED)).total, top = all.slice(0, 25).map(r => ({ ...r }));
+  const byGain = (a, b) => (open(b) - open(a)) || (b.gain || 0) - (a.gain || 0), byProfit = (a, b) => ((b.profit ?? -Infinity) - (a.profit ?? -Infinity)) || (b.gain || 0) - (a.gain || 0);
+  const title = prof ? head.replace(/^Best/, 'Most profit') : head;
+  all.sort(byGain);
+  let top;
+  if (prof) { const cand = all.filter(r => open(r) && r.gain > 0).slice(0, 300).map(r => ({ ...r }));
+    if (!pricesReady(cand)) { showRes([], title, '<div class="state note" id="ed-prog">Loading prices…</div>'); await loadPrices(cand); if (n !== qN) return; }
+    cand.forEach(priceRow); top = cand.sort(byProfit).slice(0, 25); }
+  else top = all.slice(0, 25).map(r => ({ ...r }));
+  const lv = edLv(), cur = totalOf(compose(ED)).total;
   for (const r of top) { if (!open(r)) continue; const held = baseOf(ED).some(p => p.key === `${r.sport}:${r.season}:${r.id}`);
     r.gain = totalOf(compose({ base: ED.base, adds: ED.adds.concat({ sport: r.sport, season: Number(r.season), id: Number(r.id), name: r.name, lv: Math.min(lv, ladderFor(r.sport).length - 1), up: held }) })).total - cur;
     await new Promise(res => setTimeout(res, 0)); if (n !== qN) return; }
-  top.sort((a, b) => (open(b) - open(a)) || (b.gain || 0) - (a.gain || 0));
-  const pick = top.slice(0, 15); pick.forEach(priceRow); showRes(pick, head);
-  const pend = pick.map(pairOf).filter(pr => !NO_PACKS.has(pr.split(':')[0]) && !packDone.has(pr)), needMkt = pick.some(r => r.sport === 'soccer') && !MKT_AT;
-  if (!pend.length && !needMkt) return;
-  await Promise.all([ensurePack(pend), needMkt ? ensureMkt() : null]); if (n !== qN) return;
-  pick.forEach(priceRow); showRes(pick, head); }
+  top.forEach(priceRow); top.sort(prof ? byProfit : byGain);
+  const pick = top.slice(0, 15); showRes(pick, title);
+  if (prof || pricesReady(pick)) return;
+  await loadPrices(pick); if (n !== qN) return; pick.forEach(priceRow); showRes(pick, title); }
 async function gamesFor(list) {   // [{sport, season, id}] -> fills G, fetched by sport-season
   const need = {}; for (const r of list) { const k = `${r.sport}:${r.season}:${r.id}`; if (!G[k]) (need[`${r.sport}|${r.season}`] = need[`${r.sport}|${r.season}`] || []).push(r.id); }
   await Promise.all(Object.entries(need).map(async ([g, ids]) => { const [sp, se] = g.split('|'); for (let i = 0; i < ids.length; i += 80) { const part = ids.slice(i, i + 80);
@@ -874,15 +895,22 @@ async function suggest() { const n = ++qN; $('#ed-res').hidden = false;
   // Weighed in slices so the page never locks up.
   for (let i = 0; i < cand.length; i += 150) { for (const r of cand.slice(i, i + 150)) r.gain = r.up ? (quickUp(`${r.sport}:${r.season}:${r.id}`, lv) || 0) : quickGain(r.sport, r.season, G[`${r.sport}:${r.season}:${r.id}`], lv); await new Promise(r => setTimeout(r, 0)); if (n !== qN) return; }
   finish(n, cand, 'Best for this loadout'); }
+drawSpf();
+$('#ed-sp').addEventListener('click', e => { const b = e.target.closest('[data-spf]'); if (!b) return; const k = b.dataset.spf;
+  if (k === 'all') HIDE.clear(); else if (HIDE.has(k)) HIDE.delete(k); else { HIDE.add(k); if (SPF.every(x => HIDE.has(x))) HIDE.clear(); }
+  ls.set('otd_hide_sp_v1', JSON.stringify([...HIDE])); drawSpf(); runSearch($('#ed-q').value.trim()); });
 $('#ed-q').addEventListener('input', e => { clearTimeout(qT); const q = e.target.value.trim(); qT = setTimeout(() => runSearch(q), q.length < 2 ? 0 : 250); });
 $('#ed-q').addEventListener('focus', () => { if ($('#ed-res').hidden) runSearch($('#ed-q').value.trim()); });
 $('#ed-lv').addEventListener('change', () => { if (!$('#ed-res').hidden) runSearch($('#ed-q').value.trim()); });
 // A new price only changes costs, not what anyone adds: the rows on screen are priced again, nothing re-weighed.
 function reprice() { const el = $('#ed-res'), rows = el._rows; if (!rows || el.hidden || !el._head) return; rows.forEach(priceRow); showRes(rows, el._head); }
-$('#ed-cost').addEventListener('change', e => { ls.set('otd_cost_v1', e.target.value); drawRate(); reprice(); if (ED) drawEd(); });
+const reorder = () => { const el = $('#ed-res'); if (el._all && !el.hidden) finish(++qN, el._all, el._head); };
+const priceMoved = () => { if ($('#ed-sort').value === 'profit') reorder(); else reprice(); };
+$('#ed-cost').addEventListener('change', e => { ls.set('otd_cost_v1', e.target.value); drawRate(); priceMoved(); if (ED) drawEd(); });
+$('#ed-sort').value = ls.get('otd_sort_v1') === 'profit' ? 'profit' : 'gain';
+$('#ed-sort').addEventListener('change', e => { ls.set('otd_sort_v1', e.target.value); if ($('#ed-res').hidden) runSearch($('#ed-q').value.trim()); else reorder(); });
 drawRate();
-$('#ed-res').addEventListener('click', async e => { const sh = e.target.closest('[data-sh]');
-  if (sh) { const k = sh.dataset.sh; HIDE.has(k) ? HIDE.delete(k) : HIDE.add(k); ls.set('otd_hide_sp_v1', JSON.stringify([...HIDE])); sh.setAttribute('aria-pressed', String(!HIDE.has(k))); runSearch($('#ed-q').value.trim()); return; }
+$('#ed-res').addEventListener('click', async e => {
   if (e.target.closest('.rh')) { const shut = !$('#ed-res').classList.contains('shut'); ls.set(SHUT_KEY, shut ? '1' : '0');
     $('#ed-res').classList.toggle('shut', shut); const c = $('#ed-res .col'); if (c) c.setAttribute('aria-expanded', String(!shut)); return; }
   const b = e.target.closest('[data-add]'); if (!b) return; const r = ($('#ed-res')._rows || [])[Number(b.dataset.add)]; if (!r) return;
