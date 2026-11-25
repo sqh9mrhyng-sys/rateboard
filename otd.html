@@ -450,7 +450,7 @@ function build() {
   P.forEach((p, i) => {
     p.lv = levelIdx(p.rating, p);
     p.capLeft = capOf(p, p.lv) - (Number(p.earned) || 0);
-    p.mult = p.capLeft <= 0 ? 0 : (Number(p.mult) || (p.lv >= 0 ? ladderOf(p)[p.lv][1] : 1));   // at its all-time cap: claims nothing more
+    p.mult = p.capLeft <= 0 || p.lv < 0 ? 0 : (Number(p.mult) || ladderOf(p)[p.lv][1]);   // at its all-time cap, or General (no OTD): claims nothing   // at its all-time cap: claims nothing more
     p.games = G[p.key] || [];
     for (const [d, rax] of p.games) { if (!byDay.has(d)) byDay.set(d, []); byDay.get(d).push({ i, sport: p.sport, base: rax }); }
   });
@@ -607,7 +607,8 @@ const skeleton = () => state('<section style="margin-top:14px"><div class="sk" s
    then quietly checks the server for anything newer. The server keeps its own copy too (6 hours). */
 const CK = 'otd_games_cache_v2';
 function show(g) {
-  ACCT = (g.passes || []).map(p => ({ ...p })); G = Object.assign({}, G, g.games || {}); PEND = g.pending || 0;
+  // General cards don't claim OTD (Dennis, 2026-11-25), so they're left out entirely.
+  ACCT = (g.passes || []).map(p => ({ ...p })).filter(p => levelIdx(p.rating, p) >= 0); G = Object.assign({}, G, g.games || {}); PEND = g.pending || 0;
   for (const p of ACCT) if (!p.key) p.key = `${p.sport}:${p.season}:${p.id}`;
   P = compose(activeLo()); EDK = ''; POOL = null;
   if (!ACCT.length) return state(`<section><div class="card state"><b>No passes yet</b><span class="note">Scan your passes and your full OTD breakdown shows up here.</span><br><button type="button" id="scanbtn">Scan my passes</button></div></section>`);
