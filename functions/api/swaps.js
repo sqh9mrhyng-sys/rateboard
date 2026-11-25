@@ -7334,6 +7334,14 @@ async function handle({ request, env, waitUntil }) {
     // Extra passes to weigh up (the OTD page's target lists): their games too, even if not held. Up to 60.
     for (const k of String(url.searchParams.get('extra') || '').split(',').filter(x => /^[a-z]+:\d{4}:\d+$/.test(x)).slice(0, 60)) {
       const [sp, se, id] = k.split(':'); (groups[`${sp}|${se}`] = groups[`${sp}|${se}`] || []).push(Number(id)); }
+    /* Kept per member (Dennis, 2026-11-25: "can this data be cached once so it doesn't take so long to load"): the
+       slow part is reading every player's games for each season your passes are in. The answer for your own set of
+       passes is saved for 6 hours, so every load after the first is one small read. A scan that adds or removes a
+       pass changes the set and rebuilds it; &fresh=1 forces a rebuild. Ratings and what's been earned are never
+       cached - they come from your last scan every time. */
+    const gSig = (() => { let h = 5381; const t = Object.entries(groups).map(([g, ids]) => g + ':' + ids.slice().sort((a, b) => a - b).join(',')).sort().join('|') + '#' + passes.filter(p => p.kind === 'team').map(p => p.key).sort().join(','); for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) | 0; return h + ':' + t.length; })();
+    const gKey = 'otd_games_u1_' + String(me).toLowerCase();
+    if (url.searchParams.get('fresh') !== '1') { try { const c = JSON.parse((await env.RATEBOARD_KV.get(gKey)) || 'null'); if (c && c.sig === gSig && Date.now() - c.at < 6 * 3600000) return json({ passes, games: c.games, cachedAt: c.at }); } catch (e) {} }
     const out = {};
     /* Team passes: there's no team game log, so each team's per-day rax comes
        from Real's earnings screen for that team (the same one the player rax
@@ -7365,6 +7373,7 @@ async function handle({ request, env, waitUntil }) {
       const games = await otdSeason(env, db, sp, Number(se));
       for (const id of ids) { const v = games[id]; if (v && v.length) out[`${sp}:${se}:${id}`] = v; }
     }
+    try { await env.RATEBOARD_KV.put(gKey, JSON.stringify({ sig: gSig, at: Date.now(), games: out }), { expirationTtl: 7 * 86400 }); } catch (e) {}
     return json({ passes, games: out });
   }
 

@@ -270,7 +270,7 @@ const levelIdx = (r, p) => { let k = -1; ladderOf(p).forEach((l, i) => { if (Num
 const tag = p => { const L = ladderOf(p), i = p.lv; return i < 0 ? '<span class="tag" style="background:#8a93a6">General · 1x</span>' : `<span class="tag" style="background:${RC[L[i][3]]}">${esc(L[i][0])} · ${L[i][1]}x</span>`; };
 const sub = p => `${isTeam(p) ? 'Team · ' : ''}${esc(SPORT[p.sport] || p.sport)} · ${esc(seasonLbl(p.sport, p.season))}`;
 
-let P = [], G = {}, byDay = new Map(), Y = null;
+let P = [], G = {}, byDay = new Map(), Y = null, WHO = '';
 const S = { claims: ls.get('otd_claims_v1') === '2' ? 2 : 3, sport: null, view: 'cal', sel: null, showDays: 30, showPass: 40, q: '', psort: 'won' };
 
 // One day's claims: two per sport, then (with + 1) the best one left over across every sport.
@@ -440,25 +440,38 @@ $('#tabs').addEventListener('click', e => { const b = e.target.closest('button[d
 
 function state(html) { $('#b-main').hidden = true; $('#b-state').innerHTML = html; }
 const skeleton = () => state('<section style="margin-top:14px"><div class="sk" style="height:206px"></div><div class="sk" style="height:46px;margin-top:14px"></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px"><div class="sk" style="height:78px"></div><div class="sk" style="height:78px"></div><div class="sk" style="height:78px"></div><div class="sk" style="height:78px"></div></div><div class="sk" style="height:260px;margin-top:18px"></div><p class="note" style="text-align:center;margin-top:12px">Loading every game for your passes…</p></section>');
-async function loadAll() {
-  skeleton();
-  const g = await api('/api/swaps?op=games');
-  if (g.error) return state(`<section><div class="card state"><b>Couldn't load your passes</b><span class="note">${esc(g.error)}</span><br><button type="button" id="retry">Try again</button></div></section>`);
-  P = (g.passes || []).filter(p => p.sport !== 'ufc'); G = g.games || {};
+/* Fast loads (Dennis, 2026-11-25): the last answer is kept in this browser, so the page draws straight away and
+   then quietly checks the server for anything newer. The server keeps its own copy too (6 hours). */
+const CK = 'otd_games_cache_v1';
+function show(g) {
+  P = (g.passes || []).filter(p => p.sport !== 'ufc').map(p => ({ ...p })); G = g.games || {};
   for (const p of P) if (!p.key) p.key = `${p.sport}:${p.season}:${p.id}`;
   if (!P.length) return state(`<section><div class="card state"><b>No passes yet</b><span class="note">Scan your passes and your full OTD breakdown shows up here.</span><br><button type="button" id="scanbtn">Scan my passes</button></div></section>`);
   build(); $('#b-state').innerHTML = ''; $('#b-main').hidden = false; compute();
 }
+const sigOf = g => { try { return JSON.stringify([(g.passes || []).map(p => [p.key || p.id, p.rating, p.earned, p.mult]), Object.keys(g.games || {}).length]); } catch (e) { return ''; } };
+async function loadAll(fresh) {
+  let had = null;
+  if (!fresh) { try { const c = JSON.parse(ls.get(CK) || 'null'); if (c && c.who === WHO && c.g) { had = c.g; show(had); } } catch (e) {} }
+  if (!had) skeleton();
+  const g = await api('/api/swaps?op=games' + (fresh ? '&fresh=1' : ''));
+  if (g.error) { if (!had) state(`<section><div class="card state"><b>Couldn't load your passes</b><span class="note">${esc(g.error)}</span><br><button type="button" id="retry">Try again</button></div></section>`); return; }
+  try { localStorage.setItem(CK, JSON.stringify({ who: WHO, at: Date.now(), g: { passes: g.passes, games: g.games } })); } catch (e) { try { localStorage.removeItem(CK); } catch (x) {} }
+  if (!had || sigOf(had) !== sigOf(g)) show(g);
+}
 $('#b-state').addEventListener('click', e => { if (e.target.closest('#retry')) loadAll(); if (e.target.closest('#scanbtn') && window.rbScan) window.rbScan(); });
 // The Scan button beside the menu (nav.js): when a scan finishes, everything here is worked out again.
-window.rbAfterScan = async () => { await loadAll(); };
+window.rbAfterScan = async () => { await loadAll(true); };
 
 (async () => {
-  let me = await api('/api/swaps?op=me');
-  for (let i = 0; i < 2 && me.error && /sign in/i.test(me.error) && ls.get('ratebrd_token_v1'); i++) { await new Promise(r => setTimeout(r, 1200 * (i + 1))); me = await api('/api/swaps?op=me'); }
+  // Opened here before on this device: draw from the saved copy at once, and check the account alongside.
+  let early = false; try { const c = JSON.parse(ls.get(CK) || 'null'); if (c && c.who === 'dennis' && c.g && ls.get('ratebrd_token_v1')) { WHO = 'dennis'; early = true; $('#app').hidden = false; show(c.g); } } catch (e) {}
+  let me = await api('/api/swaps?op=me&page=boosts');
+  for (let i = 0; i < 2 && me.error && /sign in/i.test(me.error) && ls.get('ratebrd_token_v1'); i++) { await new Promise(r => setTimeout(r, 1200 * (i + 1))); me = await api('/api/swaps?op=me&page=boosts'); }
   // Private to Dennis for now (2026-11-25): everyone else gets the OTD screen on the Board, as before.
-  if (me.error || String(me.key || '').toLowerCase() !== 'dennis') { location.replace('/board#otd'); return; }
-  $('#app').hidden = false;
+  if (me.error && early && !/sign in/i.test(me.error)) me = { key: 'dennis' };   // the site hiccuped: keep what's on screen
+  if (me.error || String(me.key || '').toLowerCase() !== 'dennis') { try { localStorage.removeItem(CK); } catch (e) {} location.replace('/board#otd'); return; }
+  WHO = String(me.key).toLowerCase(); $('#app').hidden = false;
   const t = ls.get('otd_tab_v1'); if (t === 'l' || t === 'o') { const b = document.querySelector(`#tabs button[data-tab="${t}"]`); if (b) b.click(); }
   await loadAll();
 })();
