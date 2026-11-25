@@ -8156,12 +8156,27 @@ async function handleGet({ request, env, waitUntil }) {
       const DHP = 'PARTITION BY sport, season, playerId, day';
       const gameFrom = w => `(SELECT gamelog.*, ROW_NUMBER() OVER (${DHP} ORDER BY COALESCE(rax, 0) DESC, gameId) AS dhn, COUNT(*) OVER (${DHP}) AS dhc,
           SUM(rating) OVER (${DHP}) AS dhr, MAX(rax) OVER (${DHP}) AS dhx FROM gamelog WHERE ${w}) AS gamelog`;
-      const gameColsSql = GAME_COLS.map(c => c === 'rax' ? 'dhx AS rax' : c === 'rating' ? 'ROUND(dhr, 2) AS rating' : c).join(', ') + ', dhc AS dh';
+      /* Every game reads plain rows again and joins a doubleheader's games afterwards (2026-11-25 08:25: the window-function
+         version took 45 s over several seasons, filled the heavy queue, and Boosts answered "Busy"). Only the page's own
+         rows are looked up for a second game the same day. */
+      const dhMerge = async rows => {
+        const keys = [...new Map(rows.filter(r => r.playerId != null && r.day).map(r => [`${r.sport}|${r.season}|${r.playerId}|${r.day}`, r])).values()];
+        const sib = new Map();
+        for (let i = 0; i < keys.length; i += 80) { const part = keys.slice(i, i + 80);
+          try { const q = await db.prepare(`SELECT sport, season, playerId, day, COUNT(*) AS n, SUM(rating) AS r, MAX(rax) AS x FROM gamelog WHERE ${part.map(() => '(sport = ? AND season = ? AND playerId = ? AND day = ?)').join(' OR ')} GROUP BY sport, season, playerId, day HAVING COUNT(*) > 1`)
+              .bind(...part.flatMap(r => [r.sport, r.season, r.playerId, r.day])).all();
+            for (const x of (q.results || [])) sib.set(`${x.sport}|${x.season}|${x.playerId}|${x.day}`, x); } catch (e) {} }
+        const seen = new Set(), out = [];
+        for (const r of rows) { const k = `${r.sport}|${r.season}|${r.playerId}|${r.day}`, d = sib.get(k);
+          if (d) { if (seen.has(k)) continue; seen.add(k); r.rating = d.r == null ? r.rating : Math.round(d.r * 100) / 100; r.rax = d.x; r.dh = d.n; }
+          out.push(r); }
+        return out;
+      };
 
       const playerSql = (order, lim) =>
         `SELECT * FROM (${playerInner})${OUTER} ORDER BY ${order} ${dir} ${lim}`;
       const gameSql = (order, lim) => `
-        SELECT ${gameColsSql} FROM ${gameFrom(W)} WHERE dhn = 1
+        SELECT ${GAME_COLS.join(', ')} FROM gamelog WHERE ${W}
          ORDER BY ${order} ${dir} ${lim}`;
 
       try {
@@ -8237,7 +8252,7 @@ async function handleGet({ request, env, waitUntil }) {
            left out; and the answer is kept 30 minutes, since game data
            changes once a day. */
         if (mode === 'games' && pairs.length > 1) {
-          const ck = 'glg_v3_' + [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(url.search.replace(/[?&](x|_)=[^&]*/g, ''))))].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 40);
+          const ck = 'glg_v4_' + [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(url.search.replace(/[?&](x|_)=[^&]*/g, ''))))].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 40);
           try { const c0 = await env.RATEBOARD_KV.get(ck); if (c0) return new Response(c0, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } }); } catch (e) {}
           const need = Math.min(1000, offset + limit);
           const rest = where.slice(1), restBinds = binds.slice(scopeBinds.length), merged = [];
@@ -8245,7 +8260,7 @@ async function handleGet({ request, env, waitUntil }) {
           for (const [sp, se] of pairs) {
             const w1 = ['(sport = ? AND season = ?)'].concat(rest).join(' AND ');
             try {
-              const r1 = await db.prepare(`SELECT ${gameColsSql} FROM ${gameFrom(w1)} WHERE dhn = 1 ORDER BY ${sort} ${dir} LIMIT ${need}`).bind(sp, se, ...restBinds).all();
+              const r1 = await db.prepare(`SELECT ${GAME_COLS.join(', ')} FROM gamelog WHERE ${w1} ORDER BY ${sort} ${dir} LIMIT ${need}`).bind(sp, se, ...restBinds).all();
               const got = (r1 && r1.results) || []; if (got.length >= need) capped = true;
               for (const row of got) merged.push(row);
             } catch (e) { failed++; lastErr = String((e && e.message) || e); }
@@ -8256,8 +8271,9 @@ async function handleGet({ request, env, waitUntil }) {
           merged.sort((a, b) => { const av = a[sort], bv = b[sort];
             if (txt) return sgn * String(av == null ? '' : av).localeCompare(String(bv == null ? '' : bv));
             const an = av == null ? -Infinity : Number(av), bn = bv == null ? -Infinity : Number(bv); return an === bn ? 0 : sgn * (an - bn); });
+          const pageRows = await dhMerge(merged.slice(offset, offset + limit));
           const body = JSON.stringify({ mode, sort, dir: dir.toLowerCase(), limit, offset, pairs: pairs.map(([x, y]) => `${x}:${y}`),
-            total: capped ? null : merged.length, capped, columns: GAME_COLS, rows: merged.slice(offset, offset + limit) });
+            total: capped ? null : merged.length, capped, columns: GAME_COLS, rows: pageRows });
           if (!failed) { try { await env.RATEBOARD_KV.put(ck, body, { expirationTtl: 1800 }); } catch (e) {} }
           return new Response(body, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
         }
@@ -8269,10 +8285,11 @@ async function handleGet({ request, env, waitUntil }) {
           ? binds.concat([minGames]).concat(outerBinds)
           : binds).concat([limit, offset]);
         const r = await db.prepare(sql).bind(...args).all();
+        if (mode === 'games' && r && r.results) r.results = await dhMerge(r.results);
 
         const countSql = mode === 'players'
           ? `SELECT COUNT(*) AS n FROM (${playerInner})${OUTER}`
-          : `SELECT COUNT(*) AS n FROM ${gameFrom(W)} WHERE dhn = 1`;
+          : `SELECT COUNT(*) AS n FROM gamelog WHERE ${W}`;
         const c = await db.prepare(countSql)
           .bind(...(mode === 'players' ? binds.concat([minGames]).concat(outerBinds) : binds)).first();
         /* Each game's performance card on Real (its box-score id), where the
