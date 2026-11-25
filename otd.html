@@ -711,36 +711,34 @@ $('#ed-lv').addEventListener('change', e => ls.set(LV_KEY, e.target.value));
    isn't really in packs, so he gets no price. Profit = what he adds in the next 12 months - the cost. */
 const NO_PACKS = new Set(['soccer', 'ufc']);
 const normName = n => String(n || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z]/g, '');
-const COSTS = [['pad', 'Pack a day', 200], ['swaps', 'Swaps', 241], ['back', '160 back', 271], ['full', 'Full price', 415], ['custom', 'Custom rate', null], ['bulk', 'Bulk rates', null]];
+const COSTS = [['pad', 'Pack a day', 200], ['swaps', 'Swaps', 241], ['back', '160 back', 271], ['full', 'Full price', 415], ['custom', 'Custom rate', null], ['bulk', 'Bulk data', null]];
 $('#ed-cost').innerHTML = COSTS.map(c => `<option value="${c[0]}">${c[1]}${c[2] ? ' · ' + c[2] : ''}</option>`).join('');
 $('#ed-cost').value = COSTS.some(c => c[0] === ls.get('otd_cost_v1')) ? ls.get('otd_cost_v1') : 'swaps';
 const costPick = () => COSTS.find(c => c[0] === $('#ed-cost').value) || COSTS[1];
-/* Custom rate and Bulk rates (Dennis, 2026-11-25): priced per point of rating instead of by packs, so they work for
-   every sport, UFC and FC too. Custom: one rate, "3" or "3/1" (3 rax for 1 rating). Bulk: one line each - a player or
-   a sport, then the rate (e.g. "Zach Edey 4", "nba 2.5", "all 3"); a player's line beats his sport's, which beats
-   "all". Both kept in this browser. */
+/* Custom rate (Dennis, 2026-11-25): one rax-per-rating rate, "3" or "3/1", for every sport (UFC and FC too).
+   Bulk data (Dennis, 2026-11-25: "from the page where we pull bulk data"): each player-season's rax per rating from
+   the Bulk ratings page's ended auctions over the past 30 days - the same average that page shows ("avg 4.65/1"), with
+   its odd-sale rule (5+ sales: one under half or over double the usual is left out). A player with no sales there
+   takes his sport-season's median, marked ~. */
 const rateOf = t => { const m = String(t || '').trim().match(/^(\d+(?:\.\d+)?)(?:\s*\/\s*(\d+(?:\.\d+)?))?$/); if (!m) return null; const v = Number(m[1]) / (m[2] ? Number(m[2]) : 1); return v > 0 && Number.isFinite(v) ? v : null; };
-const SPK = Object.fromEntries(Object.entries(SPORT).flatMap(([k, v]) => [[k, k], [v.toLowerCase(), k]]).concat([['cfb', 'ncaaf'], ['cbb', 'ncaam'], ['fc', 'soccer'], ['soccer', 'soccer']]));
-let CUSTOM = rateOf(ls.get('otd_cost_custom_v1')), BULK = { all: null, sp: {}, pl: {}, bad: 0, n: 0 };
-function parseBulk(txt) { const b = { all: null, sp: {}, pl: {}, bad: 0, n: 0 };
-  for (const raw of String(txt || '').split(/\n/)) { const line = raw.trim(); if (!line) continue;
-    const m = line.match(/^(.*?)[\s,:=\-]+(\d+(?:\.\d+)?(?:\s*\/\s*\d+(?:\.\d+)?)?)$/), r = m && rateOf(m[2]); if (!r) { b.bad++; continue; }
-    const who = m[1].trim().toLowerCase(); b.n++;
-    if (who === 'all' || who === '*' || who === 'everyone' || who === 'default') b.all = r; else if (SPK[who]) b.sp[SPK[who]] = r; else b.pl[normName(who)] = r; }
-  return b; }
-BULK = parseBulk(ls.get('otd_cost_bulk_v1'));
-const flatRate = (sp, name) => $('#ed-cost').value === 'custom' ? CUSTOM : BULK.pl[normName(name)] ?? BULK.sp[sp] ?? BULK.all;
-const costLabel = () => { const v = $('#ed-cost').value; return v === 'custom' ? (CUSTOM ? `${+CUSTOM.toFixed(3)} rax per rating` : 'Custom rate not set') : v === 'bulk' ? 'Your bulk rates' : `${costPick()[1]} prices`; };
-function drawRate() { const v = $('#ed-cost').value, el = $('#ed-rate'); el.hidden = v !== 'custom' && v !== 'bulk'; if (el.hidden) return;
-  el.innerHTML = v === 'custom'
-    ? `<label for="ed-rt">Rax for 1 rating<input id="ed-rt" inputmode="decimal" placeholder="3 or 3/1" value="${esc(ls.get('otd_cost_custom_v1') || '')}"></label><p>Every player's cost is the rating he needs × this rate.</p>`
-    : `<textarea id="ed-bk" spellcheck="false" placeholder="Zach Edey 4&#10;nba 2.5&#10;nfl 3/1&#10;all 3">${esc(ls.get('otd_cost_bulk_v1') || '')}</textarea><p id="ed-bkn"></p>`;
-  bulkNote(); }
-function bulkNote() { const p = $('#ed-bkn'); if (!p) return; p.innerHTML = BULK.n || BULK.bad ? `${BULK.n} rate${BULK.n === 1 ? '' : 's'} read${BULK.bad ? ` · <b>${BULK.bad} line${BULK.bad === 1 ? '' : 's'} not understood</b>` : ''}${BULK.all == null ? ' · add <b>all 3</b> to price everyone not listed' : ''}` : 'One per line: a player or a sport, then rax for 1 rating. A player beats his sport; <b>all</b> covers the rest.'; }
+let CUSTOM = rateOf(ls.get('otd_cost_custom_v1')), BK = null, BKP = null;
+const bMed = a => { if (!a.length) return null; const s2 = a.slice().sort((x, y) => x - y), m = s2.length >> 1; return s2.length % 2 ? s2[m] : (s2[m - 1] + s2[m]) / 2; };
+function loadBulk() { if (BKP) return BKP;
+  BKP = (async () => { let j; try { const t = ls.get('ratebrd_token_v1') || ''; j = await (await fetch('/api/swaps?op=bulklist', { headers: t ? { 'x-rb-token': t } : {} })).json(); } catch (e) { j = { error: 'x' }; }
+    if (!j || j.error) { BKP = null; BK = { err: true, pl: {}, ss: {}, n: 0 }; return BK; }
+    const since = Date.now() - 30 * 864e5, by = {}, ss = {};
+    for (const r of j.ended || []) { if (!(r.endsAt >= since) || r.price == null || !r.rating || !/sold|buy now|last seen bid/.test(r.how || '')) continue;
+      const v = r.price / r.rating; (by[`${r.sport}:${r.season}:${r.playerId}`] = by[`${r.sport}:${r.season}:${r.playerId}`] || []).push(v); (ss[`${r.sport}:${r.season}`] = ss[`${r.sport}:${r.season}`] || []).push(v); }
+    const pl = {}; for (const [k, v] of Object.entries(by)) { const m = bMed(v), use = v.length >= 5 && m ? v.filter(x => x <= 2 * m && x >= 0.5 * m) : v; pl[k] = [use.reduce((t, x) => t + x, 0) / use.length, v.length]; }
+    BK = { pl, ss: Object.fromEntries(Object.entries(ss).map(([k, v]) => [k, bMed(v)])), n: Object.keys(pl).length }; return BK; })();
+  return BKP; }
+const costLabel = () => { const v = $('#ed-cost').value; return v === 'custom' ? (CUSTOM ? `${+CUSTOM.toFixed(3)} rax per rating` : 'Custom rate not set') : v === 'bulk' ? 'Bulk sales, past 30 days' : `${costPick()[1]} prices`; };
+function drawRate() { const v = $('#ed-cost').value, el = $('#ed-rate'); el.hidden = v !== 'custom'; if (v === 'bulk') loadBulk().then(() => { reprice(); if (ED) drawEd(); });
+  if (el.hidden) return;
+  el.innerHTML = `<label for="ed-rt">Rax for 1 rating<input id="ed-rt" inputmode="decimal" placeholder="3 or 3/1" value="${esc(ls.get('otd_cost_custom_v1') || '')}"></label><p>Each player's cost is the rating he needs × this.</p>`; }
 let rateT = null; const rateChanged = () => { clearTimeout(rateT); rateT = setTimeout(() => { reprice(); if (ED) drawEd(); }, 350); };
 $('#ed-rate').addEventListener('input', e => {
-  if (e.target.id === 'ed-rt') { ls.set('otd_cost_custom_v1', e.target.value); CUSTOM = rateOf(e.target.value); rateChanged(); }
-  if (e.target.id === 'ed-bk') { ls.set('otd_cost_bulk_v1', e.target.value); BULK = parseBulk(e.target.value); bulkNote(); rateChanged(); } });
+  if (e.target.id === 'ed-rt') { ls.set('otd_cost_custom_v1', e.target.value); CUSTOM = rateOf(e.target.value); rateChanged(); } });
 const PACK = {}, PLAYS = {}, MKT = {}; let MKT_AT = 0;
 const PK = 'otd_pack_cache_v2', PTTL = 12 * 3600000;
 let PC = (() => { try { return JSON.parse(ls.get(PK) || '{}') || {}; } catch (e) { return {}; } })();
@@ -768,7 +766,10 @@ const pairOf = r => `${r.sport}:${r.season}`;
 // { cost } when priced, { why } when it can't be, {} while its pack data is still loading.
 function costOf(sp, se, id, name, from, lv) {
   const L = ladderFor(sp), l = Math.min(lv, L.length - 1), need = Math.max(0, (l < 0 ? 0 : L[l][2]) - (Number(from) || 0)), mode = $('#ed-cost').value;
-  if (mode === 'custom' || mode === 'bulk') { const r = flatRate(sp, name); return r == null ? { why: mode === 'custom' ? 'Set a rate' : 'Not in your rates' } : { cost: Math.round(need * r) }; }
+  if (mode === 'custom') return CUSTOM == null ? { why: 'Set a rate' } : { cost: Math.round(need * CUSTOM) };
+  if (mode === 'bulk') { if (!BK) return {}; if (BK.err) return { why: 'Bulk data didn\'t load' };
+    const p = BK.pl[`${sp}:${se}:${id}`]; if (p) return { cost: Math.round(need * p[0]), rate: p[0], n: p[1] };
+    const m = BK.ss[`${sp}:${se}`]; return m ? { cost: Math.round(need * m), rate: m, est: true } : { why: 'No bulk sales' }; }
   if (sp === 'ufc') return { why: 'No price' };
   if (sp === 'soccer') { const ppr = MKT[normName(name)] ?? MKT['*fc']; return ppr == null ? (MKT_AT ? { why: 'No FC offers' } : {}) : { cost: Math.round(need * ppr) }; }
   if (!packDone.has(`${sp}:${se}`)) return {};
@@ -779,7 +780,7 @@ function priceRow(r) { const held = baseOf(ED).find(p => p.key === `${r.sport}:$
 // Right side: what he adds a year (the list is ordered by this). Left, under his season: his cost and the profit.
 const numHtml = g => g == null ? '<div></div>' : `<div class="num"><b class="${g > 0 ? 'pos' : ''}">${g >= 0 ? '+' : ''}${fmt(g)}</b><small>a year</small></div>`;
 function moneyHtml(g, c) { if (!c || g == null) return ''; if (c.why) return `<div class="mo"><span class="w">${esc(c.why)}</span></div>`; if (c.cost == null) return '';
-  const pr = g - c.cost; return `<div class="mo">Cost ${fmt(c.cost)} · <b class="${pr >= 0 ? 'pos' : 'neg'}">${pr >= 0 ? '+' : ''}${fmt(pr)}</b> profit</div>`; }
+  const pr = g - c.cost; return `<div class="mo">Cost ${c.est ? '~' : ''}${fmt(c.cost)}${c.rate ? ` <span title="${c.est ? 'Season median' : c.n + ' sales'}">(${c.rate.toFixed(2)}/1${c.est ? ' season' : ''})</span>` : ''} · <b class="${pr >= 0 ? 'pos' : 'neg'}">${pr >= 0 ? '+' : ''}${fmt(pr)}</b> profit</div>`; }
 /* Ranked by what they'd add (Dennis, 2026-11-25: "order by how much rax it'll add to that loadout, the first options
    should show top players that benefit my profile"). Each candidate is weighed against the loadout as it stands, at
    the level picked: day by day, what the day's claims would be with him in, after the daily limit and his own cap.
