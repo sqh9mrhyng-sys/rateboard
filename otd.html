@@ -159,7 +159,8 @@
   .chip{font-size:10.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;border-radius:6px;padding:2px 6px;background:var(--panel2);color:var(--mute)}
   .chip.on{background:var(--accent);color:#141925}
   .newlo{display:block;width:100%;margin-top:10px;border:1.5px dashed var(--line);background:none;border-radius:16px;padding:14px;font-weight:800;color:var(--accent)}
-  .back{border:0;background:none;color:var(--accent);font-weight:800;padding:4px 0;font-size:15px}
+  .back{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 12%,var(--panel));color:var(--ink);font-weight:800;padding:9px 14px 9px 11px;border-radius:12px;font-size:15px}
+  .back b{color:var(--accent);font-size:18px;line-height:1}
   .nm{display:block;width:100%;margin:8px 0 10px;background:none;border:0;border-bottom:1px solid var(--line);padding:6px 2px;font-size:22px;font-weight:800;letter-spacing:-.01em;border-radius:0}
   .nm:focus{outline:none;border-bottom-color:var(--accent)}
   .cmp{padding:14px 16px;display:grid;grid-template-columns:1fr 1fr;gap:10px 14px}
@@ -179,6 +180,7 @@
   .ar .add{background:var(--accent);color:#141925;border:0;border-radius:9px;padding:7px 12px;font-weight:800}
   .ar .held{color:var(--mute);font-size:12.5px;font-weight:700}
   .ar .rm{border:1px solid var(--line);background:var(--panel2);border-radius:9px;width:32px;height:32px;font-size:16px;line-height:1}
+  .rh{padding:9px 14px;font-size:11.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--accent);border-bottom:1px solid var(--line)}
   .gain{font-weight:800;font-variant-numeric:tabular-nums;font-size:13px}
   #lo-ed{padding-bottom:96px}
   .edbar{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;gap:8px;max-width:860px;margin:0 auto;padding:14px 16px calc(12px + env(safe-area-inset-bottom));background:linear-gradient(transparent,var(--bg) 26%)}
@@ -262,12 +264,12 @@
     <div id="lo-list"></div>
     <div id="lo-ed" hidden>
       <section style="margin-top:14px">
-        <button type="button" class="back" id="ed-back">&#8249; Loadouts</button>
+        <button type="button" class="back" id="ed-back"><b>&#8592;</b>Back to loadouts</button>
         <input id="ed-name" class="nm" maxlength="40" placeholder="Name this loadout" aria-label="Loadout name">
         <div class="card cmp" id="ed-cmp"></div>
       </section>
       <section>
-        <div class="sh"><h2>Add players</h2><span>Any sport or season</span></div>
+        <div class="sh"><h2>Add players</h2><span id="ed-hint">Best adds for this loadout first</span></div>
         <div class="find"><input id="ed-q" type="search" placeholder="Search a player" autocomplete="off" aria-label="Search a player to add">
           <select id="ed-lv" aria-label="Level for new players"></select></div>
         <div class="card" id="ed-res" style="overflow:hidden" hidden></div>
@@ -538,7 +540,7 @@ const CK = 'otd_games_cache_v2';
 function show(g) {
   ACCT = (g.passes || []).map(p => ({ ...p })); G = Object.assign({}, G, g.games || {}); PEND = g.pending || 0;
   for (const p of ACCT) if (!p.key) p.key = `${p.sport}:${p.season}:${p.id}`;
-  P = compose(activeLo());
+  P = compose(activeLo()); EDK = ''; POOL = null;
   if (!ACCT.length) return state(`<section><div class="card state"><b>No passes yet</b><span class="note">Scan your passes and your full OTD breakdown shows up here.</span><br><button type="button" id="scanbtn">Scan my passes</button></div></section>`);
   build(); $('#b-state').innerHTML = ''; $('#b-main').hidden = false; compute(); drawLoSel(); if (!$('#t-l').hidden) drawLoadouts();
   if (activeLo()) ensureGames(activeLo().adds).then(n => { if (n) applyActive(); });
@@ -603,7 +605,7 @@ $('#lo-list').addEventListener('click', e => { if (e.target.closest('#lo-new')) 
 function openEd(lo) {
   ED = lo ? { id: lo.id, name: lo.name, adds: lo.adds.map(x => ({ ...x })), saved: true } : { id: null, name: '', adds: [], saved: false };
   $('#lo-list').hidden = true; $('#lo-ed').hidden = false; $('#ed-name').value = ED.name; $('#ed-q').value = ''; $('#ed-res').hidden = true;
-  $('#ed-del').hidden = !ED.id; scrollTo(0, 0); drawEd();
+  $('#ed-del').hidden = !ED.id; scrollTo(0, 0); drawEd().then(() => suggest());
 }
 function edDirty(v) { ED.dirty = v !== false; $('#ed-save').disabled = !ED.adds.length || (!ED.dirty && !!ED.id); $('#ed-save').textContent = ED.id ? (ED.dirty ? 'Save changes' : 'Saved') : 'Save loadout'; }
 async function drawEd() {
@@ -617,28 +619,73 @@ async function drawEd() {
   $('#ed-n').textContent = ED.adds.length ? `${ED.adds.length} added` : '';
   $('#ed-adds').innerHTML = ED.adds.length ? ED.adds.map((x, i) => `<div class="ar"><div><div class="n">${esc(x.name)}</div><div class="m"><span>${esc(SPORT[x.sport] || x.sport)} · ${esc(seasonLbl(x.sport, x.season))}${x.team ? ' · ' + esc(x.team) : ''}</span><span class="gain ${gains[i] > 0 ? 'pos' : ''}">${gains[i] > 0 ? '+' : ''}${fmt(gains[i])} a year</span>${!(G[`${x.sport}:${x.season}:${x.id}`] || []).length ? '<span class="flag w">No games on file</span>' : ''}</div></div>
       <div class="acts"><select data-lv="${i}" aria-label="Level for ${esc(x.name)}">${L(x.sport).replace(`value="${x.lv}"`, `value="${x.lv}" selected`)}</select><button type="button" class="rm" data-rm="${i}" aria-label="Remove ${esc(x.name)}">&times;</button></div></div>`).join('')
-    : '<div class="state note">Search above to add players. Each one shows what it adds to your year.</div>';
+    : '<div class="state note">Tap Add on a player above. Each one shows what it adds to your year.</div>';
   edDirty(!!ED.dirty);
 }
 // Level for new players, remembered.
 $('#ed-lv').innerHTML = LEVELS.map((l, k) => `<option value="${k}">New at ${esc(l[0])}</option>`).join(''); $('#ed-lv').value = ls.get(LV_KEY) || '9';
 $('#ed-lv').addEventListener('change', e => ls.set(LV_KEY, e.target.value));
-let qT = null, qN = 0;
-$('#ed-q').addEventListener('input', e => { clearTimeout(qT); const q = e.target.value.trim(); if (q.length < 2) { $('#ed-res').hidden = true; return; }
-  qT = setTimeout(async () => { const n = ++qN, j = await api('/api/swaps?op=search&q=' + encodeURIComponent(q)); if (n !== qN) return;
-    const held = new Set(ACCT.map(p => p.key)), inEd = new Set(ED.adds.map(x => `${x.sport}:${x.season}:${x.id}`)), rows = (j.rows || []).filter(r => r.sport !== 'golf').slice(0, 12);
-    $('#ed-res').hidden = false;
-    $('#ed-res').innerHTML = rows.length ? rows.map((r, i) => { const k = `${r.sport}:${r.season}:${r.playerId}`;
-      return `<div class="ar"><div><div class="n">${esc(r.player)}</div><div class="m"><span>${esc(SPORT[r.sport] || r.sport)} · ${esc(seasonLbl(r.sport, r.season))}${r.team ? ' · ' + esc(r.team) : ''}</span>${r.games ? `<span>${fmt(r.games)} games</span>` : ''}</div></div>
-        <div class="acts">${held.has(k) ? '<span class="held">You hold this</span>' : inEd.has(k) ? '<span class="held">Added</span>' : `<button type="button" class="add" data-add="${i}">Add</button>`}</div></div>`; }).join('')
-      : `<div class="state note">${j.error ? esc(j.error) : 'No players found.'}</div>`;
-    $('#ed-res')._rows = rows; }, 250); });
+/* Ranked by what they'd add (Dennis, 2026-11-25: "order by how much rax it'll add to that loadout, the first options
+   should show top players that benefit my profile"). Each candidate is weighed against the loadout as it stands, at
+   the level picked: day by day, what the day's claims would be with him in, after the daily limit and his own cap.
+   With nothing typed, the top players of the seasons you hold (and this season's) are weighed and the best shown. */
+let qT = null, qN = 0, EDY = null, EDK = '';
+function edYear() { const k = JSON.stringify([S.claims, ED.adds.map(x => [x.sport, x.season, x.id, x.lv])]); if (EDK === k && EDY) return EDY;
+  const keep = P; P = compose(ED); build(); const y = scanYear(S.claims); P = keep; build();
+  const by = new Map(); for (const D of y.days) { const k2 = String(D.date.getMonth() + 1).padStart(2, '0') + '-' + String(D.date.getDate()).padStart(2, '0'); if (!by.has(k2)) by.set(k2, D); }
+  EDY = { by }; EDK = k; return EDY; }
+function quickGain(sp, se, games, lv) {
+  const L = ladderFor(sp), l = Math.min(lv, L.length - 1), mult = l < 0 ? 1 : L[l][1]; let cap = capOf({ sport: sp, season: se, kind: 'player' }, l), gain = 0;
+  const Y = edYear(), gs = (games || []).slice().sort((a, b) => { const da = Y.by.get(a[0]), db = Y.by.get(b[0]); return (da ? da.n : 999) - (db ? db.n : 999); });
+  for (const [d, base] of gs) { if (cap <= 0) break; const D = Y.by.get(d); const rax = Math.min(base * mult, cap); if (!(rax > 0)) continue;
+    if (!D) { gain += rax; cap -= rax; continue; }
+    const lst = D.won.concat(D.lost).map(o => ({ i: o.i, sport: o.sport, rax: o.rax })), me = { i: -1, sport: sp, rax }; lst.push(me);
+    const sc = scoreDay(lst, S.claims), g = sc.earned - D.earned; if (g > 0) { gain += g; if (sc.won.includes(me)) cap -= rax; } }
+  return gain; }
+const edLv = () => Number($('#ed-lv').value) || 0;
+function resRow(r, i) { const k = `${r.sport}:${r.season}:${r.id}`, held = ACCT.some(p => p.key === k), inEd = ED.adds.some(x => `${x.sport}:${x.season}:${x.id}` === k);
+  return `<div class="ar"><div><div class="n">${esc(r.name)}</div><div class="m"><span>${esc(SPORT[r.sport] || r.sport)} · ${esc(seasonLbl(r.sport, r.season))}${r.team ? ' · ' + esc(r.team) : ''}</span>${r.gain != null && !held ? `<span class="gain ${r.gain > 0 ? 'pos' : ''}">${r.gain > 0 ? '+' : ''}${fmt(r.gain)} a year</span>` : ''}</div></div>
+    <div class="acts">${held ? '<span class="held">You hold this</span>' : inEd ? '<span class="held">Added</span>' : `<button type="button" class="add" data-add="${i}">Add</button>`}</div></div>`; }
+function showRes(rows, note) { $('#ed-res').hidden = false; $('#ed-res')._rows = rows;
+  $('#ed-res').innerHTML = (note ? `<div class="rh">${note}</div>` : '') + (rows.length ? rows.map(resRow).join('') : '<div class="state note">No players found.</div>'); }
+async function gamesFor(list) {   // [{sport, season, id}] -> fills G, fetched by sport-season
+  const need = {}; for (const r of list) { const k = `${r.sport}:${r.season}:${r.id}`; if (!G[k]) (need[`${r.sport}|${r.season}`] = need[`${r.sport}|${r.season}`] || []).push(r.id); }
+  await Promise.all(Object.entries(need).map(async ([g, ids]) => { const [sp, se] = g.split('|'); for (let i = 0; i < ids.length; i += 80) { const part = ids.slice(i, i + 80);
+    const j = await api(`/api/swaps?op=otdpool&sport=${sp}&season=${se}&ids=${part.join(',')}`); for (const id of part) G[`${sp}:${se}:${id}`] = (j.games || {})[id] || []; } })); }
+const notMine = r => { const k = `${r.sport}:${r.season}:${r.id}`; return !ACCT.some(p => p.key === k) && !ED.adds.some(x => `${x.sport}:${x.season}:${x.id}` === k); };
+async function runSearch(q) { const n = ++qN;
+  if (q.length < 2) return suggest();
+  $('#ed-res').hidden = false; $('#ed-res').innerHTML = '<div class="state note">Searching…</div>';
+  const j = await api('/api/swaps?op=search&q=' + encodeURIComponent(q)); if (n !== qN) return;
+  if (j.error) return showRes([], esc(j.error));
+  const rows = (j.rows || []).filter(r => r.sport !== 'golf').map(r => ({ sport: r.sport, season: Number(r.season), id: Number(r.playerId), name: r.player, team: r.team || '' }));
+  await gamesFor(rows); if (n !== qN) return;
+  const lv = edLv(); for (const r of rows) r.gain = quickGain(r.sport, r.season, G[`${r.sport}:${r.season}:${r.id}`], lv);
+  rows.sort((a, b) => (notMine(b) - notMine(a)) || b.gain - a.gain);
+  showRes(rows.slice(0, 15), `Best adds first · at ${esc(LEVELS[lv][0])}`); }
+// Suggestions: the top players (by rax) of every season you hold plus this season's, weighed against this loadout.
+let POOL = null;
+async function suggest() { const n = ++qN; $('#ed-res').hidden = false;
+  $('#ed-res').innerHTML = '<div class="state note">Finding the players that add the most to this loadout…</div>';
+  if (!POOL) { const seasons = [...new Set(ACCT.filter(p => p.kind !== 'team' && p.sport !== 'golf').map(p => `${p.sport}|${p.season}`).concat(['nba|2027', 'ncaam|2027', 'nfl|2026', 'ncaaf|2026', 'nhl|2026', 'mlb|2026']))].slice(0, 24);
+    const out = []; await Promise.all(seasons.map(async g => { const [sp, se] = g.split('|'); const j = await api(`/api/swaps?op=otdpool&sport=${sp}&season=${se}`);
+      for (const [id, gm] of Object.entries(j.games || {})) { const k = `${sp}:${se}:${id}`; G[k] = G[k] || gm; const nm = (j.names || {})[id] || []; out.push({ sport: sp, season: Number(se), id: Number(id), name: nm[0] || 'Player ' + id, team: nm[1] || '', tot: gm.reduce((t, x) => t + x[1], 0) }); } }));
+    POOL = out; }
+  if (n !== qN) return;
+  const lv = edLv(), cand = POOL.filter(notMine).sort((a, b) => b.tot - a.tot).slice(0, 1500);
+  // Weighed in slices so the page never locks up.
+  for (let i = 0; i < cand.length; i += 150) { for (const r of cand.slice(i, i + 150)) r.gain = quickGain(r.sport, r.season, G[`${r.sport}:${r.season}:${r.id}`], lv); await new Promise(r => setTimeout(r, 0)); if (n !== qN) return; }
+  cand.sort((a, b) => b.gain - a.gain);
+  showRes(cand.slice(0, 15).map(r => ({ ...r })), `Top adds for this loadout · at ${esc(LEVELS[lv][0])}`); }
+$('#ed-q').addEventListener('input', e => { clearTimeout(qT); const q = e.target.value.trim(); qT = setTimeout(() => runSearch(q), q.length < 2 ? 0 : 250); });
+$('#ed-q').addEventListener('focus', () => { if ($('#ed-res').hidden) runSearch($('#ed-q').value.trim()); });
+$('#ed-lv').addEventListener('change', () => { if (!$('#ed-res').hidden) runSearch($('#ed-q').value.trim()); });
 $('#ed-res').addEventListener('click', async e => { const b = e.target.closest('[data-add]'); if (!b) return; const r = ($('#ed-res')._rows || [])[Number(b.dataset.add)]; if (!r) return;
-  const L = ladderFor(r.sport), lv = Math.min(Number($('#ed-lv').value) || 0, L.length - 1);
-  ED.adds.unshift({ sport: r.sport, season: Number(r.season), id: Number(r.playerId), name: r.player, team: r.team || '', lv }); ED.dirty = true;
-  b.outerHTML = '<span class="held">Added</span>'; await drawEd(); });
+  const L = ladderFor(r.sport), lv = Math.min(edLv(), L.length - 1);
+  ED.adds.unshift({ sport: r.sport, season: Number(r.season), id: Number(r.id), name: r.name, team: r.team || '', lv }); ED.dirty = true;
+  b.outerHTML = '<span class="held">Added</span>'; await drawEd(); runSearch($('#ed-q').value.trim()); });
 $('#ed-adds').addEventListener('change', e => { const s = e.target.closest('[data-lv]'); if (!s) return; ED.adds[Number(s.dataset.lv)].lv = Number(s.value); ED.dirty = true; drawEd(); });
-$('#ed-adds').addEventListener('click', e => { const b = e.target.closest('[data-rm]'); if (!b) return; ED.adds.splice(Number(b.dataset.rm), 1); ED.dirty = true; drawEd(); });
+$('#ed-adds').addEventListener('click', e => { const b = e.target.closest('[data-rm]'); if (!b) return; ED.adds.splice(Number(b.dataset.rm), 1); ED.dirty = true; drawEd().then(() => runSearch($('#ed-q').value.trim())); });
 $('#ed-name').addEventListener('input', () => { ED.name = $('#ed-name').value; edDirty(true); });
 $('#ed-back').addEventListener('click', () => { if (ED && ED.dirty && ED.adds.length && !confirmLeave()) return; ED = null; drawLoadouts(); });
 function confirmLeave() { const b = $('#ed-back'); if (b.dataset.sure) { delete b.dataset.sure; return true; } b.dataset.sure = '1'; toast('Not saved - tap again to leave'); setTimeout(() => { delete b.dataset.sure; }, 3000); return false; }
