@@ -961,7 +961,7 @@ window.rbAfterScan = async () => { await loadAll(true); };
   for (let i = 0; i < 2 && me.error && /sign in/i.test(me.error) && ls.get('ratebrd_token_v1'); i++) { await new Promise(r => setTimeout(r, 1200 * (i + 1))); me = await api('/api/swaps?op=me&page=boosts'); }
   /* Dennis and the testers he picks on the Testers page (2026-11-25); everyone else gets the OTD screen on the Board. */
   if (me.error && early && !/sign in/i.test(me.error)) me = { key: WHO, tests: ['/otd'] };   // the site hiccuped: keep what's on screen
-  if (me.error || !(me.tests || []).includes('/otd')) { try { localStorage.removeItem(CK); } catch (e) {} location.replace('/board#otd'); return; }
+  if (me.error || !((me.tests || []).includes('/otd') || String(me.key || '').toLowerCase() === 'dennis')) { try { localStorage.removeItem(CK); } catch (e) {} location.replace('/board#otd'); return; }
   if (early && WHO !== String(me.key).toLowerCase()) { try { localStorage.removeItem(CK); } catch (e) {} location.reload(); return; }
   WHO = String(me.key).toLowerCase(); $('#app').hidden = false;
   const t = ls.get('otd_tab_v1'); if (t === 'l' || t === 'o') { const b = document.querySelector(`#tabs button[data-tab="${t}"]`); if (b) b.click(); }
