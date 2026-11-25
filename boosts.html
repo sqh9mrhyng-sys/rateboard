@@ -478,8 +478,8 @@ const MODE_NOTE = {
 };
 const LBL = { legendary: 'Legendary', epic: 'Epic', rare: 'Rare' };
 /* Today and the next three days, in Eastern time (when games are listed).
-   NFL only plays Thursday, Sunday and Monday, so it gets the next of those
-   that fall in the same window (refreshed schedules cover four days). */
+   NFL gets every day but Tuesday: mostly Thursday, Sunday and Monday, but holiday weeks add
+   Wednesday, Friday and Saturday games (a member's Wednesday game wasn't offered, 2026-11-24). */
 function days(sp){
   const out = [];
   if(sp === 'golf') return out;   // golf: the tournaments come from the server
@@ -487,7 +487,7 @@ function days(sp){
     const d = new Date(Date.now() + i * 86400000);
     const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
     const wd = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' }).format(d);
-    if(sp === 'nfl' && !['Thu', 'Sun', 'Mon'].includes(wd)) continue;
+    if(sp === 'nfl' && wd === 'Tue') continue;   // 2026-11-24: holiday weeks have Wednesday, Friday and Saturday games - only Tuesday never has one
     const lbl = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' }).format(d);
     out.push([ymd, (i === 0 ? 'Today · ' : i === 1 ? 'Tomorrow · ' : '') + lbl]);
   }
@@ -792,7 +792,7 @@ async function run(){
     $('#out').hidden = false;
     $('#outhead').textContent = /read your passes/i.test(why) ? 'Read your passes first - once your scan is done, pick a day and tap Show my boosts again.'
       : /none of your passes/i.test(why) ? `None of your ${nm} passes play in the next 12 days.`
-      : sp === 'nfl' ? 'No NFL games in the next 4 days - NFL plays Thursday, Sunday and Monday.'
+      : sp === 'nfl' ? 'No NFL games in the next 4 days.'
       : `No ${nm} games in the next 4 days.`;
     return; }
   try{ localStorage.setItem('boosts_pick_v1', JSON.stringify({ sport: sp, mode })); }catch(e){} saveMode(sp, mode);
@@ -968,7 +968,7 @@ async function runAll(reuse){
   const key = day + '|' + list.map(x => x[0] + ':' + modeFor(x[0])).join(',');
   const res = reuse === true && allLast && allLast.key === key ? allLast.res : await Promise.all(list.map(async ([sp, lbl]) => {
     const m = modeFor(sp);
-    if(sp === 'nfl' && ![0, 1, 4].includes(wd)) return { sp, lbl, m, skip: 'No NFL games - NFL plays Thursday, Sunday and Monday.' };
+    if(sp === 'nfl' && wd === 2) return { sp, lbl, m, skip: 'No NFL games on a Tuesday.' };
     const date = sp === 'golf' ? golfEv && golfEv.day : day;
     if(!date) return { sp, lbl, m, skip: 'No tournament that day.' };
     const j = await api(`/api/swaps?op=boostplan&page=boosts&sport=${sp}&date=${date}&mode=${m}` + (m === 'custom' ? cusQueryFor(sp) : '') + (hideStarted() ? '&upcoming=1' : '') + (spreadOn() ? '' : '&spread=0'));
