@@ -191,6 +191,9 @@
   .rh>span{flex:1;font-size:11.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--mute)}
   .rh .pill{border:1px solid var(--line);background:var(--panel2);color:var(--mute);border-radius:99px;padding:4px 10px;font-weight:800;font-size:12px}
   .rh .pill[aria-pressed="true"]{border-color:var(--accent);color:var(--ink)}
+  .shr{display:flex;align-items:center;gap:8px}
+  .sh .col{flex:none;width:30px;height:30px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);display:grid;place-items:center;font-size:13px;line-height:1;transition:transform .15s}
+  .sh .col.shut{transform:rotate(-90deg)}
   .rh .col{flex:none;width:30px;height:30px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);display:grid;place-items:center;font-size:13px;line-height:1;transition:transform .15s}
   #ed-res.shut .col{transform:rotate(-90deg)}
   #ed-res.shut>:not(.rh){display:none}
@@ -311,7 +314,7 @@
         <div class="card sum" id="ed-cmp"></div>
       </section>
       <section>
-        <div class="sh"><h2>In this loadout</h2><span id="ed-n"></span></div>
+        <div class="sh"><h2>In this loadout</h2><div class="shr"><span id="ed-n"></span><button type="button" class="col" id="ed-adcol" aria-label="Show or hide the players in this loadout">&#9662;</button></div></div>
         <div class="card" id="ed-adds" style="overflow:hidden"></div>
       </section>
       <section>
@@ -417,6 +420,10 @@ function hashidsEncode(salt, minLength, numbers) {
   return ret.join('');
 }
 const passLink = p => p && p.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(p.passId)]) : null;
+/* A player's profile on Real (Dennis, 2026-11-25), for the loadout lists: the same link the Bulk page uses. */
+const REAL_SPORT = { nba: [2, 1], nfl: [2, 2], ncaam: [2, 3], mlb: [2, 4], nhl: [2, 7], ufc: [3, 10], ncaaf: [2, 11], wnba: [2, 12], soccer: [2, 14], golf: [2, 15] };
+const profLink = r => { const k = REAL_SPORT[r.sport]; return k && r.id ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [k[0], k[1], 0, Number(r.id)]) + '/' + r.season : null; };
+const profName = r => { const t = esc(r.name || 'Player ' + r.id), u = profLink(r); return u ? `<a class="pl" href="${u}" target="_blank" rel="noopener">${t}<span aria-hidden="true">&#8599;</span></a>` : t; };
 const pname = p => { const t = esc(p.name || 'Player ' + p.id), u = passLink(p); return u ? `<a class="pl" href="${u}" target="_blank" rel="noopener">${t}<span aria-hidden="true">&#8599;</span></a>` : t; };
 const sub = p => `${isTeam(p) ? 'Team · ' : ''}${esc(SPORT[p.sport] || p.sport)} · ${esc(seasonLbl(p.sport, p.season))}`;
 
@@ -701,7 +708,7 @@ async function drawEd() {
   const opts = (sp, sel) => ladderFor(sp).map((l, k) => `<option value="${k}"${k === sel ? ' selected' : ''}>${esc(l[0])}</option>`).join('');
   const fromOf = x => { const p = baseOf(ED).find(q => q.key === `${x.sport}:${x.season}:${x.id}`); return p ? levelIdx(p.rating, p) : -1; };
   $('#ed-adds').innerHTML = ED.adds.length ? ED.adds.map((x, i) => { const c = costs[i], g = gains[i], f = fromOf(x);
-    return `<div class="ar"><div><div class="n">${esc(x.name)}</div><div class="m"><span>${esc(SPORT[x.sport] || x.sport)} ${esc(seasonLbl(x.sport, x.season))}</span>${x.up ? `<span class="up">${esc(f < 0 ? 'General' : ladderFor(x.sport)[f][0])} →</span>` : ''}<select data-lv="${i}" aria-label="Level for ${esc(x.name)}">${opts(x.sport, x.lv)}</select>${!(G[`${x.sport}:${x.season}:${x.id}`] || []).length ? '<span class="w">no games</span>' : ''}</div>${moneyHtml(g, c)}</div>
+    return `<div class="ar"><div><div class="n">${profName(x)}</div><div class="m"><span>${esc(SPORT[x.sport] || x.sport)} ${esc(seasonLbl(x.sport, x.season))}</span>${x.up ? `<span class="up">${esc(f < 0 ? 'General' : ladderFor(x.sport)[f][0])} →</span>` : ''}<select data-lv="${i}" aria-label="Level for ${esc(x.name)}">${opts(x.sport, x.lv)}</select>${!(G[`${x.sport}:${x.season}:${x.id}`] || []).length ? '<span class="w">no games</span>' : ''}</div>${moneyHtml(g, c)}</div>
       ${numHtml(g)}<button type="button" class="rm" data-rm="${i}" aria-label="Remove ${esc(x.name)}">&times;</button></div>`; }).join('')
     : '<div class="state note">Nothing added yet. Tap Add on a player above.</div>';
   edDirty(!!ED.dirty);
@@ -825,7 +832,7 @@ const edLv = () => Number($('#ed-lv').value) || 0;
 function resRow(r, i) { const k = `${r.sport}:${r.season}:${r.id}`, held = baseOf(ED).find(p => p.key === k), inEd = ED.adds.some(x => `${x.sport}:${x.season}:${x.id}` === k), lv = edLv();
   const L = ladderFor(r.sport), now = held ? levelIdx(held.rating, held) : -1, to = Math.min(lv, L.length - 1), canUp = held && !isTeam(held) && to > now;
   const up = held ? `<span class="up">Yours · ${esc(now < 0 ? 'General' : L[now][0])}${canUp ? ' → ' + esc(L[to][0]) : ''}</span>` : '', live = !held || canUp;
-  return `<div class="ar"><div><div class="n">${esc(r.name)}</div><div class="m"><span>${esc(SPORT[r.sport] || r.sport)} ${esc(seasonLbl(r.sport, r.season))}${r.team ? ' · ' + esc(r.team) : ''}</span>${up}</div>${live ? moneyHtml(r.gain, r.c) : ''}</div>
+  return `<div class="ar"><div><div class="n">${profName(r)}</div><div class="m"><span>${esc(SPORT[r.sport] || r.sport)} ${esc(seasonLbl(r.sport, r.season))}${r.team ? ' · ' + esc(r.team) : ''}</span>${up}</div>${live ? moneyHtml(r.gain, r.c) : ''}</div>
     ${live ? numHtml(r.gain) : '<div></div>'}<div>${inEd ? `<span class="held">${held ? 'Upgraded' : 'Added'}</span>` : held ? (canUp ? `<button type="button" class="add" data-add="${i}">Upgrade</button>` : '<span class="held">Have it</span>') : `<button type="button" class="add" data-add="${i}">Add</button>`}</div></div>`; }
 const SHUT_KEY = 'otd_res_shut_v1';
 /* Header of the list: what it is and the collapse arrow. */
@@ -896,6 +903,10 @@ async function suggest() { const n = ++qN; $('#ed-res').hidden = false;
   for (let i = 0; i < cand.length; i += 150) { for (const r of cand.slice(i, i + 150)) r.gain = r.up ? (quickUp(`${r.sport}:${r.season}:${r.id}`, lv) || 0) : quickGain(r.sport, r.season, G[`${r.sport}:${r.season}:${r.id}`], lv); await new Promise(r => setTimeout(r, 0)); if (n !== qN) return; }
   finish(n, cand, 'Best for this loadout'); }
 drawSpf();
+// In this loadout folds away too (Dennis, 2026-11-25), remembered.
+const adShut = v => { $('#ed-adds').hidden = v; $('#ed-adcol').classList.toggle('shut', v); $('#ed-adcol').setAttribute('aria-expanded', String(!v)); };
+adShut(ls.get('otd_adds_shut_v1') === '1');
+$('#ed-adcol').addEventListener('click', () => { const v = !$('#ed-adds').hidden; ls.set('otd_adds_shut_v1', v ? '1' : '0'); adShut(v); });
 $('#ed-sp').addEventListener('click', e => { const b = e.target.closest('[data-spf]'); if (!b) return; const k = b.dataset.spf;
   if (k === 'all') HIDE.clear(); else if (HIDE.has(k)) HIDE.delete(k); else { HIDE.add(k); if (SPF.every(x => HIDE.has(x))) HIDE.clear(); }
   ls.set('otd_hide_sp_v1', JSON.stringify([...HIDE])); drawSpf(); runSearch($('#ed-q').value.trim()); });
