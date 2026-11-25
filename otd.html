@@ -460,6 +460,9 @@ const CAP = { 'General': 0, 'Common': 1000, 'Uncommon': 1500, 'Rare': 2000, 'Epi
   'Legendary 1': 12500, 'Legendary 2': 14000, 'Legendary 3': 16000, 'Legendary 4': 17500, 'Legendary 5': 20000,
   'Mystic 1': 37500, 'Mystic 2': 39500, 'Mystic 3': 41500, 'Mystic 4': 43500, 'Mystic 5': 45500,
   'Mystic 6': 47500, 'Mystic 7': 49000, 'Mystic 8': 50500, 'Mystic 9': 51500, 'Mystic 10': 52500 };
+/* Seasons still being played. Golf 2026 isn't here on purpose (Dennis, 2026-11-25): the players who matter have no more
+   events this year, so its passes count as a finished season - all-time caps apply and the "active season cards"
+   switch leaves them in. The server still reads its new results on schedule (OTD_LIVE in swaps.js). */
 const LIVE = new Set(['nba:2027', 'ncaam:2027', 'nfl:2026', 'ncaaf:2026', 'nhl:2026']);
 const TEAM_LEVELS = [['Common', 1.2, 30, 1], ['Uncommon', 1.4, 90, 2], ['Rare', 1.6, 240, 3], ['Epic', 2, 540, 4], ['Legendary', 2.5, 1140, 5], ['Mystic', 4, 4140, 6], ['Iconic', 6, 10140, 7]];
 const TEAM_CAP = { 0: 0, 1: 1500, 2: 2500, 3: 4000, 4: 6000, 5: 12000, 6: 24000, 7: 128000 };
@@ -1024,7 +1027,9 @@ async function runSearch(q) { const n = ++qN;
 let POOL = null; const POOL_OK = new Set();
 async function ensurePool(prog) {
   const CUR = { nba: 2027, ncaam: 2027, nfl: 2026, ncaaf: 2026, nhl: 2026, mlb: 2026, wnba: 2026, soccer: 2026, golf: 2026 };   // golf added 2026-11-25
-    const seasons = [...new Set(Object.entries(CUR).flatMap(([sp, c]) => [c, c - 1, c - 2, c - 3].map(se => `${sp}|${se}`)).concat(ACCT.filter(p => p.kind !== 'team' && p.sport !== 'ufc').map(p => `${p.sport}|${p.season}`)))];
+  // How many seasons back: four for most, golf all the way to 2014 (Dennis, 2026-11-25: "JT should be back to 2014").
+  const BACK = { golf: 13 };
+    const seasons = [...new Set(Object.entries(CUR).flatMap(([sp, c]) => Array.from({ length: BACK[sp] || 4 }, (_, i) => `${sp}|${c - i}`)).concat(ACCT.filter(p => p.kind !== 'team' && p.sport !== 'ufc').map(p => `${p.sport}|${p.season}`)))];
     const need = seasons.filter(g => !POOL_OK.has(g)); POOL = POOL || [];
     const one = async g => { const [sp, se] = g.split('|');
       for (let t = 0; t < 2 && !POOL_OK.has(g); t++) { const j = await api(`/api/swaps?op=otdpool&sport=${sp}&season=${se}`); if (j.error || !j.games) continue;
