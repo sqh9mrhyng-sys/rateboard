@@ -116,6 +116,7 @@
   .pr .x{text-align:right;font-weight:800;font-size:15px;font-variant-numeric:tabular-nums}
   .pr .x span{display:block;color:var(--mute);font-size:11.5px;font-weight:600}
   .pr>div{min-width:0}
+  a.pl{color:inherit;text-decoration:none} a.pl span{color:var(--accent);font-size:.8em;margin-left:4px} a.pl:active{opacity:.7}
   .tag{display:inline-block;padding:1px 7px;border-radius:6px;font-size:11px;font-weight:800;color:#10131b;white-space:nowrap}
   .flag{font-size:11px;font-weight:800;border-radius:6px;padding:1px 6px;border:1px solid currentColor;white-space:nowrap}
   .flag.b{color:var(--bad)} .flag.w{color:#ffc95a}
@@ -273,6 +274,27 @@ function capOf(p, k) {
 }
 const levelIdx = (r, p) => { let k = -1; ladderOf(p).forEach((l, i) => { if (Number(r) >= l[2]) k = i; }); return k; };
 const tag = p => { const L = ladderOf(p), i = p.lv; return i < 0 ? '<span class="tag" style="background:#8a93a6">General · 1x</span>' : `<span class="tag" style="background:${RC[L[i][3]]}">${esc(L[i][0])} · ${L[i][1]}x</span>`; };
+/* Each pass links to it on Real (2026-11-25), the same link the old OTD screen used. */
+function hashidsEncode(salt, minLength, numbers) {
+  const ALPHA0 = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890', SEPS0 = 'cfhistuCFHISTU', RATIO = 3.5, GUARD_DIV = 12;
+  const shuffle = (alpha, s) => { if (!s.length) return alpha; const t = alpha.slice(); for (let i = t.length - 1, v = 0, p = 0; i > 0; i--, v++) { v %= s.length; const int = s[v].codePointAt(0); p += int; const j = (int + v + p) % i; [t[i], t[j]] = [t[j], t[i]]; } return t; };
+  const toAlpha = (n, alpha) => { const id = []; let v = n; do { id.unshift(alpha[v % alpha.length]); v = Math.floor(v / alpha.length); } while (v > 0); return id; };
+  const saltC = Array.from(salt); let alpha = [...new Set(Array.from(ALPHA0))], seps = Array.from(SEPS0).filter(c => alpha.includes(c));
+  alpha = alpha.filter(c => !seps.includes(c)); seps = shuffle(seps, saltC);
+  if (!seps.length || alpha.length / seps.length > RATIO) { let sl = Math.ceil(alpha.length / RATIO); if (sl === 1) sl = 2; if (sl > seps.length) { const diff = sl - seps.length; seps = seps.concat(alpha.slice(0, diff)); alpha = alpha.slice(diff); } else seps = seps.slice(0, sl); }
+  alpha = shuffle(alpha, saltC); const gc = Math.ceil(alpha.length / GUARD_DIV); let guards;
+  if (alpha.length < 3) { guards = seps.slice(0, gc); seps = seps.slice(gc); } else { guards = alpha.slice(0, gc); alpha = alpha.slice(gc); }
+  let hashInt = 0; for (let i = 0; i < numbers.length; i++) hashInt += numbers[i] % (i + 100);
+  const lottery = alpha[hashInt % alpha.length]; let ret = [lottery];
+  for (let i = 0; i < numbers.length; i++) { let num = numbers[i]; const buf = [lottery].concat(saltC, alpha); alpha = shuffle(alpha, buf.slice(0, alpha.length)); const last = toAlpha(num, alpha); ret = ret.concat(last);
+    if (i + 1 < numbers.length) { num %= (last[0].codePointAt(0) + i); ret.push(seps[num % seps.length]); } }
+  if (ret.length < minLength) { let gi = (hashInt + ret[0].codePointAt(0)) % guards.length; ret.unshift(guards[gi]); if (ret.length < minLength) { gi = (hashInt + ret[2].codePointAt(0)) % guards.length; ret.push(guards[gi]); } }
+  const half = Math.floor(alpha.length / 2);
+  while (ret.length < minLength) { alpha = shuffle(alpha, alpha); ret = alpha.slice(half).concat(ret, alpha.slice(0, half)); const ex = ret.length - minLength; if (ex > 0) ret = ret.slice(ex / 2, ex / 2 + minLength); }
+  return ret.join('');
+}
+const passLink = p => p && p.passId ? 'https://www.realapp.com/' + hashidsEncode('routing', 11, [18, 0, 0, Number(p.passId)]) : null;
+const pname = p => { const t = esc(p.name || 'Player ' + p.id), u = passLink(p); return u ? `<a class="pl" href="${u}" target="_blank" rel="noopener">${t}<span aria-hidden="true">&#8599;</span></a>` : t; };
 const sub = p => `${isTeam(p) ? 'Team · ' : ''}${esc(SPORT[p.sport] || p.sport)} · ${esc(seasonLbl(p.sport, p.season))}`;
 
 let P = [], G = {}, byDay = new Map(), Y = null, WHO = '', PEND = 0, pendT = null;
@@ -408,7 +430,7 @@ function drawPasses() {
   $('#pnote').textContent = `${fmt(rows.length)}${S.sport ? ' ' + (SPORT[S.sport] || S.sport) : ''} pass${rows.length === 1 ? '' : 'es'}`;
   const shown = rows.slice(0, S.showPass);
   $('#plist').innerHTML = rows.length ? shown.map((r, i) => `<div class="pr"><span class="r">${i + 1}</span>
-    <div><div class="n">${esc(r.p.name || 'Player ' + r.p.id)}</div><div class="m"><span>${sub(r.p)}</span>${tag(r.p)}${flag(r)}</div></div>
+    <div><div class="n">${pname(r.p)}</div><div class="m"><span>${sub(r.p)}</span>${tag(r.p)}${flag(r)}</div></div>
     <div class="x">${fmt(r.won)}<span>${r.lost > 0 ? `${fmt(r.lost)} lost` : `${fmt(r.days)} day${r.days === 1 ? '' : 's'}`}</span></div></div>`).join('')
     + (rows.length > shown.length ? `<button type="button" class="more" id="morepass">Show all ${fmt(rows.length)}</button>` : '')
     : `<div class="state"><b>No passes found</b><span class="note">${q ? 'Nothing matches that search.' : 'No passes in this sport.'}</span></div>`;
@@ -416,7 +438,7 @@ function drawPasses() {
 
 function openDay(n) {
   const D = Y.days[n]; if (!D) return; S.sel = n;
-  const row = (r, lost) => { const p = P[r.i]; return `<div class="cl${lost ? ' lost' : ''}"><div><div class="n">${esc(p.name || 'Player ' + p.id)}</div><div class="m"><span>${sub(p)}</span>${tag(p)}${r.extra && !lost ? '<span class="flag w">+1 claim</span>' : ''}</div></div><div class="x">${fmt(r.rax)}</div></div>`; };
+  const row = (r, lost) => { const p = P[r.i]; return `<div class="cl${lost ? ' lost' : ''}"><div><div class="n">${pname(p)}</div><div class="m"><span>${sub(p)}</span>${tag(p)}${r.extra && !lost ? '<span class="flag w">+1 claim</span>' : ''}</div></div><div class="x">${fmt(r.rax)}</div></div>`; };
   const won = D.won.slice().sort((a, b) => b.rax - a.rax), lost = D.lost.slice().sort((a, b) => b.rax - a.rax);
   $('#dtitle').textContent = D.date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   $('#dsub').textContent = `${fmt(D.earned)} rax from ${won.length} claim${won.length === 1 ? '' : 's'}${D.lostRax > 0 ? ` · ${fmt(D.lostRax)} lost to the limit` : ''}`;
