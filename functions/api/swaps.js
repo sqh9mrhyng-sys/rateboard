@@ -7429,7 +7429,7 @@ async function handle({ request, env, waitUntil }) {
     if (!acc.admin && !(await testerPagesFor(env, me)).includes('/otd')) return forbidden('OTD Optimization is off for now.');
     const sp = String(url.searchParams.get('sport') || ''), se = Number(url.searchParams.get('season'));
     if (!/^[a-z]+$/.test(sp) || !(se > 2000)) return json({ error: 'Pick a sport and season.' }, 400);
-    if (!acc.admin && !(await allow(url.origin, 'otdpool:' + me, 30, 600))) return json({ error: 'Too many loads - wait a few minutes.' }, 429);
+    if (!acc.admin && !(await allow(url.origin, 'otdpool:' + me, 150, 600))) return json({ error: 'Too many loads - wait a few minutes.' }, 429);   // 150 (was 30): suggestions read ~35 seasons
     const games = await otdSeason(env, db, sp, se);
     const ids = String(url.searchParams.get('ids') || '').split(',').map(Number).filter(n => n > 0).slice(0, 80);
     const tot = id => (games[id] || []).reduce((a, g) => a + g[1], 0);
