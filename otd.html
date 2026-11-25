@@ -199,11 +199,19 @@
   .find.two input{flex:1 1 100%}
   .find.two select{flex:1 1 0;max-width:none;min-width:0}
   .gain{font-weight:800;font-variant-numeric:tabular-nums;font-size:13px}
-  #lo-ed{padding-bottom:96px}
-  .edbar{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;gap:8px;max-width:860px;margin:0 auto;padding:14px 16px calc(12px + env(safe-area-inset-bottom));background:linear-gradient(transparent,var(--bg) 26%)}
-  .edbar button{flex:1;border-radius:12px;padding:12px 10px;font-weight:800;white-space:nowrap;font-size:14.5px;border:1px solid var(--line);background:var(--panel2);min-width:0}
-  .edbar .pri{background:var(--accent);color:#141925;border-color:var(--accent);flex:1.3}
-  .edbar .pri:disabled{opacity:.5}
+  #lo-ed{padding-bottom:32px}
+  .edtop{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .save{background:var(--accent);color:#141925;border:1px solid var(--accent);border-radius:12px;padding:9px 20px;font-weight:800;font-size:15px}
+  .save:disabled{background:none;color:var(--mute);border-color:var(--line)}
+  .edfoot{display:flex;gap:8px;margin-top:18px}
+  .edfoot button{flex:1;border-radius:12px;padding:12px 10px;font-weight:800;font-size:14.5px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
+  .edfoot #ed-del{flex:0 0 auto;padding:12px 18px;color:var(--bad)}
+  .rate{padding:12px 14px;margin-bottom:10px}
+  .rate label{display:flex;align-items:center;justify-content:space-between;gap:10px;font-weight:700;font-size:14px}
+  .rate input{width:110px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:16px;font-weight:800;text-align:right;color:var(--ink)}
+  .rate textarea{width:100%;min-height:110px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px;font:15px/1.4 ui-monospace,Menlo,monospace;color:var(--ink);resize:vertical}
+  .rate p{margin:6px 0 0;color:var(--mute);font-size:12.5px}
+  .rate p b{color:var(--ink)}
   .toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:var(--bg);font-weight:800;font-size:14px;padding:9px 16px;border-radius:99px;z-index:70;box-shadow:0 8px 24px rgba(0,0,0,.4)}
   .flag.a{color:var(--accent)}
   .lc.fixed{cursor:default}
@@ -293,22 +301,23 @@
     <div id="lo-list"></div>
     <div id="lo-ed" hidden>
       <section style="margin-top:14px">
-        <button type="button" class="back" id="ed-back"><b>&#8592;</b>Back to loadouts</button>
+        <div class="edtop"><button type="button" class="back" id="ed-back"><b>&#8592;</b>Back to loadouts</button><button type="button" id="ed-save" class="save">Save</button></div>
         <input id="ed-name" class="nm" maxlength="40" placeholder="Name this loadout" aria-label="Loadout name">
         <div class="card sum" id="ed-cmp"></div>
+      </section>
+      <section>
+        <div class="sh"><h2>In this loadout</h2><span id="ed-n"></span></div>
+        <div class="card" id="ed-adds" style="overflow:hidden"></div>
       </section>
       <section>
         <div class="sh"><h2>Add players</h2></div>
         <div class="find two"><input id="ed-q" type="search" placeholder="Search a player" autocomplete="off" aria-label="Search a player to add">
           <select id="ed-lv" aria-label="Level for new players"></select>
           <select id="ed-cost" aria-label="How you get rating"></select></div>
+        <div class="card rate" id="ed-rate" hidden></div>
         <div class="card" id="ed-res" style="overflow:hidden" hidden></div>
       </section>
-      <section>
-        <div class="sh"><h2>In this loadout</h2><span id="ed-n"></span></div>
-        <div class="card" id="ed-adds" style="overflow:hidden"></div>
-      </section>
-      <div class="edbar"><button type="button" id="ed-del" class="ghost" hidden>Delete</button><button type="button" id="ed-show" class="ghost">View in Breakdown</button><button type="button" id="ed-save" class="pri">Save loadout</button></div>
+      <div class="edfoot"><button type="button" id="ed-show">View in Breakdown</button><button type="button" id="ed-del" hidden>Delete</button></div>
     </div>
   </div>
   <div id="t-o" hidden><section><div class="card soon"><i>&#9733;</i><b>Optimized</b><p class="note">Next up. Breakdown is finished first - this tab is ready for it.</p></div></section></div>
@@ -664,7 +673,7 @@ function openEd(lo) {
   $('#lo-list').hidden = true; $('#lo-ed').hidden = false; $('#ed-name').value = ED.name; $('#ed-q').value = ''; $('#ed-res').hidden = true;
   $('#ed-del').hidden = !ED.id; scrollTo(0, 0); drawEd().then(() => suggest());
 }
-function edDirty(v) { ED.dirty = v !== false; $('#ed-save').disabled = !ED.adds.length || (!ED.dirty && !!ED.id); $('#ed-save').textContent = ED.id ? (ED.dirty ? 'Save changes' : 'Saved') : 'Save loadout'; }
+function edDirty(v) { ED.dirty = v !== false; $('#ed-save').disabled = !ED.adds.length || (!ED.dirty && !!ED.id); $('#ed-save').textContent = ED.id && !ED.dirty ? 'Saved ✓' : 'Save'; }
 async function drawEd() {
   await ensureGames(ED.adds);
   const prs = ED.adds.map(pairOf), fc = ED.adds.some(x => x.sport === 'soccer');
@@ -681,7 +690,7 @@ async function drawEd() {
   $('#ed-cmp').innerHTML = `<div class="k">This loadout</div><div class="v">${fmt(r.total)}<small>a year</small></div>
     ${scratch ? '' : `<div class="nt">Your account ${fmt(base)}${ED.adds.length && base ? ` · <b class="${cls(d)}">${(d >= 0 ? '+' : '') + (d / base * 100).toFixed(1)}%</b>` : ''}</div>`}
     ${ED.adds.length ? `<div class="st"><div><div class="k">${scratch ? 'Players' : 'Adds'}</div><b class="${scratch ? '' : cls(d)}">${scratch ? fmt(ED.adds.length) : sg(d)}</b></div><div><div class="k">Cost</div><b>${fmt(spend)}</b></div><div><div class="k">Profit</div><b class="${cls(d - spend)}">${sg(d - spend)}</b></div></div>
-      <div class="nt">${esc(costPick()[1])} prices · after the daily limit and caps${unpriced ? ` · ${unpriced} with no price` : ''}</div>` : ''}`;
+      <div class="nt">${esc(costLabel())} · after the daily limit and caps${unpriced ? ` · ${unpriced} with no price` : ''}</div>` : ''}`;
   $('#ed-n').textContent = ED.adds.length ? `${ED.adds.length} player${ED.adds.length === 1 ? '' : 's'}` : '';
   const opts = (sp, sel) => ladderFor(sp).map((l, k) => `<option value="${k}"${k === sel ? ' selected' : ''}>${esc(l[0])}</option>`).join('');
   const fromOf = x => { const p = baseOf(ED).find(q => q.key === `${x.sport}:${x.season}:${x.id}`); return p ? levelIdx(p.rating, p) : -1; };
@@ -700,12 +709,38 @@ $('#ed-lv').addEventListener('change', e => ls.set(LV_KEY, e.target.value));
    10), so packs = rating needed / that, and cost = packs x the price picked. FC has no packs: it's priced at the best
    Rate Board offer per rating for that player, or the median FC offer. UFC has no price. A player with under 10 plays
    isn't really in packs, so he gets no price. Profit = what he adds in the next 12 months - the cost. */
-const COSTS = [['pad', 'Pack a day', 200], ['swaps', 'Swaps', 241], ['back', '160 back', 271], ['full', 'Full price', 415]];
-$('#ed-cost').innerHTML = COSTS.map(c => `<option value="${c[0]}">${c[1]} · ${c[2]}</option>`).join('');
-$('#ed-cost').value = COSTS.some(c => c[0] === ls.get('otd_cost_v1')) ? ls.get('otd_cost_v1') : 'swaps';
-const costPick = () => COSTS.find(c => c[0] === $('#ed-cost').value) || COSTS[1];
 const NO_PACKS = new Set(['soccer', 'ufc']);
 const normName = n => String(n || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z]/g, '');
+const COSTS = [['pad', 'Pack a day', 200], ['swaps', 'Swaps', 241], ['back', '160 back', 271], ['full', 'Full price', 415], ['custom', 'Custom rate', null], ['bulk', 'Bulk rates', null]];
+$('#ed-cost').innerHTML = COSTS.map(c => `<option value="${c[0]}">${c[1]}${c[2] ? ' · ' + c[2] : ''}</option>`).join('');
+$('#ed-cost').value = COSTS.some(c => c[0] === ls.get('otd_cost_v1')) ? ls.get('otd_cost_v1') : 'swaps';
+const costPick = () => COSTS.find(c => c[0] === $('#ed-cost').value) || COSTS[1];
+/* Custom rate and Bulk rates (Dennis, 2026-11-25): priced per point of rating instead of by packs, so they work for
+   every sport, UFC and FC too. Custom: one rate, "3" or "3/1" (3 rax for 1 rating). Bulk: one line each - a player or
+   a sport, then the rate (e.g. "Zach Edey 4", "nba 2.5", "all 3"); a player's line beats his sport's, which beats
+   "all". Both kept in this browser. */
+const rateOf = t => { const m = String(t || '').trim().match(/^(\d+(?:\.\d+)?)(?:\s*\/\s*(\d+(?:\.\d+)?))?$/); if (!m) return null; const v = Number(m[1]) / (m[2] ? Number(m[2]) : 1); return v > 0 && Number.isFinite(v) ? v : null; };
+const SPK = Object.fromEntries(Object.entries(SPORT).flatMap(([k, v]) => [[k, k], [v.toLowerCase(), k]]).concat([['cfb', 'ncaaf'], ['cbb', 'ncaam'], ['fc', 'soccer'], ['soccer', 'soccer']]));
+let CUSTOM = rateOf(ls.get('otd_cost_custom_v1')), BULK = { all: null, sp: {}, pl: {}, bad: 0, n: 0 };
+function parseBulk(txt) { const b = { all: null, sp: {}, pl: {}, bad: 0, n: 0 };
+  for (const raw of String(txt || '').split(/\n/)) { const line = raw.trim(); if (!line) continue;
+    const m = line.match(/^(.*?)[\s,:=\-]+(\d+(?:\.\d+)?(?:\s*\/\s*\d+(?:\.\d+)?)?)$/), r = m && rateOf(m[2]); if (!r) { b.bad++; continue; }
+    const who = m[1].trim().toLowerCase(); b.n++;
+    if (who === 'all' || who === '*' || who === 'everyone' || who === 'default') b.all = r; else if (SPK[who]) b.sp[SPK[who]] = r; else b.pl[normName(who)] = r; }
+  return b; }
+BULK = parseBulk(ls.get('otd_cost_bulk_v1'));
+const flatRate = (sp, name) => $('#ed-cost').value === 'custom' ? CUSTOM : BULK.pl[normName(name)] ?? BULK.sp[sp] ?? BULK.all;
+const costLabel = () => { const v = $('#ed-cost').value; return v === 'custom' ? (CUSTOM ? `${+CUSTOM.toFixed(3)} rax per rating` : 'Custom rate not set') : v === 'bulk' ? 'Your bulk rates' : `${costPick()[1]} prices`; };
+function drawRate() { const v = $('#ed-cost').value, el = $('#ed-rate'); el.hidden = v !== 'custom' && v !== 'bulk'; if (el.hidden) return;
+  el.innerHTML = v === 'custom'
+    ? `<label for="ed-rt">Rax for 1 rating<input id="ed-rt" inputmode="decimal" placeholder="3 or 3/1" value="${esc(ls.get('otd_cost_custom_v1') || '')}"></label><p>Every player's cost is the rating he needs × this rate.</p>`
+    : `<textarea id="ed-bk" spellcheck="false" placeholder="Zach Edey 4&#10;nba 2.5&#10;nfl 3/1&#10;all 3">${esc(ls.get('otd_cost_bulk_v1') || '')}</textarea><p id="ed-bkn"></p>`;
+  bulkNote(); }
+function bulkNote() { const p = $('#ed-bkn'); if (!p) return; p.innerHTML = BULK.n || BULK.bad ? `${BULK.n} rate${BULK.n === 1 ? '' : 's'} read${BULK.bad ? ` · <b>${BULK.bad} line${BULK.bad === 1 ? '' : 's'} not understood</b>` : ''}${BULK.all == null ? ' · add <b>all 3</b> to price everyone not listed' : ''}` : 'One per line: a player or a sport, then rax for 1 rating. A player beats his sport; <b>all</b> covers the rest.'; }
+let rateT = null; const rateChanged = () => { clearTimeout(rateT); rateT = setTimeout(() => { reprice(); if (ED) drawEd(); }, 350); };
+$('#ed-rate').addEventListener('input', e => {
+  if (e.target.id === 'ed-rt') { ls.set('otd_cost_custom_v1', e.target.value); CUSTOM = rateOf(e.target.value); rateChanged(); }
+  if (e.target.id === 'ed-bk') { ls.set('otd_cost_bulk_v1', e.target.value); BULK = parseBulk(e.target.value); bulkNote(); rateChanged(); } });
 const PACK = {}, PLAYS = {}, MKT = {}; let MKT_AT = 0;
 const PK = 'otd_pack_cache_v2', PTTL = 12 * 3600000;
 let PC = (() => { try { return JSON.parse(ls.get(PK) || '{}') || {}; } catch (e) { return {}; } })();
@@ -732,7 +767,8 @@ async function ensureMkt() { if (Date.now() - MKT_AT < 30 * 60000) return;
 const pairOf = r => `${r.sport}:${r.season}`;
 // { cost } when priced, { why } when it can't be, {} while its pack data is still loading.
 function costOf(sp, se, id, name, from, lv) {
-  const L = ladderFor(sp), l = Math.min(lv, L.length - 1), need = Math.max(0, (l < 0 ? 0 : L[l][2]) - (Number(from) || 0));
+  const L = ladderFor(sp), l = Math.min(lv, L.length - 1), need = Math.max(0, (l < 0 ? 0 : L[l][2]) - (Number(from) || 0)), mode = $('#ed-cost').value;
+  if (mode === 'custom' || mode === 'bulk') { const r = flatRate(sp, name); return r == null ? { why: mode === 'custom' ? 'Set a rate' : 'Not in your rates' } : { cost: Math.round(need * r) }; }
   if (sp === 'ufc') return { why: 'No price' };
   if (sp === 'soccer') { const ppr = MKT[normName(name)] ?? MKT['*fc']; return ppr == null ? (MKT_AT ? { why: 'No FC offers' } : {}) : { cost: Math.round(need * ppr) }; }
   if (!packDone.has(`${sp}:${se}`)) return {};
@@ -840,8 +876,10 @@ async function suggest() { const n = ++qN; $('#ed-res').hidden = false;
 $('#ed-q').addEventListener('input', e => { clearTimeout(qT); const q = e.target.value.trim(); qT = setTimeout(() => runSearch(q), q.length < 2 ? 0 : 250); });
 $('#ed-q').addEventListener('focus', () => { if ($('#ed-res').hidden) runSearch($('#ed-q').value.trim()); });
 $('#ed-lv').addEventListener('change', () => { if (!$('#ed-res').hidden) runSearch($('#ed-q').value.trim()); });
-const reorder = () => { const el = $('#ed-res'); if (el._all && !el.hidden) finish(++qN, el._all, el._head); };
-$('#ed-cost').addEventListener('change', e => { ls.set('otd_cost_v1', e.target.value); reorder(); if (ED) drawEd(); });
+// A new price only changes costs, not what anyone adds: the rows on screen are priced again, nothing re-weighed.
+function reprice() { const el = $('#ed-res'), rows = el._rows; if (!rows || el.hidden || !el._head) return; rows.forEach(priceRow); showRes(rows, el._head); }
+$('#ed-cost').addEventListener('change', e => { ls.set('otd_cost_v1', e.target.value); drawRate(); reprice(); if (ED) drawEd(); });
+drawRate();
 $('#ed-res').addEventListener('click', async e => { const sh = e.target.closest('[data-sh]');
   if (sh) { const k = sh.dataset.sh; HIDE.has(k) ? HIDE.delete(k) : HIDE.add(k); ls.set('otd_hide_sp_v1', JSON.stringify([...HIDE])); sh.setAttribute('aria-pressed', String(!HIDE.has(k))); runSearch($('#ed-q').value.trim()); return; }
   if (e.target.closest('.rh')) { const shut = !$('#ed-res').classList.contains('shut'); ls.set(SHUT_KEY, shut ? '1' : '0');
