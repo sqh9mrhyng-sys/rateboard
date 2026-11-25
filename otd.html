@@ -20,9 +20,13 @@
   .hd{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:6px 0 12px}
   h1{font-size:24px;line-height:1.1;margin:0;font-weight:800;letter-spacing:-.02em}
   .hd small{color:var(--mute);font-size:12.5px;text-align:right}
-  .tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:4px;position:sticky;top:8px;z-index:20;box-shadow:0 8px 24px rgba(0,0,0,.28)}
-  .tabs button{border:1px solid transparent;background:none;border-radius:10px;padding:10px 6px;font-weight:700;font-size:14px;color:var(--mute);min-width:0}
-  .tabs button[aria-pressed="true"]{background:var(--panel2);color:var(--ink);border-color:var(--accent)}
+  /* OTD switcher (Dennis, 2026-11-25): Breakdown | Loadouts, a gap, By player | Every game - the same block on this page
+     and on the Board's OTD screen, so the four read as one place. */
+  .og{display:grid;gap:12px;margin-bottom:4px}
+  .ogr{display:grid;grid-template-columns:1fr 1fr;gap:3px;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:3px}
+  .ogr button,.ogr a{border:0;background:none;border-radius:999px;padding:10px 6px;font-weight:700;font-size:14.5px;color:var(--mute);text-align:center;text-decoration:none;min-width:0}
+  .ogr button[aria-pressed="true"]{background:var(--accent);color:#141925}
+  .ogr a:active,.ogr button:active{opacity:.75}
   section{margin-top:18px}
   .sh{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 2px 10px}
   h2{font-size:16px;margin:0;font-weight:800;letter-spacing:-.01em}
@@ -253,8 +257,9 @@
 <body>
 <div class="wrap" id="app" hidden>
   <div class="hd"><h1>OTD</h1><small id="hdnote"></small></div>
-  <div class="tabs" role="tablist" id="tabs">
-    <button data-tab="b" aria-pressed="true">Breakdown</button><button data-tab="l" aria-pressed="false">Loadouts</button><button data-tab="o" aria-pressed="false">Optimized</button>
+  <div class="og" role="tablist" id="tabs">
+    <div class="ogr"><button data-tab="b" aria-pressed="true">Breakdown</button><button data-tab="l" aria-pressed="false">Loadouts</button></div>
+    <div class="ogr"><a href="/board?m=players#otd">By player</a><a href="/board?m=games#otd">Every game</a></div>
   </div>
 
   <div id="t-b">
@@ -329,7 +334,6 @@
       <div class="edfoot"><button type="button" id="ed-show">View in Breakdown</button><button type="button" id="ed-del" hidden>Delete</button></div>
     </div>
   </div>
-  <div id="t-o" hidden><section><div class="card soon"><i>&#9733;</i><b>Optimized</b><p class="note">Next up. Breakdown is finished first - this tab is ready for it.</p></div></section></div>
 </div>
 <div class="shade" id="nlshade" hidden><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="nltitle">
   <header><div><h3 id="nltitle">New loadout</h3><p class="note">Name it, then pick where it starts.</p></div><button type="button" id="nlclose" aria-label="Close">&times;</button></header>
@@ -595,7 +599,7 @@ $('#shade').addEventListener('click', e => { if (e.target === $('#shade')) close
 addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#shade').hidden) closeDay(); if (e.key === 'Escape' && !$('#nlshade').hidden) nlClose(); });
 $('#tabs').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (!b) return;
   document.querySelectorAll('#tabs button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
-  for (const k of ['b', 'l', 'o']) $('#t-' + k).hidden = k !== b.dataset.tab; ls.set('otd_tab_v1', b.dataset.tab); scrollTo(0, 0); if (b.dataset.tab === 'l' && !ED) drawLoadouts(); });
+  for (const k of ['b', 'l']) $('#t-' + k).hidden = k !== b.dataset.tab; ls.set('otd_tab_v1', b.dataset.tab); scrollTo(0, 0); if (b.dataset.tab === 'l' && !ED) drawLoadouts(); });
 
 function state(html) { $('#b-main').hidden = true; $('#b-state').innerHTML = html; }
 const skeleton = () => state('<section style="margin-top:14px"><div class="sk" style="height:206px"></div><div class="sk" style="height:46px;margin-top:14px"></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px"><div class="sk" style="height:78px"></div><div class="sk" style="height:78px"></div><div class="sk" style="height:78px"></div><div class="sk" style="height:78px"></div></div><div class="sk" style="height:260px;margin-top:18px"></div><p class="note" style="text-align:center;margin-top:12px">Loading every game for your passes…</p></section>');
@@ -964,7 +968,7 @@ window.rbAfterScan = async () => { await loadAll(true); };
   if (me.error || !((me.tests || []).includes('/otd') || String(me.key || '').toLowerCase() === 'dennis')) { try { localStorage.removeItem(CK); } catch (e) {} location.replace('/board#otd'); return; }
   if (early && WHO !== String(me.key).toLowerCase()) { try { localStorage.removeItem(CK); } catch (e) {} location.reload(); return; }
   WHO = String(me.key).toLowerCase(); $('#app').hidden = false;
-  const t = ls.get('otd_tab_v1'); if (t === 'l' || t === 'o') { const b = document.querySelector(`#tabs button[data-tab="${t}"]`); if (b) b.click(); }
+  const t = new URLSearchParams(location.search).get('tab') || ls.get('otd_tab_v1'); if (t === 'l') { const b = document.querySelector(`#tabs button[data-tab="${t}"]`); if (b) b.click(); }
   loadLoads();
   await loadAll();
 })();

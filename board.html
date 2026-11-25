@@ -478,6 +478,9 @@
   .hide{display:none!important}
   .vmhide{display:none!important}
   /* OTD (Dennis, 2026-11-25): breakdown link in the header, Simple / Custom, Rarities, select a whole sport. */
+  .ogtop{margin-bottom:6px}
+  .ogtop a{flex:1;padding:9px;border-radius:999px;font-weight:600;font-size:14px;color:var(--mute);text-align:center;text-decoration:none}
+  .ogtop a:active{opacity:.75}
   .panel-hd .hdbtn{align-self:center;border:1px solid var(--accent);color:var(--ink);background:color-mix(in srgb,var(--accent) 12%,transparent);border-radius:10px;padding:7px 12px;font-weight:700;font-size:14px;text-decoration:none;white-space:nowrap}
   .vmrow{display:flex;gap:8px;align-items:stretch}
   .vmrow .vmsel{flex:1;min-width:0;font-size:17px;font-weight:700;padding:12px 14px}
@@ -1103,7 +1106,7 @@ function checkMarketAccess(){
     swapsAccess = !!(j && j.swaps);
     otdAccess = !!(j && j.otd);
     // OTD breakdown: Dennis and his testers get a button to it on the OTD screen (2026-11-25).
-    otdBreak = !!(j && (j.owner || (j.tests || []).includes('/otd'))); const ob = document.getElementById('otd-bd'); if(ob) ob.classList.toggle('hide', !otdBreak);
+    otdBreak = !!(j && (j.owner || (j.tests || []).includes('/otd'))); const ob = document.getElementById('og-top'); if(ob) ob.classList.toggle('hide', !otdBreak);
     if(was !== [marketAccess, swapsAccess, otdAccess].join('|')) applyGameDataVisibility();
   }).catch(() => { marketAsked = ''; });
 }
@@ -2641,7 +2644,7 @@ addEventListener('message', e => { if(e.origin !== location.origin || !e.data ||
   const f = document.querySelector('#cb-otdb iframe'); if(f) f.style.height = Math.max(600, Number(e.data.otdbH) + 20) + 'px'; });
 function pageShell(title, bodyHTML){
   const host = $('#page-cbb');
-  host.innerHTML = `<div class="modal"><div class="panel-hd"><h2>${esc(title)}</h2>${title === 'OTD' ? `<a class="hdbtn${otdBreak ? '' : ' hide'}" id="otd-bd" href="/otd">OTD breakdown &#8594;</a>` : ''}</div>`
+  host.innerHTML = `<div class="modal"><div class="panel-hd"><h2>${esc(title)}</h2></div>`
     + `<div class="panel-bd stack">${bodyHTML}</div></div>`;
   return host;
 }
@@ -5063,7 +5066,7 @@ const CB_SPORT_LABEL = { ncaam:'CBB', ncaaf:'CFB', nfl:'NFL', nba:'NBA', nhl:'NH
                          mlb:'MLB', wnba:'WNBA', soccer:'FC', golf:'Golf', ufc:'UFC', tennis:'Tennis' };
 
 async function cbbPanel(){
-  const st = { mode:'players', sort:'rax', dir:'desc', offset:0, limit:100,
+  const st = { mode: cbView === 'otd' && new URLSearchParams(location.search).get('m') === 'games' ? 'games' : 'players', sort:'rax', dir:'desc', offset:0, limit:100,
                q:'', team:'', conference:'', position:'', seasonType:'', homeAway:'', result:'',
                from:'', to:'', minGames:'', playedOnly:'', exact:false,
                minOwners:'', maxOwners:'', minRax:'', maxRax:'',
@@ -5074,18 +5077,19 @@ async function cbbPanel(){
   const tabsOk = dataTabs().filter(t => cbView === 'otd' ? CB_OTD_TABS.includes(t) : !CB_OTD_TABS.includes(t));
   if(!tabsOk.includes(st.mode)) st.mode = tabsOk[0] || 'pack';
   const box = pageShell(only ? 'Pack data' : cbView === 'otd' ? 'OTD' : 'Game data', `
-    ${cbView === 'otd' ? `<div class="vmrow"><select class="field vmsel" id="cb-vm" aria-label="Simple or custom"><option value="simple">Simple</option><option value="custom">Custom</option></select>
-      <button class="btn-ghost" id="cb-rar" aria-expanded="false">Rarities</button></div>
-    <div class="dtbar hide" id="cb-rarbar"></div>` : ''}
+    ${cbView === 'otd' ? `<div class="seg ogtop${otdBreak ? '' : ' hide'}" id="og-top"><a href="/otd?tab=b">Breakdown</a><a href="/otd?tab=l">Loadouts</a></div>` : ''}
     <div class="seg seg-tabs" role="group" aria-label="View">
       <button data-cm="players" aria-pressed="${st.mode === 'players' ? 'true' : 'false'}">By player</button>
-      <button data-cm="games" aria-pressed="false">Every game</button>
+      <button data-cm="games" aria-pressed="${st.mode === 'games' ? 'true' : 'false'}">Every game</button>
       <!-- OTD breakdown tab removed (Dennis, 2026-11-25): it's its own page now, under OTD in the menu (/otd). -->
       <button data-cm="pack" class="hide" aria-pressed="${st.mode === 'pack' ? 'true' : 'false'}">Pack data &#8599;</button>
       <button data-cm="golf" aria-pressed="${st.mode === 'golf' ? 'true' : 'false'}">Golf</button>
       <button data-cm="shift" aria-pressed="${st.mode === 'shift' ? 'true' : 'false'}">Rax shift</button>
       <button data-cm="hist" aria-pressed="false">Historical</button>
     </div>
+    ${cbView === 'otd' ? `<div class="vmrow"><select class="field vmsel" id="cb-vm" aria-label="Simple or custom"><option value="simple">Simple</option><option value="custom">Custom</option></select>
+      <button class="btn-ghost" id="cb-rar" aria-expanded="false">Rarities</button></div>
+    <div class="dtbar hide" id="cb-rarbar"></div>` : ''}
     <div id="cb-seasons"><span class="note">Loading seasons&hellip;</span></div>
     <div class="note" id="cb-scope" style="margin:6px 0"></div>
     <!-- Cleaner layout (2026-11-10): search and the buttons on one line, every
