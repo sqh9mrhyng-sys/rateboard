@@ -6,7 +6,7 @@
     ['/', 'Home'],
     ['/board', 'Board'],
     ['/board#otd', 'OTD'],
-    ['/otd', 'OTD breakdown', 'test', '/board#otd'],   // Dennis and his testers (2026-11-25); rides under OTD
+    // OTD breakdown has no menu entry of its own (2026-11-25): it's reached from the Breakdown / Loadouts switcher on OTD.
     ['/board#gamedata', 'Game data', 'admin'],
     ['/packs', 'Pack data'],
     ['/swaps', 'Swaps'],

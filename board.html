@@ -479,7 +479,10 @@
   .vmhide{display:none!important}
   /* OTD (Dennis, 2026-11-25): breakdown link in the header, Simple / Custom, Rarities, select a whole sport. */
   .ogtop{margin-bottom:6px}
-  .ogtop a{flex:1;padding:9px;border-radius:999px;font-weight:600;font-size:14px;color:var(--mute);text-align:center;text-decoration:none}
+  /* Both OTD rows as pills, the same as on the Breakdown page (2026-11-25: the By player row read as squares). */
+  #page-cbb[data-view="otd"] .seg-tabs, .ogtop{border-radius:999px;padding:3px;gap:3px}
+  #page-cbb[data-view="otd"] .seg-tabs button, .ogtop a{flex:1;padding:10px 6px;border-radius:999px;font-weight:700;font-size:14.5px}
+  .ogtop a{color:var(--mute);text-align:center;text-decoration:none}
   .ogtop a:active{opacity:.75}
   .panel-hd .hdbtn{align-self:center;border:1px solid var(--accent);color:var(--ink);background:color-mix(in srgb,var(--accent) 12%,transparent);border-radius:10px;padding:7px 12px;font-weight:700;font-size:14px;text-decoration:none;white-space:nowrap}
   .vmrow{display:flex;gap:8px;align-items:stretch}
@@ -615,7 +618,7 @@
 })();
 </script>
 <script src="/theme.js"></script>
-<script src="/nav.js?v=8"></script>
+<script src="/nav.js?v=9"></script>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/img/favicon-48.png">
 <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
