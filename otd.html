@@ -667,12 +667,16 @@ async function runSearch(q) { const n = ++qN;
 let POOL = null;
 async function suggest() { const n = ++qN; $('#ed-res').hidden = false;
   $('#ed-res').innerHTML = '<div class="state note">Finding the players that add the most to this loadout…</div>';
-  if (!POOL) { const seasons = [...new Set(ACCT.filter(p => p.kind !== 'team' && p.sport !== 'golf').map(p => `${p.sport}|${p.season}`).concat(['nba|2027', 'ncaam|2027', 'nfl|2026', 'ncaaf|2026', 'nhl|2026', 'mlb|2026']))].slice(0, 24);
+  /* Every sport's last four seasons, held or not (2026-11-25: Dennis wasn't shown 2023-24 Luka because no 2023-24 NBA
+     season was in the pool - only seasons he held were). */
+  if (!POOL) { const CUR = { nba: 2027, ncaam: 2027, nfl: 2026, ncaaf: 2026, nhl: 2026, mlb: 2026, wnba: 2026, soccer: 2026 };
+    const seasons = [...new Set(Object.entries(CUR).flatMap(([sp, c]) => [c, c - 1, c - 2, c - 3].map(se => `${sp}|${se}`)).concat(ACCT.filter(p => p.kind !== 'team' && p.sport !== 'golf' && p.sport !== 'ufc').map(p => `${p.sport}|${p.season}`)))];
     const out = []; await Promise.all(seasons.map(async g => { const [sp, se] = g.split('|'); const j = await api(`/api/swaps?op=otdpool&sport=${sp}&season=${se}`);
       for (const [id, gm] of Object.entries(j.games || {})) { const k = `${sp}:${se}:${id}`; G[k] = G[k] || gm; const nm = (j.names || {})[id] || []; out.push({ sport: sp, season: Number(se), id: Number(id), name: nm[0] || 'Player ' + id, team: nm[1] || '', tot: gm.reduce((t, x) => t + x[1], 0) }); } }));
     POOL = out; }
   if (n !== qN) return;
-  const lv = edLv(), cand = POOL.filter(notMine).sort((a, b) => b.tot - a.tot).slice(0, 1500);
+  const lv = edLv(), ub = r => { const L = ladderFor(r.sport), l = Math.min(lv, L.length - 1); return Math.min(r.tot * (l < 0 ? 1 : L[l][1]), capOf({ sport: r.sport, season: r.season, kind: 'player' }, l)); };
+  const cand = POOL.filter(notMine).map(r => (r.ub = ub(r), r)).sort((a, b) => b.ub - a.ub).slice(0, 2000);
   // Weighed in slices so the page never locks up.
   for (let i = 0; i < cand.length; i += 150) { for (const r of cand.slice(i, i + 150)) r.gain = quickGain(r.sport, r.season, G[`${r.sport}:${r.season}:${r.id}`], lv); await new Promise(r => setTimeout(r, 0)); if (n !== qN) return; }
   cand.sort((a, b) => b.gain - a.gain);
