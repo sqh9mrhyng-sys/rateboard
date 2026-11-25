@@ -5080,7 +5080,7 @@ async function cbbPanel(){
   const tabsOk = dataTabs().filter(t => cbView === 'otd' ? CB_OTD_TABS.includes(t) : !CB_OTD_TABS.includes(t));
   if(!tabsOk.includes(st.mode)) st.mode = tabsOk[0] || 'pack';
   const box = pageShell(only ? 'Pack data' : cbView === 'otd' ? 'OTD' : 'Game data', `
-    ${cbView === 'otd' ? `<div class="seg ogtop${otdBreak ? '' : ' hide'}" id="og-top"><a href="/otd?tab=b">Breakdown</a><a href="/otd?tab=l">Loadouts</a></div>` : ''}
+    ${cbView === 'otd' ? `<div class="seg ogtop${otdBreak ? '' : ' hide'}" id="og-top"><a href="/otd?tab=b">Breakdown</a><a href="/otd?tab=l">Loadouts</a><a href="/otd?tab=o">Optimized</a></div>` : ''}
     <div class="seg seg-tabs" role="group" aria-label="View">
       <button data-cm="players" aria-pressed="${st.mode === 'players' ? 'true' : 'false'}">By player</button>
       <button data-cm="games" aria-pressed="${st.mode === 'games' ? 'true' : 'false'}">Every game</button>

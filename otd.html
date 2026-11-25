@@ -25,6 +25,7 @@
   .og{display:grid;gap:12px;margin-bottom:4px}
   .ogr{display:grid;grid-template-columns:1fr 1fr;gap:3px;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:3px}
   .ogr button,.ogr a{border:0;background:none;border-radius:999px;padding:10px 6px;font-weight:700;font-size:14.5px;color:var(--mute);text-align:center;text-decoration:none;min-width:0}
+  .ogr.three{grid-template-columns:repeat(3,1fr)}
   .ogr button[aria-pressed="true"]{background:var(--accent);color:#141925}
   .ogr a:active,.ogr button:active{opacity:.75}
   section{margin-top:18px}
@@ -253,6 +254,26 @@
   .nlo button b{display:block;font-size:15px}
   .nlo button span{display:block;color:var(--mute);font-size:13px;margin-top:2px}
   .nlo button[aria-pressed="true"]{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,var(--panel2))}
+  /* Optimized (Dennis, 2026-11-25) */
+  .opt{padding:14px}
+  .opt .lsel{margin-top:0}
+  .opr{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+  .opf{display:flex;flex-direction:column;gap:5px;min-width:0}
+  .opf span{color:var(--mute);font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.05em}
+  .opf input,.opf select{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 10px;font-size:16px;font-weight:800;color:var(--ink);min-width:0}
+  .opt .spf{margin:12px 0 0}
+  .opt .nlgo{margin-top:14px}
+  .ops{padding:16px}
+  .ops .st{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+  .ops .st b{display:block;font-size:16px;font-weight:800;font-variant-numeric:tabular-nums}
+  .ops .k{color:var(--mute);font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.05em}
+  .ops .v{font-size:28px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  .ops .v small{font-size:13px;color:var(--mute);font-weight:700;margin-left:4px}
+  .opa{display:flex;gap:8px;margin-top:12px}
+  .opa button{flex:1;border-radius:12px;padding:11px;font-weight:800;border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
+  .opa button.pri{background:var(--accent);color:#141925;border-color:var(--accent)}
+  .ar .up2{color:var(--accent);font-weight:800}
+  .usdrop{width:100%;margin-top:10px;background:var(--panel2);color:var(--bad);border:1px solid var(--line);border-radius:12px;padding:13px;font-weight:800;font-size:16px}
   .nlgo{width:100%;margin-top:16px;background:var(--accent);color:#141925;border:0;border-radius:12px;padding:13px;font-weight:800;font-size:16px}
   .nlgo:disabled{opacity:.45}
   .soon{padding:34px 20px;text-align:center}
@@ -275,7 +296,7 @@
 <div class="wrap" id="app" hidden>
   <div class="hd"><h1>OTD</h1><small id="hdnote"></small></div>
   <div class="og" role="tablist" id="tabs">
-    <div class="ogr"><button data-tab="b" aria-pressed="true">Breakdown</button><button data-tab="l" aria-pressed="false">Loadouts</button></div>
+    <div class="ogr three"><button data-tab="b" aria-pressed="true">Breakdown</button><button data-tab="l" aria-pressed="false">Loadouts</button><button data-tab="o" aria-pressed="false">Optimized</button></div>
     <div class="ogr"><a href="/board?m=players#otd">By player</a><a href="/board?m=games#otd">Every game</a></div>
   </div>
 
@@ -352,7 +373,25 @@
       <div class="edfoot"><button type="button" id="ed-show">View in Breakdown</button><button type="button" id="ed-del" hidden>Delete</button></div>
     </div>
   </div>
+  <div id="t-o" hidden>
+    <section style="margin-top:14px">
+      <div class="card opt">
+        <label class="lsel"><span>Loadout</span><select id="op-lo" aria-label="Loadout to improve"></select></label>
+        <div class="opr">
+          <label class="opf"><span>Rax to spend</span><input id="op-bud" inputmode="numeric" placeholder="50,000" autocomplete="off"></label>
+          <label class="opf"><span>Price</span><select id="op-way"><option value="best">Cheapest way</option><option value="pad">Pack a day · 200</option><option value="swaps">Swaps · 241</option><option value="bulk">Bulk data</option></select></label>
+        </div>
+        <div class="spf" id="op-sp" role="group" aria-label="Sports"></div>
+        <button type="button" id="op-go" class="nlgo">Find the best upgrades</button>
+      </div>
+    </section>
+    <div id="op-out"></div>
+  </div>
 </div>
+<div class="shade" id="usshade" hidden><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="ustitle">
+  <header><div><h3 id="ustitle">This loadout is unsaved</h3><p class="note">Your changes will be lost if you leave without saving.</p></div><button type="button" id="usx" aria-label="Keep editing">&times;</button></header>
+  <div class="body nlb"><button type="button" id="us-save" class="nlgo" style="margin-top:4px">Save and close</button><button type="button" id="us-drop" class="usdrop">Discard and close</button></div>
+</div></div>
 <div class="shade" id="nlshade" hidden><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="nltitle">
   <header><div><h3 id="nltitle">New loadout</h3><p class="note">Name it, then pick where it starts.</p></div><button type="button" id="nlclose" aria-label="Close">&times;</button></header>
   <div class="body nlb">
@@ -632,9 +671,13 @@ $('#psort').addEventListener('change', e => { S.psort = e.target.value; S.showPa
 $('#dclose').addEventListener('click', closeDay);
 $('#shade').addEventListener('click', e => { if (e.target === $('#shade')) closeDay(); });
 addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#shade').hidden) closeDay(); if (e.key === 'Escape' && !$('#nlshade').hidden) nlClose(); });
-$('#tabs').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (!b) return;
+function goTab(t) { const b = document.querySelector(`#tabs button[data-tab="${t}"]`); if (!b) return;
   document.querySelectorAll('#tabs button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
-  for (const k of ['b', 'l']) $('#t-' + k).hidden = k !== b.dataset.tab; ls.set('otd_tab_v1', b.dataset.tab); scrollTo(0, 0); if (b.dataset.tab === 'l' && !ED) drawLoadouts(); });
+  for (const k of ['b', 'l', 'o']) $('#t-' + k).hidden = k !== t; ls.set('otd_tab_v1', t); scrollTo(0, 0);
+  if (t === 'l' && !ED) drawLoadouts(); if (t === 'o') opInit(); }
+$('#tabs').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (!b) return; const t = b.dataset.tab;
+  if (t !== 'l' && !$('#t-l').hidden && ED) return askLeave(() => { ED = null; $('#lo-ed').hidden = true; $('#lo-list').hidden = false; goTab(t); });
+  goTab(t); });
 
 function state(html) { $('#b-main').hidden = true; $('#b-state').innerHTML = html; }
 const skeleton = () => state('<section style="margin-top:14px"><div class="sk" style="height:206px"></div><div class="sk" style="height:46px;margin-top:14px"></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px"><div class="sk" style="height:78px"></div><div class="sk" style="height:78px"></div><div class="sk" style="height:78px"></div><div class="sk" style="height:78px"></div></div><div class="sk" style="height:260px;margin-top:18px"></div><p class="note" style="text-align:center;margin-top:12px">Loading every game for your passes…</p></section>');
@@ -709,15 +752,26 @@ function drawLoSel() {
 $('#losel').addEventListener('change', async e => { ACTIVE = e.target.value; ls.set('otd_active_v1', ACTIVE); const lo = activeLo(); if (lo) await ensureGames(lo.adds); applyActive(); });
 
 let accTot = null;
+/* Shown at once (Dennis, 2026-11-25: "it takes a second to show your loadouts"): the list is drawn straight away with
+   the totals from last time, and the totals are worked out again just after and filled in. */
+const LT_KEY = 'otd_lo_tot_v1';
+let LOT = (() => { try { return JSON.parse(ls.get(LT_KEY) || '{}') || {}; } catch (e) { return {}; } })(), loN = 0;
 async function drawLoadouts() {
-  $('#lo-ed').hidden = true; $('#lo-list').hidden = false;
+  $('#lo-ed').hidden = true; $('#lo-list').hidden = false; const n = ++loN;
   if (!ACCT.length) { $('#lo-list').innerHTML = '<section><div class="card state"><b>No passes yet</b><span class="note">Scan your passes first - your account is the start of every loadout.</span></div></section>'; return; }
-  accTot = totalOf(ACCT).total;
-  await ensureGames(LOADS.flatMap(l => l.adds));
+  paintLoadouts();
+  await new Promise(r => setTimeout(r, 30)); if (n !== loN) return;
+  accTot = totalOf(ACCT).total; LOT.acct = accTot;
+  await ensureGames(LOADS.flatMap(l => l.adds)); if (n !== loN) return;
+  for (const l of LOADS) { LOT[l.id] = totalOf(compose(l)).total; await new Promise(r => setTimeout(r, 0)); if (n !== loN) return; }
+  ls.set(LT_KEY, JSON.stringify(LOT)); if (!$('#lo-list').hidden) paintLoadouts();
+}
+function paintLoadouts() {
+  const accT = LOT.acct;
   const row = (id, name, meta, tot, d) => `<${id === 'acct' ? 'div' : 'button type="button"'} class="lc${id === 'acct' ? ' fixed' : ''}" data-lo="${esc(id)}" aria-current="${ACTIVE === id}"><div><div class="n">${esc(name)}${ACTIVE === id ? '<span class="chip on">Showing</span>' : ''}</div><div class="m">${meta}</div></div><div class="x"><b>${fmt(tot)}</b>${d == null ? '<span class="note">a year</span>' : `<span class="${d >= 0 ? 'pos' : 'neg'}">${d >= 0 ? '+' : ''}${fmt(d)}</span>`}</div></${id === 'acct' ? 'div' : 'button'}>`;
   $('#lo-list').innerHTML = `<section style="margin-top:14px"><div class="sh"><h2>Loadouts</h2></div>`
-    + row('acct', 'Your account', `${fmt(ACCT.length)} passes · from your last scan`, accTot, null)
-    + LOADS.map(l => { const t = totalOf(compose(l)).total; return row(l.id, l.name, (l.base === 'none' ? `From scratch · ${l.adds.length} player${l.adds.length === 1 ? '' : 's'}` : `Your account + ${l.adds.filter(x => !x.up).length} added · ${l.adds.filter(x => x.up).length} upgraded`), t, l.base === 'none' ? null : t - accTot); }).join('')
+    + row('acct', 'Your account', `${fmt(ACCT.length)} passes · from your last scan`, accT, null)
+    + LOADS.map(l => { const t = LOT[l.id]; return row(l.id, l.name, (l.base === 'none' ? `From scratch · ${l.adds.length} player${l.adds.length === 1 ? '' : 's'}` : `Your account + ${l.adds.filter(x => !x.up).length} added · ${l.adds.filter(x => x.up).length} upgraded`), t, l.base === 'none' || t == null || accT == null ? null : t - accT); }).join('')
     + `<button type="button" class="newlo" id="lo-new">+ New loadout</button></section>`;
 }
 function newLo() { $('#nlname').value = ''; document.querySelectorAll('.nlo button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.base === 'acct'))); $('#nlgo').disabled = true;
@@ -826,8 +880,8 @@ async function ensureMkt() { if (Date.now() - MKT_AT < 30 * 60000) return;
     const all = fc.map(o => Number(o.rate)).sort((a, b) => a - b); if (all.length) MKT['*fc'] = all[Math.floor(all.length / 2)]; MKT_AT = Date.now(); } catch (e) {} }
 const pairOf = r => `${r.sport}:${r.season}`;
 // { cost } when priced, { why } when it can't be, {} while its pack data is still loading.
-function costOf(sp, se, id, name, from, lv) {
-  const L = ladderFor(sp), l = Math.min(lv, L.length - 1), need = Math.max(0, (l < 0 ? 0 : L[l][2]) - (Number(from) || 0)), mode = $('#ed-cost').value;
+function costOf(sp, se, id, name, from, lv, mode0) {
+  const L = ladderFor(sp), l = Math.min(lv, L.length - 1), need = Math.max(0, (l < 0 ? 0 : L[l][2]) - (Number(from) || 0)), mode = mode0 || $('#ed-cost').value;
   if (mode === 'custom') return CUSTOM == null ? { why: 'Set a rate' } : { cost: Math.round(need * CUSTOM) };
   if (mode === 'bulk') { if (!BK) return {}; if (BK.err) return { why: 'Bulk data didn\'t load' };
     const p = BK.pl[`${sp}:${se}:${id}`]; if (p) return { cost: Math.round(need * p[0]), rate: p[0], n: p[1] };
@@ -836,7 +890,7 @@ function costOf(sp, se, id, name, from, lv) {
   if (sp === 'soccer') { const ppr = MKT[normName(name)] ?? MKT['*fc']; return ppr == null ? (MKT_AT ? { why: 'No FC offers' } : {}) : { cost: Math.round(need * ppr) }; }
   if (!packDone.has(`${sp}:${se}`)) return {};
   const k = `${sp}:${se}:${id}`; if ((PLAYS[k] || 0) < 10) return { why: 'Not in packs' };
-  const packs = Math.ceil(need / Math.max(10, (Number(PACK[k]) || 0) * 3)); return { cost: packs * costPick()[2], packs }; }
+  const packs = Math.ceil(need / Math.max(10, (Number(PACK[k]) || 0) * 3)); return { cost: packs * ((COSTS.find(c => c[0] === mode) || costPick())[2]), packs }; }
 function priceRow(r) { const held = baseOf(ED).find(p => p.key === `${r.sport}:${r.season}:${r.id}`);
   r.c = costOf(r.sport, r.season, r.id, r.name, held ? held.rating : 0, edLv()); r.profit = r.c.cost != null && r.gain != null ? r.gain - r.c.cost : null; return r; }
 // Right side: what he adds a year (the list is ordered by this). Left, under his season: his cost and the profit.
@@ -933,6 +987,15 @@ async function runSearch(q) { const n = ++qN;
   finish(n, rows, 'Results'); }
 // Suggestions: the top players (by rax) of every season you hold plus this season's, weighed against this loadout.
 let POOL = null; const POOL_OK = new Set();
+async function ensurePool(prog) {
+  const CUR = { nba: 2027, ncaam: 2027, nfl: 2026, ncaaf: 2026, nhl: 2026, mlb: 2026, wnba: 2026, soccer: 2026 };
+    const seasons = [...new Set(Object.entries(CUR).flatMap(([sp, c]) => [c, c - 1, c - 2, c - 3].map(se => `${sp}|${se}`)).concat(ACCT.filter(p => p.kind !== 'team' && p.sport !== 'golf' && p.sport !== 'ufc').map(p => `${p.sport}|${p.season}`)))];
+    const need = seasons.filter(g => !POOL_OK.has(g)); POOL = POOL || [];
+    const one = async g => { const [sp, se] = g.split('|');
+      for (let t = 0; t < 2 && !POOL_OK.has(g); t++) { const j = await api(`/api/swaps?op=otdpool&sport=${sp}&season=${se}`); if (j.error || !j.games) continue;
+        for (const [id, gm] of Object.entries(j.games)) { const k = `${sp}:${se}:${id}`; G[k] = G[k] || gm; const nm = (j.names || {})[id] || []; POOL.push({ sport: sp, season: Number(se), id: Number(id), name: nm[0] || 'Player ' + id, team: nm[1] || '', tot: gm.reduce((t2, x) => t2 + x[1], 0) }); }
+        POOL_OK.add(g); } };
+    for (let i = 0; i < need.length; i += 4) { await Promise.all(need.slice(i, i + 4).map(one)); if (prog) prog(Math.round(Math.min(need.length, i + 4) / need.length * 100)); } }
 async function suggest() { const n = ++qN; $('#ed-res').hidden = false;
   $('#ed-res').innerHTML = '<div class="state note">Finding the players that add the most to this loadout…</div>';
   /* Every sport's last four seasons, held or not (2026-11-25: Dennis wasn't shown 2023-24 Luka because no 2023-24 NBA
@@ -940,14 +1003,7 @@ async function suggest() { const n = ++qN; $('#ed-res').hidden = false;
   /* Loaded four seasons at a time, each tried twice (2026-11-25: Luka 2023-24 went missing - all ~35 seasons were asked
      for at once, a slow one failed, and the pool was kept without it for as long as the page was open). A season that
      still fails is asked for again next time. */
-  { const CUR = { nba: 2027, ncaam: 2027, nfl: 2026, ncaaf: 2026, nhl: 2026, mlb: 2026, wnba: 2026, soccer: 2026 };
-    const seasons = [...new Set(Object.entries(CUR).flatMap(([sp, c]) => [c, c - 1, c - 2, c - 3].map(se => `${sp}|${se}`)).concat(ACCT.filter(p => p.kind !== 'team' && p.sport !== 'golf' && p.sport !== 'ufc').map(p => `${p.sport}|${p.season}`)))];
-    const need = seasons.filter(g => !POOL_OK.has(g)); POOL = POOL || [];
-    const one = async g => { const [sp, se] = g.split('|');
-      for (let t = 0; t < 2 && !POOL_OK.has(g); t++) { const j = await api(`/api/swaps?op=otdpool&sport=${sp}&season=${se}`); if (j.error || !j.games) continue;
-        for (const [id, gm] of Object.entries(j.games)) { const k = `${sp}:${se}:${id}`; G[k] = G[k] || gm; const nm = (j.names || {})[id] || []; POOL.push({ sport: sp, season: Number(se), id: Number(id), name: nm[0] || 'Player ' + id, team: nm[1] || '', tot: gm.reduce((t2, x) => t2 + x[1], 0) }); }
-        POOL_OK.add(g); } };
-    for (let i = 0; i < need.length; i += 4) { await Promise.all(need.slice(i, i + 4).map(one)); const pr = $('#ed-res .state'); if (pr && n === qN) pr.textContent = `Finding the players that add the most to this loadout… ${Math.round(Math.min(need.length, i + 4) / need.length * 100)}%`; } }
+  await ensurePool(pct => { const pr = $('#ed-res .state'); if (pr && n === qN) pr.textContent = `Finding the players that add the most to this loadout… ${pct}%`; });
   if (n !== qN) return;
   const lv = edLv(), ub = r => { const L = ladderFor(r.sport), l = Math.min(lv, L.length - 1); return Math.min(r.tot * (l < 0 ? 1 : L[l][1]), capOf({ sport: r.sport, season: r.season, kind: 'player' }, l)); };
   const inEd = new Set(ED.adds.map(x => `${x.sport}:${x.season}:${x.id}`));
@@ -986,24 +1042,147 @@ $('#ed-res').addEventListener('click', async e => {
 $('#ed-adds').addEventListener('change', e => { const s = e.target.closest('[data-lv]'); if (!s) return; ED.adds[Number(s.dataset.lv)].lv = Number(s.value); ED.dirty = true; drawEd(); });
 $('#ed-adds').addEventListener('click', e => { const b = e.target.closest('[data-rm]'); if (!b) return; ED.adds.splice(Number(b.dataset.rm), 1); ED.dirty = true; drawEd().then(() => runSearch($('#ed-q').value.trim())); });
 $('#ed-name').addEventListener('input', () => { ED.name = $('#ed-name').value; edDirty(true); });
-$('#ed-back').addEventListener('click', () => { if (ED && ED.dirty && ED.adds.length && !confirmLeave()) return; ED = null; drawLoadouts(); });
+/* Leaving a loadout that isn't saved (Dennis, 2026-11-25): a sheet asks - Save and close, or Discard and close. */
+let leaveGo = null;
+function askLeave(go) { if (!(ED && ED.dirty && ED.adds.length)) return go(); leaveGo = go; $('#usshade').hidden = false; document.body.style.overflow = 'hidden'; }
+const usClose = () => { $('#usshade').hidden = true; document.body.style.overflow = ''; };
+$('#us-save').addEventListener('click', async () => { const b = $('#us-save'); b.disabled = true; b.textContent = 'Saving…'; const ok = await saveEd(); b.disabled = false; b.textContent = 'Save and close'; if (!ok) { usClose(); return; } usClose(); const g = leaveGo; leaveGo = null; if (g) g(); });
+$('#us-drop').addEventListener('click', () => { if (ED) ED.dirty = false; usClose(); const g = leaveGo; leaveGo = null; if (g) g(); });
+$('#usx').addEventListener('click', () => { leaveGo = null; usClose(); });
+$('#usshade').addEventListener('click', e => { if (e.target === $('#usshade')) { leaveGo = null; usClose(); } });
+// The By player / Every game links leave the page: asked first too.
+document.querySelectorAll('#tabs a').forEach(a => a.addEventListener('click', e => { if (ED && ED.dirty && ED.adds.length) { e.preventDefault(); askLeave(() => { location.href = a.href; }); } }));
+$('#ed-back').addEventListener('click', () => askLeave(() => { ED = null; drawLoadouts(); }));
 function confirmLeave() { const b = $('#ed-back'); if (b.dataset.sure) { delete b.dataset.sure; return true; } b.dataset.sure = '1'; toast('Not saved - tap again to leave'); setTimeout(() => { delete b.dataset.sure; }, 3000); return false; }
 function toast(t) { const d = document.createElement('div'); d.className = 'toast'; d.textContent = t; document.body.appendChild(d); setTimeout(() => d.remove(), 2200); }
-async function saveLoads(list) { const j = await api2('/api/swaps?op=otdloadouts', { loadouts: list }); if (j.error) { toast(j.error); return false; } LOADS = j.loadouts || list; return true; }
+async function saveLoads(list) { const j = await api2('/api/swaps?op=otdloadouts', { loadouts: list }); if (j.error) { toast(j.error); return false; } LOADS = j.loadouts || list; ls.set('otd_loads_v1', JSON.stringify(LOADS)); return true; }
 const api2 = async (u, body) => { try { const r = await fetch(u, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); const j = await r.json().catch(() => ({})); if (!r.ok && !j.error) j.error = 'Error ' + r.status; return j; } catch (e) { return { error: 'Could not reach the site.' }; } };
-$('#ed-save').addEventListener('click', async () => { if (!ED.adds.length) return; const b = $('#ed-save'); b.disabled = true; b.textContent = 'Saving…';
-  const name = (ED.name || '').trim(); if (!name) { toast('Give it a name first'); $('#ed-name').focus(); edDirty(true); return; }
+$('#ed-save').addEventListener('click', () => saveEd());
+async function saveEd() { if (!ED.adds.length) return false; const b = $('#ed-save'); b.disabled = true; b.textContent = 'Saving…';
+  const name = (ED.name || '').trim(); if (!name) { toast('Give it a name first'); $('#ed-name').focus(); edDirty(true); return false; }
   const id = ED.id || Math.random().toString(36).slice(2, 10);
   const lo = { id, name, base: ED.base, adds: ED.adds }, list = ED.id ? LOADS.map(l => l.id === id ? lo : l) : LOADS.concat(lo);
-  if (await saveLoads(list)) { ED.id = id; ED.name = name; $('#ed-name').value = name; $('#ed-del').hidden = false; ED.dirty = false; edDirty(false); drawLoSel(); toast('Saved'); if (ACTIVE === id) applyActive(); }
-  else edDirty(true); });
+  if (await saveLoads(list)) { ED.id = id; ED.name = name; $('#ed-name').value = name; $('#ed-del').hidden = false; ED.dirty = false; edDirty(false); drawLoSel(); toast('Saved'); if (ACTIVE === id) applyActive(); return true; }
+  edDirty(true); return false; }
 $('#ed-show').addEventListener('click', async () => {
   // Shows what's on screen: a saved loadout, or this draft once it's saved.
   if (!ED.id || ED.dirty) { if (!ED.adds.length) { ACTIVE = 'acct'; } else { $('#ed-save').click(); await new Promise(r => setTimeout(r, 400)); if (!ED.id) return; ACTIVE = ED.id; } } else ACTIVE = ED.id;
   ls.set('otd_active_v1', ACTIVE); const lo = activeLo(); if (lo) await ensureGames(lo.adds); applyActive(); document.querySelector('#tabs [data-tab="b"]').click(); });
 $('#ed-del').addEventListener('click', async () => { const b = $('#ed-del'); if (!b.dataset.sure) { b.dataset.sure = '1'; b.textContent = 'Tap to delete'; setTimeout(() => { delete b.dataset.sure; b.textContent = 'Delete'; }, 3000); return; }
   if (await saveLoads(LOADS.filter(l => l.id !== ED.id))) { if (ACTIVE === ED.id) { ACTIVE = 'acct'; ls.set('otd_active_v1', 'acct'); applyActive(); } drawLoSel(); toast('Deleted'); ED = null; drawLoadouts(); } });
-async function loadLoads() { const j = await api('/api/swaps?op=otdloadouts'); if (!j.error) { LOADS = j.loadouts || []; drawLoSel(); const lo = activeLo(); if (lo && ACCT.length) { await ensureGames(lo.adds); applyActive(); } } }
+/* ---------- Optimized (Dennis, 2026-11-25) ----------
+   "Enter rax you want to spend and based on bulk data and swaps and pack a day it shows best players to upgrade to
+   each rarity to increase the loadout the most efficiently within your rax." Starts from a loadout (or your account).
+   Every move considered: one of the loadout's players, or one of the top players of every sport's last four seasons,
+   taken up to the start of a rarity (Common through Iconic 1). Each is priced the cheapest of pack a day, swaps and Bulk
+   data (or the one picked), and weighed the same way the loadout editor weighs a player - his days against the
+   loadout's, after the daily limit and caps. The move adding the most rax a year per rax spent goes first; then
+   everything is weighed again with it in place (players fighting over the same days lose value), until the budget
+   is spent. The final figures are worked out in full. */
+const RAR_LV = [0, 1, 2, 3, 4, 9, 19];   // Common, Uncommon, Rare, Epic, Legendary 1, Mystic 1, Iconic 1
+const rarName = (sp, lv) => String(ladderFor(sp)[Math.min(lv, ladderFor(sp).length - 1)][0]).replace(/ 1$/, '');
+const OPH = new Set((() => { try { return JSON.parse(ls.get('otd_op_hide_v1') || '[]') || []; } catch (e) { return []; } })());
+let OPRES = null, opN = 0;
+function opInit() {
+  const cur = $('#op-lo').value || ACTIVE;
+  $('#op-lo').innerHTML = `<option value="acct">Your account</option>` + LOADS.map(l => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join('');
+  $('#op-lo').value = LOADS.some(l => l.id === cur) ? cur : 'acct';
+  if (!$('#op-bud').value) $('#op-bud').value = ls.get('otd_op_bud_v1') || '';
+  $('#op-way').value = ls.get('otd_op_way_v1') || 'best';
+  $('#op-sp').innerHTML = `<button type="button" data-ops="all" aria-pressed="${!SPF.some(k => OPH.has(k))}">All</button>` + SPF.map(k => `<button type="button" data-ops="${k}" aria-pressed="${!OPH.has(k)}">${esc(SPORT[k])}</button>`).join('');
+  if (!OPRES) $('#op-out').innerHTML = '<section><div class="card state"><b>Set a budget</b><span class="note">Enter the rax you want to spend and tap Find. Your loadout is weighed day by day, after the daily limit and caps.</span></div></section>';
+}
+$('#op-sp').addEventListener('click', e => { const b = e.target.closest('[data-ops]'); if (!b) return; const k = b.dataset.ops;
+  if (k === 'all') OPH.clear(); else if (OPH.has(k)) OPH.delete(k); else { OPH.add(k); if (SPF.every(x => OPH.has(x))) OPH.clear(); }
+  ls.set('otd_op_hide_v1', JSON.stringify([...OPH])); opInit(); });
+$('#op-bud').addEventListener('input', e => { const v = e.target.value.replace(/[^0-9]/g, ''); e.target.value = v ? Number(v).toLocaleString() : ''; ls.set('otd_op_bud_v1', e.target.value); });
+$('#op-way').addEventListener('change', e => ls.set('otd_op_way_v1', e.target.value));
+$('#op-bud').addEventListener('keydown', e => { if (e.key === 'Enter') $('#op-go').click(); });
+const opMsg = t => { $('#op-out').innerHTML = `<section><div class="card state note" id="op-prog">${esc(t)}</div></section>`; };
+$('#op-go').addEventListener('click', () => optimize());
+async function optimize() {
+  const n = ++opN, budget = Number(String($('#op-bud').value).replace(/[^0-9]/g, '')) || 0, way = $('#op-way').value;
+  if (!(budget > 0)) { toast('Enter the rax to spend'); $('#op-bud').focus(); return; }
+  if (!ACCT.length) { toast('Scan your passes first'); return; }
+  const loId = $('#op-lo').value, lo0 = LOADS.find(l => l.id === loId) || null;
+  const OP = { base: lo0 ? lo0.base : 'acct', adds: lo0 ? lo0.adds.map(x => ({ ...x })) : [] };
+  $('#op-go').disabled = true; opMsg('Loading players and prices…');
+  try {
+    await ensureGames(OP.adds);
+    await ensurePool(pct => { if (n === opN) { const p = $('#op-prog'); if (p) p.textContent = `Loading players… ${pct}%`; } }); if (n !== opN) return;
+    const keep = r => !OPH.has(r.sport) && r.sport !== 'golf';
+    const owned = baseOf(OP).filter(p => !isTeam(p) && keep(p) && (G[p.key] || []).length).map(p => ({ sport: p.sport, season: Number(p.season), id: Number(p.id), name: p.name || 'Player ' + p.id, team: '', key: p.key }));
+    const ownK = new Set(owned.map(r => r.key));
+    const added = OP.adds.filter(x => !x.up && keep(x)).map(x => ({ sport: x.sport, season: Number(x.season), id: Number(x.id), name: x.name, team: x.team || '', key: `${x.sport}:${x.season}:${x.id}` }));
+    added.forEach(r => ownK.add(r.key));
+    const pool = POOL.filter(r => keep(r) && !ownK.has(`${r.sport}:${r.season}:${r.id}`)).sort((a, b) => b.tot - a.tot);
+    // The top 40 of each sport by what they earn, so every sport gets a look.
+    const per = {}; const fresh = pool.filter(r => (per[r.sport] = (per[r.sport] || 0) + 1) <= 40).map(r => ({ ...r, key: `${r.sport}:${r.season}:${r.id}` }));
+    const C = owned.concat(added, fresh);
+    const ways = way === 'best' ? ['pad', 'swaps', 'bulk'] : [way];
+    opMsg('Loading prices…');
+    if (ways.some(w => w !== 'bulk')) await ensurePack(C.map(pairOf), (i, t) => { if (n === opN) { const p = $('#op-prog'); if (p) p.textContent = `Loading pack prices… ${Math.round(i / t * 100)}%`; } });
+    if (ways.includes('bulk')) await loadBulk();
+    if (C.some(r => r.sport === 'soccer')) await ensureMkt();
+    if (n !== opN) return;
+    const price = (r, from, lv) => { let best = null; for (const w of ways) { const c = costOf(r.sport, r.season, r.id, r.name, from, lv, w); if (c.cost != null && c.cost > 0 && (!best || c.cost < best.cost)) best = { ...c, way: w }; } return best; };
+    const WN = { pad: 'Pack a day', swaps: 'Swaps', bulk: 'Bulk' };
+    const keepED = ED, keepEDK = EDK, keepEDY = EDY; ED = OP; EDK = '';
+    const steps = []; let left = budget;
+    // Moves: [candidate, level]. Their last ratio is kept, so only the most promising are weighed again each round.
+    let M = []; for (const c of C) for (const lv of RAR_LV) M.push({ c, lv, r: Infinity });
+    const before = totalOf(compose(OP)).total;
+    try {
+      for (let pick = 0; pick < 150 && left > 0; pick++) {
+        opMsg(`Weighing upgrades… ${steps.length} picked so far`);
+        await new Promise(r => setTimeout(r, 0)); if (n !== opN) return;
+        const Y = edYear(); let best = null;
+        M.sort((a, b) => b.r - a.r);
+        for (const m of M) {
+          if (best && m.r <= best.r) break;   // nothing below can beat it: values only fall as the loadout fills
+          const i = Y.idx.get(m.c.key), p = i == null ? null : Y.list[i], cur = p ? levelIdx(p.rating, p) : -1, L = ladderFor(m.c.sport);
+          if (m.lv >= L.length || m.lv <= cur) { m.r = -1; continue; }
+          const c = price(m.c, p ? p.rating : 0, m.lv); if (!c) { m.r = -1; continue; }
+          if (c.cost > left) { m.r = 0; continue; }
+          const g = p ? (quickUp(m.c.key, m.lv) || 0) : quickGain(m.c.sport, m.c.season, G[m.c.key], m.lv);
+          m.r = g > 0 ? g / c.cost : -1; m.g = g; m.cost = c;
+          if (m.r > 0 && (!best || m.r > best.r)) best = m;
+        }
+        if (!best) break;
+        const k = best.c.key, i = Y.idx.get(k), p = i == null ? null : Y.list[i], from = p ? levelIdx(p.rating, p) : -1;
+        const ex = OP.adds.find(x => `${x.sport}:${x.season}:${x.id}` === k);
+        if (ex) ex.lv = best.lv; else OP.adds.push({ sport: best.c.sport, season: best.c.season, id: best.c.id, name: best.c.name, team: best.c.team || '', lv: best.lv, up: baseOf(OP).some(q => q.key === k) });
+        left -= best.cost.cost;
+        steps.push({ c: best.c, from, to: best.lv, cost: best.cost.cost, way: WN[best.cost.way] || best.cost.way, packs: best.cost.packs, g: best.g });
+        // That player's other moves start from his new level: weigh them again.
+        for (const m of M) if (m.c.key === k) m.r = Infinity;
+      }
+      const after = totalOf(compose(OP)).total;
+      OPRES = { OP, steps, budget, spent: budget - left, before, after, lo: lo0 };
+    } finally { ED = keepED; EDK = keepEDK; EDY = keepEDY; }
+    drawOpt();
+  } finally { if (n === opN) $('#op-go').disabled = false; }
+}
+function drawOpt() {
+  const R0 = OPRES; if (!R0) return;
+  const d = R0.after - R0.before, sg = v => (v >= 0 ? '+' : '') + fmt(v);
+  if (!R0.steps.length) { $('#op-out').innerHTML = '<section><div class="card state"><b>Nothing fits</b><span class="note">No upgrade at that budget adds rax to this loadout - try a bigger budget or more sports.</span></div></section>'; return; }
+  $('#op-out').innerHTML = `<section><div class="card ops"><div class="k">With these upgrades</div><div class="v">${fmt(R0.after)}<small>a year</small></div>
+      <div class="note" style="margin-top:4px">${esc(R0.lo ? R0.lo.name : 'Your account')} ${fmt(R0.before)} · <b class="${d >= 0 ? 'pos' : 'neg'}">${sg(d)}</b></div>
+      <div class="st"><div><div class="k">Spend</div><b>${fmt(R0.spent)}</b></div><div><div class="k">Adds</div><b class="pos">${sg(d)}</b></div><div><div class="k">Profit</div><b class="${d - R0.spent >= 0 ? 'pos' : 'neg'}">${sg(d - R0.spent)}</b></div></div>
+      <div class="opa"><button type="button" class="pri" id="op-save">Save as a loadout</button></div></div></section>
+    <section><div class="sh"><h2>Best order</h2><span>${R0.steps.length} upgrade${R0.steps.length === 1 ? '' : 's'} · of ${fmt(R0.budget)}</span></div>
+    <div class="card" style="overflow:hidden">${R0.steps.map((x, i) => `<div class="ar"><div><div class="n">${i + 1}. ${profName(x.c)}</div>
+      <div class="m"><span>${esc(SPORT[x.c.sport] || x.c.sport)} ${esc(seasonLbl(x.c.sport, x.c.season))}</span><span class="up2">${esc(x.from < 0 ? 'New' : rarName(x.c.sport, x.from))} → ${esc(rarName(x.c.sport, x.to))}</span></div>
+      <div class="mo">Cost ${fmt(x.cost)} · ${esc(x.way)}${x.packs ? ` · ${fmt(x.packs)} pack${x.packs === 1 ? '' : 's'}` : ''}</div></div>
+      <div class="num"><b class="pos">+${fmt(x.g)}</b><small>a year</small></div><div></div></div>`).join('')}</div>
+    <p class="note" style="margin:8px 2px 0">Each one is weighed with the ones above it already done, so they're best taken in this order.</p></section>`;
+}
+$('#op-out').addEventListener('click', async e => { if (!e.target.closest('#op-save') || !OPRES) return;
+  const R0 = OPRES, id = Math.random().toString(36).slice(2, 10), name = `Optimized · ${fmt(R0.budget)}`;
+  const lo = { id, name, base: R0.OP.base, adds: R0.OP.adds }; if (await saveLoads(LOADS.concat(lo))) { drawLoSel(); toast(`Saved as "${name}"`); } });
+try { LOADS = JSON.parse(ls.get('otd_loads_v1') || '[]') || []; } catch (e) { LOADS = []; }
+async function loadLoads() { const j = await api('/api/swaps?op=otdloadouts'); if (!j.error) { LOADS = j.loadouts || []; ls.set('otd_loads_v1', JSON.stringify(LOADS)); if (!$('#t-l').hidden && !ED) drawLoadouts(); drawLoSel(); const lo = activeLo(); if (lo && ACCT.length) { await ensureGames(lo.adds); applyActive(); } } }
 $('#b-state').addEventListener('click', e => { if (e.target.closest('#retry')) loadAll(); if (e.target.closest('#scanbtn') && window.rbScan) window.rbScan(); });
 // The Scan button beside the menu (nav.js): when a scan finishes, everything here is worked out again.
 window.rbAfterScan = async () => { await loadAll(true); };
@@ -1018,7 +1197,7 @@ window.rbAfterScan = async () => { await loadAll(true); };
   if (me.error || !((me.tests || []).includes('/otd') || String(me.key || '').toLowerCase() === 'dennis')) { try { localStorage.removeItem(CK); } catch (e) {} location.replace('/board#otd'); return; }
   if (early && WHO !== String(me.key).toLowerCase()) { try { localStorage.removeItem(CK); } catch (e) {} location.reload(); return; }
   WHO = String(me.key).toLowerCase(); $('#app').hidden = false;
-  const t = new URLSearchParams(location.search).get('tab') || ls.get('otd_tab_v1'); if (t === 'l') { const b = document.querySelector(`#tabs button[data-tab="${t}"]`); if (b) b.click(); }
+  const t = new URLSearchParams(location.search).get('tab') || ls.get('otd_tab_v1'); if (t === 'l' || t === 'o') { const b = document.querySelector(`#tabs button[data-tab="${t}"]`); if (b) b.click(); }
   loadLoads();
   await loadAll();
 })();
