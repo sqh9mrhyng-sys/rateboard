@@ -900,7 +900,9 @@ function costOf(sp, se, id, name, from, lv, mode0) {
     const p = BK.pl[`${sp}:${se}:${id}`]; if (!p) return { why: 'No bulk sales' }; if (p[1] < BULK_MIN_SALES) return { why: `Only ${p[1]} bulk sale${p[1] === 1 ? '' : 's'}` };
     return { cost: Math.round(need * p[0]), rate: p[0], n: p[1] }; }
   if (sp === 'ufc') return { why: 'No price' };
-  if (sp === 'soccer') { const ppr = MKT[normName(name)] ?? MKT['*fc']; return ppr == null ? (MKT_AT ? { why: 'No FC offers' } : {}) : { cost: Math.round(need * ppr) }; }
+  /* FC has no packs (Dennis, 2026-11-25): whatever pack price is picked, an FC player is priced at the Rate Board's
+     rate for him (the best standing offer per rating, else the median FC offer) and said so - never "Pack a day". */
+  if (sp === 'soccer') { const own = MKT[normName(name)], ppr = own ?? MKT['*fc']; return ppr == null ? (MKT_AT ? { why: 'No FC offers' } : {}) : { cost: Math.round(need * ppr), board: own != null ? 'player' : 'median' }; }
   if (!packDone.has(`${sp}:${se}`)) return {};
   const k = `${sp}:${se}:${id}`; if ((PLAYS[k] || 0) < 10) return { why: 'Not in packs' };
   const packs = Math.ceil(need / Math.max(10, (Number(PACK[k]) || 0) * 3)); return { cost: packs * ((COSTS.find(c => c[0] === mode) || costPick())[2]), packs }; }
@@ -1140,11 +1142,13 @@ async function optimize() {
     const ways = way === 'best' ? ['pad', 'swaps', 'bulk'] : [way];
     opMsg('Loading prices…');
     if (ways.some(w => w !== 'bulk')) await ensurePack(C.map(pairOf), (i, t) => { if (n === opN) { const p = $('#op-prog'); if (p) p.textContent = `Loading pack prices… ${Math.round(i / t * 100)}%`; } });
-    if (ways.includes('bulk')) await loadBulk();
+    if (ways.includes('bulk') || C.some(r => r.sport === 'soccer')) await loadBulk();
     if (C.some(r => r.sport === 'soccer')) await ensureMkt();
     if (n !== opN) return;
-    const price = (r, from, lv) => { let best = null; for (const w of ways) { const c = costOf(r.sport, r.season, r.id, r.name, from, lv, w); if (c.cost != null && c.cost > 0 && (!best || c.cost < best.cost)) best = { ...c, way: w }; } return best; };
-    const WN = { pad: 'Pack a day', swaps: 'Swaps', bulk: 'Loose/Bulk' };
+    // FC is never priced by packs: board rate and Loose/Bulk market data only (both tried whatever price is picked).
+    const price = (r, from, lv) => { let best = null; const ws = r.sport === 'soccer' ? ['pad', 'bulk'] : ways;
+      for (const w of ws) { const c = costOf(r.sport, r.season, r.id, r.name, from, lv, w); if (c.cost != null && c.cost > 0 && (!best || c.cost < best.cost)) best = { ...c, way: c.board ? (c.board === 'player' ? 'board' : 'boardmed') : w }; } return best; };
+    const WN = { pad: 'Pack a day', swaps: 'Swaps', bulk: 'Loose/Bulk', board: 'Board rate', boardmed: 'Board rate (FC median)' };
     const keepED = ED, keepEDK = EDK, keepEDY = EDY; ED = OP; EDK = '';
     const steps = []; let left = budget;
     // Moves: [candidate, level]. Their last ratio is kept, so only the most promising are weighed again each round.
@@ -1162,7 +1166,7 @@ async function optimize() {
           if (best && m.r <= best.r) break;   // nothing below can beat it: values only fall as the loadout fills
           const i = Y.idx.get(m.c.key), p = i == null ? null : Y.list[i], cur = p ? levelIdx(p.rating, p) : -1, L = ladderFor(m.c.sport);
           if (m.lv >= L.length || m.lv <= cur) { m.r = -1; continue; }
-          const c = price(m.c, p ? p.rating : 0, m.lv); if (!c) { m.r = -1; continue; }
+          const c = price(m.c, p ? p.rating : 0, m.lv); if (!c) { m.r = -1; continue; }   // FC: board rate or Loose/Bulk, whichever is cheaper
           if (c.cost > left) { m.r = 0; continue; }
           const g = p ? (quickUp(m.c.key, m.lv, W) || 0) : quickGain(m.c.sport, m.c.season, G[m.c.key], m.lv, W);
           m.r = g > 0 ? g / c.cost : -1; m.g = g; m.cost = c;
