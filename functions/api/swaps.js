@@ -3697,6 +3697,7 @@ export async function swapAccess(env, request) {
 // for OTD their own passes and games.
 const MEMBER_OPS = new Set(['confirm', 'recbuys', 'myhour', 'me', 'save', 'keep', 'touch', 'giveprefs', 'packstoday', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'ownercounts', 'usersearch', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
 const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan', 'search', 'otdpool']);
+const TEST_OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'search', 'otdpool', 'otdloadouts']);
 
 /* ---------- Moderation (Dennis, 2026-11-11) ----------
    Reports on swap / 160 partners are counted automatically:
@@ -6869,8 +6870,12 @@ async function handle({ request, env, waitUntil }) {
   const boostCall = BOOSTS_OPEN && url.searchParams.get('page') === 'boosts' && BOOST_OPS.has(op) && !!acc.who;
   // Pack data's rating calculator (open to everyone signed in): their passes and the site's one scan.
   const packCall = url.searchParams.get('page') === 'packs' && ['me', 'scan', 'scanstatus'].includes(op) && !!acc.who;
-  if (!acc.ok && !boostCall && !packCall) return forbidden(acc.who ? 'Your account does not have this page yet.' : 'Sign in first (raxacademy.app).');
-  if (!acc.admin && !boostCall && !packCall && !((acc.swaps && MEMBER_OPS.has(op)) || (acc.otd && OTD_OPS.has(op)))) return forbidden('Your account does not have this.');
+  /* Testers (2026-11-25): members Dennis added on the Testers page get what the OTD page needs, whatever else they
+     have. Only looked up for those calls. */
+  const testCall = !!acc.who && TEST_OTD_OPS.has(op) && (await testerPagesFor(env, acc.who)).includes('/otd');
+  if (testCall) { /* allowed */ }
+  else if (!acc.ok && !boostCall && !packCall) return forbidden(acc.who ? 'Your account does not have this page yet.' : 'Sign in first (raxacademy.app).');
+  if (!testCall && !acc.admin && !boostCall && !packCall && !((acc.swaps && MEMBER_OPS.has(op)) || (acc.otd && OTD_OPS.has(op)))) return forbidden('Your account does not have this.');
   const me = acc.who;
   if (op === 'tagview') return tagViewOp(env, db, url, acc, waitUntil);
   await ready(db);
