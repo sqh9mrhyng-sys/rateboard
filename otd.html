@@ -163,40 +163,41 @@
   .back b{color:var(--accent);font-size:18px;line-height:1}
   .nm{display:block;width:100%;margin:8px 0 10px;background:none;border:0;border-bottom:1px solid var(--line);padding:6px 2px;font-size:22px;font-weight:800;letter-spacing:-.01em;border-radius:0}
   .nm:focus{outline:none;border-bottom-color:var(--accent)}
-  .cmp{padding:14px 16px;display:grid;grid-template-columns:1fr 1fr;gap:10px 14px}
-  .cmp .k{color:var(--mute);font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.05em}
-  .cmp .v{font-size:20px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
-  .cmp .d{grid-column:1/-1;border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:2px}
-  .cmp .d>div{white-space:nowrap}
-  .dr2{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
-  .tg2{display:flex;gap:6px}
-  .tg2 button{border:1px solid var(--line);background:var(--panel2);color:var(--mute);border-radius:99px;padding:6px 11px;font-weight:800;font-size:12.5px;white-space:nowrap}
-  .tg2 button[aria-pressed="true"]{border-color:var(--accent);color:var(--ink);background:color-mix(in srgb,var(--accent) 14%,var(--panel2))}
-  .tg2 button[aria-pressed="true"]::before{content:'\2713  ';color:var(--accent)}
-  .cmp .d b{font-size:24px;font-weight:800;font-variant-numeric:tabular-nums}
-  .cmp .d span{color:var(--mute);font-size:12.5px}
-  .cmp .d b.sm{font-size:13px;color:var(--ink)} .cmp .d b.sm.pos{color:var(--ok)} .cmp .d b.sm.neg{color:var(--bad)}
-  .ar{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;border-top:1px solid var(--line);padding:10px 14px}
+  .sum{padding:16px}
+  .sum .k{color:var(--mute);font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.05em}
+  .sum .v{white-space:nowrap;font-size:28px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.02em;line-height:1.15}
+  .sum .v small{font-size:13px;color:var(--mute);font-weight:700;letter-spacing:0;margin-left:4px}
+  .sum .st{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+  .sum .st b{display:block;font-size:16px;font-weight:800;font-variant-numeric:tabular-nums}
+  .sum .nt{color:var(--mute);font-size:12.5px;margin-top:4px}
+  .sum .st+.nt{margin-top:10px;font-size:12px}
+  .ar{display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;border-top:1px solid var(--line);padding:11px 12px 11px 14px}
   .ar:first-child{border-top:0}
-  .ar .n{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .ar .m{color:var(--mute);font-size:12.5px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:2px}
   .ar>div{min-width:0}
-  .ar .acts{display:flex;gap:6px;align-items:center}
-  .ar select{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:6px 6px;font-size:13px;font-weight:700;max-width:132px}
+  .ar .n{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ar .m{color:var(--mute);font-size:12.5px;display:flex;gap:4px 6px;align-items:center;flex-wrap:wrap;margin-top:2px}
+  .ar .m select{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:3px 4px;font-size:12.5px;font-weight:700;color:var(--ink);max-width:120px}
+  .ar .up{color:var(--accent);font-weight:700}
+  .ar .w{color:#ffc95a;font-weight:700}
+  .ar .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .ar .num b{display:block;font-size:15px;font-weight:800}
+  .ar .num small{display:block;color:var(--mute);font-size:11.5px;font-weight:700}
+  .ar .mo{font-size:12.5px;color:var(--mute);margin-top:3px;font-variant-numeric:tabular-nums}
+  .ar .mo b{font-weight:800}
   .ar .add{background:var(--accent);color:#141925;border:0;border-radius:9px;padding:7px 12px;font-weight:800}
   .ar .held{color:var(--mute);font-size:12.5px;font-weight:700}
-  .ar .rm{border:1px solid var(--line);background:var(--panel2);border-radius:9px;width:32px;height:32px;font-size:16px;line-height:1}
-  .rh{padding:6px 8px 6px 14px;font-size:11.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--accent);display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:40px}
-  .rh .col{flex:none;width:32px;height:32px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);display:grid;place-items:center;font-size:14px;line-height:1;transition:transform .15s}
+  .ar .rm{border:1px solid var(--line);background:var(--panel2);border-radius:9px;width:30px;height:30px;font-size:16px;line-height:1;color:var(--mute)}
+  .rh{padding:6px 8px 6px 14px;display:flex;align-items:center;gap:8px;min-height:44px;cursor:pointer}
+  .rh>span{flex:1;font-size:11.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--mute)}
+  .rh .pill{border:1px solid var(--line);background:var(--panel2);color:var(--mute);border-radius:99px;padding:4px 10px;font-weight:800;font-size:12px}
+  .rh .pill[aria-pressed="true"]{border-color:var(--accent);color:var(--ink)}
+  .rh .col{flex:none;width:30px;height:30px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);display:grid;place-items:center;font-size:13px;line-height:1;transition:transform .15s}
   #ed-res.shut .col{transform:rotate(-90deg)}
   #ed-res.shut>:not(.rh){display:none}
   #ed-res:not(.shut) .rh{border-bottom:1px solid var(--line)}
-  .sh select.srt{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:6px 8px;font-size:13px;font-weight:800;color:var(--accent)}
   .find.two{flex-wrap:wrap}
   .find.two input{flex:1 1 100%}
   .find.two select{flex:1 1 0;max-width:none;min-width:0}
-  .ar .m .cst{color:var(--mute);font-variant-numeric:tabular-nums}
-  .gain.neg{color:var(--bad)}
   .gain{font-weight:800;font-variant-numeric:tabular-nums;font-size:13px}
   #lo-ed{padding-bottom:96px}
   .edbar{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;gap:8px;max-width:860px;margin:0 auto;padding:14px 16px calc(12px + env(safe-area-inset-bottom));background:linear-gradient(transparent,var(--bg) 26%)}
@@ -294,10 +295,10 @@
       <section style="margin-top:14px">
         <button type="button" class="back" id="ed-back"><b>&#8592;</b>Back to loadouts</button>
         <input id="ed-name" class="nm" maxlength="40" placeholder="Name this loadout" aria-label="Loadout name">
-        <div class="card cmp" id="ed-cmp"></div>
+        <div class="card sum" id="ed-cmp"></div>
       </section>
       <section>
-        <div class="sh"><h2>Add or upgrade players</h2><select id="ed-sort" class="srt" aria-label="Order"><option value="gain">Best first</option><option value="profit">Most profit</option></select></div>
+        <div class="sh"><h2>Add players</h2></div>
         <div class="find two"><input id="ed-q" type="search" placeholder="Search a player" autocomplete="off" aria-label="Search a player to add">
           <select id="ed-lv" aria-label="Level for new players"></select>
           <select id="ed-cost" aria-label="How you get rating"></select></div>
@@ -643,8 +644,8 @@ async function drawLoadouts() {
   accTot = totalOf(ACCT).total;
   await ensureGames(LOADS.flatMap(l => l.adds));
   const row = (id, name, meta, tot, d) => `<${id === 'acct' ? 'div' : 'button type="button"'} class="lc${id === 'acct' ? ' fixed' : ''}" data-lo="${esc(id)}" aria-current="${ACTIVE === id}"><div><div class="n">${esc(name)}${ACTIVE === id ? '<span class="chip on">Showing</span>' : ''}</div><div class="m">${meta}</div></div><div class="x"><b>${fmt(tot)}</b>${d == null ? '<span class="note">a year</span>' : `<span class="${d >= 0 ? 'pos' : 'neg'}">${d >= 0 ? '+' : ''}${fmt(d)}</span>`}</div></${id === 'acct' ? 'div' : 'button'}>`;
-  $('#lo-list').innerHTML = `<section style="margin-top:14px"><div class="sh"><h2>Loadouts</h2><span>Tap one to add players</span></div>`
-    + row('acct', 'Your account', `Live from your last scan · ${fmt(ACCT.length)} passes · can't be edited`, accTot, null)
+  $('#lo-list').innerHTML = `<section style="margin-top:14px"><div class="sh"><h2>Loadouts</h2></div>`
+    + row('acct', 'Your account', `${fmt(ACCT.length)} passes · from your last scan`, accTot, null)
     + LOADS.map(l => { const t = totalOf(compose(l)).total; return row(l.id, l.name, (l.base === 'none' ? `From scratch · ${l.adds.length} player${l.adds.length === 1 ? '' : 's'}` : `Your account + ${l.adds.filter(x => !x.up).length} added · ${l.adds.filter(x => x.up).length} upgraded`), t, l.base === 'none' ? null : t - accTot); }).join('')
     + `<button type="button" class="newlo" id="lo-new">+ New loadout</button></section>`;
 }
@@ -666,26 +667,28 @@ function openEd(lo) {
 function edDirty(v) { ED.dirty = v !== false; $('#ed-save').disabled = !ED.adds.length || (!ED.dirty && !!ED.id); $('#ed-save').textContent = ED.id ? (ED.dirty ? 'Save changes' : 'Saved') : 'Save loadout'; }
 async function drawEd() {
   await ensureGames(ED.adds);
-  const prs = ED.adds.map(pairOf); if (prs.some(pr => !NO_PACKS.has(pr.split(':')[0]) && !packDone.has(pr)) || (ED.adds.some(x => x.sport === 'soccer') && !MKT_AT)) await Promise.all([ensurePack(prs), ED.adds.some(x => x.sport === 'soccer') ? ensureMkt() : null]);
+  const prs = ED.adds.map(pairOf), fc = ED.adds.some(x => x.sport === 'soccer');
+  if (prs.some(pr => !NO_PACKS.has(pr.split(':')[0]) && !packDone.has(pr)) || (fc && !MKT_AT)) await Promise.all([ensurePack(prs), fc ? ensureMkt() : null]);
   if (!ED) return;
-  const base = accTot != null ? accTot : totalOf(ACCT).total, all = compose(ED), r = totalOf(all), d = r.total - base;
-  const scratch = ED.base === 'none', dd = scratch ? r.total : d;
-  $('#ed-cmp').innerHTML = `${scratch ? `<div><div class="k">Players</div><div class="v">${fmt(ED.adds.length)}</div></div>` : `<div><div class="k">Your account</div><div class="v">${fmt(base)}</div></div>`}<div><div class="k">This loadout</div><div class="v">${fmt(r.total)}</div></div>
-    <div class="d"><div class="dr2"><div><b class="${scratch ? '' : d >= 0 ? 'pos' : 'neg'}">${scratch ? '' : d >= 0 ? '+' : ''}${fmt(dd)}</b> <span>a year</span></div>
-      <div class="tg2" role="group" aria-label="Sports to suggest">${[['ufc', 'Show UFC'], ['soccer', 'Show FC']].map(([k, t]) => `<button type="button" data-sh="${k}" aria-pressed="${!HIDE.has(k)}">${t}</button>`).join('')}</div></div>
-      <span>${scratch ? 'From scratch' : base ? (d >= 0 ? '+' : '') + (d / base * 100).toFixed(1) + '%' : ''} · after the daily limit and caps</span></div>`;
-  // What each added player adds on its own, with everything else in the loadout in place.
-  const gains = ED.adds.map((x, i) => { const others = { base: ED.base, adds: ED.adds.filter((_, j) => j !== i) }; return r.total - totalOf(compose(others)).total; });
+  const scratch = ED.base === 'none', base = scratch ? 0 : accTot != null ? accTot : totalOf(ACCT).total, r = totalOf(compose(ED)), d = r.total - base;
+  /* What each added player is worth with everything else in the loadout in place - your passes (unless it's from
+     scratch) and the other players added - so two players fighting over the same days aren't both counted in full. */
+  const gains = ED.adds.map((x, i) => r.total - totalOf(compose({ base: ED.base, adds: ED.adds.filter((_, j) => j !== i) })).total);
   const fromR = x => { const p = baseOf(ED).find(q => q.key === `${x.sport}:${x.season}:${x.id}`); return p ? p.rating : 0; };
   const costs = ED.adds.map(x => costOf(x.sport, x.season, x.id, x.name, fromR(x), x.lv));
-  const priced = costs.filter(c => c.cost != null), spend = priced.reduce((t, c) => t + c.cost, 0), unpriced = costs.length - priced.length;
-  if (ED.adds.length) $('#ed-cmp .d').insertAdjacentHTML('beforeend', `<span>Costs <b class="sm">${fmt(spend)}</b> at ${esc(costPick()[1])} · <b class="sm ${dd - spend >= 0 ? 'pos' : 'neg'}">${dd - spend >= 0 ? '+' : ''}${fmt(dd - spend)}</b> profit in a year${unpriced ? ` · ${unpriced} without a price` : ''}</span>`);
-  const L = sp => ladderFor(sp).map((l, k) => `<option value="${k}">${esc(l[0])} · ${l[1]}x</option>`).join('');
-  $('#ed-n').textContent = ED.adds.length ? `${ED.adds.length} added` : '';
+  const spend = costs.reduce((t, c) => t + (c.cost || 0), 0), unpriced = costs.filter(c => c.cost == null).length;
+  const sg = v => (v >= 0 ? '+' : '') + fmt(v), cls = v => v >= 0 ? 'pos' : 'neg';
+  $('#ed-cmp').innerHTML = `<div class="k">This loadout</div><div class="v">${fmt(r.total)}<small>a year</small></div>
+    ${scratch ? '' : `<div class="nt">Your account ${fmt(base)}${ED.adds.length && base ? ` · <b class="${cls(d)}">${(d >= 0 ? '+' : '') + (d / base * 100).toFixed(1)}%</b>` : ''}</div>`}
+    ${ED.adds.length ? `<div class="st"><div><div class="k">${scratch ? 'Players' : 'Adds'}</div><b class="${scratch ? '' : cls(d)}">${scratch ? fmt(ED.adds.length) : sg(d)}</b></div><div><div class="k">Cost</div><b>${fmt(spend)}</b></div><div><div class="k">Profit</div><b class="${cls(d - spend)}">${sg(d - spend)}</b></div></div>
+      <div class="nt">${esc(costPick()[1])} prices · after the daily limit and caps${unpriced ? ` · ${unpriced} with no price` : ''}</div>` : ''}`;
+  $('#ed-n').textContent = ED.adds.length ? `${ED.adds.length} player${ED.adds.length === 1 ? '' : 's'}` : '';
+  const opts = (sp, sel) => ladderFor(sp).map((l, k) => `<option value="${k}"${k === sel ? ' selected' : ''}>${esc(l[0])}</option>`).join('');
   const fromOf = x => { const p = baseOf(ED).find(q => q.key === `${x.sport}:${x.season}:${x.id}`); return p ? levelIdx(p.rating, p) : -1; };
-  $('#ed-adds').innerHTML = ED.adds.length ? ED.adds.map((x, i) => `<div class="ar"><div><div class="n">${esc(x.name)}</div><div class="m"><span>${esc(SPORT[x.sport] || x.sport)} · ${esc(seasonLbl(x.sport, x.season))}${x.team ? ' · ' + esc(x.team) : ''}</span>${x.up ? `<span class="flag a">Upgrade from ${esc(fromOf(x) < 0 ? 'General' : ladderFor(x.sport)[fromOf(x)][0])}</span>` : ''}<span class="gain ${gains[i] > 0 ? 'pos' : ''}">${gains[i] > 0 ? '+' : ''}${fmt(gains[i])} a year</span>${costHtml(costs[i], costs[i].cost != null ? gains[i] - costs[i].cost : null)}${!(G[`${x.sport}:${x.season}:${x.id}`] || []).length ? '<span class="flag w">No games on file</span>' : ''}</div></div>
-      <div class="acts"><select data-lv="${i}" aria-label="Level for ${esc(x.name)}">${L(x.sport).replace(`value="${x.lv}"`, `value="${x.lv}" selected`)}</select><button type="button" class="rm" data-rm="${i}" aria-label="Remove ${esc(x.name)}">&times;</button></div></div>`).join('')
-    : '<div class="state note">Tap Add on a player above. Each one shows what it adds to your year.</div>';
+  $('#ed-adds').innerHTML = ED.adds.length ? ED.adds.map((x, i) => { const c = costs[i], g = gains[i], f = fromOf(x);
+    return `<div class="ar"><div><div class="n">${esc(x.name)}</div><div class="m"><span>${esc(SPORT[x.sport] || x.sport)} ${esc(seasonLbl(x.sport, x.season))}</span>${x.up ? `<span class="up">${esc(f < 0 ? 'General' : ladderFor(x.sport)[f][0])} →</span>` : ''}<select data-lv="${i}" aria-label="Level for ${esc(x.name)}">${opts(x.sport, x.lv)}</select>${!(G[`${x.sport}:${x.season}:${x.id}`] || []).length ? '<span class="w">no games</span>' : ''}</div>${moneyHtml(g, c)}</div>
+      ${numHtml(g)}<button type="button" class="rm" data-rm="${i}" aria-label="Remove ${esc(x.name)}">&times;</button></div>`; }).join('')
+    : '<div class="state note">Nothing added yet. Tap Add on a player above.</div>';
   edDirty(!!ED.dirty);
 }
 // Level for new players, remembered.
@@ -700,7 +703,6 @@ $('#ed-lv').addEventListener('change', e => ls.set(LV_KEY, e.target.value));
 const COSTS = [['pad', 'Pack a day', 200], ['swaps', 'Swaps', 241], ['back', '160 back', 271], ['full', 'Full price', 415]];
 $('#ed-cost').innerHTML = COSTS.map(c => `<option value="${c[0]}">${c[1]} · ${c[2]}</option>`).join('');
 $('#ed-cost').value = COSTS.some(c => c[0] === ls.get('otd_cost_v1')) ? ls.get('otd_cost_v1') : 'swaps';
-$('#ed-sort').value = ls.get('otd_sort_v1') === 'profit' ? 'profit' : 'gain';
 const costPick = () => COSTS.find(c => c[0] === $('#ed-cost').value) || COSTS[1];
 const NO_PACKS = new Set(['soccer', 'ufc']);
 const normName = n => String(n || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z]/g, '');
@@ -738,8 +740,10 @@ function costOf(sp, se, id, name, from, lv) {
   const packs = Math.ceil(need / Math.max(10, (Number(PACK[k]) || 0) * 3)); return { cost: packs * costPick()[2], packs }; }
 function priceRow(r) { const held = baseOf(ED).find(p => p.key === `${r.sport}:${r.season}:${r.id}`);
   r.c = costOf(r.sport, r.season, r.id, r.name, held ? held.rating : 0, edLv()); r.profit = r.c.cost != null && r.gain != null ? r.gain - r.c.cost : null; return r; }
-const costHtml = (c, profit) => !c ? '' : c.why ? `<span class="flag w">${esc(c.why)}</span>` : c.cost == null ? ''
-  : `<span class="cst">Cost ${fmt(c.cost)}${c.packs ? ` · ${fmt(c.packs)} pack${c.packs === 1 ? '' : 's'}` : ''}</span>${profit == null ? '' : `<span class="gain ${profit >= 0 ? 'pos' : 'neg'}">${profit >= 0 ? '+' : ''}${fmt(profit)} profit</span>`}`;
+// Right side: what he adds a year (the list is ordered by this). Left, under his season: his cost and the profit.
+const numHtml = g => g == null ? '<div></div>' : `<div class="num"><b class="${g > 0 ? 'pos' : ''}">${g >= 0 ? '+' : ''}${fmt(g)}</b><small>a year</small></div>`;
+function moneyHtml(g, c) { if (!c || g == null) return ''; if (c.why) return `<div class="mo"><span class="w">${esc(c.why)}</span></div>`; if (c.cost == null) return '';
+  const pr = g - c.cost; return `<div class="mo">Cost ${fmt(c.cost)} · <b class="${pr >= 0 ? 'pos' : 'neg'}">${pr >= 0 ? '+' : ''}${fmt(pr)}</b> profit</div>`; }
 /* Ranked by what they'd add (Dennis, 2026-11-25: "order by how much rax it'll add to that loadout, the first options
    should show top players that benefit my profile"). Each candidate is weighed against the loadout as it stands, at
    the level picked: day by day, what the day's claims would be with him in, after the daily limit and his own cap.
@@ -772,32 +776,33 @@ function quickGain(sp, se, games, lv) {
   return gain; }
 const edLv = () => Number($('#ed-lv').value) || 0;
 function resRow(r, i) { const k = `${r.sport}:${r.season}:${r.id}`, held = baseOf(ED).find(p => p.key === k), inEd = ED.adds.some(x => `${x.sport}:${x.season}:${x.id}` === k), lv = edLv();
-  const L = ladderFor(r.sport), now = held ? levelIdx(held.rating, held) : -1, canUp = held && !isTeam(held) && Math.min(lv, L.length - 1) > now;
-  const gain = r.gain != null && (!held || canUp) ? `<span class="gain ${r.gain > 0 ? 'pos' : ''}">${r.gain > 0 ? '+' : ''}${fmt(r.gain)} a year</span>` : '';
-  const from = held ? `<span class="flag a">Yours · ${esc(now < 0 ? 'General' : L[now][0])}${canUp ? ' → ' + esc(L[Math.min(lv, L.length - 1)][0]) : ''}</span>` : '';
-  const money = !held || canUp ? costHtml(r.c, r.profit) : '';
-  return `<div class="ar"><div><div class="n">${esc(r.name)}</div><div class="m"><span>${esc(SPORT[r.sport] || r.sport)} · ${esc(seasonLbl(r.sport, r.season))}${r.team ? ' · ' + esc(r.team) : ''}</span>${from}${gain}${money}</div></div>
-    <div class="acts">${inEd ? `<span class="held">${held ? 'Upgraded' : 'Added'}</span>` : held ? (canUp ? `<button type="button" class="add" data-add="${i}">Upgrade</button>` : '<span class="held">Already there</span>') : `<button type="button" class="add" data-add="${i}">Add</button>`}</div></div>`; }
+  const L = ladderFor(r.sport), now = held ? levelIdx(held.rating, held) : -1, to = Math.min(lv, L.length - 1), canUp = held && !isTeam(held) && to > now;
+  const up = held ? `<span class="up">Yours · ${esc(now < 0 ? 'General' : L[now][0])}${canUp ? ' → ' + esc(L[to][0]) : ''}</span>` : '', live = !held || canUp;
+  return `<div class="ar"><div><div class="n">${esc(r.name)}</div><div class="m"><span>${esc(SPORT[r.sport] || r.sport)} ${esc(seasonLbl(r.sport, r.season))}${r.team ? ' · ' + esc(r.team) : ''}</span>${up}</div>${live ? moneyHtml(r.gain, r.c) : ''}</div>
+    ${live ? numHtml(r.gain) : '<div></div>'}<div>${inEd ? `<span class="held">${held ? 'Upgraded' : 'Added'}</span>` : held ? (canUp ? `<button type="button" class="add" data-add="${i}">Upgrade</button>` : '<span class="held">Have it</span>') : `<button type="button" class="add" data-add="${i}">Add</button>`}</div></div>`; }
 const SHUT_KEY = 'otd_res_shut_v1';
-const rhHtml = note => `<div class="rh"><span>${note}</span><button type="button" class="col" data-col aria-label="Show or hide these players" aria-expanded="${ls.get(SHUT_KEY) !== '1'}">&#9662;</button></div>`;
+/* Header of the list: what it is, Show UFC / Show FC (neither has packs), and the collapse arrow. */
+const rhHtml = note => `<div class="rh"><span>${note}</span>${[['ufc', 'UFC'], ['soccer', 'FC']].map(([k, t]) => `<button type="button" class="pill" data-sh="${k}" aria-pressed="${!HIDE.has(k)}" aria-label="Show ${t}">${t}</button>`).join('')}<button type="button" class="col" data-col aria-label="Show or hide these players" aria-expanded="${ls.get(SHUT_KEY) !== '1'}">&#9662;</button></div>`;
 function showRes(rows, note, body) { const el = $('#ed-res'); el.hidden = false; el._rows = rows; el.classList.toggle('shut', ls.get(SHUT_KEY) === '1');
   el.innerHTML = rhHtml(note) + (body || (rows.length ? rows.map(resRow).join('') : '<div class="state note">No players found.</div>')); }
-const resNote = (what, lv) => `${what} · at ${esc(LEVELS[lv][0])} · ${esc(costPick()[1])}`;
-/* Orders the weighed players and shows the top 15. "Most profit" prices the best 300 by what they add first (pack data
-   loads for their seasons), then orders by profit; "Best first" shows at once and fills the costs in when they load. */
+/* Best first: the top 15 by what they add to this loadout, shown at once; their costs fill in when the pack data for
+   their seasons has loaded (kept 12 hours). */
 async function finish(n, all, head) {
-  const el = $('#ed-res'); el._all = all; el._head = head; const lv = edLv(), prof = $('#ed-sort').value === 'profit';
+  const el = $('#ed-res'); el._all = all; el._head = head;
   const open = r => !ED.adds.some(x => `${x.sport}:${x.season}:${x.id}` === `${r.sport}:${r.season}:${r.id}`) && r.gain != null;
   all.sort((a, b) => (open(b) - open(a)) || (b.gain || 0) - (a.gain || 0));
-  let pick = (prof ? all.filter(r => r.gain > 0).slice(0, 300) : all.slice(0, 15)).map(r => ({ ...r }));
-  const note = resNote(prof ? 'Most profit' : head, lv), pend = pick.map(pairOf).filter(pr => !NO_PACKS.has(pr.split(':')[0]) && !packDone.has(pr));
-  const needMkt = pick.some(r => r.sport === 'soccer') && !MKT_AT;
-  if (!prof) { pick.forEach(priceRow); showRes(pick, note); }
-  else if (pend.length || needMkt) showRes([], note, '<div class="state note" id="ed-prog">Loading pack prices…</div>');
-  if (pend.length || needMkt) { await Promise.all([ensurePack(pend, (i, t) => { const p = $('#ed-prog'); if (p && n === qN) p.textContent = `Loading pack prices · ${Math.round(i / t * 100)}%`; }), needMkt ? ensureMkt() : null]); if (n !== qN) return; }
-  pick.forEach(priceRow);
-  if (prof) pick = pick.sort((a, b) => (open(b) - open(a)) || ((b.profit ?? -Infinity) - (a.profit ?? -Infinity)) || (b.gain || 0) - (a.gain || 0)).slice(0, 15);
-  showRes(pick, note); }
+  /* The quick estimate ranks everyone; the top 25 are then worked out in full (the whole year again with him in, after
+     your passes and everything already added), so the number shown is exactly what adding him does to this loadout. */
+  const lv = edLv(), cur = totalOf(compose(ED)).total, top = all.slice(0, 25).map(r => ({ ...r }));
+  for (const r of top) { if (!open(r)) continue; const held = baseOf(ED).some(p => p.key === `${r.sport}:${r.season}:${r.id}`);
+    r.gain = totalOf(compose({ base: ED.base, adds: ED.adds.concat({ sport: r.sport, season: Number(r.season), id: Number(r.id), name: r.name, lv: Math.min(lv, ladderFor(r.sport).length - 1), up: held }) })).total - cur;
+    await new Promise(res => setTimeout(res, 0)); if (n !== qN) return; }
+  top.sort((a, b) => (open(b) - open(a)) || (b.gain || 0) - (a.gain || 0));
+  const pick = top.slice(0, 15); pick.forEach(priceRow); showRes(pick, head);
+  const pend = pick.map(pairOf).filter(pr => !NO_PACKS.has(pr.split(':')[0]) && !packDone.has(pr)), needMkt = pick.some(r => r.sport === 'soccer') && !MKT_AT;
+  if (!pend.length && !needMkt) return;
+  await Promise.all([ensurePack(pend), needMkt ? ensureMkt() : null]); if (n !== qN) return;
+  pick.forEach(priceRow); showRes(pick, head); }
 async function gamesFor(list) {   // [{sport, season, id}] -> fills G, fetched by sport-season
   const need = {}; for (const r of list) { const k = `${r.sport}:${r.season}:${r.id}`; if (!G[k]) (need[`${r.sport}|${r.season}`] = need[`${r.sport}|${r.season}`] || []).push(r.id); }
   await Promise.all(Object.entries(need).map(async ([g, ids]) => { const [sp, se] = g.split('|'); for (let i = 0; i < ids.length; i += 80) { const part = ids.slice(i, i + 80);
@@ -811,7 +816,7 @@ async function runSearch(q) { const n = ++qN;
   const rows = (j.rows || []).filter(r => r.sport !== 'golf' && shown(r)).map(r => ({ sport: r.sport, season: Number(r.season), id: Number(r.playerId), name: r.player, team: r.team || '' }));
   await gamesFor(rows); if (n !== qN) return;
   const lv = edLv(), Y = edYear(); for (const r of rows) { const k = `${r.sport}:${r.season}:${r.id}`; r.gain = baseOf(ED).some(p => p.key === k) ? quickUp(k, lv) : quickGain(r.sport, r.season, G[k], lv); }
-  finish(n, rows, 'Best first'); }
+  finish(n, rows, 'Results'); }
 // Suggestions: the top players (by rax) of every season you hold plus this season's, weighed against this loadout.
 let POOL = null;
 async function suggest() { const n = ++qN; $('#ed-res').hidden = false;
@@ -831,14 +836,15 @@ async function suggest() { const n = ++qN; $('#ed-res').hidden = false;
   const cand = POOL.filter(r => notMine(r) && shown(r)).map(r => (r.ub = ub(r), r)).concat(ups).sort((a, b) => b.ub - a.ub).slice(0, 2000);
   // Weighed in slices so the page never locks up.
   for (let i = 0; i < cand.length; i += 150) { for (const r of cand.slice(i, i + 150)) r.gain = r.up ? (quickUp(`${r.sport}:${r.season}:${r.id}`, lv) || 0) : quickGain(r.sport, r.season, G[`${r.sport}:${r.season}:${r.id}`], lv); await new Promise(r => setTimeout(r, 0)); if (n !== qN) return; }
-  finish(n, cand, 'Top adds and upgrades'); }
+  finish(n, cand, 'Best for this loadout'); }
 $('#ed-q').addEventListener('input', e => { clearTimeout(qT); const q = e.target.value.trim(); qT = setTimeout(() => runSearch(q), q.length < 2 ? 0 : 250); });
 $('#ed-q').addEventListener('focus', () => { if ($('#ed-res').hidden) runSearch($('#ed-q').value.trim()); });
 $('#ed-lv').addEventListener('change', () => { if (!$('#ed-res').hidden) runSearch($('#ed-q').value.trim()); });
 const reorder = () => { const el = $('#ed-res'); if (el._all && !el.hidden) finish(++qN, el._all, el._head); };
 $('#ed-cost').addEventListener('change', e => { ls.set('otd_cost_v1', e.target.value); reorder(); if (ED) drawEd(); });
-$('#ed-sort').addEventListener('change', e => { ls.set('otd_sort_v1', e.target.value); if ($('#ed-res').hidden) runSearch($('#ed-q').value.trim()); else reorder(); });
-$('#ed-res').addEventListener('click', async e => { if (e.target.closest('.rh')) { const shut = !$('#ed-res').classList.contains('shut'); ls.set(SHUT_KEY, shut ? '1' : '0');
+$('#ed-res').addEventListener('click', async e => { const sh = e.target.closest('[data-sh]');
+  if (sh) { const k = sh.dataset.sh; HIDE.has(k) ? HIDE.delete(k) : HIDE.add(k); ls.set('otd_hide_sp_v1', JSON.stringify([...HIDE])); sh.setAttribute('aria-pressed', String(!HIDE.has(k))); runSearch($('#ed-q').value.trim()); return; }
+  if (e.target.closest('.rh')) { const shut = !$('#ed-res').classList.contains('shut'); ls.set(SHUT_KEY, shut ? '1' : '0');
     $('#ed-res').classList.toggle('shut', shut); const c = $('#ed-res .col'); if (c) c.setAttribute('aria-expanded', String(!shut)); return; }
   const b = e.target.closest('[data-add]'); if (!b) return; const r = ($('#ed-res')._rows || [])[Number(b.dataset.add)]; if (!r) return;
   const L = ladderFor(r.sport), lv = Math.min(edLv(), L.length - 1), up = baseOf(ED).some(p => p.key === `${r.sport}:${r.season}:${r.id}`);
@@ -846,8 +852,6 @@ $('#ed-res').addEventListener('click', async e => { if (e.target.closest('.rh'))
   b.outerHTML = `<span class="held">${up ? 'Upgraded' : 'Added'}</span>`; await drawEd(); runSearch($('#ed-q').value.trim()); });
 $('#ed-adds').addEventListener('change', e => { const s = e.target.closest('[data-lv]'); if (!s) return; ED.adds[Number(s.dataset.lv)].lv = Number(s.value); ED.dirty = true; drawEd(); });
 $('#ed-adds').addEventListener('click', e => { const b = e.target.closest('[data-rm]'); if (!b) return; ED.adds.splice(Number(b.dataset.rm), 1); ED.dirty = true; drawEd().then(() => runSearch($('#ed-q').value.trim())); });
-$('#ed-cmp').addEventListener('click', e => { const b = e.target.closest('[data-sh]'); if (!b) return; const k = b.dataset.sh; HIDE.has(k) ? HIDE.delete(k) : HIDE.add(k);
-  ls.set('otd_hide_sp_v1', JSON.stringify([...HIDE])); b.setAttribute('aria-pressed', String(!HIDE.has(k))); runSearch($('#ed-q').value.trim()); });
 $('#ed-name').addEventListener('input', () => { ED.name = $('#ed-name').value; edDirty(true); });
 $('#ed-back').addEventListener('click', () => { if (ED && ED.dirty && ED.adds.length && !confirmLeave()) return; ED = null; drawLoadouts(); });
 function confirmLeave() { const b = $('#ed-back'); if (b.dataset.sure) { delete b.dataset.sure; return true; } b.dataset.sure = '1'; toast('Not saved - tap again to leave'); setTimeout(() => { delete b.dataset.sure; }, 3000); return false; }
