@@ -4045,14 +4045,15 @@ export async function otdBackground(env) {
   st.ms = Date.now() - t0; try { await env.RATEBOARD_KV.put('otd_bg_last', JSON.stringify(st), { expirationTtl: 86400 }); } catch (e) {}
 }
 export async function otdSeason(env, db, sp, se, force) {
-  const job = `${sp}:${se}`, key = 'otdseason_v1_' + job;
+  const job = `${sp}:${se}`, key = 'otdseason_v2_' + job;
   let c = null;
   if (!force) { try { c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); } catch (e) {} }
   if (c && c.games && (!OTD_LIVE.has(job) || Date.now() - c.at < 24 * 3600000 || !force)) return c.games;   // a stale live copy is still served; otdBackground rebuilds it
   const games = {};
   try {
-    const r = await db.prepare(`SELECT playerId, substr(day, 6, 5) AS d, rax FROM gamelog
-      WHERE sport=? AND season=? AND rax > 0`).bind(sp, se).all();
+    // One claim per player per day: a doubleheader's rax once, never twice (Dennis, 2026-11-25).
+    const r = await db.prepare(`SELECT playerId, substr(day, 6, 5) AS d, MAX(rax) AS rax FROM gamelog
+      WHERE sport=? AND season=? AND rax > 0 GROUP BY playerId, day`).bind(sp, se).all();
     for (const x of (r.results || [])) (games[x.playerId] = games[x.playerId] || []).push([x.d, x.rax]);
   } catch (e) { return (c && c.games) || {}; }
   try { await env.RATEBOARD_KV.put(key, JSON.stringify({ at: Date.now(), games })); } catch (e) {}

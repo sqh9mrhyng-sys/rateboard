@@ -322,12 +322,13 @@ async function dhFix2Tick(env) {
   if (st && st.done) return;
   if (st && st.lock > Date.now()) return;
   st = st || { q: null, pos: 0, fixed: 0, days: 0, errs: 0, seasons: [] };
-  st.lock = Date.now() + 55000; await env.RATEBOARD_KV.put(DH2_KEY, JSON.stringify(st));
+  st.lock = Date.now() + 120000; await env.RATEBOARD_KV.put(DH2_KEY, JSON.stringify(st));
   if (!st.q) {
     const r = ((await db.prepare(`SELECT sport, season, playerId, GROUP_CONCAT(day) AS days FROM (SELECT sport, season, playerId, day FROM gamelog
       WHERE playerId IS NOT NULL GROUP BY sport, season, playerId, day HAVING COUNT(*) > 1 AND MAX(COALESCE(rax, 0)) = 0) GROUP BY sport, season, playerId`).all()).results) || [];
     const OLD = { nba: 2025, nfl: 2024, nhl: 2023 };   // before these, the seasons hold no rax on Real
     st.q = r.filter(x => !(OLD[x.sport] && Number(x.season) < OLD[x.sport])).map(x => [x.sport, Number(x.season), Number(x.playerId), String(x.days || '')]); st.pos = 0; st.days = r.reduce((t, x) => t + String(x.days || '').split(',').length, 0);
+    await env.RATEBOARD_KV.put(DH2_KEY, JSON.stringify(st));   // kept at once, so a slow minute can't start the list over
   }
   const touched = new Set(st.seasons);
   const t0 = Date.now(); let r429 = 0;
@@ -341,10 +342,12 @@ async function dhFix2Tick(env) {
       if (stmts.length) touched.add(`${sp}:${se}`);
       st.pos++; r429 = 0;
     } catch (e) {
-      if (/\b429\b/.test(String(e.message || e))) { st.r429 = (st.r429 || 0) + 1; await sleep(Math.min(8000, 1000 * ++r429)); continue; }
+      // 429: Real wants a breather - the minute ends and the same player is tried first next minute (2026-11-25: retrying at once kept the account blocked).
+      if (/\b429\b/.test(String(e.message || e))) { st.r429 = (st.r429 || 0) + 1; break; }
       st.errs++; st.pos++;   // anything else: move on
     }
-    await sleep(40);
+    await sleep(350);   // ~100 a minute: the first try at full speed (186 in a minute) got the account blocked
+    if (st.pos % 25 === 0) { st.seasons = [...touched]; st.at = Date.now(); try { await env.RATEBOARD_KV.put(DH2_KEY, JSON.stringify(st)); } catch (e) {} }
   }
   st.seasons = [...touched];
   if (st.pos >= st.q.length) {
@@ -8130,22 +8133,29 @@ async function handleGet({ request, env, waitUntil }) {
 
       const playerInner = `
         SELECT playerId, sport, season, MAX(player) AS player, MAX(team) AS team,
-               MAX(conference) AS conference, COUNT(*) AS games,
+               MAX(conference) AS conference, COUNT(DISTINCT day) AS games,
                ${ownerPick('now')} AS owners,
                ${ownerPick('week')} AS ownersWeekAgo,
                ${ownerPick('now')} - ${ownerPick('week')} AS ownersChange,
-               SUM(rax) AS rax, ROUND(AVG(rax), 2) AS raxPerGame, MAX(rax) AS bestRax,
-               ROUND(SUM(rating), 2) AS rating, ROUND(AVG(rating), 2) AS ratingPerGame,
+               SUM(raxd) AS rax, ROUND(SUM(raxd) * 1.0 / COUNT(DISTINCT day), 2) AS raxPerGame, MAX(raxd) AS bestRax,
+               ROUND(SUM(rating), 2) AS rating, ROUND(SUM(rating) / COUNT(DISTINCT day), 2) AS ratingPerGame,
                ROUND(AVG(min), 1) AS min, ROUND(AVG(pts), 1) AS pts, ROUND(AVG(reb), 1) AS reb,
                ROUND(AVG(ast), 1) AS ast, ROUND(AVG(stl), 1) AS stl, ROUND(AVG(blk), 1) AS blk,
                ROUND(AVG(tov), 1) AS tov, ROUND(AVG(fantasyPts), 1) AS fantasyPts
-          FROM gamelog WHERE ${W}
-         GROUP BY playerId, sport, season HAVING COUNT(*) >= ?`;
+          FROM (SELECT gamelog.*, CASE WHEN ROW_NUMBER() OVER (PARTITION BY sport, season, playerId, day ORDER BY COALESCE(rax, 0) DESC, gameId) = 1 THEN rax ELSE 0 END AS raxd
+                  FROM gamelog WHERE ${W}) AS gamelog
+         GROUP BY playerId, sport, season HAVING COUNT(DISTINCT day) >= ?`;
+      /* A doubleheader (or an All-Star day of two games) is one claim on Real (Dennis, 2026-11-25): its games are
+         one row here - the day's rax once, the ratings added together, "dh" saying how many games it was. */
+      const DHP = 'PARTITION BY sport, season, playerId, day';
+      const gameFrom = w => `(SELECT gamelog.*, ROW_NUMBER() OVER (${DHP} ORDER BY COALESCE(rax, 0) DESC, gameId) AS dhn, COUNT(*) OVER (${DHP}) AS dhc,
+          SUM(rating) OVER (${DHP}) AS dhr, MAX(rax) OVER (${DHP}) AS dhx FROM gamelog WHERE ${w}) AS gamelog`;
+      const gameColsSql = GAME_COLS.map(c => c === 'rax' ? 'dhx AS rax' : c === 'rating' ? 'ROUND(dhr, 2) AS rating' : c).join(', ') + ', dhc AS dh';
 
       const playerSql = (order, lim) =>
         `SELECT * FROM (${playerInner})${OUTER} ORDER BY ${order} ${dir} ${lim}`;
       const gameSql = (order, lim) => `
-        SELECT ${GAME_COLS.join(', ')} FROM gamelog WHERE ${W}
+        SELECT ${gameColsSql} FROM ${gameFrom(W)} WHERE dhn = 1
          ORDER BY ${order} ${dir} ${lim}`;
 
       try {
@@ -8221,7 +8231,7 @@ async function handleGet({ request, env, waitUntil }) {
            left out; and the answer is kept 30 minutes, since game data
            changes once a day. */
         if (mode === 'games' && pairs.length > 1) {
-          const ck = 'glg_v2_' + [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(url.search.replace(/[?&](x|_)=[^&]*/g, ''))))].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 40);
+          const ck = 'glg_v3_' + [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(url.search.replace(/[?&](x|_)=[^&]*/g, ''))))].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 40);
           try { const c0 = await env.RATEBOARD_KV.get(ck); if (c0) return new Response(c0, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } }); } catch (e) {}
           const need = Math.min(1000, offset + limit);
           const rest = where.slice(1), restBinds = binds.slice(scopeBinds.length), merged = [];
@@ -8229,7 +8239,7 @@ async function handleGet({ request, env, waitUntil }) {
           for (const [sp, se] of pairs) {
             const w1 = ['(sport = ? AND season = ?)'].concat(rest).join(' AND ');
             try {
-              const r1 = await db.prepare(`SELECT ${GAME_COLS.join(', ')} FROM gamelog WHERE ${w1} ORDER BY ${sort} ${dir} LIMIT ${need}`).bind(sp, se, ...restBinds).all();
+              const r1 = await db.prepare(`SELECT ${gameColsSql} FROM ${gameFrom(w1)} WHERE dhn = 1 ORDER BY ${sort} ${dir} LIMIT ${need}`).bind(sp, se, ...restBinds).all();
               const got = (r1 && r1.results) || []; if (got.length >= need) capped = true;
               for (const row of got) merged.push(row);
             } catch (e) { failed++; lastErr = String((e && e.message) || e); }
@@ -8256,7 +8266,7 @@ async function handleGet({ request, env, waitUntil }) {
 
         const countSql = mode === 'players'
           ? `SELECT COUNT(*) AS n FROM (${playerInner})${OUTER}`
-          : `SELECT COUNT(*) AS n FROM gamelog WHERE ${W}`;
+          : `SELECT COUNT(*) AS n FROM ${gameFrom(W)} WHERE dhn = 1`;
         const c = await db.prepare(countSql)
           .bind(...(mode === 'players' ? binds.concat([minGames]).concat(outerBinds) : binds)).first();
         /* Each game's performance card on Real (its box-score id), where the
@@ -9187,14 +9197,16 @@ async function glSnapBuild(env, db, sp, se) {
   const own = d => d ? `(SELECT ow.owners FROM owners ow WHERE ow.sport = gamelog.sport AND ow.season = gamelog.season
       AND ow.playerId = gamelog.playerId AND ow.day = '${d}')` : 'NULL';
   const r = await db.prepare(`
-    SELECT playerId, sport, season, MAX(player) AS player, MAX(team) AS team, MAX(conference) AS conference, COUNT(*) AS games,
+    SELECT playerId, sport, season, MAX(player) AS player, MAX(team) AS team, MAX(conference) AS conference, COUNT(DISTINCT day) AS games,
            ${own(now)} AS owners, ${own(wk)} AS ownersWeekAgo, ${own(now)} - ${own(wk)} AS ownersChange,
-           SUM(rax) AS rax, ROUND(AVG(rax), 2) AS raxPerGame, MAX(rax) AS bestRax,
-           ROUND(SUM(rating), 2) AS rating, ROUND(AVG(rating), 2) AS ratingPerGame,
+           SUM(raxd) AS rax, ROUND(SUM(raxd) * 1.0 / COUNT(DISTINCT day), 2) AS raxPerGame, MAX(raxd) AS bestRax,
+           ROUND(SUM(rating), 2) AS rating, ROUND(SUM(rating) / COUNT(DISTINCT day), 2) AS ratingPerGame,
            ROUND(AVG(min), 1) AS min, ROUND(AVG(pts), 1) AS pts, ROUND(AVG(reb), 1) AS reb,
            ROUND(AVG(ast), 1) AS ast, ROUND(AVG(stl), 1) AS stl, ROUND(AVG(blk), 1) AS blk,
            ROUND(AVG(tov), 1) AS tov, ROUND(AVG(fantasyPts), 1) AS fantasyPts
-      FROM gamelog WHERE sport = ? AND season = ? AND COALESCE(seasonType, 'regularseason') <> 'preseason' GROUP BY playerId, sport, season`).bind(sp, se).all();
+      FROM (SELECT gamelog.*, CASE WHEN ROW_NUMBER() OVER (PARTITION BY playerId, day ORDER BY COALESCE(rax, 0) DESC, gameId) = 1 THEN rax ELSE 0 END AS raxd
+              FROM gamelog WHERE sport = ? AND season = ? AND COALESCE(seasonType, 'regularseason') <> 'preseason') AS gamelog
+     GROUP BY playerId, sport, season`).bind(sp, se).all();   // a doubleheader day is one claim: its rax once (2026-11-25)
   return (r && r.results) || [];
 }
 /* Each season's player table kept in memory (2026-11-13): every "by player"
@@ -9217,7 +9229,7 @@ async function glSnap(env, db, sp, se, waitUntil) {
   if (c && c.rows) {
     /* Spring training and other preseason games left out (2026-11-25: Semien's 2023 read 200 games - 162 + 17
        postseason + 21 spring training, which earn no rax). Tables saved before that are rebuilt in the background. */
-    const age = c.at < 1795618235249 ? Infinity : Date.now() - c.at, ttl = GL_LIVE.has(job) ? 3 * 3600000 : 7 * 86400000;   // live seasons: 3 hours (was 12), and dropped when a rax pass finishes
+    const age = c.at < 1795624000000 ? Infinity : Date.now() - c.at, ttl = GL_LIVE.has(job) ? 3 * 3600000 : 7 * 86400000;   // live seasons: 3 hours (was 12), and dropped when a rax pass finishes
     if (age > ttl && waitUntil && GLSNAP_BUSY.n < 2) {   // two rebuilds at a time per process, so a wave of stale seasons doesn't swamp the database
       let locked = null; try { locked = await env.RATEBOARD_KV.get(LOCK); } catch (e) {}
       if (!locked) {
