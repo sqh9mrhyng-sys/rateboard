@@ -3396,6 +3396,7 @@ export async function swapTick(env) {
   try { DM_STOP = !!(await env.RATEBOARD_KV.get('swaps_hold')); } catch (e) { DM_STOP = true; }
   if (!DM_STOP) { confirmReminders(env, env.RATEBOARD_DB).catch(() => {});   // not awaited, like boostReminders
     boostReminders(env, env.RATEBOARD_DB).catch(() => {}); }   // not awaited: never holds up the swap DMs (and not while the bot is down)
+  otdBackground(env).catch(() => {});   // OTD data kept built (2026-11-25); not awaited
   TICK_T0 = Date.now();
   if (!DM_ON) return null;
   const db = env.RATEBOARD_DB, auth = swapToken(env);
@@ -3952,11 +3953,95 @@ const PAGE_OPS = new Set(['projections', 'me', 'procheck', 'myswaps', 'hourcount
    is kept for good; a season still being played is rebuilt once a day (after
    the morning sweep has added the new games). */
 const OTD_LIVE = new Set(['nba:2027', 'ncaam:2027', 'nfl:2026', 'ncaaf:2026', 'nhl:2026', 'soccer:2026', 'golf:2026']);
+/* OTD games for one member (Dennis, 2026-11-25: "I waited over a minute ... speed this up now"). What made it slow:
+   team and UFC passes were read from Real one at a time while you waited, and a live season's game list was rebuilt
+   from the whole game log while you waited. Now nothing is ever fetched while a page waits:
+   - team/UFC numbers come from what's stored; anything missing is queued and fetched in the background;
+   - a stale live season is served from its last copy and rebuilt in the background;
+   - each member's answer is kept (6 hours, or 3 minutes while something is still being fetched) and kept built in
+     the background for everyone who has opened OTD. */
+const OTD_TEAM_DDL = `CREATE TABLE IF NOT EXISTS swap_teamrax (sport TEXT, season INTEGER, teamId INTEGER, days TEXT, at INTEGER, PRIMARY KEY (sport, season, teamId))`;
+async function otdGamesFor(env, db, me, passes, extra, fresh) {
+  const groups = {};
+  for (const p of passes) if (p.kind !== 'team') (groups[`${p.sport}|${p.season}`] = groups[`${p.sport}|${p.season}`] || []).push(p.id);
+  for (const k of String(extra || '').split(',').filter(x => /^[a-z]+:\d{4}:\d+$/.test(x)).slice(0, 60)) { const [sp, se, id] = k.split(':'); (groups[`${sp}|${se}`] = groups[`${sp}|${se}`] || []).push(Number(id)); }
+  const teams = passes.filter(p => p.kind === 'team');
+  const sig = (() => { let h = 5381; const t = Object.entries(groups).map(([g, ids]) => g + ':' + ids.slice().sort((a, b) => a - b).join(',')).sort().join('|') + '#' + teams.map(p => p.key).sort().join(','); for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) | 0; return h + ':' + t.length; })();
+  const gKey = 'otd_games_u2_' + String(me).toLowerCase();
+  if (!fresh) { try { const c = JSON.parse((await env.RATEBOARD_KV.get(gKey)) || 'null'); if (c && c.sig === sig && Date.now() - c.at < (c.pending ? 3 * 60000 : 6 * 3600000)) return c; } catch (e) {} }
+  const out = {}; let pending = 0;
+  if (teams.length) {
+    await db.prepare(OTD_TEAM_DDL).run();
+    const have = new Map(); for (const r of ((await db.prepare('SELECT sport, season, teamId, days, at FROM swap_teamrax').all()).results || [])) have.set(`${r.sport}:${r.season}:${r.teamId}`, r);
+    const want = [];
+    for (const t of teams) { const r = have.get(`${t.sport}:${t.season}:${t.id}`); const days = r ? parse(r.days, []) : null;
+      if (days && days.length) out[t.key] = days; if (!r) { pending++; want.push(`${t.sport}:${t.season}:${t.id}`); } }
+    if (want.length) { try { const Q = JSON.parse((await env.RATEBOARD_KV.get('otd_team_queue_v1')) || '[]') || []; const set = new Set(Q); want.forEach(w => set.add(w)); await env.RATEBOARD_KV.put('otd_team_queue_v1', JSON.stringify([...set].slice(-3000))); } catch (e) {} }
+  }
+  for (const [g, ids] of Object.entries(groups)) { const [sp, se] = g.split('|'); const games = await otdSeason(env, db, sp, Number(se)); for (const id of ids) { const v = games[id]; if (v && v.length) out[`${sp}:${se}:${id}`] = v; } }
+  const rec = { sig, at: Date.now(), pending, games: out };
+  if (!extra) try { await env.RATEBOARD_KV.put(gKey, JSON.stringify(rec), { expirationTtl: 7 * 86400 }); } catch (e) {}
+  return rec;
+}
+/* Background, every minute (not awaited by the tick):
+   1. Team and UFC numbers from Real, a few at a time with the bot: anything never fetched; a live team season again
+      after a day. UFC (Dennis, 2026-11-25: "only rescan and refresh UFC numbers Sunday after fights and only what
+      wasn't already scanned"): a fighter is fetched once, and after that only on a Sunday (Alaska) when he fought
+      that weekend - from ESPN's UFC results for Friday-Saturday. Past seasons never change, so they're never fetched again.
+   2. Live seasons whose saved game list is over a day old are rebuilt.
+   3. Each member who opened OTD gets their copy rebuilt when it's missing or due. */
+export async function otdBackground(env) {
+  const db = env.RATEBOARD_DB; if (!db) return;
+  const LK = 'otd_bg_lock'; try { const l = Number(await env.RATEBOARD_KV.get(LK)); if (l && Date.now() - l < 55000) return; await env.RATEBOARD_KV.put(LK, String(Date.now()), { expirationTtl: 120 }); } catch (e) { return; }
+  const t0 = Date.now(), soon = ms => Date.now() - t0 < ms;
+  const st = { at: Date.now(), fetched: 0, failed: 0, seasons: 0, users: 0 };
+  try {
+    await db.prepare(OTD_TEAM_DDL).run();
+    const auth = swapToken(env); let hold = false; try { hold = !!(await env.RATEBOARD_KV.get('swaps_hold')); } catch (e) {}
+    let Q = []; try { Q = JSON.parse((await env.RATEBOARD_KV.get('otd_team_queue_v1')) || '[]') || []; } catch (e) {}
+    // Live team seasons over a day old go back in the queue (not UFC: Sundays only, below).
+    try { for (const r of ((await db.prepare('SELECT sport, season, teamId, at FROM swap_teamrax WHERE sport != ? AND at < ?').bind('ufc', Date.now() - 86400000).all()).results || []))
+      if (OTD_LIVE.has(`${r.sport}:${r.season}`)) Q.push(`${r.sport}:${r.season}:${r.teamId}`); } catch (e) {}
+    // Sunday in Alaska, after the weekend's fights: only the fighters who fought.
+    const ak = new Date(Date.now() - 9 * 3600000), sunKey = ak.toISOString().slice(0, 10);
+    if (ak.getUTCDay() === 0 && ak.getUTCHours() >= 6) { let done = null; try { done = await env.RATEBOARD_KV.get('otd_ufc_sun_v1'); } catch (e) {}
+      if (done !== sunKey) { try {
+        const names = new Set(); const nm = v => String(v || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z]/g, '');
+        for (const back of [1, 2]) { const d = new Date(ak.getTime() - back * 86400000).toISOString().slice(0, 10).replace(/-/g, '');
+          try { const j = await (await fetch(`https://site.api.espn.com/apis/site/v2/sports/mma/ufc/scoreboard?dates=${d}`)).json();
+            for (const ev of (j.events || [])) for (const c of (ev.competitions || [])) for (const x of (c.competitors || [])) { const a = x.athlete || {}; if (a.displayName) names.add(nm(a.displayName)); } } catch (e) {} }
+        const fought = new Set();
+        for (const r of ((await db.prepare('SELECT passes FROM swap_users WHERE passes IS NOT NULL').all()).results || [])) for (const p of parse(r.passes, [])) if (p.sport === 'ufc' && p.kind === 'team' && Number(p.season) === ak.getUTCFullYear() && names.has(nm(p.name))) fought.add(`ufc:${p.season}:${p.id}`);   // this year's pass: past seasons never change
+        fought.forEach(k => Q.push(k)); st.ufcFought = fought.size; st.ufcNames = names.size;
+        await env.RATEBOARD_KV.put('otd_ufc_sun_v1', sunKey, { expirationTtl: 8 * 86400 });
+      } catch (e) {} } }
+    Q = [...new Set(Q)];
+    if (auth && !hold) {
+      while (Q.length && soon(35000)) { const k = Q.shift(), [sp, se, id] = k.split(':');
+        try { const d = await rsGetJson(`https://web.realapp.com/userpassearnings/${sp}/season/${se}/entity/team/${id}`, auth);
+          const days = ((d && d.earnings) || []).filter(e => e && e.day && Number(e.earnings) > 0).map(e => [String(e.day).slice(5, 10), Number(e.earnings)]);
+          await db.prepare('INSERT OR REPLACE INTO swap_teamrax (sport, season, teamId, days, at) VALUES (?, ?, ?, ?, ?)').bind(sp, Number(se), Number(id), JSON.stringify(days), Date.now()).run(); st.fetched++;
+        } catch (e) { st.failed++; if (/401|403|429/.test(String(e.message || e))) { Q.unshift(k); break; } }
+        await sleep(700); }
+    }
+    try { await env.RATEBOARD_KV.put('otd_team_queue_v1', JSON.stringify(Q.slice(0, 3000))); } catch (e) {}
+    st.queued = Q.length;
+    // 2. Live seasons due a rebuild.
+    for (const job of OTD_LIVE) { if (!soon(45000)) break; try { const c = JSON.parse((await env.RATEBOARD_KV.get('otdseason_v1_' + job)) || 'null'); if (c && Date.now() - c.at < 24 * 3600000) continue; const [sp, se] = job.split(':'); await otdSeason(env, db, sp, Number(se), true); st.seasons++; } catch (e) {} }
+    // 3. Members who opened OTD in the last two weeks: copy missing or due.
+    let L = {}; try { L = JSON.parse((await env.RATEBOARD_KV.get('otd_users_v1')) || '{}') || {}; } catch (e) {}
+    for (const [who, seen] of Object.entries(L)) { if (!soon(52000)) break; if (Date.now() - seen > 14 * 86400000) continue;
+      try { const c = JSON.parse((await env.RATEBOARD_KV.get('otd_games_u2_' + who)) || 'null'); if (c && Date.now() - c.at < (c.pending ? 3 * 60000 : 5 * 3600000)) continue;
+        const u = await db.prepare('SELECT passes FROM swap_users WHERE LOWER(key)=?').bind(who).first(); if (!u) continue;
+        await otdGamesFor(env, db, who, parse(u.passes, []), '', true); st.users++; } catch (e) {} }
+  } catch (e) { st.err = String(e.message || e).slice(0, 120); }
+  st.ms = Date.now() - t0; try { await env.RATEBOARD_KV.put('otd_bg_last', JSON.stringify(st), { expirationTtl: 86400 }); } catch (e) {}
+}
 export async function otdSeason(env, db, sp, se, force) {
   const job = `${sp}:${se}`, key = 'otdseason_v1_' + job;
   let c = null;
   if (!force) { try { c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); } catch (e) {} }
-  if (c && c.games && (!OTD_LIVE.has(job) || Date.now() - c.at < 24 * 3600000)) return c.games;
+  if (c && c.games && (!OTD_LIVE.has(job) || Date.now() - c.at < 24 * 3600000 || !force)) return c.games;   // a stale live copy is still served; otdBackground rebuilds it
   const games = {};
   try {
     const r = await db.prepare(`SELECT playerId, substr(day, 6, 5) AS d, rax FROM gamelog
@@ -7329,52 +7414,11 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'games') {
     const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
     const passes = parse(u && u.passes, []);
-    const groups = {};
-    for (const p of passes) if (p.kind !== 'team') (groups[`${p.sport}|${p.season}`] = groups[`${p.sport}|${p.season}`] || []).push(p.id);
-    // Extra passes to weigh up (the OTD page's target lists): their games too, even if not held. Up to 60.
-    for (const k of String(url.searchParams.get('extra') || '').split(',').filter(x => /^[a-z]+:\d{4}:\d+$/.test(x)).slice(0, 60)) {
-      const [sp, se, id] = k.split(':'); (groups[`${sp}|${se}`] = groups[`${sp}|${se}`] || []).push(Number(id)); }
-    /* Kept per member (Dennis, 2026-11-25: "can this data be cached once so it doesn't take so long to load"): the
-       slow part is reading every player's games for each season your passes are in. The answer for your own set of
-       passes is saved for 6 hours, so every load after the first is one small read. A scan that adds or removes a
-       pass changes the set and rebuilds it; &fresh=1 forces a rebuild. Ratings and what's been earned are never
-       cached - they come from your last scan every time. */
-    const gSig = (() => { let h = 5381; const t = Object.entries(groups).map(([g, ids]) => g + ':' + ids.slice().sort((a, b) => a - b).join(',')).sort().join('|') + '#' + passes.filter(p => p.kind === 'team').map(p => p.key).sort().join(','); for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) | 0; return h + ':' + t.length; })();
-    const gKey = 'otd_games_u1_' + String(me).toLowerCase();
-    if (url.searchParams.get('fresh') !== '1') { try { const c = JSON.parse((await env.RATEBOARD_KV.get(gKey)) || 'null'); if (c && c.sig === gSig && Date.now() - c.at < 6 * 3600000) return json({ passes, games: c.games, cachedAt: c.at }); } catch (e) {} }
-    const out = {};
-    /* Team passes: there's no team game log, so each team's per-day rax comes
-       from Real's earnings screen for that team (the same one the player rax
-       comes from), kept for a day. */
-    await db.prepare(`CREATE TABLE IF NOT EXISTS swap_teamrax (sport TEXT, season INTEGER, teamId INTEGER,
-      days TEXT, at INTEGER, PRIMARY KEY (sport, season, teamId))`).run();
-    const teams = passes.filter(p => p.kind === 'team' && p.sport !== 'ufc');   // UFC isn't on the OTD page
-    let fetched = 0;
-    for (const t of teams) {
-      const row = await db.prepare('SELECT days, at FROM swap_teamrax WHERE sport=? AND season=? AND teamId=?').bind(t.sport, t.season, t.id).first();
-      let days = row && Date.now() - row.at < 86400000 ? parse(row.days, null) : null;
-      if (!days && auth && fetched < 60) {
-        try {
-          const d = await rsGetJson(`https://web.realapp.com/userpassearnings/${t.sport}/season/${t.season}/entity/team/${t.id}`, auth);
-          days = ((d && d.earnings) || []).filter(e => e && e.day && Number(e.earnings) > 0)
-            .map(e => [String(e.day).slice(5, 10), Number(e.earnings)]);
-          await db.prepare('INSERT OR REPLACE INTO swap_teamrax (sport, season, teamId, days, at) VALUES (?, ?, ?, ?, ?)')
-            .bind(t.sport, t.season, t.id, JSON.stringify(days), Date.now()).run();
-          fetched++;
-          await sleep(200);
-        } catch (e) { days = row ? parse(row.days, []) : []; }
-      }
-      if (days && days.length) out[t.key] = days;
-    }
-    // Each season's games come from a saved copy shared by everyone (see
-    // otdSeason), so a load reads KV instead of the game log.
-    for (const [g, ids] of Object.entries(groups)) {
-      const [sp, se] = g.split('|');
-      const games = await otdSeason(env, db, sp, Number(se));
-      for (const id of ids) { const v = games[id]; if (v && v.length) out[`${sp}:${se}:${id}`] = v; }
-    }
-    try { await env.RATEBOARD_KV.put(gKey, JSON.stringify({ sig: gSig, at: Date.now(), games: out }), { expirationTtl: 7 * 86400 }); } catch (e) {}
-    return json({ passes, games: out });
+    const extra = String(url.searchParams.get('extra') || '');
+    // Remember who opens OTD, so the background job keeps their copy built (see otdBackground).
+    try { const L = JSON.parse((await env.RATEBOARD_KV.get('otd_users_v1')) || '{}') || {}; if (!L[String(me).toLowerCase()] || Date.now() - L[String(me).toLowerCase()] > 3600000) { L[String(me).toLowerCase()] = Date.now(); await env.RATEBOARD_KV.put('otd_users_v1', JSON.stringify(L)); } } catch (e) {}
+    const r = await otdGamesFor(env, db, me, passes, extra, url.searchParams.get('fresh') === '1');
+    return json({ passes, games: r.games, cachedAt: r.at || null, pending: r.pending || 0 });
   }
 
   if (op === 'buildindex') {

@@ -208,7 +208,7 @@
         <div class="find"><input id="pq" type="search" placeholder="Search a player" autocomplete="off" aria-label="Search a player">
           <select id="psort" aria-label="Sort passes"><option value="won">Most claimed</option><option value="lost">Most lost</option><option value="lvl">Highest level</option><option value="games">Most games</option><option value="name">Name</option></select></div>
         <div class="card" id="plist" style="overflow:hidden"></div>
-        <p class="note" style="margin:10px 2px 0">UFC isn't counted here yet - its claim data isn't reliable enough.</p>
+        <p class="note" id="pendnote" style="margin:10px 2px 0" hidden></p>
       </section>
     </div>
   </div>
@@ -233,7 +233,7 @@ const short = n => { n = Math.round(n || 0); return n >= 1e6 ? (n / 1e6).toFixed
 const api = async u => { try { const r = await fetch(u); const j = await r.json().catch(() => ({})); if (!r.ok && !j.error) j.error = 'Error ' + r.status; return j; } catch (e) { return { error: 'Could not reach the site.' }; } };
 const ls = { get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } };
 
-const SPORT = { nba: 'NBA', nfl: 'NFL', ncaaf: 'CFB', ncaam: 'CBB', mlb: 'MLB', nhl: 'NHL', soccer: 'FC', wnba: 'WNBA', golf: 'Golf' };
+const SPORT = { nba: 'NBA', nfl: 'NFL', ncaaf: 'CFB', ncaam: 'CBB', mlb: 'MLB', nhl: 'NHL', soccer: 'FC', wnba: 'WNBA', golf: 'Golf', ufc: 'UFC' };
 const START = { nfl: 1, nhl: 1, ncaaf: 1, soccer: 1 };
 const seasonLbl = (sp, se) => { se = Number(se); return START[sp] ? `${se}-${String(se + 1).slice(2)}` : (sp === 'nba' || sp === 'ncaam') ? `${se - 1}-${String(se).slice(2)}` : String(se); };
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -257,20 +257,25 @@ const CAP = { 'General': 0, 'Common': 1000, 'Uncommon': 1500, 'Rare': 2000, 'Epi
 const LIVE = new Set(['nba:2027', 'ncaam:2027', 'nfl:2026', 'ncaaf:2026', 'nhl:2026']);
 const TEAM_LEVELS = [['Common', 1.2, 30, 1], ['Uncommon', 1.4, 90, 2], ['Rare', 1.6, 240, 3], ['Epic', 2, 540, 4], ['Legendary', 2.5, 1140, 5], ['Mystic', 4, 4140, 6], ['Iconic', 6, 10140, 7]];
 const TEAM_CAP = { 0: 0, 1: 1500, 2: 2500, 3: 4000, 4: 6000, 5: 12000, 6: 24000, 7: 128000 };
-const isTeam = p => p && p.kind === 'team';
-const ladderOf = p => isTeam(p) ? TEAM_LEVELS : LEVELS;
+const isTeam = p => p && p.kind === 'team' && p.sport !== 'ufc';   // UFC fighters are filed as teams but follow the UFC rules
+/* UFC: the player ladder (same ratings and levels) with its own multipliers, up to Iconic 18 (19 and 20 aren't known). */
+const UFC_MULT = [1.2, 1.4, 1.6, 2, 5, 5.4, 5.8, 6.2, 6.6, 10, 10.2, 10.4, 10.6, 10.8, 11, 11.2, 11.4, 11.6, 11.8, 20, 20.3, 20.6, 20.9, 21.2, 21.5, 21.8, 22.1, 22.4, 22.7, 23, 23.3, 23.6, 23.9, 24.2, 24.5, 24.8, 26];
+const UFC_LEVELS = LEVELS.slice(0, UFC_MULT.length).map((l, i) => [l[0], UFC_MULT[i], l[2], l[3]]);
+const CAP_UFC = { 0: 0, 1: 1500, 2: 3000, 3: 6000, 4: 12000, 5: 24000, 6: 48000 };
+const ladderOf = p => isTeam(p) ? TEAM_LEVELS : p && p.sport === 'ufc' ? UFC_LEVELS : LEVELS;
 function capOf(p, k) {
   if (LIVE.has(`${p.sport}:${p.season}`)) return Infinity;
   const L = ladderOf(p), name = k < 0 ? 'General' : L[k][0], tier = k < 0 ? 0 : L[k][3];
   if (isTeam(p)) return TEAM_CAP[tier] ?? 0;
   if (tier === 7) return Infinity;
+  if (p.sport === 'ufc') return CAP_UFC[tier] ?? 0;
   return CAP[name] ?? 0;
 }
 const levelIdx = (r, p) => { let k = -1; ladderOf(p).forEach((l, i) => { if (Number(r) >= l[2]) k = i; }); return k; };
 const tag = p => { const L = ladderOf(p), i = p.lv; return i < 0 ? '<span class="tag" style="background:#8a93a6">General · 1x</span>' : `<span class="tag" style="background:${RC[L[i][3]]}">${esc(L[i][0])} · ${L[i][1]}x</span>`; };
 const sub = p => `${isTeam(p) ? 'Team · ' : ''}${esc(SPORT[p.sport] || p.sport)} · ${esc(seasonLbl(p.sport, p.season))}`;
 
-let P = [], G = {}, byDay = new Map(), Y = null, WHO = '';
+let P = [], G = {}, byDay = new Map(), Y = null, WHO = '', PEND = 0, pendT = null;
 const S = { claims: ls.get('otd_claims_v1') === '2' ? 2 : 3, sport: null, view: 'cal', sel: null, showDays: 30, showPass: 40, q: '', psort: 'won' };
 
 // One day's claims: two per sport, then (with + 1) the best one left over across every sport.
@@ -442,21 +447,24 @@ function state(html) { $('#b-main').hidden = true; $('#b-state').innerHTML = htm
 const skeleton = () => state('<section style="margin-top:14px"><div class="sk" style="height:206px"></div><div class="sk" style="height:46px;margin-top:14px"></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px"><div class="sk" style="height:78px"></div><div class="sk" style="height:78px"></div><div class="sk" style="height:78px"></div><div class="sk" style="height:78px"></div></div><div class="sk" style="height:260px;margin-top:18px"></div><p class="note" style="text-align:center;margin-top:12px">Loading every game for your passes…</p></section>');
 /* Fast loads (Dennis, 2026-11-25): the last answer is kept in this browser, so the page draws straight away and
    then quietly checks the server for anything newer. The server keeps its own copy too (6 hours). */
-const CK = 'otd_games_cache_v1';
+const CK = 'otd_games_cache_v2';
 function show(g) {
-  P = (g.passes || []).filter(p => p.sport !== 'ufc').map(p => ({ ...p })); G = g.games || {};
+  P = (g.passes || []).map(p => ({ ...p })); G = g.games || {}; PEND = g.pending || 0;
   for (const p of P) if (!p.key) p.key = `${p.sport}:${p.season}:${p.id}`;
   if (!P.length) return state(`<section><div class="card state"><b>No passes yet</b><span class="note">Scan your passes and your full OTD breakdown shows up here.</span><br><button type="button" id="scanbtn">Scan my passes</button></div></section>`);
   build(); $('#b-state').innerHTML = ''; $('#b-main').hidden = false; compute();
+  // Team or UFC numbers still being fetched in the background: say so, and look again in a minute.
+  $('#pendnote').hidden = !PEND; $('#pendnote').textContent = PEND ? `Still fetching ${PEND} team/UFC pass${PEND === 1 ? '' : 'es'} from Real - they'll fill in on their own.` : '';
+  clearTimeout(pendT); if (PEND) pendT = setTimeout(() => loadAll(), 60000);
 }
-const sigOf = g => { try { return JSON.stringify([(g.passes || []).map(p => [p.key || p.id, p.rating, p.earned, p.mult]), Object.keys(g.games || {}).length]); } catch (e) { return ''; } };
+const sigOf = g => { try { return JSON.stringify([(g.passes || []).map(p => [p.key || p.id, p.rating, p.earned, p.mult]), Object.keys(g.games || {}).length, g.pending || 0]); } catch (e) { return ''; } };
 async function loadAll(fresh) {
   let had = null;
   if (!fresh) { try { const c = JSON.parse(ls.get(CK) || 'null'); if (c && c.who === WHO && c.g) { had = c.g; show(had); } } catch (e) {} }
   if (!had) skeleton();
   const g = await api('/api/swaps?op=games' + (fresh ? '&fresh=1' : ''));
   if (g.error) { if (!had) state(`<section><div class="card state"><b>Couldn't load your passes</b><span class="note">${esc(g.error)}</span><br><button type="button" id="retry">Try again</button></div></section>`); return; }
-  try { localStorage.setItem(CK, JSON.stringify({ who: WHO, at: Date.now(), g: { passes: g.passes, games: g.games } })); } catch (e) { try { localStorage.removeItem(CK); } catch (x) {} }
+  try { localStorage.setItem(CK, JSON.stringify({ who: WHO, at: Date.now(), g: { passes: g.passes, games: g.games, pending: g.pending || 0 } })); } catch (e) { try { localStorage.removeItem(CK); } catch (x) {} }
   if (!had || sigOf(had) !== sigOf(g)) show(g);
 }
 $('#b-state').addEventListener('click', e => { if (e.target.closest('#retry')) loadAll(); if (e.target.closest('#scanbtn') && window.rbScan) window.rbScan(); });
