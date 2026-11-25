@@ -4085,13 +4085,18 @@ const boostAlias = (sp, t) => (BOOST_ALIAS_BY[sp] || BOOST_ALIAS)[t] || t;
    fetched once, and saved for everyone. */
 async function boostSchedule(env, sp, day, force) {
   const key = `boostsched_v2_${sp}_${day}`;
-  if (!force) { try { const c = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); if (c) return boostSchedAlias(sp, c); } catch (e) {} }
+  /* Kept an hour, not for good (2026-11-25: CBB holiday tournaments fill in their later rounds once the first ones
+     finish - a copy saved days earlier had those games as TBD, so those teams' players showed no game). Days already
+     over keep their copy. If ESPN fails, the saved copy is used. */
+  let c0 = null; try { c0 = JSON.parse((await env.RATEBOARD_KV.get(key)) || 'null'); } catch (e) {}
+  const past = day < new Date(Date.now() - 36 * 3600000).toISOString().slice(0, 10);
+  if (!force && c0 && (past || Date.now() - (Number(c0.at) || 0) < 3600000)) return boostSchedAlias(sp, c0);
   let d;
   try {
     const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${ESPN_PATH[sp]}/scoreboard?dates=${day.replace(/-/g, '')}&limit=500${ESPN_GROUP[sp]}`);
-    if (!r.ok) return { error: 'Could not load the schedule (' + r.status + ').' };
+    if (!r.ok) return c0 ? boostSchedAlias(sp, c0) : { error: 'Could not load the schedule (' + r.status + ').' };
     d = await r.json();
-  } catch (e) { return { error: 'Could not load the schedule.' }; }
+  } catch (e) { return c0 ? boostSchedAlias(sp, c0) : { error: 'Could not load the schedule.' }; }
   const teams = {};
   let games = 0;
   for (const ev of (d.events || [])) {
