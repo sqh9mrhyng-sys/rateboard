@@ -7905,7 +7905,7 @@ async function handleGet({ request, env, waitUntil }) {
       // One or more sport-seasons, given as "ncaam:2026,ncaam:2025". Falls back
       // to the single sport/season params so older links keep working.
       const pairs = [];
-      for (const bit of (P('seasons') ? P('seasons').split(',') : []).slice(0, 30)) {
+      for (const bit of (P('seasons') ? P('seasons').split(',') : []).slice(0, 60)) {   // 60 (was 30, 2026-11-25: 44 picked, 14 dropped)
         const [sp, se] = String(bit).split(':');
         if (SPORTS.has(String(sp).toLowerCase()) && /^\d{4}$/.test(se)
             // A historical season asked for by hand is refused here too, not
@@ -7922,6 +7922,8 @@ async function handleGet({ request, env, waitUntil }) {
       for (const [sp, se] of pairs) scopeBinds.push(sp, se);
 
       const where = [scope];
+      // Preseason games earn no rax and aren't OTD games (2026-11-25): left out unless asked for by type.
+      if (!P('seasonType')) where.push("COALESCE(seasonType, 'regularseason') <> 'preseason'");
       const binds = scopeBinds.slice();
       const eq = (param, col, ok) => {
         const v = P(param);
@@ -9138,14 +9140,14 @@ async function glSnapBuild(env, db, sp, se) {
            ROUND(AVG(min), 1) AS min, ROUND(AVG(pts), 1) AS pts, ROUND(AVG(reb), 1) AS reb,
            ROUND(AVG(ast), 1) AS ast, ROUND(AVG(stl), 1) AS stl, ROUND(AVG(blk), 1) AS blk,
            ROUND(AVG(tov), 1) AS tov, ROUND(AVG(fantasyPts), 1) AS fantasyPts
-      FROM gamelog WHERE sport = ? AND season = ? GROUP BY playerId, sport, season`).bind(sp, se).all();
+      FROM gamelog WHERE sport = ? AND season = ? AND COALESCE(seasonType, 'regularseason') <> 'preseason' GROUP BY playerId, sport, season`).bind(sp, se).all();
   return (r && r.results) || [];
 }
 /* Each season's player table kept in memory (2026-11-13): every "by player"
    OTD search read and parsed every season's saved table again - dozens of
    big tables per search - which is what kept running the server out of
    memory. Now parsed once and re-read at most once a minute. */
-const GLSNAP_MEM = new Map();
+const GLSNAP_MEM = new Map(), GLSNAP_BUSY = { n: 0 };
 async function glSnap(env, db, sp, se, waitUntil) {
   const job = `${sp}:${se}`, KEY = 'glsnap_v1_' + job, LOCK = 'glsnap_lock_' + job;
   let c = null;
@@ -9159,12 +9161,14 @@ async function glSnap(env, db, sp, se, waitUntil) {
     return rows;
   };
   if (c && c.rows) {
-    const age = Date.now() - c.at, ttl = GL_LIVE.has(job) ? 3 * 3600000 : 7 * 86400000;   // live seasons: 3 hours (was 12), and dropped when a rax pass finishes
-    if (age > ttl && waitUntil) {
+    /* Spring training and other preseason games left out (2026-11-25: Semien's 2023 read 200 games - 162 + 17
+       postseason + 21 spring training, which earn no rax). Tables saved before that are rebuilt in the background. */
+    const age = c.at < 1795618235249 ? Infinity : Date.now() - c.at, ttl = GL_LIVE.has(job) ? 3 * 3600000 : 7 * 86400000;   // live seasons: 3 hours (was 12), and dropped when a rax pass finishes
+    if (age > ttl && waitUntil && GLSNAP_BUSY.n < 2) {   // two rebuilds at a time per process, so a wave of stale seasons doesn't swamp the database
       let locked = null; try { locked = await env.RATEBOARD_KV.get(LOCK); } catch (e) {}
       if (!locked) {
         try { await env.RATEBOARD_KV.put(LOCK, '1', { expirationTtl: 600 }); } catch (e) {}
-        waitUntil(save().catch(() => {}));
+        GLSNAP_BUSY.n++; waitUntil(save().catch(() => {}).finally(() => { GLSNAP_BUSY.n--; }));
       }
     }
     return c.rows;
