@@ -44,6 +44,14 @@
   .spark{display:grid;grid-template-columns:repeat(12,1fr);gap:5px;align-items:end;height:64px;margin-top:16px}
   .spark i{display:block;border-radius:4px 4px 2px 2px;background:color-mix(in srgb,var(--accent) 55%,var(--panel2));min-height:3px}
   .spark i.top{background:var(--accent)}
+  /* Months you can tap (Dennis, 2026-11-25): the whole page then shows that month. */
+  .spark button{display:flex;align-items:flex-end;height:100%;padding:0;border:0;background:none;min-width:0}
+  .spark button i{width:100%}
+  .spark.pick button i{background:color-mix(in srgb,var(--accent) 22%,var(--panel2))}
+  .spark.pick button[aria-pressed="true"] i{background:var(--accent)}
+  .sparkl span.on{color:var(--accent);font-weight:800}
+  .hk{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:26px}
+  .mclr{border:1px solid color-mix(in srgb,var(--accent) 60%,transparent);background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--ink);border-radius:99px;padding:4px 10px;font-size:12.5px;font-weight:800;white-space:nowrap}
   .sparkl{display:grid;grid-template-columns:repeat(12,1fr);gap:5px;margin-top:5px;font-size:10px;color:var(--mute);text-align:center;text-transform:uppercase;letter-spacing:.03em}
   .seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:4px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:4px}
   .seg button{border:1px solid transparent;background:none;border-radius:9px;padding:8px 8px;font-weight:700;font-size:13.5px;color:var(--mute);min-width:0;white-space:nowrap}
@@ -267,10 +275,10 @@
     <div id="b-main" hidden>
       <section style="margin-top:14px">
         <div class="card hero">
-          <div class="k">Next 12 months</div>
+          <div class="hk"><div class="k" id="h-k">Next 12 months</div><button type="button" class="mclr" id="h-clr" hidden>All 12 months &times;</button></div>
           <div class="v"><span id="h-total">-</span><small>rax</small></div>
           <div class="s" id="h-sub"></div>
-          <div class="spark" id="h-spark" aria-hidden="true"></div>
+          <div class="spark" id="h-spark" role="group" aria-label="Tap a month for its breakdown"></div>
           <div class="sparkl" id="h-sparkl" aria-hidden="true"></div>
         </div>
         <label class="lsel"><span>Showing</span><select id="losel" aria-label="Which loadout to show"></select></label>
@@ -434,7 +442,7 @@ const sub = p => `${isTeam(p) ? 'Team · ' : ''}${esc(SPORT[p.sport] || p.sport)
 
 let P = [], G = {}, byDay = new Map(), Y = null, WHO = '', PEND = 0, pendT = null;
 let ACCT = [], LOADS = [], ACTIVE = ls.get('otd_active_v1') || 'acct', ED = null;
-const S = { claims: ls.get('otd_claims_v1') === '2' ? 2 : 3, sport: null, view: 'cal', sel: null, showDays: 30, showPass: 40, q: '', psort: 'won' };
+const S = { mon: null, claims: ls.get('otd_claims_v1') === '2' ? 2 : 3, sport: null, view: 'cal', sel: null, showDays: 30, showPass: 40, q: '', psort: 'won' };
 
 // One day's claims: two per sport, then (with + 1) the best one left over across every sport.
 function scoreDay(list, claims) {
@@ -474,6 +482,14 @@ function scanYear(claims) {
   }
   return { days, per };
 }
+/* The month picked on the chart (or the whole 12 months): every number on the Breakdown below the chart reads from these. */
+const mkOf = D => D.date.getFullYear() * 12 + D.date.getMonth();
+const SD = () => S.mon == null ? Y.days : Y.days.filter(D => mkOf(D) === S.mon);
+function perScope() { if (S.mon == null) return Y.per;
+  const per = P.map((_, i) => ({ won: 0, lost: 0, days: 0, capHit: Y.per[i].capHit }));
+  for (const D of SD()) { for (const r of D.won) { per[r.i].won += r.rax; per[r.i].days++; } for (const r of D.lost) per[r.i].lost += r.rax; }
+  return per; }
+const monName = k => new Date(Math.floor(k / 12), k % 12, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 // A day's numbers for the sport picked (or every sport).
 const dv = D => S.sport ? (D.by[S.sport] || 0) : D.earned;
 const dl = D => S.sport ? (D.byLost[S.sport] || 0) : D.lostRax;
@@ -482,20 +498,23 @@ function compute() { Y = scanYear(S.claims); draw(); }
 function draw() { drawHero(); drawSports(); drawChips(); drawCal(); drawPasses(); }
 
 function drawHero() {
-  const days = Y.days, total = days.reduce((t, D) => t + D.earned, 0), lost = days.reduce((t, D) => t + D.lostRax, 0), on = days.filter(D => D.earned > 0);
+  const days = SD(), total = days.reduce((t, D) => t + D.earned, 0), lost = days.reduce((t, D) => t + D.lostRax, 0), on = days.filter(D => D.earned > 0), nd = days.length;
   $('#h-total').textContent = fmt(total);
-  $('#h-sub').textContent = total ? `About ${fmt(total / 365)} a day · ${fmt(total / 12)} a month` : 'Nothing to claim in the next 12 months yet.';
-  // Twelve bars, one per month starting with this one.
-  const m = []; for (const D of days) { const k = D.date.getFullYear() * 12 + D.date.getMonth(); let e = m.find(x => x.k === k); if (!e) m.push(e = { k, mo: D.date.getMonth(), v: 0 }); e.v += D.earned; }
+  $('#h-k').textContent = S.mon == null ? 'Next 12 months' : monName(S.mon); $('#h-clr').hidden = S.mon == null;
+  $('#h-sub').textContent = S.mon != null ? (total ? `About ${fmt(total / Math.max(1, nd))} a day · ${fmt(on.length)} of ${fmt(nd)} days claim` : 'Nothing to claim this month.')
+    : total ? `About ${fmt(total / 365)} a day · ${fmt(total / 12)} a month` : 'Nothing to claim in the next 12 months yet.';
+  // Twelve bars, one per month starting with this one - tap one for its breakdown, tap it again for the whole year.
+  const m = []; for (const D of Y.days) { const k = mkOf(D); let e = m.find(x => x.k === k); if (!e) m.push(e = { k, mo: D.date.getMonth(), v: 0 }); e.v += D.earned; }
   const mm = m.slice(0, 12), mx = Math.max(1, ...mm.map(x => x.v));
-  $('#h-spark').innerHTML = mm.map(x => `<i class="${x.v === mx && x.v > 0 ? 'top' : ''}" style="height:${Math.max(4, Math.round(x.v / mx * 100))}%" title="${MON[x.mo]}: ${fmt(x.v)}"></i>`).join('');
-  $('#h-sparkl').innerHTML = mm.map(x => `<span>${MON[x.mo][0]}</span>`).join('');
+  $('#h-spark').classList.toggle('pick', S.mon != null);
+  $('#h-spark').innerHTML = mm.map(x => `<button type="button" data-mon="${x.k}" aria-pressed="${S.mon === x.k}" aria-label="${monName(x.k)}: ${fmt(x.v)} rax"><i class="${x.v === mx && x.v > 0 ? 'top' : ''}" style="height:${Math.max(4, Math.round(x.v / mx * 100))}%"></i></button>`).join('');
+  $('#h-sparkl').innerHTML = mm.map(x => `<span class="${S.mon === x.k ? 'on' : ''}">${MON[x.mo][0]}</span>`).join('');
   document.querySelectorAll('#claims button').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.c) === S.claims)));
   $('#claimsnote').textContent = S.claims === 3 ? 'Two claims per sport each day, plus the best one left over across every sport.' : 'Two claims per sport each day. Anything past that is lost.';
   $('#t-lost').textContent = fmt(lost); $('#t-lost-s').textContent = total + lost ? `${Math.round(lost / (total + lost) * 100)}% of everything claimable` : '';
-  const claiming = Y.per.filter(x => x.won > 0).length, capped = P.filter(p => p.capLeft !== Infinity && p.capLeft <= 0 && p.games.length).length;
+  const claiming = perScope().filter(x => x.won > 0).length, capped = P.filter(p => p.capLeft !== Infinity && p.capLeft <= 0 && p.games.length).length;
   $('#t-pass').textContent = fmt(claiming); $('#t-pass-s').textContent = `of ${fmt(P.length)}${capped ? ` · ${fmt(capped)} at their cap` : ''}`;
-  $('#t-days').textContent = fmt(on.length); $('#t-days-s').textContent = `${fmt(365 - on.length)} empty day${365 - on.length === 1 ? '' : 's'}`;
+  $('#t-days').textContent = fmt(on.length); $('#t-days-s').textContent = `${fmt(nd - on.length)} empty day${nd - on.length === 1 ? '' : 's'}`;
   const best = on.slice().sort((a, b) => b.earned - a.earned)[0];
   $('#t-best').textContent = best ? fmt(best.earned) : '-'; $('#t-best-s').textContent = best ? best.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '';
   $('#hdnote').textContent = `${fmt(P.length)} passes`;
@@ -504,8 +523,9 @@ function drawHero() {
 function sportRows() {
   const m = new Map();
   const g = sp => { if (!m.has(sp)) m.set(sp, { sp, won: 0, lost: 0, days: 0, passes: 0, claiming: 0 }); return m.get(sp); };
-  for (const D of Y.days) { for (const [sp, v] of Object.entries(D.by)) { const e = g(sp); e.won += v; e.days++; } for (const [sp, v] of Object.entries(D.byLost)) g(sp).lost += v; }
-  P.forEach((p, i) => { const e = g(p.sport); e.passes++; if (Y.per[i].won > 0) e.claiming++; });
+  const per = perScope();
+  for (const D of SD()) { for (const [sp, v] of Object.entries(D.by)) { const e = g(sp); e.won += v; e.days++; } for (const [sp, v] of Object.entries(D.byLost)) g(sp).lost += v; }
+  P.forEach((p, i) => { const e = g(p.sport); e.passes++; if (per[i].won > 0) e.claiming++; });
   return [...m.values()].sort((a, b) => b.won - a.won || b.passes - a.passes);
 }
 function drawSports() {
@@ -523,7 +543,7 @@ function drawChips() {
 function heat(v, mx) { if (!(v > 0)) return ['', false]; const f = Math.sqrt(v / mx), pct = Math.round(14 + f * 86); return [`background:color-mix(in srgb,var(--accent) ${pct}%,var(--panel2))`, pct >= 58]; }
 function drawCal() {
   document.querySelectorAll('#calview button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === S.view)));
-  const days = Y.days, mx = Math.max(1, ...days.map(dv)), spn = S.sport ? (SPORT[S.sport] || S.sport) : null;
+  const days = SD(), mx = Math.max(1, ...days.map(dv)), spn = S.sport ? (SPORT[S.sport] || S.sport) : null;
   if (S.view === 'cal') {
     $('#calnote').textContent = spn ? `${spn} only · tap a day` : 'Tap a day for its claims';
     const months = []; for (const D of days) { const k = D.date.getFullYear() * 12 + D.date.getMonth(); let e = months.find(x => x.k === k); if (!e) months.push(e = { k, y: D.date.getFullYear(), mo: D.date.getMonth(), days: [] }); e.days.push(D); }
@@ -555,7 +575,8 @@ function drawCal() {
 
 function drawPasses() {
   const q = S.q.trim().toLowerCase();
-  let rows = P.map((p, i) => ({ p, ...Y.per[i] })).filter(r => (!S.sport || r.p.sport === S.sport) && (!q || String(r.p.name || '').toLowerCase().includes(q)));
+  const per = perScope();
+  let rows = P.map((p, i) => ({ p, ...per[i] })).filter(r => (!S.sport || r.p.sport === S.sport) && (!q || String(r.p.name || '').toLowerCase().includes(q)));
   const key = { won: r => r.won, lost: r => r.lost, lvl: r => (r.p.lv < 0 ? -1 : ladderOf(r.p)[r.p.lv][1]), games: r => r.p.games.length }[S.psort];
   rows.sort(S.psort === 'name' ? (a, b) => String(a.p.name || '').localeCompare(String(b.p.name || '')) : (a, b) => key(b) - key(a) || b.won - a.won || String(a.p.name || '').localeCompare(String(b.p.name || '')));
   const capped = p => p.capLeft !== Infinity && p.capLeft <= 0;
@@ -586,6 +607,9 @@ function openDay(n) {
 function closeDay() { $('#shade').hidden = true; document.body.style.overflow = ''; }
 
 function setSport(sp) { S.sport = sp || null; S.showDays = 30; S.showPass = 40; drawSports(); drawChips(); drawCal(); drawPasses(); }
+function setMonth(k) { S.mon = k; S.showDays = 30; S.showPass = 40; draw(); }
+$('#h-spark').addEventListener('click', e => { const b = e.target.closest('[data-mon]'); if (!b) return; const k = Number(b.dataset.mon); setMonth(S.mon === k ? null : k); });
+$('#h-clr').addEventListener('click', () => setMonth(null));
 $('#claims').addEventListener('click', e => { const b = e.target.closest('button[data-c]'); if (!b) return; S.claims = Number(b.dataset.c); ls.set('otd_claims_v1', String(S.claims)); compute(); accTot = null; });
 $('#sports').addEventListener('click', e => { const b = e.target.closest('.sp'); if (!b) return; setSport(S.sport === b.dataset.sp ? null : b.dataset.sp); if (S.sport) $('#calsec').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
 $('#chips').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setSport(b.dataset.sp); });
