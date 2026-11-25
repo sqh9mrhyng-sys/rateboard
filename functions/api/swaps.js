@@ -4030,6 +4030,7 @@ export async function otdBackground(env) {
     for (const job of OTD_LIVE) { if (!soon(45000)) break; try { const c = JSON.parse((await env.RATEBOARD_KV.get('otdseason_v1_' + job)) || 'null'); if (c && Date.now() - c.at < 24 * 3600000) continue; const [sp, se] = job.split(':'); await otdSeason(env, db, sp, Number(se), true); st.seasons++; } catch (e) {} }
     // 3. Members who opened OTD in the last two weeks: copy missing or due.
     let L = {}; try { L = JSON.parse((await env.RATEBOARD_KV.get('otd_users_v1')) || '{}') || {}; } catch (e) {}
+    if (!L.dennis || Date.now() - L.dennis > 86400000) L.dennis = Date.now();   // the page is his for now: always kept built
     for (const [who, seen] of Object.entries(L)) { if (!soon(52000)) break; if (Date.now() - seen > 14 * 86400000) continue;
       try { const c = JSON.parse((await env.RATEBOARD_KV.get('otd_games_u2_' + who)) || 'null'); if (c && Date.now() - c.at < (c.pending ? 3 * 60000 : 5 * 3600000)) continue;
         const u = await db.prepare('SELECT passes FROM swap_users WHERE LOWER(key)=?').bind(who).first(); if (!u) continue;
