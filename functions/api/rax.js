@@ -748,7 +748,14 @@ const spAt = (sp, p0, bookPt, realPt, live) => { if (Math.abs(bookPt - realPt) <
    opponent's name in that game - its letters appear in order ("GS" in Galatasaray, "POR" in FC Porto, "BOD" in
    Bodo/Glimt) - as long as that points at one opponent only. */
 const socPlain = v => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ø/gi, 'o').replace(/æ/gi, 'ae').replace(/ß/g, 'ss').toLowerCase();
-const socCompat = (code, name) => { const c = socPlain(code).replace(/[^a-z0-9]/g, ''), n = socPlain(name).replace(/[^a-z0-9]/g, ''); if (c.length < 2) return false; let i = 0; for (const ch of n) { if (ch === c[i]) i++; if (i === c.length) return true; } return false; };
+/* Fix 2026-11-24 (Dennis: "ITS READING THIS VERY WRONG" - VFB @ INT was matched to Stuttgart v Eintracht Frankfurt,
+   because "INT" sits inside "eINTracht"): the code's first letter must also start the club's name (club prefixes like
+   FC, AC, SC, 1. are skipped), and the code may only skip ahead within that name's words. */
+const SOC_PFX = new Set(['fc', 'ac', 'as', 'sc', 'sv', 'cf', 'cd', 'ud', 'rc', 'rcd', 'ss', 'us', 'vfb', 'vfl', 'tsg', 'fk', 'nk', 'sk', 'ks', 'if', 'bk', 'afc', 'ssc', 'ogc', 'losc', 'psv', 'real', 'club', 'sporting', 'olympique', 'athletic', 'atletico', 'borussia', 'the', '1', 'de', 'cp', 'sl', 'gnk', 'hnk', 'pfc', 'aek', 'paok', 'kaa', 'krc', 'rsc', 'royal', 'stade', 'racing', 'deportivo', 'sport', 'esporte']);
+const socCompat = (code, name) => { const c = socPlain(code).replace(/[^a-z0-9]/g, ''); if (c.length < 2) return false;
+  const words = socPlain(name).split(/[^a-z0-9]+/).filter(Boolean), core = words.filter(w => !SOC_PFX.has(w)); const lead = (core[0] || words[0] || '')[0];
+  if (!lead || c[0] !== lead) return false;
+  const n = (core.length ? core : words).join(''); let i = 0; for (const ch of n) { if (ch === c[i]) i++; if (i === c.length) return true; } return false; };
 const isDraw = s => /^(draw|tie|x)$/i.test(String(s || '').trim());
 /* UFC and FC (Dennis, 2026-11-21: "Add UFC and FC to predictions"). Real's UFC sides are the fighters'
    initials ("KV"), so a book's fighter name counts when its first and last initials match. Real's FC
@@ -938,7 +945,8 @@ async function predReal(env) {
           if (sp === 'soccer' && map.some(x => !x)) {   // one side recognised, the other side's code fits the opponent
             const nd = oc.map((x, i) => i).filter(i => !(isDraw(oc[i].label) || isDraw(oc[i].key))), tm = g.names.filter(n => !isDraw(n));
             if (nd.length === 2 && tm.length === 2) { const j = !map[nd[0]] && map[nd[1]] ? nd[0] : !map[nd[1]] && map[nd[0]] ? nd[1] : -1, k = j === nd[0] ? nd[1] : nd[0];
-              if (j >= 0) { const other = tm.find(n => n !== map[k]); if (other && socCompat(String(oc[j].key || oc[j].label || '').split(' ')[0], other)) { map[j] = other; inferred.add(other); } } } }
+              // ...and only when the known club has just this one game on the books' lists, so a league game can't stand in for a cup game.
+              if (j >= 0 && srcs.filter(x => x.names.includes(map[k])).length === 1) { const other = tm.find(n => n !== map[k]); if (other && socCompat(String(oc[j].key || oc[j].label || '').split(' ')[0], other)) { map[j] = other; inferred.add(other); } } } }
           if (map.some(x => !x) || new Set(map).size !== map.length) continue;
           // "X Win or Draw": X's chance plus the draw's (and the price for both together).
           const dn = g.names.find(isDraw), pOf = (P, n, i) => (P[n] || 0) + (orDraw(oc[i].label) && dn ? (P[dn] || 0) : 0);
