@@ -308,6 +308,57 @@ async function dhFixTick(env) {
   try { await env.RATEBOARD_KV.put(DH_KEY, JSON.stringify(st)); } catch (e) {}
 }
 
+/* Doubleheader days, second pass (2026-11-25: Trea Turner's Jul 15 2023 doubleheader read 0 + 0 - Real lists it as
+   one day of 9 rax over two box scores, but the first fix's read of him had failed (Real was answering 429s) and the
+   failure was skipped, so the day stayed 0. Same for many others, in every sport - SGA's 2025 All-Star games too).
+   Every player with a two-game day where every game is still at 0 is read again, as fast as Real answers (Dennis,
+   06:58 AK: "run it as fast as you can"), ~50 s of reads each minute; a 429 waits a moment and tries the same player
+   again instead of skipping him. Old seasons that earn no rax on Real are left out.
+   Progress in health (dhFix2). */
+const DH2_KEY = 'dhfix_v2';
+async function dhFix2Tick(env) {
+  const db = env.RATEBOARD_DB, auth = env.RS_AUTH_TOKEN; if (!db || !auth) return;
+  let st = null; try { st = JSON.parse((await env.RATEBOARD_KV.get(DH2_KEY)) || 'null'); } catch (e) {}
+  if (st && st.done) return;
+  if (st && st.lock > Date.now()) return;
+  st = st || { q: null, pos: 0, fixed: 0, days: 0, errs: 0, seasons: [] };
+  st.lock = Date.now() + 55000; await env.RATEBOARD_KV.put(DH2_KEY, JSON.stringify(st));
+  if (!st.q) {
+    const r = ((await db.prepare(`SELECT sport, season, playerId, GROUP_CONCAT(day) AS days FROM (SELECT sport, season, playerId, day FROM gamelog
+      WHERE playerId IS NOT NULL GROUP BY sport, season, playerId, day HAVING COUNT(*) > 1 AND MAX(COALESCE(rax, 0)) = 0) GROUP BY sport, season, playerId`).all()).results) || [];
+    const OLD = { nba: 2025, nfl: 2024, nhl: 2023 };   // before these, the seasons hold no rax on Real
+    st.q = r.filter(x => !(OLD[x.sport] && Number(x.season) < OLD[x.sport])).map(x => [x.sport, Number(x.season), Number(x.playerId), String(x.days || '')]); st.pos = 0; st.days = r.reduce((t, x) => t + String(x.days || '').split(',').length, 0);
+  }
+  const touched = new Set(st.seasons);
+  const t0 = Date.now(); let r429 = 0;
+  while (Date.now() - t0 < 48000 && st.pos < st.q.length) {
+    const [sp, se, id, days] = st.q[st.pos], want = new Set(days.split(','));
+    try {
+      const d = await rsGet(`https://web.realapp.com/userpassearnings/${sp}/season/${se}/entity/player/${id}`, auth);
+      const stmts = [];
+      for (const e of ((d && d.earnings) || [])) if (e && want.has(String(e.day)) && e.earnings != null && Number(e.earnings) > 0) { stmts.push(...dhStatements(db, sp, se, id, String(e.day), Number(e.earnings))); st.fixed++; }
+      for (let i = 0; i < stmts.length; i += 40) await db.batch(stmts.slice(i, i + 40));
+      if (stmts.length) touched.add(`${sp}:${se}`);
+      st.pos++; r429 = 0;
+    } catch (e) {
+      if (/\b429\b/.test(String(e.message || e))) { st.r429 = (st.r429 || 0) + 1; await sleep(Math.min(8000, 1000 * ++r429)); continue; }
+      st.errs++; st.pos++;   // anything else: move on
+    }
+    await sleep(40);
+  }
+  st.seasons = [...touched];
+  if (st.pos >= st.q.length) {
+    // Done: the saved copies of every season that changed are rebuilt with the new figures.
+    for (const k of st.seasons) { const [sp, se] = k.split(':');
+      try { await db.prepare(PACKSNAP_DDL).run(); await db.prepare('UPDATE pack_snap SET at = 0 WHERE sport = ? AND season = ?').bind(sp, Number(se)).run(); } catch (e) {}
+      try { await env.RATEBOARD_KV.delete(`glsnap_v1_${sp}:${se}`); } catch (e) {}
+      try { await env.RATEBOARD_KV.delete(`otdseason_v1_${sp}:${se}`); } catch (e) {} }
+    st.done = Date.now(); st.q = null;
+  }
+  st.at = Date.now(); st.lock = 0;
+  try { await env.RATEBOARD_KV.put(DH2_KEY, JSON.stringify(st)); } catch (e) {}
+}
+
 function gamelogRow(sport, season, b) {
   const sv = {};
   for (const x of (b.statValues || [])) if (x && x.label) sv[x.label] = x;
@@ -9672,7 +9723,7 @@ async function collectorHealth(env, url) {
     slowCalls: (await readSlow(env)).slice(0, 30).map(c => ({ at: c.at, ms: c.ms, sql: String(c.sql || '').replace(/'[^']*'/g, "'?'").slice(0, 110),
       where: String(c.where || '').replace(/([?&](op|collector|queue|page)=[a-z0-9_]+)|[?&][^&]*/gi, '$1').slice(0, 60), err: c.err ? String(c.err).slice(0, 80) : undefined })),
     navDiag: await kvj('navdiag'),
-    oneOffsRun: await kvj(ONE_OFF_KEY), outgive: await kvj('outgive_clear_1119_n'), staleUndo: await kvj('stale_undo_1119_n'), repeatClear: await kvj('repeat_clear_1119_n'), mktProbe: await kvj('market_page_probe_1119b'), cbbMarket: await (async () => { const st = await kvj(MARKET_KEY); if (!st) return null; const l = st.lanes || {}; return { cur: st.cur || null, at: st.at || null, windowsDone: Object.values(l).filter(x => x.done).length, rows: Object.values(l).reduce((a, x) => a + (x.rows || 0), 0), pages: Object.values(l).reduce((a, x) => a + (x.pages || 0), 0), errs: Object.values(l).map(x => x.err).filter(Boolean).slice(0, 3), last: st.last || null, cool: st.coolUntil || null, pause: st.pause || null, idle: !!st.idle }; })(), pushStats: await kvj('push_stats'), staleClear: await kvj('stale_clear_1119_n'), modVoid1119: await kvj('mod_void_1119_n'), swapsHold: await (async () => { const h = await kvj('swaps_hold'); return h ? { at: h.at, off: h.off || 0, off160: h.off160 || 0, last: h.last || null, probe: h.probe || null } : { lifted: Number(await env.RATEBOARD_KV.get('swaps_hold_lifted')) || null }; })(), dfs: await (async () => { const o = await kvj('dfs_props_v1'); if (!o) return null; const evs = Object.values(o.ev || {}); const bks = {}; let props = 0;
+    oneOffsRun: await kvj(ONE_OFF_KEY), dhFix2: await (async () => { const x = await kvj(DH2_KEY); if (x && x.q) { x.of = x.q.length; delete x.q; } return x; })(), outgive: await kvj('outgive_clear_1119_n'), staleUndo: await kvj('stale_undo_1119_n'), repeatClear: await kvj('repeat_clear_1119_n'), mktProbe: await kvj('market_page_probe_1119b'), cbbMarket: await (async () => { const st = await kvj(MARKET_KEY); if (!st) return null; const l = st.lanes || {}; return { cur: st.cur || null, at: st.at || null, windowsDone: Object.values(l).filter(x => x.done).length, rows: Object.values(l).reduce((a, x) => a + (x.rows || 0), 0), pages: Object.values(l).reduce((a, x) => a + (x.pages || 0), 0), errs: Object.values(l).map(x => x.err).filter(Boolean).slice(0, 3), last: st.last || null, cool: st.coolUntil || null, pause: st.pause || null, idle: !!st.idle }; })(), pushStats: await kvj('push_stats'), staleClear: await kvj('stale_clear_1119_n'), modVoid1119: await kvj('mod_void_1119_n'), swapsHold: await (async () => { const h = await kvj('swaps_hold'); return h ? { at: h.at, off: h.off || 0, off160: h.off160 || 0, last: h.last || null, probe: h.probe || null } : { lifted: Number(await env.RATEBOARD_KV.get('swaps_hold_lifted')) || null }; })(), dfs: await (async () => { const o = await kvj('dfs_props_v1'); if (!o) return null; const evs = Object.values(o.ev || {}); const bks = {}; let props = 0;
       for (const v of evs) for (const m of Object.values(v.props || {})) for (const pl of Object.values(m)) { props++; for (const b of Object.keys(pl)) bks[b] = (bks[b] || 0) + 1; }
       return { events: (o.events || []).length, pulled: evs.length, props, books: bks, kalshi: o.kalshi, lastPull: o.lastPull, used: o.used, credits: o.credits, errs: o.errs }; })(), oddsCredits: await (async () => { const o = await kvj('pred_odds_v2'); if (!o) return null; const d = ET_DAY_FMT.format(new Date()), today = o.clog && o.clog[d] != null ? (Number(o.used) || 0) - o.clog[d] : null; return { remaining: Number(o.credits) || null, used: Number(o.used) || null, today, budget: PRED_DAY_BUDGET, fast: today == null || today < PRED_DAY_BUDGET, log: o.clog || null }; })(), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predPause: await kvj('pred_pause_v1'), predLiveClock: await (async () => { const x = await kvj('pred_liveclock_v1') || {}; return Object.fromEntries(Object.entries(x).map(([k, v]) => [k, { live: (v.live || []).length, ago: Math.round((Date.now() - (v.at || 0)) / 1000) }])); })(), predGx: await (async () => { const x = await kvj('pred_gamextra_v1') || {}; const v = Object.values(x); return { games: v.length, a3: v.filter(e => (e.a3 || []).some(Boolean)).length, teamHist: v.filter(e => (e.th || []).some(Boolean)).length }; })(), predSlipFit: await kvj('pred_slipfit_v1'), diskTidy: await kvj('disk_tidy_last'), marketWipe: await kvj('oneoff_market_wipe_1116'), predStore: await (async () => { const o = {}; for (const k of ['pred_ev_v1', 'pred_recent_v1', 'pred_odds_v2', 'pred_real_open', 'bulk_state_v2']) { const v = await env.RATEBOARD_KV.get(k); o[k] = v ? v.length : 0; }
       try { for (const t of ['bulk_listings', 'bulk_results']) { const r = await env.RATEBOARD_DB.prepare(`SELECT COUNT(*) AS n FROM ${t}`).first().catch(() => null); o[t] = r ? r.n : null; } } catch (e) {} return o; })(), realBusy: await realBusy(env), dmPredAsk: await (async () => { const x = await kvj('dm_predask_v1'); return x ? { sent: (x.sent || []).length, noChat: (x.noChat || []).length, notFound: (x.notFound || []).length, failed: (x.failed || []).length } : null; })(), dmPromo: await (async () => { const x = await kvj('dm_promo_' + Date.UTC(2026, 10, 17, 21, 0, 0)); return x ? { total: x.total, sent: x.sent, skipped: x.skipped, failed: x.failed, startedAt: x.startedAt } : null; })(), predSlipDay: await (async () => { try { const day = ET_DAY_FMT.format(new Date()), db = env.RATEBOARD_DB;
@@ -9756,6 +9807,7 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil(nhlCatchup(env).catch(() => {}));
     ctx.waitUntil(swapDiag(env).catch(() => {}));
     ctx.waitUntil(dhFixTick(env).catch(() => {}));
+    ctx.waitUntil(dhFix2Tick(env).catch(() => {}));
     ctx.waitUntil(perfMarketTick(ctx).catch(() => {}));
     // FC Boosts: lineups near kickoff, and the game log after each game.
     ctx.waitUntil(fcLineupTick(env).catch(() => {}));
