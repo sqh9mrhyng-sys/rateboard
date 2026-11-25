@@ -3893,7 +3893,8 @@ let ownedCache = null;
 async function ownedPassNames(){
   let on = false; try{ on = localStorage.getItem(EXOWN_KEY) === '1'; }catch(e){}
   if(!on) return [];
-  if(!ownedCache){ try{ ownedCache = await (await fetch('/api/swaps?op=mypassnames')).json(); }catch(e){ ownedCache = { sports: {} }; } }
+  if(!ownedCache){ try{ ownedCache = await (await fetch('/api/swaps?op=mypassnames')).json(); }catch(e){ ownedCache = { error: 'Could not reach the site.' }; } }
+  if(ownedCache.error){ const n0 = $('#s-exowned-note'); if(n0){ n0.classList.remove('hide'); n0.textContent = 'Couldn\'t read your passes: ' + ownedCache.error; } const e0 = ownedCache; ownedCache = null; return []; }
   const n = $('#s-exowned-note'), list = (ownedCache.sports || {})[BOARD_SP[sport]] || [];
   if(n){ n.classList.remove('hide'); n.textContent = ownedCache.none ? 'No passes found - scan your passes on the Swaps page first.' : `${list.length} current-season ${SPORTS[sport]} pass${list.length === 1 ? '' : 'es'} left out${ownedCache.at ? ' (from your scan ' + new Date(ownedCache.at).toLocaleDateString() + ')' : ''}.`; }
   return list;
