@@ -476,6 +476,13 @@
   @keyframes sp{to{transform:rotate(360deg)}}
   @media(prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
   .hide{display:none!important}
+  .vmhide{display:none!important}
+  /* OTD (Dennis, 2026-11-25): breakdown link in the header, Simple / Custom, Rarities, select a whole sport. */
+  .panel-hd .hdbtn{align-self:center;border:1px solid var(--accent);color:var(--ink);background:color-mix(in srgb,var(--accent) 12%,transparent);border-radius:10px;padding:7px 12px;font-weight:700;font-size:14px;text-decoration:none;white-space:nowrap}
+  .vmrow{display:flex;gap:8px;align-items:stretch}
+  .vmrow .vmsel{flex:1;min-width:0;font-size:17px;font-weight:700;padding:12px 14px}
+  .vmrow #cb-rar{flex:0 0 auto;font-weight:700}
+  .seasons .sall{font-weight:700;border-style:dashed}
   :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
   /* =========================================================
@@ -1084,7 +1091,7 @@ function pageGo(){
 /* Market data lives on /market and is only for accounts Dennis has given it
    to. The server decides, from the sign-in token; this only asks once per
    sign-in so the picker knows whether to offer it. */
-let marketAccess = false, marketAsked = '', swapsAccess = false, otdAccess = false;
+let marketAccess = false, marketAsked = '', swapsAccess = false, otdAccess = false, otdBreak = false;
 function checkMarketAccess(){
   let t = ''; try{ t = localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){}
   if(!t){ marketAccess = false; swapsAccess = false; otdAccess = false; marketAsked = ''; return; }
@@ -1095,6 +1102,8 @@ function checkMarketAccess(){
     marketAccess = !!(j && j.access);
     swapsAccess = !!(j && j.swaps);
     otdAccess = !!(j && j.otd);
+    // OTD breakdown: Dennis and his testers get a button to it on the OTD screen (2026-11-25).
+    otdBreak = !!(j && (j.owner || (j.tests || []).includes('/otd'))); const ob = document.getElementById('otd-bd'); if(ob) ob.classList.toggle('hide', !otdBreak);
     if(was !== [marketAccess, swapsAccess, otdAccess].join('|')) applyGameDataVisibility();
   }).catch(() => { marketAsked = ''; });
 }
@@ -2632,7 +2641,7 @@ addEventListener('message', e => { if(e.origin !== location.origin || !e.data ||
   const f = document.querySelector('#cb-otdb iframe'); if(f) f.style.height = Math.max(600, Number(e.data.otdbH) + 20) + 'px'; });
 function pageShell(title, bodyHTML){
   const host = $('#page-cbb');
-  host.innerHTML = `<div class="modal"><div class="panel-hd"><h2>${esc(title)}</h2></div>`
+  host.innerHTML = `<div class="modal"><div class="panel-hd"><h2>${esc(title)}</h2>${title === 'OTD' ? `<a class="hdbtn${otdBreak ? '' : ' hide'}" id="otd-bd" href="/otd">OTD breakdown &#8594;</a>` : ''}</div>`
     + `<div class="panel-bd stack">${bodyHTML}</div></div>`;
   return host;
 }
@@ -5065,6 +5074,9 @@ async function cbbPanel(){
   const tabsOk = dataTabs().filter(t => cbView === 'otd' ? CB_OTD_TABS.includes(t) : !CB_OTD_TABS.includes(t));
   if(!tabsOk.includes(st.mode)) st.mode = tabsOk[0] || 'pack';
   const box = pageShell(only ? 'Pack data' : cbView === 'otd' ? 'OTD' : 'Game data', `
+    ${cbView === 'otd' ? `<div class="vmrow"><select class="field vmsel" id="cb-vm" aria-label="Simple or custom"><option value="simple">Simple</option><option value="custom">Custom</option></select>
+      <button class="btn-ghost" id="cb-rar" aria-expanded="false">Rarities</button></div>
+    <div class="dtbar hide" id="cb-rarbar"></div>` : ''}
     <div class="seg seg-tabs" role="group" aria-label="View">
       <button data-cm="players" aria-pressed="${st.mode === 'players' ? 'true' : 'false'}">By player</button>
       <button data-cm="games" aria-pressed="false">Every game</button>
@@ -5299,7 +5311,31 @@ async function cbbPanel(){
   const CB_HIDE_KEY = 'cb_hidecols_v1';
   let hideCols = {}; try { hideCols = JSON.parse(localStorage.getItem(CB_HIDE_KEY) || '{}') || {}; } catch (e) {}
   const hiddenNow = () => new Set(hideCols[st.mode === 'games' ? 'games' : 'players'] || []);
-  function cols(){ const h = hiddenNow(); return baseCols().filter(c => c[0] === 'player' || !h.has(c[0])); }
+  /* Simple / Custom (Dennis, 2026-11-25): Simple is rank, player, sport, season, games and rax - no filters or
+     column settings. Custom is everything as before. Remembered on this device. */
+  const VM_KEY = 'cb_otd_vm_v1';
+  let VM = (() => { try { return localStorage.getItem(VM_KEY) === 'custom' ? 'custom' : 'simple'; } catch (e) { return 'simple'; } })();
+  const simpleOn = () => cbView === 'otd' && VM === 'simple';
+  const CB_SIMPLE_COLS = [['player','Player','l'], ['sport','Sport','l'], ['season','Season'], ['games','G'], ['rax','Rax']];
+  /* Rarities (Dennis, 2026-11-25): each rarity picked adds a column after Rax - what a pass at that rarity's first
+     level would have earned: rax x its multiplier, held to that level's all-time cap on a finished season. */
+  const CB_RAR = [['Common', 2, 1000, 1.2, 1500], ['Uncommon', 3, 1500, 1.4, 3000], ['Rare', 4, 2000, 1.6, 6000], ['Epic', 10, 5000, 2, 12000],
+    ['Legendary', 25, 12500, 5, 24000], ['Mystic', 75, 37500, 10, 48000], ['Iconic', 150, Infinity, 20, Infinity]];   // [name, mult, cap, UFC mult, UFC cap]
+  const CB_LIVE = new Set(['nba:2027', 'ncaam:2027', 'nfl:2026', 'ncaaf:2026', 'nhl:2026']);
+  const RAR_KEY = 'cb_otd_rar_v1';
+  let RAR = new Set((() => { try { return JSON.parse(localStorage.getItem(RAR_KEY) || '[]') || []; } catch (e) { return []; } })());
+  const rarEarn = (r, name) => { const x = CB_RAR.find(q => q[0] === name), v = Number(r.rax); if(!x || !Number.isFinite(v)) return null;
+    const ufc = r.sport === 'ufc', e = v * (ufc ? x[3] : x[1]), cap = ufc ? x[4] : x[2];
+    return st.mode === 'players' && !CB_LIVE.has(`${r.sport}:${r.season}`) && e > cap ? { v: cap, capped: true } : { v: e }; };
+  function withRar(c){ if(cbView !== 'otd' || !RAR.size) return c; const i = c.findIndex(x => x[0] === 'rax'); if(i < 0) return c;
+    return c.slice(0, i + 1).concat(CB_RAR.filter(x => RAR.has(x[0])).map(x => ['rar:' + x[0], x[0]]), c.slice(i + 1)); }
+  function cols(){ if(simpleOn() && st.mode === 'players') return withRar(CB_SIMPLE_COLS.slice()); const h = hiddenNow(); return withRar(baseCols().filter(c => c[0] === 'player' || !h.has(c[0]))); }
+  function applyVM(){ const sv = simpleOn(); for(const id of ['#cb-cols', '#cb-more', '#cb-colbar']){ const el = $b(id); if(el) el.classList.toggle('vmhide', sv); }
+    const v = $b('#cb-vm'); if(v) v.value = VM; }
+  function drawRar(){ const b = $b('#cb-rarbar'); if(!b) return;
+    b.innerHTML = '<div class="colgrp"><span class="colh">Earnings at <span class="note">- tap to add a column</span></span>' + CB_RAR.map(([n]) => `<button class="colt" data-rar="${n}" aria-pressed="${RAR.has(n)}">${n}</button>`).join('')
+      + (RAR.size ? '<button class="colt colreset" data-rarclear="1">None</button>' : '') + '</div>';
+    $b('#cb-rar').textContent = RAR.size ? `Rarities · ${RAR.size}` : 'Rarities'; }
   function baseCols(){
     if(st.mode === 'games') return CB_GAME_COLS.concat(gameStatCols);
     const on = consensusStats().concat(st.extra.filter(k => !consensusStats().includes(k)));
@@ -5321,12 +5357,13 @@ async function cbbPanel(){
     p.set('sport', first[0]); p.set('season', first[1]);
     for(const k of ['q','team','conference','position','seasonType','homeAway','result','minGames','playedOnly',
                     'minOwners','maxOwners','minRax','maxRax']){
+      if(simpleOn() && k !== 'q') continue;   // Simple has no filters: any set in Custom wait there
       if(st[k]) p.set(k, st[k]);
     }
     // Month-day by default, so one window covers every season at once; exact
     // dates are there when a single run of days is what you want.
-    if(st.from) p.set(st.exact ? 'from' : 'fromMD', st.from);
-    if(st.to)   p.set(st.exact ? 'to'   : 'toMD',   st.to);
+    if(st.from && !simpleOn()) p.set(st.exact ? 'from' : 'fromMD', st.from);
+    if(st.to && !simpleOn())   p.set(st.exact ? 'to'   : 'toMD',   st.to);
     for(const k in (extra||{})) p.set(k, extra[k]);
     return '/api/rax?' + p.toString();
   }
@@ -5349,6 +5386,7 @@ async function cbbPanel(){
         + `<span class="note">${seasons.length} season${seasons.length === 1 ? '' : 's'}</span>`
         + (on.length ? `<span class="tick">${on.length} selected</span>` : '')
         + '</summary><div class="seasons">'
+        + `<button class="btn-ghost sall" data-sall="${esc(sp)}">${on.length === seasons.length ? 'Deselect all' : 'Select all'}</button>`
         + seasons.map(se => {
             const key = `${sp}|${se}`;
             return `<button class="btn-ghost" data-pair="${esc(key)}" `
@@ -5434,7 +5472,7 @@ async function cbbPanel(){
       // The stat columns come out of the rows themselves, so the database
       // cannot sort on them and they are left unclickable rather than
       // pretending to.
-      const sortable = !String(k).startsWith('stat:');
+      const sortable = !String(k).startsWith('stat:') && !String(k).startsWith('rar:');
       return `<th class="${align === 'l' ? 'l' : ''}${st.sort === k ? ' on' : ''}"`
         + `${sortable ? ` data-sc="${k}"` : ' style="cursor:default"'}>`
         + `${esc(label)}${st.sort === k ? (st.dir === 'desc' ? ' ↓' : ' ↑') : ''}</th>`;
@@ -5479,6 +5517,8 @@ async function cbbPanel(){
             // And his performance card from that game, once the performance pull has it (2026-11-09).
             if(st.mode === 'games' && r.boxId && REAL_SPORT[r.sport]) v += ` <a class="plink glink" href="${esc('https://www.realapp.com/' + hashidsEncode('routing', 11, [14, REAL_SPORT[r.sport][1], 0, Number(r.boxId)]))}" target="_blank" rel="noopener" title="His performance card from this game">Perf ↗</a>`;
           }
+          if(String(k).startsWith('rar:')){ const e = rarEarn(r, k.slice(4)); v = e ? Math.round(e.v).toLocaleString() + (e.capped ? ' <span class="note" title="All-time cap at this rarity">cap</span>' : '') : null; if(v && e.capped) v = `<span>${v}</span>`; }
+          if(k === 'season' && v) v = seasonLabel(r.sport, v);
           if(k === 'sport' && v) v = CB_SPORT_LABEL[v] || String(v).toUpperCase();
           if(k === 'rating' && v != null && v !== '') v = Number(v).toFixed(2);
           if(k === 'conference' && v === '-') v = '';
@@ -7513,7 +7553,10 @@ async function cbbPanel(){
     if(dirty) load();
   });
 
+  applyVM(); drawRar();
   box.addEventListener('change', e => {
+    if(e.target.id === 'cb-vm'){ VM = e.target.value === 'custom' ? 'custom' : 'simple'; try { localStorage.setItem(VM_KEY, VM); } catch (x) {}
+      applyVM(); if(!cols().some(c => c[0] === st.sort)){ st.sort = 'rax'; st.dir = 'desc'; } return load(); }
     if(e.target.id === 'lk-lvl'){ lkLevel = +e.target.value; return lkDetail(); }
     if(e.target.id === 'lk-month'){ lkMonth = e.target.value; lkDay = ''; return lkBag(); }
     if(e.target.id === 'gf-season'){ gfSeason = e.target.value; return gfLoad(); }
@@ -7791,6 +7834,22 @@ async function cbbPanel(){
       return lkBag();
     }
 
+    const sall = e.target.closest('[data-sall]');
+    if(sall){
+      const sp = sall.dataset.sall, keys = available.filter(r => r.sport === sp).map(r => `${sp}|${r.season}`), all = keys.every(k => st.pairs.includes(k));
+      st.pairs = all ? st.pairs.filter(k => !keys.includes(k)) : st.pairs.concat(keys.filter(k => !st.pairs.includes(k)));
+      st.team = ''; st.conference = ''; st.position = ''; st.offset = 0;
+      st.extra = st.extra.filter(k => allStats().some(c => c[0] === k));
+      drawSeasons(); drawCols(); applyFilterVisibility();
+      await loadTeams();
+      return queue();
+    }
+    const rb = e.target.closest('#cb-rar');
+    if(rb){ const bar = $b('#cb-rarbar'); bar.classList.toggle('hide'); rb.setAttribute('aria-expanded', String(!bar.classList.contains('hide'))); drawRar(); return; }
+    const rk = e.target.closest('[data-rar]'), rc = e.target.closest('[data-rarclear]');
+    if(rk || rc){ if(rc) RAR.clear(); else { const n = rk.dataset.rar; RAR.has(n) ? RAR.delete(n) : RAR.add(n); }
+      try { localStorage.setItem(RAR_KEY, JSON.stringify([...RAR])); } catch (x) {}
+      drawRar(); return load(); }
     const pair = e.target.closest('[data-pair]');
     if(pair){
       const key = pair.dataset.pair;
