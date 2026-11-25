@@ -848,7 +848,7 @@ $('#ed-lv').addEventListener('change', e => ls.set(LV_KEY, e.target.value));
    10), so packs = rating needed / that, and cost = packs x the price picked. FC has no packs: it's priced at the best
    Rate Board offer per rating for that player, or the median FC offer. UFC has no price. A player with under 10 plays
    isn't really in packs, so he gets no price. Profit = what he adds in the next 12 months - the cost. */
-const NO_PACKS = new Set(['soccer', 'ufc']);
+const NO_PACKS = new Set(['soccer', 'ufc', 'golf']);   // golf: priced at 10 rating a pack, no pack data loaded
 const normName = n => String(n || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z]/g, '');
 const COSTS = [['pad', 'Pack a day', 200], ['swaps', 'Swaps', 241], ['back', '160 back', 271], ['full', 'Full price', 415], ['custom', 'Custom rate', null], ['bulk', 'Bulk data', null]];
 $('#ed-cost').innerHTML = COSTS.map(c => `<option value="${c[0]}">${c[1]}${c[2] ? ' · ' + c[2] : ''}</option>`).join('');
@@ -917,6 +917,8 @@ function costOf(sp, se, id, name, from, lv, mode0) {
   /* FC has no packs (Dennis, 2026-11-25): whatever pack price is picked, an FC player is priced at the Rate Board's
      rate for him (the best standing offer per rating, else the median FC offer) and said so - never "Pack a day". */
   if (sp === 'soccer') { const own = MKT[normName(name)], ppr = own ?? MKT['*fc']; return ppr == null ? (MKT_AT ? { why: 'No FC offers' } : {}) : { cost: Math.round(need * ppr), board: own != null ? 'player' : 'median' }; }
+  // Golf (Dennis, 2026-11-25): no pack data to go on - a pack counts as 10 rating.
+  if (sp === 'golf') { const packs = Math.ceil(need / 10); return { cost: packs * ((COSTS.find(c => c[0] === mode) || costPick())[2]), packs }; }
   if (!packDone.has(`${sp}:${se}`)) return {};
   const k = `${sp}:${se}:${id}`; if ((PLAYS[k] || 0) < 10) return { why: 'Not in packs' };
   const packs = Math.ceil(need / Math.max(10, (Number(PACK[k]) || 0) * 3)); return { cost: packs * ((COSTS.find(c => c[0] === mode) || costPick())[2]), packs }; }
@@ -937,7 +939,7 @@ const HIDE = new Set((() => { try { return JSON.parse(ls.get('otd_hide_sp_v1') |
 const shown = r => !HIDE.has(r.sport);
 /* Sport filter (Dennis, 2026-11-25: "add filter for each sport"): each sport on or off for suggestions and search,
    remembered. All turns every one back on. */
-const SPF = ['nba', 'nfl', 'mlb', 'nhl', 'ncaam', 'ncaaf', 'wnba', 'ufc', 'soccer'];
+const SPF = ['nba', 'nfl', 'mlb', 'nhl', 'ncaam', 'ncaaf', 'wnba', 'golf', 'ufc', 'soccer'];
 function drawSpf() { $('#ed-sp').innerHTML = `<button type="button" data-spf="all" aria-pressed="${!SPF.some(k => HIDE.has(k))}">All</button>` + SPF.map(k => `<button type="button" data-spf="${k}" aria-pressed="${!HIDE.has(k)}">${esc(SPORT[k])}</button>`).join(''); }
 function edYear() { const k = JSON.stringify([S.claims, ED.base, ED.adds.map(x => [x.sport, x.season, x.id, x.lv, !!x.up])]); if (EDK === k && EDY) return EDY;
   const keep = P, list = compose(ED); P = list; build(); const y = scanYear(S.claims); P = keep; build();
@@ -1014,15 +1016,15 @@ async function runSearch(q) { const n = ++qN;
   $('#ed-res').hidden = false; $('#ed-res').innerHTML = '<div class="state note">Searching…</div>';
   const j = await api('/api/swaps?op=search&q=' + encodeURIComponent(q)); if (n !== qN) return;
   if (j.error) return showRes([], esc(j.error));
-  const rows = (j.rows || []).filter(r => r.sport !== 'golf' && shown(r)).map(r => ({ sport: r.sport, season: Number(r.season), id: Number(r.playerId), name: r.player, team: r.team || '' }));
+  const rows = (j.rows || []).filter(r => shown(r)).map(r => ({ sport: r.sport, season: Number(r.season), id: Number(r.playerId), name: r.player, team: r.team || '' }));
   await gamesFor(rows); if (n !== qN) return;
   const lv = edLv(), Y = edYear(); for (const r of rows) { const k = `${r.sport}:${r.season}:${r.id}`; r.gain = baseOf(ED).some(p => p.key === k) ? quickUp(k, lv) : quickGain(r.sport, r.season, G[k], lv); }
   finish(n, rows, 'Results'); }
 // Suggestions: the top players (by rax) of every season you hold plus this season's, weighed against this loadout.
 let POOL = null; const POOL_OK = new Set();
 async function ensurePool(prog) {
-  const CUR = { nba: 2027, ncaam: 2027, nfl: 2026, ncaaf: 2026, nhl: 2026, mlb: 2026, wnba: 2026, soccer: 2026 };
-    const seasons = [...new Set(Object.entries(CUR).flatMap(([sp, c]) => [c, c - 1, c - 2, c - 3].map(se => `${sp}|${se}`)).concat(ACCT.filter(p => p.kind !== 'team' && p.sport !== 'golf' && p.sport !== 'ufc').map(p => `${p.sport}|${p.season}`)))];
+  const CUR = { nba: 2027, ncaam: 2027, nfl: 2026, ncaaf: 2026, nhl: 2026, mlb: 2026, wnba: 2026, soccer: 2026, golf: 2026 };   // golf added 2026-11-25
+    const seasons = [...new Set(Object.entries(CUR).flatMap(([sp, c]) => [c, c - 1, c - 2, c - 3].map(se => `${sp}|${se}`)).concat(ACCT.filter(p => p.kind !== 'team' && p.sport !== 'ufc').map(p => `${p.sport}|${p.season}`)))];
     const need = seasons.filter(g => !POOL_OK.has(g)); POOL = POOL || [];
     const one = async g => { const [sp, se] = g.split('|');
       for (let t = 0; t < 2 && !POOL_OK.has(g); t++) { const j = await api(`/api/swaps?op=otdpool&sport=${sp}&season=${se}`); if (j.error || !j.games) continue;
@@ -1040,7 +1042,7 @@ async function suggest() { const n = ++qN; $('#ed-res').hidden = false;
   if (n !== qN) return;
   const lv = edLv(), ub = r => { const L = ladderFor(r.sport), l = Math.min(lv, L.length - 1); return Math.min(r.tot * (l < 0 ? 1 : L[l][1]), capOf({ sport: r.sport, season: r.season, kind: 'player' }, l)); };
   const inEd = new Set(ED.adds.map(x => `${x.sport}:${x.season}:${x.id}`));
-  const ups = baseOf(ED).filter(p => !isTeam(p) && p.sport !== 'golf' && shown(p) && !inEd.has(p.key) && Math.min(lv, ladderFor(p.sport).length - 1) > levelIdx(p.rating, p) && (G[p.key] || []).length)
+  const ups = baseOf(ED).filter(p => !isTeam(p) && shown(p) && !inEd.has(p.key) && Math.min(lv, ladderFor(p.sport).length - 1) > levelIdx(p.rating, p) && (G[p.key] || []).length)
     .map(p => { const L = ladderFor(p.sport), l = Math.min(lv, L.length - 1); return { sport: p.sport, season: Number(p.season), id: Number(p.id), name: p.name || 'Player ' + p.id, team: '', up: true, ub: Math.min((G[p.key] || []).reduce((t, x) => t + x[1], 0) * L[l][1], capOf(p, l) - (Number(p.earned) || 0)) }; });
   const cand = POOL.filter(r => notMine(r) && shown(r)).map(r => (r.ub = ub(r), r)).concat(ups).sort((a, b) => b.ub - a.ub).slice(0, 2000);
   // Weighed in slices so the page never locks up.
@@ -1156,7 +1158,7 @@ async function optimize() {
   try {
     await ensureGames(OP.adds);
     await ensurePool(pct => { if (n === opN) { const p = $('#op-prog'); if (p) p.textContent = `Loading players… ${pct}%`; } }); if (n !== opN) return;
-    const keep = r => !OPH.has(r.sport) && r.sport !== 'golf';
+    const keep = r => !OPH.has(r.sport);
     const owned = baseOf(OP).filter(p => !isTeam(p) && keep(p) && (G[p.key] || []).length).map(p => ({ sport: p.sport, season: Number(p.season), id: Number(p.id), name: p.name || 'Player ' + p.id, team: '', key: p.key }));
     const ownK = new Set(owned.map(r => r.key));
     const added = OP.adds.filter(x => !x.up && keep(x)).map(x => ({ sport: x.sport, season: Number(x.season), id: Number(x.id), name: x.name, team: x.team || '', key: `${x.sport}:${x.season}:${x.id}` }));
