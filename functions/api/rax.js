@@ -4702,7 +4702,7 @@ async function handleGet({ request, env, waitUntil }) {
       if (built >= 3) { building++; continue; }
       try {
         const r = await db.prepare(
-          `SELECT playerId, MAX(player) AS player, MAX(team) AS team, MAX(position) AS position,
+          `SELECT playerId, MAX(player) AS player, MAX(CASE WHEN seasonType = 'allstar' THEN NULL ELSE team END) AS team, MAX(position) AS position,
                   COUNT(*) AS games, ROUND(SUM(rating), 2) AS rating,
                   SUM(${histRaxSql(sp)}) AS estRax
              FROM gamelog
@@ -5154,7 +5154,7 @@ async function handleGet({ request, env, waitUntil }) {
       const stype = String(url.searchParams.get('seasonType') || 'regularseason');
       try {
         const r = await db.prepare(
-          `SELECT playerId, MAX(player) AS player, MAX(position) AS pos, MAX(team) AS team,
+          `SELECT playerId, MAX(player) AS player, MAX(position) AS pos, MAX(CASE WHEN seasonType = 'allstar' THEN NULL ELSE team END) AS team,
                   COUNT(*) AS n, SUM(rax) AS rax, ROUND(SUM(rating), 2) AS rating,
                   ROUND(CAST(SUM(rax) AS REAL) / SUM(rating), 3) AS mult
              FROM gamelog
@@ -5472,7 +5472,7 @@ async function handleGet({ request, env, waitUntil }) {
       // them have plays collected - checked game by game, not by reading
       // the whole season's plays.
       const g = (await db.prepare(
-        `SELECT MAX(team) AS team, gameId FROM gamelog WHERE sport=?1 AND season=?2 AND playerId=?3
+        `SELECT MAX(CASE WHEN seasonType = 'allstar' THEN NULL ELSE team END) AS team, gameId FROM gamelog WHERE sport=?1 AND season=?2 AND playerId=?3
            AND seasonType IN (${seasonTypeSql(sport)}) GROUP BY gameId`).bind(sport, Number(season), pid).all()).results || [];
       out.team = g.reduce((a, x) => a || x.team, null);
       out.gamesPlayed = g.length || null;
@@ -5882,7 +5882,7 @@ async function handleGet({ request, env, waitUntil }) {
         .bind(sport, Number(season), pid).first();
       Object.assign(out, head || {});
       const cov = await db.prepare(
-        `SELECT MAX(team) AS team, COUNT(DISTINCT gameId) AS played,
+        `SELECT MAX(CASE WHEN seasonType = 'allstar' THEN NULL ELSE team END) AS team, COUNT(DISTINCT gameId) AS played,
                 COUNT(DISTINCT CASE WHEN gameId IN
                   (SELECT DISTINCT gameId FROM plays WHERE sport=?1 AND season=?2)
                   THEN gameId END) AS swept
@@ -6110,7 +6110,7 @@ async function handleGet({ request, env, waitUntil }) {
          with no collectible play is still a collected game. */
       try {
         const g = await db.prepare(
-          `SELECT playerId, MAX(team) AS team,
+          `SELECT playerId, MAX(CASE WHEN seasonType = 'allstar' THEN NULL ELSE team END) AS team,
                   COUNT(DISTINCT gameId) AS played,
                   COUNT(DISTINCT CASE WHEN gameId IN
                     (SELECT DISTINCT gameId FROM plays WHERE sport=?1 AND season=?2)
@@ -7928,7 +7928,7 @@ async function handleGet({ request, env, waitUntil }) {
 
       try {
         const top = await db.prepare(
-          `SELECT playerId, sport, season, MAX(player) AS player, MAX(team) AS team,
+          `SELECT playerId, sport, season, MAX(player) AS player, MAX(CASE WHEN seasonType = 'allstar' THEN NULL ELSE team END) AS team,
                   SUM(rax) AS rax, COUNT(*) AS games
              FROM gamelog WHERE ${scope} AND rax IS NOT NULL${posSql}
             GROUP BY playerId, sport, season
@@ -8143,7 +8143,7 @@ async function handleGet({ request, env, waitUntil }) {
       const OUTER = outer.length ? ' WHERE ' + outer.join(' AND ') : '';
 
       const playerInner = `
-        SELECT playerId, sport, season, MAX(player) AS player, MAX(team) AS team,
+        SELECT playerId, sport, season, MAX(player) AS player, MAX(CASE WHEN seasonType = 'allstar' THEN NULL ELSE team END) AS team,
                MAX(conference) AS conference, COUNT(DISTINCT day) AS games,
                ${ownerPick('now')} AS owners,
                ${ownerPick('week')} AS ownersWeekAgo,
@@ -9225,7 +9225,7 @@ async function glSnapBuild(env, db, sp, se) {
   const own = d => d ? `(SELECT ow.owners FROM owners ow WHERE ow.sport = gamelog.sport AND ow.season = gamelog.season
       AND ow.playerId = gamelog.playerId AND ow.day = '${d}')` : 'NULL';
   const r = await db.prepare(`
-    SELECT playerId, sport, season, MAX(player) AS player, MAX(team) AS team, MAX(conference) AS conference, COUNT(DISTINCT day) AS games,
+    SELECT playerId, sport, season, MAX(player) AS player, MAX(CASE WHEN seasonType = 'allstar' THEN NULL ELSE team END) AS team, MAX(CASE WHEN seasonType = 'allstar' THEN NULL ELSE conference END) AS conference, COUNT(DISTINCT day) AS games,
            ${own(now)} AS owners, ${own(wk)} AS ownersWeekAgo, ${own(now)} - ${own(wk)} AS ownersChange,
            SUM(raxd) AS rax, ROUND(SUM(raxd) * 1.0 / COUNT(DISTINCT day), 2) AS raxPerGame, MAX(raxd) AS bestRax,
            ROUND(SUM(rating), 2) AS rating, ROUND(SUM(rating) / COUNT(DISTINCT day), 2) AS ratingPerGame,
@@ -9257,7 +9257,7 @@ async function glSnap(env, db, sp, se, waitUntil) {
   if (c && c.rows) {
     /* Spring training and other preseason games left out (2026-11-25: Semien's 2023 read 200 games - 162 + 17
        postseason + 21 spring training, which earn no rax). Tables saved before that are rebuilt in the background. */
-    const age = c.at < 1795624000000 ? Infinity : Date.now() - c.at, ttl = GL_LIVE.has(job) ? 3 * 3600000 : 7 * 86400000;   // live seasons: 3 hours (was 12), and dropped when a rax pass finishes
+    const age = c.at < 1795629167703 ? Infinity : Date.now() - c.at, ttl = GL_LIVE.has(job) ? 3 * 3600000 : 7 * 86400000;   // live seasons: 3 hours (was 12), and dropped when a rax pass finishes
     if (age > ttl && waitUntil && GLSNAP_BUSY.n < 2) {   // two rebuilds at a time per process, so a wave of stale seasons doesn't swamp the database
       let locked = null; try { locked = await env.RATEBOARD_KV.get(LOCK); } catch (e) {}
       if (!locked) {

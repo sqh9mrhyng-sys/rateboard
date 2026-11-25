@@ -160,7 +160,7 @@ async function indexOne(db) {
   const [sp, se] = pick;
   await db.prepare('DELETE FROM swap_index WHERE sport=? AND season=?').bind(sp, se).run();
   await db.prepare(`INSERT OR REPLACE INTO swap_index (sport, season, playerId, player, lname, team, rax, games)
-    SELECT sport, season, playerId, MAX(player), LOWER(MAX(player)), MAX(team), COALESCE(SUM(rax), 0), COUNT(*)
+    SELECT sport, season, playerId, MAX(player), LOWER(MAX(player)), MAX(CASE WHEN seasonType = 'allstar' THEN NULL ELSE team END), COALESCE(SUM(rax), 0), COUNT(*)
       FROM gamelog WHERE sport=? AND season=? GROUP BY playerId`).bind(sp, se).run();
   await db.prepare('INSERT OR REPLACE INTO swap_index_meta (job, builtAt) VALUES (?, ?)').bind(`${sp}:${se}`, Date.now()).run();
   return `${sp}:${se}`;
@@ -7442,7 +7442,8 @@ async function handle({ request, env, waitUntil }) {
       const want = Object.keys(out).map(Number);
       for (let i = 0; i < want.length; i += 90) {
         const part = want.slice(i, i + 90);
-        const r = await db.prepare(`SELECT playerId, player, team FROM swap_index WHERE sport=? AND season=? AND playerId IN (${part.map(() => '?').join(',')})`).bind(sp, se, ...part).all();
+        // From the game log, All-Star games left out (2026-11-25: the index's team was the All-Star side - LEB, GIA, WLD).
+        const r = await db.prepare(`SELECT playerId, MAX(player) AS player, MAX(CASE WHEN seasonType = 'allstar' THEN NULL ELSE team END) AS team FROM gamelog WHERE sport=? AND season=? AND playerId IN (${part.map(() => '?').join(',')}) GROUP BY playerId`).bind(sp, se, ...part).all();
         for (const x of (r.results || [])) names[x.playerId] = [x.player, x.team];
       }
     } catch (e) {}
@@ -7856,7 +7857,7 @@ async function handle({ request, env, waitUntil }) {
     const rkey = 'resell_rpg_v5_' + SP;
     let R = null; try { R = JSON.parse((await env.RATEBOARD_KV.get(rkey)) || 'null'); } catch (e) {}
     if (!R || Date.now() - R.at > 30 * 60000) {
-      const grab = async se => ((await db.prepare(`SELECT playerId AS id, MAX(player) AS n, MAX(team) AS t, MAX(position) AS pos, COUNT(*) AS g, SUM(rax) AS r, MAX(rax) AS mx,
+      const grab = async se => ((await db.prepare(`SELECT playerId AS id, MAX(player) AS n, MAX(CASE WHEN seasonType = 'allstar' THEN NULL ELSE team END) AS t, MAX(position) AS pos, COUNT(*) AS g, SUM(rax) AS r, MAX(rax) AS mx,
           SUM(CASE WHEN rax >= ? THEN 1 ELSE 0 END) AS hit, ROUND(AVG(min), 1) AS m
         FROM gamelog WHERE sport=? AND season=? AND rax IS NOT NULL AND seasonType IN ('regularseason','postseason') GROUP BY playerId`).bind(CFG.HIT, SP, se).all()).results) || [];
       // Games each team has played this season (regular season, then postseason apart), from every game in the log.

@@ -711,7 +711,7 @@ function show(g) {
   // General cards don't claim OTD (Dennis, 2026-11-25), so they're left out entirely.
   ACCT = (g.passes || []).map(p => ({ ...p })).filter(p => levelIdx(p.rating, p) >= 0); G = Object.assign({}, G, g.games || {}); PEND = g.pending || 0;
   for (const p of ACCT) if (!p.key) p.key = `${p.sport}:${p.season}:${p.id}`;
-  P = bView(compose(activeLo())); EDK = ''; POOL = null; POOL_OK.clear(); drawActv();
+  P = bView(compose(activeLo())); EDK = ''; POOL = null; POOL_OK.clear(); POOL_K.clear(); drawActv();
   if (!ACCT.length) return state(`<section><div class="card state"><b>No passes yet</b><span class="note">Scan your passes and your full OTD breakdown shows up here.</span><br><button type="button" id="scanbtn">Scan my passes</button></div></section>`);
   build(); $('#b-state').innerHTML = ''; $('#b-main').hidden = false; compute(); drawLoSel(); if (!$('#t-l').hidden) drawLoadouts();
   if (activeLo()) ensureGames(activeLo().adds).then(n => { if (n) applyActive(); });
@@ -991,6 +991,7 @@ const pricesReady = list => { const mode = $('#ed-cost').value; return mode === 
    25 get the full count (the whole year again with him in, after your passes and everything already added), so the
    number shown is exactly what adding him does to this loadout. */
 async function finish(n, all, head) {
+  { const seen = new Set(); all = all.filter(r => { const k = `${r.sport}:${r.season}:${r.id}`; if (seen.has(k)) return false; seen.add(k); return true; }); }
   const el = $('#ed-res'); el._all = all; el._head = head; const prof = $('#ed-sort').value === 'profit';
   const open = r => !ED.adds.some(x => `${x.sport}:${x.season}:${x.id}` === `${r.sport}:${r.season}:${r.id}`) && r.gain != null;
   const byGain = (a, b) => (open(b) - open(a)) || (b.gain || 0) - (a.gain || 0), byProfit = (a, b) => ((b.profit ?? -Infinity) - (a.profit ?? -Infinity)) || (b.gain || 0) - (a.gain || 0);
@@ -1024,17 +1025,19 @@ async function runSearch(q) { const n = ++qN;
   const lv = edLv(), Y = edYear(); for (const r of rows) { const k = `${r.sport}:${r.season}:${r.id}`; r.gain = baseOf(ED).some(p => p.key === k) ? quickUp(k, lv) : quickGain(r.sport, r.season, G[k], lv); }
   finish(n, rows, 'Results'); }
 // Suggestions: the top players (by rax) of every season you hold plus this season's, weighed against this loadout.
-let POOL = null; const POOL_OK = new Set();
+let POOL = null; const POOL_OK = new Set(), POOL_K = new Set(), POOL_P = new Map();
 async function ensurePool(prog) {
   const CUR = { nba: 2027, ncaam: 2027, nfl: 2026, ncaaf: 2026, nhl: 2026, mlb: 2026, wnba: 2026, soccer: 2026, golf: 2026 };   // golf added 2026-11-25
   // How many seasons back: four for most, golf all the way to 2014 (Dennis, 2026-11-25: "JT should be back to 2014").
   const BACK = { golf: 13 };
     const seasons = [...new Set(Object.entries(CUR).flatMap(([sp, c]) => Array.from({ length: BACK[sp] || 4 }, (_, i) => `${sp}|${c - i}`)).concat(ACCT.filter(p => p.kind !== 'team' && p.sport !== 'ufc').map(p => `${p.sport}|${p.season}`)))];
     const need = seasons.filter(g => !POOL_OK.has(g)); POOL = POOL || [];
-    const one = async g => { const [sp, se] = g.split('|');
+    /* One load per season at a time, and each player once (2026-11-25: two lookups started together each filled the pool,
+       so Luka 2023-24 and others were suggested twice). */
+    const one = g => POOL_P.get(g) || (POOL_P.set(g, (async () => { const [sp, se] = g.split('|');
       for (let t = 0; t < 2 && !POOL_OK.has(g); t++) { const j = await api(`/api/swaps?op=otdpool&sport=${sp}&season=${se}`); if (j.error || !j.games) continue;
-        for (const [id, gm] of Object.entries(j.games)) { const k = `${sp}:${se}:${id}`; G[k] = G[k] || gm; const nm = (j.names || {})[id] || []; POOL.push({ sport: sp, season: Number(se), id: Number(id), name: nm[0] || 'Player ' + id, team: nm[1] || '', tot: gm.reduce((t2, x) => t2 + x[1], 0) }); }
-        POOL_OK.add(g); } };
+        for (const [id, gm] of Object.entries(j.games)) { const k = `${sp}:${se}:${id}`; G[k] = G[k] || gm; const nm = (j.names || {})[id] || []; if (POOL_K.has(k)) continue; POOL_K.add(k); POOL.push({ sport: sp, season: Number(se), id: Number(id), name: nm[0] || 'Player ' + id, team: nm[1] || '', tot: gm.reduce((t2, x) => t2 + x[1], 0) }); }
+        POOL_OK.add(g); } POOL_P.delete(g); })()), POOL_P.get(g));
     for (let i = 0; i < need.length; i += 4) { await Promise.all(need.slice(i, i + 4).map(one)); if (prog) prog(Math.round(Math.min(need.length, i + 4) / need.length * 100)); } }
 async function suggest() { const n = ++qN; $('#ed-res').hidden = false;
   $('#ed-res').innerHTML = '<div class="state note">Finding the players that add the most to this loadout…</div>';
