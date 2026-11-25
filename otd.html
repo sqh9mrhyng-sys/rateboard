@@ -58,6 +58,15 @@
   .seg button[aria-pressed="true"]{background:var(--panel);color:var(--ink);border-color:var(--accent)}
   .claims{margin-top:14px}
   .claims p{margin:8px 2px 0}
+  /* Active season cards (Dennis, 2026-11-25): off by default - they can hit their cap before the season ends. */
+  .actv{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;margin-top:12px;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+  .actv span{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .actv b{font-size:14.5px}
+  .actv small{color:var(--mute);font-size:12.5px}
+  .actv i{flex:none;width:44px;height:26px;border-radius:99px;background:var(--panel2);border:1px solid var(--line);position:relative;transition:background .15s}
+  .actv i::after{content:'';position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:var(--mute);transition:transform .15s,background .15s}
+  .actv[aria-pressed="true"] i{background:color-mix(in srgb,var(--accent) 35%,var(--panel2));border-color:var(--accent)}
+  .actv[aria-pressed="true"] i::after{transform:translateX(18px);background:var(--accent)}
   .tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:10px}
   .tile{padding:12px 14px;min-width:0}
   .tile .k{color:var(--mute);font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em}
@@ -286,6 +295,7 @@
           <div class="seg" id="claims" role="radiogroup" aria-label="Claims a day"><button data-c="2">2 a day</button><button data-c="3">2 a day + 1</button></div>
           <p class="note" id="claimsnote"></p>
         </div>
+        <button type="button" class="actv" id="actv" aria-pressed="false"><span><b>Show active season cards</b><small id="actvnote"></small></span><i aria-hidden="true"></i></button>
         <div class="tiles">
           <div class="card tile"><div class="k">Lost to the limit</div><div class="v" id="t-lost">-</div><div class="s" id="t-lost-s"></div></div>
           <div class="card tile"><div class="k">Passes claiming</div><div class="v" id="t-pass">-</div><div class="s" id="t-pass-s"></div></div>
@@ -442,7 +452,7 @@ const sub = p => `${isTeam(p) ? 'Team · ' : ''}${esc(SPORT[p.sport] || p.sport)
 
 let P = [], G = {}, byDay = new Map(), Y = null, WHO = '', PEND = 0, pendT = null;
 let ACCT = [], LOADS = [], ACTIVE = ls.get('otd_active_v1') || 'acct', ED = null;
-const S = { mon: null, claims: ls.get('otd_claims_v1') === '2' ? 2 : 3, sport: null, view: 'cal', sel: null, showDays: 30, showPass: 40, q: '', psort: 'won' };
+const S = { active: ls.get('otd_active_cards_v1') === '1', mon: null, claims: ls.get('otd_claims_v1') === '2' ? 2 : 3, sport: null, view: 'cal', sel: null, showDays: 30, showPass: 40, q: '', psort: 'won' };
 
 // One day's claims: two per sport, then (with + 1) the best one left over across every sport.
 function scoreDay(list, claims) {
@@ -607,6 +617,7 @@ function openDay(n) {
 function closeDay() { $('#shade').hidden = true; document.body.style.overflow = ''; }
 
 function setSport(sp) { S.sport = sp || null; S.showDays = 30; S.showPass = 40; drawSports(); drawChips(); drawCal(); drawPasses(); }
+$('#actv').addEventListener('click', () => { S.active = !S.active; ls.set('otd_active_cards_v1', S.active ? '1' : '0'); S.showPass = 40; applyActive(); });
 function setMonth(k) { S.mon = k; S.showDays = 30; S.showPass = 40; draw(); }
 $('#h-spark').addEventListener('click', e => { const b = e.target.closest('[data-mon]'); if (!b) return; const k = Number(b.dataset.mon); setMonth(S.mon === k ? null : k); });
 $('#h-clr').addEventListener('click', () => setMonth(null));
@@ -634,7 +645,7 @@ function show(g) {
   // General cards don't claim OTD (Dennis, 2026-11-25), so they're left out entirely.
   ACCT = (g.passes || []).map(p => ({ ...p })).filter(p => levelIdx(p.rating, p) >= 0); G = Object.assign({}, G, g.games || {}); PEND = g.pending || 0;
   for (const p of ACCT) if (!p.key) p.key = `${p.sport}:${p.season}:${p.id}`;
-  P = compose(activeLo()); EDK = ''; POOL = null;
+  P = bView(compose(activeLo())); EDK = ''; POOL = null; POOL_OK.clear(); drawActv();
   if (!ACCT.length) return state(`<section><div class="card state"><b>No passes yet</b><span class="note">Scan your passes and your full OTD breakdown shows up here.</span><br><button type="button" id="scanbtn">Scan my passes</button></div></section>`);
   build(); $('#b-state').innerHTML = ''; $('#b-main').hidden = false; compute(); drawLoSel(); if (!$('#t-l').hidden) drawLoadouts();
   if (activeLo()) ensureGames(activeLo().adds).then(n => { if (n) applyActive(); });
@@ -682,7 +693,15 @@ async function ensureGames(adds) {
 // The 12-month total for any set of passes (the Breakdown's own numbers are put back after).
 function totalOf(list) { const keep = P; P = list; build(); const r = scanYear(S.claims); P = keep; build();
   return { total: r.days.reduce((t, D) => t + D.earned, 0), lost: r.days.reduce((t, D) => t + D.lostRax, 0), per: r.per }; }
-function applyActive() { P = compose(activeLo()); build(); compute(); drawLoSel(); }
+/* Active season cards are left off the Breakdown unless turned on (Dennis, 2026-11-25): a pass in a season still being
+   played can reach its all-time cap before the season ends, so its year can't be counted on - Iconic passes have no
+   cap, so they always stay. */
+const tierOf = p => { const k = levelIdx(p.rating, p); return k < 0 ? 0 : ladderOf(p)[k][3]; };
+const isActiveCard = p => LIVE.has(`${p.sport}:${p.season}`) && tierOf(p) !== 7;
+const bView = list => S.active ? list : list.filter(p => !isActiveCard(p));
+function drawActv() { const n = compose(activeLo()).filter(isActiveCard).length; $('#actv').setAttribute('aria-pressed', String(S.active));
+  $('#actvnote').textContent = n ? (S.active ? `${fmt(n)} current-season pass${n === 1 ? '' : 'es'} counted - they can cap before the season ends` : `${fmt(n)} current-season pass${n === 1 ? '' : 'es'} left out (Iconic always counts)`) : 'No current-season passes below Iconic'; }
+function applyActive() { P = bView(compose(activeLo())); build(); compute(); drawLoSel(); drawActv(); }
 function drawLoSel() {
   const o = [`<option value="acct">Your account</option>`].concat(LOADS.map(l => `<option value="${esc(l.id)}">${esc(l.name)}</option>`));
   $('#losel').innerHTML = o.join(''); if (!activeLo()) ACTIVE = 'acct'; $('#losel').value = ACTIVE;
