@@ -2439,7 +2439,7 @@ async function scanWork(env, db, me, job, auth) {
     // differently-shaped reply just means no passes in that season.
     if (d && typeof d === 'object' && !Array.isArray(d) && !rowsOf(d).length
         && (d.error || (Number(d.statusCode) >= 400) || /high volume|rate limit|too many/i.test(String(d.message || '')))) throw new Error(`Real said: ${String(d.message || d.error || d.statusCode).slice(0, 80)}`);
-    const rows = rowsOf(d);
+    const rows = rowsOf(d); job.okReads = (job.okReads || 0) + 1;
     rows.push(...(await morePassPages(base, tok, d, rows)));
     for (const r of rows) { const p = passOf(r, sport, season, kind); if (p) job.passes.push(p); }
   };
@@ -2482,9 +2482,13 @@ async function scanWork(env, db, me, job, auth) {
     try { await read(step, pickTok()); } catch (e) {
       if (!job.firstErr) job.firstErr = String(e.message || e).slice(0, 120);
       if (/429|high volume|too many/i.test(String(e.message || e))) {
-        job.slow = 1; await sleep(900);
-        try { await read(step, pickTok()); } catch (e2) { job.failed.push(step); }
+        job.slow = 1; job.r429 = (job.r429 || 0) + 1; await sleep(900);
+        try { await read(step, pickTok()); } catch (e2) { job.failed.push(step); job.r429++; }
       } else job.failed.push(step);
+      /* Real refusing everything (2026-11-25: every read 429'd for 25+ minutes, scans ground on 3-7 minutes and
+         still kept the old passes): after 8 refusals and not one read through, stop - the passes from the last scan
+         stay, the member is told in seconds, and the calls stop adding to the load. */
+      if (!job.okReads && job.r429 >= 8) { job.realDown = 1; job.failed.push(...STEPS.slice(job.idx)); job.idx = STEPS.length; job.ri = job.failed.length; job.still.push(...job.failed); job.errors.push('Real is refusing reads right now (429)'); }
     }
     await sleep(job.slow ? 650 : 200);
   }
@@ -2516,7 +2520,7 @@ async function scanWork(env, db, me, job, auth) {
   }
   await fillNames(db, job.passes);
   // A scan with seasons that still failed can be run again in 5 minutes.
-  const stamp = job.kept ? Date.now() - (await scanEvery(env)) * 60000 + 5 * 60000 : Date.now();
+  const stamp = job.realDown ? Number((await db.prepare('SELECT scannedAt FROM swap_users WHERE key=?').bind(me).first() || {}).scannedAt) || 0 : job.kept ? Date.now() - (await scanEvery(env)) * 60000 + 5 * 60000 : Date.now();
   await db.prepare(`INSERT INTO swap_users (key, rsUser, hashId, passes, scannedAt, updatedAt, wants, keep, slots) VALUES (?, ?, ?, ?, ?, ?, '[]', '[]', '[]')
     ON CONFLICT(key) DO UPDATE SET rsUser=excluded.rsUser, hashId=excluded.hashId, passes=excluded.passes,
       scannedAt=excluded.scannedAt, updatedAt=excluded.updatedAt`)
@@ -2533,7 +2537,7 @@ async function scanWork(env, db, me, job, auth) {
   if (job.kept) { await stat(db, 'scan_partial'); await botFail(db, 'scan', `${me}: ${job.kept} season(s) kept from last scan - ${job.errors.slice(0, 3).join(' | ')}`); }
   else await stat(db, 'scan_ok');
   return { done: true, job: { self: job.self, hashId: job.hashId, rsUser: job.rsUser }, hashId: job.hashId, passes: job.passes, errors: job.errors, scannedAt: Date.now(),
-    note: job.kept ? `${job.kept} season${job.kept === 1 ? '' : 's'} couldn't be read from Real just now, so ${job.kept === 1 ? 'it keeps' : 'they keep'} your passes from your last scan. Scan again in 5 minutes to refresh ${job.kept === 1 ? 'it' : 'them'}.` : null };
+    note: job.realDown ? 'Real is limiting reads right now, so nothing could be read - your passes from your last scan are kept. Try again in 15-30 minutes.' : job.kept ? `${job.kept} season${job.kept === 1 ? '' : 's'} couldn't be read from Real just now, so ${job.kept === 1 ? 'it keeps' : 'they keep'} your passes from your last scan. Scan again in 5 minutes to refresh ${job.kept === 1 ? 'it' : 'them'}.` : null };
 }
 /* "Scan done" DMs (Dennis, 2026-11-08): tap scan, leave, and the bot tells
    you when it's finished. Sent when the server finished the scan (the page
