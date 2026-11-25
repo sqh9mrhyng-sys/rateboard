@@ -7424,7 +7424,7 @@ async function handle({ request, env, waitUntil }) {
         id: String(l.id || '').replace(/[^a-z0-9]/gi, '').slice(0, 24) || Math.random().toString(36).slice(2, 10),
         name: String(l.name || 'Loadout').replace(/[<>]/g, '').slice(0, 40) || 'Loadout', at: Date.now(),
         adds: (Array.isArray(l.adds) ? l.adds : []).slice(0, 80).map(x => ({ sport: String(x.sport || '').replace(/[^a-z]/g, '').slice(0, 10), season: Number(x.season) || 0, id: Number(x.id) || 0,
-          name: String(x.name || '').replace(/[<>]/g, '').slice(0, 60), team: String(x.team || '').replace(/[<>]/g, '').slice(0, 40), lv: Math.max(-1, Math.min(39, Number(x.lv) || 0)) })).filter(x => x.sport && x.season > 2000 && x.id > 0) }));
+          name: String(x.name || '').replace(/[<>]/g, '').slice(0, 60), team: String(x.team || '').replace(/[<>]/g, '').slice(0, 40), lv: Math.max(-1, Math.min(39, Number(x.lv) || 0)), up: !!x.up })).filter(x => x.sport && x.season > 2000 && x.id > 0) }));
       await env.RATEBOARD_KV.put(K, JSON.stringify(clean));
       return json({ ok: true, loadouts: clean });
     }

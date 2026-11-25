@@ -269,7 +269,7 @@
         <div class="card cmp" id="ed-cmp"></div>
       </section>
       <section>
-        <div class="sh"><h2>Add players</h2><span id="ed-hint">Best adds for this loadout first</span></div>
+        <div class="sh"><h2>Add or upgrade players</h2><span id="ed-hint">Best first</span></div>
         <div class="find"><input id="ed-q" type="search" placeholder="Search a player" autocomplete="off" aria-label="Search a player to add">
           <select id="ed-lv" aria-label="Level for new players"></select></div>
         <div class="card" id="ed-res" style="overflow:hidden" hidden></div>
@@ -568,7 +568,12 @@ const lvName = (sp, lv) => lv < 0 ? 'General · 1x' : `${ladderFor(sp)[lv][0]} �
 const activeLo = () => ACTIVE === 'acct' ? null : LOADS.find(l => l.id === ACTIVE) || null;
 function addPass(x) { const L = ladderFor(x.sport), lv = Math.min(x.lv, L.length - 1);
   return { sport: x.sport, season: x.season, id: x.id, key: `${x.sport}:${x.season}:${x.id}`, name: x.name, kind: 'player', rating: lv < 0 ? 0 : L[lv][2], earned: 0, added: true, passId: null }; }
-function compose(lo) { const held = new Set(ACCT.map(p => p.key)); return ACCT.concat(((lo && lo.adds) || []).filter(x => !held.has(`${x.sport}:${x.season}:${x.id}`)).map(addPass)); }
+/* Upgrades (Dennis, 2026-11-25: "add players you own ... ability to upgrade the rating"): a loadout entry with up:true
+   is one of your own passes taken to a higher level. It keeps what it has already earned, so its all-time cap is
+   counted right. */
+function upPass(p, lv) { const L = ladderOf(p), l = Math.min(lv, L.length - 1); return { ...p, rating: l < 0 ? 0 : L[l][2], mult: 0, upFrom: levelIdx(p.rating, p), upgraded: true }; }
+function compose(lo) { const adds = (lo && lo.adds) || [], up = new Map(adds.filter(x => x.up).map(x => [`${x.sport}:${x.season}:${x.id}`, x.lv])), held = new Set(ACCT.map(p => p.key));
+  return ACCT.map(p => up.has(p.key) ? upPass(p, up.get(p.key)) : p).concat(adds.filter(x => !x.up && !held.has(`${x.sport}:${x.season}:${x.id}`)).map(addPass)); }
 // Games for added players: fetched once per player-season and kept with the rest.
 async function ensureGames(adds) {
   const need = {}; for (const x of adds || []) { const k = `${x.sport}:${x.season}:${x.id}`; if (!G[k]) (need[`${x.sport}|${x.season}`] = need[`${x.sport}|${x.season}`] || []).push(x.id); }
@@ -597,7 +602,7 @@ async function drawLoadouts() {
   const row = (id, name, meta, tot, d) => `<button type="button" class="lc" data-lo="${esc(id)}" aria-current="${ACTIVE === id}"><div><div class="n">${esc(name)}${ACTIVE === id ? '<span class="chip on">Showing</span>' : ''}</div><div class="m">${meta}</div></div><div class="x"><b>${fmt(tot)}</b>${d == null ? '<span class="note">a year</span>' : `<span class="${d >= 0 ? 'pos' : 'neg'}">${d >= 0 ? '+' : ''}${fmt(d)}</span>`}</div></button>`;
   $('#lo-list').innerHTML = `<section style="margin-top:14px"><div class="sh"><h2>Loadouts</h2><span>Tap one to add players</span></div>`
     + row('acct', 'Your account', `Live from your last scan · ${fmt(ACCT.length)} passes`, accTot, null)
-    + LOADS.map(l => { const t = totalOf(compose(l)).total; return row(l.id, l.name, `Your account + ${l.adds.length} player${l.adds.length === 1 ? '' : 's'}`, t, t - accTot); }).join('')
+    + LOADS.map(l => { const t = totalOf(compose(l)).total; return row(l.id, l.name, `Your account + ${l.adds.filter(x => !x.up).length} added · ${l.adds.filter(x => x.up).length} upgraded`, t, t - accTot); }).join('')
     + `<button type="button" class="newlo" id="lo-new">+ New loadout</button></section>`;
 }
 $('#lo-list').addEventListener('click', e => { if (e.target.closest('#lo-new')) return openEd(null); const b = e.target.closest('[data-lo]'); if (!b) return; openEd(b.dataset.lo === 'acct' ? null : LOADS.find(l => l.id === b.dataset.lo)); });
@@ -617,23 +622,33 @@ async function drawEd() {
   const gains = ED.adds.map((x, i) => { const others = { adds: ED.adds.filter((_, j) => j !== i) }; return r.total - totalOf(compose(others)).total; });
   const L = sp => ladderFor(sp).map((l, k) => `<option value="${k}">${esc(l[0])} · ${l[1]}x</option>`).join('');
   $('#ed-n').textContent = ED.adds.length ? `${ED.adds.length} added` : '';
-  $('#ed-adds').innerHTML = ED.adds.length ? ED.adds.map((x, i) => `<div class="ar"><div><div class="n">${esc(x.name)}</div><div class="m"><span>${esc(SPORT[x.sport] || x.sport)} · ${esc(seasonLbl(x.sport, x.season))}${x.team ? ' · ' + esc(x.team) : ''}</span><span class="gain ${gains[i] > 0 ? 'pos' : ''}">${gains[i] > 0 ? '+' : ''}${fmt(gains[i])} a year</span>${!(G[`${x.sport}:${x.season}:${x.id}`] || []).length ? '<span class="flag w">No games on file</span>' : ''}</div></div>
+  const fromOf = x => { const p = ACCT.find(q => q.key === `${x.sport}:${x.season}:${x.id}`); return p ? levelIdx(p.rating, p) : -1; };
+  $('#ed-adds').innerHTML = ED.adds.length ? ED.adds.map((x, i) => `<div class="ar"><div><div class="n">${esc(x.name)}</div><div class="m"><span>${esc(SPORT[x.sport] || x.sport)} · ${esc(seasonLbl(x.sport, x.season))}${x.team ? ' · ' + esc(x.team) : ''}</span>${x.up ? `<span class="flag a">Upgrade from ${esc(fromOf(x) < 0 ? 'General' : ladderFor(x.sport)[fromOf(x)][0])}</span>` : ''}<span class="gain ${gains[i] > 0 ? 'pos' : ''}">${gains[i] > 0 ? '+' : ''}${fmt(gains[i])} a year</span>${!(G[`${x.sport}:${x.season}:${x.id}`] || []).length ? '<span class="flag w">No games on file</span>' : ''}</div></div>
       <div class="acts"><select data-lv="${i}" aria-label="Level for ${esc(x.name)}">${L(x.sport).replace(`value="${x.lv}"`, `value="${x.lv}" selected`)}</select><button type="button" class="rm" data-rm="${i}" aria-label="Remove ${esc(x.name)}">&times;</button></div></div>`).join('')
     : '<div class="state note">Tap Add on a player above. Each one shows what it adds to your year.</div>';
   edDirty(!!ED.dirty);
 }
 // Level for new players, remembered.
-$('#ed-lv').innerHTML = LEVELS.map((l, k) => `<option value="${k}">New at ${esc(l[0])}</option>`).join(''); $('#ed-lv').value = ls.get(LV_KEY) || '9';
+$('#ed-lv').innerHTML = LEVELS.map((l, k) => `<option value="${k}">At ${esc(l[0])}</option>`).join(''); $('#ed-lv').value = ls.get(LV_KEY) || '9';
 $('#ed-lv').addEventListener('change', e => ls.set(LV_KEY, e.target.value));
 /* Ranked by what they'd add (Dennis, 2026-11-25: "order by how much rax it'll add to that loadout, the first options
    should show top players that benefit my profile"). Each candidate is weighed against the loadout as it stands, at
    the level picked: day by day, what the day's claims would be with him in, after the daily limit and his own cap.
    With nothing typed, the top players of the seasons you hold (and this season's) are weighed and the best shown. */
 let qT = null, qN = 0, EDY = null, EDK = '';
-function edYear() { const k = JSON.stringify([S.claims, ED.adds.map(x => [x.sport, x.season, x.id, x.lv])]); if (EDK === k && EDY) return EDY;
-  const keep = P; P = compose(ED); build(); const y = scanYear(S.claims); P = keep; build();
+function edYear() { const k = JSON.stringify([S.claims, ED.adds.map(x => [x.sport, x.season, x.id, x.lv, !!x.up])]); if (EDK === k && EDY) return EDY;
+  const keep = P, list = compose(ED); P = list; build(); const y = scanYear(S.claims); P = keep; build();
   const by = new Map(); for (const D of y.days) { const k2 = String(D.date.getMonth() + 1).padStart(2, '0') + '-' + String(D.date.getDate()).padStart(2, '0'); if (!by.has(k2)) by.set(k2, D); }
-  EDY = { by }; EDK = k; return EDY; }
+  EDY = { by, list, idx: new Map(list.map((p, i) => [p.key, i])) }; EDK = k; return EDY; }
+// One of your passes taken to level lv: day by day, its claims at the new multiplier (and its new cap) against the rest.
+function quickUp(key, lv) { const Y = edYear(), i = Y.idx.get(key); if (i == null) return null; const p = Y.list[i], L = ladderOf(p), l = Math.min(lv, L.length - 1), now = levelIdx(p.rating, p);
+  if (l <= now) return null; const mult = L[l][1]; let cap = capOf(p, l) - (Number(p.earned) || 0), gain = 0;
+  const gs = (G[key] || []).slice().sort((a, b) => { const da = Y.by.get(a[0]), db = Y.by.get(b[0]); return (da ? da.n : 999) - (db ? db.n : 999); });
+  for (const [d, base] of gs) { if (cap <= 0) break; const D = Y.by.get(d), rax = Math.min(base * mult, cap); if (!(rax > 0)) continue;
+    if (!D) { gain += rax; cap -= rax; continue; }
+    const lst = D.won.concat(D.lost).filter(o => o.i !== i).map(o => ({ i: o.i, sport: o.sport, rax: o.rax })), me = { i, sport: p.sport, rax }; lst.push(me);
+    const sc = scoreDay(lst, S.claims); gain += sc.earned - D.earned; if (sc.won.includes(me)) cap -= rax; }
+  return gain; }
 function quickGain(sp, se, games, lv) {
   const L = ladderFor(sp), l = Math.min(lv, L.length - 1), mult = l < 0 ? 1 : L[l][1]; let cap = capOf({ sport: sp, season: se, kind: 'player' }, l), gain = 0;
   const Y = edYear(), gs = (games || []).slice().sort((a, b) => { const da = Y.by.get(a[0]), db = Y.by.get(b[0]); return (da ? da.n : 999) - (db ? db.n : 999); });
@@ -643,9 +658,12 @@ function quickGain(sp, se, games, lv) {
     const sc = scoreDay(lst, S.claims), g = sc.earned - D.earned; if (g > 0) { gain += g; if (sc.won.includes(me)) cap -= rax; } }
   return gain; }
 const edLv = () => Number($('#ed-lv').value) || 0;
-function resRow(r, i) { const k = `${r.sport}:${r.season}:${r.id}`, held = ACCT.some(p => p.key === k), inEd = ED.adds.some(x => `${x.sport}:${x.season}:${x.id}` === k);
-  return `<div class="ar"><div><div class="n">${esc(r.name)}</div><div class="m"><span>${esc(SPORT[r.sport] || r.sport)} · ${esc(seasonLbl(r.sport, r.season))}${r.team ? ' · ' + esc(r.team) : ''}</span>${r.gain != null && !held ? `<span class="gain ${r.gain > 0 ? 'pos' : ''}">${r.gain > 0 ? '+' : ''}${fmt(r.gain)} a year</span>` : ''}</div></div>
-    <div class="acts">${held ? '<span class="held">You hold this</span>' : inEd ? '<span class="held">Added</span>' : `<button type="button" class="add" data-add="${i}">Add</button>`}</div></div>`; }
+function resRow(r, i) { const k = `${r.sport}:${r.season}:${r.id}`, held = ACCT.find(p => p.key === k), inEd = ED.adds.some(x => `${x.sport}:${x.season}:${x.id}` === k), lv = edLv();
+  const L = ladderFor(r.sport), now = held ? levelIdx(held.rating, held) : -1, canUp = held && !isTeam(held) && Math.min(lv, L.length - 1) > now;
+  const gain = r.gain != null && (!held || canUp) ? `<span class="gain ${r.gain > 0 ? 'pos' : ''}">${r.gain > 0 ? '+' : ''}${fmt(r.gain)} a year</span>` : '';
+  const from = held ? `<span class="flag a">Yours · ${esc(now < 0 ? 'General' : L[now][0])}${canUp ? ' → ' + esc(L[Math.min(lv, L.length - 1)][0]) : ''}</span>` : '';
+  return `<div class="ar"><div><div class="n">${esc(r.name)}</div><div class="m"><span>${esc(SPORT[r.sport] || r.sport)} · ${esc(seasonLbl(r.sport, r.season))}${r.team ? ' · ' + esc(r.team) : ''}</span>${from}${gain}</div></div>
+    <div class="acts">${inEd ? `<span class="held">${held ? 'Upgraded' : 'Added'}</span>` : held ? (canUp ? `<button type="button" class="add" data-add="${i}">Upgrade</button>` : '<span class="held">Already there</span>') : `<button type="button" class="add" data-add="${i}">Add</button>`}</div></div>`; }
 function showRes(rows, note) { $('#ed-res').hidden = false; $('#ed-res')._rows = rows;
   $('#ed-res').innerHTML = (note ? `<div class="rh">${note}</div>` : '') + (rows.length ? rows.map(resRow).join('') : '<div class="state note">No players found.</div>'); }
 async function gamesFor(list) {   // [{sport, season, id}] -> fills G, fetched by sport-season
@@ -660,9 +678,10 @@ async function runSearch(q) { const n = ++qN;
   if (j.error) return showRes([], esc(j.error));
   const rows = (j.rows || []).filter(r => r.sport !== 'golf').map(r => ({ sport: r.sport, season: Number(r.season), id: Number(r.playerId), name: r.player, team: r.team || '' }));
   await gamesFor(rows); if (n !== qN) return;
-  const lv = edLv(); for (const r of rows) r.gain = quickGain(r.sport, r.season, G[`${r.sport}:${r.season}:${r.id}`], lv);
-  rows.sort((a, b) => (notMine(b) - notMine(a)) || b.gain - a.gain);
-  showRes(rows.slice(0, 15), `Best adds first · at ${esc(LEVELS[lv][0])}`); }
+  const lv = edLv(), Y = edYear(); for (const r of rows) { const k = `${r.sport}:${r.season}:${r.id}`; r.gain = ACCT.some(p => p.key === k) ? quickUp(k, lv) : quickGain(r.sport, r.season, G[k], lv); }
+  const open = r => !ED.adds.some(x => `${x.sport}:${x.season}:${x.id}` === `${r.sport}:${r.season}:${r.id}`) && r.gain != null;
+  rows.sort((a, b) => (open(b) - open(a)) || (b.gain || 0) - (a.gain || 0));
+  showRes(rows.slice(0, 15), `Best first · at ${esc(LEVELS[lv][0])}`); }
 // Suggestions: the top players (by rax) of every season you hold plus this season's, weighed against this loadout.
 let POOL = null;
 async function suggest() { const n = ++qN; $('#ed-res').hidden = false;
@@ -676,18 +695,21 @@ async function suggest() { const n = ++qN; $('#ed-res').hidden = false;
     POOL = out; }
   if (n !== qN) return;
   const lv = edLv(), ub = r => { const L = ladderFor(r.sport), l = Math.min(lv, L.length - 1); return Math.min(r.tot * (l < 0 ? 1 : L[l][1]), capOf({ sport: r.sport, season: r.season, kind: 'player' }, l)); };
-  const cand = POOL.filter(notMine).map(r => (r.ub = ub(r), r)).sort((a, b) => b.ub - a.ub).slice(0, 2000);
+  const inEd = new Set(ED.adds.map(x => `${x.sport}:${x.season}:${x.id}`));
+  const ups = ACCT.filter(p => !isTeam(p) && p.sport !== 'golf' && !inEd.has(p.key) && Math.min(lv, ladderFor(p.sport).length - 1) > levelIdx(p.rating, p) && (G[p.key] || []).length)
+    .map(p => { const L = ladderFor(p.sport), l = Math.min(lv, L.length - 1); return { sport: p.sport, season: Number(p.season), id: Number(p.id), name: p.name || 'Player ' + p.id, team: '', up: true, ub: Math.min((G[p.key] || []).reduce((t, x) => t + x[1], 0) * L[l][1], capOf(p, l) - (Number(p.earned) || 0)) }; });
+  const cand = POOL.filter(notMine).map(r => (r.ub = ub(r), r)).concat(ups).sort((a, b) => b.ub - a.ub).slice(0, 2000);
   // Weighed in slices so the page never locks up.
-  for (let i = 0; i < cand.length; i += 150) { for (const r of cand.slice(i, i + 150)) r.gain = quickGain(r.sport, r.season, G[`${r.sport}:${r.season}:${r.id}`], lv); await new Promise(r => setTimeout(r, 0)); if (n !== qN) return; }
+  for (let i = 0; i < cand.length; i += 150) { for (const r of cand.slice(i, i + 150)) r.gain = r.up ? (quickUp(`${r.sport}:${r.season}:${r.id}`, lv) || 0) : quickGain(r.sport, r.season, G[`${r.sport}:${r.season}:${r.id}`], lv); await new Promise(r => setTimeout(r, 0)); if (n !== qN) return; }
   cand.sort((a, b) => b.gain - a.gain);
-  showRes(cand.slice(0, 15).map(r => ({ ...r })), `Top adds for this loadout · at ${esc(LEVELS[lv][0])}`); }
+  showRes(cand.slice(0, 15).map(r => ({ ...r })), `Top adds and upgrades · at ${esc(LEVELS[lv][0])}`); }
 $('#ed-q').addEventListener('input', e => { clearTimeout(qT); const q = e.target.value.trim(); qT = setTimeout(() => runSearch(q), q.length < 2 ? 0 : 250); });
 $('#ed-q').addEventListener('focus', () => { if ($('#ed-res').hidden) runSearch($('#ed-q').value.trim()); });
 $('#ed-lv').addEventListener('change', () => { if (!$('#ed-res').hidden) runSearch($('#ed-q').value.trim()); });
 $('#ed-res').addEventListener('click', async e => { const b = e.target.closest('[data-add]'); if (!b) return; const r = ($('#ed-res')._rows || [])[Number(b.dataset.add)]; if (!r) return;
-  const L = ladderFor(r.sport), lv = Math.min(edLv(), L.length - 1);
-  ED.adds.unshift({ sport: r.sport, season: Number(r.season), id: Number(r.id), name: r.name, team: r.team || '', lv }); ED.dirty = true;
-  b.outerHTML = '<span class="held">Added</span>'; await drawEd(); runSearch($('#ed-q').value.trim()); });
+  const L = ladderFor(r.sport), lv = Math.min(edLv(), L.length - 1), up = ACCT.some(p => p.key === `${r.sport}:${r.season}:${r.id}`);
+  ED.adds.unshift({ sport: r.sport, season: Number(r.season), id: Number(r.id), name: r.name, team: r.team || '', lv, up }); ED.dirty = true;
+  b.outerHTML = `<span class="held">${up ? 'Upgraded' : 'Added'}</span>`; await drawEd(); runSearch($('#ed-q').value.trim()); });
 $('#ed-adds').addEventListener('change', e => { const s = e.target.closest('[data-lv]'); if (!s) return; ED.adds[Number(s.dataset.lv)].lv = Number(s.value); ED.dirty = true; drawEd(); });
 $('#ed-adds').addEventListener('click', e => { const b = e.target.closest('[data-rm]'); if (!b) return; ED.adds.splice(Number(b.dataset.rm), 1); ED.dirty = true; drawEd().then(() => runSearch($('#ed-q').value.trim())); });
 $('#ed-name').addEventListener('input', () => { ED.name = $('#ed-name').value; edDirty(true); });
