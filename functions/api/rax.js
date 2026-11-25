@@ -798,10 +798,12 @@ async function predOdds(env) {
   }
   try { await env.RATEBOARD_KV.put('pred_liveclock_v1', JSON.stringify(LC), { expirationTtl: 3600 }); } catch (e) {}
   // FC club codes -> names (ESPN's team lists, every 6 hours, only while Real has an FC market open).
-  if ((real.soccer || []).length && (!o.socAbbrAt || Date.now() - o.socAbbrAt > 6 * 3600000)) { o.socAbbrAt = Date.now();
+  if ((real.soccer || []).length && (!o.socAbbrAt || !o.abbrL || Date.now() - o.socAbbrAt > 6 * 3600000)) { o.socAbbrAt = Date.now();
     for (const lg of ESPN_SOCCER) { try { const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/${lg}/teams`); const d = r.ok ? await r.json() : null;
         for (const t of ((((d || {}).sports || [])[0] || {}).leagues || [])[0] ? d.sports[0].leagues[0].teams || [] : []) { const tm = t.team || {}; if (!tm.abbreviation) continue;
           const k = `soccer:${tm.abbreviation}`, l = new Set(o.abbr[k] || []); for (const n of [tm.displayName, tm.shortDisplayName, tm.name, tm.location]) if (n) l.add(n); o.abbr[k] = [...l].slice(0, 12);
+          // Also kept per league (2026-11-25): a code like MUN is Man United in England and Bayern in Germany.
+          o.abbrL = o.abbrL || {}; (o.abbrL[lg] = o.abbrL[lg] || {})[tm.abbreviation] = [tm.displayName, tm.shortDisplayName, tm.name, tm.location].filter(Boolean);
           if (tm.logos && tm.logos[0] && tm.logos[0].href) { o.logo = o.logo || {}; o.logo[k] = tm.logos[0].href; o.logo[`soccer:${normTeam(tm.displayName)}`] = tm.logos[0].href; } } } catch (e) {} }
     o.soccerAt = 0; }
   if (!key) { o.lock = 0; await save(); return; }
@@ -957,7 +959,15 @@ async function predReal(env) {
         /* Two different games matched one Real market (2026-11-25: MUN @ SCP got Bayern Munich v SC Paderborn and another
            game averaged together - club codes like MUN mean different clubs in different leagues): sources more than
            3 hours apart are different games, so nothing is priced rather than a blend. */
-        { const ts = found.map(f => Date.parse(f.start || '')).filter(Number.isFinite); if (ts.length > 1 && Math.max(...ts) - Math.min(...ts) > 3 * 3600000) found.length = 0; }
+        { const ts = found.map(f => Date.parse(f.start || '')).filter(Number.isFinite);
+          if (sp === 'soccer' && ts.length > 1 && Math.max(...ts) - Math.min(...ts) > 3 * 3600000) {
+            /* ...unless exactly one of those games has both clubs under these codes in the same league (MUN and SCP are
+               Bayern Munich and SC Paderborn in the Bundesliga, while MUN alone is also Man United). That game is used. */
+            const L = odds.abbrL || {}, cds = oc.filter(x => !(isDraw(x.label) || isDraw(x.key))).map(x => String(x.key || x.label || '').split(' ')[0].toUpperCase());
+            const fits = f => { const nm = f.names.filter(n => !isDraw(n)); return Object.values(L).some(lg => cds.length === 2 && cds.every(c => lg[c]) && cds.every(c => nm.some(n => sideHits(lg[c], n)))); };
+            const ok = found.filter(fits), st = new Set(ok.map(f => Math.round(Date.parse(f.start || 0) / (3 * 3600000))));
+            const keep = ok.length && st.size === 1 ? ok : []; found.length = 0; found.push(...keep); }
+          else if (ts.length > 1 && Math.max(...ts) - Math.min(...ts) > 3 * 3600000) found.length = 0; }
         if (m._inf && found.length) out.inferred = (out.inferred || 0) + 1;   // a count only, for health
         // Fair chance: Pinnacle counts double when it's there, every other source once.
         const refs = found.filter(f => f.ref), fnd = found.filter(f => !f.ref);
