@@ -1371,51 +1371,6 @@ async function tgFeedTick(env) {
   if (!st.q.length) { st.done = Date.now(); try { await env.RATEBOARD_KV.put('proj_force_v1_nfl', String(Date.now())); } catch (e) {} }
   await env.RATEBOARD_KV.put(K, JSON.stringify(st), { expirationTtl: 3 * 86400 });
 }
-/* One-off (2026-11-26, Dennis: "alone" means nothing else of that card live at that moment): start time of each
-   listing worked out from its id (ids count up as listings are made) and its length (12/24/48/72 h): in each run of
-   300 ids the most common start hour is when they were made, and each listing takes the length closest to it.
-   Then: alone when listed (nothing else of that card live at its start) and alone when it ended. Aggregates only,
-   encrypted for Dennis. Removed once read. */
-async function bulkAlone2(env) {
-  const K = 'diag_bulkalone2_1126'; try { if (await env.RATEBOARD_KV.get(K)) return; } catch (e) { return; }
-  await env.RATEBOARD_KV.put(K, JSON.stringify({ running: Date.now() }), { expirationTtl: 3600 });
-  const db = env.RATEBOARD_DB, out = { at: Date.now() }, since = Date.now() - 17 * 86400000, H = BULK_HOURS.map(h => h * 3600000);
-  try {
-    const rows = ((await db.prepare('SELECT id, sport, season, playerId, rarity, price, minBid, buyNow, endsAt FROM bulk_results WHERE endsAt > ? AND endsAt < ? ORDER BY id').bind(since, Date.now()).all()).results) || [];
-    out.n = rows.length;
-    // start times
-    let fit = 0;
-    for (let a = 0; a < rows.length; a += 300) { const w = rows.slice(a, a + 300), cnt = new Map();
-      for (const r of w) for (const h of H) { const b = Math.floor((r.endsAt - h) / 3600000); cnt.set(b, (cnt.get(b) || 0) + 1); }
-      let best = null, bn = -1; for (const [b, n] of cnt) if (n > bn) { bn = n; best = b; }
-      const mid = best * 3600000 + 1800000;
-      for (const r of w) { let s0 = null, d0 = Infinity; for (const h of H) { const s1 = r.endsAt - h, d = Math.abs(s1 - mid); if (d < d0) { d0 = d; s0 = s1; } } r.start = s0; if (d0 < 3 * 3600000) fit++; } }
-    out.fit = +(fit / rows.length).toFixed(3);
-    const recent = Date.now() - 14 * 86400000;
-    const grp = new Map(); for (const r of rows) { const k = `${r.sport}|${r.season}|${r.playerId}|${r.rarity}`; (grp.get(k) || grp.set(k, []).get(k)).push(r); }
-    const B = [[0, 0.9], [0.9, 1.0], [1.0, 1.1], [1.1, 1.2], [1.2, 1.35], [1.35, 1.5], [1.5, 1.75], [1.75, 2.0], [2.0, 3.0], [3.0, 99]];
-    const mk = () => B.map(b => ({ b, n: 0, sold: 0, rs: [] }));
-    const agg = { aloneStart: mk(), aloneEnd: mk(), aloneBoth: mk(), crowd: mk() }, byR = {};
-    for (const [k, l] of grp) {
-      const sold = l.filter(r => r.price != null && r.endsAt > recent).map(r => Number(r.price)).sort((a, b) => a - b); if (sold.length < 5) continue;
-      const med = sold[Math.floor(sold.length / 2)], rar = k.split('|')[3];
-      for (const r of l) { if (r.endsAt <= recent) continue; const ask = Number(r.buyNow || r.minBid || 0); if (!(ask > 0)) continue;
-        const liveAt = t => l.some(o => o !== r && o.start <= t && o.endsAt > t);
-        const aS = !liveAt(r.start + 60000), aE = !liveAt(r.endsAt - 60000);
-        const m = ask / med, bi = B.findIndex(b => m >= b[0] && m < b[1]); if (bi < 0) continue;
-        const tg = []; if (aS) tg.push(agg.aloneStart[bi]); if (aE) tg.push(agg.aloneEnd[bi]); if (aS && aE) { tg.push(agg.aloneBoth[bi]); byR[rar] = byR[rar] || mk(); tg.push(byR[rar][bi]); } if (!aS && !aE) tg.push(agg.crowd[bi]);
-        for (const c of tg) { c.n++; if (r.price != null) { c.sold++; c.rs.push(Number(r.price) / med); } } } }
-    const fin = a => a.map(c => { c.rs.sort((x, y) => x - y); return { b: c.b, n: c.n, sold: c.sold, med: c.rs.length ? +c.rs[Math.floor(c.rs.length / 2)].toFixed(3) : null }; });
-    for (const k of Object.keys(agg)) out[k] = fin(agg[k]); out.byR = Object.fromEntries(Object.entries(byR).map(([r, a]) => [r, fin(a)]));
-  } catch (e) { out.err = String(e.message || e).slice(0, 200); }
-  try {
-    const b64 = x => Buffer.from(x).toString('base64'), pk = await crypto.subtle.importKey('spki', Buffer.from(CBB_AGG_PUB, 'base64'), { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['encrypt']);
-    const ak = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt']), raw = await crypto.subtle.exportKey('raw', ak), iv = crypto.getRandomValues(new Uint8Array(12));
-    const zl = await import('node:zlib'), body = zl.gzipSync(Buffer.from(JSON.stringify(out)));
-    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, ak, body), ek = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, pk, raw);
-    await env.RATEBOARD_KV.put(K, JSON.stringify({ k: b64(ek), iv: b64(iv), ct: b64(ct) }), { expirationTtl: 86400 });
-  } catch (e) { await env.RATEBOARD_KV.put(K, JSON.stringify({ err: 'encrypt: ' + String(e.message || e).slice(0, 120) }), { expirationTtl: 3600 }); }
-}
 async function planDiag(env) {
   const K = 'diag_plan_1118'; try { if (await env.RATEBOARD_KV.get(K)) return; } catch (e) { return; }
   await env.RATEBOARD_KV.put(K, JSON.stringify({ running: Date.now() }), { expirationTtl: 3600 });
@@ -9875,7 +9830,7 @@ async function collectorHealth(env, url) {
     navDiag: await kvj('navdiag'),
     oneOffsRun: await kvj(ONE_OFF_KEY), dhFix2: await (async () => { const x = await kvj(DH2_KEY); if (x && x.q) { x.of = x.q.length; delete x.q; } return x; })(), outgive: await kvj('outgive_clear_1119_n'), staleUndo: await kvj('stale_undo_1119_n'), repeatClear: await kvj('repeat_clear_1119_n'), mktProbe: await kvj('market_page_probe_1119b'), cbbMarket: await (async () => { const st = await kvj(MARKET_KEY); if (!st) return null; const l = st.lanes || {}; return { cur: st.cur || null, at: st.at || null, windowsDone: Object.values(l).filter(x => x.done).length, rows: Object.values(l).reduce((a, x) => a + (x.rows || 0), 0), pages: Object.values(l).reduce((a, x) => a + (x.pages || 0), 0), errs: Object.values(l).map(x => x.err).filter(Boolean).slice(0, 3), last: st.last || null, cool: st.coolUntil || null, pause: st.pause || null, idle: !!st.idle }; })(), pushStats: await kvj('push_stats'), staleClear: await kvj('stale_clear_1119_n'), modVoid1119: await kvj('mod_void_1119_n'), swapsHold: await (async () => { const h = await kvj('swaps_hold'); return h ? { at: h.at, off: h.off || 0, off160: h.off160 || 0, last: h.last || null, probe: h.probe || null } : { lifted: Number(await env.RATEBOARD_KV.get('swaps_hold_lifted')) || null }; })(), dfs: await (async () => { const o = await kvj('dfs_props_v1'); if (!o) return null; const evs = Object.values(o.ev || {}); const bks = {}; let props = 0;
       for (const v of evs) for (const m of Object.values(v.props || {})) for (const pl of Object.values(m)) { props++; for (const b of Object.keys(pl)) bks[b] = (bks[b] || 0) + 1; }
-      return { events: (o.events || []).length, pulled: evs.length, props, books: bks, kalshi: o.kalshi, lastPull: o.lastPull, used: o.used, credits: o.credits, errs: o.errs }; })(), tgErr: await env.RATEBOARD_KV.get('tgfeed_err'), tgFeed: await (async () => { try { const v = JSON.parse((await env.RATEBOARD_KV.get('tgfeed_v1')) || 'null'); return v ? { left: (v.q || []).length, total: v.total, n: v.n, rows: v.rows, rax: v.rax, fails: v.fails, lastErr: v.lastErr, restBy: v.restBy, by: v.by, done: v.done } : null; } catch (e) { return null; } })(), bulkAlone: await kvj('diag_bulkalone2_1126'), oddsCredits: await (async () => { const o = await kvj('pred_odds_v2'); if (!o) return null; const d = ET_DAY_FMT.format(new Date()), today = o.clog && o.clog[d] != null ? (Number(o.used) || 0) - o.clog[d] : null; return { remaining: Number(o.credits) || null, used: Number(o.used) || null, today, budget: PRED_DAY_BUDGET, fast: today == null || today < PRED_DAY_BUDGET, log: o.clog || null }; })(), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predPause: await kvj('pred_pause_v1'), predLiveClock: await (async () => { const x = await kvj('pred_liveclock_v1') || {}; return Object.fromEntries(Object.entries(x).map(([k, v]) => [k, { live: (v.live || []).length, ago: Math.round((Date.now() - (v.at || 0)) / 1000) }])); })(), predGx: await (async () => { const x = await kvj('pred_gamextra_v1') || {}; const v = Object.values(x); return { games: v.length, a3: v.filter(e => (e.a3 || []).some(Boolean)).length, teamHist: v.filter(e => (e.th || []).some(Boolean)).length }; })(), predSlipFit: await kvj('pred_slipfit_v1'), diskTidy: await kvj('disk_tidy_last'), marketWipe: await kvj('oneoff_market_wipe_1116'), predStore: await (async () => { const o = {}; for (const k of ['pred_ev_v1', 'pred_recent_v1', 'pred_odds_v2', 'pred_real_open', 'bulk_state_v2']) { const v = await env.RATEBOARD_KV.get(k); o[k] = v ? v.length : 0; }
+      return { events: (o.events || []).length, pulled: evs.length, props, books: bks, kalshi: o.kalshi, lastPull: o.lastPull, used: o.used, credits: o.credits, errs: o.errs }; })(), tgErr: await env.RATEBOARD_KV.get('tgfeed_err'), tgFeed: await (async () => { try { const v = JSON.parse((await env.RATEBOARD_KV.get('tgfeed_v1')) || 'null'); return v ? { left: (v.q || []).length, total: v.total, n: v.n, rows: v.rows, rax: v.rax, fails: v.fails, lastErr: v.lastErr, restBy: v.restBy, by: v.by, done: v.done } : null; } catch (e) { return null; } })(), oddsCredits: await (async () => { const o = await kvj('pred_odds_v2'); if (!o) return null; const d = ET_DAY_FMT.format(new Date()), today = o.clog && o.clog[d] != null ? (Number(o.used) || 0) - o.clog[d] : null; return { remaining: Number(o.credits) || null, used: Number(o.used) || null, today, budget: PRED_DAY_BUDGET, fast: today == null || today < PRED_DAY_BUDGET, log: o.clog || null }; })(), swapDiag: await kvj('diag_swap_1109b'), scanProbe: await kvj('diag_scanprobe_1110'), modPreview: await kvj('mod_preview_v1'), tzCounts: await kvj('diag_tz_1112'), untouch: await kvj('diag_untouch_1112'), keepProbe: await kvj('diag_keep_1112'), top15: await kvj('oneoff_top15_1112'), dmPurge: await kvj('dm_purge_1112_n'), dennisProbe: await kvj('diag_dennis_1112b'), bulkState: await kvj('bulk_state_v2'), oddsKeySet: !!env.ODDS_API_KEY, predPause: await kvj('pred_pause_v1'), predLiveClock: await (async () => { const x = await kvj('pred_liveclock_v1') || {}; return Object.fromEntries(Object.entries(x).map(([k, v]) => [k, { live: (v.live || []).length, ago: Math.round((Date.now() - (v.at || 0)) / 1000) }])); })(), predGx: await (async () => { const x = await kvj('pred_gamextra_v1') || {}; const v = Object.values(x); return { games: v.length, a3: v.filter(e => (e.a3 || []).some(Boolean)).length, teamHist: v.filter(e => (e.th || []).some(Boolean)).length }; })(), predSlipFit: await kvj('pred_slipfit_v1'), diskTidy: await kvj('disk_tidy_last'), marketWipe: await kvj('oneoff_market_wipe_1116'), predStore: await (async () => { const o = {}; for (const k of ['pred_ev_v1', 'pred_recent_v1', 'pred_odds_v2', 'pred_real_open', 'bulk_state_v2']) { const v = await env.RATEBOARD_KV.get(k); o[k] = v ? v.length : 0; }
       try { for (const t of ['bulk_listings', 'bulk_results']) { const r = await env.RATEBOARD_DB.prepare(`SELECT COUNT(*) AS n FROM ${t}`).first().catch(() => null); o[t] = r ? r.n : null; } } catch (e) {} return o; })(), realBusy: await realBusy(env), dmPredAsk: await (async () => { const x = await kvj('dm_predask_v1'); return x ? { sent: (x.sent || []).length, noChat: (x.noChat || []).length, notFound: (x.notFound || []).length, failed: (x.failed || []).length } : null; })(), dmPromo: await (async () => { const x = await kvj('dm_promo_' + Date.UTC(2026, 10, 17, 21, 0, 0)); return x ? { total: x.total, sent: x.sent, skipped: x.skipped, failed: x.failed, startedAt: x.startedAt } : null; })(), predSlipDay: await (async () => { try { const day = ET_DAY_FMT.format(new Date()), db = env.RATEBOARD_DB;
         const r = (await db.prepare("SELECT sport, live, COUNT(*) AS n, COUNT(DISTINCT mid) AS m, SUM(CASE WHEN dv > 0 THEN dv ELSE 0 END) AS vol, MIN(at) AS t0, MAX(at) AS t1 FROM pred_slip_log WHERE day=? GROUP BY sport, live").bind(day).all()).results || [];
         return { day, rows: r }; } catch (e) { return { err: String(e.message || e).slice(0, 80) }; } })(), predSlip: await (async () => { try { if (!((await kvj('pred_mkeys_v1')) || {}).px) await env.RATEBOARD_KV.delete('pred_mkeys_v1'); } catch (e) {} const S = (await kvj('pred_slip_v1')) || {}; const fit = {}; const med = a => { const b = a.slice().sort((x, y) => x - y); return b.length ? b[Math.floor(b.length / 2)] : null; };
@@ -9953,7 +9908,7 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil((async () => { const k = await dmTickKey(env); if (!k) return;
       await fetch(`${origin}/api/swaps?op=scantick&k=${k}`, { cf: { cacheTtl: 0 } }).catch(() => {}); })().catch(() => {}));
     ctx.waitUntil(boostRefresh(env).catch(() => {}));
-    ctx.waitUntil(bulkAlone2(env).catch(() => {}));
+    ctx.waitUntil(env.RATEBOARD_KV.delete('diag_bulkalone2_1126').catch(() => {}));
     ctx.waitUntil(env.RATEBOARD_KV.delete('diag_bulktimes_1126').catch(() => {}));
     ctx.waitUntil(tgFeedTick(env).catch(e => env.RATEBOARD_KV.put('tgfeed_err', String(e && e.stack || e).slice(0, 300), { expirationTtl: 86400 }).catch(() => {})));
     ctx.waitUntil(nhlZeroFix(env).catch(() => {}));
