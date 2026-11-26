@@ -1437,9 +1437,10 @@ async function dmPace(prio = 2) {
   if (ON_DROPLET) return new Promise(go => { PQ.push({ p: prio, t: Date.now(), go }); pqPump(); });
   const t = Date.now(), at = Math.max(t, dmNextAt); dmNextAt = at + DM_GAP_MS; if (at > t) await sleep(at - t);
 }
+let LAST_SWAP_DM = 0;   // last swap DM sent (anything but the giveaway's prio 9), for the giveaway's quiet gaps
 async function dmSend(auth, channelId, text, prio = 2) {
   if (DM_STOP) throw new Error('DMs stopped (emergency stop)');
-  await dmPace(prio);
+  await dmPace(prio); if (prio < 9) LAST_SWAP_DM = Date.now();
   const res = await fetch(`https://web.realapp.com/messages/channels/${channelId}/messages`, {
     method: 'POST', headers: { ...rsHeaders(auth), 'content-type': 'application/json' },
     body: JSON.stringify({ text, parentMessageId: null }) });
@@ -2782,14 +2783,18 @@ const DM_OWNER_ON = false;
    DMs. Stop any time: KV grpdm_stop. Finishes on its own; ends Saturday 12am ET. */
 const GRPDM = { group: 60099, key: 'grpdm_v1', until: Date.parse('2026-11-28T05:00:00Z'),
   text: "You\u2019re in https://www.realapp.com/nlvcQFNFg4k , to automatically enter a 25k giveaway leave it by 12am est Saturday\n\nIf you use EV on edge, it\u2019s provided here aswell but all features free and numbers are more accurate\nhttps://www.realapp.com/beI8FMFdORk" };
+const GRPDM_DDL = 'CREATE TABLE IF NOT EXISTS grpdm_list (userName TEXT PRIMARY KEY, channelId INTEGER, foundAt INTEGER, sentAt INTEGER, leftAt INTEGER)';
 export async function grpDmTick(env) {
   const db = env.RATEBOARD_DB; if (!db || Date.now() > GRPDM.until) return;
+  await db.prepare(GRPDM_DDL).run();
+  const note = (u, ch, sent) => db.prepare('INSERT INTO grpdm_list (userName, channelId, foundAt, sentAt) VALUES (?, ?, ?, ?) ON CONFLICT(userName) DO UPDATE SET sentAt = COALESCE(excluded.sentAt, grpdm_list.sentAt)').bind(u, ch, Date.now(), sent ? Date.now() : null).run().catch(() => {});
   try { if (await env.RATEBOARD_KV.get('grpdm_stop')) return; } catch (e) { return; }
   let st = null; try { st = JSON.parse((await env.RATEBOARD_KV.get(GRPDM.key)) || 'null'); } catch (e) {}
   if (st && st.lock && Date.now() - st.lock < 4 * 60000) return;
   if (!st) { const rows = ((await db.prepare('SELECT hashId, userName, channelId FROM swap_dm WHERE userName IS NOT NULL AND channelId IS NOT NULL').all()).results) || [];
     st = { look: rows.map(r => [r.userName, r.channelId]), hit: [], sent: [], fail: 0, looked: 0, at: Date.now() }; }
   st.lock = Date.now(); await env.RATEBOARD_KV.put(GRPDM.key, JSON.stringify(st), { expirationTtl: 7 * 86400 });
+  if (!st.listed) { for (const [u, ch] of st.hit) await note(u, ch, false); for (const u of st.sent) await note(u, null, true); st.listed = 1; }   // the ones found before the list existed
   const save = async () => { st.lock = 0; await env.RATEBOARD_KV.put(GRPDM.key, JSON.stringify(st), { expirationTtl: 7 * 86400 }); };
   try {
     // 1. Look up up to 6 usernames this minute.
@@ -2798,16 +2803,17 @@ export async function grpDmTick(env) {
       const r = await fetch(`https://web.realapp.com/groups/${GRPDM.group}/searchmembers?permissionsFilter=all&query=${encodeURIComponent(u)}`, { headers: rsHeaders(tok) });
       if (r.status === 429) { st.rest = Date.now() + 10 * 60000; break; }
       st.look.shift(); st.looked++;
-      if (r.ok) { const j = await r.json().catch(() => null); if (((j && j.users) || []).some(x => String(x.userName || '').toLowerCase() === String(u).toLowerCase())) st.hit.push([u, ch]); }
+      if (r.ok) { const j = await r.json().catch(() => null); if (((j && j.users) || []).some(x => String(x.userName || '').toLowerCase() === String(u).toLowerCase())) { st.hit.push([u, ch]); await note(u, ch, false); } }
       await sleep(10000); }
     // 2. One message, if no swap is near and the bot isn't busy.
     if (st.hit.length) {
       const near = await db.prepare("SELECT COUNT(*) AS n FROM swap_matches WHERE dueAt BETWEEN ? AND ? AND status NOT IN ('cancelled','cleared')").bind(Date.now() - 5 * 60000, Date.now() + 5 * 60000).first().catch(() => ({ n: 1 }));
-      const held = DM_STOP || PQ.length > 0;
+      // Only in a quiet gap between swap DMs (Dennis): nothing queued and no swap DM in the last 2 minutes.
+      const held = DM_STOP || PQ.length > 0 || Date.now() - LAST_SWAP_DM < 120000;
       if (!(near && near.n) && !held) { const [u, ch] = st.hit.shift();
         const bad = await db.prepare('SELECT n FROM dm_403 WHERE key=? AND n >= 3').bind(String(u).toLowerCase()).first().catch(() => null);
-        if (!bad) { try { await dmSend(swapToken(env), ch, GRPDM.text, 9); st.sent.push(u); await stat(db, 'grpdm'); } catch (e) { st.fail++; st.lastErr = String(e.message || e).slice(0, 100); if (/429/.test(st.lastErr)) st.hit.unshift([u, ch]); } } }
-      else { st.waits = (st.waits || 0) + 1; st.why = (near && near.n ? 'swap near ' + near.n : '') + (DM_STOP ? ' hold' : '') + (PQ.length ? ' queue ' + PQ.length : ''); }
+        if (!bad) { try { await dmSend(swapToken(env), ch, GRPDM.text, 9); st.sent.push(u); await note(u, ch, true); await stat(db, 'grpdm'); } catch (e) { st.fail++; st.lastErr = String(e.message || e).slice(0, 100); if (/429/.test(st.lastErr)) st.hit.unshift([u, ch]); } } }
+      else { st.waits = (st.waits || 0) + 1; st.why = (near && near.n ? 'swap near ' + near.n : '') + (DM_STOP ? ' hold' : '') + (PQ.length ? ' queue ' + PQ.length : '') + (Date.now() - LAST_SWAP_DM < 120000 ? ' swap DM just sent' : ''); }
     }
     if (!st.look.length && !st.hit.length) st.done = st.done || Date.now();
   } catch (e) { st.lastErr = String(e.message || e).slice(0, 100); }
@@ -7204,6 +7210,13 @@ async function handle({ request, env, waitUntil }) {
   // Blacklist search (2026-11-11): swappers whose name starts with what's typed, as they type.
   /* Testers page (Dennis only, 2026-11-25): who can open each page still being built. GET lists them with Real names;
      ?q= finds members by site or Real name; POST {page, add} / {page, del} changes a list. */
+  // The giveaway list (Dennis only): every member of group 60099 the bot has a chat with, and when they were messaged.
+  if (op === 'grpdm') {
+    if (String(me || '').toLowerCase() !== 'dennis') return forbidden('Only Dennis can open this.');
+    try { await db.prepare(GRPDM_DDL).run(); } catch (e) {}
+    const rows = ((await db.prepare('SELECT userName, foundAt, sentAt, leftAt FROM grpdm_list ORDER BY foundAt').all()).results) || [];
+    return json({ rows, status: await grpDmStatus(env) });
+  }
   if (op === 'testers') {
     if (String(me || '').toLowerCase() !== 'dennis') return forbidden('Only Dennis can open this.');
     const q = String(url.searchParams.get('q') || '').trim().toLowerCase().replace(/^@/, '').slice(0, 30);
