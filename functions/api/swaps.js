@@ -3548,15 +3548,20 @@ export async function swapTick(env) {
     let h = 0; for (const c of String(auth)) h = (h * 31 + c.charCodeAt(0)) | 0; const tok = (h >>> 0).toString(36);
     if (!(await env.RATEBOARD_KV.get('swaps_hold_set_1119'))) { await env.RATEBOARD_KV.put('swaps_hold_set_1119', '1', { expirationTtl: 30 * 86400 });
       await env.RATEBOARD_KV.put('swaps_hold', JSON.stringify({ at: Date.now(), tok, why: 'swap bot is logged out' })); }
+    /* Swaps down by hand (Dennis, 2026-11-26 2:47pm AK: "feature is down, issue getting resolved"). A manual hold
+       never lifts by itself - only when he says it's fixed (swaps_hold and swaps_down deleted). */
+    if (!(await env.RATEBOARD_KV.get('swaps_down_set_1126'))) { await env.RATEBOARD_KV.put('swaps_down_set_1126', '1', { expirationTtl: 30 * 86400 });
+      await env.RATEBOARD_KV.put('swaps_hold', JSON.stringify({ at: Date.now(), tok, manual: true, why: 'swaps down by Dennis' }));
+      await env.RATEBOARD_KV.put('swaps_down', JSON.stringify({ at: Date.now(), msg: 'Feature is down, issue getting resolved. We\u2019ll post in the big group when it\u2019s fixed.' })); }
     const hold = JSON.parse((await env.RATEBOARD_KV.get('swaps_hold')) || 'null');
-    if (hold && hold.tok !== tok) { await env.RATEBOARD_KV.delete('swaps_hold'); await env.RATEBOARD_KV.put('swaps_hold_lifted', String(Date.now()), { expirationTtl: 30 * 86400 }); await db.prepare("INSERT INTO bot_log (at, kind, msg) VALUES (?, 'match', ?)").bind(Date.now(), 'hold lifted: new bot token').run().catch(() => {}); }
-    else if (hold && hold.probe && hold.probe.ok >= 2) { await env.RATEBOARD_KV.delete('swaps_hold'); await env.RATEBOARD_KV.put('swaps_hold_lifted', String(Date.now()), { expirationTtl: 30 * 86400 });
+    if (hold && !hold.manual && hold.tok !== tok) { await env.RATEBOARD_KV.delete('swaps_hold'); await env.RATEBOARD_KV.put('swaps_hold_lifted', String(Date.now()), { expirationTtl: 30 * 86400 }); await db.prepare("INSERT INTO bot_log (at, kind, msg) VALUES (?, 'match', ?)").bind(Date.now(), 'hold lifted: new bot token').run().catch(() => {}); }
+    else if (hold && !hold.manual && hold.probe && hold.probe.ok >= 2) { await env.RATEBOARD_KV.delete('swaps_hold'); await env.RATEBOARD_KV.put('swaps_hold_lifted', String(Date.now()), { expirationTtl: 30 * 86400 });
       await db.prepare("INSERT INTO bot_log (at, kind, msg) VALUES (?, 'match', ?)").bind(Date.now(), 'hold lifted: Real accepts the bot again').run().catch(() => {}); }
     else if (hold) {
       /* Is the bot let back in? A read-only look at its chat list every 2 min (no message sent). Two OKs in a row lift the hold. */
       if (!hold.probe || Date.now() - hold.probe.at > 120000) { let st = 0; try { const r = await fetch('https://web.realapp.com/messages/channels', { headers: rsHeaders(auth) }); st = r.status; } catch (e) { st = -1; }
         hold.probe = { at: Date.now(), status: st, ok: st >= 200 && st < 300 ? ((hold.probe && hold.probe.ok) || 0) + 1 : 0 }; }
-      const n = Date.now(), note = 'called off: the swap bot is down - swaps resume once it is fixed';
+      const n = Date.now(), note = hold.manual ? 'called off: swaps are down while an issue is fixed' : 'called off: the swap bot is down - swaps resume once it is fixed';
       const a = await db.prepare(`UPDATE swap_matches SET status='cancelled', note=? WHERE status IN ('pending','warned') AND dueAt > ?`).bind(note, n - 5 * 60000).run();
       const b = await db.prepare(`UPDATE swap_160 SET status='cancelled', note=? WHERE status IN ('pending','warned') AND dueAt > ?`).bind(note, n - 5 * 60000).run().catch(() => null);
       hold.off = (hold.off || 0) + ((a && a.meta && a.meta.changes) || 0); hold.off160 = (hold.off160 || 0) + ((b && b.meta && b.meta.changes) || 0); hold.last = n;
@@ -7680,7 +7685,8 @@ async function handle({ request, env, waitUntil }) {
     const lowP = u && !lite && url.searchParams.get('page') !== 'packs' ? await (async () => { try { return [...await lowPlays(env, db, parse(u.passes, []).filter(p => p.kind !== 'team').map(p => p.key), thinP, u.key)]; } catch (e) { return []; } })() : [];
     mark(request, 'plays');
     const cDay = confirmDayNow();
-    return json({ confirmShow: Date.now() >= CONFIRM_SHOW_AT, confirmedToday: !!(u && u.confirmDay === cDay), confirmStarts: CONFIRM_FROM_DAY, swapToday: cDay, key: me, tests: await testerPagesFor(env, me), admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
+    let down = null; try { down = JSON.parse((await env.RATEBOARD_KV.get('swaps_down')) || 'null'); } catch (e) {}   // the "swaps are down" notice
+    return json({ down: down && down.msg || null, confirmShow: Date.now() >= CONFIRM_SHOW_AT, confirmedToday: !!(u && u.confirmDay === cDay), confirmStarts: CONFIRM_FROM_DAY, swapToday: cDay, key: me, tests: await testerPagesFor(env, me), admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
       keep: parse(u.keep, []), touch: parse(u.touch, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: lite ? [] : parse(u.passes, []), passCount: (() => { try { return parse(u.passes, []).length; } catch (e) { return 0; } })(), passSummary: lite ? passSummary(parse(u.passes, [])) : undefined, lowPlays: lowP, thinPlays: String(u && u.key || '').toLowerCase() === THIN_OWNER ? [...thinP] : undefined, scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {}, b160: !!u.b160, s160: !!u.s160, only160: !!u.only160, nicheIn: !!u.nicheIn, niche: parse(u.niche, {}) || {}, nicheLim: nicheLim(u), blist: parse(u.blist, []) || [], lock1: parse(u.lock1, []) || [], noSp: Object.entries(parse(u.noSp, {}) || {}).filter(([, d]) => d === swapDay(Date.now())).map(([sp]) => sp), sell160m: u.sell160m || null, sell160h: parse(u.sell160h, []) } : null, real: realN });
   }
 
