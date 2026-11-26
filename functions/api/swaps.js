@@ -2785,8 +2785,25 @@ const GRPDM = { group: 60099, key: 'grpdm_v1', until: Date.parse('2026-11-28T05:
   text: "You\u2019re in https://www.realapp.com/nlvcQFNFg4k , to automatically enter a 25k giveaway leave it by 12am est Saturday\n\nIf you use EV on edge, it\u2019s provided here aswell but all features free and numbers are more accurate\nhttps://www.realapp.com/beI8FMFdORk" };
 const GRPDM_DDL = 'CREATE TABLE IF NOT EXISTS grpdm_list (userName TEXT PRIMARY KEY, channelId INTEGER, foundAt INTEGER, sentAt INTEGER, leftAt INTEGER)';
 export async function grpDmTick(env) {
-  const db = env.RATEBOARD_DB; if (!db || Date.now() > GRPDM.until) return;
+  const db = env.RATEBOARD_DB; if (!db) return;
   await db.prepare(GRPDM_DDL).run();
+  /* After the deadline (Saturday 12am ET): check everyone on the list against the group again, 6 a minute; anyone no
+     longer found gets leftAt - they're in the giveaway. Runs until each has been checked once (checkedAt). */
+  if (Date.now() > GRPDM.until) {
+    if (Date.now() > GRPDM.until + 3 * 86400000) return;
+    try { await db.prepare('ALTER TABLE grpdm_list ADD COLUMN checkedAt INTEGER').run(); } catch (e) {}
+    const lk = 'grpdm_check_lock'; if (await env.RATEBOARD_KV.get(lk)) return; await env.RATEBOARD_KV.put(lk, '1', { expirationTtl: 240 });
+    try { const tok = env.RS_AUTH_TOKEN; const due = ((await db.prepare('SELECT userName FROM grpdm_list WHERE checkedAt IS NULL LIMIT 6').all()).results) || [];
+      for (const { userName: u } of due) {
+        const r = await fetch(`https://web.realapp.com/groups/${GRPDM.group}/searchmembers?permissionsFilter=all&query=${encodeURIComponent(u)}`, { headers: rsHeaders(tok) });
+        if (r.status === 429) break; if (!r.ok) { await sleep(10000); continue; }
+        const j = await r.json().catch(() => null), still = ((j && j.users) || []).some(x => String(x.userName || '').toLowerCase() === String(u).toLowerCase());
+        await db.prepare('UPDATE grpdm_list SET checkedAt = ?, leftAt = ? WHERE userName = ?').bind(Date.now(), still ? null : Date.now(), u).run();
+        await sleep(10000); }
+    } catch (e) {}
+    try { await env.RATEBOARD_KV.delete(lk); } catch (e) {}
+    return;
+  }
   const note = (u, ch, sent) => db.prepare('INSERT INTO grpdm_list (userName, channelId, foundAt, sentAt) VALUES (?, ?, ?, ?) ON CONFLICT(userName) DO UPDATE SET sentAt = COALESCE(excluded.sentAt, grpdm_list.sentAt)').bind(u, ch, Date.now(), sent ? Date.now() : null).run().catch(() => {});
   try { if (await env.RATEBOARD_KV.get('grpdm_stop')) return; } catch (e) { return; }
   let st = null; try { st = JSON.parse((await env.RATEBOARD_KV.get(GRPDM.key)) || 'null'); } catch (e) {}
@@ -7214,7 +7231,8 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'grpdm') {
     if (String(me || '').toLowerCase() !== 'dennis') return forbidden('Only Dennis can open this.');
     try { await db.prepare(GRPDM_DDL).run(); } catch (e) {}
-    const rows = ((await db.prepare('SELECT userName, foundAt, sentAt, leftAt FROM grpdm_list ORDER BY foundAt').all()).results) || [];
+    try { await db.prepare('ALTER TABLE grpdm_list ADD COLUMN checkedAt INTEGER').run(); } catch (e) {}
+    const rows = ((await db.prepare('SELECT userName, foundAt, sentAt, leftAt, checkedAt FROM grpdm_list ORDER BY foundAt').all()).results) || [];
     return json({ rows, status: await grpDmStatus(env) });
   }
   if (op === 'testers') {

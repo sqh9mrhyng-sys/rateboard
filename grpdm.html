@@ -54,7 +54,7 @@
 <div class="wrap">
   <h1>Giveaway list</h1>
   <p class="lead">Members of the group the bot has a chat with. Everyone here gets the giveaway message once, in quiet gaps between swap DMs.</p>
-  <div class="card"><div class="stat" id="stat">Loading…</div><div class="bar"><button type="button" id="copy">Copy usernames</button><button type="button" id="reload">Refresh</button></div>
+  <div class="card"><div class="stat" id="stat">Loading…</div><div class="bar"><button type="button" id="copy">Copy usernames</button><button type="button" id="copyleft">Copy who left</button><button type="button" id="reload">Refresh</button></div>
   <div id="list"></div></div>
 </div>
 <script>
@@ -67,10 +67,11 @@ async function load() {
   let j = {}; try { const r = await fetch('/api/swaps?op=grpdm', { headers: { 'x-rb-token': tok() } }); j = await r.json().catch(() => ({})); if (!r.ok && !j.error) j.error = 'Error ' + r.status; } catch (e) { j = { error: 'Could not reach the site.' }; }
   if (j.error) { if (/only dennis|sign in/i.test(j.error)) { location.replace('/'); return; } $('#stat').textContent = j.error; return; }
   ROWS = j.rows || []; const s = j.status || {}, sent = ROWS.filter(r => r.sentAt).length;
-  $('#stat').innerHTML = `<span><b>${ROWS.length}</b>in the group</span><span><b>${sent}</b>messaged</span><span><b>${ROWS.length - sent}</b>waiting</span><span><b>${s.toLook ?? 0}</b>chats left to check</span>`;
-  $('#list').innerHTML = ROWS.length ? `<table><thead><tr><th>#</th><th>Member</th><th>Messaged (AK)</th></tr></thead><tbody>${ROWS.map((r, i) => `<tr><td class="mute">${i + 1}</td><td>${esc(r.userName)}</td><td>${r.sentAt ? '<span class="ok">' + ak(r.sentAt) + '</span>' : '<span class="mute">waiting</span>'}</td></tr>`).join('')}</tbody></table>` : '<div class="stat">No one yet.</div>';
+  $('#stat').innerHTML = `<span><b>${ROWS.length}</b>in the group</span><span><b>${sent}</b>messaged</span><span><b>${ROWS.length - sent}</b>waiting</span><span><b>${s.toLook ?? 0}</b>chats left to check</span>${ROWS.some(r => r.checkedAt) ? `<span><b>${ROWS.filter(r => r.leftAt).length}</b>left the group (of ${ROWS.filter(r => r.checkedAt).length} rechecked)</span>` : ''}`;
+  $('#list').innerHTML = ROWS.length ? `<table><thead><tr><th>#</th><th>Member</th><th>Messaged (AK)</th><th>Saturday</th></tr></thead><tbody>${ROWS.map((r, i) => `<tr><td class="mute">${i + 1}</td><td>${esc(r.userName)}</td><td>${r.sentAt ? '<span class="ok">' + ak(r.sentAt) + '</span>' : '<span class="mute">waiting</span>'}</td><td>${r.leftAt ? '<span class="ok">Left</span>' : r.checkedAt ? 'Still in' : ''}</td></tr>`).join('')}</tbody></table>` : '<div class="stat">No one yet.</div>';
 }
 $('#copy').onclick = async () => { try { await navigator.clipboard.writeText(ROWS.map(r => r.userName).join('\n')); $('#copy').textContent = 'Copied ' + ROWS.length; } catch (e) { $('#copy').textContent = 'Copy failed'; } setTimeout(() => $('#copy').textContent = 'Copy usernames', 2000); };
+$('#copyleft').onclick = async () => { const l = ROWS.filter(r => r.leftAt).map(r => r.userName); try { await navigator.clipboard.writeText(l.join('\n')); $('#copyleft').textContent = 'Copied ' + l.length; } catch (e) { $('#copyleft').textContent = 'Copy failed'; } setTimeout(() => $('#copyleft').textContent = 'Copy who left', 2000); };
 $('#reload').onclick = load;
 load();
 </script>
