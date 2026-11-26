@@ -2784,9 +2784,10 @@ const DM_OWNER_ON = false;
 const GRPDM = { group: 60099, key: 'grpdm_v1', until: Date.parse('2026-11-28T05:00:00Z'),
   text: "You\u2019re in https://www.realapp.com/nlvcQFNFg4k , to automatically enter a 25k giveaway leave it by 12am est Saturday\n\nIf you use EV on edge, it\u2019s provided here aswell but all features free and numbers are more accurate\nhttps://www.realapp.com/beI8FMFdORk" };
 const GRPDM_DDL = 'CREATE TABLE IF NOT EXISTS grpdm_list (userName TEXT PRIMARY KEY, channelId INTEGER, foundAt INTEGER, sentAt INTEGER, leftAt INTEGER)';
+async function grpDmCols(db) { await db.prepare(GRPDM_DDL).run(); for (const c of ['checkedAt', 'heldAt']) { try { await db.prepare(`ALTER TABLE grpdm_list ADD COLUMN ${c} INTEGER`).run(); } catch (e) {} } }
 export async function grpDmTick(env) {
   const db = env.RATEBOARD_DB; if (!db) return;
-  await db.prepare(GRPDM_DDL).run();
+  await grpDmCols(db);
   /* After the deadline (Saturday 12am ET): check everyone on the list against the group again, 6 a minute; anyone no
      longer found gets leftAt - they're in the giveaway. Runs until each has been checked once (checkedAt). */
   if (Date.now() > GRPDM.until) {
@@ -2821,19 +2822,22 @@ export async function grpDmTick(env) {
       const near = await db.prepare("SELECT COUNT(*) AS n FROM swap_matches WHERE dueAt BETWEEN ? AND ? AND status NOT IN ('cancelled','cleared')").bind(Date.now() - 5 * 60000, Date.now() + 5 * 60000).first().catch(() => ({ n: 1 }));
       if (near && near.n) { st.why = 'swap near ' + near.n; return false; } return true; };
     while (Date.now() < stopAt) {
-      if (st.hit.length && await quiet()) { const [u, ch] = st.hit.shift();
+      // Dennis can hold anyone on /grpdm: they stay waiting and are skipped until he lets them go.
+      let held = new Set(); try { held = new Set((((await db.prepare('SELECT userName FROM grpdm_list WHERE heldAt IS NOT NULL').all()).results) || []).map(r => String(r.userName).toLowerCase())); } catch (e) {}
+      const hi = st.hit.findIndex(([u]) => !held.has(String(u).toLowerCase()));
+      if (hi >= 0 && await quiet()) { const [u, ch] = st.hit.splice(hi, 1)[0];
         const bad = await db.prepare('SELECT n FROM dm_403 WHERE key=? AND n >= 3').bind(String(u).toLowerCase()).first().catch(() => null);
         if (!bad) { try { await dmSend(swapToken(env), ch, GRPDM.text, 9); st.sent.push(u); await note(u, ch, true); await stat(db, 'grpdm'); }
           catch (e) { st.fail++; st.lastErr = String(e.message || e).slice(0, 100); if (/429/.test(st.lastErr)) { st.hit.unshift([u, ch]); break; } } }
         await sleep(10000 + Math.floor(Math.random() * 5000)); continue; }
-      if (st.hit.length) st.waits = (st.waits || 0) + 1;
+      if (hi >= 0) st.waits = (st.waits || 0) + 1;
       if (st.look.length && tok && !(st.rest > Date.now())) { const [u, ch] = st.look[0];
         const r = await fetch(`https://web.realapp.com/groups/${GRPDM.group}/searchmembers?permissionsFilter=all&query=${encodeURIComponent(u)}`, { headers: rsHeaders(tok) });
         if (r.status === 429) { st.rest = Date.now() + 10 * 60000; continue; }
         st.look.shift(); st.looked++;
         if (r.ok) { const j = await r.json().catch(() => null); if (((j && j.users) || []).some(x => String(x.userName || '').toLowerCase() === String(u).toLowerCase())) { st.hit.push([u, ch]); await note(u, ch, false); } }
         await sleep(10000); continue; }
-      if (!st.hit.length) break;
+      if (hi < 0) break;   // no one left to send to but held members
       await sleep(10000);   // nothing to look up and not quiet: wait for a gap
     }
     if (!st.look.length && !st.hit.length) st.done = st.done || Date.now();
@@ -7234,9 +7238,10 @@ async function handle({ request, env, waitUntil }) {
   // The giveaway list (Dennis only): every member of group 60099 the bot has a chat with, and when they were messaged.
   if (op === 'grpdm') {
     if (String(me || '').toLowerCase() !== 'dennis') return forbidden('Only Dennis can open this.');
-    try { await db.prepare(GRPDM_DDL).run(); } catch (e) {}
-    try { await db.prepare('ALTER TABLE grpdm_list ADD COLUMN checkedAt INTEGER').run(); } catch (e) {}
-    const rows = ((await db.prepare('SELECT userName, foundAt, sentAt, leftAt, checkedAt FROM grpdm_list ORDER BY foundAt').all()).results) || [];
+    try { await grpDmCols(db); } catch (e) {}
+    if (request.method === 'POST') { const b = await request.json().catch(() => ({})); const u = String(b.user || '').slice(0, 60);
+      if (u) await db.prepare('UPDATE grpdm_list SET heldAt = ? WHERE userName = ? AND sentAt IS NULL').bind(b.hold ? Date.now() : null, u).run(); }
+    const rows = ((await db.prepare('SELECT userName, foundAt, sentAt, leftAt, checkedAt, heldAt FROM grpdm_list ORDER BY foundAt').all()).results) || [];
     return json({ rows, status: await grpDmStatus(env) });
   }
   if (op === 'testers') {

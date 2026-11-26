@@ -39,7 +39,8 @@
   table{width:100%;border-collapse:collapse;font-size:14px} td,th{padding:8px 10px;border-top:1px solid var(--line);text-align:left} th{color:var(--mute);font-size:12.5px;border-top:0}
   .stat{display:flex;gap:16px;flex-wrap:wrap;padding:12px 16px;color:var(--mute);font-size:13.5px} .stat b{color:var(--ink);font-size:18px;display:block}
   .bar{display:flex;gap:8px;padding:0 16px 12px} .bar button{border:1px solid var(--line);background:var(--panel2);border-radius:10px;padding:8px 12px;font-weight:700}
-  .ok{color:var(--ok)} .mute{color:var(--mute)}
+  .ok{color:var(--ok)} .mute{color:var(--mute)} .held{color:var(--accent);font-weight:700}
+  .hb{border:1px solid var(--line);background:var(--panel2);border-radius:8px;padding:4px 10px;font-weight:700;font-size:12.5px} .hb.on{border-color:var(--accent);color:var(--accent)}
 </style>
 <script src="/theme.js"></script>
 <script src="/nav.js?v=9"></script>
@@ -63,16 +64,17 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const tok = () => { try { return localStorage.getItem('ratebrd_token_v1') || ''; } catch (e) { return ''; } };
 const ak = t => t ? new Date(t).toLocaleString('en-US', { timeZone: 'America/Anchorage', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
 let ROWS = [];
-async function load() {
-  let j = {}; try { const r = await fetch('/api/swaps?op=grpdm', { headers: { 'x-rb-token': tok() } }); j = await r.json().catch(() => ({})); if (!r.ok && !j.error) j.error = 'Error ' + r.status; } catch (e) { j = { error: 'Could not reach the site.' }; }
+async function load(body) {
+  let j = {}; try { const r = await fetch('/api/swaps?op=grpdm', body ? { method: 'POST', headers: { 'x-rb-token': tok(), 'content-type': 'application/json' }, body: JSON.stringify(body) } : { headers: { 'x-rb-token': tok() } }); j = await r.json().catch(() => ({})); if (!r.ok && !j.error) j.error = 'Error ' + r.status; } catch (e) { j = { error: 'Could not reach the site.' }; }
   if (j.error) { if (/only dennis|sign in/i.test(j.error)) { location.replace('/'); return; } $('#stat').textContent = j.error; return; }
-  ROWS = j.rows || []; const s = j.status || {}, sent = ROWS.filter(r => r.sentAt).length;
-  $('#stat').innerHTML = `<span><b>${ROWS.length}</b>in the group</span><span><b>${sent}</b>messaged</span><span><b>${ROWS.length - sent}</b>waiting</span><span><b>${s.toLook ?? 0}</b>chats left to check</span>${ROWS.some(r => r.checkedAt) ? `<span><b>${ROWS.filter(r => r.leftAt).length}</b>left the group (of ${ROWS.filter(r => r.checkedAt).length} rechecked)</span>` : ''}`;
-  $('#list').innerHTML = ROWS.length ? `<table><thead><tr><th>#</th><th>Member</th><th>Messaged (AK)</th><th>Saturday</th></tr></thead><tbody>${ROWS.map((r, i) => `<tr><td class="mute">${i + 1}</td><td>${esc(r.userName)}</td><td>${r.sentAt ? '<span class="ok">' + ak(r.sentAt) + '</span>' : '<span class="mute">waiting</span>'}</td><td>${r.leftAt ? '<span class="ok">Left</span>' : r.checkedAt ? 'Still in' : ''}</td></tr>`).join('')}</tbody></table>` : '<div class="stat">No one yet.</div>';
+  ROWS = j.rows || []; const s = j.status || {}, sent = ROWS.filter(r => r.sentAt).length, heldN = ROWS.filter(r => r.heldAt && !r.sentAt).length;
+  $('#stat').innerHTML = `<span><b>${ROWS.length}</b>in the group</span><span><b>${sent}</b>messaged</span><span><b>${ROWS.length - sent - heldN}</b>waiting</span><span><b>${heldN}</b>held</span><span><b>${s.toLook ?? 0}</b>chats left to check</span>${ROWS.some(r => r.checkedAt) ? `<span><b>${ROWS.filter(r => r.leftAt).length}</b>left the group (of ${ROWS.filter(r => r.checkedAt).length} rechecked)</span>` : ''}`;
+  $('#list').innerHTML = ROWS.length ? `<table><thead><tr><th>#</th><th>Member</th><th>Messaged (AK)</th><th></th><th>Saturday</th></tr></thead><tbody>${ROWS.map((r, i) => `<tr><td class="mute">${i + 1}</td><td>${esc(r.userName)}</td><td>${r.sentAt ? '<span class="ok">' + ak(r.sentAt) + '</span>' : (r.heldAt ? '<span class="held">held</span>' : '<span class="mute">waiting</span>')}</td><td>${r.sentAt ? '' : `<button type="button" class="hb ${r.heldAt ? 'on' : ''}" data-u="${esc(r.userName)}" data-h="${r.heldAt ? 0 : 1}">${r.heldAt ? 'Let go' : 'Hold'}</button>`}</td><td>${r.leftAt ? '<span class="ok">Left</span>' : r.checkedAt ? 'Still in' : ''}</td></tr>`).join('')}</tbody></table>` : '<div class="stat">No one yet.</div>';
 }
 $('#copy').onclick = async () => { try { await navigator.clipboard.writeText(ROWS.map(r => r.userName).join('\n')); $('#copy').textContent = 'Copied ' + ROWS.length; } catch (e) { $('#copy').textContent = 'Copy failed'; } setTimeout(() => $('#copy').textContent = 'Copy usernames', 2000); };
 $('#copyleft').onclick = async () => { const l = ROWS.filter(r => r.leftAt).map(r => r.userName); try { await navigator.clipboard.writeText(l.join('\n')); $('#copyleft').textContent = 'Copied ' + l.length; } catch (e) { $('#copyleft').textContent = 'Copy failed'; } setTimeout(() => $('#copyleft').textContent = 'Copy who left', 2000); };
-$('#reload').onclick = load;
+$('#reload').onclick = () => load();
+$('#list').addEventListener('click', e => { const b = e.target.closest('.hb'); if (!b) return; b.disabled = true; load({ user: b.dataset.u, hold: b.dataset.h === '1' }); });
 load();
 </script>
 </body>
