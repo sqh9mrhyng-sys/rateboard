@@ -6374,7 +6374,7 @@ async function handle({ request, env, waitUntil }) {
     const ETF = ET_DAY_FMT, etd = d => ETF.format(d);
     const days0 = [...Array(7)].map((_, i) => etd(new Date(Date.now() + i * 86400000)));
     const today = days0.includes(url.searchParams.get('day')) ? url.searchParams.get('day') : days0[0];
-    const K = 'boosttop_v8_' + today;   // v4: no one who sat out his team's last game
+    const K = 'boosttop_v9_' + today;   // v4: no one who sat out his team's last game
     try { const c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (c && Date.now() - c.at < 10 * 60000) return json(c); } catch (e) {}
     const out = { at: Date.now(), day: today, sports: {} };
     for (const sp of ['nfl', 'ncaaf', 'nba', 'ncaam', 'nhl', 'soccer']) {
@@ -6392,8 +6392,13 @@ async function handle({ request, env, waitUntil }) {
         if (sp === 'nfl' && sc.ids) { try { Object.assign(inj, await boostTeamInj(env, sp, [...todayG.keys()].map(ab => sc.ids[ab]))); } catch (e) {} }
       }
       try { Object.assign(inj, await boostManualOut(env, sp, today)); } catch (e) {}
+      /* "Sat out his team's last game" only where that game is in the log (2026-11-25: NFL Week 12 wasn't logged for
+         most players yet, so Gibbs, Lamb, Allen and whole teams were left off Thanksgiving). A team where most regulars
+         look like they sat out is a log that hasn't caught up, not a team that sat out. */
+      const mlT = new Map(); for (const r of (pj.rows || [])) { const x = r.x || {}; if (!x.ab || !(x.av > 0.5)) continue; const c = mlT.get(x.ab) || mlT.set(x.ab, [0, 0]).get(x.ab); c[1]++; if (x.ml) c[0]++; }
+      const mlOk = ab => { const c = mlT.get(ab); return !c || c[1] < 3 || c[0] / c[1] <= 0.4; };
       for (const r of (pj.rows || [])) {
-        const x = r.x || {}; if (!x.ab || !(x.av > 0) || x.sk || x.sn || x.ml) continue;
+        const x = r.x || {}; if (!x.ab || !(x.av > 0) || x.sk || x.sn || (x.ml && mlOk(x.ab))) continue;
         const g = todayG.get(x.ab); if (!g) continue;
         const ij = injOf(inj, r.n, sc.ids ? sc.ids[x.ab] : null);
         if (ij && /^(out|injured reserve|doubtful|suspen)/i.test(ij.status)) continue;
