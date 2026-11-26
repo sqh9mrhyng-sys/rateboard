@@ -2776,6 +2776,45 @@ const NO_MSG = new Map();   // members Real just refused a DM for -> when to try
    His own switches on Notifications (Bot DMs); held while swaps are on hold; at most 40 an hour. Never throws. */
 // Off 2026-11-19 11:57 PM AK with the bulk alerts (Dennis: "End the DMs and notifications").
 const DM_OWNER_ON = false;
+/* Group giveaway DM (Dennis, 2026-11-26; his wording). Only members the bot already has a chat with: each chat's
+   username is looked up in group 60099's member search (board account, one every 10 s), and the exact matches get
+   Dennis's message from the bot once, about one a minute, never within 15 minutes of a swap and always behind swap
+   DMs. Stop any time: KV grpdm_stop. Finishes on its own; ends Saturday 12am ET. */
+const GRPDM = { group: 60099, key: 'grpdm_v1', until: Date.parse('2026-11-28T05:00:00Z'),
+  text: "You\u2019re in https://www.realapp.com/nlvcQFNFg4k , to automatically enter a 25k giveaway leave it by 12am est Saturday\n\nIf you use EV on edge, it\u2019s provided here aswell but all features free and numbers are more accurate\nhttps://www.realapp.com/beI8FMFdORk" };
+export async function grpDmTick(env) {
+  const db = env.RATEBOARD_DB; if (!db || Date.now() > GRPDM.until) return;
+  try { if (await env.RATEBOARD_KV.get('grpdm_stop')) return; } catch (e) { return; }
+  let st = null; try { st = JSON.parse((await env.RATEBOARD_KV.get(GRPDM.key)) || 'null'); } catch (e) {}
+  if (st && st.lock && Date.now() - st.lock < 4 * 60000) return;
+  if (!st) { const rows = ((await db.prepare('SELECT hashId, userName, channelId FROM swap_dm WHERE userName IS NOT NULL AND channelId IS NOT NULL').all()).results) || [];
+    st = { look: rows.map(r => [r.userName, r.channelId]), hit: [], sent: [], fail: 0, looked: 0, at: Date.now() }; }
+  st.lock = Date.now(); await env.RATEBOARD_KV.put(GRPDM.key, JSON.stringify(st), { expirationTtl: 7 * 86400 });
+  const save = async () => { st.lock = 0; await env.RATEBOARD_KV.put(GRPDM.key, JSON.stringify(st), { expirationTtl: 7 * 86400 }); };
+  try {
+    // 1. Look up up to 6 usernames this minute.
+    const tok = env.RS_AUTH_TOKEN;
+    for (let i = 0; i < 6 && st.look.length && tok; i++) { const [u, ch] = st.look[0];
+      const r = await fetch(`https://web.realapp.com/groups/${GRPDM.group}/searchmembers?permissionsFilter=all&query=${encodeURIComponent(u)}`, { headers: rsHeaders(tok) });
+      if (r.status === 429) { st.rest = Date.now() + 10 * 60000; break; }
+      st.look.shift(); st.looked++;
+      if (r.ok) { const j = await r.json().catch(() => null); if (((j && j.users) || []).some(x => String(x.userName || '').toLowerCase() === String(u).toLowerCase())) st.hit.push([u, ch]); }
+      await sleep(10000); }
+    // 2. One message, if no swap is near and the bot isn't busy.
+    if (st.hit.length) {
+      const near = await db.prepare("SELECT COUNT(*) AS n FROM swap_matches WHERE dueAt BETWEEN ? AND ? AND status NOT IN ('cancelled','cleared')").bind(Date.now() - 15 * 60000, Date.now() + 15 * 60000).first().catch(() => ({ n: 1 }));
+      const held = DM_STOP || PQ.length > 0;
+      if (!(near && near.n) && !held) { const [u, ch] = st.hit.shift();
+        const bad = await db.prepare('SELECT n FROM dm_403 WHERE key=? AND n >= 3').bind(String(u).toLowerCase()).first().catch(() => null);
+        if (!bad) { try { await dmSend(swapToken(env), ch, GRPDM.text, 9); st.sent.push(u); await stat(db, 'grpdm'); } catch (e) { st.fail++; st.lastErr = String(e.message || e).slice(0, 100); if (/429/.test(st.lastErr)) st.hit.unshift([u, ch]); } } }
+      else st.waits = (st.waits || 0) + 1;
+    }
+    if (!st.look.length && !st.hit.length) st.done = st.done || Date.now();
+  } catch (e) { st.lastErr = String(e.message || e).slice(0, 100); }
+  await save();
+}
+export async function grpDmStatus(env) { try { const st = JSON.parse((await env.RATEBOARD_KV.get(GRPDM.key)) || 'null'); if (!st) return null;
+  return { toLook: st.look.length, looked: st.looked, matched: st.hit.length + st.sent.length, sent: st.sent.length, waiting: st.hit.length, fail: st.fail, lastErr: st.lastErr, done: st.done, stopped: !!(await env.RATEBOARD_KV.get('grpdm_stop')) }; } catch (e) { return null; } }
 export async function dmOwner(env, kind, text) {
   if (!DM_OWNER_ON) return false;
   try {
