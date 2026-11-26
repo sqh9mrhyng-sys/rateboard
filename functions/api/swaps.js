@@ -6783,6 +6783,8 @@ async function handle({ request, env, waitUntil }) {
         let st = {}; try { st = JSON.parse((await env.RATEBOARD_KV.get('bulk_state_v2')) || '{}') || {}; } catch (e) {}
         let rows = [], ended = [];
         try { rows = ((await db.prepare('SELECT id, endsAt, sport, season, playerId, name, rarity, rating, buyNow, minBid, curBid, bids FROM bulk_listings WHERE endsAt > ? ORDER BY endsAt LIMIT 6000').bind(Date.now()).all()).results) || []; } catch (e) {}
+        // Not seen on the last read of their stretch of the list: likely gone, waiting to be checked (2026-11-26).
+        { const gq = new Set((st.goneQ || []).map(Number)); if (gq.size) rows = rows.filter(r => !gq.has(Number(r.id))); }
         try { ended = ((await db.prepare("SELECT id, endsAt, sport, season, playerId, name, rarity, rating, buyNow, price, bids, how FROM bulk_results WHERE endsAt > ? AND price IS NOT NULL ORDER BY endsAt DESC LIMIT 20000").bind(Date.now() - 60 * 86400000).all()).results) || []; } catch (e) {}
         let unsold = []; try { unsold = ((await db.prepare("SELECT sport, season, playerId, endsAt FROM bulk_results WHERE endsAt > ? AND price IS NULL LIMIT 30000").bind(Date.now() - 60 * 86400000).all()).results) || []; } catch (e) {}
         const fix = r => { for (const k of Object.keys(r)) if (r[k] == null) delete r[k]; return r; };   // links are made on the page; empty fields dropped (keeps it small)

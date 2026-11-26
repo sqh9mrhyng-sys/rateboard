@@ -584,7 +584,7 @@ async function bulkTick(env) {
   const SK = 'bulk_state_v2';
   let st = {}; try { st = JSON.parse((await env.RATEBOARD_KV.get(SK)) || '{}') || {}; } catch (e) {}
   if (st.pauseUntil && Date.now() < st.pauseUntil) return;
-  if (st.lock && Date.now() - st.lock < 4 * 60000) return;   // a run is still going
+  if (st.lock && Date.now() - st.lock < 12 * 60000) return;   // a run is still going (runs can take ~8 min since 2026-11-26)
   const full = !st.fullDone, watchDue = !full && Date.now() >= (st.nextWatch || 0);
   if (!full && !watchDue) return;
   st.lock = Date.now(); await env.RATEBOARD_KV.put(SK, JSON.stringify(st));
@@ -624,12 +624,32 @@ async function bulkTick(env) {
   const page = async cursor => { const r = await get(`cardmarketplacelistings?${cursor ? 'beforeEndsAt=' + encodeURIComponent(cursor) + '&' : ''}${base}`);
     if (!r || r.status !== 200) return null; const L = (r.d && r.d.listings) || []; if (r.d && r.d.listingCount != null) st.count = r.d.listingCount; await save(L); return L; };
   // Walk pages from a start time until past an end time (or out of pages).
-  const walk = async (from, until, maxPages) => { let cur = from, pages = 0;
-    while (pages < maxPages && !stop) { const L = await page(cur); pages++; if (!L || !L.length) return { done: true, cur };
-      const last = L[L.length - 1]; const nx = last.endsAt === cur ? new Date(Date.parse(last.endsAt) + 1).toISOString() : last.endsAt;
-      if (L.length < 10 || (until && Date.parse(last.endsAt) >= until)) return { done: true, cur: nx };
+  /* Each walk notes the stretch of end times it read in full (2026-11-26, members: listings bought out early or
+     re-bid still showed hours left at the old price). A listing in that stretch that didn't come back is gone. */
+  const runStart = Date.now(), spans = [];
+  const walk = async (from, until, maxPages) => { let cur = from, pages = 0; const a = from ? Date.parse(from) : Date.now();
+    const done = (c, end) => { if (end > a) spans.push([a, end]); return { done: true, cur: c }; };
+    while (pages < maxPages && !stop) { const L = await page(cur); pages++; if (!L) return { done: false, cur }; if (!L.length) return done(cur, Infinity);
+      const last = L[L.length - 1], le = Date.parse(last.endsAt); const nx = last.endsAt === cur ? new Date(le + 1).toISOString() : last.endsAt;
+      if (L.length < 10) return done(nx, Infinity);
+      if (until && le >= until) return done(nx, le - 1);
       cur = nx; }
+    if (cur && Date.parse(cur) > a) spans.push([a, Date.parse(cur) - 1]);
     return { done: false, cur }; };
+  // One listing read on its own: gone (bought, ended, pulled) goes to the results, else its bid and time are updated.
+  const checkOne = async x => {
+    await sleep(BULK_GAP); let r = null;
+    try { const res = await fetch(`https://web.realapp.com/cardmarketplacelistings/${x.id}`, { headers: rsHeaders(tok) }); st.reqs = (st.reqs || 0) + 1; r = { status: res.status, d: res.ok ? await res.json().catch(() => null) : null }; } catch (e) { return; }
+    if (r.status === 429) { st.pauseUntil = Date.now() + 30 * 60000; stop = true; return; }
+    const L = r.status === 200 && r.d ? (r.d.listing || r.d) : null;
+    const gone = r.status === 403 || r.status === 404 || r.status === 410 || (L && (L.purchasedUserId != null || L.finalPurchaseAmount != null || /sold|complete|purchas|cancel|expire|closed/i.test(String(L.status || ''))));
+    if (gone) { const price = L ? (num(L.finalPurchaseAmount) ?? null) : null, sold = L && (L.purchasedUserId != null || L.finalPurchaseAmount != null);
+      const how = sold ? (num(L.buyNowPrice) != null && price === num(L.buyNowPrice) ? 'buy now' : 'sold') : 'unsold';
+      await db.prepare(`INSERT OR REPLACE INTO bulk_results (id, endsAt, sport, season, playerId, name, rarity, rating, mult, buyNow, minBid, price, bids, how, lastSeenBid, lastSeenAt, savedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .bind(x.id, Math.min(Date.now(), x.endsAt || Date.now()), x.sport, x.season, x.playerId, x.name, x.rarity, x.rating, x.mult, x.buyNow, x.minBid, sold ? (price ?? x.buyNow) : null, x.bids, how, x.curBid, x.seenAt, Date.now()).run();
+      await db.prepare('DELETE FROM bulk_listings WHERE id=?').bind(x.id).run(); st.goneN = (st.goneN || 0) + 1; }
+    else if (L) await db.prepare('UPDATE bulk_listings SET curBid=?, bids=?, endsAt=?, seenAt=? WHERE id=?').bind(num(L.currentBidAmount), Number(L.numBids) || 0, Date.parse(L.endsAt) || x.endsAt, Date.now(), x.id).run();
+  };
   try {
     if (full) {
       // 1. The one full scan, a minute's worth at a time.
@@ -637,9 +657,9 @@ async function bulkTick(env) {
       st.fullCursor = r.cur;
       if (r.done && !stop) { st.fullDone = Date.now(); st.lastWatch = Date.now(); st.nextWatch = Date.now() + BULK_EVERY * 60000; }
     } else {
-      // 2a. Ending in the next 10 minutes (their last bids).
+      // 2a. Ending in the next hour (their bids and times, read every run - was the next 10 minutes).
       const now = Date.now();
-      await walk(null, now + 10 * 60000, 3);
+      await walk(null, now + 60 * 60000, 6);
       // 2b. New listings only: the slice ending 12/24/48/72h after the last watch up to now.
       const since = st.lastWatch || now - BULK_EVERY * 60000;
       for (const h of BULK_HOURS) { if (stop) break; await walk(new Date(since + h * 3600000 - 60000).toISOString(), now + h * 3600000, 3); }
@@ -656,7 +676,7 @@ async function bulkTick(env) {
           /* Oldest-checked first (2026-11-17: a Messi bought 7 hours earlier still showed - the same top 8 by
              profit were re-read every time, so deals further down were never checked). A bought listing drops
              out of the page walks, so its seenAt goes stale and it comes up first. */
-          .sort((a, b) => (a.x.seenAt || 0) - (b.x.seenAt || 0)).slice(0, 12);
+          .sort((a, b) => (a.x.seenAt || 0) - (b.x.seenAt || 0)).slice(0, 6);
         for (const { x } of cand) { if (stop) break;
           // Read on its own (a 403/404 here means the listing is gone, not that account 2 is refused).
           await sleep(BULK_GAP); let r = null;
@@ -669,6 +689,17 @@ async function bulkTick(env) {
             await db.prepare('DELETE FROM bulk_listings WHERE id=?').bind(x.id).run(); st.dealsGone = (st.dealsGone || 0) + 1; }
           else if (L) await db.prepare('UPDATE bulk_listings SET curBid=?, bids=?, seenAt=? WHERE id=?').bind(num(L.currentBidAmount), Number(L.numBids) || 0, Date.now(), x.id).run();
         }
+      } catch (e) {} }
+      /* 2d. The rest of the list, a few pages a run from where the last run stopped, so every listing is read
+         again every few hours (bids, extended times, early buy-outs). */
+      if (!stop) { if (!st.sweepCur || Date.parse(st.sweepCur) < now + 60 * 60000) st.sweepCur = new Date(now + 60 * 60000).toISOString();
+        const r = await walk(st.sweepCur, null, 4); st.sweepCur = r.done ? null : r.cur; if (r.done) st.sweeps = (st.sweeps || 0) + 1; }
+      // 2e. Listings in a stretch read in full that didn't come back: read each on its own (6 a run).
+      if (!stop) { try {
+        const q = new Set(st.goneQ || []);
+        for (const [a, b] of spans) for (const r of (((await db.prepare('SELECT id FROM bulk_listings WHERE endsAt >= ? AND endsAt <= ? AND seenAt < ?').bind(a, Number.isFinite(b) ? b : 9e15, runStart).all()).results) || [])) q.add(Number(r.id));
+        const ids = [...q]; st.goneQ = ids.slice(6, 300);
+        for (const id of ids.slice(0, 6)) { if (stop) break; const x = await db.prepare('SELECT * FROM bulk_listings WHERE id=?').bind(id).first(); if (x) await checkOne(x); }
       } catch (e) {} }
       st.lastWatch = now; st.nextWatch = now + BULK_EVERY * 60000; st.watches = (st.watches || 0) + 1;
     }
