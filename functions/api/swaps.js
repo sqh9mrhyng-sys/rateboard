@@ -2778,7 +2778,7 @@ const NO_MSG = new Map();   // members Real just refused a DM for -> when to try
 const DM_OWNER_ON = false;
 /* Group giveaway DM (Dennis, 2026-11-26; his wording). Only members the bot already has a chat with: each chat's
    username is looked up in group 60099's member search (board account, one every 10 s), and the exact matches get
-   Dennis's message from the bot once, about one a minute, never within 15 minutes of a swap and always behind swap
+   Dennis's message from the bot once, about one a minute, never within 5 minutes of a swap (swaps run almost all the time) and always behind swap
    DMs. Stop any time: KV grpdm_stop. Finishes on its own; ends Saturday 12am ET. */
 const GRPDM = { group: 60099, key: 'grpdm_v1', until: Date.parse('2026-11-28T05:00:00Z'),
   text: "You\u2019re in https://www.realapp.com/nlvcQFNFg4k , to automatically enter a 25k giveaway leave it by 12am est Saturday\n\nIf you use EV on edge, it\u2019s provided here aswell but all features free and numbers are more accurate\nhttps://www.realapp.com/beI8FMFdORk" };
@@ -2802,7 +2802,7 @@ export async function grpDmTick(env) {
       await sleep(10000); }
     // 2. One message, if no swap is near and the bot isn't busy.
     if (st.hit.length) {
-      const near = await db.prepare("SELECT COUNT(*) AS n FROM swap_matches WHERE dueAt BETWEEN ? AND ? AND status NOT IN ('cancelled','cleared')").bind(Date.now() - 15 * 60000, Date.now() + 15 * 60000).first().catch(() => ({ n: 1 }));
+      const near = await db.prepare("SELECT COUNT(*) AS n FROM swap_matches WHERE dueAt BETWEEN ? AND ? AND status NOT IN ('cancelled','cleared')").bind(Date.now() - 5 * 60000, Date.now() + 5 * 60000).first().catch(() => ({ n: 1 }));
       const held = DM_STOP || PQ.length > 0;
       if (!(near && near.n) && !held) { const [u, ch] = st.hit.shift();
         const bad = await db.prepare('SELECT n FROM dm_403 WHERE key=? AND n >= 3').bind(String(u).toLowerCase()).first().catch(() => null);
