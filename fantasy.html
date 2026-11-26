@@ -30,6 +30,10 @@
   .app{font-size:11px;font-weight:800;padding:2px 7px;border-radius:999px;background:var(--panel2);color:var(--accent);margin-left:6px;vertical-align:middle}
   .books{grid-column:1/-1;font-size:12px;color:var(--mute);border-top:1px solid var(--line);padding-top:6px;margin-top:2px;display:none}
   .pk.open .books{display:block}
+  .btab{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}
+  .btab th{text-align:left;font-weight:700;color:var(--mute);padding:3px 4px;border-bottom:1px solid var(--line)}
+  .btab td{padding:3px 4px;color:var(--ink)} .btab tbody tr+tr td{border-top:1px solid var(--line)}
+  .btab tfoot td{border-top:1px solid var(--line);color:var(--mute);font-weight:700}
   .slip{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin:10px 0}
   .slip h3{margin:0 0 6px;font-size:15px;display:flex;justify-content:space-between;gap:10px} .slip li{margin:3px 0;font-size:14px}
   .slip ol{margin:4px 0 0;padding-left:20px}
@@ -154,7 +158,7 @@ function buildPicks(){
   const evName = id => { const e = (D.events || []).find(x => x.id === id); return e ? { game: `${e.away} @ ${e.home}`, start: e.start } : { game: '', start: null }; };
   for (const [id, ev] of Object.entries(D.ev || {})) { const g = evName(id); if (g.start && Date.parse(g.start) <= Date.now()) continue;
     for (const [mk, players] of Object.entries(ev.props || {})) for (const [pl, books] of Object.entries(players)) {
-      const refs = Object.entries(books).filter(([b, x]) => W[b] && x.L != null && x.o > 1 && x.u > 1).map(([b, x]) => { const io = 1 / x.o, iu = 1 / x.u; return { b, L: x.L, p: io / (io + iu), w: W[b] }; });
+      const refs = Object.entries(books).filter(([b, x]) => W[b] && x.L != null && x.o > 1 && x.u > 1).map(([b, x]) => { const io = 1 / x.o, iu = 1 / x.u; return { b, L: x.L, p: io / (io + iu), w: W[b], o: x.o, u: x.u, link: x.link }; });
       if (refs.length < 2) continue;
       /* Lines to beat: Underdog's one line, and every Kalshi strike (15+, 20+, ...) - Kalshi's own data, at the ask. */
       const lines = [];
@@ -175,6 +179,15 @@ function buildPicks(){
 function beNow(){ const m = BE_TYPE.match(/^(std|flex)(\d)$/); return m ? breakeven(m[1], Number(m[2])) : 0.5413; }
 function edgeOf(p, be){ return p.app === 'kalshi' ? p.ev : p.fair - be; }
 
+/* Tap a pick: every book the fair % comes from (2026-11-26, Dennis). Line, the book's odds both ways, its no-vig %
+   for this side at its own line, that % moved to the app's line, and the weight it gets. */
+const am = d => d >= 2 ? '+' + Math.round((d - 1) * 100) : '-' + Math.round(100 / (d - 1));
+function booksTable(p){
+  const sd = x => p.side === 'o' ? x : 1 - x, rows = p.refs.slice().sort((a, b) => b.w - a.w).map(r => { const at = sd(moveLine(p.mk, r.L, r.p, p.L));
+    return `<tr><td>${esc(BN[r.b] || r.b)}</td><td>${r.L}</td><td>${am(r.o)} / ${am(r.u)}</td><td>${(sd(r.p) * 100).toFixed(1)}%</td><td><b>${(at * 100).toFixed(1)}%</b></td><td>×${r.w}</td></tr>`; }).join('');
+  return `<table class="btab"><thead><tr><th>Book</th><th>Line</th><th>Over / Under</th><th>No-vig ${p.side === 'o' ? 'over' : 'under'}</th><th>At ${p.L}</th><th>Weight</th></tr></thead><tbody>${rows}</tbody>
+    <tfoot><tr><td colspan="4">Weighted fair at ${p.L}${p.app === 'kalshi' ? ` · Kalshi ask ${(p.price * 100).toFixed(0)}¢` : p.udP ? ` · Underdog ${am(p.udP)}` : ''}</td><td><b>${(p.fair * 100).toFixed(1)}%</b></td><td></td></tr></tfoot></table>`;
+}
 function drawPicks(){
   const be = beNow(), m = BE_TYPE.match(/^(std|flex)(\d)$/);
   $('#bnote').textContent = `Underdog picks vs a ${m ? slipName(m[1], Number(m[2])) : '5-pick Flex'}: break-even ${(be * 100).toFixed(1)}% a pick (change in How it works → Settings). Kalshi shows EV after fee.`;
@@ -185,14 +198,13 @@ function drawPicks(){
   if (!P.length) { $('#picks').innerHTML = `<div class="empty">${D && Object.keys(D.ev || {}).length ? 'No picks match - try "Any edge".' : (D && D.lastPull ? (D.events || []).length ? 'Games found, but no props posted for them yet. Pull again closer to game time.' : 'No NBA or NFL games in the next 30 hours.' : 'Tap Pull props to load today\'s props.')}</div>`; return; }
   $('#picks').innerHTML = P.slice(0, 200).map(p => {
     const sideTxt = p.app === 'underdog' ? (p.side === 'o' ? 'Higher' : 'Lower') : (p.side === 'o' ? `Yes ${Math.ceil(p.L)}+` : `No ${Math.ceil(p.L)}+`);
-    const bl = p.refs.map(r => `${BN[r.b] || r.b} ${r.L} (${(p.side === 'o' ? r.p : 1 - r.p) * 100 >> 0}%)`).join(' · ');
     const ud = p.app === 'underdog' && p.udP ? `<div class="ud">UD ${p.udP.toFixed(2)} (${(100 / p.udP).toFixed(1)}%) · fair <b>${(1 / p.fair).toFixed(2)}</b></div>` : p.app === 'kalshi' ? `<div class="ud">Kalshi ${(p.price * 100).toFixed(0)}¢ ask${p.spread != null ? ` (spread ${(p.spread * 100).toFixed(0)}¢)` : ''} · fair <b>${(p.fair * 100).toFixed(0)}¢</b></div>` : `<div class="ud">Fair odds <b>${(1 / p.fair).toFixed(2)}</b></div>`;
     return `<div class="pk ${LOCK.has(p.key) ? 'sel' : ''} ${OPEN.has(p.key) ? 'open' : ''}" data-k="${esc(p.key)}">
       <input type="checkbox" class="ck" data-sel="${esc(p.key)}" ${LOCK.has(p.key) ? 'checked' : ''} aria-label="Add to parlay">
       <div class="who"><b>${esc(p.pl)}<span class="app">${p.app === 'underdog' ? 'Underdog' : 'Kalshi'}</span></b><span>${esc(MK[p.mk] ? MK[p.mk][0] : p.mk)} <b style="display:inline;color:var(--ink)">${p.L}</b> <span class="side ${p.side}">${sideTxt}</span> · ${esc(p.game)}</span>${ud}</div>
       <div class="num">Fair hit<b>${(p.fair * 100).toFixed(1)}%</b></div>
       <div class="num">${p.app === 'kalshi' ? 'EV' : 'Edge'}<b class="${p.edge >= 0 ? 'pos' : 'neg'}">${p.edge >= 0 ? '+' : ''}${(p.edge * 100).toFixed(1)}%</b></div>
-      <div class="books">${p.app === 'kalshi' ? `Kalshi ${(p.price * 100).toFixed(0)}¢ · ` : ''}Books (${p.n}, avg line ${p.cons.toFixed(1)}): ${esc(bl)}</div></div>`; }).join('');
+      <div class="books">${booksTable(p)}</div></div>`; }).join('');
 }
 function drawSlips(){
   const all = buildPicks().filter(p => p.app === 'underdog');
