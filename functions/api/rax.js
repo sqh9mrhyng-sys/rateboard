@@ -1726,6 +1726,10 @@ const DFS_DAY_BUDGET = 30000;
 // Kalshi NBA prop series -> our stat keys (series that don't exist just come back empty).
 const KALSHI_NBA = { KXNBAPTS: 'player_points', KXNBAREB: 'player_rebounds', KXNBAAST: 'player_assists', KXNBA3PT: 'player_threes', KXNBA3PM: 'player_threes',
   KXNBAPRA: 'player_points_rebounds_assists', KXNBABLK: 'player_blocks', KXNBASTL: 'player_steals' };
+// Kalshi NFL prop series (2026-11-26) - same shape: "Name: 200+ passing yards", strike 199.5.
+const KALSHI_NFL = { KXNFLPASSYDS: 'player_pass_yds', KXNFLPASSTDS: 'player_pass_tds', KXNFLPASSCOMP: 'player_pass_completions', KXNFLPASSATT: 'player_pass_attempts',
+  KXNFLPASSINT: 'player_pass_interceptions', KXNFLRSHYDS: 'player_rush_yds', KXNFLRSHATT: 'player_rush_attempts', KXNFLREC: 'player_receptions',
+  KXNFLRECYDS: 'player_reception_yds', KXNFLRRYDS: 'player_rush_reception_yds' };
 /* Pulls only when Dennis taps Pull on the page (2026-11-18: "only pull when I click the pull button"). One pull =
    every NBA game still to start, about one credit per stat returned per game. */
 export async function dfsPull(env) {
@@ -1763,7 +1767,8 @@ export async function dfsPull(env) {
     const norm = x => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\b(jr|sr|ii|iii|iv)\b/g, '').replace(/[^a-z]/g, '');
     const idx = {}; for (const [eid, v] of Object.entries(o.ev)) for (const [mk, pls] of Object.entries(v.props || {})) for (const pl of Object.keys(pls)) { idx[mk + '|' + norm(pl)] = [eid, pl]; delete pls[pl].kalshi_lines; }
     o.kalshi = {};
-    for (const [ser, mk] of Object.entries(KALSHI_NBA)) { let cur = '', n = 0, hit = 0;
+    const lgs = new Set((o.events || []).map(e => e.lg || 'NBA'));
+    for (const [ser, mk] of Object.entries({ ...(lgs.has('NBA') ? KALSHI_NBA : {}), ...(lgs.has('NFL') ? KALSHI_NFL : {}) })) { let cur = '', n = 0, hit = 0;
       for (let pg = 0; pg < 6; pg++) {
         const r = await fetch(`https://api.elections.kalshi.com/trade-api/v2/markets?series_ticker=${ser}&status=open&limit=1000${cur ? '&cursor=' + encodeURIComponent(cur) : ''}`);
         if (!r.ok) { if (r.status !== 404) o.errs.push(`Kalshi ${ser} ${r.status}`); break; }
