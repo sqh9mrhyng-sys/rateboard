@@ -81,6 +81,8 @@ export async function onRequest(ctx) {
     const rows = ((await db.prepare('SELECT key, link, bio, open, unit, bg, styles, updatedAt FROM gfx_creators WHERE COALESCE(hidden,0)=0').all()).results) || [];
     // Their Real username (from Swaps sign-up) for the profile link; the board name if they never signed up.
     const rs = {}; try { for (const u of ((await db.prepare('SELECT key, rsUser FROM swap_users WHERE rsUser IS NOT NULL').all()).results || [])) rs[String(u.key).toLowerCase()] = u.rsUser; } catch (e) {}
+    // The Real username they linked on /username wins (2026-11-25: a member renamed there and Graphics still showed his old name).
+    try { for (const u of ((await db.prepare("SELECT key, rsName FROM users WHERE rsName IS NOT NULL AND rsName <> ''").all()).results || [])) rs[String(u.key).toLowerCase()] = u.rsName; } catch (e) {}
     const creators = rows.map(r => { let st = []; try { st = JSON.parse(r.styles || '[]') || []; } catch (e) {}
       // Every style with a design, in the creator's order (6 limit removed 2026-11-20).
       st = st.filter(s => s.imgs && s.imgs.length).slice(0, MAX_STYLES);
