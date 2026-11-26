@@ -5529,6 +5529,14 @@ async function projBuild(env, db, sp) {
   const foot = sp === 'ncaaf' || sp === 'nfl';
   const played = x => (!useMin || x.min == null || Number(x.min) > 0) && !(foot && Number(x.ns) === 1 && !(Number(x.rax) > 0));
   const alias = fc ? (c => c) : projLearnAlias(sp, cur, sched);
+  /* Per team, not one day for everyone (2026-11-25: NFL Week 12 was logged for a few players only, so the latest day in
+     the log was Week 12 and everyone else's Week 12 read as a missed game - Emmett Johnson, Burden, Barkley and Caleb
+     Williams projected far too low). A team's game counts as logged once at least half as many of its players are in
+     it as in its fullest game; until then it's a game still to come in the log, counted at his rate. */
+  const tdN = new Map(), tdMax = new Map();
+  if (!fc) { for (const x of all) { if (!x.team || !x.day) continue; const k = alias(x.team) + '|' + x.day; tdN.set(k, (tdN.get(k) || 0) + 1); }
+    for (const [k, n] of tdN) { const t = k.split('|')[0]; if (n > (tdMax.get(t) || 0)) tdMax.set(t, n); } }
+  const teamLogged = (t, d) => d <= cover && (tdN.get(t + '|' + d) || 0) >= Math.max(2, 0.5 * (tdMax.get(t) || 0));
   // Last season, per game actually played.
   const old = new Map();
   let lgPrev = null;
@@ -5602,7 +5610,7 @@ async function projBuild(env, db, sp) {
         rest = tg.filter(g => !g[2] && Date.parse(g[0]) > Date.now() - 4 * 3600000);
         teamDays = tg.filter(g => g[2]).map(g => etd(g[0])); tgDone = teamDays.length;
         // Finished games the log doesn't reach yet: still to be counted, at his rate.
-        if (cover) { unlogged = tg.filter(g => g[2] && etd(g[0]) > cover); teamDays = teamDays.filter(d => d <= cover); }
+        if (cover) { unlogged = tg.filter(g => g[2] && !teamLogged(ab, etd(g[0]))); teamDays = teamDays.filter(d => teamLogged(ab, d)); }
       } else flags.push('Team schedule not found');
     }
     // Share of his team's games (since his first) he has played, pulled toward a regular's.
@@ -5655,7 +5663,7 @@ async function projBuild(env, db, sp) {
   rows.sort((x, y) => y.pr - x.pr);
   // The latest game in the game data it was built from (shown at the top of the page).
   const gd = cur.reduce((m, x) => String(x.day || '') > m ? String(x.day) : m, '');
-  const out = { at: Date.now(), gd: gd || null, zfix: 3, sig: projSigOf(cur.length - zf, gd, cur.reduce((t, x) => t + Number(x.rax || 0), 0)), sport: sp, season: se, model: 2, lg: r2(lg), of, hf, rows: rows.slice(0, 4000), players: rows.length, schedPages: sched.pages, schedOf: sched.of };
+  const out = { at: Date.now(), gd: gd || null, zfix: 4, sig: projSigOf(cur.length - zf, gd, cur.reduce((t, x) => t + Number(x.rax || 0), 0)), sport: sp, season: se, model: 2, lg: r2(lg), of, hf, rows: rows.slice(0, 4000), players: rows.length, schedPages: sched.pages, schedOf: sched.of };
   try { await env.RATEBOARD_KV.put(`proj_v3_${sp}`, JSON.stringify(out), { expirationTtl: 3 * 86400 }); } catch (e) {}
   return out;
 }
@@ -6380,6 +6388,9 @@ async function handle({ request, env, waitUntil }) {
     for (const sp of ['nfl', 'ncaaf', 'nba', 'ncaam', 'nhl', 'soccer']) {
       let pj = null, sc = null;
       try { [pj, sc] = await Promise.all([env.RATEBOARD_KV.get(`proj_v3_${sp}`), env.RATEBOARD_KV.get(`projsched_v2_${sp}`)]); pj = JSON.parse(pj || 'null'); sc = JSON.parse(sc || 'null'); } catch (e) {}
+      // Built before the current model version: build again in the background (one at a time per sport).
+      if (pj && Number(pj.zfix || 0) < 4) { try { const lk = `proj_lock_v1_${sp}`; if (!(await env.RATEBOARD_KV.get(lk))) { await env.RATEBOARD_KV.put(lk, '1', { expirationTtl: 120 });
+        const job = projBuild(env, db, sp).finally(() => env.RATEBOARD_KV.delete(lk).catch(() => {})); try { waitUntil(job.catch(() => {})); } catch (e) { job.catch(() => {}); } } } catch (e) {} }
       if (!pj || !sc || !sc.teams) continue;
       const of = pj.of || {}, hf = pj.hf || {}, list = [], todayG = new Map();
       // Each team's game that day, worked out once per team.
@@ -8384,7 +8395,7 @@ async function handle({ request, env, waitUntil }) {
     const pid = Number(url.searchParams.get('pid'));
     if (pid) { const row = m ? m.byId.get(pid) : null; return json({ row: row || null, ...(await projDetail(env, sp, row, c)) }); }
     const lockK = `proj_lock_v1_${sp}`;
-    let stale = !c || (acc.admin && url.searchParams.get('refresh') === '1') || (m && m.force > c.at) || Number(c.zfix || 0) < 3;   // zfix: blank-rax 0s counted (2026-11-12); 2 = missed-last-game flag (2026-11-13)
+    let stale = !c || (acc.admin && url.searchParams.get('refresh') === '1') || (m && m.force > c.at) || Number(c.zfix || 0) < 4;   // 4 = per-team log cutoff (2026-11-25); zfix: blank-rax 0s counted (2026-11-12); 2 = missed-last-game flag (2026-11-13)
     // Rebuilt when the game data has changed - and at most every 30 minutes while games are coming in.
     if (!stale && Date.now() - c.at > 30 * 60000) { try { stale = (await projSig(env, db, sp)) !== c.sig; } catch (e) { stale = Date.now() - c.at > 24 * 3600000; } }
     if (stale) {
