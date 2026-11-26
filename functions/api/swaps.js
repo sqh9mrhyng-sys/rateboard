@@ -2807,14 +2807,14 @@ export async function grpDmTick(env) {
       if (!(near && near.n) && !held) { const [u, ch] = st.hit.shift();
         const bad = await db.prepare('SELECT n FROM dm_403 WHERE key=? AND n >= 3').bind(String(u).toLowerCase()).first().catch(() => null);
         if (!bad) { try { await dmSend(swapToken(env), ch, GRPDM.text, 9); st.sent.push(u); await stat(db, 'grpdm'); } catch (e) { st.fail++; st.lastErr = String(e.message || e).slice(0, 100); if (/429/.test(st.lastErr)) st.hit.unshift([u, ch]); } } }
-      else st.waits = (st.waits || 0) + 1;
+      else { st.waits = (st.waits || 0) + 1; st.why = (near && near.n ? 'swap near ' + near.n : '') + (DM_STOP ? ' hold' : '') + (PQ.length ? ' queue ' + PQ.length : ''); }
     }
     if (!st.look.length && !st.hit.length) st.done = st.done || Date.now();
   } catch (e) { st.lastErr = String(e.message || e).slice(0, 100); }
   await save();
 }
 export async function grpDmStatus(env) { try { const st = JSON.parse((await env.RATEBOARD_KV.get(GRPDM.key)) || 'null'); if (!st) return null;
-  return { toLook: st.look.length, looked: st.looked, matched: st.hit.length + st.sent.length, sent: st.sent.length, waiting: st.hit.length, fail: st.fail, lastErr: st.lastErr, done: st.done, stopped: !!(await env.RATEBOARD_KV.get('grpdm_stop')) }; } catch (e) { return null; } }
+  return { toLook: st.look.length, looked: st.looked, matched: st.hit.length + st.sent.length, sent: st.sent.length, waiting: st.hit.length, fail: st.fail, waits: st.waits, why: st.why, lastErr: st.lastErr, done: st.done, stopped: !!(await env.RATEBOARD_KV.get('grpdm_stop')) }; } catch (e) { return null; } }
 export async function dmOwner(env, kind, text) {
   if (!DM_OWNER_ON) return false;
   try {
