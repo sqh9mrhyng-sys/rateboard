@@ -95,7 +95,7 @@
 
   <div id="vh" hidden>
     <div class="slip">
-      <p><b>Fair %.</b> Each sportsbook's over/under is de-vigged (the book's margin removed), then moved to Underdog's or Kalshi's line with a normal curve sized to the stat. The books are weighted: Pinnacle 2, FanDuel 1.5, Novig 1.2, the rest 1. A pick needs at least 2 books.</p>
+      <p><b>Fair %.</b> Each sportsbook's over/under is de-vigged (the book's margin removed), then moved to Underdog's or Kalshi's line with a normal curve sized to the stat. The books are weighted: Pinnacle 2, FanDuel 1.5, Novig 1.2, the rest 1. A pick needs at least 2 books whose line is close to the app's line (within 3/4 of a spread), and fair % is capped at 95% either way.</p>
       <p><b>Underdog.</b> Every pick is compared to the breakeven of the slip type picked in Settings. For example, a 5-pick Flex needs about 54% a pick to break even with the default payouts. Slips are scored with the full payout table, partial hits included.</p>
       <p><b>Kalshi.</b> EV = fair % / (price + Kalshi's fee) - 1. The fee is taken as 7% x price x (1 - price) per contract.</p>
       <p><b>Data.</b> The Odds API, pregame only, and only when you tap Pull props. One pull covers every NBA and NFL game starting in the next 30 hours, at about 1 credit per stat per game (roughly 100-150 credits a pull on a full slate). Hard cap: 30,000 credits a day.</p>
@@ -138,11 +138,17 @@ let D = null, APP = '', LOCK = new Set((ls.get('dfs_sel') || '').split('|').filt
 const Phi = x => { const t = 1 / (1 + 0.2316419 * Math.abs(x)), d = 0.3989423 * Math.exp(-x * x / 2), p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274)))); return x > 0 ? 1 - p : p; };
 const PhiInv = p => { p = Math.min(0.999, Math.max(0.001, p)); let lo = -6, hi = 6; for (let i = 0; i < 60; i++) { const m = (lo + hi) / 2; if (Phi(m) < p) lo = m; else hi = m; } return (lo + hi) / 2; };
 // P(stat > line) from a book's line L with no-vig over chance pOver, moved to line T.
+/* Spread sized at the bigger of the two lines (2026-11-26: sized at a backup's 0.5-yard line it was so narrow that
+   moving to Kalshi's 10+ read as a near-sure under - "100% fair hit"). */
+const sdOf = (mk, L, T) => Math.max(0.7, (MK[mk] ? MK[mk][1] : 1.1) * Math.sqrt(Math.max(L, T, 0.5)));
 function moveLine(mk, L, pOver, T){
   if (L === T) return pOver;
-  const sd = Math.max(0.7, (MK[mk] ? MK[mk][1] : 1.1) * Math.sqrt(Math.max(L, 0.5))), mean = L + sd * PhiInv(pOver);
+  const sd = sdOf(mk, L, T), mean = L + sd * PhiInv(pOver);
   return 1 - Phi((T - mean) / sd);
 }
+// A book's line only counts for an app line within 3/4 of a spread of it - further than that the curve is a guess.
+const nearLine = (mk, L, T) => Math.abs(T - L) <= 0.75 * sdOf(mk, L, T);
+const FAIR_CAP = 0.95;
 // Each slip's EV with every pick at chance p (for breakevens), or with a list of chances.
 function slipEv(type, n, ps){
   const tab = type === 'std' ? { [n]: PAY.std[n] } : PAY.flex[n]; if (!tab || tab[n] == null) return null;
@@ -165,14 +171,16 @@ function buildPicks(){
       if (books.underdog && books.underdog.L != null) lines.push({ app: 'underdog', L: books.underdog.L, a: books.underdog });
       for (const k of (books.kalshi_lines || [])) lines.push({ app: 'kalshi', L: k.L, k });
       for (const ln of lines) { const app = ln.app, a = ln.a || {};
-        let fo = 0, wt = 0; for (const r of refs) { fo += moveLine(mk, r.L, r.p, ln.L) * r.w; wt += r.w; } fo /= wt;
-        const cons = refs.reduce((t, r) => t + r.L * r.w, 0) / wt;
+        const near = refs.filter(r => nearLine(mk, r.L, ln.L)); if (near.length < 2) continue;   // needs 2 books close to this line
+        let fo = 0, wt = 0; for (const r of near) { fo += moveLine(mk, r.L, r.p, ln.L) * r.w; wt += r.w; } fo /= wt;
+        fo = Math.min(FAIR_CAP, Math.max(1 - FAIR_CAP, fo));
+        const cons = near.reduce((t, r) => t + r.L * r.w, 0) / wt;
         for (const side of ['o', 'u']) { const fair = side === 'o' ? fo : 1 - fo;
           let price = null, ev = null, spread = null;
           if (app === 'kalshi') { price = side === 'o' ? ln.k.yA : ln.k.nA; if (!(price > 0.01 && price < 0.99)) continue;
             const bid = side === 'o' ? ln.k.yB : ln.k.nB; spread = bid > 0 ? price - bid : null;
             ev = fair / (price + 0.07 * price * (1 - price)) - 1; }
-          const o1 = { key: [id, mk, pl, app, side, ln.L].join('|'), id, game: g.game, start: g.start, mk, pl, app, side, L: ln.L, fair, price, spread, ev, cons, n: refs.length, refs, link: a.link, udP: app === 'underdog' && a[side] > 1 ? a[side] : null };
+          const o1 = { key: [id, mk, pl, app, side, ln.L].join('|'), id, game: g.game, start: g.start, mk, pl, app, side, L: ln.L, fair, price, spread, ev, cons, n: near.length, refs: near, far: refs.filter(r => !near.includes(r)), link: a.link, udP: app === 'underdog' && a[side] > 1 ? a[side] : null };
           out.push(o1); PICKS.set(o1.key, o1); } } } }
   return out;
 }
@@ -186,6 +194,7 @@ function booksTable(p){
   const sd = x => p.side === 'o' ? x : 1 - x, rows = p.refs.slice().sort((a, b) => b.w - a.w).map(r => { const at = sd(moveLine(p.mk, r.L, r.p, p.L));
     return `<tr><td>${esc(BN[r.b] || r.b)}</td><td>${r.L}</td><td>${am(r.o)} / ${am(r.u)}</td><td>${(sd(r.p) * 100).toFixed(1)}%</td><td><b>${(at * 100).toFixed(1)}%</b></td><td>×${r.w}</td></tr>`; }).join('');
   return `<table class="btab"><thead><tr><th>Book</th><th>Line</th><th>Over / Under</th><th>No-vig ${p.side === 'o' ? 'over' : 'under'}</th><th>At ${p.L}</th><th>Weight</th></tr></thead><tbody>${rows}</tbody>
+    ${(p.far || []).length ? `<tr><td colspan="6" style="color:var(--mute)">Not used (line too far from ${p.L}): ${p.far.map(r => esc(BN[r.b] || r.b) + ' ' + r.L).join(', ')}</td></tr>` : ''}
     <tfoot><tr><td colspan="4">Weighted fair at ${p.L}${p.app === 'kalshi' ? ` · Kalshi ask ${(p.price * 100).toFixed(0)}¢` : p.udP ? ` · Underdog ${am(p.udP)}` : ''}</td><td><b>${(p.fair * 100).toFixed(1)}%</b></td><td></td></tr></tfoot></table>`;
 }
 function drawPicks(){
