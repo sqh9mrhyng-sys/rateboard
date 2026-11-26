@@ -182,7 +182,7 @@ function drawPicks(){
   let P = buildPicks().filter(p => (!APP || p.app === APP) && (!mk || p.mk === mk) && (!gm || p.id === gm));
   P.forEach(p => p.edge = edgeOf(p, be));
   P = P.filter(p => min < -0.5 || p.edge > min).sort((a, b) => b.edge - a.edge);
-  if (!P.length) { $('#picks').innerHTML = `<div class="empty">${D && Object.keys(D.ev || {}).length ? 'No picks match - try "Any edge".' : 'Pulling props… the first games show within a couple of minutes.'}</div>`; return; }
+  if (!P.length) { $('#picks').innerHTML = `<div class="empty">${D && Object.keys(D.ev || {}).length ? 'No picks match - try "Any edge".' : (D && D.lastPull ? (D.events || []).length ? 'Games found, but no props posted for them yet. Pull again closer to game time.' : 'No NBA or NFL games in the next 30 hours.' : 'Tap Pull props to load today\'s props.')}</div>`; return; }
   $('#picks').innerHTML = P.slice(0, 200).map(p => {
     const sideTxt = p.app === 'underdog' ? (p.side === 'o' ? 'Higher' : 'Lower') : (p.side === 'o' ? `Yes ${Math.ceil(p.L)}+` : `No ${Math.ceil(p.L)}+`);
     const bl = p.refs.map(r => `${BN[r.b] || r.b} ${r.L} (${(p.side === 'o' ? r.p : 1 - r.p) * 100 >> 0}%)`).join(' · ');
