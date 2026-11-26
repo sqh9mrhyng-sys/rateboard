@@ -1090,7 +1090,6 @@ async function predReal(env) {
     try { await env.RATEBOARD_KV.delete('diag_bulkwk2_1125'); } catch (e) {}
     try { await env.RATEBOARD_KV.delete('diag_bulkwk3_1125'); } catch (e) {}
     try { await env.RATEBOARD_KV.delete('diag_bulkwk4_1125'); } catch (e) {}
-    try { await tgFeedTick(env); } catch (e) { try { await env.RATEBOARD_KV.put('tgfeed_err', String(e && e.stack || e).slice(0, 300), { expirationTtl: 86400 }); } catch (e2) {} }
     try { await env.RATEBOARD_KV.delete('diag_bulkwk_1125'); } catch (e) {}   // bulk week one-off read and removed (2026-11-25)
     try { await env.RATEBOARD_KV.delete('diag_teamalt_1125'); } catch (e) {}   // VICE->MIA one-off done (2026-11-25)
     try { await env.RATEBOARD_KV.delete('diag_lax_1125'); } catch (e) {}   // lax one-off read and removed (2026-11-25)
@@ -9891,6 +9890,7 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil((async () => { const k = await dmTickKey(env); if (!k) return;
       await fetch(`${origin}/api/swaps?op=scantick&k=${k}`, { cf: { cacheTtl: 0 } }).catch(() => {}); })().catch(() => {}));
     ctx.waitUntil(boostRefresh(env).catch(() => {}));
+    ctx.waitUntil(tgFeedTick(env).catch(e => env.RATEBOARD_KV.put('tgfeed_err', String(e && e.stack || e).slice(0, 300), { expirationTtl: 86400 }).catch(() => {})));
     ctx.waitUntil(nhlZeroFix(env).catch(() => {}));
     ctx.waitUntil(nhlCatchup(env).catch(() => {}));
     ctx.waitUntil(swapDiag(env).catch(() => {}));
