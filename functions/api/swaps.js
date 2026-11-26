@@ -4557,8 +4557,35 @@ async function boostOutList(env) {
 // The hand list for one sport as an injury map, today's entries only.
 async function boostManualOut(env, sp, day) {
   const all = await boostOutList(env), today = day || etDay(Date.now()), m = {};
+  if (sp === 'soccer') { try { Object.assign(m, await fplInjuries(env)); } catch (e) {} }   // the hand list below wins over FPL
   for (const [k, v] of Object.entries(all[sp] || {})) if (!v.until || v.until >= today) m[k] = { status: v.status, note: v.note || '', until: v.until || '', manual: true };
   return m;
+}
+/* Premier League injuries from the official Fantasy Premier League feed (Dennis, 2026-11-26: free, no key; nothing
+   free covers the other leagues). Injured or suspended = Out / Suspension; doubtful at 25% or less = Doubtful,
+   50% = Questionable, 75% = left alone. Read at most once an hour. Each player is filed under his full name, the
+   short name FPL shows (when no one else has it), and first + last name, so it matches how Real spells him. */
+async function fplInjuries(env) {
+  const K = 'fplinj_v1'; let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
+  if (c && Date.now() - c.at < 3600000) return c.m;
+  try { if (await env.RATEBOARD_KV.get(K + '_lock')) return (c && c.m) || {}; await env.RATEBOARD_KV.put(K + '_lock', '1', { expirationTtl: 120 }); } catch (e) {}
+  try {
+    const r = await fetch('https://fantasy.premierleague.com/api/bootstrap-static/', { headers: { accept: 'application/json' } });
+    if (!r.ok) throw new Error('FPL ' + r.status);
+    const j = await r.json(), teams = Object.fromEntries((j.teams || []).map(t => [t.id, t.short_name])), m = {};
+    const webN = {}; for (const p of (j.elements || [])) { const k = boostName(p.web_name); webN[k] = (webN[k] || 0) + 1; }
+    for (const p of (j.elements || [])) {
+      const ch = p.chance_of_playing_next_round;
+      const status = p.status === 'i' ? 'Out' : p.status === 's' ? 'Suspension' : p.status === 'd' ? (ch == null || ch <= 25 ? 'Doubtful' : ch <= 50 ? 'Questionable' : null) : null;
+      if (!status) continue;
+      const v = { status, note: `${String(p.news || '').slice(0, 120)} (FPL${teams[p.team] ? ', ' + teams[p.team] : ''})`, until: '', fpl: true };
+      const full = `${p.first_name} ${p.second_name}`, parts = String(p.second_name || '').split(/\s+/);
+      for (const k of new Set([boostName(full), webN[boostName(p.web_name)] === 1 ? boostName(p.web_name) : '', boostName(`${String(p.first_name || '').split(/\s+/)[0]} ${parts[parts.length - 1]}`)])) if (k) m[k] = v;
+    }
+    c = { at: Date.now(), m }; await env.RATEBOARD_KV.put(K, JSON.stringify(c), { expirationTtl: 3 * 86400 });
+  } catch (e) { if (c) { c.at = Date.now() - 3000000; try { await env.RATEBOARD_KV.put(K, JSON.stringify(c), { expirationTtl: 3 * 86400 }); } catch (e2) {} } }   // try again in 10 minutes
+  try { await env.RATEBOARD_KV.delete(K + '_lock'); } catch (e) {}
+  return (c && c.m) || {};
 }
 /* Each team's own injury list, from its ESPN roster (2026-11-04: the league
    list ESPN publishes missed Lamar Jackson, out for the season, so he was
