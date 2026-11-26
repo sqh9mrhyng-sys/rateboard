@@ -68,7 +68,7 @@
 <script src="/nav.js?v=9"></script>
 <div class="wrap">
   <div class="top">
-    <div><h1>Fantasy optimizer</h1><div class="note">NBA props on Underdog and Kalshi, priced against the sharp books.</div></div>
+    <div><h1>Fantasy optimizer</h1><div class="note">NBA and NFL props on Underdog and Kalshi, priced against the sharp books.</div></div>
     <div style="text-align:right"><button class="pull" id="pull">Pull props</button><div class="stat" id="stat" style="margin-top:6px">Loading…</div></div>
   </div>
   <div class="tabs" id="tabs"><button data-t="p" aria-pressed="true">Picks</button><button data-t="s" aria-pressed="false">Slips</button><button data-t="h" aria-pressed="false">How it works</button></div>
@@ -94,7 +94,7 @@
       <p><b>Fair %.</b> Each sportsbook's over/under is de-vigged (the book's margin removed), then moved to Underdog's or Kalshi's line with a normal curve sized to the stat. The books are weighted: Pinnacle 2, FanDuel 1.5, Novig 1.2, the rest 1. A pick needs at least 2 books.</p>
       <p><b>Underdog.</b> Every pick is compared to the breakeven of the slip type picked in Settings. For example, a 5-pick Flex needs about 54% a pick to break even with the default payouts. Slips are scored with the full payout table, partial hits included.</p>
       <p><b>Kalshi.</b> EV = fair % / (price + Kalshi's fee) - 1. The fee is taken as 7% x price x (1 - price) per contract.</p>
-      <p><b>Data.</b> The Odds API, pregame only, and only when you tap Pull props. One pull covers every NBA game still to start, at about 1 credit per stat per game (roughly 100-150 credits a pull on a full slate). Hard cap: 30,000 credits a day.</p>
+      <p><b>Data.</b> The Odds API, pregame only, and only when you tap Pull props. One pull covers every NBA and NFL game starting in the next 30 hours, at about 1 credit per stat per game (roughly 100-150 credits a pull on a full slate). Hard cap: 30,000 credits a day.</p>
       <p class="note">Underdog's payouts change. Check them in the app and set them in Settings, since the edges depend on them.</p>
     </div>
     <details class="set" open><summary>Settings</summary>
@@ -116,7 +116,11 @@ const api = async q => { const t = ls.get('ratebrd_token_v1') || ''; return (awa
 
 const MK = { player_points: ['Points', 1.2], player_rebounds: ['Rebounds', 1.05], player_assists: ['Assists', 1.0], player_threes: ['3-pointers', 0.85],
   player_points_rebounds_assists: ['Pts+Reb+Ast', 1.3], player_points_rebounds: ['Pts+Reb', 1.25], player_points_assists: ['Pts+Ast', 1.25], player_rebounds_assists: ['Reb+Ast', 1.1],
-  player_blocks: ['Blocks', 0.85], player_steals: ['Steals', 0.85], player_blocks_steals: ['Blks+Stls', 0.9], player_turnovers: ['Turnovers', 0.85] };
+  player_blocks: ['Blocks', 0.85], player_steals: ['Steals', 0.85], player_blocks_steals: ['Blks+Stls', 0.9], player_turnovers: ['Turnovers', 0.85],
+  // NFL (2026-11-26). The number sizes each stat's spread (spread = number x square root of the line).
+  player_pass_yds: ['Pass yds', 3.2], player_pass_tds: ['Pass TDs', 0.75], player_pass_completions: ['Completions', 0.95], player_pass_attempts: ['Pass attempts', 1.0],
+  player_pass_interceptions: ['Interceptions', 1.0], player_rush_yds: ['Rush yds', 3.2], player_rush_attempts: ['Rush attempts', 1.0], player_receptions: ['Receptions', 0.85],
+  player_reception_yds: ['Rec yds', 3.5], player_rush_reception_yds: ['Rush+Rec yds', 3.6], player_kicking_points: ['Kicking pts', 1.1] };
 const W = { pinnacle: 2, fanduel: 1.5, novig: 1.2, draftkings: 1, betmgm: 1, williamhill_us: 1, betonlineag: 1, lowvig: 1 };
 const BN = { pinnacle: 'Pinnacle', fanduel: 'FanDuel', draftkings: 'DraftKings', betmgm: 'BetMGM', williamhill_us: 'Caesars', betonlineag: 'BetOnline', lowvig: 'LowVig', novig: 'Novig', underdog: 'Underdog', kalshi: 'Kalshi' };
 const APPS = ['underdog', 'kalshi'];
@@ -264,7 +268,7 @@ async function load(pull){
   const lp = j.lastPull; LASTAT = last;
   $('#stat').innerHTML = `${last ? 'Pulled <span id="age"></span>' : 'Not pulled yet'}${lp && lp.cost ? ' · ' + lp.cost + ' credits' : ''}<br>${(j.usedToday || 0).toLocaleString()} / ${(j.budget || 30000).toLocaleString()} credits today${j.pulled && j.pulled.error ? '<br><span class="neg">' + esc(j.pulled.error) + '</span>' : ''}`; ageTick();
   const games = (j.events || []).filter(e => Date.parse(e.start) > Date.now());
-  const gv = $('#gm').value; $('#gm').innerHTML = '<option value="">Every game</option>' + games.map(e => `<option value="${esc(e.id)}" ${gv === e.id ? 'selected' : ''}>${esc(e.away)} @ ${esc(e.home)} · ${new Date(e.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</option>`).join('');
+  const gv = $('#gm').value; $('#gm').innerHTML = '<option value="">Every game</option>' + games.map(e => `<option value="${esc(e.id)}" ${gv === e.id ? 'selected' : ''}>${e.lg ? esc(e.lg) + ' · ' : ''}${esc(e.away)} @ ${esc(e.home)} · ${new Date(e.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</option>`).join('');
   buildPicks(); if (PICKS.size) { let ch = false; for (const k of [...LOCK]) if (!PICKS.has(k)) { LOCK.delete(k); ch = true; } if (ch) saveSel(); }   // drop checked picks the latest pull no longer has
   drawAll();
 }

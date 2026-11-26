@@ -1719,6 +1719,9 @@ async function predPortProbe(env) {
    region, so a game costs about one credit per market it returns. Budget cap: 30k credits a day. */
 export const DFS_BOOKS = ['pinnacle', 'fanduel', 'draftkings', 'betmgm', 'williamhill_us', 'betonlineag', 'lowvig', 'novig', 'underdog', 'kalshi'];
 const DFS_MARKETS = ['player_points', 'player_rebounds', 'player_assists', 'player_threes', 'player_points_rebounds_assists', 'player_points_rebounds', 'player_points_assists', 'player_rebounds_assists', 'player_blocks', 'player_steals', 'player_blocks_steals', 'player_turnovers'];
+const DFS_MARKETS_NFL = ['player_pass_yds', 'player_pass_tds', 'player_pass_completions', 'player_pass_attempts', 'player_pass_interceptions', 'player_rush_yds', 'player_rush_attempts', 'player_receptions', 'player_reception_yds', 'player_rush_reception_yds', 'player_kicking_points'];
+// Sports pulled (NFL added 2026-11-26, Dennis: "add NFL"). Each game: about one credit per stat it returns.
+const DFS_SPORTS = [['basketball_nba', 'NBA', DFS_MARKETS], ['americanfootball_nfl', 'NFL', DFS_MARKETS_NFL]];
 const DFS_DAY_BUDGET = 30000;
 // Kalshi NBA prop series -> our stat keys (series that don't exist just come back empty).
 const KALSHI_NBA = { KXNBAPTS: 'player_points', KXNBAREB: 'player_rebounds', KXNBAAST: 'player_assists', KXNBA3PT: 'player_threes', KXNBA3PM: 'player_threes',
@@ -1734,13 +1737,15 @@ export async function dfsPull(env) {
   const day = ET_DAY_FMT.format(new Date()); o.used = o.used || {}; o.used[day] = o.used[day] || 0; for (const d of Object.keys(o.used).sort().slice(0, -10)) delete o.used[d];
   o.errs = []; o.ev = o.ev || {}; let cost = 0;
   try {
-    const r = await api('sports/basketball_nba/events'); const l = await r.json();   // free
-    if (Array.isArray(l)) o.events = l.map(e => ({ id: e.id, home: e.home_team, away: e.away_team, start: e.commence_time })).filter(e => Date.parse(e.start) > Date.now() && Date.parse(e.start) < Date.now() + 30 * 3600000);
-    else o.errs.push('events ' + r.status);
+    o.events = [];
+    for (const [sk, lg, mks] of DFS_SPORTS) { const r = await api(`sports/${sk}/events`); const l = await r.json();   // free
+      if (Array.isArray(l)) o.events.push(...l.map(e => ({ id: e.id, home: e.home_team, away: e.away_team, start: e.commence_time, sk, lg })).filter(e => Date.parse(e.start) > Date.now() && Date.parse(e.start) < Date.now() + 30 * 3600000));
+      else o.errs.push(`${lg} events ${r.status}`); }
     for (const id of Object.keys(o.ev)) if (!(o.events || []).some(e => e.id === id)) delete o.ev[id];
     for (const e of (o.events || [])) {
       if (o.used[day] >= DFS_DAY_BUDGET) { o.errs.push('Daily credit budget reached'); break; }
-      try { const r = await api(`sports/basketball_nba/events/${e.id}/odds`, `&bookmakers=${DFS_BOOKS.join(',')}&markets=${DFS_MARKETS.join(',')}&oddsFormat=decimal&includeLinks=true`);
+      const mks = (DFS_SPORTS.find(x => x[0] === e.sk) || DFS_SPORTS[0])[2];
+      try { const r = await api(`sports/${e.sk || 'basketball_nba'}/events/${e.id}/odds`, `&bookmakers=${DFS_BOOKS.join(',')}&markets=${mks.join(',')}&oddsFormat=decimal&includeLinks=true`);
         const c = Number(r.headers.get('x-requests-last')) || 0; o.used[day] += c; cost += c; o.credits = Number(r.headers.get('x-requests-remaining')) || o.credits;
         if (!r.ok) { o.errs.push(`${e.away} @ ${e.home}: ${r.status}`); continue; }
         const d = await r.json(), P = {};
