@@ -4078,7 +4078,7 @@ const BOOST_ALIAS = { WISC: 'WIS', NCST: 'NCSU', BUT: 'BTLR', BSU: 'BOIS', AFA: 
 /* Per sport (2026-11-09): the college list sent the NFL's IND (Colts) to IU,
    so Colts players never found their game. Pro leagues get their own. */
 const BOOST_ALIAS_BY = { ncaam: BOOST_ALIAS, ncaaf: BOOST_ALIAS, nfl: { WAS: 'WSH' },
-  nba: { GSW: 'GS', NOP: 'NO', NYK: 'NY', SAS: 'SA', UTA: 'UTAH', WAS: 'WSH' },
+  nba: { GSW: 'GS', NOP: 'NO', NYK: 'NY', SAS: 'SA', UTA: 'UTAH', WAS: 'WSH', VICE: 'MIA' },
   nhl: { LAK: 'LA', NJD: 'NJ', SJS: 'SJ', TBL: 'TB', UTA: 'UTAH' } };
 const boostAlias = (sp, t) => (BOOST_ALIAS_BY[sp] || BOOST_ALIAS)[t] || t;
 /* Schedules, injury reports and depth charts are fetched by the daily
@@ -5112,7 +5112,7 @@ async function fcRows(env, db, cards, day, inv) {
 const PROJ_SEASON = { ncaaf: [2026, 2025], nfl: [2026, 2025], ncaam: [2027, 2026], nba: [2027, 2026], nhl: [2026, 2025], soccer: [2026, 2025] };
 const PROJ_PATH = { ...ESPN_PATH, nba: 'basketball/nba', nhl: 'hockey/nhl' };
 // Real's team codes that ESPN writes differently.
-const PROJ_ALIAS = { nba: { GSW: 'GS', NOP: 'NO', NYK: 'NY', SAS: 'SA', UTA: 'UTAH', WAS: 'WSH' }, nhl: { LAK: 'LA', NJD: 'NJ', SJS: 'SJ', TBL: 'TB', UTA: 'UTAH' } };
+const PROJ_ALIAS = { nba: { GSW: 'GS', NOP: 'NO', NYK: 'NY', SAS: 'SA', UTA: 'UTAH', WAS: 'WSH', VICE: 'MIA' }, nhl: { LAK: 'LA', NJD: 'NJ', SJS: 'SJ', TBL: 'TB', UTA: 'UTAH' } };
 const projAlias = (sp, t) => (PROJ_ALIAS[sp] && PROJ_ALIAS[sp][t]) || boostAlias(sp, t);
 // Daily schedules: [first day, last regular-season day, ESPN extra].
 const PROJ_DAYS = { ncaam: ['2026-11-01', '2027-03-08', '&groups=50&limit=500'], nba: ['2026-10-15', '2027-04-20', '&limit=100'], nhl: ['2026-10-01', '2027-04-22', '&limit=100'] };
