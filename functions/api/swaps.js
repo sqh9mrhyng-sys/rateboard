@@ -6389,7 +6389,8 @@ async function handle({ request, env, waitUntil }) {
       let pj = null, sc = null;
       try { [pj, sc] = await Promise.all([env.RATEBOARD_KV.get(`proj_v3_${sp}`), env.RATEBOARD_KV.get(`projsched_v2_${sp}`)]); pj = JSON.parse(pj || 'null'); sc = JSON.parse(sc || 'null'); } catch (e) {}
       // Built before the current model version: build again in the background (one at a time per sport).
-      if (pj && Number(pj.zfix || 0) < 4) { try { const lk = `proj_lock_v1_${sp}`; if (!(await env.RATEBOARD_KV.get(lk))) { await env.RATEBOARD_KV.put(lk, '1', { expirationTtl: 120 });
+      let pf = 0; try { pf = Number(await env.RATEBOARD_KV.get(`proj_force_v1_${sp}`)) || 0; } catch (e) {}
+      if (pj && (Number(pj.zfix || 0) < 4 || pf > Number(pj.at || 0))) { try { const lk = `proj_lock_v1_${sp}`; if (!(await env.RATEBOARD_KV.get(lk))) { await env.RATEBOARD_KV.put(lk, '1', { expirationTtl: 120 });
         const job = projBuild(env, db, sp).finally(() => env.RATEBOARD_KV.delete(lk).catch(() => {})); try { waitUntil(job.catch(() => {})); } catch (e) { job.catch(() => {}); } } } catch (e) {} }
       if (!pj || !sc || !sc.teams) continue;
       const of = pj.of || {}, hf = pj.hf || {}, list = [], todayG = new Map();
