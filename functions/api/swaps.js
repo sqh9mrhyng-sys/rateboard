@@ -415,14 +415,17 @@ async function playsMap(env, db, sp, se) {
 }
 // The keys (sport:season:id) with fewer than MIN_PLAYS collectible plays, among those given.
 const playsMemo = new Map();   // this worker's copy, so a page open doesn't read KV once per season
-async function lowPlays(env, db, keys) {
+/* Thin players (Dennis, 2026-11-25): Dennis alone can swap for players with 10-29 plays. Each member who gives
+   him one can't be matched to give him that same player again for 168 hours (from the swap's time, not the 7am day). */
+const THIN_MIN = 10, THIN_OWNER = 'dennis', THIN_GAP_MS = 168 * 3600000;
+async function lowPlays(env, db, keys, thin, who) {
   const bySeason = new Map(), low = new Set();
   for (const k of keys) { const [sp, se, id] = String(k).split(':'); if (/^t/.test(id)) continue; (bySeason.get(`${sp}:${se}`) || bySeason.set(`${sp}:${se}`, []).get(`${sp}:${se}`)).push([k, id]); }
   // Every season at once rather than one after another.
   await Promise.all([...bySeason].map(async ([ss, list]) => { const [sp, se] = ss.split(':');
     let c = playsMemo.get(ss);
     if (!c || Date.now() - c.at > 30 * 60000) { c = { at: Date.now(), m: await playsMap(env, db, sp, se) }; playsMemo.set(ss, c); }
-    const m = c.m; if (!m) return; for (const [k, id] of list) if ((m[id] || 0) < MIN_PLAYS) low.add(k); }));
+    const m = c.m; if (!m) return; for (const [k, id] of list) { const n = m[id] || 0; if (n < MIN_PLAYS) { if (n >= THIN_MIN && thin) thin.add(k); if (!(String(who || '').toLowerCase() === THIN_OWNER && n >= THIN_MIN)) low.add(k); } } }));
   return low;
 }
 async function goalRoom(db, cache, u, usedFor, wantKey) {
@@ -1013,7 +1016,21 @@ async function runMatchingInner(db, env) {
   // Up to 5 players each, in their order, and only passes they own: they buy cards for those.
   for (const u of users) { const own = new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key)); u.wants = u.wants.filter(k => swappable(k) && own.has(k)).slice(0, MAX_WANTS); }
   // Players with fewer than MIN_PLAYS (30) collectible plays are never matched, even if picked before the rule.
-  if (env) { try { const low = await lowPlays(env, db, [...new Set(users.flatMap(u => u.wants))]); if (low.size) for (const u of users) u.wants = u.wants.filter(k => !low.has(k)); } catch (e) {} }
+  const thin = new Set();   // 10-29 plays: only Dennis keeps these
+  if (env) { try { const low = await lowPlays(env, db, [...new Set(users.flatMap(u => u.wants))], thin); if (low.size) for (const u of users) u.wants = u.wants.filter(k => !low.has(k) || (String(u.key).toLowerCase() === THIN_OWNER && thin.has(k))); } catch (e) {} }
+  for (const u of users) if (String(u.key).toLowerCase() !== THIN_OWNER) u.wants = u.wants.filter(k => !thin.has(k));
+  /* Who has given Dennis each thin player, and when it was due: no one gives the same one again within 168 hours.
+     A swap counts unless it was called off before the giver was warned (same as the day rule). */
+  const thinDue = new Map(), thinAdd = (g, k, t) => (thinDue.get(g + '|' + k) || thinDue.set(g + '|' + k, []).get(g + '|' + k)).push(Number(t) || 0);
+  const thinOk = (g, k, due) => !thin.has(k) || !(thinDue.get(g + '|' + k) || []).some(t => Math.abs(due - t) < THIN_GAP_MS);
+  if (thin.size) { try { const t0 = Date.now() - 8 * 86400000;
+    for (const m of (((await db.prepare(`SELECT a, b, aGets, bGets, dueAt, status, warnA, warnB, doneA, doneB FROM swap_matches WHERE dueAt > ? AND (a = ? OR b = ?)`).bind(t0, THIN_OWNER, THIN_OWNER).all()).results) || [])) {
+      const live = !['cancelled', 'cancelling', 'cleared'].includes(m.status);
+      if (m.a === THIN_OWNER && thin.has(m.aGets) && (live || m.warnB || m.doneB)) thinAdd(m.b, m.aGets, m.dueAt);
+      if (m.b === THIN_OWNER && thin.has(m.bGets) && (live || m.warnA || m.doneA)) thinAdd(m.a, m.bGets, m.dueAt); }
+    for (const r of (((await db.prepare(`SELECT seller, pass, dueAt FROM swap_160 WHERE buyer = ? AND dueAt > ? AND (status <> 'cancelled' OR warnS IS NOT NULL)`).bind(THIN_OWNER, t0).all()).results) || []))
+      if (thin.has(r.pass)) thinAdd(r.seller, r.pass, r.dueAt);
+  } catch (e) {} }
   /* Goal rating, per player they want: how many more swaps that pass can take.
      The counts come from one read of the live swaps, done here in memory
      (2026-11-05: a count query per member per player - hundreds once goals
@@ -1135,7 +1152,7 @@ async function runMatchingInner(db, env) {
     if (!roomFor(A.key, d) || !roomFor(B.key, d)) break;
     // The best pair of picks that works both ways (earlier picks first). The
     // exact same pass both ways is no swap; the same player in two seasons is fine.
-    const aOk = A.wants.filter(w => givesOne(B, w, d) && goalOk(A.key, w) && perDayOk(A.key, w, d)), bOk = B.wants.filter(w => givesOne(A, w, d) && goalOk(B.key, w) && perDayOk(B.key, w, d));
+    const aOk = A.wants.filter(w => givesOne(B, w, d) && thinOk(B.key, w, due) && goalOk(A.key, w) && perDayOk(A.key, w, d)), bOk = B.wants.filter(w => givesOne(A, w, d) && thinOk(A.key, w, due) && goalOk(B.key, w) && perDayOk(B.key, w, d));
     let pick = null;
     for (let s = 0; s < aOk.length + bOk.length && !pick; s++)
       for (let x = 0; x <= s && !pick; x++) { const aw = aOk[x], bw = bOk[s - x]; if (!aw || !bw || aw === bw) continue;
@@ -1146,6 +1163,7 @@ async function runMatchingInner(db, env) {
     if (!pick) break;
     const [aGets, bGets] = pick;
     made.push({ a: A.key, b: B.key, aGets, bGets, slot, due });
+    if (thin.has(aGets)) thinAdd(B.key, aGets, due); if (thin.has(bGets)) thinAdd(A.key, bGets, due);
     given.add(`${B.key}|${aGets}|${d}`); given.add(`${A.key}|${bGets}|${d}`);
     giveSeason(B.key, aGets, d); giveSeason(A.key, bGets, d);
     bump(count, `${A.key}|${d}`); bump(count, `${B.key}|${d}`);
@@ -1172,11 +1190,11 @@ async function runMatchingInner(db, env) {
           if ((got.get(b.key) || 0) >= MAX_160_HOUR) continue;
           for (const w of b.wants) {
             if (!goalOk(b.key, w) || !perDayOk(b.key, w, d)) continue;
-            const can = S.filter(x => x.key !== b.key && !blocked(b, x) && !(x.lock1 && x.lock1.has(w)) && givesOne(x, w, d));
+            const can = S.filter(x => x.key !== b.key && !blocked(b, x) && !(x.lock1 && x.lock1.has(w)) && givesOne(x, w, d) && thinOk(x.key, w, due));
             if (!can.length) continue;
             const sl = can.reduce((m, x) => (sold.get(x.key) || 0) < (sold.get(m.key) || 0) ? x : m, can[0]);
             made160.push({ buyer: b.key, seller: sl.key, pass: w, slot, due });
-            given.add(`${sl.key}|${w}|${d}`); giveSeason(sl.key, w, d);
+            given.add(`${sl.key}|${w}|${d}`); giveSeason(sl.key, w, d); if (thin.has(w)) thinAdd(sl.key, w, due);
             bump(recv, `${b.key}|${w}|${d}`); goalLeft.set(`${b.key}|${w}`, (goalLeft.get(`${b.key}|${w}`) ?? Infinity) - 1);
             bump(got, b.key); bump(sold, sl.key); any = true; break;
           }
@@ -1214,10 +1232,10 @@ async function runMatchingInner(db, env) {
             while (left > 0) {
               if (!goalOk(b.key, w) || !perDayOk(b.key, w, d)) break;
               const can = H.filter(h => h.key !== b.key && !blocked(b, h) && !owns.get(h.key).has(w) && !usedBy.has(`*|${w}|${h.key}`) && (hourOf.get(`${h.key}|${due}`) || 0) < lim.get(h.key).h
-                && (dayOf.get(`${h.key}|${d}`) || 0) < lim.get(h.key).d && room(h, w) && seasonRoom(h.key, w, d));
+                && (dayOf.get(`${h.key}|${d}`) || 0) < lim.get(h.key).d && room(h, w) && seasonRoom(h.key, w, d) && thinOk(h.key, w, due));
               if (!can.length) break;
               const h = can.reduce((m, x) => (dayOf.get(`${x.key}|${d}`) || 0) < (dayOf.get(`${m.key}|${d}`) || 0) ? x : m, can[Math.floor(Math.random() * can.length)]);
-              madeNiche.push({ buyer: b.key, seller: h.key, pass: w, slot, due });
+              madeNiche.push({ buyer: b.key, seller: h.key, pass: w, slot, due }); if (thin.has(w)) thinAdd(h.key, w, due);
               note(b.key, h.key, w, due, now); bump(pend, `${h.key}|${seas(w)}`); giveSeason(h.key, w, d);
               bump(recv, `${b.key}|${w}|${d}`); goalLeft.set(`${b.key}|${w}`, (goalLeft.get(`${b.key}|${w}`) ?? Infinity) - 1);
               left--;
@@ -5692,7 +5710,7 @@ export async function whyNotFull(db, env, key) {
   const swappable = k => !/^(soccer|ufc):/.test(k) && !seasonOff(k);
   const owned = new Set(u.passes.filter(p => p.kind !== 'team').map(p => p.key));
   const picked = u.wants.slice(0, MAX_WANTS);
-  let low = new Set(); try { low = await lowPlays(env, db, picked); } catch (e) {}
+  let low = new Set(); try { low = await lowPlays(env, db, picked, null, u.key); } catch (e) {}
   const wants = picked.filter(k => swappable(k) && owned.has(k) && !low.has(k));
   out.picks = picked.length; out.usable = wants.length;
   out.dropped = { notOwned: picked.filter(k => !owned.has(k)).length, lowPlays: picked.filter(k => low.has(k)).length, seasonOff: picked.filter(k => seasonOff(k)).length };
@@ -7531,11 +7549,12 @@ async function handle({ request, env, waitUntil }) {
     mark(request, 'names');
     // Boosts only needs how many passes are on file, not the list (or the play counts).
     const lite = url.searchParams.get('page') === 'boosts';
-    const lowP = u && !lite && url.searchParams.get('page') !== 'packs' ? await (async () => { try { return [...await lowPlays(env, db, parse(u.passes, []).filter(p => p.kind !== 'team').map(p => p.key))]; } catch (e) { return []; } })() : [];
+    const thinP = new Set();   // Dennis's 10-29 play players, marked on his page
+    const lowP = u && !lite && url.searchParams.get('page') !== 'packs' ? await (async () => { try { return [...await lowPlays(env, db, parse(u.passes, []).filter(p => p.kind !== 'team').map(p => p.key), thinP, u.key)]; } catch (e) { return []; } })() : [];
     mark(request, 'plays');
     const cDay = confirmDayNow();
     return json({ confirmShow: Date.now() >= CONFIRM_SHOW_AT, confirmedToday: !!(u && u.confirmDay === cDay), confirmStarts: CONFIRM_FROM_DAY, swapToday: cDay, key: me, tests: await testerPagesFor(env, me), admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
-      keep: parse(u.keep, []), touch: parse(u.touch, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: lite ? [] : parse(u.passes, []), passCount: (() => { try { return parse(u.passes, []).length; } catch (e) { return 0; } })(), passSummary: lite ? passSummary(parse(u.passes, [])) : undefined, lowPlays: lowP, scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {}, b160: !!u.b160, s160: !!u.s160, only160: !!u.only160, nicheIn: !!u.nicheIn, niche: parse(u.niche, {}) || {}, nicheLim: nicheLim(u), blist: parse(u.blist, []) || [], lock1: parse(u.lock1, []) || [], noSp: Object.entries(parse(u.noSp, {}) || {}).filter(([, d]) => d === swapDay(Date.now())).map(([sp]) => sp), sell160m: u.sell160m || null, sell160h: parse(u.sell160h, []) } : null, real: realN });
+      keep: parse(u.keep, []), touch: parse(u.touch, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: lite ? [] : parse(u.passes, []), passCount: (() => { try { return parse(u.passes, []).length; } catch (e) { return 0; } })(), passSummary: lite ? passSummary(parse(u.passes, [])) : undefined, lowPlays: lowP, thinPlays: String(u && u.key || '').toLowerCase() === THIN_OWNER ? [...thinP] : undefined, scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {}, b160: !!u.b160, s160: !!u.s160, only160: !!u.only160, nicheIn: !!u.nicheIn, niche: parse(u.niche, {}) || {}, nicheLim: nicheLim(u), blist: parse(u.blist, []) || [], lock1: parse(u.lock1, []) || [], noSp: Object.entries(parse(u.noSp, {}) || {}).filter(([, d]) => d === swapDay(Date.now())).map(([sp]) => sp), sell160m: u.sell160m || null, sell160h: parse(u.sell160h, []) } : null, real: realN });
   }
 
   // A tick in the passes list saves at once: the passes they won't give.
@@ -7591,7 +7610,7 @@ async function handle({ request, env, waitUntil }) {
     const owned = new Set(parse(mine && mine.passes, []).filter(p => p.kind !== 'team').map(p => p.key));
     if (wants.some(w => !owned.has(w))) return json({ error: 'You can only swap for passes you own - scan your passes, then pick from them.' }, 400);
     if (wants.some(w => seasonOff(w))) return json({ error: '2026-27 CBB and NBA passes can\'t be swapped yet.' }, 400);
-    { const low = await lowPlays(env, db, wants);
+    { const low = await lowPlays(env, db, wants, null, me);
       if (low.size) return json({ error: `Only players with ${MIN_PLAYS}+ collectible plays can be swapped for - remove ${[...low].length === 1 ? 'the one' : 'the ones'} marked "under ${MIN_PLAYS} plays".`, low: [...low] }, 400); }
     const comment = String(b.comment || '').trim();
     if (!SWAP_COMMENT_RE.test(comment)) return json({ error: 'That link is not a comment under the swap post. Open the swap post, copy the link to your comment, and paste it in step 2.' }, 400);
