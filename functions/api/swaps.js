@@ -4549,6 +4549,8 @@ const BOOST_OUT_SEED = { ncaaf: [
 ] };
 async function boostOutList(env) {
   let kv = null; try { kv = JSON.parse((await env.RATEBOARD_KV.get(BOOST_OUT_KEY)) || 'null'); } catch (e) {}
+  // One-off (2026-11-26): Gibbs was marked out by an accidental tap on Boosts. Take him off once.
+  try { if (kv && kv.nfl && !(await env.RATEBOARD_KV.get('boostout_fix_gibbs_1126'))) { const k = boostName('Jahmyr Gibbs'); if (kv.nfl[k] && /Boosts/.test(kv.nfl[k].note || '')) { delete kv.nfl[k]; await env.RATEBOARD_KV.put(BOOST_OUT_KEY, JSON.stringify(kv)); await env.RATEBOARD_KV.put('proj_force_v1_nfl', String(Date.now()), { expirationTtl: 7 * 86400 }); await env.RATEBOARD_KV.delete('boosttop_v9_' + etDay(Date.now())).catch(() => {}); } await env.RATEBOARD_KV.put('boostout_fix_gibbs_1126', '1', { expirationTtl: 7 * 86400 }); } } catch (e) {}
   if (!kv) { kv = {}; for (const [sp, rows] of Object.entries(BOOST_OUT_SEED)) { kv[sp] = {}; for (const [name, status, note, until] of rows) kv[sp][boostName(name)] = { name, status, note, until, at: Date.parse('2026-11-07T06:00:00Z') }; } }
   return kv;
 }

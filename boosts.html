@@ -297,7 +297,7 @@
         <details class="vw"><summary>View</summary><div class="vwp">
           <button class="sm hidestart" id="allhidestart" type="button" aria-pressed="false">Hide games that already started</button>
           <button class="sm simplebtn" id="allfullbtn" type="button" aria-pressed="false">View full layout</button>
-          <button class="sm simplebtn boxlinkbtn" type="button" aria-pressed="false">Whole box opens the player: off</button></div></details></div>
+          <button class="sm simplebtn boxlinkbtn" type="button" aria-pressed="false">Whole box opens the player: off</button><button class="sm outeditbtn" type="button" aria-pressed="false" hidden>Mark players out: off</button></div></details></div>
       <div class="sum" id="allsum"></div>
       <div id="alllist"></div>
     </section>
@@ -308,7 +308,7 @@
           <button class="sm hidestart" id="hidestart" type="button" aria-pressed="false">Hide games that already started</button>
           <button class="sm simplebtn" id="simplebtn" type="button" aria-pressed="false">View simple layout</button>
           <button class="sm spreadbtn" id="spreadbtn" type="button" aria-pressed="true" title="Use the booster types you have plenty of when they're nearly as good, so points / goals boosters don't run out first">Use spare booster types: on</button>
-          <button class="sm simplebtn boxlinkbtn" type="button" aria-pressed="false">Whole box opens the player: off</button></div></details></div>
+          <button class="sm simplebtn boxlinkbtn" type="button" aria-pressed="false">Whole box opens the player: off</button><button class="sm outeditbtn" type="button" aria-pressed="false" hidden>Mark players out: off</button></div></details></div>
       <div id="simple" class="simple-list"></div>
       <div class="tot" id="tot"></div>
       <div class="sum" id="sum"></div>
@@ -1061,7 +1061,14 @@ const FC_LG = { 'eng.1': 'Premier League', 'eng.2': 'Championship', 'esp.1': 'La
    injury list for his sport (the same list as Admin › Boosts injuries) and the boosts are worked out again. */
 const BADMIN = () => { try { return !!JSON.parse(sessionStorage.getItem('rb_nav_acc_v1') || '{}').acc.admin; } catch (e) { return false; } };
 const OUT_SP = ['ncaaf', 'ncaam', 'nfl', 'soccer', 'nba', 'nhl'];
-const outBtn = (sp, r) => BADMIN() && OUT_SP.includes(sp) && r && r.name ? `<button class="bout" data-markout="${esc(sp)}" data-name="${esc(r.name)}" title="Mark ${esc(r.name)} out">Out</button>` : '';
+/* Out buttons (admin) stay hidden until "Mark players out" is turned on under View (Dennis, 2026-11-26: tapped
+   Gibbs's by accident - it sat right under every player). */
+const OUTEDIT = () => { try { return sessionStorage.getItem('boost_outedit') === '1'; } catch (e) { return false; } };
+function outEditSync(){ document.querySelectorAll('.outeditbtn').forEach(b => { b.hidden = !BADMIN(); const on = OUTEDIT(); b.setAttribute('aria-pressed', on ? 'true' : 'false'); b.textContent = 'Mark players out: ' + (on ? 'on' : 'off'); }); }
+document.addEventListener('click', e => { const b = e.target.closest('.outeditbtn'); if(!b) return; try { sessionStorage.setItem('boost_outedit', OUTEDIT() ? '0' : '1'); } catch (x) {} outEditSync();
+  if(lastOne && !$('#out').hidden){ redrawOnly = true; $('#run').click(); } if(allLast && !$('#allout').hidden) runAll(true); });
+setTimeout(outEditSync, 0);
+const outBtn = (sp, r) => BADMIN() && OUTEDIT() && OUT_SP.includes(sp) && r && r.name ? `<button class="bout" data-markout="${esc(sp)}" data-name="${esc(r.name)}" title="Mark ${esc(r.name)} out">Out</button>` : '';
 document.addEventListener('click', async e => { const b = e.target.closest('[data-markout]'); if(!b) return; e.preventDefault(); e.stopPropagation();
   if(!b.dataset.sure){ b.dataset.sure = '1'; b.textContent = 'Sure?'; setTimeout(() => { if(b.isConnected){ delete b.dataset.sure; b.textContent = 'Out'; } }, 3000); return; }
   b.disabled = true; b.textContent = '…';
