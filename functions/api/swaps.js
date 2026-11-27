@@ -3577,6 +3577,10 @@ export async function swapTick(env) {
     if (!(await env.RATEBOARD_KV.get('swaps_down_lift_1127'))) { await env.RATEBOARD_KV.put('swaps_down_lift_1127', '1', { expirationTtl: 30 * 86400 });
       const h0 = JSON.parse((await env.RATEBOARD_KV.get('swaps_hold')) || 'null'); if (h0 && h0.manual) await env.RATEBOARD_KV.delete('swaps_hold');
       await env.RATEBOARD_KV.delete('swaps_down'); await db.prepare("INSERT INTO bot_log (at, kind, msg) VALUES (?, 'match', ?)").bind(Date.now(), 'hand hold lifted: swaps back on for verified members').run().catch(() => {}); }
+    // Down again by hand (Dennis, 2026-11-27 7:19am AK): same hold and notice; lifted only when he says.
+    if (!(await env.RATEBOARD_KV.get('swaps_down_set_1127b'))) { await env.RATEBOARD_KV.put('swaps_down_set_1127b', '1', { expirationTtl: 30 * 86400 });
+      await env.RATEBOARD_KV.put('swaps_hold', JSON.stringify({ at: Date.now(), tok, manual: true, why: 'swaps down by Dennis' }));
+      await env.RATEBOARD_KV.put('swaps_down', JSON.stringify({ at: Date.now(), msg: 'Feature is down, issue getting resolved. We\u2019ll post in the big group when it\u2019s fixed.' })); }
     const hold = JSON.parse((await env.RATEBOARD_KV.get('swaps_hold')) || 'null');
     if (hold && !hold.manual && hold.tok !== tok) { await env.RATEBOARD_KV.delete('swaps_hold'); await env.RATEBOARD_KV.put('swaps_hold_lifted', String(Date.now()), { expirationTtl: 30 * 86400 }); await db.prepare("INSERT INTO bot_log (at, kind, msg) VALUES (?, 'match', ?)").bind(Date.now(), 'hold lifted: new bot token').run().catch(() => {}); }
     else if (hold && !hold.manual && hold.probe && hold.probe.ok >= 2) { await env.RATEBOARD_KV.delete('swaps_hold'); await env.RATEBOARD_KV.put('swaps_hold_lifted', String(Date.now()), { expirationTtl: 30 * 86400 });
