@@ -897,7 +897,7 @@
             <div>
               <label for="b-player">Player</label>
               <div style="position:relative">
-                <input id="b-player" class="field" autocomplete="off" placeholder="Search any player or season" role="combobox" aria-expanded="false" aria-autocomplete="list">
+                <input id="b-player" class="field" autocomplete="off" placeholder="Search any player of any season" role="combobox" aria-expanded="false" aria-autocomplete="list">
                 <ul id="b-suggest" class="suggest hide" role="listbox"></ul>
               </div>
               <div id="b-fighter"></div>
@@ -1281,7 +1281,7 @@ function applyAdminVisibility(){
   if(banner) banner.classList.toggle('hide', !previewMember);
   applyGameDataVisibility();
 }
-const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL', UFC:'UFC', NHL:'NHL', NBA:'NBA', CBB:'College basketball' };
+const SPORTS = { CFB:'College football', FC:'FC', NFL:'NFL', UFC:'UFC', NHL:'NHL', NBA:'NBA', CBB:'College basketball', MLB:'MLB', WNBA:'WNBA', GOLF:'Golf' };
 
 // The post buyers must comment under before they can post a buy offer —
 // this is the link shown to them and where "this post" points.
@@ -3331,24 +3331,26 @@ $('#b-guide-toggle').addEventListener('click', () => {
    ========================================================= */
 /* One board for every sport and season (Dennis, 2026-11-27). Season labels as members see them; the first is the
    one being played. An offer without a season is for the current one (FC always has one). */
-const SP_ORDER = ['CFB', 'NFL', 'NBA', 'CBB', 'NHL', 'FC', 'UFC'];
+const SP_ORDER = ['CFB', 'NFL', 'NBA', 'CBB', 'NHL', 'FC', 'MLB', 'WNBA', 'GOLF', 'UFC'];
+const spLbl = s => s === 'GOLF' ? 'Golf' : s;
 const BSEAS = { CFB: ['2026', '2025', '2024', '2023'], NFL: ['2026', '2025', '2024', '2023'], NBA: ['2026-27', '2025-26', '2024-25', '2023-24', '2022-23'],
-  CBB: ['2026-27', '2025-26', '2024-25', '2023-24'], NHL: ['2026-27', '2025-26', '2024-25', '2023-24'], FC: ['2026-27', '2025-26'], UFC: [] };
-const BOARD_OF = { ncaaf: 'CFB', nfl: 'NFL', nhl: 'NHL', nba: 'NBA', ncaam: 'CBB', soccer: 'FC', ufc: 'UFC' };
+  CBB: ['2026-27', '2025-26', '2024-25', '2023-24'], NHL: ['2026-27', '2025-26', '2024-25', '2023-24'], FC: ['2026-27', '2025-26'], UFC: [],
+  MLB: ['2026', '2025', '2024', '2023', '2022'], WNBA: ['2026', '2025', '2024'], GOLF: ['2026', '2025', '2024', '2023', '2022'] };
+const BOARD_OF = { ncaaf: 'CFB', nfl: 'NFL', nhl: 'NHL', nba: 'NBA', ncaam: 'CBB', soccer: 'FC', ufc: 'UFC', mlb: 'MLB', wnba: 'WNBA', golf: 'GOLF' };
 const curSeason = sp => (BSEAS[sp] || [])[0] || '';
 const offSeason = o => o.season || curSeason(o.sport);
 // Real's season number <-> label: CFB/NFL 2026 = "2026"; NBA/CBB 2027 = "2026-27"; NHL/FC 2026 = "2026-27".
-function seasonLblOf(sp, se){ se = Number(se); if(!se || sp === 'UFC') return ''; if(sp === 'CFB' || sp === 'NFL') return String(se);
+function seasonLblOf(sp, se){ se = Number(se); if(!se || sp === 'UFC') return ''; if(['CFB', 'NFL', 'MLB', 'WNBA', 'GOLF'].includes(sp)) return String(se);
   const a = sp === 'NBA' || sp === 'CBB' ? se - 1 : se; return `${a}-${String(a + 1).slice(2)}`; }
 function seasonKeyOf(sp, lbl){ const m = String(lbl || '').match(/^(\d{4})(?:-(\d{2}))?$/); if(!m) return null; const y = +m[1]; return m[2] && (sp === 'NBA' || sp === 'CBB') ? y + 1 : y; }
 function updatePlayerPlaceholder(){}
-const seasonTag = o => { const l = offSeason(o); return ` <span class="seas">${esc(o.sport)}${l ? ' · ' + esc(l) : ''}</span>`; };
+const seasonTag = o => { const l = offSeason(o); return ` <span class="seas">${esc(spLbl(o.sport))}${l ? ' · ' + esc(l) : ''}</span>`; };
 // Which sports are shown (none picked = all). Narrows the player search and the offers list.
 const SPF_KEY = 'ratebrd_spf_v1';
 let spSel = new Set(); try{ spSel = new Set((JSON.parse(localStorage.getItem(SPF_KEY) || '[]') || []).filter(s => SP_ORDER.includes(s))); }catch(e){}
 const spOn = sp => !spSel.size || spSel.has(sp);
 function drawSpf(){ const b = $('#spf'); if(!b) return;
-  b.innerHTML = `<button type="button" data-spf="" aria-pressed="${!spSel.size}">All sports</button>` + SP_ORDER.map(s => `<button type="button" data-spf="${s}" aria-pressed="${spSel.has(s)}">${s}</button>`).join(''); }
+  b.innerHTML = `<button type="button" data-spf="" aria-pressed="${!spSel.size}">All sports</button>` + SP_ORDER.map(s => `<button type="button" data-spf="${s}" aria-pressed="${spSel.has(s)}">${spLbl(s)}</button>`).join(''); }
 $('#spf').addEventListener('click', e => { const b = e.target.closest('[data-spf]'); if(!b) return; const s = b.dataset.spf;
   if(!s) spSel.clear(); else { spSel.has(s) ? spSel.delete(s) : spSel.add(s); if(spSel.size === SP_ORDER.length) spSel.clear(); }
   try{ localStorage.setItem(SPF_KEY, JSON.stringify([...spSel])); }catch(e2){}
@@ -3402,7 +3404,7 @@ function renderSuggest(items, note){
   suggestActive = -1;
   const firstOther = items.findIndex(it => !it.own);
   const rows = items.map((it,i) => (i === 0 && it.own ? '<li class="shd">Your passes</li>' : '') + (i === firstOther && firstOther > 0 ? '<li class="shd">Everyone</li>' : '')
-    + `<li role="option" data-i="${i}" class="it2${it.own ? ' own' : ''}"><div class="l1"><span class="nm">${esc(it.name)}</span><span class="meta">• ${esc(it.sport)}${it.season ? ' • ' + esc(it.season) : ''}</span><span class="team">${esc(it.team || '')}</span></div>`
+    + `<li role="option" data-i="${i}" class="it2${it.own ? ' own' : ''}"><div class="l1"><span class="nm">${esc(it.name)}</span><span class="meta">• ${esc(spLbl(it.sport))}${it.season ? ' • ' + esc(it.season) : ''}</span><span class="team">${esc(it.team || '')}</span></div>`
     + (it.own ? `<div class="l2"><b>${Number(it.own.r).toLocaleString(undefined, { maximumFractionDigits: 1 })}</b> rating${it.own.lv ? ' • ' + esc(it.own.lv) : ''}</div>`
       : it.rax != null ? `<div class="l2"><b>${Math.round(it.rax).toLocaleString()}</b> rax that season${it.owners ? ` • ${Number(it.owners).toLocaleString()} owners` : ''}</div>`
       : it.sport === 'UFC' ? ufcDetailChips(it.name) : '') + '</li>').join('');
@@ -4099,7 +4101,8 @@ window.rbAfterScan = () => { const f = document.querySelector('iframe[src="/otd-
   setTimeout(() => location.reload(), 1200); };
 /* Exclude owned (Dennis, 2026-11-16): leave out every player you have a pass for (from your last pass scan on
    Swaps), so you aren't told to sell the cards you're grinding. On/off is remembered on this device. */
-const EXOWN_KEY = 'ratebrd_exowned_v1', BOARD_SP = { CFB: 'ncaaf', FC: 'soccer', NFL: 'nfl', UFC: 'ufc', NHL: 'nhl', NBA: 'nba', CBB: 'ncaam' };
+// Off by default (Dennis, 2026-11-27) - a new key so everyone starts unticked.
+const EXOWN_KEY = 'ratebrd_exowned_v2', BOARD_SP = { CFB: 'ncaaf', FC: 'soccer', NFL: 'nfl', UFC: 'ufc', NHL: 'nhl', NBA: 'nba', CBB: 'ncaam', MLB: 'mlb', WNBA: 'wnba', GOLF: 'golf' };
 let ownedCache = null;
 async function ownedPassNames(){
   let on = false; try{ on = localStorage.getItem(EXOWN_KEY) === '1'; }catch(e){}
@@ -4108,47 +4111,66 @@ async function ownedPassNames(){
   if(ownedCache.error){ const n0 = $('#s-exowned-note'); if(n0){ n0.classList.remove('hide'); n0.textContent = 'Couldn\'t read your passes: ' + ownedCache.error; } ownedCache = null; return {}; }
   const by = {}; let n = 0; for(const s of SP_ORDER){ by[s] = (ownedCache.sports || {})[BOARD_SP[s]] || []; n += by[s].length; }
   const note = $('#s-exowned-note');
-  if(note){ note.classList.remove('hide'); note.textContent = ownedCache.none ? 'No passes found - scan your passes on the Swaps page first.' : `${n} current-season pass${n === 1 ? '' : 'es'} left out${ownedCache.at ? ' (from your scan ' + new Date(ownedCache.at).toLocaleDateString() + ')' : ''}.`; }
+  if(note){ note.classList.remove('hide'); note.textContent = ownedCache.none ? 'No passes found - tap Scan at the top of the page first, then pull your cards again.' : `${n} current-season pass${n === 1 ? '' : 'es'} left out${ownedCache.at ? ' (from your scan ' + new Date(ownedCache.at).toLocaleDateString() + ')' : ''}.`; }
   return by;
 }
 try{ $('#s-exowned').checked = localStorage.getItem(EXOWN_KEY) === '1'; }catch(e){}
-$('#s-exowned').addEventListener('change', e => { try{ localStorage.setItem(EXOWN_KEY, e.target.checked ? '1' : '0'); }catch(e2){} if(!e.target.checked) $('#s-exowned-note').classList.add('hide'); else ownedPassNames(); });
+$('#s-exowned').addEventListener('change', async e => { try{ localStorage.setItem(EXOWN_KEY, e.target.checked ? '1' : '0'); }catch(e2){}
+  const n = $('#s-exowned-note'); if(!e.target.checked){ n.classList.add('hide'); return; }
+  n.classList.remove('hide'); n.textContent = 'This uses your passes from the Scan button at the top of the page - tap Scan first if you haven\'t lately.';
+  await ownedPassNames(); if(ownedCache && !ownedCache.none) n.textContent = 'Uses your passes from the Scan button at the top - tap Scan first if you haven\'t lately. ' + n.textContent; });
 
+/* Exclude players (Dennis, 2026-11-27): your top cards in the sports and seasons you sell, narrowed as you type;
+   tap one to leave it out. From your latest pull, or your passes from the Scan button before you've pulled. */
 function excludeManager(){
   const box = modal('Exclude players/teams', `
     <p class="note">Anything you add here is left out of your scan results from now on, even when someone has a standing offer on it.</p>
     <div style="display:flex;gap:8px">
-      <input id="ex-add" class="field" placeholder="e.g. Julian Sayin, or a team name">
+      <input id="ex-add" class="field" placeholder="Search your players, or type any name" autocomplete="off">
       <button class="btn-ghost" id="ex-add-btn" style="flex-shrink:0">Add</button>
     </div>
+    <div id="ex-sugg"></div>
     <div id="ex-list"></div>`);
-
+  let pool = null;
+  const getPool = async () => {
+    if(pool) return pool;
+    const c = sellCfg(), inSel = (sp, se) => !!c[sp] && (!(BSEAS[sp] || []).length || c[sp].includes(se));
+    if(lastPull && lastPull.length) pool = lastPull.filter(p => inSel(p.sport, p.season)).map(p => ({ n: p.name, sp: p.sport, se: p.season, r: p.totalValue }));
+    else { await loadMyPasses(); pool = (myAll || []).filter(p => inSel(p.sp, p.se)).map(p => ({ n: p.n, sp: p.sp, se: p.se, r: p.r, lv: p.lv })); }
+    const best = new Map(); for(const p of pool){ const k = norm(p.n), o = best.get(k); if(!o || (p.r || 0) > (o.r || 0)) best.set(k, p); }
+    pool = [...best.values()].sort((a, b) => (b.r || 0) - (a.r || 0));
+    return pool;
+  };
+  const drawSugg = async () => {
+    const q = norm(box.querySelector('#ex-add').value || ''), ex = loadExcludes(), P = await getPool();
+    const l = P.filter(p => !ex.some(x => samePlayer(x, p.n)) && (!q || norm(p.n).includes(q))).slice(0, q ? 15 : 20);
+    box.querySelector('#ex-sugg').innerHTML = !P.length ? '<p class="note">Pull your cards (or tap Scan at the top) to see your players here.</p>'
+      : `<p class="note" style="margin:8px 0 4px">${q ? 'Matching your players' : 'Your top players'} - tap to exclude</p>` + (l.map(p => `<div class="hit" style="grid-template-columns:1fr auto;align-items:center">
+        <span><span class="player">${esc(p.n)}</span> <span class="seas">${esc(spLbl(p.sp))}${p.se ? ' · ' + esc(p.se) : ''}</span>${p.r ? `<br><span class="who">${Number(p.r).toLocaleString(undefined, { maximumFractionDigits: 1 })} rating${p.lv ? ' • ' + esc(p.lv) : ''}</span>` : ''}</span>
+        <button class="btn-ghost" data-exadd="${esc(p.n)}">Exclude</button></div>`).join('') || '<p class="nohit">None of your players match - tap Add to exclude that name anyway.</p>');
+  };
   const renderList = () => {
     const list = loadExcludes();
-    box.querySelector('#ex-list').innerHTML = list.length
+    box.querySelector('#ex-list').innerHTML = `<p class="note" style="margin:12px 0 4px"><b>Excluded</b></p>` + (list.length
       ? list.map((n,i)=>`<div class="hit" style="grid-template-columns:1fr auto"><span class="player">${esc(n)}</span><button class="btn-ghost" data-rm="${i}">Remove</button></div>`).join('')
-      : '<p class="nohit">Nothing excluded yet.</p>';
+      : '<p class="nohit">Nothing excluded yet.</p>');
   };
-  renderList();
-
-  const add = () => {
-    const input = box.querySelector('#ex-add');
-    const name = input.value.trim();
-    if(!name) return;
-    const list = loadExcludes();
-    if(!list.some(x => norm(x)===norm(name))) { list.push(name); saveExcludes(list); }
-    input.value = '';
-    renderList();
-  };
+  const addName = name => { name = String(name || '').trim(); if(!name) return; const list = loadExcludes();
+    if(!list.some(x => norm(x)===norm(name))) { list.push(name); saveExcludes(list); } renderList(); drawSugg(); };
+  renderList(); drawSugg();
+  let exT = 0;
+  box.querySelector('#ex-add').addEventListener('input', () => { clearTimeout(exT); exT = setTimeout(drawSugg, 120); });
+  const add = () => { const input = box.querySelector('#ex-add'); addName(input.value); input.value = ''; drawSugg(); };
   box.querySelector('#ex-add-btn').addEventListener('click', add);
   box.querySelector('#ex-add').addEventListener('keydown', e => { if(e.key==='Enter') add(); });
   box.addEventListener('click', e => {
+    const a = e.target.closest('[data-exadd]'); if(a){ addName(a.dataset.exadd); return; }
     const rm = e.target.closest('[data-rm]');
     if(!rm) return;
     const list = loadExcludes();
     list.splice(+rm.dataset.rm, 1);
     saveExcludes(list);
-    renderList();
+    renderList(); drawSugg();
   });
 }
 
@@ -4291,7 +4313,6 @@ async function showMatches(raw){
     <div class="seg sm-sort" role="group" aria-label="Sort by">
       <button data-sort="rate">Best rate</button>
       <button data-sort="value">Card value</button>
-      <button data-sort="orders">Big orders</button>
     </div>
     <input id="sm-q" class="field" autocomplete="off" spellcheck="false"
            placeholder="Search your cards by player" style="margin-top:8px">
@@ -4457,7 +4478,7 @@ async function showMatches(raw){
     smFilter();
   }));
   let savedSort = 'rate';
-  try{ savedSort = localStorage.getItem(SORT_KEY) || 'rate'; }catch(e){}
+  try{ savedSort = localStorage.getItem(SORT_KEY) || 'rate'; }catch(e){} if(savedSort === 'orders') savedSort = 'rate';   // Big orders removed (2026-11-27)
   applySort(savedSort);
 
   if(blocked.length){
@@ -8791,13 +8812,13 @@ function updateRsLookupVisibility(){
 // Cards come out of a cache that rolls over every 30 minutes. The number here
 // has to match CACHE_BUCKET_MS in functions/api/collection.js, or the countdown
 // points at a time the cache does not actually roll over.
+let lastPullAt = null, lastPull = null;   // the latest pull this visit (cards + when Real was read)
 function updateFreshnessNote(){
   const el = $('#rs-fresh');
   if(!el) return;
-  const slot = 30 * 60 * 1000;
-  const next = new Date(Math.ceil(Date.now() / slot) * slot);
-  el.textContent = `Collection data updates every 30 minutes. Next update ${
-    next.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' })}.`;
+  // Each member's cards are read from Real at most every 90 minutes (2026-11-27); a pull in between shows the saved copy.
+  const at = lastPullAt, t = d => new Date(d).toLocaleTimeString([], { hour:'numeric', minute:'2-digit' });
+  el.textContent = at ? `Cards read from Real at ${t(at)}. They refresh at most every 90 minutes - next after ${t(at + 90 * 60000)}.` : 'Your cards are read from Real at most once every 90 minutes.';
 }
 setInterval(updateFreshnessNote, 30000);
 
@@ -8817,7 +8838,7 @@ function sellCfg(){ let c = null; try{ c = JSON.parse(localStorage.getItem(SELL_
 function saveSellCfg(c){ try{ localStorage.setItem(SELL_KEY, JSON.stringify(c)); }catch(e){} }
 function drawSellCfg(){ const box = $('#sellcfg'); if(!box) return; const c = sellCfg();
   box.innerHTML = SP_ORDER.map(s => { const on = !!c[s], SL = BSEAS[s] || [];
-    return `<div class="sr${on ? '' : ' off'}"><label><input type="checkbox" data-sellsp="${s}"${on ? ' checked' : ''}>${s}</label>`
+    return `<div class="sr${on ? '' : ' off'}"><label><input type="checkbox" data-sellsp="${s}"${on ? ' checked' : ''}>${spLbl(s)}</label>`
       + SL.map(se => `<button type="button" data-sellse="${s}|${se}" aria-pressed="${on && c[s].includes(se)}">${se}</button>`).join('') + '</div>'; }).join(''); }
 $('#sellcfg').addEventListener('change', e => { const s = e.target.dataset.sellsp; if(!s) return; const c = sellCfg();
   if(e.target.checked) c[s] = [curSeason(s)]; else delete c[s]; saveSellCfg(c); drawSellCfg(); });
@@ -8839,6 +8860,7 @@ async function pullOne(sp, lbl, say){
     for(const p of data.players || []){ if(!p.name) continue; const m = merged.get(p.name) || { name: p.name, total: 0, totalValue: 0 };
       m.total += p.total || 0; m.totalValue = Math.round((m.totalValue + (p.totalValue || 0)) * 10) / 10; merged.set(p.name, m); }
     hashId = data.hashId || hashId;
+    if(data.fetchedAt) lastPullAt = lastPullAt ? Math.min(lastPullAt, data.fetchedAt) : data.fetchedAt;
     if(!data.hasMore || chunk > 50) break;
     start = data.nextStart;
   }
@@ -8848,7 +8870,7 @@ $('#rs-go').addEventListener('click', async () => {
   const btn = $('#rs-go'), c = sellCfg();
   const jobs = SP_ORDER.flatMap(s => !c[s] ? [] : (BSEAS[s] || []).length ? c[s].map(se => [s, se]) : [[s, '']]);
   if(!jobs.length) return rsMsg('Pick at least one sport you sell.', true);
-  btn.disabled = true; rsMsg('');
+  btn.disabled = true; rsMsg(''); lastPullAt = null;
   const raw = [], failed = [];
   try{
     for(let i = 0; i < jobs.length; i++){
@@ -8858,6 +8880,7 @@ $('#rs-go').addEventListener('click', async () => {
     }
     if(!raw.length){ rsMsg(failed.length ? `Could not load ${failed.join(', ')} - try again in a minute.` : `No cards found for "${me}" in what you sell.`, true); return; }
     rsMsg(failed.length ? `Couldn't load ${failed.join(', ')} - showing the rest.` : '', !!failed.length);
+    lastPull = raw; updateFreshnessNote();
     showMatches(raw);
   }catch(e){
     console.error(e);

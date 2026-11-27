@@ -1849,7 +1849,7 @@ async function amLog(env, e) { let l = []; try { l = JSON.parse((await env.RATEB
   l.unshift({ at: Date.now(), ...e }); await env.RATEBOARD_KV.put(AM_LOG, JSON.stringify(l.slice(0, 150))); }
 /* Goal rating (Dennis, 2026-11-27): a buyer names the rarity they're grinding to; once their pass for that player
    is there, the listing comes down. Their passes are read once per run (one request for every pass they own). */
-const AM_SP = { CFB: ['ncaaf', 2026], NFL: ['nfl', 2026], NHL: ['nhl', 2026], NBA: ['nba', 2027], CBB: ['ncaam', 2027], FC: ['soccer', 2026], UFC: ['ufc', null] };
+const AM_SP = { CFB: ['ncaaf', 2026], NFL: ['nfl', 2026], NHL: ['nhl', 2026], NBA: ['nba', 2027], CBB: ['ncaam', 2027], FC: ['soccer', 2026], UFC: ['ufc', null], MLB: ['mlb', 2026], WNBA: ['wnba', 2026], GOLF: ['golf', 2026] };
 const amNorm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\b(jr|sr|ii|iii|iv|v)\b/g, '').replace(/\s+/g, ' ').trim();
 // Every pass a member has for one board sport this season (paged - one call doesn't return them all).
 // Board season label -> Real's season number ('2025-26' FC -> 2025, NBA -> 2026, CFB '2024' -> 2024). Blank = the current one.
@@ -1858,9 +1858,9 @@ function boardSeasonKey(bs, lbl) {
   const y = Number(m[1]); return m[2] && (bs === 'NBA' || bs === 'CBB') ? y + 1 : y;
 }
 // Board sport for a pass's sport, and the label members see for its season.
-const BOARD_OF = { ncaaf: 'CFB', nfl: 'NFL', nhl: 'NHL', nba: 'NBA', ncaam: 'CBB', soccer: 'FC', ufc: 'UFC' };
+const BOARD_OF = { ncaaf: 'CFB', nfl: 'NFL', nhl: 'NHL', nba: 'NBA', ncaam: 'CBB', soccer: 'FC', ufc: 'UFC', mlb: 'MLB', wnba: 'WNBA', golf: 'GOLF' };
 function boardSeasonLbl(bs, se) { se = Number(se); if (!se || bs === 'UFC') return '';
-  if (bs === 'CFB' || bs === 'NFL') return String(se);
+  if (bs === 'CFB' || bs === 'NFL' || bs === 'MLB' || bs === 'WNBA' || bs === 'GOLF') return String(se);
   const a = bs === 'NBA' || bs === 'CBB' ? se - 1 : se; return `${a}-${String(a + 1).slice(2)}`; }
 async function boardSportPasses(hid, bsport, tok, only) {
   const [sp, se0] = AM_SP[bsport] || []; if (!sp) return [];

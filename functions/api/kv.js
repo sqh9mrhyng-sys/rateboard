@@ -102,7 +102,8 @@ const FC_SEASONS = ['2025-26', '2026-27'];
 /* Every sport on one board, old seasons too (Dennis, 2026-11-27). Season labels as members see them; the first is
    the one being played. FC keeps storing its label always; other sports store one only for an older season. */
 const BOARD_SEASONS = { CFB: ['2026', '2025', '2024', '2023'], NFL: ['2026', '2025', '2024', '2023'], NBA: ['2026-27', '2025-26', '2024-25', '2023-24', '2022-23'],
-  CBB: ['2026-27', '2025-26', '2024-25', '2023-24'], NHL: ['2026-27', '2025-26', '2024-25', '2023-24'], FC: ['2026-27', '2025-26'], UFC: [] };
+  CBB: ['2026-27', '2025-26', '2024-25', '2023-24'], NHL: ['2026-27', '2025-26', '2024-25', '2023-24'], FC: ['2026-27', '2025-26'], UFC: [],
+  MLB: ['2026', '2025', '2024', '2023', '2022'], WNBA: ['2026', '2025', '2024'], GOLF: ['2026', '2025', '2024', '2023', '2022'] };
 let seasonColOk = false, goalColOk = false;
 
 /* ---- backups ----------------------------------------------------------

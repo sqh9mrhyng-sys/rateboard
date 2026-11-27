@@ -20,7 +20,7 @@ const CACHE_BUCKET_MS   = 30 * 60 * 1000;     // 30-minute slots
 const CACHE_TTL_SECONDS = 1800;               // 30 minutes — fresher cards, still
                                               // one RS pull per slot per user
 const IP_WINDOW_SECONDS = 60;
-const IP_MAX_REQUESTS   = 8;   // slowed 2026-11-02 (was 20)
+const IP_MAX_REQUESTS   = 12;  // 12 (2026-11-27): one pull can cover every board sport; each is still read at most every 90 min
 
 // rs = RS API sport string, season = RS season, entity = RS entity type
 const SPORT_CONFIG = {
@@ -33,10 +33,16 @@ const SPORT_CONFIG = {
   // now is 2027 while football's and hockey's is 2026.
   NBA: { rs: 'nba',    season: '2027', entity: 'player' },
   CBB: { rs: 'ncaam',  season: '2027', entity: 'player' },   // college basketball (2026-11-18)
+  MLB: { rs: 'mlb',    season: '2026', entity: 'player' },   // MLB, WNBA, Golf on the board (2026-11-27)
+  WNBA: { rs: 'wnba',  season: '2026', entity: 'player' },
+  GOLF: { rs: 'golf',  season: '2026', entity: 'player' },
 };
 // Older seasons can be read too (Dennis, 2026-11-27: one board for every sport and season), in Real's numbering.
 const SEASONS_OK = { FC: [2026, 2025], CFB: [2026, 2025, 2024, 2023], NFL: [2026, 2025, 2024, 2023], NHL: [2026, 2025, 2024, 2023], UFC: [2023],
-  NBA: [2027, 2026, 2025, 2024, 2023], CBB: [2027, 2026, 2025, 2024] };
+  NBA: [2027, 2026, 2025, 2024, 2023], CBB: [2027, 2026, 2025, 2024], MLB: [2026, 2025, 2024, 2023, 2022], WNBA: [2026, 2025, 2024], GOLF: [2026, 2025, 2024, 2023, 2022] };
+/* One read of Real per member, sport, season and part every 90 minutes (Dennis, 2026-11-27), kept in KV so a
+   restart doesn't let anyone pull again early. */
+const KEEP_SECONDS = 90 * 60;
 const PAGE_SIZE   = 20;
 const CHUNK_PAGES = 15; // 15 pages × 20 players = 300 players per invocation
 
@@ -261,7 +267,9 @@ export async function onRequestGet({ request, env }) {
 
   // 1. Cache check — serve from cache if it's from this quarter-hour slot
   const cacheReq = cacheKeyReq(origin, ['col', rsSport, season, username.toLowerCase(), String(start), String(slot)]);
-  const cached = await cacheGet(cacheReq);
+  const kvKey = `col90:${rsSport}:${season}:${username.toLowerCase()}:${start}`;
+  let cached = null; try { cached = env.RATEBOARD_KV ? await env.RATEBOARD_KV.get(kvKey) : null; } catch (e) {}
+  if (!cached) cached = env.RATEBOARD_KV ? null : await cacheGet(cacheReq);
   if (cached) {
     return new Response(cached, {
       headers: { 'content-type': 'application/json', 'x-cache': 'HIT' }
@@ -298,7 +306,8 @@ export async function onRequestGet({ request, env }) {
   });
 
   // 5. Cache until this quarter-hour slot rolls over
-  await cachePut(cacheReq, result, CACHE_TTL_SECONDS);
+  if (env.RATEBOARD_KV) { try { await env.RATEBOARD_KV.put(kvKey, result, { expirationTtl: KEEP_SECONDS }); } catch (e) {} }
+  else await cachePut(cacheReq, result, CACHE_TTL_SECONDS);
 
   return new Response(result, {
     headers: { 'content-type': 'application/json', 'x-cache': 'MISS' }
