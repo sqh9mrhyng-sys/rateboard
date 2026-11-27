@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Real Sports Rax Leaders by Sport - Rax Academy</title>
+<meta name="description" content="The top rax earners on Real Sports this season for NFL, college football, NBA, college basketball, NHL, MLB, WNBA, soccer and golf - total rax, rax per game, best game and games played.">
+<style>
+  :root{--bg:#141925;--panel:#1d2433;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:20px 16px 40px}
+  a{color:var(--accent)}
+  h1{font-size:28px;margin:8px 0 4px} h2{font-size:20px;margin:28px 0 6px}
+  .note{color:var(--mute);font-size:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:10px 0}
+  .card b{display:block;margin-bottom:2px}
+  .top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+  .btn{display:inline-block;background:#2f6fdd;color:#fff;text-decoration:none;font-weight:700;padding:9px 14px;border-radius:9px}
+  footer{border-top:1px solid var(--line);margin-top:36px;padding-top:14px;font-size:14px;color:var(--mute)}
+  footer a{margin-right:14px}
+  .seg{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0}
+  .seg button{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:999px;padding:7px 12px;font:inherit;font-size:14px;font-weight:700;cursor:pointer}
+  .seg button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#141925}
+  .ctl{display:flex;gap:8px;align-items:center;margin:4px 0 10px;flex-wrap:wrap} .ctl select{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:7px 10px;font:inherit;font-size:14px}
+  table{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}
+  th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line)} th{color:var(--mute);font-size:12.5px;font-weight:700}
+  td.n,th.n{text-align:right} td.r{color:var(--mute);width:28px} .tm{color:var(--mute);font-size:12.5px;display:block}
+  #more{margin:12px 0;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:9px;padding:9px 14px;font:inherit;font-weight:700;cursor:pointer}
+</style>
+<script src="/theme.js"></script>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/img/favicon-48.png">
+<link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Rax Academy">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#141925">
+</head>
+<body><div class="wrap">
+<div class="top"><a href="/" style="text-decoration:none;color:var(--ink);font-weight:900;font-size:20px">Rax Academy</a><a class="btn" href="/">Sign in / Sign up</a></div>
+
+<h1>Rax leaders</h1>
+<p>The players who have earned the most rax on Real Sports this season, sport by sport. Rax per game shows who pays best when he plays; total rax rewards players who play often as well as well. Numbers come from every logged game and update through the day. See the <a href="/guide">guide</a> for how rax works, and <a href="/projections">Projections</a> for where each player is heading.</p>
+<div class="seg" id="seg" role="group" aria-label="Sport"></div>
+<div class="ctl"><label class="note" for="sort">Sort by</label><select id="sort"><option value="rax">Total rax</option><option value="raxPerGame">Rax per game</option><option value="bestRax">Best game</option></select>
+<select id="min" aria-label="Minimum games"><option value="0">Any games</option><option value="5" selected>5+ games</option><option value="10">10+ games</option></select></div>
+<p class="note" id="head">Loading…</p>
+<table><thead><tr><th>#</th><th>Player</th><th class="n">Games</th><th class="n">Rax</th><th class="n">Per game</th><th class="n">Best</th></tr></thead><tbody id="rows"></tbody></table>
+<button id="more" hidden>Show more</button>
+
+<h2>How to read this</h2>
+<p><b>Rax</b> is what a player's games have paid on the base rate this season; a pass's rarity multiplies it. <b>Per game</b> is total rax divided by games played - the fairest way to compare a player who has missed time with one who hasn't. <b>Best</b> is his biggest single game, a hint at how high his ceiling is when he hits.</p>
+<p>For most sports the leaders by total rax and by rax per game are different lists: high-volume starters top the first, stars with fewer games the second. When you're choosing whom to build, look at both - and check injury news before boosting anyone.</p>
+
+<footer><a href="/about">About</a><a href="/guide">Guide</a><a href="/leaders">Leaders</a><a href="/privacy">Privacy policy</a><a href="/contact">Contact</a><br>Rax Academy is an independent fan-made site. It is not made by, endorsed by or affiliated with Real Sports.</footer>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const SP = [['nfl', 2026, 'NFL', '2026-27'], ['ncaaf', 2026, 'CFB', '2026'], ['nba', 2027, 'NBA', '2026-27'], ['ncaam', 2027, 'CBB', '2026-27'], ['nhl', 2026, 'NHL', '2026-27'],
+  ['soccer', 2026, 'Soccer', '2026-27'], ['mlb', 2026, 'MLB', '2026'], ['wnba', 2026, 'WNBA', '2026'], ['golf', 2026, 'Golf', '2026']];
+let cur = 0, rows = [], shown = 50;
+try { const v = Number(localStorage.getItem('leaders_sp')); if (SP[v]) cur = v; } catch (e) {}
+$('#seg').innerHTML = SP.map((s, i) => `<button type="button" data-i="${i}">${s[2]}</button>`).join('');
+const paint = () => document.querySelectorAll('#seg button').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.i) === cur)));
+const unit = () => SP[cur][0] === 'golf' ? 'round' : 'game';
+function draw() {
+  const min = Number($('#min').value), k = $('#sort').value;
+  const list = rows.filter(r => (r.games || 0) >= min).sort((a, b) => (b[k] || 0) - (a[k] || 0));
+  const [sp, se, lb, sl] = SP[cur];
+  $('#head').textContent = `${lb} ${sl} · ${list.length.toLocaleString()} players${min ? ' with ' + min + '+ ' + unit() + 's' : ''}`;
+  $('#rows').innerHTML = list.slice(0, shown).map((r, i) => `<tr><td class="r">${i + 1}</td><td><b>${esc(r.player)}</b><span class="tm">${esc(r.team || '')}</span></td><td class="n">${r.games}</td><td class="n">${Math.round(r.rax).toLocaleString()}</td><td class="n">${(r.raxPerGame || 0).toFixed(1)}</td><td class="n">${Math.round(r.bestRax || 0)}</td></tr>`).join('') || '<tr><td colspan="6" class="note">No players yet.</td></tr>';
+  $('#more').hidden = list.length <= shown;
+}
+async function load() {
+  paint(); $('#head').textContent = 'Loading…'; $('#rows').innerHTML = ''; shown = 50;
+  const [sp, se] = SP[cur], want = cur;
+  try { const d = await (await fetch(`/api/rax?gamelog=query&mode=players&sport=${sp}&season=${se}&seasons=${sp}:${se}&limit=500&sort=rax&dir=desc`)).json();
+    if (want !== cur) return; rows = d.rows || []; draw(); } catch (e) { $('#head').textContent = 'Could not load - try again.'; }
+}
+$('#seg').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; cur = Number(b.dataset.i); try { localStorage.setItem('leaders_sp', cur); } catch (x) {} load(); });
+$('#sort').onchange = () => { shown = 50; draw(); }; $('#min').onchange = () => { shown = 50; draw(); };
+$('#more').onclick = () => { shown += 50; draw(); };
+load();
+</script>
+</body>
+</html>
