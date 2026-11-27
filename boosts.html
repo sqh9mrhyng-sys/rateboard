@@ -237,6 +237,7 @@
   /* Passes box gone (Dennis, 2026-11-17): Scan is at the top now; Read my boosters takes the whole row. */
   .rdrow>.rd[hidden]{display:none} .rdrow{grid-template-columns:1fr !important} #scanmsg[hidden]{display:none !important}
   .bout{flex:none;margin-left:6px;border:1px solid var(--bad,#e5484d);color:var(--bad,#e5484d);background:none;border-radius:8px;padding:4px 8px;font-weight:800;font-size:12px}
+.rbearn{display:inline-flex;flex-direction:column;align-items:flex-start;justify-content:center;background:var(--panel2,#1d2433);border:1px solid var(--line,#2a3346);border-radius:10px;padding:4px 11px;line-height:1.15}.rbearn span{font:600 11px system-ui,-apple-system,sans-serif;color:var(--mute,#9aa3b5)}.rbearn b{font:800 15px system-ui,-apple-system,sans-serif;color:var(--accent,#e3c46f)}.rbearn[hidden]{display:none}
 </style>
 <script src="/theme.js"></script>
 <script src="/nav.js?v=9"></script>
@@ -1165,7 +1166,7 @@ function drawPassSum(p){
     + list.map(x => `<tr><td><b>${esc(nm(x.sport))}</b> <span class="note">${esc(SEAS(x.sport, x.season))}</span></td><td>${x.n - x.teams}</td><td>${x.teams || '-'}</td><td><div class="rc">${Object.entries(x.by || {}).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<span>${esc(RLBL[k] || k)} ${n}</span>`).join('')}</div></td></tr>`).join('')
     + '</tbody></table></div>';
 }
-async function loadPassSum(){ const j = await api('/api/swaps?op=me&page=boosts'); if(!j.error) drawPassSum(j.profile); }
+async function loadPassSum(){ const j = await api('/api/swaps?op=me&page=boosts'); if(!j.error){ drawPassSum(j.profile); EARNED = (j.profile && j.profile.earnedBy) || EARNED; drawEarned(); } }
 // One scan for the whole site, in parts: keeps asking until it's done.
 let scanStart = 0;
 async function fullScan(extra, onPart){
@@ -1217,6 +1218,20 @@ async function pubTop(){
     + '<p class="note" style="margin-top:10px">Projections are estimates, not guarantees. Sign in to see which of <b>your</b> cards to boost and with which booster.</p>';
 }
 document.addEventListener('click', e => { const b = e.target.closest('[data-ptsp]'); if(b){ ptSp = b.dataset.ptsp; pubTop(); } });
+/* Rax earned from this sport (Dennis, 2026-11-27): the earnings on your passes added up, this season only,
+   shown beside Scan. All adds up every sport's current season. */
+const EARN_SE = { ncaam: [2027], ncaaf: [2026], nfl: [2026], nba: [2027], nhl: [2026], golf: [2026], soccer: [2026] };
+const EARN_LBL = { ncaam: 'CBB', ncaaf: 'CFB', nfl: 'NFL', nba: 'NBA', nhl: 'NHL', golf: 'Golf', soccer: 'FC' };
+let EARNED = null;
+function drawEarned(){
+  const bar = document.querySelector('.rbnav-top'); if(!bar || !EARNED) return;
+  let el = document.getElementById('rbearn'); if(!el){ el = document.createElement('div'); el.id = 'rbearn'; el.className = 'rbearn'; const m = document.getElementById('rbscanmsg'); bar.insertBefore(el, m || null); }
+  const sp = $('#sport').value, sps = sp === 'all' ? Object.keys(EARN_SE) : EARN_SE[sp] ? [sp] : [];
+  let n = 0; for(const s of sps) for(const se of EARN_SE[s]) n += Number(EARNED[`${s}:${se}`]) || 0;
+  el.hidden = !sps.length;
+  el.innerHTML = `<span>${sp === 'all' ? 'Rax earned this season' : `Rax earned from ${EARN_LBL[sp]}`}</span><b>${Math.round(n).toLocaleString()}</b>`;
+}
+$('#sport').addEventListener('change', drawEarned);
 (async () => {
   let me = await api('/api/swaps?op=me&page=boosts');
   for(let i = 0; i < 4 && me.error && /sign in/i.test(me.error) && (()=>{try{return !!localStorage.getItem('ratebrd_token_v1')}catch(e){return false}})(); i++){
@@ -1225,6 +1240,7 @@ document.addEventListener('click', e => { const b = e.target.closest('[data-ptsp
   }
   if(me.error){ $('#lock').hidden = false; $('#lockmsg').textContent = /sign in/i.test(me.error) ? 'Sign in first.' : me.error; if(/sign in/i.test(me.error)){ $('#signinbtn').hidden = false; $('#signinhint').hidden = false; pubTop(); } return; }
   $('#main').hidden = false;
+  EARNED = (me.profile && me.profile.earnedBy) || null; drawEarned(); setTimeout(drawEarned, 600);
   if(URL_SPORT && $('#sport').value === URL_SPORT){ try{ paintSport(); }catch(e){} setTimeout(() => { const r = $('#run'); if(r && !r.disabled) r.click(); }, 1500); }
   // The extra settings are only offered to the accounts that have them.
   if(me.boostModes){
