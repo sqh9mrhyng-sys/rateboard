@@ -1849,17 +1849,23 @@ async function amLog(env, e) { let l = []; try { l = JSON.parse((await env.RATEB
    is there, the listing comes down. Their passes are read once per run (one request for every pass they own). */
 const AM_SP = { CFB: ['ncaaf', 2026], NFL: ['nfl', 2026], NHL: ['nhl', 2026], NBA: ['nba', 2027], CBB: ['ncaam', 2027], FC: ['soccer', 2026], UFC: ['ufc', null] };
 const amNorm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\b(jr|sr|ii|iii|iv|v)\b/g, '').replace(/\s+/g, ' ').trim();
-async function amPasses(env, db, user, tok, memo) {
-  const k = String(user).toLowerCase(); if (memo.has(k)) return memo.get(k);
+// Every pass a member has for one board sport this season (paged - one call doesn't return them all).
+async function boardSportPasses(hid, bsport, tok) {
+  const [sp, se0] = AM_SP[bsport] || []; if (!sp) return [];
+  const seasons = bsport === 'FC' ? [2026, 2025] : bsport === 'UFC' ? (SWAP_SEASONS.ufc || []) : [se0], kinds = bsport === 'UFC' ? ['team', 'player'] : ['player'], out = [];
+  for (const se of seasons) for (const kind of kinds) {
+    const base = `https://web.realapp.com/userpasses/${encodeURIComponent(hid)}/passes?entityType=${kind}&season=${se}&sport=${sp}`;
+    const d = await rsGetJson(base, tok); const rows = rowsOf(d); rows.push(...(await morePassPages(base, tok, d, rows)));
+    for (const x of rows) { const p = passOf(x, sp, se, kind); if (p && p.name && p.rating != null) out.push(p); } }
+  return out;
+}
+async function amPasses(env, db, user, tok, memo, bsport) {
+  const k = String(user).toLowerCase() + '|' + bsport, uk = String(user).toLowerCase(); if (memo.has(k)) return memo.get(k);
   let list = null;
-  try { let hid = (await db.prepare('SELECT hashId FROM swap_users WHERE LOWER(key)=?').bind(k).first().catch(() => null) || {}).hashId;
-    if (!hid) { const n = await db.prepare('SELECT rsName FROM users WHERE LOWER(key)=?').bind(k).first().catch(() => null); try { hid = await resolveHashId((n && n.rsName) || user, tok); } catch (e) {} }
-    if (hid) { const r = await fetch(`https://web.realapp.com/userpasses/${encodeURIComponent(hid)}/passes`, { headers: rsHeaders(tok) });
-      if (r.status === 429) list = 'busy';
-      else if (r.ok) { list = []; for (const x of rowsOf(await r.json())) { const e = (x && (x.pass || x.entity)) || x || {};
-        const p = passOf(x, String(x.sport || e.sport || '').toLowerCase(), Number(x.season || e.season), String(x.entityType || e.entityType || '').toLowerCase());
-        if (p && p.rating != null && p.name) list.push({ sp: p.sport, se: p.season, n: amNorm(p.name), r: p.rating }); } } }
-  } catch (e) {}
+  try { let hid = (await db.prepare('SELECT hashId FROM swap_users WHERE LOWER(key)=?').bind(uk).first().catch(() => null) || {}).hashId;
+    if (!hid) { const n = await db.prepare('SELECT rsName FROM users WHERE LOWER(key)=?').bind(uk).first().catch(() => null); try { hid = await resolveHashId((n && n.rsName) || user, tok); } catch (e) {} }
+    if (hid) list = (await boardSportPasses(hid, bsport, tok)).map(p => ({ sp: p.sport, se: p.season, n: amNorm(p.name), r: p.rating }));
+  } catch (e) { list = /429/.test(String(e && e.message)) ? 'busy' : null; }
   memo.set(k, list); return list;
 }
 // Which account reads: the swap bot while Swaps are on hold (it's idle), else the market account.
@@ -1881,7 +1887,7 @@ async function amCheck(env, db, o, tok, memo = new Map()) {
     return 'deleted';
   }
   // Goal reached: their pass for this player is at (or past) the rarity they said they're grinding to.
-  if (Number(o.goal) > 0) { const ps = await amPasses(env, db, o.user, tok, memo);
+  if (Number(o.goal) > 0) { const ps = await amPasses(env, db, o.user, tok, memo, o.sport);
     if (ps === 'busy') return 'busy';
     if (Array.isArray(ps)) { const [sp, se0] = AM_SP[o.sport] || []; const se = o.sport === 'FC' ? (o.season === '2025-26' ? 2025 : 2026) : se0, nm = amNorm(o.player);
       const hit = ps.filter(p => p.sp === sp && (se == null || p.se === se) && p.n === nm).sort((a, b) => b.r - a.r)[0];
@@ -8429,24 +8435,16 @@ async function handle({ request, env, waitUntil }) {
      shown first. One read of every pass they own, kept 15 minutes. Their own data only. */
   if (op === 'myboardpasses') {
     if (!acc.who) return json({ error: 'Sign in first.' }, 401);
-    const k = String(acc.who).toLowerCase(), ck = 'mbp_v1_' + k;
-    try { const c = JSON.parse((await env.RATEBOARD_KV.get(ck)) || 'null'); if (c && Date.now() - c.at < 15 * 60000 && url.searchParams.get('fresh') !== '1') return json(c); } catch (e) {}
-    if (!(await allow(url.origin, 'mbp:' + k, 8, 600))) return json({ error: 'Wait a few minutes.' }, 429);
-    const tok = scanTok(env); if (!tok) return json({ sports: {} });
+    const bs = String(url.searchParams.get('sport') || '').toUpperCase(); if (!AM_SP[bs]) return json({ passes: [] });
+    const k = String(acc.who).toLowerCase(), ck = 'mbp_v2_' + k + '_' + bs;
+    try { const c = JSON.parse((await env.RATEBOARD_KV.get(ck)) || 'null'); if (c && Date.now() - c.at < 15 * 60000) return json(c); } catch (e) {}
+    if (!(await allow(url.origin, 'mbp:' + k, 12, 600))) return json({ error: 'Wait a few minutes.' }, 429);
+    const tok = scanTok(env); if (!tok) return json({ passes: [] });
     let hid = (await db.prepare('SELECT hashId FROM swap_users WHERE LOWER(key)=?').bind(k).first().catch(() => null) || {}).hashId;
     if (!hid) { try { hid = await resolveHashId(await realName(db, acc.who), tok); } catch (e) {} }
-    if (!hid) return json({ sports: {}, none: true });
-    let r; try { r = await fetch(`https://web.realapp.com/userpasses/${encodeURIComponent(hid)}/passes`, { headers: rsHeaders(tok) }); } catch (e) { return json({ error: 'Could not reach Real.' }, 502); }
-    if (!r.ok) return json({ error: r.status === 429 ? 'Real is busy - try again in a minute.' : 'Could not read your passes.' }, 502);
-    const BS = Object.fromEntries(Object.entries(AM_SP).map(([b, [sp]]) => [sp, b])), out = {};
-    for (const x of rowsOf(await r.json())) { const e = (x && (x.pass || x.entity)) || x || {};
-      const p = passOf(x, String(x.sport || e.sport || '').toLowerCase(), Number(x.season || e.season), String(x.entityType || e.entityType || '').toLowerCase());
-      const b = p && BS[p.sport]; if (!b || !p.name || p.rating == null) continue;
-      const se0 = AM_SP[b][1]; if (se0 != null && p.season !== se0 && !(b === 'FC' && (p.season === 2025 || p.season === 2026))) continue;
-      if (p.kind === 'team' && b !== 'UFC') continue;
-      (out[b] = out[b] || []).push({ n: p.name, r: Math.round(p.rating), lv: p.levelLabel || null, se: p.season }); }
-    for (const l of Object.values(out)) l.sort((a, b) => b.r - a.r);
-    const res = { at: Date.now(), sports: out };
+    if (!hid) return json({ passes: [], none: true });
+    let ps; try { ps = await boardSportPasses(hid, bs, tok); } catch (e) { return json({ error: 'Could not read your passes - try again in a minute.' }, 502); }
+    const res = { at: Date.now(), passes: ps.map(p => ({ n: p.name, r: Math.round(p.rating * 10) / 10, lv: p.levelLabel || null, se: p.season })).sort((a, b) => b.r - a.r) };
     try { await env.RATEBOARD_KV.put(ck, JSON.stringify(res), { expirationTtl: 3600 }); } catch (e) {}
     return json(res);
   }
