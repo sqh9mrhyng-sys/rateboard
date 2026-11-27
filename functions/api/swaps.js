@@ -1845,11 +1845,28 @@ export async function readComment(env, link, tokIn) {
 }
 async function amLog(env, e) { let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get(AM_LOG)) || '[]') || []; } catch (x) {}
   l.unshift({ at: Date.now(), ...e }); await env.RATEBOARD_KV.put(AM_LOG, JSON.stringify(l.slice(0, 150))); }
+/* Goal rating (Dennis, 2026-11-27): a buyer names the rarity they're grinding to; once their pass for that player
+   is there, the listing comes down. Their passes are read once per run (one request for every pass they own). */
+const AM_SP = { CFB: ['ncaaf', 2026], NFL: ['nfl', 2026], NHL: ['nhl', 2026], NBA: ['nba', 2027], CBB: ['ncaam', 2027], FC: ['soccer', 2026], UFC: ['ufc', null] };
+const amNorm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\b(jr|sr|ii|iii|iv|v)\b/g, '').replace(/\s+/g, ' ').trim();
+async function amPasses(env, db, user, tok, memo) {
+  const k = String(user).toLowerCase(); if (memo.has(k)) return memo.get(k);
+  let list = null;
+  try { let hid = (await db.prepare('SELECT hashId FROM swap_users WHERE LOWER(key)=?').bind(k).first().catch(() => null) || {}).hashId;
+    if (!hid) { const n = await db.prepare('SELECT rsName FROM users WHERE LOWER(key)=?').bind(k).first().catch(() => null); try { hid = await resolveHashId((n && n.rsName) || user, tok); } catch (e) {} }
+    if (hid) { const r = await fetch(`https://web.realapp.com/userpasses/${encodeURIComponent(hid)}/passes`, { headers: rsHeaders(tok) });
+      if (r.status === 429) list = 'busy';
+      else if (r.ok) { list = []; for (const x of rowsOf(await r.json())) { const e = (x && (x.pass || x.entity)) || x || {};
+        const p = passOf(x, String(x.sport || e.sport || '').toLowerCase(), Number(x.season || e.season), String(x.entityType || e.entityType || '').toLowerCase());
+        if (p && p.rating != null && p.name) list.push({ sp: p.sport, se: p.season, n: amNorm(p.name), r: p.rating }); } } }
+  } catch (e) {}
+  memo.set(k, list); return list;
+}
 // Which account reads: the swap bot while Swaps are on hold (it's idle), else the market account.
 async function amToken(env) { let hold = false; try { hold = !!(await env.RATEBOARD_KV.get('swaps_hold')); } catch (e) {}
   return (hold && env.RS_SWAP_TOKEN) || env.RS_MARKET_TOKEN || env.RS_SWAP_TOKEN; }
 // One listing: read its comment, take it down if Real says it was deleted, flag the rest. Returns the state.
-async function amCheck(env, db, o, tok) {
+async function amCheck(env, db, o, tok, memo = new Map()) {
   const r = await readComment(env, o.link, tok);
   if (r.state === 'busy' || r.state === 'error' || r.state === 'notoken') return r.state;
   const was = await db.prepare('SELECT state FROM board_cm WHERE offerId=?').bind(o.id).first().catch(() => null);
@@ -1861,8 +1878,21 @@ async function amCheck(env, db, o, tok) {
     await db.prepare('DELETE FROM offers WHERE id=?').bind(o.id).run();
     await addNote(db, o.user, 'mod', `Your ${o.player} ${o.rate}/1 listing on the board was taken down: your comment was deleted. If you're still buying, post it again with a new comment.`);
     await amLog(env, { act: 'removed', why: 'deleted', ...base, row });
-  } else if ((r.state === 'missing' || r.state === 'closed') && (!was || was.state !== r.state)) await amLog(env, { act: 'flag', why: r.state, ...base });
-  else if (r.state === 'ok' && r.author) {
+    return 'deleted';
+  }
+  // Goal reached: their pass for this player is at (or past) the rarity they said they're grinding to.
+  if (Number(o.goal) > 0) { const ps = await amPasses(env, db, o.user, tok, memo);
+    if (ps === 'busy') return 'busy';
+    if (Array.isArray(ps)) { const [sp, se0] = AM_SP[o.sport] || []; const se = o.sport === 'FC' ? (o.season === '2025-26' ? 2025 : 2026) : se0, nm = amNorm(o.player);
+      const hit = ps.filter(p => p.sp === sp && (se == null || p.se === se) && p.n === nm).sort((a, b) => b.r - a.r)[0];
+      if (hit && hit.r >= Number(o.goal)) { const row = await db.prepare('SELECT * FROM offers WHERE id=?').bind(o.id).first().catch(() => null);
+        await db.prepare('DELETE FROM offers WHERE id=?').bind(o.id).run();
+        await db.prepare("UPDATE board_cm SET state='goal' WHERE offerId=?").bind(o.id).run().catch(() => {});
+        await addNote(db, o.user, 'mod', `Your ${o.player} pass hit your goal of ${o.goal_name || o.goal} (it's at ${Math.round(hit.r)}), so your ${o.rate}/1 listing on the board was taken down. Congrats!`);
+        await amLog(env, { act: 'removed', why: 'goal', goal: o.goal_name || String(o.goal), rating: Math.round(hit.r), ...base, row });
+        return 'goal'; } } }
+  if ((r.state === 'missing' || r.state === 'closed') && (!was || was.state !== r.state)) await amLog(env, { act: 'flag', why: r.state, ...base });
+  if (r.state === 'ok' && r.author) {
     const n = await db.prepare('SELECT u.rsName AS a, s.rsUser AS b FROM (SELECT ? AS k) q LEFT JOIN users u ON LOWER(u.key)=q.k LEFT JOIN swap_users s ON LOWER(s.key)=q.k').bind(String(o.user).toLowerCase()).first().catch(() => null);
     const names = [o.user, n && n.a, n && n.b].filter(Boolean).map(x => String(x).toLowerCase().replace(/^@/, ''));
     if (!names.includes(r.author) && !(was && was.state === 'ok')) await amLog(env, { act: 'flag', why: 'notyours', author: r.author, ...base });
@@ -1880,28 +1910,29 @@ export async function boardAutoMod(env) {
   const tok = await amToken(env); if (!tok) { await env.RATEBOARD_KV.delete('automod_lock'); return; }
   const pause = () => new Promise(res => setTimeout(res, 1500));
   try { await db.prepare(AM_DDL).run();
+    for (const c of ['goal INTEGER', 'goal_name TEXT']) { try { await alterOnce(db, 'ALTER TABLE offers ADD COLUMN ' + c); } catch (e) {} }
     // 1) Reports first: the reported member's listings, right away.
     let q = []; try { q = JSON.parse((await env.RATEBOARD_KV.get('automod_q')) || '[]') || []; } catch (e) {}
     if (q.length) { const job = q[0], who = String(job.target || '').toLowerCase().replace(/^@/, '');
-      const offs = ((await db.prepare(`SELECT id, user, sport, player, rate, link FROM offers WHERE link <> '' AND (LOWER(user)=?
+      const offs = ((await db.prepare(`SELECT id, user, sport, player, rate, link, season, goal, goal_name FROM offers WHERE link <> '' AND (LOWER(user)=?
           OR LOWER(user) IN (SELECT LOWER(key) FROM users WHERE LOWER(rsName)=?) OR LOWER(user) IN (SELECT LOWER(key) FROM swap_users WHERE LOWER(rsUser)=?)) LIMIT 30`).bind(who, who, who).all().catch(() => ({ results: [] }))).results) || [];
-      let gone = [], busy = false;
-      for (const o of offs) { const st = await amCheck(env, db, o, tok); if (st === 'busy') { busy = true; break; } if (st === 'deleted') gone.push(o); await pause(); }
+      let gone = [], busy = false; const memo = new Map();
+      for (const o of offs) { const st = await amCheck(env, db, o, tok, memo); if (st === 'busy') { busy = true; break; } if (st === 'deleted' || st === 'goal') gone.push({ ...o, st }); await pause(); }
       if (busy) { await env.RATEBOARD_KV.put('automod_rest', '1', { expirationTtl: 600 }); return; }
       if (gone.length && job.id) { try { const m = JSON.parse((await env.RATEBOARD_KV.get(BOARD_KV)) || '{}') || {}; const r = (m.reports || []).find(x => x.id === job.id);
-          if (r && r.status === 'open') { r.status = 'closed'; r.auto = 'deleted comment'; await env.RATEBOARD_KV.put(BOARD_KV, JSON.stringify(m));
-            await addNote(db, r.by, 'reply', `Thanks for the report on @${r.target} - their comment was deleted, so their ${gone.map(o => o.player).join(', ')} listing${gone.length === 1 ? ' was' : 's were'} taken down.`);
-            await amLog(env, { act: 'report', why: 'deleted', user: gone[0].user, reporter: r.by, player: gone.map(o => o.player).join(', '), sport: gone[0].sport }); } } catch (e) {} }
+          if (r && r.status === 'open') { const why = gone.every(o => o.st === 'goal') ? 'goal' : 'deleted'; r.status = 'closed'; r.auto = why === 'goal' ? 'goal reached' : 'deleted comment'; await env.RATEBOARD_KV.put(BOARD_KV, JSON.stringify(m));
+            await addNote(db, r.by, 'reply', `Thanks for the report on @${r.target} - ${why === 'goal' ? 'they already reached their goal' : 'their comment was deleted'}, so their ${gone.map(o => o.player).join(', ')} listing${gone.length === 1 ? ' was' : 's were'} taken down.`);
+            await amLog(env, { act: 'report', why, user: gone[0].user, reporter: r.by, player: gone.map(o => o.player).join(', '), sport: gone[0].sport }); } } catch (e) {} }
       q.shift(); await env.RATEBOARD_KV.put('automod_q', JSON.stringify(q)); return; }
     // 2) The daily sweep, from 1:00am Alaska until every listing has been read today.
     const ak = new Date(Date.now() - 9 * 3600000), day = ak.toISOString().slice(0, 10);
     let sw = {}; try { sw = JSON.parse((await env.RATEBOARD_KV.get('automod_sweep')) || '{}') || {}; } catch (e) {}
     if (ak.getUTCHours() < 1 || sw.done === day) return;
     if (sw.day !== day) { sw = { day, from: Date.now(), n: 0 }; }
-    const due = ((await db.prepare(`SELECT o.id, o.user, o.sport, o.player, o.rate, o.link FROM offers o LEFT JOIN board_cm c ON c.offerId = o.id
+    const due = ((await db.prepare(`SELECT o.id, o.user, o.sport, o.player, o.rate, o.link, o.season, o.goal, o.goal_name FROM offers o LEFT JOIN board_cm c ON c.offerId = o.id
       WHERE o.link IS NOT NULL AND o.link <> '' AND (c.offerId IS NULL OR c.checkedAt < ?) ORDER BY c.checkedAt LIMIT 8`).bind(sw.from).all()).results) || [];
     if (!due.length) { sw.done = day; sw.end = Date.now(); await env.RATEBOARD_KV.put('automod_sweep', JSON.stringify(sw)); return; }
-    for (const o of due) { const st = await amCheck(env, db, o, tok); if (st === 'busy') { await env.RATEBOARD_KV.put('automod_rest', '1', { expirationTtl: 600 }); break; } sw.n++; await pause(); }
+    const memo = new Map(); for (const o of due) { const st = await amCheck(env, db, o, tok, memo); if (st === 'busy') { await env.RATEBOARD_KV.put('automod_rest', '1', { expirationTtl: 600 }); break; } sw.n++; await pause(); }
     await env.RATEBOARD_KV.put('automod_sweep', JSON.stringify(sw));
   } catch (e) { try { await env.RATEBOARD_KV.put('automod_err', String(e.message || e).slice(0, 200), { expirationTtl: 86400 }); } catch (x) {} }
   finally { try { await env.RATEBOARD_KV.delete('automod_lock'); } catch (e) {} }

@@ -99,7 +99,7 @@ const ALLOWED_KEYS = new Set([KV_KEY]);
 const MAX_VALUE_BYTES = 8_000_000;
 const MAX_OFFERS = 20_000;
 const FC_SEASONS = ['2025-26', '2026-27'];
-let seasonColOk = false;
+let seasonColOk = false, goalColOk = false;
 
 /* ---- backups ----------------------------------------------------------
    These live in D1 alongside the listings, NOT in KV. They used to be KV
@@ -206,10 +206,10 @@ async function readBoard(env, includeHashes) {
   const side = await readSide(env);
   const [offersRes, usersRes] = await Promise.all([
     env.RATEBOARD_DB.prepare(
-      'SELECT id, user, sport, player, rate, link, ts, season FROM offers').all().catch(async () => {
-        // The FC season column is new; add it once and read again.
-        try { await env.RATEBOARD_DB.prepare('ALTER TABLE offers ADD COLUMN season TEXT').run(); } catch (e) {}
-        return env.RATEBOARD_DB.prepare('SELECT id, user, sport, player, rate, link, ts, season FROM offers').all();
+      'SELECT id, user, sport, player, rate, link, ts, season, goal, goal_name FROM offers').all().catch(async () => {
+        // The FC season and goal columns are new; add them once and read again.
+        for (const c of ['season TEXT', 'goal INTEGER', 'goal_name TEXT']) { try { await env.RATEBOARD_DB.prepare('ALTER TABLE offers ADD COLUMN ' + c).run(); } catch (e) {} }
+        return env.RATEBOARD_DB.prepare('SELECT id, user, sport, player, rate, link, ts, season, goal, goal_name FROM offers').all();
       }),
     env.RATEBOARD_DB.prepare(
       'SELECT key, name, hash, created, banned FROM users').all()
@@ -232,7 +232,7 @@ async function readBoard(env, includeHashes) {
     users,
     offers: (offersRes.results || []).map(o => ({
       id: o.id, user: o.user, sport: o.sport, player: o.player,
-      rate: o.rate, link: o.link || '', ts: o.ts, ...(o.season ? { season: o.season } : {})
+      rate: o.rate, link: o.link || '', ts: o.ts, ...(o.season ? { season: o.season } : {}), ...(o.goal ? { goal: o.goal, goalName: o.goal_name || null } : {})
     })),
     reports: side.reports, minimums: side.minimums, keeplist: side.keeplist, house: side.house,
     gamedata: side.gamedata, packdata: side.packdata, golfdata: side.golfdata, shiftdata: side.shiftdata,
@@ -266,6 +266,10 @@ async function applyOp(env, body) {
     // FC cards differ by season (e.g. the MLS sprint is still 2025-26).
     const season = sport === 'FC' && FC_SEASONS.includes(String(o.season)) ? String(o.season) : null;
     if (!user || !player || !sport || !(rate > 0)) return 'bad offer';
+    // Goal rating (2026-11-27): the rarity they're grinding to - required; the listing comes down once they're there.
+    const goal = Math.round(Number(o.goal)), goalName = str(o.goalName, 30);
+    if (!(goal >= 10 && goal <= 40000)) return 'pick your goal rarity';
+    if (!goalColOk) { for (const c of ['goal INTEGER', 'goal_name TEXT']) { try { await db.prepare('ALTER TABLE offers ADD COLUMN ' + c).run(); } catch (e) {} } goalColOk = true; }
 
     const count = await db.prepare('SELECT COUNT(*) AS n FROM offers').first();
     if (count && count.n >= MAX_OFFERS) return 'board is full';
@@ -277,12 +281,12 @@ async function applyOp(env, body) {
     // for the same player. No other row is read or touched, so it can't
     // collide with anyone else posting at the same moment.
     await db.prepare(
-      `INSERT INTO offers (id, user, sport, player, player_key, rate, link, ts, season)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO offers (id, user, sport, player, player_key, rate, link, ts, season, goal, goal_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user, sport, player_key)
        DO UPDATE SET rate = excluded.rate, player = excluded.player,
-                     link = excluded.link, ts = excluded.ts, season = excluded.season`
-    ).bind(str(o.id, 40) || uid(), user, sport, player, norm(player) + (season ? '|' + season : ''), rate, link, Date.now(), season).run();
+                     link = excluded.link, ts = excluded.ts, season = excluded.season, goal = excluded.goal, goal_name = excluded.goal_name`
+    ).bind(str(o.id, 40) || uid(), user, sport, player, norm(player) + (season ? '|' + season : ''), rate, link, Date.now(), season, goal, goalName || null).run();
     return null;
   }
 
