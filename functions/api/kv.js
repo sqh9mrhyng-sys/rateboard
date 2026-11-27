@@ -724,8 +724,10 @@ export async function onRequestPost({ request, env, waitUntil }) {
       const target = str(body.target, 60), reason = str(body.reason, 1000);
       if (!target || target.length < 2 || !reason || reason.length < 3) return json({ error: 'Add a username and what happened.' }, 400);
       const raw = await env.RATEBOARD_KV.get(KV_KEY); let m = {}; try { m = JSON.parse(raw || '{}') || {}; } catch (e) { m = {}; }
-      m.reports = m.reports || []; m.reports.push({ id: uid(), by: me, target: target.replace(/^@/, ''), reason, ts: Date.now(), status: 'open' });
+      const rid = uid(); m.reports = m.reports || []; m.reports.push({ id: rid, by: me, target: target.replace(/^@/, ''), reason, ts: Date.now(), status: 'open' });
       await env.RATEBOARD_KV.put(KV_KEY, JSON.stringify(m)); await bustBoard(origin);
+      // The reported member's listings get their comments checked within a minute (board auto-moderation).
+      try { const q = JSON.parse((await env.RATEBOARD_KV.get('automod_q')) || '[]') || []; q.push({ id: rid, target: target.replace(/^@/, ''), at: Date.now() }); await env.RATEBOARD_KV.put('automod_q', JSON.stringify(q.slice(-50))); } catch (e) {}
       return json({ ok: true });
     } catch (e) { return json({ error: 'Could not send: ' + (e && e.message || e) }, 503); }
   }
