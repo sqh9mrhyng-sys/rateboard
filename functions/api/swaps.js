@@ -1291,7 +1291,7 @@ async function dmChannel(db, auth, hashId, userName, env) {
   await db.prepare(DM_DDL).run();
   const had = await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=?').bind(hashId).first();
   if (had && had.channelId) return had.channelId;
-  if (!env || !(await newChatAllowed(env))) throw new Error('no chat with this member yet and today\'s 5 new chats are used - ask them to message @raxacademy.app');
+  if (!env || !(await newChatAllowed(env))) throw new Error('no chat with this member yet and today\'s 5 new chats are used - ask them to message @rax.academy');
   const res = await fetch('https://web.realapp.com/messages/channels', {
     method: 'POST', headers: { ...rsHeaders(auth), 'content-type': 'application/json' },
     body: JSON.stringify({ users: [{ id: hashId, userName: userName || undefined }] }) });
@@ -3548,6 +3548,20 @@ export async function swapTick(env) {
     let h = 0; for (const c of String(auth)) h = (h * 31 + c.charCodeAt(0)) | 0; const tok = (h >>> 0).toString(36);
     if (!(await env.RATEBOARD_KV.get('swaps_hold_set_1119'))) { await env.RATEBOARD_KV.put('swaps_hold_set_1119', '1', { expirationTtl: 30 * 86400 });
       await env.RATEBOARD_KV.put('swaps_hold', JSON.stringify({ at: Date.now(), tok, why: 'swap bot is logged out' })); }
+    /* New bot account (Dennis, 2026-11-27: the bot moves to @rax.academy, the old bot does Bulk). The old bot's
+       chats can't be used by the new one, so when the bot's token changes they're set aside (swap_dm_oldbot) and
+       everyone verifies again by DMing the new bot #packswap - until then they aren't matched. */
+    { const seen = await env.RATEBOARD_KV.get('bot_tok_v1');
+      if (!seen) await env.RATEBOARD_KV.put('bot_tok_v1', tok);
+      else if (seen !== tok) { await env.RATEBOARD_KV.put('bot_tok_v1', tok);
+        await db.prepare(DM_DDL).run();
+        await db.prepare('CREATE TABLE IF NOT EXISTS swap_dm_oldbot (hashId TEXT PRIMARY KEY, userName TEXT, channelId INTEGER, openedAt INTEGER)').run();
+        await db.prepare('INSERT OR REPLACE INTO swap_dm_oldbot SELECT hashId, userName, channelId, openedAt FROM swap_dm').run();
+        const n = await db.prepare('SELECT COUNT(*) AS n FROM swap_dm').first();
+        await db.prepare('DELETE FROM swap_dm').run();
+        try { await env.RATEBOARD_KV.put('grpdm_stop', 'bot switched', { expirationTtl: 30 * 86400 }); } catch (e) {}   // giveaway sending was the old bot's chats; the Saturday check still runs
+        await env.RATEBOARD_KV.put('bot_switch_1127', JSON.stringify({ at: Date.now(), setAside: n && n.n }), { expirationTtl: 30 * 86400 });
+        await db.prepare("INSERT INTO bot_log (at, kind, msg) VALUES (?, 'match', ?)").bind(Date.now(), `new bot account: ${n && n.n} old chats set aside, everyone verifies again`).run().catch(() => {}); } }
     /* Swaps down by hand (Dennis, 2026-11-26 2:47pm AK: "feature is down, issue getting resolved"). A manual hold
        never lifts by itself - only when he says it's fixed (swaps_hold and swaps_down deleted). */
     if (!(await env.RATEBOARD_KV.get('swaps_down_set_1126'))) { await env.RATEBOARD_KV.put('swaps_down_set_1126', '1', { expirationTtl: 30 * 86400 });
@@ -5973,7 +5987,7 @@ async function renameFlow(env, db, url, acc, op, waitUntil) {
   if (!auth) return json({ error: 'The bot is not set up.' }, 503);
   const found = await findCodeInDms(auth, String(p.name).toLowerCase(), RN_PHRASE);
   if (found.error) return json({ waiting: true, error: 'Could not reach Real just now - try again in a minute.' });
-  if (!found.ok) return json({ waiting: true, error: `No "confirm username change" message from @${p.name} yet. Send it to @raxacademy.app from that account, then tap verify again.` });
+  if (!found.ok) return json({ waiting: true, error: `No "confirm username change" message from @${p.name} yet. Send it to @rax.academy from that account, then tap verify again.` });
   await db.prepare('UPDATE users SET rsName=? WHERE key=?').bind(p.name, acc.who).run();
   await stat(db, 'rename_ok');
   try { await db.prepare(SPRO_DDL).run(); await db.prepare('DELETE FROM swap_pro WHERE key=?').bind(acc.who).run(); } catch (e) {}
@@ -6402,7 +6416,7 @@ async function handle({ request, env, waitUntil }) {
     if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
     if (kind === 'contact' && Date.now() < due - 30000) return json({ error: 'The swap DM opens at swap time.' }, 400);
     const once = `hourdm_v1_${key.toLowerCase()}_${due}_${kind}`;
-    if (await env.RATEBOARD_KV.get(once)) return json({ error: 'Already sent - check your DMs from @raxacademy.app.' }, 429);
+    if (await env.RATEBOARD_KV.get(once)) return json({ error: 'Already sent - check your DMs from @rax.academy.' }, 429);
     const auth = swapToken(env);
     const u = await db.prepare('SELECT key FROM swap_users WHERE LOWER(key)=?').bind(key.toLowerCase()).first();
     if (!u || !auth) return json({ error: 'No swaps found.' }, 404);

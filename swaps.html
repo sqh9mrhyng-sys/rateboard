@@ -228,6 +228,15 @@
 <body>
 <div class="lock" id="lock" hidden><h1>Swaps</h1><p class="note" id="lockmsg">Checking…</p><p id="probox" hidden><button class="primary" id="procheck">Pro check</button></p><p class="note" id="rnhint" hidden>Is your Real username different from your board username? <a href="/username">Link your Real account</a> first.</p><p id="signinbtn" hidden><a class="btn" href="/?next=/swaps" style="display:inline-block;padding:10px 14px;border-radius:9px;background:#E8A33D;color:#141925;font-weight:700;text-decoration:none">Sign in</a></p><p class="note" id="signinhint" hidden>Signed in already? Open the board once - it will ask for your password one more time, then this page works. Opened this from inside Real? Use the browser you signed in with.</p></div>
 <div class="lock" id="banbox" hidden style="max-width:520px"><h1>Swaps</h1><div id="banbody"></div></div>
+<!-- Verify gate (Dennis, 2026-11-27: the bot moved to @rax.academy). Nothing on Swaps works, and you aren't matched,
+     until you DM the new bot #packswap - a page of its own so no one scrolls past it. -->
+<div class="lock" id="vgate" hidden style="max-width:480px;padding:0 16px"><h1>Verify to swap</h1>
+  <p class="note" style="font-size:15px">Swaps now run from <b>@rax.academy</b>. Your swaps aren't confirmed, and you won't be matched, until you DM it the word <b>#packswap</b>.</p>
+  <div class="bar two" style="margin:16px 0 10px"><a class="btn" href="https://www.realapp.com/u/rax.academy" target="_blank" rel="noopener">Open @rax.academy</a><button type="button" id="vgcopy">Copy #packswap</button></div>
+  <div class="bar"><button class="primary wide" id="vgcheck">I sent it - check</button></div>
+  <p class="note" id="vgmsg" style="margin-top:12px"></p>
+  <p id="vgdown" hidden style="margin-top:16px;padding:12px 14px;border-radius:12px;border:1px solid var(--bad);background:rgba(229,72,77,.12);font-weight:700;text-align:left"></p>
+</div>
 <div class="wrap" id="main" hidden>
   <div id="modnote" hidden style="margin:10px 0;padding:10px 12px;border-radius:10px;border:1px solid #ffc95a55;background:#ffc95a14;font-size:14px"></div>
   <header class="hd3 swhd"><h1>Swaps</h1><span data-acct></span><a class="hourgo" id="hourgo" href="#" hidden><span class="hg1">Your swap page</span><span class="hg2">Buy list, offers &amp; hours</span><b>→</b></a></header>
@@ -256,8 +265,8 @@
   <section id="s1" class="step">
     <h2><span class="n">1</span>Message the bot</h2>
     <div id="s1how">
-      <p class="note">On Real, DM <b>@raxacademy.app</b> the word <b>#packswap</b>, then tap Check.</p>
-      <div class="bar two"><a class="btn" href="https://www.realapp.com/" target="_blank" rel="noopener">Open Real</a><button type="button" id="copytag">Copy #packswap</button></div>
+      <p class="note">On Real, DM <b>@rax.academy</b> the word <b>#packswap</b>, then tap Check.</p>
+      <div class="bar two"><a class="btn" href="https://www.realapp.com/u/rax.academy" target="_blank" rel="noopener">Open @rax.academy</a><button type="button" id="copytag">Copy #packswap</button></div>
       <div class="bar"><button class="primary wide" id="connect">Check verification</button></div>
     </div>
     <div class="note" id="connmsg"></div>
@@ -1307,12 +1316,26 @@ $('#whynot').addEventListener('click', async () => {
 });
 function paintConn(ok){
   connected = !!ok;
-  $('#connmsg').innerHTML = ok ? '✅ Verified - DMs come from <b>@raxacademy.app</b>.' : '';
+  // Not verified with the bot: the whole page waits behind the verify gate.
+  $('#vgate').hidden = !!ok; $('#main').hidden = !ok; if(!ok) window.scrollTo(0, 0);
+  $('#connmsg').innerHTML = ok ? '✅ Verified - DMs come from <b>@rax.academy</b>.' : '';
   $('#connect').style.display = ok ? 'none' : '';
   $('#s1how').hidden = !!ok; $('#s1').classList.toggle('ok', !!ok);
   $('#s1').hidden = !!ok;   // done: step 1 goes away (Dennis, 2026-11-17)
   renumber();
 }
+$('#vgcopy').addEventListener('click', async () => {
+  let ok = false; try{ await navigator.clipboard.writeText('#packswap'); ok = true; }catch(e){}
+  $('#vgcopy').textContent = ok ? 'Copied' : 'Type #packswap'; setTimeout(() => { $('#vgcopy').textContent = 'Copy #packswap'; }, 2000);
+});
+$('#vgcheck').addEventListener('click', async () => {
+  $('#vgcheck').disabled = true; $('#vgmsg').textContent = 'Checking…';
+  const j = await api('/api/swaps?op=connect');
+  $('#vgcheck').disabled = false;
+  if(j.error){ $('#vgmsg').textContent = j.error; return; }
+  if(j.connected){ $('#vgmsg').textContent = ''; paintConn(true); }
+  else $('#vgmsg').innerHTML = 'No DM from you yet. Send <b>#packswap</b> to <b>@rax.academy</b> on Real from your own account, wait a few seconds, then tap again.';
+});
 $('#copytag').addEventListener('click', async () => {
   let ok = false; try{ await navigator.clipboard.writeText('#packswap'); ok = true; }catch(e){}
   if(!ok){ try{ const a = document.createElement('textarea'); a.value = '#packswap'; document.body.appendChild(a); a.select(); ok = document.execCommand('copy'); a.remove(); }catch(e){} }
@@ -1324,7 +1347,7 @@ $('#connect').addEventListener('click', async () => {
   $('#connect').disabled = false;
   if(j.error){ $('#connmsg').textContent = j.error; return; }
   if(j.connected){ paintConn(true); if(j.confirmFailed){ $('#connmsg').innerHTML = '<span style="color:var(--bad)">Confirmation failed, your Real account is likely on friends only DMs.</span>'; $('#connect').style.display = ''; } }
-  else $('#connmsg').innerHTML = 'No DM from you yet. Send <b>#packswap</b> to <b>@raxacademy.app</b> on Real, wait a few seconds, then tap again.';
+  else $('#connmsg').innerHTML = 'No DM from you yet. Send <b>#packswap</b> to <b>@rax.academy</b> on Real, wait a few seconds, then tap again.';
 });
 $('#chatsync').addEventListener('click', async () => {
   const j = await api('/api/swaps?op=chats&sync=1');
@@ -1422,7 +1445,7 @@ async function showModNote(){
   showModNote().catch(() => {});
   try{ wantNames = JSON.parse(localStorage.getItem('ratebrd_swapnames') || '{}') || {}; }catch(e){}
   if(j.profile) prof = Object.assign(prof, j.profile);
-  { let b = document.getElementById('downbar'); if (j.down) { if (!b) { b = document.createElement('div'); b.id = 'downbar'; b.style.cssText = 'margin:10px 0 14px;padding:14px 16px;border-radius:14px;border:1px solid var(--bad);background:rgba(229,72,77,.12);font-weight:700;line-height:1.4'; const hd = document.querySelector('.swhd'); (hd && hd.parentNode ? hd.parentNode.insertBefore(b, hd.nextSibling) : document.body.prepend(b)); } b.textContent = j.down; } else if (b) b.remove(); }
+  { let b = document.getElementById('downbar'); if (j.down) { if (!b) { b = document.createElement('div'); b.id = 'downbar'; b.style.cssText = 'margin:10px 0 14px;padding:14px 16px;border-radius:14px;border:1px solid var(--bad);background:rgba(229,72,77,.12);font-weight:700;line-height:1.4'; const hd = document.querySelector('.swhd'); (hd && hd.parentNode ? hd.parentNode.insertBefore(b, hd.nextSibling) : document.body.prepend(b)); } b.textContent = j.down; } else if (b) b.remove(); const vd = document.getElementById('vgdown'); if (vd) { vd.hidden = !j.down; vd.textContent = j.down || ''; } }
   if(!j.tokenFound) $('#scanmsg').innerHTML = '<span style="color:var(--bad)">No swap token found in Cloudflare yet.</span>';
   $('#rsuser').textContent = '@' + (j.real || j.key || '');
   $('#rstop').textContent = '@' + (j.real || j.key || '');
