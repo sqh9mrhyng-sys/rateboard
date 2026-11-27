@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>College basketball on Real Sports: rax leaders, projections and tips - Rax Academy</title>
+<meta name="description" content="How College basketball pays on Real Sports, this season's top rax earners, best per-game players, projected leaders and tips for building and boosting CBB passes.">
+<style>
+  :root{--bg:#141925;--panel:#1d2433;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:20px 16px 40px}
+  a{color:var(--accent)}
+  h1{font-size:28px;margin:8px 0 4px} h2{font-size:20px;margin:28px 0 6px}
+  .note{color:var(--mute);font-size:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:10px 0}
+  .card b{display:block;margin-bottom:2px}
+  .top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+  .btn{display:inline-block;background:#2f6fdd;color:#fff;text-decoration:none;font-weight:700;padding:9px 14px;border-radius:9px}
+  footer{border-top:1px solid var(--line);margin-top:36px;padding-top:14px;font-size:14px;color:var(--mute)}
+  footer a{margin-right:14px}
+  .grid{display:grid;grid-template-columns:1fr;gap:12px} @media(min-width:720px){.grid{grid-template-columns:1fr 1fr}}
+  .box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .box h3{margin:0 0 6px;font-size:16px}
+  .box ol{margin:0;padding-left:22px} .box li{padding:3px 0;font-size:14.5px} .box li span{color:var(--mute);font-size:13px}
+  .sp{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0} .sp a{border:1px solid var(--line);border-radius:999px;padding:6px 11px;text-decoration:none;font-size:14px;font-weight:700}
+  .sp a.on{background:var(--accent);color:#141925;border-color:var(--accent)}
+</style>
+<script src="/theme.js"></script>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/img/favicon-48.png">
+<link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Rax Academy">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#141925">
+</head>
+<body><div class="wrap">
+<div class="top"><a href="/" style="text-decoration:none;color:var(--ink);font-weight:900;font-size:20px">Rax Academy</a><a class="btn" href="/">Sign in / Sign up</a></div>
+<div class="sp"><a href="/sports/nfl" data-k="nfl">NFL</a><a href="/sports/cfb" data-k="cfb">CFB</a><a href="/sports/nba" data-k="nba">NBA</a><a href="/sports/cbb" data-k="cbb">CBB</a><a href="/sports/nhl" data-k="nhl">NHL</a><a href="/sports/soccer" data-k="soccer">FC</a><a href="/sports/mlb" data-k="mlb">MLB</a><a href="/sports/wnba" data-k="wnba">WNBA</a><a href="/sports/golf" data-k="golf">Golf</a></div>
+<h1>College basketball on Real Sports</h1>
+<p>College basketball runs from November to the tournament in March, about 30 games or more per team, with thousands of players across Division I.</p>
+<h2>What drives CBB rax</h2>
+<ul><li>Early-season schedules are full of mismatches, so November numbers can look better than a player's true level.</li><li>Conference play from January is the truer test; per-game averages settle after about 10 games.</li><li>Postseason tournaments add games only for teams that keep winning.</li><li>Like college football, the huge player pool means small pack pools and big swings in pack odds.</li></ul>
+<h2>This season (CBB 2026-27)</h2>
+<div class="grid">
+<div class="box"><h3>Most rax</h3><ol id="tot"><li class="note">Loading…</li></ol></div>
+<div class="box"><h3>Best rax per game <span class="note">(5+ games)</span></h3><ol id="pg"><li class="note">Loading…</li></ol></div>
+<div class="box"><h3>Projected season leaders</h3><ol id="pj"><li class="note">Loading…</li></ol><p class="note" style="margin:8px 0 0"><a href="/projections">All projections</a></p></div>
+</div>
+<p class="note">Live from every logged game. See the full <a href="/leaders">leaders</a> table, <a href="/packs">pack data</a> for pack odds, and the <a href="/guide">guide</a> for how rarities and boosters work.</p>
+<footer><a href="/about">About</a><a href="/guide">Guide</a><a href="/leaders">Leaders</a><a href="/privacy">Privacy policy</a><a href="/contact">Contact</a><br>Rax Academy is an independent fan-made site. It is not made by, endorsed by or affiliated with Real Sports.</footer>
+</div>
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+document.querySelectorAll('.sp a').forEach(a => a.classList.toggle('on', a.dataset.k === 'cbb'));
+const li = (n, t, v) => `<li><b>${esc(n)}</b> <span>${esc(t || '')}</span> - ${v}</li>`;
+(async () => {
+  try { const d = await (await fetch('/api/rax?gamelog=query&mode=players&sport=ncaam&season=2027&seasons=ncaam:2027&limit=400&sort=rax&dir=desc')).json(); const r = d.rows || [];
+    document.getElementById('tot').innerHTML = r.slice(0, 10).map(x => li(x.player, x.team, Math.round(x.rax).toLocaleString() + ' rax in ' + x.games)).join('') || '<li class="note">No games yet this season.</li>';
+    document.getElementById('pg').innerHTML = r.filter(x => x.games >= 5).sort((a, b) => b.raxPerGame - a.raxPerGame).slice(0, 10).map(x => li(x.player, x.team, x.raxPerGame.toFixed(1) + ' a game')).join('') || '<li class="note">Not enough games yet.</li>';
+  } catch (e) { document.getElementById('tot').innerHTML = '<li class="note">Could not load.</li>'; }
+  const pj = document.getElementById('pj'); if (pj) try { const j = await (await fetch('/api/swaps?op=projections&page=boosts&sport=ncaam')).json();
+    pj.innerHTML = (j.rows || []).slice().sort((a, b) => b.pr - a.pr).slice(0, 10).map(x => li(x.n, [x.t, x.p].filter(Boolean).join(' '), Math.round(x.pr).toLocaleString() + ' projected')).join('') || '<li class="note">Not available yet.</li>';
+  } catch (e) { pj.innerHTML = '<li class="note">Could not load.</li>'; }
+})();
+</script>
+</body>
+</html>

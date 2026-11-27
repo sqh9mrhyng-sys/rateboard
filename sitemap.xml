@@ -15,4 +15,13 @@
   <url><loc>https://raxacademy.app/graphics</loc><changefreq>daily</changefreq></url>
   <url><loc>https://raxacademy.app/privacy</loc><changefreq>daily</changefreq></url>
   <url><loc>https://raxacademy.app/contact</loc><changefreq>daily</changefreq></url>
+  <url><loc>https://raxacademy.app/sports/nfl</loc><changefreq>daily</changefreq></url>
+  <url><loc>https://raxacademy.app/sports/cfb</loc><changefreq>daily</changefreq></url>
+  <url><loc>https://raxacademy.app/sports/nba</loc><changefreq>daily</changefreq></url>
+  <url><loc>https://raxacademy.app/sports/cbb</loc><changefreq>daily</changefreq></url>
+  <url><loc>https://raxacademy.app/sports/nhl</loc><changefreq>daily</changefreq></url>
+  <url><loc>https://raxacademy.app/sports/soccer</loc><changefreq>daily</changefreq></url>
+  <url><loc>https://raxacademy.app/sports/mlb</loc><changefreq>daily</changefreq></url>
+  <url><loc>https://raxacademy.app/sports/wnba</loc><changefreq>daily</changefreq></url>
+  <url><loc>https://raxacademy.app/sports/golf</loc><changefreq>daily</changefreq></url>
 </urlset>
