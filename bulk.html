@@ -43,6 +43,8 @@
   .sc{overflow-x:auto} .ctab{width:100%;min-width:340px;border-collapse:collapse;font-size:13px} .ctab th{color:var(--mute);font-size:11px;text-transform:uppercase;text-align:right;padding:5px 4px;border-bottom:1px solid var(--line)} .ctab td{text-align:right;padding:6px 4px;border-bottom:1px solid var(--line)} .ctab th:first-child,.ctab td:first-child{text-align:left}
   .dev{margin:0;padding:11px 16px;background:rgba(232,163,61,.12);border-bottom:1px solid var(--line);color:var(--accent);font-size:13.5px} .dev b{color:var(--accent)}
   .empty{padding:14px;color:var(--mute);font-size:14px}
+  .injt{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:11px;font-weight:800;color:#e5484d;background:rgba(229,72,77,.14);vertical-align:1px}
+  .injn{font-size:12px;color:#e5a33d;margin:3px 0 1px;font-style:italic}
 </style>
 <script src="/theme.js"></script>
 <script src="/nav.js?v=9"></script>
@@ -229,7 +231,9 @@ const injOf = r => { const st = D && D.inj && D.inj[`${r.sport}|${injName(r.name
 const pass = r => { const q = $('#q').value.trim().toLowerCase(), sp = $('#sp').value; return (!q || String(r.name || '').toLowerCase().includes(q)) && (!sp || r.sp === sp); };
 const openA = r => r.link ? `<a class="open" href="${esc(r.link)}" target="_blank" rel="noopener">Open auction ↗</a>` : '';
 const lkRow = x => `<a class="lk${SOLD(x) && !x.odd ? '' : ' dim'}" href="${esc(x.link)}" target="_blank" rel="noopener"><b>${SOLD(x) ? fmt(x.price) : x.endsAt > Date.now() ? fmt(nowPrice(x)) : '-'}</b><span class="note">${x.endsAt > Date.now() ? 'live · ends in ' + left(x.endsAt) : day(x.endsAt)} · rating ${fmt(x.rating)}${x.how === 'buy now' ? ' · buy now' : ''}</span><span class="tag">${x.odd ? 'ignored · ' : ''}Open ↗</span></a>`;
-const nameCell = (r, extra = '') => `<span class="nm">${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.name || 'Player ' + r.playerId)}</a>` : esc(r.name || 'Player ' + r.playerId)}</span>${r.rarity || r.label ? `<span class="rar${rarCls(r.rarity || r.label)}">${esc(r.rarity || r.label)}</span>` : ''}${extra}`;
+/* Injured players (Dennis, 2026-11-27: a member's Davante Adams still read 8,400 after his injury). */
+const injNote = r => { const st = injOf(r); return st ? `<span class="injt">${esc(st)}</span><div class="injn">*value may be inaccurate, the value is based on previous auctions only, can't account for injury difference*</div>` : ''; };
+const nameCell = (r, extra = '') => `<span class="nm">${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.name || 'Player ' + r.playerId)}</a>` : esc(r.name || 'Player ' + r.playerId)}</span>${r.rarity || r.label ? `<span class="rar${rarCls(r.rarity || r.label)}">${esc(r.rarity || r.label)}</span>` : ''}${extra}${injNote(r)}`;
 function out(html, n){ $('#list').innerHTML = html || '<div class="empty">Nothing here yet.</div>'; $('#more').hidden = n <= shown; }
 // Seasons the way Real shows them (Dennis, 2026-11-15): 2025-26, or one year where a season sits in one year.
 const seasonLbl = (sp, se) => { se = Number(se); if(!se) return ''; if(['mlb', 'golf', 'wnba'].includes(sp)) return String(se);
