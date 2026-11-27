@@ -77,6 +77,11 @@
       <p class="note" style="margin:6px 0 0">With a DM turned off you only get the notification - if it can't reach any of your devices, the DM goes anyway so you never miss a swap.</p></div></div>
   <div class="ag" data-g="boosts"><div class="ah"><button class="ax" data-x="boosts" aria-expanded="false">▸</button><b>Boosts</b><button class="aon" data-on="boosts">Activate</button></div>
     <div class="ab" hidden><p class="note" style="margin:4px 0 6px">A reminder to boost before the first game of the day. Pick how long before (up to 36 hours).</p><div id="bsp"></div></div></div>
+  <div class="ag" data-g="otd"><div class="ah"><button class="ax" data-x="otd" aria-expanded="false">▸</button><b>OTD claim</b><button class="aon" data-on="otd">Activate</button></div>
+    <div class="ab" hidden><p class="note" style="margin:4px 0 6px">A daily reminder: "Claim your OTD - you have X today". X comes from your <a href="/otd-breakdown">OTD breakdown</a> for today's date. No notification on days you'd get nothing.</p>
+      <label class="ar sub2"><span>Time</span><input type="time" data-ot="at" step="900" style="min-height:36px"></label>
+      <label class="ar sub2"><span>Claims a day</span><select data-ot="claims"><option value="3">3 (2 per sport + 1 spare)</option><option value="2">2 per sport</option></select></label>
+      <p class="note" id="otz" style="margin:6px 0 0"></p></div></div>
   <div class="ag" data-g="bulk" hidden><div class="ah"><button class="ax" data-x="bulk" aria-expanded="false">▸</button><b>Bulk notifications</b><button class="aon" data-on="bulk">Activate</button></div>
     <div class="ab" hidden><p class="note" style="margin:4px 0 8px">Brand-new listings only (just put up, not ones ending with bids), with a buy now well under the usual price for that player - from recent bulk sales, else the same rarity's.</p>
       <div class="bk"><span>At least</span><select data-bk="cut"><option value="10">10%</option><option value="15">15%</option><option value="20">20%</option><option value="25">25%</option><option value="30">30%</option><option value="40">40%</option><option value="50">50%</option></select><span>under usual</span></div>
@@ -131,6 +136,8 @@ const $ = s => document.querySelector(s);
   let P = j.prefs || {}; const SP = j.sports || {};
   P.swaps = Object.assign({ on: false, warn: true, live: true, confirm: true, dmWarn: true, dmLive: true, confirmLead: 0 }, P.swaps || {});
   P.boosts = Object.assign({ on: false, sports: {}, all: false, allHours: 2 }, P.boosts || {}); P.notes = Object.assign({ on: true }, P.notes || {});
+  const TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York'; } catch (e) { return 'America/New_York'; } })();
+  P.otd = Object.assign({ on: false, at: 600, claims: 3 }, P.otd || {}); P.otd.tz = TZ;   // OTD claim reminder (2026-11-27), in this device's time zone
   // Bulk alerts (2026-11-19): only shown to accounts the server allows (Dennis for now).
   const BULK = !!j.bulk; P.bulk = Object.assign({ on: false, min: 0, max: 0, cut: 25, sports: [], rarities: [] }, P.bulk || {}); if (P.bulk.max >= 10000000) P.bulk.max = 0;
   P.owner = Object.assign({ dmBulk: true, dmEv: true }, P.owner || {});
@@ -138,10 +145,13 @@ const $ = s => document.querySelector(s);
   const BSP = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf', soccer: 'FC', ufc: 'UFC' }, BRAR = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Mystic', 'Iconic'];
   const HRS = [0.5, 1, 2, 3, 4, 6, 8, 12, 18, 24, 30, 36], hl = h => h < 1 ? '30 min' : h + (h === 1 ? ' hour' : ' hours');
   const draw = () => {
-    for (const g of ['swaps', 'boosts', 'notes', 'bulk']) { const b = document.querySelector(`[data-on="${g}"]`); b.textContent = P[g].on ? 'Active ✓' : 'Activate'; b.classList.toggle('on', !!P[g].on);
+    for (const g of ['swaps', 'boosts', 'notes', 'bulk', 'otd']) { const b = document.querySelector(`[data-on="${g}"]`); b.textContent = P[g].on ? 'Active ✓' : 'Activate'; b.classList.toggle('on', !!P[g].on);
       const body = document.querySelector(`.ag[data-g="${g}"] .ab`); if (body) body.classList.toggle('off', !P[g].on); }
     document.querySelectorAll('[data-k]').forEach(i => { const [g, k] = i.dataset.k.split('.'); i.checked = P[g][k] !== false; });
     const opt = v => HRS.map(h => `<option value="${h}"${Math.abs(h - (v || 2)) < 0.01 ? ' selected' : ''}>${hl(h)} before</option>`).join('');
+    { const a = document.querySelector('[data-ot="at"]'), c = document.querySelector('[data-ot="claims"]'), m = Number(P.otd.at) || 0;
+      if (a !== document.activeElement) a.value = String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); c.value = String(P.otd.claims === 2 ? 2 : 3);
+      $('#otz').textContent = 'Your time (' + TZ.replace(/_/g, ' ') + ').'; }
     const sel = document.querySelector('[data-cl]'); if (sel) sel.value = String(P.swaps.confirmLead || 0);
     if (BULK) { for (const k of ['min', 'max', 'cut']) { const el = document.querySelector(`[data-bk="${k}"]`); if (el !== document.activeElement) el.value = k === 'cut' ? P.bulk.cut : (P.bulk[k] || ''); }
       $('#bksp').innerHTML = Object.entries(BSP).map(([k, l]) => `<label><input type="checkbox" data-bks="${k}"${P.bulk.sports.includes(k) ? ' checked' : ''}>${l}</label>`).join('');
@@ -169,6 +179,8 @@ const $ = s => document.querySelector(s);
     if (i.dataset.bs) { const k = i.dataset.bs; P.boosts.sports[k] = Object.assign({ hours: 2 }, P.boosts.sports[k] || {}, { on: i.checked }); save(); }
     if (i.dataset.ball) { P.boosts.all = i.checked; if (i.checked) for (const k of Object.keys(SP)) { P.boosts.sports[k] = Object.assign({}, P.boosts.sports[k] || {}, { on: true, hours: P.boosts.allHours }); } draw(); save(); }
     if (i.dataset.bah) { P.boosts.allHours = Number(i.value); for (const k of Object.keys(SP)) P.boosts.sports[k] = Object.assign({ on: !!(P.boosts.sports[k] || {}).on }, P.boosts.sports[k] || {}, { hours: Number(i.value) }); draw(); save(); }
+    if (i.dataset.ot === 'at' && /^\d\d:\d\d/.test(i.value)) { const [h, m] = i.value.split(':').map(Number); P.otd.at = h * 60 + m; save(); }
+    if (i.dataset.ot === 'claims') { P.otd.claims = Number(i.value); save(); }
     if (i.dataset.cl) { P.swaps.confirmLead = Number(i.value); save(); }
     if (i.dataset.bk) { const k = i.dataset.bk; P.bulk[k] = k === 'cut' ? Number(i.value) : (i.value === '' ? 0 : Math.max(0, Math.round(+i.value))); save(); }
     if (i.dataset.bks) { const s = new Set(P.bulk.sports); i.checked ? s.add(i.dataset.bks) : s.delete(i.dataset.bks); P.bulk.sports = [...s]; save(); }

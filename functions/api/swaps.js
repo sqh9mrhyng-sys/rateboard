@@ -2049,6 +2049,62 @@ export async function nicheNudge(env) {
   } catch (e) { try { await env.RATEBOARD_KV.put('niche_nudge_err', String(e.message || e).slice(0, 200), { expirationTtl: 86400 }); } catch (x) {} }
 }
 
+/* OTD reminder (Dennis, 2026-11-27): at the time a member picks, "Claim your OTD - you have X today". X is today's
+   claim, worked out the way the OTD breakdown page does it: each pass's rax on today's date from its player's past games,
+   times its multiplier (none at General or once its all-time cap is used), then the claim limit (2 per sport, plus 1
+   spare with 3 claims). */
+const OTD_LV = [[2, 10], [3, 30], [4, 80], [10, 180], [25, 380], [28, 520], [32, 720], [35, 1000], [40, 1180], [75, 1380], [79, 1560], [83, 1760], [87, 1980], [91, 2220], [95, 2480], [98, 2760], [101, 3000], [103, 3180], [105, 3250],
+  [150, 3380], [153, 3820], [156, 4320], [159, 4920], [163, 5620], [167, 6420], [171, 7320], [175, 8320], [180, 9420], [185, 10620], [190, 12000], [196, 13600], [202, 15400], [208, 17500], [214, 19900], [220, 22700], [226, 26000], [233, 29000], [240, 34500], [250, 40000]];
+const OTD_TIER = i => i < 4 ? i + 1 : i < 9 ? 5 : i < 19 ? 6 : 7;
+const OTD_NAMES = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary 1', 'Legendary 2', 'Legendary 3', 'Legendary 4', 'Legendary 5', 'Mystic 1', 'Mystic 2', 'Mystic 3', 'Mystic 4', 'Mystic 5', 'Mystic 6', 'Mystic 7', 'Mystic 8', 'Mystic 9', 'Mystic 10'];
+const OTD_CAP = { Common: 1000, Uncommon: 1500, Rare: 2000, Epic: 5000, 'Legendary 1': 12500, 'Legendary 2': 14000, 'Legendary 3': 16000, 'Legendary 4': 17500, 'Legendary 5': 20000,
+  'Mystic 1': 37500, 'Mystic 2': 39500, 'Mystic 3': 41500, 'Mystic 4': 43500, 'Mystic 5': 45500, 'Mystic 6': 47500, 'Mystic 7': 49000, 'Mystic 8': 50500, 'Mystic 9': 51500, 'Mystic 10': 52500 };
+const OTD_TEAM = [[1.2, 30, 1], [1.4, 90, 2], [1.6, 240, 3], [2, 540, 4], [2.5, 1140, 5], [4, 4140, 6], [6, 10140, 7]], OTD_TEAM_CAP = { 1: 1500, 2: 2500, 3: 4000, 4: 6000, 5: 12000, 6: 24000, 7: 128000 };
+const OTD_UFC = [1.2, 1.4, 1.6, 2, 5, 5.4, 5.8, 6.2, 6.6, 10, 10.2, 10.4, 10.6, 10.8, 11, 11.2, 11.4, 11.6, 11.8, 20, 20.3, 20.6, 20.9, 21.2, 21.5, 21.8, 22.1, 22.4, 22.7, 23, 23.3, 23.6, 23.9, 24.2, 24.5, 24.8, 26], OTD_UFC_CAP = { 1: 1500, 2: 3000, 3: 6000, 4: 12000, 5: 24000, 6: 48000 };
+const OTD_UNCAP = new Set(['nba:2027', 'ncaam:2027', 'nfl:2026', 'ncaaf:2026', 'nhl:2026']);
+function otdMult(p) {   // [multiplier, cap left] for one pass
+  const team = p.kind === 'team' && p.sport !== 'ufc', r = Number(p.rating) || 0;
+  let lv = -1, mult = 0, tier = 0, cap = Infinity;
+  if (team) { OTD_TEAM.forEach((l, i) => { if (r >= l[1]) lv = i; }); if (lv < 0) return [0, 0]; mult = OTD_TEAM[lv][0]; tier = OTD_TEAM[lv][2]; cap = OTD_TEAM_CAP[tier]; }
+  else { const L = p.sport === 'ufc' ? OTD_LV.slice(0, OTD_UFC.length) : OTD_LV; L.forEach((l, i) => { if (r >= l[1]) lv = i; }); if (lv < 0) return [0, 0];
+    mult = p.sport === 'ufc' ? OTD_UFC[lv] : L[lv][0]; tier = OTD_TIER(lv);
+    cap = tier === 7 ? Infinity : p.sport === 'ufc' ? (OTD_UFC_CAP[tier] ?? 0) : (OTD_CAP[OTD_NAMES[lv]] ?? 0); }
+  if (OTD_UNCAP.has(`${p.sport}:${p.season}`)) cap = Infinity;
+  const left = cap - (Number(p.earned) || 0); if (left <= 0) return [0, 0];
+  return [Number(p.mult) || mult, left];
+}
+export async function otdToday(env, db, who, claims = 3, tz = 'America/New_York') {
+  const u = await db.prepare('SELECT passes FROM swap_users WHERE LOWER(key)=?').bind(String(who).toLowerCase()).first(); const passes = parse(u && u.passes, []);
+  if (!passes.length) return null;
+  const r = await otdGamesFor(env, db, who, passes, '', false); const G = (r && r.games) || {};
+  let md; try { md = new Intl.DateTimeFormat('en-CA', { timeZone: tz, month: '2-digit', day: '2-digit' }).format(new Date()); } catch (e) { md = ET_DAY_FMT.format(new Date()).slice(5); }
+  const list = [];
+  for (const p of passes) { const [m, left] = otdMult(p); if (!(m > 0)) continue;
+    for (const [d, rax] of (G[p.key] || [])) if (d === md && rax > 0) list.push({ sport: p.sport, name: p.name, rax: Math.min(rax * m, left) }); }
+  const by = new Map(); for (const x of list) (by.get(x.sport) || by.set(x.sport, []).get(x.sport)).push(x);
+  let earned = 0; const spare = [], won = [];
+  for (const arr of by.values()) { arr.sort((a, b) => b.rax - a.rax); arr.forEach((x, n) => { if (n < 2) { earned += x.rax; won.push(x); } else spare.push(x); }); }
+  if (claims >= 3 && spare.length) { spare.sort((a, b) => b.rax - a.rax); earned += spare[0].rax; won.push(spare[0]); }
+  return { earned: Math.round(earned), won: won.sort((a, b) => b.rax - a.rax).map(x => x.name), pending: r && r.pending };
+}
+export async function otdReminders(env) {
+  const db = env.RATEBOARD_DB; if (!db) return;
+  let users = []; try { users = JSON.parse((await env.RATEBOARD_KV.get('push_otd_users_v1')) || '[]') || []; } catch (e) {}
+  for (const who of users) {
+    let p = {}; try { p = (JSON.parse((await env.RATEBOARD_KV.get('push_prefs_v1_' + who)) || '{}') || {}).otd || {}; } catch (e) {}
+    if (!p.on) continue;
+    const tz = p.tz || 'America/New_York'; let hh, mm, day;
+    try { const f = new Intl.DateTimeFormat('en-CA', { timeZone: tz, hour: 'numeric', minute: 'numeric', hourCycle: 'h23' }).formatToParts(new Date()); hh = Number(f.find(x => x.type === 'hour').value); mm = Number(f.find(x => x.type === 'minute').value);
+      day = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date()); } catch (e) { continue; }
+    if (hh * 60 + mm < Number(p.at) || hh * 60 + mm > Number(p.at) + 30) continue;
+    const K = 'otd_push_' + who; if ((await env.RATEBOARD_KV.get(K)) === day) continue;
+    await env.RATEBOARD_KV.put(K, day, { expirationTtl: 2 * 86400 });
+    try { const o = await otdToday(env, db, who, Number(p.claims) === 2 ? 2 : 3, tz); if (!o || !(o.earned > 0)) continue;
+      await pushTo(env, db, who, { title: `Claim your OTD - you have ${o.earned.toLocaleString()} today`, body: o.won.length ? `${o.won.slice(0, 3).join(', ')}${o.won.length > 3 ? ` +${o.won.length - 3} more` : ''}` : 'Open Real to claim.', url: '/otd-breakdown', tag: 'otd-' + day });
+    } catch (e) {}
+  }
+}
+
 export function routeId(numbers) {
   const ALPHA0 = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890', SEPS0 = 'cfhistuCFHISTU';
   const salt = Array.from('routing'), minLength = 11;
@@ -7247,6 +7303,10 @@ async function handle({ request, env, waitUntil }) {
         clean.bulk = { on: !!bu.on, min: mn, max: mx, cut: [10, 15, 20, 25, 30, 40, 50].includes(Number(bu.cut)) ? Number(bu.cut) : 25, price: 'buy',
           sports: (Array.isArray(bu.sports) ? bu.sports : []).filter(x => SPK.includes(x)), rarities: (Array.isArray(bu.rarities) ? bu.rarities : []).map(x => String(x).toLowerCase()).filter(x => RK.includes(x)) };
         try { const ix = new Set(JSON.parse((await env.RATEBOARD_KV.get('push_bulk_users_v1')) || '[]')); if (clean.bulk.on) ix.add(who); else ix.delete(who); await env.RATEBOARD_KV.put('push_bulk_users_v1', JSON.stringify([...ix])); } catch (e) {} }
+      // OTD reminder (2026-11-27): a time of day (minutes after midnight, their time) and 2 or 3 claims.
+      { const o = b.otd || {}, at = Math.round(Number(o.at)), tz = String(o.tz || 'America/New_York').slice(0, 60); let tzOk = true; try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); } catch (e) { tzOk = false; }
+        clean.otd = { on: !!o.on, at: Number.isFinite(at) && at >= 0 && at < 1440 ? at : 600, claims: Number(o.claims) === 2 ? 2 : 3, tz: tzOk ? tz : 'America/New_York' };
+        try { const ix = new Set(JSON.parse((await env.RATEBOARD_KV.get('push_otd_users_v1')) || '[]')); if (clean.otd.on) ix.add(who); else ix.delete(who); await env.RATEBOARD_KV.put('push_otd_users_v1', JSON.stringify([...ix])); } catch (e) {} }
       if (who === 'dennis') { const o = b.owner || {}; clean.owner = { dmBulk: o.dmBulk !== false, dmEv: o.dmEv !== false }; }
       p = clean; await env.RATEBOARD_KV.put(PUSH_PREF(who), JSON.stringify(p));
       // Who has boost reminders on, so the minute job doesn't read every member.
