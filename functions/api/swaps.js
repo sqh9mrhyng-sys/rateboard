@@ -7714,7 +7714,14 @@ async function handle({ request, env, waitUntil }) {
     mark(request, 'plays');
     const cDay = confirmDayNow();
     let down = null; try { down = JSON.parse((await env.RATEBOARD_KV.get('swaps_down')) || 'null'); } catch (e) {}   // the "swaps are down" notice
-    return json({ down: down && down.msg || null, confirmShow: Date.now() >= CONFIRM_SHOW_AT, confirmedToday: !!(u && u.confirmDay === cDay), confirmStarts: CONFIRM_FROM_DAY, swapToday: cDay, key: me, tests: await testerPagesFor(env, me), admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
+    /* Names of the players they picked (2026-11-27: names only lived in the browser they were picked in, so Real's
+       in-app browser showed "Player 17215"). From their passes, else the game log. */
+    const wantNames = {};
+    try { const ws = u ? parse(u.wants, []) : [], ps = u ? parse(u.passes, []) : [], byKey = new Map(ps.map(p => [p.key, p.name]));
+      for (const k of ws.slice(0, 12)) { let nm = byKey.get(k); if (!nm || /^player$/i.test(nm)) { const [sp, se, id] = String(k).split(':');
+          const r = await db.prepare('SELECT player FROM gamelog WHERE sport=? AND season=? AND playerId=? AND player IS NOT NULL LIMIT 1').bind(sp, Number(se), Number(id)).first().catch(() => null); nm = r && r.player; }
+        if (nm) wantNames[k] = nm; } } catch (e) {}
+    return json({ down: down && down.msg || null, wantNames, confirmShow: Date.now() >= CONFIRM_SHOW_AT, confirmedToday: !!(u && u.confirmDay === cDay), confirmStarts: CONFIRM_FROM_DAY, swapToday: cDay, key: me, tests: await testerPagesFor(env, me), admin: acc.admin, swaps: acc.swaps, otd: acc.otd, boostModes: acc.admin || BOOST_FAST.has(String(me || '').toLowerCase()), tokenFound: !!auth, connected, profile: u ? { rsUser: u.rsUser, hashId: u.hashId, wants: parse(u.wants, []),
       keep: parse(u.keep, []), touch: parse(u.touch, []), slots: parse(u.slots, []), sched: parse(u.sched, null), passes: lite ? [] : parse(u.passes, []), passCount: (() => { try { return parse(u.passes, []).length; } catch (e) { return 0; } })(), passSummary: lite ? passSummary(parse(u.passes, [])) : undefined, lowPlays: lowP, thinPlays: String(u && u.key || '').toLowerCase() === THIN_OWNER ? [...thinP] : undefined, scannedAt: u.scannedAt, active: !!u.active, comment: u.comment || '', goal: u.goal ?? null, dayCap: u.dayCap ?? null, caps: parse(u.caps, {}) || {}, b160: !!u.b160, s160: !!u.s160, only160: !!u.only160, nicheIn: !!u.nicheIn, niche: parse(u.niche, {}) || {}, nicheLim: nicheLim(u), blist: parse(u.blist, []) || [], lock1: parse(u.lock1, []) || [], noSp: Object.entries(parse(u.noSp, {}) || {}).filter(([, d]) => d === swapDay(Date.now())).map(([sp]) => sp), sell160m: u.sell160m || null, sell160h: parse(u.sell160h, []) } : null, real: realN });
   }
 
