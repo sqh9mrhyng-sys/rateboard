@@ -99,6 +99,10 @@ const ALLOWED_KEYS = new Set([KV_KEY]);
 const MAX_VALUE_BYTES = 8_000_000;
 const MAX_OFFERS = 20_000;
 const FC_SEASONS = ['2025-26', '2026-27'];
+/* Every sport on one board, old seasons too (Dennis, 2026-11-27). Season labels as members see them; the first is
+   the one being played. FC keeps storing its label always; other sports store one only for an older season. */
+const BOARD_SEASONS = { CFB: ['2026', '2025', '2024', '2023'], NFL: ['2026', '2025', '2024', '2023'], NBA: ['2026-27', '2025-26', '2024-25', '2023-24', '2022-23'],
+  CBB: ['2026-27', '2025-26', '2024-25', '2023-24'], NHL: ['2026-27', '2025-26', '2024-25', '2023-24'], FC: ['2026-27', '2025-26'], UFC: [] };
 let seasonColOk = false, goalColOk = false;
 
 /* ---- backups ----------------------------------------------------------
@@ -264,7 +268,8 @@ async function applyOp(env, body) {
       if (user && await db.prepare('SELECT 1 AS x FROM restricted WHERE LOWER(key)=?').bind(user.toLowerCase()).first()) return 'your account can no longer post offers'; } catch (e) {}
     const rate = Number(o.rate), link = str(o.link, 300) || '';
     // FC cards differ by season (e.g. the MLS sprint is still 2025-26).
-    const season = sport === 'FC' && FC_SEASONS.includes(String(o.season)) ? String(o.season) : null;
+    const SL = BOARD_SEASONS[sport] || [], s0 = String(o.season || '');
+    const season = sport === 'FC' ? (FC_SEASONS.includes(s0) ? s0 : null) : (SL.includes(s0) && s0 !== SL[0] ? s0 : null);
     if (!user || !player || !sport || !(rate > 0)) return 'bad offer';
     // Goal rating (2026-11-27): the rarity they're grinding to - required; the listing comes down once they're there.
     const goal = Math.round(Number(o.goal)), goalName = str(o.goalName, 30);
@@ -276,7 +281,7 @@ async function applyOp(env, body) {
 
     if (!seasonColOk) { try { await db.prepare('ALTER TABLE offers ADD COLUMN season TEXT').run(); } catch (e) {} seasonColOk = true; }
     // A season-tagged FC post replaces this person's old untagged one.
-    if (season) await db.prepare("DELETE FROM offers WHERE user=? AND sport='FC' AND player_key=?").bind(user, norm(player)).run();
+    if (season && sport === 'FC') await db.prepare("DELETE FROM offers WHERE user=? AND sport='FC' AND player_key=?").bind(user, norm(player)).run();
     // One statement: adds this listing, or updates this person's existing one
     // for the same player. No other row is read or touched, so it can't
     // collide with anyone else posting at the same moment.

@@ -1852,21 +1852,31 @@ async function amLog(env, e) { let l = []; try { l = JSON.parse((await env.RATEB
 const AM_SP = { CFB: ['ncaaf', 2026], NFL: ['nfl', 2026], NHL: ['nhl', 2026], NBA: ['nba', 2027], CBB: ['ncaam', 2027], FC: ['soccer', 2026], UFC: ['ufc', null] };
 const amNorm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\b(jr|sr|ii|iii|iv|v)\b/g, '').replace(/\s+/g, ' ').trim();
 // Every pass a member has for one board sport this season (paged - one call doesn't return them all).
-async function boardSportPasses(hid, bsport, tok) {
+// Board season label -> Real's season number ('2025-26' FC -> 2025, NBA -> 2026, CFB '2024' -> 2024). Blank = the current one.
+function boardSeasonKey(bs, lbl) {
+  const m = String(lbl || '').match(/^(\d{4})(?:-(\d{2}))?$/); if (!m) return bs === 'FC' ? 2026 : null;
+  const y = Number(m[1]); return m[2] && (bs === 'NBA' || bs === 'CBB') ? y + 1 : y;
+}
+// Board sport for a pass's sport, and the label members see for its season.
+const BOARD_OF = { ncaaf: 'CFB', nfl: 'NFL', nhl: 'NHL', nba: 'NBA', ncaam: 'CBB', soccer: 'FC', ufc: 'UFC' };
+function boardSeasonLbl(bs, se) { se = Number(se); if (!se || bs === 'UFC') return '';
+  if (bs === 'CFB' || bs === 'NFL') return String(se);
+  const a = bs === 'NBA' || bs === 'CBB' ? se - 1 : se; return `${a}-${String(a + 1).slice(2)}`; }
+async function boardSportPasses(hid, bsport, tok, only) {
   const [sp, se0] = AM_SP[bsport] || []; if (!sp) return [];
-  const seasons = bsport === 'FC' ? [2026, 2025] : bsport === 'UFC' ? (SWAP_SEASONS.ufc || []) : [se0], kinds = bsport === 'UFC' ? ['team', 'player'] : ['player'], out = [];
+  const seasons = only ? [only] : bsport === 'FC' ? [2026, 2025] : bsport === 'UFC' ? (SWAP_SEASONS.ufc || []) : [se0], kinds = bsport === 'UFC' ? ['team', 'player'] : ['player'], out = [];
   for (const se of seasons) for (const kind of kinds) {
     const base = `https://web.realapp.com/userpasses/${encodeURIComponent(hid)}/passes?entityType=${kind}&season=${se}&sport=${sp}`;
     const d = await rsGetJson(base, tok); const rows = rowsOf(d); rows.push(...(await morePassPages(base, tok, d, rows)));
     for (const x of rows) { const p = passOf(x, sp, se, kind); if (p && p.name && p.rating != null) out.push(p); } }
   return out;
 }
-async function amPasses(env, db, user, tok, memo, bsport) {
-  const k = String(user).toLowerCase() + '|' + bsport, uk = String(user).toLowerCase(); if (memo.has(k)) return memo.get(k);
+async function amPasses(env, db, user, tok, memo, bsport, only) {
+  const k = String(user).toLowerCase() + '|' + bsport + '|' + (only || ''), uk = String(user).toLowerCase(); if (memo.has(k)) return memo.get(k);
   let list = null;
   try { let hid = (await db.prepare('SELECT hashId FROM swap_users WHERE LOWER(key)=?').bind(uk).first().catch(() => null) || {}).hashId;
     if (!hid) { const n = await db.prepare('SELECT rsName FROM users WHERE LOWER(key)=?').bind(uk).first().catch(() => null); try { hid = await resolveHashId((n && n.rsName) || user, tok); } catch (e) {} }
-    if (hid) list = (await boardSportPasses(hid, bsport, tok)).map(p => ({ sp: p.sport, se: p.season, n: amNorm(p.name), r: p.rating }));
+    if (hid) list = (await boardSportPasses(hid, bsport, tok, only)).map(p => ({ sp: p.sport, se: p.season, n: amNorm(p.name), r: p.rating }));
   } catch (e) { list = /429/.test(String(e && e.message)) ? 'busy' : null; }
   memo.set(k, list); return list;
 }
@@ -1889,9 +1899,9 @@ async function amCheck(env, db, o, tok, memo = new Map()) {
     return 'deleted';
   }
   // Goal reached: their pass for this player is at (or past) the rarity they said they're grinding to.
-  if (Number(o.goal) > 0) { const ps = await amPasses(env, db, o.user, tok, memo, o.sport);
+  if (Number(o.goal) > 0) { const ps = await amPasses(env, db, o.user, tok, memo, o.sport, boardSeasonKey(o.sport, o.season));
     if (ps === 'busy') return 'busy';
-    if (Array.isArray(ps)) { const [sp, se0] = AM_SP[o.sport] || []; const se = o.sport === 'FC' ? (o.season === '2025-26' ? 2025 : 2026) : se0, nm = amNorm(o.player);
+    if (Array.isArray(ps)) { const [sp, se0] = AM_SP[o.sport] || []; const se = boardSeasonKey(o.sport, o.season) || se0, nm = amNorm(o.player);
       const hit = ps.filter(p => p.sp === sp && (se == null || p.se === se) && p.n === nm).sort((a, b) => b.r - a.r)[0];
       if (hit && hit.r >= Number(o.goal)) { const row = await db.prepare('SELECT * FROM offers WHERE id=?').bind(o.id).first().catch(() => null);
         await db.prepare('DELETE FROM offers WHERE id=?').bind(o.id).run();
@@ -4125,7 +4135,7 @@ const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan', 'sear
 // Open to every signed-in member: OTD's page, and the Rate Board's Exclude owned list (2026-11-25: members without Swaps got a 403 and "0 passes left out").
 const PUBLIC_OPS = new Set(['projections']);
 const PRED_PUB_MEMO = { at: 0, text: '' };   // the EV page for signed-out visitors   // signed-out visitors (2026-11-27); grows as pages open up
-const TEST_OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'search', 'otdpool', 'otdloadouts', 'mypassnames', 'myboardpasses', 'bulkwatch', 'bulkplayers']);
+const TEST_OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'search', 'otdpool', 'otdloadouts', 'mypassnames', 'myboardpasses', 'myboardall', 'bulkwatch', 'bulkplayers']);
 
 /* ---------- Moderation (Dennis, 2026-11-11) ----------
    Reports on swap / 160 partners are counted automatically:
@@ -8661,6 +8671,13 @@ async function handle({ request, env, waitUntil }) {
   /* Your passes by sport, names only (2026-11-16, Board seller's "Exclude owned"): from your last pass scan. */
   /* The board's player box (Dennis, 2026-11-27): the buyer's own passes this season, with their rating right now,
      shown first. One read of every pass they own, kept 15 minutes. Their own data only. */
+  // Every board sport and season from their last site Scan (Dennis, 2026-11-27: one board for all sports).
+  if (op === 'myboardall') {
+    if (!acc.who) return json({ error: 'Sign in first.' }, 401);
+    const u = await db.prepare('SELECT passes, scannedAt FROM swap_users WHERE LOWER(key)=?').bind(String(acc.who).toLowerCase()).first().catch(() => null);
+    const ps = parse(u && u.passes, []).filter(p => BOARD_OF[p.sport] && p.name && p.rating != null && (p.kind !== 'team' || p.sport === 'ufc'));
+    return json({ scannedAt: (u && u.scannedAt) || null, passes: ps.map(p => { const bs = BOARD_OF[p.sport]; return { sp: bs, se: boardSeasonLbl(bs, p.season), n: p.name, r: Math.round(Number(p.rating) * 10) / 10, lv: p.levelLabel || null }; }).sort((a, b) => b.r - a.r) });
+  }
   if (op === 'myboardpasses') {
     if (!acc.who) return json({ error: 'Sign in first.' }, 401);
     const bs = String(url.searchParams.get('sport') || '').toUpperCase(); if (!AM_SP[bs]) return json({ passes: [] });

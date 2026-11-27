@@ -34,6 +34,9 @@ const SPORT_CONFIG = {
   NBA: { rs: 'nba',    season: '2027', entity: 'player' },
   CBB: { rs: 'ncaam',  season: '2027', entity: 'player' },   // college basketball (2026-11-18)
 };
+// Older seasons can be read too (Dennis, 2026-11-27: one board for every sport and season), in Real's numbering.
+const SEASONS_OK = { FC: [2026, 2025], CFB: [2026, 2025, 2024, 2023], NFL: [2026, 2025, 2024, 2023], NHL: [2026, 2025, 2024, 2023], UFC: [2023],
+  NBA: [2027, 2026, 2025, 2024, 2023], CBB: [2027, 2026, 2025, 2024] };
 const PAGE_SIZE   = 20;
 const CHUNK_PAGES = 15; // 15 pages × 20 players = 300 players per invocation
 
@@ -249,13 +252,15 @@ export async function onRequestGet({ request, env }) {
   if (username.length > 50) return json({ error: 'username too long' }, 400);
   if (!SPORT_CONFIG[sport]) return json({ error: `unsupported sport: ${sport}` }, 400);
 
-  const { rs: rsSport, season, entity } = SPORT_CONFIG[sport];
+  const { rs: rsSport, entity } = SPORT_CONFIG[sport];
+  const askSe = Number(url.searchParams.get('season'));
+  const season = (SEASONS_OK[sport] || []).includes(askSe) ? String(askSe) : SPORT_CONFIG[sport].season;
   // The slot number is part of the cache key, so a cached chunk is dead the
   // moment the clock ticks past the next quarter hour — not a rolling window.
   const slot = Math.floor(Date.now() / CACHE_BUCKET_MS);
 
   // 1. Cache check — serve from cache if it's from this quarter-hour slot
-  const cacheReq = cacheKeyReq(origin, ['col', rsSport, username.toLowerCase(), String(start), String(slot)]);
+  const cacheReq = cacheKeyReq(origin, ['col', rsSport, season, username.toLowerCase(), String(start), String(slot)]);
   const cached = await cacheGet(cacheReq);
   if (cached) {
     return new Response(cached, {

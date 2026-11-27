@@ -9,7 +9,7 @@
      --bg / --panel / --panel2 / --line / --accent on the page; the board's older names point at them. */
   :root{--bg:#141925;--panel:#1d2433;--panel2:#232b3d;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;
     --field:var(--bg);--panel-2:var(--panel2);--bone:var(--ink);--accent-ink:#141925;--bad:#e5484d;--good:#5fbf7a;--r:12px}
-  .seas{font-size:11px;padding:1px 6px;border-radius:6px;background:rgba(63,208,166,.15);color:#3FD0A6;margin-left:4px;vertical-align:middle}
+  .seas{display:inline-block;white-space:nowrap;font-size:11px;padding:1px 6px;border-radius:6px;background:rgba(63,208,166,.15);color:#3FD0A6;margin-left:4px;vertical-align:middle}
   .tl{font-size:10px;padding:1px 5px;border-radius:5px;margin-left:5px;font-weight:700;vertical-align:middle}
   .tl.trusted{background:rgba(80,160,255,.18);color:#7fb6ff}
   .tl.vet{background:rgba(255,190,60,.18);color:#ffc95a}
@@ -276,6 +276,26 @@
     border-radius:999px;cursor:pointer;color:var(--bone);font-size:12px}
   .tp-shows input{margin:0;accent-color:var(--accent)}
   .suggest li{flex-wrap:wrap}
+  .spf{display:flex;flex-wrap:wrap;gap:6px}
+  .spf button{padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:var(--panel-2);color:var(--mute);font-weight:700;font-size:13px}
+  .spf button[aria-pressed="true"]{background:color-mix(in srgb,var(--accent) 20%,transparent);border-color:var(--accent);color:var(--ink)}
+  .bsub button{font-size:13.5px}
+  .suggest li.it2{display:block}
+  .suggest li.it2 .l1{display:flex;align-items:baseline;gap:6px}
+  .suggest li.it2 .l1 .nm{font-weight:700}
+  .suggest li.it2 .l1 .meta{color:var(--mute);font-size:12px;white-space:nowrap}
+  .suggest li.it2 .l1 .team{margin-left:auto;color:var(--mute);font-size:12px;text-align:right}
+  .suggest li.it2 .l2{color:var(--mute);font-size:12.5px;margin-top:2px}
+  .suggest li.it2 .l2 b{color:var(--ink)}
+  .bpicked{margin-top:8px;font-size:13px;color:var(--mute)} .bpicked b{color:var(--ink)}
+  .sellcfg{display:grid;gap:8px;margin-top:6px}
+  .sellcfg .sr{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 10px;border:1px solid var(--line);border-radius:12px;background:var(--panel-2)}
+  .sellcfg .sr.off{opacity:.55}
+  .sellcfg .sr label{display:flex;align-items:center;gap:8px;margin:0;font-weight:800;min-width:74px;color:var(--ink)}
+  .sellcfg .sr label input{width:18px;height:18px;accent-color:var(--accent)}
+  .sellcfg .sr button{padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--mute);font-size:12.5px;font-weight:700}
+  .sellcfg .sr button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+  .hit .sptag{font-size:11px;padding:1px 6px;border-radius:6px;background:rgba(63,208,166,.15);color:#3FD0A6;margin-left:4px}
   .suggest li .fx{flex-basis:100%;margin:2px 0 0 14px}
   #b-fighter{margin-top:8px}
   #b-fighter .fx span{font-size:12px}
@@ -791,7 +811,7 @@
 
       </div>
     </div>
-    <div class="sportpick">
+    <div class="sportpick" style="display:none">
       <select id="sport" aria-label="Sport">
         <option value="CFB">College football</option>
         <option value="FC">FC</option>
@@ -855,6 +875,12 @@
           <button id="tab-buy" aria-pressed="true">Buyer</button>
           <button id="tab-sell" aria-pressed="false">Seller</button>
         </div>
+        <!-- One board for every sport and season (Dennis, 2026-11-27): narrow it to some sports here. -->
+        <div class="spf" id="spf" role="group" aria-label="Sports shown"></div>
+        <div class="seg bsub" id="buysub" role="group" aria-label="Buyer">
+          <button data-bsub="new" aria-pressed="true">Create a buy offer</button>
+          <button data-bsub="mine" aria-pressed="false">Your buys</button>
+        </div>
 
         <!-- BUYER -->
         <div id="pane-buy" class="panel">
@@ -871,16 +897,14 @@
             <div>
               <label for="b-player">Player</label>
               <div style="position:relative">
-                <input id="b-player" class="field" autocomplete="off" placeholder="e.g. Julian Sayin" role="combobox" aria-expanded="false" aria-autocomplete="list">
+                <input id="b-player" class="field" autocomplete="off" placeholder="Search any player or season" role="combobox" aria-expanded="false" aria-autocomplete="list">
                 <ul id="b-suggest" class="suggest hide" role="listbox"></ul>
               </div>
               <div id="b-fighter"></div>
+              <div id="b-picked" class="bpicked hide"></div>
               <div id="b-season-wrap" class="hide" style="margin-top:8px">
                 <label for="b-season">Card season</label>
-                <select id="b-season" class="field">
-                  <option value="2026-27">2026-27</option>
-                  <option value="2025-26">2025-26 (incl. MLS sprint)</option>
-                </select>
+                <select id="b-season" class="field"></select>
               </div>
             </div>
             <div>
@@ -918,6 +942,11 @@
               <label for="ot-seg" style="display:block">Offer time</label>
               <div class="seg" id="ot-seg" role="group" aria-label="Offer time"></div>
               <p class="note" id="ot-note" style="margin-top:6px"></p>
+            </div>
+            <div>
+              <label style="display:block">What you sell</label>
+              <div id="sellcfg" class="sellcfg"></div>
+              <p class="note" style="margin-top:6px">Tick the sports you sell, then tap the seasons you have cards in. Everything you pick shows on one page.</p>
             </div>
             <div id="rs-lookup-wrap" class="hide">
               <button id="rs-go" class="btn">Pull my cards from Real</button>
@@ -3300,12 +3329,31 @@ $('#b-guide-toggle').addEventListener('click', () => {
 /* =========================================================
    Sport + mode
    ========================================================= */
-const PLAYER_EXAMPLES = { CFB:'Julian Sayin', FC:'Lamine Yamal', NFL:'Josh Allen', UFC:'Jon Jones', NHL:'Connor McDavid', NBA:'Nikola Jokic', CBB:'Dior Johnson' };
-function updatePlayerPlaceholder(){
-  $('#b-player').placeholder = 'e.g. ' + (PLAYER_EXAMPLES[sport] || '');
-  $('#b-season-wrap').classList.toggle('hide', sport !== 'FC');
-}
-const seasonTag = o => o.sport === 'FC' && o.season ? ` <span class="seas">${esc(o.season)}</span>` : '';
+/* One board for every sport and season (Dennis, 2026-11-27). Season labels as members see them; the first is the
+   one being played. An offer without a season is for the current one (FC always has one). */
+const SP_ORDER = ['CFB', 'NFL', 'NBA', 'CBB', 'NHL', 'FC', 'UFC'];
+const BSEAS = { CFB: ['2026', '2025', '2024', '2023'], NFL: ['2026', '2025', '2024', '2023'], NBA: ['2026-27', '2025-26', '2024-25', '2023-24', '2022-23'],
+  CBB: ['2026-27', '2025-26', '2024-25', '2023-24'], NHL: ['2026-27', '2025-26', '2024-25', '2023-24'], FC: ['2026-27', '2025-26'], UFC: [] };
+const BOARD_OF = { ncaaf: 'CFB', nfl: 'NFL', nhl: 'NHL', nba: 'NBA', ncaam: 'CBB', soccer: 'FC', ufc: 'UFC' };
+const curSeason = sp => (BSEAS[sp] || [])[0] || '';
+const offSeason = o => o.season || curSeason(o.sport);
+// Real's season number <-> label: CFB/NFL 2026 = "2026"; NBA/CBB 2027 = "2026-27"; NHL/FC 2026 = "2026-27".
+function seasonLblOf(sp, se){ se = Number(se); if(!se || sp === 'UFC') return ''; if(sp === 'CFB' || sp === 'NFL') return String(se);
+  const a = sp === 'NBA' || sp === 'CBB' ? se - 1 : se; return `${a}-${String(a + 1).slice(2)}`; }
+function seasonKeyOf(sp, lbl){ const m = String(lbl || '').match(/^(\d{4})(?:-(\d{2}))?$/); if(!m) return null; const y = +m[1]; return m[2] && (sp === 'NBA' || sp === 'CBB') ? y + 1 : y; }
+function updatePlayerPlaceholder(){}
+const seasonTag = o => { const l = offSeason(o); return ` <span class="seas">${esc(o.sport)}${l ? ' · ' + esc(l) : ''}</span>`; };
+// Which sports are shown (none picked = all). Narrows the player search and the offers list.
+const SPF_KEY = 'ratebrd_spf_v1';
+let spSel = new Set(); try{ spSel = new Set((JSON.parse(localStorage.getItem(SPF_KEY) || '[]') || []).filter(s => SP_ORDER.includes(s))); }catch(e){}
+const spOn = sp => !spSel.size || spSel.has(sp);
+function drawSpf(){ const b = $('#spf'); if(!b) return;
+  b.innerHTML = `<button type="button" data-spf="" aria-pressed="${!spSel.size}">All sports</button>` + SP_ORDER.map(s => `<button type="button" data-spf="${s}" aria-pressed="${spSel.has(s)}">${s}</button>`).join(''); }
+$('#spf').addEventListener('click', e => { const b = e.target.closest('[data-spf]'); if(!b) return; const s = b.dataset.spf;
+  if(!s) spSel.clear(); else { spSel.has(s) ? spSel.delete(s) : spSel.add(s); if(spSel.size === SP_ORDER.length) spSel.clear(); }
+  try{ localStorage.setItem(SPF_KEY, JSON.stringify([...spSel])); }catch(e2){}
+  drawSpf(); render(); if(document.activeElement === $('#b-player')) runSuggest($('#b-player').value.trim()); });
+drawSpf();
 const LV_RANK = { owner: 9, goat: 8, silver: 7, bronze: 6, legend: 5, elite: 4, vet: 3, trusted: 2, rising: 1 };
 const lvOf = u => (market.users[u] || {}).lv;
 const LV_LBL = { owner: 'Owner', goat: '🐐 GOAT', silver: '🥈 2nd', bronze: '🥉 3rd', legend: 'Legend', elite: 'Elite', vet: 'Vet', trusted: 'Trusted', rising: 'Rising', new: 'New' };
@@ -3340,23 +3388,24 @@ function closeSuggest(){
   $('#b-player').setAttribute('aria-expanded', 'false');
 }
 
-/* Their own passes first, with the rating they're at now (Dennis, 2026-11-27). */
-const myPasses = {}, myPassesAsk = {};
-function loadMyPasses(){ const s = sport; if(!myPassesAsk[s]) myPassesAsk[s] = fetch('/api/swaps?op=myboardpasses&sport=' + s).then(r => r.json())
-  .then(j => { if(j && j.passes) myPasses[s] = j.passes; else myPassesAsk[s] = null; }).catch(() => { myPassesAsk[s] = null; }); return myPassesAsk[s]; }
-const ownedFor = q => { const l = myPasses[sport] || [], nq = norm(q || '');
-  return l.filter(p => !nq || norm(p.n).includes(nq)).slice(0, nq ? 8 : 12).map(p => ({ name: p.n, own: p, team: '' })); };
+/* Their own passes first (every sport and season, from their last Scan), then everyone from the player index:
+   "Name • Sport • Season   Team", with the rating line under it (Dennis, 2026-11-27). */
+let myAll = null, myAllAsk = null, picked = null;
+function loadMyPasses(){ if(!myAllAsk) myAllAsk = fetch('/api/swaps?op=myboardall').then(r => r.json())
+  .then(j => { myAll = (j && j.passes) || []; }).catch(() => { myAllAsk = null; }); return myAllAsk; }
+const ownedFor = q => { const nq = norm(q || '');
+  return (myAll || []).filter(p => spOn(p.sp) && (!nq || norm(p.n).includes(nq))).slice(0, nq ? 8 : 12).map(p => ({ name: p.n, sport: p.sp, season: p.se, own: p, team: '' })); };
+const pkey = it => norm(it.name) + '|' + it.sport + '|' + (it.season || '');
 function renderSuggest(items, note){
   const box = $('#b-suggest');
   suggestItems = items;
   suggestActive = -1;
   const firstOther = items.findIndex(it => !it.own);
-  const rows = items.map((it,i) => (i === 0 && it.own ? '<li class="shd">Your passes</li>' : '') + (i === firstOther && firstOther > 0 ? '<li class="shd">Everyone</li>' : '') + (it.own
-    ? `<li role="option" data-i="${i}" class="own"><span class="dot">•</span> ${esc(it.name)}${sport === 'FC' && it.own.se ? ` <span class="seas">${it.own.se === 2025 ? '2025-26' : '2026-27'}</span>` : ''} <span class="team">${esc(it.team || '')}</span>
-        <span class="ownr"><b>${it.own.r.toLocaleString(undefined, { maximumFractionDigits: 1 })}</b> rating${it.own.lv ? ' • ' + esc(it.own.lv) : ''}</span></li>`
-    : `<li role="option" data-i="${i}"><span class="dot">•</span> ${esc(it.name)} <span class="team">${esc(it.team)}</span>${
-      sport === 'UFC' ? ufcDetailChips(it.name) : ''}</li>`)
-  ).join('');
+  const rows = items.map((it,i) => (i === 0 && it.own ? '<li class="shd">Your passes</li>' : '') + (i === firstOther && firstOther > 0 ? '<li class="shd">Everyone</li>' : '')
+    + `<li role="option" data-i="${i}" class="it2${it.own ? ' own' : ''}"><div class="l1"><span class="nm">${esc(it.name)}</span><span class="meta">• ${esc(it.sport)}${it.season ? ' • ' + esc(it.season) : ''}</span><span class="team">${esc(it.team || '')}</span></div>`
+    + (it.own ? `<div class="l2"><b>${Number(it.own.r).toLocaleString(undefined, { maximumFractionDigits: 1 })}</b> rating${it.own.lv ? ' • ' + esc(it.own.lv) : ''}</div>`
+      : it.rax != null ? `<div class="l2"><b>${Math.round(it.rax).toLocaleString()}</b> rax that season${it.owners ? ` • ${Number(it.owners).toLocaleString()} owners` : ''}</div>`
+      : it.sport === 'UFC' ? ufcDetailChips(it.name) : '') + '</li>').join('');
   box.innerHTML = rows + (note ? `<li class="hint">${esc(note)}</li>` : '');
   const show = items.length > 0 || !!note;
   box.classList.toggle('hide', !show);
@@ -3365,43 +3414,40 @@ function renderSuggest(items, note){
 
 async function runSuggest(q){
   await loadMyPasses();
-  const mine = ownedFor(q);
-  if(q.length < 2){ if(mine.length) renderSuggest(mine, null); else closeSuggest(); return; }
-  if(BOARD_TO_DATA[sport]){ await loadStats(BOARD_TO_DATA[sport]); await lookupMany(q); }
+  const mine = ownedFor(q), scanHint = myAll && !myAll.length ? 'Tap Scan at the top to list your own passes here.' : null;
+  if(q.length < 2){ if(mine.length || scanHint) renderSuggest(mine, mine.length ? null : 'Type a player name. ' + scanHint); else closeSuggest(); return; }
   try{
-    const r = await fetch(`/api/players?sport=${encodeURIComponent(sport)}&q=${encodeURIComponent(q)}`);
-    const data = await r.json();
-    let items = (data.players || [])
-      .filter(it => { const h = houseFor(sport, it.name); return !(h && h.exact); });
-    // UFC: fighters on the purchases list come first, most-bought first, so
-    // "sean" lands on O'Malley and Strickland before the whole A-Z roster.
-    if(sport === 'UFC'){
-      await loadUfcMeta();
-      const nq = norm(q);
-      const listed = UFC_LIST.filter(f => norm(f.name).includes(nq))
-        .sort((a,b) => (b.purchases ?? -1) - (a.purchases ?? -1))
-        .map(f => {
-          const api = items.find(it => norm(it.name) === norm(f.name));
-          const m = ufcMetaFor(f.name);
-          const fromUfc = m ? [String(m.division || '').replace(/\s*Division$/i, ''), m.record].filter(Boolean).join(' ') : '';
-          return { name: f.name, team: (api && api.team) || fromUfc };
-        });
-      const seen = new Set(listed.map(x => norm(x.name)));
-      items = listed.concat(items.filter(it => !seen.has(norm(it.name)))).slice(0, 15);
-    }
-    { const own = new Set(mine.map(m => norm(m.name)));
-      for(const m of mine){ const hit = items.find(it => norm(it.name) === norm(m.name)); if(hit) m.team = hit.team; }
-      items = mine.concat(items.filter(it => !own.has(norm(it.name)))); }
-    const note = !items.length
-      ? (data.building ? 'Still building the player list — try again in a bit' : 'No matches')
-      : (data.building ? 'Still indexing — more players will show up soon' : null);
-    renderSuggest(items, note);
+    const enc = encodeURIComponent(q);
+    const [s, u] = await Promise.all([
+      fetch('/api/swaps?op=search&q=' + enc).then(r => r.json()).catch(() => ({ rows: [] })),
+      spOn('UFC') ? (loadUfcMeta(), fetch('/api/players?sport=UFC&q=' + enc).then(r => r.json()).catch(() => ({ players: [] }))) : Promise.resolve(null)]);
+    if($('#b-player').value.trim() !== q) return;   // they kept typing
+    let items = (s.rows || []).map(r => { const sp = BOARD_OF[r.sport]; return { name: r.player, sport: sp, season: seasonLblOf(sp, r.season), team: r.team || '', rax: r.rax, owners: r.owners }; })
+      .filter(it => it.sport && it.sport !== 'UFC' && spOn(it.sport) && (BSEAS[it.sport] || []).includes(it.season));
+    if(u) items = items.concat((u.players || []).map(p => ({ name: p.name, sport: 'UFC', season: '', team: p.team || '' })));
+    items = items.filter(it => { const h = houseFor(it.sport, it.name); return !(h && h.exact); });
+    const own = new Set(mine.map(pkey));
+    for(const m of mine){ const hit = items.find(it => pkey(it) === pkey(m)); if(hit) m.team = hit.team; }
+    items = mine.concat(items.filter(it => !own.has(pkey(it)))).slice(0, 30);
+    renderSuggest(items, items.length ? null : 'No matches' + (spSel.size ? ' in the sports picked above' : ''));
   }catch(e){ closeSuggest(); }
 }
-
+function setPicked(p){
+  picked = p || null;
+  const w = $('#b-season-wrap'), pk = $('#b-picked');
+  if(!picked){ w.classList.add('hide'); pk.classList.add('hide'); return; }
+  sport = picked.sport; document.body.dataset.sport = sport;
+  pk.innerHTML = `<b>${esc(picked.name)}</b> • ${esc(SPORTS[picked.sport] || picked.sport)}${picked.team ? ' • ' + esc(picked.team) : ''}${picked.own ? ` • you're at <b>${Number(picked.own.r).toLocaleString(undefined, { maximumFractionDigits: 1 })}</b>${picked.own.lv ? ' (' + esc(picked.own.lv) + ')' : ''}` : ''}`;
+  pk.classList.remove('hide');
+  const SL = BSEAS[picked.sport] || [];
+  if(SL.length){ $('#b-season').innerHTML = SL.map((s, i) => `<option value="${s}">${s}${i === 0 ? ' (this season)' : ''}${picked.sport === 'FC' && s === '2025-26' ? ' (incl. MLS sprint)' : ''}</option>`).join('');
+    $('#b-season').value = SL.includes(picked.season) ? picked.season : SL[0]; w.classList.remove('hide'); }
+  else w.classList.add('hide');
+}
 $('#b-player').addEventListener('input', e => {
   clearTimeout(suggestTimer);
   const q = e.target.value.trim();
+  if(picked && norm(q) !== norm(picked.name)) setPicked(null);
   suggestTimer = setTimeout(()=>{ runSuggest(q); applyMinimumToForm(); }, 220);
 });
 $('#b-player').addEventListener('focus', e => { runSuggest(e.target.value.trim()); });
@@ -3421,7 +3467,7 @@ function pickSuggest(i){
   const it = suggestItems[i];
   if(!it) return;
   $('#b-player').value = it.name;
-  if(it.own && sport === 'FC' && it.own.se){ const s = $('#b-season'); if(s) s.value = it.own.se === 2025 ? '2025-26' : '2026-27'; }
+  setPicked({ ...it });
   closeSuggest();
   applyMinimumToForm();
   $('#b-rate').focus();
@@ -3436,15 +3482,21 @@ document.addEventListener('click', e => {
 });
 $('#tab-buy').addEventListener('click', ()=>setMode('buy'));
 $('#tab-sell').addEventListener('click', ()=>setMode('sell'));
+// Buyer has two sides (2026-11-27): Create a buy offer | Your buys.
+let bsub = 'new'; try{ bsub = localStorage.getItem('ratebrd_bsub_v1') === 'mine' ? 'mine' : 'new'; }catch(e){}
 function setMode(m){
   mode = m;
   $('#tab-buy').setAttribute('aria-pressed', m==='buy');
   $('#tab-sell').setAttribute('aria-pressed', m==='sell');
-  $('#pane-buy').classList.toggle('hide', m!=='buy');
-  $('#pane-mine').classList.toggle('hide', m!=='buy');
+  $('#buysub').classList.toggle('hide', m!=='buy');
+  document.querySelectorAll('#buysub [data-bsub]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.bsub === bsub)));
+  $('#pane-buy').classList.toggle('hide', m!=='buy' || bsub!=='new');
+  $('#pane-mine').classList.toggle('hide', m!=='buy' || bsub!=='mine');
   $('#pane-sell').classList.toggle('hide', m!=='sell');
   applyBoardVisibility();
 }
+$('#buysub').addEventListener('click', e => { const b = e.target.closest('[data-bsub]'); if(!b) return; bsub = b.dataset.bsub;
+  try{ localStorage.setItem('ratebrd_bsub_v1', bsub); }catch(e2){} setMode('buy'); });
 
 /* The offer board is the whole point of the buyer tab, so this only ever
    hides it while you're on the seller side. The choice sticks per browser. */
@@ -3458,9 +3510,10 @@ function applyBoardVisibility(){
   const on = boardOpen();
   $('#board-panel').classList.toggle('hide', !on);
   const b = $('#bd-open'); if(b){ b.setAttribute('aria-expanded', String(on)); }
-  const tt = $('#bd-open-t'); if(tt) tt.textContent = `${on ? 'Hide' : 'See'} all ${SPORTS[sport]} offers`;
+  const tt = $('#bd-open-t'); if(tt) tt.textContent = `${on ? 'Hide' : 'See'} all offers${spSel.size ? ' · ' + [...spSel].join(', ') : ''}`;
 }
 $('#bd-open').addEventListener('click', () => { try{ localStorage.setItem(BOARD_OPEN, boardOpen() ? '0' : '1'); }catch(e){} applyBoardVisibility(); });
+setMode('buy');   // draws the Buyer sides (Create a buy offer | Your buys)
 $('#s-hide-board').addEventListener('click', () => {
   try{ localStorage.setItem(BOARD_HIDDEN, boardHidden() ? '0' : '1'); }catch(e){}
   applyBoardVisibility();
@@ -3475,39 +3528,40 @@ async function render(){
   // One open a day per person; the server ignores the repeats.
   if(me && !openCounted){ openCounted = true; track('open'); }
   updateBell();
-  const live = market.offers
-    .filter(o => o.sport===sport && !market.users[o.user]?.banned)
+  const all = market.offers.filter(o => !market.users[o.user]?.banned);
+  const live = all
+    .filter(o => spOn(o.sport))
     // Same rate: Vet, then Trusted swappers sit higher.
     .sort((a,b) => b.rate - a.rate || (LV_RANK[lvOf(b.user)]||0) - (LV_RANK[lvOf(a.user)]||0) || a.ts - b.ts);
 
-  $('#board-title').textContent = `${SPORTS[sport]} buy offers`;
+  $('#board-title').textContent = spSel.size ? `Buy offers · ${[...spSel].join(', ')}` : 'Buy offers · every sport';
   $('#board-count').textContent = live.length ? `${live.length} standing` : '';
   { const n = $('#bd-open-n'); if(n) n.textContent = live.length ? `${live.length} up` : 'none yet'; applyBoardVisibility(); }
   $('#board').innerHTML = live.length ? live.map(o => `
     <li class="row ${o.user===me.toLowerCase()?'mine':''}">
       <span class="rate num">${o.rate}<small>/1</small></span>
-      <span><span class="player">${esc(o.player)}</span>${seasonTag(o)}<br><span class="who">${esc(market.users[o.user]?.name||o.user)}</span>${lvTag(o.user)}${o.goalName ? `<span class="goalto">→ ${esc(o.goalName)}</span>` : ''}</span>
+      <span><span class="player">${esc(o.player)}</span><br>${seasonTag(o).trim()} <span class="who">${esc(market.users[o.user]?.name||o.user)}</span>${lvTag(o.user)}${o.goalName ? `<span class="goalto">→ ${esc(o.goalName)}</span>` : ''}</span>
       <span class="rowacts">${o.user===me.toLowerCase()
         ? `<button class="btn-ghost" data-edit="${o.id}">Edit</button><button class="btn-ghost btn-danger" data-del="${o.id}">Remove</button>`
         : (isAdmin() ? (o.link ? `<a class="xbtn lnk" href="${esc(o.link)}" target="_blank" rel="noopener" title="Their comment" aria-label="Their comment">↗</a>` : `<span class="xbtn off" title="No comment link">–</span>`) : '') +
           `<button class="rlink" data-rep="${esc(market.users[o.user]?.name||o.user)}">Report</button>` +
           (isAdmin() ? `<button class="xbtn" data-kill="${o.id}" title="Delete this listing" aria-label="Delete this listing">&times;</button>` : '')}</span>
     </li>`).join('')
-    : `<li class="empty"><b>Nothing on the board yet</b>Post the first ${SPORTS[sport]} offer and sellers will see it.</li>`;
+    : `<li class="empty"><b>Nothing on the board yet</b>Post the first offer and sellers will see it.</li>`;
 
-  const mine = live.filter(o => o.user===me.toLowerCase());
-  $('#pane-mine').classList.toggle('nomine', !mine.length);
-  $('#mine-count').textContent = mine.length ? `${mine.length} in ${sport}` : '';
+  const mine = all.filter(o => o.user===me.toLowerCase()).sort((a, b) => SP_ORDER.indexOf(a.sport) - SP_ORDER.indexOf(b.sport) || b.rate - a.rate);
+  $('#mine-count').textContent = mine.length ? `${mine.length} up` : '';
+  { const bb = document.querySelector('#buysub [data-bsub="mine"]'); if(bb) bb.textContent = mine.length ? `Your buys (${mine.length})` : 'Your buys'; }
   $('#mine').innerHTML = mine.length ? mine.map(o => `
     <li class="row">
       <span class="rate num">${o.rate}<small>/1</small></span>
-      <span><span class="player">${esc(o.player)}${seasonTag(o)}</span>${o.goalName ? `<br><span class="goalto" style="margin:0">Goal: ${esc(o.goalName)}</span>` : ''}</span>
+      <span><span class="player">${esc(o.player)}</span><br>${seasonTag(o).trim()}${o.goalName ? ` <span class="goalto" style="margin:0">Goal: ${esc(o.goalName)}</span>` : ''}</span>
       <span class="rowacts">
         <button class="btn-ghost" data-edit="${o.id}">Edit</button>
         <button class="btn-ghost btn-danger" data-del="${o.id}">Remove</button>
       </span>
     </li>`).join('')
-    : `<li class="empty"><b>No offers in ${SPORTS[sport]}</b>Anything you post shows up here.</li>`;
+    : `<li class="empty"><b>No buy offers yet</b>Anything you post shows up here.</li>`;
 }
 
 document.addEventListener('click', async e => {
@@ -3545,6 +3599,9 @@ $('#b-post').addEventListener('click', async () => {
   const player = asciiName($('#b-player').value);
   const link = $('#b-link').value.trim();
   if(player.length < 2) return toast('Enter a player name.');
+  if(!picked || norm(picked.name) !== norm(player)) return toast('Pick the player from the list - it sets the sport and season.');
+  sport = picked.sport;
+  const pSeason = (BSEAS[sport] || []).length ? $('#b-season').value : '';
   if(!validCommentLink(link)) return toast('Paste the link to your comment under the pinned post first.');
 
   const hs = houseFor(sport, player);
@@ -3569,13 +3626,13 @@ $('#b-post').addEventListener('click', async () => {
   const gl = GOAL_LEVELS[Number($('#b-goal').value)];
   if(!gl) return toast('Pick your goal rarity.');
   const posted = await patch('addOffer', {
-    offer: { id:uid(), user:me.toLowerCase(), sport, player, rate, link, goal: gl[1], goalName: gl[0], ...(sport==='FC' ? { season: $('#b-season').value } : {}) }
+    offer: { id:uid(), user:me.toLowerCase(), sport, player, rate, link, goal: gl[1], goalName: gl[0], ...(pSeason ? { season: pSeason } : {}) }
   });
   if(!posted) return;
-  $('#b-player').value=''; $('#b-link').value='';
+  $('#b-player').value=''; $('#b-link').value=''; setPicked(null);
   closeSuggest();
   renderBuyInstructions();
-  toast(`Posted ${player}${sport==='FC' ? ' ('+$('#b-season').value+')' : ''} at ${rate}/1`);
+  toast(`Posted ${player} (${sport}${pSeason ? ' ' + pSeason : ''}) at ${rate}/1`);
   render();
 });
 
@@ -3972,10 +4029,12 @@ document.addEventListener('click', e => {
   if(b) reportDataForm(b.dataset.rdCard);
 });
 
-$('#b-top').addEventListener('click', async () => {
-  await pull();
-  await showTopPlayers();
-});
+/* With no sport dropdown, tools that work one sport at a time ask which first (2026-11-27). */
+function pickSportThen(title, fn){
+  const box = modal(title, `<div class="spf">${SP_ORDER.map(s => `<button type="button" data-pks="${s}" aria-pressed="${s === sport}">${esc(SPORTS[s] || s)}</button>`).join('')}</div>`);
+  box.addEventListener('click', e => { const b = e.target.closest('[data-pks]'); if(!b) return; sport = b.dataset.pks; document.body.dataset.sport = sport; box.remove(); fn(); });
+}
+$('#b-top').addEventListener('click', () => pickSportThen('Top players - which sport?', async () => { await pull(); await showTopPlayers(); }));
 
 function editRate(id){
   const o = market.offers.find(x => x.id===id);
@@ -4044,12 +4103,13 @@ const EXOWN_KEY = 'ratebrd_exowned_v1', BOARD_SP = { CFB: 'ncaaf', FC: 'soccer',
 let ownedCache = null;
 async function ownedPassNames(){
   let on = false; try{ on = localStorage.getItem(EXOWN_KEY) === '1'; }catch(e){}
-  if(!on) return [];
+  if(!on) return {};
   if(!ownedCache){ try{ ownedCache = await (await fetch('/api/swaps?op=mypassnames')).json(); }catch(e){ ownedCache = { error: 'Could not reach the site.' }; } }
-  if(ownedCache.error){ const n0 = $('#s-exowned-note'); if(n0){ n0.classList.remove('hide'); n0.textContent = 'Couldn\'t read your passes: ' + ownedCache.error; } const e0 = ownedCache; ownedCache = null; return []; }
-  const n = $('#s-exowned-note'), list = (ownedCache.sports || {})[BOARD_SP[sport]] || [];
-  if(n){ n.classList.remove('hide'); n.textContent = ownedCache.none ? 'No passes found - scan your passes on the Swaps page first.' : `${list.length} current-season ${SPORTS[sport]} pass${list.length === 1 ? '' : 'es'} left out${ownedCache.at ? ' (from your scan ' + new Date(ownedCache.at).toLocaleDateString() + ')' : ''}.`; }
-  return list;
+  if(ownedCache.error){ const n0 = $('#s-exowned-note'); if(n0){ n0.classList.remove('hide'); n0.textContent = 'Couldn\'t read your passes: ' + ownedCache.error; } ownedCache = null; return {}; }
+  const by = {}; let n = 0; for(const s of SP_ORDER){ by[s] = (ownedCache.sports || {})[BOARD_SP[s]] || []; n += by[s].length; }
+  const note = $('#s-exowned-note');
+  if(note){ note.classList.remove('hide'); note.textContent = ownedCache.none ? 'No passes found - scan your passes on the Swaps page first.' : `${n} current-season pass${n === 1 ? '' : 'es'} left out${ownedCache.at ? ' (from your scan ' + new Date(ownedCache.at).toLocaleDateString() + ')' : ''}.`; }
+  return by;
 }
 try{ $('#s-exowned').checked = localStorage.getItem(EXOWN_KEY) === '1'; }catch(e){}
 $('#s-exowned').addEventListener('change', e => { try{ localStorage.setItem(EXOWN_KEY, e.target.checked ? '1' : '0'); }catch(e2){} if(!e.target.checked) $('#s-exowned-note').classList.add('hide'); else ownedPassNames(); });
@@ -4165,30 +4225,32 @@ async function copyText(text){
 
 async function showMatches(raw){
   await pull();
-  const live = market.offers.filter(o => o.sport===sport && !market.users[o.user]?.banned);
+  const live = market.offers.filter(o => !market.users[o.user]?.banned);
 
   // Accept either ["Name"] or [{name, boost, owned, totalValue}]
   const players = (raw||[]).map(p => typeof p === 'string' ? {name:p, boost:null, owned:null, totalValue:null} : p)
                            .filter(p => p && p.name)
-                           .map(p => ({...p, name: asciiName(p.name)}))
+                           .map(p => ({...p, name: asciiName(p.name), sport: p.sport || sport, season: p.season != null ? p.season : curSeason(p.sport || sport)}))
                            .filter(p => p.name);
 
-  const excludes = loadExcludes(), owned = await ownedPassNames();
+  const excludes = loadExcludes(), ownedBy = await ownedPassNames();
   const hits = [], noBuyer = [], blocked = [];
   for(const p of players){
     if(isExcluded(p.name, excludes)) continue;
-    if(owned.length && owned.some(n => samePlayer(n, p.name))) continue;   // Exclude owned (2026-11-16)
+    { const owned = p.season === curSeason(p.sport) ? (ownedBy[p.sport] || []) : [];
+      if(owned.length && owned.some(n => samePlayer(n, p.name))) continue; }   // Exclude owned (2026-11-16): this season's passes
     // On the house list: bought at a set rate, so it never goes on the board.
-    const hs = houseFor(sport, p.name);
+    const hs = houseFor(p.sport, p.name);
     if(hs){ blocked.push({ name:p.name, cfg:hs,
       value: p.totalValue != null ? p.totalValue : (p.boost != null ? p.boost : null) }); continue; }
     // Everyone standing on this player, best price first — not just the top one.
     // FC (2026-11-27, member report): Real hands back your 2026-27 FC cards, so a buyer who only wants 2025-26 isn't a match.
-    const buyers = live.filter(o => samePlayer(o.player, p.name) && !(sport === 'FC' && o.season && o.season !== '2026-27'))
+    // Same sport and same season (an offer with no season is for the current one).
+    const buyers = live.filter(o => o.sport === p.sport && offSeason(o) === p.season && samePlayer(o.player, p.name))
                        .sort((a,b) => b.rate - a.rate)
                        .map(o => ({ user:o.user, rate:o.rate, buyer: market.users[o.user]?.name || o.user, season: o.season || '', link: o.link || '' }));
     if(buyers.length) hits.push({
-      player: p.name,
+      player: p.name, sport: p.sport, season: p.season,
       value: p.totalValue != null ? p.totalValue : (p.boost != null ? p.boost : null),
       buyers
     });
@@ -4199,14 +4261,15 @@ async function showMatches(raw){
   // Quicksell suggestions: nobody is buying them AND they aren't on the
   // keep list for this sport. Without a keep list we suggest nothing at all —
   // "no offer yet" on its own is never a reason to dump a card.
-  const keep = (market.keeplist || []).filter(k => k.sport === sport);
+  const keepAll = market.keeplist || [];
   const qsSeen = new Set();
-  const quicksells = !keep.length ? [] : noBuyer
-    .filter(p => !keep.some(k => samePlayer(k.player, p.name)))
+  const quicksells = !keepAll.length ? [] : noBuyer
+    .filter(p => keepAll.some(k => k.sport === p.sport) && !keepAll.some(k => k.sport === p.sport && samePlayer(k.player, p.name)))
     .filter(p => !qsSeen.has(norm(p.name)) && qsSeen.add(norm(p.name)));
 
   const seen = new Set();
-  const rows = hits.filter(h => !seen.has(norm(h.player)) && seen.add(norm(h.player)));
+  const hk = h => norm(h.player) + '|' + h.sport + '|' + h.season;
+  const rows = hits.filter(h => !seen.has(hk(h)) && seen.add(hk(h)));
   const totalBuyers = rows.reduce((n,h) => n + h.buyers.length, 0);
 
   const fmtVal = v => v == null ? '' : (v >= 1000 ? (v/1000).toFixed(1)+'k' : v);
@@ -4218,7 +4281,7 @@ async function showMatches(raw){
   const unpriced = rows.length - priced.length;
 
   const box = modal('Your best sellers', rows.length ? `
-    <p class="note">Found ${players.length} player${players.length===1?'':'s'} in your collection. ${rows.length} ${rows.length===1?'has':'have'} a standing ${SPORTS[sport]} offer — ${totalBuyers} buyer${totalBuyers===1?'':'s'} in total.</p>
+    <p class="note">Found ${players.length} player${players.length===1?'':'s'} in your collection. ${rows.length} ${rows.length===1?'has':'have'} a standing offer — ${totalBuyers} buyer${totalBuyers===1?'':'s'} in total.</p>
     ${haul ? `<div class="haul">
       <b class="num" id="haul-n">${haul.toLocaleString()}</b>
       <span id="haul-sub">selling every card to its highest buyer</span>
@@ -4237,7 +4300,7 @@ async function showMatches(raw){
     <div id="sm-list">${rows.map((h,i)=>`
       <div class="hit" data-i="${i}" data-pname="${esc(norm(h.player))}" style="display:block">
         <div class="bidder-hd">
-          <span class="player">${esc(h.player)}</span>
+          <span class="player">${esc(h.player)}<span class="sptag">${esc(h.sport)}${h.season ? ' · ' + esc(h.season) : ''}</span></span>
           ${h.value != null ? `<span class="who">rating ${fmtVal(h.value)}</span>` : ''}
           <span class="who">${h.buyers.length} buyer${h.buyers.length===1?'':'s'}</span>
         </div>
@@ -4255,7 +4318,7 @@ async function showMatches(raw){
             </span>
           </div>`).join('')}
       </div>`).join('')}</div>`
-    : `<p class="nohit">Read ${players.length} player${players.length===1?'':'s'}, but none of them have a standing ${SPORTS[sport]} offer right now. Check back, or switch sports if the pull was for a different one.</p>`);
+    : `<p class="nohit">Read ${players.length} player${players.length===1?'':'s'}, but none of them have a standing offer for that sport and season right now. Check back later.</p>`);
 
   // ---- sort. "Best rate" is the original order; "Card value" puts the cards
   // you hold the most of first — 1,200 of an 8/1 guy ahead of 100 of a 50/1.
@@ -4277,7 +4340,7 @@ async function showMatches(raw){
       if(!per.has(b.user)) per.set(b.user, { who: b.buyer, link: b.link, cards: [] });
       const e = per.get(b.user);
       if(!e.link && b.link) e.link = b.link;
-      e.cards.push({ player: h.player, value: h.value, rate: b.rate,
+      e.cards.push({ player: h.player, sp: h.sport, se: h.season, value: h.value, rate: b.rate,
                      owed: h.value > 0 ? Math.round(h.value * b.rate / 10) * 10 : null });
     }));
     return [...per.values()]
@@ -4292,7 +4355,7 @@ async function showMatches(raw){
     const wrap = box.querySelector('#sm-orders');
     const list = bigOrders();
     if(!list.length){
-      wrap.innerHTML = `<p class="nohit">No one is buying more than one of your ${SPORTS[sport]} cards right now. Best rate and card value still work.</p>`;
+      wrap.innerHTML = `<p class="nohit">No one is buying more than one of your cards right now. Best rate and card value still work.</p>`;
       return;
     }
     wrap.innerHTML = `<p class="note">${list.length} buyer${list.length===1?'':'s'} want${list.length===1?'s':''} more than one of your cards — sell the lot in one message.</p>` +
@@ -4305,7 +4368,7 @@ async function showMatches(raw){
         </div>
         ${e.cards.map(c => `<div class="bidder">
           <span class="rate num">${c.rate}<small>/1</small></span>
-          <span><span class="player">${esc(c.player)}</span>
+          <span><span class="player">${esc(c.player)}<span class="sptag">${esc(c.sp)}${c.se ? ' · ' + esc(c.se) : ''}</span></span>
             <div class="note">${c.owed != null ? `${c.value} × ${c.rate}/1 = ${c.owed.toLocaleString()}`
                                                 : 'no rating read for this card'}</div></span>
           <span></span></div>`).join('')}
@@ -8242,7 +8305,7 @@ function parseKeepLines(text){
   return out;
 }
 
-$('#open-min').addEventListener('click', minimumsPanel);
+$('#open-min').addEventListener('click', () => pickSportThen('Lists - which sport?', minimumsPanel));
 
 async function minimumsPanel(){
   await pull();
@@ -8252,7 +8315,7 @@ async function minimumsPanel(){
   const house = houseList(sport);
 
   const box = modal(`Lists — ${SPORTS[sport]}`, `
-    <p class="note">The least anyone is allowed to offer for these players. Buyers can't pick a lower rate, and existing offers below a new minimum are raised to it. Switch sports on the board to manage another list.</p>
+    <p class="note">The least anyone is allowed to offer for these players. Buyers can't pick a lower rate, and existing offers below a new minimum are raised to it. Open Lists again to manage another sport.</p>
     <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
       <div style="flex:1 1 150px"><label for="mn-player">Player</label><input id="mn-player" class="field" placeholder="e.g. Lamine Yamal"></div>
       <div style="width:110px"><label for="mn-rate">Minimum</label><input id="mn-rate" class="field num" type="number" inputmode="numeric" min="1" step="1" placeholder="35"></div>
@@ -8709,7 +8772,7 @@ function adminPanel(){ return moderationPanel('inbox'); }
    to the screenshot path.
    ========================================================= */
 const RS_LOOKUP_SPORTS = ['FC', 'CFB', 'NFL', 'NHL', 'UFC', 'NBA', 'CBB'];
-function rsLookupVisible(){ return RS_LOOKUP_SPORTS.includes(sport); }
+function rsLookupVisible(){ return true; }
 
 function updateRsLookupVisibility(){
   const wrap = $('#rs-lookup-wrap');
@@ -8719,7 +8782,7 @@ function updateRsLookupVisibility(){
   updateFreshnessNote();
   if(rsLookupVisible()){
     wrap.classList.remove('hide');
-    $('#rs-go').textContent = `Pull my ${SPORTS[sport]} cards from Real`;
+    $('#rs-go').textContent = 'Pull my cards from Real';
   } else {
     wrap.classList.add('hide');
   }
@@ -8745,89 +8808,63 @@ function rsMsg(text, isError){
   el.style.color = isError ? 'var(--bad)' : 'var(--mute)';
 }
 
-$('#rs-go').addEventListener('click', async () => {
-  const btn = $('#rs-go');
-  btn.disabled = true;
-  rsMsg('');
+/* What you sell (Dennis, 2026-11-27): sports and seasons, all pulled and shown on one page. */
+const SELL_KEY = 'ratebrd_sell_v1';
+function sellCfg(){ let c = null; try{ c = JSON.parse(localStorage.getItem(SELL_KEY) || 'null'); }catch(e){}
+  if(!c || typeof c !== 'object'){ c = {}; for(const s of SP_ORDER) c[s] = [curSeason(s)]; }
+  for(const s of Object.keys(c)) if(!SP_ORDER.includes(s) || !Array.isArray(c[s])) delete c[s];
+  return c; }
+function saveSellCfg(c){ try{ localStorage.setItem(SELL_KEY, JSON.stringify(c)); }catch(e){} }
+function drawSellCfg(){ const box = $('#sellcfg'); if(!box) return; const c = sellCfg();
+  box.innerHTML = SP_ORDER.map(s => { const on = !!c[s], SL = BSEAS[s] || [];
+    return `<div class="sr${on ? '' : ' off'}"><label><input type="checkbox" data-sellsp="${s}"${on ? ' checked' : ''}>${s}</label>`
+      + SL.map(se => `<button type="button" data-sellse="${s}|${se}" aria-pressed="${on && c[s].includes(se)}">${se}</button>`).join('') + '</div>'; }).join(''); }
+$('#sellcfg').addEventListener('change', e => { const s = e.target.dataset.sellsp; if(!s) return; const c = sellCfg();
+  if(e.target.checked) c[s] = [curSeason(s)]; else delete c[s]; saveSellCfg(c); drawSellCfg(); });
+$('#sellcfg').addEventListener('click', e => { const b = e.target.closest('[data-sellse]'); if(!b) return; const [s, se] = b.dataset.sellse.split('|'), c = sellCfg();
+  const l = new Set(c[s] || []); l.has(se) ? l.delete(se) : l.add(se);
+  if(l.size) c[s] = (BSEAS[s] || []).filter(x => l.has(x)); else delete c[s]; saveSellCfg(c); drawSellCfg(); });
+drawSellCfg();
 
-  // Merge player data across chunks: sum totals + totalValue
-  const merged = new Map(); // name → {name, total, totalValue}
-  function mergeChunk(players){
-    for(const p of players){
-      if(!p.name) continue;
-      if(!merged.has(p.name)){
-        merged.set(p.name, { name:p.name, total:0, totalValue:0 });
-      }
-      const m = merged.get(p.name);
-      m.total += p.total || 0;
-      m.totalValue = Math.round((m.totalValue + (p.totalValue || 0)) * 10) / 10;
-    }
+// One sport and season of their collection, every chunk; cards merged by name.
+async function pullOne(sp, lbl, say){
+  const merged = new Map(), seK = sp === 'UFC' ? null : seasonKeyOf(sp, lbl);
+  let start = 0, hashId = null, chunk = 0, tries = 0;
+  while(true){
+    chunk++; say(chunk);
+    const qs = `/api/collection?username=${encodeURIComponent(me)}&sport=${encodeURIComponent(sp)}&start=${start}` + (seK ? `&season=${seK}` : '') + (hashId ? `&hashId=${encodeURIComponent(hashId)}` : '');
+    const res = await fetch(qs); const data = await res.json().catch(() => ({}));
+    if(res.status === 429 && tries < 2){ tries++; chunk--; say(0, 'Real is busy - waiting a minute…'); await new Promise(r => setTimeout(r, 62000)); continue; }
+    if(!res.ok) throw new Error((data.error || 'Could not load cards') + (data.detail ? ' (' + data.detail + ')' : ''));
+    for(const p of data.players || []){ if(!p.name) continue; const m = merged.get(p.name) || { name: p.name, total: 0, totalValue: 0 };
+      m.total += p.total || 0; m.totalValue = Math.round((m.totalValue + (p.totalValue || 0)) * 10) / 10; merged.set(p.name, m); }
+    hashId = data.hashId || hashId;
+    if(!data.hasMore || chunk > 50) break;
+    start = data.nextStart;
   }
-
+  return [...merged.values()].map(p => ({ name: p.name, boost: p.totalValue || null, owned: p.total, totalValue: p.totalValue, sport: sp, season: lbl }));
+}
+$('#rs-go').addEventListener('click', async () => {
+  const btn = $('#rs-go'), c = sellCfg();
+  const jobs = SP_ORDER.flatMap(s => !c[s] ? [] : (BSEAS[s] || []).length ? c[s].map(se => [s, se]) : [[s, '']]);
+  if(!jobs.length) return rsMsg('Pick at least one sport you sell.', true);
+  btn.disabled = true; rsMsg('');
+  const raw = [], failed = [];
   try{
-    let start = 0, hashId = null, chunk = 0;
-    while(true){
-      chunk++;
-      btn.innerHTML = `<span class="spin"></span> Fetching cards${chunk > 1 ? ' ('+chunk+')' : ''}…`;
-      const qs = `/api/collection?username=${encodeURIComponent(me)}&sport=${encodeURIComponent(sport)}&start=${start}` +
-        (hashId ? `&hashId=${encodeURIComponent(hashId)}` : '');
-
-      // On first chunk, check cache before staggering
-      if(chunk === 1){
-        const probe = await fetch(qs);
-        const cached = probe.headers.get('x-cache') === 'HIT';
-        if(!cached){
-          // Not cached — stagger to spread RS load across burst of users
-          const staggerMs = Math.floor(Math.random() * 10000);
-          btn.innerHTML = `<span class="spin"></span> Starting in ${Math.ceil(staggerMs/1000)}s…`;
-          await new Promise(r => setTimeout(r, staggerMs));
-          btn.innerHTML = `<span class="spin"></span> Fetching cards…`;
-        }
-        const data = await probe.json();
-        if(!probe.ok){
-          rsMsg((data.error || 'Could not load cards — try again.') + (data.detail ? ' (' + data.detail + ')' : ''), true);
-          return;
-        }
-        mergeChunk(data.players || []);
-        hashId = data.hashId || hashId;
-        if(!data.hasMore) break;
-        start = data.nextStart;
-        continue;
-      }
-
-      const res = await fetch(qs);
-      const data = await res.json();
-      if(!res.ok){
-        rsMsg((data.error || 'Could not load cards — try again.') + (data.detail ? ' (' + data.detail + ')' : ''), true);
-        return;
-      }
-      mergeChunk(data.players || []);
-      hashId = data.hashId || hashId;
-      if(!data.hasMore) break;
-      start = data.nextStart;
-      if(chunk > 50) break;
+    for(let i = 0; i < jobs.length; i++){
+      const [sp, se] = jobs[i];
+      try{ raw.push(...await pullOne(sp, se, (ch, note) => { btn.innerHTML = `<span class="spin"></span> ${esc(note || `${sp}${se ? ' ' + se : ''}${ch > 1 ? ' (' + ch + ')' : ''}`)} · ${i + 1} of ${jobs.length}`; })); }
+      catch(e){ failed.push(`${sp}${se ? ' ' + se : ''}`); }
     }
-
-    const raw = [...merged.values()].map(p => ({
-      name:       p.name,
-      boost:      p.totalValue || null,
-      owned:      p.total,
-      totalValue: p.totalValue,
-    }));
-
-    if(!raw.length){
-      rsMsg(`No ${SPORTS[sport]} cards found for "${me}" on Real Sports.`, true);
-      return;
-    }
-
-    rsMsg('');
+    if(!raw.length){ rsMsg(failed.length ? `Could not load ${failed.join(', ')} - try again in a minute.` : `No cards found for "${me}" in what you sell.`, true); return; }
+    rsMsg(failed.length ? `Couldn't load ${failed.join(', ')} - showing the rest.` : '', !!failed.length);
     showMatches(raw);
   }catch(e){
     console.error(e);
     rsMsg('Could not reach the server — check your connection and try again.', true);
   }finally{
     btn.disabled = false;
-    btn.textContent = 'Pull my cards';
+    btn.textContent = 'Pull my cards from Real';
   }
 });
 
