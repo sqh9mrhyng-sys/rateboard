@@ -475,6 +475,76 @@
   .spin{display:inline-block;width:15px;height:15px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
   @keyframes sp{to{transform:rotate(360deg)}}
   @media(prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+  /* ---------- board tools row + moderation sheet (2026-11-27) ---------- */
+  .bdbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 16px}
+  .bchip{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);background:var(--panel);color:var(--bone);
+    border-radius:999px;padding:8px 14px;font-size:13.5px;font-weight:600;cursor:pointer}
+  .bchip:hover{border-color:var(--accent)}
+  .bchip.bmod{margin-left:auto;border-color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent)}
+  .bn{display:inline-grid;place-items:center;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:var(--bad);color:#fff;font-size:11.5px;font-weight:800}
+  .bmenuwrap{position:relative}
+  .bmenu{position:absolute;left:0;top:calc(100% + 6px);z-index:50;min-width:220px;background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;padding:6px;box-shadow:0 14px 36px rgba(0,0,0,.45);display:flex;flex-direction:column}
+  .bmenu button,.bmenu a{display:block;text-align:left;padding:10px 12px;border-radius:8px;color:var(--bone);text-decoration:none;font-size:14px;font-weight:600}
+  .bmenu button:hover,.bmenu a:hover{background:color-mix(in srgb,var(--accent) 13%,transparent)}
+  .howto{margin:0;padding:12px 14px 12px 34px;background:var(--panel-2);border:1px solid var(--line);border-radius:10px;font-size:14.5px;line-height:1.5}
+  .howto li+li{margin-top:6px}
+  .linkish{color:var(--accent);font-size:13.5px;font-weight:600;padding:0;text-align:left;text-decoration:underline;text-underline-offset:3px}
+  p.alarm{margin:0;text-transform:none;font-size:13px;padding:10px 12px;border-width:1px;letter-spacing:0}
+  .rlink{color:var(--mute);font-size:12.5px;text-decoration:underline;text-underline-offset:3px;padding:6px 4px}
+  .rlink:hover{color:var(--bad)}
+  .xbtn{width:32px;height:32px;border-radius:8px;border:1px solid var(--line);color:var(--mute);font-size:18px;line-height:1}
+  .xbtn:hover{border-color:var(--bad);color:var(--bad)}
+  .modal.modsheet{max-width:640px;max-height:90vh}
+  .mtabs .mtn{font-size:11.5px;margin-left:4px;opacity:.85}
+  .mchips{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 4px}
+  .mchip{border:1px solid var(--line);border-radius:999px;padding:6px 12px;font-size:13px;font-weight:600;color:var(--mute)}
+  .mchip b{color:var(--bone);margin-left:2px}
+  .mchip[aria-pressed="true"]{border-color:var(--accent);color:var(--bone);background:color-mix(in srgb,var(--accent) 14%,transparent)}
+  .mcard{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--panel-2);margin-top:10px;transition:opacity .18s}
+  .mcard.gone{opacity:0}
+  .mtop{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .msrc{font-size:11.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;padding:3px 8px;border-radius:6px;background:var(--panel);color:var(--mute)}
+  .msrc.s-board{color:var(--bad)} .msrc.s-swap{color:#e5a33d} .msrc.s-feature{color:#7fb6ff} .msrc.s-data{color:#3FD0A6}
+  .mm{color:var(--mute);font-size:12.5px;font-weight:500}
+  .mhead{margin:8px 0 0;font-size:15px;font-weight:700}
+  .mu{color:var(--bone);text-decoration:none} .mu:hover{text-decoration:underline}
+  .mttl{font-weight:700;margin-top:4px}
+  .mq{margin:8px 0 0;padding:8px 12px;border-left:3px solid var(--line);color:var(--bone);background:var(--panel);border-radius:0 8px 8px 0;white-space:pre-wrap}
+  .mtags{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .mtag{font-size:11.5px;font-weight:700;padding:2px 8px;border-radius:999px;background:color-mix(in srgb,var(--bad) 18%,transparent);color:var(--bad)}
+  .mtag.ok{background:color-mix(in srgb,var(--good) 18%,transparent);color:var(--good)}
+  .mlink{font-size:13px;font-weight:600;white-space:nowrap}
+  .mdet{margin-top:8px} .mdet summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--mute)}
+  .mrow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 10px;margin-top:6px;border-radius:8px;background:var(--panel);font-size:13.5px}
+  .mrowacts{display:flex;align-items:center;gap:8px;flex-shrink:0}
+  .macts{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px}
+  .macts .btn.mbtn,.mreplyacts .btn{width:auto;padding:7px 16px;font-size:13.5px;font-weight:700}
+  .macts .btn-ghost,.macts .mmore summary{padding:7px 12px;min-height:0;font-size:13px}
+  .mreply{margin-top:10px} .mreply textarea{min-height:70px;resize:vertical}
+  .mreplyacts{display:flex;gap:8px;margin-top:8px} .mreplyacts .btn{width:auto;padding:8px 16px}
+  .mnote{display:flex;gap:8px;align-items:center;margin:10px 0 0;font-size:12.5px}
+  .mmore{position:relative} .mmore summary{list-style:none;cursor:pointer} .mmore summary::-webkit-details-marker{display:none}
+  .mmore[open]{flex-basis:100%;order:9}
+  .mmore summary{display:inline-flex}
+  .mmenu{margin-top:8px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:6px}
+  .mmenu button{display:block;width:100%;text-align:left;padding:9px 10px;border-radius:7px;font-size:13.5px;font-weight:600}
+  .mmenu button:hover{background:color-mix(in srgb,var(--accent) 13%,transparent)} .mmenu button.bad,.mmenu button.armed{color:var(--bad)}
+  button.armed{border-color:var(--bad)!important;color:var(--bad)!important}
+  .mempty{text-align:center;padding:34px 10px;color:var(--mute)} .mempty b{display:block;color:var(--bone);font-size:16px;margin-bottom:4px}
+  .mbanner{display:block;margin:0 0 6px;padding:10px 12px;border-radius:10px;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent);font-weight:600;font-size:13.5px;text-decoration:none}
+  .mpills{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .mpill{display:inline-flex;align-items:center;gap:2px;border:1px solid var(--line);border-radius:999px;padding:3px 6px 3px 11px;font-size:13px}
+  .mlist{margin-top:4px}
+  @media(max-width:640px){
+    .bchip{padding:9px 13px}
+    .bchip.bmod{order:-1;margin-left:0}
+    .board .row{position:relative}
+    .board .rowacts:has(> .rlink:only-child){position:absolute;right:14px;top:12px;margin:0}
+    .bdbar{gap:6px}
+    .scrim:has(.modsheet){padding:0;align-items:flex-end}
+    .modal.modsheet{max-height:94vh;height:94vh;border-radius:16px 16px 0 0}
+  }
   .hide{display:none!important}
   .vmhide{display:none!important}
   /* OTD (Dennis, 2026-11-25): breakdown link in the header, Simple / Custom, Rarities, select a whole sport. */
@@ -718,6 +788,20 @@
   </header>
 
   <div class="wrap" id="page-board">
+    <!-- One row of board tools (2026-11-27). The old header row of links was hidden on every screen size. -->
+    <nav class="bdbar" aria-label="Board tools">
+      <button class="bchip" id="bb-alerts" type="button">Alerts</button>
+      <button class="bchip" id="bb-report" type="button">Report</button>
+      <div class="bmenuwrap"><button class="bchip" id="bb-more" type="button" aria-haspopup="menu" aria-expanded="false">More ▾</button>
+        <div class="bmenu hide" id="bb-more-m" role="menu">
+          <button type="button" data-bb="#open-feature">Request a feature</button>
+          <a href="/username">Change Real username</a>
+          <button type="button" class="hide" data-bb="#open-copy" data-adm>Copy list</button>
+          <button type="button" class="hide" data-bb="#open-min" data-adm>Minimums &amp; keep list</button>
+          <button type="button" class="hide" data-bb="#open-preview" data-real id="bb-preview">View as member</button>
+        </div></div>
+      <button class="bchip bmod hide" id="bb-mod" type="button">Moderation <b class="bn hide" id="bb-mod-n"></b></button>
+    </nav>
     <div id="packcall" class="packcall hide">
       <span id="packcall-msg">Pack data is open to everyone until 4am ET Sunday.</span>
       <button class="btn" id="packcall-go">Open pack data</button>
@@ -749,9 +833,8 @@
         <div id="pane-buy" class="panel">
           <div class="panel-hd"><h2>Post a buy offer</h2></div>
           <div class="panel-bd stack">
-            <div class="alarm">When done grinding please remove listing, if listing is not removed in a timely manner after you're done buying you will be banned</div>
-            <div class="warn" id="b-instructions"></div>
-            <button id="b-guide-toggle" class="btn-ghost" aria-expanded="false">PICTURE GUIDES OF HOW TO SUBMIT COMMENT</button>
+            <ol class="howto" id="b-instructions"></ol>
+            <button id="b-guide-toggle" class="linkish" type="button" aria-expanded="false">Show picture guide</button>
             <div id="b-guide" class="examples hide">
               <figure>
                 <a href="examples/buy-1-open-post.jpg" target="_blank" rel="noopener"><img src="examples/buy-1-open-post.jpg" alt="The buy offer form with the this post link circled"></a>
@@ -793,7 +876,8 @@
               <input id="b-link" class="field" autocomplete="off" placeholder="https://www.realapp.com/...">
             </div>
             <button id="b-post" class="btn">Post offer</button>
-            <p class="note">Rates are per 1. Posting the same player twice replaces your earlier offer. A valid comment link is required — sellers use it to reach you.</p>
+            <p class="alarm">Take your listing down when you're done buying. Listings left up get you banned.</p>
+            <p class="note">Rates are per 1. Posting the same player again replaces your earlier offer.</p>
             <button id="b-top" class="btn-ghost">View top players</button>
           </div>
         </div>
@@ -1119,6 +1203,10 @@ function checkMarketAccess(){
 // single switch rather than a rule repeated in a dozen spots.
 function applyAdminVisibility(){
   const on = isAdmin();
+  { const m = $('#bb-mod'); if(m) m.classList.toggle('hide', !on);
+    for(const b of document.querySelectorAll('#bb-more-m [data-adm]')) b.classList.toggle('hide', !on);
+    const pv = $('#bb-preview'); if(pv){ pv.classList.toggle('hide', !reallyAdmin()); pv.textContent = previewMember ? 'Back to admin view' : 'View as member'; }
+    if(on && modItems === null && !modAsked){ modAsked = true; modLoad(); } }
   for(const id of ['#open-admin', '#open-min', '#open-copy']){
     const b = $(id);
     if(b) b.classList.toggle('hide', !on);
@@ -3149,17 +3237,16 @@ function applyMinimumToForm(){
    ========================================================= */
 function renderBuyInstructions(){
   $('#b-instructions').innerHTML =
-    `<p>To buy cards, get the card link of the player or team you're upgrading, and post a comment under ` +
-    `<a href="${esc(TARGET_LINK)}" target="_blank" rel="noopener">this post</a> with your card and any extra ` +
-    `details you want to add. Once you have created the comment, paste it below (it is auto verified).</p>` +
-    `<p class="shout">IF CONFUSED ABOUT PINNED COMMENT OR ANYTHING CLICK THE BOX THAT SAYS "PICTURE GUIDES OF HOW TO SUBMIT COMMENT"</p>`;
+    `<li>Comment under <a href="${esc(TARGET_LINK)}" target="_blank" rel="noopener">the pinned post</a> with the card you're upgrading and your rate.</li>` +
+    `<li>Copy your comment's link.</li>` +
+    `<li>Paste it below and post - it's checked automatically.</li>`;
 }
 renderBuyInstructions();
 
 $('#b-guide-toggle').addEventListener('click', () => {
   const btn = $('#b-guide-toggle'), box = $('#b-guide');
   const nowHidden = box.classList.toggle('hide');
-  btn.textContent = nowHidden ? 'PICTURE GUIDES OF HOW TO SUBMIT COMMENT' : 'HIDE PICTURE GUIDES';
+  btn.textContent = nowHidden ? 'Show picture guide' : 'Hide picture guide';
   btn.setAttribute('aria-expanded', String(!nowHidden));
 });
 
@@ -3338,11 +3425,9 @@ async function render(){
       <span><span class="player">${esc(o.player)}</span>${seasonTag(o)}<br><span class="who">${esc(market.users[o.user]?.name||o.user)}</span>${lvTag(o.user)}</span>
       <span class="rowacts">${o.user===me.toLowerCase()
         ? `<button class="btn-ghost" data-edit="${o.id}">Change rate</button><button class="btn-ghost btn-danger" data-del="${o.id}">Remove</button>`
-        : `<button class="btn-ghost" data-rep="${esc(market.users[o.user]?.name||o.user)}">Report</button>` +
-          (isAdmin() ? `<button class="btn-ghost btn-danger" data-kill="${o.id}">Delete listing</button>` : '')}
-        ${isAdmin() ? (o.link
-          ? `<a class="btn-ghost adminonly" href="${esc(o.link)}" target="_blank" rel="noopener">Their comment</a>`
-          : `<span class="who adminonly">no comment link</span>`) : ''}</span>
+        : (isAdmin() ? (o.link ? `<a class="btn-ghost" href="${esc(o.link)}" target="_blank" rel="noopener">Comment ↗</a>` : `<span class="who">no link</span>`) : '') +
+          `<button class="rlink" data-rep="${esc(market.users[o.user]?.name||o.user)}">Report</button>` +
+          (isAdmin() ? `<button class="xbtn" data-kill="${o.id}" title="Delete this listing" aria-label="Delete this listing">&times;</button>` : '')}</span>
     </li>`).join('')
     : `<li class="empty"><b>Nothing on the board yet</b>Post the first ${SPORTS[sport]} offer and sellers will see it.</li>`;
 
@@ -4359,6 +4444,20 @@ function showQuicksells(list){
    Reports + admin
    ========================================================= */
 $('#open-report').addEventListener('click', ()=>reportUser(''));
+// The board tools row (2026-11-27): the same actions as the hidden header links.
+let modAsked = false;
+$('#bb-alerts').addEventListener('click', () => $('#open-bell').click());
+$('#bb-report').addEventListener('click', () => reportUser(''));
+$('#bb-mod').addEventListener('click', () => moderationPanel('inbox'));
+// View as member: every admin-only branch hides itself (isAdmin() answers no) until switched back.
+const togglePreview = () => { previewMember = !previewMember; applyAdminVisibility(); render(); };
+$('#open-preview').addEventListener('click', togglePreview);
+$('#preview-off').addEventListener('click', togglePreview);
+{ const mb = $('#bb-more'), mm = $('#bb-more-m');
+  const close = () => { mm.classList.add('hide'); mb.setAttribute('aria-expanded', 'false'); };
+  mb.addEventListener('click', e => { e.stopPropagation(); const open = mm.classList.toggle('hide') === false; mb.setAttribute('aria-expanded', String(open)); });
+  mm.addEventListener('click', e => { const it = e.target.closest('[data-bb]'); close(); if(it){ const t = $(it.dataset.bb); if(t) t.click(); } });
+  document.addEventListener('click', e => { if(!e.target.closest('.bmenuwrap')) close(); }); }
 
 /* =========================================================
    Feature requests
@@ -4503,6 +4602,7 @@ function updateBell(){
   if(!b) return;
   const n = unreadCount();
   b.textContent = n ? `Alerts (${n})` : 'Alerts';
+  const c = $('#bb-alerts'); if(c) c.innerHTML = n ? `Alerts <b class="bn">${n}</b>` : 'Alerts';
 }
 
 // Yesterday's board activity. New users, listings, reports and requests all
@@ -8223,525 +8323,304 @@ async function minimumsPanel(){
   });
 }
 
-async function adminPanel(){
-  await pull();
-  const open = market.reports.filter(r => r.status==='open').sort((a,b)=>b.ts-a.ts);
-  const users = Object.entries(market.users).sort((a,b)=>a[0].localeCompare(b[0]));
+/* =========================================================
+   Moderation (Dennis, 2026-11-27: "a clear way to field it, it's all over the
+   place"). One sheet, three tabs:
+     Inbox    - everything waiting on a decision, newest first: board reports,
+                Swaps reports, feature requests and data reports. Each card has
+                the same few actions, and the reported member's listings right
+                there to delete.
+     Members  - find anyone: their listings, password reset, data access,
+                delete / restore.
+     Listings - the board at a glance and who's buying a player.
+   Board and Swaps reports and feature requests come from the same inbox as
+   /admin (op=inbox / inboxact), so answering in either place clears both.
+   ========================================================= */
+const MOD_SRC = { board: 'Board report', swap: 'Swaps report', feature: 'Feature request', data: 'Data report' };
+const MOD_SPORT = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', mlb: 'MLB', nhl: 'NHL', wnba: 'WNBA', soccer: 'FC', golf: 'Golf', ufc: 'UFC' };
+let modItems = null, modExtra = null;
+const modAgo = ts => { if(!ts) return ''; const m = Math.round((Date.now() - ts) / 60000);
+  return m < 1 ? 'just now' : m < 60 ? m + 'm ago' : m < 1440 ? Math.round(m / 60) + 'h ago' : new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric' }); };
+const modName = (w, fb) => (w && (w.rsUser || w.key)) || fb || '?';
+const modUser = n => `<a class="mu" href="https://www.realapp.com/u/${encodeURIComponent(n)}" target="_blank" rel="noopener">@${esc(n)}</a>`;
 
-  // Listings summary. Offers from deleted accounts are off the board already,
-  // so they don't count here either. Two players with the same name in
-  // different sports are two different listings.
-  const liveOffers = market.offers.filter(o => !market.users[o.user]?.banned);
-  const groups = new Map();
-  for(const o of liveOffers){
-    const key = o.sport + '|' + norm(o.player);
-    if(!groups.has(key)) groups.set(key, { sport:o.sport, player:o.player, offers:[] });
-    groups.get(key).offers.push(o);
+// Everything open, in one list. Data reports have their own store.
+async function modLoad(){
+  const [ib, dr] = await Promise.all([
+    fetch('/api/swaps?op=inbox').then(r => r.json()).catch(() => ({ error: 'Could not reach the inbox.' })),
+    fetch('/api/kv?datareports=1').then(r => r.json()).catch(() => ({ reports: [] }))]);
+  if(ib.error){ modItems = null; return ib.error; }
+  modItems = (ib.items || []).concat((dr.reports || []).map(r => ({ src: 'data', id: String(r.id), ts: r.ts, by: r.by_user, raw: r,
+    title: `${r.player}${r.sport ? ' · ' + r.sport : ''}`, detail: r.note || '' })));
+  modItems.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  modBadge();
+  return null;
+}
+// Swaps strikes, appeals and unban requests stay on /admin; this just says when any are waiting.
+async function modLoadExtra(){
+  try{
+    const [a, l] = await Promise.all([fetch('/api/swaps?op=modappeals').then(r => r.json()), fetch('/api/swaps?op=modlist').then(r => r.json())]);
+    modExtra = { appeals: (a.rows || []).filter(r => r.status === 'open').length, unban: (l.requests || []).length };
+  }catch(e){ modExtra = null; }
+}
+function modBadge(){
+  const n = modItems ? modItems.length : 0, el = $('#bb-mod-n');
+  if(el){ el.textContent = n ? String(n) : ''; el.classList.toggle('hide', !n); }
+}
+
+function modCard(x){
+  const k = `${x.src}|${x.id}`, rep = x.src === 'board' || x.src === 'swap';
+  const from = modName(x.from, x.by), about = x.target ? modName(x.about, x.target) : null;
+  let head = '', body = '', extra = '';
+  if(rep){
+    head = `${modUser(from)} <span class="mm">reported</span> ${modUser(about)}`;
+    const ab = x.about || {};
+    const tags = [ab.swapper && 'swapper', ab.restricted && 'no posts/swaps', ab.banned && 'banned', ab.key === undefined || ab.key ? null : 'no board account']
+      .filter(Boolean).map(t => `<span class="mtag">${esc(t)}</span>`).join('');
+    if(x.src === 'swap'){
+      extra = ab.comment ? `<a class="mlink" href="${esc(ab.comment)}" target="_blank" rel="noopener">Their swap comment ↗</a>` : '<span class="mm">No swap comment saved.</span>';
+      if((x.offs || []).length) extra += `<details class="mdet"${x.matchId ? ' open' : ''}><summary>${esc(from)} was in ${x.offs.length} called-off swap${x.offs.length === 1 ? '' : 's'}</summary>${x.offs.map(o =>
+        `<div class="mrow"><span>${o.reported ? '▶ ' : ''}${esc(new Date(o.due).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))} with ${esc(o.partner)}<br><span class="mm">bought ${esc(o.buys || '?')} · was to get ${esc(o.gets || '?')}${o.told ? ' · told to buy' : ''}</span></span>
+          ${o.refunded ? '<span class="mtag ok">refunded</span>' : `<button class="btn-ghost" data-ma="refunded" data-mid="${o.id}">Mark refunded</button>`}</div>`).join('')}</details>`;
+    } else {
+      const offs = ab.offers || [];
+      extra = `<details class="mdet"${offs.length ? ' open' : ''}><summary>${esc(about)}'s listings (${offs.length})</summary>${offs.length ? offs.map(o =>
+        `<div class="mrow" data-orow="${esc(o.id)}"><span><b class="num">${esc(o.rate)}</b> ${esc(o.player)} <span class="mm">${esc(MOD_SPORT[o.sport] || o.sport || '')}</span></span>
+          <span class="mrowacts">${o.link ? `<a class="mlink" href="${esc(o.link)}" target="_blank" rel="noopener">Comment ↗</a>` : '<span class="mm">no link</span>'}<button class="killer" data-mkill="${esc(o.id)}" title="Delete this listing">&times;</button></span></div>`).join('')
+        : '<p class="mm" style="margin:6px 0 0">Nothing listed.</p>'}</details>`;
+    }
+    extra = (tags ? `<div class="mtags">${tags}</div>` : '') + extra;
+  } else if(x.src === 'feature'){
+    head = `${modUser(from)} <span class="mm">asked for</span>`;
+  } else {
+    const r = x.raw, fl = (DATA_FIELDS.find(f => f[0] === r.field) || [r.field, r.field])[1];
+    head = `${modUser(from)} <span class="mm">says a figure is wrong</span>`;
+    body = `<div class="mttl">${esc(x.title)}</div><div><b>${esc(fl)}</b>${r.value ? ` should be <b>${esc(r.value)}</b>` : ''}</div>`;
   }
-  const contested = [...groups.values()]
-    .filter(g => g.offers.length > 1)
-    .sort((a,b) => b.offers.length - a.offers.length
-                || Math.max(...b.offers.map(o=>o.rate)) - Math.max(...a.offers.map(o=>o.rate)));
-  const nameOf = u => market.users[u]?.name || u;
+  const ttl = x.src === 'feature' ? `<div class="mttl">${esc(x.title || '')}</div>` : '';
+  const quote = x.detail ? `<blockquote class="mq">${esc(x.detail)}</blockquote>` : '';
+  const open = x.from && x.from.channelId;
+  let acts;
+  if(x.src === 'data'){
+    const fix = ['status', 'age', 'minimum', 'purchases', 'earnings'].includes(x.raw.field);
+    acts = `${fix ? '<button class="btn mbtn" data-md="fix">Apply fix</button>' : ''}<button class="btn-ghost" data-md="dismiss">Dismiss</button>`;
+  } else {
+    acts = `<button class="btn mbtn" data-ma="done">${rep ? 'Resolve' : 'Done'}</button><button class="btn-ghost" data-ma="declined">Decline</button>
+      <button class="btn-ghost" data-mreply>Reply</button>
+      <details class="mmore"><summary class="btn-ghost">More</summary><div class="mmenu">
+        ${x.target ? `<button data-ma="restrict" data-two="1">Take posts &amp; swaps from @${esc(about)}</button><button data-ma="ban" data-two="1" class="bad">Ban @${esc(about)} from the site</button>` : ''}
+        ${x.target ? `<button data-mreply="about">Message @${esc(about)}</button>` : ''}
+        <button data-ma="delete" data-two="1">Delete with no message (spam)</button></div></details>`;
+  }
+  const reply = x.src === 'data' ? '' : `<div class="mreply hide"><textarea class="field" rows="3" placeholder=""></textarea>
+    <div class="mreplyacts"><button class="btn mbtn" data-msend>Send</button><button class="btn-ghost" data-mcancel>Cancel</button></div></div>
+    <label class="mnote"><input type="checkbox" data-mnotify${open ? ' checked' : ' disabled'}> ${open ? `DM @${esc(from)} the outcome` : `@${esc(from)} has no bot chat - the outcome shows on their Notifications page`}</label>`;
+  return `<article class="mcard" data-k="${esc(k)}">
+    <div class="mtop"><span class="msrc s-${x.src}">${MOD_SRC[x.src]}</span><span class="mm">${esc(modAgo(x.ts))}</span></div>
+    <div class="mhead">${head}</div>${ttl}${body}${quote}${extra}
+    <div class="macts">${acts}</div>${reply}</article>`;
+}
 
-  // A report is only useful next to what the person actually has up, so each
-  // one carries their listings and the comment behind every listing.
-  const reportCard = r => {
-    const k = String(r.target || '').trim().toLowerCase();
-    const acct = market.users[k];
-    const theirs = market.offers.filter(o => o.user === k)
-      .sort((a,b) => a.sport.localeCompare(b.sport) || b.rate - a.rate);
-    return `<div class="hit rep-card">
-      <div class="rep-top">
-        <span><span class="player">${esc(r.target)}</span>${acct ? '' : ' <span class="who">(no account by that name)</span>'}<br>
-          <span class="who">${esc(r.reason)} — from ${esc(r.by)}, ${new Date(r.ts).toLocaleDateString()}</span></span>
-        <span class="rowacts">
-          ${acct && !acct.banned ? `<button class="btn-ghost btn-danger" data-ban="${esc(k)}">Delete account</button>` : ''}
-          <button class="btn-ghost" data-clear="${r.id}">Dismiss</button>
-        </span>
-      </div>
-      <div class="rep-list">
-        <span class="who">${theirs.length} listing${theirs.length===1?'':'s'}${theirs.length ? ' — every comment they posted:' : ''}</span>
-        ${theirs.map(o => `<div class="rep-item">
-            <span><b class="num">${o.rate}</b>/1 ${esc(o.player)} <em>${o.sport}</em></span>
-            <span class="rep-acts">
-              ${o.link ? `<a class="btn-ghost adminonly" href="${esc(o.link)}" target="_blank" rel="noopener">Comment</a>`
-                       : `<span class="who">no link</span>`}
-              <button class="killer" data-kill="${o.id}" title="Delete this listing">&times;</button>
-            </span>
-          </div>`).join('')}
-      </div>
-    </div>`;
+function modInboxHTML(f){
+  if(!modItems) return '<p class="nohit">Loading…</p>';
+  const counts = {}; for(const x of modItems) counts[x.src] = (counts[x.src] || 0) + 1;
+  const chips = [['', 'All', modItems.length], ['board', 'Board', counts.board], ['swap', 'Swaps', counts.swap], ['feature', 'Features', counts.feature], ['data', 'Data', counts.data]]
+    .filter(c => !c[0] || c[2]).map(([v, l, n]) => `<button class="mchip" data-mf="${v}" aria-pressed="${f === v}">${l}${n ? ` <b>${n}</b>` : ''}</button>`).join('');
+  const list = modItems.filter(x => !f || x.src === f);
+  const ex = modExtra && (modExtra.appeals || modExtra.unban)
+    ? `<a class="mbanner" href="/admin#reports">${[modExtra.appeals && `${modExtra.appeals} strike appeal${modExtra.appeals === 1 ? '' : 's'}`, modExtra.unban && `${modExtra.unban} Swaps unban request${modExtra.unban === 1 ? '' : 's'}`].filter(Boolean).join(' and ')} waiting on Admin ↗</a>` : '';
+  return `${ex}<div class="mchips">${chips}</div>${list.length ? list.map(modCard).join('') : `<div class="mempty"><b>All clear</b>Nothing waiting${f ? ' here' : ''}.</div>`}`;
+}
+
+function modMembersHTML(){
+  const granted = gameDataList().filter(k => market.users[k]), packs = packDataList().filter(k => market.users[k]);
+  return `<input id="mu-q" class="field" placeholder="Find a member by username" autocomplete="off">
+    <div id="mu-out"></div>
+    <h4 class="subhd">Game data access (${granted.length})</h4>
+    <div class="mpills">${granted.length ? granted.map(k => `<span class="mpill">${esc(market.users[k].name || k)}<button class="killer" data-gd="${esc(k)}" title="Take game data away">&times;</button></span>`).join('') : '<span class="mm">Only admins.</span>'}</div>
+    <h4 class="subhd">Pack data only (${packs.length})</h4>
+    <div class="mpills">${packs.length ? packs.map(k => `<span class="mpill">${esc(market.users[k].name || k)}<button class="killer" data-pd="${esc(k)}" title="Take pack data away">&times;</button></span>`).join('') : '<span class="mm">Nobody.</span>'}</div>
+    <p class="mm" id="ad-backup" style="margin-top:16px">Checking backups…</p>`;
+}
+function modMemberCard(k, u){
+  const theirs = market.offers.filter(o => o.user === k).sort((a, b) => b.rate - a.rate || a.player.localeCompare(b.player));
+  const self = k === String(me).toLowerCase();
+  return `<div class="mcard">
+    <div class="mtop"><span class="mhead" style="margin:0">${modUser(u.name || k)}</span><span class="mm">${u.banned ? 'deleted' : `${theirs.length} listing${theirs.length === 1 ? '' : 's'}`}</span></div>
+    ${theirs.length ? `<div class="mlist">${theirs.map(o => `<div class="mrow"><span><b class="num">${o.rate}</b>/1 ${esc(o.player)} <span class="mm">${o.sport}</span></span>
+      <span class="mrowacts">${o.link ? `<a class="mlink" href="${esc(o.link)}" target="_blank" rel="noopener">Comment ↗</a>` : ''}<button class="killer" data-mkill="${o.id}" title="Delete this listing">&times;</button></span></div>`).join('')}</div>` : ''}
+    ${self ? '<p class="mm" style="margin:8px 0 0">This is you.</p>' : u.banned ? `<div class="macts"><button class="btn-ghost" data-unban="${esc(k)}">Restore account</button></div>`
+      : `<div class="macts"><button class="btn-ghost" data-reset="${esc(k)}">${u.hasPass ? 'Reset password' : 'Waiting on new password'}</button>
+        <button class="btn-ghost" data-gd="${esc(k)}">${gameDataList().includes(k) ? 'Remove game data' : 'Give game data'}</button>
+        <button class="btn-ghost" data-pd="${esc(k)}">${packDataList().includes(k) ? 'Remove pack data' : 'Give pack data'}</button>
+        <button class="btn-ghost btn-danger" data-ban="${esc(k)}" data-two="1">Delete account</button></div>`}
+  </div>`;
+}
+
+function modListingsHTML(){
+  const live = market.offers.filter(o => !market.users[o.user]?.banned), groups = new Map();
+  for(const o of live){ const key = o.sport + '|' + norm(o.player); if(!groups.has(key)) groups.set(key, { sport: o.sport, player: o.player, offers: [] }); groups.get(key).offers.push(o); }
+  const contested = [...groups.values()].filter(g => g.offers.length > 1)
+    .sort((a, b) => b.offers.length - a.offers.length || Math.max(...b.offers.map(o => o.rate)) - Math.max(...a.offers.map(o => o.rate)));
+  const bySport = {}; for(const o of live) bySport[o.sport] = (bySport[o.sport] || 0) + 1;
+  return `<div class="statrow"><div class="stat"><b class="num">${live.length}</b><span>listings up</span></div><div class="stat"><b class="num">${groups.size}</b><span>players</span></div></div>
+    <p class="mm" style="margin:8px 0 0">${Object.entries(bySport).sort((a, b) => b[1] - a[1]).map(([s, n]) => `${esc(s)} ${n}`).join(' · ')}</p>
+    <h4 class="subhd">Who's buying a player</h4>
+    <input id="lk-player" class="field" placeholder="Player name" autocomplete="off"><div id="lk-player-out"></div>
+    <h4 class="subhd">More than one buyer (${contested.length})</h4>
+    ${contested.length ? contested.map(modGroup).join('') : '<p class="nohit">Every listing is on a different player.</p>'}`;
+}
+const modGroup = g => `<div class="mcard"><div class="mtop"><span class="player">${esc(g.player)}</span><span class="mm">${g.sport} · ${g.offers.length} buyer${g.offers.length === 1 ? '' : 's'}</span></div>
+  <div class="buyers">${g.offers.slice().sort((a, b) => b.rate - a.rate).map(o => `<span class="buyer"><b class="num">${o.rate}</b>/1 ${esc(market.users[o.user]?.name || o.user)}<button class="killer" data-mkill="${o.id}" title="Delete this listing">&times;</button></span>`).join('')}</div></div>`;
+
+async function moderationPanel(tab){
+  await pull();
+  let cur = tab || 'inbox', filt = '';
+  const box = modal('Moderation', `<div class="seg mtabs" role="tablist">
+      <button data-mt="inbox" aria-pressed="true">Inbox <b class="mtn" id="mt-n"></b></button><button data-mt="members" aria-pressed="false">Members</button><button data-mt="listings" aria-pressed="false">Listings</button></div>
+    <div id="mod-body"></div>`);
+  box.querySelector('.modal').classList.add('modsheet');
+  const bodyEl = box.querySelector('#mod-body');
+  const setN = () => { const n = modItems ? modItems.length : 0; box.querySelector('#mt-n').textContent = n ? String(n) : ''; };
+  const draw = () => {
+    for(const b of box.querySelectorAll('[data-mt]')) b.setAttribute('aria-pressed', String(b.dataset.mt === cur));
+    if(cur === 'inbox') bodyEl.innerHTML = modInboxHTML(filt);
+    else if(cur === 'members'){ bodyEl.innerHTML = modMembersHTML(); modBackup(box); }
+    else bodyEl.innerHTML = modListingsHTML();
+    setN();
   };
-
-  const box = modal('Admin', `
-    <details class="ad-drop" id="ad-reports" ${open.length ? 'open' : ''}>
-      <summary><span>Reports</span><span class="count ${open.length ? 'hot' : ''}" id="ad-rep-count">${open.length} open</span></summary>
-      <div id="ad-rep-list">${open.length ? open.map(reportCard).join('') : '<p class="nohit">No open reports.</p>'}</div>
-    </details>
-    <details class="ad-drop" id="ad-data">
-      <summary><span>Data reports</span><span class="count" id="ad-data-count">…</span></summary>
-      <div id="ad-data-list"><p class="nohit">Loading…</p></div>
-    </details>
-    <details class="ad-drop" id="ad-feat">
-      <summary><span>Feature requests</span><span class="count" id="ad-feat-count">…</span></summary>
-      <div id="ad-feat-list"><p class="nohit">Loading…</p></div>
-    </details>
-    <p class="note" id="ad-backup">Checking backups…</p>
-    <h3 style="margin:0;font-size:14px;font-weight:600">Listings</h3>
-    <div class="statrow">
-      <div class="stat"><b class="num">${liveOffers.length}</b><span>total listings out</span></div>
-      <div class="stat"><b class="num">${groups.size}</b><span>unique players</span></div>
-    </div>
-
-    <h4 class="subhd">Look up a user</h4>
-    <input id="lk-user" class="field" placeholder="Username — see everything they have listed" autocomplete="off">
-    <div id="lk-user-out"></div>
-
-    <h4 class="subhd">Look up a player</h4>
-    <input id="lk-player" class="field" placeholder="Player name — see who's buying them" autocomplete="off">
-    <div id="lk-player-out"></div>
-    <h4 class="subhd">Players with more than one buyer (${contested.length})</h4>
-    ${contested.length ? contested.map(g => `
-      <div class="hit" style="display:block">
-        <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline">
-          <span class="player">${esc(g.player)}</span>
-          <span class="who">${g.sport} — ${g.offers.length} buyers</span>
-        </div>
-        <div class="buyers">${g.offers.slice().sort((a,b)=>b.rate-a.rate).map(o =>
-          `<span class="buyer"><b class="num">${o.rate}</b>/1 ${esc(nameOf(o.user))}</span>`).join('')}</div>
-      </div>`).join('') : '<p class="nohit">Every listing is on a different player right now.</p>'}
-
-    <h3 style="margin:18px 0 0;font-size:14px;font-weight:600">Game data access</h3>
-    <div class="hit" style="grid-template-columns:1fr auto;align-items:center">
-      <select class="field" id="gd-who"></select>
-      <button class="btn-ghost btn-danger" id="gd-revoke">Revoke</button>
-    </div>
-    <p class="note" id="gd-note"></p>
-
-    <h3 style="margin:18px 0 0;font-size:14px;font-weight:600">All accounts (${users.length})</h3>
-    ${users.map(([k,u])=>`
-      <div class="hit" style="grid-template-columns:1fr auto">
-        <span><span class="player">${esc(u.name)}</span><br>
-          <span class="who">${u.banned ? 'deleted' : market.offers.filter(o=>o.user===k).length + ' offers'}</span></span>
-        ${k === me.toLowerCase() ? `<span class="who">this is you</span>`
-          : u.banned ? `<button class="btn-ghost" data-unban="${esc(k)}">Restore</button>`
-                     : `<button class="btn-ghost" data-reset="${esc(k)}">${u.hasPass ? 'Reset password' : 'awaiting new password'}</button>
-                        <button class="btn-ghost" data-gd="${esc(k)}">${
-                          gameDataList().includes(k) ? 'Revoke game data' : 'Grant access to game data'}</button>
-                        <button class="btn-ghost" data-pd="${esc(k)}">${
-                          packDataList().includes(k) ? 'Revoke pack data' : 'Grant pack data only'}</button>
-                        <button class="btn-ghost btn-danger" data-ban="${esc(k)}">Delete account</button>`}
-      </div>`).join('')}`);
-
-  // Everyone currently holding game data access, so it can be taken back from
-  // one place rather than hunting through the account list.
-  (function drawGameData(){
-    const sel = box.querySelector('#gd-who'), note = box.querySelector('#gd-note');
-    if(!sel) return;
-    const granted = gameDataList().filter(k => market.users[k]);
-    sel.innerHTML = granted.length
-      ? granted.map(k => `<option value="${esc(k)}">${esc(market.users[k].name || k)}</option>`).join('')
-      : '<option value="">Nobody yet</option>';
-    sel.disabled = !granted.length;
-    const revoke = box.querySelector('#gd-revoke');
-    if(revoke) revoke.disabled = !granted.length;
-    if(note) note.textContent = granted.length
-      ? `${granted.length} ${granted.length === 1 ? 'person has' : 'people have'} access, plus admins. Grant it from the account list below.`
-      : 'Only admins can see game data. Grant it to someone from the account list below.';
-  })();
-
-  // ---- data reports: someone says a figure is wrong. Review, then either
-  // apply the fix (saved as a correction that the daily UFC.com refresh
-  // won't undo) or dismiss it.
-  const FIXABLE = ['status','age','minimum','purchases','earnings'];
-  const fieldLabel = k => (DATA_FIELDS.find(x => x[0] === k) || [k, k])[1];
-  let dataReports = [];
-  const drawDataReports = () => {
-    const list = box.querySelector('#ad-data-list'), cnt = box.querySelector('#ad-data-count');
-    cnt.textContent = `${dataReports.length} open`;
-    cnt.classList.toggle('hot', dataReports.length > 0);
-    if(dataReports.length) box.querySelector('#ad-data').open = true;
-    list.innerHTML = dataReports.length ? dataReports.map(r => `
-      <div class="hit rep-card">
-        <div class="rep-top">
-          <span><span class="player">${esc(r.player)}</span> <span class="who">${esc(r.sport || '')}</span><br>
-            <span class="who"><b>${esc(fieldLabel(r.field))}</b>${r.value ? ` should be <b>${esc(r.value)}</b>` : ''}
-            — from ${esc(r.by_user)}, ${new Date(r.ts).toLocaleDateString()}</span>
-            ${r.note ? `<br><span class="who">"${esc(r.note)}"</span>` : ''}</span>
-          <span class="rowacts">
-            ${FIXABLE.includes(r.field) ? `<button class="btn-ghost" data-dfix="${esc(r.id)}">Apply fix</button>` : ''}
-            <button class="btn-ghost" data-ddis="${esc(r.id)}">Dismiss</button>
-          </span>
-        </div>
-        <div class="rep-list"><span class="who">Showing now:</span>${ufcDetailChips(r.player, new Set()) || '<span class="who">nothing on file</span>'}</div>
-      </div>`).join('') : '<p class="nohit">No open data reports.</p>';
+  const redrawKeep = () => { // same tab, same search text
+    const q = box.querySelector('#mu-q, #lk-player'), v = q ? q.value : '', id = q && q.id;
+    draw(); if(id && v){ const f = box.querySelector('#' + id); f.value = v; f.dispatchEvent(new Event('input', { bubbles: true })); }
   };
-  (async () => {
-    try{
-      await loadUfcMeta(true);
-      const d = await (await fetch('/api/kv?datareports=1')).json();
-      dataReports = d.reports || [];
-    }catch(e){ dataReports = []; }
-    drawDataReports();
-  })();
+  draw();
+  if(!modItems) modLoad().then(err => { if(err && cur === 'inbox') bodyEl.innerHTML = `<p class="nohit">${esc(err)}</p>`; else if(cur === 'inbox') draw(); setN(); });
+  else modLoad().then(() => { if(cur === 'inbox') draw(); setN(); });
+  modLoadExtra().then(() => { if(cur === 'inbox' && modItems) draw(); });
 
-  // ---- feature requests: what members have asked for. Marking one done or
-  // dismissing it redraws this list only, so the panel never jumps back to
-  // the top or loses whatever else is open.
-  const kindLabel = k => (FEATURE_KINDS.find(x => x[0] === k) || [k, k || 'request'])[1];
-  let featReqs = [];
-  const drawFeatures = () => {
-    const list = box.querySelector('#ad-feat-list'), cnt = box.querySelector('#ad-feat-count');
-    if(!list || !cnt) return;
-    cnt.textContent = `${featReqs.length} open`;
-    cnt.classList.toggle('hot', featReqs.length > 0);
-    list.innerHTML = featReqs.length ? featReqs.map(r => `
-      <div class="hit rep-card">
-        <div class="rep-top">
-          <span><span class="player">${esc(r.title)}</span>
-            <span class="who">${esc(kindLabel(r.kind))}</span><br>
-            <span class="who">from ${esc(r.by_user)}, ${new Date(r.ts).toLocaleDateString()}</span>
-            ${r.detail ? `<br><span class="who">"${esc(r.detail)}"</span>` : ''}</span>
-          <span class="rowacts">
-            <button class="btn-ghost" data-fdone="${esc(r.id)}">Mark done</button>
-            <button class="btn-ghost" data-fdis="${esc(r.id)}">Dismiss</button>
-          </span>
-        </div>
-      </div>`).join('') : '<p class="nohit">No open feature requests.</p>';
-  };
-  const dropFeature = async (id, status) => {
-    const ok = await patch('resolveFeature', { id, status });
-    if(!ok) return;
-    featReqs = featReqs.filter(x => x.id !== id);
-    drawFeatures();
-    toast(status === 'done' ? 'Marked done.' : 'Dismissed.');
-  };
-  box.addEventListener('click', e => {
-    const done = e.target.closest('[data-fdone]');
-    if(done) return dropFeature(done.dataset.fdone, 'done');
-    const dis = e.target.closest('[data-fdis]');
-    if(dis) return dropFeature(dis.dataset.fdis, 'declined');
-  });
-  (async () => {
-    try{
-      const d = await (await fetch('/api/kv?features=1')).json();
-      featReqs = d.requests || [];
-    }catch(e){ featReqs = []; }
-    drawFeatures();
-  })();
-  box.addEventListener('click', async e => {
-    const fx = e.target.closest('[data-dfix]'), ds = e.target.closest('[data-ddis]');
-    if(!fx && !ds) return;
-    const id = (fx || ds).dataset[fx ? 'dfix' : 'ddis'];
-    const r = dataReports.find(x => x.id === id);
-    if(!r) return;
-    if(fx){
-      const canonical = (ufcListEntry(r.player) || {}).name || r.player;
-      let v = prompt(`Set ${fieldLabel(r.field).toLowerCase()} for ${canonical} to:\n(leave blank to clear an earlier fix)`, r.value || '');
-      if(v === null) return;
-      v = v.trim().replace(/,/g, '');
-      if(r.field === 'status' && v){
-        const l = v.toLowerCase();
-        v = l.startsWith('act') ? 'Active' : l.startsWith('inact') ? 'Inactive' : l.startsWith('ret') ? 'Retired' : '';
-        if(!v) return toast('Status has to be Active, Inactive or Retired.');
-      }
-      if(r.field === 'minimum' && v && !/^min/i.test(v) && !/^\d+(\/1)?$/.test(v)) return toast('Minimum should look like 25/1 or min.');
-      if(r.field === 'minimum' && /^\d+$/.test(v)) v = v + '/1';
-      if(['age','purchases','earnings'].includes(r.field) && v && !/^\d+$/.test(v)) return toast('That should be a whole number.');
-      try{
-        const res = await fetch('/api/ufc', { method:'POST', headers:{'content-type':'application/json'},
-          body: JSON.stringify({ overrides: { [canonical]: { [r.field]: v } } }) });
-        if(!res.ok) throw new Error(res.status);
-      }catch(err){ return toast('Could not save the fix. Try again.'); }
-      await loadUfcMeta(true);
+  box.addEventListener('input', e => {
+    if(e.target.id === 'mu-q'){
+      const q = e.target.value.trim().toLowerCase(), out = box.querySelector('#mu-out');
+      if(!q){ out.innerHTML = ''; return; }
+      const scored = Object.entries(market.users).map(([k, u]) => { const n = String(u.name || '').toLowerCase();
+        return { k, u, s: k === q || n === q ? 0 : k.startsWith(q) || n.startsWith(q) ? 1 : k.includes(q) || n.includes(q) ? 2 : -1 }; })
+        .filter(x => x.s > -1).sort((a, b) => a.s - b.s || a.k.localeCompare(b.k));
+      out.innerHTML = scored.length ? scored.slice(0, 8).map(x => modMemberCard(x.k, x.u)).join('') + (scored.length > 8 ? `<p class="nohit">+${scored.length - 8} more - keep typing.</p>` : '')
+        : '<p class="nohit">No account matches that.</p>';
     }
-    const done = await patch('resolveDataReport', { id, status: fx ? 'fixed' : 'dismissed' });
-    if(!done) return;
-    dataReports = dataReports.filter(x => x.id !== id);
-    drawDataReports();
-    toast(fx ? 'Fixed.' : 'Dismissed.');
+    if(e.target.id === 'lk-player'){
+      const q = norm(e.target.value), out = box.querySelector('#lk-player-out');
+      if(q.length < 2){ out.innerHTML = ''; return; }
+      const found = new Map();
+      for(const o of market.offers.filter(o => !market.users[o.user]?.banned && norm(o.player).includes(q))){ const key = o.sport + '|' + norm(o.player);
+        if(!found.has(key)) found.set(key, { sport: o.sport, player: o.player, offers: [] }); found.get(key).offers.push(o); }
+      const list = [...found.values()].sort((a, b) => Math.max(...b.offers.map(o => o.rate)) - Math.max(...a.offers.map(o => o.rate))).slice(0, 12);
+      out.innerHTML = list.length ? list.map(modGroup).join('') : '<p class="nohit">Nobody is buying anyone by that name.</p>';
+    }
   });
 
-  // ---- backup health. The backup writer runs in the background where a
-  // failure is silent, so the only way it stays honest is by being shown.
-  (async () => {
-    const el = box.querySelector('#ad-backup');
-    if(!el) return;
-    try{
-      const d = await (await fetch('/api/kv?snap=list')).json();
-      const n = d.newest;
-      if(!n){ el.textContent = 'No backups on file yet.'; el.style.color = 'var(--bad)'; return; }
-      const mins = n.ageMinutes;
-      const when = mins < 60 ? `${mins} min ago` : `${(mins/60).toFixed(1)} hrs ago`;
-      el.textContent = `Last backup ${when} — ${n.users} accounts, ${n.offers} listings.`;
-      el.style.color = mins > 90 ? 'var(--bad)' : 'var(--mute)';
-    }catch(e){
-      el.textContent = 'Could not check backups.';
-      el.style.color = 'var(--bad)';
-    }
-  })();
-
-  // ---- lookups. These search loosely on purpose: typing "coleman" should
-  // turn up every Coleman, unlike offer matching which has to be exact.
-  const userOut = box.querySelector('#lk-user-out');
-  box.querySelector('#lk-user').addEventListener('input', e => {
-    const q = e.target.value.trim().toLowerCase();
-    if(q.length < 1){ userOut.innerHTML = ''; return; }
-    // Rank by how close the match is, not alphabetically — with hundreds of
-    // accounts an exact name was getting pushed off the end of the list.
-    const scored = Object.entries(market.users)
-      .map(([k,u]) => {
-        const name = String(u.name||'').toLowerCase();
-        let score = -1;
-        if(k === q || name === q) score = 0;
-        else if(k.startsWith(q) || name.startsWith(q)) score = 1;
-        else if(k.includes(q) || name.includes(q)) score = 2;
-        return { k, u, score };
-      })
-      .filter(x => x.score > -1)
-      .sort((a,b) => a.score - b.score || a.k.localeCompare(b.k));
-    const found = scored.slice(0, 25).map(x => [x.k, x.u]);
-    const hidden = scored.length - found.length;
-    if(!found.length){ userOut.innerHTML = '<p class="nohit">No account matches that.</p>'; return; }
-    userOut.innerHTML = found.map(([k,u]) => {
-      const theirs = market.offers.filter(o => o.user === k)
-        .sort((a,b) => b.rate - a.rate || a.player.localeCompare(b.player));
-      return `<div class="hit" style="display:block">
-        <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline">
-          <span class="player">${esc(u.name || k)}</span>
-          <span class="who">${u.banned ? 'deleted — ' : ''}${theirs.length} listing${theirs.length===1?'':'s'}</span>
-        </div>
-        <div class="hitacts"><button class="btn-ghost" data-reset="${esc(k)}">${
-          u.hasPass ? 'Reset password' : 'awaiting new password'}</button>
-          <button class="btn-ghost" data-gd="${esc(k)}">${
-            gameDataList().includes(k) ? 'Revoke game data' : 'Grant access to game data'}</button>
-          <button class="btn-ghost" data-pd="${esc(k)}">${
-            packDataList().includes(k) ? 'Revoke pack data' : 'Grant pack data only'}</button></div>
-        ${theirs.length ? `<div class="buyers">${theirs.map(o =>
-            `<span class="buyer"><b class="num">${o.rate}</b>/1 ${esc(o.player)} <em style="opacity:.6">${o.sport}</em>
-              <button class="killer" data-kill="${o.id}" title="Delete this listing">&times;</button></span>`).join('')}</div>`
-          : '<p class="nohit" style="margin-top:6px">Nothing listed.</p>'}
-      </div>`;
-    }).join('') + (hidden > 0 ? `<p class="nohit">+${hidden} more — keep typing to narrow it down.</p>` : '');
-  });
-
-  const playerOut = box.querySelector('#lk-player-out');
-  box.querySelector('#lk-player').addEventListener('input', e => {
-    const q = norm(e.target.value);
-    if(q.length < 2){ playerOut.innerHTML = ''; return; }
-    const found = new Map();
-    for(const o of liveOffers){
-      if(!norm(o.player).includes(q)) continue;
-      const key = o.sport + '|' + norm(o.player);
-      if(!found.has(key)) found.set(key, { sport:o.sport, player:o.player, offers:[] });
-      found.get(key).offers.push(o);
-    }
-    const list = [...found.values()]
-      .sort((a,b) => Math.max(...b.offers.map(o=>o.rate)) - Math.max(...a.offers.map(o=>o.rate)))
-      .slice(0, 12);
-    if(!list.length){ playerOut.innerHTML = '<p class="nohit">Nobody is buying anyone by that name.</p>'; return; }
-    playerOut.innerHTML = list.map(g => `
-      <div class="hit" style="display:block">
-        <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline">
-          <span class="player">${esc(g.player)}</span>
-          <span class="who">${g.sport} — ${g.offers.length} buyer${g.offers.length===1?'':'s'}</span>
-        </div>
-        <div class="buyers">${g.offers.slice().sort((a,b)=>b.rate-a.rate).map(o =>
-          `<span class="buyer"><b class="num">${o.rate}</b>/1 ${esc(nameOf(o.user))}
-            <button class="killer" data-kill="${o.id}" title="Delete this listing">&times;</button></span>`).join('')}</div>
-      </div>`).join('');
-  });
-
-  // The two lookups already rebuild themselves from whatever is in `market`
-  // when something is typed, so replaying that is all it takes to show the
-  // change without disturbing what the admin has on screen.
-  const refreshLookups = () => {
-    for(const id of ['#lk-user', '#lk-player']){
-      const f = box.querySelector(id);
-      if(f && f.value.trim()) f.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-  };
-
-  // Keeps the revoke list and the per-row grant buttons honest after a change,
-  // without rebuilding anything the admin is part way through using.
-  const redrawGrants = () => {
-    const sel = box.querySelector('#gd-who');
-    if(sel){
-      const list = gameDataList();
-      sel.innerHTML = list.length
-        ? list.map(k => `<option value="${esc(k)}">${esc(market.users[k]?.name || k)}</option>`).join('')
-        : '<option value="">nobody yet</option>';
-    }
-    for(const b of box.querySelectorAll('[data-pd]')){
-      const on = packDataList().includes(b.dataset.pd);
-      b.textContent = on ? 'Revoke pack data' : 'Grant pack data only';
-      b.classList.toggle('adminonly', !on);
-    }
-    for(const b of box.querySelectorAll('[data-gd]')){
-      const on = gameDataList().includes(b.dataset.gd);
-      b.textContent = on ? 'Remove game data' : 'Grant game data';
-      b.classList.toggle('adminonly', !on);
-    }
-  };
-
-  // Redraws just the reports block. Rebuilding the whole panel threw away the
-  // scroll position and whatever was typed into the lookup boxes, which is a
-  // lot to lose for dismissing one report.
-  const redrawReports = () => {
-    const live = market.reports.filter(r => r.status === 'open').sort((a, b) => b.ts - a.ts);
-    const list = box.querySelector('#ad-rep-list');
-    const cnt = box.querySelector('#ad-rep-count');
-    if(list) list.innerHTML = live.length
-      ? live.map(reportCard).join('') : '<p class="nohit">No open reports.</p>';
-    if(cnt){
-      cnt.textContent = `${live.length} open`;
-      cnt.classList.toggle('hot', live.length > 0);
-    }
-  };
-
-  // Takes one listing row out of wherever it is on screen, and tidies up the
-  // report card it belonged to if that was its last one.
-  const dropListingRow = id => {
-    for(const btn of box.querySelectorAll(`[data-kill="${CSS.escape(id)}"]`)){
-      const row = btn.closest('.rep-item') || btn.closest('.hit') || btn.parentElement;
-      const holder = row && row.parentElement;
-      if(row) row.remove();
-      if(holder && holder.classList.contains('rep-list') && !holder.querySelector('.rep-item')){
-        const head = holder.querySelector('.who');
-        if(head) head.textContent = 'no listings left';
-      }
-    }
-  };
+  // Two taps for anything that can't be undone easily.
+  const armed = b => { if(!b.dataset.two || b.dataset.armed === '1') return true;
+    b.dataset.armed = '1'; const was = b.textContent; b.textContent = 'Tap again to confirm'; b.classList.add('armed');
+    setTimeout(() => { if(b.isConnected){ b.dataset.armed = ''; b.textContent = was; b.classList.remove('armed'); } }, 4000); return false; };
+  const dropCard = card => { const [src, id] = card.dataset.k.split('|'); modItems = modItems.filter(x => !(x.src === src && x.id === id));
+    card.classList.add('gone'); setTimeout(() => { if(cur === 'inbox') draw(); }, 180); setN(); modBadge(); };
 
   box.addEventListener('click', async e => {
-    // Delete anyone's listing, straight from either lookup.
-    const kill = e.target.closest('[data-kill]');
-    if(kill){
-      const id = kill.dataset.kill;
-      const o = market.offers.find(x => x.id === id);
-      const who = o ? `${o.player} (${o.rate}/1) from ${nameOf(o.user)}` : 'this listing';
-      if(!confirm(`Delete ${who}?`)) return;
+    const t = e.target.closest('[data-mt]'); if(t){ cur = t.dataset.mt; draw(); return; }
+    const fc = e.target.closest('[data-mf]'); if(fc){ filt = fc.dataset.mf; draw(); return; }
+
+    // Reply box: to the reporter, or (from More) to the reported member.
+    const rp = e.target.closest('[data-mreply]');
+    if(rp){ const card = rp.closest('.mcard'), wrap = card.querySelector('.mreply'), ta = wrap.querySelector('textarea'), x = modItems.find(i => `${i.src}|${i.id}` === card.dataset.k);
+      const to = rp.dataset.mreply === 'about' ? modName(x.about, x.target) : modName(x.from, x.by), w = rp.dataset.mreply === 'about' ? x.about : x.from;
+      wrap.dataset.act = rp.dataset.mreply === 'about' ? 'replyabout' : 'reply'; wrap.classList.remove('hide');
+      ta.placeholder = `Message to @${to}` + (w && w.channelId ? ' - the bot sends it on Real' : ' - shows on their Notifications page'); ta.focus();
+      const m = rp.closest('details'); if(m) m.open = false; return; }
+    const cc = e.target.closest('[data-mcancel]'); if(cc){ cc.closest('.mreply').classList.add('hide'); return; }
+
+    // Inbox actions, the same ones /admin uses.
+    const ma = e.target.closest('[data-ma], [data-msend]');
+    if(ma){ const card = ma.closest('.mcard'), [src, id] = card.dataset.k.split('|');
+      const a = ma.dataset.msend !== undefined ? ma.closest('.mreply').dataset.act : ma.dataset.ma;
+      if(!armed(ma)) return;
+      const ta = card.querySelector('.mreply textarea'), text = ta ? ta.value.trim() : '';
+      if((a === 'reply' || a === 'replyabout') && !text) return toast('Write a message first.');
+      const nt = card.querySelector('[data-mnotify]');
+      ma.disabled = true;
+      let j; try{ j = await (await fetch('/api/swaps?op=inboxact', { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ src, id, action: a, text, notify: !!(nt && nt.checked), matchId: ma.dataset.mid }) })).json(); }catch(err){ j = { error: 'Could not reach the inbox.' }; }
+      ma.disabled = false;
+      if(j.error) return toast(j.error);
+      if(a === 'reply' || a === 'replyabout'){ toast(j.dm && j.dm.sent ? 'Sent on Real.' : 'Saved to their Notifications page' + (j.dm && j.dm.why ? ` (${j.dm.why})` : '') + '.');
+        if(ta) ta.value = ''; card.querySelector('.mreply').classList.add('hide'); return; }
+      if(a === 'refunded'){ ma.outerHTML = '<span class="mtag ok">refunded</span>'; return; }
+      if(a === 'restrict'){ toast('Posts and swaps taken.'); ma.closest('details').open = false; return; }
+      toast({ done: 'Resolved', declined: 'Declined', ban: 'Banned from the site', delete: 'Deleted' }[a] + (j.dm ? (j.dm.sent ? ' · DM sent' : '') : '') + '.');
+      if(a === 'ban'){ await pull(); render(); }
+      dropCard(card); return; }
+
+    // Data reports.
+    const md = e.target.closest('[data-md]');
+    if(md){ const card = md.closest('.mcard'), id = card.dataset.k.split('|')[1], r = (modItems.find(x => x.src === 'data' && x.id === id) || {}).raw; if(!r) return;
+      const fl = (DATA_FIELDS.find(f => f[0] === r.field) || [r.field, r.field])[1];
+      if(md.dataset.md === 'fix'){
+        const canonical = (ufcListEntry(r.player) || {}).name || r.player;
+        let v = prompt(`Set ${fl.toLowerCase()} for ${canonical} to:\n(leave blank to clear an earlier fix)`, r.value || ''); if(v === null) return;
+        v = v.trim().replace(/,/g, '');
+        if(r.field === 'status' && v){ const l = v.toLowerCase(); v = l.startsWith('act') ? 'Active' : l.startsWith('inact') ? 'Inactive' : l.startsWith('ret') ? 'Retired' : ''; if(!v) return toast('Status has to be Active, Inactive or Retired.'); }
+        if(r.field === 'minimum' && v && !/^min/i.test(v) && !/^\d+(\/1)?$/.test(v)) return toast('Minimum should look like 25/1 or min.');
+        if(r.field === 'minimum' && /^\d+$/.test(v)) v = v + '/1';
+        if(['age', 'purchases', 'earnings'].includes(r.field) && v && !/^\d+$/.test(v)) return toast('That should be a whole number.');
+        try{ const res = await fetch('/api/ufc', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ overrides: { [canonical]: { [r.field]: v } } }) }); if(!res.ok) throw new Error(res.status); }
+        catch(err){ return toast('Could not save the fix. Try again.'); }
+        await loadUfcMeta(true);
+      }
+      if(!(await patch('resolveDataReport', { id, status: md.dataset.md === 'fix' ? 'fixed' : 'dismissed' }))) return;
+      toast(md.dataset.md === 'fix' ? 'Fixed.' : 'Dismissed.'); dropCard(card); return; }
+
+    // Delete a listing from anywhere in the sheet.
+    const kill = e.target.closest('[data-mkill]');
+    if(kill){ const id = kill.dataset.mkill, o = market.offers.find(x => x.id === id);
+      if(!confirm(`Delete ${o ? `${o.player} (${o.rate}/1) from ${market.users[o.user]?.name || o.user}` : 'this listing'}?`)) return;
       kill.disabled = true;
-      const gone = await patch('removeOffer', { id });
-      if(!gone){ kill.disabled = false; return; }
+      if(!(await patch('removeOffer', { id }))){ kill.disabled = false; return; }
       market.offers = market.offers.filter(x => x.id !== id);
-      dropListingRow(id);
-      toast('Listing deleted');
-      render();
-      return;
-    }
+      for(const it of modItems || []) if(it.about && it.about.offers) it.about.offers = it.about.offers.filter(x => String(x.id) !== String(id));
+      toast('Listing deleted'); render(); redrawKeep(); return; }
 
-    // Game data access. The grant list is part of the board, so it follows
-    // the person to whatever device they sign in on.
-    const gd = e.target.closest('[data-gd]');
-    if(gd){
-      const k = gd.dataset.gd;
-      const u = market.users[k];
-      const had = gameDataList().includes(k);
-      if(had && !confirm(`Take game data access away from ${u?.name || k}?`)) return;
-      const ok = await push(m => {
-        const list = (m.gamedata || []).map(x => String(x).toLowerCase()).filter(x => x !== k);
-        m.gamedata = had ? list : list.concat([k]);
-      });
-      if(!ok) return;
-      toast(had ? `${u?.name || k} can no longer see game data` : `${u?.name || k} can now see game data`);
-      applyGameDataVisibility();
-      redrawGrants(); refreshLookups();
-      return;
-    }
-
-    // Pack data on its own. Same shape as the game data grant; the two are
-    // independent, and full game data access already includes pack data.
-    const pd = e.target.closest('[data-pd]');
-    if(pd){
-      const k = pd.dataset.pd;
-      const u = market.users[k];
-      const had = packDataList().includes(k);
-      if(had && !confirm(`Take pack data access away from ${u?.name || k}?`)) return;
-      const ok = await push(m => {
-        const list = (m.packdata || []).map(x => String(x).toLowerCase()).filter(x => x !== k);
-        m.packdata = had ? list : list.concat([k]);
-      });
-      if(!ok) return;
-      toast(had ? `${u?.name || k} can no longer see pack data`
-                : `${u?.name || k} can now see pack data`);
-      applyGameDataVisibility();
-      redrawGrants(); refreshLookups();
-      return;
-    }
-
-    if(e.target.closest('#gd-revoke')){
-      const sel = box.querySelector('#gd-who');
-      const k = sel && sel.value;
-      if(!k) return toast('Nobody has game data access yet.');
-      const u = market.users[k];
-      if(!confirm(`Take game data access away from ${u?.name || k}?`)) return;
-      const ok = await push(m => {
-        m.gamedata = (m.gamedata || []).map(x => String(x).toLowerCase()).filter(x => x !== k);
-      });
-      if(!ok) return;
-      toast(`${u?.name || k} can no longer see game data`);
-      applyGameDataVisibility();
-      redrawGrants(); refreshLookups();
-      return;
-    }
-
-    // Clear someone's password. Their listings stay exactly where they are;
-    // the next password they type on the login screen becomes the real one.
+    // Accounts.
+    const gd = e.target.closest('[data-gd]'), pd = e.target.closest('[data-pd]');
+    if(gd || pd){ const k = (gd || pd).dataset[gd ? 'gd' : 'pd'], u = market.users[k], f = gd ? 'gamedata' : 'packdata', had = (gd ? gameDataList() : packDataList()).includes(k);
+      if(had && !confirm(`Take ${gd ? 'game' : 'pack'} data away from ${u?.name || k}?`)) return;
+      if(!(await push(m => { const l = (m[f] || []).map(x => String(x).toLowerCase()).filter(x => x !== k); m[f] = had ? l : l.concat([k]); }))) return;
+      toast(`${u?.name || k} ${had ? 'no longer has' : 'now has'} ${gd ? 'game' : 'pack'} data`); applyGameDataVisibility(); redrawKeep(); return; }
     const rs = e.target.closest('[data-reset]');
-    if(rs){
-      const k = rs.dataset.reset;
-      const u = market.users[k];
-      if(u && !u.hasPass){ toast(`${u.name || k} is already waiting to set a new password.`); return; }
-      if(!confirm(`Reset the password for ${u?.name || k}?\n\nTheir listings stay up. The next password they type when logging in becomes their new one.`)) return;
-      rs.disabled = true;
-      const done = await patch('resetPass', { key: k });
-      if(!done){ rs.disabled = false; return; }
-      await pull();
-      toast(`Password cleared for ${u?.name || k} — their next login sets it.`);
-      refreshLookups();
-      return;
-    }
-
-    const ban = e.target.closest('[data-ban]'), un = e.target.closest('[data-unban]'), cl = e.target.closest('[data-clear]');
-    if(ban){
-      const k = ban.dataset.ban;
-      // Deleting yourself locks you out of your own board — and since admin
-      // access is tied to the username, nobody could undo it from in here.
-      if(k === me.toLowerCase()) return toast("That's your own account — you can't delete it.");
-      if(!confirm(`Delete ${k}? Their offers come off the board.`)) return;
-      ban.disabled = true;
-      const done = await push(m => {
-        if(m.users[k]) m.users[k].banned = true;
-        m.offers = m.offers.filter(o => o.user!==k);
-        m.reports.forEach(r => { if(r.target.toLowerCase()===k) r.status='closed'; });
-      });
-      if(!done){ ban.disabled = false; return; }
-      toast(`${k} deleted`); render(); redrawReports(); refreshLookups();
-      return;
-    }
-    if(un){
-      un.disabled = true;
-      const done = await push(m => { if(m.users[un.dataset.unban]) m.users[un.dataset.unban].banned = false; });
-      if(!done){ un.disabled = false; return; }
-      toast('Account restored'); render(); redrawReports(); refreshLookups();
-      return;
-    }
-    if(cl){
-      // Take the card off screen straight away - the write is confirmed before
-      // anything else changes, and putting it back on a failure is less jarring
-      // than the whole panel blinking.
-      const card = cl.closest('.rep-card');
-      if(card) card.style.opacity = '.4';
-      cl.disabled = true;
-      const done = await push(m => { const r = m.reports.find(x=>x.id===cl.dataset.clear); if(r) r.status='closed'; });
-      if(!done){ if(card) card.style.opacity = ''; cl.disabled = false; return; }
-      redrawReports();
-      return;
-    }
+    if(rs){ const k = rs.dataset.reset, u = market.users[k];
+      if(u && !u.hasPass) return toast(`${u.name || k} is already waiting to set a new password.`);
+      if(!confirm(`Reset the password for ${u?.name || k}?\n\nTheir listings stay up. The next password they type becomes their new one.`)) return;
+      rs.disabled = true; if(!(await patch('resetPass', { key: k }))){ rs.disabled = false; return; }
+      await pull(); toast(`Password cleared for ${u?.name || k}.`); redrawKeep(); return; }
+    const ban = e.target.closest('[data-ban]');
+    if(ban){ const k = ban.dataset.ban; if(k === String(me).toLowerCase()) return toast("That's your own account.");
+      if(!armed(ban)) return; ban.disabled = true;
+      if(!(await push(m => { if(m.users[k]) m.users[k].banned = true; m.offers = m.offers.filter(o => o.user !== k); m.reports.forEach(r => { if(String(r.target).toLowerCase() === k) r.status = 'closed'; }); }))){ ban.disabled = false; return; }
+      toast(`${k} deleted`); render(); redrawKeep(); return; }
+    const un = e.target.closest('[data-unban]');
+    if(un){ un.disabled = true; if(!(await push(m => { if(m.users[un.dataset.unban]) m.users[un.dataset.unban].banned = false; }))){ un.disabled = false; return; }
+      toast('Account restored'); render(); redrawKeep(); }
   });
 }
+// The backup writer runs where a failure is silent, so its age is shown.
+async function modBackup(box){
+  const el = box.querySelector('#ad-backup'); if(!el) return;
+  try{ const n = (await (await fetch('/api/kv?snap=list')).json()).newest;
+    if(!n){ el.textContent = 'No backups on file yet.'; el.style.color = 'var(--bad)'; return; }
+    el.textContent = `Last backup ${n.ageMinutes < 60 ? n.ageMinutes + ' min' : (n.ageMinutes / 60).toFixed(1) + ' hrs'} ago - ${n.users} accounts, ${n.offers} listings.`;
+    el.style.color = n.ageMinutes > 90 ? 'var(--bad)' : '';
+  }catch(e){ el.textContent = 'Could not check backups.'; el.style.color = 'var(--bad)'; }
+}
+function adminPanel(){ return moderationPanel('inbox'); }
 
 /* =========================================================
    RS collection lookup — pulls cards directly from Real Sports
