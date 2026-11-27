@@ -1859,7 +1859,10 @@ export async function boardAutoMod(env) {
       if (r.state === 'error' || r.state === 'notoken') continue;
       await db.prepare('INSERT INTO board_cm (offerId, link, checkedAt, state, author) VALUES (?, ?, ?, ?, ?) ON CONFLICT(offerId) DO UPDATE SET link=excluded.link, checkedAt=excluded.checkedAt, state=excluded.state, author=excluded.author')
         .bind(o.id, o.link, Date.now(), r.state, r.author || null).run();
-      if (r.state === 'deleted' || r.state === 'closed') {
+      // Replies turned off: flagged, not taken down, until Dennis says it should be (Real may close busy threads itself).
+      if (r.state === 'closed') { const was = await db.prepare("SELECT 1 AS x FROM board_cm WHERE offerId=? AND state='closed' AND checkedAt < ?").bind(o.id, Date.now() - 60000).first().catch(() => null);
+        if (!was) await amLog(env, { act: 'flag', why: 'closed', user: o.user, player: o.player, sport: o.sport, rate: o.rate, link: o.link }); }
+      if (r.state === 'deleted') {
         await db.prepare('DELETE FROM offers WHERE id=?').bind(o.id).run();
         const why = r.state === 'deleted' ? 'your comment was deleted' : 'replies on your comment are turned off, so sellers can’t reach you';
         await addNote(db, o.user, 'mod', `Your ${o.player} ${o.rate}/1 listing on the board was taken down: ${why}. If you're still buying, post it again with a new comment.`);

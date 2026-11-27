@@ -8667,7 +8667,7 @@ async function modAutoHTML(){
   const rows = (j.log || []).map(x => `<div class="mcard"><div class="mtop"><span class="msrc ${x.act === 'removed' ? 's-board' : 's-swap'}">${x.act === 'removed' ? 'Taken down' : 'Flagged'}</span><span class="mm">${esc(modAgo(x.at))}</span></div>
       <div class="mhead">${modUser(x.user)} <span class="mm">${esc(x.sport || '')}</span> ${esc(x.player || '')} <b class="num">${esc(x.rate)}</b>/1</div>
       <div class="mm" style="margin-top:4px">${esc(WHY[x.why] || x.why)}${x.author ? ` - posted by @${esc(x.author)}` : ''}${x.link ? ` · <a class="mlink" href="${esc(x.link)}" target="_blank" rel="noopener">Comment ↗</a>` : ''}</div></div>`).join('');
-  return `<p class="mm" style="margin:2px 0 6px">Every listing's comment is checked on Real when it's posted and again every 3 hours. Deleted comments and comments with replies turned off come down by themselves, and the buyer gets a note. Comments posted by someone else are flagged here for you.</p>
+  return `<p class="mm" style="margin:2px 0 6px">Every listing's comment is checked on Real when it's posted and again every 3 hours. Listings whose comment was deleted come down by themselves, and the buyer gets a note. Comments with replies turned off, or posted by someone else, are flagged here for you.</p>
     <div class="statrow"><div class="stat"><b class="num">${j.checked || 0}</b><span>listings checked</span></div><div class="stat"><b class="num">${j.unread || 0}</b><span>waiting for a first check</span></div></div>
     ${rows || '<div class="mempty"><b>Nothing yet</b>Taken-down and flagged listings show up here.</div>'}`;
 }
