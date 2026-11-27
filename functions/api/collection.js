@@ -39,7 +39,7 @@ const SPORT_CONFIG = {
 };
 // Older seasons can be read too (Dennis, 2026-11-27: one board for every sport and season), in Real's numbering.
 const SEASONS_OK = { FC: [2026, 2025], CFB: [2026, 2025, 2024, 2023], NFL: [2026, 2025, 2024, 2023], NHL: [2026, 2025, 2024, 2023], UFC: [2023],
-  NBA: [2027, 2026, 2025, 2024, 2023], CBB: [2027, 2026, 2025, 2024], MLB: [2026, 2025, 2024, 2023, 2022], WNBA: [2026, 2025, 2024], GOLF: [2026, 2025, 2024, 2023, 2022] };
+  NBA: [2027, 2026, 2025, 2024, 2023], CBB: [2027, 2026, 2025, 2024], MLB: [2026, 2025, 2024, 2023, 2022], WNBA: [2026, 2025, 2024], GOLF: [2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2016, 2015, 2014] };
 /* One read of Real per member, sport, season and part every 90 minutes (Dennis, 2026-11-27), kept in KV so a
    restart doesn't let anyone pull again early. */
 const KEEP_SECONDS = 90 * 60;
