@@ -8498,13 +8498,8 @@ function modInboxHTML(f){
 }
 
 function modMembersHTML(){
-  const granted = gameDataList().filter(k => market.users[k]), packs = packDataList().filter(k => market.users[k]);
   return `<input id="mu-q" class="field" placeholder="Find a member by username" autocomplete="off">
     <div id="mu-out"></div>
-    <h4 class="subhd">Game data access (${granted.length})</h4>
-    <div class="mpills">${granted.length ? granted.map(k => `<span class="mpill">${esc(market.users[k].name || k)}<button class="killer" data-gd="${esc(k)}" title="Take game data away">&times;</button></span>`).join('') : '<span class="mm">Only admins.</span>'}</div>
-    <h4 class="subhd">Pack data only (${packs.length})</h4>
-    <div class="mpills">${packs.length ? packs.map(k => `<span class="mpill">${esc(market.users[k].name || k)}<button class="killer" data-pd="${esc(k)}" title="Take pack data away">&times;</button></span>`).join('') : '<span class="mm">Nobody.</span>'}</div>
     <p class="mm" id="ad-backup" style="margin-top:16px">Checking backups…</p>`;
 }
 function modMemberCard(k, u){
@@ -8516,8 +8511,6 @@ function modMemberCard(k, u){
       <span class="mrowacts">${o.link ? `<a class="mlink" href="${esc(o.link)}" target="_blank" rel="noopener">Comment ↗</a>` : ''}<button class="killer" data-mkill="${o.id}" title="Delete this listing">&times;</button></span></div>`).join('')}</div>` : ''}
     ${self ? '<p class="mm" style="margin:8px 0 0">This is you.</p>' : u.banned ? `<div class="macts"><button class="btn-ghost" data-unban="${esc(k)}">Restore account</button></div>`
       : `<div class="macts"><button class="btn-ghost" data-reset="${esc(k)}">${u.hasPass ? 'Reset password' : 'Waiting on new password'}</button>
-        <button class="btn-ghost" data-gd="${esc(k)}">${gameDataList().includes(k) ? 'Remove game data' : 'Give game data'}</button>
-        <button class="btn-ghost" data-pd="${esc(k)}">${packDataList().includes(k) ? 'Remove pack data' : 'Give pack data'}</button>
         <button class="btn-ghost btn-danger" data-ban="${esc(k)}" data-two="1">Delete account</button></div>`}
   </div>`;
 }
