@@ -2005,7 +2005,7 @@ export async function bulkWatchTick(env) {
       const hit = await bwMatches(db, w); if (hit.length < Math.max(1, Number(w.minN) || 1)) continue;
       const told = new Set(parse(w.told, []) || []), fresh = hit.filter(x => !told.has(String(x.id))); if (!fresh.length) continue;
       const c = hit[0], nm = `${w.name} ${BW_SPN[w.sport] || w.sport} ${w.season}`;
-      await pushTo(env, db, w.who, { title: `🔔 ${w.name}: ${hit.length} at ${Number(w.maxRpr).toFixed(2)} rax/rating or less`,
+      await pushTo(env, db, w.who, { title: hit.length > 1 ? `🔔 ${w.name}: ${hit.length} listed at ${Number(w.maxRpr).toFixed(2)} rax/rating or less` : `🔔 ${w.name} listed at ${c.rpr.toFixed(2)} rax/rating`,
         body: `Cheapest: ${c.rarity || ''} ${Math.round(c.rating)} for ${Math.round(c.price).toLocaleString()} rax (${c.rpr.toFixed(2)}/rating)${Number(c.buyNow) > 0 ? ' buy now' : ' bid'} · ${nm}`,
         url: '/bulk#watch=' + encodeURIComponent(`${w.sport}:${w.season}:${w.playerId}`), tag: 'bw-' + w.id });
       for (const x of hit) told.add(String(x.id));
@@ -7238,8 +7238,14 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'bulkplayers') {
     if (!acc.who) return json({ error: 'Sign in first.' }, 401);
     const q = String(url.searchParams.get('q') || '').trim().toLowerCase().replace(/[%_]/g, '').slice(0, 40); if (q.length < 2) return json({ players: [] });
-    const rows = ((await db.prepare("SELECT sport, season, playerId, name, COUNT(*) AS n FROM bulk_results WHERE LOWER(name) LIKE ? AND endsAt > ? GROUP BY sport, season, playerId ORDER BY n DESC LIMIT 15").bind('%' + q + '%', Date.now() - 60 * 86400000).all().catch(() => ({ results: [] }))).results) || [];
-    return json({ players: rows.map(r => ({ ...r, sp: BW_SPN[r.sport] || r.sport })) });
+    // Auction alerts (2026-11-27): anyone sold in 60 days or listed now, with the usual sold rate to help pick one.
+    const like = '%' + q + '%', since = Date.now() - 60 * 86400000;
+    const sold = ((await db.prepare("SELECT sport, season, playerId, MAX(name) AS name, COUNT(*) AS n, AVG(price / rating) AS rate FROM bulk_results WHERE LOWER(name) LIKE ? AND endsAt > ? AND price IS NOT NULL AND rating > 0 GROUP BY sport, season, playerId ORDER BY n DESC LIMIT 20").bind(like, since).all().catch(() => ({ results: [] }))).results) || [];
+    const live = ((await db.prepare("SELECT sport, season, playerId, MAX(name) AS name, COUNT(*) AS live FROM bulk_listings WHERE LOWER(name) LIKE ? AND endsAt > ? GROUP BY sport, season, playerId LIMIT 20").bind(like, Date.now()).all().catch(() => ({ results: [] }))).results) || [];
+    const M = new Map(); for (const r of sold) M.set(`${r.sport}:${r.season}:${r.playerId}`, { ...r, live: 0 });
+    for (const r of live) { const k = `${r.sport}:${r.season}:${r.playerId}`; if (M.has(k)) M.get(k).live = r.live; else M.set(k, { ...r, n: 0, rate: null }); }
+    const out = [...M.values()].sort((a, b) => (b.n + b.live) - (a.n + a.live)).slice(0, 15).map(r => ({ sport: r.sport, season: r.season, playerId: r.playerId, name: r.name, n: r.n, live: r.live, rate: r.rate ? Math.round(r.rate * 100) / 100 : null, sp: BW_SPN[r.sport] || r.sport }));
+    return json({ players: out });
   }
   if (op === 'bulklist') {
     if (!(await allow(url.origin, 'bulk:' + clientIp(request), 20, 60))) return json({ error: 'Too many refreshes - wait a minute.' }, 429);

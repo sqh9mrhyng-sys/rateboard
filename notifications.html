@@ -39,6 +39,9 @@
   .pw{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line);font-size:14px} .pw:first-child{border-top:0} .pw b{flex:1 1 100%}
   .pw input{width:70px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 7px;font:inherit;font-size:16px} .pw .x{margin-left:auto;background:none;border:1px solid var(--line);color:var(--mute);border-radius:8px;padding:4px 10px;cursor:pointer;font:inherit;font-size:13px}
   .pwadd input{width:100%;margin-top:8px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:9px 11px;font:inherit;font-size:16px}
+  #pwpick{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;padding:10px;border:1px solid var(--line);border-radius:12px} #pwpick[hidden]{display:none} #pwpick b{flex:1 1 100%} #pwpick .note{flex:1 1 100%;margin:0}
+  #pwpick input{width:90px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;font-size:16px}
+  #pwgo{background:var(--accent);color:#fff;border:0;border-radius:10px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer} #pwpick .x{background:none;border:1px solid var(--line);color:var(--mute);border-radius:8px;padding:6px 10px;cursor:pointer;font:inherit;font-size:13px}
   #pwres button{display:block;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);color:var(--ink);padding:9px 4px;font:inherit;font-size:14px;cursor:pointer}
   .evmode{display:flex;gap:6px} .evmode button{flex:1;font:inherit;font-weight:800;font-size:13px;border-radius:999px;padding:7px;border:1px solid var(--line);background:none;color:var(--mute);cursor:pointer} .evmode button[aria-pressed="true"]{background:var(--accent);color:#1a1205;border-color:var(--accent)}
   .evn{width:56px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:3px 6px;font:inherit;font-size:16px}
@@ -92,12 +95,15 @@
     <div class="ab"><p class="note" style="margin:4px 0 6px">The swap bot also DMs you these, on top of the notifications.</p>
       <label class="ar"><span>Bulk auctions in your range (with links)</span><input type="checkbox" data-k="owner.dmBulk"></label>
       <label class="ar"><span>Value alerts (team | fair, bet link, betting ladder)</span><input type="checkbox" data-k="owner.dmEv"></label></div></div>
-  <!-- Player alerts on Bulk (2026-11-27): also set from the 🔔 by any name on /bulk. -->
-  <div class="ag" data-g="pw" id="alerts"><div class="ah"><button class="ax" data-x="pw" aria-expanded="false">▸</button><b>Player alerts <span class="note" id="pwn"></span></b><a class="aon" href="/bulk" style="text-decoration:none">Bulk ↗</a></div>
-    <div class="ab" hidden><p class="note" style="margin:4px 0 8px">A push when enough of one player are listed on Bulk at or under the rax per rating you set. Each listing is only sent once.</p>
-      <div id="pwlist"></div>
-      <div class="pwadd"><input id="pwq" type="search" placeholder="Add a player - type a name" autocomplete="off"><div id="pwres"></div></div>
-      <p class="note" id="pwmsg" style="margin:6px 0 0"></p></div></div>
+  <!-- Auction alerts (2026-11-27): search a name, set a rate. Also set from the 🔔 by any name on /bulk. -->
+  <div class="ag" data-g="pw" id="alerts"><div class="ah"><button class="ax" data-x="pw" aria-expanded="true">▾</button><b>Auction alerts <span class="note" id="pwn"></span></b><a class="aon" href="/bulk" style="text-decoration:none">Bulk ↗</a></div>
+    <div class="ab"><p class="note" style="margin:4px 0 8px">Pick a player and the most rax per rating you'd pay. You get a push when one is listed on Bulk at that rate or lower - each listing once.</p>
+      <div class="pwadd"><input id="pwq" type="search" placeholder="Search a player" autocomplete="off"><div id="pwres"></div>
+        <div id="pwpick" hidden><b id="pwpn"></b><span class="note" id="pwph"></span>
+          <label>Max <input id="pwrate" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0.00"> rax/rating</label>
+          <button id="pwgo" type="button">Add alert</button><button id="pwcancel" type="button" class="x">Cancel</button></div></div>
+      <p class="note" id="pwmsg" style="margin:6px 0 0"></p>
+      <div id="pwlist"></div></div></div>
   <!-- Predictions EV alerts (2026-11-27): the same settings as Predictions > Alerts, saved to the same place. -->
   <div class="ag" data-g="ev"><div class="ah"><button class="ax" data-x="ev" aria-expanded="false">▸</button><b>Predictions EV</b><button class="aon" id="evon">Activate</button></div>
     <div class="ab" hidden>
@@ -234,17 +240,25 @@ const $ = s => document.querySelector(s);
   const wCall = async body => (await fetch('/api/swaps?op=bulkwatch', body ? { method: 'POST', headers: { ...H, 'content-type': 'application/json' }, body: JSON.stringify(body) } : { headers: H })).json();
   const pwDraw = j => { const l = j.watches || []; document.getElementById('pwn').textContent = l.length ? `(${l.length})` : '';
     document.getElementById('pwlist').innerHTML = l.map(w => `<div class="pw" data-id="${E(w.id)}"><b>${E(w.name)} <span class="note">${E(w.sp)} ${E(w.season)}</span></b>
-      <span>at least <input type="number" min="1" max="50" value="${w.minN}" data-pf="minN"> at ≤ <input type="number" min="0.01" step="0.01" value="${w.maxRpr}" data-pf="maxRpr"> rax/rating</span>
+      <span>Max <input type="number" min="0.01" step="0.01" inputmode="decimal" value="${w.maxRpr}" data-pf="maxRpr"> rax/rating</span>
       <span class="note">${w.now ? `${w.now} listed now · cheapest ${w.cheapest.price.toLocaleString()} (${w.cheapest.rpr}/rating)` : 'none listed at that price now'}</span><button class="x" data-pdel="${E(w.id)}">Remove</button></div>`).join('') || '<p class="note" style="margin:0">No player alerts yet.</p>'; };
   wCall().then(pwDraw).catch(() => {});
   if (location.hash === '#alerts') { const b = document.querySelector('.ag[data-g="pw"] .ab'), x = document.querySelector('[data-x="pw"]'); if (b) { b.hidden = false; x.setAttribute('aria-expanded', 'true'); x.textContent = '▾'; } }
-  let qT = 0; document.getElementById('pwq').addEventListener('input', e => { clearTimeout(qT); const q = e.target.value.trim(); qT = setTimeout(async () => {
+  let PICK = null;
+  document.getElementById('pwrate').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('pwgo').click(); });
+  let qT = 0; document.getElementById('pwq').addEventListener('input', e => { clearTimeout(qT); const q = e.target.value.trim(); PICK = null; document.getElementById('pwpick').hidden = true; qT = setTimeout(async () => {
     if (q.length < 2) { document.getElementById('pwres').innerHTML = ''; return; }
     const j = await (await fetch('/api/swaps?op=bulkplayers&q=' + encodeURIComponent(q), { headers: H })).json().catch(() => ({}));
-    document.getElementById('pwres').innerHTML = (j.players || []).map(p => `<button data-padd="${E(JSON.stringify({ sport: p.sport, season: p.season, playerId: p.playerId, name: p.name }))}">${E(p.name)} <span class="note">${E(p.sp)} ${E(p.season)} · ${p.n} sales</span></button>`).join('') || '<p class="note">No one by that name sold on Bulk lately.</p>'; }, 300); });
+    document.getElementById('pwres').innerHTML = (j.players || []).map(p => `<button data-padd="${E(JSON.stringify({ sport: p.sport, season: p.season, playerId: p.playerId, name: p.name, sp: p.sp, rate: p.rate, live: p.live }))}">${E(p.name)} <span class="note">${E(p.sp)} ${E(p.season)}${p.rate ? ` · usually sells ~${p.rate}/rating` : ''}${p.live ? ` · ${p.live} listed now` : ''}</span></button>`).join('') || '<p class="note">No one by that name on Bulk in the last 60 days.</p>'; }, 300); });
   document.addEventListener('click', async e => {
-    const a = e.target.closest('[data-padd]'); if (a) { const p = JSON.parse(a.dataset.padd), mx = prompt(`Most rax per rating you'd pay for ${p.name}?`, ''); if (!mx) return;
-      const j = await wCall({ add: { ...p, maxRpr: Number(mx), minN: 1 } }); document.getElementById('pwmsg').textContent = j.error || '✓ Alert set'; if (!j.error) { pwDraw(j); document.getElementById('pwres').innerHTML = ''; document.getElementById('pwq').value = ''; } return; }
+    const $i = id => document.getElementById(id);
+    const a = e.target.closest('[data-padd]'); if (a) { PICK = JSON.parse(a.dataset.padd); $i('pwres').innerHTML = ''; $i('pwq').value = PICK.name; $i('pwpick').hidden = false;
+      $i('pwpn').textContent = `${PICK.name} · ${PICK.sp} ${PICK.season}`; $i('pwph').textContent = PICK.rate ? `Usually sells around ${PICK.rate} rax/rating.` : '';
+      $i('pwrate').value = ''; $i('pwrate').focus(); return; }
+    if (e.target.id === 'pwcancel') { PICK = null; $i('pwpick').hidden = true; $i('pwq').value = ''; return; }
+    if (e.target.id === 'pwgo' && PICK) { const mx = Number($i('pwrate').value); if (!(mx > 0)) { $i('pwmsg').textContent = 'Type the most rax per rating you\'d pay.'; return; }
+      const { sport, season, playerId, name } = PICK, j = await wCall({ add: { sport, season, playerId, name, maxRpr: mx, minN: 1 } }); $i('pwmsg').textContent = j.error || `✓ Alert set for ${name}`;
+      if (!j.error) { pwDraw(j); PICK = null; $i('pwpick').hidden = true; $i('pwq').value = ''; } return; }
     const d = e.target.closest('[data-pdel]'); if (d) { pwDraw(await wCall({ del: d.dataset.pdel })); } });
   document.addEventListener('change', async e => { const f = e.target.dataset && e.target.dataset.pf; if (!f) return; const id = e.target.closest('.pw').dataset.id;
     const j = await wCall({ set: { id, [f]: Number(e.target.value) } }); document.getElementById('pwmsg').textContent = j.error || '✓ Saved'; if (!j.error) pwDraw(j); });
