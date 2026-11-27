@@ -304,7 +304,7 @@
     <!-- Sports maxed today (2026-11-11): Real allows only so many packs a day per sport, so give nothing more in these until the swap day ends. -->
     <div class="field" id="nosp" hidden><label>Maxed out today? Give nothing in:</label><div class="seg wrap" id="nospb"></div>
       <p class="note sub" style="margin:4px 0 0">Resets when the swap day ends (7am ET). Your other sports keep swapping.</p></div>
-    <div class="psum" id="psum" hidden style="margin-bottom:8px"><span id="psumtxt"></span><button id="ptoggle" class="sm">Done - collapse</button></div>
+    <div class="psum" id="psum" hidden style="margin-bottom:8px"><span id="psumtxt"></span><button id="pkeep" class="sm" style="margin-left:auto">See who I'm keeping</button><button id="ptoggle" class="sm">Done - collapse</button></div>
     <div class="bar" id="pctl" hidden>
       <select id="pview" aria-label="View"><option value="all">All passes</option><option value="season">By season</option><option value="locked">Your locked passes</option></select>
       <select id="psport" aria-label="Sport"><option value="">Every sport</option><option value="nba">NBA</option><option value="ncaam">CBB</option><option value="nfl">NFL</option><option value="ncaaf">CFB</option><option value="nhl">NHL</option><option value="mlb">MLB</option><option value="wnba">WNBA</option><option value="golf">Golf</option></select>
@@ -777,6 +777,7 @@ function drawSum(){
   $('#psum').hidden = !all.length;
   $('#psumtxt').innerHTML = `<b>${all.length - kept}</b> swappable · <b>${kept}</b> keeping`;
   $('#ptoggle').textContent = collapsed ? 'Show my passes' : 'Done - collapse';
+  { const b = $('#pkeep'); if(b){ b.hidden = !kept; b.textContent = !collapsed && $('#pview').value === 'locked' ? 'Show all passes' : `See who I'm keeping (${kept})`; } }
 }
 function drawPasses(){
   const keep = new Set(prof.keep);
@@ -843,6 +844,12 @@ $('#nospb').addEventListener('click', e => { const b = e.target.closest('[data-n
   const sp = b.dataset.nosp, on = !(prof.noSp || []).includes(sp);
   prof.noSp = on ? [...(prof.noSp || []), sp] : (prof.noSp || []).filter(x => x !== sp);
   b.setAttribute('aria-pressed', on); saveGivePrefs(); });
+// See who I'm keeping (shmerz, 2026-11-27): opens the list on "Your locked passes"; tap again to go back to all.
+$('#pkeep').addEventListener('click', () => {
+  const on = !collapsed && $('#pview').value === 'locked';
+  if(on){ $('#pview').value = 'all'; } else { collapsed = false; try{ localStorage.setItem('swaps_passes_folded', '0'); }catch(e){} $('#pview').value = 'locked'; $('#prar').value = ''; $('#psport').value = ''; $('#pq').value = ''; }
+  drawPasses(); $('#psum').scrollIntoView({ block: 'start', behavior: 'smooth' });
+});
 $('#ptoggle').addEventListener('click', () => {
   collapsed = !collapsed; try{ localStorage.setItem('swaps_passes_folded', collapsed ? '1' : '0'); }catch(e){} drawPasses();
   if(collapsed) $('#psum').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
