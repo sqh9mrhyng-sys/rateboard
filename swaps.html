@@ -70,6 +70,7 @@
   .want1 .mv button:disabled{opacity:.3}
   .want1 .acts{display:flex;align-items:center;gap:8px;flex:none}
   .want1 .wg{display:inline-flex;align-items:center;gap:6px;margin-top:6px;font-size:12.5px;color:var(--mute);font-weight:600}
+  .want1 .wg select{max-width:170px;padding:5px 8px;min-height:32px;font-size:13px}
   .want1 .wg input{width:86px;padding:5px 8px;min-height:32px;font-size:13px}
   .stabs{display:flex;gap:6px;margin:4px 0 10px}
   .stabs button{flex:1}
@@ -980,6 +981,20 @@ function saveWants(){ clearTimeout(swT); swT = setTimeout(async () => {
   const j = await api('/api/swaps?op=savewants', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ wants: prof.wants.slice(0, 10) }) });
   $('#savemsg').textContent = j.error ? j.error : 'Picks saved' + (j.calledOff ? ` - ${j.calledOff} swap${j.calledOff === 1 ? '' : 's'} for removed players called off.` : '.');
   if(!j.error) savedWants = new Set(prof.wants); }, 700); }
+/* Goal rating by rarity (liamthomson, 2026-11-27): pick Mystic 3, Iconic 1... from a list; Custom keeps a typed rating. */
+const GOAL_LV = [['Common', 10], ['Uncommon', 30], ['Rare', 80], ['Epic', 180]]
+  .concat([380, 520, 720, 1000, 1180].map((r, i) => ['Legendary ' + (i + 1), r]))
+  .concat([1380, 1560, 1760, 1980, 2220, 2480, 2760, 3000, 3180, 3250].map((r, i) => ['Mystic ' + (i + 1), r]))
+  .concat([3380, 3820, 4320, 4920, 5620, 6420, 7320, 8320, 9420, 10620, 12000, 13600, 15400, 17500, 19900, 22700, 26000, 29000, 34500, 40000].map((r, i) => ['Iconic ' + (i + 1), r]));
+const goalCustom = new Set();
+function goalHTML(k){
+  const g = (caps[k] && caps[k].g) || '', lv = GOAL_LV.find(x => String(x[1]) === String(g).trim()), cus = goalCustom.has(k) || (g !== '' && !lv);
+  const grp = (nm, l) => `<optgroup label="${nm}">` + l.map(x => `<option value="${x[1]}"${!cus && lv === x ? ' selected' : ''}>${x[0]} · ${x[1].toLocaleString()}</option>`).join('') + '</optgroup>';
+  return `<br><label class="wg">Goal <select data-goalsel="${k}"><option value=""${!g && !cus ? ' selected' : ''}>None</option>`
+    + grp('Common - Epic', GOAL_LV.slice(0, 4)) + grp('Legendary', GOAL_LV.slice(4, 9)) + grp('Mystic', GOAL_LV.slice(9, 19)) + grp('Iconic', GOAL_LV.slice(19))
+    + `<option value="custom"${cus ? ' selected' : ''}>Custom rating…</option></select>`
+    + (cus ? `<input data-goal="${k}" type="number" inputmode="decimal" min="0" step="0.1" placeholder="rating" value="${esc(g)}">` : '') + `</label>`;
+}
 function drawWants(){
   if(prof.wants.length > 10) prof.wants = prof.wants.slice(0, 10);
   try{ drawSell(); }catch(e){}   // "same times as my swaps" shows only with players picked
@@ -988,7 +1003,7 @@ function drawWants(){
     return `<div class="want1"${lo ? ' style="border-color:var(--bad)"' : ''}><span>${lo ? '<b style="color:var(--bad);font-size:12px">Under 30 plays - won\'t match</b><br>' : ''}${!lo && (prof.thinPlays || []).includes(k) ? '<b style="color:var(--accent);font-size:12px">10-29 plays - each member gives it once per 168h</b><br>' : ''}<span class="note">${RANK[i]} pick · </span><b>${esc(wantNames[k] || 'Player ' + k.split(':')[2])}</b>${isNiche(k) ? NICHE_TAG : ''} <span class="note">· ${esc(keyLbl(k))}</span>`
       + `<br><span style="font-size:13px;font-weight:700;color:${crowdCol(n)}">${crowdTxt(n)}</span>${ownTxt(k) ? `<span class="note"> · ${ownTxt(k)}</span>` : ''}`
       + (isNiche(k) || nicheReq[k] ? `<br><label class="wg">Request <input data-niche="${k}" type="number" inputmode="numeric" min="0" max="40" step="1" placeholder="0" value="${esc(nicheReq[k] || '')}" style="width:64px"> people to buy <span class="note">(you pay full price)</span></label>` : '')
-      + `<br><label class="wg">Goal rating <input data-goal="${k}" type="number" inputmode="decimal" min="0" step="0.1" placeholder="none" value="${esc((caps[k] && caps[k].g) || '')}"></label></span>`
+      + goalHTML(k) + `</span>`
       + `<span class="acts"><span class="mv"><button data-up="${i}" aria-label="Move up"${i === 0 ? ' disabled' : ''}>▲</button><button data-dn="${i}" aria-label="Move down"${i === prof.wants.length - 1 ? ' disabled' : ''}>▼</button></span>`
       + `<button data-x="${k}" aria-label="Remove">✕</button></span></div>`; }).join('')
     || '<p class="note" style="margin:8px 0 0">Nobody picked yet.</p>';
@@ -1000,6 +1015,12 @@ $('#wants').addEventListener('input', e => { const nk = e.target.dataset.niche;
   const v = e.target.value.trim(), c = caps[k] || {}; if(v) c.g = v; else delete c.g;
   if(c.n || c.d || c.g) caps[k] = c; else delete caps[k];
   $('#savemsg').textContent = 'Goal changed - tap Save to keep it.'; });
+$('#wants').addEventListener('change', e => { const k = e.target.dataset.goalsel; if(!k) return;
+  const v = e.target.value, c = caps[k] || {};
+  if(v === 'custom'){ goalCustom.add(k); drawWants(); const i = document.querySelector(`[data-goal="${k}"]`); if(i) i.focus(); return; }
+  goalCustom.delete(k); if(v) c.g = v; else delete c.g;
+  if(c.n || c.d || c.g) caps[k] = c; else delete caps[k];
+  drawWants(); $('#savemsg').textContent = 'Goal changed - tap Save to keep it.'; });
 $('#wants').addEventListener('click', async e => { const b = e.target.closest('button'); if(!b) return;
   const x = b.dataset.x; if(x){
     prof.wants = prof.wants.filter(k => k !== x); drawWants(); saveWants();
