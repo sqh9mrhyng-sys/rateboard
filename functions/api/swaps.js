@@ -633,15 +633,15 @@ async function adminDm(db, auth, who, text, ref) {
    with names and card links. Kept 5 minutes; the hour page's leaderboard and
    step 3's recommended buys both read it. */
 async function wantTop(env, db) {
-  let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get('swap_wanttop_v1')) || 'null'); } catch (e) {}
+  let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get('swap_wanttop_v2')) || 'null'); } catch (e) {}
   if (c && Date.now() - c.at <= 300000) return c;
   const n = {}; let members = 0;
-  for (const r of ((await db.prepare(`SELECT wants FROM swap_users WHERE active=1 AND wants IS NOT NULL AND wants <> '[]'`).all()).results || [])) {
+  for (const r of ((await db.prepare(`SELECT wants FROM swap_users WHERE active=1 AND wants IS NOT NULL AND wants <> '[]' AND hashId IN (SELECT v.hashId FROM swap_ver v JOIN swap_dm d ON d.hashId = v.hashId WHERE d.channelId IS NOT NULL)`).all()).results || [])) {
     members++; for (const w of parse(r.wants, []).slice(0, MAX_WANTS)) n[w] = (n[w] || 0) + 1; }
   const nc = new Map(), top = Object.entries(n).sort((a, b) => b[1] - a[1]).slice(0, 80);
   const rows = []; for (const [k, v] of top) rows.push({ key: k, name: await indexName(db, k, nc), n: v, url: playerUrl(k) });
   c = { at: Date.now(), members, rows };
-  try { await env.RATEBOARD_KV.put('swap_wanttop_v1', JSON.stringify(c)); } catch (e) {}
+  try { await env.RATEBOARD_KV.put('swap_wanttop_v2', JSON.stringify(c)); } catch (e) {}
   return c;
 }
 async function indexName(db, k, cache) {
@@ -6202,9 +6202,24 @@ async function handle({ request, env, waitUntil }) {
     if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
     const pk = String(url.searchParams.get('k') || '').slice(0, 40);
     if (!/^[a-z]+:\d{4}:t?\d+$/.test(pk)) return json({ error: 'Pick a player.' }, 400);
-    const rs = ((await db.prepare(`SELECT u.rsUser AS n, j.key AS i FROM swap_users u, json_each(u.wants) j WHERE u.active=1 AND u.wants IS NOT NULL AND j.value=?`).bind(pk).all()).results) || [];
+    const rs = ((await db.prepare(`SELECT u.rsUser AS n, j.key AS i FROM swap_users u, json_each(u.wants) j WHERE u.active=1 AND u.hashId IN (SELECT v.hashId FROM swap_ver v JOIN swap_dm d ON d.hashId = v.hashId WHERE d.channelId IS NOT NULL) AND u.wants IS NOT NULL AND j.value=?`).bind(pk).all()).results) || [];
     const names = rs.filter(r => Number(r.i) < MAX_WANTS && r.n).map(r => r.n).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
     return json({ key: pk, names });
+  }
+  /* Who's grinding what (Dennis, 2026-11-27): admins search members by name and see each one's picked players. */
+  if (op === 'hourgrind') {
+    const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));
+    if (!key || !due || url.searchParams.get('t') !== await hourSig(env, key, due)) return json({ error: 'This link is not valid.' }, 403);
+    if (!ADMINS.includes(key.toLowerCase())) return json({ error: 'Admins only.' }, 403);
+    const q = String(url.searchParams.get('q') || '').trim().toLowerCase().replace(/^@/, '').replace(/[%_]/g, '').slice(0, 30);
+    if (!q) return json({ users: [] });
+    const rs = ((await db.prepare(`SELECT key, rsUser, wants, active, confirmDay, (hashId IN (SELECT v.hashId FROM swap_ver v JOIN swap_dm d ON d.hashId = v.hashId WHERE d.channelId IS NOT NULL)) AS ver FROM swap_users
+      WHERE LOWER(key) LIKE ? OR LOWER(rsUser) LIKE ? ORDER BY (LOWER(rsUser)=? OR LOWER(key)=?) DESC, ver DESC, key LIMIT 12`).bind(q + '%', q + '%', q, q).all()).results) || [];
+    const nc = new Map(), day = confirmDayNow(), users = [];
+    for (const r of rs) { const ws = parse(r.wants, []).slice(0, MAX_WANTS), picks = [];
+      for (const k of ws) picks.push({ key: k, name: await indexName(db, k, nc), url: playerUrl(k) });
+      users.push({ name: r.rsUser || r.key, active: !!r.active, verified: !!r.ver, confirmed: r.confirmDay === day, picks }); }
+    return json({ users });
   }
   if (op === 'hourtop') {
     const key = String(url.searchParams.get('u') || ''), due = Number(url.searchParams.get('d'));

@@ -175,6 +175,9 @@
     <h2>Most picked players</h2>
     <p class="note" id="topsum" style="margin:0 0 8px">Loading…</p>
     <div id="toplist"></div></section>
+    <section id="grindbox" hidden><h2>Who's grinding what</h2>
+      <input id="grindq" type="search" placeholder="Search a member" autocomplete="off" style="width:100%;box-sizing:border-box;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:transparent;color:inherit;font:inherit">
+      <div id="grindout" style="margin-top:8px"></div></section>
     <section id="raxbox" hidden><h2>Top 50 rax earners</h2>
       <p class="note" id="raxsum" style="margin:0 0 8px">Loading…</p>
       <div class="rxh"><span>#</span><span>Player</span><span>Rax</span><span>Owners</span><span>Here</span></div>
@@ -432,14 +435,25 @@ async function loadTop(){
   let j; try{ j = await (await fetch(`/api/swaps?op=hourtop&${sig()}`)).json(); }catch(e){ $('#topsum').textContent = 'Could not reach the board.'; return; }
   if(j.error){ $('#topsum').textContent = j.error; return; }
   const max = Math.max(1, ...j.rows.map(x => x.n));
-  $('#topsum').textContent = `How many of the ${j.members} active swappers are swapping for each player. Updated every 5 minutes.`;
+  $('#topsum').textContent = `How many of the ${j.members} confirmed swappers (verified with @rax.academy) are swapping for each player. Updated every 5 minutes.`;
   $('#toplist').innerHTML = j.rows.map((x, i) => { const m = String(x.name).match(/^(.*) (\S+) (\d{4})$/), nm = m ? m[1] : x.name, tag = m ? `${m[2]} ${m[3]}` : '';
     return `<div class="tp${x.mine ? ' me' : ''}" data-k="${esc(x.key)}"><div class="row"><span class="rk">${i + 1}</span>`
       + `<span class="nm">${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(nm)}</a>` : esc(nm)}${x.mine ? '<span class="you">YOURS</span>' : ''}<span class="tag">${esc(tag)}</span></span>`
       + `<span class="ct">${x.n}<small>swapping</small></span><span class="chev">▶</span><span class="bar"><i style="width:${Math.round(x.n / max * 100)}%"></i></span></div><div class="who"></div></div>`; }).join('')
     || '<p class="note">Nobody has picked a player yet.</p>';
-  if(isAdm) loadRax();
+  if(isAdm){ loadRax(); $('#grindbox').hidden = false; }
 }
+/* Who's grinding what (admins): members by name, each with their picks. */
+let grindT = 0, grindN = 0;
+$('#grindq').addEventListener('input', () => { clearTimeout(grindT); grindT = setTimeout(async () => {
+  const qv = $('#grindq').value.trim(), my = ++grindN; if(!qv){ $('#grindout').innerHTML = ''; return; }
+  let j; try{ j = await (await fetch(`/api/swaps?op=hourgrind&q=${encodeURIComponent(qv)}&${sig()}`)).json(); }catch(e){ j = { error: 'Could not reach the board.' }; }
+  if(my !== grindN) return;
+  if(j.error){ $('#grindout').innerHTML = `<p class="note">${esc(j.error)}</p>`; return; }
+  $('#grindout').innerHTML = j.users.map(u => `<div style="padding:10px 0;border-top:1px solid var(--line)"><b>@${esc(u.name)}</b> <span class="note">${u.verified ? (u.confirmed ? '✅ confirmed today' : 'verified · not confirmed today') : '⚠️ not verified'}${u.active ? '' : ' · paused'}</span>`
+    + (u.picks.length ? '<ol style="margin:4px 0 0;padding-left:22px">' + u.picks.map(p => `<li>${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.name)}</a>` : esc(p.name)}</li>`).join('') + '</ol>' : '<div class="note">No players picked.</div>') + '</div>').join('')
+    || '<p class="note">No member by that name.</p>';
+}, 300); });
 async function loadRax(){
   $('#raxbox').hidden = false;
   let j; try{ j = await (await fetch(`/api/swaps?op=hourrax&${sig()}`)).json(); }catch(e){ $('#raxsum').textContent = 'Could not reach the board.'; return; }
