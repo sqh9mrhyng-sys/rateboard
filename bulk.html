@@ -70,6 +70,7 @@
 <div class="bar" id="bar" hidden>
   <input type="search" id="q" placeholder="Search player" autocomplete="off">
   <select id="sp"><option value="">All sports</option></select>
+  <select id="rar"><option value="">All rarities</option><option>Rare</option><option>Epic</option><option>Legendary</option><option>Mystic</option><option>Iconic</option></select>
   <select id="per"><option value="1">Past 24 hours</option><option value="7" selected>Past week</option><option value="30">Past 30 days</option><option value="c">Custom…</option></select>
   <input type="date" id="from" hidden><input type="date" id="to" hidden>
 </div>
@@ -228,7 +229,9 @@ function setView(v){ view = v; ls.set('bulk_view', v); shown = 150;
 const injName = n => String(n || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\b(jr|sr|ii|iii|iv)\b\.?/g, '').replace(/[^a-z]/g, '');
 const newestSeason = sp => Math.max(0, ...((D && D.rows) || []).filter(x => x.sport === sp).map(x => Number(x.season) || 0));
 const injOf = r => { const st = D && D.inj && D.inj[`${r.sport}|${injName(r.name)}`]; return st && Number(r.season) === newestSeason(r.sport) ? st : null; };
-const pass = r => { const q = $('#q').value.trim().toLowerCase(), sp = $('#sp').value; return (!q || String(r.name || '').toLowerCase().includes(q)) && (!sp || r.sp === sp); };
+// Rarity (a member, 2026-11-27): Legendary covers Legendary 1-5, and so on. History and Grind are per player, so it leaves them alone.
+const rarOk = r => { const v = $('#rar').value; if(!v || view === 'history' || view === 'grind') return true; return String(r.rarity || r.label || '').toLowerCase().startsWith(v.toLowerCase()); };
+const pass = r => { const q = $('#q').value.trim().toLowerCase(), sp = $('#sp').value; return (!q || String(r.name || '').toLowerCase().includes(q)) && (!sp || r.sp === sp) && rarOk(r); };
 const openA = r => r.link ? `<a class="open" href="${esc(r.link)}" target="_blank" rel="noopener">Open auction ↗</a>` : '';
 const lkRow = x => `<a class="lk${SOLD(x) && !x.odd ? '' : ' dim'}" href="${esc(x.link)}" target="_blank" rel="noopener"><b>${SOLD(x) ? fmt(x.price) : x.endsAt > Date.now() ? fmt(nowPrice(x)) : '-'}</b><span class="note">${x.endsAt > Date.now() ? 'live · ends in ' + left(x.endsAt) : day(x.endsAt)} · rating ${fmt(x.rating)}${x.how === 'buy now' ? ' · buy now' : ''}</span><span class="tag">${x.odd ? 'ignored · ' : ''}Open ↗</span></a>`;
 /* Injured players (Dennis, 2026-11-27: a member's Davante Adams still read 8,400 after his injury). */
@@ -275,6 +278,7 @@ const costTable = (x, g) => !x.pack ? '<p class="note">No pack data for this pla
 function draw(){
   if(!D) return;
   $('#bar2').hidden = true; $('#bar2').innerHTML = '';
+  $('#rar').hidden = view === 'history' || view === 'grind';
   const book = salesBook(), perTxt = $('#per').selectedOptions[0].text.replace(/^Past /, '').toLowerCase();
   if(view === 'deals'){
     // 1. Only on solid data: 5+ sales of that exact player and season, buy-now listings or bids under the usual price.
@@ -331,6 +335,7 @@ const inSpan = x => { const [a, b] = span(); return x.endsAt >= a && x.endsAt <=
 document.querySelectorAll('#seg button').forEach(b => b.addEventListener('click', () => setView(b.dataset.v)));
 $('#q').addEventListener('input', () => { shown = 150; draw(); });
 $('#sp').addEventListener('change', e => { ls.set('bulk_sp', e.target.value); shown = 150; draw(); });
+$('#rar').addEventListener('change', () => { shown = 150; draw(); });
 $('#per').addEventListener('change', e => { ls.set('bulk_per', e.target.value); setView(view); });
 for(const id of ['from', 'to']) $('#' + id).addEventListener('change', e => { ls.set('bulk_' + id, e.target.value); draw(); });
 $('#more').addEventListener('click', () => { shown += 200; draw(); });
