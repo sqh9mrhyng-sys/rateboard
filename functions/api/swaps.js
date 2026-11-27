@@ -3958,7 +3958,7 @@ const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan', 'sear
 // Open to every signed-in member: OTD's page, and the Rate Board's Exclude owned list (2026-11-25: members without Swaps got a 403 and "0 passes left out").
 const PUBLIC_OPS = new Set(['projections']);
 const PRED_PUB_MEMO = { at: 0, text: '' };   // the EV page for signed-out visitors   // signed-out visitors (2026-11-27); grows as pages open up
-const TEST_OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'search', 'otdpool', 'otdloadouts', 'mypassnames']);
+const TEST_OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'search', 'otdpool', 'otdloadouts', 'mypassnames', 'myboardpasses']);
 
 /* ---------- Moderation (Dennis, 2026-11-11) ----------
    Reports on swap / 160 partners are counted automatically:
@@ -8425,6 +8425,31 @@ async function handle({ request, env, waitUntil }) {
   /* Username suggestions for the Report page (2026-11-16), signed-in members only: names that start
      with what was typed first, then names that contain it. Usernames only. */
   /* Your passes by sport, names only (2026-11-16, Board seller's "Exclude owned"): from your last pass scan. */
+  /* The board's player box (Dennis, 2026-11-27): the buyer's own passes this season, with their rating right now,
+     shown first. One read of every pass they own, kept 15 minutes. Their own data only. */
+  if (op === 'myboardpasses') {
+    if (!acc.who) return json({ error: 'Sign in first.' }, 401);
+    const k = String(acc.who).toLowerCase(), ck = 'mbp_v1_' + k;
+    try { const c = JSON.parse((await env.RATEBOARD_KV.get(ck)) || 'null'); if (c && Date.now() - c.at < 15 * 60000 && url.searchParams.get('fresh') !== '1') return json(c); } catch (e) {}
+    if (!(await allow(url.origin, 'mbp:' + k, 8, 600))) return json({ error: 'Wait a few minutes.' }, 429);
+    const tok = scanTok(env); if (!tok) return json({ sports: {} });
+    let hid = (await db.prepare('SELECT hashId FROM swap_users WHERE LOWER(key)=?').bind(k).first().catch(() => null) || {}).hashId;
+    if (!hid) { try { hid = await resolveHashId(await realName(db, acc.who), tok); } catch (e) {} }
+    if (!hid) return json({ sports: {}, none: true });
+    let r; try { r = await fetch(`https://web.realapp.com/userpasses/${encodeURIComponent(hid)}/passes`, { headers: rsHeaders(tok) }); } catch (e) { return json({ error: 'Could not reach Real.' }, 502); }
+    if (!r.ok) return json({ error: r.status === 429 ? 'Real is busy - try again in a minute.' : 'Could not read your passes.' }, 502);
+    const BS = Object.fromEntries(Object.entries(AM_SP).map(([b, [sp]]) => [sp, b])), out = {};
+    for (const x of rowsOf(await r.json())) { const e = (x && (x.pass || x.entity)) || x || {};
+      const p = passOf(x, String(x.sport || e.sport || '').toLowerCase(), Number(x.season || e.season), String(x.entityType || e.entityType || '').toLowerCase());
+      const b = p && BS[p.sport]; if (!b || !p.name || p.rating == null) continue;
+      const se0 = AM_SP[b][1]; if (se0 != null && p.season !== se0 && !(b === 'FC' && (p.season === 2025 || p.season === 2026))) continue;
+      if (p.kind === 'team' && b !== 'UFC') continue;
+      (out[b] = out[b] || []).push({ n: p.name, r: Math.round(p.rating), lv: p.levelLabel || null, se: p.season }); }
+    for (const l of Object.values(out)) l.sort((a, b) => b.r - a.r);
+    const res = { at: Date.now(), sports: out };
+    try { await env.RATEBOARD_KV.put(ck, JSON.stringify(res), { expirationTtl: 3600 }); } catch (e) {}
+    return json(res);
+  }
   if (op === 'mypassnames') {
     if (!acc.who) return json({ error: 'Sign in first.' }, 401);
     const u = await db.prepare('SELECT passes, scannedAt FROM swap_users WHERE LOWER(key)=?').bind(String(acc.who).toLowerCase()).first().catch(() => null);

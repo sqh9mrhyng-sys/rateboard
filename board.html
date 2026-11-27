@@ -549,6 +549,8 @@
   .howto li+li{margin-top:10px}
   .howto li::before{content:counter(st);width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:12.5px;font-weight:800;
     color:var(--accent);background:color-mix(in srgb,var(--accent) 16%,transparent)}
+  .suggest li.shd{font-size:11.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--mute);padding:8px 14px 4px;cursor:default}
+  .suggest li.own .team b{color:var(--accent)}
   .goalto{margin-left:8px;font-size:12px;color:var(--mute);white-space:nowrap}
   .fine{margin:0;color:var(--mute);font-size:12.5px;line-height:1.5}
   .fine .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--bad);margin-right:7px;vertical-align:1px}
@@ -3336,13 +3338,20 @@ function closeSuggest(){
   $('#b-player').setAttribute('aria-expanded', 'false');
 }
 
+/* Their own passes first, with the rating they're at now (Dennis, 2026-11-27). */
+let myPasses = null, myPassesAsk = null;
+function loadMyPasses(){ if(!myPassesAsk) myPassesAsk = fetch('/api/swaps?op=myboardpasses').then(r => r.json()).then(j => { myPasses = j && j.sports ? j.sports : {}; }).catch(() => { myPasses = {}; myPassesAsk = null; }); return myPassesAsk; }
+const ownedFor = q => { const l = (myPasses && myPasses[sport]) || [], nq = norm(q || '');
+  return l.filter(p => !nq || norm(p.n).includes(nq)).slice(0, nq ? 8 : 12).map(p => ({ name: p.n, own: p, team: '' })); };
 function renderSuggest(items, note){
   const box = $('#b-suggest');
   suggestItems = items;
   suggestActive = -1;
-  const rows = items.map((it,i) =>
-    `<li role="option" data-i="${i}"><span class="dot">•</span> ${esc(it.name)} <span class="team">${esc(it.team)}</span>${
-      sport === 'UFC' ? ufcDetailChips(it.name) : statChips(it.name)}</li>`
+  const firstOther = items.findIndex(it => !it.own);
+  const rows = items.map((it,i) => (i === 0 && it.own ? '<li class="shd">Your passes</li>' : '') + (i === firstOther && firstOther > 0 ? '<li class="shd">Everyone</li>' : '') + (it.own
+    ? `<li role="option" data-i="${i}" class="own"><span class="dot">•</span> ${esc(it.name)}${sport === 'FC' && it.own.se ? ` <span class="seas">${it.own.se === 2025 ? '2025-26' : '2026-27'}</span>` : ''} <span class="team"><b>${it.own.r.toLocaleString()}</b>${it.own.lv ? ' · ' + esc(it.own.lv) : ''}</span></li>`
+    : `<li role="option" data-i="${i}"><span class="dot">•</span> ${esc(it.name)} <span class="team">${esc(it.team)}</span>${
+      sport === 'UFC' ? ufcDetailChips(it.name) : statChips(it.name)}</li>`)
   ).join('');
   box.innerHTML = rows + (note ? `<li class="hint">${esc(note)}</li>` : '');
   const show = items.length > 0 || !!note;
@@ -3351,7 +3360,9 @@ function renderSuggest(items, note){
 }
 
 async function runSuggest(q){
-  if(q.length < 2){ closeSuggest(); return; }
+  await loadMyPasses();
+  const mine = ownedFor(q);
+  if(q.length < 2){ if(mine.length) renderSuggest(mine, null); else closeSuggest(); return; }
   if(BOARD_TO_DATA[sport]){ await loadStats(BOARD_TO_DATA[sport]); await lookupMany(q); }
   try{
     const r = await fetch(`/api/players?sport=${encodeURIComponent(sport)}&q=${encodeURIComponent(q)}`);
@@ -3374,6 +3385,7 @@ async function runSuggest(q){
       const seen = new Set(listed.map(x => norm(x.name)));
       items = listed.concat(items.filter(it => !seen.has(norm(it.name)))).slice(0, 15);
     }
+    { const own = new Set(mine.map(m => norm(m.name))); items = mine.concat(items.filter(it => !own.has(norm(it.name)))); }
     const note = !items.length
       ? (data.building ? 'Still building the player list — try again in a bit' : 'No matches')
       : (data.building ? 'Still indexing — more players will show up soon' : null);
@@ -3386,10 +3398,7 @@ $('#b-player').addEventListener('input', e => {
   const q = e.target.value.trim();
   suggestTimer = setTimeout(()=>{ runSuggest(q); applyMinimumToForm(); }, 220);
 });
-$('#b-player').addEventListener('focus', e => {
-  const q = e.target.value.trim();
-  if(q.length >= 2) runSuggest(q);
-});
+$('#b-player').addEventListener('focus', e => { runSuggest(e.target.value.trim()); });
 $('#b-player').addEventListener('keydown', e => {
   if($('#b-suggest').classList.contains('hide') || !suggestItems.length) return;
   if(e.key === 'ArrowDown'){ e.preventDefault(); suggestActive = Math.min(suggestActive+1, suggestItems.length-1); highlightSuggest(); }
@@ -3406,6 +3415,7 @@ function pickSuggest(i){
   const it = suggestItems[i];
   if(!it) return;
   $('#b-player').value = it.name;
+  if(it.own && sport === 'FC' && it.own.se){ const s = $('#b-season'); if(s) s.value = it.own.se === 2025 ? '2025-26' : '2026-27'; }
   closeSuggest();
   applyMinimumToForm();
   $('#b-rate').focus();
