@@ -410,7 +410,7 @@
       <a class="btn" id="packsite" hidden target="_blank" rel="noopener" style="display:block;text-align:center;margin-top:8px">Open your swap page ↗</a>
       <div id="packlist"><p class="note">Loading…</p></div>
     </div>
-    <div class="bar swper"><select id="swper" aria-label="Time period"></select><input type="date" id="swday" hidden aria-label="Day"><span class="note" id="swcount"></span></div>
+    <div class="bar swper"><select id="swper" aria-label="Time period"></select><select id="swsort" aria-label="Order"><option value="time">By time</option><option value="user">By person</option></select><input type="date" id="swday" hidden aria-label="Day"><span class="note" id="swcount"></span></div>
     <div id="swlist"><p class="note">Loading…</p></div>
   </section>
 
@@ -1139,9 +1139,16 @@ function drawSwaps(){
   const inPer = x => per === 'all' ? true : per[0] === 'h' ? x.due === Number(per.slice(1)) : per === 'today' ? dayOf(x.due) === today
     : per === 'tomorrow' ? dayOf(x.due) === shift(1) : per === 'yesterday' ? dayOf(x.due) === shift(-1) : per === '7d' ? nowMs - x.due <= 7 * 86400000
     : per === 'day' ? (pick == null || dayOf(x.due) === pick) : true;
-  const list = mySwaps.filter(x => (swTab === 'up' ? x.upcoming : !x.upcoming) && inPer(x));
+  let list = mySwaps.filter(x => (swTab === 'up' ? x.upcoming : !x.upcoming) && inPer(x));
+  /* 160s with the same person at the same time, one card with the total to offer (member request, 2026-11-27). */
+  { const g = new Map(), out = [];
+    for (const x of list) { if (x.kind !== '160') { out.push(x); continue; } const k = `${x.partner}|${x.due}|${x.role}|${x.state}`;
+      if (g.has(k)) g.get(k).group.push(x); else { const y = { ...x, group: [x] }; g.set(k, y); out.push(y); } }
+    list = out; }
   { const n1 = list.filter(x => !x.kind).length, n2 = list.length - n1; $('#swcount').textContent = `${n1} swap${n1 === 1 ? '' : 's'}` + (n2 ? ` · ${n2} 160${n2 === 1 ? '' : 's'}/niche` : ''); }
   if(swTab === 'up') list.sort((a, b) => a.due - b.due);
+  // By person: everyone you deal with together, then by time.
+  if($('#swsort').value === 'user') list.sort((a, b) => String(a.partner || '').toLowerCase().localeCompare(String(b.partner || '').toLowerCase()) || (swTab === 'up' ? a.due - b.due : b.due - a.due));
   const when = ms => new Date(ms).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   const lnk = (t, u) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)}</a>` : esc(t);
   const tm = ms => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -1150,7 +1157,10 @@ function drawSwaps(){
     // A 160 or a niche buy (2026-11-10): one line of what you do, with whom.
     if(x.kind){ const what = x.kind === 'niche'
         ? (x.role === 'sell' ? `Niche: buy <b>${lnk(x.player, x.playerUrl)}</b> and a pack for ${whoL} - they pay full price` : `Niche: ${whoL} buys <b>${lnk(x.player, x.playerUrl)}</b> and a pack for you - you pay full price`)
-        : (x.role === 'sell' ? `160: you sell a <b>${lnk(x.player, x.playerUrl)}</b> pack to ${whoL}` : `160: you buy a <b>${lnk(x.player, x.playerUrl)}</b> pack from ${whoL}`);
+        : (x.group && x.group.length > 1
+          ? (x.role === 'sell' ? `160 ×${x.group.length}: you sell ${x.group.map(y => `<b>${lnk(y.player, y.playerUrl)}</b>`).join(', ')} packs to ${whoL} - <b>${(160 * x.group.length).toLocaleString()} rax</b> in all`
+              : `160 ×${x.group.length}: you buy ${x.group.map(y => `<b>${lnk(y.player, y.playerUrl)}</b>`).join(', ')} packs from ${whoL} - offer <b>${(160 * x.group.length).toLocaleString()}</b> for the packs`)
+          : x.role === 'sell' ? `160: you sell a <b>${lnk(x.player, x.playerUrl)}</b> pack to ${whoL}` : `160: you buy a <b>${lnk(x.player, x.playerUrl)}</b> pack from ${whoL}`);
       return `<div class="sw1"><div class="top"><b>${x.hourUrl ? `<a href="${esc(x.hourUrl)}" target="_blank" rel="noopener" title="This time's page">${when(x.due)} ↗</a>` : when(x.due)}</b><span class="tag" style="color:${t[1]}">${t[0]}</span></div>`
         + `<div class="swwho">${what}</div>` + (x.made ? `<div class="note swtl">Matched ${when(x.made)}</div>` : '') + (x.note ? `<div class="note" style="margin-top:4px">${esc(x.note)}</div>` : '') + `</div>`; }
     const gp = String(x.give || '').replace(/ \d{4}$/, ''), rp = String(x.get || '').replace(/ \d{4}$/, '');
@@ -1168,6 +1178,8 @@ async function loadSwaps(){ const j = await api('/api/swaps?op=myswaps'); if(j.e
 const swPer = {};
 $('#swper').addEventListener('change', () => { swPer[swTab] = $('#swper').value; if($('#swper').value === 'day' && !$('#swday').value){ const d = new Date(); $('#swday').value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; } drawSwaps(); });
 $('#swday').addEventListener('change', drawSwaps);
+$('#swsort').addEventListener('change', () => { try{ localStorage.setItem('sw_sort', $('#swsort').value); }catch(e){} drawSwaps(); });
+try{ const v = localStorage.getItem('sw_sort'); if(v) $('#swsort').value = v; }catch(e){}
 $('#tabup').addEventListener('click', () => { swTab = 'up'; drawSwaps(); });
 $('#tabpast').addEventListener('click', () => { swTab = 'past'; drawSwaps(); });
 $('#tabpacks').addEventListener('click', () => { swTab = 'packs'; drawSwaps(); });
