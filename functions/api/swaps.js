@@ -2014,6 +2014,41 @@ export async function bulkWatchTick(env) {
   } catch (e) { try { await env.RATEBOARD_KV.put('bw_err', String(e.message || e).slice(0, 200), { expirationTtl: 86400 }); } catch (x) {} }
 }
 
+/* Niche owners and their requester (Dennis, 2026-11-27, from a member: "the people that bought my niche grind don't
+   always get to open it, my times vary"): once a day, for every member who bought a niche player for someone who is
+   still swapping for that player, if their swap times share no hour, the owner is told one of the requester's hours to
+   add so they get matched. Daily schedules only; once a week per pair. Only while Swaps are on. */
+export async function nicheNudge(env) {
+  const db = env.RATEBOARD_DB; if (!db || etHour(Date.now()) !== 8) return;
+  if (await env.RATEBOARD_KV.get('swaps_hold')) return;
+  const day = ET_DAY_FMT.format(new Date()); if ((await env.RATEBOARD_KV.get('niche_nudge_day')) === day) return;
+  await env.RATEBOARD_KV.put('niche_nudge_day', day, { expirationTtl: 3 * 86400 });
+  try {
+    const rows = ((await db.prepare("SELECT DISTINCT seller, buyer, pass FROM swap_160 WHERE kind='niche' AND status <> 'cancelled' AND dueAt < ? AND dueAt > ?").bind(Date.now(), Date.now() - 60 * 86400000).all()).results) || [];
+    const U = new Map(); const get = async k => { if (!U.has(k)) U.set(k, await db.prepare('SELECT key, rsUser, wants, slots, sched, active, passes FROM swap_users WHERE key=?').bind(k).first().catch(() => null)); return U.get(k); };
+    let sent = 0;
+    for (const r of rows) {
+      const own = await get(r.seller), req = await get(r.buyer); if (!own || !req || !own.active || !req.active) continue;
+      if (!(parse(req.wants, []) || []).includes(r.pass)) continue;   // they've moved on from that player
+      if (!parse(own.passes, []).some(p => p.key === r.pass)) continue;   // the owner no longer has it
+      const so = parse(own.sched, null) || {}, sr = parse(req.sched, null) || {};
+      if ((so.mode && so.mode !== 'daily') || (sr.mode && sr.mode !== 'daily')) continue;
+      const a = new Set((parse(own.slots, []) || []).map(Number)), b = (parse(req.slots, []) || []).map(Number).filter(h => !noSwapHour(Date.UTC(2026, 10, 20, h)));
+      if (!b.length || b.some(h => a.has(h))) continue;
+      const k = `niche_nudge_${own.key}_${req.key}`; if (await env.RATEBOARD_KV.get(k)) continue;
+      // The requester's hour closest to one the owner already has.
+      const dist = h => a.size ? Math.min(...[...a].map(x => Math.min(Math.abs(x - h), 24 - Math.abs(x - h)))) : 0;
+      const h = b.slice().sort((x, y) => dist(x) - dist(y))[0], tz = so.tz || 'America/New_York';
+      let when; try { when = new Date(Date.UTC(2026, 10, 20, h)).toLocaleTimeString('en-US', { timeZone: tz, hour: 'numeric' }); } catch (e) { when = `${h}:00 UTC`; }
+      const pl = (parse(own.passes, []).find(p => p.key === r.pass) || {}).name || 'the niche player';
+      await addNote(db, own.key, 'reply', `@${req.rsUser || req.key} is still swapping for ${pl}, which you bought through niche - but your swap times never overlap, so you aren't matched. Add ${when} (your time) to your swap times in step 4 and you'll be paired to open packs for each other.`);
+      await env.RATEBOARD_KV.put(k, '1', { expirationTtl: 7 * 86400 }); sent++;
+      if (sent >= 40) break;
+    }
+    await env.RATEBOARD_KV.put('niche_nudge_last', JSON.stringify({ at: Date.now(), pairs: rows.length, sent }), { expirationTtl: 7 * 86400 });
+  } catch (e) { try { await env.RATEBOARD_KV.put('niche_nudge_err', String(e.message || e).slice(0, 200), { expirationTtl: 86400 }); } catch (x) {} }
+}
+
 export function routeId(numbers) {
   const ALPHA0 = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890', SEPS0 = 'cfhistuCFHISTU';
   const salt = Array.from('routing'), minLength = 11;
@@ -4029,7 +4064,7 @@ export async function swapAccess(env, request) {
 }
 // What a member (not an admin) may do: their own swap and nothing else, and
 // for OTD their own passes and games.
-const MEMBER_OPS = new Set(['confirm', 'recbuys', 'myhour', 'me', 'save', 'keep', 'touch', 'giveprefs', 'packstoday', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'ownercounts', 'usersearch', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
+const MEMBER_OPS = new Set(['savewants', 'confirm', 'recbuys', 'myhour', 'me', 'save', 'keep', 'touch', 'giveprefs', 'packstoday', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'ownercounts', 'usersearch', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
 const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan', 'search', 'otdpool']);
 // Open to every signed-in member: OTD's page, and the Rate Board's Exclude owned list (2026-11-25: members without Swaps got a 403 and "0 passes left out").
 const PUBLIC_OPS = new Set(['projections']);
@@ -7356,6 +7391,22 @@ async function handle({ request, env, waitUntil }) {
   /* Hours save the moment they're ticked or unticked (Dennis, 2026-11-04: an
      unticked hour that was never saved still got swaps). Unticking one calls
      off its swaps still to come, under the same late-change rule. */
+  /* Picks save as they're made (Dennis, 2026-11-27: "when you check a player it saves on all your devices") - only
+     the players picked, so it never turns a paused swap back on. Same checks as Save my swap. */
+  if (op === 'savewants' && request.method === 'POST') {
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    const wants = [...new Set((Array.isArray(b.wants) ? b.wants : []).map(String).filter(k => /^[a-z]+:\d{4}:t?\d+$/.test(k)))].slice(0, MAX_WANTS);
+    const r = await db.prepare('SELECT passes, wants, slots, sched FROM swap_users WHERE key=?').bind(me).first();
+    if (!r) return json({ error: 'Scan your passes first.' }, 400);
+    const owned = new Set(parse(r.passes, []).filter(p => p.kind !== 'team').map(p => p.key));
+    if (wants.some(w => !owned.has(w))) return json({ error: 'You can only swap for passes you own - scan your passes, then pick from them.' }, 400);
+    if (wants.some(w => seasonOff(w))) return json({ error: '2026-27 CBB and NBA passes can\'t be swapped yet.' }, 400);
+    { const low = await lowPlays(env, db, wants, null, me); if (low.size) return json({ error: `Only players with ${MIN_PLAYS}+ collectible plays can be swapped for.`, low: [...low] }, 400); }
+    await db.prepare('UPDATE swap_users SET wants=?, updatedAt=? WHERE key=?').bind(JSON.stringify(wants), Date.now(), me).run();
+    try { await env.RATEBOARD_KV.delete('swap_wantcounts_v3'); } catch (e) {}
+    let res = { n: 0, late: 0 }; try { res = await afterCallOff(env, db, auth, me, await cancelDropped(db, me, new Set(wants), new Set(parse(r.slots, [])), parse(r.sched, null))); } catch (e) {}
+    return json({ ok: true, wants, calledOff: res.n, late: res.late });
+  }
   if (op === 'saveslots' && request.method === 'POST') {
     let b = {}; try { b = await request.json(); } catch (e) {}
     const sched = cleanSched(b.sched);

@@ -941,7 +941,7 @@ $('#wres').addEventListener('click', e => {
     if(prof.wants.length >= 10){ $('#savemsg').textContent = 'Up to 10 players - remove one first.'; return; }
     prof.wants.push(d.dataset.k);
   }
-  wantNames[d.dataset.k] = d.dataset.n; drawWants();
+  wantNames[d.dataset.k] = d.dataset.n; drawWants(); saveWants();
   $('#wres').innerHTML = ''; $('#wq').value = '';
 });
 // --- scale: caps = { passKey: { n: total, d: per day } }
@@ -967,6 +967,12 @@ for(const [id, f] of [['#capn', 'n'], ['#capd', 'd']]) $(id).addEventListener('i
   if(v) c[f] = v; else delete c[f];
   if(c.n || c.d || c.g) caps[k] = c; else delete caps[k];
   const o = $('#capwho').selectedOptions[0]; if(o) o.textContent = capLbl(k, prof.wants.indexOf(k)); });
+/* Picks save to your account as you make them, so every device has them (2026-11-27). */
+let swT = 0;
+function saveWants(){ clearTimeout(swT); swT = setTimeout(async () => {
+  const j = await api('/api/swaps?op=savewants', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ wants: prof.wants.slice(0, 10) }) });
+  $('#savemsg').textContent = j.error ? j.error : 'Picks saved' + (j.calledOff ? ` - ${j.calledOff} swap${j.calledOff === 1 ? '' : 's'} for removed players called off.` : '.');
+  if(!j.error) savedWants = new Set(prof.wants); }, 700); }
 function drawWants(){
   if(prof.wants.length > 10) prof.wants = prof.wants.slice(0, 10);
   try{ drawSell(); }catch(e){}   // "same times as my swaps" shows only with players picked
@@ -989,7 +995,7 @@ $('#wants').addEventListener('input', e => { const nk = e.target.dataset.niche;
   $('#savemsg').textContent = 'Goal changed - tap Save to keep it.'; });
 $('#wants').addEventListener('click', async e => { const b = e.target.closest('button'); if(!b) return;
   const x = b.dataset.x; if(x){
-    prof.wants = prof.wants.filter(k => k !== x); drawWants();
+    prof.wants = prof.wants.filter(k => k !== x); drawWants(); saveWants();
     // Saved straight away, and his swaps still to come are called off.
     const j = await api('/api/swaps?op=dropwant', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: x }) });
     if(j.error){ $('#savemsg').textContent = j.error; return; }
@@ -999,7 +1005,7 @@ $('#wants').addEventListener('click', async e => { const b = e.target.closest('b
   // ▲/▼ move a pick up or down the priority order (saved with Save).
   const i = b.dataset.up != null ? Number(b.dataset.up) : b.dataset.dn != null ? Number(b.dataset.dn) : -1; if(i < 0) return;
   const j = b.dataset.up != null ? i - 1 : i + 1; if(j < 0 || j >= prof.wants.length) return;
-  [prof.wants[i], prof.wants[j]] = [prof.wants[j], prof.wants[i]]; drawWants();
+  [prof.wants[i], prof.wants[j]] = [prof.wants[j], prof.wants[i]]; drawWants(); saveWants();
   $('#savemsg').textContent = 'Order changed - tap Save to keep it.'; });
 
 function paintPaused(){ const sc = prof.sched || {};
