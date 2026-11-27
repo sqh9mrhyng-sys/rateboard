@@ -7243,8 +7243,14 @@ async function handle({ request, env, waitUntil }) {
   if (op === 'whynot') {
     if (!(await allow(url.origin, 'whynot:' + me, 6, 600))) return json({ error: 'Wait a few minutes and try again.' }, 429);
     if (!(await allow(url.origin, 'whynot-all', 30, 60))) return json({ error: HIGH_VOL }, 429);
-    const w = await whyNotFull(db, env, me);
-    return json({ why: w.why, ready: !w.why.length || w.free > 0, can: w.can, hour: w.hour, both: w.free });
+    /* Dennis can check any member (2026-11-27): ?user=name */
+    let who = me; const asked = String(url.searchParams.get('user') || '').trim().toLowerCase().replace(/^@/, '');
+    if (asked && acc.admin) { const r = await db.prepare('SELECT key FROM swap_users WHERE LOWER(key)=? OR LOWER(rsUser)=?').bind(asked, asked).first().catch(() => null);
+      if (!r) return json({ why: ['No saved swap under ' + asked + '.'], ready: false }); who = r.key; }
+    const w = await whyNotFull(db, env, who);
+    if (confirmOn(confirmDayNow())) { const c = await db.prepare('SELECT confirmDay FROM swap_users WHERE key=?').bind(who).first().catch(() => null);
+      if (c && c.confirmDay !== confirmDayNow()) w.why.push("Today's times are not confirmed - unconfirmed swaps are called off."); }
+    return json({ who: who !== me ? who : undefined, why: w.why, ready: !w.why.length || w.free > 0, can: w.can, hour: w.hour, both: w.free });
   }
 
   // Admin: what the bot has done today and the last week, and what failed.
