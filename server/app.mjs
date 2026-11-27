@@ -73,7 +73,7 @@ const TAKEDOWN_HTML = '<!doctype html><html lang="en"><head><meta charset="utf-8
   + '</head><body><div><h1>This website has been taken down.</h1><p>raxacademy.app</p></div></body></html>';
 function serveStatic(req) {
   const u = new URL(req.url);
-  if (u.pathname.endsWith('.html')) {   // Cloudflare Pages drops .html from addresses
+  if (u.pathname.endsWith('.html') && !/^\/google[0-9a-f]+\.html$/.test(u.pathname)) {   // Cloudflare Pages drops .html from addresses (not Google's verification file)
     const to = u.pathname === '/index.html' ? '/' : u.pathname.slice(0, -5);
     return new Response(null, { status: 308, headers: { location: to + u.search } });
   }
