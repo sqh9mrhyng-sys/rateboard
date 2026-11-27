@@ -276,6 +276,7 @@
   .ahl{margin-top:6px;font-size:14px;line-height:1.45} .achk{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px} .achk button{border:1px solid var(--accent);background:var(--panel2);color:var(--ink);border-radius:9px;padding:8px 12px;font:700 14px inherit;font-family:inherit} .hld{margin:10px 0 0;padding:10px 12px;border-radius:10px;background:var(--panel2);font-size:14px;line-height:1.45}
   .alp{margin-top:10px;font-size:14px;color:var(--mute)} .alp b{font-size:16px}
   .alsave{margin-top:10px;width:100%;background:var(--panel2);color:var(--ink);border:1px solid var(--accent);border-radius:12px;padding:11px;font:inherit;font-weight:800;cursor:pointer} .alsave:disabled{opacity:.45;cursor:default}
+  body.pub .place{display:none!important}
 </style>
 <script src="/theme.js"></script>
 <script src="/nav.js?v=9"></script>
@@ -546,6 +547,11 @@ async function load(){
   try{ const t = ls.get('ratebrd_token_v1') || ''; J = await (await fetch('/api/swaps?op=predev', { headers: t ? { 'x-rb-token': t } : {}, cache: 'no-store' })).json(); }catch(e){ J = { error: 'Could not reach the site.' }; }
   try{ setSlipFit(J && J.slipFit); }catch(e){}
   if(J.error){ $('#list').innerHTML = `<div class="empty">${/sign in/i.test(J.error) ? 'Sign in first - <a href="/?next=/predictions">sign in</a>.' : esc(J.error)}</div>`; return; }
+  document.body.classList.toggle('pub', !!J.public);   // signed out: read-only, no bet logging
+  if(J.public && !document.getElementById('pubintro')){ const d = document.createElement('p'); d.id = 'pubintro'; d.className = 'note';
+    d.style.cssText = 'margin:0 0 12px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;line-height:1.45';
+    d.innerHTML = 'Every open Real Sports prediction market next to the sportsbooks. <b>Fair</b> is the books\' price with their margin taken out; <b>EV</b> is how much a side returns on average at Real\'s price - green means Real is underpricing it. <a href="/?next=/predictions">Sign in</a> to log your bets and track your record.';
+    const l = $('#list'); l.parentNode.insertBefore(d, l); }
   applyMe(J.me); autoPort(); try { localStorage.setItem('rb_pred_alerts', (J.owner || J.port) ? '1' : '0'); } catch (e) {} /* Notifications tab (Dennis, 2026-11-23): everyone, but only inside the installed web app - push alerts only
      reach a phone from there. */
   const nOn = !!(J && !J.error && isApp()); $('#tabs [data-t="n"]').hidden = !nOn; $('#tabs').classList.toggle('t5', nOn);
