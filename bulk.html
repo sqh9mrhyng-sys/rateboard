@@ -355,9 +355,15 @@ function draw(){
       <div class="px"><button class="x" data-hide="${esc(r.key)}" title="Hide">✕</button>${w ? r100(w.v) : '-'}<small>worth</small></div></div>`).join('') + (hidden.size ? `<div class="row"><span class="note">${hidden.size} hidden · <a href="#" id="unhide">show them again</a></span></div>` : ''), l.length,
       'Priced from sales of the same player and season. Search to find one, ✕ to hide.');
   }
-  // All live listings, ending soonest.
-  const l = D.rows.filter(pass).sort((a, b) => a.endsAt - b.endsAt);
-  out(l.slice(0, shown).map(r => `<div class="row"><div>${nameCell(r)}<div class="sub">${esc(r.sp)} ${esc(seasonLbl(r.sport, r.season))} · rating ${fmt(r.rating)} · ends in ${left(r.endsAt)}${r.bids ? ` · ${r.bids} bids` : ''}</div>${openA(r)}</div>
+  // All live listings, ending soonest. Max rax per rating (a member, 2026-11-27: "only show cards 40/1 and under").
+  const rprOf = r => r.rating > 0 && nowPrice(r) != null ? nowPrice(r) / r.rating : null;
+  $('#bar2').hidden = false; $('#bar2').innerHTML = `<label class="note" style="display:flex;align-items:center;gap:6px">At most <input id="maxr" type="number" min="0" step="0.5" inputmode="decimal" placeholder="any" style="width:80px" value="${esc(ls.get('bulk_maxr') || '')}">/1</label><select id="lsort"><option value="end">Ending soonest</option><option value="rpr">Cheapest per rating</option></select>`;
+  $('#lsort').value = ls.get('bulk_lsort') || 'end';
+  $('#maxr').oninput = e => { ls.set('bulk_maxr', e.target.value); clearTimeout(window._mrT); window._mrT = setTimeout(() => { shown = 150; draw(); setTimeout(() => { const m = $('#maxr'); if(m){ m.focus(); m.setSelectionRange(m.value.length, m.value.length); } }, 0); }, 400); };
+  $('#lsort').onchange = e => { ls.set('bulk_lsort', e.target.value); draw(); };
+  const mx = Number(ls.get('bulk_maxr')) || 0;
+  const l = D.rows.filter(pass).filter(r => !mx || (rprOf(r) != null && rprOf(r) <= mx)).sort(ls.get('bulk_lsort') === 'rpr' ? (a, b) => (rprOf(a) ?? 1e9) - (rprOf(b) ?? 1e9) : (a, b) => a.endsAt - b.endsAt);
+  out(l.slice(0, shown).map(r => `<div class="row"><div>${nameCell(r)}<div class="sub">${esc(r.sp)} ${esc(seasonLbl(r.sport, r.season))} · rating ${fmt(r.rating)}${rprOf(r) != null ? ` · <b>${rprOf(r).toFixed(1)}/1</b>` : ''} · ends in ${left(r.endsAt)}${r.bids ? ` · ${r.bids} bids` : ''}</div>${openA(r)}</div>
     <div class="px">${fmt(nowPrice(r))}<small>${r.buyNow != null ? 'buy now' : r.curBid != null ? 'current bid' : 'min bid'}</small></div></div>`).join(''), l.length, 'Every live listing, ending soonest.');
 }
 const inSpan = x => { const [a, b] = span(); return x.endsAt >= a && x.endsAt <= b; };
