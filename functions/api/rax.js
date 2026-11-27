@@ -9941,7 +9941,8 @@ export async function onRequestGet(ctx) {
     ctx.waitUntil(boostRefresh(env).catch(() => {}));
     ctx.waitUntil(boardAutoMod(env).catch(() => {}));
     ctx.waitUntil(swapCommentSweep(env).catch(() => {}));
-    ctx.waitUntil(bulkWatchTick(env).catch(() => {}));   // Bulk player alerts (2026-11-27)   // swap comments at pack reset (2026-11-27)   // the board's comment checks (2026-11-27)
+    ctx.waitUntil(bulkWatchTick(env).catch(() => {}));
+    ctx.waitUntil((async () => { if (await env.RATEBOARD_KV.get('projgk_1127')) return; await env.RATEBOARD_KV.put('projgk_1127', '1', { expirationTtl: 30 * 86400 }); await env.RATEBOARD_KV.put('proj_force_v1_soccer', String(Date.now()), { expirationTtl: 7 * 86400 }); })().catch(() => {}));   // ONE-OFF: rebuild FC projections with goalkeepers   // Bulk player alerts (2026-11-27)   // swap comments at pack reset (2026-11-27)   // the board's comment checks (2026-11-27)
     ctx.waitUntil(grpDmTick(env).catch(() => {}));   // group giveaway DM (2026-11-26, ends Saturday)
     ctx.waitUntil(env.RATEBOARD_KV.delete('diag_bulkalone2_1126').catch(() => {}));
     ctx.waitUntil(env.RATEBOARD_KV.delete('diag_bulktimes_1126').catch(() => {}));

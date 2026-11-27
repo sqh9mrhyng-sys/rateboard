@@ -4182,7 +4182,8 @@ async function showMatches(raw){
     if(hs){ blocked.push({ name:p.name, cfg:hs,
       value: p.totalValue != null ? p.totalValue : (p.boost != null ? p.boost : null) }); continue; }
     // Everyone standing on this player, best price first — not just the top one.
-    const buyers = live.filter(o => samePlayer(o.player, p.name))
+    // FC (2026-11-27, member report): Real hands back your 2026-27 FC cards, so a buyer who only wants 2025-26 isn't a match.
+    const buyers = live.filter(o => samePlayer(o.player, p.name) && !(sport === 'FC' && o.season && o.season !== '2026-27'))
                        .sort((a,b) => b.rate - a.rate)
                        .map(o => ({ user:o.user, rate:o.rate, buyer: market.users[o.user]?.name || o.user, season: o.season || '', link: o.link || '' }));
     if(buyers.length) hits.push({

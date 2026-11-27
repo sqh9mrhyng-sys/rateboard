@@ -5882,7 +5882,8 @@ async function projBuild(env, db, sp) {
      sat out (2026-11-13: Malachi Toney's Notre Dame game - out hurt - read as
      a 0-rax game played, so he wasn't seen missing it). */
   const foot = sp === 'ncaaf' || sp === 'nfl';
-  const played = x => (!useMin || x.min == null || Number(x.min) > 0) && !(foot && Number(x.ns) === 1 && !(Number(x.rax) > 0));
+  // FC goalkeepers (2026-11-27: none in FC projections): Real leaves their minutes at 0, so FC counts a game played the way fcMin does.
+  const played = x => (fc ? fcPlayed(x) : (!useMin || x.min == null || Number(x.min) > 0)) && !(foot && Number(x.ns) === 1 && !(Number(x.rax) > 0));
   const alias = fc ? (c => c) : projLearnAlias(sp, cur, sched);
   /* Per team, not one day for everyone (2026-11-25: NFL Week 12 was logged for a few players only, so the latest day in
      the log was Week 12 and everyone else's Week 12 read as a missed game - Emmett Johnson, Burden, Barkley and Caleb
@@ -5895,7 +5896,7 @@ async function projBuild(env, db, sp) {
   // Last season, per game actually played.
   const old = new Map();
   let lgPrev = null;
-  try { const r = await db.prepare(`SELECT playerId, SUM(rax) AS s, ${useMin ? 'SUM(CASE WHEN min IS NULL OR min > 0 THEN 1 ELSE 0 END)' : 'COUNT(*)'} AS n FROM gamelog
+  try { const r = await db.prepare(`SELECT playerId, SUM(rax) AS s, ${useMin ? `SUM(CASE WHEN min IS NULL OR min > 0${fc ? " OR UPPER(position)='G'" : ''} THEN 1 ELSE 0 END)` : 'COUNT(*)'} AS n FROM gamelog
         WHERE sport=? AND season=? AND rax IS NOT NULL AND (seasonType IS NULL OR seasonType='regularseason') GROUP BY playerId`).bind(sp, prev).all();
     let ts = 0, tn = 0;
     for (const x of (r.results || [])) { const n = Number(x.n) || 0; if (n) { old.set(Number(x.playerId), [Number(x.s) / n, n]); ts += Number(x.s); tn += n; } }
