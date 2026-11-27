@@ -3819,7 +3819,8 @@ export async function swapAccess(env, request) {
 const MEMBER_OPS = new Set(['confirm', 'recbuys', 'myhour', 'me', 'save', 'keep', 'touch', 'giveprefs', 'packstoday', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'ownercounts', 'usersearch', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
 const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan', 'search', 'otdpool']);
 // Open to every signed-in member: OTD's page, and the Rate Board's Exclude owned list (2026-11-25: members without Swaps got a 403 and "0 passes left out").
-const PUBLIC_OPS = new Set(['projections']);   // signed-out visitors (2026-11-27); grows as pages open up
+const PUBLIC_OPS = new Set(['projections']);
+const PRED_PUB_MEMO = { at: 0, text: '' };   // the EV page for signed-out visitors   // signed-out visitors (2026-11-27); grows as pages open up
 const TEST_OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'search', 'otdpool', 'otdloadouts', 'mypassnames']);
 
 /* ---------- Moderation (Dennis, 2026-11-11) ----------
@@ -6862,7 +6863,15 @@ async function handle({ request, env, waitUntil }) {
   }
   if (op === 'predev') {
     const who = String(acc.who || '').toLowerCase();
-    if (!who) return json({ error: 'Sign in first.' }, 401);
+    /* Signed out (2026-11-27, for AdSense): the same games and EV everyone sees, nothing account-specific and no
+       credit counts. Built at most once a minute; limited per address. */
+    if (!who) {
+      if (!(await allow(url.origin, 'pub:predev:' + (request.headers.get('cf-connecting-ip') || ''), 60, 60))) return json({ error: 'Too many loads - wait a minute.' }, 429);
+      if (!PRED_PUB_MEMO.text || Date.now() - PRED_PUB_MEMO.at > 60000) { let x = null; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_ev_v1')) || 'null'); } catch (e) {}
+        let gx = null; try { gx = JSON.parse((await env.RATEBOARD_KV.get('pred_gamextra_v1')) || 'null'); } catch (e) {}
+        PRED_PUB_MEMO.text = JSON.stringify({ public: true, gx, at: x ? x.at : null, games: x ? x.games || [] : [] }); PRED_PUB_MEMO.at = Date.now(); }
+      return new Response(PRED_PUB_MEMO.text, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
+    }
     if (!PRED_PUBLIC && who !== 'dennis' && !(await predAcc()).includes(who)) return forbidden('Predictions is invite-only for now - ask Dennis for access.');
     let x = null; try { x = JSON.parse((await env.RATEBOARD_KV.get('pred_ev_v1')) || 'null'); } catch (e) {}
     const owner = who === 'dennis' || undefined, port = !!predPortTok(env, who) || undefined;

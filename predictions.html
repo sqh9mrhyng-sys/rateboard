@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Predictions EV - Rax Academy</title>
+<meta name="description" content="Real Sports prediction markets compared with sportsbook odds: the fair price of every game and which side has positive expected value (+EV), updated through the day.">
 <meta name="robots" content="noindex">
 <style>
   :root{--bg:#141925;--panel:#1d2433;--panel2:#242c3d;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;--good:#3fbf7f;--bad:#e5534b;--live:#ff4d5e}
@@ -548,7 +549,7 @@ async function load(){
   applyMe(J.me); autoPort(); try { localStorage.setItem('rb_pred_alerts', (J.owner || J.port) ? '1' : '0'); } catch (e) {} /* Notifications tab (Dennis, 2026-11-23): everyone, but only inside the installed web app - push alerts only
      reach a phone from there. */
   const nOn = !!(J && !J.error && isApp()); $('#tabs [data-t="n"]').hidden = !nOn; $('#tabs').classList.toggle('t5', nOn);
-  if(!J.keySet){ $('#list').innerHTML = '<div class="empty">The Odds API key isn\'t on the server yet.</div>'; return; }
+  if(!J.keySet && !J.public){ $('#list').innerHTML = '<div class="empty">The Odds API key isn\'t on the server yet.</div>'; return; }
   { const ae = document.activeElement; if (!(ae && ae.closest && ae.closest('#vr form'))) drawArb(); }
   draw(); focusGo(); if (!$('#vb').hidden && !(document.activeElement && document.activeElement.dataset && (document.activeElement.dataset.amt || document.activeElement.dataset.pay))) drawBets(); else $('#bn').textContent = BETS.filter(b => !b.res).length ? `(${BETS.filter(b => !b.res).length})` : '';
 }
