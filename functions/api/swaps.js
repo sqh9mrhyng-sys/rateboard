@@ -4101,24 +4101,27 @@ async function moderate(env, db, dry) {
   for (const m of ms) if (!off(m.status)) { addPair(m.a, m.b, Number(m.dueAt)); addPair(m.b, m.a, Number(m.dueAt)); }
   for (const s of ss) if (!off(s.status)) { addPair(s.buyer, s.seller, Number(s.dueAt)); addPair(s.seller, s.buyer, Number(s.dueAt)); }
   const state = new Map(st.map(s => [s.key, s]));
+  /* Reports that can't count close themselves, and the reporter is told why (Dennis, 2026-11-27: "shouldn't swap
+     reports be auto resolved for the most part?"): the swap was called off, or no swap between them was found. */
+  const shut = [];
   const first = new Map(), handled = [], voided = await kvObj(env, MOD_VOIDED_KV), force = await kvObj(env, MOD_FORCE_KV);
   for (const r of reps) {
     const by = String(r.by_user || ''), ts = Number(r.ts) || 0;
     let tgt = null, period = null, src = null;
     if (r.m160) {
       const s = sById.get(Number(r.m160));
-      if (!s || (s.buyer !== by && s.seller !== by)) { out.noSwap++; continue; }
-      if (off(s.status)) { out.calledOff++; continue; }
+      if (!s || (s.buyer !== by && s.seller !== by)) { out.noSwap++; shut.push({ r, why: 'noswap' }); continue; }
+      if (off(s.status)) { out.calledOff++; shut.push({ r, why: 'off' }); continue; }
       tgt = s.buyer === by ? s.seller : s.buyer; period = Number(s.dueAt); src = { s, by };
     } else if (r.matchId) {
       const m = mById.get(Number(r.matchId));
-      if (!m || (m.a !== by && m.b !== by)) { out.noSwap++; continue; }
-      if (off(m.status)) { out.calledOff++; continue; }
+      if (!m || (m.a !== by && m.b !== by)) { out.noSwap++; shut.push({ r, why: 'noswap' }); continue; }
+      if (off(m.status)) { out.calledOff++; shut.push({ r, why: 'off' }); continue; }
       tgt = m.a === by ? m.b : m.a; period = Number(m.dueAt); src = { m, by };
     } else {
-      const u = byName.get(lc(r.target)); if (!u || u.key === by) { out.noSwap++; continue; }
+      const u = byName.get(lc(r.target)); if (!u || u.key === by) { out.noSwap++; shut.push({ r, why: 'noswap' }); continue; }
       const times = (pairs.get(by + '|' + u.key) || []).filter(t => t <= ts + MOD_EARLY && t >= ts - MOD_LOOKBACK);
-      if (!times.length) { out.noSwap++; continue; }
+      if (!times.length) { out.noSwap++; shut.push({ r, why: 'noswap' }); continue; }
       tgt = u.key; period = Math.max(...times);
       const m = ms.find(x => !off(x.status) && Number(x.dueAt) === period && ((x.a === by && x.b === tgt) || (x.b === by && x.a === tgt)));
       const s1 = m ? null : ss.find(x => !off(x.status) && Number(x.dueAt) === period && ((x.buyer === by && x.seller === tgt) || (x.seller === by && x.buyer === tgt)));
@@ -4198,7 +4201,16 @@ async function moderate(env, db, dry) {
     const ids = handled.slice(i, i + 80);
     await db.prepare(`UPDATE swap_reports SET status='auto' WHERE status='open' AND rowid IN (${ids.map(() => '?').join(',')})`).bind(...ids).run();
   }
-  if (!dry) try { await env.RATEBOARD_KV.put('mod_summary_v1', JSON.stringify({ at: Date.now(), reports: out.reports, counted: out.counted, warned: out.warned, struck: out.struck, banned: out.banned })); } catch (e) {}
+  if (!dry) for (const { r, why } of shut.slice(0, 60)) {
+    const c = await db.prepare("UPDATE swap_reports SET status='auto' WHERE status='open' AND rowid=?").bind(r.id).run().catch(() => null);
+    if (!(c && c.meta && c.meta.changes)) continue;
+    out.autoClosed = (out.autoClosed || 0) + 1;
+    const who = r.target ? '@' + String(r.target).replace(/^@/, '') : 'your partner';
+    await addNote(db, r.by_user, 'mod', why === 'off'
+      ? `Your Swaps report on ${who} was closed: that swap was called off before it happened, so it doesn't count against them.`
+      : `Your Swaps report on ${who} was closed: there's no swap between you two around that time, so it can't count. Reports need to be about a swap you were matched in.`);
+  }
+  if (!dry) try { await env.RATEBOARD_KV.put('mod_summary_v1', JSON.stringify({ at: Date.now(), reports: out.reports, counted: out.counted, warned: out.warned, struck: out.struck, banned: out.banned, autoClosed: out.autoClosed || 0, noSwap: out.noSwap, calledOff: out.calledOff, held: out.held || 0, early: out.early })); } catch (e) {}
   return out;
 }
 // A member's own record: warnings, strikes, ban and unban request.
