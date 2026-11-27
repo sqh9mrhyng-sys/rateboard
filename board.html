@@ -485,6 +485,7 @@
   .xbtn:hover{border-color:var(--bad);color:var(--bad)}
   .modal.modsheet{max-width:640px;max-height:90vh}
   .mtabs .mtn{font-size:11.5px;margin-left:4px;opacity:.85}
+  .mtabs button{padding-left:4px;padding-right:4px}
   .mchips{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 4px}
   .mchip{border:1px solid var(--line);border-radius:999px;padding:6px 12px;font-size:13px;font-weight:600;color:var(--mute)}
   .mchip b{color:var(--bone);margin-left:2px}
@@ -8513,7 +8514,7 @@ async function moderationPanel(tab){
   await pull();
   let cur = tab || 'inbox', filt = '';
   const box = modal('Moderation', `<div class="seg mtabs" role="tablist">
-      <button data-mt="inbox" aria-pressed="true">Inbox <b class="mtn" id="mt-n"></b></button><button data-mt="members" aria-pressed="false">Members</button><button data-mt="listings" aria-pressed="false">Listings</button></div>
+      <button data-mt="inbox" aria-pressed="true">Inbox <b class="mtn" id="mt-n"></b></button><button data-mt="members" aria-pressed="false">Members</button><button data-mt="listings" aria-pressed="false">Listings</button><button data-mt="auto" aria-pressed="false">Auto</button></div>
     <div id="mod-body"></div>`);
   box.querySelector('.modal').classList.add('modsheet');
   const bodyEl = box.querySelector('#mod-body');
@@ -8522,7 +8523,8 @@ async function moderationPanel(tab){
     for(const b of box.querySelectorAll('[data-mt]')) b.setAttribute('aria-pressed', String(b.dataset.mt === cur));
     if(cur === 'inbox') bodyEl.innerHTML = modInboxHTML(filt);
     else if(cur === 'members'){ bodyEl.innerHTML = modMembersHTML(); modBackup(box); }
-    else bodyEl.innerHTML = modListingsHTML();
+    else if(cur === 'listings') bodyEl.innerHTML = modListingsHTML();
+    else { bodyEl.innerHTML = '<p class="nohit">Loading…</p>'; modAutoHTML().then(h => { if(cur === 'auto') bodyEl.innerHTML = h; }); }
     setN();
   };
   const redrawKeep = () => { // same tab, same search text
@@ -8655,6 +8657,19 @@ async function modBackup(box){
     el.textContent = `Last backup ${n.ageMinutes < 60 ? n.ageMinutes + ' min' : (n.ageMinutes / 60).toFixed(1) + ' hrs'} ago - ${n.users} accounts, ${n.offers} listings.`;
     el.style.color = n.ageMinutes > 90 ? 'var(--bad)' : '';
   }catch(e){ el.textContent = 'Could not check backups.'; el.style.color = 'var(--bad)'; }
+}
+/* Auto tab: what the automatic checks did. Every listing's comment is read on Real; deleted comments and ones
+   with replies turned off come down by themselves (the buyer gets a note); comments posted by someone else are flagged. */
+async function modAutoHTML(){
+  let j; try{ j = await (await fetch('/api/swaps?op=automod')).json(); }catch(e){ j = { error: 'Could not reach the site.' }; }
+  if(j.error) return `<p class="nohit">${esc(j.error)}</p>`;
+  const WHY = { deleted: 'comment deleted', closed: 'replies turned off', notyours: 'comment posted by someone else' };
+  const rows = (j.log || []).map(x => `<div class="mcard"><div class="mtop"><span class="msrc ${x.act === 'removed' ? 's-board' : 's-swap'}">${x.act === 'removed' ? 'Taken down' : 'Flagged'}</span><span class="mm">${esc(modAgo(x.at))}</span></div>
+      <div class="mhead">${modUser(x.user)} <span class="mm">${esc(x.sport || '')}</span> ${esc(x.player || '')} <b class="num">${esc(x.rate)}</b>/1</div>
+      <div class="mm" style="margin-top:4px">${esc(WHY[x.why] || x.why)}${x.author ? ` - posted by @${esc(x.author)}` : ''}${x.link ? ` · <a class="mlink" href="${esc(x.link)}" target="_blank" rel="noopener">Comment ↗</a>` : ''}</div></div>`).join('');
+  return `<p class="mm" style="margin:2px 0 6px">Every listing's comment is checked on Real when it's posted and again every 3 hours. Deleted comments and comments with replies turned off come down by themselves, and the buyer gets a note. Comments posted by someone else are flagged here for you.</p>
+    <div class="statrow"><div class="stat"><b class="num">${j.checked || 0}</b><span>listings checked</span></div><div class="stat"><b class="num">${j.unread || 0}</b><span>waiting for a first check</span></div></div>
+    ${rows || '<div class="mempty"><b>Nothing yet</b>Taken-down and flagged listings show up here.</div>'}`;
 }
 function adminPanel(){ return moderationPanel('inbox'); }
 

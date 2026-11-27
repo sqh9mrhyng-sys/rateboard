@@ -1805,6 +1805,78 @@ export async function draftScan(env) {
 }
 /* Real's own link codes (hashids, salt 'routing', min length 11): a player is
    [2, sport code, 0, id], a pass is [18, 0, 0, passId]. */
+/* Board auto-moderation (Dennis, 2026-11-27: "I want the moderation to be automatic").
+   Every listing's comment is read on Real - comments/news/{post}/replies/{comment}?limit=1 gives the
+   comment itself as parentComment. A deleted comment (deletedAt set, or gone) or one with replies
+   turned off means sellers can't reach the buyer, so the listing comes down and the buyer gets a
+   note. A comment posted by someone other than the listing's owner is only flagged for Dennis.
+   New listings are read first, then each one again every 3 hours. A few a minute on the market
+   account; a 429 rests it 10 minutes. */
+const AM_DDL = 'CREATE TABLE IF NOT EXISTS board_cm (offerId TEXT PRIMARY KEY, link TEXT, checkedAt INTEGER, state TEXT, author TEXT)';
+const AM_LOG = 'board_automod_log_v1';
+export function routeDecode(id) {
+  const ALPHA0 = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890', SEPS0 = 'cfhistuCFHISTU', salt = Array.from('routing');
+  const shuffle = (alpha, sl) => { if (!sl.length) return alpha; const t = alpha.slice();
+    for (let i = t.length - 1, v = 0, p = 0; i > 0; i--, v++) { v %= sl.length; const n = sl[v].codePointAt(0); p += n; const j = (n + v + p) % i; [t[i], t[j]] = [t[j], t[i]]; } return t; };
+  let alpha = [...new Set(Array.from(ALPHA0))], seps = Array.from(SEPS0).filter(c => alpha.includes(c));
+  alpha = alpha.filter(c => !seps.includes(c)); seps = shuffle(seps, salt);
+  if (!seps.length || alpha.length / seps.length > 3.5) { let sl = Math.ceil(alpha.length / 3.5); if (sl === 1) sl = 2;
+    if (sl > seps.length) { const d = sl - seps.length; seps = seps.concat(alpha.slice(0, d)); alpha = alpha.slice(d); } else seps = seps.slice(0, sl); }
+  alpha = shuffle(alpha, salt);
+  const gc = Math.ceil(alpha.length / 12); let guards; if (alpha.length < 3) { guards = seps.slice(0, gc); seps = seps.slice(gc); } else { guards = alpha.slice(0, gc); alpha = alpha.slice(gc); }
+  try { const parts = String(id).split(new RegExp('[' + guards.join('') + ']')); let b = parts.length === 3 || parts.length === 2 ? parts[1] : parts[0];
+    const lottery = b[0]; b = b.slice(1); let a = alpha; const out = [];
+    for (const s of b.split(new RegExp('[' + seps.join('') + ']'))) { a = shuffle(a, [lottery].concat(salt, a).slice(0, a.length)); let n = 0; for (const c of s) { const i = a.indexOf(c); if (i < 0) return null; n = n * a.length + i; } out.push(n); }
+    return out; } catch (e) { return null; }
+}
+const AM_TYPE = { 15: 'news', 14: 'posts' };
+export async function readComment(env, link) {
+  const m = String(link || '').match(/realapp\.com\/([A-Za-z0-9]+)\/(\d{6,})/); if (!m) return { state: 'badlink' };
+  const nums = routeDecode(m[1]); if (!nums || nums.length < 4) return { state: 'badlink' };
+  const kind = AM_TYPE[nums[0]]; if (!kind) return { state: 'unknown' };
+  const tok = env.RS_MARKET_TOKEN; if (!tok) return { state: 'notoken' };
+  let r; try { r = await fetch(`https://web.realapp.com/comments/${kind}/${nums[3]}/replies/${m[2]}?limit=1`, { headers: rsHeaders(tok) }); } catch (e) { return { state: 'error' }; }
+  if (r.status === 429) return { state: 'busy' };
+  if (r.status === 404) return { state: 'deleted' };
+  if (!r.ok) return { state: 'error', status: r.status };
+  const j = await r.json().catch(() => null), c = j && j.parentComment; if (!c) return { state: 'deleted' };
+  const u = c.user || {}, author = String(u.userName || u.username || u.name || '').toLowerCase();
+  return { state: c.deletedAt ? 'deleted' : c.repliesClosed ? 'closed' : 'ok', author, text: String(c.plainText || '').slice(0, 200) };
+}
+async function amLog(env, e) { let l = []; try { l = JSON.parse((await env.RATEBOARD_KV.get(AM_LOG)) || '[]') || []; } catch (x) {}
+  l.unshift({ at: Date.now(), ...e }); await env.RATEBOARD_KV.put(AM_LOG, JSON.stringify(l.slice(0, 150))); }
+export async function boardAutoMod(env) {
+  const db = env.RATEBOARD_DB; if (!db || !env.RS_MARKET_TOKEN) return;
+  if (await env.RATEBOARD_KV.get('automod_rest')) return;
+  if (await env.RATEBOARD_KV.get('automod_lock')) return; await env.RATEBOARD_KV.put('automod_lock', '1', { expirationTtl: 120 });
+  try { await db.prepare(AM_DDL).run();
+    // Never read, or the link changed, first; then the oldest read over 3 hours ago.
+    const due = ((await db.prepare(`SELECT o.id, o.user, o.sport, o.player, o.rate, o.link FROM offers o LEFT JOIN board_cm c ON c.offerId = o.id
+      WHERE o.link IS NOT NULL AND o.link <> '' AND (c.offerId IS NULL OR c.link <> o.link OR c.checkedAt < ?) ORDER BY (c.offerId IS NULL) DESC, c.checkedAt LIMIT 4`).bind(Date.now() - 3 * 3600000).all()).results) || [];
+    for (const o of due) {
+      const r = await readComment(env, o.link);
+      if (r.state === 'busy') { await env.RATEBOARD_KV.put('automod_rest', '1', { expirationTtl: 600 }); break; }
+      if (r.state === 'error' || r.state === 'notoken') continue;
+      await db.prepare('INSERT INTO board_cm (offerId, link, checkedAt, state, author) VALUES (?, ?, ?, ?, ?) ON CONFLICT(offerId) DO UPDATE SET link=excluded.link, checkedAt=excluded.checkedAt, state=excluded.state, author=excluded.author')
+        .bind(o.id, o.link, Date.now(), r.state, r.author || null).run();
+      if (r.state === 'deleted' || r.state === 'closed') {
+        await db.prepare('DELETE FROM offers WHERE id=?').bind(o.id).run();
+        const why = r.state === 'deleted' ? 'your comment was deleted' : 'replies on your comment are turned off, so sellers can’t reach you';
+        await addNote(db, o.user, 'mod', `Your ${o.player} ${o.rate}/1 listing on the board was taken down: ${why}. If you're still buying, post it again with a new comment.`);
+        await amLog(env, { act: 'removed', why: r.state, user: o.user, player: o.player, sport: o.sport, rate: o.rate, link: o.link });
+      } else if (r.state === 'ok' && r.author) {
+        // Whose comment it is: their linked Real name, else their board name.
+        const n = await db.prepare('SELECT u.rsName AS a, s.rsUser AS b FROM (SELECT ? AS k) q LEFT JOIN users u ON LOWER(u.key)=q.k LEFT JOIN swap_users s ON LOWER(s.key)=q.k').bind(String(o.user).toLowerCase()).first().catch(() => null);
+        const names = [o.user, n && n.a, n && n.b].filter(Boolean).map(x => String(x).toLowerCase().replace(/^@/, ''));
+        if (!names.includes(r.author)) { const seen = await db.prepare("SELECT 1 AS x FROM board_cm WHERE offerId=? AND state='ok' AND author=? AND checkedAt < ?").bind(o.id, r.author, Date.now() - 60000).first().catch(() => null);
+          if (!seen) await amLog(env, { act: 'flag', why: 'notyours', user: o.user, author: r.author, player: o.player, sport: o.sport, rate: o.rate, link: o.link }); }
+      }
+      await new Promise(res => setTimeout(res, 1500));
+    }
+  } catch (e) { try { await env.RATEBOARD_KV.put('automod_err', String(e.message || e).slice(0, 200), { expirationTtl: 86400 }); } catch (x) {} }
+  finally { try { await env.RATEBOARD_KV.delete('automod_lock'); } catch (e) {} }
+}
+
 export function routeId(numbers) {
   const ALPHA0 = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890', SEPS0 = 'cfhistuCFHISTU';
   const salt = Array.from('routing'), minLength = 11;
@@ -7487,6 +7559,14 @@ async function handle({ request, env, waitUntil }) {
 
   /* ---- Admin inbox ---- */
   if (op === 'inbox') return json({ items: await inboxItems(env, db) });
+  if (op === 'automod') {   // the board's automatic moderation: what it did, and what it's watching
+    if (!acc.admin) return forbidden('Admins only.');
+    let log = []; try { log = JSON.parse((await env.RATEBOARD_KV.get(AM_LOG)) || '[]') || []; } catch (e) {}
+    try { await db.prepare(AM_DDL).run(); } catch (e) {}
+    const c = await db.prepare("SELECT COUNT(*) AS n, SUM(checkedAt > ?) AS day FROM board_cm").bind(Date.now() - 86400000).first().catch(() => null);
+    const left = await db.prepare("SELECT COUNT(*) AS n FROM offers o LEFT JOIN board_cm c ON c.offerId=o.id WHERE o.link <> '' AND c.offerId IS NULL").first().catch(() => null);
+    return json({ log, checked: c && c.n, checkedDay: c && c.day, unread: left && left.n });
+  }
   if (op === 'inboxact' && request.method === 'POST') {
     let b = {}; try { b = await request.json(); } catch (e) {}
     const action = ['done', 'declined', 'delete', 'reply', 'replyabout', 'restrict', 'ban', 'refunded'].includes(b.action) ? b.action : null;
