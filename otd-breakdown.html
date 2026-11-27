@@ -72,7 +72,7 @@
   <div id="v-view" hidden>
     <section>
       <h2>Add players</h2>
-      <p class="note">Pick players from any season - held or not - and see what they'd claim on this-day: each one's rax on every date of the year × the level you give him, after the claim limit. Overlaps show the dates where two of them fight for the same claim. All-time caps aren't counted here.</p>
+      <p class="note">Pick players from any season - held or not - and see what they'd claim on this-day: each one's rax on every date of the year × the level you give him, after the claim limit. Overlaps show the dates where two of them fight for the same claim. <b>Spillage</b> is what your other players stop claiming because of the new one, and <b>Net gain</b> is what he really adds. All-time caps aren't counted here.</p>
       <div class="bar">
         <input id="vq" placeholder="Search a player (any sport or season)" autocomplete="off" style="flex:1 1 240px">
         <label class="note">New players at <select id="vdef"></select></label>
@@ -86,7 +86,7 @@
         <div class="tile"><div class="k">Days with a claim</div><div class="v" id="vt-days">–</div></div>
         <div class="tile"><div class="k">Overlap days</div><div class="v" id="vt-over">–</div></div>
       </div>
-      <div class="scroll"><table><thead><tr><th>Player</th><th>Level</th><th>Games</th><th>Rax at level / yr</th><th>Claimed / yr</th><th>Lost to overlaps</th><th></th></tr></thead><tbody id="vsel"><tr><td colspan="7" class="note">Search above to add players.</td></tr></tbody></table></div>
+      <div class="scroll"><table><thead><tr><th>Player</th><th>Level</th><th>Games</th><th>Rax at level / yr</th><th>Claimed / yr</th><th>Lost to overlaps</th><th title="What your other players stop claiming because of him">Spillage</th><th title="Claimed minus spillage: what he really adds">Net gain</th><th></th></tr></thead><tbody id="vsel"><tr><td colspan="9" class="note">Search above to add players.</td></tr></tbody></table></div>
     </section>
     <section>
       <h2>Best players to add</h2>
@@ -905,11 +905,16 @@ function vDraw(){
   const E = vEntries(), claims = Number($('#vclaims').value), s = vScore(E, claims); vLast = { E, s };
   $('#vt-total').textContent = fmt(s.total); $('#vt-lost').textContent = fmt(s.lost); $('#vt-days').textContent = fmt(s.days); $('#vt-over').textContent = fmt(s.over.length);
   const lbl = e => `${esc(e.name || 'Player')} <span class="note">${esc(SPORT[e.sport] || e.sport)} ${esc(seasonLbl(e.sport, e.season))}${e.mine ? ' · your pass' : ''}</span>`;
-  $('#vsel').innerHTML = E.map((e, i) => { const raw = e.games.reduce((a, g) => a + g[1], 0) * e.mult;
+  /* Spillage (a member, 2026-11-27): an added player also pushes your other players out of claims. With him vs without
+     him: what the others lose is spillage, and the total's change is what he really adds. */
+  const spill = E.map((e, i) => { if(e.mine) return null; const s2 = vScore(E.filter((_, j) => j !== i), claims);
+    return { spill: Math.max(0, s2.total - (s.total - s.per[i].won)), net: s.total - s2.total }; });
+  $('#vsel').innerHTML = E.map((e, i) => { const raw = e.games.reduce((a, g) => a + g[1], 0) * e.mult, sp = spill[i];
     return `<tr><td>${lbl(e)}</td><td>${e.mine ? `<span class="note">${e.mult}x</span>` : `<select data-lv="${esc(e.key)}">${lvlOpts(e.k)}</select>`}</td><td>${fmt(e.games.length)}</td><td>${fmt(raw)}</td>
       <td><b>${fmt(s.per[i].won)}</b></td><td style="color:${s.per[i].lost ? 'var(--bad)' : 'var(--mute)'}">${s.per[i].lost ? '−' + fmt(s.per[i].lost) : '–'}</td>
+      <td style="color:${sp && sp.spill ? 'var(--bad)' : 'var(--mute)'}">${sp ? (sp.spill ? '−' + fmt(sp.spill) : '–') : ''}</td><td>${sp ? `<b style="color:var(--ok)">+${fmt(sp.net)}</b>` : ''}</td>
       <td>${e.mine ? '' : `<button class="x" data-rm="${esc(e.key)}" aria-label="Remove">✕</button>`}</td></tr>`; }).join('')
-    || '<tr><td colspan="7" class="note">Search above to add players.</td></tr>';
+    || '<tr><td colspan="9" class="note">Search above to add players.</td></tr>';
   // Overlaps: the dates where someone loses a claim, worst first.
   const ov = s.over.map(d => { const r = s.dayRes.get(d); return [d, r.total - r.earned, r]; }).sort((a, b) => b[1] - a[1]);
   $('#vover').innerHTML = ov.length ? `<p class="note" style="margin:0 0 8px">${ov.length} dates where the claim limit leaves rax behind (${fmt(s.lost)} a year). Worst first:</p><div class="scroll"><table><thead><tr><th>Date</th><th>Claimed</th><th>Left behind</th><th>Who</th></tr></thead><tbody>`
