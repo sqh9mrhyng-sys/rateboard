@@ -1983,6 +1983,37 @@ export async function swapCommentSweep(env) {
   finally { try { await env.RATEBOARD_KV.delete('swcm_lock'); } catch (e) {} }
 }
 
+/* Player alerts on Bulk (Dennis, 2026-11-27, from a member: "notified when a certain number of a specific card are
+   on the market"): a member picks a player (sport + season) and the most rax per rating point they'll pay; when at
+   least N live listings of that player are at or under it (buy now, else the current / minimum bid), they get a push.
+   Each listing is only told about once. Checked every 5 minutes; at most 25 alerts a member. */
+const BW_DDL = 'CREATE TABLE IF NOT EXISTS bulk_watch (id TEXT PRIMARY KEY, who TEXT, sport TEXT, season INTEGER, playerId INTEGER, name TEXT, maxRpr REAL, minN INTEGER, at INTEGER, lastAt INTEGER, told TEXT)';
+const BW_SPN = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf', soccer: 'FC', ufc: 'UFC' };
+const bwPrice = x => Number(x.buyNow) > 0 ? Number(x.buyNow) : Math.max(Number(x.minBid) || 0, Number(x.curBid) || 0) || null;
+async function bwMatches(db, w) {
+  const rows = ((await db.prepare('SELECT id, endsAt, rarity, rating, buyNow, minBid, curBid FROM bulk_listings WHERE sport=? AND season=? AND playerId=? AND endsAt > ?').bind(w.sport, w.season, w.playerId, Date.now()).all().catch(() => ({ results: [] }))).results) || [];
+  return rows.map(x => ({ ...x, price: bwPrice(x) })).filter(x => x.price && Number(x.rating) > 0).map(x => ({ ...x, rpr: x.price / Number(x.rating) }))
+    .filter(x => x.rpr <= Number(w.maxRpr) + 1e-9).sort((a, b) => a.rpr - b.rpr);
+}
+export async function bulkWatchTick(env) {
+  const db = env.RATEBOARD_DB; if (!db) return;
+  const last = Number(await env.RATEBOARD_KV.get('bw_last')) || 0; if (Date.now() - last < 5 * 60000) return;
+  await env.RATEBOARD_KV.put('bw_last', String(Date.now()));
+  try { await db.prepare(BW_DDL).run();
+    const ws = ((await db.prepare('SELECT * FROM bulk_watch LIMIT 2000').all()).results) || [];
+    for (const w of ws) {
+      const hit = await bwMatches(db, w); if (hit.length < Math.max(1, Number(w.minN) || 1)) continue;
+      const told = new Set(parse(w.told, []) || []), fresh = hit.filter(x => !told.has(String(x.id))); if (!fresh.length) continue;
+      const c = hit[0], nm = `${w.name} ${BW_SPN[w.sport] || w.sport} ${w.season}`;
+      await pushTo(env, db, w.who, { title: `🔔 ${w.name}: ${hit.length} at ${Number(w.maxRpr).toFixed(2)} rax/rating or less`,
+        body: `Cheapest: ${c.rarity || ''} ${Math.round(c.rating)} for ${Math.round(c.price).toLocaleString()} rax (${c.rpr.toFixed(2)}/rating)${Number(c.buyNow) > 0 ? ' buy now' : ' bid'} · ${nm}`,
+        url: '/bulk#watch=' + encodeURIComponent(`${w.sport}:${w.season}:${w.playerId}`), tag: 'bw-' + w.id });
+      for (const x of hit) told.add(String(x.id));
+      await db.prepare('UPDATE bulk_watch SET lastAt=?, told=? WHERE id=?').bind(Date.now(), JSON.stringify([...told].slice(-300)), w.id).run();
+    }
+  } catch (e) { try { await env.RATEBOARD_KV.put('bw_err', String(e.message || e).slice(0, 200), { expirationTtl: 86400 }); } catch (x) {} }
+}
+
 export function routeId(numbers) {
   const ALPHA0 = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890', SEPS0 = 'cfhistuCFHISTU';
   const salt = Array.from('routing'), minLength = 11;
@@ -4003,7 +4034,7 @@ const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan', 'sear
 // Open to every signed-in member: OTD's page, and the Rate Board's Exclude owned list (2026-11-25: members without Swaps got a 403 and "0 passes left out").
 const PUBLIC_OPS = new Set(['projections']);
 const PRED_PUB_MEMO = { at: 0, text: '' };   // the EV page for signed-out visitors   // signed-out visitors (2026-11-27); grows as pages open up
-const TEST_OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'search', 'otdpool', 'otdloadouts', 'mypassnames', 'myboardpasses']);
+const TEST_OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'search', 'otdpool', 'otdloadouts', 'mypassnames', 'myboardpasses', 'bulkwatch', 'bulkplayers']);
 
 /* ---------- Moderation (Dennis, 2026-11-11) ----------
    Reports on swap / 160 partners are counted automatically:
@@ -7093,6 +7124,31 @@ async function handle({ request, env, waitUntil }) {
   /* Bulk ratings (open to everyone, 2026-11-15): live listings, ended ones (history),
      pack data for Grind, and the viewer's own passes. The shared part is built at most
      every 3 minutes per server process and kept as text, so a crowd costs one build. */
+  // Player alerts (see bulkWatchTick): list / add / change / remove. Anyone signed in.
+  if (op === 'bulkwatch') {
+    const who = String(acc.who || '').toLowerCase(); if (!who) return json({ error: 'Sign in first.' }, 401);
+    await db.prepare(BW_DDL).run();
+    if (request.method === 'POST') { let b = {}; try { b = await request.json(); } catch (e) {}
+      if (b.del) await db.prepare('DELETE FROM bulk_watch WHERE id=? AND who=?').bind(String(b.del), who).run();
+      const num = (v, lo, hi) => { const n = Number(v); return Number.isFinite(n) && n >= lo && n <= hi ? n : null; };
+      if (b.add) { const a = b.add, sp = String(a.sport || '').toLowerCase(), se = num(a.season, 2000, 2100), pid = num(a.playerId, 1, 1e12), mx = num(a.maxRpr, 0.01, 1000), n = num(a.minN, 1, 50) || 1;
+        if (!BW_SPN[sp] || !se || !pid || !mx) return json({ error: 'Pick a player and a rax per rating.' }, 400);
+        const c = await db.prepare('SELECT COUNT(*) AS n FROM bulk_watch WHERE who=?').bind(who).first(); if (c && c.n >= 25) return json({ error: 'You can have 25 alerts - remove one first.' }, 400);
+        const ex = await db.prepare('SELECT id FROM bulk_watch WHERE who=? AND sport=? AND season=? AND playerId=?').bind(who, sp, se, pid).first();
+        if (ex) await db.prepare('UPDATE bulk_watch SET maxRpr=?, minN=?, told=NULL WHERE id=?').bind(mx, n, ex.id).run();
+        else await db.prepare('INSERT INTO bulk_watch (id, who, sport, season, playerId, name, maxRpr, minN, at, told) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)').bind(crypto.randomUUID(), who, sp, se, pid, String(a.name || 'Player').slice(0, 80), mx, n, Date.now()).run(); }
+      if (b.set) { const mx = num(b.set.maxRpr, 0.01, 1000), n = num(b.set.minN, 1, 50); if (mx || n) await db.prepare('UPDATE bulk_watch SET maxRpr=COALESCE(?, maxRpr), minN=COALESCE(?, minN), told=NULL WHERE id=? AND who=?').bind(mx, n, String(b.set.id), who).run(); } }
+    const ws = ((await db.prepare('SELECT id, sport, season, playerId, name, maxRpr, minN, lastAt FROM bulk_watch WHERE who=? ORDER BY at DESC').bind(who).all()).results) || [];
+    for (const w of ws) { const h = await bwMatches(db, w); w.now = h.length; w.cheapest = h[0] ? { price: Math.round(h[0].price), rating: Math.round(h[0].rating), rpr: Math.round(h[0].rpr * 100) / 100, rarity: h[0].rarity } : null; w.sp = BW_SPN[w.sport] || w.sport; }
+    return json({ watches: ws });
+  }
+  // Players to pick for an alert: anyone sold or listed on Bulk lately.
+  if (op === 'bulkplayers') {
+    if (!acc.who) return json({ error: 'Sign in first.' }, 401);
+    const q = String(url.searchParams.get('q') || '').trim().toLowerCase().replace(/[%_]/g, '').slice(0, 40); if (q.length < 2) return json({ players: [] });
+    const rows = ((await db.prepare("SELECT sport, season, playerId, name, COUNT(*) AS n FROM bulk_results WHERE LOWER(name) LIKE ? AND endsAt > ? GROUP BY sport, season, playerId ORDER BY n DESC LIMIT 15").bind('%' + q + '%', Date.now() - 60 * 86400000).all().catch(() => ({ results: [] }))).results) || [];
+    return json({ players: rows.map(r => ({ ...r, sp: BW_SPN[r.sport] || r.sport })) });
+  }
   if (op === 'bulklist') {
     if (!(await allow(url.origin, 'bulk:' + clientIp(request), 20, 60))) return json({ error: 'Too many refreshes - wait a minute.' }, 429);
     const SPN = { nba: 'NBA', ncaam: 'CBB', nfl: 'NFL', ncaaf: 'CFB', nhl: 'NHL', mlb: 'MLB', wnba: 'WNBA', golf: 'Golf', soccer: 'FC', ufc: 'UFC' };

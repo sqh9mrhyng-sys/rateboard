@@ -1,5 +1,5 @@
 import { isAdminRequest, allow, clientIp, forbidden, sessionKey, ADMINS, touchSeen, userStats, sessionState } from '../../lib/auth.js';
-import { boardAutoMod, swapCommentSweep, grpDmTick, grpDmStatus, draftScan, draftCheck, draftGap, swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick, fcSchedule, whyNotFull, TAG_DEFS, scanProbe, boostProbe, wiltProbe, multProbe, untouchProbe, keepProbe, dennisProbe, pfpProbe, dmOwner, testPredPushOnce, tzProbe, cfbPassProbe, routeId, realWait, realBusy } from './swaps.js';
+import { boardAutoMod, swapCommentSweep, bulkWatchTick, grpDmTick, grpDmStatus, draftScan, draftCheck, draftGap, swapTick, dmTickKey, boostRefresh, swapAccess, fcKeysOf, fcLineupTick, fcSchedule, whyNotFull, TAG_DEFS, scanProbe, boostProbe, wiltProbe, multProbe, untouchProbe, keepProbe, dennisProbe, pfpProbe, dmOwner, testPredPushOnce, tzProbe, cfbPassProbe, routeId, realWait, realBusy } from './swaps.js';
 import { watchEnv, readSlow, readUse, jobOverBudget, addJobUse, jobUse, jobHistory, capNow } from '../../lib/dbwatch.js';
 import { packAllowed } from './kv.js';
 import { testerPagesFor } from '../../lib/testers.js';
@@ -9940,7 +9940,8 @@ export async function onRequestGet(ctx) {
       await fetch(`${origin}/api/swaps?op=scantick&k=${k}`, { cf: { cacheTtl: 0 } }).catch(() => {}); })().catch(() => {}));
     ctx.waitUntil(boostRefresh(env).catch(() => {}));
     ctx.waitUntil(boardAutoMod(env).catch(() => {}));
-    ctx.waitUntil(swapCommentSweep(env).catch(() => {}));   // swap comments at pack reset (2026-11-27)   // the board's comment checks (2026-11-27)
+    ctx.waitUntil(swapCommentSweep(env).catch(() => {}));
+    ctx.waitUntil(bulkWatchTick(env).catch(() => {}));   // Bulk player alerts (2026-11-27)   // swap comments at pack reset (2026-11-27)   // the board's comment checks (2026-11-27)
     ctx.waitUntil(grpDmTick(env).catch(() => {}));   // group giveaway DM (2026-11-26, ends Saturday)
     ctx.waitUntil(env.RATEBOARD_KV.delete('diag_bulkalone2_1126').catch(() => {}));
     ctx.waitUntil(env.RATEBOARD_KV.delete('diag_bulktimes_1126').catch(() => {}));

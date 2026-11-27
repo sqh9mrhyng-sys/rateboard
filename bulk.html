@@ -45,6 +45,10 @@
   .empty{padding:14px;color:var(--mute);font-size:14px}
   .injt{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:11px;font-weight:800;color:#e5484d;background:rgba(229,72,77,.14);vertical-align:1px}
   .injn{font-size:12px;color:#e5a33d;margin:3px 0 1px;font-style:italic}
+  .bell{background:none;border:0;padding:0 2px;margin-left:6px;font-size:15px;cursor:pointer;opacity:.55;vertical-align:1px} .bell.on{opacity:1}
+  .wsheet{border:1px solid var(--accent);border-radius:16px;padding:14px 16px;margin:0 0 14px;background:var(--panel)}
+  .wrow{margin:12px 0 2px;font-size:15px;line-height:2.2} .wrow input{width:78px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;font-size:16px}
+  .wbtns{display:flex;gap:8px;flex-wrap:wrap} .wbtns button{font:inherit;font-weight:800;font-size:14px;border-radius:10px;padding:10px 14px;cursor:pointer;background:var(--accent);color:#1a1205;border:0} .wbtns .ghost{background:none;color:var(--ink);border:1px solid var(--line)}
 </style>
 <script src="/theme.js"></script>
 <script src="/nav.js?v=9"></script>
@@ -185,7 +189,7 @@ function span(){
 function salesBook(){
   const [a, b] = span(), by = new Map(), byRar = new Map();
   for (const r of D.ended) { if(r.endsAt < a || r.endsAt > b) continue;
-    const k = kOf(r), o = by.get(k) || by.set(k, { k, name: r.name, rarity: r.rarity, sp: r.sp, sport: r.sport, season: r.season, url: r.url, sold: [], ended: 0 }).get(k); o.ended++;
+    const k = kOf(r), o = by.get(k) || by.set(k, { k, playerId: r.playerId, name: r.name, rarity: r.rarity, sp: r.sp, sport: r.sport, season: r.season, url: r.url, sold: [], ended: 0 }).get(k); o.ended++;
     if(SOLD(r)){ o.sold.push(r); if(r.rating){ const rk = `${r.sport}:${r.season}:${r.rarity}`; (byRar.get(rk) || byRar.set(rk, []).get(rk)).push(r.price / r.rating); } } }
   // Unsold ones count in sold/ended.
   for (const [k, t] of (D.unsold || [])) { if(t < a || t > b) continue; const o = by.get(k); if(o) o.ended++; }
@@ -218,6 +222,9 @@ async function load(){
   const sps = [...new Set(j.rows.concat(j.ended, j.mine).map(r => r.sp).filter(Boolean))].sort();
   $('#sp').innerHTML = '<option value="">All sports</option>' + sps.map(x => `<option>${esc(x)}</option>`).join(''); $('#sp').value = ls.get('bulk_sp') || '';
   $('#per').value = ls.get('bulk_per') || '7'; $('#from').value = ls.get('bulk_from') || ''; $('#to').value = ls.get('bulk_to') || '';
+  if(D.signedIn) await loadWatch();
+  // From a player-alert push: his live listings.
+  { const wk = new URLSearchParams(location.hash.slice(1)).get('watch'); if(wk){ const r = D.rows.concat(D.ended).find(x => wKey(x) === wk); if(r){ $('#q').value = r.name || ''; view = 'live'; } } }
   $('#seg').hidden = false; $('#bar').hidden = false; $('#list').hidden = false; setView(view);
 }
 function setView(v){ view = v; ls.set('bulk_view', v); shown = 150;
@@ -235,13 +242,35 @@ const pass = r => { const q = $('#q').value.trim().toLowerCase(), sp = $('#sp').
 const openA = r => r.link ? `<a class="open" href="${esc(r.link)}" target="_blank" rel="noopener">Open auction ↗</a>` : '';
 const lkRow = x => `<a class="lk${SOLD(x) && !x.odd ? '' : ' dim'}" href="${esc(x.link)}" target="_blank" rel="noopener"><b>${SOLD(x) ? fmt(x.price) : x.endsAt > Date.now() ? fmt(nowPrice(x)) : '-'}</b><span class="note">${x.endsAt > Date.now() ? 'live · ends in ' + left(x.endsAt) : day(x.endsAt)} · rating ${fmt(x.rating)}${x.how === 'buy now' ? ' · buy now' : ''}</span><span class="tag">${x.odd ? 'ignored · ' : ''}Open ↗</span></a>`;
 /* Injured players (Dennis, 2026-11-27: a member's Davante Adams still read 8,400 after his injury). */
+/* Player alerts (2026-11-27): 🔔 by a name sets "tell me when N of him are listed at X rax per rating or less". */
+let WATCH = new Map();
+const wKey = r => `${r.sport}:${r.season}:${r.playerId}`;
+const bell = r => D && D.signedIn && r.playerId ? `<button type="button" class="bell${WATCH.has(wKey(r)) ? ' on' : ''}" data-w="${esc(wKey(r))}" data-wn="${esc(r.name || '')}" title="Alert me when he's listed cheap" aria-label="Set an alert">${WATCH.has(wKey(r)) ? '🔔' : '🔕'}</button>` : '';
+async function wCall(body){ const t = ls.get('ratebrd_token_v1') || ''; return (await fetch('/api/swaps?op=bulkwatch', body ? { method: 'POST', headers: { 'content-type': 'application/json', 'x-rb-token': t }, body: JSON.stringify(body) } : { headers: { 'x-rb-token': t } })).json(); }
+async function loadWatch(){ try{ const j = await wCall(); WATCH = new Map((j.watches || []).map(w => [`${w.sport}:${w.season}:${w.playerId}`, w])); }catch(e){} }
+function watchSheet(k, name){
+  const [sport, season, playerId] = k.split(':'), w = WATCH.get(k), o = salesBook().by.get(k);
+  const sug = w ? w.maxRpr : o && o.ppr ? Math.round(o.ppr * 0.9 * 100) / 100 : '';
+  const box = $('#deal'); box.hidden = false;
+  box.innerHTML = `<div class="wsheet"><div class="note" style="text-transform:uppercase;letter-spacing:.06em;font-weight:800;font-size:11px">Player alert</div>
+    <div style="font-size:19px;font-weight:800;margin:4px 0 2px">${esc(name)}</div><div class="note">${esc(SPN[sport] || sport)} ${esc(seasonLbl(sport, season))}${o && o.ppr ? ` · usually sells ~${o.ppr.toFixed(2)} rax per rating` : ''}</div>
+    <div class="wrow">Tell me when <input id="wn" type="number" min="1" max="50" step="1" value="${w ? w.minN : 1}" inputmode="numeric"> or more are listed at <input id="wr" type="number" min="0.01" step="0.01" value="${sug}" inputmode="decimal"> rax per rating or less</div>
+    <p class="note" style="margin:6px 0 10px">Buy now price, else the current or minimum bid, divided by the card's rating. You get a push each time a new one shows up. Turn notifications on at <a href="/notifications">Notifications</a>.</p>
+    <div class="wbtns"><button type="button" id="wsave">${w ? 'Save' : 'Set alert'}</button>${w ? '<button type="button" id="wdel" class="ghost">Remove alert</button>' : ''}<button type="button" id="wx" class="ghost">Close</button></div><p class="note" id="wmsg"></p></div>`;
+  box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  $('#wx').onclick = () => { box.hidden = true; };
+  $('#wsave').onclick = async () => { const j = await wCall({ add: { sport, season: Number(season), playerId: Number(playerId), name, maxRpr: Number($('#wr').value), minN: Number($('#wn').value) || 1 } }).catch(() => ({ error: 'Could not save.' }));
+    if(j.error){ $('#wmsg').textContent = j.error; return; } WATCH = new Map((j.watches || []).map(x => [`${x.sport}:${x.season}:${x.playerId}`, x])); $('#wmsg').textContent = '✓ Alert set' + (WATCH.get(k) && WATCH.get(k).now ? ` - ${WATCH.get(k).now} listed at that price right now` : ''); draw(); };
+  if($('#wdel')) $('#wdel').onclick = async () => { const j = await wCall({ del: w.id }); WATCH = new Map((j.watches || []).map(x => [`${x.sport}:${x.season}:${x.playerId}`, x])); box.hidden = true; draw(); };
+}
+document.addEventListener('click', e => { const b = e.target.closest('[data-w]'); if(!b) return; e.preventDefault(); e.stopPropagation(); watchSheet(b.dataset.w, b.dataset.wn); }, true);
 const injNote = r => { const st = injOf(r); return st ? `<span class="injt">${esc(st)}</span><div class="injn">*value may be inaccurate, the value is based on previous auctions only, can't account for injury difference*</div>` : ''; };
-const nameCell = (r, extra = '') => `<span class="nm">${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.name || 'Player ' + r.playerId)}</a>` : esc(r.name || 'Player ' + r.playerId)}</span>${r.rarity || r.label ? `<span class="rar${rarCls(r.rarity || r.label)}">${esc(r.rarity || r.label)}</span>` : ''}${extra}${injNote(r)}`;
+const nameCell = (r, extra = '') => `<span class="nm">${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.name || 'Player ' + r.playerId)}</a>` : esc(r.name || 'Player ' + r.playerId)}</span>${r.rarity || r.label ? `<span class="rar${rarCls(r.rarity || r.label)}">${esc(r.rarity || r.label)}</span>` : ''}${bell(r)}${extra}${injNote(r)}`;
 function out(html, n){ $('#list').innerHTML = html || '<div class="empty">Nothing here yet.</div>'; $('#more').hidden = n <= shown; }
 // Seasons the way Real shows them (Dennis, 2026-11-15): 2025-26, or one year where a season sits in one year.
 const seasonLbl = (sp, se) => { se = Number(se); if(!se) return ''; if(['mlb', 'golf', 'wnba'].includes(sp)) return String(se);
   return ['nba', 'ncaam'].includes(sp) ? `${se - 1}-${se}` : `${se}-${se + 1}`; };
-const plainName = r => `<span class="nm">${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.name || 'Player ' + r.playerId)}</a>` : esc(r.name || 'Player ' + r.playerId)}</span>`;
+const plainName = r => `<span class="nm">${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.name || 'Player ' + r.playerId)}</a>` : esc(r.name || 'Player ' + r.playerId)}</span>${bell(r)}`;
 // The rating where each rarity starts: Rare and Epic from the listings seen, the rest from Real's ladder.
 function rarThresholds(){
   const lo = lab => { const v = D.rows.concat(D.ended).filter(r => r.rarity === lab && r.rating).map(r => r.rating).sort((a, b) => a - b); return v.length >= 10 ? v[Math.floor(v.length * 0.02)] : null; };

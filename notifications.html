@@ -36,6 +36,12 @@
   .strikes i{width:22px;height:22px;border-radius:6px;border:1px solid var(--line);display:inline-block}
   .strikes i.on{background:var(--bad);border-color:var(--bad)}
   .empty{color:var(--mute);font-size:14px;padding:6px 2px}
+  .pw{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line);font-size:14px} .pw:first-child{border-top:0} .pw b{flex:1 1 100%}
+  .pw input{width:70px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 7px;font:inherit;font-size:16px} .pw .x{margin-left:auto;background:none;border:1px solid var(--line);color:var(--mute);border-radius:8px;padding:4px 10px;cursor:pointer;font:inherit;font-size:13px}
+  .pwadd input{width:100%;margin-top:8px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:9px 11px;font:inherit;font-size:16px}
+  #pwres button{display:block;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);color:var(--ink);padding:9px 4px;font:inherit;font-size:14px;cursor:pointer}
+  .evmode{display:flex;gap:6px} .evmode button{flex:1;font:inherit;font-weight:800;font-size:13px;border-radius:999px;padding:7px;border:1px solid var(--line);background:none;color:var(--mute);cursor:pointer} .evmode button[aria-pressed="true"]{background:var(--accent);color:#1a1205;border-color:var(--accent)}
+  .evn{width:56px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:3px 6px;font:inherit;font-size:16px}
 </style>
 <script src="/theme.js"></script>
 <script src="/nav.js?v=9"></script>
@@ -81,6 +87,25 @@
     <div class="ab"><p class="note" style="margin:4px 0 6px">The swap bot also DMs you these, on top of the notifications.</p>
       <label class="ar"><span>Bulk auctions in your range (with links)</span><input type="checkbox" data-k="owner.dmBulk"></label>
       <label class="ar"><span>Value alerts (team | fair, bet link, betting ladder)</span><input type="checkbox" data-k="owner.dmEv"></label></div></div>
+  <!-- Player alerts on Bulk (2026-11-27): also set from the 🔔 by any name on /bulk. -->
+  <div class="ag" data-g="pw" id="alerts"><div class="ah"><button class="ax" data-x="pw" aria-expanded="false">▸</button><b>Player alerts <span class="note" id="pwn"></span></b><a class="aon" href="/bulk" style="text-decoration:none">Bulk ↗</a></div>
+    <div class="ab" hidden><p class="note" style="margin:4px 0 8px">A push when enough of one player are listed on Bulk at or under the rax per rating you set. Each listing is only sent once.</p>
+      <div id="pwlist"></div>
+      <div class="pwadd"><input id="pwq" type="search" placeholder="Add a player - type a name" autocomplete="off"><div id="pwres"></div></div>
+      <p class="note" id="pwmsg" style="margin:6px 0 0"></p></div></div>
+  <!-- Predictions EV alerts (2026-11-27): the same settings as Predictions > Alerts, saved to the same place. -->
+  <div class="ag" data-g="ev"><div class="ah"><button class="ax" data-x="ev" aria-expanded="false">▸</button><b>Predictions EV</b><button class="aon" id="evon">Activate</button></div>
+    <div class="ab" hidden>
+      <div class="evmode"><button type="button" data-em="simple">Simple</button><button type="button" data-em="custom">Custom</button></div>
+      <p class="note" id="evsimple" style="margin:6px 0">Big value by fair %: 60%+ at 6% EV · 50-60% at 8% · 40-50% at 10% · 30-40% at 14% · 20-30% at 25% · 14-20% at 60%. Also: Add more, Steady value and Starting soon.</p>
+      <div id="evcustom">
+        <label class="ar"><span>Big value - EV at least <input class="evn" data-ev="ev.minEv" type="number" min="2" max="100">% with fair at least <input class="evn" data-ev="ev.minFair" type="number" min="0" max="95">%</span><input type="checkbox" data-evc="ev"></label>
+        <label class="ar"><span>Steady value - 3-hour EV at least <input class="evn" data-ev="steady.minEv" type="number" min="2" max="100">%</span><input type="checkbox" data-evc="steady"></label>
+        <label class="ar"><span>Add more - a side you hold back at <input class="evn" data-ev="add.minEv" type="number" min="1" max="100">% EV</span><input type="checkbox" data-evc="add"></label>
+        <label class="ar"><span>Over fair - <input class="evn" data-ev="sell.pts" type="number" min="1" max="30"> points over fair on a side you hold</span><input type="checkbox" data-evc="sell"></label>
+        <label class="ar"><span>Starting soon - 15 min before a game you hold, if still +EV</span><input type="checkbox" data-evc="start"></label></div>
+      <label class="ar"><span>Most alerts per hour <input class="evn" data-ev="cap" type="number" min="1" max="20"></span></label>
+      <p class="note" id="evmsg" style="margin:4px 0 0">Also on Predictions › Alerts - changing one changes both.</p></div></div>
   <div class="ag" data-g="notes"><div class="ah"><span class="ax" style="visibility:hidden"></span><b>Messages to you</b><button class="aon" data-on="notes">Activate</button></div>
     <p class="note" style="margin:4px 0 0 42px">Replies from Dennis, moderation updates and request answers.</p></div>
   <p class="note" id="amsg" style="margin:8px 0 0"></p>
@@ -189,6 +214,50 @@ const $ = s => document.querySelector(s);
   $('#ptest').addEventListener('click', async () => { $('#ptest').disabled = true; const r = await call('pushtest', {}); $('#ptest').disabled = false; msg(r.error ? r.error : r.sent ? 'Test sent - it should pop up in a few seconds.' : 'Nothing was delivered - try turning notifications off and on again.'); });
   $('#poff').addEventListener('click', async () => { const sub = reg && await reg.pushManager.getSubscription(); if (sub) { await call('pushunsub', { endpoint: sub.endpoint }); await sub.unsubscribe(); } paint(); });
   paint().catch(e => { state(false, 'Off'); msg('Could not start notifications here: ' + (e.message || e)); });
+})();
+/* Player alerts + Predictions EV alerts (2026-11-27). */
+(() => {
+  const tok = () => { try{ return localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){ return ''; } }; if (!tok()) return;
+  const H = { 'x-rb-token': tok() }, E = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const wCall = async body => (await fetch('/api/swaps?op=bulkwatch', body ? { method: 'POST', headers: { ...H, 'content-type': 'application/json' }, body: JSON.stringify(body) } : { headers: H })).json();
+  const pwDraw = j => { const l = j.watches || []; document.getElementById('pwn').textContent = l.length ? `(${l.length})` : '';
+    document.getElementById('pwlist').innerHTML = l.map(w => `<div class="pw" data-id="${E(w.id)}"><b>${E(w.name)} <span class="note">${E(w.sp)} ${E(w.season)}</span></b>
+      <span>at least <input type="number" min="1" max="50" value="${w.minN}" data-pf="minN"> at ≤ <input type="number" min="0.01" step="0.01" value="${w.maxRpr}" data-pf="maxRpr"> rax/rating</span>
+      <span class="note">${w.now ? `${w.now} listed now · cheapest ${w.cheapest.price.toLocaleString()} (${w.cheapest.rpr}/rating)` : 'none listed at that price now'}</span><button class="x" data-pdel="${E(w.id)}">Remove</button></div>`).join('') || '<p class="note" style="margin:0">No player alerts yet.</p>'; };
+  wCall().then(pwDraw).catch(() => {});
+  if (location.hash === '#alerts') { const b = document.querySelector('.ag[data-g="pw"] .ab'), x = document.querySelector('[data-x="pw"]'); if (b) { b.hidden = false; x.setAttribute('aria-expanded', 'true'); x.textContent = '▾'; } }
+  let qT = 0; document.getElementById('pwq').addEventListener('input', e => { clearTimeout(qT); const q = e.target.value.trim(); qT = setTimeout(async () => {
+    if (q.length < 2) { document.getElementById('pwres').innerHTML = ''; return; }
+    const j = await (await fetch('/api/swaps?op=bulkplayers&q=' + encodeURIComponent(q), { headers: H })).json().catch(() => ({}));
+    document.getElementById('pwres').innerHTML = (j.players || []).map(p => `<button data-padd="${E(JSON.stringify({ sport: p.sport, season: p.season, playerId: p.playerId, name: p.name }))}">${E(p.name)} <span class="note">${E(p.sp)} ${E(p.season)} · ${p.n} sales</span></button>`).join('') || '<p class="note">No one by that name sold on Bulk lately.</p>'; }, 300); });
+  document.addEventListener('click', async e => {
+    const a = e.target.closest('[data-padd]'); if (a) { const p = JSON.parse(a.dataset.padd), mx = prompt(`Most rax per rating you'd pay for ${p.name}?`, ''); if (!mx) return;
+      const j = await wCall({ add: { ...p, maxRpr: Number(mx), minN: 1 } }); document.getElementById('pwmsg').textContent = j.error || '✓ Alert set'; if (!j.error) { pwDraw(j); document.getElementById('pwres').innerHTML = ''; document.getElementById('pwq').value = ''; } return; }
+    const d = e.target.closest('[data-pdel]'); if (d) { pwDraw(await wCall({ del: d.dataset.pdel })); } });
+  document.addEventListener('change', async e => { const f = e.target.dataset && e.target.dataset.pf; if (!f) return; const id = e.target.closest('.pw').dataset.id;
+    const j = await wCall({ set: { id, [f]: Number(e.target.value) } }); document.getElementById('pwmsg').textContent = j.error || '✓ Saved'; if (!j.error) pwDraw(j); });
+  // Predictions EV: the same config as Predictions > Alerts (op=predalerts).
+  const DEF = { enabled: false, mode: 'simple', cap: 10, ev: { on: true, minEv: 0.10, minFair: 0.30 }, add: { on: true, minEv: 0.05 }, sell: { on: false, pts: 5 }, start: { on: false }, steady: { on: true, minEv: 0.06 } };
+  const eCall = async body => (await fetch('/api/swaps?op=predalerts', body ? { method: 'POST', headers: { ...H, 'content-type': 'application/json' }, body: JSON.stringify(body) } : { headers: H })).json();
+  let C = null, sT = 0;
+  const pct = k => ['ev.minEv', 'ev.minFair', 'steady.minEv', 'add.minEv'].includes(k);
+  const get = k => k.split('.').reduce((o, p) => o && o[p], C), set = (k, v) => { const ps = k.split('.'); let o = C; while (ps.length > 1) o = o[ps.shift()]; o[ps[0]] = v; };
+  const paint = () => { const on = document.getElementById('evon'); on.textContent = C.enabled ? 'Active ✓' : 'Activate'; on.classList.toggle('on', C.enabled);
+    document.querySelector('.ag[data-g="ev"] .ab').classList.toggle('off', !C.enabled);
+    document.querySelectorAll('[data-em]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.em === C.mode)));
+    document.getElementById('evsimple').hidden = C.mode !== 'simple'; document.getElementById('evcustom').hidden = C.mode !== 'custom';
+    document.querySelectorAll('[data-ev]').forEach(i => { if (i !== document.activeElement) { const v = get(i.dataset.ev); i.value = pct(i.dataset.ev) ? Math.round(v * 100) : v; } });
+    document.querySelectorAll('[data-evc]').forEach(i => { i.checked = !!C[i.dataset.evc].on; }); };
+  const save = () => { clearTimeout(sT); sT = setTimeout(async () => { const j = await eCall({ cfg: C }).catch(() => ({ error: 'Could not save.' })); document.getElementById('evmsg').textContent = j.error || '✓ Saved - also on Predictions › Alerts.'; }, 500); };
+  eCall().then(j => { if (j.error) { document.querySelector('.ag[data-g="ev"]').hidden = true; return; }
+    C = { ...DEF, ...(j.cfg || {}) }; for (const k of ['ev', 'add', 'sell', 'start', 'steady']) C[k] = { ...DEF[k], ...(C[k] || {}) }; if (j.cfg && !j.cfg.mode) C.mode = 'custom'; paint(); }).catch(() => {});
+  document.getElementById('evon').addEventListener('click', () => { if (!C) return; C.enabled = !C.enabled;
+    if (C.enabled) { const b = document.querySelector('.ag[data-g="ev"] .ab'), x = document.querySelector('[data-x="ev"]'); b.hidden = false; x.setAttribute('aria-expanded', 'true'); x.textContent = '▾'; }
+    paint(); save(); });
+  document.addEventListener('click', e => { const b = e.target.closest('[data-em]'); if (!b || !C) return; C.mode = b.dataset.em; paint(); save(); });
+  document.addEventListener('change', e => { if (!C) return; const i = e.target;
+    if (i.dataset.ev) { const v = Number(i.value); if (Number.isFinite(v)) { set(i.dataset.ev, pct(i.dataset.ev) ? v / 100 : v); save(); } }
+    if (i.dataset.evc) { C[i.dataset.evc].on = i.checked; save(); } });
 })();
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const ls = { get: k => { try{ return localStorage.getItem(k); }catch(e){ return null; } }, set: (k, v) => { try{ localStorage.setItem(k, v); }catch(e){} } };
