@@ -199,7 +199,8 @@
   .setbox .upick{background:none;border:0;border-radius:0;padding:0 12px 12px}
   .sum{grid-template-columns:repeat(3,1fr);gap:6px;margin:8px 0}
   .sum>div{padding:8px 10px!important;border-radius:10px!important} .sum b{font-size:18px!important} .sum span{font-size:11.5px!important}
-  .bar{margin:8px 0 4px} .chips button{padding:5px 11px} .vbtn{padding:6px 11px;font-size:13px}
+  .bar{margin:8px 0 4px} .chips button{padding:5px 11px}
+  .chips .minev{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:999px;padding:5px 10px;font:inherit;font-size:13px;font-weight:700} .vbtn{padding:6px 11px;font-size:13px}
   .bkbox{padding:7px 12px;border-radius:10px} .bkbox summary{font-size:12.5px}
   .gh .nm{font-size:16px!important} .tag{font-size:11px}
   .sd{padding:11px 14px} .sd .t>span:last-child{font-size:15px}
@@ -405,7 +406,7 @@ const pc = v => v == null ? '-' : (Math.round(v * 1000) / 10).toFixed(1) + '%';
 const logo = (s, cls = '') => s.logo ? `<span class="lgw ${cls}"><img class="lg" src="${esc(s.logo)}" alt="" loading="lazy" onerror="this.parentNode.classList.add('nol');this.remove()"><em>${esc(String(s.key || s.label || '').slice(0, 4))}</em></span>`
   : `<span class="lgw nol ${cls}" style="--tc:${esc(s.color || '#4a5468')}"><em>${esc(String(s.key || s.label || s.name || '').slice(0, 4))}</em></span>`;
 const SPN = { nhl: 'NHL', nba: 'NBA', nfl: 'NFL', ncaaf: 'CFB', ncaam: 'CBB', ufc: 'UFC', soccer: 'FC' };
-let J = null, chip = ls.get('pred_chip') || '', preOnly = ls.get('pred_pre') === '1';
+let J = null, chip = ls.get('pred_chip') || '', preOnly = ls.get('pred_pre') === '1', minEv = Number(ls.get('pred_minev')) || 0;   // min EV % (member request, 2026-11-27)
 const MIN_FAIR = 0.07, MIN_EV_U = 0.02;
 let bank = Number(ls.get('pred_bank')) || 0;
 // Unit size (Dennis, 2026-11-17): 1u = 0.5% to 4% of your rax, 1% unless you pick another. Saved on this device.
@@ -940,14 +941,16 @@ function draw(){
   drawFocus();
   const sps = SP_ORDER.filter(sp => games.some(g => g.sport === sp));
   $('#chips').innerHTML = ['', '_ev', ...(sps.length > 1 ? sps : [])].map(s => `<button data-c="${s}" aria-pressed="${chip === s}">${s === '_best' ? 'Best EV' : s === '_ev' ? '+EV' : s ? SPN[s] || s : 'All'}</button>`).join('')
-    + `<button data-pre="1" aria-pressed="${preOnly}" title="Only games that haven't started">Not started</button>`;
+    + `<button data-pre="1" aria-pressed="${preOnly}" title="Only games that haven't started">Not started</button>`
+    + `<select id="minev" class="minev" aria-label="Minimum EV">${[0, 1, 2, 3, 5, 7, 10, 15, 20].map(v => `<option value="${v}"${v === minEv ? ' selected' : ''}>${v ? 'Min EV ' + v + '%' : 'Min EV: off'}</option>`).join('')}</select>`;
   const pos = games.filter(g => g.sides.some(s => stillToBet(g, s))), top = games.reduce((a, g) => Math.max(a, best(g)), -9);
   $('#sum').innerHTML = `<div><b>${games.length}</b><span>open markets${pos.length ? ` · <em class="pos">${pos.length} to bet</em>` : ''}</span></div>`;
   if (!$('#bkbox').open) drawBooks();
   /* All: every open market. +EV: games that aren't decided (no side under 7% fair) and have a bet to make. */
   /* Not started (member request 2026-11-18): hides live games; stacks with the other chips. */
   const notStarted = g => !g.live && !g.ended && !(g.start && Date.parse(g.start) <= Date.now());
-  const vis = (chip === '_ev' ? games.filter(g => !decided(g) && g.sides.some(s => units(g, s))) : games).filter(g => !preOnly || notStarted(g));
+  const vis = (chip === '_ev' ? games.filter(g => !decided(g) && g.sides.some(s => units(g, s))) : games).filter(g => !preOnly || notStarted(g))
+    .filter(g => !minEv || best(g) >= minEv / 100);   // games whose best side is under the minimum don't show
   $('#livenote').hidden = !vis.some(g => g.live);   // note shows whenever a live game is listed (Dennis, 2026-11-17)
   let html;
   if (chip === '_ev') {
@@ -968,6 +971,7 @@ function draw(){
   tick();
 }
 document.addEventListener('toggle', e => { const d = e.target; if(!d.matches || !d.matches('details.bd')) return; d.open ? openBd.add(d.dataset.bd) : openBd.delete(d.dataset.bd); }, true);
+$('#chips').addEventListener('change', e => { if (e.target.id !== 'minev') return; minEv = Number(e.target.value) || 0; ls.set('pred_minev', String(minEv)); draw(); });
 $('#chips').addEventListener('click', e => { if (e.target.closest('[data-pre]')) { preOnly = !preOnly; ls.set('pred_pre', preOnly ? '1' : '0'); draw(); return; } const b = e.target.closest('[data-c]'); if(!b) return; chip = b.dataset.c; ls.set('pred_chip', chip); draw(); });
 $('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if(!b) return; for (const x of document.querySelectorAll('#tabs button')) x.setAttribute('aria-pressed', x === b); $('#vm').hidden = b.dataset.t !== 'm'; $('#vg').hidden = b.dataset.t !== 'g'; $('#va').hidden = b.dataset.t !== 'a'; $('#vf').hidden = b.dataset.t !== 'f'; if (b.dataset.t === 'f') { fbCall(); } if (b.dataset.t === 'a') accLoad(); $('#vb').hidden = b.dataset.t !== 'b'; if (b.dataset.t === 'b') loadPort(); if (b.dataset.t === 'b') drawBets(); $('#vr').hidden = b.dataset.t !== 'r'; if (b.dataset.t === 'r') drawArb(); $('#vn').hidden = b.dataset.t !== 'n'; if (b.dataset.t === 'n') naLoad(); });
 $('#list').addEventListener('click', e => {
