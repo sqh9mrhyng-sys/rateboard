@@ -1946,6 +1946,43 @@ export async function boardAutoMod(env) {
   finally { try { await env.RATEBOARD_KV.delete('automod_lock'); } catch (e) {} }
 }
 
+/* Swap comments (Dennis, 2026-11-27): once a day at pack reset (7am ET - the hour with no swaps), while Swaps are
+   on, every active member's swap comment is read on Real. Deleted, or replies turned off, means partners can't
+   offer on it, so their swaps are paused (as if they tapped Pause: swaps and 160s not yet messaged are called off)
+   and they get a note to post a new comment and save again. */
+export async function swapCommentSweep(env) {
+  const db = env.RATEBOARD_DB; if (!db || etHour(Date.now()) !== 7) return;
+  if (await env.RATEBOARD_KV.get('swaps_hold')) return;
+  if (await env.RATEBOARD_KV.get('swcm_rest') || await env.RATEBOARD_KV.get('swcm_lock')) return;
+  const day = ET_DAY_FMT.format(new Date()); let sw = {}; try { sw = JSON.parse((await env.RATEBOARD_KV.get('swcm_sweep')) || '{}') || {}; } catch (e) {}
+  if (sw.done === day) return; if (sw.day !== day) sw = { day, from: Date.now(), n: 0, paused: 0 };
+  await env.RATEBOARD_KV.put('swcm_lock', '1', { expirationTtl: 120 });
+  try { try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN cmAt INTEGER'); } catch (e) {}
+    const tok = env.RS_MARKET_TOKEN || env.RS_SWAP_TOKEN;
+    const due = ((await db.prepare("SELECT key, comment FROM swap_users WHERE active=1 AND comment IS NOT NULL AND comment <> '' AND (cmAt IS NULL OR cmAt < ?) LIMIT 8").bind(sw.from).all()).results) || [];
+    if (!due.length) { sw.done = day; await env.RATEBOARD_KV.put('swcm_sweep', JSON.stringify(sw)); return; }
+    for (const u of due) {
+      const r = await readComment(env, u.comment, tok);
+      if (r.state === 'busy') { await env.RATEBOARD_KV.put('swcm_rest', '1', { expirationTtl: 600 }); break; }
+      if (r.state === 'error') { await new Promise(res => setTimeout(res, 1500)); continue; }
+      await db.prepare('UPDATE swap_users SET cmAt=? WHERE key=?').bind(Date.now(), u.key).run(); sw.n++;
+      if (r.state === 'deleted' || r.state === 'closed') {
+        const me = u.key, res = { n: 0, late: 0, soon: 0 }, why = r.state === 'deleted' ? 'your swap comment was deleted' : 'replies on your swap comment are turned off';
+        await db.prepare('UPDATE swap_users SET active=0, updatedAt=? WHERE key=?').bind(Date.now(), me).run();
+        try { await db.prepare(`UPDATE swap_160 SET status='cancelled', note=? WHERE status='pending' AND warnS IS NULL AND warnB IS NULL AND (buyer=? OR seller=?)`).bind(`called off: @${me}'s swap comment is gone`, me, me).run(); } catch (e) {}
+        for (const m of ((await db.prepare(`SELECT * FROM swap_matches WHERE status IN ('pending','warned') AND (a=? OR b=?)`).bind(me, me).all()).results) || []) await callOff(db, m, `called off: @${me}'s swap comment is gone`, res);
+        try { await afterCallOff(env, db, swapToken(env), me, res); } catch (e) {}
+        await addNote(db, me, 'mod', `Your swaps are paused: ${why}, so partners can't offer on it. Post a new swap comment, put its link in step 2 on raxacademy.app/swaps, and tap Save my swap to start again.`);
+        sw.paused++; await amLog(env, { act: 'swappaused', why: r.state, user: me, link: u.comment });
+        try { await env.RATEBOARD_KV.delete('swap_hourcounts_v3'); await env.RATEBOARD_KV.delete('swap_wantcounts_v3'); } catch (e) {}
+      }
+      await new Promise(res => setTimeout(res, 1500));
+    }
+    await env.RATEBOARD_KV.put('swcm_sweep', JSON.stringify(sw));
+  } catch (e) { try { await env.RATEBOARD_KV.put('swcm_err', String(e.message || e).slice(0, 200), { expirationTtl: 86400 }); } catch (x) {} }
+  finally { try { await env.RATEBOARD_KV.delete('swcm_lock'); } catch (e) {} }
+}
+
 export function routeId(numbers) {
   const ALPHA0 = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890', SEPS0 = 'cfhistuCFHISTU';
   const salt = Array.from('routing'), minLength = 11;
