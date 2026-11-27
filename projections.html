@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Projections</title>
+<title>Real Sports Rax Projections - Rax Academy</title>
+<meta name="description" content="Projected rax for every Real Sports player for the rest of the regular season - CFB, NFL, CBB, NBA, NHL and FC - from each player's own games, schedule and injury news.">
 <style>
   :root{--bg:#141925;--panel:#1d2433;--panel2:#232b3d;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;--ok:#5fbf7a;--bad:#e5484d}
   *{box-sizing:border-box}
@@ -97,6 +98,7 @@
 <div class="lock" id="lock" hidden><h1>Projections</h1><p class="note" id="lockmsg">Checking…</p><p id="signinbtn" hidden><a href="/?next=/projections" style="display:inline-block;padding:10px 14px;border-radius:9px;background:#E8A33D;color:#141925;font-weight:700;text-decoration:none">Sign in</a></p></div>
 <div class="wrap" id="main" hidden>
   <header><h1>Projections</h1></header>
+  <p class="note" id="pubnote" hidden style="margin:4px 0 10px">Every player's projected rax for the rest of the regular season: his average per game this season, times the games his team has left, adjusted for injuries. <a href="/?next=/projections">Sign in</a> to filter to the passes you own.</p>
   <p class="fresh" id="fresh"></p>
   <section>
     <div class="seg" id="sportseg"><button data-s="ncaaf" aria-pressed="true">CFB</button><button data-s="nfl" aria-pressed="false">NFL</button><button data-s="ncaam" aria-pressed="false">CBB</button><button data-s="nba" aria-pressed="false">NBA</button><button data-s="nhl" aria-pressed="false">NHL</button><button data-s="soccer" aria-pressed="false">FC</button></div>
@@ -336,6 +338,8 @@ $('#rows').addEventListener('click', async e => {
   const el = document.getElementById('bd-' + id); if(el) el.innerHTML = bdCache.get(sp0 + ':' + id);
 });
 $('#lock').hidden = false;   // "Checking…" until the server says who they are
+{ let t = ''; try{ t = localStorage.getItem('ratebrd_token_v1') || ''; }catch(e){}
+  if(!t){ $('#pubnote').hidden = false; $('#who').value = 'all'; $('#who').disabled = true; } }   // signed out: everyone's list, no "mine"
 load();
 </script>
 <script src="/sponsor.js" data-page="projections" defer></script>

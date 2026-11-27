@@ -3819,6 +3819,7 @@ export async function swapAccess(env, request) {
 const MEMBER_OPS = new Set(['confirm', 'recbuys', 'myhour', 'me', 'save', 'keep', 'touch', 'giveprefs', 'packstoday', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'ownercounts', 'usersearch', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
 const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan', 'search', 'otdpool']);
 // Open to every signed-in member: OTD's page, and the Rate Board's Exclude owned list (2026-11-25: members without Swaps got a 403 and "0 passes left out").
+const PUBLIC_OPS = new Set(['projections']);   // signed-out visitors (2026-11-27); grows as pages open up
 const TEST_OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'search', 'otdpool', 'otdloadouts', 'mypassnames']);
 
 /* ---------- Moderation (Dennis, 2026-11-11) ----------
@@ -7050,9 +7051,13 @@ async function handle({ request, env, waitUntil }) {
      have. Only looked up for those calls. */
   // OTD breakdown is public (2026-11-25): everything its page needs is open to every signed-in member.
   const testCall = !!acc.who && TEST_OTD_OPS.has(op);
-  if (testCall) { /* allowed */ }
-  else if (!acc.ok && !boostCall && !packCall) return forbidden(acc.who ? 'Your account does not have this page yet.' : 'Sign in first (raxacademy.app).');
-  if (!testCall && !acc.admin && !boostCall && !packCall && !((acc.swaps && MEMBER_OPS.has(op)) || (acc.otd && OTD_OPS.has(op)))) return forbidden('Your account does not have this.');
+  /* Open to signed-out visitors too (Dennis, 2026-11-27: "add whatever you want to pages without signing in" - for
+     AdSense, which only sees what a visitor sees). Read-only, the same for everyone, limited per address. */
+  const publicCall = !acc.who && PUBLIC_OPS.has(op);
+  if (publicCall && !(await allow(url.origin, 'pub:' + op + ':' + (request.headers.get('cf-connecting-ip') || ''), 120, 60))) return json({ error: 'Too many loads - wait a minute.' }, 429);
+  if (testCall || publicCall) { /* allowed */ }
+  else if (!acc.ok && !boostCall && !packCall && !publicCall) return forbidden(acc.who ? 'Your account does not have this page yet.' : 'Sign in first (raxacademy.app).');
+  if (!testCall && !publicCall && !acc.admin && !boostCall && !packCall && !((acc.swaps && MEMBER_OPS.has(op)) || (acc.otd && OTD_OPS.has(op)))) return forbidden('Your account does not have this.');
   const me = acc.who;
   if (op === 'tagview') return tagViewOp(env, db, url, acc, waitUntil);
   await ready(db);
@@ -8527,8 +8532,7 @@ async function handle({ request, env, waitUntil }) {
       fields: Object.fromEntries([...seen].map(([k, v]) => [k, [...v]])), first3: rows.slice(0, 3) });
   }
   if (op === 'projections') {
-    // Open to everyone signed in (Dennis, 2026-11-08; was Dennis only).
-    if (!acc.who) return json({ error: 'Sign in first (raxacademy.app).' }, 403);
+    // Open to everyone (2026-11-27; signed in only from 2026-11-08). Signed out: no "my passes".
     const sp = PROJ_SEASON[url.searchParams.get('sport')] ? url.searchParams.get('sport') : 'ncaaf';
     /* Kept in memory per worker, with the list already turned into text, and
        the saved copy re-read from KV at most once a minute: a crowd opening the
@@ -8566,7 +8570,7 @@ async function handle({ request, env, waitUntil }) {
     if (!c.gd) { try { const k = `proj_gd_v1_${sp}`; let g = await env.RATEBOARD_KV.get(k);
       if (!g) { const r = await db.prepare('SELECT MAX(day) AS d FROM gamelog WHERE sport=? AND season=? AND rax IS NOT NULL').bind(sp, Number(PROJ_SEASON[sp][0])).first(); g = (r && r.d) || ''; if (g) await env.RATEBOARD_KV.put(k, g, { expirationTtl: 1800 }); }
       if (g) c.gd = g; } catch (e) {} }
-    const u = await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first();
+    const u = me ? await db.prepare('SELECT passes FROM swap_users WHERE key=?').bind(me).first() : null;
     const [se] = PROJ_SEASON[sp];
     // Their passes for this season, with the card's id so a name can open their own card.
     const mine = parse(u && u.passes, []).filter(p => p.sport === sp && Number(p.season) === se && p.kind !== 'team').map(p => [Number(p.id), p.passId ? Number(p.passId) : null]);
