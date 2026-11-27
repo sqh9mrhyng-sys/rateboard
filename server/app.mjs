@@ -35,8 +35,11 @@ const env = {
   RATEBOARD_DB: new D1(path.join(DATA, 'rateboard.db')),
   RATEBOARD_KV: new KV(path.join(DATA, 'kv.db')),
   RS_AUTH_TOKEN: process.env.RS_AUTH_TOKEN,
-  RS_MARKET_TOKEN: process.env.RS_MARKET_TOKEN,
-  RS_SWAP_TOKEN: process.env.RS_SWAP_TOKEN,
+  /* Accounts switched (Dennis, 2026-11-27): @rax.academy - the old market account, saved as RS_MARKET_TOKEN in
+     .env - is the swap bot now, and the old bot (RS_SWAP_TOKEN in .env) does Bulk and market pulls. .env stays as
+     it is; the two are swapped here. */
+  RS_MARKET_TOKEN: process.env.RS_SWAP_TOKEN,
+  RS_SWAP_TOKEN: process.env.RS_MARKET_TOKEN,
   ODDS_API_KEY: process.env.ODDS_API_KEY,
   /* Members' own Real tokens for their Predictions portfolio sync (2026-11-18): Dennis types
      RS_AUTH_TOKEN_<SITEUSERNAME>=... into /opt/rax/.env. Read-only use (open positions, their trades). */
