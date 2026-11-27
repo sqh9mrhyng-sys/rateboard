@@ -224,7 +224,7 @@ async function readBoard(env, includeHashes) {
   }
   // Swap trust levels (Trusted / Vet), only from the swaps cache — never built here.
   try {
-    const t = JSON.parse((await env.RATEBOARD_KV.get('swap_trust_v3')) || 'null');
+    const t = JSON.parse((await env.RATEBOARD_KV.get('swap_trust_v5')) || 'null');
     for (const [k, v] of Object.entries((t && t.m) || {})) if (users[k] && v && v.lv && v.lv !== 'new') users[k].lv = v.lv;
   } catch (e) {}
   const now = Date.now();

@@ -821,7 +821,7 @@ async function ratingScores(db) {
    time has passed and that went ahead for them. Stars are the weighted score
    (pulled toward 3.5 until a member has a few ratings), so 99 fives and a
    four beat four fives. Worked out at most every 30 minutes. */
-const TRUST_KEY = 'swap_trust_v4';
+const TRUST_KEY = 'swap_trust_v5';
 /* Swap tags (Dennis, 2026-11-16 rework): by Swap Score, with a floor of swaps and stars for each,
    so a few perfect ratings or lots of swaps with poor ratings can't jump the line:
      Rising   score 50+, 31+ swaps
@@ -829,9 +829,11 @@ const TRUST_KEY = 'swap_trust_v4';
      Vet      score 75+, 150+ swaps, 4.5+ stars
      Legend   score 82+, 300+ swaps, 4.6+ stars
    The three best scores (Trusted or better) show 🐐 / 🥈 / 🥉, and Dennis shows Owner.
+   Raised 2026-11-27 (a member: "Legend only needs 300 swaps, I do that in a week") - Elite added between Vet and Legend:
+     Rising 50+ / 40+ swaps · Trusted 65+ / 100+ / 4.3 · Vet 75+ / 250+ / 4.5 · Elite 78+ / 500+ / 4.6 · Legend 82+ / 1,000+ / 4.7
    Stars here are the pulled-toward-3.5 stars (starScore). */
-const trustOf = (t, sc, st) => sc >= 82 && t >= 300 && st >= 4.6 ? 'legend' : sc >= 75 && t >= 150 && st >= 4.5 ? 'vet' : sc >= 65 && t >= 60 && st >= 4.3 ? 'trusted' : sc >= 50 && t > 30 ? 'rising' : 'new';
-const TAG_RANK = { new: 0, rising: 1, trusted: 2, vet: 3, legend: 4 };
+const trustOf = (t, sc, st) => sc >= 82 && t >= 1000 && st >= 4.7 ? 'legend' : sc >= 78 && t >= 500 && st >= 4.6 ? 'elite' : sc >= 75 && t >= 250 && st >= 4.5 ? 'vet' : sc >= 65 && t >= 100 && st >= 4.3 ? 'trusted' : sc >= 50 && t >= 40 ? 'rising' : 'new';
+const TAG_RANK = { new: 0, rising: 1, trusted: 2, vet: 3, elite: 4, legend: 5 };
 const TAG_OWNER = 'dennis';
 async function tradeCounts(db, since = 0) {
   const now = Date.now(), out = new Map();
@@ -1123,7 +1125,7 @@ async function runMatchingInner(db, env) {
   // Trusted and Vet members (2026-11-11) get a small edge in toss-ups - a reason to care about their rating.
   let tmM = {}; try { if (env) tmM = await trustMap(env, db); } catch (e) {}
   // The higher the tag, the bigger the edge (Dennis, 2026-11-15): Rising < Trusted < Vet < Legend < 🥉 < 🥈 < 🐐.
-  const TAG_EDGE = { owner: 0.5, goat: 0.5, silver: 0.45, bronze: 0.4, legend: 0.35, vet: 0.25, trusted: 0.15, rising: 0.05 };
+  const TAG_EDGE = { owner: 0.5, goat: 0.5, silver: 0.45, bronze: 0.4, legend: 0.35, elite: 0.3, vet: 0.25, trusted: 0.15, rising: 0.05 };
   /* Toss-ups go by Swap Score (2026-11-16): 0-100 shown to members, here /20 (0-5) plus the tag edge.
      Before ratings switch on (score empty), stars stay out and only swaps and the tag count. */
   const rs = k => { const v = tmM[k] || {}; const base = score.size ? (v.pts != null ? v.pts / 20 : (score.get(k) ?? RATE_PRIOR)) : RATE_PRIOR;

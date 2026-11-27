@@ -15,6 +15,7 @@
   .tl.vet{background:rgba(255,190,60,.18);color:#ffc95a}
   .tl.rising{background:rgba(63,191,127,.18);color:#6fdca5}
   .tl.legend{background:rgba(139,92,246,.22);color:#c4a8ff}
+  .tl.elite{background:rgba(236,72,153,.18);color:#f9a8d4}
   .tl.goat{background:linear-gradient(135deg,#ffe58a,#E8A33D 55%,#b8741a);color:#2a1a00;font-size:12px;padding:1px 7px}
   .tl.silver{background:linear-gradient(135deg,#f4f6fa,#b9c0cc 55%,#8a93a3);color:#1e2330}
   .tl.bronze{background:linear-gradient(135deg,#f3c49b,#cd7f32 55%,#8c5323);color:#2a1606}
@@ -3304,9 +3305,9 @@ function updatePlayerPlaceholder(){
   $('#b-season-wrap').classList.toggle('hide', sport !== 'FC');
 }
 const seasonTag = o => o.sport === 'FC' && o.season ? ` <span class="seas">${esc(o.season)}</span>` : '';
-const LV_RANK = { owner: 9, goat: 8, silver: 7, bronze: 6, legend: 4, vet: 3, trusted: 2, rising: 1 };
+const LV_RANK = { owner: 9, goat: 8, silver: 7, bronze: 6, legend: 5, elite: 4, vet: 3, trusted: 2, rising: 1 };
 const lvOf = u => (market.users[u] || {}).lv;
-const LV_LBL = { owner: 'Owner', goat: '🐐 GOAT', silver: '🥈 2nd', bronze: '🥉 3rd', legend: 'Legend', vet: 'Vet', trusted: 'Trusted', rising: 'Rising', new: 'New' };
+const LV_LBL = { owner: 'Owner', goat: '🐐 GOAT', silver: '🥈 2nd', bronze: '🥉 3rd', legend: 'Legend', elite: 'Elite', vet: 'Vet', trusted: 'Trusted', rising: 'Rising', new: 'New' };
 const lvTag = u => { const l = lvOf(u); return l && LV_LBL[l] ? ` <span class="tl ${l}">${LV_LBL[l]}</span>` : ''; };
 updatePlayerPlaceholder();
 
