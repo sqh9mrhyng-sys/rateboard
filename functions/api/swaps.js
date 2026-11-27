@@ -2806,7 +2806,7 @@ export async function grpDmTick(env) {
     return;
   }
   const note = (u, ch, sent) => db.prepare('INSERT INTO grpdm_list (userName, channelId, foundAt, sentAt) VALUES (?, ?, ?, ?) ON CONFLICT(userName) DO UPDATE SET sentAt = COALESCE(excluded.sentAt, grpdm_list.sentAt)').bind(u, ch, Date.now(), sent ? Date.now() : null).run().catch(() => {});
-  try { if (await env.RATEBOARD_KV.get('grpdm_stop')) return; } catch (e) { return; }
+  return;   // Giveaway DMs ended for good (Dennis, 2026-11-27: "make sure no more giveaway DMs"). Only the Saturday check above runs.
   let st = null; try { st = JSON.parse((await env.RATEBOARD_KV.get(GRPDM.key)) || 'null'); } catch (e) {}
   if (st && st.lock && Date.now() - st.lock < 4 * 60000) return;
   if (!st) { const rows = ((await db.prepare('SELECT hashId, userName, channelId FROM swap_dm WHERE userName IS NOT NULL AND channelId IS NOT NULL').all()).results) || [];
@@ -3198,7 +3198,9 @@ async function confirmPrompts(env, db, auth) {
   const pend = ((await db.prepare(`SELECT a, b, slot, createdAt, dueAt FROM swap_matches WHERE status IN ('pending','warned') AND dueAt >= ? AND dueAt < ?`).bind(start, start + 24 * 3600000).all()).results) || [];
   for (const m of pend) { const t = sideDue(m); if (swapDay(t) !== day) continue; for (const k of [m.a, m.b]) { if (!dues.has(k)) dues.set(k, new Set()); dues.get(k).add(t); } }
   for (const k of dues.keys()) if (!byKey.has(k)) { const u = await db.prepare('SELECT key, rsUser, hashId, slots, sched, confirmDay FROM swap_users WHERE key=?').bind(k).first(); if (u && u.hashId) byKey.set(k, u); }
-  const todo = [...byKey.values()].filter(u => !isConfirmed(u, day)).map(u => {
+  // Only members verified with the current bot (2026-11-27: after the switch to @rax.academy it tried everyone and failed).
+  let ver = new Set(); try { ver = new Set((((await db.prepare('SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL').all()).results) || []).map(r => String(r.hashId))); } catch (e) {}
+  const todo = [...byKey.values()].filter(u => ver.has(String(u.hashId)) && !isConfirmed(u, day)).map(u => {
     const hrs = [...new Set([...hoursToday(u, start), ...(dues.get(u.key) || [])])].filter(t => t > now).sort((x, y) => x - y);
     return { u, hrs };
   }).filter(x => x.hrs.length).sort((a, b) => a.hrs[0] - b.hrs[0]);
