@@ -932,7 +932,7 @@ async function runMatchingInner(db, env) {
       AND ((wants IS NOT NULL AND wants <> '[]') OR s160=1 OR only160=1 OR nicheIn=1) AND ((slots IS NOT NULL AND slots <> '[]') OR s160=1 OR only160=1)
       AND key NOT IN (SELECT key FROM restricted) AND key NOT IN (SELECT key FROM swap_block)
       AND LOWER(key) NOT IN (SELECT key FROM dm_403 WHERE n >= 3 AND last - first >= 600000 AND last > ${Date.now() - 86400000})
-      AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`))
+      AND hashId IN (SELECT v.hashId FROM swap_ver v JOIN swap_dm d ON d.hashId = v.hashId WHERE d.channelId IS NOT NULL)`))
     .map(u => ({ ...u, nicheReq: parse(u.niche, {}) || {}, bl: new Set((parse(u.blist, []) || []).map(k => String(k).toLowerCase())), lock1: new Set(parse(u.lock1, []) || []), noSp: parse(u.noSp, {}) || {} }))
     .map(u => ({ ...u, sched: parse(u.sched, null), wants: parse(u.wants, []), keep: new Set(parse(u.keep, [])), touch: new Set(parse(u.touch, [])), slots: parse(u.slots, []),
                  passes: parse(u.passes, []), caps: parse(u.caps, {}) || {} }))
@@ -1286,6 +1286,9 @@ const DM_ON = true;
    a new RS_SWAP_TOKEN). */
 let DM_STOP = false;
 const DM_DDL = `CREATE TABLE IF NOT EXISTS swap_dm (hashId TEXT PRIMARY KEY, userName TEXT, channelId INTEGER, openedAt INTEGER)`;
+/* Verified (Dennis, 2026-11-27): only members who tapped "I sent it - check" and had a chat with the current bot.
+   Any chat used to count, so @rax.academy's old chats from its market-account days all counted at the switch. */
+const VER_DDL = 'CREATE TABLE IF NOT EXISTS swap_ver (hashId TEXT PRIMARY KEY, key TEXT, at INTEGER)';
 
 async function dmChannel(db, auth, hashId, userName, env) {
   await db.prepare(DM_DDL).run();
@@ -3199,7 +3202,7 @@ async function confirmPrompts(env, db, auth) {
   for (const m of pend) { const t = sideDue(m); if (swapDay(t) !== day) continue; for (const k of [m.a, m.b]) { if (!dues.has(k)) dues.set(k, new Set()); dues.get(k).add(t); } }
   for (const k of dues.keys()) if (!byKey.has(k)) { const u = await db.prepare('SELECT key, rsUser, hashId, slots, sched, confirmDay FROM swap_users WHERE key=?').bind(k).first(); if (u && u.hashId) byKey.set(k, u); }
   // Only members verified with the current bot (2026-11-27: after the switch to @rax.academy it tried everyone and failed).
-  let ver = new Set(); try { ver = new Set((((await db.prepare('SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL').all()).results) || []).map(r => String(r.hashId))); } catch (e) {}
+  let ver = new Set(); try { ver = new Set((((await db.prepare('SELECT v.hashId FROM swap_ver v JOIN swap_dm d ON d.hashId = v.hashId WHERE d.channelId IS NOT NULL').all()).results) || []).map(r => String(r.hashId))); } catch (e) {}
   const todo = [...byKey.values()].filter(u => ver.has(String(u.hashId)) && !isConfirmed(u, day)).map(u => {
     const hrs = [...new Set([...hoursToday(u, start), ...(dues.get(u.key) || [])])].filter(t => t > now).sort((x, y) => x - y);
     return { u, hrs };
@@ -3553,6 +3556,7 @@ export async function swapTick(env) {
     /* New bot account (Dennis, 2026-11-27: the bot moves to @rax.academy, the old bot does Bulk). The old bot's
        chats can't be used by the new one, so when the bot's token changes they're set aside (swap_dm_oldbot) and
        everyone verifies again by DMing the new bot #packswap - until then they aren't matched. */
+    try { await db.prepare(VER_DDL).run(); } catch (e) {}
     { const seen = await env.RATEBOARD_KV.get('bot_tok_v1');
       if (!seen) await env.RATEBOARD_KV.put('bot_tok_v1', tok);
       else if (seen !== tok) { await env.RATEBOARD_KV.put('bot_tok_v1', tok);
@@ -3648,7 +3652,7 @@ export async function swapTick(env) {
       try { await alterOnce(db, 'ALTER TABLE swap_users ADD COLUMN goal REAL'); } catch (e) {}
       await db.prepare("UPDATE swap_users SET wants='[]', keep='[]', slots='[]', goal=NULL, active=0").run();
       await db.prepare("UPDATE swap_matches SET status='cleared' WHERE status IN ('pending','warned','sending','error')").run();
-      try { await env.RATEBOARD_KV.delete('swap_hourcounts_v2'); await env.RATEBOARD_KV.delete('swap_wantcounts_v2'); } catch (e) {}
+      try { await env.RATEBOARD_KV.delete('swap_hourcounts_v3'); await env.RATEBOARD_KV.delete('swap_wantcounts_v3'); } catch (e) {}
       await stat(db, 'cleared');
     }
   } catch (e) {}
@@ -5831,7 +5835,7 @@ export async function whyNotFull(db, env, key) {
     slots: parse(x.slots, []), passes: parse(x.passes, []), caps: parse(x.caps, {}) || {} });
   const u = prep(r), now = Date.now();
   const one = async (sql, ...b) => { try { return await db.prepare(sql).bind(...b).first(); } catch (e) { return null; } };
-  if (!(await one('SELECT 1 AS x FROM swap_dm WHERE hashId=? AND channelId IS NOT NULL', u.hashId || ''))) out.why.push('Step 1 is not verified - the bot cannot DM you, so you are never matched.');
+  if (!(await one('SELECT 1 AS x FROM swap_ver v JOIN swap_dm d ON d.hashId = v.hashId WHERE v.hashId=? AND d.channelId IS NOT NULL', u.hashId || ''))) out.why.push('Step 1 is not verified - the bot cannot DM you, so you are never matched.');
   if (await one('SELECT 1 AS x FROM restricted WHERE key=?', key)) out.why.push('Your swaps are on hold - message Dennis.');
   if (await one('SELECT 1 AS x FROM swap_block WHERE key=?', key)) out.why.push('Your swaps are on hold - message Dennis.');
   if (!u.comment) out.why.push('No comment link saved (step 2).');
@@ -5889,7 +5893,7 @@ export async function whyNotFull(db, env, key) {
   }
   const others = (await pagedRows(db, `SELECT * FROM swap_users WHERE active=1 AND passes IS NOT NULL AND key<>? AND (only160 IS NULL OR only160=0)
       AND wants IS NOT NULL AND wants <> '[]' AND key NOT IN (SELECT key FROM restricted) AND key NOT IN (SELECT key FROM swap_block)
-      AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`, [key])).map(prep);
+      AND hashId IN (SELECT v.hashId FROM swap_ver v JOIN swap_dm d ON d.hashId = v.hashId WHERE d.channelId IS NOT NULL)`, [key])).map(prep);
   let lowO = new Set(); try { lowO = await lowPlays(env, db, [...new Set(others.flatMap(o => o.wants.slice(0, MAX_WANTS)))]); } catch (e) {}
   for (const o of others) {
     const og = giveSet(o);
@@ -6270,7 +6274,7 @@ async function handle({ request, env, waitUntil }) {
         sched = { mode: 'daily', ...(sched && sched.tz ? { tz: sched.tz } : {}) };
       } else return json({ error: 'Nothing to change.' }, 400);
       await db.prepare('UPDATE swap_users SET wants=?, slots=?, sched=?, updatedAt=? WHERE key=?').bind(JSON.stringify(wants), JSON.stringify(slots), JSON.stringify(sched || { mode: 'daily' }), Date.now(), me).run();
-      try { await env.RATEBOARD_KV.delete('swap_wantcounts_v2'); await env.RATEBOARD_KV.delete('swap_hourcounts_v2'); } catch (e) {}
+      try { await env.RATEBOARD_KV.delete('swap_wantcounts_v3'); await env.RATEBOARD_KV.delete('swap_hourcounts_v3'); } catch (e) {}
       try { const res = await afterCallOff(env, db, auth, me, await cancelDropped(db, me, new Set(wants), new Set(slots), sched)); calledOff = res.n; late = res.late; } catch (e) {}
       msg = 'Saved.';
     }
@@ -7065,7 +7069,7 @@ async function handle({ request, env, waitUntil }) {
     if (!r) return json({ ok: true, wants: [], calledOff: 0 });
     const wants = parse(r.wants, []).filter(w => w !== k);
     await db.prepare('UPDATE swap_users SET wants=?, updatedAt=? WHERE key=?').bind(JSON.stringify(wants), Date.now(), me).run();
-    try { await env.RATEBOARD_KV.delete('swap_wantcounts_v2'); } catch (e) {}
+    try { await env.RATEBOARD_KV.delete('swap_wantcounts_v3'); } catch (e) {}
     let res = { n: 0, late: 0 }; try { res = await afterCallOff(env, db, auth, me, await cancelDropped(db, me, new Set(wants), new Set(parse(r.slots, [])), parse(r.sched, null))); } catch (e) {}
     return json({ ok: true, wants, calledOff: res.n, late: res.late });
   }
@@ -7081,7 +7085,7 @@ async function handle({ request, env, waitUntil }) {
     if (!r) return json({ ok: true, slots, calledOff: 0, late: 0 });
     await db.prepare('UPDATE swap_users SET slots=?, sched=?, updatedAt=? WHERE key=?').bind(JSON.stringify(slots), JSON.stringify(sched), Date.now(), me).run();
     let confirmed = false; try { confirmed = await autoConfirm(db, me, r, { slots, sched }); } catch (e) {}
-    try { await env.RATEBOARD_KV.delete('swap_hourcounts_v2'); } catch (e) {}
+    try { await env.RATEBOARD_KV.delete('swap_hourcounts_v3'); } catch (e) {}
     let res = { n: 0, late: 0 }; try { res = await afterCallOff(env, db, auth, me, await cancelDropped(db, me, new Set(parse(r.wants, [])), new Set(slots), sched)); } catch (e) {}
     return json({ ok: true, slots, sched, calledOff: res.n, late: res.late, confirmed: confirmed || undefined, day: confirmed ? confirmDayNow() : undefined });
   }
@@ -7090,7 +7094,7 @@ async function handle({ request, env, waitUntil }) {
   if ((op === 'pause' || op === 'endall') && request.method === 'POST') {
     await matchCols(db);
     await db.prepare('UPDATE swap_users SET active=0, updatedAt=? WHERE key=?').bind(Date.now(), me).run();
-    try { await env.RATEBOARD_KV.delete('swap_hourcounts_v2'); await env.RATEBOARD_KV.delete('swap_wantcounts_v2'); } catch (e) {}
+    try { await env.RATEBOARD_KV.delete('swap_hourcounts_v3'); await env.RATEBOARD_KV.delete('swap_wantcounts_v3'); } catch (e) {}
     let res = { n: 0, late: 0, soon: 0 };
     // Paused: no new matches, and their 160s and niche buys not yet messaged are called off too (2026-11-10).
     if (op === 'pause') { try { const c = await db.prepare(`UPDATE swap_160 SET status='cancelled', note=? WHERE status='pending' AND warnS IS NULL AND warnB IS NULL AND (buyer=? OR seller=?)`).bind(`called off: @${me} paused`, me, me).run(); res.n += (c && c.meta && c.meta.changes) || 0; } catch (e) {} }
@@ -7296,13 +7300,14 @@ async function handle({ request, env, waitUntil }) {
     return json({ users: r.map(x => ({ key: x.key, name: x.rsUser || x.key })) });
   }
   if (op === 'wantcounts') {
-    let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get('swap_wantcounts_v2')) || 'null'); } catch (e) {}
+    try { await db.prepare(VER_DDL).run(); } catch (e) {}
+    let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get('swap_wantcounts_v3')) || 'null'); } catch (e) {}
     if (!c || Date.now() - c.at > 300000) {
       const n = {};
-      for (const r of ((await db.prepare(`SELECT wants FROM swap_users WHERE active=1 AND wants IS NOT NULL AND wants <> '[]' AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`).all()).results || []))
+      for (const r of ((await db.prepare(`SELECT wants FROM swap_users WHERE active=1 AND wants IS NOT NULL AND wants <> '[]' AND hashId IN (SELECT v.hashId FROM swap_ver v JOIN swap_dm d ON d.hashId = v.hashId WHERE d.channelId IS NOT NULL)`).all()).results || []))
         { for (const w of parse(r.wants, []).slice(0, MAX_WANTS)) n[w] = (n[w] || 0) + 1; }
       c = { at: Date.now(), n };
-      try { await env.RATEBOARD_KV.put('swap_wantcounts_v2', JSON.stringify(c)); } catch (e) {}
+      try { await env.RATEBOARD_KV.put('swap_wantcounts_v3', JSON.stringify(c)); } catch (e) {}
     }
     return json(c);
   }
@@ -7310,13 +7315,14 @@ async function handle({ request, env, waitUntil }) {
   // How many saved swappers picked each hour (UTC), kept 5 minutes.
   // Counts only people verified with the bot (2026-11-27: after the switch to @rax.academy, not the old totals).
   if (op === 'hourcounts') {
-    let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get('swap_hourcounts_v2')) || 'null'); } catch (e) {}
+    try { await db.prepare(VER_DDL).run(); } catch (e) {}
+    let c = null; try { c = JSON.parse((await env.RATEBOARD_KV.get('swap_hourcounts_v3')) || 'null'); } catch (e) {}
     if (!c || Date.now() - c.at > 300000) {
       const n = Array(24).fill(0);
-      for (const r of ((await db.prepare(`SELECT slots FROM swap_users WHERE active=1 AND slots IS NOT NULL AND slots <> '[]' AND hashId IN (SELECT hashId FROM swap_dm WHERE channelId IS NOT NULL)`).all()).results || []))
+      for (const r of ((await db.prepare(`SELECT slots FROM swap_users WHERE active=1 AND slots IS NOT NULL AND slots <> '[]' AND hashId IN (SELECT v.hashId FROM swap_ver v JOIN swap_dm d ON d.hashId = v.hashId WHERE d.channelId IS NOT NULL)`).all()).results || []))
         for (const h of parse(r.slots, [])) if (h >= 0 && h < 24) n[h]++;
       c = { at: Date.now(), n };
-      try { await env.RATEBOARD_KV.put('swap_hourcounts_v2', JSON.stringify(c)); } catch (e) {}
+      try { await env.RATEBOARD_KV.put('swap_hourcounts_v3', JSON.stringify(c)); } catch (e) {}
     }
     return json(c);
   }
@@ -7667,6 +7673,7 @@ async function handle({ request, env, waitUntil }) {
   }
 
   if (op === 'me') {
+    try { await db.prepare(VER_DDL).run(); } catch (e) {}
     touchSeen(env, me, waitUntil);
     // The member's row, whether the bot has a chat with them, and their Real name: one trip.
     try { await db.prepare(DM_DDL).run(); } catch (e) {}
@@ -7675,7 +7682,7 @@ async function handle({ request, env, waitUntil }) {
     try {
       const [r1, r2, r3] = await db.batch([
         db.prepare('SELECT * FROM swap_users WHERE key=?').bind(me),
-        db.prepare('SELECT 1 AS x FROM swap_dm WHERE hashId=(SELECT hashId FROM swap_users WHERE key=?) AND channelId IS NOT NULL').bind(me),
+        db.prepare('SELECT 1 AS x FROM swap_ver v JOIN swap_dm d ON d.hashId = v.hashId WHERE v.hashId=(SELECT hashId FROM swap_users WHERE key=?) AND d.channelId IS NOT NULL').bind(me),
         db.prepare('SELECT rsName FROM users WHERE key=?').bind(me)]);
       u = (r1.results || [])[0] || null; connected = !!(r2.results || []).length;
       const rn = (r3.results || [])[0]; if (rn && rn.rsName) realN = String(rn.rsName);
@@ -7839,7 +7846,7 @@ async function handle({ request, env, waitUntil }) {
       if (!sell) await db.prepare(`UPDATE swap_160 SET status='cancelled', note='called off: seller stopped selling 160s' WHERE seller=? AND kind IS NULL AND status='pending' AND warnS IS NULL AND warnB IS NULL`).bind(me).run().catch(() => {});
       if (!buy) await db.prepare(`UPDATE swap_160 SET status='cancelled', note='called off: buyer stopped buying 160s' WHERE buyer=? AND kind IS NULL AND status='pending' AND warnS IS NULL AND warnB IS NULL`).bind(me).run().catch(() => {}); }
     try { await autoConfirm(db, me, mine, { slots, sched }); } catch (e) {}
-    try { await env.RATEBOARD_KV.delete('swap_hourcounts_v2'); await env.RATEBOARD_KV.delete('swap_wantcounts_v2'); } catch (e) {}
+    try { await env.RATEBOARD_KV.delete('swap_hourcounts_v3'); await env.RATEBOARD_KV.delete('swap_wantcounts_v3'); } catch (e) {}
     let calledOff = 0, late = 0;
     try { const a = await cancelKept(db, me, new Set(keep)), d = await cancelDropped(db, me, new Set(wants), new Set(slots), sched);
       const res = await afterCallOff(env, db, auth, me, { n: a.n + d.n, late: a.late + d.late, soon: a.soon + d.soon }); calledOff = res.n; late = res.late; } catch (e) {}
@@ -9112,7 +9119,7 @@ async function handle({ request, env, waitUntil }) {
     try { await acceptRequests(db, auth); } catch (e) {}
     try { await syncChats(db, auth); } catch (e) { return json({ error: String(e.message || e) }, 502); }
     const c = await db.prepare('SELECT channelId FROM swap_dm WHERE hashId=? AND channelId IS NOT NULL').bind(u.hashId).first();
-    await stat(db, 'verify_try'); if (c) await stat(db, 'verify_ok');
+    await stat(db, 'verify_try'); if (c) { await stat(db, 'verify_ok'); await db.prepare(VER_DDL).run(); await db.prepare('INSERT OR REPLACE INTO swap_ver (hashId, key, at) VALUES (?, ?, ?)').bind(u.hashId, String(me).toLowerCase(), Date.now()).run(); }
     /* A "Confirmed" reply in their chat once they're verified (Dennis, 2026-11-05), sent once.
        If Real won't let the bot message them, the page says why. */
     let confirmFailed = false;
