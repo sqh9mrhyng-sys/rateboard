@@ -288,6 +288,9 @@
   .examples a{display:block}
   .examples img{display:block;width:100%;max-width:100%;border-radius:8px;border:1px solid var(--line)}
   .examples figcaption{font-size:14px;color:var(--ink);margin:0 0 8px}
+  .gview{position:fixed;inset:0;z-index:300;background:rgba(5,7,12,.92);display:flex;align-items:center;justify-content:center;padding:56px 12px 16px}
+  .gview img{max-width:100%;max-height:100%;border-radius:10px;object-fit:contain}
+  .gclose{position:fixed;top:max(12px,env(safe-area-inset-top));right:12px;padding:10px 16px;border-radius:999px;background:var(--panel);border:1px solid var(--line);color:var(--ink);font-weight:700;font-size:15px}
   .examples .gx{display:grid;grid-template-columns:1fr 1fr;gap:8px}
   .examples{gap:18px}
   .tapfull{opacity:.75}
@@ -3261,6 +3264,15 @@ function renderBuyInstructions(){
 }
 renderBuyInstructions();
 
+/* Guide pictures open over the page with a Close button (2026-11-27: a new tab had no way back in the web app). */
+$('#b-guide').addEventListener('click', e => {
+  const l = e.target.closest('a[href$=".jpg"]'); if(!l) return; e.preventDefault();
+  const v = document.createElement('div'); v.className = 'gview';
+  v.innerHTML = `<button type="button" class="gclose" aria-label="Close">✕ Close</button><img src="${l.getAttribute('href')}" alt="">`;
+  const shut = () => { v.remove(); document.removeEventListener('keydown', key); };
+  const key = ev => { if(ev.key === 'Escape') shut(); };
+  v.addEventListener('click', shut); document.addEventListener('keydown', key); document.body.appendChild(v);
+});
 $('#b-guide-toggle').addEventListener('click', () => {
   const btn = $('#b-guide-toggle'), box = $('#b-guide');
   const nowHidden = box.classList.toggle('hide');
