@@ -287,7 +287,9 @@
   .examples figure{margin:0}
   .examples a{display:block}
   .examples img{display:block;width:100%;max-width:100%;border-radius:8px;border:1px solid var(--line)}
-  .examples figcaption{font-size:12px;color:var(--mute);margin-top:6px}
+  .examples figcaption{font-size:14px;color:var(--ink);margin:0 0 8px}
+  .examples .gx{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .examples{gap:18px}
   .tapfull{opacity:.75}
 
   /* ---------- RS collection lookup ---------- */
@@ -852,18 +854,10 @@
             <ol class="howto" id="b-instructions"></ol>
             <button id="b-guide-toggle" class="linkish" type="button" aria-expanded="false">Show picture guide</button>
             <div id="b-guide" class="examples hide">
-              <figure>
-                <a href="examples/buy-1-open-post.jpg" target="_blank" rel="noopener"><img src="examples/buy-1-open-post.jpg" alt="The buy offer form with the this post link circled"></a>
-                <figcaption>1. Tap "this post" to open the post on Real.</figcaption>
-              </figure>
-              <figure>
-                <a href="examples/buy-2-write-comment.jpg" target="_blank" rel="noopener"><img src="examples/buy-2-write-comment.jpg" alt="An example comment on Real showing a player card and the rate offered"></a>
-                <figcaption>2. Comment with your card and your rate, like this.</figcaption>
-              </figure>
-              <figure>
-                <a href="examples/buy-3-paste-link.jpg" target="_blank" rel="noopener"><img src="examples/buy-3-paste-link.jpg" alt="The buy offer form with the comment link box and Post offer button circled"></a>
-                <figcaption>3. Copy your comment's link, paste it below, then Post offer.</figcaption>
-              </figure>
+              <figure><figcaption><b>1.</b> Tap "this post" to open the post on Real.</figcaption><a href="examples/guide-1.jpg" target="_blank" rel="noopener"><img src="examples/guide-1.jpg" alt="The buy offer form with this post circled" loading="lazy"></a></figure>
+              <figure><figcaption><b>2.</b> Create a comment like this, click share, copy link, go back to the website.</figcaption>
+                <div class="gx"><a href="examples/guide-2.jpg" target="_blank" rel="noopener"><img src="examples/guide-2.jpg" alt="A comment with a card and rate" loading="lazy"></a><a href="examples/guide-3.jpg" target="_blank" rel="noopener"><img src="examples/guide-3.jpg" alt="The dots next to reply circled" loading="lazy"></a><a href="examples/guide-4.jpg" target="_blank" rel="noopener"><img src="examples/guide-4.jpg" alt="Share circled in the menu" loading="lazy"></a><a href="examples/guide-5.jpg" target="_blank" rel="noopener"><img src="examples/guide-5.jpg" alt="Copy link circled" loading="lazy"></a></div></figure>
+              <figure><figcaption><b>3.</b> Submit link here.</figcaption><a href="examples/guide-6.jpg" target="_blank" rel="noopener"><img src="examples/guide-6.jpg" alt="The comment link box circled" loading="lazy"></a></figure>
             </div>
             <div>
               <label for="b-player">Player</label>
