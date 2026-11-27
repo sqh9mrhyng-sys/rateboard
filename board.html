@@ -8617,6 +8617,9 @@ async function moderationPanel(tab){
       if(!(await patch('resolveDataReport', { id, status: md.dataset.md === 'fix' ? 'fixed' : 'dismissed' }))) return;
       toast(md.dataset.md === 'fix' ? 'Fixed.' : 'Dismissed.'); dropCard(card); return; }
 
+    const ab = e.target.closest('[data-amback]');
+    if(ab){ ab.disabled = true; let j; try{ j = await (await fetch('/api/swaps?op=automod', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ at: Number(ab.dataset.amback) }) })).json(); }catch(err){ j = { error: 'Could not reach the site.' }; }
+      if(j.error){ ab.disabled = false; return toast(j.error); } toast('Listing put back.'); render(); draw(); return; }
     // Delete a listing from anywhere in the sheet.
     const kill = e.target.closest('[data-mkill]');
     if(kill){ const id = kill.dataset.mkill, o = market.offers.find(x => x.id === id);
@@ -8663,10 +8666,11 @@ async function modBackup(box){
 async function modAutoHTML(){
   let j; try{ j = await (await fetch('/api/swaps?op=automod')).json(); }catch(e){ j = { error: 'Could not reach the site.' }; }
   if(j.error) return `<p class="nohit">${esc(j.error)}</p>`;
-  const WHY = { deleted: 'comment deleted', closed: 'replies turned off', notyours: 'comment posted by someone else' };
-  const rows = (j.log || []).map(x => `<div class="mcard"><div class="mtop"><span class="msrc ${x.act === 'removed' ? 's-board' : 's-swap'}">${x.act === 'removed' ? 'Taken down' : 'Flagged'}</span><span class="mm">${esc(modAgo(x.at))}</span></div>
+  const WHY = { deleted: 'comment deleted', closed: 'replies turned off', notyours: 'comment posted by someone else', missing: "comment couldn't be found" };
+  const rows = (j.log || []).map(x => `<div class="mcard"><div class="mtop"><span class="msrc ${x.act === 'removed' ? 's-board' : 's-swap'}">${x.act === 'removed' ? 'Taken down' : x.act === 'restored' ? 'Put back' : 'Flagged'}</span><span class="mm">${esc(modAgo(x.at))}</span></div>
       <div class="mhead">${modUser(x.user)} <span class="mm">${esc(x.sport || '')}</span> ${esc(x.player || '')} <b class="num">${esc(x.rate)}</b>/1</div>
-      <div class="mm" style="margin-top:4px">${esc(WHY[x.why] || x.why)}${x.author ? ` - posted by @${esc(x.author)}` : ''}${x.link ? ` · <a class="mlink" href="${esc(x.link)}" target="_blank" rel="noopener">Comment ↗</a>` : ''}</div></div>`).join('');
+      <div class="mm" style="margin-top:4px">${esc(WHY[x.why] || x.why)}${x.author ? ` - posted by @${esc(x.author)}` : ''}${x.link ? ` · <a class="mlink" href="${esc(x.link)}" target="_blank" rel="noopener">Comment ↗</a>` : ''}</div>
+      ${x.act === 'removed' ? `<div class="macts"><button class="btn-ghost" data-amback="${x.at}">Put it back</button></div>` : ''}</div>`).join('');
   return `<p class="mm" style="margin:2px 0 6px">Every listing's comment is checked on Real when it's posted and again every 3 hours. Listings whose comment was deleted come down by themselves, and the buyer gets a note. Comments with replies turned off, or posted by someone else, are flagged here for you.</p>
     <div class="statrow"><div class="stat"><b class="num">${j.checked || 0}</b><span>listings checked</span></div><div class="stat"><b class="num">${j.unread || 0}</b><span>waiting for a first check</span></div></div>
     ${rows || '<div class="mempty"><b>Nothing yet</b>Taken-down and flagged listings show up here.</div>'}`;

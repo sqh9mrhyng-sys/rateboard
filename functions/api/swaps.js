@@ -1837,9 +1837,9 @@ export async function readComment(env, link) {
   const tok = env.RS_MARKET_TOKEN; if (!tok) return { state: 'notoken' };
   let r; try { r = await fetch(`https://web.realapp.com/comments/${kind}/${nums[3]}/replies/${m[2]}?limit=1`, { headers: rsHeaders(tok) }); } catch (e) { return { state: 'error' }; }
   if (r.status === 429) return { state: 'busy' };
-  if (r.status === 404) return { state: 'deleted' };
+  if (r.status === 404) return { state: 'missing' };
   if (!r.ok) return { state: 'error', status: r.status };
-  const j = await r.json().catch(() => null), c = j && j.parentComment; if (!c) return { state: 'deleted' };
+  const j = await r.json().catch(() => null), c = j && j.parentComment; if (!c) return { state: 'missing' };
   const u = c.user || {}, author = String(u.userName || u.username || u.name || '').toLowerCase();
   return { state: c.deletedAt ? 'deleted' : c.repliesClosed ? 'closed' : 'ok', author, text: String(c.plainText || '').slice(0, 200) };
 }
@@ -1860,13 +1860,16 @@ export async function boardAutoMod(env) {
       await db.prepare('INSERT INTO board_cm (offerId, link, checkedAt, state, author) VALUES (?, ?, ?, ?, ?) ON CONFLICT(offerId) DO UPDATE SET link=excluded.link, checkedAt=excluded.checkedAt, state=excluded.state, author=excluded.author')
         .bind(o.id, o.link, Date.now(), r.state, r.author || null).run();
       // Replies turned off: flagged, not taken down, until Dennis says it should be (Real may close busy threads itself).
+      if (r.state === 'missing') { const was = await db.prepare("SELECT 1 AS x FROM board_cm WHERE offerId=? AND state='missing' AND checkedAt < ?").bind(o.id, Date.now() - 60000).first().catch(() => null);
+        if (!was) await amLog(env, { act: 'flag', why: 'missing', user: o.user, player: o.player, sport: o.sport, rate: o.rate, link: o.link }); }
       if (r.state === 'closed') { const was = await db.prepare("SELECT 1 AS x FROM board_cm WHERE offerId=? AND state='closed' AND checkedAt < ?").bind(o.id, Date.now() - 60000).first().catch(() => null);
         if (!was) await amLog(env, { act: 'flag', why: 'closed', user: o.user, player: o.player, sport: o.sport, rate: o.rate, link: o.link }); }
       if (r.state === 'deleted') {
+        const row = await db.prepare('SELECT * FROM offers WHERE id=?').bind(o.id).first().catch(() => null);
         await db.prepare('DELETE FROM offers WHERE id=?').bind(o.id).run();
         const why = r.state === 'deleted' ? 'your comment was deleted' : 'replies on your comment are turned off, so sellers can’t reach you';
         await addNote(db, o.user, 'mod', `Your ${o.player} ${o.rate}/1 listing on the board was taken down: ${why}. If you're still buying, post it again with a new comment.`);
-        await amLog(env, { act: 'removed', why: r.state, user: o.user, player: o.player, sport: o.sport, rate: o.rate, link: o.link });
+        await amLog(env, { act: 'removed', why: r.state, user: o.user, player: o.player, sport: o.sport, rate: o.rate, link: o.link, row });
       } else if (r.state === 'ok' && r.author) {
         // Whose comment it is: their linked Real name, else their board name.
         const n = await db.prepare('SELECT u.rsName AS a, s.rsUser AS b FROM (SELECT ? AS k) q LEFT JOIN users u ON LOWER(u.key)=q.k LEFT JOIN swap_users s ON LOWER(s.key)=q.k').bind(String(o.user).toLowerCase()).first().catch(() => null);
@@ -7568,7 +7571,14 @@ async function handle({ request, env, waitUntil }) {
     try { await db.prepare(AM_DDL).run(); } catch (e) {}
     const c = await db.prepare("SELECT COUNT(*) AS n, SUM(checkedAt > ?) AS day FROM board_cm").bind(Date.now() - 86400000).first().catch(() => null);
     const left = await db.prepare("SELECT COUNT(*) AS n FROM offers o LEFT JOIN board_cm c ON c.offerId=o.id WHERE o.link <> '' AND c.offerId IS NULL").first().catch(() => null);
-    return json({ log, checked: c && c.n, checkedDay: c && c.day, unread: left && left.n });
+    // Put a taken-down listing back (Dennis's call), and don't check it again for a day.
+    if (request.method === 'POST') { const b = await request.json().catch(() => ({})), e = log.find(x => x.at === Number(b.at) && x.act === 'removed');
+      if (!e || !e.row) return json({ error: 'That one can\u2019t be put back.' }, 400);
+      const w = e.row; await db.prepare('INSERT OR IGNORE INTO offers (id, user, sport, player, player_key, rate, link, ts, season) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(w.id, w.user, w.sport, w.player, w.player_key, w.rate, w.link, w.ts, w.season ?? null).run();
+      await db.prepare('UPDATE board_cm SET checkedAt=? WHERE offerId=?').bind(Date.now() + 21 * 3600000, w.id).run().catch(() => {});
+      e.act = 'restored'; await env.RATEBOARD_KV.put(AM_LOG, JSON.stringify(log)); return json({ ok: true }); }
+    return json({ log: log.map(({ row, ...x }) => x), checked: c && c.n, checkedDay: c && c.day, unread: left && left.n });
   }
   if (op === 'inboxact' && request.method === 'POST') {
     let b = {}; try { b = await request.json(); } catch (e) {}
