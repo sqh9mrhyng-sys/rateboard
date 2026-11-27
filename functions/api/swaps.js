@@ -7573,8 +7573,9 @@ async function handle({ request, env, waitUntil }) {
     const left = await db.prepare("SELECT COUNT(*) AS n FROM offers o LEFT JOIN board_cm c ON c.offerId=o.id WHERE o.link <> '' AND c.offerId IS NULL").first().catch(() => null);
     // Put a taken-down listing back (Dennis's call), and don't check it again for a day.
     if (request.method === 'POST') { const b = await request.json().catch(() => ({})), e = log.find(x => x.at === Number(b.at) && x.act === 'removed');
-      if (!e || !e.row) return json({ error: 'That one can\u2019t be put back.' }, 400);
-      const w = e.row; await db.prepare('INSERT OR IGNORE INTO offers (id, user, sport, player, player_key, rate, link, ts, season) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      if (!e) return json({ error: 'That one can\u2019t be put back.' }, 400);
+      const nk = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\b(jr|sr|ii|iii|iv)\b/g, '').replace(/\s+/g, ' ').trim();
+      const w = e.row || { id: 'am' + e.at, user: e.user, sport: e.sport, player: e.player, player_key: nk(e.player), rate: e.rate, link: e.link, ts: Date.now(), season: null }; await db.prepare('INSERT OR IGNORE INTO offers (id, user, sport, player, player_key, rate, link, ts, season) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
         .bind(w.id, w.user, w.sport, w.player, w.player_key, w.rate, w.link, w.ts, w.season ?? null).run();
       await db.prepare('UPDATE board_cm SET checkedAt=? WHERE offerId=?').bind(Date.now() + 21 * 3600000, w.id).run().catch(() => {});
       e.act = 'restored'; await env.RATEBOARD_KV.put(AM_LOG, JSON.stringify(log)); return json({ ok: true }); }
