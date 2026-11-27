@@ -244,7 +244,7 @@
   .warn{background:color-mix(in srgb,var(--bad) 13%,transparent);border:1px solid color-mix(in srgb,var(--bad) 40%,transparent);border-radius:8px;padding:11px 13px;font-size:12.5px;line-height:1.45}
   /* The buy instructions are the one thing everyone has to read, so they get
      real body copy size rather than the small print the other notes use. */
-  #b-instructions{font-size:15px;line-height:1.5;padding:14px 15px}
+  #b-instructions{font-size:15px;line-height:1.5;padding:4px 0 0}
   #b-instructions p{margin:0 0 11px}
   #b-instructions p:last-child{margin-bottom:0}
   #b-instructions .shout{font-weight:700;letter-spacing:.2px}
@@ -522,11 +522,52 @@
   @media(max-width:640px){
     .bchip{padding:9px 13px}
     .bchip.bmod{order:-1;margin-left:0}
-    .board .row{position:relative}
-    .board .rowacts:has(> .rlink:only-child){position:absolute;right:14px;top:12px;margin:0}
+
     .bdbar{gap:6px}
     .scrim:has(.modsheet){padding:0;align-items:flex-end}
     .modal.modsheet{max-height:94vh;height:94vh;border-radius:16px 16px 0 0}
+  }
+  /* ---------- clean-up pass 2 (2026-11-27) ---------- */
+  #page-board{max-width:720px}
+  body:has(#page-board:not(.hide)) .topbar{max-width:720px}
+  #page-board .cols{grid-template-columns:1fr;gap:14px}
+  #page-board .cols > aside{order:0}
+  #page-board .panel{border-radius:14px}
+  #page-board .panel-hd{border-bottom:0;padding:16px 18px 4px}
+  #page-board .panel-hd h2{font-size:17px;font-weight:700}
+  #page-board .panel-bd{padding:12px 18px 18px}
+  #page-board .stack>*+*{margin-top:12px}
+  #page-board .board .row:first-child{border-top:1px solid var(--line)}
+  .howto{list-style:none;counter-reset:st;margin:0;padding:0;background:none;border:0;font-size:15px;line-height:1.45}
+  .howto li{counter-increment:st;display:grid;grid-template-columns:26px 1fr;gap:10px;align-items:start}
+  .howto li+li{margin-top:10px}
+  .howto li::before{content:counter(st);width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:12.5px;font-weight:800;
+    color:var(--accent);background:color-mix(in srgb,var(--accent) 16%,transparent)}
+  .fine{margin:0;color:var(--mute);font-size:12.5px;line-height:1.5}
+  .fine .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--bad);margin-right:7px;vertical-align:1px}
+  .opener{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:14px 18px;border-radius:14px;
+    border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:15px;text-align:left}
+  .opener:hover{border-color:var(--accent)}
+  .opener b{font-weight:700;margin-right:8px}
+  .opener .chev{color:var(--mute);transition:transform .15s}
+  .opener[aria-expanded="true"] .chev{transform:rotate(180deg)}
+  .bmenuwrap{margin-left:0}
+  .bmenu{left:auto;right:0}
+  #page-board .seg{border-radius:14px} #page-board .seg button{border-radius:11px}
+  #pane-mine.nomine{display:none}
+  #page-board .row{grid-template-columns:auto 1fr auto;gap:12px;padding:12px 18px}
+  #page-board .rate{min-width:54px}
+  #page-board .player{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
+  #page-board .row > span:nth-child(2){min-width:0}
+  #page-board .rowacts{gap:6px}
+  #page-board .rowacts .btn-ghost{padding:6px 10px;min-height:0;font-size:12.5px;border-radius:8px}
+  #page-board .xbtn{width:30px;height:30px;font-size:16px}
+  .xbtn.lnk,.xbtn.off{display:inline-grid;place-items:center;text-decoration:none;color:var(--accent)} .xbtn.off{color:var(--mute);opacity:.5}
+  @media(max-width:640px){
+    #page-board .row{grid-template-columns:auto 1fr auto;gap:10px;padding:12px 14px}
+    #page-board .rowacts{grid-column:auto;margin:0;justify-content:flex-end;flex-wrap:nowrap}
+    #page-board .rate{font-size:22px;min-width:46px}
+    #page-board .rowacts .btn-ghost{padding:6px 9px;font-size:12px}
   }
   .hide{display:none!important}
   .vmhide{display:none!important}
@@ -797,15 +838,6 @@
     <div id="offline" class="warn hide" style="margin-bottom:18px"></div>
     <div class="cols">
 
-      <!-- board -->
-      <section class="panel" id="board-panel">
-        <div class="panel-hd">
-          <h2 id="board-title">Standing buy offers</h2>
-          <span class="count" id="board-count"></span>
-        </div>
-        <ul class="board" id="board"></ul>
-      </section>
-
       <!-- side -->
       <aside class="stack">
         <div class="seg" role="group" aria-label="Mode">
@@ -860,9 +892,8 @@
               <input id="b-link" class="field" autocomplete="off" placeholder="https://www.realapp.com/...">
             </div>
             <button id="b-post" class="btn">Post offer</button>
-            <p class="alarm">Take your listing down when you're done buying. Listings left up get you banned.</p>
-            <p class="note">Rates are per 1. Posting the same player again replaces your earlier offer.</p>
-            <button id="b-top" class="btn-ghost">View top players</button>
+            <p class="fine"><span class="dot"></span>Take your listing down when you're done buying - listings left up get you banned. Rates are per 1; posting a player again replaces your offer.</p>
+            <button id="b-top" class="linkish" type="button">View top players</button>
           </div>
         </div>
 
@@ -889,11 +920,20 @@
             <button id="s-exclude" class="btn-ghost">Exclude players/teams</button>
             <label class="note" style="display:flex;gap:8px;align-items:center;font-weight:700"><input type="checkbox" id="s-exowned"> Exclude owned - leave out players you have a this-season pass for</label>
             <p class="note hide" id="s-exowned-note" style="margin:-4px 0 0"></p>
-            <button id="s-hide-board" class="btn-ghost">Hide the buy offers board</button>
+            <button id="s-hide-board" class="btn-ghost hide">Hide the buy offers board</button>
           </div>
         </div>
       </aside>
 
+      <!-- Everyone's offers: tucked behind a button (Dennis, 2026-11-27); opened or closed sticks per browser. -->
+      <button type="button" class="opener" id="bd-open" aria-expanded="false"><span><b id="bd-open-t">All offers</b><span class="mm" id="bd-open-n"></span></span><span class="chev">▾</span></button>
+      <section class="panel hide" id="board-panel">
+        <div class="panel-hd">
+          <h2 id="board-title">Standing buy offers</h2>
+          <span class="count" id="board-count"></span>
+        </div>
+        <ul class="board" id="board"></ul>
+      </section>
     </div>
   </div>
 
@@ -3221,9 +3261,9 @@ function applyMinimumToForm(){
    ========================================================= */
 function renderBuyInstructions(){
   $('#b-instructions').innerHTML =
-    `<li>Comment under <a href="${esc(TARGET_LINK)}" target="_blank" rel="noopener">this post</a> with card/gallery.</li>` +
-    `<li>Copy your comment's link.</li>` +
-    `<li>Paste it below and post - it's checked automatically.</li>`;
+    `<li><span>Comment under <a href="${esc(TARGET_LINK)}" target="_blank" rel="noopener">this post</a> with card/gallery.</span></li>` +
+    `<li><span>Copy your comment's link.</span></li>` +
+    `<li><span>Paste it below and post - it's checked automatically.</span></li>`;
 }
 renderBuyInstructions();
 
@@ -3377,11 +3417,15 @@ const BOARD_HIDDEN = 'ratebrd_board_hidden';
 function boardHidden(){
   try{ return localStorage.getItem(BOARD_HIDDEN) === '1'; }catch(e){ return false; }
 }
+const BOARD_OPEN = 'ratebrd_board_open_v1';
+function boardOpen(){ try{ return localStorage.getItem(BOARD_OPEN) === '1'; }catch(e){ return false; } }
 function applyBoardVisibility(){
-  const off = boardHidden();
-  $('#board-panel').classList.toggle('hide', mode === 'sell' && off);
-  $('#s-hide-board').textContent = `${off ? 'Show' : 'Hide'} ${SPORTS[sport]} buy offers`;
+  const on = boardOpen();
+  $('#board-panel').classList.toggle('hide', !on);
+  const b = $('#bd-open'); if(b){ b.setAttribute('aria-expanded', String(on)); }
+  const tt = $('#bd-open-t'); if(tt) tt.textContent = `${on ? 'Hide' : 'See'} all ${SPORTS[sport]} offers`;
 }
+$('#bd-open').addEventListener('click', () => { try{ localStorage.setItem(BOARD_OPEN, boardOpen() ? '0' : '1'); }catch(e){} applyBoardVisibility(); });
 $('#s-hide-board').addEventListener('click', () => {
   try{ localStorage.setItem(BOARD_HIDDEN, boardHidden() ? '0' : '1'); }catch(e){}
   applyBoardVisibility();
@@ -3403,26 +3447,28 @@ async function render(){
 
   $('#board-title').textContent = `${SPORTS[sport]} buy offers`;
   $('#board-count').textContent = live.length ? `${live.length} standing` : '';
+  { const n = $('#bd-open-n'); if(n) n.textContent = live.length ? `${live.length} up` : 'none yet'; applyBoardVisibility(); }
   $('#board').innerHTML = live.length ? live.map(o => `
     <li class="row ${o.user===me.toLowerCase()?'mine':''}">
       <span class="rate num">${o.rate}<small>/1</small></span>
       <span><span class="player">${esc(o.player)}</span>${seasonTag(o)}<br><span class="who">${esc(market.users[o.user]?.name||o.user)}</span>${lvTag(o.user)}</span>
       <span class="rowacts">${o.user===me.toLowerCase()
-        ? `<button class="btn-ghost" data-edit="${o.id}">Change rate</button><button class="btn-ghost btn-danger" data-del="${o.id}">Remove</button>`
-        : (isAdmin() ? (o.link ? `<a class="btn-ghost" href="${esc(o.link)}" target="_blank" rel="noopener">Comment ↗</a>` : `<span class="who">no link</span>`) : '') +
+        ? `<button class="btn-ghost" data-edit="${o.id}">Edit</button><button class="btn-ghost btn-danger" data-del="${o.id}">Remove</button>`
+        : (isAdmin() ? (o.link ? `<a class="xbtn lnk" href="${esc(o.link)}" target="_blank" rel="noopener" title="Their comment" aria-label="Their comment">↗</a>` : `<span class="xbtn off" title="No comment link">–</span>`) : '') +
           `<button class="rlink" data-rep="${esc(market.users[o.user]?.name||o.user)}">Report</button>` +
           (isAdmin() ? `<button class="xbtn" data-kill="${o.id}" title="Delete this listing" aria-label="Delete this listing">&times;</button>` : '')}</span>
     </li>`).join('')
     : `<li class="empty"><b>Nothing on the board yet</b>Post the first ${SPORTS[sport]} offer and sellers will see it.</li>`;
 
   const mine = live.filter(o => o.user===me.toLowerCase());
+  $('#pane-mine').classList.toggle('nomine', !mine.length);
   $('#mine-count').textContent = mine.length ? `${mine.length} in ${sport}` : '';
   $('#mine').innerHTML = mine.length ? mine.map(o => `
     <li class="row">
       <span class="rate num">${o.rate}<small>/1</small></span>
       <span class="player">${esc(o.player)}${seasonTag(o)}</span>
       <span class="rowacts">
-        <button class="btn-ghost" data-edit="${o.id}">Change</button>
+        <button class="btn-ghost" data-edit="${o.id}">Edit</button>
         <button class="btn-ghost btn-danger" data-del="${o.id}">Remove</button>
       </span>
     </li>`).join('')
