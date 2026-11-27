@@ -561,7 +561,9 @@ Object.values(CUS_IDS).forEach(id => $('#' + id).addEventListener('input', () =>
 $('#c-reset').addEventListener('click', () => { const d = CUS_DEF[setSp()]; $('#c-l').value = d.l; $('#c-e').value = d.e; $('#c-r').value = d.r; $('#m-l').value = $('#m-e').value = $('#m-r').value = ''; cusSave(); drawMode(); if(shown()) run(); });
 const drawMode = () => { const m = $('#mode').value;
   $('#custom').hidden = m !== 'custom';
-  if(m === 'custom'){ $('#modenote').textContent = cusNote(); return; }
+  // NBA/NHL keep Dennis's 1-Legendary-a-day limit in Custom too - say so, so a low Legendary bar doesn't look broken (2026-11-27).
+  { const s = setSp(), one = s === 'nba' || s === 'nhl'; $('#m-l').placeholder = one ? '1 a day' : 'no limit'; $('#m-l').max = one ? '1' : ''; }
+  if(m === 'custom'){ const s = setSp(); $('#modenote').textContent = cusNote() + (s === 'nba' || s === 'nhl' ? ` · ${s === 'nba' ? 'NBA' : 'NHL'} uses at most 1 Legendary a day, on your top projection.` : ''); return; }
   const CFB_NOTE = { balanced: 'Legendary 22+ proj rax (max 70% a week) · Epic 15+ · Rare 10+',
     heavy: 'Legendary 18+ proj rax (no cap) · Epic 12+ · Rare 10+',
     saver: 'Legendary 27.5+ proj rax (max 20% a week) · Epic 20+ · Rare 10+' };
