@@ -4,24 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rate Board — CFB / FC / NFL / UFC / NHL / NBA / CBB card offers</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800&display=swap" rel="stylesheet" media="print" onload="this.media=\'all\'">
 <style>
-  :root{
-    --field:#1B2130;
-    --panel:#232B3D;
-    --panel-2:#2C3549;
-    --line:#3A4459;
-    --bone:#E9E7E1;
-    --mute:#98A2B8;
-    --accent:#E8A33D;
-    --accent-ink:#1B2130;
-    --bad:#F0685E;
-    --good:#4FD1A5;
-    --r:10px;
-  }
-  [data-sport="FC"]{ --accent:#3FD0A6; }
+  /* The site's colours (2026-11-27: the board had its own and ignored the theme picked on Home). theme.js sets
+     --bg / --panel / --panel2 / --line / --accent on the page; the board's older names point at them. */
+  :root{--bg:#141925;--panel:#1d2433;--panel2:#232b3d;--line:#2c3549;--ink:#e9e7e1;--mute:#9aa3b5;--accent:#E8A33D;
+    --field:var(--bg);--panel-2:var(--panel2);--bone:var(--ink);--accent-ink:#141925;--bad:#e5484d;--good:#5fbf7a;--r:12px}
   .seas{font-size:11px;padding:1px 6px;border-radius:6px;background:rgba(63,208,166,.15);color:#3FD0A6;margin-left:4px;vertical-align:middle}
   .tl{font-size:10px;padding:1px 5px;border-radius:5px;margin-left:5px;font-weight:700;vertical-align:middle}
   .tl.trusted{background:rgba(80,160,255,.18);color:#7fb6ff}
@@ -32,17 +19,13 @@
   .tl.silver{background:linear-gradient(135deg,#f4f6fa,#b9c0cc 55%,#8a93a3);color:#1e2330}
   .tl.bronze{background:linear-gradient(135deg,#f3c49b,#cd7f32 55%,#8c5323);color:#2a1606}
   .tl.owner{background:linear-gradient(90deg,#e5534b,#E8A33D);color:#fff}
-  [data-sport="NFL"]{ --accent:#7E9BFF; }
-  [data-sport="UFC"]{ --accent:#E5484D; }
-  [data-sport="NHL"]{ --accent:#6FC3E8; }
-  [data-sport="CBB"]{ --accent:#F08A3C; }
 
   *{box-sizing:border-box}
   html,body{margin:0;padding:0}
   body{
     background:var(--field);
     color:var(--bone);
-    font-family:'Archivo',ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
     font-size:15px;
     line-height:1.5;
     -webkit-font-smoothing:antialiased;
@@ -53,11 +36,10 @@
   a{color:var(--accent)}
 
   /* ---------- shell ---------- */
-  .topbar{
-    display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:16px;
-    padding:14px 22px;border-bottom:1px solid var(--line);
-    background:rgba(27,33,48,.94);position:sticky;top:0;z-index:40;backdrop-filter:blur(6px);
-  }
+  /* Title left, sport right - the same header as the other pages (2026-11-27). */
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;max-width:1180px;margin:0 auto;padding:16px 22px 0}
+  .bdtitle{margin:0;font-size:20px;font-weight:800;white-space:nowrap}
+  body:has(#page-board.hide) .bdtitle{display:none}
   .brandwrap{display:flex;align-items:center;gap:14px;min-width:0}
   .brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:-0.02em;white-space:nowrap}
   /* Same shape as the sport picker but quieter, so the sport stays the louder
@@ -491,6 +473,7 @@
   .howto li+li{margin-top:6px}
   .linkish{color:var(--accent);font-size:13.5px;font-weight:600;padding:0;text-align:left;text-decoration:underline;text-underline-offset:3px}
   p.alarm{margin:0;text-transform:none;font-size:13px;padding:10px 12px;border-width:1px;letter-spacing:0}
+  .rowacts a.btn-ghost{text-decoration:none}
   .rlink{color:var(--mute);font-size:12.5px;text-decoration:underline;text-underline-offset:3px;padding:6px 4px}
   .rlink:hover{color:var(--bad)}
   .xbtn{width:32px;height:32px;border-radius:8px;border:1px solid var(--line);color:var(--mute);font-size:18px;line-height:1}
@@ -576,7 +559,7 @@
     html,body{overflow-x:hidden}
 
     /* ---- top bar: brand + sport on one line, account row beneath ---- */
-    .topbar{grid-template-columns:auto 1fr;gap:10px;row-gap:9px;padding:10px 14px}
+    .topbar{padding:12px 14px 0}
     .brand{font-size:15px;white-space:nowrap}
     .brand .pip{width:9px;height:9px}
     /* The page picker takes the space between the name and the sport rather
@@ -739,6 +722,7 @@
 <div id="app" class="hide">
   <header class="topbar">
     <div class="brandwrap">
+      <h1 class="bdtitle">Buy board</h1>
       
       <!-- Which page you are on. On a phone this fills the gap that sat empty
            between the name and the sport. -->
@@ -3237,7 +3221,7 @@ function applyMinimumToForm(){
    ========================================================= */
 function renderBuyInstructions(){
   $('#b-instructions').innerHTML =
-    `<li>Comment under <a href="${esc(TARGET_LINK)}" target="_blank" rel="noopener">the pinned post</a> with the card you're upgrading and your rate.</li>` +
+    `<li>Comment under <a href="${esc(TARGET_LINK)}" target="_blank" rel="noopener">this post</a> with card/gallery.</li>` +
     `<li>Copy your comment's link.</li>` +
     `<li>Paste it below and post - it's checked automatically.</li>`;
 }
