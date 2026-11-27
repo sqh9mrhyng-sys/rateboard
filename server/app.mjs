@@ -55,7 +55,7 @@ const MIDDLE = await mod('_middleware.js');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
   '.webp': 'image/webp', '.gif': 'image/gif', '.txt': 'text/plain; charset=utf-8', '.sh': 'text/plain; charset=utf-8', '.woff2': 'font/woff2', '.xml': 'application/xml', '.webmanifest': 'application/manifest+json' };
-const HIDDEN = /^\/(server|functions|lib|worker|node_modules|examples)(\/|$)|\/\.|package(-lock)?\.json$|\.md$/;
+const HIDDEN = /^\/(server|functions|lib|worker|node_modules)(\/|$)|\/\.|package(-lock)?\.json$|\.md$/;
 
 function fileFor(p) {
   if (HIDDEN.test(p)) return null;
