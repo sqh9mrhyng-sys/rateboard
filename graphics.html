@@ -70,7 +70,7 @@
   #fsort{width:auto;height:40px;background-color:var(--panel);font-size:13.5px;font-weight:700}
   .cards{display:grid;gap:18px}
   .card{border-radius:var(--r);padding:16px;background:color-mix(in srgb,var(--panel) 92%,transparent);border:1px solid var(--line);animation:rise .45s var(--ease) both}
-  .ch{display:flex;gap:12px;align-items:center;margin-bottom:14px}
+  .ch{display:flex;gap:12px;align-items:center;margin-bottom:14px;min-width:0} .card{min-width:0;max-width:100%} .ch>*{min-width:0;overflow-wrap:anywhere}
   .av{flex:none;width:44px;height:44px;border-radius:13px;display:grid;place-items:center;font-family:var(--disp);font-weight:800;font-size:19px;color:#fff}
   .who{flex:1;min-width:0}
   .who .nm{font-family:var(--disp);font-size:19px;font-weight:700;letter-spacing:-.01em;text-decoration:none;display:inline-flex;align-items:center;gap:5px;max-width:100%}
