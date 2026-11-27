@@ -1,0 +1,10 @@
+User-agent: *
+Disallow: /api/
+Disallow: /admin
+Disallow: /testers
+Disallow: /grpdm
+Disallow: /bulk
+Disallow: /market
+Allow: /
+
+Sitemap: https://raxacademy.app/sitemap.xml

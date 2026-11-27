@@ -77,7 +77,9 @@ function serveStatic(req) {
     const to = u.pathname === '/index.html' ? '/' : u.pathname.slice(0, -5);
     return new Response(null, { status: 308, headers: { location: to + u.search } });
   }
-  const f = fileFor(u.pathname) || fileFor('/index.html');   // no 404 page: Pages serves the front page
+  /* An address with no page gets the front page with a 404 status (2026-11-27: AdSense saw every unknown address as
+     a copy of the home page). People still land somewhere useful; search engines see "not found". */
+  const own = fileFor(u.pathname), f = own || fileFor('/index.html'), notFound = !own && u.pathname !== '/';
   const ext = path.extname(f).toLowerCase();
   /* Joke (Dennis, 2026-11-17): every page shows "taken down" until 5:00am Alaska (14:00 UTC Nov 18). Nothing
      else changes and the site's data and API keep running. Dennis gets in with /?peek=rax (remembered). */
@@ -87,7 +89,7 @@ function serveStatic(req) {
     if (!/(?:^|;\s*)rb_peek=1/.test(ck)) return new Response(req.method === 'HEAD' ? null : TAKEDOWN_HTML, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
   }
   const body = fs.readFileSync(f);
-  return new Response(req.method === 'HEAD' ? null : body, { status: 200, headers: {
+  return new Response(req.method === 'HEAD' ? null : body, { status: notFound ? 404 : 200, headers: {
     'content-type': TYPES[ext] || 'application/octet-stream',
     'cache-control': ext === '.html' || u.pathname === '/sw.js' || (ext === '.js' && /^\/[^/]+$/.test(u.pathname)) ? 'no-cache' : /^\/(img|data)\//.test(u.pathname) ? 'public, max-age=3600' : 'public, max-age=300' } });
 }
