@@ -250,7 +250,8 @@ async function fillNames(db, passes) {
 
 async function rsGetJson(url, auth) {
   for (let i = 0; ; i++) {
-    const res = await fetch(url, { headers: rsHeaders(auth) });
+    // 2026-11-28: Real hanging under load left Boosts on "Working it out" - no call waits more than 15s.
+    const res = await fetch(url, { headers: rsHeaders(auth), signal: AbortSignal.timeout(15000) });
     const text = await res.text();
     if (res.ok) { try { return JSON.parse(text); } catch (e) { return null; } }
     if ((res.status === 429 || /high volume/i.test(text)) && i < 2) { await sleep(3000 * (i + 1)); continue; }
@@ -5460,13 +5461,14 @@ async function realInjuries(env, sp, ids) {
   await Promise.all([...new Set(ids.map(Number).filter(Number.isFinite))].map(async id => {
     try { const c = JSON.parse((await env.RATEBOARD_KV.get(`rinj_v1_${sp}_${id}`)) || 'null'); if (c) { if (c.s) out[id] = c; return; } } catch (e) {}
     need.push(id); }));
-  const tok = scanTok(env), q = need.slice(0, 80);
-  const work = async () => { while (q.length) { const id = q.shift();
+  // At most ~8 seconds on this: whatever isn't read in time is picked up on a later run (2026-11-28, Real busy).
+  const tok = scanTok(env), q = need.slice(0, 80), until = Date.now() + 8000;
+  const work = async () => { while (q.length && Date.now() < until) { const id = q.shift();
     try { const d = await rsGetJson(`https://web.realapp.com/players/${id}/sport/${sp}`, tok), p = (d && d.player) || {};
       const c = { s: p.injuryStatus || null, b: p.injuryBodyPart || null, n: p.injuryNotes || null };
       await env.RATEBOARD_KV.put(`rinj_v1_${sp}_${id}`, JSON.stringify(c), { expirationTtl: 7200 }); if (c.s) out[id] = c;
     } catch (e) {} } };
-  await Promise.all([work(), work(), work(), work(), work()]);
+  await Promise.race([Promise.all([work(), work(), work(), work(), work()]), sleep(9000)]);
   return out;
 }
 /* One row per FC pass the member holds whose team plays that day.
