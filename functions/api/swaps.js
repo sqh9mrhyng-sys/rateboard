@@ -4977,7 +4977,7 @@ const BOOST_OUT_SEED = { ncaaf: [
 async function boostOutList(env) {
   let kv = null; try { kv = JSON.parse((await env.RATEBOARD_KV.get(BOOST_OUT_KEY)) || 'null'); } catch (e) {}
   // One-off (2026-11-26): Gibbs was marked out by an accidental tap on Boosts. Take him off once.
-  try { if (kv && kv.nfl && !(await env.RATEBOARD_KV.get('boostout_fix_gibbs_1126'))) { const k = boostName('Jahmyr Gibbs'); if (kv.nfl[k] && /Boosts/.test(kv.nfl[k].note || '')) { delete kv.nfl[k]; await env.RATEBOARD_KV.put(BOOST_OUT_KEY, JSON.stringify(kv)); await env.RATEBOARD_KV.put('proj_force_v1_nfl', String(Date.now()), { expirationTtl: 7 * 86400 }); await env.RATEBOARD_KV.delete('boosttop_v10_' + etDay(Date.now())).catch(() => {}); } await env.RATEBOARD_KV.put('boostout_fix_gibbs_1126', '1', { expirationTtl: 7 * 86400 }); } } catch (e) {}
+  try { if (kv && kv.nfl && !(await env.RATEBOARD_KV.get('boostout_fix_gibbs_1126'))) { const k = boostName('Jahmyr Gibbs'); if (kv.nfl[k] && /Boosts/.test(kv.nfl[k].note || '')) { delete kv.nfl[k]; await env.RATEBOARD_KV.put(BOOST_OUT_KEY, JSON.stringify(kv)); await env.RATEBOARD_KV.put('proj_force_v1_nfl', String(Date.now()), { expirationTtl: 7 * 86400 }); await env.RATEBOARD_KV.delete('boosttop_v11_' + etDay(Date.now())).catch(() => {}); } await env.RATEBOARD_KV.put('boostout_fix_gibbs_1126', '1', { expirationTtl: 7 * 86400 }); } } catch (e) {}
   if (!kv) { kv = {}; for (const [sp, rows] of Object.entries(BOOST_OUT_SEED)) { kv[sp] = {}; for (const [name, status, note, until] of rows) kv[sp][boostName(name)] = { name, status, note, until, at: Date.parse('2026-11-07T06:00:00Z') }; } }
   return kv;
 }
@@ -6878,7 +6878,7 @@ async function handle({ request, env, waitUntil }) {
     const ETF = ET_DAY_FMT, etd = d => ETF.format(d);
     const days0 = [...Array(7)].map((_, i) => etd(new Date(Date.now() + i * 86400000)));
     const today = days0.includes(url.searchParams.get('day')) ? url.searchParams.get('day') : days0[0];
-    const K = 'boosttop_v10_' + today;   // v10: FC included   // v4: no one who sat out his team's last game
+    const K = 'boosttop_v11_' + today;   // v10-11: FC included   // v4: no one who sat out his team's last game
     try { const c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (c && Date.now() - c.at < 10 * 60000) return json(c); } catch (e) {}
     const out = { at: Date.now(), day: today, sports: {} };
     for (const sp of ['nfl', 'ncaaf', 'nba', 'ncaam', 'nhl', 'soccer']) {
