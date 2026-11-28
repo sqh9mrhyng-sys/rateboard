@@ -68,6 +68,9 @@
   .bkbox summary{cursor:pointer;font-weight:700;font-size:13px;color:var(--mute)} .bkbox summary span{color:var(--ink)}
   #books{display:grid;grid-template-columns:repeat(2,1fr);gap:6px 10px;padding:4px 0 2px} .bkc{font-size:14px;display:flex;align-items:center;gap:6px} .bkc em{font-style:normal;font-size:11px;color:var(--accent)} .bkc.ref{color:var(--mute)}
   .ar{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--line)} .ar button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 10px;font:inherit;font-size:13px;font-weight:700;cursor:pointer}
+  /* Watch (member idea, 2026-11-28): pin markets to a Watching tab that keeps a fixed order. */
+  .wt{flex:none;margin-left:8px;background:none;border:1px solid var(--line, #3a4150);color:var(--mute);font:inherit;font-size:12.5px;font-weight:700;padding:5px 10px;border-radius:999px;cursor:pointer;white-space:nowrap;align-self:center}
+  .wt.on{border-color:var(--accent);color:var(--accent)}
   .cl{background:none;border:0;color:var(--mute);font-size:15px;cursor:pointer;padding:2px 6px 0 0;align-self:flex-start}
   .gh{align-items:flex-start} .g.col .gh{padding-bottom:12px} .gh .u{align-self:center}
   .bp{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:0 14px 10px}
@@ -624,6 +627,8 @@ function xtra(g, si){ const e = (J && J.gx && J.gx[g.id]) || null; if (!e) retur
   const a = (e.a3 || [])[si]; if (a && a[2] >= 60) { const ed = a[1] / a[0] - 1; o += `<small class="x3${ed >= 0.03 ? ' up' : ''}">${a[2] >= 170 ? '3h' : Math.round(a[2] / 6) / 10 + 'h'} avg: Real ${(a[0] * 100).toFixed(1)}% · fair ${(a[1] * 100).toFixed(1)}%</small>`; }
   const t = (e.th || [])[si]; if (t && Math.abs(t[0]) >= 1) o += `<small class="xt${t[0] > 0 ? ' up' : ''}">Last ${t[1]}: Real priced them ${Math.abs(t[0]).toFixed(1)} pts ${t[0] > 0 ? 'under' : 'over'} fair</small>`;
   return o; }
+let WATCH = new Set(); try { WATCH = new Set(JSON.parse(ls.get('pred_watch_v1') || '[]').map(String)); } catch (e) {}
+const saveWatch = () => { try { ls.set('pred_watch_v1', JSON.stringify([...WATCH])); } catch (e) {} };
 function card(g){
   const srcs = g.sources || [];
   const c = collapsed.has(String(g.id)) && g.id !== FOCUS.gid, bestS = g.sides.reduce((a, x) => (x.ev ?? -9) > (a.ev ?? -9) ? x : a, g.sides[0]);
@@ -631,7 +636,7 @@ function card(g){
   return `<div id="g-${g.id}" class="g${g.sides.some(s => stillToBet(g, s)) ? ' hot' : ''}${g.id === FOCUS.gid ? ' focus' : ''}${c ? ' col' : ''}${took.length || hsd.length ? ' taken' : ''}">${took.length || hsd.length ? `<div class="tk">${hsd.length ? hsd.map(([i, H]) => `<div>✓ ${heldHtml(g, i, H)}</div>`).join('') : `✓ You took ${took.map(b => `${esc(b.name)} at ${pw(b.price)}${b.amt ? ` · ${Math.round(b.amt).toLocaleString()} rax` : ''}`).join(', ')}`}</div>${took.length ? arbLine(took[0]) : ''}` : ''}
     <div class="gh"><button class="cl" data-cl="${g.id}" aria-label="${c ? 'Expand' : 'Collapse'}">${c ? '▸' : '▾'}</button><span class="pair">${g.sides.filter(x => !/^(draw|tie|x)$/i.test(x.label || '')).slice(0, 2).map(x => logo(x, 'sm')).join('')}</span><div style="min-width:0;flex:1">
       ${g.path ? `<a class="nm" href="https://www.realapp.com${esc(g.path)}" target="_blank" rel="noopener">${esc(g.game)}</a>` : `<span class="nm">${esc(g.game)}</span>`}
-      <div class="meta"><span class="tag">${esc(SPN[g.sport] || g.sport)}</span>${g.kind === 'spread' ? '<span class="tag" title="Fair % from books at this exact spread; books at a nearby line are moved to it and count half">Spread</span>' : ''}${when(g)}${thin(g) && bkOf(g).length ? '<span class="tag lock" title="Too few books or lines too old to trust the EV">Thin odds</span>' : ''}${g.volume ? `<span class="tag vol">${esc(g.volume)} vol</span>` : ''}</div></div>
+      <div class="meta"><span class="tag">${esc(SPN[g.sport] || g.sport)}</span>${g.kind === 'spread' ? '<span class="tag" title="Fair % from books at this exact spread; books at a nearby line are moved to it and count half">Spread</span>' : ''}${when(g)}${thin(g) && bkOf(g).length ? '<span class="tag lock" title="Too few books or lines too old to trust the EV">Thin odds</span>' : ''}${g.volume ? `<span class="tag vol">${esc(g.volume)} vol</span>` : ''}</div></div><button class="wt${WATCH.has(String(g.id)) ? ' on' : ''}" data-w="${g.id}" aria-pressed="${WATCH.has(String(g.id))}" title="${WATCH.has(String(g.id)) ? 'Watching - tap to stop' : 'Watch this market'}">${WATCH.has(String(g.id)) ? '★ Watching' : '☆ Watch'}</button>
       ${c ? (units(g, bestS) ? `<span class="u">${esc(bestS.label)} +${pc(evNet(g, bestS, units(g, bestS)))} · ${units(g, bestS)}u</span>` : '') : g.link ? `<a class="go" href="${esc(g.link)}" target="_blank" rel="noopener">Predict ↗</a>` : ''}</div>
     ${c ? '' : g.sides.map((s, si) => { const u = units(g, s); return `<div class="sd"><span class="t">${logo(s)}<span>${esc(s.name || s.label)}<small class="fr">Fair <b>${pc(s.fair)}</b></small>${xtra(g, si)}${(g.refs || []).length ? `<small class="ref">${g.refs.map(r => `${esc(r.src)} ${pc(r.p[si])}`).join(' · ')}</small>` : ''}${s.price > 0 ? `<button class="place inl${u ? '' : ' dim'}" data-g="${g.id}" data-s="${si}">Bet placed</button>` : ''}</span></span>
       <span class="c">Real<b>${pw(s.price)}</b></span>
@@ -954,7 +959,10 @@ function draw(){
   const bg = betGids(), games = (J.games || []).filter(g => !g.locked && !bg.has(g.id) && g.id !== FOCUS.gid).map(derive);
   drawFocus();
   const sps = SP_ORDER.filter(sp => games.some(g => g.sport === sp));
-  $('#chips').innerHTML = ['', '_ev', ...(sps.length > 1 ? sps : [])].map(s => `<button data-c="${s}" aria-pressed="${chip === s}">${s === '_best' ? 'Best EV' : s === '_ev' ? '+EV' : s ? SPN[s] || s : 'All'}</button>`).join('')
+  // Forget watched markets once they're gone from Real (kept while locked, so a just-started game stays).
+  { const live = new Set((J.games || []).map(g => String(g.id))); if ((J.games || []).length && [...WATCH].some(k => !live.has(k))) { WATCH = new Set([...WATCH].filter(k => live.has(k))); saveWatch(); } }
+  if (chip === '_watch' && !WATCH.size) chip = '';
+  $('#chips').innerHTML = ['', '_ev', ...(WATCH.size ? ['_watch'] : []), ...(sps.length > 1 ? sps : [])].map(s => `<button data-c="${s}" aria-pressed="${chip === s}">${s === '_best' ? 'Best EV' : s === '_ev' ? '+EV' : s === '_watch' ? `★ Watching ${WATCH.size}` : s ? SPN[s] || s : 'All'}</button>`).join('')
     + `<button data-pre="1" aria-pressed="${preOnly}" title="Only games that haven't started">Not started</button>`
     + `<select id="minev" class="minev" aria-label="Minimum EV">${[0, 1, 2, 3, 5, 7, 10, 15, 20].map(v => `<option value="${v}"${v === minEv ? ' selected' : ''}>${v ? 'Min EV ' + v + '%' : 'Min EV: off'}</option>`).join('')}</select>`;
   const pos = games.filter(g => g.sides.some(s => stillToBet(g, s))), top = games.reduce((a, g) => Math.max(a, best(g)), -9);
@@ -967,7 +975,11 @@ function draw(){
     .filter(g => !minEv || best(g) >= minEv / 100);   // games whose best side is under the minimum don't show
   $('#livenote').hidden = !vis.some(g => g.live);   // note shows whenever a live game is listed (Dennis, 2026-11-17)
   let html;
-  if (chip === '_ev') {
+  if (chip === '_watch') {
+    // Watching: only the markets you starred, in a fixed order (start time, then game) - prices refresh, nothing moves.
+    const wl = (J.games || []).filter(g => !g.locked && WATCH.has(String(g.id)) && g.id !== FOCUS.gid).map(derive).sort(stable);
+    html = wl.map(card).join('') || '<div class="empty">Nothing you\'re watching is open right now.</div>';
+  } else if (chip === '_ev') {
     // +EV: games with a bet to make (not decided), best EV first.
     html = vis.slice().sort((a, b) => best(b) - best(a) || stable(a, b)).map(card).join('') || '<div class="empty">No +EV bets right now.</div>';
   } else {
@@ -978,7 +990,7 @@ function draw(){
     html = html || `<div class="empty">${chip === '_ev' && games.length ? 'No +EV bets right now.' : preOnly && games.length ? 'No games that haven\'t started yet.' : (J.errs || []).some(e => / real 40[13]/.test(String(e))) ? 'Real is turning away the site\'s login right now, so its markets can\'t be read. They\'ll show up here again as soon as it\'s fixed.' : 'No open game markets on Real right now.'}</div>`;
   }
   // Locked and ended games (kept 24 h) at the bottom, so a bet can still be logged after the fact.
-  const ended = (J.games || []).filter(g => g.locked && !bg.has(g.id) && (!chip || chip === '_ev' || g.sport === chip)).map(derive).sort(stable);
+  const ended = (J.games || []).filter(g => g.locked && !bg.has(g.id) && (chip === '_watch' ? WATCH.has(String(g.id)) : !chip || chip === '_ev' || g.sport === chip)).map(derive).sort(stable);
   if (ended.length && chip !== '_ev' && !preOnly) html += `<details class="endbox"${endOpen ? ' open' : ''}><summary class="sph"><span>Locked &amp; ended</span><span class="note">${ended.length} game${ended.length === 1 ? '' : 's'} · log a bet you made</span></summary>${ended.map(endCard).join('')}</details>`;
   $('#list').innerHTML = html;
   $('#tabs [data-t="a"]').hidden = true;   // public now: the access list does nothing { const n = [...document.querySelectorAll('#tabs button')].filter(x => !x.hidden).length; $('#tabs').style.setProperty('--tc', n <= 4 ? 2 : 3); } $('#tabs [data-t="r"]').hidden = !J.owner; $('#garb').hidden = !J.owner;
@@ -989,6 +1001,7 @@ $('#chips').addEventListener('change', e => { if (e.target.id !== 'minev') retur
 $('#chips').addEventListener('click', e => { if (e.target.closest('[data-pre]')) { preOnly = !preOnly; ls.set('pred_pre', preOnly ? '1' : '0'); draw(); return; } const b = e.target.closest('[data-c]'); if(!b) return; chip = b.dataset.c; ls.set('pred_chip', chip); draw(); });
 $('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if(!b) return; for (const x of document.querySelectorAll('#tabs button')) x.setAttribute('aria-pressed', x === b); $('#vm').hidden = b.dataset.t !== 'm'; $('#vg').hidden = b.dataset.t !== 'g'; $('#va').hidden = b.dataset.t !== 'a'; $('#vf').hidden = b.dataset.t !== 'f'; if (b.dataset.t === 'f') { fbCall(); } if (b.dataset.t === 'a') accLoad(); $('#vb').hidden = b.dataset.t !== 'b'; if (b.dataset.t === 'b') loadPort(); if (b.dataset.t === 'b') drawBets(); $('#vr').hidden = b.dataset.t !== 'r'; if (b.dataset.t === 'r') drawArb(); $('#vn').hidden = b.dataset.t !== 'n'; if (b.dataset.t === 'n') naLoad(); });
 $('#list').addEventListener('click', e => {
+  const w = e.target.closest('[data-w]'); if (w) { const k = w.dataset.w; WATCH.has(k) ? WATCH.delete(k) : WATCH.add(k); saveWatch(); draw(); return; }
   const c = e.target.closest('[data-cl]'); if (c) { const id = c.dataset.cl; collapsed.has(id) ? collapsed.delete(id) : collapsed.add(id); ls.set('pred_collapsed2', JSON.stringify([...collapsed])); draw(); return; }
   const x = e.target.closest('.bfx'); if (x) { betForm = null; draw(); return; }
   const b = e.target.closest('button.place[data-g]'); if (b) openBetForm(Number(b.dataset.g), Number(b.dataset.s)); });
