@@ -8982,16 +8982,17 @@ $('#rs-go').addEventListener('click', async () => {
   if(!jobs.length) return rsMsg('None of what you picked has a buyer right now - pick a sport or season with a number on it.', true);
   if(jobs.length > SELL_MAX) return rsMsg(`Up to ${SELL_MAX} seasons in one pull - you have ${jobs.length} on. Turn some off first.`, true);
   btn.disabled = true; rsMsg(''); lastPullAt = null;
-  const raw = [], failed = []; let cdMsg = '';
+  const raw = [], failed = []; let cdMsg = '', realBusy = false;
   try{
     for(let i = 0; i < jobs.length; i++){
       const [sp, se] = jobs[i];
       try{ raw.push(...await pullOne(sp, se, (ch, note) => { btn.innerHTML = `<span class="spin"></span> ${esc(note || `${sp}${se ? ' ' + se : ''}${ch > 1 ? ' (' + ch + ')' : ''}`)} · ${i + 1} of ${jobs.length}`; })); }
-      catch(e){ if(e.cd){ cdMsg = e.message; break; } failed.push(`${sp}${se ? ' ' + se : ''}`); }
+      catch(e){ if(e.cd){ cdMsg = e.message; break; } failed.push(`${sp}${se ? ' ' + se : ''}`); if(/Real is busy/.test(e.message)) realBusy = true; }
     }
     if(cdMsg && !raw.length){ rsMsg(cdMsg, true); return; }
-    if(!raw.length){ rsMsg(failed.length ? `Could not load ${failed.join(', ')} - try again in a minute.` : `No cards found for "${me}" in what you sell.`, true); return; }
-    rsMsg(cdMsg ? cdMsg + ' Showing what loaded.' : failed.length ? `Couldn't load ${failed.join(', ')} - showing the rest.` : '', !!(failed.length || cdMsg));
+    const why = realBusy ? ' Real is busy and is limiting how fast cards can be read - try again in 10-15 minutes.' : ' - try again in a minute.';
+    if(!raw.length){ rsMsg(failed.length ? `Could not load ${failed.join(', ')}.${why}` : `No cards found for "${me}" in what you sell.`, true); return; }
+    rsMsg(cdMsg ? cdMsg + ' Showing what loaded.' : failed.length ? `Couldn't load ${failed.join(', ')} - showing the rest.${realBusy ? why : ''}` : '', !!(failed.length || cdMsg));
     lastPull = raw; updateFreshnessNote();
     showMatches(raw);
   }catch(e){
