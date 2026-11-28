@@ -8990,7 +8990,7 @@ $('#rs-go').addEventListener('click', async () => {
       catch(e){ if(e.cd){ cdMsg = e.message; break; } failed.push(`${sp}${se ? ' ' + se : ''}`); if(/Real is busy/.test(e.message)) realBusy = true; }
     }
     if(cdMsg && !raw.length){ rsMsg(cdMsg, true); return; }
-    const why = realBusy ? ' Real is busy and is limiting how fast cards can be read - try again in 10-15 minutes.' : ' - try again in a minute.';
+    const why = realBusy ? ' Real is busy and is limiting how fast cards can be read - try again in 10-15 minutes.' : ' Try again in a minute.';
     if(!raw.length){ rsMsg(failed.length ? `Could not load ${failed.join(', ')}.${why}` : `No cards found for "${me}" in what you sell.`, true); return; }
     rsMsg(cdMsg ? cdMsg + ' Showing what loaded.' : failed.length ? `Couldn't load ${failed.join(', ')} - showing the rest.${realBusy ? why : ''}` : '', !!(failed.length || cdMsg));
     lastPull = raw; updateFreshnessNote();
