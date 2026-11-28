@@ -254,6 +254,12 @@
   .tp-tools{position:sticky;top:0;z-index:2;background:var(--panel);padding:2px 0 10px;display:flex;flex-direction:column;gap:9px}
   .tp-row{display:grid;grid-template-columns:38px 1fr auto;gap:10px;align-items:baseline;padding:9px 0;border-bottom:1px solid var(--line)}
   .tp-row:last-child{border-bottom:none}
+  .tp-row.tp2{grid-template-columns:34px 1fr;align-items:start}
+  .tp2 .tp-rank{font-size:14px;padding-top:1px}
+  .tp2 a.tp-name{text-decoration:none} .tp2 a.tp-name:active{opacity:.7}
+  .tp2 .tp-val{margin-top:3px} .tp2 .tp-val i{font-style:normal;opacity:.45;margin:0 6px}
+  .tp2 .tp-av{color:var(--accent);font-weight:600;white-space:nowrap}
+  .tp2 .tp-buyers{grid-column:2}
   .tp-rank{color:var(--mute);font-size:12px;font-variant-numeric:tabular-nums}
   .tp-name{font-weight:600}
   .tp-taken{color:var(--bad)}
@@ -3897,7 +3903,7 @@ async function topLive(bs){
       + `&seasons=${ds}:${se}&sort=rax&dir=desc&limit=${TOP_LIVE_LIMIT}`)).json();
     const rows = (d.rows || [])
       .filter(r => r.player)
-      .map(r => ({ name: r.player, team: r.team || '', rax: r.rax, owners: r.owners,
+      .map(r => ({ id: Number(r.playerId) || 0, name: r.player, team: r.team || '', rax: r.rax, owners: r.owners,
                    games: r.games }));
     if(!rows.length) return null;
     topLiveCache.set(bs, { at: Date.now(), rows });
@@ -3946,6 +3952,7 @@ async function showTopPlayers(){
     buyers.sort((a,b) => b.rate - a.rate);
     return {
       rank: i + 1,
+      id: p.id || 0,
       name: p.name,
       team: p.team || '',
       rax: p.rax,
@@ -3976,12 +3983,24 @@ async function showTopPlayers(){
       ${liveTop ? `<div class="seg" role="group" aria-label="Sort by">
         <button data-s="rax"    aria-pressed="true">Rax earned</button>
         <button data-s="owners" aria-pressed="false">Owners</button>
+        <button data-s="av"     aria-pressed="false">Available rating</button>
       </div>` : ''}
       <p class="note" id="tp-count"></p>
     </div>
     <div id="tp-list"></div>`);
 
   let filter = 'all', query = '', sortKey = liveTop ? 'rax' : 'value';
+  /* Links, rest-of-season projections and available rating (Dennis, 2026-11-28), filled in once they load. */
+  let extra = null;
+  const ds = BOARD_TO_DATA[sport];
+  if(liveTop && ds){
+    const ids = rows.map(r => r.id).filter(Boolean);
+    fetch(`/api/swaps?op=boardtop&sport=${ds}&ids=${ids.join(',')}`, { credentials: 'same-origin' }).then(r => r.json()).then(d => {
+      extra = (d && d.players) || {};
+      for(const r of rows){ const x = extra[r.id]; if(!x) continue; r.url = x.u || ''; r.ros = x.ros; r.av = x.av || 0; }
+      draw();
+    }).catch(() => { extra = {}; draw(); });
+  }
 
   // Rank follows whichever sort is on, and is worked out before the search
   // and the buyer filters narrow the list - so a player keeps the number they
@@ -3998,26 +4017,30 @@ async function showTopPlayers(){
     const all = ordered();
     all.forEach((r, i) => { r.rank = i + 1; });
     const shown = all.filter(r => {
+      if(sortKey === 'av' && (r.buyers.length || !(r.av > 0))) return false;
       if(filter === 'taken' && !r.buyers.length) return false;
       if(filter === 'open'  &&  r.buyers.length) return false;
       return !q || r.key.includes(q);
     });
 
-    box.querySelector('#tp-count').textContent =
-      `${shown.length} of ${rows.length} shown — ${taken} already being bought, ${rows.length - taken} with no buyer.`;
+    box.querySelector('#tp-count').textContent = sortKey === 'av'
+      ? (extra ? `Players with no buyer, by the rating members' latest card pulls hold of them. Grows as more people pull their cards.` : 'Loading…')
+      : `${shown.length} of ${rows.length} shown — ${taken} already being bought, ${rows.length - taken} with no buyer.`;
 
+    const nf = n => Number(n).toLocaleString(), sep = '<i>|</i>';
     box.querySelector('#tp-list').innerHTML = shown.length ? shown.map(r => `
-      <div class="tp-row">
-        <span class="tp-rank">${r.rank}</span>
-        <span class="tp-name ${r.buyers.length ? 'tp-taken' : 'tp-open'}">${esc(r.name)}</span>
-        <span class="tp-val">${r.rax != null
-          ? `${Number(r.rax).toLocaleString()} rax${r.owners != null
-              ? ` &middot; ${Number(r.owners).toLocaleString()} owners` : ''}`
-          : (r.value != null ? Number(r.value).toLocaleString() : '')}</span>
+      <div class="tp-row tp2">
+        <span class="tp-rank">${r.rank}.</span>
+        <div>${r.url ? `<a class="tp-name ${r.buyers.length ? 'tp-taken' : 'tp-open'}" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.name)}</a>`
+                     : `<span class="tp-name ${r.buyers.length ? 'tp-taken' : 'tp-open'}">${esc(r.name)}</span>`}
+        <div class="tp-val">${r.rax != null
+          ? [`${nf(r.rax)} rax`, r.owners != null ? `${nf(r.owners)} owners` : '', r.ros != null ? `ROS ~${nf(r.ros)}` : '',
+             sortKey === 'av' && r.av > 0 ? `<span class="tp-av">~${r.av} available</span>` : ''].filter(Boolean).join(sep)
+          : (r.value != null ? nf(r.value) : '')}</div></div>
         ${r.buyers.length ? `<div class="tp-buyers">${r.buyers.map(b =>
           `<b>${b.rate}/1</b> ${esc(b.who)}`).join(' &nbsp;·&nbsp; ')}</div>` : ''}
       </div>`).join('')
-      : `<p class="tp-empty">Nothing matches that.</p>`;
+      : `<p class="tp-empty">${sortKey === 'av' ? (extra ? 'No card pulls hold any of these players yet.' : 'Loading…') : 'Nothing matches that.'}</p>`;
   }
 
   box.querySelector('#tp-q').addEventListener('input', e => { query = e.target.value; draw(); });

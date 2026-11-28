@@ -4133,9 +4133,9 @@ export async function swapAccess(env, request) {
 const MEMBER_OPS = new Set(['savewants', 'confirm', 'recbuys', 'myhour', 'me', 'save', 'keep', 'touch', 'giveprefs', 'packstoday', 'scan', 'scanstatus', 'search', 'connect', 'whynot', 'hourcounts', 'wantcounts', 'ownercounts', 'usersearch', 'report', 'myswaps', 'dropwant', 'pause', 'endall', 'saveslots']);
 const OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'boostplan', 'search', 'otdpool']);
 // Open to every signed-in member: OTD's page, and the Rate Board's Exclude owned list (2026-11-25: members without Swaps got a 403 and "0 passes left out").
-const PUBLIC_OPS = new Set(['projections']);
+const PUBLIC_OPS = new Set(['projections', 'boardtop']);
 const PRED_PUB_MEMO = { at: 0, text: '' };   // the EV page for signed-out visitors   // signed-out visitors (2026-11-27); grows as pages open up
-const TEST_OTD_OPS = new Set(['me', 'scan', 'scanstatus', 'games', 'search', 'otdpool', 'otdloadouts', 'mypassnames', 'myboardpasses', 'myboardall', 'bulkwatch', 'bulkplayers']);
+const TEST_OTD_OPS = new Set(['boardtop', 'me', 'scan', 'scanstatus', 'games', 'search', 'otdpool', 'otdloadouts', 'mypassnames', 'myboardpasses', 'myboardall', 'bulkwatch', 'bulkplayers']);
 
 /* ---------- Moderation (Dennis, 2026-11-11) ----------
    Reports on swap / 160 partners are counted automatically:
@@ -9054,6 +9054,24 @@ async function handle({ request, env, waitUntil }) {
     rows.forEach((r, i) => walk(r, '', i));
     return json({ sport: sp, season: se, account: u.rsUser, passes: rows.length, topKeys: Object.keys(d || {}),
       fields: Object.fromEntries([...seen].map(([k, v]) => [k, [...v]])), first3: rows.slice(0, 3) });
+  }
+  /* Board's Top players (Dennis, 2026-11-28): each listed player's Real link, rest-of-season projection (projected
+     end of season minus what he has now) and the rating members' last scans hold of him. Totals only - never who. */
+  if (op === 'boardtop') {
+    const sp = PROJ_SEASON[url.searchParams.get('sport')] ? url.searchParams.get('sport') : null;
+    if (!sp) return json({ error: 'sport?' }, 400);
+    const se = PROJ_SEASON[sp][0];
+    const ids = [...new Set(String(url.searchParams.get('ids') || '').split(',').map(Number).filter(n => n > 0))].slice(0, 600);
+    let pc = PROJ_MEM.get(sp) ? PROJ_MEM.get(sp).c : null;
+    if (!pc) { try { pc = JSON.parse((await env.RATEBOARD_KV.get(`proj_v3_${sp}`)) || 'null'); } catch (e) {} }
+    const pr = new Map(); if (pc && pc.rows) for (const r of pc.rows) pr.set(Number(r.i), r);
+    const av = new Map();
+    try { const q = await db.prepare('SELECT pid, SUM(rating) AS r, COUNT(*) AS n FROM board_avail WHERE sp=? AND se=? AND at>? GROUP BY pid').bind(sp, se, Date.now() - 14 * 86400000).all();
+      for (const x of (q.results || [])) av.set(Number(x.pid), [Math.round(Number(x.r) * 10) / 10, Number(x.n)]); } catch (e) {}
+    const out = {};
+    for (const id of ids) { const r = pr.get(id), a = av.get(id);
+      out[id] = { u: playerUrl(`${sp}:${se}:${id}`), ros: r ? Math.max(0, Math.round(r.pr - r.r)) : null, av: a ? a[0] : 0, an: a ? a[1] : 0 }; }
+    return json({ at: pc ? pc.at : null, players: out });
   }
   if (op === 'projections') {
     // Open to everyone (2026-11-27; signed in only from 2026-11-08). Signed out: no "my passes".

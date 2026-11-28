@@ -305,6 +305,10 @@ export async function onRequestGet({ request, env }) {
     fetchedAt: Date.now(),
   });
 
+  /* Available rating (Dennis, 2026-11-28): each member's last scan, per player, so the board's Top players can show how
+     much rating of a player with no buyer is out there. Only totals ever leave the server. */
+  if (entity === 'player' && env.RATEBOARD_DB) { try { await recordScan(env.RATEBOARD_DB, username.toLowerCase(), rsSport, Number(season), start, chunk.players); } catch (e) {} }
+
   // 5. Cache until this quarter-hour slot rolls over
   if (env.RATEBOARD_KV) { try { await env.RATEBOARD_KV.put(kvKey, result, { expirationTtl: KEEP_SECONDS }); } catch (e) {} }
   else await cachePut(cacheReq, result, CACHE_TTL_SECONDS);
@@ -312,4 +316,16 @@ export async function onRequestGet({ request, env }) {
   return new Response(result, {
     headers: { 'content-type': 'application/json', 'x-cache': 'MISS' }
   });
+}
+
+let availReady = false;
+async function recordScan(db, u, sp, se, start, players) {
+  if (!availReady) { await db.prepare('CREATE TABLE IF NOT EXISTS board_avail (u TEXT, sp TEXT, se INTEGER, pid INTEGER, rating REAL, at INTEGER, PRIMARY KEY (u, sp, se, pid))').run();
+    await db.prepare('CREATE INDEX IF NOT EXISTS board_avail_sp ON board_avail (sp, se, pid)').run(); availReady = true; }
+  const now = Date.now(), st = [];
+  // A fresh scan replaces their last one for that sport and season.
+  if (start === 0) st.push(db.prepare('DELETE FROM board_avail WHERE u=? AND sp=? AND se=?').bind(u, sp, se));
+  for (const p of players) { const id = Number(p.playerId), r = Number(p.totalValue) || 0;
+    if (id > 0 && r > 0) st.push(db.prepare('INSERT OR REPLACE INTO board_avail (u, sp, se, pid, rating, at) VALUES (?, ?, ?, ?, ?, ?)').bind(u, sp, se, id, r, now)); }
+  if (st.length) await db.batch(st);
 }
