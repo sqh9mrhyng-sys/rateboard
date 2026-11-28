@@ -294,7 +294,10 @@ export async function onRequestGet({ request, env }) {
   // 4. Fetch one chunk from the topentities endpoint
   let chunk;
   try { chunk = await fetchCollectionChunk(hashId, rsSport, season, entity, auth, start); }
-  catch (e) { return json({ error: 'Could not load collection — try again shortly', detail: e.message }, 502); }
+  catch (e) {
+    // Real's own limit (2026-11-28: a crowd pulling at once) - say so plainly instead of a raw error.
+    if (/ 429/.test(e.message)) return json({ error: "Real is busy and is limiting how fast cards can be read - try again in 10-15 minutes." }, 503);
+    return json({ error: 'Could not load collection — try again shortly', detail: e.message }, 502); }
 
   const result = JSON.stringify({
     username,
