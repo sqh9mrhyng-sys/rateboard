@@ -4382,7 +4382,7 @@ async function showMatches(raw){
             </span>
             <span class="hitacts">
               <button class="btn-ghost" data-copy="${i}-${j}">Copy message</button>
-              ${b.link ? `<a class="btn-ghost" href="${esc(b.link)}" target="_blank" rel="noopener">Message</a>` : ''}
+              ${b.link ? `<a class="btn-ghost" href="${esc(b.link)}" target="_blank" rel="noopener">Link to their comment</a>` : ''}
               <button class="btn-ghost" data-rep="${esc(b.buyer)}">Report</button>
             </span>
           </div>`).join('')}
@@ -4443,7 +4443,7 @@ async function showMatches(raw){
           <span></span></div>`).join('')}
         <div class="hitacts">
           <button class="btn-ghost" data-ocopy="${k}">Copy message</button>
-          ${e.link ? `<a class="btn-ghost" href="${esc(e.link)}" target="_blank" rel="noopener">Message ${esc(e.who)}</a>`
+          ${e.link ? `<a class="btn-ghost" href="${esc(e.link)}" target="_blank" rel="noopener">Link to ${esc(e.who)}'s comment</a>`
                    : `<span class="nohit">No comment link on file</span>`}
           <button class="btn-ghost" data-rep="${esc(e.who)}">Report</button>
         </div>
@@ -4561,7 +4561,7 @@ async function showMatches(raw){
          ${esc(b.cfg.player)}; if that's the card you have, mention it in your message.`).join('<br>')}</p>` : ''}
       <div class="hitacts">
         ${msg ? `<button class="btn-ghost" id="hs-copy">Copy message</button>` : ''}
-        <a class="btn-ghost" href="${esc(HOUSE.link)}" target="_blank" rel="noopener">Message ${esc(HOUSE.buyer)}</a>
+        <a class="btn-ghost" href="${esc(HOUSE.link)}" target="_blank" rel="noopener">Link to ${esc(HOUSE.buyer)}'s comment</a>
       </div>
       ${msg ? `<div class="note" id="hs-msg" style="margin-top:6px;white-space:pre-wrap">${esc(withOfferTime(msg))}</div>` : ''}
     </div>`;
