@@ -1536,7 +1536,7 @@ async function predMemberAlerts(env, out) {
       const hs = g.sides.map((_, si) => held(g.id, si)), holdAny = hs.some(Boolean);
       for (let si = 0; si < g.sides.length; si++) {
         const sd = g.sides[si], fair = d.fair(si), q = Number(sd.price); if (!(fair > 0.05) || !(q > 0 && q < 1)) continue;
-        const rate = PB_SLIP[g.sport] ?? PB_DEF, evp = fair / (q + (unit > 0 ? rate * unit / 1000 / 200 : 0)) - 1, nm = sd.name || sd.label, h = hs[si];
+        const rate = PB_SLIP[g.sport] ?? PB_DEF, evp = fair / (q + rate * (unit > 0 ? unit : 1000) / 1000 / 200) - 1, nm = sd.name || sd.label, h = hs[si];
         const U = (k, a) => `/predictions#g=${g.id}&s=${si}&k=${k}${a > 0 ? '&a=' + Math.round(a / 50) * 50 : ''}&q=${Math.round(q * 100)}`, tag = k => 'pu-' + k + '-' + g.id + '-' + si;
         // Holding one side of a game: never pushed toward another side of it.
         if (g._left != null) {   // in game: Simple long shots only
