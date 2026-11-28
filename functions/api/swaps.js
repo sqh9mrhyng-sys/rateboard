@@ -5451,6 +5451,24 @@ async function fcTeamOn(env, sched, sides, name, jersey, lineups) {
   }
   return ok.find(c => !c.nat) || ok[0] || null;
 }
+/* Real's own injury list (Dennis, 2026-11-28: Olise was out and still got a booster - FPL only covers the Premier
+   League). Each player's Real record carries injuryStatus ("Out", "Doubtful", "Questionable"...) and a note such as
+   "Expected return: 2026-11-29", in every league. Kept 2 hours per player, shared by everyone; at most 80 new reads
+   a call, 5 at a time. */
+async function realInjuries(env, sp, ids) {
+  const out = {}, need = [];
+  await Promise.all([...new Set(ids.map(Number).filter(Number.isFinite))].map(async id => {
+    try { const c = JSON.parse((await env.RATEBOARD_KV.get(`rinj_v1_${sp}_${id}`)) || 'null'); if (c) { if (c.s) out[id] = c; return; } } catch (e) {}
+    need.push(id); }));
+  const tok = scanTok(env), q = need.slice(0, 80);
+  const work = async () => { while (q.length) { const id = q.shift();
+    try { const d = await rsGetJson(`https://web.realapp.com/players/${id}/sport/${sp}`, tok), p = (d && d.player) || {};
+      const c = { s: p.injuryStatus || null, b: p.injuryBodyPart || null, n: p.injuryNotes || null };
+      await env.RATEBOARD_KV.put(`rinj_v1_${sp}_${id}`, JSON.stringify(c), { expirationTtl: 7200 }); if (c.s) out[id] = c;
+    } catch (e) {} } };
+  await Promise.all([work(), work(), work(), work(), work()]);
+  return out;
+}
 /* One row per FC pass the member holds whose team plays that day.
    Projection: what he earns when he starts (min 55+; last 5 starts 50%, this
    season's 30%, last season's 20%), x home 1.05 / away 0.95, x how much the
@@ -5470,6 +5488,7 @@ async function fcRows(env, db, cards, day, inv) {
   if (!MT) { try { await fcMatchups(env); MT = JSON.parse((await env.RATEBOARD_KV.get('boostmatch_v2_soccer')) || 'null'); } catch (e) {} }
   MT = MT || { f: {}, fm: {}, ga: {}, gam: {}, lg: 1.35 };
   let hand = {}; try { hand = await boostManualOut(env, 'soccer', day); } catch (e) {}
+  let rinj = {}; try { rinj = await realInjuries(env, 'soccer', cards.players.map(p => p.id)); } catch (e) {}
   // Lineups for every game on the slate that has one (read again if it could still change).
   const lineups = new Map();
   await Promise.all((sched.events || []).map(async e => { const l = await fcLineup(env, e, true); if (l) lineups.set(e.id, l); }));
@@ -5547,6 +5566,11 @@ async function fcRows(env, db, cards, day, inv) {
       if (/^(out|injured reserve|doubtful|suspen)/i.test(ij.status)) { skip = true; flags.push(`${ij.status}${ij.note ? ': ' + ij.note : ''}`); }
       else if (/questionable/i.test(ij.status)) { k *= Q_CUT; flags.push(`Questionable${ij.note ? ': ' + ij.note : ''}`); }
     }
+    // Real's own injury list (2026-11-28), when the hand list says nothing about him. A starting lineup overrides it.
+    const ri = !ij && rinj[Number(p.id)];
+    if (ri && lu !== 'start') { const why = [ri.b, ri.n].filter(Boolean).join(' - ');
+      if (/^(out|injured|doubtful|suspen)/i.test(ri.s)) { skip = true; flags.push(`${ri.s}${why ? ': ' + why : ''} (Real)`); }
+      else if (/question|day-to-day/i.test(ri.s)) { k *= Q_CUT; flags.push(`Questionable${why ? ': ' + why : ''} (Real)`); } }
     // Hasn't played in three weeks while his club has: injured or dropped (a starting lineup overrides it).
     if (lu !== 'start' && lastG && cg.length && dayMs - Date.parse(lastG.day + 'T12:00:00Z') > 21 * 86400000) { skip = true; flags.push(`No game since ${lastG.day}`); }
     if (!cg.length && og.length && lu !== 'start') { k *= 0.7; flags.push('No games this season yet'); }
