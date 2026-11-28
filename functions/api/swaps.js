@@ -9533,6 +9533,12 @@ async function handle({ request, env, waitUntil }) {
     }
     for (const k of Object.keys(totals)) totals[k] = Math.round(totals[k]);
     if (inv) used = inv.map((b, i) => ({ ...b, used: b.count - left[i].count }));
+    // Diagnostic (2026-11-28, Dennis: FC showed 11 boosts of 37 playing with 100+ boosters) - counts only, no names.
+    if (sp === 'soccer' && acc.who === 'dennis') { try { const fl = {}; for (const r of rows) for (const x of (r.flags || [])) { const k = String(x).replace(/[:(].*$/, '').slice(0, 40); fl[k] = (fl[k] || 0) + 1; }
+      const hr = {}; for (const b of (inv || [])) hr[b.rarity] = (hr[b.rarity] || 0) + b.count;
+      await env.RATEBOARD_KV.put('diag_fcboost_d', JSON.stringify({ at: Date.now(), rows: rows.length, skip: rows.filter(r => r.skip).length, projNull: rows.filter(r => r.proj == null).length,
+        rar: rows.reduce((o, r) => (o[r.boost || 'none'] = (o[r.boost || 'none'] || 0) + 1, o), {}), best: rows.filter(r => r.best).length, below: rows.filter(r => r.belowCut).length,
+        flags: fl, held: hr, invN: inv ? inv.length : null, bars, cus: CUS || null, mode }), { expirationTtl: 86400 }); } catch (e) {} }
 
     return json({ sport: sp, season: se, date: day, mode, binvMsg: binvMsg || undefined, bars: bars.map(x => Number.isFinite(x) ? x : null), cutAt, totals, lineups: sched.lineups ?? null, lineupsAt: sched.lineupsAt || null, started: sched.started ?? null, legCap: inv && Number.isFinite(dayCap[5]) ? dayCap[5] : null, inv: used, statMode: !!used, rsUser: u.rsUser, cardsAt: cards.at, invAt, games: sched.games, event: sched.event || null, course: sched.course || null, field: sched.field ?? null, depth: !!depth,
       rows, notPlaying: idle.length, players: cards.players.length });
