@@ -4977,7 +4977,7 @@ const BOOST_OUT_SEED = { ncaaf: [
 async function boostOutList(env) {
   let kv = null; try { kv = JSON.parse((await env.RATEBOARD_KV.get(BOOST_OUT_KEY)) || 'null'); } catch (e) {}
   // One-off (2026-11-26): Gibbs was marked out by an accidental tap on Boosts. Take him off once.
-  try { if (kv && kv.nfl && !(await env.RATEBOARD_KV.get('boostout_fix_gibbs_1126'))) { const k = boostName('Jahmyr Gibbs'); if (kv.nfl[k] && /Boosts/.test(kv.nfl[k].note || '')) { delete kv.nfl[k]; await env.RATEBOARD_KV.put(BOOST_OUT_KEY, JSON.stringify(kv)); await env.RATEBOARD_KV.put('proj_force_v1_nfl', String(Date.now()), { expirationTtl: 7 * 86400 }); await env.RATEBOARD_KV.delete('boosttop_v9_' + etDay(Date.now())).catch(() => {}); } await env.RATEBOARD_KV.put('boostout_fix_gibbs_1126', '1', { expirationTtl: 7 * 86400 }); } } catch (e) {}
+  try { if (kv && kv.nfl && !(await env.RATEBOARD_KV.get('boostout_fix_gibbs_1126'))) { const k = boostName('Jahmyr Gibbs'); if (kv.nfl[k] && /Boosts/.test(kv.nfl[k].note || '')) { delete kv.nfl[k]; await env.RATEBOARD_KV.put(BOOST_OUT_KEY, JSON.stringify(kv)); await env.RATEBOARD_KV.put('proj_force_v1_nfl', String(Date.now()), { expirationTtl: 7 * 86400 }); await env.RATEBOARD_KV.delete('boosttop_v10_' + etDay(Date.now())).catch(() => {}); } await env.RATEBOARD_KV.put('boostout_fix_gibbs_1126', '1', { expirationTtl: 7 * 86400 }); } } catch (e) {}
   if (!kv) { kv = {}; for (const [sp, rows] of Object.entries(BOOST_OUT_SEED)) { kv[sp] = {}; for (const [name, status, note, until] of rows) kv[sp][boostName(name)] = { name, status, note, until, at: Date.parse('2026-11-07T06:00:00Z') }; } }
   return kv;
 }
@@ -6878,7 +6878,7 @@ async function handle({ request, env, waitUntil }) {
     const ETF = ET_DAY_FMT, etd = d => ETF.format(d);
     const days0 = [...Array(7)].map((_, i) => etd(new Date(Date.now() + i * 86400000)));
     const today = days0.includes(url.searchParams.get('day')) ? url.searchParams.get('day') : days0[0];
-    const K = 'boosttop_v9_' + today;   // v4: no one who sat out his team's last game
+    const K = 'boosttop_v10_' + today;   // v10: FC included   // v4: no one who sat out his team's last game
     try { const c = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); if (c && Date.now() - c.at < 10 * 60000) return json(c); } catch (e) {}
     const out = { at: Date.now(), day: today, sports: {} };
     for (const sp of ['nfl', 'ncaaf', 'nba', 'ncaam', 'nhl', 'soccer']) {
@@ -6888,6 +6888,40 @@ async function handle({ request, env, waitUntil }) {
       let pf = 0; try { pf = Number(await env.RATEBOARD_KV.get(`proj_force_v1_${sp}`)) || 0; } catch (e) {}
       if (pj && (Number(pj.zfix || 0) < 4 || pf > Number(pj.at || 0))) { try { const lk = `proj_lock_v1_${sp}`; if (!(await env.RATEBOARD_KV.get(lk))) { await env.RATEBOARD_KV.put(lk, '1', { expirationTtl: 120 });
         const job = projBuild(env, db, sp).finally(() => env.RATEBOARD_KV.delete(lk).catch(() => {})); try { waitUntil(job.catch(() => {})); } catch (e) { job.catch(() => {}); } } } catch (e) {} }
+      /* FC (2026-11-28: Top players always said "No FC games that day" - FC has no season schedule to read, so it was
+         skipped). The day's games from the FC schedule Boosts already uses, each player's per-start rate x how often
+         he plays from the season projections, home 1.05 / away 0.95; out of a posted lineup or on the bench = left
+         off; Real's injury list and the hand list = left off when Out/Doubtful/Suspended. */
+      if (sp === 'soccer') {
+        if (!pj) continue;
+        let fs = null; try { fs = await fcSchedule(env, today); } catch (e) {}
+        if (!fs || fs.error || !fs.teams) continue;
+        const byAb = new Map(); for (const tm of Object.values(fs.teams)) { if (!tm.ab) continue; (byAb.get(tm.ab) || byAb.set(tm.ab, []).get(tm.ab)).push(tm); }
+        const evs = new Map((fs.events || []).map(e => [e.id, e])), lus = new Map(), list = [];
+        const cand = [];
+        for (const r of (pj.rows || [])) { const x = r.x || {}; if (!(x.av > 0) || x.sk || x.sn || x.ml) continue;
+          const ts = byAb.get(r.t) || []; if (ts.length !== 1) continue; const tm = ts[0];
+          cand.push({ r, tm, v: x.rate * x.av * (tm.home ? 1.05 : 0.95) }); }
+        cand.sort((a, b) => b.v - a.v);
+        const short = cand.slice(0, 160);
+        let hand = {}, rinj = {};
+        try { hand = await boostManualOut(env, 'soccer', today); } catch (e) {}
+        try { rinj = await realInjuries(env, 'soccer', short.map(c => c.r.i)); } catch (e) {}
+        for (const c of short) { const { r, tm } = c;
+          const hj = hand[boostName(r.n)], ri = rinj[Number(r.i)], st = (hj && hj.status) || (ri && ri.s) || '';
+          if (/^(out|injured|doubtful|suspen)/i.test(st)) continue;
+          // A posted lineup decides: not starting = no booster.
+          const ev = evs.get(tm.ev); let lu = ev ? lus.get(ev.id) : null;
+          if (ev && lu === undefined) { try { lu = await fcLineup(env, ev, false); } catch (e) { lu = null; } lus.set(ev.id, lu); }
+          const LT = lu && lu.out ? lu.teams[tm.id] : null;
+          if (LT) { const fnd = fcFind(r.n, LT.p, null); if (!fnd || !fnd.p.s) continue; }
+          list.push({ id: r.i, n: r.n, u: r.i ? playerUrl(`soccer:${(PROJ_SEASON.soccer || [])[0]}:${r.i}`) : null, t: r.t, p: r.p, opp: tm.oppAb || tm.opp, h: tm.home ? 'home' : 'away', at: tm.at,
+            v: Math.round(c.v * 10) / 10, a: r.a, gp: r.gp, inj: /question|day-to-day/i.test(st) ? st : undefined, lu: LT ? 'start' : undefined }); }
+        list.sort((a, b) => b.v - a.v);
+        const topS = list.slice(0, 100); for (const x of topS) delete x.id;
+        if (topS.length) out.sports[sp] = topS;
+        continue;
+      }
       if (!pj || !sc || !sc.teams) continue;
       const of = pj.of || {}, hf = pj.hf || {}, list = [], todayG = new Map();
       // Each team's game that day, worked out once per team.
