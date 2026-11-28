@@ -9056,7 +9056,8 @@ async function handle({ request, env, waitUntil }) {
       fields: Object.fromEntries([...seen].map(([k, v]) => [k, [...v]])), first3: rows.slice(0, 3) });
   }
   /* Board's Top players (Dennis, 2026-11-28): each listed player's Real link, rest-of-season projection (projected
-     end of season minus what he has now) and the rating members' last scans hold of him. Totals only - never who. */
+     end of season minus what he has now) and the rating members' last scans hold of him. Totals only - never who.
+     A pass of 80+ rating is someone building it, not selling - left out (Dennis, 2026-11-28). */
   if (op === 'boardtop') {
     const sp = PROJ_SEASON[url.searchParams.get('sport')] ? url.searchParams.get('sport') : null;
     if (!sp) return json({ error: 'sport?' }, 400);
@@ -9066,7 +9067,7 @@ async function handle({ request, env, waitUntil }) {
     if (!pc) { try { pc = JSON.parse((await env.RATEBOARD_KV.get(`proj_v3_${sp}`)) || 'null'); } catch (e) {} }
     const pr = new Map(); if (pc && pc.rows) for (const r of pc.rows) pr.set(Number(r.i), r);
     const av = new Map();
-    try { const q = await db.prepare('SELECT pid, SUM(rating) AS r, COUNT(*) AS n FROM board_avail WHERE sp=? AND se=? AND at>? GROUP BY pid').bind(sp, se, Date.now() - 14 * 86400000).all();
+    try { const q = await db.prepare('SELECT pid, SUM(rating) AS r, COUNT(*) AS n FROM board_avail WHERE sp=? AND se=? AND at>? AND rating<80 GROUP BY pid').bind(sp, se, Date.now() - 14 * 86400000).all();
       for (const x of (q.results || [])) av.set(Number(x.pid), [Math.round(Number(x.r) * 10) / 10, Number(x.n)]); } catch (e) {}
     const out = {};
     for (const id of ids) { const r = pr.get(id), a = av.get(id);
