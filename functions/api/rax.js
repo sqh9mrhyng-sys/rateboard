@@ -1171,7 +1171,7 @@ const PB_SLIP0 = { nba: 1.0, ncaam: 1.0, nhl: 2.0, soccer: 1.8, ufc: 1.9 }, PB_D
    UFC ~1.9; CFB and NFL not enough yet, so 2.5). The page and the alerts both read pred_slipfit_v1. */
 let PB_SLIP = { ...PB_SLIP0 }, PB_SLIP_AT = 0, PB_FIT = null;
 // A safety margin on every slippage estimate used for advice (Dennis, 2026-11-27: "a little bit more than you actually think").
-const SLIP_SAFE = 1.15;
+const SLIP_SAFE = 1.15;   // EV below is priced at the end of the move (/ 100), not the average fill (Dennis, 2026-11-28: conservative)
 async function loadSlipFit(env) { if (Date.now() - PB_SLIP_AT < 5 * 60000) return PB_SLIP; PB_SLIP_AT = Date.now();
   try { const f = JSON.parse((await env.RATEBOARD_KV.get('pred_slipfit_v1')) || 'null'); PB_FIT = f; if (f && f.s) { PB_SLIP = { ...PB_SLIP0 }; for (const [k, v] of Object.entries(f.s)) if (v && v.n >= 100 && v.m > 0.2 && v.m < 6 && !(v.p75 > 3 * v.m)) PB_SLIP[k] = v.m; } } catch (e) {}
   return PB_SLIP; }
@@ -1249,7 +1249,7 @@ const pbHeld = (bets, port, gid, si) => { const p = ((port && port.pos) || []).f
 const pbAddNeed = (fair, q, unit, rate, heldPays, minEv) => { if (!(unit > 0) || !(q > 0 && q < 1)) return null;
   const u0 = pbUnits(fair, q); if (!u0) return null; const have = (heldPays || 0) * q; let best = null;
   for (let x = u0; x >= 0.5; x -= 0.5) { const add = x * unit - have; if (add < unit / 2) break;
-    const qf = Math.min(0.99, q + rate * add / 1000 / 200), ev = fair / qf - 1; if (ev < Math.max(PB_MIN_EV, minEv || 0) || pbUnits(fair, qf) < x) continue;
+    const qf = Math.min(0.99, q + rate * add / 1000 / 100), ev = fair / qf - 1; if (ev < Math.max(PB_MIN_EV, minEv || 0) || pbUnits(fair, qf) < x) continue;
     if (!best || add * ev > best.add * best.ev) best = { add, ev, units: x }; }
   return best ? { more: Math.round(best.add / 50) * 50, ev: best.ev, units: best.units, have } : null; };
 const pbHoldLines = (h, nm, q, fair, more, ev) => ({ title: `Buy ${more.toLocaleString()} more • ${nm} +${(ev * 100).toFixed(1)}%`,
@@ -1287,9 +1287,9 @@ async function predBuildTick(env, out) {
       if (H) { const N = pbAddNeed(fair, q, cfg.unit, rate, H.pays, GOOD); if (!N) continue; left = N.more; }
       if (left < 100) continue;
       let piece = Math.min(left, PB_PIECE_PTS / rate * 1000);
-      while (piece >= 100 && fair / (q + rate * piece / 1000 / 200) - 1 < GOOD) piece = Math.floor(piece / 2);
+      while (piece >= 100 && fair / (q + rate * piece / 1000 / 100) - 1 < GOOD) piece = Math.floor(piece / 2);
       if (piece < 100) continue;
-      piece = Math.round(piece / 50) * 50; const evp = fair / (q + rate * piece / 1000 / 200) - 1;
+      piece = Math.round(piece / 50) * 50; const evp = fair / (q + rate * piece / 1000 / 100) - 1;
       const k = g.id + ':' + si, s0 = st[k];
       // Quieter (2026-11-17, "it's sending a lot"): a side again only if the price is 2+ points better or 45 min
       // passed; and never more than 3 alerts in any 15 minutes overall.
@@ -1571,7 +1571,7 @@ async function predMemberAlerts(env, out) {
       const hs = g.sides.map((_, si) => held(g.id, si)), holdAny = hs.some(Boolean);
       for (let si = 0; si < g.sides.length; si++) {
         const sd = g.sides[si], fair = d.fair(si), q = Number(sd.price); if (!(fair > 0.05) || !(q > 0 && q < 1)) continue;
-        const stk = unit > 0 ? unit : 1000, rate = (slipRateOf(PB_FIT, g.sport, g.live, g.vn, stk) ?? PB_SLIP[g.sport] ?? PB_DEF) * SLIP_SAFE, evp = fair / (q + rate * stk / 1000 / 200) - 1, nm = sd.name || sd.label, h = hs[si];
+        const stk = unit > 0 ? unit : 1000, rate = (slipRateOf(PB_FIT, g.sport, g.live, g.vn, stk) ?? PB_SLIP[g.sport] ?? PB_DEF) * SLIP_SAFE, evp = fair / (q + rate * stk / 1000 / 100) - 1, nm = sd.name || sd.label, h = hs[si];
         const U = (k, a) => `/predictions#g=${g.id}&s=${si}&k=${k}${a > 0 ? '&a=' + Math.round(a / 50) * 50 : ''}&q=${Math.round(q * 100)}`, tag = k => 'pu-' + k + '-' + g.id + '-' + si;
         // Holding one side of a game: never pushed toward another side of it.
         if (g._left != null) {   // in game: Simple long shots only

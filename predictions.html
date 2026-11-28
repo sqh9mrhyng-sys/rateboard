@@ -383,7 +383,7 @@
 <h2>Live games</h2>
 <p>In-game lines are extremely volatile, and late in games the jumps are too severe to consistently snipe great EV. Pregame predictions are recommended when available. Sportsbooks update their live lines 10-80 seconds apart while Real moves instantly, so live EV is noisier than pregame.</p>
 <h2>Slippage</h2>
-<p>Real takes no fee - both sides always add up to 100%. The only cost is that your own bet moves the price as it goes in, so you get a slightly worse price than the one shown. From every bet on Real's markets (tracked all day, refitted every hour), 1,000 rax moves NBA and CBB about 1 point, NHL about 2, FC about 1.8 and UFC about 1.9 - CFB and NFL use a cautious 2.5 until there's enough data - and on average you pay about half of that move. The EV shown for each bet always takes slippage off: on your bet size once you enter your rax amount at the top, or on 1,000 rax a unit until you do. The size is the one that earns the most rax after slippage (never more than the Kelly size).</p>
+<p>Real takes no fee - both sides always add up to 100%. The only cost is that your own bet moves the price as it goes in, so you get a slightly worse price than the one shown. From every bet on Real's markets (tracked all day, refitted every hour), 1,000 rax moves NBA and CBB about 1 point, NHL about 2, FC about 1.8 and UFC about 1.9 - CFB and NFL use a cautious 2.5 until there's enough data - and we price every bet as if you paid the end of that move (the worst price your buy reaches, plus a 15% cushion), so the EV shown is on the safe side. The EV shown for each bet always takes slippage off: on your bet size once you enter your rax amount at the top, or on 1,000 rax a unit until you do. The size is the one that earns the most rax after slippage (never more than the Kelly size).</p>
 <h2>Placing a bet</h2>
 <p>Every side shows a <b>unit ladder</b>, like <b>0.5u under 50% · 1u under 47% · 2u under 44%</b>: the size to bet at each Real price, from the same rule as above. Live prices swing between refreshes, so if Real jumps to 46% you already know it's a 1u bet without waiting. The size the current price earns is lit green. <b>+EV up to X%</b> is the highest price that's still worth a bet at all; above it, skip. Once you buy, tap <b>Bet placed</b>, put in the Real % you actually got and the rax you bet (both filled in for you), and tap <b>Enter</b>: the game leaves Markets and shows in <b>My bets</b>. Change the amount if you put in something different; the payout (amount ÷ the price you paid) updates with it. The payout can be changed too if Real paid something different (clear it to go back to auto). When the market settles on Real it's marked Won or Lost for you; you can still tap Won or Lost yourself.</p>
 <div id="garb" hidden><h2>Arbitrage (locking in profit)</h2>
@@ -430,7 +430,7 @@ function pieceNow(g, sd, u){
   const tLeft = st ? st - 10 * 60000 - Date.now() : 3 * 3600000, pieces = Math.max(1, Math.ceil(left / cap));
   const gap = Math.max(8 * 60000, Math.min(30 * 60000, tLeft / pieces));
   let piece = Math.min(left, Math.max(cap, tLeft > 0 ? left / Math.max(1, Math.floor(tLeft / gap) + 1) : left));
-  while (piece >= 100 && sd.fair / (sd.price + rate * piece / 1000 / 200) - 1 < MIN_EV_U) piece = Math.floor(piece / 2);
+  while (piece >= 100 && sd.fair / (sd.price + rate * piece / 1000 / 100) - 1 < MIN_EV_U) piece = Math.floor(piece / 2);
   return { target, placed, piece: piece >= 100 ? Math.round(piece / 50) * 50 : 0, gap };
 }
 /* Already placed (Dennis, 2026-11-21: "they already placed x amount on it, they don't place anymore - unless they should
@@ -492,7 +492,9 @@ function slipRate(g){ const f = SLIP_FIT;
 function setSlipFit(f){ SLIP_FIT = f || null; SLIP_1K = { ...SLIP_0 }; if (f && f.s) for (const [k, v] of Object.entries(f.s)) if (v && v.n >= 100 && v.m > 0.2 && v.m < 6 && !(v.p75 > 3 * v.m)) SLIP_1K[k] = v.m; }
 // 15% on top of the measured slippage, to be safe (Dennis, 2026-11-27).
 const SLIP_SAFE = 1.15, movePts = (g, stake) => Math.min(15, slipRate(g) * SLIP_SAFE * (stake || 0) / 1000);
-const fillAt = (g, q, stake) => Math.min(0.99, q + movePts(g, stake) / 200);
+/* Conservative (Dennis, 2026-11-28: "don't even risk showing people EV too high"): EV is priced at the END of the
+   expected move - the worst price your buy reaches - not the average fill halfway along it. */
+const fillAt = (g, q, stake) => Math.min(0.99, q + movePts(g, stake) / 100);
 const upTo = sd => Math.floor(sd.fair / (1 + MIN_EV_U) * 100);
 // EV after slippage on the stake we recommend (2026-11-17: shown as the EV itself, not a second line).
 const evNet = (g, sd, u) => { if (sd.ev == null) return null; const st = stakeOf(g, sd, u) || (sd.ev > 0 ? slipUnit() : 0);   // a +EV side with no size yet: after slippage on 1u
@@ -854,7 +856,7 @@ let slip = Number(ls.get('pred_slip2')); if (!Number.isFinite(slip) || ls.get('p
    - plus your own cushion. */
 const volNum = v => { const m = String(v || '').trim().match(/^([\d.]+)\s*([kmb])?/i); if (!m) return 0; return Number(m[1]) * ({ k: 1e3, m: 1e6, b: 1e9 }[(m[2] || '').toLowerCase()] || 1); };
 function slipFor(g, stake){
-  const size = movePts(g, stake) / 2;   // measured, see SLIP_1K; the average fill is half the move
+  const size = movePts(g, stake);   // conservative: the whole move, not the average fill (2026-11-28)
   const h = g.hist || []; let mv = 0; if (h.length > 2) { let t = 0; for (let k = 1; k < h.length; k++) t += Math.abs(h[k] - h[k - 1]); mv = t / (h.length - 1) * 100 / 4; }
   const swing = Math.max(g.live ? 0.5 : 0.2, mv * (g.live ? 1.5 : 1));
   return { size, swing, total: size + swing + slip };
