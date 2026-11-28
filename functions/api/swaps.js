@@ -5490,9 +5490,10 @@ async function fcRows(env, db, cards, day, inv) {
   let hand = {}; try { hand = await boostManualOut(env, 'soccer', day); } catch (e) {}
   let rinj = {}; try { rinj = await realInjuries(env, 'soccer', cards.players.map(p => p.id)); } catch (e) {}
   /* Each club's latest logged game (2026-11-28: every MLS pass was left out as "No game since Nov 1" - the MLS
-     playoffs aren't in the game log, so the gap was the log's, not the player's). */
+     playoffs aren't in the game log, so the gap was the log's, not the player's). Games he could have played in only:
+     the log holds rows with no rax for games not played yet, which made every MLS club look like it had played Nov 7. */
   const clubLast = new Map();
-  try { for (const x of ((await db.prepare("SELECT team, season, MAX(day) AS d FROM gamelog WHERE sport='soccer' AND season IN (?, ?) AND day < ? GROUP BY team, season").bind(FC_SEASON[0], FC_MLS_SEASON, day).all()).results || []))
+  try { for (const x of ((await db.prepare("SELECT team, season, MAX(day) AS d FROM gamelog WHERE sport='soccer' AND season IN (?, ?) AND day < ? AND rax IS NOT NULL AND COALESCE(min, 1) > 0 GROUP BY team, season").bind(FC_SEASON[0], FC_MLS_SEASON, day).all()).results || []))
     clubLast.set(`${x.season}|${x.team}`, x.d); } catch (e) {}
   // Lineups for every game on the slate that has one (read again if it could still change).
   const lineups = new Map();
