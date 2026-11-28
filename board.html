@@ -8867,6 +8867,7 @@ function drawSellCfg(){ const box = $('#sellcfg'); if(!box) return; const c = se
     rows.push(`<div class="sr${on ? '' : ' off'}"><label class="sw"><input type="checkbox" data-sellsp="${s}"${on ? ' checked' : ''}><span class="tg"></span>${spLbl(s)}</label><div class="ss">`
       + live.map(se => { const n = hasBuyer(B, s, se); return se ? `<button type="button" data-sellse="${s}|${se}" aria-pressed="${on && c[s].includes(se)}">${se}<span class="bc">${n}</span></button>` : `<span class="note" style="margin:0">${n} buyer${n === 1 ? '' : 's'}</span>`; }).join('')
       + '</div></div>'); }
+  tidyCscans();
   box.innerHTML = (rows.join('') || '<div class="nob">No one is buying anything right now.</div>') + (none.length ? `<div class="nob">No buyers yet: ${esc(none.join(', '))}</div>` : '');
   drawCscan(); }
 $('#sellcfg').addEventListener('change', e => { const s = e.target.dataset.sellsp; if(!s) return; const c = sellCfg(), B = buyerMap();
@@ -8882,15 +8883,30 @@ const cscans = () => { try{ const l = JSON.parse(localStorage.getItem(CSCAN_KEY)
 const saveCscans = l => { try{ localStorage.setItem(CSCAN_KEY, JSON.stringify(l.slice(0, 30))); }catch(e){} };
 const cscanSel = () => { try{ return localStorage.getItem(CSCAN_SEL) || ''; }catch(e){ return ''; } };
 const setCscanSel = v => { try{ localStorage.setItem(CSCAN_SEL, v); }catch(e){} };
-const cfgTxt = c => SP_ORDER.filter(s => c[s]).map(s => spLbl(s) + (c[s].filter(Boolean).length ? ' ' + c[s].filter(Boolean).join('/') : '')).join(', ');
+/* Only sports and seasons someone is buying count (Dennis, 2026-11-28). Names are short: "FC + UFC", with the
+   number of seasons only when it's more than the current one. */
+const liveCfg = c => { const B = buyerMap(), o = {}; if(!(market && market.offers && market.offers.length)) return c;
+  for(const s of SP_ORDER){ if(!c[s]) continue; const SL = BSEAS[s] || [];
+    const l = SL.length ? c[s].filter(se => hasBuyer(B, s, se)) : (hasBuyer(B, s, '') ? [''] : []); if(l.length) o[s] = l; }
+  return o; };
+const cfgName = c => { const ks = SP_ORDER.filter(s => c[s] && c[s].length); if(!ks.length) return '';
+  return ks.map(s => { const l = c[s].filter(Boolean); return spLbl(s) + (l.length > 1 ? ` (${l.length} seasons)` : (l.length === 1 && l[0] !== curSeason(s) ? ' ' + l[0] : '')); }).join(' + '); };
+const cfgKey = c => SP_ORDER.filter(s => c[s] && c[s].length).map(s => s + ':' + c[s].join('/')).join(';');
+/* Tidy older saves: names that were the long auto text get the short name, and repeats of the same picks are dropped. */
+let cscTidied = false;
+function tidyCscans(){ if(cscTidied) return; cscTidied = true; const l = cscans(); if(!l.length) return; const before = JSON.stringify(l); const seen = new Set(), out = [];
+  for(const x of l){ if(/,| - /.test(x.name)) x.name = cfgName(liveCfg(x.cfg)) || cfgName(x.cfg) || x.name; const k = cfgKey(x.cfg); if(seen.has(k)) continue; seen.add(k); out.push(x); }
+  if(JSON.stringify(out) !== before){ saveCscans(out); setCscanSel(''); } }
 function drawCscan(){ const sel = $('#cscan'); if(!sel) return; const l = cscans(), cur = cscanSel();
-  sel.innerHTML = `<option value="">${l.length ? 'Saved scans…' : 'None saved yet'}</option>` + l.map((x, i) => `<option value="${i}"${String(i) === cur ? ' selected' : ''}>${esc(x.name)} - ${esc(cfgTxt(x.cfg))}</option>`).join('');
+  sel.innerHTML = `<option value="">${l.length ? 'Pick a saved scan' : 'No saved scans yet'}</option>` + l.map((x, i) => `<option value="${i}"${String(i) === cur ? ' selected' : ''}>${esc(x.name)}</option>`).join('');
   $('#cscan-del').hidden = cur === '' || !l[+cur]; }
 $('#cscan').addEventListener('change', e => { const v = e.target.value, l = cscans(); setCscanSel(v);
   if(v !== '' && l[+v]){ saveSellCfg(l[+v].cfg); } drawSellCfg(); });
-$('#cscan-save').addEventListener('click', () => { const c = sellCfg(); if(!Object.keys(c).length) return rsMsg('Pick at least one sport first.', true);
-  const name = (prompt('Name this custom scan', cfgTxt(c).slice(0, 40)) || '').trim().slice(0, 40); if(!name) return;
-  const l = cscans(); const i = l.findIndex(x => x.name.toLowerCase() === name.toLowerCase());
+$('#cscan-save').addEventListener('click', () => { const c = liveCfg(sellCfg()); if(!Object.keys(c).length) return rsMsg('Turn on at least one sport first.', true);
+  const l = cscans(), k = cfgKey(c), dup = l.findIndex(x => cfgKey(x.cfg) === k);
+  if(dup >= 0){ setCscanSel(String(dup)); drawSellCfg(); return rsMsg(`Already saved as "${l[dup].name}".`); }
+  const name = (prompt('Name this scan', cfgName(c)) || '').trim().slice(0, 30); if(!name) return;
+  const i = l.findIndex(x => x.name.toLowerCase() === name.toLowerCase());
   if(i >= 0) l[i] = { name, cfg: c }; else l.push({ name, cfg: c }); saveCscans(l); setCscanSel(String(i >= 0 ? i : l.length - 1)); drawSellCfg(); rsMsg(`Saved "${name}".`); });
 $('#cscan-del').addEventListener('click', () => { const l = cscans(), v = cscanSel(); if(v === '' || !l[+v]) return; l.splice(+v, 1); saveCscans(l); setCscanSel(''); drawSellCfg(); });
 drawSellCfg();
