@@ -1170,6 +1170,8 @@ const PB_SLIP0 = { nba: 1.0, ncaam: 1.0, nhl: 2.0, soccer: 1.8, ufc: 1.9 }, PB_D
    once a sport has 100+ of them and they are not too spread out (p75 over 3x the median, like CFB on Nov 21, keeps the default); until then the full-day study's numbers above (Nov 21: NBA/CBB ~1, NHL ~2, FC ~1.8,
    UFC ~1.9; CFB and NFL not enough yet, so 2.5). The page and the alerts both read pred_slipfit_v1. */
 let PB_SLIP = { ...PB_SLIP0 }, PB_SLIP_AT = 0, PB_FIT = null;
+// A safety margin on every slippage estimate used for advice (Dennis, 2026-11-27: "a little bit more than you actually think").
+const SLIP_SAFE = 1.15;
 async function loadSlipFit(env) { if (Date.now() - PB_SLIP_AT < 5 * 60000) return PB_SLIP; PB_SLIP_AT = Date.now();
   try { const f = JSON.parse((await env.RATEBOARD_KV.get('pred_slipfit_v1')) || 'null'); PB_FIT = f; if (f && f.s) { PB_SLIP = { ...PB_SLIP0 }; for (const [k, v] of Object.entries(f.s)) if (v && v.n >= 100 && v.m > 0.2 && v.m < 6 && !(v.p75 > 3 * v.m)) PB_SLIP[k] = v.m; } } catch (e) {}
   return PB_SLIP; }
@@ -1280,7 +1282,7 @@ async function predBuildTick(env, out) {
       if (heldSides.size && !heldSides.has(si)) continue;
       const sd = g.sides[si], fair = d.fair(si), q = Number(sd.price); if (!(fair > 0.07) || !(q > 0 && q < 1)) continue;
       const u = pbUnits(fair, q); if (!u || Math.round(q * 100) > Math.floor(fair / (1 + PB_MIN_EV) * 100)) continue;
-      const H = pbHeld(bets, port, g.id, si), held = H ? H.cost : 0, rate = slipRateOf(PB_FIT, g.sport, g.live, g.vn, cfg.unit) ?? PB_SLIP[g.sport] ?? PB_DEF;
+      const H = pbHeld(bets, port, g.id, si), held = H ? H.cost : 0, rate = (slipRateOf(PB_FIT, g.sport, g.live, g.vn, cfg.unit) ?? PB_SLIP[g.sport] ?? PB_DEF) * SLIP_SAFE;
       let left = u * cfg.unit - held;
       if (H) { const N = pbAddNeed(fair, q, cfg.unit, rate, H.pays, GOOD); if (!N) continue; left = N.more; }
       if (left < 100) continue;
@@ -1569,7 +1571,7 @@ async function predMemberAlerts(env, out) {
       const hs = g.sides.map((_, si) => held(g.id, si)), holdAny = hs.some(Boolean);
       for (let si = 0; si < g.sides.length; si++) {
         const sd = g.sides[si], fair = d.fair(si), q = Number(sd.price); if (!(fair > 0.05) || !(q > 0 && q < 1)) continue;
-        const stk = unit > 0 ? unit : 1000, rate = slipRateOf(PB_FIT, g.sport, g.live, g.vn, stk) ?? PB_SLIP[g.sport] ?? PB_DEF, evp = fair / (q + rate * stk / 1000 / 200) - 1, nm = sd.name || sd.label, h = hs[si];
+        const stk = unit > 0 ? unit : 1000, rate = (slipRateOf(PB_FIT, g.sport, g.live, g.vn, stk) ?? PB_SLIP[g.sport] ?? PB_DEF) * SLIP_SAFE, evp = fair / (q + rate * stk / 1000 / 200) - 1, nm = sd.name || sd.label, h = hs[si];
         const U = (k, a) => `/predictions#g=${g.id}&s=${si}&k=${k}${a > 0 ? '&a=' + Math.round(a / 50) * 50 : ''}&q=${Math.round(q * 100)}`, tag = k => 'pu-' + k + '-' + g.id + '-' + si;
         // Holding one side of a game: never pushed toward another side of it.
         if (g._left != null) {   // in game: Simple long shots only
@@ -1783,7 +1785,7 @@ export async function predPortSync(env, who = 'dennis') {
        prices over 100%). Instead: Real's own price for that side at that minute (from the 10-second reads the
        site keeps) plus half of the trade's measured slippage, then all buys scaled together so they pay out
        exactly what Real says the position pays. */
-    const SLs = (SL[p.marketId] || {}).s || [], rate = PB_SLIP[p.sport] ?? PB_DEF;
+    const SLs = (SL[p.marketId] || {}).s || [], rate = (PB_SLIP[p.sport] ?? PB_DEF) * SLIP_SAFE;
     const realAt = t => { if (!SLs.length || !t) return null; let b = null; for (const x of SLs) { if (x[0] <= t + 15000) b = x; else break; } b = b || SLs[0]; if (Math.abs(b[0] - t) > 30 * 60000) return null; return si === 0 ? b[2] : si === 1 && g && g.sides.length === 2 ? 1 - b[2] : null; };
     const raw = ((tr && tr.items) || []).map(x => { const r0 = realAt(x.at); return r0 ? Math.min(0.99, r0 + rate * x.amt / 1000 / 200) : null; });
     const buysAll = ((tr && tr.items) || []).every(x => !/sell|cash/i.test(x.type)), est = raw.every(v => v) && buysAll && pays > 0;
