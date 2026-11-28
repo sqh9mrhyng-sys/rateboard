@@ -1175,33 +1175,34 @@ async function loadSlipFit(env) { if (Date.now() - PB_SLIP_AT < 5 * 60000) retur
   return PB_SLIP; }
 /* Slippage by market (Dennis, 2026-11-27: "keep watching the line movements to get it 100% accurate"): besides each
    sport's one number, the move per 1,000 rax is fitted by live or pregame, the market's volume (under 100k, 100-500k,
-   500k-2M, over 2M rax) and the bet's size (up to 1k, 1-5k, 5-20k), falling back to a wider group when a narrow one
-   has too few bets. Every hour it is tested: fitted on everything before the last 24 hours, then asked to predict
+   500k-2M, over 2M rax), falling back to the sport when a market group has too few bets. Every hour it is tested: fitted on everything before the last 24 hours, then asked to predict
    the last 24 hours' moves; the by-market fit is used only while it predicts better than the one number. */
 const SLIP_VB = v => !(v > 0) ? 'x' : v < 100000 ? 0 : v < 500000 ? 1 : v < 2000000 ? 2 : 3;
 const SLIP_SB = s => !(s > 0) || s <= 1000 ? 0 : s <= 5000 ? 1 : 2;
 export function slipRateOf(f, sp, live, vol, stake) {
   if (!f || f.use !== 'bucket' || !f.b) return null; const L = live ? 1 : 0, vb = SLIP_VB(vol), sb = SLIP_SB(stake);
-  for (const k of [`${sp}|${L}|${vb}|${sb}`, `${sp}|${L}|${vb}`, `${sp}|${L}|x|${sb}`, `${sp}|${L}`]) if (f.b[k] != null) return f.b[k];
+  for (const k of [`${sp}|${L}|${vb}`, `${sp}|${L}`]) if (f.b[k] != null) return f.b[k];
   return null;
 }
 async function predSlipFit(env) {
   const K = 'pred_slipfit_v1'; let f = null; try { f = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
-  if (f && f.b && Date.now() - f.at < 3600000) return;
+  if (f && f.v === 2 && Date.now() - f.at < 3600000) return;
   const now = Date.now(), rows = env.RATEBOARD_DB.raw.prepare("SELECT sport, live, vol, dv, ABS(dp) * 100 AS m, at FROM pred_slip_log WHERE at > ? AND dv > 0 AND dv <= 20000 AND gap <= 120000 AND dp <> 0").all(now - 7 * 86400000);
   for (const x of rows) x.r = x.m / (x.dv / 1000);
   const med = l => { if (!l.length) return null; const a = l.slice().sort((p, q2) => p - q2); return a[Math.floor(a.length / 2)]; };
   const q = (l, t0) => { const a = l.slice().sort((p, q2) => p - q2); return a[Math.min(a.length - 1, Math.floor(t0 * a.length))]; };
   // The single number per sport (pregame), still read by anything that hasn't moved on.
   const by = {}; for (const x of rows) if (!x.live) (by[x.sport] = by[x.sport] || []).push(x.r);
-  const out = { at: now, s: {}, b: {}, n: rows.length };
+  const out = { at: now, v: 2, s: {}, b: {}, n: rows.length };
   for (const [sp, l] of Object.entries(by)) out.s[sp] = { m: Math.round(q(l, 0.5) * 100) / 100, p25: Math.round(q(l, 0.25) * 100) / 100, p75: Math.round(q(l, 0.75) * 100) / 100, n: l.length };
   const fitB = rs => { const g = new Map(), add = (k, r) => (g.get(k) || g.set(k, []).get(k)).push(r);
-    for (const x of rs) { const L = x.live ? 1 : 0, vb = SLIP_VB(x.vol), sb = SLIP_SB(x.dv); add(`${x.sport}|${L}|${vb}|${sb}`, x.r); add(`${x.sport}|${L}|${vb}`, x.r); add(`${x.sport}|${L}|x|${sb}`, x.r); add(`${x.sport}|${L}`, x.r); }
-    const o = {}; for (const [k, l] of g) if (l.length >= (k.split('|').length === 4 ? 150 : 100)) o[k] = Math.round(med(l) * 100) / 100; return o; };
+    /* Only steps of up to 5,000 rax (2026-11-27): a bigger step in 10 seconds is usually several bets on both
+       sides netting out, so it moves less per rax than one bet of that size would - it understated big bets. */
+    for (const x of rs) { if (x.dv > 5000) continue; const L = x.live ? 1 : 0, vb = SLIP_VB(x.vol); add(`${x.sport}|${L}|${vb}`, x.r); add(`${x.sport}|${L}`, x.r); }
+    const o = {}; for (const [k, l] of g) if (l.length >= 100) o[k] = Math.round(med(l) * 100) / 100; return o; };
   // The test: fit on what came before the last 24 hours, predict the last 24 hours.
-  const cut = now - 86400000, train = rows.filter(x => x.at < cut), test = rows.filter(x => x.at >= cut);
-  const flat = {}; for (const [sp, l] of Object.entries(train.filter(x => !x.live).reduce((a, x) => ((a[x.sport] = a[x.sport] || []).push(x.r), a), {}))) flat[sp] = med(l);
+  const cut = now - 86400000, train = rows.filter(x => x.at < cut), test = rows.filter(x => x.at >= cut && x.dv <= 5000);
+  const flat = {}; for (const [sp, l] of Object.entries(train.filter(x => !x.live && x.dv <= 5000).reduce((a, x) => ((a[x.sport] = a[x.sport] || []).push(x.r), a), {}))) flat[sp] = med(l);
   const fb = { use: 'bucket', b: fitB(train) }, err = { flat: [], bucket: [] }, bias = { flat: 0, bucket: 0 }; let nT = 0;
   for (const x of test) { const rf = flat[x.sport], rb = slipRateOf(fb, x.sport, x.live, x.vol, x.dv); if (rf == null || rb == null) continue; nT++;
     const pf = rf * x.dv / 1000, pb = rb * x.dv / 1000; err.flat.push(Math.abs(pf - x.m)); err.bucket.push(Math.abs(pb - x.m)); bias.flat += pf - x.m; bias.bucket += pb - x.m; }
