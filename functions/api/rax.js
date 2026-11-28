@@ -1031,7 +1031,7 @@ async function predReal(env) {
           const hist = (m.probabilityHistory || []).slice(-24).map(h => Math.round(h.pA * 1000) / 1000), tn = i => (map && map[i]) || names[oc[i].key] || ((odds.abbr || {})[`${sp}:${oc[i].key}`] || [])[0] || oc[i].key || '';
           const fmtL = v => (v > 0 ? '+' : '') + v;
           out.games.push({ sport: sp, id: m.id, kind: 'spread', line: L[0], game: ((m.gameDisplay || {}).display || oc.map(x => x.key).join(' vs ')) + ' · Spread', path: (m.gameDisplay || {}).path || null,
-            link: `https://www.realapp.com/${routeId([36, 0, 0, Number(m.id)])}`, locked: !!m.isLocked, volume: m.volumeDisplay || null, start: ev ? ev.start : null, oddsAt, live: !!(ev && ev.live), hist,
+            link: `https://www.realapp.com/${routeId([36, 0, 0, Number(m.id)])}`, locked: !!m.isLocked, volume: m.volumeDisplay || null, vn: (() => { for (const k of ['volume', 'totalVolume', 'volumeAmount', 'totalAmount']) if (m[k] !== null && m[k] !== '' && Number.isFinite(Number(m[k]))) return Number(m[k]); return null; })(), start: ev ? ev.start : null, oddsAt, live: !!(ev && ev.live), hist,
             sources: okBk.length ? [{ src: okBk.length === 1 ? okBk[0].t : `${okBk.length} books`, p: fair.map(v => Math.round(v * 1000) / 1000), books: okBk.map(b => b.t), bk: okBk }] : [], refs: [],
             sides: oc.map((x, i) => ({ oid: x.id, key: x.key, label: x.label, logo: ((odds.logo || {})[`${sp}:${x.key}`]) || ((odds.logo || {})[`${sp}:${normTeam(tn(i))}`]) || null, name: `${fmtL(L[i])} ${tn(i)}`, color: x.backgroundColor || null, price: x.probability, fair: fair[i], ev: fair[i] != null && x.probability > 0 ? fair[i] / x.probability - 1 : null })) });
           continue;
@@ -1069,7 +1069,7 @@ async function predReal(env) {
         const oddsAt = sp === 'soccer' ? Math.max(0, ...(odds.keys || []).filter(k => /^soccer_/.test(k)).map(k => ((odds.api || {})[k] || {}).at || 0)) : (((odds.api || {})[ODDS_SPORT[sp]] || {}).at || null);
         const hist = (m.probabilityHistory || []).slice(-24).map(h => Math.round(h.pA * 1000) / 1000);
         out.games.push({ sport: sp, id: m.id, game: (m.gameDisplay || {}).display || oc.map(x => x.label).join(' vs '), path: (m.gameDisplay || {}).path || null,
-          link: `https://www.realapp.com/${routeId([36, 0, 0, Number(m.id)])}`, locked: !!m.isLocked, volume: m.volumeDisplay || null, start: st, oddsAt, live: !!(found.find(f => f.live)), hist,
+          link: `https://www.realapp.com/${routeId([36, 0, 0, Number(m.id)])}`, locked: !!m.isLocked, volume: m.volumeDisplay || null, vn: (() => { for (const k of ['volume', 'totalVolume', 'volumeAmount', 'totalAmount']) if (m[k] !== null && m[k] !== '' && Number.isFinite(Number(m[k]))) return Number(m[k]); return null; })(), start: st, oddsAt, live: !!(found.find(f => f.live)), hist,
           sources: fnd.map(f => ({ src: f.src, p: f.p.map(v => Math.round(v * 1000) / 1000), books: f.books, bk: f.bk })), refs: refs.map(f => ({ src: f.src, p: f.p.map(v => Math.round(v * 1000) / 1000) })),
           sides: oc.map((x, i) => ({ oid: x.id, key: x.key, label: x.label, logo: (sp === 'soccer' && found[0] && (odds.logo || {})[`${sp}:${normTeam(found[0].names[i] || '')}`]) || ((odds.logo || {})[`${sp}:${x.key}`]) || ((odds.logo || {})[`${sp}:${normTeam((found[0] && found[0].names[i]) || names[x.key] || '')}`]) || null, name: (((found[0] && found[0].names[i]) || names[x.key] || ((odds.abbr || {})[`${sp}:${x.key}`] || [])[0] || '') + (orDraw(x.label) ? ' or Draw' : '')) || names[x.key] || ((odds.abbr || {})[`${sp}:${x.key}`] || [])[0] || x.label, color: x.backgroundColor || null, price: x.probability, fair: fair[i], ev: fair[i] != null && x.probability > 0 ? fair[i] / x.probability - 1 : null })) });
       }
@@ -1169,17 +1169,49 @@ const PB_SLIP0 = { nba: 1.0, ncaam: 1.0, nhl: 2.0, soccer: 1.8, ufc: 1.9 }, PB_D
    sport's pregame bets over the last 7 days of pred_slip_log (single steps of up to 20k rax, under 2 minutes apart),
    once a sport has 100+ of them and they are not too spread out (p75 over 3x the median, like CFB on Nov 21, keeps the default); until then the full-day study's numbers above (Nov 21: NBA/CBB ~1, NHL ~2, FC ~1.8,
    UFC ~1.9; CFB and NFL not enough yet, so 2.5). The page and the alerts both read pred_slipfit_v1. */
-let PB_SLIP = { ...PB_SLIP0 }, PB_SLIP_AT = 0;
+let PB_SLIP = { ...PB_SLIP0 }, PB_SLIP_AT = 0, PB_FIT = null;
 async function loadSlipFit(env) { if (Date.now() - PB_SLIP_AT < 5 * 60000) return PB_SLIP; PB_SLIP_AT = Date.now();
-  try { const f = JSON.parse((await env.RATEBOARD_KV.get('pred_slipfit_v1')) || 'null'); if (f && f.s) { PB_SLIP = { ...PB_SLIP0 }; for (const [k, v] of Object.entries(f.s)) if (v && v.n >= 100 && v.m > 0.2 && v.m < 6 && !(v.p75 > 3 * v.m)) PB_SLIP[k] = v.m; } } catch (e) {}
+  try { const f = JSON.parse((await env.RATEBOARD_KV.get('pred_slipfit_v1')) || 'null'); PB_FIT = f; if (f && f.s) { PB_SLIP = { ...PB_SLIP0 }; for (const [k, v] of Object.entries(f.s)) if (v && v.n >= 100 && v.m > 0.2 && v.m < 6 && !(v.p75 > 3 * v.m)) PB_SLIP[k] = v.m; } } catch (e) {}
   return PB_SLIP; }
+/* Slippage by market (Dennis, 2026-11-27: "keep watching the line movements to get it 100% accurate"): besides each
+   sport's one number, the move per 1,000 rax is fitted by live or pregame, the market's volume (under 100k, 100-500k,
+   500k-2M, over 2M rax) and the bet's size (up to 1k, 1-5k, 5-20k), falling back to a wider group when a narrow one
+   has too few bets. Every hour it is tested: fitted on everything before the last 24 hours, then asked to predict
+   the last 24 hours' moves; the by-market fit is used only while it predicts better than the one number. */
+const SLIP_VB = v => !(v > 0) ? 'x' : v < 100000 ? 0 : v < 500000 ? 1 : v < 2000000 ? 2 : 3;
+const SLIP_SB = s => !(s > 0) || s <= 1000 ? 0 : s <= 5000 ? 1 : 2;
+export function slipRateOf(f, sp, live, vol, stake) {
+  if (!f || f.use !== 'bucket' || !f.b) return null; const L = live ? 1 : 0, vb = SLIP_VB(vol), sb = SLIP_SB(stake);
+  for (const k of [`${sp}|${L}|${vb}|${sb}`, `${sp}|${L}|${vb}`, `${sp}|${L}|x|${sb}`, `${sp}|${L}`]) if (f.b[k] != null) return f.b[k];
+  return null;
+}
 async function predSlipFit(env) {
   const K = 'pred_slipfit_v1'; let f = null; try { f = JSON.parse((await env.RATEBOARD_KV.get(K)) || 'null'); } catch (e) {}
-  if (f && Date.now() - f.at < 3600000) return;
-  const rows = env.RATEBOARD_DB.raw.prepare("SELECT sport, ABS(dp) * 100 / (dv / 1000.0) AS r FROM pred_slip_log WHERE at > ? AND live = 0 AND dv > 0 AND dv <= 20000 AND gap <= 120000 AND dp <> 0").all(Date.now() - 7 * 86400000);
-  const by = {}; for (const x of rows) (by[x.sport] = by[x.sport] || []).push(x.r);
-  const out = { at: Date.now(), s: {} };
-  for (const [sp, l] of Object.entries(by)) { l.sort((a, b) => a - b); const q = t => l[Math.min(l.length - 1, Math.floor(t * l.length))]; out.s[sp] = { m: Math.round(q(0.5) * 100) / 100, p25: Math.round(q(0.25) * 100) / 100, p75: Math.round(q(0.75) * 100) / 100, n: l.length }; }
+  if (f && f.b && Date.now() - f.at < 3600000) return;
+  const now = Date.now(), rows = env.RATEBOARD_DB.raw.prepare("SELECT sport, live, vol, dv, ABS(dp) * 100 AS m, at FROM pred_slip_log WHERE at > ? AND dv > 0 AND dv <= 20000 AND gap <= 120000 AND dp <> 0").all(now - 7 * 86400000);
+  for (const x of rows) x.r = x.m / (x.dv / 1000);
+  const med = l => { if (!l.length) return null; const a = l.slice().sort((p, q2) => p - q2); return a[Math.floor(a.length / 2)]; };
+  const q = (l, t0) => { const a = l.slice().sort((p, q2) => p - q2); return a[Math.min(a.length - 1, Math.floor(t0 * a.length))]; };
+  // The single number per sport (pregame), still read by anything that hasn't moved on.
+  const by = {}; for (const x of rows) if (!x.live) (by[x.sport] = by[x.sport] || []).push(x.r);
+  const out = { at: now, s: {}, b: {}, n: rows.length };
+  for (const [sp, l] of Object.entries(by)) out.s[sp] = { m: Math.round(q(l, 0.5) * 100) / 100, p25: Math.round(q(l, 0.25) * 100) / 100, p75: Math.round(q(l, 0.75) * 100) / 100, n: l.length };
+  const fitB = rs => { const g = new Map(), add = (k, r) => (g.get(k) || g.set(k, []).get(k)).push(r);
+    for (const x of rs) { const L = x.live ? 1 : 0, vb = SLIP_VB(x.vol), sb = SLIP_SB(x.dv); add(`${x.sport}|${L}|${vb}|${sb}`, x.r); add(`${x.sport}|${L}|${vb}`, x.r); add(`${x.sport}|${L}|x|${sb}`, x.r); add(`${x.sport}|${L}`, x.r); }
+    const o = {}; for (const [k, l] of g) if (l.length >= (k.split('|').length === 4 ? 150 : 100)) o[k] = Math.round(med(l) * 100) / 100; return o; };
+  // The test: fit on what came before the last 24 hours, predict the last 24 hours.
+  const cut = now - 86400000, train = rows.filter(x => x.at < cut), test = rows.filter(x => x.at >= cut);
+  const flat = {}; for (const [sp, l] of Object.entries(train.filter(x => !x.live).reduce((a, x) => ((a[x.sport] = a[x.sport] || []).push(x.r), a), {}))) flat[sp] = med(l);
+  const fb = { use: 'bucket', b: fitB(train) }, err = { flat: [], bucket: [] }, bias = { flat: 0, bucket: 0 }; let nT = 0;
+  for (const x of test) { const rf = flat[x.sport], rb = slipRateOf(fb, x.sport, x.live, x.vol, x.dv); if (rf == null || rb == null) continue; nT++;
+    const pf = rf * x.dv / 1000, pb = rb * x.dv / 1000; err.flat.push(Math.abs(pf - x.m)); err.bucket.push(Math.abs(pb - x.m)); bias.flat += pf - x.m; bias.bucket += pb - x.m; }
+  const r3 = v => v == null ? null : Math.round(v * 1000) / 1000;
+  out.test = { n: nT, flatMedErr: r3(med(err.flat)), bucketMedErr: r3(med(err.bucket)), flatMeanErr: r3(err.flat.reduce((a, v) => a + v, 0) / (nT || 1)), bucketMeanErr: r3(err.bucket.reduce((a, v) => a + v, 0) / (nT || 1)),
+    flatBias: r3(bias.flat / (nT || 1)), bucketBias: r3(bias.bucket / (nT || 1)) };
+  out.use = nT >= 500 && out.test.bucketMeanErr <= out.test.flatMeanErr ? 'bucket' : 'flat';
+  out.b = fitB(rows);   // what's used from now on: every bet of the last 7 days
+  // A running record of the hourly tests, so it shows whether it keeps getting better.
+  out.hist = [...((f && f.hist) || []).slice(-47), [now, nT, out.test.flatMeanErr, out.test.bucketMeanErr, out.use === 'bucket' ? 1 : 0]];
   await env.RATEBOARD_KV.put(K, JSON.stringify(out)); PB_SLIP_AT = 0;
 }
 function pbDerive(g) {
@@ -1247,7 +1279,7 @@ async function predBuildTick(env, out) {
       if (heldSides.size && !heldSides.has(si)) continue;
       const sd = g.sides[si], fair = d.fair(si), q = Number(sd.price); if (!(fair > 0.07) || !(q > 0 && q < 1)) continue;
       const u = pbUnits(fair, q); if (!u || Math.round(q * 100) > Math.floor(fair / (1 + PB_MIN_EV) * 100)) continue;
-      const H = pbHeld(bets, port, g.id, si), held = H ? H.cost : 0, rate = PB_SLIP[g.sport] ?? PB_DEF;
+      const H = pbHeld(bets, port, g.id, si), held = H ? H.cost : 0, rate = slipRateOf(PB_FIT, g.sport, g.live, g.vn, cfg.unit) ?? PB_SLIP[g.sport] ?? PB_DEF;
       let left = u * cfg.unit - held;
       if (H) { const N = pbAddNeed(fair, q, cfg.unit, rate, H.pays, GOOD); if (!N) continue; left = N.more; }
       if (left < 100) continue;
@@ -1536,7 +1568,7 @@ async function predMemberAlerts(env, out) {
       const hs = g.sides.map((_, si) => held(g.id, si)), holdAny = hs.some(Boolean);
       for (let si = 0; si < g.sides.length; si++) {
         const sd = g.sides[si], fair = d.fair(si), q = Number(sd.price); if (!(fair > 0.05) || !(q > 0 && q < 1)) continue;
-        const rate = PB_SLIP[g.sport] ?? PB_DEF, evp = fair / (q + rate * (unit > 0 ? unit : 1000) / 1000 / 200) - 1, nm = sd.name || sd.label, h = hs[si];
+        const stk = unit > 0 ? unit : 1000, rate = slipRateOf(PB_FIT, g.sport, g.live, g.vn, stk) ?? PB_SLIP[g.sport] ?? PB_DEF, evp = fair / (q + rate * stk / 1000 / 200) - 1, nm = sd.name || sd.label, h = hs[si];
         const U = (k, a) => `/predictions#g=${g.id}&s=${si}&k=${k}${a > 0 ? '&a=' + Math.round(a / 50) * 50 : ''}&q=${Math.round(q * 100)}`, tag = k => 'pu-' + k + '-' + g.id + '-' + si;
         // Holding one side of a game: never pushed toward another side of it.
         if (g._left != null) {   // in game: Simple long shots only
