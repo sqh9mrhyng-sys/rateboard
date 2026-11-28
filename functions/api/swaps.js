@@ -5489,6 +5489,11 @@ async function fcRows(env, db, cards, day, inv) {
   MT = MT || { f: {}, fm: {}, ga: {}, gam: {}, lg: 1.35 };
   let hand = {}; try { hand = await boostManualOut(env, 'soccer', day); } catch (e) {}
   let rinj = {}; try { rinj = await realInjuries(env, 'soccer', cards.players.map(p => p.id)); } catch (e) {}
+  /* Each club's latest logged game (2026-11-28: every MLS pass was left out as "No game since Nov 1" - the MLS
+     playoffs aren't in the game log, so the gap was the log's, not the player's). */
+  const clubLast = new Map();
+  try { for (const x of ((await db.prepare("SELECT team, season, MAX(day) AS d FROM gamelog WHERE sport='soccer' AND season IN (?, ?) AND day < ? GROUP BY team, season").bind(FC_SEASON[0], FC_MLS_SEASON, day).all()).results || []))
+    clubLast.set(`${x.season}|${x.team}`, x.d); } catch (e) {}
   // Lineups for every game on the slate that has one (read again if it could still change).
   const lineups = new Map();
   await Promise.all((sched.events || []).map(async e => { const l = await fcLineup(env, e, true); if (l) lineups.set(e.id, l); }));
@@ -5572,7 +5577,10 @@ async function fcRows(env, db, cards, day, inv) {
       if (/^(out|injured|doubtful|suspen)/i.test(ri.s)) { skip = true; flags.push(`${ri.s}${why ? ': ' + why : ''} (Real)`); }
       else if (/question|day-to-day/i.test(ri.s)) { k *= Q_CUT; flags.push(`Questionable${why ? ': ' + why : ''} (Real)`); } }
     // Hasn't played in three weeks while his club has: injured or dropped (a starting lineup overrides it).
-    if (lu !== 'start' && lastG && cg.length && dayMs - Date.parse(lastG.day + 'T12:00:00Z') > 21 * 86400000) { skip = true; flags.push(`No game since ${lastG.day}`); }
+    // Only when his club has played since without him; a club with nothing newer in the log is a gap in the log.
+    const clubSince = lastG ? clubLast.get(`${M ? FC_MLS_SEASON : FC_SEASON[0]}|${lastG.team}`) : null;
+    if (lu !== 'start' && lastG && cg.length && dayMs - Date.parse(lastG.day + 'T12:00:00Z') > 21 * 86400000 && clubSince && clubSince > lastG.day) { skip = true; flags.push(`No game since ${lastG.day}`); }
+    else if (lu !== 'start' && lastG && dayMs - Date.parse(lastG.day + 'T12:00:00Z') > 21 * 86400000) flags.push(`Last logged game ${lastG.day} (his club's too - playoffs or a break)`);
     if (!cg.length && og.length && lu !== 'start') { k *= 0.7; flags.push('No games this season yet'); }
     const oppKeys = fcKeysOf(g.oppId).filter(x => x.nat === side.nat && !!x.mls === !!side.mls && !(side.mls && FC_CLUBS[x.key]));
     const ok1 = oppKeys.length === 1 ? oppKeys[0].key : null;
@@ -9533,20 +9541,6 @@ async function handle({ request, env, waitUntil }) {
     }
     for (const k of Object.keys(totals)) totals[k] = Math.round(totals[k]);
     if (inv) used = inv.map((b, i) => ({ ...b, used: b.count - left[i].count }));
-    // Diagnostic (2026-11-28, Dennis: FC showed 11 boosts of 37 playing with 100+ boosters) - counts only, no names.
-    if (sp === 'soccer' && acc.who === 'dennis') { try { const fl = {}; for (const r of rows) for (const x of (r.flags || [])) { const k = String(x).replace(/[:(].*$/, '').slice(0, 40); fl[k] = (fl[k] || 0) + 1; }
-      const hr = {}; for (const b of (inv || [])) hr[b.rarity] = (hr[b.rarity] || 0) + b.count;
-      await env.RATEBOARD_KV.put('diag_fcboost_d', JSON.stringify({ at: Date.now(), rows: rows.length, skip: rows.filter(r => r.skip).length, projNull: rows.filter(r => r.proj == null).length,
-        rar: rows.reduce((o, r) => (o[r.boost || 'none'] = (o[r.boost || 'none'] || 0) + 1, o), {}), best: rows.filter(r => r.best).length, below: rows.filter(r => r.belowCut).length,
-        flags: fl, held: hr, invN: inv ? inv.length : null, bars, cus: CUS || null, mode }), { expirationTtl: 86400 }); } catch (e) {} }
-    // The rows themselves, encrypted to a key only Claude's session holds (his passes are private), for the same check.
-    if (sp === 'soccer' && acc.who === 'dennis') { try { const wc = globalThis.crypto.subtle, enc = new TextEncoder();
-      const pk = await wc.importKey('spki', Uint8Array.from(atob('MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtW3LsIJY2vKC+b5yT+fu+GeP6pJe4fF1n+0s0J2SRixMEyYfDkvh5Dbp0a6ybooeqmuO6OECHtoKk3l2fUggYZmKSaAX/4npEm5KmRJfTmimK9YduJJpPc1t+WAt6Aer3KI9l1oQe1KsQ3pZJ62gIFHsjjW8Lprko8oVJVCF6Zw+Na7Mtiv0MSKLiikRSEmN7XfASf0hb/3NntliWO45iLUVDUG9aOuryQ5BejMyMZGKxXFW6BZjkNaOUEgbnd4ix75aMeKV1n/+np2IxVznBp5zoRE3BGptyvHSF+Vuk7mwNH17pG+yBGLaCNn+KaHHRdL737vOQPiRIK44LMruhQIDAQAB'), c => c.charCodeAt(0)), { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['encrypt']);
-      const k = await wc.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt']), iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
-      const body = JSON.stringify(rows.map(r => [r.name, r.team, r.skip ? 1 : 0, r.proj, r.boost || null, r.flags || []]));
-      const ct = new Uint8Array(await wc.encrypt({ name: 'AES-GCM', iv }, k, enc.encode(body))), ek = new Uint8Array(await wc.encrypt({ name: 'RSA-OAEP' }, pk, new Uint8Array(await wc.exportKey('raw', k))));
-      const b64 = u => btoa(String.fromCharCode(...u));
-      await env.RATEBOARD_KV.put('diag_fcboost_e', JSON.stringify({ ek: b64(ek), iv: b64(iv), ct: b64(ct) }), { expirationTtl: 86400 }); } catch (e) { try { await env.RATEBOARD_KV.put('diag_fcboost_e', JSON.stringify({ err: String(e.message || e).slice(0, 100) }), { expirationTtl: 3600 }); } catch (e2) {} } }
 
     return json({ sport: sp, season: se, date: day, mode, binvMsg: binvMsg || undefined, bars: bars.map(x => Number.isFinite(x) ? x : null), cutAt, totals, lineups: sched.lineups ?? null, lineupsAt: sched.lineupsAt || null, started: sched.started ?? null, legCap: inv && Number.isFinite(dayCap[5]) ? dayCap[5] : null, inv: used, statMode: !!used, rsUser: u.rsUser, cardsAt: cards.at, invAt, games: sched.games, event: sched.event || null, course: sched.course || null, field: sched.field ?? null, depth: !!depth,
       rows, notPlaying: idle.length, players: cards.players.length });
