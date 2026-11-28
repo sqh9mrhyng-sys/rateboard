@@ -8866,7 +8866,7 @@ function updateFreshnessNote(){
   if(!el) return;
   // Each member's cards are read from Real at most every 90 minutes (2026-11-27); a pull in between shows the saved copy.
   const at = lastPullAt, t = d => new Date(d).toLocaleTimeString([], { hour:'numeric', minute:'2-digit' });
-  el.textContent = at ? `Cards read from Real at ${t(at)}. They refresh at most every 90 minutes - next after ${t(at + 90 * 60000)}.` : 'Your cards are read from Real at most once every 90 minutes.';
+  el.textContent = at ? `Cards read from Real at ${t(at)}. Up to 3 seasons per pull, one new pull every 15 minutes; a season is re-read after 90 minutes (older seasons, except FC, after 4 hours).` : 'Up to 3 seasons per pull, one new pull every 15 minutes. A season you pulled is kept 90 minutes (older seasons, except FC, 4 hours).';
 }
 setInterval(updateFreshnessNote, 30000);
 
@@ -8880,7 +8880,7 @@ function rsMsg(text, isError){
 /* What you sell (Dennis, 2026-11-27): sports and seasons, all pulled and shown on one page. */
 const SELL_KEY = 'ratebrd_sell_v1';
 function sellCfg(){ let c = null; try{ c = JSON.parse(localStorage.getItem(SELL_KEY) || 'null'); }catch(e){}
-  if(!c || typeof c !== 'object'){ c = {}; for(const s of SP_ORDER) c[s] = [curSeason(s)]; }
+  if(!c || typeof c !== 'object'){ c = { FC: [curSeason('FC')] }; }
   for(const s of Object.keys(c)) if(!SP_ORDER.includes(s) || !Array.isArray(c[s])) delete c[s];
   return c; }
 function saveSellCfg(c){ try{ localStorage.setItem(SELL_KEY, JSON.stringify(c)); }catch(e){} }
@@ -8891,10 +8891,18 @@ function buyerMap(){ const m = new Map();
     const k = o.sport + '|' + (o.sport === 'UFC' ? '' : offSeason(o)); const s = m.get(k) || m.set(k, new Set()).get(k); s.add(o.user); }
   return m; }
 const hasBuyer = (B, s, se) => (B.get(s + '|' + se) || new Set()).size;
+/* Seller page (Dennis, 2026-11-28): FC first; up to 3 seasons in one pull. */
+const SELL_ORDER = ['FC', ...SP_ORDER.filter(s => s !== 'FC')], SELL_MAX = 3;
+const sellCount = c => { const B = buyerMap(); return SELL_ORDER.reduce((n, s) => n + (c[s] ? ((BSEAS[s] || []).length ? c[s].filter(se => hasBuyer(B, s, se)).length : (hasBuyer(B, s, '') ? 1 : 0)) : 0), 0); };
 function drawSellCfg(){ const box = $('#sellcfg'); if(!box) return; const c = sellCfg(), B = buyerMap(), ready = !!(market && market.offers && market.offers.length);
   if(!ready){ box.innerHTML = '<div class="nob">Loading who\'s buying…</div>'; drawCscan(); return; }
+  // Older picks with more than 3 seasons on (the old default was every sport): keep the first 3, FC first.
+  if(sellCount(c) > SELL_MAX){ let n = 0; for(const s of SELL_ORDER){ if(!c[s]) continue; const SL = BSEAS[s] || [];
+      const l = SL.length ? c[s].filter(se => hasBuyer(B, s, se)) : (hasBuyer(B, s, '') ? [''] : []);
+      const keep = l.slice(0, Math.max(0, SELL_MAX - n)); n += keep.length; if(keep.length) c[s] = keep; else delete c[s]; }
+    saveSellCfg(c); }
   const rows = [], none = [];
-  for(const s of SP_ORDER){ const SL = BSEAS[s] || [], live = SL.length ? SL.filter(se => hasBuyer(B, s, se)) : (hasBuyer(B, s, '') ? [''] : []);
+  for(const s of SELL_ORDER){ const SL = BSEAS[s] || [], live = SL.length ? SL.filter(se => hasBuyer(B, s, se)) : (hasBuyer(B, s, '') ? [''] : []);
     if(!live.length){ none.push(spLbl(s)); continue; }
     const on = !!c[s];
     rows.push(`<div class="sr${on ? '' : ' off'}"><label class="sw"><input type="checkbox" data-sellsp="${s}"${on ? ' checked' : ''}><span class="tg"></span>${spLbl(s)}</label><div class="ss">`
@@ -8904,10 +8912,13 @@ function drawSellCfg(){ const box = $('#sellcfg'); if(!box) return; const c = se
   box.innerHTML = (rows.join('') || '<div class="nob">No one is buying anything right now.</div>') + (none.length ? `<div class="nob">No buyers yet: ${esc(none.join(', '))}</div>` : '');
   drawCscan(); }
 $('#sellcfg').addEventListener('change', e => { const s = e.target.dataset.sellsp; if(!s) return; const c = sellCfg(), B = buyerMap();
+  if(e.target.checked && sellCount(c) >= SELL_MAX){ e.target.checked = false; return rsMsg(`Up to ${SELL_MAX} seasons at once - turn one off first.`, true); }
   if(e.target.checked){ const SL = BSEAS[s] || []; const live = SL.filter(se => hasBuyer(B, s, se)); c[s] = SL.length ? [live.includes(curSeason(s)) ? curSeason(s) : (live[0] || curSeason(s))] : ['']; }
   else delete c[s]; saveSellCfg(c); setCscanSel(''); drawSellCfg(); });
 $('#sellcfg').addEventListener('click', e => { const b = e.target.closest('[data-sellse]'); if(!b) return; const [s, se] = b.dataset.sellse.split('|'), c = sellCfg();
-  const l = new Set(c[s] || []); l.has(se) ? l.delete(se) : l.add(se);
+  const l = new Set(c[s] || []);
+  if(!l.has(se) && sellCount(c) >= SELL_MAX) return rsMsg(`Up to ${SELL_MAX} seasons at once - turn one off first.`, true);
+  rsMsg(''); l.has(se) ? l.delete(se) : l.add(se);
   if(l.size) c[s] = (BSEAS[s] || []).filter(x => l.has(x)); else delete c[s]; saveSellCfg(c); setCscanSel(''); drawSellCfg(); });
 /* Custom scans (Dennis, 2026-11-28): save the sports and seasons you scan as named picks, as many as you like,
    and pick one each time. Kept on this device. */
@@ -8952,6 +8963,7 @@ async function pullOne(sp, lbl, say){
     chunk++; say(chunk);
     const qs = `/api/collection?username=${encodeURIComponent(me)}&sport=${encodeURIComponent(sp)}&start=${start}` + (seK ? `&season=${seK}` : '') + (hashId ? `&hashId=${encodeURIComponent(hashId)}` : '');
     const res = await fetch(qs); const data = await res.json().catch(() => ({}));
+    if(res.status === 429 && data.wait){ const e = new Error(data.error); e.cd = true; throw e; }   // our 15-minute limit: no point waiting here
     if(res.status === 429 && tries < 2){ tries++; chunk--; say(0, 'Real is busy - waiting a minute…'); await new Promise(r => setTimeout(r, 62000)); continue; }
     if(!res.ok) throw new Error((data.error || 'Could not load cards') + (data.detail ? ' (' + data.detail + ')' : ''));
     for(const p of data.players || []){ if(!p.name) continue; const m = merged.get(p.name) || { name: p.name, total: 0, totalValue: 0 };
@@ -8966,18 +8978,20 @@ async function pullOne(sp, lbl, say){
 $('#rs-go').addEventListener('click', async () => {
   const btn = $('#rs-go'), c = sellCfg();
   const B = buyerMap();
-  const jobs = SP_ORDER.flatMap(s => !c[s] ? [] : (BSEAS[s] || []).length ? c[s].map(se => [s, se]) : [[s, '']]).filter(([s, se]) => hasBuyer(B, s, se));   // nobody buying = nothing to pull
+  const jobs = SELL_ORDER.flatMap(s => !c[s] ? [] : (BSEAS[s] || []).length ? c[s].map(se => [s, se]) : [[s, '']]).filter(([s, se]) => hasBuyer(B, s, se));   // nobody buying = nothing to pull
   if(!jobs.length) return rsMsg('None of what you picked has a buyer right now - pick a sport or season with a number on it.', true);
+  if(jobs.length > SELL_MAX) return rsMsg(`Up to ${SELL_MAX} seasons in one pull - you have ${jobs.length} on. Turn some off first.`, true);
   btn.disabled = true; rsMsg(''); lastPullAt = null;
-  const raw = [], failed = [];
+  const raw = [], failed = []; let cdMsg = '';
   try{
     for(let i = 0; i < jobs.length; i++){
       const [sp, se] = jobs[i];
       try{ raw.push(...await pullOne(sp, se, (ch, note) => { btn.innerHTML = `<span class="spin"></span> ${esc(note || `${sp}${se ? ' ' + se : ''}${ch > 1 ? ' (' + ch + ')' : ''}`)} · ${i + 1} of ${jobs.length}`; })); }
-      catch(e){ failed.push(`${sp}${se ? ' ' + se : ''}`); }
+      catch(e){ if(e.cd){ cdMsg = e.message; break; } failed.push(`${sp}${se ? ' ' + se : ''}`); }
     }
+    if(cdMsg && !raw.length){ rsMsg(cdMsg, true); return; }
     if(!raw.length){ rsMsg(failed.length ? `Could not load ${failed.join(', ')} - try again in a minute.` : `No cards found for "${me}" in what you sell.`, true); return; }
-    rsMsg(failed.length ? `Couldn't load ${failed.join(', ')} - showing the rest.` : '', !!failed.length);
+    rsMsg(cdMsg ? cdMsg + ' Showing what loaded.' : failed.length ? `Couldn't load ${failed.join(', ')} - showing the rest.` : '', !!(failed.length || cdMsg));
     lastPull = raw; updateFreshnessNote();
     showMatches(raw);
   }catch(e){

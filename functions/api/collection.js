@@ -276,6 +276,26 @@ export async function onRequestGet({ request, env }) {
     });
   }
 
+  /* Pull limits (Dennis, 2026-11-28): up to 3 sport-seasons in one go, then 15 minutes before the next new pull.
+     A pull opens a 5-minute window that takes up to 3 sport-seasons; after that, nothing new until 15 minutes from
+     its start. Cached copies (above) are never limited. */
+  let cdSave = null;
+  if (start === 0 && env.RATEBOARD_KV) {
+    const ck = `colcd:${username.toLowerCase()}`, me = `${rsSport}:${season}`, now = Date.now();
+    let w = null; try { w = JSON.parse((await env.RATEBOARD_KV.get(ck)) || 'null'); } catch (e) {}
+    if (w && now - w.at < 15 * 60000) {
+      const inWin = now - w.at < 5 * 60000;
+      if (!w.set.includes(me)) {
+        if (!inWin || w.set.length >= 3) {
+          const mins = Math.max(1, Math.ceil((w.at + 15 * 60000 - now) / 60000));
+          return json({ error: `You can pull up to 3 seasons every 15 minutes - try again in ${mins} minute${mins === 1 ? '' : 's'}.`, wait: mins }, 429);
+        }
+        w.set.push(me);
+      }
+    } else w = { at: now, set: [me] };
+    cdSave = [ck, w];   // only counted once Real has actually answered
+  }
+
   // 2. Per-IP rate limit (only on first chunk, and only once we know we're
   //    actually about to go out to RS)
   if (start === 0) {
@@ -299,6 +319,8 @@ export async function onRequestGet({ request, env }) {
     if (/ 429/.test(e.message)) return json({ error: "Real is busy and is limiting how fast cards can be read - try again in 10-15 minutes." }, 503);
     return json({ error: 'Could not load collection — try again shortly', detail: e.message }, 502); }
 
+  if (cdSave) { try { await env.RATEBOARD_KV.put(cdSave[0], JSON.stringify(cdSave[1]), { expirationTtl: 20 * 60 }); } catch (e) {} }
+
   const result = JSON.stringify({
     username,
     hashId,
@@ -313,7 +335,9 @@ export async function onRequestGet({ request, env }) {
   if (entity === 'player' && env.RATEBOARD_DB) { try { await recordScan(env.RATEBOARD_DB, username.toLowerCase(), rsSport, Number(season), start, chunk.players); } catch (e) {} }
 
   // 5. Cache until this quarter-hour slot rolls over
-  if (env.RATEBOARD_KV) { try { await env.RATEBOARD_KV.put(kvKey, result, { expirationTtl: KEEP_SECONDS }); } catch (e) {} }
+  // Older seasons (all but FC's) are kept 4 hours, not 90 minutes (Dennis, 2026-11-28).
+  const keep = sport !== 'FC' && season !== SPORT_CONFIG[sport].season ? 4 * 3600 : KEEP_SECONDS;
+  if (env.RATEBOARD_KV) { try { await env.RATEBOARD_KV.put(kvKey, result, { expirationTtl: keep }); } catch (e) {} }
   else await cachePut(cacheReq, result, CACHE_TTL_SECONDS);
 
   return new Response(result, {
