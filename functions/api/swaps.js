@@ -6900,7 +6900,11 @@ async function handle({ request, env, waitUntil }) {
         const evs = new Map((fs.events || []).map(e => [e.id, e])), lus = new Map(), list = [];
         const cand = [];
         for (const r of (pj.rows || [])) { const x = r.x || {}; if (!(x.av > 0) || x.sk || x.sn || x.ml) continue;
-          const ts = byAb.get(r.t) || []; if (ts.length !== 1) continue; const tm = ts[0];
+          // His club's ESPN id the way FC boosts find it (Real's codes aren't ESPN's: Bayern is FCB on Real, MUN on ESPN).
+          const lgc = String((x.fc && x.fc.lg) || '').toUpperCase();
+          let ids = fcClubIds({ team: r.t, conference: lgc }).filter(id => fs.teams[id] && fs.teams[id].lg !== 'usa.1');
+          if (!ids.length && !FC_CLUBS[String(r.t).toUpperCase()]) ids = (byAb.get(r.t) || []).filter(tm0 => tm0.lg === FC_CONF_LG[lgc]).map(tm0 => tm0.id);
+          if (ids.length !== 1) continue; const tm = fs.teams[ids[0]];
           cand.push({ r, tm, v: x.rate * x.av * (tm.home ? 1.05 : 0.95) }); }
         cand.sort((a, b) => b.v - a.v);
         const short = cand.slice(0, 160);
