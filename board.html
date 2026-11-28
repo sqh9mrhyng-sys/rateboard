@@ -358,6 +358,16 @@
   .bidder .rate{font-size:22px}
   .bidder .hitacts{margin-top:0}
   .hitacts .btn-ghost{flex:1 1 auto;text-align:center}
+  /* Your best sellers (Dennis, 2026-11-28: "when it's a new player it all blends"): each player is its own card,
+     with a solid header band; buyers sit inside it, lighter. */
+  #sm-list .hit{display:block!important;padding:0;margin:14px 0;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--panel-2)}
+  #sm-list .hit:last-child{border-bottom:1px solid var(--line)}
+  #sm-list .bidder-hd{padding:12px 14px;background:#2c3650;border-bottom:1px solid var(--line);align-items:center;gap:8px}
+  #sm-list .bidder-hd .player{font-size:17px;font-weight:800;flex:1 1 100%}
+  #sm-list .bidder-hd .who{font-size:12.5px;background:var(--bg);border-radius:999px;padding:2px 9px;color:var(--ink)}
+  #sm-list .bidder{padding:10px 14px;border-bottom:1px solid var(--line);border-top:0}
+  #sm-list .bidder:last-child{border-bottom:0}
+  #sm-list .bidder .hitacts .btn-ghost{padding:7px 10px;font-size:13px}
 
   /* ---------- player/team autocomplete ---------- */
   .suggest{list-style:none;margin:6px 0 0;padding:4px;position:absolute;left:0;right:0;top:100%;z-index:50;
@@ -4367,7 +4377,7 @@ async function showMatches(raw){
           <div class="bidder">
             <span class="rate num">${b.rate}<small>/1</small></span>
             <span>
-              <span class="who">${esc(b.buyer)}${b.season ? ` <span class="seas">${esc(b.season)}</span>` : ""}</span>
+              <span class="who">${esc(b.buyer)}${b.season && b.season !== h.season ? ` <span class="seas">${esc(b.season)}</span>` : ""}</span>
               <div class="note" data-msg="${i}-${j}" style="margin-top:4px"></div>
             </span>
             <span class="hitacts">
