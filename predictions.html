@@ -1115,7 +1115,9 @@ $('#bank').addEventListener('input', e => { bank = Math.max(0, Number(e.target.v
 $('#rfr').addEventListener('click', async () => { const b = $('#rfr'); if (b.classList.contains('on')) return; b.classList.add('on');
   try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); await Promise.all([load(), betsCall(null)]); if (hasPort()) await loadPort(); drawFocus(); } catch (e) {}
   setTimeout(() => b.classList.remove('on'), 400); });
-betsCall(); load(); setInterval(load, 10000); setInterval(() => { const a = document.activeElement; if (!(a && a.dataset && (a.dataset.amt || a.dataset.pay))) betsCall(); }, 60000); setInterval(tick, 1000);
+betsCall(); load(); setInterval(load, 10000);
+// Back on the page (2026-11-27): phones pause a page in the background, so read fresh prices the moment it shows again.
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') load(); }); addEventListener('pageshow', e => { if (e.persisted) load(); }); setInterval(() => { const a = document.activeElement; if (!(a && a.dataset && (a.dataset.amt || a.dataset.pay))) betsCall(); }, 60000); setInterval(tick, 1000);
 </script>
 </body>
 </html>
