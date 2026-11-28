@@ -291,6 +291,9 @@
   .sellcfg{display:grid;gap:8px;margin-top:6px}
   .sellcfg .sr{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 10px;border:1px solid var(--line);border-radius:12px;background:var(--panel-2)}
   .sellcfg .sr.off{opacity:.55}
+  .sellcfg .sr.none{opacity:.35} .sellcfg .sr button:disabled{opacity:.35;text-decoration:line-through;cursor:not-allowed}
+  .sellcfg .sr .nb{font-size:12px;color:var(--mute)} .sellcfg .sr button .bn{font-size:11px;opacity:.75;margin-left:3px}
+  .cscan{display:flex;gap:6px;align-items:center;margin-top:6px} .cscan select{flex:1;min-width:0} .cscan button{flex-shrink:0;padding:8px 10px}
   .sellcfg .sr label{display:flex;align-items:center;gap:8px;margin:0;font-weight:800;min-width:74px;color:var(--ink)}
   .sellcfg .sr label input{width:18px;height:18px;accent-color:var(--accent)}
   .sellcfg .sr button{padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--mute);font-size:12.5px;font-weight:700}
@@ -944,9 +947,11 @@
               <p class="note" id="ot-note" style="margin-top:6px"></p>
             </div>
             <div>
-              <label style="display:block">What you sell</label>
+              <label style="display:block">Custom scan</label>
+              <div class="cscan"><select id="cscan" class="field"></select><button type="button" class="btn-ghost" id="cscan-save">Save as new</button><button type="button" class="btn-ghost" id="cscan-del" hidden>Delete</button></div>
+              <label style="display:block;margin-top:10px">What you sell</label>
               <div id="sellcfg" class="sellcfg"></div>
-              <p class="note" style="margin-top:6px">Tick the sports you sell, then tap the seasons you have cards in. Everything you pick shows on one page.</p>
+              <p class="note" style="margin-top:6px">Only sports and seasons someone is buying can be picked - the rest have no buyer yet, so there's nothing to pull. Save a pick as a custom scan to reuse it.</p>
             </div>
             <div id="rs-lookup-wrap" class="hide">
               <button id="rs-go" class="btn">Pull my cards from Real</button>
@@ -3531,6 +3536,7 @@ async function render(){
   if(me && !openCounted){ openCounted = true; track('open'); }
   updateBell();
   const all = market.offers.filter(o => !market.users[o.user]?.banned);
+  try{ drawSellCfg(); }catch(e){}
   const live = all
     .filter(o => spOn(o.sport))
     // Same rate: Vet, then Trusted swappers sit higher.
@@ -8836,15 +8842,44 @@ function sellCfg(){ let c = null; try{ c = JSON.parse(localStorage.getItem(SELL_
   for(const s of Object.keys(c)) if(!SP_ORDER.includes(s) || !Array.isArray(c[s])) delete c[s];
   return c; }
 function saveSellCfg(c){ try{ localStorage.setItem(SELL_KEY, JSON.stringify(c)); }catch(e){} }
-function drawSellCfg(){ const box = $('#sellcfg'); if(!box) return; const c = sellCfg();
-  box.innerHTML = SP_ORDER.map(s => { const on = !!c[s], SL = BSEAS[s] || [];
-    return `<div class="sr${on ? '' : ' off'}"><label><input type="checkbox" data-sellsp="${s}"${on ? ' checked' : ''}>${spLbl(s)}</label>`
-      + SL.map(se => `<button type="button" data-sellse="${s}|${se}" aria-pressed="${on && c[s].includes(se)}">${se}</button>`).join('') + '</div>'; }).join(''); }
-$('#sellcfg').addEventListener('change', e => { const s = e.target.dataset.sellsp; if(!s) return; const c = sellCfg();
-  if(e.target.checked) c[s] = [curSeason(s)]; else delete c[s]; saveSellCfg(c); drawSellCfg(); });
+/* Only what someone is buying (Dennis, 2026-11-28): a sport or season with no live buy offer can't be picked and is
+   never pulled - no point asking Real for cards nobody wants. Counts are buyers (people) per season. */
+function buyerMap(){ const m = new Map();
+  if(market && market.offers) for(const o of market.offers){ if(market.users && market.users[o.user] && market.users[o.user].banned) continue;
+    const k = o.sport + '|' + (o.sport === 'UFC' ? '' : offSeason(o)); const s = m.get(k) || m.set(k, new Set()).get(k); s.add(o.user); }
+  return m; }
+const hasBuyer = (B, s, se) => (B.get(s + '|' + se) || new Set()).size;
+function drawSellCfg(){ const box = $('#sellcfg'); if(!box) return; const c = sellCfg(), B = buyerMap(), ready = !!(market && market.offers && market.offers.length);
+  box.innerHTML = SP_ORDER.map(s => { const SL = BSEAS[s] || [], live = SL.length ? SL.filter(se => !ready || hasBuyer(B, s, se)) : (!ready || hasBuyer(B, s, '') ? [''] : []);
+    const on = !!c[s] && live.length > 0;
+    return `<div class="sr${!live.length ? ' none' : on ? '' : ' off'}"><label><input type="checkbox" data-sellsp="${s}"${on ? ' checked' : ''}${live.length ? '' : ' disabled'}>${spLbl(s)}</label>`
+      + (!live.length ? '<span class="nb">no buyers yet</span>' : SL.map(se => { const n = ready ? hasBuyer(B, s, se) : 0;
+        return `<button type="button" data-sellse="${s}|${se}" aria-pressed="${on && c[s].includes(se) && (!ready || n > 0)}"${ready && !n ? ' disabled title="No one is buying this season yet"' : ''}>${se}${n ? `<span class="bn">${n}</span>` : ''}</button>`; }).join('')) + '</div>'; }).join('');
+  drawCscan(); }
+$('#sellcfg').addEventListener('change', e => { const s = e.target.dataset.sellsp; if(!s) return; const c = sellCfg(), B = buyerMap();
+  if(e.target.checked){ const SL = BSEAS[s] || []; const live = SL.filter(se => hasBuyer(B, s, se)); c[s] = SL.length ? [live.includes(curSeason(s)) ? curSeason(s) : (live[0] || curSeason(s))] : ['']; }
+  else delete c[s]; saveSellCfg(c); setCscanSel(''); drawSellCfg(); });
 $('#sellcfg').addEventListener('click', e => { const b = e.target.closest('[data-sellse]'); if(!b) return; const [s, se] = b.dataset.sellse.split('|'), c = sellCfg();
   const l = new Set(c[s] || []); l.has(se) ? l.delete(se) : l.add(se);
-  if(l.size) c[s] = (BSEAS[s] || []).filter(x => l.has(x)); else delete c[s]; saveSellCfg(c); drawSellCfg(); });
+  if(l.size) c[s] = (BSEAS[s] || []).filter(x => l.has(x)); else delete c[s]; saveSellCfg(c); setCscanSel(''); drawSellCfg(); });
+/* Custom scans (Dennis, 2026-11-28): save the sports and seasons you scan as named picks, as many as you like,
+   and pick one each time. Kept on this device. */
+const CSCAN_KEY = 'ratebrd_cscan_v1', CSCAN_SEL = 'ratebrd_cscan_sel_v1';
+const cscans = () => { try{ const l = JSON.parse(localStorage.getItem(CSCAN_KEY) || '[]'); return Array.isArray(l) ? l.filter(x => x && x.name && x.cfg) : []; }catch(e){ return []; } };
+const saveCscans = l => { try{ localStorage.setItem(CSCAN_KEY, JSON.stringify(l.slice(0, 30))); }catch(e){} };
+const cscanSel = () => { try{ return localStorage.getItem(CSCAN_SEL) || ''; }catch(e){ return ''; } };
+const setCscanSel = v => { try{ localStorage.setItem(CSCAN_SEL, v); }catch(e){} };
+const cfgTxt = c => SP_ORDER.filter(s => c[s]).map(s => spLbl(s) + (c[s].filter(Boolean).length ? ' ' + c[s].filter(Boolean).join('/') : '')).join(', ');
+function drawCscan(){ const sel = $('#cscan'); if(!sel) return; const l = cscans(), cur = cscanSel();
+  sel.innerHTML = `<option value="">${l.length ? 'Pick a custom scan…' : 'No custom scans yet'}</option>` + l.map((x, i) => `<option value="${i}"${String(i) === cur ? ' selected' : ''}>${esc(x.name)} - ${esc(cfgTxt(x.cfg))}</option>`).join('');
+  $('#cscan-del').hidden = cur === '' || !l[+cur]; }
+$('#cscan').addEventListener('change', e => { const v = e.target.value, l = cscans(); setCscanSel(v);
+  if(v !== '' && l[+v]){ saveSellCfg(l[+v].cfg); } drawSellCfg(); });
+$('#cscan-save').addEventListener('click', () => { const c = sellCfg(); if(!Object.keys(c).length) return rsMsg('Pick at least one sport first.', true);
+  const name = (prompt('Name this custom scan', cfgTxt(c).slice(0, 40)) || '').trim().slice(0, 40); if(!name) return;
+  const l = cscans(); const i = l.findIndex(x => x.name.toLowerCase() === name.toLowerCase());
+  if(i >= 0) l[i] = { name, cfg: c }; else l.push({ name, cfg: c }); saveCscans(l); setCscanSel(String(i >= 0 ? i : l.length - 1)); drawSellCfg(); rsMsg(`Saved "${name}".`); });
+$('#cscan-del').addEventListener('click', () => { const l = cscans(), v = cscanSel(); if(v === '' || !l[+v]) return; l.splice(+v, 1); saveCscans(l); setCscanSel(''); drawSellCfg(); });
 drawSellCfg();
 
 // One sport and season of their collection, every chunk; cards merged by name.
@@ -8868,8 +8903,9 @@ async function pullOne(sp, lbl, say){
 }
 $('#rs-go').addEventListener('click', async () => {
   const btn = $('#rs-go'), c = sellCfg();
-  const jobs = SP_ORDER.flatMap(s => !c[s] ? [] : (BSEAS[s] || []).length ? c[s].map(se => [s, se]) : [[s, '']]);
-  if(!jobs.length) return rsMsg('Pick at least one sport you sell.', true);
+  const B = buyerMap();
+  const jobs = SP_ORDER.flatMap(s => !c[s] ? [] : (BSEAS[s] || []).length ? c[s].map(se => [s, se]) : [[s, '']]).filter(([s, se]) => hasBuyer(B, s, se));   // nobody buying = nothing to pull
+  if(!jobs.length) return rsMsg('None of what you picked has a buyer right now - pick a sport or season with a number on it.', true);
   btn.disabled = true; rsMsg(''); lastPullAt = null;
   const raw = [], failed = [];
   try{
