@@ -7074,7 +7074,14 @@ async function handleGet({ request, env, waitUntil }) {
     try { stuck = JSON.parse((await env.RATEBOARD_KV.get(STUCK_KEY)) || '{}') || {}; } catch (e) {}
     if (!stuck.skip || typeof stuck.skip !== 'object') stuck.skip = {};
 
-    const setAside = (sp, se, phase) => stuck.skip[`${sp}:${se}:${phase}`] === today;
+    /* 2026-11-28: Real's "high volume" morning made every game-log phase look stuck, and they sat out the whole day
+       (projections stopped counting new games). A game log is now only set aside for 2 hours, and today's are let back. */
+    if (!(await env.RATEBOARD_KV.get('unstick_gamelog_1128'))) {
+      for (const k of Object.keys(stuck.skip)) if (/:gamelog$/.test(k)) delete stuck.skip[k];
+      try { await env.RATEBOARD_KV.put(STUCK_KEY, JSON.stringify(stuck)); await env.RATEBOARD_KV.put('unstick_gamelog_1128', '1', { expirationTtl: 7 * 86400 }); } catch (e) {}
+    }
+    const setAside = (sp, se, phase) => { const v = stuck.skip[`${sp}:${se}:${phase}`]; if (v === today) return true;
+      if (typeof v === 'string' && v.startsWith(today + '|')) return Date.now() - Number(v.split('|')[1]) < 2 * 3600000; return false; };
 
     // Records this hand-out and says whether the phase has stopped moving.
     const wedged = async (sp, se, phase, progress) => {
@@ -7083,7 +7090,7 @@ async function handleGet({ request, env, waitUntil }) {
       else { stuck.tag = tag; stuck.progress = progress; stuck.n = 1; }
       let out = false;
       if (stuck.n > STUCK_PASSES) {
-        stuck.skip[tag] = today;
+        stuck.skip[tag] = phase === 'gamelog' ? `${today}|${Date.now()}` : today;
         stuck.tag = ''; stuck.n = 0; stuck.progress = null;
         out = true;
       }
